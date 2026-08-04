@@ -106,7 +106,9 @@ async function testManualShotAndApprovedLibrary() {
   assert(shot.html.indexOf("guided-frame-workflow") < shot.html.indexOf("shot-stage-automation"), "manual frame workflow must appear before automation");
 
   const approved = await render("#/library/approved", project, { agentStatus: disabledAgents() });
-  assert(approved.html.includes("Approved reference library"));
+  /* The heading stays the canonical section name ("References") so navigation, heading
+     and breadcrumb agree; the approved-only view is distinguished by its subtitle. */
+  assert(approved.html.includes('<span class="view-title">References</span>'));
   assert(approved.html.includes("Candidates and automation are hidden"));
   assert(!approved.html.includes("AWAITING REVIEW"));
   assert(!approved.html.includes("AI REVIEW"));

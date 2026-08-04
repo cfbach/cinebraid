@@ -184,7 +184,7 @@ async function main() {
 
     const index = fs.readFileSync(path.join(ROOT, "public", "index.html"), "utf8");
     const app = fs.readFileSync(path.join(ROOT, "public", "app.js"), "utf8");
-    assert(index.includes("Leave test note"), "the test-note control must remain available from every route");
+    assert(index.includes("Leave feedback"), "the feedback control must remain available from every route");
     for (const fn of ["openTestNote", "saveTestNote", "copySavedTestNote", "downloadSavedTestNote"]) assert(app.includes(`window.${fn}`), `manual feedback UI is missing ${fn}`);
 
     console.log("Readiness and feedback suite passed entity-scoped deduplication (22 shots → 1 row), deliberate two-item sample readiness, and locally persisted redacted test-note copy/download output.");

@@ -575,15 +575,15 @@ async function main() {
   const cases = [
     ["#/production", fixture, ["Production", "CONTINUE PRODUCTION", "RETURNED RESULTS"]],
     ["#/create", fixture, ["Build the first usable shot", "Set the visual rules once", "Create the first shot"]],
-    ["#/shots/board", fixture, ["Production board", "Hull check"]],
+    ["#/shots/board", fixture, ["Shots", "Hull check", "CARD BADGES"]],
     ["#/shot/L1-01", fixture, ["Hull check", "NEXT ACTION", "Inputs", "Look &amp; blocking", "Frames", "Motion &amp; sound", "Deliver"]],
-    ["#/library", fixture, ["Approved production inputs", "Kai"]],
+    ["#/library", fixture, ["References", "Kai"]],
     ["#/prop/PR-TOOL", fixture, ["Panel tool", "UPLOAD & ORGANIZE", "Map imported references"]],
     ["#/vehicle/VEH-CART", fixture, ["Maintenance cart", "UPLOAD & ORGANIZE", "Upload reference files"]],
-    ["#/reports", fixture, ["Reports", "Runs & production intelligence", "RUN HISTORY"]],
-    ["#/settings", fixture, ["Project & services", "Project", "Recovery & advanced"]],
-    ["#/production", emptyFixture(), ["Production", "Every shot is marked final"]],
-    ["#/shots/board", emptyFixture(), ["Production board"]],
+    ["#/reports", fixture, ["Reports", "RUN HISTORY"]],
+    ["#/settings", fixture, ["Settings", "Project", "Recovery & advanced"]],
+    ["#/production", emptyFixture(), ["Production", "This project has no shots"]],
+    ["#/shots/board", emptyFixture(), ["Shots"]],
   ];
   for (const [hash, project, expected] of cases) {
     const { html, context } = await render(hash, project);
@@ -601,7 +601,7 @@ async function main() {
   } });
   assert(reportsRender.html.includes("RUN DETAIL"), "selected Reports routes must lazy-load full run detail inline");
   assert(reportsRender.html.includes("DOWNLOAD DIAGNOSTIC BUNDLE"), "Reports must retain diagnostic bundle export");
-  assert(reportsRender.html.includes("PROJECT OPTIMIZATION SUMMARY"), "Reports must expose project optimization intelligence");
+  assert(reportsRender.html.includes("WHERE EFFORT WENT"), "Reports must expose the project-wide effort summary");
 
   const stateFixture = buildFixture();
   const stateProp = stateFixture.props.find((item) => item.id === "PR-TOOL");
@@ -622,9 +622,9 @@ async function main() {
     { name: "PR-TOOL-CANDIDATE-B.png", url: "/assets/props/PR-TOOL-CANDIDATE-B.png" },
   ];
   const stateApprovedRender = await render("#/prop/PR-TOOL", stateFixture, { scan: stateScan, storage: { "cinebraid-focused:fixture:entity-task:props:PR-TOOL": "approved" } });
-  assert(stateApprovedRender.html.includes("APPROVED AUTHORITY"), "reference page must expose the compact authority map");
-  assert(/entity-authority-status[^>]*>\s*<strong>2\/2<\/strong>\s*<span>states assigned<\/span>/.test(stateApprovedRender.html), "authority summary must report approved continuity coverage with separated label/value markup");
-  assert(stateApprovedRender.html.includes("Default") && stateApprovedRender.html.includes("Damaged"), "authority summary must name both approved states");
+  assert(stateApprovedRender.html.includes("APPROVED IMAGES"), "reference page must expose the compact approved-image map");
+  assert(/entity-authority-status[^>]*>\s*<strong>2\/2<\/strong>\s*<span>states have an approved image<\/span>/.test(stateApprovedRender.html), "approved-image summary must report continuity coverage with separated label/value markup and correct plural agreement");
+  assert(stateApprovedRender.html.includes("Default") && stateApprovedRender.html.includes("Damaged"), "approved-image summary must name both approved states");
   const stateCandidateRender = await render("#/prop/PR-TOOL", stateFixture, { scan: stateScan, storage: { "cinebraid-focused:fixture:entity-task:props:PR-TOOL": "candidates" } });
   assert(stateCandidateRender.html.includes("CHOOSE & APPROVE"), "candidate task must separate unapproved media from canon");
   assert(stateCandidateRender.html.includes("AI 84 · PASS · Damaged"), "stored state-specific vision review must appear on the candidate card");

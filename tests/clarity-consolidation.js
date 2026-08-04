@@ -44,7 +44,7 @@ assert(reports.includes("reportsLegacyCompatibilityUsage"), "Reports must expose
 
 assert(app.includes('boundedPage(filteredPairs, "shots", boardPageKey, 5)'), "shot board must use a five-card next-action page");
 assert(app.includes('action: "unfinished"'), "shot board must default to unfinished work");
-assert(app.includes("Next actions"));
+assert(app.includes("Not delivered"), "shot board must offer the not-delivered filter");
 assert(!app.includes("const winnersProgress"), "verified dead winnersProgress helper must be removed");
 assert(!composer.includes("function planHolderForActiveUnit"), "verified dead planHolderForActiveUnit helper must be removed");
 assert(!mutations.includes("window.setWinner"), "overwritten legacy setWinner implementation must be removed");

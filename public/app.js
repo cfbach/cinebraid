@@ -75,6 +75,35 @@ const WORKFLOW_STATES = [
   "CHANGES REQUESTED",
   "APPROVED",
 ];
+/* Count-aware wording. Every visible "N thing(s)" string goes through one of these so
+   a project with exactly one shot never reads "1 shots". */
+const plural = (n, one, many = one + "s") => `${n} ${Number(n) === 1 ? one : many}`;
+const pluralWord = (n, one, many = one + "s") => (Number(n) === 1 ? one : many);
+
+/* The only words allowed in a stage status slot, on the shot taskbar and the reference
+   taskbar alike. Each names a state the work is actually in. Commands ("Set look"),
+   time references ("Later") and bare counts ("2/3") are not statuses and must not
+   appear here — a count belongs in the stage's description line instead. */
+const STAGE_STATUS = {
+  notStarted: "Not started",
+  inProgress: "In progress",
+  incomplete: "Incomplete",
+  needsReview: "Needs review",
+  nothingWaiting: "Nothing waiting",
+  running: "Running",
+  failed: "Failed",
+  approved: "Approved",
+  complete: "Complete",
+  blocked: "Not needed yet",
+};
+
+/* One name per production concept, used everywhere that concept is counted. "Delivered"
+   and "Approved" are deliberately different words for deliberately different states:
+   a shot is delivered when a final file is recorded on it, and approved when its
+   workflow status is APPROVED. A shot can be either without being the other. */
+const shotIsDelivered = (s) => shotProductionNextAction(s).key === "final";
+const shotIsApproved = (s) => workflowState(s).key === "APPROVED";
+
 const skey = (s) => s.replace(/ /g, "");
 const isVideo = (n) => /\.(mp4|webm|mov)$/i.test(n);
 const isAudio = (n) => /\.(wav|mp3|m4a|flac|ogg)$/i.test(n);
@@ -1020,8 +1049,12 @@ function tally() {
     c[k] = (c[k] || 0) + 1;
   });
   const total = P.shots.reduce((a, s) => a + shotDur(s), 0);
+  /* The breakdown below the totals is the workflow status of every shot, so it is
+     labelled as such — otherwise "approved 2" reads as a contradiction of the
+     "0/3 shots delivered" tile on Production, which counts a different thing. */
   $("#tally").innerHTML =
-    `<div><b>${P.shots.length}</b> shots · <b>${P.scenes.length}</b> scenes · <b>${mmss(total)}</b></div>` +
+    `<div><b>${P.shots.length}</b> ${pluralWord(P.shots.length, "shot")} · <b>${P.scenes.length}</b> ${pluralWord(P.scenes.length, "scene")} · <b>${mmss(total)}</b></div>` +
+    `<div class="tally-heading">Shot workflow status</div>` +
     WORKFLOW_STATES.map(
       (k) => `<div>${k.toLowerCase()} <b>${c[k] || 0}</b></div>`,
     ).join("");
@@ -1332,31 +1365,31 @@ window.openTestNote = async () => {
     const data = response.ok ? await response.json() : { notes: [] };
     savedCount = Array.isArray(data.notes) ? data.notes.length : 0;
   } catch (_) {}
-  openModal(`<div class="test-note-modal"><h3>Leave a test note</h3><p>Capture what was confusing while you are still looking at it. CineBraid saves the note locally with this route and a compact project summary. Nothing is transmitted automatically.</p><label><span>What happened?</span><textarea id="cinebraid-test-note" autofocus placeholder="What did you expect, what happened instead, or which term or button needed explaining?"></textarea></label><small>${savedCount ? `${savedCount} test note${savedCount === 1 ? "" : "s"} already saved in this project.` : "No test notes saved in this project yet."}</small><div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button class="approve-btn" onclick="saveTestNote()">Save note</button></div></div>`);
+  openModal(`<div class="test-note-modal"><h3>Leave feedback</h3><p>Capture what was confusing while you are still looking at it. CineBraid saves the note on this computer along with the page you were on and a short project summary. Nothing is sent anywhere automatically.</p><label><span>What happened?</span><textarea id="cinebraid-test-note" autofocus placeholder="What did you expect, what happened instead, or which term or button needed explaining?"></textarea></label><small>${savedCount ? `${plural(savedCount, "note")} already saved in this project.` : "No feedback saved in this project yet."}</small><div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button class="approve-btn" onclick="saveTestNote()">Save note</button></div></div>`);
 };
 window.saveTestNote = async () => {
   const note = String(document.getElementById("cinebraid-test-note")?.value || "").trim();
-  if (!note) return toast("Write a note first");
+  if (!note) return toast("Write your feedback first");
   const response = await fetch("/api/test-feedback", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ note, route: location.hash || "#/production" }),
   });
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) return toast(data.error || "Could not save test note");
+  if (!response.ok) return toast(data.error || "Could not save your feedback");
   LAST_TEST_NOTE_EXPORT = data;
   const summary = data.record?.projectSummary || {};
-  openModal(`<div class="test-note-modal saved"><h3>Test note saved locally</h3><p>The note was redacted through CineBraid's diagnostic safety path. Copy or download it when you are ready to share feedback.</p><div class="test-note-context"><span>${esc(data.record?.route || location.hash || "#/production")}</span><b>${Number(summary.shots || 0)} shots · ${Number(summary.entities || 0)} entities · ${Number(summary.openReadinessIssues || 0)} readiness issues</b></div><div class="modal-actions"><button class="cancel" onclick="closeModal()">Close</button><button class="ghost-btn" onclick="copySavedTestNote()">Copy note</button><button class="approve-btn" onclick="downloadSavedTestNote()">Download note</button></div></div>`);
+  openModal(`<div class="test-note-modal saved"><h3>Feedback saved on this computer</h3><p>File paths and keys were removed from the note before it was saved. Copy or download it when you are ready to share it.</p><div class="test-note-context"><span>${esc(data.record?.route || location.hash || "#/production")}</span><b>${Number(summary.shots || 0)} shots · ${plural(Number(summary.entities || 0), "reference")} · ${Number(summary.openReadinessIssues || 0)} readiness issues</b></div><div class="modal-actions"><button class="cancel" onclick="closeModal()">Close</button><button class="ghost-btn" onclick="copySavedTestNote()">Copy note</button><button class="approve-btn" onclick="downloadSavedTestNote()">Download note</button></div></div>`);
 };
 window.copySavedTestNote = async () => {
   const text = String(LAST_TEST_NOTE_EXPORT?.markdown || "");
-  if (!text) return toast("No saved test note is open");
-  try { await navigator.clipboard.writeText(text); toast("Test note copied"); }
-  catch { toast("Could not copy test note"); }
+  if (!text) return toast("No saved feedback is open");
+  try { await navigator.clipboard.writeText(text); toast("Feedback copied"); }
+  catch { toast("Could not copy the feedback"); }
 };
 window.downloadSavedTestNote = () => {
   const text = String(LAST_TEST_NOTE_EXPORT?.markdown || ""), id = String(LAST_TEST_NOTE_EXPORT?.record?.id || "cinebraid-test-note");
-  if (!text) return toast("No saved test note is open");
+  if (!text) return toast("No saved feedback is open");
   const link = document.createElement("a");
   link.href = URL.createObjectURL(new Blob([text], { type: "text/markdown" }));
   link.download = `${id}.md`;
@@ -1407,7 +1440,7 @@ $("#mobile-nav").onclick = () => document.body.classList.toggle("rail-open");
 $("#global-add").onclick = () => openGlobalAdd();
 window.addEventListener("hashchange", route);
 function productionCount() {
-  return P ? P.shots.filter((shot) => shotProductionNextAction(shot).key !== "final").length : 0;
+  return P ? P.shots.filter((shot) => !shotIsDelivered(shot)).length : 0;
 }
 function updateChrome(view, navName) {
   const active = document.querySelector(`.nav-btn[data-view="${navName}"]`);
@@ -2030,16 +2063,26 @@ function sceneReferenceRecords(sc) {
 function workflowChip(state) {
   return `<span class="workflow-chip wf-${state.cls}">${esc(state.label)}</span>`;
 }
+/* The badges on a shot card are one or two letters, so they carry their own accessible
+   name as well as a tooltip: a character shows its initials, every other reference type
+   shows its first letter. The board prints the key once above the cards. */
 function shotRelationshipChips(s) {
-  const refs = referenceRecordsForShot(s).slice(0, 4);
-  const chips = refs
-    .map(
-      (x) =>
-        `<span class="relation-chip relation-${x.type.toLowerCase()}" title="${attr(x.type + ": " + (x.name || x.id))}">${esc(x.type === "Character" ? entityInitials(x.id) : x.type[0])}</span>`,
-    )
+  const all = referenceRecordsForShot(s);
+  const chips = all
+    .slice(0, 4)
+    .map((x) => {
+      const name = `${x.type}: ${x.name || x.id}`;
+      return `<span class="relation-chip relation-${x.type.toLowerCase()}" title="${attr(name)}" aria-label="${attr(name)}">${esc(x.type === "Character" ? entityInitials(x.id) : x.type[0])}</span>`;
+    })
     .join("");
-  const more = Math.max(0, referenceRecordsForShot(s).length - 4);
-  return chips + (more ? `<span class="relation-more">+${more}</span>` : "");
+  const more = Math.max(0, all.length - 4);
+  return chips + (more ? `<span class="relation-more" title="${attr(plural(more, "more linked reference"))}" aria-label="${attr(plural(more, "more linked reference"))}">+${more}</span>` : "");
+}
+/* A one-line key for those badges, so a filmmaker never has to guess what "TC" or "P"
+   means. It sits with the board controls rather than inside every card. */
+function shotBadgeLegend() {
+  const rows = [["Initials", "Character"], ["L", "Location"], ["P", "Prop"], ["V", "Vehicle"], ["A", "Audio"]];
+  return `<div class="board-badge-legend"><span>CARD BADGES</span>${rows.map(([mark, meaning]) => `<b><i>${esc(mark)}</i>${esc(meaning)}</b>`).join("")}</div>`;
 }
 function shotProductionNextAction(s, takes = takesFor(s.id)) {
   const c = s.creationBrief || {};
@@ -2089,9 +2132,9 @@ function slate(s, sceneId) {
     <a class="slate-thumb take-tile" href="#/shot/${s.id}" style="display:block">${thumb}${winner ? '<span class="win-badge">APPROVED PICK</span>' : ""}</a>
     <a class="slate-body" href="#/shot/${s.id}">
       <div class="slate-title">${esc(s.title)}</div>
-      <div class="state-pair"><span class="shot-next-chip next-${next.key}">${esc(next.label)}</span><small>${esc(next.detail)}</small></div>
+      <div class="state-pair"><span class="shot-next-chip next-${next.key}" title="Next action for this shot">${esc(next.label)}</span><small>${esc(next.detail)}</small></div>
       <div class="slate-relations">${shotRelationshipChips(s)}${warning}</div>
-      <div class="slate-footer"><span>${takes.length} version${takes.length === 1 ? "" : "s"} · ${refs.length} ref${refs.length === 1 ? "" : "s"}</span><span>${s.submittedAt ? "submitted " + esc(s.submittedAt.slice(0, 10)) : s.audio?.line || (s.clips || []).some((c) => c.line) ? "Dialogue linked" : ""}</span></div>
+      <div class="slate-footer"><span>${plural(takes.length, "version")} · ${plural(refs.length, "reference")}</span><span>${s.submittedAt ? "submitted " + esc(s.submittedAt.slice(0, 10)) : s.audio?.line || (s.clips || []).some((c) => c.line) ? "Dialogue linked" : ""}</span></div>
     </a>
   </article>`;
 }
@@ -2129,7 +2172,7 @@ window.batchContinuityState = () => {
     return toast("Create a continuity state in the Library first");
   window._batchContinuity = entities;
   openModal(
-    `<h3>Assign continuity state</h3><div class="modal-sub">APPLIES THE SELECTED STATE TO ${BATCH_SHOTS.size} SHOT${BATCH_SHOTS.size === 1 ? "" : "S"}</div><div class="form-field"><label>Entity and state</label><select id="batch-continuity-choice">${entities.flatMap((x) => (x.continuityStates || []).map((st) => `<option value="${attr(x.id + "|" + st.id)}">${esc(x.name || x.id)} — ${esc(st.name)}</option>`)).join("")}</select></div><div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button class="approve-btn" onclick="confirmBatchContinuity()">ASSIGN</button></div>`,
+    `<h3>Assign continuity state</h3><div class="modal-sub">APPLIES THE SELECTED STATE TO ${BATCH_SHOTS.size} SHOT${BATCH_SHOTS.size === 1 ? "" : "S"}</div><div class="form-field"><label>Reference and state</label><select id="batch-continuity-choice">${entities.flatMap((x) => (x.continuityStates || []).map((st) => `<option value="${attr(x.id + "|" + st.id)}">${esc(x.name || x.id)} — ${esc(st.name)}</option>`)).join("")}</select></div><div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button class="approve-btn" onclick="confirmBatchContinuity()">ASSIGN</button></div>`,
   );
 };
 window.confirmBatchContinuity = () => {
@@ -2403,7 +2446,7 @@ function projectDecisionItems() {
 }
 function productionResultInbox(limit = 6) {
   const items = projectDecisionItems();
-  return `<section class="production-inbox"><header><div><span>RETURNED RESULTS</span><h2>${items.length ? `${items.length} decision${items.length === 1 ? "" : "s"} waiting` : "Nothing waiting for review"}</h2><p>Results uploaded inside a frame or motion step appear here automatically.</p></div></header>${items.length ? `<div class="production-inbox-list">${items.map((item) => {
+  return `<section class="production-inbox"><header><div><span>RETURNED RESULTS</span><h2>${items.length ? `${plural(items.length, "decision")} waiting` : "Nothing waiting for review"}</h2><p>Results uploaded inside a frame or motion step appear here automatically.</p></div></header>${items.length ? `<div class="production-inbox-list">${items.map((item) => {
     if (item.shot) {
       const takes = takesFor(item.shot.id), media = item.type === "video" ? takes.filter((take) => isVideo(take.name)).at(-1) : takes.filter((take) => !isVideo(take.name) && !isAudio(take.name)).at(-1);
       const preview = media ? (isVideo(media.name) ? `<video muted preload="metadata" src="${attr(media.url)}#t=0.1"></video>` : `<img src="${attr(media.url)}" alt="">`) : `<span>${item.type === "video" ? "VIDEO" : "FRAME"}</span>`;
@@ -2421,18 +2464,26 @@ async function productionHomeView() {
   } catch {}
   const next = nextProductionShot();
   const decisions = projectDecisionItems();
-  const finalCount = P.shots.filter((shot) => shotProductionNextAction(shot).key === "final").length;
-  const activeRows = P.shots.map((shot) => ({ shot, next: shotProductionNextAction(shot) })).filter((row) => row.next.key !== "final").slice(0, 8);
-  return `<div class="view-head production-home-head"><div><div class="eyebrow">Production</div><span class="view-title">${esc(P.meta.title)}</span><div class="view-sub">Continue the film from the next unfinished decision. Detailed tools stay inside each shot.</div></div><div class="production-home-actions"><button class="assemble-btn" onclick="continueProduction()">${next ? "CONTINUE PRODUCTION" : "ALL SHOTS FINAL"}</button><button class="add-btn" onclick="openGlobalAdd('shot')">＋ Add shot</button></div></div>
-  <div class="production-summary"><article><b>${finalCount}/${P.shots.length}</b><span>shots final</span></article><article class="review"><b>${decisions.length}</b><span>decisions waiting</span></article><article><b>${P.scenes.length}</b><span>scenes</span></article><article><b>${mmss(P.shots.reduce((sum, shot) => sum + shotDur(shot), 0))}</b><span>planned runtime</span></article></div>
-  <details class="production-readiness" ${readiness.issues?.length ? "" : "open"}><summary><div><span>PROJECT READINESS</span><b>${readiness.issues?.length ? `${readiness.issues.length} item${readiness.issues.length === 1 ? "" : "s"} to resolve` : "Ready for production work"}</b></div><span>${readiness.issues?.length ? "REVIEW" : "CLEAR"}</span></summary><div class="production-readiness-list">${(readiness.issues || []).map((issue) => `<a href="${attr(issue.href || "#/production")}"${issue.kind === "unresolved-reference" && issue.targetId ? ` onclick="boundedWriteState('shot-task','${attr(issue.targetId)}','inputs')"` : ""}><b>${esc(String(issue.kind || "readiness").replace(/-/g," "))}</b><span>${esc(issue.message || "Readiness issue")}</span><i>Open →</i></a>`).join("") || `<p>No missing descriptions, durations, canon, approved references, or approved files were found.</p>`}</div></details>
-  ${next ? `<section class="production-next"><div><span>NEXT ACTION</span><h2>${esc(next.shot.id)} · ${esc(next.shot.title)}</h2><p>${esc(next.next.label)} — ${esc(next.next.detail)}</p></div><a class="assemble-btn" href="#/shot/${next.shot.id}">${esc(next.next.label.toUpperCase())} →</a></section>` : `<section class="production-next complete"><div><span>PRODUCTION COMPLETE</span><h2>Every shot is marked final</h2><p>Open Shots to inspect delivery media or add another shot.</p></div><a class="ghost-btn" href="#/shots/board">Open shots →</a></section>`}
+  const hasShots = P.shots.length > 0;
+  /* Three different states of a shot, counted three different ways, so each tile is
+     labelled with the one it actually reports:
+       delivered — a final still or video file is recorded on the shot
+       approved  — the shot's workflow status is APPROVED (it may still need delivery)
+       waiting   — a returned result is sitting unreviewed in the inbox           */
+  const deliveredCount = P.shots.filter(shotIsDelivered).length;
+  const approvedCount = P.shots.filter(shotIsApproved).length;
+  const activeRows = P.shots.map((shot) => ({ shot, next: shotProductionNextAction(shot) })).filter((row) => !shotIsDelivered(row.shot)).slice(0, 8);
+  return `<div class="view-head production-home-head"><div><div class="eyebrow">Production</div><span class="view-title">${esc(P.meta.title)}</span><div class="view-sub">Continue the film from the next unfinished decision. Detailed tools stay inside each shot.</div></div><div class="production-home-actions"><button class="assemble-btn" onclick="continueProduction()">${next ? "CONTINUE PRODUCTION" : hasShots ? "ALL SHOTS DELIVERED" : "ADD THE FIRST SHOT"}</button><button class="add-btn" onclick="openGlobalAdd('shot')">＋ Add shot</button></div></div>
+  <div class="production-summary"><article title="A shot is delivered once a final still or video file is recorded on it."><b>${deliveredCount}/${P.shots.length}</b><span>${pluralWord(P.shots.length, "shot")} delivered</span></article><article title="A shot is approved once its workflow status is Approved. Approving a shot does not deliver it."><b>${approvedCount}/${P.shots.length}</b><span>${pluralWord(P.shots.length, "shot")} approved</span></article><article class="review" title="Returned results that are waiting for you to choose or approve."><b>${decisions.length}</b><span>${pluralWord(decisions.length, "decision")} waiting</span></article><article><b>${mmss(P.shots.reduce((sum, shot) => sum + shotDur(shot), 0))}</b><span>planned runtime across ${plural(P.scenes.length, "scene")}</span></article></div>
+  <details class="production-readiness" ${readiness.issues?.length ? "" : "open"}><summary><div><span>PROJECT READINESS</span><b>${readiness.issues?.length ? `${plural(readiness.issues.length, "item")} to resolve` : "Ready for production work"}</b></div><span>${readiness.issues?.length ? "NEEDS ATTENTION" : "READY"}</span></summary><div class="production-readiness-list">${(readiness.issues || []).map((issue) => `<a href="${attr(issue.href || "#/production")}"${issue.kind === "unresolved-reference" && issue.targetId ? ` onclick="boundedWriteState('shot-task','${attr(issue.targetId)}','inputs')"` : ""}><b>${esc(String(issue.kind || "readiness").replace(/-/g," "))}</b><span>${esc(issue.message || "Readiness issue")}</span><i>Open →</i></a>`).join("") || `<p>No missing descriptions, durations, canon text, approved references, or approved files were found.</p>`}</div></details>
+  ${next ? `<section class="production-next"><div><span>NEXT ACTION</span><h2>${esc(next.shot.id)} · ${esc(next.shot.title)}</h2><p>${esc(next.next.label)} — ${esc(next.next.detail)}</p></div><a class="assemble-btn" href="#/shot/${next.shot.id}">${esc(next.next.label.toUpperCase())} →</a></section>` : hasShots ? `<section class="production-next complete"><div><span>EVERY SHOT DELIVERED</span><h2>All ${plural(P.shots.length, "shot")} have a final file</h2><p>Open Shots to inspect delivery media or add another shot.</p></div><a class="ghost-btn" href="#/shots/board">Open Shots →</a></section>` : `<section class="production-next"><div><span>NO SHOTS YET</span><h2>This project has no shots</h2><p>Add the first shot to start tracking scenes, frames and deliveries.</p></div><a class="assemble-btn" href="#/shots/board">Open Shots →</a></section>`}
   ${productionResultInbox()}
-  <section class="production-active"><header><div><span>IN PROGRESS</span><h2>Shots and their next action</h2></div><a href="#/shots/board">View all shots →</a></header>${activeRows.length ? `<div class="production-active-list">${activeRows.map(({shot,next}) => `<a href="#/shot/${shot.id}"><span class="next-${next.key}">${esc(next.label)}</span><div><b>${esc(shot.id)} · ${esc(shot.title)}</b><small>${esc(sceneById(shot.scene)?.title || shot.scene)} · ${esc(next.detail)}</small></div><i>→</i></a>`).join("")}</div>` : `<div class="production-inbox-empty">There are no unfinished shots.</div>`}</section>
-  <section class="production-scenes"><header><div><span>SCENES</span><h2>Production progress</h2></div><a href="#/shots/scenes">Manage scenes →</a></header><div class="scene-progress-grid">${P.scenes.map((scene) => {
-    const shots = P.shots.filter((shot) => shot.scene === scene.id), done = shots.filter((shot) => shotProductionNextAction(shot).key === "final").length, pct = shots.length ? Math.round(done / shots.length * 100) : 0;
-    return `<a href="#/scene/${scene.id}" class="scene-progress-card"><header><b>${esc(scene.title)}</b><span>${done}/${shots.length}</span></header><div class="progress-line"><i style="width:${pct}%"></i></div><footer><span>${shots.filter((shot) => ["review-still","review-video"].includes(shotProductionNextAction(shot).key)).length} review</span><span>${shots.filter((shot) => shotProductionNextAction(shot).key !== "final").length} unfinished</span></footer></a>`;
-  }).join("")}</div></section>`;
+  <section class="production-active"><header><div><span>NOT YET DELIVERED</span><h2>Shots and their next action</h2></div><a href="#/shots/board">View all shots →</a></header>${activeRows.length ? `<div class="production-active-list">${activeRows.map(({shot,next}) => `<a href="#/shot/${shot.id}"><span class="next-${next.key}" title="Next action for this shot">${esc(next.label)}</span><div><b>${esc(shot.id)} · ${esc(shot.title)}</b><small>${esc(sceneById(shot.scene)?.title || shot.scene)} · ${esc(next.detail)}</small></div><i>→</i></a>`).join("")}</div>` : `<div class="production-inbox-empty">${hasShots ? "Every shot has been delivered." : "No shots have been added yet."}</div>`}</section>
+  <section class="production-scenes"><header><div><span>SCENES</span><h2>Production progress</h2></div><a href="#/shots/scenes">Manage scenes →</a></header>${P.scenes.length ? `<div class="scene-progress-grid">${P.scenes.map((scene) => {
+    const shots = P.shots.filter((shot) => shot.scene === scene.id), done = shots.filter(shotIsDelivered).length, pct = shots.length ? Math.round(done / shots.length * 100) : 0;
+    const waiting = shots.filter((shot) => ["review-still","review-video"].includes(shotProductionNextAction(shot).key)).length;
+    return `<a href="#/scene/${scene.id}" class="scene-progress-card"><header><b>${esc(scene.title)}</b><span title="Shots delivered in this scene">${done}/${shots.length} delivered</span></header><div class="progress-line"><i style="width:${pct}%"></i></div><footer><span>${plural(waiting, "shot")} waiting for review</span><span>${plural(shots.length - done, "shot")} not delivered</span></footer></a>`;
+  }).join("")}</div>` : `<div class="production-inbox-empty">No scenes have been added yet.</div>`}</section>`;
 }
 window.openGlobalAdd = (preferred = "") => {
   const choices = [
@@ -2478,12 +2529,12 @@ window.setShotActionFilter = (value) => {
 function shotBoardActionMatches(shot) {
   const category = shotBoardActionCategory(shot), next = shotProductionNextAction(shot);
   if (!FILTER.action || FILTER.action === "all") return true;
-  if (FILTER.action === "unfinished") return next.key !== "final";
+  if (FILTER.action === "unfinished") return !shotIsDelivered(shot);
   return category === FILTER.action;
 }
 function shotBoardActionFilters() {
-  const defs = [["unfinished","Next actions"],["review","Needs review"],["missing-inputs","Missing inputs"],["ready",manualFirstWorkflow() ? "Ready for media" : "Ready to generate"],["complete","Completed"],["all","All shots"]];
-  const counts = Object.fromEntries(defs.map(([id]) => [id, P.shots.filter((shot) => id === "all" ? true : id === "unfinished" ? shotProductionNextAction(shot).key !== "final" : shotBoardActionCategory(shot) === id).length]));
+  const defs = [["unfinished","Not delivered"],["review","Needs review"],["missing-inputs","Missing inputs"],["ready",manualFirstWorkflow() ? "Ready for media" : "Ready to generate"],["complete","Delivered"],["all","All shots"]];
+  const counts = Object.fromEntries(defs.map(([id]) => [id, P.shots.filter((shot) => id === "all" ? true : id === "unfinished" ? !shotIsDelivered(shot) : shotBoardActionCategory(shot) === id).length]));
   return `<nav class="board-action-filters" aria-label="Shot next-action filters">${defs.map(([id,label]) => `<button type="button" class="${FILTER.action===id?"selected":""}" onclick="setShotActionFilter('${id}')"><span>${esc(label)}</span><b>${counts[id]}</b></button>`).join("")}</nav>`;
 }
 function productionView(tab = "board") {
@@ -2502,19 +2553,19 @@ function productionView(tab = "board") {
   const tabDefs = [["board", "Shot board"], ["scenes", "Scene directory"]];
   if (tab === "table") tab = "board";
   const tabs = workspaceTabs("production", tab, tabDefs);
-  const head = `<div class="view-head board-head"><div><div class="eyebrow">Production</div><span class="view-title">Production board</span><div class="view-sub">Track scene readiness, approved frames, and one clear next action for every shot.</div></div><div class="board-head-actions"><button class="assemble-btn" onclick="continueProduction()">CONTINUE</button><button class="add-btn" onclick="openGlobalAdd('shot')">＋ Add</button></div></div>${tabs}`;
+  const head = `<div class="view-head board-head"><div><div class="eyebrow">Shots</div><span class="view-title">Shots</span><div class="view-sub">Track scene readiness, approved frames, and one clear next action for every shot.</div></div><div class="board-head-actions"><button class="assemble-btn" onclick="continueProduction()">CONTINUE</button><button class="add-btn" onclick="openGlobalAdd('shot')">＋ Add</button></div></div>${tabs}`;
   if (tab === "scenes") {
     const scenePage = boundedPage(P.scenes, "scenes", "overview", BOUNDED_PAGE_SIZES.scenes);
     return head + runtimeBar(P.shots, P.meta.targetRuntime) + `<div class="bounded-scene-list">${scenePage.rows.map((sc) => {
-      const shots = P.shots.filter((s) => s.scene === sc.id), refs = sceneReferenceRecords(sc), done = shots.filter((s) => workflowState(s).key === "APPROVED").length;
-      return `<a class="scene-card" href="#/scene/${sc.id}"><div class="scene-card-head"><span class="scene-card-title">${esc(sc.title)}</span><span class="tier-badge ${sc.tier || "B"}">TIER ${sc.tier || "B"}</span><span class="scene-card-meta">${mmss(shots.reduce((a, s) => a + shotDur(s), 0))} · ${done}/${shots.length} approved · ${refs.length} references</span></div><div class="scene-card-beat">${esc(sc.whatHappens || "No scene beat written yet.")}</div></a>`;
+      const shots = P.shots.filter((s) => s.scene === sc.id), refs = sceneReferenceRecords(sc), done = shots.filter(shotIsApproved).length;
+      return `<a class="scene-card" href="#/scene/${sc.id}"><div class="scene-card-head"><span class="scene-card-title">${esc(sc.title)}</span><span class="tier-badge ${sc.tier || "B"}">TIER ${sc.tier || "B"}</span><span class="scene-card-meta">${mmss(shots.reduce((a, s) => a + shotDur(s), 0))} · ${done}/${shots.length} ${pluralWord(shots.length, "shot")} approved · ${plural(refs.length, "reference")}</span></div><div class="scene-card-beat">${esc(sc.whatHappens || "No scene beat written yet.")}</div></a>`;
     }).join("")}</div>${boundedPagerMarkup("scenes","overview",scenePage,"scenes")}`;
   }
   const routes = [
     ...new Set(P.shots.map((s) => outputPlanLabel(s)).filter(Boolean)),
   ];
   const filterBody = `<div class="toolbar"><select aria-label="Filter lifecycle" onchange="FILTER.status=this.value;route()"><option value="">All shots</option>${WORKFLOW_STATES.map((x) => `<option value="${x}" ${FILTER.status === x ? "selected" : ""}>${x}</option>`).join("")}</select><select aria-label="Filter output" onchange="FILTER.route=this.value;route()"><option value="">Any output</option>${routes.map((r) => `<option value="${attr(r.toUpperCase())}" ${FILTER.route === r.toUpperCase() ? "selected" : ""}>${esc(r)}</option>`).join("")}</select><select aria-label="Filter character" onchange="FILTER.char=this.value;route()"><option value="">Any character</option>${P.characters.map((c) => `<option value="${c.id}" ${FILTER.char === c.id ? "selected" : ""}>${esc(c.name)}</option>`).join("")}</select></div>`;
-  const controls = `<div class="board-list-controls">${shotBoardActionFilters()}${shotBoardDensityControl()}</div>${tab === "table" ? batchToolbar() : ""}<details class="board-filter-fold" ${(FILTER.status || FILTER.route || FILTER.char) ? "open" : ""}><summary>More filters${(FILTER.status || FILTER.route || FILTER.char) ? " · active" : ""}</summary>${filterBody}</details>`;
+  const controls = `<div class="board-list-controls">${shotBoardActionFilters()}${shotBoardDensityControl()}</div>${P.shots.length ? shotBadgeLegend() : ""}${tab === "table" ? batchToolbar() : ""}<details class="board-filter-fold" ${(FILTER.status || FILTER.route || FILTER.char) ? "open" : ""}><summary>More filters${(FILTER.status || FILTER.route || FILTER.char) ? " · active" : ""}</summary>${filterBody}</details>`;
   const filteredPairs = [];
   P.scenes.forEach((sc) => {
     P.shots.filter((shot) => shot.scene === sc.id).filter((shot) =>
@@ -2529,9 +2580,11 @@ function productionView(tab = "board") {
   const grouped = new Map();
   shotPage.rows.forEach(({ sc, shot }) => { if (!grouped.has(sc.id)) grouped.set(sc.id, { sc, shots: [] }); grouped.get(sc.id).shots.push(shot); });
   const body = [...grouped.values()].map(({ sc, shots }) => {
-    const all = P.shots.filter((shot) => shot.scene === sc.id), collapsed = COLLAPSED_SCENES.has(sc.id), pending = all.filter((shot) => workflowState(shot).key === "READY FOR REVIEW").length, approvedCount = all.filter((shot) => workflowState(shot).key === "APPROVED").length;
-    return `<section class="log-strip ${collapsed ? "collapsed" : ""}"><div class="log-head"><button class="collapse-btn" onclick="toggleSceneCollapse('${sc.id}')" aria-label="${collapsed ? "Expand" : "Collapse"} ${attr(sc.title || sc.id)}" aria-expanded="${collapsed ? "false" : "true"}">${collapsed ? "▸" : "▾"}</button><a class="log-title" href="#/scene/${sc.id}">${esc(sc.title)}</a><span class="tier-badge ${sc.tier || "B"}">TIER ${sc.tier || "B"}</span>${pending ? `<span class="scene-attention">${pending} review</span>` : ""}<span class="log-count">${approvedCount}/${all.length} approved</span></div>${collapsed ? "" : `<div class="shot-row bounded-shot-page size-${SHOT_BOARD_DENSITY}">${shots.map((shot) => slate(shot)).join("")}</div>`}</section>`;
-  }).join("") || `<div class="empty-state"><h2>No shots match these filters</h2><p>Change a filter or add another shot.</p></div>`;
+    const all = P.shots.filter((shot) => shot.scene === sc.id), collapsed = COLLAPSED_SCENES.has(sc.id), pending = all.filter((shot) => workflowState(shot).key === "READY FOR REVIEW").length, approvedCount = all.filter(shotIsApproved).length;
+    return `<section class="log-strip ${collapsed ? "collapsed" : ""}"><div class="log-head"><button class="collapse-btn" onclick="toggleSceneCollapse('${sc.id}')" aria-label="${collapsed ? "Expand" : "Collapse"} ${attr(sc.title || sc.id)}" aria-expanded="${collapsed ? "false" : "true"}">${collapsed ? "▸" : "▾"}</button><a class="log-title" href="#/scene/${sc.id}">${esc(sc.title)}</a><span class="tier-badge ${sc.tier || "B"}">TIER ${sc.tier || "B"}</span>${pending ? `<span class="scene-attention">${plural(pending, "shot")} ready for review</span>` : ""}<span class="log-count" title="Shots in this scene whose workflow status is Approved">${approvedCount}/${all.length} ${pluralWord(all.length, "shot")} approved</span></div>${collapsed ? "" : `<div class="shot-row bounded-shot-page size-${SHOT_BOARD_DENSITY}">${shots.map((shot) => slate(shot)).join("")}</div>`}</section>`;
+  }).join("") || (P.shots.length
+    ? `<div class="empty-state"><h2>No shots match these filters</h2><p>Change a filter to see the other ${plural(P.shots.length, "shot")} in this project.</p></div>`
+    : `<div class="empty-state"><h2>This project has no shots yet</h2><p>Add the first shot to start tracking scenes, frames and deliveries.</p><button class="add-btn" onclick="openGlobalAdd('shot')">＋ Add shot</button></div>`);
   const pager = boundedPagerMarkup("shots",boardPageKey,shotPage,"shots");
   return head + controls + pager + body + pager;
 }
@@ -2548,14 +2601,17 @@ function libraryCard(list, x, approvedOnly = false) {
   const media = entityMedia(list, x), route = ENTITY_ROUTE[list], approvedFile = entityApprovedFileForState(x, ""), approvedMedia = media.find((item) => item.name === approvedFile), previewMedia = approvedMedia || media.at(-1);
   const preview = previewMedia ? (isAudio(previewMedia.name) ? '<span class="library-audio-icon">◉</span>' : isVideo(previewMedia.name) ? `<video muted src="${previewMedia.url}"></video>` : `<img src="${previewMedia.url}" alt="">`) : `<div class="library-empty">${esc((x.name || x.id).slice(0,1))}</div>`;
   const type = { characters: "Character", locations: "Location", props: "Prop", vehicles: "Vehicle", audio: "Audio" }[list];
-  const authorityCount = entityApprovedReferenceCount(x);
+  /* This counts the distinct files a filmmaker has approved for the reference — its main
+     look plus any approved state, angle or expression — so it is described as approved
+     files rather than as a count of an internal noun. */
+  const approvedFiles = entityApprovedReferenceCount(x);
   const stateCount = (x.continuityStates || []).filter((state) => state.approvedFile || (state.isDefault && x.approvedFile)).length;
-  const pending = Math.max(0, media.length - authorityCount);
-  const status = authorityCount ? "approved" : media.length ? "candidate" : "missing";
-  const statusLabel = authorityCount ? "APPROVED" : media.length ? "TO ORGANIZE" : "EMPTY";
+  const pending = Math.max(0, media.length - approvedFiles);
+  const status = approvedFiles ? "approved" : media.length ? "candidate" : "missing";
+  const statusLabel = approvedFiles ? "APPROVED" : media.length ? "TO ORGANIZE" : "EMPTY";
   const description = approvedOnly
-    ? `${authorityCount} approved authorit${authorityCount === 1 ? "y" : "ies"}${stateCount > 1 ? ` · ${stateCount} states` : ""}`
-    : authorityCount ? `${authorityCount} approved authorit${authorityCount === 1 ? "y" : "ies"}${pending ? ` · ${pending} unassigned file${pending === 1 ? "" : "s"}` : ""}` : media.length ? `${pending} imported file${pending === 1 ? "" : "s"} to organize` : "Add the first reference";
+    ? `${plural(approvedFiles, "approved file")}${stateCount > 1 ? ` · ${plural(stateCount, "state")}` : ""}`
+    : approvedFiles ? `${plural(approvedFiles, "approved file")}${pending ? ` · ${plural(pending, "unassigned file")}` : ""}` : media.length ? `${plural(pending, "imported file")} to organize` : "Add the first reference";
   return `<a class="library-card ${status}" href="#/${route}/${x.id}"><div class="library-preview">${preview}<span class="library-status ${status}">${statusLabel}</span></div><div class="library-body"><span class="review-kind">${type}</span><b>${esc(x.name || x.id)}</b><small>${description}</small></div></a>`;
 }
 function libraryView(tab = "all") {
@@ -2586,7 +2642,7 @@ function libraryView(tab = "all") {
   const referencePage = boundedPage(allRows, "references", `library:${tab}`, BOUNDED_PAGE_SIZES.references);
   const add = `<button class="add-btn" onclick="openGlobalAdd('${tab === "all" || tab === "approved" ? "" : tab === "audio" ? "audio" : tab.slice(0,-1)}')">＋ Add reference</button>`;
   const pager = boundedPagerMarkup("references",`library:${tab}`,referencePage,"references");
-  const title = tab === "approved" ? "Approved reference library" : "Approved production inputs";
+  const title = "References";
   const subtitle = tab === "approved" ? "A clean view of the images, views, states, and media that currently define production truth. Candidates and automation are hidden." : "Import work made anywhere, organize it into authoritative states and views, and use optional assisted tools only when needed.";
   return `<div class="view-head"><div><div class="eyebrow">References</div><span class="view-title">${title}</span><div class="view-sub">${subtitle}</div></div>${add}</div>${tabs}${pager}<div class="library-grid bounded-source-section">${referencePage.rows.map(({list,entity}) => libraryCard(list,entity,tab === "approved")).join("") || `<div class="empty-state"><div class="empty-mark">＋</div><h2>${tab === "approved" ? "No approved references yet" : "No references yet"}</h2><p>${tab === "approved" ? "Choose an imported file as an authority to add it here." : "Add a character, location, prop, vehicle, or audio asset."}</p><button class="add-btn" onclick="openGlobalAdd()">Add reference</button></div>`}</div>${pager}`;
 }
