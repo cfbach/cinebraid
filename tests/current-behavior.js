@@ -298,6 +298,7 @@ async function main() {
     "coverage-workflow.js",
     "current-behavior.js",
     "data-recovery-focused-state.js",
+    "data-safety-repair.js",
     "deep-bot-safety.js",
     "external-test-readiness.js",
     "fal-generation.js",

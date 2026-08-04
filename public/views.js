@@ -1,4 +1,28 @@
 /* ---------- views ---------- */
+/* ACTIVE_PROJECT_SLUG is a script-scoped binding shared across the classic scripts (app.js).
+   It is deliberately not a window property, matching how coverage-automation.js, entities.js
+   and bounded-rendering.js read it. Reading it off `window` yields undefined and silently
+   requests /api/projects//backups, so always resolve it through this helper. */
+function activeProjectSlug() {
+  return (typeof ACTIVE_PROJECT_SLUG !== "undefined" && ACTIVE_PROJECT_SLUG) || "";
+}
+/* Distinguishes "this project genuinely has no backups yet" from "the list could not be
+   loaded", so a recovery failure is never rendered as an empty, reassuring list. */
+async function projectBackupList() {
+  const slug = activeProjectSlug();
+  if (!slug) return { backups: [], error: "No project is open, so backups cannot be listed." };
+  try {
+    const response = await fetch(`/api/projects/${encodeURIComponent(slug)}/backups`);
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      return { backups: [], error: detail.error || `Backups could not be loaded (${response.status}).` };
+    }
+    const data = await response.json();
+    return { backups: data.backups || [] };
+  } catch {
+    return { backups: [], error: "Could not reach the CineBraid server to list backups." };
+  }
+}
 const ROUTES = {
   production() { return productionHomeView(); },
   create() { return creationStudioView(); },
@@ -142,7 +166,7 @@ const ROUTES = {
     const [c, health, backupData] = await Promise.all([
       fetch("/api/config").then((r) => r.json()),
       fetch("/api/system/health").then((r) => r.json()).catch(() => ({})),
-      fetch(`/api/projects/${encodeURIComponent(window.ACTIVE_PROJECT_SLUG || "")}/backups`).then((r) => r.ok ? r.json() : ({ backups: [] })).catch(() => ({ backups: [] })),
+      projectBackupList(),
     ]);
     CONFIG = c || {};
     applyTheme();
@@ -222,7 +246,7 @@ const ROUTES = {
       ${field("Frame resolution", `<select id="cfg-fal-frame-resolution">${[["1k","1K"],["2k","2K"],["4k","4K"]].map(([v,l]) => `<option value="${v}" ${(fal.frameResolution || "1k") === v ? "selected" : ""}>${l}</option>`).join("")}</select>`)}
       ${field("Estimated cost per image (USD)", `<input id="cfg-fal-cost-per-image" type="number" min="0" max="100" step="0.001" value="${attr(Number(fal.estimatedCostPerImage || 0))}" placeholder="0.00">`)}
     </div><div class="settings-actions"><button class="add-btn" onclick="saveConfig()">Save generation settings</button><span id="fal-test-note" class="hint">${fal.enabled ? (fal.apiKey || fal.keySource === "environment" ? "Configured" : "Add a key to generate") : "Disabled"}</span></div><p class="hint fal-security-note">Paid generation is only submitted after confirmation.</p></section>`;
-    const recoveryPanel = `<section class="settings-block project-recovery"><div class="settings-title-row"><div><h3>Recovery & advanced</h3><p class="hint">Rotating backups, diagnostics and support records.</p></div><button class="ghost-btn" onclick="createManualProjectBackup()">Create backup now</button></div><div class="settings-health-grid"><article><span>Server</span><b>${health.ok === false ? "Needs attention" : "Running"}</b><small>${esc(health.message || health.status || "Local CineBraid service")}</small></article><article><span>Project slug</span><b>${esc(window.ACTIVE_PROJECT_SLUG || "—")}</b><small>Use Reports for integrity checks and the project log.</small></article></div><div id="project-backup-note" class="hint"></div>${(backupData.backups || []).length ? `<div class="project-backup-list">${backupData.backups.map((item) => `<article><div><b>${esc(item.name)}</b><small>${esc(new Date(item.modifiedAt).toLocaleString())} · ${Math.max(1,Math.round(Number(item.size || 0) / 1024))} KB</small></div><button class="ghost-btn" onclick="restoreProjectBackup('${attr(item.name)}')">Restore</button></article>`).join("")}</div>` : `<p class="hint">No rotating backups yet. A backup is created before each validated save.</p>`}<div class="settings-actions"><a class="ghost-btn" href="#/reports">Open project log & reports</a><button class="ghost-btn" onclick="downloadJSON()">Download JSON backup</button></div></section>`;
+    const recoveryPanel = `<section class="settings-block project-recovery"><div class="settings-title-row"><div><h3>Recovery & advanced</h3><p class="hint">Rotating backups, diagnostics and support records.</p></div><button class="ghost-btn" onclick="createManualProjectBackup()">Create backup now</button></div><div class="settings-health-grid"><article><span>Server</span><b>${health.ok === false ? "Needs attention" : "Running"}</b><small>${esc(health.message || health.status || "Local CineBraid service")}</small></article><article><span>Project slug</span><b>${esc(activeProjectSlug() || "—")}</b><small>Use Reports for integrity checks and the project log.</small></article></div><div id="project-backup-note" class="hint"></div>${backupData.error ? `<p class="hint backup-list-error" role="alert">${esc(backupData.error)}</p>` : (backupData.backups || []).length ? `<div class="project-backup-list">${backupData.backups.map((item) => `<article><div><b>${esc(item.name)}</b><small>${esc(new Date(item.modifiedAt).toLocaleString())} · ${Math.max(1,Math.round(Number(item.size || 0) / 1024))} KB</small></div><button class="ghost-btn" onclick="restoreProjectBackup('${attr(item.name)}')">Restore</button></article>`).join("")}</div>` : `<p class="hint">No rotating backups yet. A backup is created before each validated save.</p>`}<div class="settings-actions"><a class="ghost-btn" href="#/reports">Open project log & reports</a><button class="ghost-btn" onclick="downloadJSON()">Download JSON backup</button></div></section>`;
     const body = { appearance: appearancePanel, files: filesPanel, naming: namingPanel, project: projectPanel, assistant: assistantPanel, generation: generationPanel, recovery: recoveryPanel }[selected] || appearancePanel;
     setTimeout(() => { if (selected === "naming" && typeof updateFilenameTemplatePreview === "function") updateFilenameTemplatePreview(); }, 0);
     return `<div class="view-head"><div><div class="eyebrow">Settings</div><span class="view-title">Workspace control center</span><div class="view-sub">Project & services · restore brand styling, storage controls, naming rules and service setup.</div></div></div>${tabbar}<div class="settings-selected-tab" data-settings-tab="${attr(selected)}">${body}</div>`;

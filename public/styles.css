@@ -2048,6 +2048,7 @@ body.automation-activity-open{overflow:hidden}
 
 /* v6.6.0.3 recovery and dependency safety */
 .project-backup-list{display:grid;gap:8px;margin-top:12px}
+.hint.backup-list-error{margin-top:12px;padding:9px;border-radius:8px;background:rgba(190,40,40,.12);color:#f2aaaa}
 .project-backup-list article{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:rgba(255,255,255,.02)}
 .project-backup-list article div{display:grid;gap:3px;min-width:0}
 .project-backup-list article b,.project-backup-list article small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

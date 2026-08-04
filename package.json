@@ -53,7 +53,8 @@
     "check:motion-edit": "node tests/run-python-check.js tests/motion-prompt-editing-real-browser.py",
     "check:continuity-correction": "node tests/continuity-correction-workflow.js",
     "check:continuity-browser": "node tests/run-python-check.js tests/continuity-correction-real-browser.py",
-    "check:correction-modal": "node tests/continuity-correction-modal.js"
+    "check:correction-modal": "node tests/continuity-correction-modal.js",
+    "check:data-safety": "node tests/data-safety-repair.js"
   },
   "dependencies": {
     "express": "^4.19.0"

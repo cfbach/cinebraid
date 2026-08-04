@@ -134,7 +134,7 @@ window.downloadJSON = () => {
 
 /* ---------- project recovery ---------- */
 window.createManualProjectBackup = async () => {
-  const slug = window.ACTIVE_PROJECT_SLUG || "";
+  const slug = activeProjectSlug();
   if (!slug) return toast("No active project");
   const note = document.getElementById("project-backup-note");
   if (note) note.textContent = "Creating backup…";
@@ -151,8 +151,8 @@ window.createManualProjectBackup = async () => {
   }
 };
 window.restoreProjectBackup = (name) => {
-  const slug = window.ACTIVE_PROJECT_SLUG || "";
-  if (!slug || !name) return;
+  const slug = activeProjectSlug();
+  if (!slug || !name) return toast("No active project to restore into");
   confirmModal(`Restore ${name}? CineBraid will first create a safety backup of the current project.`, async () => {
     try {
       const response = await fetch(`/api/projects/${encodeURIComponent(slug)}/restore`, {

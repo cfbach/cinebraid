@@ -567,6 +567,35 @@ function normalizeReferenceCoverageData() {
   return changed;
 }
 
+/* Stored data-shape markers. These are schema versions, not the application version
+   (package.json) and not the per-project format version (P.meta.version). They must match
+   the values server.js BLANK() writes for a new project. */
+const HUB_SCHEMA_VERSION = "v6.0.0";
+const PROJECT_SCHEMA_VERSION = "6.6";
+function schemaVersionParts(value) {
+  const digits = String(value ?? "").match(/\d+/g);
+  return digits ? digits.map(Number) : null;
+}
+/* True only when the stored marker is genuinely behind the current one. Missing or
+   unreadable markers count as older (legacy records predate them). A marker that is equal
+   or ahead is left untouched, so a newer project can never be downgraded by an older build. */
+function schemaVersionIsOlder(stored, current) {
+  const a = schemaVersionParts(stored), b = schemaVersionParts(current);
+  if (!a) return true;
+  if (!b) return false;
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const x = a[i] ?? 0, y = b[i] ?? 0;
+    if (x !== y) return x < y;
+  }
+  return false;
+}
+function storedSchemaIsOlder(meta) {
+  return (
+    schemaVersionIsOlder(meta?.hubVersion, HUB_SCHEMA_VERSION) ||
+    schemaVersionIsOlder(meta?.schemaVersion, PROJECT_SCHEMA_VERSION)
+  );
+}
+
 function normalizeProjectV5() {
   let changed = false;
   for (const key of ["characters", "locations", "props", "vehicles", "audio", "scenes", "shots"]) {
@@ -718,12 +747,12 @@ function normalizeProjectV5() {
     P.meta.styleBlocks.unshift({ id: "global-style", name: "Global visual style", text: P.meta.globalStylePrompt, stage: "" });
     changed = true;
   }
-  if (P.meta.hubVersion !== "v6.0.0") {
-    P.meta.hubVersion = "v6.0.0";
+  if (schemaVersionIsOlder(P.meta.hubVersion, HUB_SCHEMA_VERSION)) {
+    P.meta.hubVersion = HUB_SCHEMA_VERSION;
     changed = true;
   }
-  if (P.meta.schemaVersion !== "6.6") {
-    P.meta.schemaVersion = "6.6";
+  if (schemaVersionIsOlder(P.meta.schemaVersion, PROJECT_SCHEMA_VERSION)) {
+    P.meta.schemaVersion = PROJECT_SCHEMA_VERSION;
     changed = true;
   }
   if (!P.meta.v5) {
@@ -834,6 +863,11 @@ async function load() {
   (P.shots || []).forEach((s) => {
     s.promptBuilds = s.promptBuilds || [];
   });
+  /* Read the stored markers before normalization rewrites them. Loading must never persist
+     on its own: defaults applied above are display-only and stay in memory until the user
+     makes a real edit. Only a record whose stored schema is genuinely older is written back,
+     so opening an already-current project leaves the file byte-identical. */
+  const schemaWasOlder = storedSchemaIsOlder(P.meta);
   const migratedV5 = normalizeProjectV5();
   $("#project-title").textContent = P.meta.title;
   $("#project-format").textContent =
@@ -842,7 +876,7 @@ async function load() {
   if (!location.hash) location.hash = "#/production";
   route();
   if ((P.meta?.dataIntegrityWarnings || []).length) setTimeout(() => toast(`${P.meta.dataIntegrityWarnings.length} project data-integrity warning${P.meta.dataIntegrityWarnings.length === 1 ? "" : "s"} found. Review Settings or Reports before relying on ambiguous IDs.`), 120);
-  if (migratedV5) setTimeout(() => dirty(), 50);
+  if (schemaWasOlder && migratedV5) setTimeout(() => dirty(), 50);
   if (
     (AGENT_STATUS.runs || []).some((x) =>
       ["QUEUED", "RUNNING"].includes(x.status),
