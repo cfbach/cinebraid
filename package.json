@@ -54,7 +54,8 @@
     "check:continuity-correction": "node tests/continuity-correction-workflow.js",
     "check:continuity-browser": "node tests/run-python-check.js tests/continuity-correction-real-browser.py",
     "check:correction-modal": "node tests/continuity-correction-modal.js",
-    "check:data-safety": "node tests/data-safety-repair.js"
+    "check:data-safety": "node tests/data-safety-repair.js",
+    "check:windows-shutdown": "node tests/windows-shutdown.js"
   },
   "dependencies": {
     "express": "^4.19.0"

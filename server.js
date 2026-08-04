@@ -6674,10 +6674,37 @@ app.post("/api/projects/new", (req, res) => {
   res.json({ ok: true, slug });
 });
 
-app.listen(PORT, HOST, () => {
+const httpServer = app.listen(PORT, HOST, () => {
   const localUrl = `http://127.0.0.1:${PORT}`;
   const exposure = LOOPBACK_HOSTS.has(HOST)
     ? "Local-only mode: other devices cannot connect."
     : "WARNING: LAN mode exposes CineBraid to devices that can reach this computer. Set an editor passcode before using paid providers or sensitive projects.";
   console.log(`\n  CINEBRAID → ${localUrl}\n  Bind address: ${HOST}\n  ${exposure}\n  Projects root: ${projectsRoot()}\n`);
 });
+
+/* Release the port on shutdown.
+   Keep-alive connections hold the listener open, so closing sockets explicitly is what
+   actually frees the port; without it close() waits for idle clients and the port stays
+   bound. Windows delivers SIGINT/SIGBREAK for Ctrl+C and Ctrl+Break, but a forced
+   TerminateProcess runs no handler at all - that case is handled by launching the server
+   directly (see .claude/launch.json) so the terminated process IS this one, rather than an
+   npm wrapper whose child would be orphaned. */
+let shuttingDown = false;
+function shutdownServer(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`\n  CineBraid received ${signal}; closing the listener on port ${PORT}.`);
+  const forceExit = setTimeout(() => {
+    console.error("  CineBraid shutdown timed out; exiting.");
+    process.exit(1);
+  }, 5000);
+  if (typeof forceExit.unref === "function") forceExit.unref();
+  httpServer.close(() => {
+    clearTimeout(forceExit);
+    process.exit(0);
+  });
+  if (typeof httpServer.closeAllConnections === "function") httpServer.closeAllConnections();
+}
+for (const signal of ["SIGINT", "SIGTERM", "SIGHUP", "SIGBREAK"]) {
+  process.on(signal, () => shutdownServer(signal));
+}

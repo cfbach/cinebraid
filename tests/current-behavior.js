@@ -333,6 +333,7 @@ async function main() {
     "v6641-usability.js",
     "v6642-board-density-real-browser.py",
     "v6642-board-density.js",
+    "windows-shutdown.js",
   ]);
 
   assert.deepStrictEqual(
