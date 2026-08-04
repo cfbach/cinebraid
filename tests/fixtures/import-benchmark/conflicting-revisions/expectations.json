@@ -1,0 +1,35 @@
+{
+  "title": "Last Ferry",
+  "sceneIds": [
+    "S01",
+    "S02"
+  ],
+  "shotIds": [
+    "S01-01",
+    "S01-02",
+    "S01-03",
+    "S02-01"
+  ],
+  "characterIds": [
+    "CHAR-ELI"
+  ],
+  "locationIds": [
+    "LOC-TERMINAL"
+  ],
+  "propIds": [
+    "PROP-TICKET"
+  ],
+  "dialogue": [
+    "Then this is where I wait."
+  ],
+  "forbiddenText": [
+    "Patch",
+    "ferry captain",
+    "We made it early"
+  ],
+  "minimumConflictMarkers": 1,
+  "sceneShotCounts": {
+    "S01": 3,
+    "S02": 1
+  }
+}

@@ -1,0 +1,308 @@
+{
+  "meta": {
+    "title": "Signal at Gate Nine",
+    "format": "Short film",
+    "aspectRatio": "16:9",
+    "globalStylePrompt": "Cinematic practical realism with controlled continuity.",
+    "globalNegativePrompt": "No invented characters, wardrobe, props, or readable text."
+  },
+  "qcChecklist": [
+    "Identity continuity",
+    "Geometry and contact",
+    "Tone and world",
+    "Motif continuity",
+    "Text accuracy"
+  ],
+  "characters": [
+    {
+      "id": "CHAR-MARA",
+      "name": "Mara",
+      "visualDescription": "Adult radio operator; orange storm shell, dark braid, tired eyes.",
+      "continuityStates": [
+        {
+          "id": "state-default",
+          "name": "Default",
+          "appliesTo": "",
+          "approvedFile": "",
+          "notes": "",
+          "isDefault": true
+        }
+      ],
+      "role": "",
+      "block": "Adult radio operator; orange storm shell, dark braid, tired eyes.",
+      "driftNotes": ""
+    }
+  ],
+  "locations": [
+    {
+      "id": "LOC-STATION",
+      "name": "Weather Station",
+      "visualDescription": "Remote metal weather station at night during a severe snowstorm.",
+      "continuityStates": [
+        {
+          "id": "state-default",
+          "name": "Default",
+          "appliesTo": "",
+          "approvedFile": "",
+          "notes": "",
+          "isDefault": true
+        }
+      ],
+      "notes": "Remote metal weather station at night during a severe snowstorm."
+    },
+    {
+      "id": "LOC-GATE9",
+      "name": "Gate Nine",
+      "visualDescription": "Frozen exterior service gate beside the station.",
+      "continuityStates": [
+        {
+          "id": "state-default",
+          "name": "Default",
+          "appliesTo": "",
+          "approvedFile": "",
+          "notes": "",
+          "isDefault": true
+        }
+      ],
+      "notes": "Frozen exterior service gate beside the station."
+    }
+  ],
+  "props": [
+    {
+      "id": "PROP-KEY",
+      "name": "Gate Nine Key",
+      "visualDescription": "Small worn brass key stamped GATE 9.",
+      "continuityStates": [
+        {
+          "id": "state-default",
+          "name": "Default",
+          "appliesTo": "",
+          "approvedFile": "",
+          "notes": "",
+          "isDefault": true
+        }
+      ],
+      "notes": "Small worn brass key stamped GATE 9."
+    },
+    {
+      "id": "PROP-RADIO",
+      "name": "Emergency Receiver",
+      "visualDescription": "Aged emergency radio receiver with a waveform display.",
+      "continuityStates": [
+        {
+          "id": "state-default",
+          "name": "Default",
+          "appliesTo": "",
+          "approvedFile": "",
+          "notes": "",
+          "isDefault": true
+        }
+      ],
+      "notes": "Aged emergency radio receiver with a waveform display."
+    }
+  ],
+  "scenes": [
+    {
+      "id": "S01",
+      "title": "The signal",
+      "tier": "A",
+      "characters": [
+        "CHAR-MARA"
+      ],
+      "whatHappens": "Mara hears the repeating tones and takes the Gate Nine key.",
+      "howItFeels": "Isolated and ominous."
+    },
+    {
+      "id": "S02",
+      "title": "At the gate",
+      "tier": "A",
+      "characters": [
+        "CHAR-MARA"
+      ],
+      "whatHappens": "The tones stop when Mara turns the key, then a voice warns her not to open the gate.",
+      "howItFeels": "Immediate danger held in stillness."
+    },
+    {
+      "id": "S03",
+      "title": "The warning",
+      "tier": "B",
+      "characters": [
+        "CHAR-MARA"
+      ],
+      "whatHappens": "Mara replaces the key and leaves a wet glove as a warning.",
+      "howItFeels": "Quiet aftermath."
+    }
+  ],
+  "shots": [
+    {
+      "id": "S01-01",
+      "scene": "S01",
+      "title": "Receiver tones",
+      "desc": "Mara listens as three tones repeat through the emergency receiver. Mara says, \"Gate Nine, identify yourself.\"",
+      "characters": [
+        "CHAR-MARA"
+      ],
+      "positioning": "Clear camera placement and subject contact points are specified.",
+      "route": "GENERATE",
+      "codes": [
+        "LOC-STATION",
+        "PROP-RADIO"
+      ],
+      "risks": [],
+      "safe": "Use a locked composition with reduced movement while preserving the story beat.",
+      "dur": 6,
+      "keyframes": [
+        {
+          "label": "A",
+          "title": "Frame A",
+          "description": "Mara listens as three tones repeat through the emergency receiver.",
+          "required": true
+        }
+      ],
+      "clips": [
+        {
+          "title": "Primary motion",
+          "dur": 6,
+          "kind": "i2v",
+          "motionPrompt": "The receiver pulses three times while Mara listens; the camera remains locked."
+        }
+      ]
+    },
+    {
+      "id": "S01-02",
+      "scene": "S01",
+      "title": "Take the key",
+      "desc": "Mara removes the brass Gate Nine key from its hook.",
+      "characters": [
+        "CHAR-MARA"
+      ],
+      "positioning": "Clear camera placement and subject contact points are specified.",
+      "route": "GENERATE",
+      "codes": [
+        "LOC-STATION",
+        "PROP-KEY"
+      ],
+      "risks": [],
+      "safe": "Use a locked composition with reduced movement while preserving the story beat.",
+      "dur": 5,
+      "keyframes": [
+        {
+          "label": "A",
+          "title": "Frame A",
+          "description": "Mara removes the brass Gate Nine key from its hook.",
+          "required": true
+        }
+      ],
+      "clips": [
+        {
+          "title": "Primary motion",
+          "dur": 5,
+          "kind": "i2v",
+          "motionPrompt": "Mara reaches to the hook and closes her gloved hand around the key."
+        }
+      ]
+    },
+    {
+      "id": "S02-01",
+      "scene": "S02",
+      "title": "Turn at Gate Nine",
+      "desc": "Mara inserts and turns the key in the frozen service gate.",
+      "characters": [
+        "CHAR-MARA"
+      ],
+      "positioning": "Clear camera placement and subject contact points are specified.",
+      "route": "GENERATE",
+      "codes": [
+        "LOC-GATE9",
+        "PROP-KEY"
+      ],
+      "risks": [],
+      "safe": "Use a locked composition with reduced movement while preserving the story beat.",
+      "dur": 7,
+      "keyframes": [
+        {
+          "label": "A",
+          "title": "Frame A",
+          "description": "Mara inserts and turns the key in the frozen service gate.",
+          "required": true
+        }
+      ],
+      "clips": [
+        {
+          "title": "Primary motion",
+          "dur": 7,
+          "kind": "i2v",
+          "motionPrompt": "Snow crosses frame; Mara turns the key; all other movement stays restrained."
+        }
+      ]
+    },
+    {
+      "id": "S02-02",
+      "scene": "S02",
+      "title": "Radio warning",
+      "desc": "Mara freezes with one hand on the gate after the radio voice says, \"Do not open it.\"",
+      "characters": [
+        "CHAR-MARA"
+      ],
+      "positioning": "Clear camera placement and subject contact points are specified.",
+      "route": "GENERATE",
+      "codes": [
+        "LOC-GATE9",
+        "PROP-RADIO"
+      ],
+      "risks": [],
+      "safe": "Use a locked composition with reduced movement while preserving the story beat.",
+      "dur": 5,
+      "keyframes": [
+        {
+          "label": "A",
+          "title": "Frame A",
+          "description": "Mara freezes with one hand on the gate after the radio voice says, \"Do not open it.\"",
+          "required": true
+        }
+      ],
+      "clips": [
+        {
+          "title": "Primary motion",
+          "dur": 5,
+          "kind": "i2v",
+          "motionPrompt": "Mara stops completely as the warning plays from the radio."
+        }
+      ]
+    },
+    {
+      "id": "S03-01",
+      "scene": "S03",
+      "title": "Leave the glove",
+      "desc": "Mara returns the key and leaves a wet glove beneath it.",
+      "characters": [
+        "CHAR-MARA"
+      ],
+      "positioning": "Clear camera placement and subject contact points are specified.",
+      "route": "GENERATE",
+      "codes": [
+        "LOC-STATION",
+        "PROP-KEY"
+      ],
+      "risks": [],
+      "safe": "Use a locked composition with reduced movement while preserving the story beat.",
+      "dur": 5,
+      "keyframes": [
+        {
+          "label": "A",
+          "title": "Frame A",
+          "description": "Mara returns the key and leaves a wet glove beneath it.",
+          "required": true
+        }
+      ],
+      "clips": [
+        {
+          "title": "Primary motion",
+          "dur": 5,
+          "kind": "i2v",
+          "motionPrompt": "Mara hangs the key and deliberately places the wet glove below it."
+        }
+      ]
+    }
+  ]
+}

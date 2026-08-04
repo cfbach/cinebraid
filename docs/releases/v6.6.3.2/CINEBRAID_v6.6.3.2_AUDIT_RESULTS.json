@@ -1,0 +1,63 @@
+{
+  "version": "6.6.3.2",
+  "release": "Manual Parity & External Test Readiness",
+  "verification": {
+    "sourceCommand": "npm run check",
+    "sourcePassed": true,
+    "suiteCount": 29,
+    "elapsedSeconds": 28.3,
+    "cleanArchivePassed": true,
+    "paidFalRequests": 0
+  },
+  "manualParity": {
+    "defaultShotVisibleControls": {
+      "manual": 9,
+      "assisted": 11
+    },
+    "controlBudgets": {
+      "shotVisible": 9,
+      "shotReachable": 23,
+      "globalActivity": 4,
+      "automationConsole": 1
+    },
+    "assistedOnlyControlsVisibleInManual": 0,
+    "historyBearingProjectChecked": true,
+    "allFiveShotTasksChecked": true,
+    "providerFreeDeliveryCompleted": true
+  },
+  "environment": {
+    "nodeFloor": ">=18",
+    "defaultHost": "127.0.0.1",
+    "lanOptIn": [
+      "npm run start:lan",
+      "node server.js --lan"
+    ],
+    "firstRunStateChecked": true,
+    "portableQuickCheck": "npm run check:quick"
+  },
+  "package": {
+    "projects": [
+      "cinebraid-sample"
+    ],
+    "sample": {
+      "name": "CineBraid Sample — The Blue Parcel",
+      "workflowEmphasis": "manual",
+      "characters": 1,
+      "locations": 1,
+      "props": 1,
+      "scenes": 1,
+      "shots": 3,
+      "mediaFiles": 9,
+      "providersRequired": false
+    },
+    "productionProjectsIncluded": 0,
+    "mediaOutsideSample": 0
+  },
+  "compatibility": {
+    "breakingSchemaMigration": false,
+    "capabilitiesRemoved": false,
+    "promptBehaviorChangedByEmphasis": false,
+    "automationBehaviorChangedByEmphasis": false,
+    "exportsChangedByEmphasis": false
+  }
+}

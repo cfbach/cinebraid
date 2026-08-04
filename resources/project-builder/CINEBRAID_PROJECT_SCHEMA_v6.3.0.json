@@ -1,0 +1,878 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cinebraid.local/schema/project-builder-v6.3.0.json",
+  "title": "CineBraid Project Builder v6.3.0 Planning Schema",
+  "description": "Planning-only CineBraid import schema with structured motion, performance, dialogue, persistent voice, camera, and sound direction.",
+  "type": "object",
+  "required": [
+    "meta",
+    "qcChecklist",
+    "characters",
+    "locations",
+    "props",
+    "vehicles",
+    "audio",
+    "scenes",
+    "shots"
+  ],
+  "properties": {
+    "meta": {
+      "type": "object",
+      "required": [
+        "title"
+      ],
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "format": {
+          "type": "string"
+        },
+        "targetRuntime": {
+          "type": "number",
+          "minimum": 0
+        },
+        "aspectRatio": {
+          "type": "string"
+        },
+        "globalStylePrompt": {
+          "type": "string"
+        },
+        "globalNegativePrompt": {
+          "type": "string"
+        },
+        "world": {
+          "type": "object",
+          "properties": {
+            "setting": {
+              "type": "string"
+            },
+            "include": {
+              "type": "string"
+            },
+            "reject": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": true
+        },
+        "promptDefaults": {
+          "description": "Optional. Usually omit and let CineBraid apply installed defaults. Include only explicit valid profile IDs supplied by the user.",
+          "type": "object",
+          "properties": {
+            "imageProfile": {
+              "type": "string"
+            },
+            "compositeProfile": {
+              "type": "string"
+            },
+            "videoProfile": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "qcChecklist": {
+      "type": "array",
+      "minItems": 5,
+      "maxItems": 5,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "characters": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/character"
+      }
+    },
+    "locations": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/entity"
+      }
+    },
+    "props": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/entity"
+      }
+    },
+    "vehicles": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/entity"
+      }
+    },
+    "audio": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/audioEntity"
+      }
+    },
+    "scenes": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/scene"
+      }
+    },
+    "shots": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/shot"
+      }
+    }
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Z0-9_-]+$"
+    },
+    "idOrEmpty": {
+      "anyOf": [
+        {
+          "const": ""
+        },
+        {
+          "type": "string",
+          "pattern": "^[A-Z0-9_-]+$"
+        }
+      ]
+    },
+    "continuityState": {
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "isDefault"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9_-]+$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "appliesTo": {
+          "type": "string"
+        },
+        "notes": {
+          "type": "string"
+        },
+        "isDefault": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": true
+    },
+    "entity": {
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "continuityStates"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "notes": {
+          "type": "string"
+        },
+        "visualDescription": {
+          "type": "string"
+        },
+        "continuityStates": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/continuityState"
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "character": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/entity"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "role": {
+              "type": "string"
+            },
+            "block": {
+              "type": "string"
+            },
+            "driftNotes": {
+              "type": "string"
+            },
+            "expressions": {
+              "type": "string"
+            },
+            "audio": {
+              "type": "object",
+              "properties": {
+                "voiceDesignPrompt": {
+                  "type": "string"
+                },
+                "voiceTool": {
+                  "type": "string"
+                },
+                "voiceNotes": {
+                  "type": "string"
+                },
+                "sunoAltPrompt": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": true
+            }
+          },
+          "additionalProperties": true
+        }
+      ]
+    },
+    "sceneAudio": {
+      "type": "object",
+      "properties": {
+        "music": {
+          "type": "string"
+        },
+        "ambience": {
+          "type": "string"
+        },
+        "notes": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "scene": {
+      "type": "object",
+      "required": [
+        "id",
+        "title",
+        "tier",
+        "characters",
+        "whatHappens",
+        "howItFeels"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tier": {
+          "enum": [
+            "A",
+            "B"
+          ]
+        },
+        "characters": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/id"
+          }
+        },
+        "whatHappens": {
+          "type": "string"
+        },
+        "howItFeels": {
+          "type": "string"
+        },
+        "notes": {
+          "type": "string"
+        },
+        "audio": {
+          "$ref": "#/$defs/sceneAudio"
+        }
+      },
+      "additionalProperties": true
+    },
+    "keyframe": {
+      "type": "object",
+      "required": [
+        "id",
+        "label",
+        "description",
+        "required"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1
+        },
+        "title": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "notes": {
+          "type": "string"
+        },
+        "required": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": true
+    },
+    "clip": {
+      "type": "object",
+      "required": [
+        "id",
+        "title",
+        "dur",
+        "kind",
+        "motionPrompt"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "label": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "dur": {
+          "type": "number",
+          "minimum": 0
+        },
+        "kind": {
+          "enum": [
+            "i2v",
+            "flf",
+            "r2v",
+            "plan",
+            "post",
+            "reuse",
+            "hold"
+          ]
+        },
+        "motionPrompt": {
+          "type": "string"
+        },
+        "note": {
+          "type": "string"
+        },
+        "fromFrame": {
+          "anyOf": [
+            {
+              "const": ""
+            },
+            {
+              "type": "string",
+              "pattern": "^[A-Z0-9_-]+$"
+            }
+          ]
+        },
+        "toFrame": {
+          "anyOf": [
+            {
+              "const": ""
+            },
+            {
+              "type": "string",
+              "pattern": "^[A-Z0-9_-]+$"
+            }
+          ]
+        },
+        "line": {
+          "type": "string",
+          "description": "Literal spoken words for this motion unit, overriding the shot line when non-empty."
+        },
+        "speakerId": {
+          "$ref": "#/$defs/idOrEmpty"
+        },
+        "audioNote": {
+          "type": "string",
+          "description": "Production direction for this unit; never quoted as dialogue."
+        },
+        "voiceEntityId": {
+          "$ref": "#/$defs/idOrEmpty"
+        },
+        "vo": {
+          "type": "string",
+          "description": "Legacy production-note field. Leave empty for new imports."
+        },
+        "sfx": {
+          "type": "string"
+        },
+        "ambience": {
+          "type": "string"
+        },
+        "emotion": {
+          "type": "string"
+        },
+        "delivery": {
+          "type": "string"
+        },
+        "language": {
+          "type": "string"
+        },
+        "pace": {
+          "type": "string"
+        },
+        "volume": {
+          "type": "string"
+        },
+        "music": {
+          "type": "string"
+        },
+        "sync": {
+          "type": "string"
+        },
+        "motionBrief": {
+          "$ref": "#/$defs/motionBrief"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "i2v",
+                  "r2v",
+                  "hold"
+                ]
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "required": [
+              "fromFrame"
+            ],
+            "properties": {
+              "fromFrame": {
+                "type": "string",
+                "pattern": "^[A-Z0-9_-]+$",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "flf"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "required": [
+              "fromFrame",
+              "toFrame"
+            ],
+            "properties": {
+              "fromFrame": {
+                "type": "string",
+                "pattern": "^[A-Z0-9_-]+$",
+                "minLength": 1
+              },
+              "toFrame": {
+                "type": "string",
+                "pattern": "^[A-Z0-9_-]+$",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "r2v"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "dur": {
+                "type": "number",
+                "minimum": 4,
+                "maximum": 15
+              }
+            }
+          }
+        }
+      ],
+      "additionalProperties": true
+    },
+    "shotAudio": {
+      "type": "object",
+      "properties": {
+        "line": {
+          "type": "string",
+          "description": "Literal words spoken. Preserve verbatim. Empty when nobody speaks."
+        },
+        "speakerId": {
+          "$ref": "#/$defs/idOrEmpty"
+        },
+        "note": {
+          "type": "string",
+          "description": "Production direction, editorial routing, or recording notes. Never quoted as dialogue."
+        },
+        "voiceEntityId": {
+          "$ref": "#/$defs/idOrEmpty"
+        },
+        "vo": {
+          "type": "string",
+          "description": "Legacy production-note field. Leave empty for new imports; use note instead."
+        },
+        "sfx": {
+          "type": "string"
+        },
+        "ambience": {
+          "type": "string"
+        },
+        "music": {
+          "type": "string"
+        },
+        "sync": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "shot": {
+      "type": "object",
+      "required": [
+        "id",
+        "scene",
+        "title",
+        "desc",
+        "route",
+        "codes",
+        "characters",
+        "risks",
+        "dur",
+        "continuityStateSelections",
+        "keyframes",
+        "clips"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "scene": {
+          "$ref": "#/$defs/id"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "desc": {
+          "type": "string"
+        },
+        "route": {
+          "enum": [
+            "GENERATE",
+            "EDIT",
+            "COMPOSITE",
+            "REUSE",
+            "POST"
+          ]
+        },
+        "codes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/id"
+          }
+        },
+        "characters": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/id"
+          }
+        },
+        "positioning": {
+          "type": "string"
+        },
+        "risks": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "safe": {
+          "type": "string"
+        },
+        "dur": {
+          "type": "number",
+          "minimum": 0
+        },
+        "notes": {
+          "type": "string"
+        },
+        "audio": {
+          "$ref": "#/$defs/shotAudio"
+        },
+        "continuityStateSelections": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^[a-z0-9_-]+$"
+          }
+        },
+        "keyframes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/keyframe"
+          }
+        },
+        "clips": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/clip"
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "audioEntity": {
+      "type": "object",
+      "required": [
+        "id",
+        "name"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "notes": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string"
+        },
+        "sameObjectAs": {
+          "$ref": "#/$defs/idOrEmpty"
+        },
+        "cleanMaster": {
+          "type": "boolean"
+        },
+        "description": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "sfxEvent": {
+      "type": "object",
+      "properties": {
+        "timing": {
+          "type": "string"
+        },
+        "event": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "intensity": {
+          "type": "string"
+        },
+        "distance": {
+          "type": "string"
+        },
+        "diegetic": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": true
+    },
+    "motionBrief": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "performance": {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string"
+            },
+            "emotion": {
+              "type": "string"
+            },
+            "delivery": {
+              "type": "string"
+            },
+            "facial": {
+              "type": "string"
+            },
+            "gaze": {
+              "type": "string"
+            },
+            "bodyLanguage": {
+              "type": "string"
+            },
+            "objectInteraction": {
+              "type": "string"
+            },
+            "secondaryMotion": {
+              "type": "string"
+            },
+            "endingState": {
+              "type": "string"
+            },
+            "staticConstraints": {
+              "type": "string"
+            },
+            "prohibitedMotion": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": true
+        },
+        "camera": {
+          "type": "object",
+          "properties": {
+            "movement": {
+              "type": "string"
+            },
+            "timing": {
+              "type": "string"
+            },
+            "framing": {
+              "type": "string"
+            },
+            "lensBehavior": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": true
+        },
+        "dialogue": {
+          "type": "object",
+          "properties": {
+            "line": {
+              "type": "string"
+            },
+            "speakerId": {
+              "$ref": "#/$defs/idOrEmpty"
+            },
+            "speakerName": {
+              "type": "string"
+            },
+            "language": {
+              "type": "string"
+            },
+            "emotion": {
+              "type": "string"
+            },
+            "delivery": {
+              "type": "string"
+            },
+            "pace": {
+              "type": "string"
+            },
+            "volume": {
+              "type": "string"
+            },
+            "startTime": {
+              "type": "string"
+            },
+            "endTime": {
+              "type": "string"
+            },
+            "locked": {
+              "type": "boolean"
+            },
+            "lipSyncRequired": {
+              "type": "boolean"
+            },
+            "voiceDesign": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": true
+        },
+        "sound": {
+          "type": "object",
+          "properties": {
+            "sfxEvents": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/sfxEvent"
+              }
+            },
+            "ambience": {
+              "type": "string"
+            },
+            "music": {
+              "type": "string"
+            },
+            "silence": {
+              "type": "string"
+            },
+            "priorities": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": true
+        },
+        "output": {
+          "type": "object",
+          "properties": {
+            "resolution": {
+              "type": "string"
+            },
+            "nativeAudio": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": true
+        },
+        "additionalDirection": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    }
+  }
+}

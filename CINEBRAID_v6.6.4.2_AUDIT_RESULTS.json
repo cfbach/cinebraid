@@ -1,0 +1,49 @@
+{
+  "version": "6.6.4-studio.4",
+  "release": "Shot Board Preview Density",
+  "status": "passed",
+  "focusedAcceptance": {
+    "cardSizeControlVisible": true,
+    "compactDefault": true,
+    "compactMaximumPixels": 260,
+    "standardMaximumPixels": 340,
+    "largeMaximumPixels": 460,
+    "oneShotSceneBounded": true,
+    "twoShotSceneBounded": true,
+    "sparseRowsLeftAligned": true,
+    "mobileSingleColumn": true,
+    "densityPreferencePersisted": true,
+    "sceneCollapsePersistenceRepaired": true
+  },
+  "inheritedAcceptance": {
+    "referenceSheetCropping": true,
+    "viewportBoundedReferenceMapper": true,
+    "singleSelectedFrameEditor": true,
+    "boundedFrameCandidates": true,
+    "recoverableProjectDeletion": true,
+    "shotAndSceneAutomation": true
+  },
+  "verification": {
+    "quickSuitePassed": true,
+    "focusedNodeSuitePassed": true,
+    "focusedRealChromiumPassed": true,
+    "fullRealChromiumPassed": true,
+    "uiStateStabilityPassed": true,
+    "externalEnvironmentPassed": true,
+    "falSafetyPassed": true,
+    "referenceAuthorityPassed": true,
+    "packageStructurePassed": true,
+    "untouchedZipQuickSuitePassed": true,
+    "patchedInstallQuickSuitePassed": true,
+    "protectedTreeHashesUnchanged": true
+  },
+  "safety": {
+    "paidGenerationRequests": 0,
+    "schemaMigration": false,
+    "patchIncludesProjects": false,
+    "patchIncludesData": false,
+    "patchIncludesNodeModules": false,
+    "providerContractsChanged": false,
+    "automationContractsChanged": false
+  }
+}

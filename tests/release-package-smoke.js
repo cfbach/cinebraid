@@ -1,0 +1,100 @@
+const assert = require("assert");
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
+const { spawnSync } = require("child_process");
+
+const ROOT = path.resolve(__dirname, "..");
+const VERSION = require(path.join(ROOT, "package.json")).version;
+const SAMPLE_PROJECT = "cinebraid-sample";
+const MEDIA_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif", ".mp4", ".webm", ".mov", ".wav", ".mp3", ".m4a", ".flac", ".ogg"]);
+
+function walkFiles(root, current = root, out = []) {
+  if (!fs.existsSync(current)) return out;
+  for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+    if (entry.name === "node_modules") continue;
+    const file = path.join(current, entry.name);
+    if (entry.isDirectory()) walkFiles(root, file, out);
+    else out.push(path.relative(root, file).split(path.sep).join("/"));
+  }
+  return out;
+}
+
+function sanitizedProjectCheck(root) {
+  const projectsRoot = path.join(root, "projects");
+  assert(fs.existsSync(projectsRoot), "release projects folder is missing");
+  const projects = fs.readdirSync(projectsRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort();
+  assert.deepStrictEqual(projects, [SAMPLE_PROJECT], `release projects must contain only ${SAMPLE_PROJECT}; found ${projects.join(", ") || "none"}`);
+  const sampleFile = path.join(projectsRoot, SAMPLE_PROJECT, "project.json");
+  assert(fs.existsSync(sampleFile), "sanitized sample project is missing project.json");
+  const sample = JSON.parse(fs.readFileSync(sampleFile, "utf8"));
+  assert.strictEqual(sample.meta?.workflowEmphasis, "manual", "sample project must open in manual-first mode");
+  const files = walkFiles(root);
+  const strayMedia = files.filter((file) => MEDIA_EXTENSIONS.has(path.extname(file).toLowerCase()) && !file.startsWith(`projects/${SAMPLE_PROJECT}/`));
+  assert.deepStrictEqual(strayMedia, [], `release contains media outside the sanitized sample: ${strayMedia.join(", ")}`);
+}
+
+function findPackageRoot(dir) {
+  if (fs.existsSync(path.join(dir, "package.json"))) return dir;
+  const queue = fs.readdirSync(dir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => path.join(dir, entry.name));
+  while (queue.length) {
+    const current = queue.shift();
+    if (fs.existsSync(path.join(current, "package.json"))) return current;
+    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+      if (entry.isDirectory() && entry.name !== "node_modules") queue.push(path.join(current, entry.name));
+    }
+  }
+  return "";
+}
+
+function structuralCheck() {
+  const rootMarkdown = fs.readdirSync(ROOT).filter((name) => name.endsWith(".md"));
+  assert(rootMarkdown.length <= 5, `release root contains ${rootMarkdown.length} Markdown files`);
+  const releaseDir = path.join(ROOT, "docs", "releases", `v${VERSION}`);
+  assert(fs.existsSync(releaseDir), `release documentation folder is missing: ${releaseDir}`);
+  for (const suffix of ["RELEASE_NOTES", "PATCH_INSTALL", "VERIFICATION_REPORT"]) {
+    const name = `CINEBRAID_v${VERSION}_${suffix}.md`;
+    assert(fs.existsSync(path.join(releaseDir, name)), `release documentation is missing ${name}`);
+  }
+  sanitizedProjectCheck(ROOT);
+  console.log(`Release package structure passed for CineBraid ${VERSION}.`);
+}
+
+function packagedCheck(zipPath) {
+  const absoluteZip = path.resolve(zipPath);
+  assert(fs.existsSync(absoluteZip), `release zip does not exist: ${absoluteZip}`);
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "cinebraid-package-smoke-"));
+  try {
+    const unpack = spawnSync("unzip", ["-q", absoluteZip, "-d", temp], { encoding: "utf8" });
+    assert.strictEqual(unpack.status, 0, `could not unzip release: ${unpack.stderr || unpack.stdout}`);
+    const packageRoot = findPackageRoot(temp);
+    assert(packageRoot, "unzipped release does not contain package.json");
+    const pkg = JSON.parse(fs.readFileSync(path.join(packageRoot, "package.json"), "utf8"));
+    assert.strictEqual(pkg.version, VERSION, "unzipped release version does not match source version");
+    sanitizedProjectCheck(packageRoot);
+    const check = spawnSync(process.platform === "win32" ? "npm.cmd" : "npm", ["run", "check:quick"], {
+      cwd: packageRoot,
+      env: { ...process.env, CINEBRAID_PACKAGE_SMOKE_CHILD: "1" },
+      encoding: "utf8",
+      timeout: 15 * 60 * 1000,
+      maxBuffer: 24 * 1024 * 1024,
+    });
+    if (check.error) throw check.error;
+    assert.strictEqual(check.status, 0, `untouched release failed npm run check:quick:\n${check.stdout}\n${check.stderr}`);
+    console.log(`Untouched release archive passed npm run check:quick: ${path.basename(absoluteZip)}`);
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+}
+
+if (process.env.CINEBRAID_PACKAGE_SMOKE_CHILD === "1") {
+  console.log("Nested release package smoke skipped inside untouched archive check.");
+} else {
+  structuralCheck();
+  if (process.env.CINEBRAID_RELEASE_ZIP) packagedCheck(process.env.CINEBRAID_RELEASE_ZIP);
+}

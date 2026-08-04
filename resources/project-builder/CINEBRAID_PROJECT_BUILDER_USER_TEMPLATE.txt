@@ -1,0 +1,46 @@
+Create an import-ready CineBraid v6.3.0 planning project from the attached or pasted materials.
+
+PROJECT INTENT
+- Project title, if not clear from the source: [optional]
+- Intended format and target runtime, if not clear: [optional]
+- Default aspect ratio: [optional; e.g. 16:9, 2.39:1, 4:3]
+- Global visual style direction, if not clear: [optional]
+- Global exclusions or non-negotiable restrictions: [optional]
+- Desired shot-planning depth: conservative / standard / detailed
+- Preserve valid existing scene and shot IDs when present: yes
+
+SOURCE PRIORITY
+- Canonical/final revision, if multiple versions are attached: [optional]
+- Document that controls scene and shot structure: [optional]
+- Document that controls dialogue/transcript wording: [optional]
+- Material to treat as alternate, outdated, deleted, or reference-only: [optional]
+
+SOURCE MATERIALS
+[Attach or paste the screenplay, treatment, story outline, character sheets, project bible, storyboard, shot list, style guide, client notes, transcript, audio bible, or other production documents here.]
+
+VISUAL / REFERENCE PREPARATION
+- Character, prop, or vehicle identity/design details that future approved references must establish: [optional]
+- Location architecture, layout, geometry, lighting, or set details that must not drift: [optional]
+- Shot geometry/contact relationships that blocking must preserve: [optional]
+- Known text, reflection, transformation, hand/contact, screen-direction, or continuity risks: [optional]
+
+AUDIO / VOICE PRIORITY
+- Canonical dialogue or transcript source: [optional]
+- Voice/recording bible or clean-master instructions: [optional]
+- Audio documents that are production notes rather than literal dialogue: [optional]
+
+MODEL DEFAULTS
+- Usually let CineBraid apply installed defaults.
+- Explicit valid CineBraid profile IDs to store, only when required: [optional]
+
+SPECIAL INSTRUCTIONS
+- Do not add story content, identity details, visual facts, dialogue, or production requirements that are not supported by the source.
+- Preserve dialogue verbatim in `shot.audio.line` or `clip.line`; put production notes in `audio.note` or `clip.audioNote`, never in the line.
+- Assign `speakerId` and `voiceEntityId` only when supported by the source.
+- Mark production assumptions with `[INFERRED FOR PLANNING]` in the nearest notes field.
+- Mark unresolved contradictions with `[SOURCE CONFLICT]` in the nearest notes field.
+- Put non-performing vehicles in the top-level `vehicles` collection. Use `props` for handheld, wearable, set, and other object assets; use `characters` only when the source explicitly treats a vehicle as a speaking/performing character.
+- Use entity descriptions, shot positioning, keyframes, and risks to prepare later reference/blocking work; do not claim that references or blocking already exist.
+- For reference-led `r2v` motion, use chained 4–15 second units instead of one overlong clip.
+- Omit approvals, candidates, winners, media filenames, reference assignments, blocking images, prompt builds, generation packages, jobs, reviews, corrections, FAL records, sessions, and delivery history.
+- Return only one lean CineBraid planning JSON object with no markdown.

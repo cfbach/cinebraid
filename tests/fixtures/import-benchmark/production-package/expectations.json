@@ -1,0 +1,78 @@
+{
+  "title": "The Overfit \u2014 Sanitized Benchmark",
+  "sceneIds": [
+    "SC-01",
+    "SC-02",
+    "SC-03",
+    "SC-04",
+    "SC-05",
+    "SC-06",
+    "SC-07",
+    "SC-08",
+    "SC-09"
+  ],
+  "shotIds": [
+    "SC-01-01",
+    "SC-01-02",
+    "SC-01-03",
+    "SC-02-01",
+    "SC-02-02",
+    "SC-03-01",
+    "SC-03-02",
+    "SC-03-03",
+    "SC-04-01",
+    "SC-04-02",
+    "SC-05-01",
+    "SC-05-02",
+    "SC-05-03",
+    "SC-06-01",
+    "SC-06-02",
+    "SC-07-01",
+    "SC-07-02",
+    "SC-07-03",
+    "SC-08-01",
+    "SC-08-02",
+    "SC-09-01",
+    "SC-09-02"
+  ],
+  "characterIds": [
+    "CHAR-KAI"
+  ],
+  "locationIds": [
+    "LOC-CONTROL",
+    "LOC-BRIEF",
+    "LOC-MACHINE",
+    "LOC-ARCHIVE",
+    "LOC-TEST"
+  ],
+  "propIds": [
+    "PROP-TABLET",
+    "PROP-FIBER-KEY",
+    "PROP-LEVER",
+    "PROP-CARTRIDGE",
+    "PROP-LAMP",
+    "PROP-SEAL"
+  ],
+  "dialogue": [
+    "Leave the error in."
+  ],
+  "forbiddenText": [
+    "new apprentice",
+    "SC-10",
+    "bright white uniform"
+  ],
+  "minimumConflictMarkers": 0,
+  "sceneShotCounts": {
+    "SC-01": 3,
+    "SC-02": 2,
+    "SC-03": 3,
+    "SC-04": 2,
+    "SC-05": 3,
+    "SC-06": 2,
+    "SC-07": 3,
+    "SC-08": 2,
+    "SC-09": 2
+  },
+  "expectedSceneCount": 9,
+  "expectedShotCount": 22
+}

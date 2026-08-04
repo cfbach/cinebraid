@@ -1,0 +1,230 @@
+{
+  "meta": {
+    "title": "Last Ferry",
+    "format": "Short film",
+    "aspectRatio": "16:9",
+    "globalStylePrompt": "Cinematic practical realism with controlled continuity.",
+    "globalNegativePrompt": "No invented characters, wardrobe, props, or readable text."
+  },
+  "qcChecklist": [
+    "Identity continuity",
+    "Geometry and contact",
+    "Tone and world",
+    "Motif continuity",
+    "Text accuracy"
+  ],
+  "characters": [
+    {
+      "id": "CHAR-ELI",
+      "name": "Eli",
+      "visualDescription": "Adult traveler in a red raincoat, arriving alone.",
+      "continuityStates": [
+        {
+          "id": "state-default",
+          "name": "Default",
+          "appliesTo": "",
+          "approvedFile": "",
+          "notes": "",
+          "isDefault": true
+        }
+      ],
+      "role": "",
+      "block": "Adult traveler in a red raincoat, arriving alone.",
+      "driftNotes": ""
+    }
+  ],
+  "locations": [
+    {
+      "id": "LOC-TERMINAL",
+      "name": "Empty Ferry Terminal",
+      "visualDescription": "An empty ferry terminal at midnight after the final departure.",
+      "continuityStates": [
+        {
+          "id": "state-default",
+          "name": "Default",
+          "appliesTo": "",
+          "approvedFile": "",
+          "notes": "",
+          "isDefault": true
+        }
+      ],
+      "notes": "An empty ferry terminal at midnight after the final departure."
+    }
+  ],
+  "props": [
+    {
+      "id": "PROP-TICKET",
+      "name": "Silver Ticket",
+      "visualDescription": "A small silver ferry ticket placed beneath the timetable.",
+      "continuityStates": [
+        {
+          "id": "state-default",
+          "name": "Default",
+          "appliesTo": "",
+          "approvedFile": "",
+          "notes": "",
+          "isDefault": true
+        }
+      ],
+      "notes": "A small silver ferry ticket placed beneath the timetable."
+    }
+  ],
+  "scenes": [
+    {
+      "id": "S01",
+      "title": "Missed ferry",
+      "tier": "A",
+      "characters": [
+        "CHAR-ELI"
+      ],
+      "whatHappens": "Eli arrives alone after the final ferry has departed and leaves the silver ticket beneath the timetable.",
+      "howItFeels": "Resigned and uncanny.",
+      "notes": "[SOURCE CONFLICT] Earlier draft used dawn and a blue coat; final locked draft requires midnight and a red raincoat."
+    },
+    {
+      "id": "S02",
+      "title": "Lights out",
+      "tier": "B",
+      "characters": [
+        "CHAR-ELI"
+      ],
+      "whatHappens": "The terminal lights shut off one row at a time while Eli waits.",
+      "howItFeels": "Patient dread."
+    }
+  ],
+  "shots": [
+    {
+      "id": "S01-01",
+      "scene": "S01",
+      "title": "Arrival alone",
+      "desc": "Eli enters the empty terminal alone in a red raincoat.",
+      "characters": [
+        "CHAR-ELI"
+      ],
+      "positioning": "Clear camera placement and subject contact points are specified.",
+      "route": "GENERATE",
+      "codes": [
+        "LOC-TERMINAL"
+      ],
+      "risks": [],
+      "safe": "Use a locked composition with reduced movement while preserving the story beat.",
+      "dur": 6,
+      "keyframes": [
+        {
+          "label": "A",
+          "title": "Frame A",
+          "description": "Eli enters the empty terminal alone in a red raincoat.",
+          "required": true
+        }
+      ],
+      "clips": [
+        {
+          "title": "Primary motion",
+          "dur": 6,
+          "kind": "i2v",
+          "motionPrompt": "Eli enters slowly; midnight rain remains visible outside."
+        }
+      ]
+    },
+    {
+      "id": "S01-02",
+      "scene": "S01",
+      "title": "Ticket under timetable",
+      "desc": "Eli places the silver ticket beneath the timetable.",
+      "characters": [
+        "CHAR-ELI"
+      ],
+      "positioning": "Clear camera placement and subject contact points are specified.",
+      "route": "GENERATE",
+      "codes": [
+        "LOC-TERMINAL",
+        "PROP-TICKET"
+      ],
+      "risks": [],
+      "safe": "Use a locked composition with reduced movement while preserving the story beat.",
+      "dur": 5,
+      "keyframes": [
+        {
+          "label": "A",
+          "title": "Frame A",
+          "description": "Eli places the silver ticket beneath the timetable.",
+          "required": true
+        }
+      ],
+      "clips": [
+        {
+          "title": "Primary motion",
+          "dur": 5,
+          "kind": "i2v",
+          "motionPrompt": "Eli slides the ticket beneath the timetable and withdraws their hand."
+        }
+      ]
+    },
+    {
+      "id": "S01-03",
+      "scene": "S01",
+      "title": "Where I wait",
+      "desc": "Eli says, \"Then this is where I wait.\"",
+      "characters": [
+        "CHAR-ELI"
+      ],
+      "positioning": "Clear camera placement and subject contact points are specified.",
+      "route": "GENERATE",
+      "codes": [
+        "LOC-TERMINAL"
+      ],
+      "risks": [],
+      "safe": "Use a locked composition with reduced movement while preserving the story beat.",
+      "dur": 5,
+      "keyframes": [
+        {
+          "label": "A",
+          "title": "Frame A",
+          "description": "Eli says, \"Then this is where I wait.\"",
+          "required": true
+        }
+      ],
+      "clips": [
+        {
+          "title": "Primary motion",
+          "dur": 5,
+          "kind": "i2v",
+          "motionPrompt": "Eli delivers the line without leaving the bench."
+        }
+      ]
+    },
+    {
+      "id": "S02-01",
+      "scene": "S02",
+      "title": "Rows go dark",
+      "desc": "The terminal lights shut off one row at a time while Eli remains seated.",
+      "characters": [
+        "CHAR-ELI"
+      ],
+      "positioning": "Clear camera placement and subject contact points are specified.",
+      "route": "GENERATE",
+      "codes": [
+        "LOC-TERMINAL"
+      ],
+      "risks": [],
+      "safe": "Use a locked composition with reduced movement while preserving the story beat.",
+      "dur": 10,
+      "keyframes": [
+        {
+          "label": "A",
+          "title": "Frame A",
+          "description": "The terminal lights shut off one row at a time while Eli remains seated.",
+          "required": true
+        }
+      ],
+      "clips": [
+        {
+          "title": "Primary motion",
+          "dur": 10,
+          "kind": "r2v",
+          "motionPrompt": "The ceiling lights switch off sequentially from far to near; Eli remains still."
+        }
+      ]
+    }
+  ]
+}

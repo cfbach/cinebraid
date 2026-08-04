@@ -1,0 +1,32 @@
+{
+  "version": "6.6.3.4",
+  "release": "Test Feedback & Readiness",
+  "verification": {
+    "registeredSuites": 31,
+    "sourcePassed": true,
+    "cleanArchivePassed": true,
+    "paidFalRequests": 0
+  },
+  "readinessScale": {
+    "shots": 22,
+    "rowsBefore": 24,
+    "rowsAfter": 3,
+    "sharedEntityRowsAfter": 1,
+    "sharedEntityShotIds": 22,
+    "shotScopedRowsAfter": 2
+  },
+  "sampleReadiness": {
+    "posture": "instructive",
+    "issueCount": 2,
+    "kinds": ["entity-canon", "shot-duration"],
+    "missingFileIssues": 0,
+    "providerFreeCompletion": true
+  },
+  "manualFeedback": {
+    "shipped": true,
+    "localOnly": true,
+    "automaticTransmission": false,
+    "formats": ["markdown", "json"],
+    "diagnosticRedaction": true
+  }
+}

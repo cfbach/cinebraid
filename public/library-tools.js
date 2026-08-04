@@ -1,0 +1,618 @@
+/* ---------- canon docs ---------- */
+window.openDoc = async (i, btn) => {
+  document
+    .querySelectorAll(".doc-tab")
+    .forEach((t) => t.classList.remove("on"));
+  if (btn) btn.classList.add("on");
+  const raw = await (
+    await fetch("/api/docs/" + encodeURIComponent(window._docs[i]))
+  ).text();
+  $("#doc-body").innerHTML = md(raw);
+};
+function md(src) {
+  const lines = esc(src).split("\n");
+  let out = [],
+    inCode = false,
+    inTable = false;
+  const inline = (t) =>
+    t
+      .replace(/`([^`]+)`/g, "<code>$1</code>")
+      .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+      .replace(/\*([^*]+)\*/g, "<em>$1</em>");
+  for (const L of lines) {
+    if (L.startsWith("```")) {
+      out.push(inCode ? "</pre>" : "<pre>");
+      inCode = !inCode;
+      continue;
+    }
+    if (inCode) {
+      out.push(L);
+      continue;
+    }
+    if (/^\|/.test(L)) {
+      if (/^\|[\s:\-|]+\|$/.test(L)) continue;
+      if (!inTable) {
+        out.push("<table>");
+        inTable = true;
+      }
+      out.push(
+        "<tr>" +
+          L.split("|")
+            .slice(1, -1)
+            .map((c) => "<td>" + inline(c.trim()) + "</td>")
+            .join("") +
+          "</tr>",
+      );
+      continue;
+    } else if (inTable) {
+      out.push("</table>");
+      inTable = false;
+    }
+    if (/^---+\s*$/.test(L)) {
+      out.push("<hr>");
+      continue;
+    }
+    const h = L.match(/^(#{1,3})\s+(.*)/);
+    if (h) {
+      out.push(`<h${h[1].length}>${inline(h[2])}</h${h[1].length}>`);
+      continue;
+    }
+    if (/^[-*]\s+/.test(L)) {
+      out.push("<li>" + inline(L.replace(/^[-*]\s+/, "")) + "</li>");
+      continue;
+    }
+    if (L.trim() === "") {
+      out.push("");
+      continue;
+    }
+    out.push("<p>" + inline(L) + "</p>");
+  }
+  if (inTable) out.push("</table>");
+  if (inCode) out.push("</pre>");
+  return out.join("\n");
+}
+
+window.copyText = (t) =>
+  navigator.clipboard.writeText(t).then(() => toast("Copied"));
+
+/* ---------- canonical intake (drop → name into the code scheme) ---------- */
+const VIEW_LIST = {
+  character: "characters",
+  location: "locations",
+  prop: "props",
+  vehicle: "vehicles",
+  sound: "audio",
+  characters: "characters",
+  locations: "locations",
+  props: "props",
+  vehicles: "vehicles",
+  audio: "audio",
+};
+function wireEntityDropzone(view, id) {
+  const dz = document.getElementById("entity-dz");
+  if (!dz) return;
+  const list = VIEW_LIST[view] || view;
+  const input = document.getElementById("entity-file");
+  input.onchange = () => intakeModal(list, id, [...input.files]);
+  ["dragover", "dragenter"].forEach((ev) =>
+    dz.addEventListener(ev, (e) => {
+      e.preventDefault();
+      dz.classList.add("over");
+    }),
+  );
+  ["dragleave", "drop"].forEach((ev) =>
+    dz.addEventListener(ev, (e) => {
+      e.preventDefault();
+      dz.classList.remove("over");
+    }),
+  );
+  dz.addEventListener("drop", (e) =>
+    intakeModal(list, id, [...e.dataTransfer.files]),
+  );
+}
+function intakeModal(list, id, files) {
+  if (!files.length) return;
+  const it = P[list].find((x) => x.id === id);
+  const pendingState = window._pendingEntityStateUpload && window._pendingEntityStateUpload.list === list && window._pendingEntityStateUpload.id === id
+    ? window._pendingEntityStateUpload
+    : null;
+  const targetState = pendingState ? entityStateById(it, pendingState.stateId) : null;
+  window._intake = { list, id, files, targetStateId: targetState?.id || "", targetStateName: targetState?.name || "" };
+  openModal(`<h3>Upload candidates — ${files.length} file(s)</h3><div class="modal-sub">${targetState ? `TARGET · ${esc(targetState.name || "CONTINUITY STATE")} · ` : ""}ORIGINAL FILENAMES ARE RETAINED IN METADATA · PRODUCTION NAMES ARE ASSIGNED ONLY ON APPROVAL</div>
+    <div class="approval-preview"><b>${esc(it.name || it.id)}</b><span>${esc(files.map((f) => f.name).join(", ")).slice(0, 180)}</span></div>
+    <div class="form-field"><label>Made with (optional provenance)</label><select id="in-model" class="status-select"><option value="">— not recorded —</option>${(P.meta.models || []).map((m) => `<option value="${m.id}">${esc(m.name)}</option>`).join("")}</select></div>
+    <div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button class="submit-btn" onclick="doIntake()">UPLOAD CANDIDATES</button></div>`);
+}
+window.doIntake = async () => {
+  const { list, id, files, targetStateId = "", targetStateName = "" } = window._intake,
+    model = document.getElementById("in-model")?.value || "",
+    it = P[list].find((x) => x.id === id),
+    type = ENTITY_MEDIA[list];
+  closeModal();
+  const saved = [],
+    original = [];
+  const prefix = (it.prefix || it.anchorPrefix || it.id).replace(/-+$/, "");
+  const stamp = Date.now().toString(36).toUpperCase();
+  for (let i = 0; i < files.length; i++) {
+    const f = files[i],
+      ext = f.name.includes(".")
+        ? f.name.slice(f.name.lastIndexOf(".")).toLowerCase()
+        : ".png";
+    const name = `${prefix}-CANDIDATE-${stamp}-${String(i + 1).padStart(2, "0")}${ext}`;
+    const r = await fetch(
+      "/api/media/upload?type=" + type + "&name=" + encodeURIComponent(name),
+      {
+        method: "POST",
+        headers: { "Content-Type": f.type || "application/octet-stream" },
+        body: f,
+      },
+    );
+    const d = await r.json();
+    if (r.ok) {
+      saved.push(d.name);
+      original.push({ stored: d.name, original: f.name, ...(targetStateId ? { targetStateId, targetStateName } : {}) });
+    }
+  }
+  it.candidateFiles = [...(it.candidateFiles || []), ...original];
+  if (model && saved.length)
+    (it.made = it.made || []).push({
+      model,
+      files: saved.join(", "),
+      prompt: "",
+      date: new Date().toISOString().slice(0, 10),
+    });
+  if (entityWorkflowState(it).key === "DRAFT") {
+    it.workflowStatus = "IN PROGRESS";
+    it.status = "IN PROGRESS";
+  }
+  dirty();
+  SCAN = await (await fetch("/api/scan")).json();
+  window._pendingEntityStateUpload = null;
+  if (targetStateId) window.selectBoundedTask?.("entity-task", `${list}:${id}`, "review");
+  else route();
+  toast(saved.length + ` candidate file(s) uploaded${targetStateName ? ` for ${targetStateName}` : ""}`);
+};
+
+/* ---------- clip mutations ---------- */
+window.setClip = (id, ci, k, v) => {
+  const s = shotById(id);
+  s.clips[ci][k] = v;
+  dirty();
+};
+window.delClip = (id, ci) => {
+  confirmModal(
+    "Remove this motion segment? Candidate files stay on disk.",
+    () => {
+      const s = shotById(id);
+      s.clips.splice(ci, 1);
+      normalizeShotV5(s);
+      dirty();
+      route();
+    },
+    { title: "Remove motion segment", confirmLabel: "REMOVE" },
+  );
+};
+window.addClip = (id) => {
+  const s = shotById(id);
+  normalizeShotV5(s);
+  const i = s.clips.length,
+    label = alphaLabel(i),
+    from =
+      s.keyframes[Math.min(i, s.keyframes.length - 1)]?.id ||
+      s.keyframes[0]?.id ||
+      "";
+  s.clips.push({
+    id: "seg-" + Date.now().toString(36),
+    suffix: label.toLowerCase(),
+    label,
+    title: "New motion segment",
+    dur: 5,
+    kind: "i2v",
+    note: "",
+    motionPrompt: "",
+    fromFrame: from,
+    toFrame: "",
+    generationPackages: [],
+  });
+  SHOT_SEGMENT_STATE[id] = s.clips[s.clips.length - 1].id;
+  dirty();
+  route();
+};
+
+/* ---------- streamlined approval ---------- */
+function projectCode() {
+  const words = String(P.meta.code || P.meta.title || "PROJECT")
+    .toUpperCase()
+    .replace(/[^A-Z0-9 ]+/g, " ")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  return (
+    words.filter((w) => !["THE", "A", "AN"].includes(w)).join("-") || "PROJECT"
+  ).slice(0, 18);
+}
+function canonicalSuggestion(id, name, target = "shot") {
+  const s = shotById(id),
+    dot = name.lastIndexOf("."),
+    ext = dot >= 0 ? name.slice(dot).toLowerCase().replace(/^\./, "") : "png";
+  let slot = "PRIMARY";
+  if (target.startsWith("frame:"))
+    slot = "FRAME_" + (frameById(s, target.slice(6))?.label || "X");
+  else if (target.startsWith("segment:"))
+    slot =
+      "MOTION_" +
+      ((s.clips || []).find((c) => unitKey(c) === target.slice(8))?.label ||
+        "X");
+  else if (target !== "shot") {
+    const [ci, edge] = target.split(":");
+    const c = s.clips?.[+ci];
+    slot =
+      (c?.suffix || "A").toUpperCase() +
+      (edge === "first" ? "_FIRST" : edge === "last" ? "_LAST" : "");
+  }
+  const versionPadding = Math.max(2, Math.min(5, Number(CONFIG?.naming?.versionPadding || 3) || 3));
+  const fallbackStem = `${projectCode()}_${id}_${slot}`.replace(/[^A-Z0-9_-]/g, "_");
+  const used = takesFor(id).filter((t) => t.name.toUpperCase().includes(id.toUpperCase())).length;
+  const template = String(CONFIG?.naming?.filenameTemplate || "{project}_{shot}_{slot}_V{version}.{ext}");
+  const sceneMatch = String(id || "").match(/SC\d+/i);
+  const scene = sceneMatch ? sceneMatch[0].toUpperCase() : (s?.sceneId || "SC00").toUpperCase();
+  const tokens = {
+    project: projectCode(),
+    scene,
+    shot: String(id || "SHOT").toUpperCase(),
+    slot,
+    stage: target.startsWith("segment:") ? "MOTION" : target.startsWith("frame:") ? "FRAME" : "SHOT",
+    state: "DEFAULT",
+    version: String(used + 1).padStart(versionPadding, "0"),
+    ext,
+  };
+  const rendered = template.replace(/\{(project|scene|shot|slot|stage|state|version|ext)\}/gi, (_, key) => tokens[key.toLowerCase()] || "");
+  const cleaned = rendered.replace(/[^A-Z0-9_.-]/gi, "_").replace(/_+/g, "_").replace(/\._/, ".");
+  return cleaned.includes(".") ? cleaned : `${fallbackStem}_V${String(used + 1).padStart(versionPadding, "0")}.${ext}`;
+}
+window.approveTake = (id, name) => {
+  const s = shotById(id);
+  normalizeShotV5(s);
+  window._approval = { id, name };
+  const video = isVideo(name);
+  const targets = video
+    ? (s.clips || [])
+        .filter((c) => !["plan", "post"].includes(c.kind))
+        .map((c) => ({
+          v: "segment:" + unitKey(c),
+          l: `Motion ${c.label || c.suffix} — ${c.title}`,
+        }))
+    : (s.keyframes || []).map((f) => ({
+        v: "frame:" + f.id,
+        l: `Frame ${f.label} — ${f.title}`,
+      }));
+  const target =
+    targets.find((o) => {
+      if (o.v.startsWith("frame:")) return !frameById(s, o.v.slice(6))?.winner;
+      const c = (s.clips || []).find((x) => unitKey(x) === o.v.slice(8));
+      return !c?.videoWinner;
+    })?.v ||
+    targets[0]?.v ||
+    "shot";
+  openModal(
+    `<h3>Approve version — ${esc(id)}</h3><div class="modal-sub">ASSIGN THIS ${video ? "VIDEO" : "IMAGE"} TO ITS EXACT PLACE IN THE SHOT PLAN</div><div class="approval-preview"><b>${esc(name)}</b><span>${video ? "Motion output" : "Approved keyframe"}</span></div>${targets.length ? `<div class="form-field"><label>Approve as</label><select id="approve-target" class="status-select" onchange="updateApprovalName()">${targets.map((o) => `<option value="${o.v}" ${o.v === target ? "selected" : ""}>${esc(o.l)}</option>`).join("")}<option value="shot">Primary shot output</option></select></div>` : `<input type="hidden" id="approve-target" value="shot">`}<div class="form-field"><label>Generated canonical filename</label><input id="approve-name" value="${attr(canonicalSuggestion(id, name, target))}"><div class="hint">CineBraid generates this automatically. Edit only for an exceptional naming requirement.</div></div><div class="approval-note">${s.submissionNote ? `Submitter note: ${esc(s.submissionNote)}` : "No submission note."}</div><div class="modal-actions"><button class="changes-btn" onclick="closeModal();requestShotChanges('${id}')">Request changes</button><button class="cancel" onclick="closeModal()">Cancel</button><button class="approve-btn large" onclick="confirmApproveTake()">APPROVE VERSION</button></div>`,
+  );
+};
+window.updateApprovalName = () => {
+  const a = window._approval;
+  if (!a) return;
+  const target = document.getElementById("approve-target")?.value || "shot";
+  const el = document.getElementById("approve-name");
+  if (el) el.value = canonicalSuggestion(a.id, a.name, target);
+};
+window.confirmApproveTake = async () => {
+  const { id, name } = window._approval || {};
+  if (!id) return;
+  const s = shotById(id),
+    target = document.getElementById("approve-target")?.value || "shot",
+    requested = document.getElementById("approve-name")?.value.trim();
+  const previousActiveName = target === "shot"
+    ? s.winner || ""
+    : target.startsWith("frame:")
+      ? frameById(s, target.slice(6))?.winner || ""
+      : target.startsWith("segment:")
+        ? (s.clips || []).find((x) => unitKey(x) === target.slice(8))?.videoWinner || ""
+        : "";
+  let finalName = name;
+  if (requested && requested !== name) {
+    const r = await fetch("/api/media/rename", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        dir: "shots/" + id + "/takes",
+        from: name,
+        to: requested,
+      }),
+    });
+    const d = await r.json();
+    if (r.ok) {
+      finalName = d.name;
+      if (typeof renameCandidateRecord === "function")
+        renameCandidateRecord(s, name, finalName);
+      SCAN = await (await fetch("/api/scan")).json();
+    } else toast("Could not rename; approval kept the original filename");
+  }
+  const video = isVideo(finalName);
+  let complete = false,
+    label = "VERSION APPROVED";
+  if (target === "shot") {
+    s.winner = finalName;
+    if (!video) {
+      const opening = (s.keyframes || [])[0];
+      if (opening) opening.winner = finalName;
+    }
+  } else if (target.startsWith("frame:")) {
+    const f = frameById(s, target.slice(6));
+    if (f) f.winner = finalName;
+    complete = shotApprovalComplete(s);
+    label = "FRAME APPROVED";
+  } else if (target.startsWith("segment:")) {
+    const c = (s.clips || []).find((x) => unitKey(x) === target.slice(8));
+    if (c) c.videoWinner = finalName;
+    const creation = typeof ensureShotCreation === "function" ? ensureShotCreation(s) : (s.creationBrief = s.creationBrief || {});
+    creation.approvedMotionFile = finalName;
+    complete = shotApprovalComplete(s);
+    label = "MOTION APPROVED";
+  } else {
+    const [ci, edge] = target.split(":");
+    if (edge === "last") s.clips[+ci].winnerEnd = finalName;
+    else s.clips[+ci].winner = finalName;
+    complete = (s.clips || []).filter(clipNeedsWinner).every(clipDone);
+  }
+  if (typeof guidedClearApprovalTarget === "function")
+    guidedClearApprovalTarget(s, target, finalName);
+  if (typeof markCandidateApproved === "function")
+    markCandidateApproved(s, finalName, target);
+  if (!video && previousActiveName && previousActiveName !== finalName && typeof guidedFrameApprovalChanged === "function")
+    guidedFrameApprovalChanged(id, target, previousActiveName, finalName);
+  if (complete) {
+    s.workflowStatus = "APPROVED";
+    s.status = "LOCKED";
+    s.reviewStatus = "";
+    s.approvedAt = new Date().toISOString();
+    s.canonicalName = finalName;
+  } else {
+    s.workflowStatus = "IN PROGRESS";
+    s.status = "BUILT";
+  }
+  dirty();
+  closeModal();
+  route();
+  stampCeremony(complete ? "APPROVED" : label);
+  toast(
+    complete
+      ? "Required outputs approved and added to the live Bible"
+      : "Approved — remaining frame or motion decisions are still open",
+  );
+  if (!video && (target === "shot" || target.startsWith("frame:")) && typeof guidedFrameSequenceInputs === "function" && typeof reviewGuidedFrameSequence === "function") {
+    const inputs = guidedFrameSequenceInputs(s);
+    const visionReady = typeof capabilityState === "function" && capabilityState("vision")?.ready;
+    if (inputs.length >= 2 && visionReady) setTimeout(() => reviewGuidedFrameSequence(id), 350);
+  }
+};
+
+window.setWinner = (id, name) => approveTake(id, name);
+function entityCanonicalSuggestion(list, id, name, stateId = "") {
+  const x = P[list].find((e) => e.id === id),
+    st = stateId ? entityStateById(x, stateId) : null,
+    dot = name.lastIndexOf("."),
+    ext = dot >= 0 ? name.slice(dot).toLowerCase() : "";
+  const suffix = st && !st.isDefault ? `_${String(st.name || "state").replace(/[^A-Z0-9_-]/gi, "_").toUpperCase()}` : "";
+  const stem = `${x.id}_PRIMARY${suffix}`.replace(/[^A-Z0-9_-]/gi, "_").toUpperCase();
+  const used = entityMedia(list, x).filter((m) =>
+    m.name.toUpperCase().startsWith(stem + "_V"),
+  ).length;
+  return `${stem}_V${String(used + 1).padStart(3, "0")}${ext}`;
+}
+function entityApprovalContinuationStates(entity, currentStateId) {
+  const states = entityStateList(entity, true),
+    index = Math.max(0, states.findIndex((state) => state.id === currentStateId));
+  return [...states.slice(index + 1), ...states.slice(0, index)]
+    .filter((state) => state.id !== currentStateId);
+}
+function entitySuggestedContinuationState(entity, currentStateId) {
+  const states = entityApprovalContinuationStates(entity, currentStateId);
+  return states.find((state) => !state.approvedFile)?.id || states[0]?.id || "";
+}
+function revealEntityContinuityState(stateId) {
+  const routeParts = String(location.hash || "").split("/");
+  const view = routeParts[1] || "", id = decodeURIComponent(routeParts[2] || "");
+  const list = ({character:"characters",location:"locations",prop:"props",vehicle:"vehicles"})[view] || "";
+  if (list && id) {
+    window.boundedWriteState?.("selected:entity-coverage-view", `${list}:${id}`, "states");
+    window.boundedWriteState?.("selected:continuity-state", `${list}:${id}`, stateId);
+  }
+  setTimeout(() => {
+    const outer = document.querySelector?.(".continuity-states");
+    if (outer) outer.open = true;
+    const card = [...(document.querySelectorAll?.("[data-continuity-state-id]") || [])]
+      .find((item) => item.dataset?.continuityStateId === stateId);
+    if (!card) return;
+    const studio = card.querySelector?.(".entity-state-generation");
+    if (studio) studio.open = true;
+    card.scrollIntoView?.({ behavior: "smooth", block: "start" });
+    setTimeout(() => card.querySelector?.(".continuity-state-delta textarea")?.focus?.(), 80);
+  }, 50);
+}
+window.approveEntityFile = (list, id, name, stateId = "") => {
+  const x = P[list].find((e) => e.id === id),
+    states = entityStateList(x, true),
+    media = entityMedia(list, x);
+  if (!media.length) return toast("Add or generate a candidate before approving a reference");
+  const requestedState = entityStateById(x, stateId || "state-default") || states[0];
+  const selected = media.find((item) => item.name === name)
+    || media.find((item) => item.name === requestedState?.approvedFile)
+    || media.find((item) => item.name === x.approvedFile)
+    || media[media.length - 1];
+  window._entityApproval = { list, id, name: selected.name, stateId: requestedState?.id || "state-default" };
+  openModal(
+    `<div class="entity-approval-modal"><h3>Approve reference — ${esc(x.name || id)}</h3><div class="modal-sub">ASSIGN ONE CANDIDATE TO ONE CONTINUITY STATE</div><div class="entity-approval-modal-layout"><figure><div id="entity-approval-preview">${isVideo(selected.name) ? `<video muted controls src="${attr(selected.url)}"></video>` : `<img src="${attr(selected.url)}" alt="Candidate to approve">`}</div><figcaption id="entity-approval-file-caption">${esc(selected.name)}</figcaption></figure><div class="entity-approval-fields"><div class="form-field"><label>Candidate file</label><select id="entity-approve-file" onchange="syncEntityApprovalModal()">${media.map((item) => `<option value="${attr(item.name)}" ${item.name === selected.name ? "selected" : ""}>${esc(item.name)}</option>`).join("")}</select></div><div class="form-field"><label>Approve for continuity state</label><select id="entity-approve-target" onchange="syncEntityApprovalModal()">${states.map((st) => `<option value="${attr(st.id)}" ${String(requestedState?.id || "state-default") === String(st.id) ? "selected" : ""}>${esc(st.name || "Default")}${st.appliesTo ? ` · ${esc(st.appliesTo)}` : ""}</option>`).join("")}</select></div><div class="entity-approval-target-summary" id="entity-approval-target-summary"></div><div class="form-field"><label>Generated canonical filename</label><input id="entity-approve-name" value="${attr(entityCanonicalSuggestion(list, id, selected.name, requestedState?.id || "state-default"))}"></div><p class="hint">The selected state will show this image in the live Project Bible. Other states and candidates are unchanged.</p><div class="form-field entity-approval-continuation"><label>Continue to another version after approval</label><select id="entity-approve-next" onchange="syncEntityApprovalContinuation()"></select><small id="entity-approve-next-note">Approve only, or continue directly into another continuity-state editor.</small></div></div></div><div class="modal-actions entity-approval-actions"><button class="changes-btn" onclick="closeModal();requestEntityChanges('${list}','${id}')">Request changes</button><div><button class="cancel" onclick="closeModal()">Cancel</button><button class="ghost-btn" onclick="confirmEntityApproval(false)">APPROVE ONLY</button><button id="entity-approve-continue" class="approve-btn large" onclick="confirmEntityApproval(true)">APPROVE & EDIT NEXT STATE</button></div></div></div>`,
+  );
+  syncEntityApprovalModal();
+};
+window.syncEntityApprovalModal = () => {
+  const current = window._entityApproval || {};
+  const x = P[current.list]?.find((item) => item.id === current.id);
+  if (!x) return;
+  const fileName = document.getElementById("entity-approve-file")?.value || current.name || "";
+  const stateId = document.getElementById("entity-approve-target")?.value || current.stateId || "state-default";
+  const targetChanged = current.stateId && current.stateId !== stateId;
+  const state = entityStateById(x, stateId);
+  const media = entityMedia(current.list, x).find((item) => item.name === fileName);
+  current.name = fileName;
+  current.stateId = stateId;
+  const preview = document.getElementById("entity-approval-preview");
+  if (preview && media) preview.innerHTML = isVideo(media.name) ? `<video muted controls src="${attr(media.url)}"></video>` : `<img src="${attr(media.url)}" alt="Candidate to approve">`;
+  const caption = document.getElementById("entity-approval-file-caption");
+  if (caption) caption.textContent = fileName;
+  const summary = document.getElementById("entity-approval-target-summary");
+  if (summary) summary.innerHTML = `<span>APPROVAL TARGET</span><b>${esc(state?.name || "Default")}</b><small>${esc(state?.appliesTo || (state?.isDefault ? "Primary project-wide state" : "No scene/shot range assigned"))}</small>`;
+  const nameInput = document.getElementById("entity-approve-name");
+  const alreadyApproved = entityApprovalBadges(x, fileName).length > 0;
+  if (nameInput) nameInput.value = alreadyApproved ? fileName : entityCanonicalSuggestion(current.list, current.id, fileName, stateId);
+  const nextSelect = document.getElementById("entity-approve-next");
+  if (nextSelect) {
+    const previous = targetChanged ? "" : nextSelect.value;
+    const nextStates = entityApprovalContinuationStates(x, stateId);
+    nextSelect.innerHTML = `<option value="">Approve only — stay on this asset</option>${nextStates.map((item) => `<option value="${attr(item.id)}">Edit ${esc(item.name || "next state")}${item.approvedFile ? " · currently approved" : " · needs reference"}</option>`).join("")}`;
+    const validPrevious = nextStates.some((item) => item.id === previous);
+    nextSelect.value = validPrevious ? previous : entitySuggestedContinuationState(x, stateId);
+  }
+  syncEntityApprovalContinuation();
+};
+window.syncEntityApprovalContinuation = () => {
+  const current = window._entityApproval || {};
+  const x = P[current.list]?.find((item) => item.id === current.id);
+  if (!x) return;
+  const stateId = document.getElementById("entity-approve-target")?.value || current.stateId || "state-default";
+  const state = entityStateById(x, stateId);
+  const nextState = entityStateById(x, document.getElementById("entity-approve-next")?.value || "");
+  const continueButton = document.getElementById("entity-approve-continue");
+  if (continueButton) {
+    continueButton.disabled = !nextState;
+    continueButton.textContent = nextState ? `APPROVE & EDIT ${String(nextState.name || "NEXT STATE").toUpperCase()}` : "APPROVE & EDIT NEXT STATE";
+  }
+  const nextNote = document.getElementById("entity-approve-next-note");
+  if (nextNote) nextNote.textContent = nextState
+    ? `${nextState.name || "The selected state"} will derive from the newly approved ${state?.name || "current"} reference. Its state-delta editor opens immediately.`
+    : "Approve this reference and remain on the asset page.";
+};
+window.confirmEntityApproval = async (continueToNext = false) => {
+  const { list, id } = window._entityApproval || {};
+  if (!list) return;
+  const x = P[list].find((e) => e.id === id),
+    name = document.getElementById("entity-approve-file")?.value || window._entityApproval.name || "",
+    targetStateId = document.getElementById("entity-approve-target")?.value || "state-default",
+    targetState = entityStateById(x, targetStateId),
+    nextStateId = continueToNext ? document.getElementById("entity-approve-next")?.value || "" : "",
+    nextState = nextStateId ? entityStateById(x, nextStateId) : null,
+    to = document.getElementById("entity-approve-name")?.value.trim();
+  const originalApprovalRow = entityCandidateRow(x, name, false);
+  const approvedIsCoverageSheet = typeof entityCandidateIsCoverageSheet === "function" && entityCandidateIsCoverageSheet(x, name);
+  if (continueToNext && !nextState && !approvedIsCoverageSheet) return toast("Choose the continuity state to edit next");
+  let finalName = name;
+  if (to && name && to !== name) {
+    const r = await fetch("/api/media/rename", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dir: ENTITY_MEDIA[list], from: name, to }),
+    });
+    const d = await r.json();
+    if (r.ok) {
+      finalName = d.name;
+      for (const state of entityStateList(x, true)) if (state.approvedFile === name) state.approvedFile = finalName;
+      if (x.approvedFile === name) x.approvedFile = finalName;
+      const candidateRow = entityCandidateRow(x, name, false);
+      if (candidateRow) candidateRow.stored = finalName;
+      for (const generated of x.generatedCandidates || []) if ((generated.stored || generated.name) === name) generated.stored = finalName;
+      SCAN = await (await fetch("/api/scan")).json();
+    } else toast("Rename failed; approved with original filename");
+  }
+  if (targetState) {
+    targetState.approvedFile = finalName;
+    targetState.approvedAt = new Date().toISOString();
+    targetState.parentValidation = null;
+  }
+  if (targetState?.isDefault || targetStateId === "state-default") {
+    x.approvedFile = finalName;
+    for (const childState of entityStateList(x, true)) if (!childState.isDefault) childState.parentValidation = null;
+    if (!approvedIsCoverageSheet && typeof ensureCoverageSlots === "function" && list !== "characters") {
+      const slots = ensureCoverageSlots(list, x);
+      if (!slots.some((slot) => slot.approvedFile)) {
+        const preferredId = ({ props: "hero", vehicles: "front-three-quarter", locations: "establishing" })[list];
+        const coverageSlot = slots.find((slot) => slot.id === preferredId) || slots[0];
+        if (coverageSlot) {
+          coverageSlot.approvedFile = finalName;
+          coverageSlot.status = "approved";
+          coverageSlot.notes = coverageSlot.notes || "Automatically seeded from the first approved primary reference.";
+          coverageSlot.provenance = { source: "primary-approved-reference", seededAt: new Date().toISOString() };
+        }
+      }
+    }
+    if (list === "characters") {
+      x.primaryAngleAssignment = {
+        status: "unassigned",
+        sourceFile: finalName,
+        updatedAt: new Date().toISOString(),
+        note: "Primary identity references are not silently assigned to an angle slot.",
+      };
+    }
+  }
+  const row = entityCandidateRow(x, finalName, false) || entityCandidateRow(x, name, false);
+  const currentReview = typeof entityCandidateTargetReview === "function" ? entityCandidateTargetReview(x, finalName) : null;
+  if (row) {
+    if (row.decision === "rejected") row.decision = "unreviewed";
+    row.decision = approvedIsCoverageSheet ? "approved-sheet-source" : "approved-reference";
+    row.humanApproved = true;
+    row.humanApprovedWithoutAI = !currentReview?.pass;
+    row.reviewRequired = false;
+    row.decidedAt = new Date().toISOString();
+    row.approvalProvenance = { source: "human", aiReviewed: !!currentReview, aiPassed: !!currentReview?.pass, approvedAt: row.decidedAt };
+  }
+  if (nextState) {
+    nextState.parentStateId = targetStateId;
+    nextState.generationMode = "derive";
+  }
+  x.workflowStatus = "APPROVED";
+  x.status = "APPROVED";
+  x.reviewStatus = "";
+  x.approvedAt = new Date().toISOString();
+  dirty();
+  closeModal();
+  await route();
+  if (targetState && !targetState.isDefault && targetState.approvedFile && String(targetState.notes || "").trim()) {
+    const capability = typeof capabilityState === "function" ? capabilityState("vision") : { ready: false };
+    if (capability.ready) setTimeout(() => validateContinuityStateAgainstParent(list, id, targetState.id), 220);
+  }
+  if (approvedIsCoverageSheet && typeof openCoverageSheetExtractor === "function") {
+    rememberWorkspaceSection?.(entityCoverageSectionKey?.(list, id, originalApprovalRow?.coverageSheetType === "expressions" ? "expressions" : "angles"), true);
+    setTimeout(() => openCoverageSheetExtractor(list, id, finalName), 50);
+  } else if (nextState) revealEntityContinuityState(nextState.id);
+  stampCeremony(`APPROVED · ${targetState?.name || "DEFAULT"}`);
+  toast(approvedIsCoverageSheet
+    ? `Approved ${finalName} as a sheet source — extract its individual views next`
+    : nextState
+      ? `Approved ${finalName} for ${targetState?.name || "Default"} — editing ${nextState.name || "next state"}`
+      : `Approved ${finalName} for ${targetState?.name || "Default"}`);
+};
+window.approveEntity = (list, id) => {
+  const x = P[list].find((e) => e.id === id),
+    media = entityMedia(list, x);
+  if (media.length)
+    return approveEntityFile(
+      list,
+      id,
+      (media.find((m) => m.name === x.approvedFile) || media[media.length - 1])
+        .name,
+    );
+  x.workflowStatus = "APPROVED";
+  x.status = "APPROVED";
+  x.approvedAt = new Date().toISOString();
+  dirty();
+  route();
+};

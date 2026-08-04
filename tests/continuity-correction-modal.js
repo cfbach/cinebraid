@@ -1,0 +1,21 @@
+const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
+const root = path.join(__dirname, '..');
+const review = fs.readFileSync(path.join(root, 'public', 'review-provenance.js'), 'utf8');
+const css = fs.readFileSync(path.join(root, 'public', 'styles.css'), 'utf8');
+const pkg = require(path.join(root, 'package.json'));
+
+assert.strictEqual(pkg.version, '6.6.4-studio.repair.13');
+assert(review.includes('YOU CHOOSE'), 'correction dialog must clearly label user choices');
+assert(review.includes('YOU EDIT'), 'correction dialog must identify editable input');
+assert(review.includes('CINEBRAID AUTOMATES'), 'correction dialog must explain automated work');
+assert(review.includes('BUILD EDITABLE CORRECTION PROMPT'), 'primary action must state that it builds an editable prompt');
+assert(review.includes('No paid request is submitted yet'), 'dialog must distinguish prompt building from paid generation');
+assert(review.includes('updateFrameSequenceCorrectionSummary'), 'anchor and target summary must update live');
+assert(review.includes('MARK DIFFERENCE INTENTIONAL'), 'alternative intentional-difference workflow must remain available');
+assert(css.includes('.modal-box:has(.frame-sequence-correction-modal)'), 'outer modal shell must own responsive sizing');
+assert(css.includes('grid-template-rows:auto auto minmax(0,1fr) auto'), 'modal must have fixed header/workflow/footer and scrollable middle');
+assert(css.includes('.frame-sequence-correction-scroll'), 'correction content needs a bounded scroll region');
+assert(css.includes('overflow-wrap:anywhere'), 'long review findings must wrap safely');
+console.log('continuity correction modal checks passed');

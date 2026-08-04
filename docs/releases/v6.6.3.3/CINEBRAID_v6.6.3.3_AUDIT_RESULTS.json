@@ -1,0 +1,40 @@
+{
+  "version": "6.6.3.3",
+  "release": "UI State Stability",
+  "status": "passed",
+  "registeredSuites": 30,
+  "paidRequestsSubmitted": 0,
+  "acceptance": {
+    "referenceBuildPromptPreservesOuterDisclosure": true,
+    "referenceImprovePreservesOuterDisclosure": true,
+    "referenceGeneratePreservesOuterDisclosure": true,
+    "continuityStateBuildPreservesEditor": true,
+    "continuityStateImprovePreservesEditor": true,
+    "sameRouteDisclosureSweepPassed": true,
+    "viewportAnchorMaximumShiftPixels": 20,
+    "staleAsyncRouteDiscarded": true,
+    "horizontalOverflowPixels": 0,
+    "sourceSuitesPassed": true,
+    "cleanArchiveQuickCheckPassed": true,
+    "cleanArchiveBrowserChecksPassed": true
+  },
+  "sweptWorkspaces": [
+    "reference creation",
+    "continuity states",
+    "coverage",
+    "shot look and blocking",
+    "shot frames",
+    "motion and sound",
+    "deliver",
+    "reports",
+    "settings"
+  ],
+  "compatibility": {
+    "schemaChanged": false,
+    "promptOutputChanged": false,
+    "automationChanged": false,
+    "providerChanged": false,
+    "capabilityRemoved": false
+  },
+  "runnerNote": "The combined runner reached the external limit at the third Chromium suite. Remaining suites passed independently in fresh processes."
+}

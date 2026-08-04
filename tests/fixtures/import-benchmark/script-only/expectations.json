@@ -1,0 +1,40 @@
+{
+  "title": "Signal at Gate Nine",
+  "sceneIds": [
+    "S01",
+    "S02",
+    "S03"
+  ],
+  "shotIds": [
+    "S01-01",
+    "S01-02",
+    "S02-01",
+    "S02-02",
+    "S03-01"
+  ],
+  "characterIds": [
+    "CHAR-MARA"
+  ],
+  "locationIds": [
+    "LOC-STATION",
+    "LOC-GATE9"
+  ],
+  "propIds": [
+    "PROP-KEY",
+    "PROP-RADIO"
+  ],
+  "dialogue": [
+    "Gate Nine, identify yourself.",
+    "Do not open it."
+  ],
+  "forbiddenText": [
+    "invented brother",
+    "police officer"
+  ],
+  "minimumConflictMarkers": 0,
+  "sceneShotCounts": {
+    "S01": 2,
+    "S02": 2,
+    "S03": 1
+  }
+}

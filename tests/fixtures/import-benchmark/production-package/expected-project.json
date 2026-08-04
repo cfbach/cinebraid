@@ -1,0 +1,1074 @@
+{
+  "meta": {
+    "title": "The Overfit \u2014 Sanitized Benchmark",
+    "format": "Short film",
+    "aspectRatio": "16:9",
+    "globalStylePrompt": "Cinematic practical realism with controlled continuity.",
+    "globalNegativePrompt": "No invented characters, wardrobe, props, or readable text."
+  },
+  "qcChecklist": [
+    "Identity continuity",
+    "Geometry and contact",
+    "Tone and world",
+    "Motif continuity",
+    "Text accuracy"
+  ],
+  "characters": [
+    {
+      "id": "CHAR-KAI",
+      "name": "KAI",
+      "visualDescription": "Adult systems operator; cropped black hair; charcoal maintenance coverall with a pale rectangular chest patch; no helmet.",
+      "continuityStates": [
+        {
+          "id": "state-default",
+          "name": "Default",
+          "appliesTo": "SC-01 through SC-03",
+          "approvedFile": "",
+          "notes": "Clean coverall and dry hair.",
+          "isDefault": true
+        },
+        {
+          "id": "state-post-failure",
+          "name": "Post-failure",
+          "appliesTo": "SC-04 through SC-06",
+          "approvedFile": "",
+          "notes": "Soot on right sleeve; small cut above left eyebrow.",
+          "isDefault": false
+        },
+        {
+          "id": "state-containment",
+          "name": "Containment",
+          "appliesTo": "SC-07 through SC-09",
+          "approvedFile": "",
+          "notes": "Post-failure state plus clear face shield.",
+          "isDefault": false
+        }
+      ],
+      "role": "",
+      "block": "Adult systems operator; cropped black hair; charcoal maintenance coverall with a pale rectangular chest patch; no helmet.",
+      "driftNotes": ""
+    }
+  ],
+  "locations": [
+    {
+      "id": "LOC-CONTROL",
+      "name": "Control Bay",
+      "visualDescription": "Control Bay, practical industrial environment with stable geometry.",
+      "continuityStates": [
+        {
+          "id": "state-default",
+          "name": "Default",
+          "appliesTo": "",
+          "approvedFile": "",
+          "notes": "",
+          "isDefault": true
+        }
+      ],
+      "notes": "Control Bay, practical industrial environment with stable geometry."
+    },
+    {
+      "id": "LOC-BRIEF",
+      "name": "Briefing Room",
+      "visualDescription": "Briefing Room, practical industrial environment with stable geometry.",
+      "continuityStates": [
+        {
+          "id": "state-default",
+          "name": "Default",
+          "appliesTo": "",
+          "approvedFile": "",
+          "notes": "",
+          "isDefault": true
+        }
+      ],
+      "notes": "Briefing Room, practical industrial environment with stable geometry."
+    },
+    {
+      "id": "LOC-MACHINE",
+      "name": "Machine Room",
+      "visualDescription": "Machine Room, practical industrial environment with stable geometry.",
+      "continuityStates": [
+        {
+          "id": "state-default",
+          "name": "Default",
+          "appliesTo": "",
+          "approvedFile": "",
+          "notes": "",
+          "isDefault": true
+        }
+      ],
+      "notes": "Machine Room, practical industrial environment with stable geometry."
+    },
+    {
+      "id": "LOC-ARCHIVE",
+      "name": "Archive Aisle",
+      "visualDescription": "Archive Aisle, practical industrial environment with stable geometry.",
+      "continuityStates": [
+        {
+          "id": "state-default",
+          "name": "Default",
+          "appliesTo": "",
+          "approvedFile": "",
+          "notes": "",
+          "isDefault": true
+        }
+      ],
+      "notes": "Archive Aisle, practical industrial environment with stable geometry."
+    },
+    {
+      "id": "LOC-TEST",
+      "name": "Test Chamber",
+      "visualDescription": "Test Chamber, practical industrial environment with stable geometry.",
+      "continuityStates": [
+        {
+          "id": "state-default",
+          "name": "Default",
+          "appliesTo": "",
+          "approvedFile": "",
+          "notes": "",
+          "isDefault": true
+        }
+      ],
+      "notes": "Test Chamber, practical industrial environment with stable geometry."
+    }
+  ],
+  "props": [
+    {
+      "id": "PROP-TABLET",
+      "name": "Diagnostic Tablet",
+      "visualDescription": "Diagnostic Tablet, production continuity prop.",
+      "continuityStates": [
+        {
+          "id": "state-default",
+          "name": "Default",
+          "appliesTo": "",
+          "approvedFile": "",
+          "notes": "",
+          "isDefault": true
+        }
+      ],
+      "notes": "Diagnostic Tablet, production continuity prop."
+    },
+    {
+      "id": "PROP-FIBER-KEY",
+      "name": "Fiber Key",
+      "visualDescription": "Fiber Key, production continuity prop.",
+      "continuityStates": [
+        {
+          "id": "state-default",
+          "name": "Default",
+          "appliesTo": "",
+          "approvedFile": "",
+          "notes": "",
+          "isDefault": true
+        }
+      ],
+      "notes": "Fiber Key, production continuity prop."
+    },
+    {
+      "id": "PROP-LEVER",
+      "name": "Red Override Lever",
+      "visualDescription": "Red Override Lever, production continuity prop.",
+      "continuityStates": [
+        {
+          "id": "state-default",
+          "name": "Default",
+          "appliesTo": "",
+          "approvedFile": "",
+          "notes": "",
+          "isDefault": true
+        }
+      ],
+      "notes": "Red Override Lever, production continuity prop."
+    },
+    {
+      "id": "PROP-CARTRIDGE",
+      "name": "Archive Cartridge",
+      "visualDescription": "Archive Cartridge, production continuity prop.",
+      "continuityStates": [
+        {
+          "id": "state-default",
+          "name": "Default",
+          "appliesTo": "",
+          "approvedFile": "",
+          "notes": "",
+          "isDefault": true
+        }
+      ],
+      "notes": "Archive Cartridge, production continuity prop."
+    },
+    {
+      "id": "PROP-LAMP",
+      "name": "Inspection Lamp",
+      "visualDescription": "Inspection Lamp, production continuity prop.",
+      "continuityStates": [
+        {
+          "id": "state-default",
+          "name": "Default",
+          "appliesTo": "",
+          "approvedFile": "",
+          "notes": "",
+          "isDefault": true
+        }
+      ],
+      "notes": "Inspection Lamp, production continuity prop."
+    },
+    {
+      "id": "PROP-SEAL",
+      "name": "Seal Case",
+      "visualDescription": "Seal Case, production continuity prop.",
+      "continuityStates": [
+        {
+          "id": "state-default",
+          "name": "Default",
+          "appliesTo": "",
+          "approvedFile": "",
+          "notes": "",
+          "isDefault": true
+        }
+      ],
+      "notes": "Seal Case, production continuity prop."
+    }
+  ],
+  "scenes": [
+    {
+      "id": "SC-01",
+      "title": "Wake cycle",
+      "tier": "A",
+      "characters": [
+        "CHAR-KAI"
+      ],
+      "whatHappens": "KAI advances the wake cycle story beat without introducing new canon.",
+      "howItFeels": "Controlled technical tension."
+    },
+    {
+      "id": "SC-02",
+      "title": "The brief",
+      "tier": "B",
+      "characters": [
+        "CHAR-KAI"
+      ],
+      "whatHappens": "KAI advances the the brief story beat without introducing new canon.",
+      "howItFeels": "Controlled technical tension."
+    },
+    {
+      "id": "SC-03",
+      "title": "Machine room",
+      "tier": "B",
+      "characters": [
+        "CHAR-KAI"
+      ],
+      "whatHappens": "KAI advances the machine room story beat without introducing new canon.",
+      "howItFeels": "Controlled technical tension."
+    },
+    {
+      "id": "SC-04",
+      "title": "First failure",
+      "tier": "A",
+      "characters": [
+        "CHAR-KAI"
+      ],
+      "whatHappens": "KAI advances the first failure story beat without introducing new canon.",
+      "howItFeels": "Controlled technical tension."
+    },
+    {
+      "id": "SC-05",
+      "title": "Archive search",
+      "tier": "B",
+      "characters": [
+        "CHAR-KAI"
+      ],
+      "whatHappens": "KAI advances the archive search story beat without introducing new canon.",
+      "howItFeels": "Controlled technical tension."
+    },
+    {
+      "id": "SC-06",
+      "title": "The test",
+      "tier": "B",
+      "characters": [
+        "CHAR-KAI"
+      ],
+      "whatHappens": "KAI advances the the test story beat without introducing new canon.",
+      "howItFeels": "Controlled technical tension."
+    },
+    {
+      "id": "SC-07",
+      "title": "Containment",
+      "tier": "A",
+      "characters": [
+        "CHAR-KAI"
+      ],
+      "whatHappens": "KAI advances the containment story beat without introducing new canon.",
+      "howItFeels": "Controlled technical tension."
+    },
+    {
+      "id": "SC-08",
+      "title": "Manual override",
+      "tier": "A",
+      "characters": [
+        "CHAR-KAI"
+      ],
+      "whatHappens": "KAI advances the manual override story beat without introducing new canon.",
+      "howItFeels": "Controlled technical tension."
+    },
+    {
+      "id": "SC-09",
+      "title": "Aftermath",
+      "tier": "B",
+      "characters": [
+        "CHAR-KAI"
+      ],
+      "whatHappens": "KAI advances the aftermath story beat without introducing new canon.",
+      "howItFeels": "Controlled technical tension."
+    }
+  ],
+  "shots": [
+    {
+      "id": "SC-01-01",
+      "scene": "SC-01",
+      "title": "Wake cycle 1",
+      "desc": "KAI performs the planned wake cycle action, beat 1.",
+      "characters": [
+        "CHAR-KAI"
+      ],
+      "positioning": "Clear camera placement and subject contact points are specified.",
+      "route": "GENERATE",
+      "codes": [
+        "LOC-CONTROL",
+        "PROP-TABLET"
+      ],
+      "risks": [],
+      "safe": "Use a locked composition with reduced movement while preserving the story beat.",
+      "dur": 5,
+      "keyframes": [
+        {
+          "label": "A",
+          "title": "Frame A",
+          "description": "KAI performs the planned wake cycle action, beat 1.",
+          "required": true
+        }
+      ],
+      "clips": [
+        {
+          "title": "Primary motion",
+          "dur": 5,
+          "kind": "i2v",
+          "motionPrompt": "KAI completes beat 1; preserve the locked camera and continuity state."
+        }
+      ]
+    },
+    {
+      "id": "SC-01-02",
+      "scene": "SC-01",
+      "title": "Wake cycle 2",
+      "desc": "KAI performs the planned wake cycle action, beat 2.",
+      "characters": [
+        "CHAR-KAI"
+      ],
+      "positioning": "Clear camera placement and subject contact points are specified.",
+      "route": "GENERATE",
+      "codes": [
+        "LOC-CONTROL",
+        "PROP-FIBER-KEY"
+      ],
+      "risks": [],
+      "safe": "Use a locked composition with reduced movement while preserving the story beat.",
+      "dur": 6,
+      "keyframes": [
+        {
+          "label": "A",
+          "title": "Frame A",
+          "description": "KAI performs the planned wake cycle action, beat 2.",
+          "required": true
+        }
+      ],
+      "clips": [
+        {
+          "title": "Primary motion",
+          "dur": 6,
+          "kind": "i2v",
+          "motionPrompt": "KAI completes beat 2; preserve the locked camera and continuity state."
+        }
+      ]
+    },
+    {
+      "id": "SC-01-03",
+      "scene": "SC-01",
+      "title": "Wake cycle 3",
+      "desc": "KAI performs the planned wake cycle action, beat 3.",
+      "characters": [
+        "CHAR-KAI"
+      ],
+      "positioning": "Clear camera placement and subject contact points are specified.",
+      "route": "GENERATE",
+      "codes": [
+        "LOC-CONTROL",
+        "PROP-LEVER"
+      ],
+      "risks": [],
+      "safe": "Use a locked composition with reduced movement while preserving the story beat.",
+      "dur": 7,
+      "keyframes": [
+        {
+          "label": "A",
+          "title": "Frame A",
+          "description": "KAI performs the planned wake cycle action, beat 3.",
+          "required": true
+        }
+      ],
+      "clips": [
+        {
+          "title": "Primary motion",
+          "dur": 7,
+          "kind": "i2v",
+          "motionPrompt": "KAI completes beat 3; preserve the locked camera and continuity state."
+        }
+      ]
+    },
+    {
+      "id": "SC-02-01",
+      "scene": "SC-02",
+      "title": "The brief 1",
+      "desc": "KAI performs the planned the brief action, beat 1.",
+      "characters": [
+        "CHAR-KAI"
+      ],
+      "positioning": "Clear camera placement and subject contact points are specified.",
+      "route": "GENERATE",
+      "codes": [
+        "LOC-CONTROL",
+        "PROP-CARTRIDGE"
+      ],
+      "risks": [],
+      "safe": "Use a locked composition with reduced movement while preserving the story beat.",
+      "dur": 5,
+      "keyframes": [
+        {
+          "label": "A",
+          "title": "Frame A",
+          "description": "KAI performs the planned the brief action, beat 1.",
+          "required": true
+        }
+      ],
+      "clips": [
+        {
+          "title": "Primary motion",
+          "dur": 5,
+          "kind": "i2v",
+          "motionPrompt": "KAI completes beat 1; preserve the locked camera and continuity state."
+        }
+      ]
+    },
+    {
+      "id": "SC-02-02",
+      "scene": "SC-02",
+      "title": "The brief 2",
+      "desc": "KAI performs the planned the brief action, beat 2.",
+      "characters": [
+        "CHAR-KAI"
+      ],
+      "positioning": "Clear camera placement and subject contact points are specified.",
+      "route": "GENERATE",
+      "codes": [
+        "LOC-CONTROL",
+        "PROP-LAMP"
+      ],
+      "risks": [],
+      "safe": "Use a locked composition with reduced movement while preserving the story beat.",
+      "dur": 6,
+      "keyframes": [
+        {
+          "label": "A",
+          "title": "Frame A",
+          "description": "KAI performs the planned the brief action, beat 2.",
+          "required": true
+        }
+      ],
+      "clips": [
+        {
+          "title": "Primary motion",
+          "dur": 6,
+          "kind": "i2v",
+          "motionPrompt": "KAI completes beat 2; preserve the locked camera and continuity state."
+        }
+      ]
+    },
+    {
+      "id": "SC-03-01",
+      "scene": "SC-03",
+      "title": "Machine room 1",
+      "desc": "KAI performs the planned machine room action, beat 1.",
+      "characters": [
+        "CHAR-KAI"
+      ],
+      "positioning": "Clear camera placement and subject contact points are specified.",
+      "route": "GENERATE",
+      "codes": [
+        "LOC-BRIEF",
+        "PROP-SEAL"
+      ],
+      "risks": [],
+      "safe": "Use a locked composition with reduced movement while preserving the story beat.",
+      "dur": 8,
+      "keyframes": [
+        {
+          "label": "A",
+          "title": "Frame A",
+          "description": "KAI performs the planned machine room action, beat 1.",
+          "required": true
+        }
+      ],
+      "clips": [
+        {
+          "title": "Primary motion",
+          "dur": 8,
+          "kind": "r2v",
+          "motionPrompt": "KAI completes beat 1; preserve the locked camera and continuity state."
+        }
+      ]
+    },
+    {
+      "id": "SC-03-02",
+      "scene": "SC-03",
+      "title": "Machine room 2",
+      "desc": "KAI performs the planned machine room action, beat 2.",
+      "characters": [
+        "CHAR-KAI"
+      ],
+      "positioning": "Clear camera placement and subject contact points are specified.",
+      "route": "GENERATE",
+      "codes": [
+        "LOC-BRIEF",
+        "PROP-TABLET"
+      ],
+      "risks": [],
+      "safe": "Use a locked composition with reduced movement while preserving the story beat.",
+      "dur": 5,
+      "keyframes": [
+        {
+          "label": "A",
+          "title": "Frame A",
+          "description": "KAI performs the planned machine room action, beat 2.",
+          "required": true
+        }
+      ],
+      "clips": [
+        {
+          "title": "Primary motion",
+          "dur": 5,
+          "kind": "i2v",
+          "motionPrompt": "KAI completes beat 2; preserve the locked camera and continuity state."
+        }
+      ]
+    },
+    {
+      "id": "SC-03-03",
+      "scene": "SC-03",
+      "title": "Machine room 3",
+      "desc": "KAI performs the planned machine room action, beat 3.",
+      "characters": [
+        "CHAR-KAI"
+      ],
+      "positioning": "Clear camera placement and subject contact points are specified.",
+      "route": "GENERATE",
+      "codes": [
+        "LOC-BRIEF",
+        "PROP-FIBER-KEY"
+      ],
+      "risks": [],
+      "safe": "Use a locked composition with reduced movement while preserving the story beat.",
+      "dur": 6,
+      "keyframes": [
+        {
+          "label": "A",
+          "title": "Frame A",
+          "description": "KAI performs the planned machine room action, beat 3.",
+          "required": true
+        }
+      ],
+      "clips": [
+        {
+          "title": "Primary motion",
+          "dur": 6,
+          "kind": "i2v",
+          "motionPrompt": "KAI completes beat 3; preserve the locked camera and continuity state."
+        }
+      ]
+    },
+    {
+      "id": "SC-04-01",
+      "scene": "SC-04",
+      "title": "First failure 1",
+      "desc": "KAI performs the planned first failure action, beat 1.",
+      "characters": [
+        "CHAR-KAI"
+      ],
+      "positioning": "Clear camera placement and subject contact points are specified.",
+      "route": "GENERATE",
+      "codes": [
+        "LOC-BRIEF",
+        "PROP-LEVER"
+      ],
+      "risks": [],
+      "safe": "Use a locked composition with reduced movement while preserving the story beat.",
+      "dur": 7,
+      "keyframes": [
+        {
+          "label": "A",
+          "title": "Frame A",
+          "description": "KAI performs the planned first failure action, beat 1.",
+          "required": true
+        }
+      ],
+      "clips": [
+        {
+          "title": "Primary motion",
+          "dur": 7,
+          "kind": "i2v",
+          "motionPrompt": "KAI completes beat 1; preserve the locked camera and continuity state."
+        }
+      ]
+    },
+    {
+      "id": "SC-04-02",
+      "scene": "SC-04",
+      "title": "First failure 2",
+      "desc": "KAI performs the planned first failure action, beat 2.",
+      "characters": [
+        "CHAR-KAI"
+      ],
+      "positioning": "Clear camera placement and subject contact points are specified.",
+      "route": "GENERATE",
+      "codes": [
+        "LOC-BRIEF",
+        "PROP-CARTRIDGE"
+      ],
+      "risks": [],
+      "safe": "Use a locked composition with reduced movement while preserving the story beat.",
+      "dur": 5,
+      "keyframes": [
+        {
+          "label": "A",
+          "title": "Frame A",
+          "description": "KAI performs the planned first failure action, beat 2.",
+          "required": true
+        }
+      ],
+      "clips": [
+        {
+          "title": "Primary motion",
+          "dur": 5,
+          "kind": "i2v",
+          "motionPrompt": "KAI completes beat 2; preserve the locked camera and continuity state."
+        }
+      ]
+    },
+    {
+      "id": "SC-05-01",
+      "scene": "SC-05",
+      "title": "Archive search 1",
+      "desc": "KAI performs the planned archive search action, beat 1.",
+      "characters": [
+        "CHAR-KAI"
+      ],
+      "positioning": "Clear camera placement and subject contact points are specified.",
+      "route": "GENERATE",
+      "codes": [
+        "LOC-MACHINE",
+        "PROP-LAMP"
+      ],
+      "risks": [],
+      "safe": "Use a locked composition with reduced movement while preserving the story beat.",
+      "dur": 6,
+      "keyframes": [
+        {
+          "label": "A",
+          "title": "Frame A",
+          "description": "KAI performs the planned archive search action, beat 1.",
+          "required": true
+        }
+      ],
+      "clips": [
+        {
+          "title": "Primary motion",
+          "dur": 6,
+          "kind": "i2v",
+          "motionPrompt": "KAI completes beat 1; preserve the locked camera and continuity state."
+        }
+      ]
+    },
+    {
+      "id": "SC-05-02",
+      "scene": "SC-05",
+      "title": "Archive search 2",
+      "desc": "KAI performs the planned archive search action, beat 2.",
+      "characters": [
+        "CHAR-KAI"
+      ],
+      "positioning": "Clear camera placement and subject contact points are specified.",
+      "route": "GENERATE",
+      "codes": [
+        "LOC-MACHINE",
+        "PROP-SEAL"
+      ],
+      "risks": [],
+      "safe": "Use a locked composition with reduced movement while preserving the story beat.",
+      "dur": 7,
+      "keyframes": [
+        {
+          "label": "A",
+          "title": "Frame A",
+          "description": "KAI performs the planned archive search action, beat 2.",
+          "required": true
+        }
+      ],
+      "clips": [
+        {
+          "title": "Primary motion",
+          "dur": 7,
+          "kind": "i2v",
+          "motionPrompt": "KAI completes beat 2; preserve the locked camera and continuity state."
+        }
+      ]
+    },
+    {
+      "id": "SC-05-03",
+      "scene": "SC-05",
+      "title": "Archive search 3",
+      "desc": "KAI performs the planned archive search action, beat 3.",
+      "characters": [
+        "CHAR-KAI"
+      ],
+      "positioning": "Clear camera placement and subject contact points are specified.",
+      "route": "GENERATE",
+      "codes": [
+        "LOC-MACHINE",
+        "PROP-TABLET"
+      ],
+      "risks": [],
+      "safe": "Use a locked composition with reduced movement while preserving the story beat.",
+      "dur": 8,
+      "keyframes": [
+        {
+          "label": "A",
+          "title": "Frame A",
+          "description": "KAI performs the planned archive search action, beat 3.",
+          "required": true
+        }
+      ],
+      "clips": [
+        {
+          "title": "Primary motion",
+          "dur": 8,
+          "kind": "r2v",
+          "motionPrompt": "KAI completes beat 3; preserve the locked camera and continuity state."
+        }
+      ]
+    },
+    {
+      "id": "SC-06-01",
+      "scene": "SC-06",
+      "title": "The test 1",
+      "desc": "KAI performs the planned the test action, beat 1.",
+      "characters": [
+        "CHAR-KAI"
+      ],
+      "positioning": "Clear camera placement and subject contact points are specified.",
+      "route": "GENERATE",
+      "codes": [
+        "LOC-MACHINE",
+        "PROP-FIBER-KEY"
+      ],
+      "risks": [],
+      "safe": "Use a locked composition with reduced movement while preserving the story beat.",
+      "dur": 6,
+      "keyframes": [
+        {
+          "label": "A",
+          "title": "Frame A",
+          "description": "KAI performs the planned the test action, beat 1.",
+          "required": true
+        }
+      ],
+      "clips": [
+        {
+          "title": "Primary motion",
+          "dur": 6,
+          "kind": "i2v",
+          "motionPrompt": "KAI completes beat 1; preserve the locked camera and continuity state."
+        }
+      ]
+    },
+    {
+      "id": "SC-06-02",
+      "scene": "SC-06",
+      "title": "The test 2",
+      "desc": "KAI performs the planned the test action, beat 2.",
+      "characters": [
+        "CHAR-KAI"
+      ],
+      "positioning": "Clear camera placement and subject contact points are specified.",
+      "route": "GENERATE",
+      "codes": [
+        "LOC-MACHINE",
+        "PROP-LEVER"
+      ],
+      "risks": [],
+      "safe": "Use a locked composition with reduced movement while preserving the story beat.",
+      "dur": 7,
+      "keyframes": [
+        {
+          "label": "A",
+          "title": "Frame A",
+          "description": "KAI performs the planned the test action, beat 2.",
+          "required": true
+        }
+      ],
+      "clips": [
+        {
+          "title": "Primary motion",
+          "dur": 7,
+          "kind": "i2v",
+          "motionPrompt": "KAI completes beat 2; preserve the locked camera and continuity state."
+        }
+      ]
+    },
+    {
+      "id": "SC-07-01",
+      "scene": "SC-07",
+      "title": "Containment 1",
+      "desc": "KAI performs the planned containment action, beat 1.",
+      "characters": [
+        "CHAR-KAI"
+      ],
+      "positioning": "Clear camera placement and subject contact points are specified.",
+      "route": "GENERATE",
+      "codes": [
+        "LOC-ARCHIVE",
+        "PROP-CARTRIDGE"
+      ],
+      "risks": [],
+      "safe": "Use a locked composition with reduced movement while preserving the story beat.",
+      "dur": 5,
+      "keyframes": [
+        {
+          "label": "A",
+          "title": "Frame A",
+          "description": "KAI performs the planned containment action, beat 1.",
+          "required": true
+        }
+      ],
+      "clips": [
+        {
+          "title": "Primary motion",
+          "dur": 5,
+          "kind": "i2v",
+          "motionPrompt": "KAI completes beat 1; preserve the locked camera and continuity state."
+        }
+      ]
+    },
+    {
+      "id": "SC-07-02",
+      "scene": "SC-07",
+      "title": "Containment 2",
+      "desc": "KAI performs the planned containment action, beat 2.",
+      "characters": [
+        "CHAR-KAI"
+      ],
+      "positioning": "Clear camera placement and subject contact points are specified.",
+      "route": "GENERATE",
+      "codes": [
+        "LOC-ARCHIVE",
+        "PROP-LAMP"
+      ],
+      "risks": [],
+      "safe": "Use a locked composition with reduced movement while preserving the story beat.",
+      "dur": 6,
+      "keyframes": [
+        {
+          "label": "A",
+          "title": "Frame A",
+          "description": "KAI performs the planned containment action, beat 2.",
+          "required": true
+        }
+      ],
+      "clips": [
+        {
+          "title": "Primary motion",
+          "dur": 6,
+          "kind": "i2v",
+          "motionPrompt": "KAI completes beat 2; preserve the locked camera and continuity state."
+        }
+      ]
+    },
+    {
+      "id": "SC-07-03",
+      "scene": "SC-07",
+      "title": "Containment 3",
+      "desc": "KAI performs the planned containment action, beat 3.",
+      "characters": [
+        "CHAR-KAI"
+      ],
+      "positioning": "Clear camera placement and subject contact points are specified.",
+      "route": "GENERATE",
+      "codes": [
+        "LOC-ARCHIVE",
+        "PROP-SEAL"
+      ],
+      "risks": [],
+      "safe": "Use a locked composition with reduced movement while preserving the story beat.",
+      "dur": 7,
+      "keyframes": [
+        {
+          "label": "A",
+          "title": "Frame A",
+          "description": "KAI performs the planned containment action, beat 3.",
+          "required": true
+        }
+      ],
+      "clips": [
+        {
+          "title": "Primary motion",
+          "dur": 7,
+          "kind": "i2v",
+          "motionPrompt": "KAI completes beat 3; preserve the locked camera and continuity state."
+        }
+      ]
+    },
+    {
+      "id": "SC-08-01",
+      "scene": "SC-08",
+      "title": "Manual override 1",
+      "desc": "KAI performs the planned manual override action, beat 1.",
+      "characters": [
+        "CHAR-KAI"
+      ],
+      "positioning": "Clear camera placement and subject contact points are specified.",
+      "route": "GENERATE",
+      "codes": [
+        "LOC-ARCHIVE",
+        "PROP-TABLET"
+      ],
+      "risks": [],
+      "safe": "Use a locked composition with reduced movement while preserving the story beat.",
+      "dur": 8,
+      "keyframes": [
+        {
+          "label": "A",
+          "title": "Frame A",
+          "description": "KAI performs the planned manual override action, beat 1.",
+          "required": true
+        }
+      ],
+      "clips": [
+        {
+          "title": "Primary motion",
+          "dur": 8,
+          "kind": "r2v",
+          "motionPrompt": "KAI completes beat 1; preserve the locked camera and continuity state."
+        }
+      ]
+    },
+    {
+      "id": "SC-08-02",
+      "scene": "SC-08",
+      "title": "Manual override 2",
+      "desc": "KAI performs the planned manual override action, beat 2.",
+      "characters": [
+        "CHAR-KAI"
+      ],
+      "positioning": "Clear camera placement and subject contact points are specified.",
+      "route": "GENERATE",
+      "codes": [
+        "LOC-ARCHIVE",
+        "PROP-FIBER-KEY"
+      ],
+      "risks": [],
+      "safe": "Use a locked composition with reduced movement while preserving the story beat.",
+      "dur": 6,
+      "keyframes": [
+        {
+          "label": "A",
+          "title": "Frame A",
+          "description": "KAI performs the planned manual override action, beat 2.",
+          "required": true
+        }
+      ],
+      "clips": [
+        {
+          "title": "Primary motion",
+          "dur": 6,
+          "kind": "i2v",
+          "motionPrompt": "KAI completes beat 2; preserve the locked camera and continuity state."
+        }
+      ]
+    },
+    {
+      "id": "SC-09-01",
+      "scene": "SC-09",
+      "title": "Aftermath 1",
+      "desc": "KAI performs the planned aftermath action, beat 1.",
+      "characters": [
+        "CHAR-KAI"
+      ],
+      "positioning": "Clear camera placement and subject contact points are specified.",
+      "route": "GENERATE",
+      "codes": [
+        "LOC-TEST",
+        "PROP-LEVER"
+      ],
+      "risks": [],
+      "safe": "Use a locked composition with reduced movement while preserving the story beat.",
+      "dur": 7,
+      "keyframes": [
+        {
+          "label": "A",
+          "title": "Frame A",
+          "description": "KAI performs the planned aftermath action, beat 1.",
+          "required": true
+        }
+      ],
+      "clips": [
+        {
+          "title": "Primary motion",
+          "dur": 7,
+          "kind": "i2v",
+          "motionPrompt": "KAI completes beat 1; preserve the locked camera and continuity state."
+        }
+      ]
+    },
+    {
+      "id": "SC-09-02",
+      "scene": "SC-09",
+      "title": "Aftermath 2",
+      "desc": "KAI performs the planned aftermath action, beat 2. KAI says, \"Leave the error in.\"",
+      "characters": [
+        "CHAR-KAI"
+      ],
+      "positioning": "Clear camera placement and subject contact points are specified.",
+      "route": "GENERATE",
+      "codes": [
+        "LOC-TEST",
+        "PROP-CARTRIDGE"
+      ],
+      "risks": [],
+      "safe": "Use a locked composition with reduced movement while preserving the story beat.",
+      "dur": 5,
+      "keyframes": [
+        {
+          "label": "A",
+          "title": "Frame A",
+          "description": "KAI performs the planned aftermath action, beat 2.",
+          "required": true
+        }
+      ],
+      "clips": [
+        {
+          "title": "Primary motion",
+          "dur": 5,
+          "kind": "i2v",
+          "motionPrompt": "KAI completes beat 2; preserve the locked camera and continuity state."
+        }
+      ]
+    }
+  ]
+}

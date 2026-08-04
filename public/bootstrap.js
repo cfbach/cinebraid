@@ -1,0 +1,30 @@
+/* Start after every view and action module has loaded. */
+load()
+  .then(() => {
+    document.body.dataset.renderReady = "1";
+    if (window.__CINEBRAID_COMPOSER_607_DISABLED) {
+      document.body.dataset.composerSafeMode = "1";
+      if (typeof toast === "function") {
+        toast(
+          window.__CINEBRAID_COMPOSER_607_ERROR
+            ? "Composer recovery mode enabled — Shots and navigation are available"
+            : "Stable workspace mode enabled",
+        );
+      }
+    }
+  })
+  .catch((error) => {
+    console.error("CineBraid failed to render:", error);
+    const message = error?.message || String(error);
+    document.body.dataset.renderError = message;
+    const main = document.getElementById("main");
+    if (main) {
+      const safe = String(message).replace(/[&<>"]/g, (c) => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+      })[c]);
+      main.innerHTML = `<section class="empty-state"><h2>CineBraid could not render</h2><p>${safe}</p>${typeof window.reloadCineBraidSafe === "function" ? '<button class="ghost-btn" onclick="reloadCineBraidSafe()">Reload stable workspace</button>' : ""}</section>`;
+    }
+  });

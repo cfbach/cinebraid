@@ -1,0 +1,2919 @@
+/* CINEBRAID — vanilla JS SPA. State = active project's project.json. Media = disk scan. */
+let P = null,
+  CONFIG = {},
+  SCAN = { anchors: [], plates: [], props: [], vehicles: [], media: [], shots: {} },
+  PROMPT_LIBRARY = { schemaVersion: 1, profiles: [] },
+  AGENT_STATUS = { enabled: false, runs: [], agents: [], index: {} },
+  FAL_GENERATION_JOBS = [],
+  AUTOMATION_RUNS = [],
+  saveTimer = null,
+  ACTIVE_PROJECT_SLUG = "",
+  SAVE_CHAIN = Promise.resolve(),
+  SAVE_REVISION = 0,
+  SAVED_REVISION = 0;
+let FILTER = { status: "", route: "", char: "", action: "unfinished" };
+const storedValue = (key, fallback = null) => localStorage.getItem(key) ?? fallback;
+FILTER.action = storedValue("cinebraid-shot-action-filter", "unfinished") || "unfinished";
+let BOARD_MODE = storedValue("cinebraid-board-mode", "wall") || "wall";
+let SHOT_BOARD_DENSITY = storedValue("cinebraid-shot-board-density", "compact") || "compact";
+if (!["compact", "comfortable", "large"].includes(SHOT_BOARD_DENSITY)) SHOT_BOARD_DENSITY = "compact";
+let LIBRARY_TAB = storedValue("cinebraid-library-tab", "all") || "all";
+let COLLAPSED_SCENES = new Set(JSON.parse(storedValue("cinebraid-collapsed-scenes", "[]") || "[]"));
+const storedJSON = (key, fallback = {}) => {
+  try { return JSON.parse(localStorage.getItem(key) || JSON.stringify(fallback)); }
+  catch { return fallback; }
+};
+let SHOT_VIEW_MODE = "focused";
+let SHOT_SECTION_STATE = storedJSON("cinebraid-shot-section-state", {});
+let SHOT_SEGMENT_STATE = storedJSON("cinebraid-shot-segment-state", {});
+let SHOT_CANDIDATE_SIZE = storedValue("cinebraid-shot-candidate-size", "medium") || "medium";
+let SAVE_STATE_TIMER = null;
+let HELP_MODE = storedValue("cinebraid-help-mode", "helpful") || "helpful";
+let PROJECT_BOARD_FILTER = storedValue("cinebraid-project-board-filter", "all") || "all";
+let PROJECT_NAV_OPEN = storedValue("cinebraid-project-nav-open-v662", "0") === "1";
+let BATCH_SHOTS = new Set();
+let CURRENT_RENDER_ROUTE_KEY = "";
+let ROUTE_RENDER_IN_PROGRESS = false;
+let ROUTE_VIEW_RESTORE_TOKEN = 0;
+let ROUTE_REQUEST_TOKEN = 0;
+function projectWorkflowEmphasis() {
+  return P?.meta?.workflowEmphasis === "assisted" ? "assisted" : "manual";
+}
+function manualFirstWorkflow() {
+  return projectWorkflowEmphasis() === "manual";
+}
+window.setProjectWorkflowEmphasis = (value) => {
+  if (!P?.meta) return;
+  P.meta.workflowEmphasis = value === "assisted" ? "assisted" : "manual";
+  dirty();
+  route();
+  toast(P.meta.workflowEmphasis === "manual" ? "Manual-first workspace enabled" : "Assisted-production workspace enabled");
+};
+const $ = (s) => document.querySelector(s);
+const esc = (t) =>
+  String(t ?? "").replace(
+    /[&<>"]/g,
+    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c],
+  );
+const attr = (t) => esc(t).replace(/'/g, "&#39;");
+const helpAttr = (text, requirement = "") =>
+  HELP_MODE === "minimal"
+    ? ""
+    : ` data-tip="${attr(text + (requirement ? " Requires: " + requirement : ""))}" tabindex="0"`;
+const STATUSES = ["UNBUILT", "BUILT", "NEEDS POST", "LOCKED"]; // legacy storage values
+const ENT_STATUSES = [
+  "NOT STARTED",
+  "IN PROGRESS",
+  "CANDIDATE",
+  "REVIEW",
+  "APPROVED",
+]; // legacy storage values
+const WORKFLOW_STATES = [
+  "DRAFT",
+  "IN PROGRESS",
+  "READY FOR REVIEW",
+  "CHANGES REQUESTED",
+  "APPROVED",
+];
+const skey = (s) => s.replace(/ /g, "");
+const isVideo = (n) => /\.(mp4|webm|mov)$/i.test(n);
+const isAudio = (n) => /\.(wav|mp3|m4a|flac|ogg)$/i.test(n);
+const shotById = (id) => P.shots.find((x) => x.id === id);
+const sceneById = (id) => P.scenes.find((x) => x.id === id);
+const clipNeedsWinner = (c) =>
+  ["hold", "i2v", "flf"].includes(c.kind || "hold");
+const clipDone = (c) =>
+  c.kind === "flf"
+    ? !!(c.winner && c.winnerEnd)
+    : clipNeedsWinner(c)
+      ? !!c.winner
+      : true;
+const frameDone = (f) => !!f?.winner;
+const requiredFrames = (s) =>
+  (s.keyframes || []).filter((f) => f.required !== false);
+const motionUnitsForApproval = (s) =>
+  (s.clips || []).filter(
+    (c) => !["plan", "post", "reuse", "hold"].includes(c.kind),
+  );
+const shotApprovalComplete = (s) => {
+  const frames = requiredFrames(s),
+    motions = motionUnitsForApproval(s);
+  const framesReady = !frames.length || frames.every(frameDone);
+  const motionReady = !motions.length || motions.every((c) => !!c.videoWinner);
+  const sequenceReview = s?.creationBrief?.frameSequenceReview || null;
+  const sequenceFiles = frames.map((frame) => frame.winner).filter(Boolean);
+  const sequenceReady = frames.length < 2 || !!(
+    sequenceReview?.pass === true &&
+    Array.isArray(sequenceReview.files) &&
+    sequenceReview.files.length === sequenceFiles.length &&
+    sequenceReview.files.every((name, index) => name === sequenceFiles[index])
+  );
+  return (
+    framesReady &&
+    sequenceReady &&
+    motionReady &&
+    (frames.length || motions.length || !!s.winner)
+  );
+};
+const anyWinnerTake = (s, takes) => {
+  for (const f of s.keyframes || []) {
+    const t = takes.find((t) => t.name === f.winner);
+    if (t) return t;
+  }
+  for (const c of s.clips || []) {
+    const t = takes.find(
+      (t) =>
+        t.name === c.winner ||
+        t.name === c.winnerEnd ||
+        t.name === c.videoWinner,
+    );
+    if (t) return t;
+  }
+  return s.winner ? takes.find((t) => t.name === s.winner) : null;
+};
+const takeBadges = (s, name) => {
+  const out = [];
+  if (s.winner === name) out.push("SHOT WINNER");
+  for (const f of s.keyframes || [])
+    if (f.winner === name) out.push(`FRAME ${f.label || "?"}`);
+  for (const c of s.clips || []) {
+    if (c.videoWinner === name)
+      out.push(`MOTION ${(c.label || c.suffix || "?").toUpperCase()}`);
+    if (!(s.keyframes || []).length && c.winner === name)
+      out.push(c.kind === "flf" ? c.suffix + " FIRST" : "WINNER · " + c.suffix);
+    if (!(s.keyframes || []).length && c.winnerEnd === name)
+      out.push(c.suffix + " LAST");
+  }
+  return out;
+};
+const shotDur = (s) =>
+  s.clips?.length
+    ? s.clips.reduce((x, c) => x + (+c.dur || 0), 0)
+    : +s.dur || 0;
+const mmss = (sec) =>
+  Math.floor(sec / 60) + ":" + String(Math.round(sec % 60)).padStart(2, "0");
+
+function stringDistance(a, b) {
+  const left = String(a || "").toLowerCase(), right = String(b || "").toLowerCase();
+  if (!left) return right.length;
+  if (!right) return left.length;
+  const previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+  for (let i = 1; i <= left.length; i += 1) {
+    let diagonal = previous[0];
+    previous[0] = i;
+    for (let j = 1; j <= right.length; j += 1) {
+      const above = previous[j], cost = left[i - 1] === right[j - 1] ? 0 : 1;
+      previous[j] = Math.min(previous[j] + 1, previous[j - 1] + 1, diagonal + cost);
+      diagonal = above;
+    }
+  }
+  return previous[right.length];
+}
+function closestExistingId(id, ids = []) {
+  const rows = (ids || []).map(String).filter(Boolean);
+  if (!rows.length) return "";
+  return rows.map((candidate) => ({ candidate, distance: stringDistance(id, candidate) }))
+    .sort((a, b) => a.distance - b.distance || a.candidate.localeCompare(b.candidate))[0]?.candidate || "";
+}
+function sharedNotFoundView(type, id, listHref, listLabel, existingIds = [], itemHrefPrefix = "") {
+  const safeType = String(type || "Item"), safeId = String(id || "");
+  const closest = closestExistingId(safeId, existingIds);
+  const suggestionHref = closest && itemHrefPrefix ? `${String(itemHrefPrefix).replace(/\/?$/, "/")}${encodeURIComponent(closest)}` : "";
+  const suggestion = suggestionHref && stringDistance(safeId, closest) <= Math.max(3, Math.ceil(Math.max(safeId.length, closest.length) * 0.45))
+    ? `<p class="not-found-suggestion">Closest existing ID: <a href="${attr(suggestionHref)}">${esc(closest)}</a></p>`
+    : "";
+  return `<section class="not-found-state" role="status"><span>NOT FOUND</span><h1>${esc(safeType)} not found</h1><p>CineBraid could not find ${esc(safeType.toLowerCase())} <code>${esc(safeId || "(missing ID)")}</code>. It may have been renamed, deleted, or opened from a stale bookmark.</p>${suggestion}<div class="not-found-actions"><a class="approve-btn" href="${attr(listHref)}">Back to ${esc(listLabel)}</a></div></section>`;
+}
+
+/* ---------- persistence ---------- */
+function applyTheme() {
+  const app = document.getElementById("app");
+  if (!app) return;
+  const appearance = CONFIG?.appearance || {};
+  const acc = localStorage.getItem("ahub-acc") || appearance.accent || "blue";
+  const surf = localStorage.getItem("ahub-surf") || appearance.surface || "night";
+  const scale = String(localStorage.getItem("cinebraid-ui-scale") || appearance.scale || "100");
+  const font = localStorage.getItem("cinebraid-ui-font") || appearance.font || "studio";
+  app.dataset.acc = acc;
+  app.dataset.surf = surf;
+  app.dataset.font = font;
+  app.dataset.density = localStorage.getItem("cinebraid-ui-density") || appearance.density || "comfortable";
+  if (document.documentElement?.style?.setProperty) document.documentElement.style.setProperty("--ui-scale", `${Math.max(90, Math.min(110, Number(scale) || 100)) / 100}`);
+  document.body.dataset.help = HELP_MODE;
+}
+
+window.setTheme = (k, v) => {
+  localStorage.setItem("ahub-" + k, v);
+  applyTheme();
+  route();
+};
+window.previewWorkspaceAppearance = (options = {}) => {
+  if (options.accent) localStorage.setItem("ahub-acc", options.accent);
+  if (options.surface) localStorage.setItem("ahub-surf", options.surface);
+  if (options.scale) localStorage.setItem("cinebraid-ui-scale", String(options.scale));
+  if (options.density) localStorage.setItem("cinebraid-ui-density", String(options.density));
+  if (options.font) localStorage.setItem("cinebraid-ui-font", String(options.font));
+  applyTheme();
+};
+window.setProjectAIPolicy = (v) => {
+  P.meta.aiPolicy = v;
+  dirty();
+  route();
+  toast("Project AI policy updated");
+};
+window.setHelpMode = (v) => {
+  HELP_MODE = v;
+  localStorage.setItem("cinebraid-help-mode", v);
+  applyTheme();
+  route();
+};
+function alphaLabel(i) {
+  let n = i + 1,
+    out = "";
+  while (n) {
+    n--;
+    out = String.fromCharCode(65 + (n % 26)) + out;
+    n = Math.floor(n / 26);
+  }
+  return out;
+}
+function newKeyframe(index, title = "") {
+  const label = alphaLabel(index);
+  return {
+    id: "frame-" + label.toLowerCase() + "-" + Date.now().toString(36) + index,
+    label,
+    title: title || `${label === "A" ? "Opening" : "Key"} frame ${label}`,
+    winner: null,
+    description: "",
+    notes: "",
+    required: true,
+    generationPackages: [],
+  };
+}
+function normalizeShotV5(s) {
+  let changed = false;
+  s.clips = s.clips || [];
+  if (!s.audio || typeof s.audio !== "object") { s.audio = {}; changed = true; }
+  for (const key of ["line", "speakerId", "note", "voiceEntityId", "vo", "sfx", "ambience", "music", "emotion", "delivery", "language", "pace", "volume", "sync"]) {
+    if (s.audio[key] == null) { s.audio[key] = ""; changed = true; }
+  }
+  if (!Array.isArray(s.keyframes)) {
+    s.keyframes = [];
+    changed = true;
+    const files = [];
+    for (const c of s.clips) {
+      if (c.winner && !files.includes(c.winner)) files.push(c.winner);
+      if (c.winnerEnd && !files.includes(c.winnerEnd)) files.push(c.winnerEnd);
+    }
+    if (s.winner && !files.includes(s.winner)) files.unshift(s.winner);
+    const count = Math.max(
+      1,
+      files.length,
+      s.clips.some((c) => c.kind === "flf") ? 2 : 1,
+    );
+    for (let i = 0; i < count; i++) {
+      const f = newKeyframe(i);
+      f.winner = files[i] || null;
+      s.keyframes.push(f);
+    }
+  }
+  if (
+    s.winner &&
+    !isVideo(s.winner) &&
+    !isAudio(s.winner) &&
+    s.keyframes[0] &&
+    !s.keyframes[0].winner
+  ) {
+    s.keyframes[0].winner = s.winner;
+    changed = true;
+  }
+  s.keyframes.forEach((f, i) => {
+    if (!f.id) {
+      f.id = "frame-" + alphaLabel(i).toLowerCase();
+      changed = true;
+    }
+    const label = alphaLabel(i);
+    if (f.label !== label) {
+      f.label = label;
+      changed = true;
+    }
+    f.generationPackages = f.generationPackages || [];
+    if (f.required == null) {
+      f.required = true;
+      changed = true;
+    }
+  });
+  if (!s.clips.length && (s.motionPrompt || "").trim()) {
+    s.clips = [
+      {
+        id: "seg-" + Date.now().toString(36),
+        suffix: "a",
+        label: "A",
+        title: "Primary motion",
+        dur: +s.dur || 5,
+        kind: (s.route || "").includes("FLF")
+          ? "flf"
+          : (s.route || "").includes("R2V")
+            ? "r2v"
+            : "i2v",
+        note: s.motionPrompt || "",
+        motionPrompt: s.motionPrompt || "",
+        fromFrame: s.keyframes[0]?.id || "",
+        toFrame: "",
+        generationPackages: [],
+      },
+    ];
+    changed = true;
+  }
+  s.clips.forEach((c, i) => {
+    if (!c.id) {
+      c.id = "seg-" + (c.suffix || i) + "-" + Date.now().toString(36);
+      changed = true;
+    }
+    const label = alphaLabel(i);
+    if (c.label !== label) {
+      c.label = label;
+      changed = true;
+    }
+    if (!c.suffix) {
+      c.suffix = label.toLowerCase();
+      changed = true;
+    }
+    if (c.kind === "hold") {
+      c.kind = (c.motionPrompt || c.note || "").trim() ? "i2v" : "plan";
+      changed = true;
+    } else if (
+      !["i2v", "flf", "r2v", "plan", "post", "reuse"].includes(c.kind)
+    ) {
+      c.kind = "i2v";
+      changed = true;
+    }
+    if (!c.fromFrame) {
+      c.fromFrame =
+        s.keyframes[Math.min(i, s.keyframes.length - 1)]?.id ||
+        s.keyframes[0]?.id ||
+        "";
+      changed = true;
+    }
+    if (c.kind === "flf" && !c.toFrame) {
+      if (!s.keyframes[i + 1]) {
+        s.keyframes.push(newKeyframe(s.keyframes.length));
+        changed = true;
+      }
+      c.toFrame = s.keyframes[i + 1]?.id || "";
+      changed = true;
+    }
+    for (const key of ["line", "speakerId", "audioNote", "voiceEntityId", "vo", "sfx", "ambience", "music", "emotion", "delivery", "language", "pace", "volume", "sync"]) {
+      if (c[key] == null) { c[key] = ""; changed = true; }
+    }
+    c.generationPackages = c.generationPackages || [];
+  });
+  if (!s.creationBrief || typeof s.creationBrief !== "object") {
+    s.creationBrief = {};
+    changed = true;
+  }
+  if (!Array.isArray(s.creationBrief.propIds)) {
+    s.creationBrief.propIds = [];
+    changed = true;
+  }
+  if (!Array.isArray(s.creationBrief.promptBuilds)) {
+    s.creationBrief.promptBuilds = [];
+    changed = true;
+  }
+  if (!s.creationBrief.mode) {
+    s.creationBrief.mode = "auto";
+    changed = true;
+  }
+  const resolvedEntities = resolveShotEntities(P, s);
+  const resolvedLocationId = resolvedEntities.locations[0]?.id || "";
+  // Preserve stale explicit IDs so the Inputs workspace can show and repair them.
+  // Only infer a location when the project has no explicit location relationship.
+  if (!String(s.creationBrief.locationId || "").trim() && resolvedLocationId) {
+    s.creationBrief.locationId = resolvedLocationId;
+    changed = true;
+  }
+  const resolvedPropIds = resolvedEntities.props.map((x) => x.id);
+  const preservedPropIds = (s.creationBrief.propIds || []).map((id) => String(id || "").trim()).filter(Boolean);
+  const nextPropIds = [...new Set([...preservedPropIds, ...resolvedPropIds])];
+  if (JSON.stringify(nextPropIds) !== JSON.stringify(s.creationBrief.propIds)) {
+    s.creationBrief.propIds = nextPropIds;
+    changed = true;
+  }
+  return changed;
+}
+
+function projectCoverageTemplate(list) {
+  const templates = {
+    characters: [["front","Front",true],["front-three-quarter","3/4 front",true],["profile","Profile",true],["rear","Rear",true],["detail-face","Face / detail",false],["expression","Expression / optional detail",false]],
+    props: [["hero","Front / hero",true],["three-quarter","3/4 view",true],["side","Side",true],["rear","Rear",false],["top","Top",false],["detail","Detail / function close-up",true]],
+    vehicles: [["front","Front",true],["rear","Rear",true],["left-side","Left side",true],["right-side","Right side",true],["front-three-quarter","Front 3/4",true],["rear-three-quarter","Rear 3/4",false],["interior","Interior / cockpit",false],["detail","Detail",false]],
+    locations: [["establishing","Master establishing",true],["reverse","Reverse angle",true],["left-coverage","Left-facing coverage",false],["right-coverage","Right-facing coverage",false],["action-zone","Key action zone",true],["entrance-exit","Entrance / exit",false],["detail-zone","Detail zone",false],["overhead","Overhead / layout",false]],
+  };
+  return (templates[list] || []).map(([id,label,required]) => ({ id,label,required,approvedFile:"",notes:"",status:"missing",replacementHistory:[] }));
+}
+function projectExpressionTemplate(entity) {
+  const raw = String(entity?.expressions || "neutral; focused; worried; determined; relieved; custom").split(/[;,\n]+/).map((item) => item.trim()).filter(Boolean).slice(0, 8);
+  return (raw.length ? raw : ["Neutral","Focused","Worried","Determined","Relieved","Custom"]).map((label,index) => ({
+    id: String(label || `Expression ${index + 1}`).toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"") || `expression-${index + 1}`,
+    label,
+    required: index < 4,
+    approvedFile: "",
+    notes: "",
+    status: "missing",
+    replacementHistory: [],
+  }));
+}
+function projectCandidateIsCoverageSheet(entity, fileName) {
+  const row = (entity?.candidateFiles || []).find((item) => String(item?.stored || item?.name || item?.original || "") === String(fileName || "")) || {};
+  return row.coverageJobType === "sheet" || !!row.coverageSheetType || /(?:SHEET|TURNAROUND|CONTACT)/i.test(String(fileName || ""));
+}
+function normalizedCoverageAlias(list, slot) {
+  const label = String(slot?.label || slot?.id || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  if (!label) return "";
+  if (list === "characters") {
+    if (/\b(front|frontal)\b/.test(label) && !/(three|3) quarter|rear|behind|back/.test(label)) return "front";
+    if (/(three|3) quarter/.test(label) && !/rear|behind|back/.test(label)) return "front-three-quarter";
+    if (/profile|side view|left side|right side/.test(label)) return "profile";
+    if (/\b(rear|back)\b/.test(label) && !/(three|3) quarter/.test(label)) return "rear";
+    if (/face|head|portrait|close up|closeup/.test(label)) return "detail-face";
+    if (/expression|emotion/.test(label)) return "expression";
+  }
+  if (list === "props") {
+    if (/front|hero/.test(label) && !/(three|3) quarter/.test(label)) return "hero";
+    if (/(three|3) quarter/.test(label)) return "three-quarter";
+    if (/profile|side/.test(label)) return "side";
+    if (/rear|back/.test(label)) return "rear";
+    if (/top|overhead/.test(label)) return "top";
+    if (/detail|close up|closeup|function|hands?/.test(label)) return "detail";
+  }
+  if (list === "vehicles") {
+    if (/front/.test(label) && /(three|3) quarter/.test(label)) return "front-three-quarter";
+    if (/rear|back/.test(label) && /(three|3) quarter/.test(label)) return "rear-three-quarter";
+    if (/front/.test(label)) return "front";
+    if (/rear|back/.test(label)) return "rear";
+    if (/left/.test(label)) return "left-side";
+    if (/right/.test(label)) return "right-side";
+    if (/interior|cockpit|cabin/.test(label)) return "interior";
+    if (/detail|close up|closeup/.test(label)) return "detail";
+  }
+  if (list === "locations") {
+    if (/master|establish/.test(label)) return "establishing";
+    if (/reverse/.test(label)) return "reverse";
+    if (/left/.test(label)) return "left-coverage";
+    if (/right/.test(label)) return "right-coverage";
+    if (/action|hero zone|key zone/.test(label)) return "action-zone";
+    if (/entrance|exit|door/.test(label)) return "entrance-exit";
+    if (/detail/.test(label)) return "detail-zone";
+    if (/overhead|top|layout|floor plan/.test(label)) return "overhead";
+  }
+  return "";
+}
+function mergeCoverageSlotNotes(base, imported) {
+  const detail = String(imported?.notes || imported?.label || "").trim();
+  if (!detail || detail.toLowerCase() === String(base?.label || "").toLowerCase()) return String(base?.notes || "");
+  const current = String(base?.notes || "").trim();
+  return current.includes(detail) ? current : [current, `Imported view detail: ${detail}`].filter(Boolean).join("\n");
+}
+function normalizeReferenceCoverageData() {
+  let changed = false;
+  const warnings = [];
+  for (const list of ["characters","locations","props","vehicles"]) {
+    const seen = new Map();
+    for (const entity of P[list] || []) {
+      const id = String(entity?.id || "");
+      if (id) {
+        if (seen.has(id)) warnings.push(`Duplicate ${list.slice(0,-1)} id ${id}; references may resolve to the first matching record.`);
+        else seen.set(id, true);
+      }
+      const defaults = projectCoverageTemplate(list);
+      const existing = Array.isArray(entity.coverageSlots) ? entity.coverageSlots : [];
+      const aliasGroups = new Map();
+      for (const item of existing) {
+        const alias = defaults.some((slot) => slot.id === item?.id) ? String(item.id) : normalizedCoverageAlias(list, item);
+        if (!alias) continue;
+        const rows = aliasGroups.get(alias) || [];
+        rows.push(item);
+        aliasGroups.set(alias, rows);
+      }
+      const merged = defaults.map((slot) => {
+        const candidates = aliasGroups.get(slot.id) || [];
+        const prior = candidates.find((item) => String(item?.id) === slot.id) || candidates.find((item) => item?.approvedFile) || candidates[0];
+        const next = { ...slot, ...(prior || {}) };
+        for (const imported of candidates.filter((item) => item !== prior)) {
+          if (!next.approvedFile && imported?.approvedFile) next.approvedFile = imported.approvedFile;
+          next.notes = mergeCoverageSlotNotes(next, imported);
+        }
+        next.required = typeof next.required === "boolean" ? next.required : slot.required;
+        next.approvedFile = String(next.approvedFile || "");
+        next.notes = String(next.notes || "");
+        next.status = next.approvedFile ? "approved" : "missing";
+        next.replacementHistory = Array.isArray(next.replacementHistory) ? next.replacementHistory : [];
+        if (next.approvedFile && projectCandidateIsCoverageSheet(entity, next.approvedFile)) {
+          entity.coverageMigrationHistory = Array.isArray(entity.coverageMigrationHistory) ? entity.coverageMigrationHistory : [];
+          entity.coverageMigrationHistory.push({ at: new Date().toISOString(), slotId: next.id, removedFile: next.approvedFile, reason: "multi-view sheet cannot be a single-angle authority" });
+          next.approvedFile = "";
+          next.status = "missing";
+          next.notes = next.notes && !/automatically seeded/i.test(next.notes) ? next.notes : "";
+          changed = true;
+        }
+        const wasSilentCharacterSeed = list === "characters"
+          && next.approvedFile
+          && next.approvedFile === String(entity.approvedFile || "")
+          && (next.provenance?.source === "primary-approved-reference" || /automatically seeded from (?:the )?(?:first )?approved primary reference/i.test(next.notes || ""));
+        if (wasSilentCharacterSeed) {
+          entity.coverageMigrationHistory = Array.isArray(entity.coverageMigrationHistory) ? entity.coverageMigrationHistory : [];
+          entity.coverageMigrationHistory.push({ at: new Date().toISOString(), slotId: next.id, removedFile: next.approvedFile, reason: "character primary references require explicit angle assignment" });
+          next.approvedFile = "";
+          next.status = "missing";
+          next.notes = "";
+          next.provenance = { source: "migration-cleared-silent-angle", clearedAt: new Date().toISOString() };
+          entity.primaryAngleAssignment = { status: "unassigned", sourceFile: String(entity.approvedFile || ""), updatedAt: new Date().toISOString() };
+          changed = true;
+        }
+        return next;
+      });
+      for (const custom of existing.filter((item) => item && !defaults.some((slot) => slot.id === item.id) && !normalizedCoverageAlias(list, item))) {
+        merged.push({ ...custom, required: !!custom.required, approvedFile: String(custom.approvedFile || ""), notes: String(custom.notes || ""), status: custom.approvedFile ? "approved" : "missing", replacementHistory: Array.isArray(custom.replacementHistory) ? custom.replacementHistory : [] });
+      }
+      if (JSON.stringify(existing) !== JSON.stringify(merged)) { entity.coverageSlots = merged; changed = true; }
+      if (list === "characters") {
+        const desired = projectExpressionTemplate(entity);
+        const priorSlots = Array.isArray(entity.expressionSlots) ? entity.expressionSlots : [];
+        const desiredIds = new Set(desired.map((slot) => slot.id));
+        const reconciled = desired.map((slot) => {
+          const prior = priorSlots.find((item) => String(item?.id) === slot.id);
+          const next = { ...slot, ...(prior || {}), retired: false };
+          next.required = typeof next.required === "boolean" ? next.required : slot.required;
+          next.approvedFile = String(next.approvedFile || "");
+          next.status = next.approvedFile ? "approved" : "missing";
+          next.replacementHistory = Array.isArray(next.replacementHistory) ? next.replacementHistory : [];
+          return next;
+        });
+        for (const stale of priorSlots.filter((slot) => slot && !desiredIds.has(String(slot.id)))) {
+          if (stale.approvedFile) reconciled.push({ ...stale, required: false, retired: true, status: "retired", label: String(stale.label || stale.id) + (String(stale.label || "").includes("retired") ? "" : " (retired)") });
+        }
+        if (JSON.stringify(priorSlots) !== JSON.stringify(reconciled)) { entity.expressionSlots = reconciled; changed = true; }
+      }
+    }
+  }
+  P.meta = P.meta || {};
+  const uniqueWarnings = [...new Set(warnings)];
+  if (JSON.stringify(P.meta.dataIntegrityWarnings || []) !== JSON.stringify(uniqueWarnings)) { P.meta.dataIntegrityWarnings = uniqueWarnings; changed = true; }
+  if (changed) {
+    P.meta.schemaMigrations = P.meta.schemaMigrations || {};
+    if (!P.meta.schemaMigrations.coverageV6533) P.meta.schemaMigrations.coverageV6533 = new Date().toISOString();
+    if (!P.meta.schemaMigrations.coverageAliasesV6602) P.meta.schemaMigrations.coverageAliasesV6602 = new Date().toISOString();
+  }
+  return changed;
+}
+
+function normalizeProjectV5() {
+  let changed = false;
+  for (const key of ["characters", "locations", "props", "vehicles", "audio", "scenes", "shots"]) {
+    if (!Array.isArray(P[key])) { P[key] = []; changed = true; }
+  }
+  if (typeof normalizePromptBuildHistory === "function" && normalizePromptBuildHistory(P, { applyRetention: false })) changed = true;
+  if (normalizeReferenceCoverageData()) changed = true;
+  (P.shots || []).forEach((s) => {
+    if (normalizeShotV5(s)) changed = true;
+    if (typeof normalizeCandidateReviewSchema === "function" && normalizeCandidateReviewSchema(s, SCAN.shots?.[s.id]?.takes || [])) changed = true;
+    if (typeof normalizeShotPackageHistory === "function" && normalizeShotPackageHistory(s)) changed = true;
+  });
+  for (const list of ["characters", "locations", "props", "vehicles"])
+    for (const x of P[list] || []) {
+      if (!Array.isArray(x.continuityStates)) {
+        x.continuityStates = [];
+        changed = true;
+      }
+      if (!Array.isArray(x.assetPromptBuilds)) {
+        x.assetPromptBuilds = [];
+        changed = true;
+      }
+      if (x.creationDescription == null) {
+        x.creationDescription = "";
+        changed = true;
+      }
+      const before = JSON.stringify(x.continuityStates);
+      if (!x.continuityStates.some((st) => st && st.isDefault)) {
+        x.continuityStates.unshift({
+          id: "state-default",
+          name: "Default",
+          appliesTo: "",
+          approvedFile: x.approvedFile || "",
+          notes: "Primary approved reference.",
+          isDefault: true,
+        });
+      }
+      x.continuityStates.forEach((st, i) => {
+        if (!st.id) st.id = i === 0 ? "state-default" : "state-" + Date.now().toString(36) + "-" + i;
+        if (!st.name) st.name = st.isDefault ? "Default" : `State ${i + 1}`;
+        if (st.approvedFile == null) st.approvedFile = "";
+        if (st.notes == null) st.notes = "";
+        if (st.appliesTo == null) st.appliesTo = "";
+        if (st.isDefault == null) st.isDefault = st.id === "state-default";
+        if (st.parentStateId == null)
+          st.parentStateId = st.isDefault ? "" : (x.continuityStates.find((item) => item && item.isDefault)?.id || "state-default");
+        if (!["derive", "independent"].includes(st.generationMode))
+          st.generationMode = st.isDefault ? "independent" : "derive";
+        if (st.assetPromptProfile == null) st.assetPromptProfile = "";
+        if (st.assetPromptNotes == null) st.assetPromptNotes = "";
+        if (!Array.isArray(st.assetPromptBuilds)) st.assetPromptBuilds = [];
+      });
+      if (x.approvedFile && x.continuityStates[0] && !x.continuityStates[0].approvedFile) x.continuityStates[0].approvedFile = x.approvedFile;
+      if ((x.continuityStates[0] || {}).approvedFile && x.approvedFile !== x.continuityStates[0].approvedFile) x.approvedFile = x.continuityStates[0].approvedFile;
+      if (before !== JSON.stringify(x.continuityStates)) changed = true;
+    }
+  if (!Array.isArray(P.mediaAssets)) {
+    P.mediaAssets = [];
+    changed = true;
+  }
+  if (!Array.isArray(P.finishJobs)) {
+    P.finishJobs = [];
+    changed = true;
+  }
+  P.finishJobs.forEach((job, i) => {
+    if (!job.id) {
+      job.id = "finish-" + Date.now().toString(36) + "-" + i;
+      changed = true;
+    }
+    if (!job.type) {
+      job.type = "upscale";
+      changed = true;
+    }
+    if (!job.status) {
+      job.status = "ready";
+      changed = true;
+    }
+  });
+  P.mediaAssets.forEach((asset, assetIndex) => {
+    if (!asset.id) {
+      asset.id = "media-" + Date.now().toString(36) + "-" + assetIndex;
+      changed = true;
+    }
+    if (!Array.isArray(asset.links)) {
+      asset.links = [];
+      changed = true;
+    }
+    asset.links.forEach((link, linkIndex) => {
+      if (!link.id) {
+        link.id = "link-" + Date.now().toString(36) + "-" + assetIndex + "-" + linkIndex;
+        changed = true;
+      }
+      if (link.agentContext == null) {
+        link.agentContext = link.role !== "do-not-use";
+        changed = true;
+      }
+      if (link.generationInput == null) {
+        link.generationInput = false;
+        changed = true;
+      }
+      if (link.order == null) {
+        link.order = linkIndex;
+        changed = true;
+      }
+      if (link.angleTag == null) {
+        link.angleTag = "";
+        changed = true;
+      }
+      if (link.priority == null) {
+        link.priority = "supporting";
+        changed = true;
+      }
+      if (link.referenceKind == null) {
+        link.referenceKind = link.role === "turnaround-reference"
+          ? "turnaround"
+          : link.role === "detail-reference"
+            ? "detail"
+            : ["alternate-view", "character-reference", "prop-reference", "vehicle-reference", "location-reference"].includes(link.role)
+              ? "single-angle"
+              : "general";
+        changed = true;
+      }
+      if (link.detailRegion == null) {
+        link.detailRegion = "";
+        changed = true;
+      }
+      if (link.availableAngles == null) {
+        link.availableAngles = "";
+        changed = true;
+      }
+    });
+  });
+  P.meta = P.meta || {};
+  P.meta.styleBlocks = Array.isArray(P.meta.styleBlocks) ? P.meta.styleBlocks : [];
+  P.meta.world = P.meta.world || { setting: "", include: "", reject: "" };
+  if (P.meta.globalStylePrompt == null) {
+    P.meta.globalStylePrompt = P.meta.styleBlocks.find((b) => b.id === "global-style")?.text || "";
+    changed = true;
+  }
+  if (P.meta.globalNegativePrompt == null) {
+    P.meta.globalNegativePrompt = P.meta.world.reject || "";
+    changed = true;
+  }
+  if (P.meta.aspectRatio == null) {
+    P.meta.aspectRatio = "";
+    changed = true;
+  }
+  if (P.meta.globalStylePrompt && !P.meta.styleBlocks.some((b) => b.id === "global-style")) {
+    P.meta.styleBlocks.unshift({ id: "global-style", name: "Global visual style", text: P.meta.globalStylePrompt, stage: "" });
+    changed = true;
+  }
+  if (P.meta.hubVersion !== "v6.0.0") {
+    P.meta.hubVersion = "v6.0.0";
+    changed = true;
+  }
+  if (P.meta.schemaVersion !== "6.6") {
+    P.meta.schemaVersion = "6.6";
+    changed = true;
+  }
+  if (!P.meta.v5) {
+    P.meta.v5 = { migratedAt: new Date().toISOString() };
+    changed = true;
+  }
+  for (const item of P.audio || []) {
+    if (item.cleanMaster == null) {
+      item.cleanMaster = false;
+      changed = true;
+    }
+    if (item.sameObjectAs == null) {
+      item.sameObjectAs = "";
+      changed = true;
+    }
+  }
+  return changed;
+}
+function frameById(s, id) {
+  return (s.keyframes || []).find((f) => f.id === id) || null;
+}
+function frameLabel(s, id) {
+  const f = frameById(s, id);
+  return f ? `Frame ${f.label}` : "No frame";
+}
+async function showFirstRunWorkspace(message = "") {
+  const projectData = await fetch("/api/projects").then((r) => r.ok ? r.json() : ({ projects: [] })).catch(() => ({ projects: [] }));
+  ACTIVE_PROJECT_SLUG = "";
+  P = null;
+  const projectTitle = $("#project-title"), projectFormat = $("#project-format"), topbarProject = $("#topbar-project");
+  if (projectTitle) projectTitle.textContent = "CineBraid";
+  if (projectFormat) projectFormat.textContent = "No project open";
+  if (topbarProject) topbarProject.textContent = "CineBraid";
+  const existing = (projectData.projects || []).map((project) => `<button class="ghost-btn" onclick="switchProject('${attr(project.slug)}')">Open ${esc(project.title || project.slug)}</button>`).join("");
+  $("#main").innerHTML = `<section class="first-run-state" role="status"><div class="first-run-mark">CB</div><div><span>WELCOME TO CINEBRAID</span><h1>Start with a project—or open the sample.</h1><p>CineBraid keeps approved references, continuity, shots, existing media and final deliveries together. AI and in-app generation are optional.</p>${message ? `<small>${esc(message)}</small>` : ""}<div class="first-run-actions"><button class="assemble-btn" onclick="newProject()">Create a project</button>${existing}</div><ol><li>Upload or map existing references.</li><li>Approve the production authorities.</li><li>Attach existing stills, video and audio to shots.</li><li>Finalize the approved result.</li></ol></div></section>`;
+}
+async function load() {
+  applyTheme();
+  const projectResponse = await fetch("/api/project");
+  if (projectResponse.status === 404) {
+    const data = await projectResponse.json().catch(() => ({}));
+    await showFirstRunWorkspace(data.error || "No project is available yet.");
+    return;
+  }
+  if (!projectResponse.ok) throw new Error((await projectResponse.json()).error || "Could not load project");
+  const loaded = await Promise.all([
+    (async () => {
+      ACTIVE_PROJECT_SLUG =
+        projectResponse.headers?.get?.("x-cinebraid-project-slug") ||
+        ACTIVE_PROJECT_SLUG ||
+        "fixture";
+      return projectResponse.json();
+    })(),
+    fetch("/api/scan").then((r) => r.json()),
+    fetch("/api/prompt/profiles")
+      .then((r) => r.json())
+      .catch(() => ({ profiles: [] })),
+    fetch("/api/config")
+      .then((r) => r.json())
+      .catch(() => ({})),
+    fetch("/api/agents/status")
+      .then((r) => r.json())
+      .catch(() => ({ enabled: false, runs: [], agents: [], index: {} })),
+    fetch("/api/automation/runs")
+      .then((r) => r.ok ? r.json() : { runs: [] })
+      .catch(() => ({ runs: [] })),
+  ]);
+  P = loaded[0];
+  clearTimeout(saveTimer);
+  saveTimer = null;
+  SAVE_REVISION = 0;
+  SAVED_REVISION = 0;
+  SCAN = loaded[1];
+  PROMPT_LIBRARY = loaded[2] || { profiles: [] };
+  CONFIG = loaded[3] || {};
+  AGENT_STATUS = loaded[4] || {
+    enabled: false,
+    runs: [],
+    agents: [],
+    index: {},
+  };
+  AUTOMATION_RUNS = loaded[5]?.runs || [];
+  FAL_GENERATION_JOBS = [];
+  const falConfig = CONFIG.generation?.fal || {};
+  if (falConfig.enabled && falConfig.keySource !== "none") {
+    FAL_GENERATION_JOBS = await fetch("/api/generation/fal/jobs")
+      .then((r) => r.ok ? r.json() : { jobs: [] })
+      .then((data) => data.jobs || [])
+      .catch(() => []);
+  }
+  applyTheme();
+  P.meta.styleBlocks = P.meta.styleBlocks || [];
+  P.meta.iterBudget = P.meta.iterBudget || { A: 12, B: 3 };
+  P.meta.world = P.meta.world || { setting: "", include: "", reject: "" };
+  P.meta.refSyntax = P.meta.refSyntax || "@imageN";
+  P.meta.models = P.meta.models || [];
+  P.audio = P.audio || [];
+  P.decisions = P.decisions || [];
+  P.jobs = P.jobs || [];
+  P.agentRuns = P.agentRuns || [];
+  P.meta.aiPolicy = P.meta.aiPolicy || "project-default";
+  if (!P.meta.workflowEmphasis) P.meta.workflowEmphasis = "manual";
+  P.meta.defaults = P.meta.defaults || { stillModel: "", videoModel: "" };
+  P.meta.promptDefaults = P.meta.promptDefaults || {
+    imageProfile: "gpt-image-2/t2i",
+    videoProfile: "seedance-2/i2v",
+  };
+  (P.shots || []).forEach((s) => {
+    s.promptBuilds = s.promptBuilds || [];
+  });
+  const migratedV5 = normalizeProjectV5();
+  $("#project-title").textContent = P.meta.title;
+  $("#project-format").textContent =
+    (P.meta.format || "") + (P.meta.version ? " · " + P.meta.version : "");
+  $("#topbar-project").textContent = P.meta.title;
+  if (!location.hash) location.hash = "#/production";
+  route();
+  if ((P.meta?.dataIntegrityWarnings || []).length) setTimeout(() => toast(`${P.meta.dataIntegrityWarnings.length} project data-integrity warning${P.meta.dataIntegrityWarnings.length === 1 ? "" : "s"} found. Review Settings or Reports before relying on ambiguous IDs.`), 120);
+  if (migratedV5) setTimeout(() => dirty(), 50);
+  if (
+    (AGENT_STATUS.runs || []).some((x) =>
+      ["QUEUED", "RUNNING"].includes(x.status),
+    )
+  )
+    setTimeout(() => refreshAgentStatus(false), 400);
+  if (typeof resumeFalGenerationPolling === "function")
+    setTimeout(() => resumeFalGenerationPolling(), 500);
+}
+function setSaveState(state, label) {
+  const el = $("#save-state");
+  if (!el) return;
+  el.dataset.state = state;
+  const text = el.querySelector("span:last-child");
+  if (text) text.textContent = label;
+}
+function dirty() {
+  clearTimeout(saveTimer);
+  clearTimeout(SAVE_STATE_TIMER);
+  SAVE_REVISION += 1;
+  setSaveState("dirty", "Unsaved changes");
+  saveTimer = setTimeout(() => {
+    saveTimer = null;
+    queueProjectSave(captureProjectSave()).catch(() => {});
+  }, 500);
+}
+function captureProjectSave() {
+  if (!P || !ACTIVE_PROJECT_SLUG) return null;
+  return {
+    slug: ACTIVE_PROJECT_SLUG,
+    revision: SAVE_REVISION,
+    body: JSON.stringify(P),
+  };
+}
+function queueProjectSave(job) {
+  if (!job) return SAVE_CHAIN;
+  const run = SAVE_CHAIN.catch(() => {}).then(async () => {
+    if (ACTIVE_PROJECT_SLUG === job.slug)
+      setSaveState("saving", "Saving…");
+    const r = await fetch(
+      `/api/projects/${encodeURIComponent(job.slug)}/project`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: job.body,
+      },
+    );
+    if (!r.ok) {
+      const data = await r.json().catch(() => ({}));
+      throw new Error(data.error || "Project save failed");
+    }
+    if (ACTIVE_PROJECT_SLUG === job.slug) {
+      SAVED_REVISION = Math.max(SAVED_REVISION, job.revision);
+      if (job.revision === SAVE_REVISION) {
+        setSaveState("saved", "Saved");
+        SAVE_STATE_TIMER = setTimeout(
+          () => setSaveState("saved", "Saved"),
+          1600,
+        );
+      }
+    }
+  });
+  SAVE_CHAIN = run;
+  run.catch((error) => {
+    if (ACTIVE_PROJECT_SLUG === job.slug) {
+      setSaveState("error", "Save failed");
+      toast(error.message || "Save failed — check server terminal");
+    }
+  });
+  return run;
+}
+async function flushPendingProjectSave() {
+  clearTimeout(saveTimer);
+  saveTimer = null;
+  if (!P || !ACTIVE_PROJECT_SLUG || SAVE_REVISION <= SAVED_REVISION) {
+    await SAVE_CHAIN;
+    return;
+  }
+  await queueProjectSave(captureProjectSave());
+}
+function toast(msg) {
+  const t = $("#toast");
+  t.textContent = msg;
+  t.classList.remove("hidden");
+  clearTimeout(t._h);
+  t._h = setTimeout(() => t.classList.add("hidden"), 2200);
+}
+function tally() {
+  const c = {};
+  P.shots.forEach((s) => {
+    const k = workflowState(s).key;
+    c[k] = (c[k] || 0) + 1;
+  });
+  const total = P.shots.reduce((a, s) => a + shotDur(s), 0);
+  $("#tally").innerHTML =
+    `<div><b>${P.shots.length}</b> shots · <b>${P.scenes.length}</b> scenes · <b>${mmss(total)}</b></div>` +
+    WORKFLOW_STATES.map(
+      (k) => `<div>${k.toLowerCase()} <b>${c[k] || 0}</b></div>`,
+    ).join("");
+}
+
+/* ---------- project switcher ---------- */
+async function openProjectSwitcher() {
+  const { active, projects, archived = [], trashed = [] } = await (await fetch("/api/projects")).json();
+  const activeRows = projects.length ? projects.map((p) => `<article class="project-switcher-row ${p.slug === active ? "active" : ""}">
+    <button class="project-switcher-open" onclick="switchProject('${attr(p.slug)}')"><span>${p.slug === active ? "▸ " : ""}${esc(p.title)}</span><small>${esc(p.slug)}${p.format ? ` · ${esc(p.format)}` : ""}</small></button>
+    <div class="project-switcher-actions"><button class="ghost-btn" onclick="event.stopPropagation();requestArchiveProject('${attr(p.slug)}','${attr(p.title || p.slug)}')">Archive</button><button class="danger-btn project-delete-btn" onclick="event.stopPropagation();requestDeleteProject('${attr(p.slug)}','${attr(p.title || p.slug)}')">Delete</button></div>
+  </article>`).join("") : `<div class="guided-empty-inline"><b>No active projects.</b><span>Create a project or restore one from the archive.</span></div>`;
+  const archivedRows = archived.length ? `<details class="project-archive-list"><summary>Archived projects <span>${archived.length}</span></summary><div>${archived.map((p) => `<article class="project-switcher-row archived"><div class="project-switcher-open"><span>${esc(p.title)}</span><small>${esc(p.slug)}${p.archivedAt ? ` · archived ${esc(new Date(p.archivedAt).toLocaleDateString())}` : ""}</small></div><div class="project-switcher-actions"><button class="approve-btn" onclick="restoreArchivedProject('${attr(p.archiveName)}')">Restore</button></div></article>`).join("")}</div></details>` : "";
+  const trashedRows = trashed.length ? `<details class="project-archive-list project-trash-list"><summary>Recently deleted projects <span>${trashed.length}</span></summary><div>${trashed.map((p) => `<article class="project-switcher-row archived"><div class="project-switcher-open"><span>${esc(p.title)}</span><small>${esc(p.slug)}${p.deletedAt ? ` · deleted ${esc(new Date(p.deletedAt).toLocaleDateString())}` : ""}</small></div><div class="project-switcher-actions"><button class="approve-btn" onclick="restoreTrashedProject('${attr(p.trashName)}')">Restore</button></div></article>`).join("")}</div></details>` : "";
+  openModal(`<div class="project-switcher-modal"><header><div><span>PROJECT MANAGEMENT</span><h3>Projects</h3><p>Open active work, archive projects you may return to, or restore recently deleted projects without using the file manager.</p></div></header><div class="project-switcher-list">${activeRows}</div>${archivedRows}${trashedRows}<div class="project-switcher-legend"><span><b>Archive</b> hides a project and keeps it restorable here.</span><span><b>Delete</b> moves the complete folder to recoverable trash; it remains restorable from this window.</span></div><div class="modal-actions"><button class="cancel" onclick="closeModal()">Close</button><button class="add-btn" onclick="newProject()">+ New project</button></div></div>`);
+}
+$("#project-title").onclick = openProjectSwitcher;
+window.requestArchiveProject = (slug, title) => {
+  confirmModal(`Archive “${title}”? It will disappear from the active project list but can be restored from this same window.`, async () => {
+    try {
+      await flushPendingProjectSave();
+      const response = await fetch(`/api/projects/${encodeURIComponent(slug)}/archive`, { method: "POST" });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || "Could not archive project");
+      location.hash = "#/production";
+      await load();
+      toast("Project archived");
+    } catch (error) { toast(error.message || "Could not archive project"); }
+  }, { title: "Archive project", confirmLabel: "ARCHIVE PROJECT" });
+};
+window.restoreArchivedProject = async (archiveName) => {
+  try {
+    const response = await fetch(`/api/projects/archive/${encodeURIComponent(archiveName)}/restore`, { method: "POST" });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || "Could not restore project");
+    closeModal();
+    await openProjectSwitcher();
+    toast(`Restored ${data.slug}`);
+  } catch (error) { toast(error.message || "Could not restore project"); }
+};
+window.restoreTrashedProject = async (trashName) => {
+  try {
+    const response = await fetch(`/api/projects/trash/${encodeURIComponent(trashName)}/restore`, { method: "POST" });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || "Could not restore deleted project");
+    closeModal();
+    await openProjectSwitcher();
+    toast(`Restored ${data.slug}`);
+  } catch (error) { toast(error.message || "Could not restore deleted project"); }
+};
+window.requestDeleteProject = (slug, title) => {
+  confirmModal(
+    `Delete “${title}”? CineBraid will close it and move the complete project folder to recoverable trash. You can restore it later from Project Management.`,
+    async () => {
+      try {
+        await flushPendingProjectSave();
+        const response = await fetch(`/api/projects/${encodeURIComponent(slug)}`, { method: "DELETE" });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.error || "Could not delete project");
+        location.hash = "#/production";
+        await load();
+        toast("Project moved to trash");
+      } catch (error) { toast(error.message || "Could not delete project"); }
+    },
+    { title: "Delete project", confirmLabel: "DELETE PROJECT" },
+  );
+};
+window.switchProject = async (slug) => {
+  try {
+    await flushPendingProjectSave();
+    const r = await fetch("/api/projects/switch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ slug }),
+    });
+    if (!r.ok) throw new Error((await r.json()).error || "Could not switch project");
+  } catch (error) {
+    return toast(error.message || "Could not switch project");
+  }
+  closeModal();
+  location.hash = "#/production";
+  await load();
+  toast("Switched project");
+};
+window.newProject = () =>
+  formModal(
+    "New CineBraid project",
+    [
+      { k: "title", label: "Project title", ph: "The Black Lantern" },
+      { k: "format", label: "Format", ph: "Short film / commercial / series" },
+      { k: "aspectRatio", label: "Default aspect ratio", ph: "2.39:1" },
+      {
+        k: "startMode",
+        label: "How do you want to begin?",
+        type: "select",
+        options: ["Start manually", "Import with an LLM"],
+        value: "Start manually",
+      },
+      {
+        k: "globalStyle",
+        label: "Global visual style (optional for now)",
+        type: "textarea",
+        ph: "Cinematic naturalism, muted earth palette, practical grime, smoke-softened torchlight…",
+      },
+    ],
+    async (v) => {
+      try {
+        await flushPendingProjectSave();
+      } catch (error) {
+        return toast(error.message || "Save the current project before creating another one");
+      }
+      const r = await fetch("/api/projects/new", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: v.title || "New Project",
+          format: v.format || "",
+          aspectRatio: v.aspectRatio || "",
+          globalStylePrompt: v.globalStyle || "",
+        }),
+      });
+      const d = await r.json();
+      if (!r.ok) return toast(d.error || "Could not create project");
+      localStorage.setItem(
+        "cinebraid-creation-start-path",
+        v.startMode === "Import with an LLM" ? "import" : "manual",
+      );
+      location.hash = "#/create";
+      await load();
+      toast(
+        v.startMode === "Import with an LLM"
+          ? "Project created — use the Project Builder import path"
+          : "Project created — CineBraid will guide you to the first usable shot",
+      );
+    },
+  );
+
+/* ---------- modal helpers ---------- */
+let AGENT_RESULT_MODAL_TIMER = null;
+let MODAL_RETURN_FOCUS = null;
+let MODAL_KEY_HANDLER = null;
+let MODAL_SCROLL_Y = 0;
+let MODAL_ANCHOR_TOP = null;
+function modalFocusable(root) {
+  return [...(root?.querySelectorAll?.('button:not([disabled]), a[href], input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])') || [])]
+    .filter((el) => !el.hidden && el.offsetParent !== null);
+}
+function openModal(inner) {
+  const m = $("#modal");
+  if (!m) return;
+  MODAL_RETURN_FOCUS = document.activeElement && document.activeElement !== document.body ? document.activeElement : null;
+  MODAL_SCROLL_Y = Number(window.scrollY || document.documentElement?.scrollTop || 0);
+  const modalAnchor = MODAL_RETURN_FOCUS?.closest?.("details.asset-creation-card, details.entity-state-generation, .settings-block, .shot-main");
+  MODAL_ANCHOR_TOP = modalAnchor?.getBoundingClientRect?.().top ?? null;
+  let content = String(inner || "");
+  if (/<h3\b/i.test(content)) content = content.replace(/<h3\b(?![^>]*\bid=)/i, '<h3 id="cinebraid-modal-title"');
+  else content = `<h3 id="cinebraid-modal-title" class="sr-only">Dialog</h3>${content}`;
+  m.innerHTML = `<div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="cinebraid-modal-title">${content}</div>`;
+  m.classList.remove("hidden");
+  m.onclick = (event) => { if (event.target === m) closeModal(); };
+  if (MODAL_KEY_HANDLER) m.removeEventListener?.("keydown", MODAL_KEY_HANDLER);
+  MODAL_KEY_HANDLER = (event) => {
+    if (event.key !== "Tab") return;
+    const focusable = modalFocusable(m);
+    if (!focusable.length) return event.preventDefault();
+    const first = focusable[0], last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+  };
+  m.addEventListener?.("keydown", MODAL_KEY_HANDLER);
+  setTimeout(() => {
+    const target = m.querySelector?.("[autofocus], input, textarea, select, button, a[href], [tabindex]:not([tabindex='-1'])");
+    target?.focus?.();
+  }, 0);
+}
+window.openMediaTheatre = (encodedUrl, encodedTitle = "Preview", kind = "") => {
+  let url = "", title = "Preview";
+  try { url = decodeURIComponent(String(encodedUrl || "")); } catch { url = String(encodedUrl || ""); }
+  try { title = decodeURIComponent(String(encodedTitle || "Preview")); } catch { title = String(encodedTitle || "Preview"); }
+  if (!url) return toast("Preview media is unavailable");
+  const mediaKind = kind || (isVideo(title) || /\.(mp4|webm|mov)(?:$|[?#])/i.test(url) ? "video" : "image");
+  const media = mediaKind === "video"
+    ? `<video controls autoplay playsinline preload="metadata" src="${attr(url)}"></video>`
+    : `<img src="${attr(url)}" alt="${attr(title)}">`;
+  openModal(`<div class="media-theatre-modal"><header><div><span>MEDIA PREVIEW</span><h3>${esc(title)}</h3><p>Large in-app inspection without leaving the shot workspace.</p></div><button class="cancel" onclick="closeModal()">Close</button></header><div class="media-theatre-stage">${media}</div><footer><span>${mediaKind === "video" ? "Use the player controls to review motion and audio." : "Image fitted to the available workspace."}</span><a class="ghost-btn" href="${attr(url)}" target="_blank" rel="noopener">Open original</a></footer></div>`);
+};
+
+window.closeModal = () => {
+  if (AGENT_RESULT_MODAL_TIMER) {
+    clearTimeout(AGENT_RESULT_MODAL_TIMER);
+    AGENT_RESULT_MODAL_TIMER = null;
+  }
+  const m = $("#modal");
+  if (!m) return;
+  m.classList.add("hidden");
+  m.onclick = null;
+  if (MODAL_KEY_HANDLER) m.removeEventListener?.("keydown", MODAL_KEY_HANDLER);
+  MODAL_KEY_HANDLER = null;
+  const returnFocus = MODAL_RETURN_FOCUS;
+  const returnScroll = MODAL_SCROLL_Y;
+  const returnAnchorTop = MODAL_ANCHOR_TOP;
+  MODAL_RETURN_FOCUS = null;
+  MODAL_ANCHOR_TOP = null;
+  setTimeout(() => {
+    if (Number.isFinite(returnScroll)) window.scrollTo?.(0, returnScroll);
+    returnFocus?.focus?.({ preventScroll: true });
+    const anchor = returnFocus?.closest?.("details.asset-creation-card, details.entity-state-generation, .settings-block, .shot-main");
+    if (anchor && Number.isFinite(returnAnchorTop)) {
+      const delta = anchor.getBoundingClientRect().top - returnAnchorTop;
+      if (Math.abs(delta) > 1) window.scrollBy?.(0, delta);
+    }
+  }, 0);
+};
+function confirmModal(message, onConfirm, options = {}) {
+  const title = options.title || "Confirm action";
+  const confirmLabel = options.confirmLabel || "CONFIRM";
+  const danger = options.danger !== false;
+  openModal(`<h3>${esc(title)}</h3><p class="modal-confirm-message">${esc(message)}</p><div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button class="${danger ? "danger-btn" : "lock-btn"}" id="modal-confirm-action">${esc(confirmLabel)}</button></div>`);
+  setTimeout(() => {
+    const button = document.getElementById("modal-confirm-action");
+    if (button) button.onclick = () => { closeModal(); onConfirm?.(); };
+  }, 0);
+}
+window.confirmModal = confirmModal;
+
+let LAST_TEST_NOTE_EXPORT = null;
+window.openTestNote = async () => {
+  let savedCount = 0;
+  try {
+    const response = await fetch("/api/test-feedback", { cache: "no-store" });
+    const data = response.ok ? await response.json() : { notes: [] };
+    savedCount = Array.isArray(data.notes) ? data.notes.length : 0;
+  } catch (_) {}
+  openModal(`<div class="test-note-modal"><h3>Leave a test note</h3><p>Capture what was confusing while you are still looking at it. CineBraid saves the note locally with this route and a compact project summary. Nothing is transmitted automatically.</p><label><span>What happened?</span><textarea id="cinebraid-test-note" autofocus placeholder="What did you expect, what happened instead, or which term or button needed explaining?"></textarea></label><small>${savedCount ? `${savedCount} test note${savedCount === 1 ? "" : "s"} already saved in this project.` : "No test notes saved in this project yet."}</small><div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button class="approve-btn" onclick="saveTestNote()">Save note</button></div></div>`);
+};
+window.saveTestNote = async () => {
+  const note = String(document.getElementById("cinebraid-test-note")?.value || "").trim();
+  if (!note) return toast("Write a note first");
+  const response = await fetch("/api/test-feedback", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ note, route: location.hash || "#/production" }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) return toast(data.error || "Could not save test note");
+  LAST_TEST_NOTE_EXPORT = data;
+  const summary = data.record?.projectSummary || {};
+  openModal(`<div class="test-note-modal saved"><h3>Test note saved locally</h3><p>The note was redacted through CineBraid's diagnostic safety path. Copy or download it when you are ready to share feedback.</p><div class="test-note-context"><span>${esc(data.record?.route || location.hash || "#/production")}</span><b>${Number(summary.shots || 0)} shots · ${Number(summary.entities || 0)} entities · ${Number(summary.openReadinessIssues || 0)} readiness issues</b></div><div class="modal-actions"><button class="cancel" onclick="closeModal()">Close</button><button class="ghost-btn" onclick="copySavedTestNote()">Copy note</button><button class="approve-btn" onclick="downloadSavedTestNote()">Download note</button></div></div>`);
+};
+window.copySavedTestNote = async () => {
+  const text = String(LAST_TEST_NOTE_EXPORT?.markdown || "");
+  if (!text) return toast("No saved test note is open");
+  try { await navigator.clipboard.writeText(text); toast("Test note copied"); }
+  catch { toast("Could not copy test note"); }
+};
+window.downloadSavedTestNote = () => {
+  const text = String(LAST_TEST_NOTE_EXPORT?.markdown || ""), id = String(LAST_TEST_NOTE_EXPORT?.record?.id || "cinebraid-test-note");
+  if (!text) return toast("No saved test note is open");
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(new Blob([text], { type: "text/markdown" }));
+  link.download = `${id}.md`;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+};
+
+function formModal(title, fields, onSubmit) {
+  window._formSubmit = () => {
+    const vals = {};
+    fields.forEach((f) => (vals[f.k] = $("#ff-" + f.k).value));
+    closeModal();
+    onSubmit(vals);
+  };
+  openModal(`<h3>${esc(title)}</h3>
+    ${fields
+      .map(
+        (f) => `<div class="form-field"><label>${esc(f.label)}</label>
+      ${
+        f.type === "textarea"
+          ? `<textarea id="ff-${f.k}" ${f.ph ? `placeholder="${attr(f.ph)}"` : ""}>${esc(f.value || "")}</textarea>`
+          : f.type === "select"
+            ? `<select id="ff-${f.k}">${f.options.map((o) => `<option ${o === f.value ? "selected" : ""}>${esc(o)}</option>`).join("")}</select>`
+            : `<input id="ff-${f.k}" value="${attr(f.value || "")}" ${f.ph ? `placeholder="${attr(f.ph)}"` : ""}>`
+      }</div>`,
+      )
+      .join("")}
+    <div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button>
+      <button class="lock-btn" onclick="_formSubmit()">SAVE</button></div>`);
+  setTimeout(() => $("#ff-" + fields[0].k)?.focus(), 30);
+}
+
+/* ---------- routing ---------- */
+document.querySelectorAll(".nav-btn[data-view]").forEach(
+  (b) =>
+    (b.onclick = () => {
+      location.hash = "#/" + b.dataset.view;
+      document.body.classList.remove("rail-open");
+    }),
+);
+$("#rescan").onclick = async () => {
+  SCAN = await (await fetch("/api/scan")).json();
+  toast("Local folders synced");
+  route();
+};
+
+$("#mobile-nav").onclick = () => document.body.classList.toggle("rail-open");
+$("#global-add").onclick = () => openGlobalAdd();
+window.addEventListener("hashchange", route);
+function productionCount() {
+  return P ? P.shots.filter((shot) => shotProductionNextAction(shot).key !== "final").length : 0;
+}
+function updateChrome(view, navName) {
+  const active = document.querySelector(`.nav-btn[data-view="${navName}"]`);
+  const labels = {
+    scene: "Scene",
+    shot: "Shot",
+    character: "Character",
+    location: "Location",
+    prop: "Prop",
+    vehicle: "Vehicle",
+    sound: "Audio asset",
+    production: "Production",
+    shots: "Shots",
+    library: "References",
+    create: "New Project",
+    reports: "Reports",
+    settings: "Settings",
+  };
+  $("#topbar-view").textContent =
+    labels[view] || active?.dataset.label || "CineBraid";
+  $("#topbar-project").textContent = P.meta.title || "Untitled project";
+  const work = productionCount();
+  const workBadge = $("#production-nav-count");
+  if (workBadge) {
+    workBadge.textContent = work;
+    workBadge.classList.toggle("hidden", !work);
+  }
+}
+function routeSelectorValue(value) {
+  return String(value || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+function routeFocusSelector(element) {
+  if (!element || element === document.body) return "";
+  try {
+    if (element.id) return `#${CSS.escape(element.id)}`;
+    const composerId = element.dataset?.composerElement;
+    if (composerId) return `[data-composer-element="${routeSelectorValue(composerId)}"]`;
+    const focusKey = element.dataset?.focusKey;
+    if (focusKey) return `[data-focus-key="${routeSelectorValue(focusKey)}"]`;
+    if (element.name) return `${String(element.tagName || "").toLowerCase()}[name="${routeSelectorValue(element.name)}"]`;
+    for (const attrName of ["onchange", "oninput", "onclick"]) {
+      const value = element.getAttribute?.(attrName);
+      if (value) return `${String(element.tagName || "").toLowerCase()}[${attrName}="${routeSelectorValue(value)}"]`;
+    }
+  } catch {}
+  return "";
+}
+function currentRouteKey() {
+  const hash = String(location.hash || "#/production").split("?")[0];
+  return `${ACTIVE_PROJECT_SLUG || "project"}:${hash || "#/production"}`;
+}
+function routeDetailsBaseKey(element) {
+  if (!element) return "";
+  const explicit = element.dataset?.uiStateKey || element.id;
+  if (explicit) return `explicit:${explicit}`;
+  for (const name of ["frameId", "guidedPanel", "entityStateGeneration", "entityContinuity", "composerElement", "focusKey"]) {
+    const value = element.dataset?.[name];
+    if (value) return `${name}:${value}`;
+  }
+  const toggle = String(element.getAttribute?.("ontoggle") || "").replace(/\s+/g, " ").trim();
+  if (toggle) return `toggle:${toggle}`;
+  const classes = String(element.className || "").split(/\s+/).filter(Boolean).sort().join(".");
+  if (classes) return `details-class:${classes}`;
+  const summary = String(element.querySelector?.(":scope > summary")?.textContent || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 160);
+  return `details-summary:${summary}`;
+}
+function routeDetailsEntries(main) {
+  const counts = new Map();
+  return [...(main?.querySelectorAll?.("details") || [])].map((element) => {
+    const base = routeDetailsBaseKey(element);
+    const occurrence = counts.get(base) || 0;
+    counts.set(base, occurrence + 1);
+    return { element, key: `${base}::${occurrence}` };
+  });
+}
+function routeViewAnchor(main, entries, active) {
+  const activeDetails = active?.closest?.("details");
+  const activeEntry = entries.find((entry) => entry.element === activeDetails);
+  const mainRect = main?.getBoundingClientRect?.();
+  if (activeEntry && mainRect) {
+    return {
+      key: activeEntry.key,
+      offset: activeEntry.element.getBoundingClientRect().top - mainRect.top,
+    };
+  }
+  if (!mainRect) return { key: "", offset: 0 };
+  const visible = entries
+    .map((entry) => ({ entry, rect: entry.element.getBoundingClientRect() }))
+    .filter(({ rect }) => rect.bottom > mainRect.top + 1 && rect.top < mainRect.bottom - 1)
+    .sort((a, b) => Math.abs(a.rect.top - mainRect.top) - Math.abs(b.rect.top - mainRect.top))[0];
+  return visible
+    ? { key: visible.entry.key, offset: visible.rect.top - mainRect.top }
+    : { key: "", offset: 0 };
+}
+function captureRouteViewState(targetRouteKey = currentRouteKey()) {
+  try {
+    if (!CURRENT_RENDER_ROUTE_KEY || CURRENT_RENDER_ROUTE_KEY !== targetRouteKey) return null;
+    const main = $("#main"), active = document.activeElement;
+    const details = routeDetailsEntries(main);
+    const anchor = routeViewAnchor(main, details, active);
+    return {
+      routeKey: targetRouteKey,
+      mainScrollTop: Number(main?.scrollTop || 0),
+      mainScrollLeft: Number(main?.scrollLeft || 0),
+      windowX: Number(window.scrollX || 0),
+      windowY: Number(window.scrollY || 0),
+      selector: routeFocusSelector(active),
+      selectionStart: Number.isFinite(active?.selectionStart) ? active.selectionStart : null,
+      selectionEnd: Number.isFinite(active?.selectionEnd) ? active.selectionEnd : null,
+      selectionDirection: active?.selectionDirection || "none",
+      disclosureState: Object.fromEntries(details.map(({ key, element }) => [key, !!element.open])),
+      anchorKey: anchor.key,
+      anchorOffset: anchor.offset,
+    };
+  } catch { return null; }
+}
+function applyRouteDisclosureState(state) {
+  if (!state?.disclosureState) return new Map();
+  const entries = routeDetailsEntries($("#main"));
+  const map = new Map(entries.map((entry) => [entry.key, entry.element]));
+  entries.forEach(({ key, element }) => {
+    if (Object.prototype.hasOwnProperty.call(state.disclosureState, key))
+      element.open = !!state.disclosureState[key];
+  });
+  return map;
+}
+function restoreRouteViewState(state) {
+  if (!state) return;
+  const token = ++ROUTE_VIEW_RESTORE_TOKEN;
+  const main = $("#main");
+  const details = applyRouteDisclosureState(state);
+  try {
+    if (main) {
+      main.scrollTop = state.mainScrollTop || 0;
+      main.scrollLeft = state.mainScrollLeft || 0;
+    }
+    if (typeof window.scrollTo === "function") window.scrollTo(state.windowX || 0, state.windowY || 0);
+  } catch {}
+  const finish = () => {
+    if (token !== ROUTE_VIEW_RESTORE_TOKEN || currentRouteKey() !== state.routeKey) return;
+    try {
+      const currentMain = $("#main");
+      const rememberedAnchor = details.get(state.anchorKey);
+      const anchor = state.anchorKey ? ((rememberedAnchor?.isConnected ? rememberedAnchor : null) || new Map(routeDetailsEntries(currentMain).map((entry) => [entry.key, entry.element])).get(state.anchorKey)) : null;
+      if (currentMain && anchor) {
+        const currentOffset = anchor.getBoundingClientRect().top - currentMain.getBoundingClientRect().top;
+        const delta = currentOffset - Number(state.anchorOffset || 0);
+        if (Math.abs(delta) > 1) currentMain.scrollTop += delta;
+      }
+      const target = state.selector ? document.querySelector(state.selector) : null;
+      if (target?.focus) {
+        target.focus({ preventScroll: true });
+        if (state.selectionStart != null && typeof target.setSelectionRange === "function")
+          target.setSelectionRange(state.selectionStart, state.selectionEnd ?? state.selectionStart, state.selectionDirection || "none");
+      }
+    } catch {}
+  };
+  if (typeof requestAnimationFrame === "function")
+    requestAnimationFrame(() => requestAnimationFrame(finish));
+  else setTimeout(finish, 0);
+}
+async function route(recoveryAttempt = false) {
+  if (!P) return;
+  const requestToken = ++ROUTE_REQUEST_TOKEN;
+  try {
+    const targetRouteKey = currentRouteKey();
+    const routeParts = location.hash.split("/");
+    const view = routeParts[1] || "production";
+    const id = routeParts[2];
+    const navName =
+      {
+        scene: "shots",
+        shot: "shots",
+        board: "shots",
+        scenes: "shots",
+        queue: "shots",
+        runs: "runs",
+        character: "library",
+        location: "library",
+        prop: "library",
+        vehicle: "library",
+        sound: "library",
+        characters: "library",
+        locations: "library",
+        props: "library",
+        vehicles: "library",
+        audio: "library",
+        sessions: "activity",
+        canon: "sources",
+      }[view] || view;
+    document
+      .querySelectorAll(".nav-btn[data-view]")
+      .forEach((b) => b.classList.toggle("active", b.dataset.view === navName));
+    updateChrome(view, navName);
+    const routeViewState = captureRouteViewState(targetRouteKey);
+    const fn = ROUTES[view] || ROUTES.production;
+    const out = fn(decodeURIComponent(id || ""));
+    const rendered = out instanceof Promise ? await out : out;
+    if (requestToken !== ROUTE_REQUEST_TOKEN || targetRouteKey !== currentRouteKey()) return;
+    ROUTE_RENDER_IN_PROGRESS = true;
+    $("#main").innerHTML = rendered;
+    delete document.body.dataset.routeError;
+    if (["canon", "sources"].includes(view) && window._docs?.length)
+      openDoc(0, document.querySelector(".doc-tab"));
+    if (view === "shot") {
+      const shotId = decodeURIComponent(id || "");
+      wireDropzone(shotId);
+      wireShotWorkspace(shotId);
+    }
+    if (["character", "location", "prop", "vehicle", "sound"].includes(view))
+      wireEntityDropzone(
+        view === "sound" ? "audio" : view,
+        decodeURIComponent(id || ""),
+      );
+    wireSearch();
+    tally();
+    window.enhanceFocusedWorkspace?.();
+    restoreRouteViewState(routeViewState);
+    CURRENT_RENDER_ROUTE_KEY = targetRouteKey;
+    ROUTE_RENDER_IN_PROGRESS = false;
+    if (!routeViewState) {
+      const main = $("#main");
+      if (main) {
+        main.scrollTop = 0;
+        main.scrollLeft = 0;
+      }
+      if (typeof window.scrollTo === "function") window.scrollTo(0, 0);
+    }
+    if (typeof CustomEvent === "function") window.dispatchEvent(new CustomEvent("cinebraid:route-rendered", { detail: { view, id: decodeURIComponent(id || "") } }));
+  } catch (error) {
+    ROUTE_RENDER_IN_PROGRESS = false;
+    console.error("CineBraid route render failed:", error);
+    document.body.dataset.routeError = error?.message || String(error);
+    if (
+      !recoveryAttempt &&
+      window.__CINEBRAID_COMPOSER_607_READY &&
+      typeof window.disableComposerEnhancements === "function"
+    ) {
+      window.disableComposerEnhancements(error, false);
+      toast("Composer recovery mode enabled — restoring the stable workspace");
+      return route(true);
+    }
+    const message = esc(error?.message || String(error));
+    const main = $("#main");
+    if (main) {
+      main.innerHTML = `<section class="empty-state route-recovery"><h2>This workspace could not render</h2><p>${message}</p><div class="modal-actions"><button class="add-btn" onclick="route()">Retry</button>${typeof window.reloadCineBraidSafe === "function" ? '<button class="ghost-btn" onclick="reloadCineBraidSafe()">Reload stable workspace</button>' : ""}</div><small>Your project data has not been deleted or replaced. The error is limited to the browser workspace.</small></section>`;
+    }
+  }
+}
+
+/* ---------- shared pieces ---------- */
+function takesFor(id) {
+  return SCAN.shots[id]?.takes || [];
+}
+function mediaByPrefix(list, prefix) {
+  return (Array.isArray(list) ? list : []).filter((m) =>
+    m.name.toUpperCase().startsWith((prefix || "").toUpperCase()),
+  );
+}
+function workflowState(s, takes = takesFor(s.id)) {
+  const explicit = WORKFLOW_STATES.includes(s.workflowStatus)
+    ? s.workflowStatus
+    : "";
+  let key = explicit;
+  if (!key) {
+    if (s.status === "LOCKED") key = "APPROVED";
+    else if (s.reviewStatus === "CHANGES REQUESTED") key = "CHANGES REQUESTED";
+    else if (anyWinnerTake(s, takes) || s.winner) key = "READY FOR REVIEW";
+    else if (takes.length || s.status === "BUILT" || s.status === "NEEDS POST")
+      key = "IN PROGRESS";
+    else key = "DRAFT";
+  }
+  const cls = key.toLowerCase().replace(/ /g, "-");
+  return { key, label: key.replace(/\b\w/g, (c) => c.toUpperCase()), cls };
+}
+function entityWorkflowState(x) {
+  let key = WORKFLOW_STATES.includes(x.workflowStatus) ? x.workflowStatus : "";
+  if (!key) {
+    if (x.status === "APPROVED") key = "APPROVED";
+    else if (x.reviewStatus === "CHANGES REQUESTED") key = "CHANGES REQUESTED";
+    else if (["CANDIDATE", "REVIEW"].includes(x.status))
+      key = "READY FOR REVIEW";
+    else if (x.status === "IN PROGRESS") key = "IN PROGRESS";
+    else key = "DRAFT";
+  }
+  return {
+    key,
+    label: key.replace(/\b\w/g, (c) => c.toUpperCase()),
+    cls: key.toLowerCase().replace(/ /g, "-"),
+  };
+}
+function legacyShotStatus(key, current = "UNBUILT") {
+  if (key === "APPROVED") return "LOCKED";
+  if (key === "DRAFT") return "UNBUILT";
+  if (current === "NEEDS POST") return "NEEDS POST";
+  return "BUILT";
+}
+function legacyEntityStatus(key) {
+  return (
+    {
+      DRAFT: "NOT STARTED",
+      "IN PROGRESS": "IN PROGRESS",
+      "READY FOR REVIEW": "REVIEW",
+      "CHANGES REQUESTED": "IN PROGRESS",
+      APPROVED: "APPROVED",
+    }[key] || "NOT STARTED"
+  );
+}
+const OUTPUT_PLANS = {
+  still: ["Still image", "hold"],
+  animate: ["Animate approved image", "i2v"],
+  flf: ["First and last frames", "flf"],
+  references: ["Generate from references", "r2v"],
+  post: ["Post-production only", "post"],
+  reuse: ["Reuse existing media", "reuse"],
+  sequence: ["Multi-clip sequence", "sequence"],
+};
+function outputPlanKey(s) {
+  const clips = s.clips || [];
+  if (clips.length > 1) return "sequence";
+  const kind = clips[0]?.kind;
+  return (
+    {
+      hold: "still",
+      i2v: "animate",
+      flf: "flf",
+      r2v: "references",
+      post: "post",
+      reuse: "reuse",
+    }[kind] ||
+    ((s.route || "").includes("FLF")
+      ? "flf"
+      : (s.route || "").includes("COMPOSITE")
+        ? "post"
+        : "still")
+  );
+}
+function outputPlanLabel(s) {
+  return OUTPUT_PLANS[outputPlanKey(s)]?.[0] || "Still image";
+}
+window.setOutputPlan = (id, key) => {
+  const s = shotById(id);
+  if (!OUTPUT_PLANS[key]) return;
+  if (key === "sequence") {
+    if (!(s.clips || []).length)
+      s.clips = [
+        {
+          suffix: "a",
+          title: "Opening beat",
+          dur: Math.max(1, Math.round((s.dur || 10) / 2)),
+          kind: "i2v",
+          note: "",
+        },
+        {
+          suffix: "b",
+          title: "Closing beat",
+          dur: Math.max(1, Math.round((s.dur || 10) / 2)),
+          kind: "i2v",
+          note: "",
+        },
+      ];
+  } else {
+    const kind = OUTPUT_PLANS[key][1];
+    const old = (s.clips || [])[0] || {};
+    s.clips = [
+      {
+        suffix: "a",
+        title: old.title || OUTPUT_PLANS[key][0],
+        dur: +old.dur || +s.dur || 10,
+        kind,
+        note: old.note || "",
+        line: old.line || "",
+        speakerId: old.speakerId || "",
+        audioNote: old.audioNote || old.vo || "",
+        voiceEntityId: old.voiceEntityId || "",
+        vo: old.vo || "",
+        winner: old.winner || null,
+        winnerEnd: kind === "flf" ? old.winnerEnd || null : null,
+      },
+    ];
+  }
+  s.route = {
+    still: "GENERATE",
+    animate: "GENERATE",
+    flf: "GENERATE (FLF)",
+    references: "GENERATE (R2V)",
+    post: "COMPOSITE",
+    reuse: "REUSE",
+    sequence: "GENERATE",
+  }[key];
+  if (workflowState(s).key === "DRAFT") {
+    s.workflowStatus = "IN PROGRESS";
+    s.status = "BUILT";
+  }
+  dirty();
+  route();
+};
+window.setShotWorkflow = (id, key) => {
+  if (!WORKFLOW_STATES.includes(key)) return;
+  const s = shotById(id);
+  s.workflowStatus = key;
+  s.status = legacyShotStatus(key, s.status);
+  if (key !== "CHANGES REQUESTED") s.reviewStatus = "";
+  dirty();
+  route();
+};
+window.setEntityWorkflow = (list, id, key) => {
+  if (!WORKFLOW_STATES.includes(key)) return;
+  const x = P[list].find((e) => e.id === id);
+  x.workflowStatus = key;
+  x.status = legacyEntityStatus(key);
+  if (key !== "CHANGES REQUESTED") x.reviewStatus = "";
+  dirty();
+  route();
+};
+window.submitShot = (id) => {
+  const s = shotById(id);
+  if (!takesFor(id).length)
+    return toast("Add at least one candidate before submitting");
+  formModal(
+    "Submit for review",
+    [
+      {
+        k: "note",
+        label: "What changed? (optional)",
+        type: "textarea",
+        value: s.submissionNote || "",
+        ph: "What should the reviewer focus on?",
+      },
+    ],
+    (v) => {
+      s.workflowStatus = "READY FOR REVIEW";
+      s.status = "BUILT";
+      s.reviewStatus = "";
+      s.submissionNote = v.note || "";
+      s.submittedAt = new Date().toISOString();
+      dirty();
+      route();
+      toast("Submitted for review");
+    },
+  );
+};
+window.submitEntity = (list, id) => {
+  const x = P[list].find((e) => e.id === id);
+  const media = entityMedia(list, x);
+  if (!media.length)
+    return toast("Add at least one candidate before submitting");
+  formModal(
+    "Submit for review",
+    [
+      {
+        k: "note",
+        label: "What changed? (optional)",
+        type: "textarea",
+        value: x.submissionNote || "",
+        ph: "What should the reviewer focus on?",
+      },
+    ],
+    (v) => {
+      x.workflowStatus = "READY FOR REVIEW";
+      x.status = "REVIEW";
+      x.reviewStatus = "";
+      x.submissionNote = v.note || "";
+      x.submittedAt = new Date().toISOString();
+      dirty();
+      route();
+      toast("Submitted for review");
+    },
+  );
+};
+window.requestShotChanges = (id) =>
+  formModal(
+    "Request changes",
+    [
+      {
+        k: "note",
+        label: "What needs to change?",
+        type: "textarea",
+        ph: "Give one clear, actionable direction.",
+      },
+    ],
+    (v) => {
+      const s = shotById(id);
+      s.workflowStatus = "CHANGES REQUESTED";
+      s.reviewStatus = "CHANGES REQUESTED";
+      s.reviewNote = v.note || "Changes requested";
+      s.status = "BUILT";
+      dirty();
+      closeModal();
+      route();
+      toast("Changes requested");
+    },
+  );
+window.requestEntityChanges = (list, id) =>
+  formModal(
+    "Request changes",
+    [
+      {
+        k: "note",
+        label: "What needs to change?",
+        type: "textarea",
+        ph: "Give one clear, actionable direction.",
+      },
+    ],
+    (v) => {
+      const x = P[list].find((e) => e.id === id);
+      x.workflowStatus = "CHANGES REQUESTED";
+      x.reviewStatus = "CHANGES REQUESTED";
+      x.reviewNote = v.note || "Changes requested";
+      x.status = "IN PROGRESS";
+      dirty();
+      closeModal();
+      route();
+      toast("Changes requested");
+    },
+  );
+function entityInitials(id) {
+  return (
+    P.characters
+      .find((x) => x.id === id)
+      ?.name?.split(/\s+/)
+      .map((x) => x[0])
+      .join("")
+      .slice(0, 2)
+      .toUpperCase() || id.slice(0, 2).toUpperCase()
+  );
+}
+function continuityStateDeltaText(state) {
+  if (!state) return "";
+  const fields = [
+    "notes",
+    "stateDelta",
+    "delta",
+    "changeOnly",
+    "change",
+    "changes",
+    "description",
+    "visualDescription",
+    "instructions",
+    "prompt",
+  ];
+  for (const key of fields) {
+    const value = String(state[key] || "").trim();
+    if (value) return value;
+  }
+  return "";
+}
+function entityStateList(entity, includeDefault = true) {
+  if (!entity) return [];
+  entity.continuityStates = Array.isArray(entity.continuityStates)
+    ? entity.continuityStates
+    : [];
+  if (!entity.continuityStates.some((st) => st && st.isDefault)) {
+    entity.continuityStates.unshift({
+      id: "state-default",
+      name: "Default",
+      appliesTo: "",
+      approvedFile: entity.approvedFile || "",
+      notes: "Primary approved reference.",
+      isDefault: true,
+    });
+  }
+  const defaultState = entity.continuityStates.find((st) => st && st.isDefault) || entity.continuityStates[0] || null;
+  entity.continuityStates.forEach((st) => {
+    if (!st) return;
+    const migratedDelta = continuityStateDeltaText(st);
+    if (!String(st.notes || "").trim() && migratedDelta) st.notes = migratedDelta;
+    if (st.parentStateId == null) st.parentStateId = st.isDefault ? "" : defaultState?.id || "state-default";
+    if (!["derive", "independent"].includes(st.generationMode)) st.generationMode = st.isDefault ? "independent" : "derive";
+    if (st.assetPromptProfile == null) st.assetPromptProfile = "";
+    if (st.assetPromptNotes == null) st.assetPromptNotes = "";
+    st.assetPromptBuilds = Array.isArray(st.assetPromptBuilds) ? st.assetPromptBuilds : [];
+  });
+  if (entity.continuityStates[0]?.approvedFile && entity.approvedFile !== entity.continuityStates[0].approvedFile)
+    entity.approvedFile = entity.continuityStates[0].approvedFile;
+  return includeDefault
+    ? entity.continuityStates
+    : entity.continuityStates.filter((st) => !st.isDefault);
+}
+function entityStateById(entity, stateId) {
+  const states = entityStateList(entity, true);
+  if (!stateId) return states.find((st) => st.isDefault) || states[0] || null;
+  return states.find((st) => st.id === stateId) || null;
+}
+function selectedEntityStateForShot(s, entity) {
+  return entityStateById(entity, s?.continuityStateSelections?.[entity.id] || "") || entityStateList(entity, true)[0] || null;
+}
+function entityApprovedFileForState(entity, stateId = "") {
+  const st = entityStateById(entity, stateId);
+  return st?.approvedFile || entity.approvedFile || "";
+}
+function entityApprovalBadges(entity, file) {
+  return entityStateList(entity, true)
+    .filter((st) => (st.approvedFile || "") === file)
+    .map((st) => (st.isDefault ? "DEFAULT" : st.name || "STATE"));
+}
+function referenceRecordsForShot(s) {
+  const resolved = resolveShotEntities(P, s);
+  return [
+    ...resolved.characters.map((x) => ({ type: "Character", route: "character", ...x })),
+    ...resolved.locations.map((x) => ({ type: "Location", route: "location", ...x })),
+    ...resolved.props.filter((x) => !(P.vehicles || []).some((v) => v.id === x.id)).map((x) => ({ type: "Prop", route: "prop", ...x })),
+    ...(resolved.vehicles || []).map((x) => ({ type: "Vehicle", route: "vehicle", ...x })),
+    ...resolved.audio.map((x) => ({ type: "Audio", route: "sound", ...x })),
+  ];
+}
+
+// Project media helpers are defined in media.js.
+
+function sceneReferenceRecords(sc) {
+  const shots = P.shots.filter((s) => s.scene === sc.id);
+  const refs = shots.flatMap(referenceRecordsForShot);
+  return refs.filter(
+    (x, i, a) => a.findIndex((y) => y.type === x.type && y.id === x.id) === i,
+  );
+}
+function workflowChip(state) {
+  return `<span class="workflow-chip wf-${state.cls}">${esc(state.label)}</span>`;
+}
+function shotRelationshipChips(s) {
+  const refs = referenceRecordsForShot(s).slice(0, 4);
+  const chips = refs
+    .map(
+      (x) =>
+        `<span class="relation-chip relation-${x.type.toLowerCase()}" title="${attr(x.type + ": " + (x.name || x.id))}">${esc(x.type === "Character" ? entityInitials(x.id) : x.type[0])}</span>`,
+    )
+    .join("");
+  const more = Math.max(0, referenceRecordsForShot(s).length - 4);
+  return chips + (more ? `<span class="relation-more">+${more}</span>` : "");
+}
+function shotProductionNextAction(s, takes = takesFor(s.id)) {
+  const c = s.creationBrief || {};
+  const images = takes.filter((take) => !isVideo(take.name) && !isAudio(take.name));
+  const videos = takes.filter((take) => isVideo(take.name));
+  const still = c.finalStillFile || s.finalStillFile || s.winner || (s.keyframes || []).find((frame) => frame.winner)?.winner;
+  const motion = c.finalVideoFile || s.finalVideoFile || c.approvedMotionFile || (s.clips || []).find((clip) => clip.videoWinner)?.videoWinner;
+  if (c.finalVideoFile || c.finalStillFile || s.finalVideoFile || s.finalStillFile) return { key: "final", label: "Final", detail: "Delivered" };
+  if (motion) return { key: "finish", label: "Finish video", detail: "Approved motion" };
+  if (videos.length) return { key: "review-video", label: "Review video", detail: `${videos.length} returned` };
+  const wantsMotion = c.deliveryIntent === "motion" || (c.deliveryIntent !== "still" && (!!String(c.motionDirection || s.motionPrompt || "").trim() || (s.clips || []).length));
+  if (still && wantsMotion) return { key: "animate", label: "Animate", detail: "Still approved" };
+  if (still) return { key: "decide", label: "Finish or animate", detail: "Still approved" };
+  if (images.length) return { key: "review-still", label: "Review still", detail: `${images.length} returned` };
+  return { key: "create", label: "Add still", detail: "No image yet" };
+}
+function nextProductionShot() {
+  return P.shots.map((shot) => ({ shot, next: shotProductionNextAction(shot) })).find((row) => row.next.key !== "final") || null;
+}
+window.continueProduction = () => {
+  const row = nextProductionShot();
+  if (!row) return toast("Every shot is marked final");
+  location.hash = `#/shot/${row.shot.id}`;
+};
+function slate(s, sceneId) {
+  const takes = takesFor(s.id);
+  const last = takes[takes.length - 1];
+  const winner = anyWinnerTake(s, takes);
+  const show = winner || last;
+  const state = workflowState(s, takes);
+  const thumb = show
+    ? isVideo(show.name)
+      ? `<video muted preload="metadata" src="${show.url}#t=0.1"></video>`
+      : `<img src="${show.url}" alt="">`
+    : `<div class="blueprint"><span class="bp-id">${esc(s.id)}</span><span class="bp-note">AWAITING CANDIDATE</span></div>`;
+  const warning =
+    state.key === "READY FOR REVIEW"
+      ? '<span class="slate-alert">Needs decision</span>'
+      : state.key === "CHANGES REQUESTED"
+        ? '<span class="slate-alert changes">Changes requested</span>'
+        : "";
+  const refs = referenceRecordsForShot(s);
+  const next = shotProductionNextAction(s, takes);
+  return `<article class="slate wf-card-${state.cls}">
+    <div class="slate-top"><span class="slate-id">${esc(s.id)}</span><span class="dur-chip">${shotDur(s) ? shotDur(s) + "s" : ""}</span><span class="slate-route">${esc(outputPlanLabel(s))}</span>
+      ${sceneId ? `<span class="move-btns"><button onclick="moveShot('${s.id}',-1)" title="Move up">↑</button><button onclick="moveShot('${s.id}',1)" title="Move down">↓</button></span>` : ""}</div>
+    <a class="slate-thumb take-tile" href="#/shot/${s.id}" style="display:block">${thumb}${winner ? '<span class="win-badge">APPROVED PICK</span>' : ""}</a>
+    <a class="slate-body" href="#/shot/${s.id}">
+      <div class="slate-title">${esc(s.title)}</div>
+      <div class="state-pair"><span class="shot-next-chip next-${next.key}">${esc(next.label)}</span><small>${esc(next.detail)}</small></div>
+      <div class="slate-relations">${shotRelationshipChips(s)}${warning}</div>
+      <div class="slate-footer"><span>${takes.length} version${takes.length === 1 ? "" : "s"} · ${refs.length} ref${refs.length === 1 ? "" : "s"}</span><span>${s.submittedAt ? "submitted " + esc(s.submittedAt.slice(0, 10)) : s.audio?.line || (s.clips || []).some((c) => c.line) ? "Dialogue linked" : ""}</span></div>
+    </a>
+  </article>`;
+}
+window.toggleBatchShot = (id, on) => {
+  on ? BATCH_SHOTS.add(id) : BATCH_SHOTS.delete(id);
+  route();
+};
+window.clearBatchShots = () => {
+  BATCH_SHOTS.clear();
+  route();
+};
+window.selectSceneShots = (sceneId) => {
+  P.shots
+    .filter((s) => s.scene === sceneId)
+    .forEach((s) => BATCH_SHOTS.add(s.id));
+  route();
+};
+window.batchSetWorkflow = (key) => {
+  if (!WORKFLOW_STATES.includes(key) || !BATCH_SHOTS.size) return;
+  for (const id of BATCH_SHOTS) {
+    const s = shotById(id);
+    s.workflowStatus = key;
+    s.status = legacyShotStatus(key, s.status);
+  }
+  dirty();
+  route();
+  toast(`${BATCH_SHOTS.size} shots updated`);
+};
+window.batchContinuityState = () => {
+  if (!BATCH_SHOTS.size) return toast("Select shots first");
+  const entities = [...P.characters, ...P.locations, ...P.props, ...(P.vehicles || [])].filter(
+    (x) => (x.continuityStates || []).length,
+  );
+  if (!entities.length)
+    return toast("Create a continuity state in the Library first");
+  window._batchContinuity = entities;
+  openModal(
+    `<h3>Assign continuity state</h3><div class="modal-sub">APPLIES THE SELECTED STATE TO ${BATCH_SHOTS.size} SHOT${BATCH_SHOTS.size === 1 ? "" : "S"}</div><div class="form-field"><label>Entity and state</label><select id="batch-continuity-choice">${entities.flatMap((x) => (x.continuityStates || []).map((st) => `<option value="${attr(x.id + "|" + st.id)}">${esc(x.name || x.id)} — ${esc(st.name)}</option>`)).join("")}</select></div><div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button class="approve-btn" onclick="confirmBatchContinuity()">ASSIGN</button></div>`,
+  );
+};
+window.confirmBatchContinuity = () => {
+  const [entityId, stateId] = (
+    document.getElementById("batch-continuity-choice")?.value || "|"
+  ).split("|");
+  for (const id of BATCH_SHOTS) {
+    const s = shotById(id);
+    s.continuityStateSelections = s.continuityStateSelections || {};
+    s.continuityStateSelections[entityId] = stateId;
+  }
+  closeModal();
+  dirty();
+  route();
+  toast("Continuity state assigned");
+};
+window.batchHealthCheck = () => {
+  if (!BATCH_SHOTS.size) return toast("Select shots first");
+  const issues = projectHealthIssues().filter((x) =>
+    BATCH_SHOTS.has(x.shot.id),
+  );
+  openModal(
+    `<h3>Selected-shot health check</h3><div class="modal-sub">${BATCH_SHOTS.size} SHOTS · ${issues.length} ISSUE${issues.length === 1 ? "" : "S"}</div>${issues.map((x) => `<a class="qc-item" href="#/shot/${x.shot.id}" onclick="closeModal()"><span>${esc(x.type)} · ${esc(x.shot.id)}</span><small>${esc(x.msg)}</small></a>`).join("") || '<div class="canon-notes">No structural planning issues found.</div>'}<div class="modal-actions"><button class="cancel" onclick="closeModal()">Close</button></div>`,
+  );
+};
+window.exportBatchPackages = async () => {
+  if (!BATCH_SHOTS.size) return toast("Select shots first");
+  const r = await fetch("/api/export/packages", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ shotIds: [...BATCH_SHOTS] }),
+  });
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({}));
+    return toast("Export failed: " + (d.error || r.status));
+  }
+  const blob = await r.blob(),
+    a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `${(P.meta.title || "CineBraid").replace(/[^a-z0-9]+/gi, "_")}_packages.zip`;
+  a.click();
+};
+function batchToolbar() {
+  return `<div class="batch-toolbar ${BATCH_SHOTS.size ? "active" : ""}"><b>${BATCH_SHOTS.size} selected</b><select onchange="if(this.value){batchSetWorkflow(this.value);this.value=''}"><option value="">Set workflow…</option>${WORKFLOW_STATES.map((x) => `<option value="${x}">${x}</option>`).join("")}</select><button onclick="batchContinuityState()">Assign continuity state</button><button onclick="batchHealthCheck()">Check health</button><button onclick="exportBatchPackages()">Export packages ZIP</button><button onclick="clearBatchShots()">Clear</button></div>`;
+}
+
+window.setBoardMode = (mode) => {
+  BOARD_MODE = mode;
+  localStorage.setItem("cinebraid-board-mode", mode);
+  route();
+};
+window.setShotBoardDensity = (mode) => {
+  if (!["compact", "comfortable", "large"].includes(mode)) return;
+  SHOT_BOARD_DENSITY = mode;
+  localStorage.setItem("cinebraid-shot-board-density", mode);
+  route();
+};
+function shotBoardDensityControl() {
+  const labels = { compact: "Compact", comfortable: "Standard", large: "Large" };
+  return `<div class="board-density-control" aria-label="Shot preview size"><span>Card size</span><div class="board-density-buttons">${Object.entries(labels).map(([id, label]) => `<button type="button" class="${SHOT_BOARD_DENSITY === id ? "selected" : ""}" onclick="setShotBoardDensity('${id}')" aria-pressed="${SHOT_BOARD_DENSITY === id ? "true" : "false"}">${label}</button>`).join("")}</div></div>`;
+}
+window.toggleSceneCollapse = (id) => {
+  COLLAPSED_SCENES.has(id)
+    ? COLLAPSED_SCENES.delete(id)
+    : COLLAPSED_SCENES.add(id);
+  localStorage.setItem(
+    "cinebraid-collapsed-scenes",
+    JSON.stringify([...COLLAPSED_SCENES]),
+  );
+  route();
+};
+
+function runtimeBar(shots, target) {
+  const total = shots.reduce((a, s) => a + shotDur(s), 0);
+  if (!target) return `<div class="runtime-label">${mmss(total)} planned</div>`;
+  const pct = Math.min(100, (total / target.max) * 100);
+  const cls = total > target.max ? "over" : total >= target.min ? "ok" : "";
+  return `<div class="runtime-bar"><div class="runtime-track"><div class="runtime-fill ${cls}" style="width:${pct}%"></div></div>
+    <div class="runtime-label">${mmss(total)} planned · target ${mmss(target.min)}–${mmss(target.max)}${total > target.max ? " · OVER" : ""}</div></div>`;
+}
+function workspaceSectionStorageKey(key) {
+  return `cinebraid-section:${ACTIVE_PROJECT_SLUG || "project"}:${String(key || "section")}`;
+}
+function workspaceSectionOpen(key, fallback = false) {
+  try {
+    const value = localStorage.getItem(workspaceSectionStorageKey(key));
+    return value === null ? !!fallback : value === "1";
+  } catch {
+    return !!fallback;
+  }
+}
+window.workspaceSectionOpen = workspaceSectionOpen;
+function rememberWorkspaceSection(key, open) {
+  if (ROUTE_RENDER_IN_PROGRESS) return;
+  try { localStorage.setItem(workspaceSectionStorageKey(key), open ? "1" : "0"); } catch {}
+}
+window.rememberWorkspaceSection = rememberWorkspaceSection;
+function workspaceStatusPill(label, tone = "neutral") {
+  return `<span class="workspace-status-pill tone-${attr(tone)}">${esc(label)}</span>`;
+}
+const field = (label, inner) => {
+  const markup = String(inner || "");
+  const controlId = markup.match(/\sid=["']([^"']+)["']/i)?.[1] || "";
+  const accessibleLabel = String(label || "Field").replace(/<[^>]+>/g, "").trim() || "Field";
+  const namedMarkup = controlId
+    ? markup
+    : markup.replace(/<(input|textarea|select)(?=\s|>)/i, (match) => `${match} aria-label="${attr(accessibleLabel)}"`);
+  return `<div class="field"><label${controlId ? ` for="${attr(controlId)}"` : ""}>${label}</label>${namedMarkup}</div>`;
+};
+const ta = (obj, key, list, id) =>
+  `<textarea onchange="setVal('${list}','${id}','${key}',this.value)">${esc(obj[key] || "")}</textarea>`;
+const inp = (obj, key, list, id) =>
+  `<input value="${attr(obj[key] || "")}" onchange="setVal('${list}','${id}','${key}',this.value)">`;
+window.setVal = (list, id, key, v) => {
+  const o = P[list].find((x) => x.id === id);
+  o[key] = v;
+  if (list === "characters" && key === "expressions") normalizeReferenceCoverageData();
+  dirty();
+};
+// nested setter for structured sub-objects (e.g. audio.voiceDesignPrompt)
+window.setValNested = (list, id, obj, key, v) => {
+  const o = P[list].find((x) => x.id === id);
+  (o[obj] = o[obj] || {})[key] = v;
+  dirty();
+};
+// textarea bound to obj[objKey][key]
+const taN = (obj, objKey, key, list, id, ph = "") =>
+  `<textarea placeholder="${attr(ph)}" onchange="setValNested('${list}','${id}','${objKey}','${key}',this.value)">${esc((obj[objKey] || {})[key] || "")}</textarea>`;
+const inpN = (obj, objKey, key, list, id, ph = "") =>
+  `<input placeholder="${attr(ph)}" value="${attr((obj[objKey] || {})[key] || "")}" onchange="setValNested('${list}','${id}','${objKey}','${key}',this.value)">`;
+
+/* ---------- audio panels ---------- */
+// character voice: ElevenLabs Voice Design (primary) + Suno alt, side by side
+function voicePanel(c) {
+  const a = c.audio || {};
+  const st = a.status || "NOT STARTED";
+  return `
+  <div class="audio-panel">
+    <div class="section-label">🎙 Voice — record the CLEAN master (degradation is post)</div>
+    <div class="audio-status-row">
+      ${ENT_STATUSES.map((s) => `<button class="chip ${st === s ? "on" : ""}" onclick="setValNested('characters','${c.id}','audio','status','${s}');route()">${s}</button>`).join("")}
+    </div>
+    ${field("ElevenLabs Voice Design prompt", taN(c, "audio", "voiceDesignPrompt", "characters", c.id, "natural-language voice description — age, register, cadence, texture, emotional register, audio quality"))}
+    <div style="display:flex;gap:8px;margin:-4px 0 8px"><button class="copy-btn" onclick="copyText(((P.characters.find(x=>x.id==='${c.id}')||{}).audio||{}).voiceDesignPrompt||'')">COPY VOICE PROMPT</button></div>
+    <div class="two-col">
+      ${field("Voice tool", inpN(c, "audio", "voiceTool", "characters", c.id, "ElevenLabs Voice Design"))}
+      ${field("Suno / alt voice prompt (optional)", taN(c, "audio", "sunoAltPrompt", "characters", c.id, "alternative voice generator prompt"))}
+    </div>
+    ${field("Voice notes (line-read direction, degradation-in-post, canon lines)", taN(c, "audio", "voiceNotes", "characters", c.id, "e.g. flat/procedural for logs; the L7 reset VO is the SAME clean take as L1"))}
+  </div>`;
+}
+// scene music + ambience: ElevenLabs Music (primary) + Suno alt
+function sceneAudioPanel(sc) {
+  const a = sc.audio || {};
+  return `
+  <div class="audio-panel">
+    <div class="section-label">🎵 Music & ambience — scene audio bed</div>
+    <div class="two-col">
+      ${field("Music — ElevenLabs Music prompt", taN(sc, "audio", "music", "scenes", sc.id, 'instrumentation + mood + texture; say "no melody" for a bed'))}
+      ${field("Ambience / SFX bed", taN(sc, "audio", "ambience", "scenes", sc.id, "room tone, diegetic sources, motifs"))}
+    </div>
+    <div class="two-col">
+      ${field("Music tool", inpN(sc, "audio", "musicTool", "scenes", sc.id, "ElevenLabs Music"))}
+      ${field("Suno / alt music prompt (optional)", taN(sc, "audio", "sunoAltPrompt", "scenes", sc.id, "style/genre + mood tags"))}
+    </div>
+    ${field("Audio notes", taN(sc, "audio", "notes", "scenes", sc.id, "motif recurrence, mix direction, diegetic vs score"))}
+    ${typeof sceneAudioPromptBuilderMarkup === "function" ? sceneAudioPromptBuilderMarkup(sc) : ""}
+  </div>`;
+}
+
+function workspaceTabs(base, active, tabs) {
+  return `<nav class="workspace-tabs">${tabs.map(([key, label, count]) => `<a class="workspace-tab ${active === key ? "on" : ""}" href="#/${base}/${key}">${esc(label)}${count != null ? ` <span>${count}</span>` : ""}</a>`).join("")}</nav>`;
+}
+function shotPlanningFlags(s) {
+  normalizeShotV5(s);
+  const frames = requiredFrames(s),
+    missingFrames = frames.filter((f) => !f.winner),
+    missingMotion = (s.clips || []).filter(
+      (c) =>
+        !["post", "reuse", "hold"].includes(c.kind) &&
+        !(c.motionPrompt || c.note || "").trim(),
+    ),
+    missingPackages = (s.clips || []).filter(
+      (c) =>
+        !["post", "reuse"].includes(c.kind) &&
+        !(c.generationPackages || []).length,
+    ),
+    flfBlocked = (s.clips || []).filter(
+      (c) =>
+        c.kind === "flf" &&
+        (!frameById(s, c.fromFrame)?.winner ||
+          !frameById(s, c.toFrame)?.winner),
+    );
+  return { missingFrames, missingMotion, missingPackages, flfBlocked };
+}
+function projectHealthIssues() {
+  const issues = [];
+  for (const s of P.shots) {
+    const f = shotPlanningFlags(s);
+    if (f.missingFrames.length)
+      issues.push({
+        type: "Frames",
+        shot: s,
+        msg: `${f.missingFrames.length} required frame${f.missingFrames.length === 1 ? " is" : "s are"} not approved`,
+      });
+    if (f.missingMotion.length)
+      issues.push({
+        type: "Motion",
+        shot: s,
+        msg: `${f.missingMotion.length} motion unit${f.missingMotion.length === 1 ? " needs" : "s need"} direction`,
+      });
+    if (f.flfBlocked.length)
+      issues.push({
+        type: "FLF",
+        shot: s,
+        msg: `${f.flfBlocked.length} first-to-last unit${f.flfBlocked.length === 1 ? " is" : "s are"} missing approved endpoints`,
+      });
+    if (!(s.desc || "").trim())
+      issues.push({ type: "Plan", shot: s, msg: "Shot intent is empty" });
+  }
+  return issues;
+}
+function capabilityState(name) {
+  return AGENT_STATUS?.capabilities?.[name] || {
+    ready: false,
+    message: `${name} capability is still being checked.`,
+    action: "Open Settings to configure AI assistance.",
+  };
+}
+function aiDisabledAttrs(name, extraRequirement = "") {
+  const state = capabilityState(name),
+    reason = [state.message, state.action, extraRequirement]
+      .filter(Boolean)
+      .join(" ");
+  return `${state.ready ? "" : " disabled"}${state.ready ? "" : ` title="${attr(reason)}"`}${helpAttr(reason)}`;
+}
+window.refreshAgentStatus = async (render = false) => {
+  try {
+    const response = await fetch("/api/agents/status");
+    if (response.ok) AGENT_STATUS = await response.json();
+  } catch (_) {}
+  if (render) route();
+};
+
+function projectDecisionItems() {
+  const items = [];
+  for (const shot of P.shots || []) {
+    const takes = takesFor(shot.id) || [];
+    const frames = typeof guidedFrames === "function" ? guidedFrames(shot) : (shot.keyframes || []);
+    let framePending = 0;
+    for (let i = 0; i < frames.length; i++) {
+      const rows = typeof guidedFrameCandidateRows === "function"
+        ? guidedFrameCandidateRows(shot, frames[i], takes, i)
+        : takes.filter((take) => !isVideo(take.name) && !isAudio(take.name));
+      const approved = rows.some((row) => row.name === frames[i]?.winner);
+      if (rows.length && !approved) framePending += rows.length;
+    }
+    const videos = takes.filter((take) => isVideo(take.name));
+    const approvedVideo = (shot.creationBrief?.approvedMotionFile || shot.creationBrief?.finalVideoFile || (shot.clips || []).find((clip) => clip.videoWinner)?.videoWinner);
+    if (framePending) items.push({ shot, type: "image", count: framePending, label: `${framePending} frame candidate${framePending === 1 ? "" : "s"} to review` });
+    if (videos.length && !approvedVideo) items.push({ shot, type: "video", count: videos.length, label: `${videos.length} video candidate${videos.length === 1 ? "" : "s"} to review` });
+  }
+  for (const [list, route, label] of [["characters","character","Character"],["locations","location","Location"],["props","prop","Prop"],["audio","sound","Audio"]]) {
+    for (const entity of P[list] || []) {
+      const media = entityMedia(list, entity);
+      const approved = entityApprovedFileForState(entity, "");
+      if (media.length && !approved) items.push({ entity, route, type: "reference", count: media.length, label: `${label} reference needs approval` });
+    }
+  }
+  return items;
+}
+function productionResultInbox(limit = 6) {
+  const items = projectDecisionItems();
+  return `<section class="production-inbox"><header><div><span>RETURNED RESULTS</span><h2>${items.length ? `${items.length} decision${items.length === 1 ? "" : "s"} waiting` : "Nothing waiting for review"}</h2><p>Results uploaded inside a frame or motion step appear here automatically.</p></div></header>${items.length ? `<div class="production-inbox-list">${items.map((item) => {
+    if (item.shot) {
+      const takes = takesFor(item.shot.id), media = item.type === "video" ? takes.filter((take) => isVideo(take.name)).at(-1) : takes.filter((take) => !isVideo(take.name) && !isAudio(take.name)).at(-1);
+      const preview = media ? (isVideo(media.name) ? `<video muted preload="metadata" src="${attr(media.url)}#t=0.1"></video>` : `<img src="${attr(media.url)}" alt="">`) : `<span>${item.type === "video" ? "VIDEO" : "FRAME"}</span>`;
+      return `<a href="#/shot/${item.shot.id}" class="production-inbox-item"><div>${preview}</div><section><b>${esc(item.shot.id)} · ${esc(item.shot.title)}</b><small>${esc(item.label)}</small></section><i>Review →</i></a>`;
+    }
+    return `<a href="#/${item.route}/${item.entity.id}" class="production-inbox-item"><div><span>REF</span></div><section><b>${esc(item.entity.name || item.entity.id)}</b><small>${esc(item.label)}</small></section><i>Review →</i></a>`;
+  }).join("")}</div>` : `<div class="production-inbox-empty">Newly returned images, videos, upscales, and reference candidates will collect here.</div>`}</section>`;
+}
+async function productionHomeView() {
+  let readiness = { issues: [] };
+  try {
+    const response = await fetch("/api/project/readiness", { cache: "no-store" });
+    const data = await response.json().catch(() => ({}));
+    if (response.ok) readiness = data;
+  } catch {}
+  const next = nextProductionShot();
+  const decisions = projectDecisionItems();
+  const finalCount = P.shots.filter((shot) => shotProductionNextAction(shot).key === "final").length;
+  const activeRows = P.shots.map((shot) => ({ shot, next: shotProductionNextAction(shot) })).filter((row) => row.next.key !== "final").slice(0, 8);
+  return `<div class="view-head production-home-head"><div><div class="eyebrow">Production</div><span class="view-title">${esc(P.meta.title)}</span><div class="view-sub">Continue the film from the next unfinished decision. Detailed tools stay inside each shot.</div></div><div class="production-home-actions"><button class="assemble-btn" onclick="continueProduction()">${next ? "CONTINUE PRODUCTION" : "ALL SHOTS FINAL"}</button><button class="add-btn" onclick="openGlobalAdd('shot')">＋ Add shot</button></div></div>
+  <div class="production-summary"><article><b>${finalCount}/${P.shots.length}</b><span>shots final</span></article><article class="review"><b>${decisions.length}</b><span>decisions waiting</span></article><article><b>${P.scenes.length}</b><span>scenes</span></article><article><b>${mmss(P.shots.reduce((sum, shot) => sum + shotDur(shot), 0))}</b><span>planned runtime</span></article></div>
+  <details class="production-readiness" ${readiness.issues?.length ? "" : "open"}><summary><div><span>PROJECT READINESS</span><b>${readiness.issues?.length ? `${readiness.issues.length} item${readiness.issues.length === 1 ? "" : "s"} to resolve` : "Ready for production work"}</b></div><span>${readiness.issues?.length ? "REVIEW" : "CLEAR"}</span></summary><div class="production-readiness-list">${(readiness.issues || []).map((issue) => `<a href="${attr(issue.href || "#/production")}"${issue.kind === "unresolved-reference" && issue.targetId ? ` onclick="boundedWriteState('shot-task','${attr(issue.targetId)}','inputs')"` : ""}><b>${esc(String(issue.kind || "readiness").replace(/-/g," "))}</b><span>${esc(issue.message || "Readiness issue")}</span><i>Open →</i></a>`).join("") || `<p>No missing descriptions, durations, canon, approved references, or approved files were found.</p>`}</div></details>
+  ${next ? `<section class="production-next"><div><span>NEXT ACTION</span><h2>${esc(next.shot.id)} · ${esc(next.shot.title)}</h2><p>${esc(next.next.label)} — ${esc(next.next.detail)}</p></div><a class="assemble-btn" href="#/shot/${next.shot.id}">${esc(next.next.label.toUpperCase())} →</a></section>` : `<section class="production-next complete"><div><span>PRODUCTION COMPLETE</span><h2>Every shot is marked final</h2><p>Open Shots to inspect delivery media or add another shot.</p></div><a class="ghost-btn" href="#/shots/board">Open shots →</a></section>`}
+  ${productionResultInbox()}
+  <section class="production-active"><header><div><span>IN PROGRESS</span><h2>Shots and their next action</h2></div><a href="#/shots/board">View all shots →</a></header>${activeRows.length ? `<div class="production-active-list">${activeRows.map(({shot,next}) => `<a href="#/shot/${shot.id}"><span class="next-${next.key}">${esc(next.label)}</span><div><b>${esc(shot.id)} · ${esc(shot.title)}</b><small>${esc(sceneById(shot.scene)?.title || shot.scene)} · ${esc(next.detail)}</small></div><i>→</i></a>`).join("")}</div>` : `<div class="production-inbox-empty">There are no unfinished shots.</div>`}</section>
+  <section class="production-scenes"><header><div><span>SCENES</span><h2>Production progress</h2></div><a href="#/shots/scenes">Manage scenes →</a></header><div class="scene-progress-grid">${P.scenes.map((scene) => {
+    const shots = P.shots.filter((shot) => shot.scene === scene.id), done = shots.filter((shot) => shotProductionNextAction(shot).key === "final").length, pct = shots.length ? Math.round(done / shots.length * 100) : 0;
+    return `<a href="#/scene/${scene.id}" class="scene-progress-card"><header><b>${esc(scene.title)}</b><span>${done}/${shots.length}</span></header><div class="progress-line"><i style="width:${pct}%"></i></div><footer><span>${shots.filter((shot) => ["review-still","review-video"].includes(shotProductionNextAction(shot).key)).length} review</span><span>${shots.filter((shot) => shotProductionNextAction(shot).key !== "final").length} unfinished</span></footer></a>`;
+  }).join("")}</div></section>`;
+}
+window.openGlobalAdd = (preferred = "") => {
+  const choices = [
+    ["shot","Shot","Add a shot to an existing scene or create the first scene."],
+    ["scene","Scene","Create a scene before adding its shots."],
+    ["character","Character","Create an identity and reference pack."],
+    ["location","Location","Create a reusable location plate and continuity states."],
+    ["prop","Prop","Create an object reference and continuity states."],
+    ["audio","Audio","Add dialogue, ambience, music, or timing material."],
+    ["project","New project","Start from scratch or import structured material."],
+  ];
+  openModal(`<div class="global-add-modal"><h3>What are you adding?</h3><div class="modal-sub">Choose the record you need. CineBraid will take you to its one canonical workspace.</div><div class="global-add-grid">${choices.map(([key,label,note]) => `<button class="${preferred === key ? "recommended" : ""}" onclick="runGlobalAdd('${key}')"><b>${label}</b><span>${note}</span></button>`).join("")}</div><div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button></div></div>`);
+};
+window.runGlobalAdd = (key) => {
+  closeModal();
+  if (key === "shot") return addShot();
+  if (key === "scene") return addScene();
+  if (key === "character") return addEntity("characters");
+  if (key === "location") return addEntity("locations");
+  if (key === "prop") return addEntity("props");
+  if (key === "audio") return addEntity("audio");
+  if (key === "project") { location.hash = "#/create"; return; }
+};
+
+
+function shotBoardActionCategory(shot) {
+  const next = shotProductionNextAction(shot);
+  if (["review-still", "review-video"].includes(next.key)) return "review";
+  if (next.key === "create") {
+    const refs = typeof shotCreationReferences === "function" ? shotCreationReferences(shot) : [];
+    return refs.some((row) => !row.url) ? "missing-inputs" : "ready";
+  }
+  if (["animate", "decide", "finish"].includes(next.key)) return "ready";
+  if (next.key === "final") return "complete";
+  return "unfinished";
+}
+window.setShotActionFilter = (value) => {
+  FILTER.action = value || "unfinished";
+  localStorage.setItem("cinebraid-shot-action-filter", FILTER.action);
+  if (typeof boundedWriteState === "function") boundedWriteState("page:shots", `board:${FILTER.status}:${FILTER.route}:${FILTER.char}:${FILTER.action}`, 0);
+  route();
+};
+function shotBoardActionMatches(shot) {
+  const category = shotBoardActionCategory(shot), next = shotProductionNextAction(shot);
+  if (!FILTER.action || FILTER.action === "all") return true;
+  if (FILTER.action === "unfinished") return next.key !== "final";
+  return category === FILTER.action;
+}
+function shotBoardActionFilters() {
+  const defs = [["unfinished","Next actions"],["review","Needs review"],["missing-inputs","Missing inputs"],["ready",manualFirstWorkflow() ? "Ready for media" : "Ready to generate"],["complete","Completed"],["all","All shots"]];
+  const counts = Object.fromEntries(defs.map(([id]) => [id, P.shots.filter((shot) => id === "all" ? true : id === "unfinished" ? shotProductionNextAction(shot).key !== "final" : shotBoardActionCategory(shot) === id).length]));
+  return `<nav class="board-action-filters" aria-label="Shot next-action filters">${defs.map(([id,label]) => `<button type="button" class="${FILTER.action===id?"selected":""}" onclick="setShotActionFilter('${id}')"><span>${esc(label)}</span><b>${counts[id]}</b></button>`).join("")}</nav>`;
+}
+function productionView(tab = "board") {
+  if (!["board", "table", "scenes"].includes(tab)) tab = "board";
+  const approved = P.shots.filter(
+    (s) => workflowState(s).key === "APPROVED",
+  ).length;
+  const review = P.shots.filter(
+    (s) => workflowState(s).key === "READY FOR REVIEW",
+  ).length;
+  const ready = P.shots.filter(
+    (s) =>
+      workflowState(s).key === "APPROVED" &&
+      ["animate", "flf", "references"].includes(outputPlanKey(s)),
+  );
+  const tabDefs = [["board", "Shot board"], ["scenes", "Scene directory"]];
+  if (tab === "table") tab = "board";
+  const tabs = workspaceTabs("production", tab, tabDefs);
+  const head = `<div class="view-head board-head"><div><div class="eyebrow">Production</div><span class="view-title">Production board</span><div class="view-sub">Track scene readiness, approved frames, and one clear next action for every shot.</div></div><div class="board-head-actions"><button class="assemble-btn" onclick="continueProduction()">CONTINUE</button><button class="add-btn" onclick="openGlobalAdd('shot')">＋ Add</button></div></div>${tabs}`;
+  if (tab === "scenes") {
+    const scenePage = boundedPage(P.scenes, "scenes", "overview", BOUNDED_PAGE_SIZES.scenes);
+    return head + runtimeBar(P.shots, P.meta.targetRuntime) + `<div class="bounded-scene-list">${scenePage.rows.map((sc) => {
+      const shots = P.shots.filter((s) => s.scene === sc.id), refs = sceneReferenceRecords(sc), done = shots.filter((s) => workflowState(s).key === "APPROVED").length;
+      return `<a class="scene-card" href="#/scene/${sc.id}"><div class="scene-card-head"><span class="scene-card-title">${esc(sc.title)}</span><span class="tier-badge ${sc.tier || "B"}">TIER ${sc.tier || "B"}</span><span class="scene-card-meta">${mmss(shots.reduce((a, s) => a + shotDur(s), 0))} · ${done}/${shots.length} approved · ${refs.length} references</span></div><div class="scene-card-beat">${esc(sc.whatHappens || "No scene beat written yet.")}</div></a>`;
+    }).join("")}</div>${boundedPagerMarkup("scenes","overview",scenePage,"scenes")}`;
+  }
+  const routes = [
+    ...new Set(P.shots.map((s) => outputPlanLabel(s)).filter(Boolean)),
+  ];
+  const filterBody = `<div class="toolbar"><select aria-label="Filter lifecycle" onchange="FILTER.status=this.value;route()"><option value="">All shots</option>${WORKFLOW_STATES.map((x) => `<option value="${x}" ${FILTER.status === x ? "selected" : ""}>${x}</option>`).join("")}</select><select aria-label="Filter output" onchange="FILTER.route=this.value;route()"><option value="">Any output</option>${routes.map((r) => `<option value="${attr(r.toUpperCase())}" ${FILTER.route === r.toUpperCase() ? "selected" : ""}>${esc(r)}</option>`).join("")}</select><select aria-label="Filter character" onchange="FILTER.char=this.value;route()"><option value="">Any character</option>${P.characters.map((c) => `<option value="${c.id}" ${FILTER.char === c.id ? "selected" : ""}>${esc(c.name)}</option>`).join("")}</select></div>`;
+  const controls = `<div class="board-list-controls">${shotBoardActionFilters()}${shotBoardDensityControl()}</div>${tab === "table" ? batchToolbar() : ""}<details class="board-filter-fold" ${(FILTER.status || FILTER.route || FILTER.char) ? "open" : ""}><summary>More filters${(FILTER.status || FILTER.route || FILTER.char) ? " · active" : ""}</summary>${filterBody}</details>`;
+  const filteredPairs = [];
+  P.scenes.forEach((sc) => {
+    P.shots.filter((shot) => shot.scene === sc.id).filter((shot) =>
+      (!FILTER.status || workflowState(shot).key === FILTER.status) &&
+      (!FILTER.route || outputPlanLabel(shot).toUpperCase() === FILTER.route) &&
+      (!FILTER.char || (shot.characters || []).includes(FILTER.char)) &&
+      shotBoardActionMatches(shot)
+    ).forEach((shot) => filteredPairs.push({ sc, shot }));
+  });
+  const boardPageKey = `board:${FILTER.status}:${FILTER.route}:${FILTER.char}:${FILTER.action}`;
+  const shotPage = boundedPage(filteredPairs, "shots", boardPageKey, 5);
+  const grouped = new Map();
+  shotPage.rows.forEach(({ sc, shot }) => { if (!grouped.has(sc.id)) grouped.set(sc.id, { sc, shots: [] }); grouped.get(sc.id).shots.push(shot); });
+  const body = [...grouped.values()].map(({ sc, shots }) => {
+    const all = P.shots.filter((shot) => shot.scene === sc.id), collapsed = COLLAPSED_SCENES.has(sc.id), pending = all.filter((shot) => workflowState(shot).key === "READY FOR REVIEW").length, approvedCount = all.filter((shot) => workflowState(shot).key === "APPROVED").length;
+    return `<section class="log-strip ${collapsed ? "collapsed" : ""}"><div class="log-head"><button class="collapse-btn" onclick="toggleSceneCollapse('${sc.id}')" aria-label="${collapsed ? "Expand" : "Collapse"} ${attr(sc.title || sc.id)}" aria-expanded="${collapsed ? "false" : "true"}">${collapsed ? "▸" : "▾"}</button><a class="log-title" href="#/scene/${sc.id}">${esc(sc.title)}</a><span class="tier-badge ${sc.tier || "B"}">TIER ${sc.tier || "B"}</span>${pending ? `<span class="scene-attention">${pending} review</span>` : ""}<span class="log-count">${approvedCount}/${all.length} approved</span></div>${collapsed ? "" : `<div class="shot-row bounded-shot-page size-${SHOT_BOARD_DENSITY}">${shots.map((shot) => slate(shot)).join("")}</div>`}</section>`;
+  }).join("") || `<div class="empty-state"><h2>No shots match these filters</h2><p>Change a filter or add another shot.</p></div>`;
+  const pager = boundedPagerMarkup("shots",boardPageKey,shotPage,"shots");
+  return head + controls + pager + body + pager;
+}
+function entityApprovedReferenceCount(entity) {
+  const names = new Set([
+    entity?.approvedFile,
+    ...(entity?.continuityStates || []).map((state) => state.approvedFile),
+    ...(entity?.coverageSlots || []).map((slot) => slot.approvedFile),
+    ...(entity?.expressionSlots || []).map((slot) => slot.approvedFile),
+  ].filter(Boolean));
+  return names.size;
+}
+function libraryCard(list, x, approvedOnly = false) {
+  const media = entityMedia(list, x), route = ENTITY_ROUTE[list], approvedFile = entityApprovedFileForState(x, ""), approvedMedia = media.find((item) => item.name === approvedFile), previewMedia = approvedMedia || media.at(-1);
+  const preview = previewMedia ? (isAudio(previewMedia.name) ? '<span class="library-audio-icon">◉</span>' : isVideo(previewMedia.name) ? `<video muted src="${previewMedia.url}"></video>` : `<img src="${previewMedia.url}" alt="">`) : `<div class="library-empty">${esc((x.name || x.id).slice(0,1))}</div>`;
+  const type = { characters: "Character", locations: "Location", props: "Prop", vehicles: "Vehicle", audio: "Audio" }[list];
+  const authorityCount = entityApprovedReferenceCount(x);
+  const stateCount = (x.continuityStates || []).filter((state) => state.approvedFile || (state.isDefault && x.approvedFile)).length;
+  const pending = Math.max(0, media.length - authorityCount);
+  const status = authorityCount ? "approved" : media.length ? "candidate" : "missing";
+  const statusLabel = authorityCount ? "APPROVED" : media.length ? "TO ORGANIZE" : "EMPTY";
+  const description = approvedOnly
+    ? `${authorityCount} approved authorit${authorityCount === 1 ? "y" : "ies"}${stateCount > 1 ? ` · ${stateCount} states` : ""}`
+    : authorityCount ? `${authorityCount} approved authorit${authorityCount === 1 ? "y" : "ies"}${pending ? ` · ${pending} unassigned file${pending === 1 ? "" : "s"}` : ""}` : media.length ? `${pending} imported file${pending === 1 ? "" : "s"} to organize` : "Add the first reference";
+  return `<a class="library-card ${status}" href="#/${route}/${x.id}"><div class="library-preview">${preview}<span class="library-status ${status}">${statusLabel}</span></div><div class="library-body"><span class="review-kind">${type}</span><b>${esc(x.name || x.id)}</b><small>${description}</small></div></a>`;
+}
+function libraryView(tab = "all") {
+  if (!["all", "approved", "characters", "locations", "props", "vehicles", "audio"].includes(tab)) tab = "all";
+  LIBRARY_TAB = tab;
+  localStorage.setItem("cinebraid-library-tab", tab);
+  const counts = {
+    characters: P.characters.length,
+    locations: P.locations.length,
+    props: P.props.length,
+    vehicles: (P.vehicles || []).length,
+    audio: (P.audio || []).length,
+  };
+  const allLists = ["characters", "locations", "props", "vehicles", "audio"];
+  const approvedCount = allLists.flatMap((list) => P[list] || []).filter((entity) => entityApprovedReferenceCount(entity) > 0).length;
+  const tabs = workspaceTabs("library", tab, [
+    ["all", "All", Object.values(counts).reduce((a, b) => a + b, 0)],
+    ["approved", "Approved", approvedCount],
+    ["characters", "Characters", counts.characters],
+    ["locations", "Locations", counts.locations],
+    ["props", "Props", counts.props],
+    ["vehicles", "Vehicles", counts.vehicles],
+    ["audio", "Audio", counts.audio],
+  ]);
+  const lists = tab === "all" || tab === "approved" ? allLists : [tab];
+  let allRows = lists.flatMap((list) => (P[list] || []).map((entity) => ({ list, entity })));
+  if (tab === "approved") allRows = allRows.filter(({ entity }) => entityApprovedReferenceCount(entity) > 0);
+  const referencePage = boundedPage(allRows, "references", `library:${tab}`, BOUNDED_PAGE_SIZES.references);
+  const add = `<button class="add-btn" onclick="openGlobalAdd('${tab === "all" || tab === "approved" ? "" : tab === "audio" ? "audio" : tab.slice(0,-1)}')">＋ Add reference</button>`;
+  const pager = boundedPagerMarkup("references",`library:${tab}`,referencePage,"references");
+  const title = tab === "approved" ? "Approved reference library" : "Approved production inputs";
+  const subtitle = tab === "approved" ? "A clean view of the images, views, states, and media that currently define production truth. Candidates and automation are hidden." : "Import work made anywhere, organize it into authoritative states and views, and use optional assisted tools only when needed.";
+  return `<div class="view-head"><div><div class="eyebrow">References</div><span class="view-title">${title}</span><div class="view-sub">${subtitle}</div></div>${add}</div>${tabs}${pager}<div class="library-grid bounded-source-section">${referencePage.rows.map(({list,entity}) => libraryCard(list,entity,tab === "approved")).join("") || `<div class="empty-state"><div class="empty-mark">＋</div><h2>${tab === "approved" ? "No approved references yet" : "No references yet"}</h2><p>${tab === "approved" ? "Choose an imported file as an authority to add it here." : "Add a character, location, prop, vehicle, or audio asset."}</p><button class="add-btn" onclick="openGlobalAdd()">Add reference</button></div>`}</div>${pager}`;
+}
+
+function currentPromptOption(s) {
+  const opts = s.promptOptions || [];
+  return opts.find((o) => o.favorite) || opts[opts.length - 1] || null;
+}
+window.setCurrentPrompt = (id, value) => {
+  const s = shotById(id);
+  s.promptOptions = s.promptOptions || [];
+  let o = currentPromptOption(s);
+  if (!o) {
+    o = { id: "prompt-1", text: "", refs: [], favorite: true };
+    s.promptOptions.push(o);
+  }
+  o.text = value;
+  o.favorite = true;
+  s.promptOptions.forEach((x) => {
+    if (x !== o) x.favorite = false;
+  });
+  if (workflowState(s).key === "DRAFT") {
+    s.workflowStatus = "IN PROGRESS";
+    s.status = "BUILT";
+  }
+  dirty();
+};
+window.setShotContinuityState = (shotId, entityId, stateId) => {
+  const s = shotById(shotId);
+  s.continuityStateSelections = s.continuityStateSelections || {};
+  if (stateId) s.continuityStateSelections[entityId] = stateId;
+  else delete s.continuityStateSelections[entityId];
+  dirty();
+  route();
+};
+
+/* ---------- compact shot workspace ---------- */
+const SHOT_VIEW_MODES = ["focused", "standard", "review", "expanded"];
+function persistShotWorkspace() {
+  localStorage.setItem(
+        JSON.stringify(SHOT_SECTION_STATE),
+  );
+  localStorage.setItem(
+        JSON.stringify(SHOT_SEGMENT_STATE),
+  );
+}
+const SHOT_STAGE_ORDER = ["plan", "references", "frames", "motion", "packages", "review", "finish"];
+const SHOT_STAGE_META = {
+  plan: { label: "Shot plan", short: "Plan", section: "plan" },
+  references: { label: "References", short: "Refs", section: "references" },
+  frames: { label: "Keyframes", short: "Frames", section: "motion" },
+  motion: { label: "Motion", short: "Motion", section: "motion" },
+  packages: { label: "Packages", short: "Package", section: "packages" },
+  review: { label: "Final review", short: "Review", section: "review" },
+  finish: { label: "Finish & upscale", short: "Finish", section: "finish" },
+};
+function stageStable(value) {
+  if (Array.isArray(value)) return value.map(stageStable);
+  if (value && typeof value === "object")
+    return Object.fromEntries(
+      Object.keys(value)
+        .sort()
+        .map((key) => [key, stageStable(value[key])]),
+    );
+  return value;
+}
+function stageHash(value) {
+  const str = JSON.stringify(stageStable(value));
+  let h = 2166136261;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0).toString(36);
+}
+function shotFinishJobs(shotId) {
+  P.finishJobs = Array.isArray(P.finishJobs) ? P.finishJobs : [];
+  return P.finishJobs.filter((job) => job.scope === "shot" && job.shotId === shotId);
+}
+function shotStageFacts(s, stage, takes = takesFor(s.id), refs = referenceRecordsForShot(s)) {
+  normalizeShotV5(s);
+  const gaps = [],
+    frames = requiredFrames(s),
+    motion = s.clips || [],
+    mediaLinks = shotMediaLinks(s),
+    generative = motion.filter((x) => !["plan", "post", "reuse"].includes(x.kind));
+  let data = {};
+  if (stage === "plan") {
+    if ((s.desc || "").trim().length < 12) gaps.push("Write the visible shot action.");
+    if ((s.positioning || "").trim().length < 8)
+      gaps.push("Define framing, blocking, camera, or contact points.");
+    data = { desc: s.desc || "", positioning: s.positioning || "", safe: s.safe || "" };
+  } else if (stage === "references") {
+    if (!refs.length && !mediaLinks.length)
+      gaps.push("Link canon records or add animatic / planning media for this shot.");
+    const unapproved = refs.filter((x) => entityWorkflowState(x).key !== "APPROVED");
+    if (unapproved.length)
+      gaps.push(`Approve or replace ${unapproved.map((x) => x.id).join(", ")}.`);
+    data = {
+      characters: [...(s.characters || [])].sort(),
+      codes: [...(s.codes || [])].sort(),
+      continuity: s.continuityStateSelections || {},
+      states: refs.map((x) => {
+        const selected = selectedEntityStateForShot(s, x);
+        return [
+          x.id,
+          entityWorkflowState(x).key,
+          selected?.id || "",
+          selected?.name || "Default",
+          selected?.approvedFile || x.approvedFile || "",
+        ];
+      }),
+      media: mediaLinks.map(({ asset, link }) => [
+        asset.id,
+        asset.file || "",
+        link.role || "",
+        link.order || 0,
+        link.beat || "",
+        link.timecode || "",
+        link.notes || "",
+        link.visualAnalysis || "",
+        link.analyzedAt || "",
+        link.agentContext !== false,
+        !!link.generationInput,
+      ]),
+    };
+  } else if (stage === "frames") {
+    if (!frames.length) gaps.push("Add at least one required keyframe.");
+    frames.forEach((f) => {
+      if ((f.description || "").trim().length < 8)
+        gaps.push(`Describe Frame ${f.label || "?"}.`);
+      if (!f.winner) gaps.push(`Approve Frame ${f.label || "?"}.`);
+    });
+    data = frames.map((f) => ({
+      id: f.id,
+      title: f.title || "",
+      description: f.description || "",
+      notes: f.notes || "",
+      winner: f.winner || "",
+      required: f.required !== false,
+      sourceMediaId: f.sourceMediaId || "",
+    }));
+  } else if (stage === "motion") {
+    if (!motion.length) gaps.push("Add at least one motion unit.");
+    motion.forEach((c) => {
+      if (!["post", "reuse"].includes(c.kind) && (c.motionPrompt || c.note || "").trim().length < 8)
+        gaps.push(`Write direction for Motion ${c.label || c.suffix || "?"}.`);
+      const first = frameById(s, c.fromFrame),
+        last = frameById(s, c.toFrame);
+      if (c.kind === "i2v" && !first?.winner)
+        gaps.push(`Motion ${c.label || c.suffix || "?"} needs an approved start frame.`);
+      if (c.kind === "flf" && (!first?.winner || !last?.winner))
+        gaps.push(`Motion ${c.label || c.suffix || "?"} needs approved first and last frames.`);
+    });
+    data = motion.map((c) => ({
+      id: c.id,
+      title: c.title || "",
+      kind: c.kind,
+      dur: c.dur,
+      fromFrame: c.fromFrame,
+      toFrame: c.toFrame,
+      direction: c.motionPrompt || c.note || "",
+      vo: c.vo || "",
+    }));
+  } else if (stage === "packages") {
+    frames.forEach((f) => {
+      if (!f.winner && !(f.generationPackages || []).length)
+        gaps.push(`Build a frame package for Frame ${f.label || "?"}.`);
+    });
+    generative.forEach((c) => {
+      if (!c.videoWinner && !(c.generationPackages || []).length)
+        gaps.push(`Build a motion package for Motion ${c.label || c.suffix || "?"}.`);
+    });
+    if (!frames.length && !generative.length && !shotPackageCount(s) && !s.winner)
+      gaps.push("Build at least one relevant generation package or document the reuse/post route.");
+    if (typeof shotPackageStaleReasons === "function")
+      shotPackageStaleReasons(s).forEach((reason) => gaps.push(`Rebuild ${reason}.`));
+    data = {
+      shot: resolvePromptBuildList(P, s.generationPackages || []).map((x) => [x.id, x.revision || 0, x.profileId, x.prompt, x.dependencySnapshot || null]),
+      frames: frames.map((f) => [f.id, f.winner || "", resolvePromptBuildList(P, f.generationPackages || []).map((x) => [x.id, x.revision || 0, x.profileId, x.prompt, x.dependencySnapshot || null])]),
+      motion: motion.map((c) => [c.id, c.videoWinner || "", resolvePromptBuildList(P, c.generationPackages || []).map((x) => [x.id, x.revision || 0, x.profileId, x.prompt, x.dependencySnapshot || null])]),
+      generationInputs: mediaLinks
+        .filter(({ link }) => link.generationInput)
+        .map(({ asset, link }) => [asset.id, asset.file || "", link.role || ""]),
+    };
+  } else if (stage === "review") {
+    if (!shotApprovalComplete(s))
+      gaps.push(
+        takes.length
+          ? "Approve the required frame and motion outputs."
+          : "Add candidates, review them, and approve the required outputs.",
+      );
+    data = {
+      workflow: workflowState(s, takes).key,
+      winner: s.winner || "",
+      frames: frames.map((f) => [f.id, f.winner || ""]),
+      motion: generative.map((c) => [c.id, c.videoWinner || ""]),
+      candidates: takes.map((x) => x.name).sort(),
+      candidateDecisions: (s.candidateFiles || []).map((x) => [x.stored || x.name || "", x.decision || "unreviewed", x.notes || "", x.sourcePackageId || "", x.approvedTarget || "", x.structuredReview || null, x.correctionBuildIds || []]).sort((a,b)=>String(a[0]).localeCompare(String(b[0]))),
+    };
+  } else if (stage === "finish") {
+    const jobs = shotFinishJobs(s.id);
+    if (!jobs.length) gaps.push("Mark any approved stills that need upscaling or finishing.");
+    jobs.forEach((job) => {
+      if (!job.sourceFile) gaps.push("A finishing job is missing its approved source image.");
+      if (["ready", "in-progress"].includes(job.status)) gaps.push(`Finish job ${job.label || job.type} is still in progress.`);
+      if (job.status === "result-received" && !job.resultFile) gaps.push(`Finish job ${job.label || job.type} needs an imported result file for QC.`);
+      if (job.status === "qc-approved" && !job.promotedAt) gaps.push(`Promote the finished result for ${job.label || job.type} or mark it complete without promotion.`);
+    });
+    data = jobs.map((job) => [job.id, job.type || "", job.sourceFile || "", job.resultFile || "", job.status || "", job.promotedAt || "", job.approvedTarget || "", job.notes || ""]);
+  }
+  return { stage, gaps: [...new Set(gaps)], ready: gaps.length === 0, fingerprint: stageHash(data), data };
+}
+function shotStageCanBeNotNeeded(s, stage) {
+  const plan = outputPlanKey(s),
+    motion = s.clips || [];
+  if (stage === "references") return true;
+  if (stage === "frames") return ["post", "reuse"].includes(plan);
+  if (stage === "motion") return plan === "still";
+  if (stage === "finish") return true;
+  if (stage === "packages")
+    return (
+      ["post", "reuse"].includes(plan) ||
+      (motion.length > 0 &&
+        motion.every((x) => ["plan", "post", "reuse"].includes(x.kind)))
+    );
+  return false;
+}
+window.approveShotStage = (id, stage) => {
+  const s = shotById(id),
+    facts = shotStageFacts(s, stage);
+  if (!facts.ready) {
+    openModal(`<h3>${esc(SHOT_STAGE_META[stage]?.label || stage)} is not ready to check</h3><div class="modal-sub">THE CHECK MARK MEANS THE REQUIRED RECORDS ARE ACTUALLY PRESENT</div><div class="stage-gap-modal"><ul>${facts.gaps.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></div><div class="modal-actions"><button class="ghost-btn" onclick="closeModal();runShotStageAgent('${id}','${stage}','fill-gaps')"${agentDisabledAttrs("coordinator")}>Ask agent for help</button><button class="cancel" onclick="closeModal()">Close</button></div>`);
+    return;
+  }
+  s.stageApprovals = s.stageApprovals || {};
+  s.stageApprovals[stage] = {
+    fingerprint: facts.fingerprint,
+    snapshot: JSON.parse(JSON.stringify(facts.data)),
+    approvedAt: new Date().toISOString(),
+    source: "human-check",
+  };
+  dirty();
+  route();
+  toast(`${SHOT_STAGE_META[stage]?.label || stage} checked complete`);
+};
+window.markShotStageNotNeeded = (id, stage) => {
+  const s = shotById(id);
+  if (!s || !shotStageCanBeNotNeeded(s, stage)) return;
+  const label = SHOT_STAGE_META[stage]?.label || stage;
+  confirmModal(
+    `Mark ${label} as not needed for this shot? The stage remains accessible and will return to Changed if its underlying records change.`,
+    () => {
+      const facts = shotStageFacts(s, stage);
+      s.stageApprovals = s.stageApprovals || {};
+      s.stageApprovals[stage] = {
+        fingerprint: facts.fingerprint,
+        snapshot: JSON.parse(JSON.stringify(facts.data)),
+        approvedAt: new Date().toISOString(),
+        source: "not-needed",
+        reason:
+          stage === "references"
+            ? "No external continuity references required"
+            : stage === "frames"
+              ? "Post/reuse route does not require generated keyframes"
+              : stage === "motion"
+                ? "Held still output"
+                : stage === "finish"
+                  ? "No upscaling or finishing pass required"
+                  : "Post/reuse route does not require a generation package",
+      };
+      dirty();
+      route();
+      toast(`${label} marked not needed`);
+    },
+    { title: `Mark ${label} not needed`, confirmLabel: "MARK NOT NEEDED", danger: false },
+  );
+};
+window.clearShotStage = (id, stage) => {
+  const s = shotById(id);
+  if (s.stageApprovals) delete s.stageApprovals[stage];
+  dirty();
+  route();
+  toast("Stage check cleared");
+};
+function shotPackageCount(s) {
+  return (
+    (s.generationPackages || []).length +
+    (s.keyframes || []).reduce(
+      (n, f) => n + (f.generationPackages || []).length,
+      0,
+    ) +
+    (s.clips || []).reduce((n, c) => n + (c.generationPackages || []).length, 0)
+  );
+}
+function wireShotWorkspace(id) {
+  document.querySelectorAll(".shot-section[data-section]").forEach((el) => {
+    el.addEventListener("toggle", () => {
+      SHOT_SECTION_STATE[id] = SHOT_SECTION_STATE[id] || {};
+      SHOT_SECTION_STATE[id][el.dataset.section] = el.open;
+      persistShotWorkspace();
+    });
+  });
+}
+window.setShotViewMode = (mode) => {
+  if (!SHOT_VIEW_MODES.includes(mode)) return;
+  SHOT_VIEW_MODE = mode;
+  localStorage.setItem("cinebraid-shot-view-mode", mode);
+  const [, view, id] = location.hash.split("/");
+  if (view === "shot" && id) delete SHOT_SECTION_STATE[decodeURIComponent(id)];
+  persistShotWorkspace();
+  route();
+};
+window.setShotCandidateSize = (size) => {
+  if (!["compact", "medium", "large"].includes(size)) return;
+  SHOT_CANDIDATE_SIZE = size;
+  localStorage.setItem("cinebraid-shot-candidate-size", size);
+  route();
+};
+window.resetShotLayout = (id) => {
+  delete SHOT_SECTION_STATE[id];
+  delete SHOT_SEGMENT_STATE[id];
+  persistShotWorkspace();
+  route();
+  toast("Shot layout reset");
+};
+window.jumpShotSection = (id, key) => {
+  SHOT_SECTION_STATE[id] = SHOT_SECTION_STATE[id] || {};
+  SHOT_SECTION_STATE[id][key] = true;
+  persistShotWorkspace();
+  const el = document.getElementById(`shot-section-${key}`);
+  if (el) {
+    el.open = true;
+    setTimeout(
+      () => el.scrollIntoView({ behavior: "smooth", block: "start" }),
+      40,
+    );
+  } else route();
+};
+function shotNeighbors(s) {
+  const i = P.shots.findIndex((x) => x.id === s.id);
+  return {
+    prev: i > 0 ? P.shots[i - 1] : null,
+    next: i >= 0 && i < P.shots.length - 1 ? P.shots[i + 1] : null,
+  };
+}
+function activeSegmentKey(s) {
+  const clips = s.clips || [];
+  if (!clips.length) return "";
+  if (Object.prototype.hasOwnProperty.call(SHOT_SEGMENT_STATE, s.id)) {
+    const saved = SHOT_SEGMENT_STATE[s.id];
+    if (saved === "") return "";
+    if (clips.some((c) => unitKey(c) === saved)) return saved;
+  }
+  return unitKey(
+    clips.find((c) => !(c.generationPackages || []).length) || clips[0],
+  );
+}
+window.toggleShotSegment = (id, key) => {
+  const s = shotById(id),
+    cur = activeSegmentKey(s);
+  SHOT_SEGMENT_STATE[id] = cur === key ? "" : key;
+  if (SHOT_SEGMENT_STATE[id]) {
+    const g = plannerState(s);
+    g.tab = "motion";
+    g.unit = key;
+  }
+  persistShotWorkspace();
+  route();
+};
+window.planShotSegment = (id, key) => {
+  const s = shotById(id),
+    g = plannerState(s);
+  g.tab = "motion";
+  g.unit = key;
+  SHOT_SEGMENT_STATE[id] = key;
+  SHOT_SECTION_STATE[id] = SHOT_SECTION_STATE[id] || {};
+  SHOT_SECTION_STATE[id].packages = true;
+  persistShotWorkspace();
+  route();
+  setTimeout(
+    () =>
+      document
+        .getElementById("shot-section-packages")
+        ?.scrollIntoView({ behavior: "smooth", block: "start" }),
+    60,
+  );
+};
+window.setKeyframe = (id, i, k, v) => {
+  const s = shotById(id);
+  normalizeShotV5(s);
+  s.keyframes[i][k] = v;
+  dirty();
+};
+window.addKeyframe = (id) => {
+  const s = shotById(id);
+  normalizeShotV5(s);
+  s.keyframes.push(newKeyframe(s.keyframes.length));
+  dirty();
+  route();
+};
+window.removeKeyframe = (id, i) => {
+  const s = shotById(id);
+  normalizeShotV5(s);
+  if (s.keyframes.length <= 1) return;
+  const removed = s.keyframes[i];
+  confirmModal(
+    `Remove Frame ${removed.label}? Candidate files stay on disk.`,
+    () => {
+      s.keyframes.splice(i, 1);
+      s.clips.forEach((c) => {
+        if (c.fromFrame === removed.id)
+          c.fromFrame = s.keyframes[Math.max(0, i - 1)]?.id || s.keyframes[0]?.id || "";
+        if (c.toFrame === removed.id) c.toFrame = "";
+      });
+      normalizeShotV5(s);
+      dirty();
+      route();
+    },
+    { title: `Remove Frame ${removed.label}`, confirmLabel: "REMOVE" },
+  );
+};
+window.selectFramePackage = (id, frameId) => {
+  const s = shotById(id),
+    g = plannerState(s);
+  g.tab = "frames";
+  g.frameId = frameId;
+  SHOT_SECTION_STATE[id] = SHOT_SECTION_STATE[id] || {};
+  SHOT_SECTION_STATE[id].packages = true;
+  persistShotWorkspace();
+  route();
+  setTimeout(
+    () =>
+      document
+        .getElementById("shot-section-packages")
+        ?.scrollIntoView({ behavior: "smooth", block: "start" }),
+    60,
+  );
+};
+window.setSegmentMode = (id, ci, kind) => {
+  const s = shotById(id),
+    c = s.clips[ci];
+  c.kind = kind;
+  if (kind === "flf" && !c.toFrame) {
+    const fromIndex = Math.max(
+      0,
+      (s.keyframes || []).findIndex((f) => f.id === c.fromFrame),
+    );
+    if (!s.keyframes[fromIndex + 1])
+      s.keyframes.push(newKeyframe(s.keyframes.length));
+    c.toFrame = s.keyframes[fromIndex + 1].id;
+  }
+  if (kind !== "flf") c.toFrame = "";
+  dirty();
+  route();
+};
+
+function projectNavigator(current) {
+  return `<aside class="project-navigator ${PROJECT_NAV_OPEN ? "open" : "closed"}"><button class="navigator-toggle" onclick="toggleProjectNavigator()" aria-label="${PROJECT_NAV_OPEN ? "Close project navigator" : "Open project navigator"}" aria-expanded="${PROJECT_NAV_OPEN ? "true" : "false"}" aria-controls="project-nav-list"${helpAttr(PROJECT_NAV_OPEN ? "Collapse the scene and shot navigator." : "Open the scene and shot navigator.")}>${PROJECT_NAV_OPEN ? "‹" : "›"}</button>${
+    PROJECT_NAV_OPEN
+      ? `<div class="navigator-head"><b>Project navigator</b><input placeholder="Filter shots" oninput="filterProjectNavigator(this.value)"></div><div id="project-nav-list" class="navigator-list">${P.scenes
+          .map((sc) => {
+            const shots = P.shots.filter((x) => x.scene === sc.id);
+            return `<section><header><a href="#/scene/${sc.id}">${esc(sc.title)}</a><span>${shots.filter((x) => workflowState(x).key === "APPROVED").length}/${shots.length}</span></header>${shots
+              .map((x) => {
+                const st = workflowState(x);
+                return `<a class="navigator-shot ${current?.id === x.id ? "on" : ""}" href="#/shot/${x.id}" data-search="${attr((x.id + " " + x.title + " " + sc.title).toLowerCase())}"><span class="nav-status wf-${st.cls}"></span><b>${esc(x.id)}</b><small>${esc(x.title)}</small></a>`;
+              })
+              .join("")}</section>`;
+          })
+          .join("")}</div>`
+      : ""
+  }</aside>`;
+}
+window.toggleProjectNavigator = () => {
+  PROJECT_NAV_OPEN = !PROJECT_NAV_OPEN;
+  localStorage.setItem(
+    "cinebraid-project-nav-open-v662",
+    PROJECT_NAV_OPEN ? "1" : "0",
+  );
+  route();
+};
+window.filterProjectNavigator = (v) => {
+  const q = String(v || "").toLowerCase();
+  document
+    .querySelectorAll(".navigator-shot")
+    .forEach((x) =>
+      x.classList.toggle("filtered", q && !x.dataset.search.includes(q)),
+    );
+};

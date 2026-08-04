@@ -1,0 +1,26 @@
+const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
+const root = path.join(__dirname, '..');
+const read = (name) => fs.readFileSync(path.join(root, name), 'utf8');
+const pkg = require(path.join(root, 'package.json'));
+const css = read('public/styles.css');
+const app = read('public/app.js');
+const views = read('public/views.js');
+const llm = read('llm.js');
+const index = read('public/index.html');
+
+assert.strictEqual(pkg.version, '6.6.4-studio.repair.13');
+assert(index.includes('styles.css?v=6.6.4-studio.repair.13'));
+assert(index.includes('class="brand-logo"'));
+assert(css.includes('.wordmark::before{display:none!important;content:none!important}'), 'duplicate CB pseudo-mark must be disabled');
+assert(css.includes('.modal-box:has(.test-note-modal){width:min(680px,calc(100vw - 40px));max-width:none}'), 'test note modal must own a responsive width');
+assert(css.includes('.test-note-modal{display:grid;gap:14px;min-width:0;width:100%;max-width:100%}'), 'test note content must not force overflow');
+assert(css.includes('#app[data-surf="light"]'), 'light surface must exist');
+assert(css.includes('#app[data-surf="night"]'), 'dark studio surface must exist');
+assert(app.includes('app.dataset.font = font'), 'font selection must propagate to the app shell');
+assert(views.includes('Light canvas'), 'appearance settings must expose light mode');
+assert(views.includes('Font system'), 'appearance settings must expose font selection');
+assert(llm.includes('/api/generate'), 'Ollama chat must have generate fallback');
+assert(llm.includes('assistantMessageText(data.message) || assistantMessageText(data)'), 'Ollama response extraction must handle top-level output');
+console.log('studio repair regression checks passed');
