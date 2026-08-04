@@ -317,6 +317,7 @@ async function main() {
     "private-preview-layout-real-browser.py",
     "private-preview-ux.js",
     "project-builder-kit.js",
+    "project-switch-safety.js",
     "readiness-feedback.js",
     "real-browser-workflow.py",
     "reference-angle-routing.js",
