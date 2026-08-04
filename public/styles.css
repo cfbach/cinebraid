@@ -3477,3 +3477,78 @@ body[data-focused-workspace="1"] .guided-frame-body,
   .guided-frame-body{grid-template-columns:minmax(0,430px) minmax(340px,1fr)!important}
   .guided-frame-context{max-width:430px}
 }
+
+/* ---------------------------------------------------------------------------
+   v6.6.4 settings consistency — every subsection states how it stores changes,
+   and the controls that carried that message stop fighting their own layout.
+   --------------------------------------------------------------------------- */
+
+/* The head row of a panel: heading and description on the left, panel-level
+   actions on the right at their own width instead of stretched across the card. */
+.settings-block>.settings-title-row{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;flex-wrap:wrap;margin-bottom:14px}
+.settings-block>.settings-title-row>div:not(.settings-inline-actions){min-width:0;flex:1 1 320px}
+.settings-block>.settings-title-row h3{margin:0 0 4px}
+.settings-block>.settings-title-row .hint{margin:0;max-width:74ch}
+.settings-inline-actions{display:flex;gap:8px;flex-wrap:wrap;flex:0 0 auto}
+.settings-inline-actions>button,.settings-block>.settings-title-row>button,.settings-head-button{flex:0 0 auto;width:auto;white-space:nowrap}
+
+/* Action rows sized by their labels. "Export project" used to wrap onto two lines
+   inside a 100px pill while the button beside it stretched to fill the card. */
+.settings-actions{flex-wrap:wrap;row-gap:10px}
+.settings-actions>button,.settings-actions>a{flex:0 0 auto;width:auto;white-space:nowrap}
+
+/* One save-state line per subsection, in the same place on every panel. */
+.settings-save-line{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-top:14px}
+.settings-save-state{font:700 11px var(--mono);letter-spacing:.04em;color:var(--muted);padding:4px 9px;border:1px solid var(--line);border-radius:999px;background:var(--panel-2)}
+.settings-save-state[data-state="dirty"]{color:var(--amber);border-color:color-mix(in srgb,var(--amber) 45%,var(--line))}
+.settings-save-state[data-state="saving"]{color:var(--acc);border-color:color-mix(in srgb,var(--acc) 45%,var(--line))}
+.settings-save-state[data-state="saved"]{color:var(--green);border-color:color-mix(in srgb,var(--green) 45%,var(--line))}
+.settings-save-state[data-state="error"]{color:var(--red);border-color:color-mix(in srgb,var(--red) 50%,var(--line))}
+.settings-save-model{color:var(--muted);font-size:11px;line-height:1.45;flex:1 1 260px;min-width:0}
+.settings-actions .settings-save-line{margin-top:0;flex:1 1 100%}
+
+/* A state chip says what is off. Bare "Disabled" text beside a bright primary
+   button never said whether the button, the feature or the setting was disabled. */
+.settings-state-chip{font:700 11px var(--mono);letter-spacing:.04em;padding:5px 10px;border-radius:999px;border:1px solid var(--line);background:var(--panel-2);color:var(--muted);white-space:nowrap}
+.settings-state-chip[data-tone="ready"]{color:var(--green);border-color:color-mix(in srgb,var(--green) 45%,var(--line))}
+.settings-state-chip[data-tone="attention"]{color:var(--amber);border-color:color-mix(in srgb,var(--amber) 45%,var(--line))}
+.settings-state-chip[data-tone="checking"]{color:var(--acc);border-color:color-mix(in srgb,var(--acc) 45%,var(--line))}
+
+/* Preview cards read as three separate statements because they are three. */
+.settings-preview-card,.filename-preview{display:grid;gap:6px;padding:12px 14px;border:1px solid var(--line)}
+.settings-preview-card>*,.filename-preview>*{display:block;min-width:0}
+.settings-preview-card>span,.filename-preview>span{font:700 9px var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+.settings-preview-card>b{font-size:15px;line-height:1.35}
+.settings-preview-card>small,.filename-preview>code{color:var(--muted);line-height:1.45;overflow-wrap:anywhere}
+
+/* The interface-scale control is part of the theme it sets, not an OS control. */
+.brand-settings input[type="range"]{appearance:none;-webkit-appearance:none;width:100%;height:22px;background:transparent;accent-color:var(--acc);cursor:pointer}
+.brand-settings input[type="range"]::-webkit-slider-runnable-track{height:6px;border-radius:999px;background:linear-gradient(90deg,var(--acc) 0 var(--range-fill,50%),var(--line-2,var(--line)) var(--range-fill,50%) 100%);border:1px solid var(--line)}
+.brand-settings input[type="range"]::-moz-range-track{height:6px;border-radius:999px;background:var(--panel-2);border:1px solid var(--line)}
+.brand-settings input[type="range"]::-moz-range-progress{height:6px;border-radius:999px;background:var(--acc)}
+.brand-settings input[type="range"]::-webkit-slider-thumb{appearance:none;-webkit-appearance:none;margin-top:-6px;width:17px;height:17px;border-radius:50%;background:var(--acc);border:2px solid var(--panel);box-shadow:0 0 0 1px var(--acc)}
+.brand-settings input[type="range"]::-moz-range-thumb{width:15px;height:15px;border-radius:50%;background:var(--acc);border:2px solid var(--panel)}
+.brand-settings input[type="range"]:focus-visible{outline:none}
+.brand-settings input[type="range"]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 4px var(--acc-soft)}
+.range-readout{font:700 12px var(--mono);color:var(--ink);margin-top:6px}
+
+/* A checkbox is 16px wide. Left to stretch inside a flex row it grew to fill the
+   card, leaving its own label marooned at the far end. */
+.checkline>input[type="checkbox"]{flex:0 0 auto;width:16px;height:16px;margin:0}
+.fal-settings>.checkline{gap:10px;line-height:1.4}
+
+/* Provider tiles: never orphan the selected one on a row of its own, and keep a
+   real gap between the tile row and the label of the field beneath it. */
+.policy-options.assistant-options{grid-template-columns:repeat(auto-fit,minmax(clamp(140px,18%,190px),1fr));margin-bottom:20px}
+
+/* The backup filename is the information needed to choose a backup; Restore is a
+   button. Size them that way round. */
+.project-backup-list article{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center}
+.project-backup-list article b{white-space:normal;overflow:visible;text-overflow:clip;overflow-wrap:anywhere;line-height:1.35}
+.project-backup-list .backup-restore-btn{flex:0 0 auto;width:auto;justify-self:end;white-space:nowrap;padding-left:20px;padding-right:20px}
+
+@media(max-width:900px){
+  .settings-block>.settings-title-row{flex-direction:column}
+  .project-backup-list article{grid-template-columns:minmax(0,1fr)}
+  .project-backup-list .backup-restore-btn{justify-self:stretch}
+}
