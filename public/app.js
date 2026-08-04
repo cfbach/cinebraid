@@ -786,8 +786,51 @@ async function showFirstRunWorkspace(message = "") {
   if (projectTitle) projectTitle.textContent = "CineBraid";
   if (projectFormat) projectFormat.textContent = "No project open";
   if (topbarProject) topbarProject.textContent = "CineBraid";
+  setSaveState("loading", "No project open");
   const existing = (projectData.projects || []).map((project) => `<button class="ghost-btn" onclick="switchProject('${attr(project.slug)}')">Open ${esc(project.title || project.slug)}</button>`).join("");
   $("#main").innerHTML = `<section class="first-run-state" role="status"><div class="first-run-mark">CB</div><div><span>WELCOME TO CINEBRAID</span><h1>Start with a project—or open the sample.</h1><p>CineBraid keeps approved references, continuity, shots, existing media and final deliveries together. AI and in-app generation are optional.</p>${message ? `<small>${esc(message)}</small>` : ""}<div class="first-run-actions"><button class="assemble-btn" onclick="newProject()">Create a project</button>${existing}</div><ol><li>Upload or map existing references.</li><li>Approve the production authorities.</li><li>Attach existing stills, video and audio to shots.</li><li>Finalize the approved result.</li></ol></div></section>`;
+}
+/* A failed project load carries the server's structured description of the failure so the
+   recovery screen can name the project and print the real file path instead of a guess. */
+function projectLoadError(data) {
+  const error = new Error(
+    (data && data.error) || "CineBraid could not open the project.",
+  );
+  if (data && data.projectFailure) error.projectFailure = data.projectFailure;
+  return error;
+}
+/* Nothing loaded, so nothing is saved. Put the chrome into an honest state and keep the
+   project switcher labelled — it is the only way out of a failed load. */
+function markProjectLoadFailure(failure) {
+  const title = (failure && (failure.title || failure.slug)) || "";
+  setSaveState("error", "Not loaded");
+  const projectTitle = $("#project-title"),
+    projectFormat = $("#project-format"),
+    topbarProject = $("#topbar-project");
+  if (projectTitle) {
+    projectTitle.textContent = "Projects";
+    projectTitle.setAttribute("aria-label", "Open the project switcher");
+  }
+  if (projectFormat)
+    projectFormat.textContent = title
+      ? `Could not open ${title}`
+      : "No project open";
+  if (topbarProject) topbarProject.textContent = "CineBraid";
+}
+function renderProjectFailureScreen(failure, message) {
+  const main = document.getElementById("main");
+  if (!main) return;
+  const name = (failure && (failure.title || failure.slug)) || "";
+  const heading = name
+    ? `CineBraid could not open “${esc(name)}”`
+    : "CineBraid could not open this project";
+  const where = failure && failure.path
+    ? `<p class="project-failure-path">The project file is at <code>${esc(failure.path)}</code></p>`
+    : "";
+  const detail = failure && failure.detail
+    ? `<details class="project-failure-detail"><summary>Technical detail</summary><pre>${esc(failure.detail)}</pre></details>`
+    : "";
+  main.innerHTML = `<section class="empty-state project-failure-state" role="alert"><h2>${heading}</h2><p>${esc(message || (failure && failure.error) || "The project file could not be read.")}</p>${where}<p><small>Your project data has not been deleted or changed. Open another project to keep working, or repair this file and reload.</small></p><div class="modal-actions"><button class="add-btn" onclick="openProjectSwitcher()">Open a different project</button><button class="ghost-btn" onclick="location.reload()">Reload</button></div>${detail}</section>`;
 }
 async function load() {
   applyTheme();
@@ -797,7 +840,10 @@ async function load() {
     await showFirstRunWorkspace(data.error || "No project is available yet.");
     return;
   }
-  if (!projectResponse.ok) throw new Error((await projectResponse.json()).error || "Could not load project");
+  if (!projectResponse.ok) {
+    const data = await projectResponse.json().catch(() => ({}));
+    throw projectLoadError(data);
+  }
   const loaded = await Promise.all([
     (async () => {
       ACTIVE_PROJECT_SLUG =
@@ -870,9 +916,12 @@ async function load() {
   const schemaWasOlder = storedSchemaIsOlder(P.meta);
   const migratedV5 = normalizeProjectV5();
   $("#project-title").textContent = P.meta.title;
+  $("#project-title").setAttribute("aria-label", `Open the project switcher — ${P.meta.title} is open`);
   $("#project-format").textContent =
     (P.meta.format || "") + (P.meta.version ? " · " + P.meta.version : "");
   $("#topbar-project").textContent = P.meta.title;
+  /* The project on screen is the project on disk, so the resting indicator is honest again. */
+  setSaveState("saved", "Saved");
   if (!location.hash) location.hash = "#/production";
   route();
   if ((P.meta?.dataIntegrityWarnings || []).length) setTimeout(() => toast(`${P.meta.dataIntegrityWarnings.length} project data-integrity warning${P.meta.dataIntegrityWarnings.length === 1 ? "" : "s"} found. Review Settings or Reports before relying on ambiguous IDs.`), 120);
@@ -979,6 +1028,35 @@ function tally() {
 }
 
 /* ---------- project switcher ---------- */
+let PROJECT_SWITCH_ERROR = null;
+function clearProjectSwitcherError() {
+  PROJECT_SWITCH_ERROR = null;
+  const slot = document.getElementById("project-switcher-error");
+  if (slot) {
+    slot.innerHTML = "";
+    slot.hidden = true;
+  }
+}
+/* Keep the dialog open and explain the refusal in place: which project, which file, and the
+   fact that the project the user was already in is untouched and still open. */
+function showProjectSwitcherError(data, slug) {
+  const failure = (data && data.projectFailure) || {};
+  const name = failure.title || failure.slug || slug || "that project";
+  const message =
+    (data && data.error) || `CineBraid could not open “${name}”.`;
+  PROJECT_SWITCH_ERROR = { failure, message, slug: failure.slug || slug || "" };
+  const slot = document.getElementById("project-switcher-error");
+  if (!slot) return toast(message);
+  const where = failure.path
+    ? `<span class="project-switcher-error-path">File: <code>${esc(failure.path)}</code></span>`
+    : "";
+  const detail = failure.detail
+    ? `<details><summary>Technical detail</summary><pre>${esc(failure.detail)}</pre></details>`
+    : "";
+  slot.innerHTML = `<strong>Could not open “${esc(name)}”</strong><span>${esc(message)}</span>${where}${detail}`;
+  slot.hidden = false;
+  slot.scrollIntoView?.({ block: "nearest" });
+}
 async function openProjectSwitcher() {
   const { active, projects, archived = [], trashed = [] } = await (await fetch("/api/projects")).json();
   const activeRows = projects.length ? projects.map((p) => `<article class="project-switcher-row ${p.slug === active ? "active" : ""}">
@@ -987,7 +1065,13 @@ async function openProjectSwitcher() {
   </article>`).join("") : `<div class="guided-empty-inline"><b>No active projects.</b><span>Create a project or restore one from the archive.</span></div>`;
   const archivedRows = archived.length ? `<details class="project-archive-list"><summary>Archived projects <span>${archived.length}</span></summary><div>${archived.map((p) => `<article class="project-switcher-row archived"><div class="project-switcher-open"><span>${esc(p.title)}</span><small>${esc(p.slug)}${p.archivedAt ? ` · archived ${esc(new Date(p.archivedAt).toLocaleDateString())}` : ""}</small></div><div class="project-switcher-actions"><button class="approve-btn" onclick="restoreArchivedProject('${attr(p.archiveName)}')">Restore</button></div></article>`).join("")}</div></details>` : "";
   const trashedRows = trashed.length ? `<details class="project-archive-list project-trash-list"><summary>Recently deleted projects <span>${trashed.length}</span></summary><div>${trashed.map((p) => `<article class="project-switcher-row archived"><div class="project-switcher-open"><span>${esc(p.title)}</span><small>${esc(p.slug)}${p.deletedAt ? ` · deleted ${esc(new Date(p.deletedAt).toLocaleDateString())}` : ""}</small></div><div class="project-switcher-actions"><button class="approve-btn" onclick="restoreTrashedProject('${attr(p.trashName)}')">Restore</button></div></article>`).join("")}</div></details>` : "";
-  openModal(`<div class="project-switcher-modal"><header><div><span>PROJECT MANAGEMENT</span><h3>Projects</h3><p>Open active work, archive projects you may return to, or restore recently deleted projects without using the file manager.</p></div></header><div class="project-switcher-list">${activeRows}</div>${archivedRows}${trashedRows}<div class="project-switcher-legend"><span><b>Archive</b> hides a project and keeps it restorable here.</span><span><b>Delete</b> moves the complete folder to recoverable trash; it remains restorable from this window.</span></div><div class="modal-actions"><button class="cancel" onclick="closeModal()">Close</button><button class="add-btn" onclick="newProject()">+ New project</button></div></div>`);
+  openModal(`<div class="project-switcher-modal"><header><div><span>PROJECT MANAGEMENT</span><h3>Projects</h3><p>Open active work, archive projects you may return to, or restore recently deleted projects without using the file manager.</p></div></header><div id="project-switcher-error" class="project-switcher-error" role="alert" hidden></div><div class="project-switcher-list">${activeRows}</div>${archivedRows}${trashedRows}<div class="project-switcher-legend"><span><b>Archive</b> hides a project and keeps it restorable here.</span><span><b>Delete</b> moves the complete folder to recoverable trash; it remains restorable from this window.</span></div><div class="modal-actions"><button class="cancel" onclick="closeModal()">Close</button><button class="add-btn" onclick="newProject()">+ New project</button></div></div>`);
+  /* Reopening the dialog from a failure state must not lose the explanation of what failed. */
+  if (PROJECT_SWITCH_ERROR)
+    showProjectSwitcherError(
+      { error: PROJECT_SWITCH_ERROR.message, projectFailure: PROJECT_SWITCH_ERROR.failure },
+      PROJECT_SWITCH_ERROR.slug,
+    );
 }
 $("#project-title").onclick = openProjectSwitcher;
 window.requestArchiveProject = (slug, title) => {
@@ -1040,23 +1124,65 @@ window.requestDeleteProject = (slug, title) => {
     { title: "Delete project", confirmLabel: "DELETE PROJECT" },
   );
 };
+/* Switching is atomic at the application-state level. The server refuses to activate a project
+   it cannot read, and if the load still fails afterwards the active project is put back before
+   anything is shown, so the interface and the server never disagree about which project is open
+   and a later edit cannot be written into the project that failed. */
 window.switchProject = async (slug) => {
+  const previousSlug = ACTIVE_PROJECT_SLUG;
+  clearProjectSwitcherError();
   try {
     await flushPendingProjectSave();
-    const r = await fetch("/api/projects/switch", {
+  } catch {
+    /* the save chain reports its own failure; the switch below is still refused or rolled back */
+  }
+  let response, data;
+  try {
+    response = await fetch("/api/projects/switch", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ slug }),
     });
-    if (!r.ok) throw new Error((await r.json()).error || "Could not switch project");
+    data = await response.json().catch(() => ({}));
   } catch (error) {
-    return toast(error.message || "Could not switch project");
+    return showProjectSwitcherError(
+      { error: error.message || "Could not reach CineBraid to switch project." },
+      slug,
+    );
+  }
+  if (!response.ok) return showProjectSwitcherError(data, slug);
+  location.hash = "#/production";
+  try {
+    await load();
+  } catch (error) {
+    await rollbackProjectSwitch(previousSlug);
+    return showProjectSwitcherError(
+      { error: error.message, projectFailure: error.projectFailure },
+      slug,
+    );
   }
   closeModal();
-  location.hash = "#/production";
-  await load();
   toast("Switched project");
 };
+/* Put the previously active project back after a post-switch load failure. If even that fails
+   there is no readable project left, so fall back to the recovery screen rather than leaving
+   the server pointing somewhere the interface is not. */
+async function rollbackProjectSwitch(previousSlug) {
+  if (!previousSlug) return;
+  try {
+    const response = await fetch("/api/projects/switch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ slug: previousSlug }),
+    });
+    if (!response.ok) throw new Error("Could not reopen the previous project.");
+    await load();
+    await openProjectSwitcher();
+  } catch (error) {
+    markProjectLoadFailure(error.projectFailure);
+    renderProjectFailureScreen(error.projectFailure, error.message);
+  }
+}
 window.newProject = () =>
   formModal(
     "New CineBraid project",

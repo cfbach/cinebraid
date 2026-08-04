@@ -2380,6 +2380,18 @@ body.automation-activity-open{overflow:hidden}
 .project-switcher-open small{color:var(--muted);font:9px var(--mono);white-space:nowrap}
 .project-delete-btn{white-space:nowrap}
 .project-switcher-note{color:var(--muted);font-size:10px}.project-switcher-note code{font-family:var(--mono);color:var(--text)}
+.project-switcher-error{display:grid;gap:6px;padding:11px 12px;border:1px solid var(--red);border-radius:10px;background:color-mix(in srgb,var(--red) 12%,transparent);color:var(--ink);font-size:12px;line-height:1.5}
+.project-switcher-error[hidden]{display:none}
+.project-switcher-error strong{font-size:13px}
+.project-switcher-error-path{color:var(--muted);font-size:10.5px;word-break:break-all}
+.project-switcher-error code,.project-failure-path code{font-family:var(--mono);color:var(--ink)}
+.project-switcher-error pre,.project-failure-detail pre{margin:6px 0 0;padding:8px;border-radius:8px;background:rgba(0,0,0,.25);font:10.5px/1.5 var(--mono);white-space:pre-wrap;word-break:break-word}
+.project-switcher-error summary,.project-failure-detail summary{cursor:pointer;color:var(--muted);font-size:10.5px}
+.project-failure-state{display:grid;gap:10px;justify-items:start;text-align:left}
+.project-failure-state .modal-actions{display:flex;flex-wrap:wrap;gap:10px;width:auto}
+.project-failure-state .modal-actions button{white-space:nowrap}
+.project-failure-path{color:var(--muted);font-size:11px;word-break:break-all}
+.save-state[data-state="loading"] .save-dot{background:var(--faint);box-shadow:none}
 @media(max-width:900px){
   .reference-manual-actions{grid-template-columns:repeat(2,minmax(0,1fr))}
   .manual-coverage-actions{grid-template-columns:1fr}

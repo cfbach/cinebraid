@@ -97,9 +97,14 @@ class FakeElement {
     return this;
   }
   querySelector(selector) {
-    if (selector === "span:last-child") return new FakeElement();
+    /* Stable so callers that write into a child (the save-state label) can be observed. */
+    if (selector === "span:last-child") {
+      this._lastSpan = this._lastSpan || new FakeElement();
+      return this._lastSpan;
+    }
     return null;
   }
+  scrollIntoView() {}
   querySelectorAll() {
     return [];
   }
@@ -383,6 +388,7 @@ function createDocument() {
     "production-nav-count",
     "automation-activity-toggle",
     "automation-activity-drawer",
+    "project-switcher-error",
   ];
   const map = new Map(ids.map((id) => [id, new FakeElement(id)]));
   const navViews = ["production", "shots", "library", "reports", "settings"];
@@ -557,11 +563,11 @@ async function render(hash, project, options = {}) {
     if (Date.now() > deadline) throw new Error(`Timed out rendering ${hash}`);
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
-  if (document.body.dataset.renderError) {
+  if (document.body.dataset.renderError && !options.allowRenderError) {
     throw new Error(`${hash}: ${document.body.dataset.renderError}`);
   }
 
-  return { html: map.get("main").innerHTML, context };
+  return { html: map.get("main").innerHTML, context, document, map };
 }
 
 async function main() {

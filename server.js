@@ -160,8 +160,8 @@ function listArchivedProjects() {
     .map((archiveName) => {
       const dir = path.join(archiveRoot, archiveName);
       let meta = {}, manifest = {};
-      try { meta = JSON.parse(fs.readFileSync(path.join(dir, "project.json"), "utf8")).meta || {}; } catch {}
-      try { manifest = JSON.parse(fs.readFileSync(path.join(dir, ".cinebraid-archive.json"), "utf8")); } catch {}
+      try { meta = readJsonSync(path.join(dir, "project.json")).meta || {}; } catch {}
+      try { manifest = readJsonSync(path.join(dir, ".cinebraid-archive.json")); } catch {}
       return {
         archiveName,
         slug: manifest.originalSlug || archiveName,
@@ -180,8 +180,8 @@ function listTrashedProjects() {
     .map((trashName) => {
       const dir = path.join(trashRoot, trashName);
       let meta = {}, manifest = {};
-      try { meta = JSON.parse(fs.readFileSync(path.join(dir, "project.json"), "utf8")).meta || {}; } catch {}
-      try { manifest = JSON.parse(fs.readFileSync(path.join(dir, ".cinebraid-trash.json"), "utf8")); } catch {}
+      try { meta = readJsonSync(path.join(dir, "project.json")).meta || {}; } catch {}
+      try { manifest = readJsonSync(path.join(dir, ".cinebraid-trash.json")); } catch {}
       const inferredSlug = trashName.replace(/-\d{4}-\d{2}-\d{2}T.*$/, "");
       return {
         trashName,
@@ -198,6 +198,15 @@ function PROJECT_DIR() {
 }
 function DATA() {
   return path.join(PROJECT_DIR(), "project.json");
+}
+/* Windows tooling (PowerShell's Out-File -Encoding utf8, Notepad) writes a UTF-8 BOM that
+   JSON.parse rejects. Every JSON file CineBraid reads goes through here so a BOM is never
+   the difference between a readable and an unreadable project. */
+function parseJsonText(text) {
+  return JSON.parse(String(text).replace(/^\uFEFF/, ""));
+}
+function readJsonSync(file) {
+  return parseJsonText(fs.readFileSync(file, "utf8"));
 }
 function cleanProjectSlug(value) {
   const slug = path.basename(String(value || "").trim());
@@ -297,6 +306,72 @@ function normalizeProjectCollections(project) {
   return project;
 }
 
+/* Single gate for "is this project safe to open?". Both GET /api/project and the switch
+   endpoint go through it, so the server can never make a project active that it would then
+   fail to serve. Failures name the project and the real file path — never a guessed one. */
+function inspectProjectFile(value) {
+  const requested = String(value || "").trim();
+  let slug, file;
+  try {
+    ({ slug, file } = projectDirForSlug(requested, false));
+  } catch {
+    return {
+      ok: false, status: 404, slug: requested, title: requested, file: "", reason: "invalid-name",
+      error: `“${requested}” is not a valid project name, so CineBraid did not open it.`,
+    };
+  }
+  if (!fs.existsSync(file))
+    return {
+      ok: false, status: 404, slug, title: slug, file, reason: "missing",
+      error: `CineBraid could not open “${slug}” because its project file is missing.`,
+    };
+  let raw;
+  try {
+    raw = fs.readFileSync(file, "utf8");
+  } catch (error) {
+    return {
+      ok: false, status: 422, slug, title: slug, file, reason: "unreadable", detail: error.message,
+      error: `CineBraid could not open “${slug}” because its project file could not be read. Nothing was changed.`,
+    };
+  }
+  let project;
+  try {
+    project = parseJsonText(raw);
+  } catch (error) {
+    return {
+      ok: false, status: 422, slug, title: slug, file, reason: "invalid-json", detail: error.message,
+      error: `CineBraid could not open “${slug}” because its project file is not valid JSON. The file is untouched and the project you were in is still open.`,
+    };
+  }
+  if (!plainObject(project))
+    return {
+      ok: false, status: 422, slug, title: slug, file, reason: "invalid-shape",
+      error: `CineBraid could not open “${slug}” because its project file does not contain a project. The file is untouched and the project you were in is still open.`,
+    };
+  const title = String(project.meta?.title || "").trim() || slug;
+  const validation = validateProjectForSave(normalizeProjectCollections(project));
+  if (!validation.ok)
+    return {
+      ok: false, status: 422, slug, title, file, reason: "invalid-structure", issues: validation.errors,
+      detail: validation.errors[0] || "",
+      error: `CineBraid could not open “${title}” because its project file is missing information CineBraid needs. The file is untouched and the project you were in is still open.`,
+    };
+  return { ok: true, slug, title, file, project };
+}
+function projectFailurePayload(inspected) {
+  return {
+    error: inspected.error,
+    projectFailure: {
+      slug: inspected.slug,
+      title: inspected.title,
+      path: inspected.file,
+      reason: inspected.reason,
+      detail: inspected.detail || "",
+      issues: inspected.issues || [],
+    },
+  };
+}
+
 function atomicWriteJson(file, value, { backup = true } = {}) {
   const payload = JSON.stringify(value, null, 2),
     dir = path.dirname(file),
@@ -326,7 +401,7 @@ function atomicWriteJson(file, value, { backup = true } = {}) {
 function projectAIPolicy() {
   try {
     return (
-      JSON.parse(fs.readFileSync(DATA(), "utf8")).meta?.aiPolicy ||
+      readJsonSync(DATA()).meta?.aiPolicy ||
       "project-default"
     );
   } catch {
@@ -352,7 +427,7 @@ function ensureDirs(dir) {
   fs.mkdirSync(projectsRoot(), { recursive: true });
   let slug = "project-1";
   try {
-    slug = (JSON.parse(fs.readFileSync(oldData, "utf8")).meta.title || slug)
+    slug = (readJsonSync(oldData).meta.title || slug)
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-|-$/g, "");
@@ -551,15 +626,15 @@ app.get("/api/project", (req, res) => {
   try {
     const slug = activeSlug();
     if (!slug) return res.status(404).json({ error: "No active project." });
-    const { file } = projectDirForSlug(slug);
-    res.setHeader("X-CineBraid-Project-Slug", slug);
-    const project = JSON.parse(fs.readFileSync(file, "utf8"));
+    const inspected = inspectProjectFile(slug);
+    if (!inspected.ok)
+      return res.status(inspected.status).json(projectFailurePayload(inspected));
+    res.setHeader("X-CineBraid-Project-Slug", inspected.slug);
+    const project = inspected.project;
     normalizePromptBuildHistory(project, { applyRetention: false });
     res.json(project);
   } catch (e) {
-    res
-      .status(500)
-      .json({ error: "Could not read data/project.json — " + e.message });
+    res.status(500).json({ error: "Could not open the active project — " + e.message });
   }
 });
 function projectReadinessIssues(P) {
@@ -616,7 +691,7 @@ app.put("/api/projects/:slug/project", (req, res) => {
   try {
     const { slug, file } = projectDirForSlug(req.params.slug),
       current = fs.existsSync(file)
-      ? JSON.parse(fs.readFileSync(file, "utf8"))
+      ? readJsonSync(file)
       : {};
     const incoming = normalizeProjectCollections({
       ...req.body,
@@ -659,7 +734,7 @@ app.post("/api/projects/:slug/restore", (req, res) => {
     if (!/^project-.*\.json$/i.test(name)) return res.status(400).json({ error: "Choose a valid project backup." });
     const backupFile = path.join(projectBackupDir(file), name);
     if (!backupFile.startsWith(projectBackupDir(file) + path.sep) || !fs.existsSync(backupFile)) return res.status(404).json({ error: "Backup not found." });
-    const restored = normalizeProjectCollections(JSON.parse(fs.readFileSync(backupFile, "utf8")));
+    const restored = normalizeProjectCollections(readJsonSync(backupFile));
     normalizePromptBuildHistory(restored, { applyRetention: false });
     const validation = validateProjectForSave(restored);
     if (!validation.ok) return res.status(422).json({ error: "Backup validation failed.", issues: validation.errors });
@@ -678,7 +753,7 @@ app.put("/api/project", (req, res) =>
 );
 
 function readProject() {
-  const project = JSON.parse(fs.readFileSync(DATA(), "utf8"));
+  const project = readJsonSync(DATA());
   normalizePromptBuildHistory(project, { applyRetention: false });
   project.jobs = Array.isArray(project.jobs) ? project.jobs : [];
   project.decisions = Array.isArray(project.decisions) ? project.decisions : [];
@@ -2444,7 +2519,7 @@ app.post("/api/projects/import-json", (req, res) => {
 /* ---- export: app state → markdown (app is the source of truth) ---- */
 app.post("/api/export", (req, res) => {
   try {
-    const P = JSON.parse(fs.readFileSync(DATA(), "utf8"));
+    const P = readJsonSync(DATA());
     const md = buildMarkdown(P);
     const name =
       "EXPORT_" +
@@ -3677,7 +3752,7 @@ function composerAssistSystem(mode, references) {
 
 app.post("/api/composer/assist", async (req, res) => {
   try {
-    const P = JSON.parse(fs.readFileSync(DATA(), "utf8"));
+    const P = readJsonSync(DATA());
     const context = PromptEngine.buildContext(P, req.body.shotId, "");
     const references = Array.isArray(req.body.references) ? req.body.references : [];
     const composition = req.body.composition && typeof req.body.composition === "object" ? req.body.composition : context.shot.composition || {};
@@ -4168,7 +4243,7 @@ AUDIO NOTES:
 If the source is too vague, create a restrained useful draft and put the uncertainty in warnings. Never add vocals or lyrics unless they are explicitly requested.`;
 app.post("/api/llm/build-scene-audio-prompts", async (req, res) => {
   try {
-    const P = JSON.parse(fs.readFileSync(DATA(), "utf8"));
+    const P = readJsonSync(DATA());
     const sceneId = String(req.body?.sceneId || "").trim();
     const scene = (P.scenes || []).find((item) => String(item.id) === sceneId);
     if (!scene) return res.status(404).json({ error: "Scene not found" });
@@ -4387,7 +4462,7 @@ function reviewCriteria(P, kind, list, id, frameId = "") {
 app.post("/api/llm/review", async (req, res) => {
   try {
     const visionProvider = aiProviderOverride();
-    const P = JSON.parse(fs.readFileSync(DATA(), "utf8"));
+    const P = readJsonSync(DATA());
     const { kind, list, id, frameId } = req.body || {};
     const source = reviewCriteria(P, kind, list, id, frameId || "");
     const requestedNames = Array.isArray(req.body?.fileNames)
@@ -4649,7 +4724,7 @@ function normalizeSceneReview(parsed, scene, rows) {
 app.post("/api/llm/review-scene", async (req, res) => {
   try {
     const visionProvider = aiProviderOverride();
-    const P = JSON.parse(fs.readFileSync(DATA(), "utf8"));
+    const P = readJsonSync(DATA());
     const sceneId = String(req.body?.sceneId || "").trim();
     const scene = (P.scenes || []).find((item) => String(item.id) === sceneId);
     if (!scene) return res.status(404).json({ error: "Scene not found" });
@@ -4743,7 +4818,7 @@ const SCENE_CORRECTION_REVIEW_SYSTEM = `You are reviewing candidate repairs for 
 app.post("/api/llm/review-scene-correction", async (req, res) => {
   try {
     const visionProvider = aiProviderOverride();
-    const P = JSON.parse(fs.readFileSync(DATA(), "utf8"));
+    const P = readJsonSync(DATA());
     const sceneId = String(req.body?.sceneId || "").trim();
     const targetShotId = String(req.body?.targetShotId || "").trim();
     const scene = (P.scenes || []).find((item) => String(item.id) === sceneId);
@@ -4815,7 +4890,7 @@ app.post("/api/llm/review-scene-correction", async (req, res) => {
 
 app.post("/api/llm/review-derived-frame", async (req, res) => {
   try {
-    const P = JSON.parse(fs.readFileSync(DATA(), "utf8"));
+    const P = readJsonSync(DATA());
     const shotId = String(req.body?.shotId || ""), frameId = String(req.body?.frameId || "");
     const shot = (P.shots || []).find((item) => String(item.id) === shotId);
     const frame = shot && (shot.keyframes || []).find((item) => String(item.id) === frameId);
@@ -4897,7 +4972,7 @@ function normalizeFrameSequenceReview(parsed) {
 
 app.post("/api/llm/review-frame-sequence", async (req, res) => {
   try {
-    const P = JSON.parse(fs.readFileSync(DATA(), "utf8"));
+    const P = readJsonSync(DATA());
     const shotId = String(req.body?.shotId || "");
     const shot = (P.shots || []).find((item) => String(item.id) === shotId);
     if (!shot) return res.status(404).json({ error: "shot not found" });
@@ -4986,7 +5061,7 @@ function candidateReviewBuild(P, shot, fileName, requestedId) {
 app.post("/api/llm/review-candidate", async (req, res) => {
   try {
     const visionProvider = aiProviderOverride();
-    const P = JSON.parse(fs.readFileSync(DATA(), "utf8"));
+    const P = readJsonSync(DATA());
     const shotId = path.basename(String(req.body?.shotId || ""));
     const frameId = String(req.body?.frameId || "");
     const fileName = path.basename(String(req.body?.fileName || ""));
@@ -5197,7 +5272,7 @@ function normalizeEntityCandidateReview(parsed, options = {}) {
 app.post("/api/llm/review-entity-candidate", async (req, res) => {
   try {
     const visionProvider = aiProviderOverride();
-    const P = JSON.parse(fs.readFileSync(DATA(), "utf8"));
+    const P = readJsonSync(DATA());
     const list = String(req.body?.list || "");
     const id = String(req.body?.id || "");
     const fileName = path.basename(String(req.body?.fileName || ""));
@@ -5307,7 +5382,7 @@ Return a score, explicit model pass/fail, all hard checks, all five factor findi
 
 async function performShotCandidateReview(shotId) {
   const visionProvider = aiProviderOverride();
-  const P = JSON.parse(fs.readFileSync(DATA(), "utf8"));
+  const P = readJsonSync(DATA());
   const source = reviewCriteria(P, "shot", null, shotId);
   const totalFiles = source.files.length;
   const files = source.files.slice(0, REVIEW_MAX_FILES);
@@ -5448,7 +5523,7 @@ function agentIndexMeta(P = null) {
   const file = path.join(PROJECT_DIR(), "agent-index.json");
   if (!fs.existsSync(file)) return { ready: false, stale: true };
   try {
-    const x = JSON.parse(fs.readFileSync(file, "utf8"));
+    const x = readJsonSync(file);
     const project = P || readProject();
     const currentFingerprint = AgentSuite.projectSourceFingerprint(
       project,
@@ -6288,13 +6363,13 @@ const cos = (a, b) => {
 app.post("/api/search", async (req, res) => {
   const q = String(req.body.q || "").trim();
   if (!q) return res.json({ mode: "none", results: [] });
-  const P = JSON.parse(fs.readFileSync(DATA(), "utf8"));
+  const P = readJsonSync(DATA());
   const docs = searchCorpus(P);
   try {
     if (projectAIPolicy() === "disabled") throw new Error("AI search disabled");
     let cache = {};
     try {
-      cache = JSON.parse(fs.readFileSync(EMB_CACHE, "utf8"));
+      cache = readJsonSync(EMB_CACHE);
     } catch {}
     const missing = docs.filter((d) => !cache[hashStr(d.text)]);
     for (let i = 0; i < missing.length; i += 16) {
@@ -6351,7 +6426,7 @@ app.post("/api/search", async (req, res) => {
 /* ---- the Bible: only approved / locked canon ---- */
 app.get("/api/bible", (req, res) => {
   try {
-    const P = JSON.parse(fs.readFileSync(DATA(), "utf8"));
+    const P = readJsonSync(DATA());
     const approved = (x) => x.status === "APPROVED";
     const media = {
       anchors: listMedia("anchors"),
@@ -6532,14 +6607,17 @@ app.get("/api/bible", (req, res) => {
 app.get("/api/projects", (req, res) =>
   res.json({ active: activeSlug(), projects: listProjects(), archived: listArchivedProjects(), trashed: listTrashedProjects() }),
 );
+/* The switch is only committed once the target project has been read and validated. A project
+   that cannot be opened never becomes active, so the server and the interface can never end up
+   pointing at different projects and a later edit cannot land in the failed target. */
 app.post("/api/projects/switch", (req, res) => {
-  const slug = path.basename(req.body.slug || "");
-  if (!fs.existsSync(path.join(projectsRoot(), slug, "project.json")))
-    return res.status(404).json({ error: "No such project" });
+  const inspected = inspectProjectFile(req.body?.slug);
+  if (!inspected.ok)
+    return res.status(inspected.status).json(projectFailurePayload(inspected));
   const c = readConfig();
-  c.activeProject = slug;
+  c.activeProject = inspected.slug;
   writeConfig(c);
-  res.json({ ok: true });
+  res.json({ ok: true, slug: inspected.slug, title: inspected.title });
 });
 app.post("/api/projects/:slug/archive", (req, res) => {
   try {
@@ -6569,7 +6647,7 @@ app.post("/api/projects/archive/:archiveName/restore", (req, res) => {
     const archiveDir = path.join(projectsRoot(), ".archive", archiveName);
     if (!fs.existsSync(path.join(archiveDir, "project.json"))) return res.status(404).json({ error: "No such archived project" });
     let manifest = {};
-    try { manifest = JSON.parse(fs.readFileSync(path.join(archiveDir, ".cinebraid-archive.json"), "utf8")); } catch {}
+    try { manifest = readJsonSync(path.join(archiveDir, ".cinebraid-archive.json")); } catch {}
     let slug = cleanProjectSlug(manifest.originalSlug || archiveName.replace(/-\d{4}-\d{2}-\d{2}T.*$/, "") || "restored-project");
     const base = slug;
     let suffix = 1;
@@ -6588,7 +6666,7 @@ app.post("/api/projects/trash/:trashName/restore", (req, res) => {
     const trashDir = path.join(projectsRoot(), ".trash", trashName);
     if (!fs.existsSync(path.join(trashDir, "project.json"))) return res.status(404).json({ error: "No such trashed project" });
     let manifest = {};
-    try { manifest = JSON.parse(fs.readFileSync(path.join(trashDir, ".cinebraid-trash.json"), "utf8")); } catch {}
+    try { manifest = readJsonSync(path.join(trashDir, ".cinebraid-trash.json")); } catch {}
     let slug = cleanProjectSlug(manifest.originalSlug || trashName.replace(/-\d{4}-\d{2}-\d{2}T.*$/, "") || "restored-project");
     const base = slug;
     let suffix = 1;
