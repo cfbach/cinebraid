@@ -151,11 +151,36 @@ window.v641UpdateManualActivity = (id, patch = {}) => {
   Object.assign(row, patch, { updatedAt: new Date().toISOString() });
   v641UpdateActivityButton(); if (V641_ACTIVITY_DRAWER_OPEN) v641RenderActivityDrawer();
 };
+/* A finished row stays in the drawer for ten minutes so the user can still read what
+   happened, then removes itself. The pending timer is tracked per activity so finishing the
+   same activity twice replaces it instead of stacking a second one, and it is unref'd where
+   the host supports that. A ref'd timer keeps Node's event loop alive, which is why a
+   completed headless run used to sit for the full ten minutes before exiting; browsers
+   return a plain numeric id with no unref, so drawer behaviour is unchanged there. */
+const V641_MANUAL_RETENTION_MS = 10 * 60_000;
+const V641_MANUAL_RETENTION_TIMERS = new Map();
+function v641ClearManualRetention(id) {
+  const pending = V641_MANUAL_RETENTION_TIMERS.get(id);
+  if (pending === undefined) return;
+  clearTimeout(pending);
+  V641_MANUAL_RETENTION_TIMERS.delete(id);
+}
+function v641ScheduleManualRetention(id) {
+  v641ClearManualRetention(id);
+  const timer = setTimeout(() => {
+    V641_MANUAL_RETENTION_TIMERS.delete(id);
+    V641_MANUAL_ACTIVITIES.delete(id);
+    v641UpdateActivityButton();
+    if (V641_ACTIVITY_DRAWER_OPEN) v641RenderActivityDrawer();
+  }, V641_MANUAL_RETENTION_MS);
+  if (timer && typeof timer.unref === "function") timer.unref();
+  V641_MANUAL_RETENTION_TIMERS.set(id, timer);
+}
 window.v641FinishManualActivity = (id, status = "completed", detail = "") => {
   const row = V641_MANUAL_ACTIVITIES.get(id); if (!row) return;
   Object.assign(row, { status, detail: detail || row.detail, completedAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
   v641UpdateActivityButton(); if (V641_ACTIVITY_DRAWER_OPEN) v641RenderActivityDrawer();
-  setTimeout(() => { V641_MANUAL_ACTIVITIES.delete(id); v641UpdateActivityButton(); if (V641_ACTIVITY_DRAWER_OPEN) v641RenderActivityDrawer(); }, 10 * 60_000);
+  v641ScheduleManualRetention(id);
 };
 function v641ManualActivityMarkup(row) {
   return `<article class="automation-drawer-run manual state-${attr(v641StatusTone(row.status))}"><header><div><span>${esc(row.system || "CINEBRAID ACTIVITY")}</span><b>${esc(row.title || "Manual operation")}</b></div><i>${row.status === "running" ? '<span class="spin">◌</span>' : row.status === "completed" ? "✓" : "!"}</i></header><p>${esc(row.detail || "Working…")}</p><small>${esc(v641ElapsedLabel(row.startedAt, row.completedAt || ""))} elapsed</small></article>`;

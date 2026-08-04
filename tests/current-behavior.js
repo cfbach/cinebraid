@@ -288,6 +288,7 @@ async function main() {
     "automation-restoration.js",
     "blocking-automation-discoverability.js",
     "bounded-rendering.js",
+    "browser-workflow-exit.js",
     "browser-workflow.js",
     "build-history.js",
     "clarity-consolidation.js",
