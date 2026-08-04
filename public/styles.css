@@ -55,6 +55,9 @@ button:focus-visible{outline:2px solid var(--acc);outline-offset:1px}
 .rail-foot{margin-top:auto;padding:16px 18px 20px;border-top:1px solid var(--line)}
 .tally{font-family:var(--mono);font-size:11px;color:var(--muted);display:flex;flex-direction:column;gap:4px;margin-bottom:12px;font-variant-numeric:tabular-nums}
 .tally b{color:var(--ink);font-weight:600}
+/* Names what the five counts below it are, so "approved 2" is never read as a
+   contradiction of the "shots delivered" tile on Production. */
+.tally-heading{margin-top:6px;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);font-size:9px}
 .ghost-btn{width:100%;border:1px solid var(--line);border-radius:var(--r-sm);padding:9px;color:var(--muted);font-size:12px;transition:color .15s,border-color .15s}
 .ghost-btn:hover{color:var(--ink);border-color:var(--line-2)}
 .foot-note{font-size:10.5px;color:var(--faint);margin-top:10px;line-height:1.55}
@@ -2580,6 +2583,12 @@ input:focus,textarea:focus,select:focus{border-color:rgba(79,216,204,.34);box-sh
 .workspace-tab{padding:11px 16px;font-weight:700}
 .board-list-controls{margin:8px 0 18px;padding:16px 18px;border:1px solid rgba(196,214,235,.12);border-radius:20px;background:linear-gradient(180deg, rgba(16,23,32,.88), rgba(11,17,25,.95));box-shadow:var(--shadow-panel)}
 .board-list-controls .board-action-filters{margin:0}
+/* One-line key for the letter badges on a shot card, so TC / L / P never need guessing.
+   It wraps rather than widening the board, and never forces a horizontal scrollbar. */
+.board-badge-legend{display:flex;align-items:center;gap:10px;flex-wrap:wrap;min-width:0;margin:-8px 0 16px;padding:0 4px;font-family:var(--mono);font-size:10px;color:var(--muted)}
+.board-badge-legend>span{letter-spacing:.1em;text-transform:uppercase;color:var(--faint)}
+.board-badge-legend b{display:inline-flex;align-items:center;gap:6px;font-weight:500;min-width:0}
+.board-badge-legend i{display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:18px;padding:0 5px;border:1px solid var(--line-2);border-radius:9px;background:var(--panel-2);font-style:normal;font-weight:600;color:var(--ink)}
 .board-action-filters button{min-height:42px;padding:10px 14px;border-radius:12px;background:rgba(255,255,255,.025)}
 .board-action-filters button.selected{background:linear-gradient(180deg, rgba(79,216,204,.16), rgba(79,216,204,.08));box-shadow:inset 0 1px 0 rgba(255,255,255,.03),0 8px 18px rgba(0,0,0,.18)}
 .board-action-filters b{padding:4px 7px;border-radius:999px;background:rgba(255,255,255,.05)}

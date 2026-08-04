@@ -81,7 +81,7 @@ async function main() {
   entity.context.selectBoundedTask('entity-task','characters:KAI','coverage');
   await new Promise((resolve) => setTimeout(resolve, 10));
   const entityStateHtml = entity.context.document.getElementById('main').innerHTML;
-  assert(entityStateHtml.includes('CURRENT APPROVED AUTHORITY') && entityStateHtml.includes('state-approved-preview'), 'selected state must show its approved authority near the top with a large-preview control');
+  assert(entityStateHtml.includes('CURRENT APPROVED IMAGE') && entityStateHtml.includes('state-approved-preview'), 'selected state must show its approved image near the top with a large-preview control');
 
   look.context.openShotAutomationModal('L1-01');
   const automationModal = look.context.document.getElementById('modal').innerHTML;
