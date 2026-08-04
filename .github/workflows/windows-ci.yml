@@ -1,0 +1,58 @@
+name: CineBraid Windows CI
+
+# Windows is CineBraid's primary supported desktop platform, so the baseline gate
+# runs the deterministic, CI-safe suites on a GitHub-hosted Windows runner.
+#
+# Pull requests targeting main are the only automatic trigger. There is deliberately
+# no `push` trigger for main: the merge commit would otherwise re-run the identical
+# validation that already passed on the pull request.
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+# The job only ever reads the repository. It never publishes, comments or deploys,
+# and it never reads a repository secret.
+permissions:
+  contents: read
+
+# A new push to the same pull request supersedes the previous run.
+concurrency:
+  group: windows-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-validation:
+    # This name is the branch-protection status check. Keep it stable.
+    name: Windows validation
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out the branch under test
+        uses: actions/checkout@v7
+
+      # package.json declares engines.node >= 18 and SETUP.md documents "Node.js 18
+      # or newer". Node 18, 20 and 25 are end of life and Node 26 is still Current,
+      # so Node 24 (Krypton) is the Active LTS line CineBraid should be validated on.
+      - name: Set up Node.js 24 (Active LTS)
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+
+      # npm ci installs strictly from package-lock.json, which is what a fresh
+      # Windows clone does. It also fails if the lockfile and package.json drift.
+      - name: Install dependencies from the lockfile
+        run: npm ci
+
+      - name: Report the toolchain under test
+        run: |
+          node --version
+          npm --version
+
+      # Every suite below is local-only and deterministic: no provider APIs, no
+      # repository secrets, no real browser, and no writes to projects/ or data/.
+      - name: Run the CI-safe validation suite
+        run: npm run check:ci
