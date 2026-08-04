@@ -329,6 +329,7 @@ async function main() {
     "run-full-check.js",
     "run-python-check.js",
     "safety-integrity.js",
+    "shot-workspace-responsive-layout.js",
     "state-chain-recovery.js",
     "studio-repair.js",
     "ui-state-stability-real-browser.py",

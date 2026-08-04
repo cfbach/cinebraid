@@ -3345,3 +3345,126 @@ body[data-focused-workspace="1"] .guided-frame-body{grid-template-columns:minmax
   .frame-sequence-correction-actions>div{align-items:stretch;flex-direction:column}
   .frame-sequence-correction-actions .cancel{width:100%}
 }
+
+/* --- v6.6.4-studio.repair.14 responsive Shot workspace layout ---
+   The Shot workspace reserved fixed pixel tracks that never yielded, so every
+   pixel lost to a narrower window was taken from the column holding the work.
+   At 1280px that starved the frame-review column to 116px while a 240px
+   collapsed-navigator track and a 290px inspector track that holds nothing
+   sat beside it. These rules make the reserved tracks yield first and give the
+   review column, its controls and its imagery a floor they cannot fall below. */
+
+/* 1. The shell reserves a track for the inspector only when one is rendered,
+      and lets the navigator's own open/closed width drive its track. */
+.focused-workspace-shell{
+  grid-template-columns:auto minmax(0,1fr);
+}
+.focused-workspace-shell:has(> .focused-inspector){
+  grid-template-columns:auto minmax(0,1fr) minmax(230px,290px);
+}
+/* A collapsed navigator must cost its collapsed width, not a fixed track. */
+.focused-workspace-shell > .project-navigator{
+  width:auto;
+  overflow:visible;
+}
+.focused-workspace-shell > .project-navigator.closed{width:34px}
+.focused-workspace-shell > .project-navigator.open{width:270px}
+
+/* 2. The navigator toggle stays inside its own panel in both states, and the
+      panel no longer clips it. Scrolling belongs to the list, not the panel. */
+.project-navigator{overflow:visible}
+.project-navigator.closed{min-height:52px}
+.navigator-toggle{right:5px;top:9px}
+.project-navigator.closed .navigator-toggle{right:auto;left:2px;width:30px}
+.navigator-head{padding-right:42px}
+
+/* 3. Sticky positioning survives the horizontal-overflow guard: clip does not
+      create a scroll container, hidden does — and a broken sticky took the
+      navigator and its toggle off screen as soon as the page scrolled. */
+body[data-focused-workspace="1"] #main{overflow-x:clip}
+
+/* 4. The frame-review column gets a floor; the context preview yields first. */
+body[data-focused-workspace="1"] .guided-frame-body,
+.guided-frame-body{
+  grid-template-columns:minmax(0,300px) minmax(340px,1fr)!important;
+  column-gap:14px;
+}
+.guided-frame-context{width:auto!important;max-width:300px;min-width:0}
+.guided-frame-work{min-width:0}
+/* Nothing in the review column may push past its own track. */
+.guided-frame-work button,
+.guided-frame-work .approve-btn{max-width:100%}
+.guided-frame-context-actions{width:100%;min-width:0}
+.guided-frame-context-actions .approve-btn{flex:0 1 auto;min-width:0}
+
+/* 5. Frame imagery keeps its aspect ratio and is sized for the judgement asked. */
+.guided-frame-approved-preview{
+  width:100%!important;
+  height:auto!important;
+  max-height:none!important;
+  aspect-ratio:16/9!important;
+  contain:layout paint;
+}
+.guided-frame-approved-preview img{
+  height:100%!important;
+  max-height:none!important;
+  object-fit:contain!important;
+}
+.guided-frame-context > img{
+  aspect-ratio:16/9;
+  object-fit:contain;
+  background:#080909;
+}
+.guided-frame-candidate .guided-candidate-preview{aspect-ratio:16/9}
+.guided-frame-candidate img{object-fit:contain;background:#080909}
+
+/* 6. A disabled approval control reads as unavailable without going illegible.
+      The filled variants kept a full-strength accent fill under muted text,
+      which measured far below the 4.5:1 that body-sized labels need. */
+.approve-btn:disabled,
+.approve-btn[aria-disabled="true"],
+.add-btn:disabled,
+.add-btn[aria-disabled="true"],
+.topbar-add:disabled,
+.topbar-add[aria-disabled="true"]{
+  opacity:1!important;
+  background:color-mix(in srgb,var(--acc) 15%,var(--panel))!important;
+  border-color:color-mix(in srgb,var(--acc) 30%,var(--line))!important;
+  color:color-mix(in srgb,var(--ink) 72%,var(--panel) 28%)!important;
+  cursor:not-allowed;
+}
+
+/* 7. Below the shell's two-column breakpoint the review column stacks rather
+      than being squeezed, and the navigator rail keeps its toggle reachable. */
+@media(max-width:1180px){
+  .focused-workspace-shell,
+  .focused-workspace-shell:has(> .focused-inspector){grid-template-columns:auto minmax(0,1fr)}
+}
+@media(max-width:1100px){
+  body[data-focused-workspace="1"] .guided-frame-body,
+  .guided-frame-body{grid-template-columns:minmax(0,1fr)!important}
+  .guided-frame-context{max-width:min(100%,420px)}
+}
+@media(max-width:860px){
+  .focused-workspace-shell > .project-navigator.closed,
+  .focused-workspace-shell > .project-navigator.open{width:auto}
+}
+
+/* 8. With the panel no longer clipping, its rows must shrink instead of
+      overflowing: shot IDs truncate rather than wrapping mid-token. */
+.navigator-list{overflow:auto;overscroll-behavior:contain}
+.navigator-shot{grid-template-columns:7px auto minmax(0,1fr);min-width:0}
+.navigator-shot > b{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* 9. On wide desktops the reclaimed width goes to the frame, not to padding:
+      the preview grows with the window while the review column keeps its floor. */
+@media(min-width:1500px){
+  body[data-focused-workspace="1"] .guided-frame-body,
+  .guided-frame-body{grid-template-columns:minmax(0,360px) minmax(340px,1fr)!important}
+  .guided-frame-context{max-width:360px}
+}
+@media(min-width:1800px){
+  body[data-focused-workspace="1"] .guided-frame-body,
+  .guided-frame-body{grid-template-columns:minmax(0,430px) minmax(340px,1fr)!important}
+  .guided-frame-context{max-width:430px}
+}
