@@ -42,6 +42,22 @@ function projectWorkflowEmphasis() {
 function manualFirstWorkflow() {
   return projectWorkflowEmphasis() === "manual";
 }
+/* The title used to call load(), which re-read the project from disk and threw the
+   edit away before the queued save could run — while the indicator still read
+   "Saved". It now takes the same autosave path as every other project field and
+   refreshes the labels that display it. */
+window.setProjectTitle = (value) => {
+  if (!P?.meta) return;
+  P.meta.title = String(value ?? "");
+  const heading = document.getElementById("project-title");
+  if (heading) {
+    heading.textContent = P.meta.title;
+    heading.setAttribute("aria-label", `Open the project switcher — ${P.meta.title} is open`);
+  }
+  const topbar = document.getElementById("topbar-project");
+  if (topbar) topbar.textContent = P.meta.title;
+  dirty();
+};
 window.setProjectWorkflowEmphasis = (value) => {
   if (!P?.meta) return;
   P.meta.workflowEmphasis = value === "assisted" ? "assisted" : "manual";
@@ -215,33 +231,48 @@ function sharedNotFoundView(type, id, listHref, listLabel, existingIds = [], ite
 }
 
 /* ---------- persistence ---------- */
+/* An appearance preview is exactly that: it lives in memory for as long as the
+   Settings screen is open and is never written anywhere. Only Save writes it to
+   the server and to this browser's stored theme, so closing Settings — or
+   reloading — returns the interface to the last saved appearance. */
+let APPEARANCE_PREVIEW = null;
 function applyTheme() {
   const app = document.getElementById("app");
   if (!app) return;
   const appearance = CONFIG?.appearance || {};
-  const acc = localStorage.getItem("ahub-acc") || appearance.accent || "blue";
-  const surf = localStorage.getItem("ahub-surf") || appearance.surface || "night";
-  const scale = String(localStorage.getItem("cinebraid-ui-scale") || appearance.scale || "100");
-  const font = localStorage.getItem("cinebraid-ui-font") || appearance.font || "studio";
+  const preview = APPEARANCE_PREVIEW || {};
+  const pick = (previewKey, storageKey, savedValue, fallback) =>
+    preview[previewKey] != null ? String(preview[previewKey]) : localStorage.getItem(storageKey) || savedValue || fallback;
+  const acc = pick("accent", "ahub-acc", appearance.accent, "blue");
+  const surf = pick("surface", "ahub-surf", appearance.surface, "night");
+  const scale = String(pick("scale", "cinebraid-ui-scale", appearance.scale, "100"));
+  const font = pick("font", "cinebraid-ui-font", appearance.font, "studio");
   app.dataset.acc = acc;
   app.dataset.surf = surf;
   app.dataset.font = font;
-  app.dataset.density = localStorage.getItem("cinebraid-ui-density") || appearance.density || "comfortable";
+  app.dataset.density = pick("density", "cinebraid-ui-density", appearance.density, "comfortable");
   if (document.documentElement?.style?.setProperty) document.documentElement.style.setProperty("--ui-scale", `${Math.max(90, Math.min(110, Number(scale) || 100)) / 100}`);
   document.body.dataset.help = HELP_MODE;
 }
+window.setAppearancePreview = (options) => {
+  APPEARANCE_PREVIEW = options ? { ...options } : null;
+  applyTheme();
+};
 
 window.setTheme = (k, v) => {
   localStorage.setItem("ahub-" + k, v);
   applyTheme();
   route();
 };
-window.previewWorkspaceAppearance = (options = {}) => {
+/* Called only once an appearance change has actually been saved, so this browser's
+   stored theme can never disagree with the appearance recorded on the server. */
+window.commitWorkspaceAppearance = (options = {}) => {
   if (options.accent) localStorage.setItem("ahub-acc", options.accent);
   if (options.surface) localStorage.setItem("ahub-surf", options.surface);
   if (options.scale) localStorage.setItem("cinebraid-ui-scale", String(options.scale));
   if (options.density) localStorage.setItem("cinebraid-ui-density", String(options.density));
   if (options.font) localStorage.setItem("cinebraid-ui-font", String(options.font));
+  APPEARANCE_PREVIEW = null;
   applyTheme();
 };
 window.setProjectAIPolicy = (v) => {
@@ -965,6 +996,19 @@ async function load() {
     setTimeout(() => resumeFalGenerationPolling(), 500);
 }
 function setSaveState(state, label) {
+  /* Settings → Project has no save button because the project record saves itself.
+     Any panel that says so mirrors the real save chain, so the promise on screen and
+     the state of the file on disk are the same statement. */
+  document.querySelectorAll("[data-mirror-save-state]").forEach((mirror) => {
+    mirror.dataset.state = state;
+    mirror.textContent = {
+      saved: "Saved automatically",
+      saving: "Saving…",
+      dirty: "Unsaved changes — saving in a moment",
+      error: "Could not save — check the CineBraid server window",
+      loading: "Opening…",
+    }[state] || label;
+  });
   const el = $("#save-state");
   if (!el) return;
   el.dataset.state = state;
@@ -1613,6 +1657,12 @@ async function route(recoveryAttempt = false) {
     const routeParts = location.hash.split("/");
     const view = routeParts[1] || "production";
     const id = routeParts[2];
+    /* Leaving Settings discards an unsaved appearance preview rather than letting it
+       become permanent by accident. */
+    if (view !== "settings" && APPEARANCE_PREVIEW) {
+      APPEARANCE_PREVIEW = null;
+      applyTheme();
+    }
     const navName =
       {
         scene: "shots",

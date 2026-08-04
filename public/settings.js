@@ -1,4 +1,86 @@
 /* ---------- settings / import / export ---------- */
+
+/* ---------- one honest save-state for every editable Settings subsection ----------
+   The three storage domains behind Settings stay as they are: appearance and the
+   assistant/generation configuration live in config.json, storage paths and naming
+   rules go through the workspace endpoint that also creates and checks the folders,
+   and project details ride the project record's own autosave. What was missing was a
+   single, truthful way of saying which of those a panel is using and where a change
+   currently stands, so a preview could never be mistaken for something stored. */
+const SETTINGS_PANEL_STATE_COPY = {
+  manual: {
+    clean: "No unsaved changes.",
+    dirty: "Unsaved changes — nothing is stored until you save.",
+    saving: "Saving…",
+    saved: "Saved.",
+    error: "Could not save.",
+  },
+  apply: {
+    clean: "No unsaved changes.",
+    dirty: "Unsaved changes — nothing is applied until you apply them.",
+    saving: "Applying…",
+    saved: "Applied.",
+    error: "Could not apply.",
+  },
+  preview: {
+    clean: "No unsaved changes.",
+    dirty: "Previewing unsaved changes — nothing is stored until you save.",
+    saving: "Saving…",
+    saved: "Saved.",
+    error: "Could not save.",
+  },
+};
+let SETTINGS_PANEL_BASELINE = null;
+function settingsPanelStateElement() {
+  return document.getElementById("settings-panel-state");
+}
+function settingsPanelControls() {
+  const panel = document.querySelector(".settings-selected-tab");
+  if (!panel) return [];
+  return Array.from(panel.querySelectorAll("input, select, textarea"));
+}
+function settingsPanelValues() {
+  return settingsPanelControls().map((el) => (el.type === "checkbox" ? String(el.checked) : String(el.value ?? "")));
+}
+window.setSettingsPanelState = (state, detail = "") => {
+  const el = settingsPanelStateElement();
+  if (!el) return;
+  const copy = SETTINGS_PANEL_STATE_COPY[el.dataset.saveModel || "manual"] || SETTINGS_PANEL_STATE_COPY.manual;
+  el.dataset.state = state;
+  el.textContent = detail ? `${copy[state] || ""} ${detail}`.trim() : copy[state] || "";
+};
+/* Re-reads the panel and reports clean or dirty against the values it was rendered
+   with, so reverting an edit by hand takes the panel back to "No unsaved changes". */
+window.refreshSettingsPanelState = () => {
+  const el = settingsPanelStateElement();
+  if (!el || !SETTINGS_PANEL_BASELINE) return;
+  const now = settingsPanelValues();
+  const changed = now.length !== SETTINGS_PANEL_BASELINE.length
+    || now.some((value, index) => value !== SETTINGS_PANEL_BASELINE[index]);
+  setSettingsPanelState(changed ? "dirty" : "clean");
+};
+window.initSettingsPanel = () => {
+  const panel = document.querySelector(".settings-selected-tab");
+  if (!panel) return;
+  SETTINGS_PANEL_BASELINE = settingsPanelValues();
+  settingsPanelControls().forEach((el) => {
+    el.addEventListener("input", refreshSettingsPanelState);
+    el.addEventListener("change", refreshSettingsPanelState);
+  });
+  if (settingsPanelStateElement()) setSettingsPanelState("clean");
+  if (panel.dataset.settingsTab === "naming" && typeof updateFilenameTemplatePreview === "function") updateFilenameTemplatePreview();
+  if (panel.dataset.settingsTab === "appearance") {
+    setAppearancePreview(null);
+    updateInterfaceScaleReadout();
+  }
+};
+/* Accepts the values the server confirmed as the new baseline, so a saved panel
+   reports itself clean without being re-rendered from scratch. */
+function settingsPanelSaved(detail = "") {
+  SETTINGS_PANEL_BASELINE = settingsPanelValues();
+  setSettingsPanelState("saved", detail);
+}
+
 async function persistPassSettings(body) {
   const r = await fetch("/api/config", {
     method: "PUT",
@@ -61,17 +143,47 @@ window.testAssistantConnection = async () => {
     toast("Assistant test failed");
   }
 };
-window.saveConfig = async () => {
+/* Only the fields the open panel actually shows are sent. Assistant and Generation
+   share one configuration document, and sending every field from whichever panel
+   happened to be open overwrote the other panel's settings with placeholder
+   defaults — saving Generation silently reset the vision assistant to "Same as main
+   assistant". A panel now patches its own settings and nothing else. */
+function assistantConfigPatch() {
   const v = (id, fallback = "") => $(id)?.value ?? fallback;
-  const body = {
-    assistant: { provider: CONFIG.assistant?.provider || "ollama", visionProvider: v("#assistant-vision-provider", "same") },
-    anthropicKey: v("#cfg-key", CONFIG.anthropicKey || ""), anthropicModel: v("#cfg-model", CONFIG.anthropicModel || "claude-sonnet-4-6"), anthropicVisionModel: v("#cfg-model", CONFIG.anthropicModel || "claude-sonnet-4-6"),
-    openaiKey: v("#cfg-openai-key", CONFIG.openaiKey || ""), openaiModel: v("#cfg-openai-model", CONFIG.openaiModel || "gpt-5.2"), openaiVisionModel: v("#cfg-openai-vision", CONFIG.openaiVisionModel || CONFIG.openaiModel || "gpt-5.2"),
-    customBaseUrl: v("#cfg-custom-url", CONFIG.customBaseUrl || "http://127.0.0.1:8000/v1"), customKey: v("#cfg-custom-key", CONFIG.customKey || ""), customModel: v("#cfg-custom-model", CONFIG.customModel || ""), customVisionModel: v("#cfg-custom-vision", CONFIG.customVisionModel || ""),
-    ollamaUrl: v("#cfg-ollama", CONFIG.ollamaUrl || "http://localhost:11434").trim(), ollamaModel: v("#cfg-omodel", CONFIG.ollamaModel || "").trim(), ollamaVisionModel: v("#cfg-vmodel", CONFIG.ollamaVisionModel || "").trim(),
+  const patch = {};
+  if ($("#assistant-vision-provider")) {
+    patch.assistant = { provider: CONFIG.assistant?.provider || "ollama", visionProvider: v("#assistant-vision-provider", "same") };
+  }
+  if ($("#cfg-key")) {
+    patch.anthropicKey = v("#cfg-key", CONFIG.anthropicKey || "");
+    patch.anthropicModel = v("#cfg-model", CONFIG.anthropicModel || "claude-sonnet-4-6");
+    patch.anthropicVisionModel = v("#cfg-model", CONFIG.anthropicModel || "claude-sonnet-4-6");
+  }
+  if ($("#cfg-openai-key")) {
+    patch.openaiKey = v("#cfg-openai-key", CONFIG.openaiKey || "");
+    patch.openaiModel = v("#cfg-openai-model", CONFIG.openaiModel || "gpt-5.2");
+    patch.openaiVisionModel = v("#cfg-openai-vision", CONFIG.openaiVisionModel || CONFIG.openaiModel || "gpt-5.2");
+  }
+  if ($("#cfg-custom-url")) {
+    patch.customBaseUrl = v("#cfg-custom-url", CONFIG.customBaseUrl || "http://127.0.0.1:8000/v1");
+    patch.customKey = v("#cfg-custom-key", CONFIG.customKey || "");
+    patch.customModel = v("#cfg-custom-model", CONFIG.customModel || "");
+    patch.customVisionModel = v("#cfg-custom-vision", CONFIG.customVisionModel || "");
+  }
+  if ($("#cfg-ollama")) {
+    patch.ollamaUrl = v("#cfg-ollama", CONFIG.ollamaUrl || "http://localhost:11434").trim();
+    patch.ollamaModel = v("#cfg-omodel", CONFIG.ollamaModel || "").trim();
+    patch.ollamaVisionModel = v("#cfg-vmodel", CONFIG.ollamaVisionModel || "").trim();
+  }
+  return patch;
+}
+function generationConfigPatch() {
+  const v = (id, fallback = "") => $(id)?.value ?? fallback;
+  if (!$("#cfg-fal-enabled")) return {};
+  return {
     generation: {
       fal: {
-        enabled: $("#cfg-fal-enabled") ? !!$("#cfg-fal-enabled").checked : !!CONFIG.generation?.fal?.enabled,
+        enabled: !!$("#cfg-fal-enabled").checked,
         apiKey: v("#cfg-fal-key", CONFIG.generation?.fal?.apiKey || ""),
         textModel: v("#cfg-fal-text-model", CONFIG.generation?.fal?.textModel || "openai/gpt-image-2").trim(),
         editModel: v("#cfg-fal-edit-model", CONFIG.generation?.fal?.editModel || "openai/gpt-image-2/edit").trim(),
@@ -91,31 +203,51 @@ window.saveConfig = async () => {
       },
     },
   };
-  const r = await fetch("/api/config", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-  if (!r.ok) return toast("Could not save AI settings");
+}
+window.saveConfig = async (scope = "assistant") => {
+  const generation = scope === "generation";
+  const body = generation ? generationConfigPatch() : assistantConfigPatch();
+  const failed = generation ? "Could not save generation settings" : "Could not save assistant settings";
+  setSettingsPanelState("saving");
+  let r;
+  try {
+    r = await fetch("/api/config", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  } catch (error) {
+    setSettingsPanelState("error", "The CineBraid server did not respond — check that it is still running.");
+    return toast(failed);
+  }
+  if (!r.ok) {
+    const data = await r.json().catch(() => ({}));
+    setSettingsPanelState("error", data.error || "The server rejected the change.");
+    return toast(failed);
+  }
   CONFIG = await fetch("/api/config").then((response) => response.json()).catch(() => ({ ...CONFIG, ...body, generation: { ...(CONFIG.generation || {}), ...(body.generation || {}), fal: { ...(CONFIG.generation?.fal || {}), ...(body.generation?.fal || {}), apiKey: body.generation?.fal?.apiKey ? "••••saved" : "" } } }));
-  toast("Settings saved");
+  settingsPanelSaved();
+  toast(generation ? "Generation settings saved" : "Assistant settings saved");
   route();
 };
 window.testFalGenerationConnection = async () => {
   const note = $("#fal-test-note");
-  if (note) note.textContent = "checking…";
+  const state = (tone, text) => { if (!note) return; note.dataset.tone = tone; note.textContent = text; };
+  state("checking", "Checking setup…");
   try {
     const response = await fetch("/api/generation/fal/test", { method: "POST" });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || "FAL setup check failed");
-    if (note) note.textContent = data.message || "FAL configured";
+    state("ready", data.message || "FAL generation is set up");
     toast("FAL generation is configured");
   } catch (error) {
-    if (note) note.textContent = error.message;
+    state("attention", error.message);
     toast("FAL setup is incomplete");
   }
 };
 window.doExport = async () => {
+  const note = $("#export-note");
+  if (note) note.textContent = "Exporting…";
   const r = await (await fetch("/api/export", { method: "POST" })).json();
-  $("#export-note").textContent = r.ok
-    ? "exported → docs/" + r.name
-    : "export failed: " + r.error;
+  if (note) note.textContent = r.ok
+    ? "Exported to docs/" + r.name
+    : "Export failed: " + r.error;
 };
 window.downloadJSON = () => {
   const blob = new Blob([JSON.stringify(P, null, 2)], {
@@ -202,84 +334,141 @@ window.updateFilenameTemplatePreview = () => {
     },
   });
 };
-window.previewAppearanceSettings = () => {
-  previewWorkspaceAppearance({
+/* Keeps the percentage readout and the filled part of the track in step with the
+   handle, so the control reads as one CineBraid component rather than an OS widget. */
+window.updateInterfaceScaleReadout = () => {
+  const slider = $("#cfg-ui-scale");
+  if (!slider) return;
+  const min = Number(slider.min || 90), max = Number(slider.max || 110);
+  const value = Number(slider.value || 100);
+  const readout = $("#cfg-ui-scale-readout");
+  if (readout) readout.textContent = `${value}%`;
+  if (slider.style?.setProperty) slider.style.setProperty("--range-fill", `${max > min ? ((value - min) / (max - min)) * 100 : 50}%`);
+};
+function appearanceFormValues() {
+  return {
     accent: $("#cfg-theme-accent")?.value || "blue",
     surface: $("#cfg-theme-surface")?.value || "night",
-    scale: $("#cfg-ui-scale")?.value || 100,
+    scale: Number($("#cfg-ui-scale")?.value || 100) || 100,
     density: $("#cfg-ui-density")?.value || "comfortable",
+    helpMode: $("#cfg-help-mode")?.value || "guided",
     font: $("#cfg-ui-font")?.value || "studio",
-  });
+  };
+}
+/* Changing a control repaints the workspace so the choice can be judged at full size,
+   but the preview is held in memory only. Nothing is written until Save. */
+window.previewAppearanceSettings = () => {
+  updateInterfaceScaleReadout();
+  setAppearancePreview(appearanceFormValues());
+  refreshSettingsPanelState();
 };
-window.resetAppearanceSettings = () => {
-  localStorage.setItem("ahub-acc", "blue");
-  localStorage.setItem("ahub-surf", "night");
-  localStorage.setItem("cinebraid-ui-scale", "100");
-  localStorage.setItem("cinebraid-ui-density", "comfortable");
-  localStorage.setItem("cinebraid-ui-font", "studio");
-  applyTheme();
+window.discardAppearancePreview = () => {
+  setAppearancePreview(null);
   route();
+  toast("Preview discarded — the saved appearance is back");
+};
+/* Loads the CineBraid defaults into the form as a preview like any other change, so
+   "Reset" is reviewable and still requires Save to take effect. */
+window.resetAppearanceSettings = () => {
+  const defaults = { accent: "blue", surface: "night", scale: 100, density: "comfortable", font: "studio" };
+  const set = (id, value) => { const el = $(id); if (el) el.value = String(value); };
+  set("#cfg-theme-accent", defaults.accent);
+  set("#cfg-theme-surface", defaults.surface);
+  set("#cfg-ui-scale", defaults.scale);
+  set("#cfg-ui-density", defaults.density);
+  set("#cfg-ui-font", defaults.font);
+  const readout = $("#cfg-ui-scale-readout");
+  if (readout) readout.textContent = `${defaults.scale}%`;
+  previewAppearanceSettings();
 };
 window.saveAppearanceSettings = async () => {
-  const body = {
-    appearance: {
-      accent: $("#cfg-theme-accent")?.value || "blue",
-      surface: $("#cfg-theme-surface")?.value || "night",
-      scale: Number($("#cfg-ui-scale")?.value || 100) || 100,
-      density: $("#cfg-ui-density")?.value || "comfortable",
-      helpMode: $("#cfg-help-mode")?.value || "guided",
-      font: $("#cfg-ui-font")?.value || "studio",
-    },
-  };
-  previewWorkspaceAppearance(body.appearance);
+  const body = { appearance: appearanceFormValues() };
+  setSettingsPanelState("saving");
+  let r;
+  try {
+    r = await fetch("/api/config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch (error) {
+    setSettingsPanelState("error", "The CineBraid server did not respond — check that it is still running.");
+    return toast("Could not save appearance settings");
+  }
+  if (!r.ok) {
+    const data = await r.json().catch(() => ({}));
+    setSettingsPanelState("error", data.error || "The server rejected the change.");
+    return toast("Could not save appearance settings");
+  }
+  /* Saved on the server first, then in this browser, so the stored theme can never
+     claim an appearance the server does not hold. */
+  commitWorkspaceAppearance(body.appearance);
   setHelpMode(body.appearance.helpMode);
-  const r = await fetch("/api/config", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!r.ok) return toast("Could not save appearance settings");
   CONFIG = await fetch("/api/config").then((response) => response.json()).catch(() => ({ ...CONFIG, ...body }));
-  toast("Appearance settings saved");
+  settingsPanelSaved();
+  toast("Appearance saved");
   route();
 };
-window.saveWorkspaceSettings = async () => {
-  const body = {
-    workspace: {
-      projectRoot: $("#cfg-project-root")?.value || "",
-      mediaRoot: $("#cfg-media-root")?.value || "",
-      outputRoot: $("#cfg-output-root")?.value || "",
-      backupRoot: $("#cfg-backup-root")?.value || "",
-      fileStrategy: $("#cfg-file-strategy")?.value || "project/scene/shot",
-      syncMode: $("#cfg-sync-mode")?.value || "manual",
-    },
-    naming: {
-      filenameTemplate: $("#cfg-filename-template")?.value || "{project}_{shot}_{slot}_V{version}.{ext}",
-      exportTemplate: $("#cfg-export-template")?.value || "{project}_{scene}_{shot}_{stage}_V{version}.{ext}",
-      versionPadding: Number($("#cfg-version-padding")?.value || 3) || 3,
-      collisionBehavior: $("#cfg-collision-behavior")?.value || "increment",
-    },
-  };
-  const note = $("#workspace-settings-note");
-  if (note) note.textContent = "Applying paths and checking write access…";
-  const r = await fetch("/api/workspace/settings", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+
+/* Storage paths and naming rules share one endpoint because the server has to create
+   the folders and check write access before it records either. They no longer share a
+   request body: a panel sends only the fields it is showing, so saving naming rules
+   cannot blank the storage paths it never displayed. */
+async function persistWorkspaceSettings(scope) {
+  const present = (id, read = (el) => el.value) => { const el = $(id); return el ? read(el) : undefined; };
+  const compact = (entries) => Object.fromEntries(Object.entries(entries).filter(([, value]) => value !== undefined));
+  const workspace = compact({
+    projectRoot: present("#cfg-project-root"),
+    mediaRoot: present("#cfg-media-root"),
+    outputRoot: present("#cfg-output-root"),
+    backupRoot: present("#cfg-backup-root"),
+    fileStrategy: present("#cfg-file-strategy"),
+    syncMode: present("#cfg-sync-mode"),
   });
+  const naming = compact({
+    filenameTemplate: present("#cfg-filename-template"),
+    exportTemplate: present("#cfg-export-template"),
+    versionPadding: present("#cfg-version-padding", (el) => Number(el.value || 3) || 3),
+    collisionBehavior: present("#cfg-collision-behavior"),
+  });
+  const body = {};
+  if (Object.keys(workspace).length) body.workspace = workspace;
+  if (Object.keys(naming).length) body.naming = naming;
+
+  const storage = scope === "workspace";
+  const note = $("#workspace-settings-note");
+  setSettingsPanelState("saving");
+  if (note) note.textContent = "Applying paths and checking write access…";
+  let r;
+  try {
+    r = await fetch("/api/workspace/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch (error) {
+    setSettingsPanelState("error", "The CineBraid server did not respond — check that it is still running.");
+    if (note) note.textContent = "The CineBraid server did not respond — check that it is still running.";
+    return toast(storage ? "Could not apply storage paths" : "Could not save naming rules");
+  }
   const data = await r.json().catch(() => ({}));
   if (!r.ok) {
-    if (note) note.textContent = data.error || "Could not apply workspace settings";
-    return toast("Could not save workspace settings");
+    const reason = data.error || "The server rejected the change.";
+    setSettingsPanelState("error", reason);
+    if (note) note.textContent = reason;
+    return toast(storage ? "Could not apply storage paths" : "Could not save naming rules");
   }
   CONFIG = await fetch("/api/config").then((response) => response.json()).catch(() => ({ ...CONFIG, ...body }));
   updateFilenameTemplatePreview();
-  if (note) note.textContent = data.migration?.movedRoot
-    ? `Applied. Copied ${data.migration.copied || 0} files into the new project root; ${data.migration.skipped || 0} existing files were kept.`
-    : "Applied. Paths are writable and active.";
-  toast(data.migration?.movedRoot ? "Workspace moved safely" : "Workspace settings saved");
-  setTimeout(route, 500);
-};
+  const applied = data.migration?.movedRoot
+    ? `Copied ${data.migration.copied || 0} files into the new project folder; ${data.migration.skipped || 0} existing files were kept.`
+    : storage ? "These folders exist and are writable." : "";
+  settingsPanelSaved(applied);
+  if (note && storage) note.textContent = applied;
+  toast(data.migration?.movedRoot ? "Project folder moved safely" : storage ? "Storage paths applied" : "Naming rules saved");
+}
+window.saveStorageSettings = () => persistWorkspaceSettings("workspace");
+window.saveNamingSettings = () => persistWorkspaceSettings("naming");
 window.refreshWorkspaceStatus = async () => {
   const note = $("#workspace-settings-note");
   if (note) note.textContent = "Checking effective paths…";
