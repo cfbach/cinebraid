@@ -56,7 +56,8 @@
     "check:correction-modal": "node tests/continuity-correction-modal.js",
     "check:data-safety": "node tests/data-safety-repair.js",
     "check:windows-shutdown": "node tests/windows-shutdown.js",
-    "check:browser-exit": "node tests/browser-workflow-exit.js"
+    "check:browser-exit": "node tests/browser-workflow-exit.js",
+    "check:ci": "npm run check:syntax && npm run check:package && npm run check:render && npm run check:behavior && npm run check:focused && npm run check:browser && npm run check:browser-exit && npm run check:api && npm run check:data-safety && npm run check:recovery && npm run check:windows-shutdown"
   },
   "dependencies": {
     "express": "^4.19.0"
