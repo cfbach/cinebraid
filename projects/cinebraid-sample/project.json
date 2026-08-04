@@ -1,0 +1,372 @@
+{
+  "meta": {
+    "title": "CineBraid Sample — The Blue Parcel",
+    "format": "Three-shot sample",
+    "version": "6.6.4-studio.2",
+    "hubVersion": "v6.0.0",
+    "schemaVersion": "6.6",
+    "workflowEmphasis": "manual",
+    "aiPolicy": "project-default",
+    "models": [],
+    "defaults": {
+      "stillModel": "",
+      "videoModel": ""
+    },
+    "promptDefaults": {
+      "imageProfile": "gpt-image-2/t2i",
+      "videoProfile": "seedance-2/i2v"
+    },
+    "world": {
+      "setting": "A quiet covered railway platform during light rain.",
+      "include": "Simple production-design continuity and readable silhouettes.",
+      "reject": "No logos, copyrighted characters, or real production material."
+    },
+    "styleBlocks": [],
+    "refSyntax": "@imageN",
+    "aspectRatio": "16:9",
+    "globalStylePrompt": "Clean graphic storyboard placeholders for a manual production-organizing sample.",
+    "globalNegativePrompt": ""
+  },
+  "qcChecklist": [
+    "Identity",
+    "Geometry",
+    "Tone",
+    "Continuity",
+    "Text"
+  ],
+  "scenes": [
+    {
+      "id": "SC-SAMPLE",
+      "title": "The platform",
+      "tier": "B",
+      "whatHappens": "A courier arrives with a blue parcel, sets it on a bench, and opens it.",
+      "howItFeels": "Quiet, clear and procedural."
+    }
+  ],
+  "shots": [
+    {
+      "id": "SAMPLE-01",
+      "scene": "SC-SAMPLE",
+      "title": "Courier arrives",
+      "desc": "The courier enters the platform carrying the closed blue parcel.",
+      "positioning": "Locked, readable storyboard composition.",
+      "workflowStatus": "APPROVED",
+      "status": "LOCKED",
+      "reviewStatus": "PENDING",
+      "characters": [
+        "CHAR-COURIER"
+      ],
+      "codes": [
+        "LOC-PLATFORM",
+        "PROP-PARCEL"
+      ],
+      "continuitySelections": {
+        "PROP-PARCEL": "state-closed"
+      },
+      "risks": [],
+      "notes": "",
+      "duration": 4,
+      "deliveryIntent": "still",
+      "keyframes": [
+        {
+          "id": "frame-a",
+          "label": "A",
+          "title": "First frame",
+          "winner": "SAMPLE-01-ARRIVAL.png",
+          "description": "The courier enters the platform carrying the closed blue parcel.",
+          "required": true,
+          "generationPackages": [],
+          "selectedCandidate": ""
+        }
+      ],
+      "clips": [],
+      "promptBuilds": [],
+      "promptOptions": [],
+      "creationBrief": {
+        "deliveryIntent": "still",
+        "finalStillFile": "",
+        "finalVideoFile": "",
+        "approvedMotionFile": "",
+        "frames": [
+          {
+            "id": "frame-a",
+            "label": "A",
+            "title": "First frame",
+            "action": "The courier enters the platform carrying the closed blue parcel.",
+            "selectedCandidate": "",
+            "promptBuilds": []
+          }
+        ],
+        "blockingBuilds": [],
+        "motionPlan": {
+          "audio": {
+            "mode": "none"
+          }
+        }
+      },
+      "dur": 4
+    },
+    {
+      "id": "SAMPLE-02",
+      "scene": "SC-SAMPLE",
+      "title": "Parcel on the bench",
+      "desc": "The courier sets the same closed blue parcel on the wooden bench.",
+      "positioning": "Locked, readable storyboard composition.",
+      "workflowStatus": "APPROVED",
+      "status": "LOCKED",
+      "reviewStatus": "PENDING",
+      "characters": [
+        "CHAR-COURIER"
+      ],
+      "codes": [
+        "LOC-PLATFORM",
+        "PROP-PARCEL"
+      ],
+      "continuitySelections": {
+        "PROP-PARCEL": "state-closed"
+      },
+      "risks": [],
+      "notes": "",
+      "duration": 4,
+      "deliveryIntent": "still",
+      "keyframes": [
+        {
+          "id": "frame-a",
+          "label": "A",
+          "title": "First frame",
+          "winner": "SAMPLE-02-BENCH.png",
+          "description": "The courier sets the same closed blue parcel on the wooden bench.",
+          "required": true,
+          "generationPackages": [],
+          "selectedCandidate": ""
+        }
+      ],
+      "clips": [],
+      "promptBuilds": [],
+      "promptOptions": [],
+      "creationBrief": {
+        "deliveryIntent": "still",
+        "finalStillFile": "",
+        "finalVideoFile": "",
+        "approvedMotionFile": "",
+        "frames": [
+          {
+            "id": "frame-a",
+            "label": "A",
+            "title": "First frame",
+            "action": "The courier sets the same closed blue parcel on the wooden bench.",
+            "selectedCandidate": "",
+            "promptBuilds": []
+          }
+        ],
+        "blockingBuilds": [],
+        "motionPlan": {
+          "audio": {
+            "mode": "none"
+          }
+        }
+      },
+      "dur": 4
+    },
+    {
+      "id": "SAMPLE-03",
+      "scene": "SC-SAMPLE",
+      "title": "Parcel opened",
+      "desc": "The same blue parcel is open on the bench; the courier is just out of frame.",
+      "positioning": "Locked, readable storyboard composition.",
+      "workflowStatus": "IN PROGRESS",
+      "status": "BUILT",
+      "reviewStatus": "PENDING",
+      "characters": [
+        "CHAR-COURIER"
+      ],
+      "codes": [
+        "LOC-PLATFORM",
+        "PROP-PARCEL"
+      ],
+      "continuitySelections": {
+        "PROP-PARCEL": "state-open"
+      },
+      "risks": [],
+      "notes": "",
+      "duration": 4,
+      "deliveryIntent": "still",
+      "keyframes": [
+        {
+          "id": "frame-a",
+          "label": "A",
+          "title": "First frame",
+          "winner": "",
+          "description": "The same blue parcel is open on the bench; the courier is just out of frame.",
+          "required": true,
+          "generationPackages": [],
+          "selectedCandidate": "SAMPLE-03-OPEN.png"
+        }
+      ],
+      "clips": [],
+      "promptBuilds": [],
+      "promptOptions": [],
+      "creationBrief": {
+        "deliveryIntent": "still",
+        "finalStillFile": "",
+        "finalVideoFile": "",
+        "approvedMotionFile": "",
+        "frames": [
+          {
+            "id": "frame-a",
+            "label": "A",
+            "title": "First frame",
+            "action": "The same blue parcel is open on the bench; the courier is just out of frame.",
+            "selectedCandidate": "SAMPLE-03-OPEN.png",
+            "promptBuilds": []
+          }
+        ],
+        "blockingBuilds": [],
+        "motionPlan": {
+          "audio": {
+            "mode": "none"
+          }
+        }
+      }
+    }
+  ],
+  "characters": [
+    {
+      "id": "CHAR-COURIER",
+      "name": "The courier",
+      "status": "APPROVED",
+      "workflowStatus": "APPROVED",
+      "block": "Adult courier in a slate-blue work coat and dark trousers. Calm posture and practical silhouette.",
+      "approvedFile": "CHAR-COURIER-FRONT.png",
+      "continuityStates": [
+        {
+          "id": "state-default",
+          "name": "Travel coat",
+          "isDefault": true,
+          "approvedFile": "CHAR-COURIER-FRONT.png",
+          "notes": "Default authority."
+        }
+      ],
+      "coverageSlots": [
+        {
+          "id": "front",
+          "label": "Front",
+          "required": true,
+          "requirement": "required",
+          "approvedFile": "CHAR-COURIER-FRONT.png",
+          "notes": "Primary identity authority."
+        },
+        {
+          "id": "profile",
+          "label": "Profile",
+          "required": false,
+          "requirement": "planned",
+          "approvedFile": "CHAR-COURIER-PROFILE.png",
+          "notes": "Useful supporting view."
+        },
+        {
+          "id": "rear",
+          "label": "Rear",
+          "required": false,
+          "requirement": "not-required",
+          "approvedFile": "",
+          "notes": "Not needed for the three sample shots."
+        }
+      ],
+      "candidateFiles": []
+    }
+  ],
+  "locations": [
+    {
+      "id": "LOC-PLATFORM",
+      "name": "Rain platform",
+      "status": "APPROVED",
+      "workflowStatus": "APPROVED",
+      "notes": "Covered platform with a central yellow safety line and a dark waiting-room wall.",
+      "approvedFile": "LOC-PLATFORM-MASTER.png",
+      "continuityStates": [
+        {
+          "id": "state-default",
+          "name": "Rainy afternoon",
+          "isDefault": true,
+          "approvedFile": "LOC-PLATFORM-MASTER.png",
+          "notes": "Default location authority."
+        }
+      ],
+      "coverageSlots": [
+        {
+          "id": "master",
+          "label": "Master establishing",
+          "required": true,
+          "requirement": "required",
+          "approvedFile": "LOC-PLATFORM-MASTER.png",
+          "notes": "Defines the shared platform geometry."
+        },
+        {
+          "id": "reverse",
+          "label": "Reverse angle",
+          "required": false,
+          "requirement": "planned",
+          "approvedFile": "LOC-PLATFORM-REVERSE.png",
+          "notes": "Same platform from the opposite direction."
+        },
+        {
+          "id": "detail",
+          "label": "Bench detail",
+          "required": false,
+          "requirement": "not-required",
+          "approvedFile": "",
+          "notes": "Not needed for the sample."
+        }
+      ],
+      "candidateFiles": [],
+      "description": "Covered rain platform with a central yellow safety line, a wooden bench, and a dark waiting-room wall. The master and reverse views describe the same fixed geometry."
+    }
+  ],
+  "props": [
+    {
+      "id": "PROP-PARCEL",
+      "name": "Blue parcel",
+      "status": "APPROVED",
+      "workflowStatus": "APPROVED",
+      "notes": "Medium blue parcel with pale straps. The same object appears closed and opened.",
+      "approvedFile": "PROP-PARCEL-CLOSED.png",
+      "continuityStates": [
+        {
+          "id": "state-closed",
+          "name": "Closed",
+          "isDefault": true,
+          "approvedFile": "PROP-PARCEL-CLOSED.png",
+          "notes": "Default authority."
+        },
+        {
+          "id": "state-open",
+          "name": "Opened",
+          "isDefault": false,
+          "parentStateId": "state-closed",
+          "generationMode": "derive",
+          "approvedFile": "PROP-PARCEL-OPEN.png",
+          "notes": "Flaps open; the blue box and pale straps remain the same object."
+        }
+      ],
+      "coverageSlots": [],
+      "candidateFiles": []
+    }
+  ],
+  "vehicles": [],
+  "audio": [],
+  "mediaAssets": [],
+  "jobs": [],
+  "agentRuns": [],
+  "decisions": [],
+  "sessions": [
+    {
+      "n": 1,
+      "date": "2026-07-31",
+      "summary": "Sanitized manual-first sample project. No provider is required.",
+      "carryForward": [
+        "Approve the existing SAMPLE-03 still and mark it final."
+      ]
+    }
+  ]
+}

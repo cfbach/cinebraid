@@ -135,9 +135,39 @@ dist
 .yarn/install-state.gz
 .pnp.*
 
-# CineBraid private/local data
-/projects/
-/data/
+# CineBraid private/local data.
+# Everything under projects/ and data/ is private by default. Only the two shipped
+# assets a fresh clone needs are re-included, and the runtime files CineBraid writes
+# inside the sample are excluded again immediately afterwards. Order matters here:
+# the directories must be opened with /* (not /) or Git will not descend far enough
+# to honour the negations below.
+/projects/*
+/data/*
+
+# Shipped assets required for a working clone (see prompt-engine.js and
+# tests/release-package-smoke.js, both of which hard-require these).
+!/data/model-profiles.json
+!/projects/cinebraid-sample/
+
+# Runtime artifacts CineBraid writes inside the sample - never track these.
+/projects/cinebraid-sample/backups/
+/projects/cinebraid-sample/*.bak
+/projects/cinebraid-sample/generation-jobs.json
+/projects/cinebraid-sample/agent-index.json
+/projects/cinebraid-sample/test-feedback.json
+/projects/cinebraid-sample/embeddings.json
+
+# Agent and editor local state
+/.claude/settings.local.json
+/.claude/worktrees/
+
+# Local QA, diagnostic and export output
+/deep-product-audit-v2-results.json
+/diagnostic.json
+/screenshots/
+/my-output/
+/exports/
+/qa-backups/
 
 # Credentials
 .env

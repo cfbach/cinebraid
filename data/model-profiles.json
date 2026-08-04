@@ -1,0 +1,1874 @@
+{
+  "schemaVersion": 1,
+  "updated": "2026-08-03",
+  "profiles": [
+    {
+      "id": "gpt-image-2/t2i",
+      "family": "gpt-image-2",
+      "name": "GPT Image 2 \u2014 Text to Image",
+      "mediaType": "image",
+      "mode": "t2i",
+      "profileVersion": "2026-07",
+      "refSyntax": "#imageN",
+      "supports": {
+        "multipleReferences": true,
+        "baseImage": false,
+        "mask": false,
+        "textRendering": true
+      },
+      "limits": {
+        "maxReferences": 16,
+        "preferredWords": [
+          80,
+          260
+        ]
+      },
+      "strategy": "precise-natural-language",
+      "rules": [
+        "For production shots, references carry identity; the prompt carries geometry, action, lighting, and grade.",
+        "Describe physical contact points and frame-relative sides explicitly.",
+        "Specify every plot-bearing word exactly, including position, font character, color, and size; otherwise leave text blank.",
+        "Keep sharp foreground detail while placing haze and atmosphere in the midground/background.",
+        "Do not use film titles as style references in the model prompt."
+      ],
+      "sections": [
+        "purpose",
+        "reference legend",
+        "subject and performance",
+        "composition and camera",
+        "environment and props",
+        "lighting and style",
+        "continuity",
+        "exclusions",
+        "output"
+      ]
+    },
+    {
+      "id": "gpt-image-2/blocking",
+      "family": "gpt-image-2",
+      "name": "GPT Image 2 \u2014 Blocking Frame",
+      "mediaType": "image",
+      "mode": "blocking",
+      "profileVersion": "2026-07",
+      "refSyntax": "#imageN",
+      "supports": {
+        "multipleReferences": false,
+        "baseImage": false,
+        "mask": false,
+        "textRendering": true
+      },
+      "limits": {
+        "maxReferences": 0,
+        "preferredWords": [
+          70,
+          220
+        ]
+      },
+      "strategy": "labelled-blocking-layout",
+      "rules": [
+        "Create flat greyscale storyboard blocking with simple masses, clear silhouettes, and readable depth separation.",
+        "Use labelled placeholders rather than production identity, wardrobe, materials, colour, texture, lighting, or era detail.",
+        "Preserve the project aspect ratio so staged positions remain useful for the production frame.",
+        "Render only the requested element labels and no other text."
+      ],
+      "sections": [
+        "style contract",
+        "frame",
+        "layout",
+        "labels",
+        "output"
+      ],
+      "blockingSettings": {
+        "qualityLevel": "lowest available quality tier",
+        "outputSize": "Match the project aspect ratio; use a modest long edge suitable for disposable planning",
+        "note": "Fast default for inexpensive storyboard blocking."
+      },
+      "supportedPurposes": [
+        "blocking"
+      ]
+    },
+    {
+      "id": "gpt-image-2/edit",
+      "family": "gpt-image-2",
+      "name": "GPT Image 2 \u2014 Reference Edit",
+      "mediaType": "image",
+      "mode": "edit",
+      "profileVersion": "2026-07",
+      "refSyntax": "#imageN",
+      "supports": {
+        "multipleReferences": true,
+        "baseImage": true,
+        "mask": true,
+        "textRendering": true
+      },
+      "limits": {
+        "maxReferences": 16,
+        "preferredWords": [
+          60,
+          240
+        ]
+      },
+      "strategy": "change-preserve",
+      "rules": [
+        "Begin with: Keep everything identical and change ONLY the named detail.",
+        "Always state: Do NOT mirror the image.",
+        "Pin unchanged text verbatim and forbid subject/object relocation.",
+        "Use one surgical edit; if the frame becomes tired, fidelity-upscale or restart from the clean source.",
+        "Do not edit a hand or paw into a new pose when a clean destination frame can be generated instead."
+      ],
+      "sections": [
+        "base image",
+        "reference legend",
+        "change only",
+        "keep unchanged",
+        "output"
+      ]
+    },
+    {
+      "id": "gpt-image-2/multi-reference",
+      "family": "gpt-image-2",
+      "name": "GPT Image 2 \u2014 Multi-reference Composite",
+      "mediaType": "image",
+      "mode": "multi-reference",
+      "profileVersion": "2026-07",
+      "refSyntax": "#imageN",
+      "supports": {
+        "multipleReferences": true,
+        "baseImage": true,
+        "mask": false,
+        "textRendering": true
+      },
+      "limits": {
+        "maxReferences": 16,
+        "preferredWords": [
+          90,
+          300
+        ]
+      },
+      "strategy": "reference-role-composite",
+      "rules": [
+        "Assign every image one job.",
+        "Specify which reference controls identity, wardrobe, location, prop, composition, lighting or style.",
+        "State what must not be imported from each reference."
+      ],
+      "sections": [
+        "reference legend",
+        "objective",
+        "composition",
+        "subjects",
+        "environment",
+        "continuity",
+        "exclusions",
+        "output"
+      ]
+    },
+    {
+      "id": "nano-banana-2/t2i",
+      "family": "nano-banana-2",
+      "name": "Nano Banana 2 \u2014 Text to Image",
+      "mediaType": "image",
+      "mode": "t2i",
+      "profileVersion": "2026-07",
+      "refSyntax": "#imageN",
+      "supports": {
+        "multipleReferences": true,
+        "baseImage": false,
+        "textRendering": true
+      },
+      "limits": {
+        "maxReferences": 10,
+        "preferredWords": [
+          70,
+          260
+        ]
+      },
+      "strategy": "conversational-production-brief",
+      "rules": [
+        "Use complete natural-language production direction.",
+        "Be explicit about spatial relationships.",
+        "State the intended production asset and aspect ratio.",
+        "Keep canon constraints separate from creative direction."
+      ],
+      "sections": [
+        "reference assignment",
+        "production objective",
+        "composition",
+        "subject relationships",
+        "art direction",
+        "preservation",
+        "output"
+      ]
+    },
+    {
+      "id": "nano-banana-2/blocking",
+      "family": "nano-banana-2",
+      "name": "Nano Banana 2 \u2014 Blocking Frame",
+      "mediaType": "image",
+      "mode": "blocking",
+      "profileVersion": "2026-07",
+      "refSyntax": "#imageN",
+      "supports": {
+        "multipleReferences": false,
+        "baseImage": false,
+        "mask": false,
+        "textRendering": true
+      },
+      "limits": {
+        "maxReferences": 0,
+        "preferredWords": [
+          70,
+          220
+        ]
+      },
+      "strategy": "labelled-blocking-layout",
+      "rules": [
+        "Create flat greyscale storyboard blocking with simple masses, clear silhouettes, and readable depth separation.",
+        "Use labelled placeholders rather than production identity, wardrobe, materials, colour, texture, lighting, or era detail.",
+        "Preserve the project aspect ratio so staged positions remain useful for the production frame.",
+        "Render only the requested element labels and no other text."
+      ],
+      "sections": [
+        "style contract",
+        "frame",
+        "layout",
+        "labels",
+        "output"
+      ],
+      "blockingSettings": {
+        "qualityLevel": "lowest available quality tier",
+        "outputSize": "Match the project aspect ratio; use a modest long edge suitable for disposable planning",
+        "note": "Fast alternate blocking profile for simple layouts."
+      },
+      "supportedPurposes": [
+        "blocking"
+      ]
+    },
+    {
+      "id": "nano-banana-2/edit",
+      "family": "nano-banana-2",
+      "name": "Nano Banana 2 \u2014 Edit",
+      "mediaType": "image",
+      "mode": "edit",
+      "profileVersion": "2026-07",
+      "refSyntax": "#imageN",
+      "supports": {
+        "multipleReferences": true,
+        "baseImage": true,
+        "textRendering": true
+      },
+      "limits": {
+        "maxReferences": 10,
+        "preferredWords": [
+          60,
+          240
+        ]
+      },
+      "strategy": "conversational-delta",
+      "rules": [
+        "Name the base image.",
+        "Describe the exact visual delta.",
+        "Explicitly preserve all unrelated pixels, design details and framing.",
+        "Avoid restaging unless requested."
+      ],
+      "sections": [
+        "base image",
+        "references",
+        "requested delta",
+        "preserve",
+        "output"
+      ]
+    },
+    {
+      "id": "nano-banana-2/multi-reference",
+      "family": "nano-banana-2",
+      "name": "Nano Banana 2 \u2014 Multi-reference",
+      "mediaType": "image",
+      "mode": "multi-reference",
+      "profileVersion": "2026-07",
+      "refSyntax": "#imageN",
+      "supports": {
+        "multipleReferences": true,
+        "baseImage": true,
+        "textRendering": true
+      },
+      "limits": {
+        "maxReferences": 10,
+        "preferredWords": [
+          80,
+          300
+        ]
+      },
+      "strategy": "reference-assignment",
+      "rules": [
+        "Give each reference a concrete role.",
+        "Explain how to combine them without copying unwanted pose, background or style.",
+        "Prefer direct spatial language over tag lists."
+      ],
+      "sections": [
+        "reference assignment",
+        "objective",
+        "composition",
+        "relationships",
+        "continuity",
+        "exclusions"
+      ]
+    },
+    {
+      "id": "nano-banana-pro/t2i",
+      "family": "nano-banana-pro",
+      "name": "Nano Banana Pro \u2014 Text to Image",
+      "mediaType": "image",
+      "mode": "t2i",
+      "profileVersion": "2026-07",
+      "refSyntax": "#imageN",
+      "supports": {
+        "multipleReferences": true,
+        "baseImage": false,
+        "textRendering": true
+      },
+      "limits": {
+        "maxReferences": 14,
+        "preferredWords": [
+          90,
+          320
+        ]
+      },
+      "strategy": "reasoned-layout",
+      "rules": [
+        "Use for difficult spatial compositions, typography and high-stakes frames.",
+        "Define foreground, midground and background.",
+        "State character-to-character and character-to-prop relationships precisely."
+      ],
+      "sections": [
+        "references",
+        "objective",
+        "layout",
+        "subjects",
+        "environment",
+        "lighting",
+        "text",
+        "continuity",
+        "output"
+      ]
+    },
+    {
+      "id": "nano-banana-pro/blocking",
+      "family": "nano-banana-pro",
+      "name": "Nano Banana Pro \u2014 Blocking Frame",
+      "mediaType": "image",
+      "mode": "blocking",
+      "profileVersion": "2026-07",
+      "refSyntax": "#imageN",
+      "supports": {
+        "multipleReferences": false,
+        "baseImage": false,
+        "mask": false,
+        "textRendering": true
+      },
+      "limits": {
+        "maxReferences": 0,
+        "preferredWords": [
+          70,
+          220
+        ]
+      },
+      "strategy": "labelled-blocking-layout",
+      "rules": [
+        "Create flat greyscale storyboard blocking with simple masses, clear silhouettes, and readable depth separation.",
+        "Define foreground, midground, background, and character-to-prop relationships precisely for difficult spatial compositions.",
+        "Use labelled placeholders rather than production identity, wardrobe, materials, colour, texture, lighting, or era detail.",
+        "Preserve the project aspect ratio so staged positions remain useful for the production frame.",
+        "Render only the requested element labels and no other text."
+      ],
+      "sections": [
+        "style contract",
+        "frame",
+        "layout",
+        "labels",
+        "output"
+      ],
+      "blockingSettings": {
+        "qualityLevel": "standard quality tier",
+        "outputSize": "Match the project aspect ratio; use a modest long edge suitable for disposable planning",
+        "note": "Use when the shot has difficult spatial relationships or layered foreground/midground/background blocking."
+      },
+      "supportedPurposes": [
+        "blocking"
+      ]
+    },
+    {
+      "id": "nano-banana-pro/edit",
+      "family": "nano-banana-pro",
+      "name": "Nano Banana Pro \u2014 Edit",
+      "mediaType": "image",
+      "mode": "edit",
+      "profileVersion": "2026-07",
+      "refSyntax": "#imageN",
+      "supports": {
+        "multipleReferences": true,
+        "baseImage": true,
+        "textRendering": true
+      },
+      "limits": {
+        "maxReferences": 14,
+        "preferredWords": [
+          70,
+          300
+        ]
+      },
+      "strategy": "reasoned-delta",
+      "rules": [
+        "State the base image and exact target state.",
+        "Break complex edits into ordered changes.",
+        "Protect composition, identity and lighting in a preserve list."
+      ],
+      "sections": [
+        "base",
+        "references",
+        "ordered edits",
+        "preserve",
+        "output"
+      ]
+    },
+    {
+      "id": "nano-banana-pro/multi-reference",
+      "family": "nano-banana-pro",
+      "name": "Nano Banana Pro \u2014 Multi-reference",
+      "mediaType": "image",
+      "mode": "multi-reference",
+      "profileVersion": "2026-07",
+      "refSyntax": "#imageN",
+      "supports": {
+        "multipleReferences": true,
+        "baseImage": true,
+        "textRendering": true
+      },
+      "limits": {
+        "maxReferences": 14,
+        "preferredWords": [
+          100,
+          340
+        ]
+      },
+      "strategy": "complex-reference-layout",
+      "rules": [
+        "Assign every reference a role and prohibited contribution.",
+        "Use explicit layout and overlap instructions.",
+        "State which source wins if references conflict."
+      ],
+      "sections": [
+        "reference contract",
+        "objective",
+        "layout",
+        "subjects",
+        "environment",
+        "style",
+        "conflict priority",
+        "output"
+      ]
+    },
+    {
+      "id": "flux-2/t2i",
+      "family": "flux-2",
+      "name": "FLUX.2 \u2014 Text to Image",
+      "mediaType": "image",
+      "mode": "t2i",
+      "profileVersion": "2026-07",
+      "refSyntax": "#imageN",
+      "supports": {
+        "multipleReferences": true,
+        "baseImage": false,
+        "textRendering": true
+      },
+      "limits": {
+        "maxReferences": 8,
+        "preferredWords": [
+          60,
+          220
+        ]
+      },
+      "strategy": "visual-spatial",
+      "rules": [
+        "Lead with strong visual nouns and spatial relationships.",
+        "Specify materials, lens, lighting and palette.",
+        "Keep exclusions concise and concrete.",
+        "Do not use booru tag soup."
+      ],
+      "sections": [
+        "scene",
+        "subjects",
+        "spatial composition",
+        "materials",
+        "camera",
+        "lighting",
+        "style",
+        "constraints"
+      ]
+    },
+    {
+      "id": "flux-2/edit",
+      "family": "flux-2",
+      "name": "FLUX.2 \u2014 Reference Edit",
+      "mediaType": "image",
+      "mode": "edit",
+      "profileVersion": "2026-07",
+      "refSyntax": "#imageN",
+      "supports": {
+        "multipleReferences": true,
+        "baseImage": true,
+        "textRendering": true
+      },
+      "limits": {
+        "maxReferences": 8,
+        "preferredWords": [
+          50,
+          210
+        ]
+      },
+      "strategy": "visual-delta",
+      "rules": [
+        "Identify the base image.",
+        "Describe changed objects, positions and materials precisely.",
+        "Protect all unmentioned content.",
+        "Use color and material terms when continuity matters."
+      ],
+      "sections": [
+        "base",
+        "references",
+        "changes",
+        "preserve",
+        "constraints"
+      ]
+    },
+    {
+      "id": "flux-2/multi-reference",
+      "family": "flux-2",
+      "name": "FLUX.2 \u2014 Multi-reference Composite",
+      "mediaType": "image",
+      "mode": "multi-reference",
+      "profileVersion": "2026-07",
+      "refSyntax": "#imageN",
+      "supports": {
+        "multipleReferences": true,
+        "baseImage": true,
+        "textRendering": true
+      },
+      "limits": {
+        "maxReferences": 8,
+        "preferredWords": [
+          80,
+          260
+        ]
+      },
+      "strategy": "visual-reference-composite",
+      "rules": [
+        "Assign references by visual role.",
+        "State exact screen positions and scale.",
+        "Define which image contributes identity, material, prop, lighting and style."
+      ],
+      "sections": [
+        "reference roles",
+        "scene",
+        "composition",
+        "subjects",
+        "materials",
+        "camera",
+        "lighting",
+        "constraints"
+      ]
+    },
+    {
+      "id": "seedream-5-pro/t2i",
+      "family": "seedream-5-pro",
+      "name": "Seedream 5 Pro \u2014 Text to Image",
+      "mediaType": "image",
+      "mode": "t2i",
+      "profileVersion": "2026-07",
+      "refSyntax": "#imageN",
+      "supports": {
+        "multipleReferences": true,
+        "baseImage": false,
+        "textRendering": true
+      },
+      "limits": {
+        "maxReferences": 10,
+        "preferredWords": [
+          80,
+          300
+        ]
+      },
+      "strategy": "reasoned-art-direction",
+      "rules": [
+        "Use natural-language art direction.",
+        "Define layout, subject hierarchy and production purpose.",
+        "Make reference assignments explicit.",
+        "Treat provider limits as editable until verified."
+      ],
+      "sections": [
+        "reference assignment",
+        "objective",
+        "layout",
+        "subjects",
+        "environment",
+        "art direction",
+        "continuity",
+        "output"
+      ]
+    },
+    {
+      "id": "seedream-5-pro/edit",
+      "family": "seedream-5-pro",
+      "name": "Seedream 5 Pro \u2014 Edit",
+      "mediaType": "image",
+      "mode": "edit",
+      "profileVersion": "2026-07",
+      "refSyntax": "#imageN",
+      "supports": {
+        "multipleReferences": true,
+        "baseImage": true,
+        "textRendering": true
+      },
+      "limits": {
+        "maxReferences": 10,
+        "preferredWords": [
+          70,
+          280
+        ]
+      },
+      "strategy": "reasoned-change-preserve",
+      "rules": [
+        "State the source image and exact change.",
+        "Protect unedited identity, geometry, lighting and color.",
+        "Use ordered instructions for complex edits."
+      ],
+      "sections": [
+        "base",
+        "reference assignment",
+        "changes",
+        "preserve",
+        "output"
+      ]
+    },
+    {
+      "id": "seedream-5-pro/multi-reference",
+      "family": "seedream-5-pro",
+      "name": "Seedream 5 Pro \u2014 Multi-reference",
+      "mediaType": "image",
+      "mode": "multi-reference",
+      "profileVersion": "2026-07",
+      "refSyntax": "#imageN",
+      "supports": {
+        "multipleReferences": true,
+        "baseImage": true,
+        "textRendering": true
+      },
+      "limits": {
+        "maxReferences": 10,
+        "preferredWords": [
+          90,
+          320
+        ]
+      },
+      "strategy": "reasoned-reference-composite",
+      "rules": [
+        "Define each reference role and conflict priority.",
+        "State precise spatial relationships and intended final composition.",
+        "Protect canon identity and design anchors."
+      ],
+      "sections": [
+        "reference contract",
+        "objective",
+        "composition",
+        "subjects",
+        "environment",
+        "continuity",
+        "output"
+      ]
+    },
+    {
+      "id": "krea-2/t2i",
+      "family": "krea-2",
+      "name": "Krea 2 \u2014 Visual Exploration",
+      "mediaType": "image",
+      "mode": "t2i",
+      "profileVersion": "2026-07",
+      "refSyntax": "#imageN",
+      "supports": {
+        "multipleReferences": true,
+        "baseImage": false,
+        "styleWeights": true
+      },
+      "limits": {
+        "maxReferences": 8,
+        "preferredWords": [
+          40,
+          180
+        ]
+      },
+      "strategy": "art-direction-exploration",
+      "rules": [
+        "Separate content from art direction.",
+        "Use for look development, moodboards and style discovery rather than final continuity edits.",
+        "State what style references may influence and what they must not copy."
+      ],
+      "sections": [
+        "content",
+        "art direction",
+        "style mix",
+        "composition",
+        "avoid"
+      ]
+    },
+    {
+      "id": "krea-2/edit",
+      "family": "krea-2",
+      "name": "Krea 2 \u2014 Reference Edit",
+      "mediaType": "image",
+      "mode": "edit",
+      "profileVersion": "2026-07",
+      "refSyntax": "#imageN",
+      "supports": {
+        "multipleReferences": true,
+        "baseImage": true,
+        "styleWeights": true
+      },
+      "limits": {
+        "maxReferences": 8,
+        "preferredWords": [
+          50,
+          210
+        ]
+      },
+      "strategy": "change-preserve",
+      "rules": [
+        "Name the approved base plate and the exact visual change.",
+        "Use additional images only for their assigned identity, prop, or design role.",
+        "Preserve the base composition, camera, lighting logic, geometry, and all unrelated details.",
+        "Do not mirror or restage unless explicitly requested."
+      ],
+      "sections": [
+        "base image",
+        "reference roles",
+        "change only",
+        "keep unchanged",
+        "art direction",
+        "output"
+      ]
+    },
+    {
+      "id": "krea-2/multi-reference",
+      "family": "krea-2",
+      "name": "Krea 2 \u2014 Multi-reference Composite",
+      "mediaType": "image",
+      "mode": "multi-reference",
+      "profileVersion": "2026-07",
+      "refSyntax": "#imageN",
+      "supports": {
+        "multipleReferences": true,
+        "baseImage": true,
+        "styleWeights": true
+      },
+      "limits": {
+        "maxReferences": 8,
+        "preferredWords": [
+          70,
+          260
+        ]
+      },
+      "strategy": "reference-role-composite",
+      "rules": [
+        "Assign every reference one explicit content, identity, prop, location, composition, or style job.",
+        "State screen position, scale, pose, contact points, and reference conflict priority.",
+        "Protect approved identity and design anchors while excluding unwanted source backgrounds or poses."
+      ],
+      "sections": [
+        "reference contract",
+        "objective",
+        "composition",
+        "subjects",
+        "environment",
+        "continuity",
+        "art direction",
+        "avoid",
+        "output"
+      ]
+    },
+    {
+      "id": "krea-2/style-reference",
+      "family": "krea-2",
+      "name": "Krea 2 \u2014 Style Reference",
+      "mediaType": "image",
+      "mode": "style-reference",
+      "profileVersion": "2026-07",
+      "refSyntax": "#imageN",
+      "supports": {
+        "multipleReferences": true,
+        "baseImage": true,
+        "styleWeights": true
+      },
+      "limits": {
+        "maxReferences": 8,
+        "preferredWords": [
+          40,
+          180
+        ]
+      },
+      "strategy": "weighted-style-mix",
+      "rules": [
+        "Assign content and style references separately.",
+        "State style weights as guidance.",
+        "Do not copy subjects or objects from style-only references."
+      ],
+      "sections": [
+        "content",
+        "style references",
+        "weights",
+        "composition",
+        "avoid"
+      ]
+    },
+    {
+      "id": "krea-2/moodboard",
+      "family": "krea-2",
+      "name": "Krea 2 \u2014 Moodboard",
+      "mediaType": "image",
+      "mode": "moodboard",
+      "profileVersion": "2026-07",
+      "refSyntax": "#imageN",
+      "supports": {
+        "multipleReferences": true,
+        "baseImage": false,
+        "styleWeights": true
+      },
+      "limits": {
+        "maxReferences": 8,
+        "preferredWords": [
+          30,
+          160
+        ]
+      },
+      "strategy": "moodboard-synthesis",
+      "rules": [
+        "Summarize the shared visual language across references.",
+        "Name palette, materials, lighting, texture and framing rhythm.",
+        "Avoid importing recognizable subjects from references."
+      ],
+      "sections": [
+        "creative brief",
+        "shared visual language",
+        "palette",
+        "materials",
+        "lighting",
+        "composition"
+      ]
+    },
+    {
+      "id": "seedance-2/t2v",
+      "family": "seedance-2",
+      "name": "Seedance 2 \u2014 Text to Video",
+      "mediaType": "video",
+      "mode": "t2v",
+      "profileVersion": "2026-07.3",
+      "refSyntax": "@imageN",
+      "supports": {
+        "multipleReferences": false,
+        "firstFrame": false,
+        "lastFrame": false,
+        "referenceVideo": false,
+        "audio": true
+      },
+      "limits": {
+        "maxReferences": 0,
+        "preferredWords": [
+          60,
+          220
+        ],
+        "resolutions": [
+          "720p"
+        ]
+      },
+      "strategy": "chronological-multimodal",
+      "rules": [
+        "Describe one continuous shot chronologically.",
+        "Separate subject performance, camera movement and environment motion.",
+        "Fit the number of actions to duration.",
+        "State exact dialogue and audio only when requested."
+      ],
+      "sections": [
+        "opening state",
+        "chronological action",
+        "camera",
+        "environment motion",
+        "audio",
+        "invariants",
+        "avoid"
+      ],
+      "defaultResolution": "720p"
+    },
+    {
+      "id": "seedance-2/i2v",
+      "family": "seedance-2",
+      "name": "Seedance 2 \u2014 Image to Video",
+      "mediaType": "video",
+      "mode": "i2v",
+      "profileVersion": "2026-07.3",
+      "refSyntax": "@imageN",
+      "supports": {
+        "multipleReferences": true,
+        "firstFrame": true,
+        "lastFrame": false,
+        "referenceVideo": false,
+        "audio": true
+      },
+      "limits": {
+        "maxReferences": 1,
+        "preferredWords": [
+          8,
+          60
+        ],
+        "resolutions": [
+          "720p"
+        ]
+      },
+      "strategy": "compact-first-frame-motion",
+      "rules": [
+        "Use only the approved start frame unless the task is explicitly reference-led.",
+        "Describe one positively named subject action plus useful ambient life.",
+        "Scope stillness to the body; do not flood the prompt with motionless/still negatives.",
+        "Avoid the word flicker for practical lights; use steady even glow and put motion into smoke, rain, dust, or screen content.",
+        "Keep the prompt to one to three short sentences and use mid-range dynamics for subtle-life shots.",
+        "For long near-still shots, generate a shorter living section and extend or hold the tail in post."
+      ],
+      "sections": [
+        "motion",
+        "optional camera",
+        "optional dialogue"
+      ],
+      "defaultResolution": "720p"
+    },
+    {
+      "id": "seedance-2/flf",
+      "family": "seedance-2",
+      "name": "Seedance 2 \u2014 First / Last Frame",
+      "mediaType": "video",
+      "mode": "flf",
+      "profileVersion": "2026-07.3",
+      "refSyntax": "@imageN",
+      "supports": {
+        "multipleReferences": true,
+        "firstFrame": true,
+        "lastFrame": true,
+        "referenceVideo": false,
+        "audio": true
+      },
+      "limits": {
+        "maxReferences": 2,
+        "preferredWords": [
+          65,
+          230
+        ],
+        "resolutions": [
+          "720p"
+        ]
+      },
+      "strategy": "transition-contract",
+      "rules": [
+        "Both endpoint compositions must exist as approved real frames.",
+        "Describe only the physical transition; do not ask FLF to invent a new framing or materialize an object.",
+        "Flag scale/framing mismatches and recommend i2v \u2192 insert \u2192 held-end or chained clips.",
+        "Do camera movement and lip-sync as separate passes.",
+        "End exactly on the supplied final frame and hold briefly when the endpoint will be reused for a match cut."
+      ],
+      "sections": [
+        "frame contract",
+        "transition chronology",
+        "camera path",
+        "environment changes",
+        "audio",
+        "invariants",
+        "avoid"
+      ],
+      "defaultResolution": "720p"
+    },
+    {
+      "id": "seedance-2/r2v",
+      "family": "seedance-2",
+      "name": "Seedance 2 \u2014 Omni Reference",
+      "mediaType": "video",
+      "mode": "r2v",
+      "profileVersion": "2026-07.3",
+      "refSyntax": "typed-omni",
+      "supports": {
+        "multipleReferences": true,
+        "firstFrame": false,
+        "lastFrame": false,
+        "referenceVideo": true,
+        "audio": true,
+        "typedMultimodal": true
+      },
+      "limits": {
+        "maxReferences": 12,
+        "maxImages": 9,
+        "maxVideos": 3,
+        "maxAudio": 3,
+        "durationSeconds": [
+          4,
+          15
+        ],
+        "preferredWords": [
+          55,
+          190
+        ],
+        "resolutions": [
+          "720p"
+        ]
+      },
+      "strategy": "typed-omni-multimodal",
+      "rules": [
+        "Assign every image, video and audio input one explicit job.",
+        "Use image references for identity, wardrobe, composition, props or opening state; use video references only for motion, performance, effects or camera behavior.",
+        "Use audio references for timing, dialogue delivery, music rhythm or sound design and state the intended relationship explicitly.",
+        "References carry source information; the prompt states the desired shot geometry, action, camera, timing and invariants.",
+        "Do not ask one reference to control several conflicting attributes.",
+        "Keep one continuous shot within the selected duration."
+      ],
+      "sections": [
+        "typed reference contract",
+        "opening state",
+        "chronological action",
+        "performance and camera",
+        "audio synchronization",
+        "preserve",
+        "avoid"
+      ],
+      "defaultResolution": "720p"
+    },
+    {
+      "id": "minimax-h3/t2v",
+      "family": "minimax-h3",
+      "name": "MiniMax H3 \u2014 Text to Video",
+      "mediaType": "video",
+      "mode": "t2v",
+      "profileVersion": "2026-08-03",
+      "refSyntax": "typed-h3",
+      "falEndpoint": "minimax/h3/text-to-video",
+      "supports": {
+        "multipleReferences": false,
+        "firstFrame": false,
+        "lastFrame": false,
+        "referenceVideo": false,
+        "audio": true,
+        "nativeStereoAudio": true
+      },
+      "limits": {
+        "maxReferences": 0,
+        "durationSeconds": [
+          5,
+          15
+        ],
+        "preferredWords": [
+          70,
+          700
+        ],
+        "maxPromptCharacters": 2000,
+        "resolutions": [
+          "768P",
+          "2K"
+        ],
+        "aspectRatios": [
+          "21:9",
+          "16:9",
+          "4:3",
+          "1:1",
+          "3:4",
+          "9:16"
+        ],
+        "publishedGuidePromptCharacters": 7000
+      },
+      "strategy": "timed-shot-list-native-audio",
+      "rules": [
+        "Write the visual direction in chronological order.",
+        "Use timed blocks whenever the shot contains more than one beat.",
+        "Direct sound, dialogue, ambience and music as deliberately as the picture.",
+        "Keep the action physically plausible inside 5\u201315 seconds.",
+        "Avoid vague camera language and conflicting simultaneous actions.",
+        "Keep the final provider prompt within the current fal queue schema limit of 2,000 characters; preserve reference assignments, chronology, continuity locks, and audio before optional stylistic detail."
+      ],
+      "sections": [
+        "production objective",
+        "timed shot list",
+        "camera and performance",
+        "sound design",
+        "continuity",
+        "avoid"
+      ],
+      "defaultResolution": "2K"
+    },
+    {
+      "id": "minimax-h3/i2v",
+      "family": "minimax-h3",
+      "name": "MiniMax H3 \u2014 Image to Video",
+      "mediaType": "video",
+      "mode": "i2v",
+      "profileVersion": "2026-08-03",
+      "refSyntax": "typed-h3",
+      "falEndpoint": "minimax/h3/image-to-video",
+      "supports": {
+        "multipleReferences": true,
+        "firstFrame": true,
+        "lastFrame": false,
+        "referenceVideo": false,
+        "audio": true,
+        "nativeStereoAudio": true
+      },
+      "limits": {
+        "maxReferences": 1,
+        "maxImages": 1,
+        "durationSeconds": [
+          5,
+          15
+        ],
+        "preferredWords": [
+          35,
+          350
+        ],
+        "maxPromptCharacters": 2000,
+        "resolutions": [
+          "768P",
+          "2K"
+        ],
+        "publishedGuidePromptCharacters": 7000
+      },
+      "strategy": "first-frame-motion-native-audio",
+      "rules": [
+        "Image 1 is the exact opening frame and already defines identity, composition, lighting and style.",
+        "Describe the motion that begins from Image 1 instead of re-describing the whole image.",
+        "Separate subject performance, camera movement, environment motion and sound.",
+        "Use timed blocks only when the clip contains more than one beat.",
+        "Keep the final provider prompt within the current fal queue schema limit of 2,000 characters; preserve reference assignments, chronology, continuity locks, and audio before optional stylistic detail."
+      ],
+      "sections": [
+        "opening-frame contract",
+        "motion chronology",
+        "camera",
+        "environment motion",
+        "audio",
+        "preserve",
+        "avoid"
+      ],
+      "defaultResolution": "2K"
+    },
+    {
+      "id": "minimax-h3/flf",
+      "family": "minimax-h3",
+      "name": "MiniMax H3 \u2014 First / Last Frame",
+      "mediaType": "video",
+      "mode": "flf",
+      "profileVersion": "2026-08-03",
+      "refSyntax": "typed-h3",
+      "falEndpoint": "minimax/h3/image-to-video",
+      "supports": {
+        "multipleReferences": true,
+        "firstFrame": true,
+        "lastFrame": true,
+        "referenceVideo": false,
+        "audio": true,
+        "nativeStereoAudio": true
+      },
+      "limits": {
+        "maxReferences": 2,
+        "maxImages": 2,
+        "durationSeconds": [
+          5,
+          15
+        ],
+        "preferredWords": [
+          45,
+          450
+        ],
+        "maxPromptCharacters": 2000,
+        "resolutions": [
+          "768P",
+          "2K"
+        ],
+        "publishedGuidePromptCharacters": 7000
+      },
+      "strategy": "first-last-bridge-native-audio",
+      "rules": [
+        "Image 1 is the exact opening frame and Image 2 is the exact final frame.",
+        "Describe only the plausible bridge between the two endpoints.",
+        "Keep identity, wardrobe, location geometry and screen direction stable.",
+        "Use chronological timing when the bridge has multiple beats.",
+        "Do not invent cuts, new props or extra story beats unless explicitly requested.",
+        "Keep the final provider prompt within the current fal queue schema limit of 2,000 characters; preserve reference assignments, chronology, continuity locks, and audio before optional stylistic detail."
+      ],
+      "sections": [
+        "endpoint contract",
+        "transition chronology",
+        "camera path",
+        "performance",
+        "audio",
+        "preserve",
+        "avoid"
+      ],
+      "defaultResolution": "2K"
+    },
+    {
+      "id": "minimax-h3/multi-frame",
+      "family": "minimax-h3",
+      "name": "MiniMax H3 \u2014 Multi-Frame / Reference Video",
+      "mediaType": "video",
+      "mode": "r2v",
+      "profileVersion": "2026-08-03",
+      "refSyntax": "typed-h3",
+      "falEndpoint": "minimax/h3/reference-to-video",
+      "supports": {
+        "multipleReferences": true,
+        "firstFrame": true,
+        "lastFrame": true,
+        "referenceVideo": true,
+        "audio": true,
+        "typedMultimodal": true,
+        "sequentialKeyframes": true,
+        "nativeStereoAudio": true
+      },
+      "limits": {
+        "maxReferences": 12,
+        "maxImages": 9,
+        "maxVideos": 3,
+        "maxAudio": 3,
+        "durationSeconds": [
+          5,
+          15
+        ],
+        "preferredWords": [
+          90,
+          900
+        ],
+        "maxPromptCharacters": 2000,
+        "resolutions": [
+          "768P",
+          "2K"
+        ],
+        "aspectRatios": [
+          "adaptive",
+          "21:9",
+          "16:9",
+          "4:3",
+          "1:1",
+          "3:4",
+          "9:16"
+        ],
+        "publishedGuidePromptCharacters": 7000
+      },
+      "strategy": "sequential-keyframes-typed-multimodal",
+      "rules": [
+        "Assign an explicit job to every Image, Video and Audio reference.",
+        "When approved shot frames are supplied in order, state that Images 1\u2013N are sequential keyframes and describe the transition between each pair.",
+        "Use timed shot-list blocks for more than one beat.",
+        "Do not let sequential keyframes become a slideshow; describe continuous motion, transitions, camera behavior and settling at each beat.",
+        "Use reference video only for the assigned motion, performance, camera rhythm or source-video edit.",
+        "Direct native stereo audio deliberately and identify any Audio reference by number.",
+        "Keep the total reference package within 12 files: at most 9 images, 3 videos and 3 audio clips.",
+        "Keep the final provider prompt within the current fal queue schema limit of 2,000 characters; preserve reference assignments, chronology, continuity locks, and audio before optional stylistic detail."
+      ],
+      "sections": [
+        "reference job map",
+        "sequential keyframe contract",
+        "timed shot list",
+        "camera and performance",
+        "audio",
+        "preserve",
+        "avoid"
+      ],
+      "defaultResolution": "2K"
+    },
+    {
+      "id": "kling-3/t2v",
+      "family": "kling-3",
+      "name": "Kling 3 \u2014 Text to Video",
+      "mediaType": "video",
+      "mode": "t2v",
+      "profileVersion": "2026-07.3",
+      "refSyntax": "#imageN",
+      "supports": {
+        "multipleReferences": false,
+        "firstFrame": false,
+        "lastFrame": false,
+        "referenceVideo": false,
+        "audio": true
+      },
+      "limits": {
+        "maxReferences": 0,
+        "preferredWords": [
+          40,
+          170
+        ]
+      },
+      "strategy": "subject-motion-background-motion",
+      "rules": [
+        "Lead with subject and motion.",
+        "Add background motion and one clear camera move.",
+        "Avoid stacking many independent actions.",
+        "Keep physical language direct.",
+        "Quote exact dialogue and keep sound direction synchronized when native audio is requested."
+      ],
+      "sections": [
+        "subject and movement",
+        "background and movement",
+        "camera",
+        "preserve",
+        "avoid"
+      ]
+    },
+    {
+      "id": "kling-3/i2v",
+      "family": "kling-3",
+      "name": "Kling 3 \u2014 Image to Video",
+      "mediaType": "video",
+      "mode": "i2v",
+      "profileVersion": "2026-07.3",
+      "refSyntax": "#imageN",
+      "supports": {
+        "multipleReferences": true,
+        "firstFrame": true,
+        "lastFrame": false,
+        "referenceVideo": false,
+        "audio": true
+      },
+      "limits": {
+        "maxReferences": 1,
+        "preferredWords": [
+          8,
+          70
+        ]
+      },
+      "strategy": "compact-subject-motion",
+      "rules": [
+        "Use exactly one starting image.",
+        "The image already defines subject, location, composition, lighting and style.",
+        "Describe only subject movement, important background movement and an intentional camera move.",
+        "Use one short natural-language paragraph; omit reference maps, preserve blocks and negative lists.",
+        "Quote exact dialogue and keep sound direction synchronized when native audio is requested."
+      ],
+      "sections": [
+        "motion",
+        "optional background motion",
+        "optional camera"
+      ]
+    },
+    {
+      "id": "kling-3/flf",
+      "family": "kling-3",
+      "name": "Kling 3 \u2014 First / Last Frame",
+      "mediaType": "video",
+      "mode": "flf",
+      "profileVersion": "2026-07.3",
+      "refSyntax": "#imageN",
+      "supports": {
+        "multipleReferences": true,
+        "firstFrame": true,
+        "lastFrame": true,
+        "referenceVideo": false,
+        "audio": true
+      },
+      "limits": {
+        "maxReferences": 2,
+        "preferredWords": [
+          15,
+          95
+        ]
+      },
+      "strategy": "compact-first-last-transition",
+      "rules": [
+        "Use exactly the supplied first and last frames.",
+        "Describe the simplest physical transition between them.",
+        "Mention camera movement only when needed to connect the frames.",
+        "Do not repeat visual details already established by the frames or add preserve/avoid blocks.",
+        "Quote exact dialogue and keep sound direction synchronized when native audio is requested."
+      ],
+      "sections": [
+        "transition",
+        "ending state",
+        "optional camera"
+      ]
+    },
+    {
+      "id": "kling-3/r2v",
+      "family": "kling-3",
+      "name": "Kling 3 \u2014 Motion / Reference Control",
+      "mediaType": "video",
+      "mode": "r2v",
+      "profileVersion": "2026-07.3",
+      "refSyntax": "#imageN",
+      "supports": {
+        "multipleReferences": true,
+        "firstFrame": true,
+        "lastFrame": false,
+        "referenceVideo": true,
+        "audio": true
+      },
+      "limits": {
+        "maxReferences": 6,
+        "preferredWords": [
+          45,
+          180
+        ]
+      },
+      "strategy": "motion-reference-control",
+      "rules": [
+        "Distinguish identity, source frame and motion reference.",
+        "State that motion references control timing only unless otherwise specified.",
+        "Keep camera and subject motion separate.",
+        "Quote exact dialogue and keep sound direction synchronized when native audio is requested."
+      ],
+      "sections": [
+        "reference contract",
+        "subject motion",
+        "background motion",
+        "camera",
+        "preserve"
+      ]
+    },
+    {
+      "id": "ltx-2.3/t2v",
+      "family": "ltx-2.3",
+      "name": "LTX 2.3 \u2014 Text to Video",
+      "mediaType": "video",
+      "mode": "t2v",
+      "profileVersion": "2026-07",
+      "refSyntax": "#imageN",
+      "supports": {
+        "multipleReferences": false,
+        "firstFrame": false,
+        "lastFrame": false,
+        "referenceVideo": false,
+        "audio": true
+      },
+      "limits": {
+        "maxReferences": 0,
+        "preferredWords": [
+          80,
+          200
+        ]
+      },
+      "strategy": "literal-flowing-paragraph",
+      "rules": [
+        "Write a detailed literal chronological paragraph.",
+        "Include gestures, environment, camera, lighting and notable changes.",
+        "Keep under roughly 200 words.",
+        "Include synchronized audio only when enabled."
+      ],
+      "sections": [
+        "continuous cinematic paragraph",
+        "audio",
+        "preserve"
+      ]
+    },
+    {
+      "id": "ltx-2.3/i2v",
+      "family": "ltx-2.3",
+      "name": "LTX 2.3 \u2014 Image to Video",
+      "mediaType": "video",
+      "mode": "i2v",
+      "profileVersion": "2026-07.2",
+      "refSyntax": "#imageN",
+      "supports": {
+        "multipleReferences": true,
+        "firstFrame": true,
+        "lastFrame": false,
+        "referenceVideo": false,
+        "audio": true
+      },
+      "limits": {
+        "maxReferences": 6,
+        "preferredWords": [
+          80,
+          200
+        ]
+      },
+      "strategy": "literal-flowing-paragraph",
+      "rules": [
+        "Treat the first frame as exact visual ground truth.",
+        "Write a chronological flowing paragraph.",
+        "Include performance, camera, lighting changes, foley and ambience where useful.",
+        "Preserve identity and geometry."
+      ],
+      "sections": [
+        "reference contract",
+        "continuous cinematic paragraph",
+        "audio",
+        "preserve"
+      ]
+    },
+    {
+      "id": "ltx-2.3/flf",
+      "family": "ltx-2.3",
+      "name": "LTX 2.3 \u2014 First / Last Frame",
+      "mediaType": "video",
+      "mode": "flf",
+      "profileVersion": "2026-07",
+      "refSyntax": "#imageN",
+      "supports": {
+        "multipleReferences": true,
+        "firstFrame": true,
+        "lastFrame": true,
+        "referenceVideo": false,
+        "audio": true
+      },
+      "limits": {
+        "maxReferences": 6,
+        "preferredWords": [
+          90,
+          210
+        ]
+      },
+      "strategy": "literal-transition-paragraph",
+      "rules": [
+        "Describe the literal chronological bridge between frames.",
+        "Make body, object, camera and lighting transitions physically plausible.",
+        "Finish exactly at the supplied final frame."
+      ],
+      "sections": [
+        "frame contract",
+        "continuous transition paragraph",
+        "audio",
+        "invariants"
+      ]
+    },
+    {
+      "id": "ltx-2.3/audio-video",
+      "family": "ltx-2.3",
+      "name": "LTX 2.3 \u2014 Synchronized Audio / Video",
+      "mediaType": "video",
+      "mode": "audio-video",
+      "profileVersion": "2026-07",
+      "refSyntax": "#imageN",
+      "supports": {
+        "multipleReferences": true,
+        "firstFrame": true,
+        "lastFrame": true,
+        "referenceVideo": false,
+        "audio": true
+      },
+      "limits": {
+        "maxReferences": 6,
+        "preferredWords": [
+          100,
+          220
+        ]
+      },
+      "strategy": "literal-audiovisual-paragraph",
+      "rules": [
+        "Integrate dialogue, foley and ambience at the moment they occur.",
+        "Quote exact dialogue and assign the speaker.",
+        "Keep visual and audio chronology synchronized."
+      ],
+      "sections": [
+        "reference contract",
+        "audiovisual chronological paragraph",
+        "preserve"
+      ]
+    },
+    {
+      "id": "happy-horse-1.1/i2v",
+      "family": "happy-horse-1.1",
+      "name": "Happy Horse 1.1 \u2014 Image to Video",
+      "mediaType": "video",
+      "mode": "i2v",
+      "profileVersion": "2026-07.2",
+      "refSyntax": "#imageN",
+      "supports": {
+        "multipleReferences": true,
+        "firstFrame": true,
+        "lastFrame": false,
+        "referenceVideo": true,
+        "audio": true
+      },
+      "limits": {
+        "maxReferences": 1,
+        "preferredWords": [
+          10,
+          100
+        ]
+      },
+      "strategy": "compact-motion-native-audio",
+      "rules": [
+        "Use one starting image for image-to-video.",
+        "Describe only visible movement and intentional camera movement.",
+        "Add dialogue, sound effects or ambience only when they are deliberately requested.",
+        "Use a short natural-language paragraph; omit reference maps, appearance summaries, preserve blocks and negative lists."
+      ],
+      "sections": [
+        "motion",
+        "optional camera",
+        "optional native audio"
+      ]
+    },
+    {
+      "id": "happy-horse-1.1/r2v",
+      "family": "happy-horse-1.1",
+      "name": "Happy Horse 1.1 \u2014 Dialogue / Reference Performance",
+      "mediaType": "video",
+      "mode": "r2v",
+      "profileVersion": "2026-07",
+      "refSyntax": "#imageN",
+      "supports": {
+        "multipleReferences": true,
+        "firstFrame": true,
+        "lastFrame": false,
+        "referenceVideo": true,
+        "audio": true
+      },
+      "limits": {
+        "maxReferences": 8,
+        "preferredWords": [
+          80,
+          260
+        ]
+      },
+      "strategy": "multi-character-performance",
+      "rules": [
+        "Map every character reference.",
+        "Assign each spoken line and non-speaking reaction.",
+        "State performance timing, tone and body movement.",
+        "Define ambience, foley and unwanted sound."
+      ],
+      "sections": [
+        "reference map",
+        "speaker map",
+        "exact dialogue",
+        "performance chronology",
+        "camera",
+        "audio environment",
+        "preserve"
+      ]
+    },
+    {
+      "id": "wan-2.7/t2v",
+      "family": "wan-2.7",
+      "name": "Wan 2.7 \u2014 Text to Video",
+      "mediaType": "video",
+      "mode": "t2v",
+      "profileVersion": "2026-07",
+      "refSyntax": "#imageN",
+      "supports": {
+        "multipleReferences": false,
+        "firstFrame": false,
+        "lastFrame": false,
+        "referenceVideo": false,
+        "audio": false
+      },
+      "limits": {
+        "maxReferences": 0,
+        "preferredWords": [
+          55,
+          190
+        ]
+      },
+      "strategy": "structured-cinematic",
+      "rules": [
+        "Describe subject, action, environment and camera in chronological order.",
+        "Avoid conflicting movement directions.",
+        "Keep one dominant action per short clip."
+      ],
+      "sections": [
+        "opening",
+        "action",
+        "camera",
+        "environment",
+        "preserve",
+        "avoid"
+      ]
+    },
+    {
+      "id": "wan-2.7/i2v",
+      "family": "wan-2.7",
+      "name": "Wan 2.7 \u2014 Image to Video",
+      "mediaType": "video",
+      "mode": "i2v",
+      "profileVersion": "2026-07.2",
+      "refSyntax": "#imageN",
+      "supports": {
+        "multipleReferences": true,
+        "firstFrame": true,
+        "lastFrame": false,
+        "referenceVideo": false,
+        "audio": false
+      },
+      "limits": {
+        "maxReferences": 1,
+        "preferredWords": [
+          50,
+          180
+        ]
+      },
+      "strategy": "structured-first-frame",
+      "rules": [
+        "Use the approved start frame as visual ground truth and describe only motion/camera.",
+        "For text-critical or high-stillness work, use 1080p and LOW motion strength.",
+        "Use Wan\u2019s real negative field for camera movement, warping, text morphing, hands entering, and motion blur.",
+        "Do not use Enhance after suppressing motion."
+      ],
+      "sections": [
+        "reference contract",
+        "subject motion",
+        "camera",
+        "environment motion",
+        "preserve",
+        "avoid"
+      ]
+    },
+    {
+      "id": "wan-2.7/flf",
+      "family": "wan-2.7",
+      "name": "Wan 2.7 \u2014 First / Last Frame",
+      "mediaType": "video",
+      "mode": "flf",
+      "profileVersion": "2026-07",
+      "refSyntax": "#imageN",
+      "supports": {
+        "multipleReferences": true,
+        "firstFrame": true,
+        "lastFrame": true,
+        "referenceVideo": false,
+        "audio": false
+      },
+      "limits": {
+        "maxReferences": 2,
+        "preferredWords": [
+          60,
+          200
+        ]
+      },
+      "strategy": "keyframe-transition",
+      "rules": [
+        "Use exactly two approved layout-compatible endpoint frames.",
+        "Keep text and geometry identical where they must interpolate without swimming.",
+        "Use 1080p and low motion strength for text-bearing inserts.",
+        "Put unwanted camera and morphing behavior in the negative field; do not Enhance."
+      ],
+      "sections": [
+        "keyframe contract",
+        "transition",
+        "camera",
+        "environment",
+        "invariants",
+        "avoid"
+      ]
+    },
+    {
+      "id": "wan-2.7/r2v",
+      "family": "wan-2.7",
+      "name": "Wan 2.7 \u2014 Reference to Video",
+      "mediaType": "video",
+      "mode": "r2v",
+      "profileVersion": "2026-07",
+      "refSyntax": "#imageN",
+      "supports": {
+        "multipleReferences": true,
+        "firstFrame": true,
+        "lastFrame": false,
+        "referenceVideo": true,
+        "audio": false
+      },
+      "limits": {
+        "maxReferences": 8,
+        "preferredWords": [
+          70,
+          230
+        ]
+      },
+      "strategy": "typed-reference-video",
+      "rules": [
+        "Assign identity, location, prop, pose and motion references.",
+        "State reference priority when they conflict.",
+        "Keep camera and performance instructions separate."
+      ],
+      "sections": [
+        "reference contract",
+        "opening",
+        "action",
+        "camera",
+        "environment",
+        "preserve",
+        "avoid"
+      ]
+    },
+    {
+      "id": "wan-2.7/video-edit",
+      "family": "wan-2.7",
+      "name": "Wan 2.7 \u2014 Video Edit",
+      "mediaType": "video",
+      "mode": "video-edit",
+      "profileVersion": "2026-07",
+      "refSyntax": "#videoN",
+      "supports": {
+        "multipleReferences": true,
+        "firstFrame": false,
+        "lastFrame": false,
+        "referenceVideo": true,
+        "audio": false
+      },
+      "limits": {
+        "maxReferences": 6,
+        "preferredWords": [
+          55,
+          200
+        ]
+      },
+      "strategy": "video-delta",
+      "rules": [
+        "Identify the source video and requested change.",
+        "List what timing, performance, camera and environment must remain unchanged.",
+        "Avoid restaging unrelated content."
+      ],
+      "sections": [
+        "source",
+        "change only",
+        "keep unchanged",
+        "output"
+      ]
+    },
+    {
+      "id": "ltx-2.3/retake",
+      "family": "ltx-2.3",
+      "name": "LTX 2.3 \u2014 Video Retake",
+      "mediaType": "video",
+      "mode": "retake",
+      "profileVersion": "2026-07",
+      "refSyntax": "#imageN",
+      "supports": {
+        "multipleReferences": true,
+        "firstFrame": true,
+        "lastFrame": false,
+        "referenceVideo": false,
+        "audio": true
+      },
+      "limits": {
+        "maxReferences": 6,
+        "preferredWords": [
+          80,
+          200
+        ]
+      },
+      "strategy": "chronological-video-retake",
+      "rules": [
+        "Describe only the requested change inside the selected time range.",
+        "Preserve everything outside the retake section.",
+        "State whether video, audio, or both should be replaced.",
+        "Keep continuity with the frames immediately before and after the edited section."
+      ],
+      "sections": [
+        "reference contract",
+        "continuous cinematic paragraph",
+        "audio",
+        "preserve"
+      ],
+      "supportedPurposes": [
+        "retake"
+      ]
+    }
+  ],
+  "playbook": "STILL Prompt Playbook v1"
+}
