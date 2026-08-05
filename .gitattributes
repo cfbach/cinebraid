@@ -1,2 +1,20 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Startup scripts are executed by a shell, not read by Node, and the wrong line
+# ending breaks them on the platform they exist for. Pin both directions so a
+# release archive is correct regardless of the machine that built it.
+*.sh        text eol=lf
+*.command   text eol=lf
+*.bat       text eol=crlf
+
+# Never ship in a release archive. `git archive` honours export-ignore, so the
+# packaged runtime is the tracked source minus continuous-integration wiring,
+# local agent state and historical QA evidence. Everything else a fresh install
+# needs — application source, public/, data/model-profiles.json, the shipped
+# sample, the startup scripts, the tests and the docs — is included.
+/.github                                    export-ignore
+/.claude                                    export-ignore
+/CINEBRAID_v6.6.4.2_AUDIT_RESULTS.json      export-ignore
+/CineBraid_v6.6.4.2_New_Chat_Handoff.md     export-ignore
+/docs/release-audit-relocated               export-ignore

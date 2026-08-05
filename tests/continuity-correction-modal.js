@@ -4,9 +4,8 @@ const path = require('path');
 const root = path.join(__dirname, '..');
 const review = fs.readFileSync(path.join(root, 'public', 'review-provenance.js'), 'utf8');
 const css = fs.readFileSync(path.join(root, 'public', 'styles.css'), 'utf8');
-const pkg = require(path.join(root, 'package.json'));
+const RELEASE_VERSION = require("../package.json").version;
 
-assert.strictEqual(pkg.version, '6.6.4-studio.repair.13');
 assert(review.includes('YOU CHOOSE'), 'correction dialog must clearly label user choices');
 assert(review.includes('YOU EDIT'), 'correction dialog must identify editable input');
 assert(review.includes('CINEBRAID AUTOMATES'), 'correction dialog must explain automated work');

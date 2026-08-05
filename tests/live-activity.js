@@ -1,10 +1,10 @@
 const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
+const RELEASE_VERSION = require("../package.json").version;
 const root = path.resolve(__dirname, "..");
 const read = (file) => fs.readFileSync(path.join(root, file), "utf8");
 
-const pkg = JSON.parse(read("package.json"));
 const index = read("public/index.html");
 const automation = read("public/automation.js");
 const scene = read("public/scene-automation.js");
@@ -17,11 +17,10 @@ const sceneReview = read("public/scene-review.js");
 const server = read("server.js");
 const audioBuilder = read("public/audio-prompt-builder.js");
 
-assert.strictEqual(pkg.version, "6.6.4-studio.repair.13");
 assert(index.includes('id="automation-activity-toggle"'), "topbar must expose the global activity button");
 assert(index.includes('id="automation-activity-drawer"'), "workspace must include the activity drawer");
-assert(index.includes('live-activity.js?v=6.6.4-studio.repair.13'), "live activity module must be cache-busted and loaded");
-assert(index.indexOf("scene-automation.js?v=6.6.4-studio.repair.13") < index.indexOf("live-activity.js?v=6.6.4-studio.repair.13"), "activity module must load after automation modules");
+assert(index.includes(`live-activity.js?v=${RELEASE_VERSION}`), "live activity module must be cache-busted and loaded");
+assert(index.indexOf(`scene-automation.js?v=${RELEASE_VERSION}`) < index.indexOf(`live-activity.js?v=${RELEASE_VERSION}`), "activity module must load after automation modules");
 assert(automation.includes("v641SetStepActivity"), "durable automation must persist operation-level activity");
 assert(automation.includes("No paid request has been submitted yet"), "FAL preparation must distinguish pre-paid work");
 assert(automation.includes("providerAccepted: true"), "accepted FAL requests must be visible");
@@ -56,6 +55,6 @@ assert(!activity.includes("FLAG INEFFICIENT"), "activity drawer must not retain 
 assert(activity.includes("VIEW REPORT"), "activity drawer rows must link to the dedicated Reports route");
 assert(activity.includes("REPAIR & RETRY"), "scene correction failures must expose repair-and-retry");
 assert(index.includes('data-view="reports"'), "the primary navigation must expose Reports");
-assert(index.includes('reports.js?v=6.6.4-studio.repair.13'), "the Reports module must be loaded and cache-busted");
+assert(index.includes(`reports.js?v=${RELEASE_VERSION}`), "the Reports module must be loaded and cache-busted");
 
 console.log("Live automation activity suite passed global drawer, universal AI/FAL capture, active-only docked live strip, resume-aware scene planning, audio prompt activity, nested child runs, incremental correction review progress, recovery actions, and work/report separation.");

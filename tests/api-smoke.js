@@ -8,6 +8,7 @@ const http = require("http");
 const { resolvePromptBuildList } = require("../public/shared-build-history");
 const PromptEngine = require("../prompt-engine");
 const { httpStatusForError } = require("../http-errors");
+const RELEASE_VERSION = require("../package.json").version;
 
 const ROOT = path.join(__dirname, "..");
 const TEMP = fs.mkdtempSync(path.join(os.tmpdir(), "cinebraid-smoke-"));
@@ -697,7 +698,7 @@ async function main() {
 
     result = await request("/api/automation/reports/export?format=json");
     assert.strictEqual(result.response.status, 200);
-    assert.strictEqual(result.body.appVersion, "6.6.4-studio.repair.13");
+    assert.strictEqual(result.body.appVersion, RELEASE_VERSION);
     assert.strictEqual(result.body.totals.runs, 1);
     assert.strictEqual(result.body.totals.imagesGenerated, 3);
     assert.strictEqual(result.body.totals.assistantCalls, 2);

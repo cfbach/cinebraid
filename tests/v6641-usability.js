@@ -3,6 +3,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
+const RELEASE_VERSION = require("../package.json").version;
 
 const ROOT = path.resolve(__dirname, '..');
 const read = (file) => fs.readFileSync(path.join(ROOT, file), 'utf8');
@@ -81,7 +82,7 @@ async function main() {
   assert(app.includes('requestDeleteProject') && app.includes('restoreTrashedProject') && app.includes('Recently deleted projects'), 'project switcher must expose recoverable deletion and in-app restoration');
   assert(server.includes('app.delete("/api/projects/:slug"'), 'server must implement project deletion');
   await projectDeletionRuntime();
-  console.log('v6.6.4-studio.repair.13 usability suite passed viewport-bounded mapping, manual sheet crops, one-frame-at-a-time editing, bounded candidates, and recoverable project deletion.');
+  console.log(`v${RELEASE_VERSION} usability suite passed viewport-bounded mapping, manual sheet crops, one-frame-at-a-time editing, bounded candidates, and recoverable project deletion.`);
 }
 
 main().catch((error) => { console.error(error.stack || error); process.exit(1); });

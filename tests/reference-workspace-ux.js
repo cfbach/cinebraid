@@ -1,10 +1,10 @@
 const fs = require('fs');
 const path = require('path');
 const assert = require('assert');
+const RELEASE_VERSION = require("../package.json").version;
 const ROOT = path.join(__dirname, '..');
 const read = (file) => fs.readFileSync(path.join(ROOT, file), 'utf8');
 
-const pkg = JSON.parse(read('package.json'));
 const index = read('public/index.html');
 const entities = read('public/entities.js');
 const creation = read('public/creation-studio.js');
@@ -16,8 +16,7 @@ const css = read('public/styles.css');
 const coverage = read('public/coverage-automation.js');
 const libraryTools = read('public/library-tools.js');
 
-assert.strictEqual(pkg.version, '6.6.4-studio.repair.13');
-assert(index.includes('focused-workspaces.js?v=6.6.4-studio.repair.13'));
+assert(index.includes(`focused-workspaces.js?v=${RELEASE_VERSION}`));
 assert(/referenceWorkspaceMarkup\(list,\s*it\)/.test(entities), 'manual-first reference workspace must be rendered on the entity page');
 assert(entities.includes('reference-manual-hub') && entities.includes('reference-assisted-tools'), 'manual intake must lead while assisted creation remains available');
 assert(entities.includes('Generate angle / viewpoint coverage') && entities.includes('Generate expression sheet') && entities.includes('Map imported references'), 'reference workspace must expose manual mapping and optional assisted workflows');

@@ -1,4 +1,4 @@
-# Getting started with CineBraid v6.6.4-studio.repair.13
+# Getting started with CineBraid 6.6.5 Private Test 1
 
 CineBraid requires **Node.js 18 or newer** and stores the approved truth of a production. You can bring in images, video, and audio made anywhere; organize them; assign continuity; attach them to shots; and mark the final result. AI and generation are optional.
 

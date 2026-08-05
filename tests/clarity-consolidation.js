@@ -1,10 +1,10 @@
 const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
+const RELEASE_VERSION = require("../package.json").version;
 const root = path.resolve(__dirname, "..");
 const read = (name) => fs.readFileSync(path.join(root, name), "utf8");
 
-const pkg = JSON.parse(read("package.json"));
 const index = read("public/index.html");
 const entities = read("public/entities.js");
 const creation = read("public/creation-studio.js");
@@ -16,8 +16,7 @@ const styles = read("public/styles.css");
 const mutations = read("public/mutations.js");
 const composer = read("public/v607-composer.js");
 
-assert.strictEqual(pkg.version, "6.6.4-studio.repair.13");
-assert(index.includes("styles.css?v=6.6.4-studio.repair.13"));
+assert(index.includes(`styles.css?v=${RELEASE_VERSION}`));
 
 for (const label of ["Reference", "Coverage & states", "Details & history"])
   assert(entities.includes(`label:"${label}"`), `missing ${label} reference workspace`);

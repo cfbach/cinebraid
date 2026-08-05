@@ -3,6 +3,7 @@ const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
 const { render, buildFixture } = require("./render-harness");
+const RELEASE_VERSION = require("../package.json").version;
 
 const ROOT = path.join(__dirname, "..");
 const read = (name) => fs.readFileSync(path.join(ROOT, name), "utf8");
@@ -140,8 +141,6 @@ function orphanFrontendFunctions(frontendSources, supportingSources = [], allowl
 }
 
 async function main() {
-  const pkg = JSON.parse(read("package.json"));
-  assert.strictEqual(pkg.version, "6.6.4-studio.repair.13");
   const appSource = fs.readFileSync(path.join(ROOT, "public", "app.js"), "utf8");
   assert(/function workspaceSectionOpen\s*\(/.test(appSource), "workspaceSectionOpen must be a real global function, not only a window property");
   assert(/window\.workspaceSectionOpen\s*=\s*workspaceSectionOpen/.test(appSource), "workspaceSectionOpen must remain available through window for inline handlers and compatibility");
@@ -154,16 +153,16 @@ async function main() {
   assert(!index.includes("mode-toggle"));
   assert(!index.includes("experimental-execution.js"));
   assert(!index.includes(">A<"), "retired amber A favicon must be gone");
-  assert(index.includes("styles.css?v=6.6.4-studio.repair.13"), "frontend assets must be cache-busted after patch updates");
-  assert(index.includes("shared-entities.js?v=6.6.4-studio.repair.13"), "shared entity resolver must load before the app");
-  assert(index.includes("shared-camera.js?v=6.6.4-studio.repair.13"), "shared camera vocabulary must load before the app");
-  assert(index.includes("shared-aspect.js?v=6.6.4-studio.repair.13"), "shared aspect-ratio model must load before the app");
-  assert(index.includes("shared-reference-views.js?v=6.6.4-studio.repair.13"), "shared reference-view vocabulary must load before media and composer modules");
-  assert(index.includes("shared-build-history.js?v=6.6.4-studio.repair.13"), "shared prompt-history compatibility must load before the app");
-  assert(index.includes("v607-composer.js?v=6.6.4-studio.repair.13"), "composer module must be cache-busted after patch updates");
-  assert(index.includes("motion-sound-composer.js?v=6.6.4-studio.repair.13"), "Motion & Sound Composer must load after the shot composer");
-  assert(index.includes("scene-automation.js?v=6.6.4-studio.repair.13"), "scene automation must load after the durable automation runner");
-  assert(index.includes("coverage-automation.js?v=6.6.4-studio.repair.13"), "coverage automation must load as a cache-busted frontend module");
+  assert(index.includes(`styles.css?v=${RELEASE_VERSION}`), "frontend assets must be cache-busted after patch updates");
+  assert(index.includes(`shared-entities.js?v=${RELEASE_VERSION}`), "shared entity resolver must load before the app");
+  assert(index.includes(`shared-camera.js?v=${RELEASE_VERSION}`), "shared camera vocabulary must load before the app");
+  assert(index.includes(`shared-aspect.js?v=${RELEASE_VERSION}`), "shared aspect-ratio model must load before the app");
+  assert(index.includes(`shared-reference-views.js?v=${RELEASE_VERSION}`), "shared reference-view vocabulary must load before media and composer modules");
+  assert(index.includes(`shared-build-history.js?v=${RELEASE_VERSION}`), "shared prompt-history compatibility must load before the app");
+  assert(index.includes(`v607-composer.js?v=${RELEASE_VERSION}`), "composer module must be cache-busted after patch updates");
+  assert(index.includes(`motion-sound-composer.js?v=${RELEASE_VERSION}`), "Motion & Sound Composer must load after the shot composer");
+  assert(index.includes(`scene-automation.js?v=${RELEASE_VERSION}`), "scene automation must load after the durable automation runner");
+  assert(index.includes(`coverage-automation.js?v=${RELEASE_VERSION}`), "coverage automation must load as a cache-busted frontend module");
   assert(read("public/review-provenance.js").includes("buildCandidateCorrectionPrompt"), "candidate review must create targeted correction prompts");
   assert(read("public/review-provenance.js").includes("openCandidateCorrectionModal"), "candidate corrections must expose an executable generation panel");
   assert(read("public/fal-generation.js").includes("startCandidateCorrectionGeneration"), "candidate corrections must submit through the existing FAL job path");
@@ -200,7 +199,7 @@ async function main() {
   assert(sceneAutomation.includes("runSceneAutomation"), "scene pages must expose durable whole-scene still automation");
   const reports = read("public/reports.js");
   assert(index.includes('data-view="reports"'), "primary navigation must expose the Reports route");
-  assert(index.includes('reports.js?v=6.6.4-studio.repair.13'), "Reports must load as a cache-busted frontend module");
+  assert(index.includes(`reports.js?v=${RELEASE_VERSION}`), "Reports must load as a cache-busted frontend module");
   assert(reports.includes("RUN HISTORY"), "Reports must expose durable run history");
   assert(reports.includes("WHERE EFFORT WENT"), "Reports must aggregate project-wide generation effort");
   for (const fn of ["copyAutomationSupportSummary", "copyAutomationDebugReport", "downloadAutomationRunReport", "downloadAutomationDiagnosticBundle", "flagAutomationRunInefficient", "saveAutomationEfficiencyFeedback"]) assert(reports.includes(fn), `${fn} must remain reachable from Reports`);
@@ -341,6 +340,7 @@ async function main() {
     "v6641-usability.js",
     "v6642-board-density-real-browser.py",
     "v6642-board-density.js",
+    "version-consistency.js",
     "windows-shutdown.js",
   ]);
 

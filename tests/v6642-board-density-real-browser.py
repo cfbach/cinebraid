@@ -7,14 +7,16 @@ import socket
 import subprocess
 import time
 import re
+import json
 import urllib.request
 import urllib.error
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+VERSION = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))["version"]
 try:
     from playwright.sync_api import sync_playwright
 except Exception:
-    print("v6.6.4-studio.4 board-density browser check skipped: Python Playwright is not installed.")
+    print(f"v{VERSION} board-density browser check skipped: Python Playwright is not installed.")
     raise SystemExit(0)
 
 CHROMIUM = shutil.which("chromium") or shutil.which("chromium-browser") or shutil.which("google-chrome")
@@ -136,7 +138,7 @@ try:
         overflow = page.evaluate("document.documentElement.scrollWidth - document.documentElement.clientWidth")
         assert overflow <= 2, f"board overflowed horizontally by {overflow}px"
         browser.close()
-    print(f"v6.6.4-studio.repair.13 real browser board-density check passed: compact {compact:.0f}px, standard {standard:.0f}px, large {large:.0f}px; one- and two-shot scenes remain bounded.")
+    print(f"v{VERSION} real browser board-density check passed: compact {compact:.0f}px, standard {standard:.0f}px, large {large:.0f}px; one- and two-shot scenes remain bounded.")
 finally:
     server.terminate()
     try:

@@ -1,4 +1,4 @@
-# CineBraid v6.6.4-studio.repair.13 setup
+# CineBraid 6.6.5 Private Test 1 setup
 
 ## Requirements
 
@@ -12,17 +12,41 @@ node --version
 
 ## Install and start
 
-1. Extract the ready-to-run archive into a new folder.
+1. Extract the release archive into a new folder.
 2. Open a terminal in that folder.
-3. Run:
+3. Install dependencies **on the machine CineBraid will run on**:
+
+```bash
+npm ci
+```
+
+4. Start:
 
 ```bash
 npm start
 ```
 
-4. Open `http://127.0.0.1:4477`.
+5. Open `http://127.0.0.1:4477`.
 
-The release archive includes `node_modules`, so a normal tester does not need to run `npm install`.
+The release archives do **not** include `node_modules`. Dependencies are installed
+on the destination machine, which is what lets one runtime tarball serve x64 and
+arm64 alike — including the DGX Spark. `npm ci` installs strictly from
+`package-lock.json` and fails if it and `package.json` disagree.
+
+## Running a second CineBraid on the same machine
+
+Give it its own port, projects root and config path, or it will share them:
+
+```bash
+PORT=4488 \
+CINEBRAID_PROJECTS_ROOT=/path/to/qa-projects \
+CINEBRAID_CONFIG_PATH=/path/to/qa-config/config.json \
+node server.js
+```
+
+`CINEBRAID_PROJECTS_ROOT` sets the *default* projects root; a `workspace.projectRoot`
+saved in the config file overrides it, so a separate `CINEBRAID_CONFIG_PATH` is
+required for real isolation. See `docs/SPARK_QA_SETUP.md`.
 
 ## Network posture
 
@@ -67,7 +91,7 @@ Provider keys remain server-side. Paid requests require explicit confirmation an
 
 1. Stop CineBraid.
 2. Back up `projects/` and `data/`.
-3. Apply the incremental patch for your exact source version, or install the complete archive into a new folder.
+3. Install the release archive into a new folder and run `npm ci` there.
 4. Restore your own `projects/` and `data/config.json` when using a new folder. Do not replace them with the release sample/config if preserving existing work.
 5. Start CineBraid and hard-refresh the browser once.
 

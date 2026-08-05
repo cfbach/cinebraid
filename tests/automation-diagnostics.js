@@ -4,6 +4,7 @@ const os = require("os");
 const path = require("path");
 const express = require("express");
 const { registerAutomationRuns } = require("../automation-runs");
+const RELEASE_VERSION = require("../package.json").version;
 
 async function listen(app) {
   return new Promise((resolve) => {
@@ -80,7 +81,7 @@ async function main() {
 
     const summary = await json(`${base}/api/automation/runs/${run.id}/support-summary`);
     assert(summary.response.ok, JSON.stringify(summary.data));
-    assert(summary.data.summary.includes("CineBraid 6.6.4-studio.repair.13 support summary"));
+    assert(summary.data.summary.includes(`CineBraid ${RELEASE_VERSION} support summary`));
     assert(summary.data.summary.includes("User flagged inefficient"));
     assert(!summary.data.summary.includes("SECRETERRORKEY"), "copyable support summaries must redact provider-echoed credentials");
 

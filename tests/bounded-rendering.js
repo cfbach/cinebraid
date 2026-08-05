@@ -2,6 +2,7 @@ const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
 const { render, buildFixture } = require("./render-harness");
+const RELEASE_VERSION = require("../package.json").version;
 
 function count(html, needle) { return String(html || "").split(needle).length - 1; }
 function clone(value) { return JSON.parse(JSON.stringify(value)); }
@@ -9,7 +10,7 @@ function clone(value) { return JSON.parse(JSON.stringify(value)); }
 async function main() {
   const root = path.join(__dirname, "..");
   const index = fs.readFileSync(path.join(root, "public", "index.html"), "utf8");
-  assert(index.includes('bounded-rendering.js?v=6.6.4-studio.repair.13'), "bounded-rendering module must load");
+  assert(index.includes(`bounded-rendering.js?v=${RELEASE_VERSION}`), "bounded-rendering module must load");
   assert(index.indexOf("bounded-rendering.js") < index.indexOf("app.js"), "bounded helpers must load before route renderers");
 
   const fixture = buildFixture();
