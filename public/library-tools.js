@@ -88,12 +88,22 @@ const VIEW_LIST = {
   vehicles: "vehicles",
   audio: "audio",
 };
+/* The reference workspace has two ways in — the "UPLOAD REFERENCES" button, which opens
+   the file picker directly, and a drop target. The drop target is the older of the two
+   and no longer exists: `#entity-dz` is not rendered anywhere in the product. This
+   function returned on its absence before reaching the line that gives the file input
+   its change handler, so choosing a file did exactly nothing — no request, no error, no
+   state change, on every Reference in every project. The frames uploader guards on both
+   its own elements and renders both, which is why importing a frame always worked.
+   The picker is now wired on the input alone, and the drop target is handled only if it
+   is there. */
 function wireEntityDropzone(view, id) {
-  const dz = document.getElementById("entity-dz");
-  if (!dz) return;
   const list = VIEW_LIST[view] || view;
   const input = document.getElementById("entity-file");
+  if (!input) return;
   input.onchange = () => intakeModal(list, id, [...input.files]);
+  const dz = document.getElementById("entity-dz");
+  if (!dz) return;
   ["dragover", "dragenter"].forEach((ev) =>
     dz.addEventListener(ev, (e) => {
       e.preventDefault();

@@ -120,6 +120,78 @@ function shotAspectLabel(project, shot) {
   return shotOutputAspect(project, shot)?.label || CINEBRAID_ASPECT_FALLBACK;
 }
 
+/* ---- MiniMax H3 output formats --------------------------------------------------
+ *
+ * H3 accepts a fixed list of aspect ratios and nothing else. The provider request
+ * builder used to express that as `list.includes(x) ? x : "16:9"`, so a 2.39:1 or 3:2
+ * production reached the provider as 16:9 — a paid video in a format the production
+ * never asked for, with nothing anywhere in the interface saying so.
+ *
+ * The whitelist below is exactly the provider's, copied from the request builder and
+ * not extended. What changed is what happens when a format is outside it: the dispatch
+ * is refused before any external request, rather than quietly rewritten.
+ *
+ * Image-to-video and first/last-frame send no aspect_ratio at all — the video takes its
+ * shape from the frames the user supplies — so there is nothing to substitute and
+ * nothing to refuse. They are routed through the same resolver so that every H3 path
+ * has one answer about its output format rather than an assumption.
+ */
+const CINEBRAID_H3_ASPECT_SUPPORT = Object.freeze({
+  t2v: Object.freeze(["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"]),
+  r2v: Object.freeze(["adaptive", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"]),
+  i2v: null,
+  flf: null,
+});
+
+/* Two ratios are the same ratio however they are written, so 1920:1080 is 16:9 and is
+   not refused. A tolerance this tight still separates 2.39:1 from 21:9, which differ by
+   2.4% and are genuinely different deliveries. */
+function h3RatioValue(label) {
+  const parsed = parseAspectRatio(label);
+  if (!parsed) return null;
+  const [w, h] = parsed.split(":").map(Number);
+  return w > 0 && h > 0 ? w / h : null;
+}
+
+/* One answer for every H3 dispatch path: manual generation, first/last frame,
+   multi-keyframe, automation and any retry or resume. Returns the value that may be
+   sent, or a refusal carrying plain-language copy — never a substituted ratio. */
+function h3AspectSupport(mode, requested) {
+  const key = String(mode || "").trim().toLowerCase();
+  const allowed = CINEBRAID_H3_ASPECT_SUPPORT[key];
+  const asked = aspectCleanText(requested);
+  if (allowed === undefined)
+    return { ok: false, mode: key, requested: asked, carriesAspectRatio: false, supported: [], reason: "mode", message: `"${asked || "(none)"}" cannot be checked: ${key || "(none)"} is not a MiniMax H3 workflow mode.` };
+  if (allowed === null)
+    return { ok: true, mode: key, requested: asked, carriesAspectRatio: false, supported: [], value: null };
+
+  const supported = allowed.slice();
+  if (supported.includes(asked)) return { ok: true, mode: key, requested: asked, carriesAspectRatio: true, supported, value: asked };
+
+  const wanted = h3RatioValue(asked);
+  if (wanted != null) {
+    for (const candidate of supported) {
+      const value = h3RatioValue(candidate);
+      if (value != null && Math.abs(value - wanted) / wanted < 0.005)
+        return { ok: true, mode: key, requested: asked, carriesAspectRatio: true, supported, value: candidate };
+    }
+  }
+  const named = asked || "(no format)";
+  return {
+    ok: false,
+    mode: key,
+    requested: asked,
+    carriesAspectRatio: true,
+    supported,
+    reason: "unsupported-ratio",
+    message:
+      `MiniMax H3 cannot produce ${named} video. It accepts ${supported.join(", ")} and nothing else, ` +
+      `and CineBraid will not quietly deliver a different shape than the one you asked for. ` +
+      `Nothing has been sent and nothing has been charged. ` +
+      `To continue, either set this Shot's format to one MiniMax H3 accepts, or choose a video model that supports ${named}.`,
+  };
+}
+
 /* ---- display sizing -------------------------------------------------------------
  * Two policies, deliberately separate.
  *
@@ -195,6 +267,8 @@ if (typeof window !== "undefined") {
   Object.assign(window, {
     CINEBRAID_ASPECT_PRESETS,
     CINEBRAID_ASPECT_FALLBACK,
+    CINEBRAID_H3_ASPECT_SUPPORT,
+    h3AspectSupport,
     parseAspectRatio,
     resolveAspect,
     intrinsicAspect,
@@ -218,6 +292,8 @@ if (typeof module !== "undefined" && module.exports) {
     CINEBRAID_ASPECT_PRESETS,
     CINEBRAID_ASPECT_FALLBACK,
     CINEBRAID_SELECTION_AREA,
+    CINEBRAID_H3_ASPECT_SUPPORT,
+    h3AspectSupport,
     parseAspectRatio,
     resolveAspect,
     intrinsicAspect,

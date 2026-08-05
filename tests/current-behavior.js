@@ -309,6 +309,7 @@ async function main() {
     "image-review-scale.js",
     "import-benchmark.js",
     "integrity-mobile-usability.js",
+    "launch-blockers.js",
     "live-activity.js",
     "manual-first-parity.js",
     "manual-first-real-browser.py",
