@@ -305,6 +305,7 @@ async function main() {
     "fal-generation.js",
     "fixtures",
     "focused-workspaces.js",
+    "image-review-scale.js",
     "import-benchmark.js",
     "integrity-mobile-usability.js",
     "live-activity.js",

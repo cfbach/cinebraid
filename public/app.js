@@ -1326,7 +1326,13 @@ function modalFocusable(root) {
 function openModal(inner) {
   const m = $("#modal");
   if (!m) return;
-  MODAL_RETURN_FOCUS = document.activeElement && document.activeElement !== document.body ? document.activeElement : null;
+  /* A pointer click on a thumbnail does not always leave the trigger focused, so
+     fall back to the element that dispatched the event still being handled. That
+     is what lets Escape hand focus back to the thumbnail that was enlarged. */
+  const dispatching = window.event?.currentTarget || window.event?.target?.closest?.("button, a[href], [tabindex]:not([tabindex='-1'])") || null;
+  MODAL_RETURN_FOCUS = document.activeElement && document.activeElement !== document.body
+    ? document.activeElement
+    : (dispatching && typeof dispatching.focus === "function" ? dispatching : null);
   MODAL_SCROLL_Y = Number(window.scrollY || document.documentElement?.scrollTop || 0);
   const modalAnchor = MODAL_RETURN_FOCUS?.closest?.("details.asset-creation-card, details.entity-state-generation, .settings-block, .shot-main");
   MODAL_ANCHOR_TOP = modalAnchor?.getBoundingClientRect?.().top ?? null;
@@ -1359,8 +1365,8 @@ window.openMediaTheatre = (encodedUrl, encodedTitle = "Preview", kind = "") => {
   const mediaKind = kind || (isVideo(title) || /\.(mp4|webm|mov)(?:$|[?#])/i.test(url) ? "video" : "image");
   const media = mediaKind === "video"
     ? `<video controls autoplay playsinline preload="metadata" src="${attr(url)}"></video>`
-    : `<img src="${attr(url)}" alt="${attr(title)}">`;
-  openModal(`<div class="media-theatre-modal"><header><div><span>MEDIA PREVIEW</span><h3>${esc(title)}</h3><p>Large in-app inspection without leaving the shot workspace.</p></div><button class="cancel" onclick="closeModal()">Close</button></header><div class="media-theatre-stage">${media}</div><footer><span>${mediaKind === "video" ? "Use the player controls to review motion and audio." : "Image fitted to the available workspace."}</span><a class="ghost-btn" href="${attr(url)}" target="_blank" rel="noopener">Open original</a></footer></div>`);
+    : `<img src="${attr(url)}" alt="Enlarged view of ${attr(title)}">`;
+  openModal(`<div class="media-theatre-modal" aria-label="Enlarged view of ${attr(title)}"><header><div><span>MEDIA PREVIEW</span><h3>${esc(title)}</h3><p>Large in-app inspection without leaving the shot workspace. Press Escape or Close to return.</p></div><button class="cancel" onclick="closeModal()" aria-label="Close the enlarged view of ${attr(title)}">Close</button></header><div class="media-theatre-stage">${media}</div><footer><span>${mediaKind === "video" ? "Use the player controls to review motion and audio." : "The complete source image, fitted to the workspace without cropping."}</span><a class="ghost-btn" href="${attr(url)}" target="_blank" rel="noopener">Open original</a></footer></div>`);
 };
 
 window.closeModal = () => {
@@ -2176,10 +2182,15 @@ function slate(s, sceneId) {
         : "";
   const refs = referenceRecordsForShot(s);
   const next = shotProductionNextAction(s, takes);
+  /* The card itself is a link to the shot, so inspection needs its own control:
+     enlarging must never navigate away from the board. */
+  const enlarge = show && !isVideo(show.name)
+    ? `<button type="button" class="media-enlarge-btn slate-enlarge" onclick="event.preventDefault();event.stopPropagation();openMediaTheatre('${attr(encodeURIComponent(show.url))}','${attr(encodeURIComponent(`${s.id} · ${show.name}`))}','image')" aria-label="View the ${attr(s.id)} image larger">View larger</button>`
+    : "";
   return `<article class="slate wf-card-${state.cls}">
     <div class="slate-top"><span class="slate-id">${esc(s.id)}</span><span class="dur-chip">${shotDur(s) ? shotDur(s) + "s" : ""}</span><span class="slate-route">${esc(outputPlanLabel(s))}</span>
       ${sceneId ? `<span class="move-btns"><button onclick="moveShot('${s.id}',-1)" title="Move up">↑</button><button onclick="moveShot('${s.id}',1)" title="Move down">↓</button></span>` : ""}</div>
-    <a class="slate-thumb take-tile" href="#/shot/${s.id}" style="display:block">${thumb}${winner ? '<span class="win-badge">APPROVED PICK</span>' : ""}</a>
+    <div class="slate-thumb-shell"><a class="slate-thumb take-tile" href="#/shot/${s.id}" style="display:block">${thumb}${winner ? '<span class="win-badge">APPROVED PICK</span>' : ""}</a>${enlarge}</div>
     <a class="slate-body" href="#/shot/${s.id}">
       <div class="slate-title">${esc(s.title)}</div>
       <div class="state-pair"><span class="shot-next-chip next-${next.key}" title="Next action for this shot">${esc(next.label)}</span><small>${esc(next.detail)}</small></div>
@@ -2500,7 +2511,11 @@ function productionResultInbox(limit = 6) {
     if (item.shot) {
       const takes = takesFor(item.shot.id), media = item.type === "video" ? takes.filter((take) => isVideo(take.name)).at(-1) : takes.filter((take) => !isVideo(take.name) && !isAudio(take.name)).at(-1);
       const preview = media ? (isVideo(media.name) ? `<video muted preload="metadata" src="${attr(media.url)}#t=0.1"></video>` : `<img src="${attr(media.url)}" alt="">`) : `<span>${item.type === "video" ? "VIDEO" : "FRAME"}</span>`;
-      return `<a href="#/shot/${item.shot.id}" class="production-inbox-item"><div>${preview}</div><section><b>${esc(item.shot.id)} · ${esc(item.shot.title)}</b><small>${esc(item.label)}</small></section><i>Review →</i></a>`;
+      /* The row navigates to the shot; inspecting the candidate must not. */
+      const enlarge = media && !isVideo(media.name)
+        ? `<button type="button" class="media-enlarge-btn production-enlarge" onclick="event.preventDefault();event.stopPropagation();openMediaTheatre('${attr(encodeURIComponent(media.url))}','${attr(encodeURIComponent(`${item.shot.id} · ${media.name}`))}','image')" aria-label="View the ${attr(item.shot.id)} candidate larger">View larger</button>`
+        : "";
+      return `<div class="production-inbox-shell"><a href="#/shot/${item.shot.id}" class="production-inbox-item"><div>${preview}</div><section><b>${esc(item.shot.id)} · ${esc(item.shot.title)}</b><small>${esc(item.label)}</small></section><i>Review →</i></a>${enlarge}</div>`;
     }
     return `<a href="#/${item.route}/${item.entity.id}" class="production-inbox-item"><div><span>REF</span></div><section><b>${esc(item.entity.name || item.entity.id)}</b><small>${esc(item.label)}</small></section><i>Review →</i></a>`;
   }).join("")}</div>` : `<div class="production-inbox-empty">Newly returned images, videos, upscales, and reference candidates will collect here.</div>`}</section>`;
@@ -2662,7 +2677,12 @@ function libraryCard(list, x, approvedOnly = false) {
   const description = approvedOnly
     ? `${plural(approvedFiles, "approved file")}${stateCount > 1 ? ` · ${plural(stateCount, "state")}` : ""}`
     : approvedFiles ? `${plural(approvedFiles, "approved file")}${pending ? ` · ${plural(pending, "unassigned file")}` : ""}` : media.length ? `${plural(pending, "imported file")} to organize` : "Add the first reference";
-  return `<a class="library-card ${status}" href="#/${route}/${x.id}"><div class="library-preview">${preview}<span class="library-status ${status}">${statusLabel}</span></div><div class="library-body"><span class="review-kind">${type}</span><b>${esc(x.name || x.id)}</b><small>${description}</small></div></a>`;
+  /* Same reasoning as the shot board: the card navigates, so the reference image
+     gets its own inspection control that does not open the reference page. */
+  const enlarge = previewMedia && !isAudio(previewMedia.name) && !isVideo(previewMedia.name)
+    ? `<button type="button" class="media-enlarge-btn library-enlarge" onclick="event.preventDefault();event.stopPropagation();openMediaTheatre('${attr(encodeURIComponent(previewMedia.url))}','${attr(encodeURIComponent(`${x.name || x.id} · ${previewMedia.name}`))}','image')" aria-label="View the ${attr(x.name || x.id)} reference image larger">View larger</button>`
+    : "";
+  return `<div class="library-card-shell"><a class="library-card ${status}" href="#/${route}/${x.id}"><div class="library-preview">${preview}<span class="library-status ${status}">${statusLabel}</span></div><div class="library-body"><span class="review-kind">${type}</span><b>${esc(x.name || x.id)}</b><small>${description}</small></div></a>${enlarge}</div>`;
 }
 function libraryView(tab = "all") {
   if (!["all", "approved", "characters", "locations", "props", "vehicles", "audio"].includes(tab)) tab = "all";
