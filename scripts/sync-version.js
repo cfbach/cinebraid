@@ -19,10 +19,18 @@ function readText(file) {
   return fs.readFileSync(path.join(ROOT, file), "utf8");
 }
 
-/* Writes with the exact bytes given. Line endings are left to .gitattributes,
-   which normalises them on checkout and on `git archive`. */
 function writeText(file, text) {
   fs.writeFileSync(path.join(ROOT, file), text);
+}
+
+/* `.gitattributes` sets `* text=auto`, so a checkout with core.autocrlf=true —
+   Windows CI, and most Windows clones — materialises these files with CRLF.
+   Re-serialising the lockfile through JSON.stringify always emits LF, so a
+   byte comparison would report drift on every Windows checkout and none on
+   Linux. Compare and write in whatever ending the file already uses. */
+function matchEol(text, original) {
+  const lf = text.replace(/\r\n/g, "\n");
+  return /\r\n/.test(original) ? lf.replace(/\n/g, "\r\n") : lf;
 }
 
 function stampIndexHtml(identity, html) {
@@ -49,7 +57,7 @@ function main() {
 
   for (const surface of SURFACES) {
     const current = readText(surface.file);
-    const stamped = surface.stamp(identity, current);
+    const stamped = matchEol(surface.stamp(identity, current), current);
     if (stamped === current) continue;
     drifted.push(surface.file);
     if (!CHECK_ONLY) writeText(surface.file, stamped);
@@ -76,4 +84,6 @@ function main() {
   for (const file of drifted) console.log(`  ${file}`);
 }
 
-main();
+module.exports = { stampIndexHtml, stampLockfile, matchEol, SURFACES };
+
+if (require.main === module) main();

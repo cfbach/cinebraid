@@ -67,6 +67,24 @@ assert.notStrictEqual(sample.meta.version, identity.version, "the shipped sample
 assert.notStrictEqual(sample.meta.hubVersion, identity.version, "the sample hubVersion was renumbered to the application version");
 assert.notStrictEqual(sample.meta.schemaVersion, identity.version, "the sample schemaVersion was renumbered to the application version");
 
+/* --- the drift check must survive a CRLF checkout -------------------------- */
+
+/* `.gitattributes` sets `* text=auto`, so a clone with core.autocrlf=true —
+   Windows CI, and most Windows clones — gets CRLF working files. Re-serialising
+   the lockfile emits LF, so a naive byte comparison reported drift on every
+   Windows checkout and none on Linux. Both endings must behave identically. */
+const { stampLockfile, stampIndexHtml, matchEol } = require(path.join(ROOT, "scripts", "sync-version.js"));
+
+for (const [label, toEol] of [["LF", (s) => s.replace(/\r\n/g, "\n")], ["CRLF", (s) => s.replace(/\r\n/g, "\n").replace(/\n/g, "\r\n")]]) {
+  const lockText = toEol(fs.readFileSync(path.join(ROOT, "package-lock.json"), "utf8"));
+  const restamped = matchEol(stampLockfile(identity, lockText), lockText);
+  assert.strictEqual(restamped, lockText, `stamping an already-correct ${label} lockfile reported drift`);
+
+  const htmlText = toEol(html);
+  const reHtml = matchEol(stampIndexHtml(identity, htmlText), htmlText);
+  assert.strictEqual(reHtml, htmlText, `stamping an already-correct ${label} index.html reported drift`);
+}
+
 /* --- the identity derivation itself --------------------------------------- */
 
 assert.strictEqual(identity.tag, `v${pkg.version}`, "the Git tag is not derived from the package version");
