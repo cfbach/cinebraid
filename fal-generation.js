@@ -3,6 +3,7 @@
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
+const { parseAspectRatio } = require("./public/shared-aspect");
 
 function registerFalGeneration(app, context) {
   const { readConfig, readProject, writeProject, projectDir } = context;
@@ -139,17 +140,14 @@ function registerFalGeneration(app, context) {
   }
   function aspectSize(value, edit, resolution = "1k") {
     const ratio = String(value || "16:9").trim();
-    const map = {
-      "1:1": [1, 1],
-      "4:3": [4, 3],
-      "5:4": [5, 4],
-      "3:4": [3, 4],
-      "2:3": [2, 3],
-      "4:5": [4, 5],
-      "9:16": [9, 16],
-      "16:9": [16, 9],
-    };
-    const pair = map[ratio] || [16, 9];
+    /* Derived rather than looked up: the old eight-entry table had no 21:9 and no
+       2.39:1, so an ultrawide or scope production silently generated 16:9 stills. Every
+       entry the table used to hold falls inside the parser's believable range and so
+       resolves to the identical pair; anything unparseable still lands on 16:9.
+       The emission rule below is untouched — a mathematically exact ratio never earns an
+       off-alignment pixel size. */
+    const parsed = parseAspectRatio(ratio);
+    const pair = parsed ? parsed.split(":").map(Number) : [16, 9];
     const longEdge = resolutionLongEdge(resolution);
     const landscape = pair[0] >= pair[1];
     const width = landscape ? longEdge : Math.round((longEdge * pair[0]) / pair[1]);

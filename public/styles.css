@@ -3658,3 +3658,121 @@ body[data-focused-workspace="1"] .guided-frame-body,
    cannot cover the row's own "Review →" affordance. */
 .production-enlarge{left:12px;right:auto;bottom:11px;padding:3px 6px;font-size:7px;letter-spacing:.02em}
 .candidate-enlarge{margin-left:auto}
+
+/* ============================================================================
+   v6.6.4-studio.repair.15 — multi-aspect production formats
+
+   The repair above stopped judgement imagery being cropped, but every well it
+   built was 16:9 because the shipped sample is. A 21:9, 2.39:1, 1:1 or 9:16
+   production was therefore still judged in a widescreen box: uncropped, but a
+   9:16 frame arrived as a 107px strip inside a 340px card.
+
+   The ratio now comes from the project record — shot override, then project
+   format, then the asset's own dimensions, then 16:9 — resolved once in
+   public/shared-aspect.js and published as custom properties. Every literal
+   below is a fallback, so a record that declares no format renders exactly as
+   it did before this block existed.
+
+   Two policies, deliberately separate:
+
+     bounded well   every grid, strip and tray. The well takes the clamped
+                    ratio and a height cap; the grid's own column widths are
+                    never derived from a ratio, because a ratio-derived track
+                    floor can exceed its own ceiling and collapse the layout.
+     review canvas  single-image review surfaces, where both dimensions can be
+                    applied. Constant area, so every format gets the same
+                    number of pixels to be judged in — vertical is tall and
+                    narrow rather than a strip, scope is wide and short rather
+                    than an unreadable ribbon.
+
+   Height caps are compile-time constants: round(columnWidth / (16/9) * factor),
+   factor 1.5 for browsing and 1.9 for the grids that ask "choose between these".
+   ============================================================================ */
+
+/* Shot output imagery. --cb-well-aspect is set inline by the shot that owns the
+   surface, so a shot with its own format keeps it on the board and the
+   dashboard, not only inside its own workspace. */
+.slate-thumb,
+.production-inbox-item>div,.decision-inbox-preview,
+.guided-candidate-preview,.guided-frame-candidate .guided-candidate-preview,
+.frame-sequence-thumbs img,.guided-motion-frame-preview img,
+.scene-review-approved-strip img{
+  aspect-ratio:var(--cb-well-aspect,var(--cb-production-aspect,16/9))}
+
+/* References keep their own shape. Separate property on purpose: a character
+   sheet inside a 2.39:1 shot workspace must not inherit that shot's ratio.
+   --cb-intrinsic-aspect is written from the loaded image's real dimensions. */
+.library-preview,.guided-input-thumb,
+.entity-authority-thumb-button .entity-authority-thumb,
+.state-approved-preview,.state-validation-thumbs img{
+  aspect-ratio:var(--cb-intrinsic-aspect,16/9)}
+
+/* --- bounded wells: browsing ---------------------------------------------- */
+/* Board cards. The grid tracks are untouched — 220/260, 280/340, 360/460 stay
+   two literal constants each — so no ratio can invert a minmax(). Instead the
+   well is capped: a 9:16 card would otherwise reach 340/0.5625 = 604px tall. */
+.slate-thumb{max-height:287px}
+.shot-row.bounded-shot-page.size-compact .slate-thumb{max-height:219px}      /* 260 / (16/9) * 1.5 */
+.shot-row.bounded-shot-page.size-comfortable .slate-thumb{max-height:287px}  /* 340 / (16/9) * 1.5 */
+.shot-row.bounded-shot-page.size-large .slate-thumb{max-height:388px}        /* 460 / (16/9) * 1.5 */
+
+/* Fixed-width overview thumbs: the ratio drives the height, the cap stops a
+   vertical asset stretching the row it sits in. */
+.production-inbox-item>div,.decision-inbox-preview{height:auto;max-height:108px}   /* 128 wide */
+.guided-input-thumb{max-height:88px}                                              /* 104 wide */
+.entity-authority-thumb-button .entity-authority-thumb{max-height:88px}           /* 104 wide */
+.state-approved-preview{max-height:199px}                                         /* 236 wide */
+.state-validation-thumbs img{max-height:88px}                                     /* 104 wide */
+.library-preview{max-height:287px}                                                /* 340 track — a square or vertical reference stays close to its own shape */
+.frame-sequence-thumbs img{max-height:152px}                                      /* 180 wide */
+.guided-motion-frame-preview img{max-height:152px}
+
+/* --- bounded wells: choosing between candidates --------------------------- */
+/* More canvas, because the decision is a comparison rather than a scan. Still a
+   cap, and still no ratio anywhere near the grid's column widths. */
+.guided-candidate-preview,.guided-frame-candidate .guided-candidate-preview,
+.scene-review-approved-strip img{max-height:342px}                                /* 320 / (16/9) * 1.9 */
+
+/* --- review canvases ------------------------------------------------------ */
+/* Both dimensions come from the shot's effective ratio and are bounded by the
+   viewport. fit-content() rather than minmax(): the track can shrink freely and
+   has no ratio-derived minimum to invert. */
+.guided-next-action{grid-template-columns:fit-content(var(--cb-selection-w,438px)) minmax(0,1fr) auto}
+.guided-next-action .guided-lifecycle-preview,.guided-finish-current img{
+  aspect-ratio:auto;
+  width:min(100%,var(--cb-selection-w,438px));
+  height:var(--cb-selection-h,246px);
+  max-height:min(var(--cb-selection-h,246px),62vh);
+  min-height:0}
+.guided-finish-current img{object-fit:contain;background:var(--img-well-bg)}
+@media(max-width:900px){.guided-next-action{grid-template-columns:1fr}}
+
+/* The shot format control. One row, so it reads as a property of the shot
+   rather than a settings panel. */
+.shot-aspect-control{margin:0 0 12px;border:1px solid var(--line);border-radius:9px;background:var(--surface-2)}
+.shot-aspect-control>summary{display:flex;align-items:center;gap:9px;padding:9px 12px;cursor:pointer;list-style:none}
+.shot-aspect-control>summary::-webkit-details-marker{display:none}
+.shot-aspect-control>summary b{font:700 8px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.shot-aspect-control>summary span{font-family:var(--mono);font-size:11px;color:var(--ink)}
+.shot-aspect-control>summary::after{content:"⌄";margin-left:auto;color:var(--faint)}
+.shot-aspect-control[open]>summary::after{content:"⌃"}
+.shot-aspect-fields{display:flex;align-items:center;gap:9px;flex-wrap:wrap;padding:0 12px 11px}
+.shot-aspect-fields label{font:700 8px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.shot-aspect-fields select{width:auto;min-width:210px;padding:7px 25px 7px 8px;font-size:11px}
+.shot-aspect-fields input{width:118px;padding:7px 8px;font-size:11px}
+.shot-aspect-fields input:disabled{opacity:.45}
+.shot-aspect-fields .hint{margin:0;flex:1 1 190px;min-width:0}
+.shot-aspect-fields .shot-aspect-hint:empty{display:none}
+.shot-aspect-fields .shot-aspect-hint{flex:1 1 100%;color:var(--amber)}
+@media(max-width:760px){.shot-aspect-fields{align-items:stretch;flex-direction:column}.shot-aspect-fields select,.shot-aspect-fields input{width:100%}}
+
+/* --- inspection ----------------------------------------------------------- */
+/* The viewer's own height allowance was 49px short of the chrome it has to sit
+   inside — header, footer and the stage's padding — so a viewport-filling frame
+   overflowed the stage by 34px and its bottom strip had to be scrolled to.
+   Measured over CDP at 1280x800 and 1600x1000, where a 9:16 frame lost its bottom
+   edge and both bottom corner markers. A percentage cannot be used here: the modal
+   is sized by max-height, so the stage row is indefinite and 100% resolves to none,
+   which lets the image render at full natural size. The stage keeps `overflow:auto`
+   as the safety valve for the rare case of a title that wraps the header taller. */
+.media-theatre-stage img,.media-theatre-stage video{max-height:calc(100dvh - 239px)}

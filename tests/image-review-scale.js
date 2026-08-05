@@ -71,10 +71,25 @@ function declaration(selector, property, source = baseCss) {
   }
   return value;
 }
+/* The wells are driven by the production format now, so a declared aspect ratio or width
+ * is a var() chain whose final fallback is the value a record declaring no format still
+ * gets. Resolving to that fallback holds this contract to exactly what it always meant:
+ * the shipped 16:9 sample, and any project without a format, is framed as before. */
+function resolveVarFallback(value, depth = 0) {
+  const text = String(value || '').trim();
+  if (depth > 6) return text;
+  const match = text.match(/^var\(\s*(--[a-z0-9-]+)\s*(?:,([\s\S]+))?\)$/i);
+  if (!match) return text;
+  if (match[2] == null) {
+    const declared = declaration(':root', match[1]);
+    return declared ? resolveVarFallback(declared, depth + 1) : '';
+  }
+  return resolveVarFallback(match[2], depth + 1);
+}
 /* Resolves `104px`, `var(--img-angle-w)` and `calc(var(--img-angle-w) + 12px)`
  * against the custom properties declared on :root. */
 function resolveLength(value, depth = 0) {
-  const text = String(value || '').trim();
+  const text = resolveVarFallback(value);
   if (!text || depth > 4) return null;
   const calc = text.match(/^calc\((.+)\)$/i);
   if (calc) {
@@ -90,7 +105,7 @@ function resolveLength(value, depth = 0) {
   return px ? parseFloat(px[1]) : null;
 }
 function ratio(value) {
-  const parts = String(value || '').split('/').map((x) => parseFloat(x));
+  const parts = resolveVarFallback(value).split('/').map((x) => parseFloat(x));
   if (parts.length !== 2 || !parts[0] || !parts[1]) return null;
   return parts[0] / parts[1];
 }
