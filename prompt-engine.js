@@ -2,6 +2,9 @@ const fs = require("fs");
 const path = require("path");
 const { resolveShotEntities } = require("./public/shared-entities");
 const { buildCameraPhrases } = require("./public/shared-camera");
+/* One parser for the whole product. It lives in the shared module so the browser can use
+   the same rule the prompt compiler does; this re-export keeps the Node API unchanged. */
+const { parseAspectRatio } = require("./public/shared-aspect");
 
 const PROFILE_FILE = path.join(__dirname, "data", "model-profiles.json");
 
@@ -40,15 +43,6 @@ function unique(xs) {
 }
 function isoNow() {
   return new Date().toISOString();
-}
-function parseAspectRatio(value) {
-  const matches = [...cleanText(value).matchAll(/(\d+(?:\.\d+)?)\s*:\s*(\d+(?:\.\d+)?)/g)];
-  for (const match of matches) {
-    const left = Number(match[1]), right = Number(match[2]), ratio = left / right;
-    if (left > 0 && right > 0 && ratio >= 0.4 && ratio <= 3.2)
-      return `${match[1]}:${match[2]}`;
-  }
-  return "";
 }
 function compactCanon(value, maxWords = 42) {
   const text = cleanText(value).replace(/\s+/g, " ");

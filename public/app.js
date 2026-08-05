@@ -254,6 +254,120 @@ function applyTheme() {
   if (document.documentElement?.style?.setProperty) document.documentElement.style.setProperty("--ui-scale", `${Math.max(90, Math.min(110, Number(scale) || 100)) / 100}`);
   document.body.dataset.help = HELP_MODE;
 }
+/* The production format, expressed as CSS custom properties.
+ *
+ * Display-only, exactly like applyTheme above: it reads the project record and writes
+ * DOM variables, never the other way round. Opening or switching a project must not
+ * write project data, so nothing here calls dirty() or normalizes stored values — a
+ * malformed or absent ratio simply resolves to nothing and the 16/9 CSS fallbacks stand.
+ *
+ * Only the ratio and the review-canvas size are published. Every height cap is a
+ * compile-time constant in the stylesheet, and no grid column width is derived from a
+ * ratio: a track floor computed from a ratio can exceed its own ceiling and collapse the
+ * layout. */
+function applyProductionFormat() {
+  const app = document.getElementById("app");
+  if (!app || !app.style || typeof app.style.setProperty !== "function") return;
+  const declared = P ? productionAspect(P) : null;
+  const effective = declared || resolveAspect(CINEBRAID_ASPECT_FALLBACK);
+  app.dataset.cbAspect = declared ? declared.label : "";
+  app.style.setProperty("--cb-production-aspect", overviewAspectCss(effective));
+  const canvas = selectionWell(effective.ratio);
+  app.style.setProperty("--cb-selection-w", `${canvas.w}px`);
+  app.style.setProperty("--cb-selection-h", `${canvas.h}px`);
+}
+
+/* A shot that declares its own format is shown in that format everywhere it appears —
+   the board, the returned-results dashboard, its own workspace — not only inside the open
+   Shot page. Shots that inherit resolve to the project's format, which is what the
+   #app-level variables already carry, so the two agree by construction.
+
+   Overview surfaces take the ratio alone: their width belongs to the grid, and a
+   ratio-derived column width can invert a minmax() and collapse the layout. */
+function shotWellStyle(shot) {
+  const aspect = P ? shotOutputAspect(P, shot) : null;
+  return aspect ? aspectStyleVars(aspect, { selection: false }) : "";
+}
+/* Review canvases take both dimensions, computed from the shot's effective ratio, so a
+   9:16 shot inside a 16:9 production is judged tall rather than as a strip. The
+   project-level variables remain only as the fallback for anything unscoped. */
+function shotCanvasStyle(shot) {
+  const aspect = P ? shotOutputAspect(P, shot) : null;
+  return aspect ? aspectStyleVars(aspect) : "";
+}
+
+/* References keep their own shape. A character sheet, a prop plate or an angle choice is
+   not a shot, so it is never forced into the production's output ratio — the well takes
+   the asset's real dimensions once the browser knows them. Nothing is stored about an
+   asset's size, so the only place to read it is the loaded image itself.
+
+   The reference wells are named once here rather than tagged at every render site, so a
+   new reference surface joins by adding one selector and no rendering code ever has to
+   know what an aspect ratio is. Some of these wells are the image itself. */
+const CB_INTRINSIC_WELLS =
+  ".library-preview,.guided-input-thumb,.entity-authority-thumb,.state-approved-preview,.state-validation-thumbs img";
+
+function applyIntrinsicAspect(well, img) {
+  if (!well || !well.style || typeof well.style.setProperty !== "function") return;
+  const aspect = intrinsicAspect(img.naturalWidth, img.naturalHeight);
+  /* A separate property from the shot wells on purpose: a reference sitting inside a
+     shot workspace must not inherit that shot's output ratio. */
+  if (aspect) well.style.setProperty("--cb-intrinsic-aspect", overviewAspectCss(aspect));
+}
+/* Keyed on the src rather than a plain "already bound" flag, so swapping an image's
+   source rebinds and recomputes instead of leaving the old shape in place. A cached
+   image is already complete and never fires load, so it is handled directly. */
+function bindIntrinsicAspect(root) {
+  const scope = root && typeof root.querySelectorAll === "function" ? root : document;
+  const wells = typeof scope.querySelectorAll === "function"
+    ? scope.querySelectorAll(CB_INTRINSIC_WELLS)
+    : [];
+  for (const well of wells) {
+    const img = well.tagName === "IMG" ? well : well.querySelector?.("img");
+    if (!img || !img.dataset) continue;
+    const src = (typeof img.getAttribute === "function" && img.getAttribute("src")) || "";
+    if (img.dataset.cbAspectSrc === src) continue;
+    img.dataset.cbAspectSrc = src;
+    if (img.complete && img.naturalWidth) {
+      applyIntrinsicAspect(well, img);
+      continue;
+    }
+    img.addEventListener("load", () => applyIntrinsicAspect(well, img), { once: true });
+    /* An asset that cannot load keeps the bounded fallback well; `contain` means it was
+       never going to be cropped either way. */
+    img.addEventListener("error", () => {}, { once: true });
+  }
+}
+/* Tabs, modals and comparison panels render without a route change, so route() alone
+   would miss them. The observer is deliberately bounded to the two containers that hold
+   rendered content, and coalesces a burst of mutations into one pass. */
+let INTRINSIC_ASPECT_OBSERVER = null;
+let INTRINSIC_ASPECT_PENDING = false;
+function watchIntrinsicAspect() {
+  if (INTRINSIC_ASPECT_OBSERVER || typeof MutationObserver === "undefined") return;
+  const targets = ["#main", "#modal"]
+    .map((selector) => document.querySelector(selector))
+    .filter((node) => node && typeof node.querySelectorAll === "function");
+  if (!targets.length) return;
+  INTRINSIC_ASPECT_OBSERVER = new MutationObserver(() => {
+    if (INTRINSIC_ASPECT_PENDING) return;
+    INTRINSIC_ASPECT_PENDING = true;
+    const run = () => {
+      INTRINSIC_ASPECT_PENDING = false;
+      bindIntrinsicAspect();
+    };
+    if (typeof requestAnimationFrame === "function") requestAnimationFrame(run);
+    else setTimeout(run, 0);
+  });
+  for (const target of targets)
+    INTRINSIC_ASPECT_OBSERVER.observe(target, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["src"],
+    });
+}
+
 window.setAppearancePreview = (options) => {
   APPEARANCE_PREVIEW = options ? { ...options } : null;
   applyTheme();
@@ -950,6 +1064,8 @@ async function load() {
       .catch(() => []);
   }
   applyTheme();
+  applyProductionFormat();
+  watchIntrinsicAspect();
   P.meta.styleBlocks = P.meta.styleBlocks || [];
   P.meta.iterBudget = P.meta.iterBudget || { A: 12, B: 3 };
   P.meta.world = P.meta.world || { setting: "", include: "", reject: "" };
@@ -1341,6 +1457,8 @@ function openModal(inner) {
   else content = `<h3 id="cinebraid-modal-title" class="sr-only">Dialog</h3>${content}`;
   m.innerHTML = `<div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="cinebraid-modal-title">${content}</div>`;
   m.classList.remove("hidden");
+  /* Modal content never goes through route(), so its reference imagery is bound here. */
+  bindIntrinsicAspect(m);
   m.onclick = (event) => { if (event.target === m) closeModal(); };
   if (MODAL_KEY_HANDLER) m.removeEventListener?.("keydown", MODAL_KEY_HANDLER);
   MODAL_KEY_HANDLER = (event) => {
@@ -1716,6 +1834,10 @@ async function route(recoveryAttempt = false) {
       );
     wireSearch();
     tally();
+    /* The format can change under us — switching projects, or editing it in Settings —
+       so it is reapplied with the view rather than only at load. */
+    applyProductionFormat();
+    bindIntrinsicAspect($("#main"));
     window.enhanceFocusedWorkspace?.();
     restoreRouteViewState(routeViewState);
     CURRENT_RENDER_ROUTE_KEY = targetRouteKey;
@@ -2190,7 +2312,7 @@ function slate(s, sceneId) {
   return `<article class="slate wf-card-${state.cls}">
     <div class="slate-top"><span class="slate-id">${esc(s.id)}</span><span class="dur-chip">${shotDur(s) ? shotDur(s) + "s" : ""}</span><span class="slate-route">${esc(outputPlanLabel(s))}</span>
       ${sceneId ? `<span class="move-btns"><button onclick="moveShot('${s.id}',-1)" title="Move up">↑</button><button onclick="moveShot('${s.id}',1)" title="Move down">↓</button></span>` : ""}</div>
-    <div class="slate-thumb-shell"><a class="slate-thumb take-tile" href="#/shot/${s.id}" style="display:block">${thumb}${winner ? '<span class="win-badge">APPROVED PICK</span>' : ""}</a>${enlarge}</div>
+    <div class="slate-thumb-shell"><a class="slate-thumb take-tile" href="#/shot/${s.id}" style="display:block;${attr(shotWellStyle(s))}">${thumb}${winner ? '<span class="win-badge">APPROVED PICK</span>' : ""}</a>${enlarge}</div>
     <a class="slate-body" href="#/shot/${s.id}">
       <div class="slate-title">${esc(s.title)}</div>
       <div class="state-pair"><span class="shot-next-chip next-${next.key}" title="Next action for this shot">${esc(next.label)}</span><small>${esc(next.detail)}</small></div>
@@ -2515,7 +2637,7 @@ function productionResultInbox(limit = 6) {
       const enlarge = media && !isVideo(media.name)
         ? `<button type="button" class="media-enlarge-btn production-enlarge" onclick="event.preventDefault();event.stopPropagation();openMediaTheatre('${attr(encodeURIComponent(media.url))}','${attr(encodeURIComponent(`${item.shot.id} · ${media.name}`))}','image')" aria-label="View the ${attr(item.shot.id)} candidate larger">View larger</button>`
         : "";
-      return `<div class="production-inbox-shell"><a href="#/shot/${item.shot.id}" class="production-inbox-item"><div>${preview}</div><section><b>${esc(item.shot.id)} · ${esc(item.shot.title)}</b><small>${esc(item.label)}</small></section><i>Review →</i></a>${enlarge}</div>`;
+      return `<div class="production-inbox-shell"><a href="#/shot/${item.shot.id}" class="production-inbox-item"><div style="${attr(shotWellStyle(item.shot))}">${preview}</div><section><b>${esc(item.shot.id)} · ${esc(item.shot.title)}</b><small>${esc(item.label)}</small></section><i>Review →</i></a>${enlarge}</div>`;
     }
     return `<a href="#/${item.route}/${item.entity.id}" class="production-inbox-item"><div><span>REF</span></div><section><b>${esc(item.entity.name || item.entity.id)}</b><small>${esc(item.label)}</small></section><i>Review →</i></a>`;
   }).join("")}</div>` : `<div class="production-inbox-empty">Newly returned images, videos, upscales, and reference candidates will collect here.</div>`}</section>`;

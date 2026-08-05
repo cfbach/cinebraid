@@ -157,6 +157,7 @@ async function main() {
   assert(index.includes("styles.css?v=6.6.4-studio.repair.13"), "frontend assets must be cache-busted after patch updates");
   assert(index.includes("shared-entities.js?v=6.6.4-studio.repair.13"), "shared entity resolver must load before the app");
   assert(index.includes("shared-camera.js?v=6.6.4-studio.repair.13"), "shared camera vocabulary must load before the app");
+  assert(index.includes("shared-aspect.js?v=6.6.4-studio.repair.13"), "shared aspect-ratio model must load before the app");
   assert(index.includes("shared-reference-views.js?v=6.6.4-studio.repair.13"), "shared reference-view vocabulary must load before media and composer modules");
   assert(index.includes("shared-build-history.js?v=6.6.4-studio.repair.13"), "shared prompt-history compatibility must load before the app");
   assert(index.includes("v607-composer.js?v=6.6.4-studio.repair.13"), "composer module must be cache-busted after patch updates");
@@ -315,6 +316,7 @@ async function main() {
     "minimax-h3-real-browser.py",
     "minimax-h3.js",
     "motion-prompt-editing-real-browser.py",
+    "multi-aspect-media.js",
     "private-preview-layout-real-browser.py",
     "private-preview-ux.js",
     "project-builder-kit.js",

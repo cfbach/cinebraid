@@ -493,6 +493,60 @@ async function main() {
     assert(recoveredJobs.response.ok);
     assert(recoveredJobs.data.jobs.some((job) => job.id === correctionSubmit.data.job.id && job.purpose === "correction" && job.status === "COMPLETED"), "persisted correction jobs should remain recoverable after refresh or server restart");
 
+    /* ---- production formats reach the provider request -------------------------
+     * The ratio->dimensions step used to be an eight-entry lookup table with no 21:9
+     * and no 2.39:1, so an ultrawide or scope production silently compiled 16:9 stills
+     * however the project was configured. It is derived from the canonical parser now.
+     * Nothing is dispatched anywhere: these are compiled requests recorded by the same
+     * in-process mock provider the rest of this suite uses.
+     *
+     * The emission rule is unchanged and is asserted alongside every case — the long
+     * edge stays exactly the resolution's long edge and both dimensions stay even and
+     * at least 256px. An exact ratio never earns an off-alignment pixel size. */
+    const FORMAT_SIZES = [
+      ["16:9", "2k", { width: 2048, height: 1152 }],
+      ["21:9", "2k", { width: 2048, height: 878 }],
+      ["2.39:1", "2k", { width: 2048, height: 858 }],
+      ["1:1", "2k", { width: 2048, height: 2048 }],
+      ["9:16", "2k", { width: 1152, height: 2048 }],
+      ["3:2", "2k", { width: 2048, height: 1366 }],
+      /* Every entry the old table held, at every resolution, byte-identical. */
+      ["4:3", "1k", { width: 1024, height: 768 }],
+      ["5:4", "1k", { width: 1024, height: 820 }],
+      ["3:4", "1k", { width: 768, height: 1024 }],
+      ["2:3", "4k", { width: 2732, height: 4096 }],
+      ["4:5", "4k", { width: 3278, height: 4096 }],
+      ["9:16", "1k", { width: 576, height: 1024 }],
+      ["16:9", "4k", { width: 4096, height: 2304 }],
+      ["1:1", "1k", { width: 1024, height: 1024 }],
+      /* Unreadable input still lands on 16:9 rather than throwing or guessing. */
+      ["widescreen", "2k", { width: 2048, height: 1152 }],
+      ["", "2k", { width: 2048, height: 1152 }],
+      /* Outside the believable range, so it is not treated as a format. */
+      ["50:1", "2k", { width: 2048, height: 1152 }],
+    ];
+    const LONG_EDGES = { "1k": 1024, "2k": 2048, "4k": 4096 };
+    for (const [aspectRatio, resolution, expected] of FORMAT_SIZES) {
+      const submit = await json(`${appOrigin}/api/generation/fal/jobs`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ purpose: "first-frame", shotId: "S1", frameId: "frame-a", frameLabel: "A", prompt: `Format check ${aspectRatio || "unset"} ${resolution}.`, outputCount: 1, quality: "high", resolution, aspectRatio, sourceBuildId: "frame-build-1" }),
+      });
+      assert(submit.response.ok, JSON.stringify(submit.data));
+      /* One concurrent job is allowed, so each request is drained before the next. */
+      await json(`${appOrigin}/api/generation/fal/jobs/${submit.data.job.id}/refresh`, { method: "POST" });
+      const size = imageProviderCalls().at(-1).body.image_size;
+      assert.deepStrictEqual(size, expected, `"${aspectRatio}" at ${resolution} should compile ${expected.width}x${expected.height}, got ${size.width}x${size.height}`);
+      assert.strictEqual(size.width % 2, 0, `"${aspectRatio}" produced an odd width (${size.width})`);
+      assert.strictEqual(size.height % 2, 0, `"${aspectRatio}" produced an odd height (${size.height})`);
+      assert(size.width >= 256 && size.height >= 256, `"${aspectRatio}" fell below the 256px floor`);
+      assert.strictEqual(
+        Math.max(size.width, size.height),
+        LONG_EDGES[resolution],
+        `"${aspectRatio}" must keep the ${resolution} long edge exactly`,
+      );
+    }
+
     const jobsFile = fs.readFileSync(path.join(projectDir, "generation-jobs.json"), "utf8");
     const projectText = fs.readFileSync(projectFile, "utf8");
     assert(!jobsFile.includes("fal-secret-test-key"), "job persistence must not contain the API key");

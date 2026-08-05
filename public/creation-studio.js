@@ -650,7 +650,13 @@ function ensureShotCreation(s) {
   c.motionAudioNotes = c.motionAudioNotes || "";
   c.motionSync = c.motionSync || "natural";
   c.composition = c.composition && typeof c.composition === "object" ? c.composition : {};
-  c.composition.aspectRatio = c.composition.aspectRatio || P.meta?.aspectRatio || "16:9";
+  /* Deliberately not defaulted. Stamping the project's format onto every shot the first
+     time its workspace opened made "follow the project" unrepresentable: the shot froze
+     whatever the project happened to say that day and stopped tracking later changes.
+     Every reader already falls back through project → 16:9, so an unset value means
+     inherit. Values already stored by the old stamp are left exactly as they are — the
+     user clears them through the control, nothing is rewritten on load. */
+  if (c.composition.aspectRatio == null) c.composition.aspectRatio = "";
   c.composition.camera = c.composition.camera && typeof c.composition.camera === "object" ? c.composition.camera : {};
   c.composition.camera.shotSize = c.composition.camera.shotSize || "wide";
   c.composition.camera.height = c.composition.camera.height || "eye-level";
@@ -1785,7 +1791,7 @@ function guidedShotStatusCard(s, takes, neighbors) {
   else if (life.key === "still-ready" || life.key === "animate") action = `<button class="assemble-btn shot-primary-action" onclick="openGuidedPanel('${s.id}','motion')">Add motion</button>`;
   else if (life.key === "review-motion") action = `<button class="assemble-btn shot-primary-action" onclick="openGuidedPanel('${s.id}','motion')">Choose video</button>`;
   else if (["motion-approved","final"].includes(life.key)) action = `<button class="assemble-btn shot-primary-action" onclick="openGuidedPanel('${s.id}','finish')">${life.key === "final" ? "View final" : "Finish shot"}</button>`;
-  return `<section class="guided-next-action state-${life.key} ${ready ? "is-ready" : ""}"><div class="guided-lifecycle-preview">${media}</div><div><span>${kicker}</span><h2>${esc(life.title)}</h2><p>${esc(life.note)}</p><div class="guided-next-actions">${action}</div></div><nav>${neighbors.prev ? `<a href="#/shot/${neighbors.prev.id}">← Previous</a>` : ""}${neighbors.next ? `<a href="#/shot/${neighbors.next.id}">Next →</a>` : ""}</nav></section>`;
+  return `<section class="guided-next-action state-${life.key} ${ready ? "is-ready" : ""}" style="${attr(shotCanvasStyle(s))}"><div class="guided-lifecycle-preview">${media}</div><div><span>${kicker}</span><h2>${esc(life.title)}</h2><p>${esc(life.note)}</p><div class="guided-next-actions">${action}</div></div><nav>${neighbors.prev ? `<a href="#/shot/${neighbors.prev.id}">← Previous</a>` : ""}${neighbors.next ? `<a href="#/shot/${neighbors.next.id}">Next →</a>` : ""}</nav></section>`;
 }
 function guidedInputThumb(ref) {
   if (!ref.url) return `<span class="guided-input-placeholder">${esc((ref.role || "?").slice(0, 1).toUpperCase())}</span>`;
@@ -1795,9 +1801,8 @@ function guidedInputThumb(ref) {
   return `<button type="button" class="guided-thumb-preview" onclick="openMediaTheatre('${attr(encodeURIComponent(ref.url))}','${attr(encodeURIComponent(title))}','${video ? "video" : "image"}')" aria-label="View ${attr(title)} larger">${video ? `<video muted preload="metadata" src="${attr(ref.url)}#t=0.1"></video>` : `<img src="${attr(ref.url)}" alt="">`}<span>View larger</span></button>`;
 }
 function composerAspectStyle(value) {
-  const parts = String(value || "16:9").split(":").map(Number);
-  const w = parts[0] > 0 ? parts[0] : 16, h = parts[1] > 0 ? parts[1] : 9;
-  return `${w} / ${h}`;
+  /* Delegates to the one aspect model rather than parsing a ratio string again here. */
+  return (resolveAspect(value) || resolveAspect(CINEBRAID_ASPECT_FALLBACK)).css;
 }
 function compositionReferenceByKey(s, key) {
   return shotCreationReferences(s).find((ref) => ref.key === key) || null;
@@ -1874,7 +1879,7 @@ function guidedFrameCandidateCard(s, frame, take, approved, selectedName) {
   const current = approved?.name === take.name;
   const selected = selectedName === take.name;
   const ai = row.aiReview;
-  return `<article role="option" aria-selected="${selected ? "true" : "false"}" tabindex="${selected ? "0" : "-1"}" class="guided-frame-candidate ${current ? "approved" : ""} ${selected ? "selected" : ""}" onclick="selectGuidedFrameCandidate('${s.id}','${frame.id}','${attr(take.name)}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();selectGuidedFrameCandidate('${s.id}','${frame.id}','${attr(take.name)}')}"><div class="guided-candidate-preview"><img src="${attr(take.url)}" alt="Frame ${esc(frame.label)} candidate">${ai ? `<span class="guided-ai-score ${ai.pass ? "pass" : "flag"}">AI ${Math.round(+ai.score || 0)}</span>` : ""}</div><div><b>${esc(take.name)}</b><small>${current ? `Approved Frame ${esc(frame.label)}` : row.sourcePackageId ? `From ${esc(row.sourcePackageLabel || row.sourcePackageId)}` : selected ? "Selected candidate" : "Returned image"}</small>${typeof candidateReviewBadge === "function" ? candidateReviewBadge(row) : ""}${ai?.notes ? `<p class="guided-ai-note">${esc(ai.notes)}</p>` : ""}</div><div class="guided-candidate-actions">${current ? `<span>✓ APPROVED</span>` : ""}${selected ? `<span>SELECTED</span>` : ""}<a class="chip" href="#" onclick="event.preventDefault();event.stopPropagation();openCandidateReview('${s.id}','${frame.id}','${attr(take.name)}')">Review candidate</a><button type="button" class="chip candidate-enlarge" onclick="event.preventDefault();event.stopPropagation();openMediaTheatre('${attr(encodeURIComponent(take.url))}','${attr(encodeURIComponent(`Frame ${frame.label} candidate · ${take.name}`))}','image')" aria-label="View the ${attr(take.name)} candidate larger">View larger</button></div></article>`;
+  return `<article role="option" style="${attr(shotWellStyle(s))}" aria-selected="${selected ? "true" : "false"}" tabindex="${selected ? "0" : "-1"}" class="guided-frame-candidate ${current ? "approved" : ""} ${selected ? "selected" : ""}" onclick="selectGuidedFrameCandidate('${s.id}','${frame.id}','${attr(take.name)}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();selectGuidedFrameCandidate('${s.id}','${frame.id}','${attr(take.name)}')}"><div class="guided-candidate-preview"><img src="${attr(take.url)}" alt="Frame ${esc(frame.label)} candidate">${ai ? `<span class="guided-ai-score ${ai.pass ? "pass" : "flag"}">AI ${Math.round(+ai.score || 0)}</span>` : ""}</div><div><b>${esc(take.name)}</b><small>${current ? `Approved Frame ${esc(frame.label)}` : row.sourcePackageId ? `From ${esc(row.sourcePackageLabel || row.sourcePackageId)}` : selected ? "Selected candidate" : "Returned image"}</small>${typeof candidateReviewBadge === "function" ? candidateReviewBadge(row) : ""}${ai?.notes ? `<p class="guided-ai-note">${esc(ai.notes)}</p>` : ""}</div><div class="guided-candidate-actions">${current ? `<span>✓ APPROVED</span>` : ""}${selected ? `<span>SELECTED</span>` : ""}<a class="chip" href="#" onclick="event.preventDefault();event.stopPropagation();openCandidateReview('${s.id}','${frame.id}','${attr(take.name)}')">Review candidate</a><button type="button" class="chip candidate-enlarge" onclick="event.preventDefault();event.stopPropagation();openMediaTheatre('${attr(encodeURIComponent(take.url))}','${attr(encodeURIComponent(`Frame ${frame.label} candidate · ${take.name}`))}','image')" aria-label="View the ${attr(take.name)} candidate larger">View larger</button></div></article>`;
 }
 function guidedFrameCandidatesPanel(s, frame, index, takes, step) {
   const promptReady = !!step.latest;
@@ -1965,7 +1970,7 @@ function guidedFrameSequenceReviewState(s, inputs = guidedFrameSequenceInputs(s)
 function guidedFrameSequenceReviewMarkup(s, inputs, review) {
   if (inputs.length < 2) return "";
   const vision = typeof capabilityState === "function" ? capabilityState("vision") : { ready: false, message: "Vision assistant unavailable" };
-  const preview = `<div class="frame-sequence-thumbs">${inputs.map(({frame,approved}) => `<button type="button" onclick="openMediaTheatre('${attr(encodeURIComponent(approved.url))}','${attr(encodeURIComponent(`Frame ${frame.label} · ${approved.name}`))}','image')"><img src="${attr(approved.url)}" alt="Frame ${esc(frame.label)}"><span>Frame ${esc(frame.label)}</span></button>`).join("")}</div>`;
+  const preview = `<div class="frame-sequence-thumbs" style="${attr(shotWellStyle(s))}">${inputs.map(({frame,approved}) => `<button type="button" onclick="openMediaTheatre('${attr(encodeURIComponent(approved.url))}','${attr(encodeURIComponent(`Frame ${frame.label} · ${approved.name}`))}','image')"><img src="${attr(approved.url)}" alt="Frame ${esc(frame.label)}"><span>Frame ${esc(frame.label)}</span></button>`).join("")}</div>`;
   if (review?.status === "working") return `<section class="frame-sequence-review state-working"><header><div><span>PAIR CONTINUITY REVIEW</span><b>Reviewing the approved anchors together…</b><small>The vision assistant is checking camera, environment, background lights, character, and prop continuity.</small></div><i class="spin">◌</i></header>${preview}</section>`;
   if (!review) return `<section class="frame-sequence-review state-pending"><header><div><span>PAIR CONTINUITY CHECK REQUIRED</span><b>Review these approved anchors together before motion</b><small>Individual approval is not enough for first/last-frame or multi-frame motion. CineBraid checks camera, environment, background lights, character, and prop continuity.</small></div><button class="approve-btn" onclick="reviewGuidedFrameSequence('${attr(s.id)}')" ${vision.ready ? "" : "disabled"}>REVIEW FRAME SEQUENCE</button></header>${preview}${!vision.ready ? `<p class="prompt-check warn">${esc(vision.message || "Connect a vision assistant to review this frame sequence.")}</p>` : ""}</section>`;
   const categories = Object.entries(review.categories || {}).map(([key,row]) => `<li class="${Number(row.score||0) >= 80 ? "pass" : "flag"}"><span>${esc(key.replace(/([A-Z])/g," $1"))}</span><b>${Math.round(Number(row.score||0))}</b><small>${esc(row.note || "")}</small></li>`).join("");
@@ -2554,9 +2559,62 @@ function boundedShotSelectedTask(s, takes) {
   } catch {}
   return selected;
 }
+/* The production format a shot is delivered in. The field already existed in the record
+   and was already read by every generation path — it simply had no control, so a shot
+   could never be given a format of its own. An empty value means "follow the project",
+   which is what most shots do. */
+function shotAspectControl(s) {
+  const stored = String(ensureShotCreation(s).composition?.aspectRatio || "").trim();
+  const presets = CINEBRAID_ASPECT_PRESETS.map(([value]) => value);
+  /* Custom is either what the shot already stores, or what the user just asked for. The
+     free-text field is rendered only in that state, so the shot workspace keeps the
+     control budget it was deliberately given — most shots never leave the presets. */
+  const custom = (!!stored && !presets.includes(stored)) || boundedSelected("shot-aspect-mode", s.id, ["preset", "custom"], "preset") === "custom";
+  const options = [
+    `<option value="" ${stored ? "" : "selected"}>Use the project format (${esc(projectAspectLabel(P))})</option>`,
+    ...CINEBRAID_ASPECT_PRESETS.map(([value, label]) => `<option value="${attr(value)}" ${stored === value ? "selected" : ""}>${esc(label)}</option>`),
+    `<option value="custom" ${custom ? "selected" : ""}>Custom…</option>`,
+  ].join("");
+  const effective = shotAspectLabel(P, s);
+  /* Collapsed by default. The shot's working format is stated in the summary, so it is
+     always readable, while the controls stay out of the shot workspace's deliberate
+     default-visible budget — most shots are delivered in the project's format. */
+  return `<details class="shot-aspect-control" data-ui-state-key="shot-aspect-${attr(s.id)}"><summary><b>Shot format</b><span>${esc(effective)}${stored ? "" : " · from the project"}</span></summary>
+    <div class="shot-aspect-fields"><label for="shot-aspect-${attr(s.id)}">Shot aspect ratio</label>
+    <select id="shot-aspect-${attr(s.id)}" onchange="setShotAspectRatio('${attr(s.id)}',this.value)">${options}</select>
+    ${custom ? `<input id="shot-aspect-custom-${attr(s.id)}" type="text" inputmode="text" placeholder="e.g. 2:1" value="${attr(presets.includes(stored) ? "" : stored)}" autofocus aria-label="Custom aspect ratio for ${attr(s.id)}" onchange="setShotAspectRatio('${attr(s.id)}',this.value)">` : ""}
+    <small id="shot-aspect-hint-${attr(s.id)}" class="hint shot-aspect-hint">${custom && !stored ? "Type a ratio as width:height, for example 2:1." : ""}</small>
+    <small class="hint">Every image this shot is judged in uses this ratio, and so does every generation request it makes.</small></div></details>`;
+}
+window.setShotAspectRatio = (shotId, value) => {
+  const s = shotById(shotId);
+  if (!s) return;
+  const hint = document.getElementById(`shot-aspect-hint-${shotId}`);
+  const raw = String(value == null ? "" : value).trim();
+  if (raw === "custom") {
+    /* "Custom…" opens a real field rather than storing a placeholder — an option that
+       cannot accept a value is not a choice. Nothing is written until a ratio is typed. */
+    boundedWriteState("selected:shot-aspect-mode", s.id, "custom");
+    if (hint) hint.textContent = "Type a ratio as width:height, for example 2:1.";
+    /* The re-render brings the field in, autofocused. */
+    route();
+    return;
+  }
+  const parsed = raw ? parseAspectRatio(raw) : "";
+  if (raw && !parsed) {
+    /* Nothing is stored: an unreadable entry must not overwrite a good saved format. */
+    if (hint) hint.textContent = `“${raw}” is not a usable aspect ratio. Use width:height, for example 2:1.`;
+    return;
+  }
+  ensureShotCreation(s).composition.aspectRatio = parsed;
+  boundedWriteState("selected:shot-aspect-mode", s.id, "preset");
+  if (hint) hint.textContent = "";
+  dirty();
+  route();
+};
 function shotLookWorkspace(s) {
   const ids=["blocking","authority"], selected=boundedSelected("shot-look-view",s.id,ids,"blocking");
-  return `<section class="shot-subworkspace"><nav class="entity-subworkspace-tabs"><button class="${selected==="blocking"?"selected":""}" onclick="selectBoundedItem('shot-look-view','${attr(s.id)}','blocking')">Blocking & camera</button><button class="${selected==="authority"?"selected":""}" onclick="selectBoundedItem('shot-look-view','${attr(s.id)}','authority')">Approved references</button></nav>${selected === "authority" ? guidedShotComposerPanel(s,false) : guidedBlockingPanel(s)}</section>`;
+  return `<section class="shot-subworkspace">${shotAspectControl(s)}<nav class="entity-subworkspace-tabs"><button class="${selected==="blocking"?"selected":""}" onclick="selectBoundedItem('shot-look-view','${attr(s.id)}','blocking')">Blocking & camera</button><button class="${selected==="authority"?"selected":""}" onclick="selectBoundedItem('shot-look-view','${attr(s.id)}','authority')">Approved references</button></nav>${selected === "authority" ? guidedShotComposerPanel(s,false) : guidedBlockingPanel(s)}</section>`;
 }
 function shotFramesWorkspace(s,takes) {
   const run = typeof v626LatestRun === "function" ? v626LatestRun("shot-chain",s.id,"stills") : null;

@@ -5,7 +5,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "check:syntax": "node --check config.js && node --check server.js && node --check http-errors.js && node --check fal-generation.js && node --check automation-runs.js && node --check llm.js && node --check agent-suite.js && node --check prompt-engine.js && node --check zip-stream.js && node --check public/shared-entities.js && node --check public/shared-camera.js && node --check public/shared-reference-views.js && node --check public/shared-build-history.js && node --check public/bounded-rendering.js && node --check public/app.js && node --check public/media.js && node --check public/review-provenance.js && node --check public/views.js && node --check public/planning.js && node --check public/entities.js && node --check public/mutations.js && node --check public/settings.js && node --check public/library-tools.js && node --check public/review.js && node --check public/scene-review.js && node --check public/creation-studio.js && node --check public/fal-generation.js && node --check public/coverage-automation.js && node --check public/automation.js && node --check public/scene-automation.js && node --check public/live-activity.js && node --check public/reports.js && node --check public/audio-prompt-builder.js && node --check public/v607-composer.js && node --check public/motion-sound-composer.js && node --check public/focused-workspaces.js && node --check public/bootstrap.js && node --check public/bible.js",
+    "check:syntax": "node --check config.js && node --check server.js && node --check http-errors.js && node --check fal-generation.js && node --check automation-runs.js && node --check llm.js && node --check agent-suite.js && node --check prompt-engine.js && node --check zip-stream.js && node --check public/shared-entities.js && node --check public/shared-camera.js && node --check public/shared-aspect.js && node --check public/shared-reference-views.js && node --check public/shared-build-history.js && node --check public/bounded-rendering.js && node --check public/app.js && node --check public/media.js && node --check public/review-provenance.js && node --check public/views.js && node --check public/planning.js && node --check public/entities.js && node --check public/mutations.js && node --check public/settings.js && node --check public/library-tools.js && node --check public/review.js && node --check public/scene-review.js && node --check public/creation-studio.js && node --check public/fal-generation.js && node --check public/coverage-automation.js && node --check public/automation.js && node --check public/scene-automation.js && node --check public/live-activity.js && node --check public/reports.js && node --check public/audio-prompt-builder.js && node --check public/v607-composer.js && node --check public/motion-sound-composer.js && node --check public/focused-workspaces.js && node --check public/bootstrap.js && node --check public/bible.js",
     "check:render": "node tests/render-harness.js",
     "check:behavior": "node tests/current-behavior.js",
     "check:api": "node tests/api-smoke.js",
@@ -57,11 +57,12 @@
     "check:data-safety": "node tests/data-safety-repair.js",
     "check:windows-shutdown": "node tests/windows-shutdown.js",
     "check:browser-exit": "node tests/browser-workflow-exit.js",
-    "check:ci": "npm run check:syntax && npm run check:package && npm run check:render && npm run check:behavior && npm run check:focused && npm run check:shot-layout && npm run check:settings && npm run check:image-scale && npm run check:browser && npm run check:browser-exit && npm run check:api && npm run check:data-safety && npm run check:project-switch && npm run check:recovery && npm run check:windows-shutdown",
+    "check:ci": "npm run check:syntax && npm run check:package && npm run check:render && npm run check:behavior && npm run check:focused && npm run check:shot-layout && npm run check:settings && npm run check:image-scale && npm run check:multi-aspect && npm run check:fal && npm run check:browser && npm run check:browser-exit && npm run check:api && npm run check:data-safety && npm run check:project-switch && npm run check:recovery && npm run check:windows-shutdown",
     "check:project-switch": "node tests/project-switch-safety.js",
     "check:shot-layout": "node tests/shot-workspace-responsive-layout.js",
     "check:settings": "node tests/settings-consistency.js",
-    "check:image-scale": "node tests/image-review-scale.js"
+    "check:image-scale": "node tests/image-review-scale.js",
+    "check:multi-aspect": "node tests/multi-aspect-media.js"
   },
   "dependencies": {
     "express": "^4.19.0"

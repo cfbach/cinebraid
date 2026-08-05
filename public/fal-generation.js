@@ -113,7 +113,7 @@ window.startFalGeneration = async () => {
     outputCount: Number(document.getElementById("fal-output-count")?.value || 1),
     quality: document.getElementById("fal-quality")?.value || (blocking ? "low" : "high"),
     resolution: document.getElementById("fal-resolution")?.value || (blocking ? falResolutionValue("blocking") : falResolutionValue("frame")),
-    aspectRatio: ensureShotCreation(s).composition?.aspectRatio || P.meta?.aspectRatio || "16:9",
+    aspectRatio: shotAspectLabel(P, s),
     revisionRequest: request.revision || "",
     revisedFromAssetId: request.sourceId || "",
   };
@@ -431,7 +431,7 @@ window.startCandidateCorrectionGeneration = async () => {
     outputCount: Number(document.getElementById("candidate-correction-output-count")?.value || falGenerationConfig().frameOutputs || 1),
     quality: document.getElementById("candidate-correction-quality")?.value || falGenerationConfig().frameQuality || "high",
     resolution: document.getElementById("candidate-correction-resolution")?.value || falResolutionValue("frame"),
-    aspectRatio: ensureShotCreation(s).composition?.aspectRatio || P.meta?.aspectRatio || "16:9",
+    aspectRatio: shotAspectLabel(P, s),
   };
   try {
     await flushPendingProjectSave();
@@ -587,7 +587,9 @@ window.openFalH3MotionModal = (shotId, buildId = "") => {
     url: ref.url,
   }));
   const duration = Math.max(5, Math.min(15, Number(build.durationSeconds || c.motionDuration || 5) || 5));
-  const ratio = profile.mode === "r2v" ? (P.meta?.aspectRatio || "adaptive") : (P.meta?.aspectRatio || "16:9");
+  /* Same resolver the screen uses, so motion cannot be requested at a format the shot
+     was never shown in. r2v keeps its "adaptive" default when the project declares none. */
+  const ratio = profile.mode === "r2v" ? (productionAspect(P)?.label || "adaptive") : projectAspectLabel(P);
   const clientRequestId = `h3-${shotId}-${build.id}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`;
   window._falH3MotionRequest = { shotId, buildId: build.id, profileId: profile.id, profileName: profile.name, profileMode: profile.mode, prompt: build.prompt, originalPrompt: build.prompt, references: refs, packageId: build.packageId || "", duration, aspectRatio: ratio, clientRequestId };
   window._falH3Submitting = false;
