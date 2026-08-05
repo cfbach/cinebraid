@@ -3,6 +3,7 @@ const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
 const { render, buildFixture } = require("./render-harness");
+const RELEASE_VERSION = require("../package.json").version;
 
 const root = path.resolve(__dirname, "..");
 const read = (name) => fs.readFileSync(path.join(root, name), "utf8");
@@ -115,11 +116,9 @@ async function testManualShotAndApprovedLibrary() {
 }
 
 function testSourceContracts() {
-  const pkg = JSON.parse(read("package.json"));
   const entities = read("public/entities.js");
   const creation = read("public/creation-studio.js");
   const views = read("public/views.js");
-  assert.strictEqual(pkg.version, "6.6.4-studio.repair.13");
   assert(entities.includes("requestHumanEntityCandidateApproval"));
   assert(entities.includes('referenceRequirement: "planned"'));
   assert(entities.includes("Required for this project"));

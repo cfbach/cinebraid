@@ -1,8 +1,13 @@
-# CineBraid v6.6.4-studio.repair.13 — Private Preview Candidate
+# CineBraid 6.6.5 Private Test 1
 
 **Your production, your control.**
 
-Repair.11 adds continuity-safe first/last and multi-frame motion preparation, bounded approved-frame previews, prominent continuity-state authority, and explicit image-generation settings throughout automation planning.
+The first packaged CineBraid release, for isolated private testing. It ships as a
+Windows ZIP and an architecture-neutral runtime tarball with checksums and a
+manifest, and it is meant to be installed **alongside** an existing CineBraid
+rather than over one.
+
+This is a private test build, not a public production release.
 
 ## Start
 - Windows: `start.bat`
@@ -16,4 +21,7 @@ Then open the local CineBraid URL shown in the terminal.
 - Two or more motion anchor frames must pass sequence continuity review before motion opens.
 - Projects, media, provider keys, and local-model settings remain local to the configured workspace.
 
-See `docs/GETTING_STARTED.md` and `docs/releases/v6.6.4-studio.repair.13/`.
+See `docs/GETTING_STARTED.md` and `docs/releases/v6.6.5-private.1/`.
+
+For an isolated side-by-side QA install on the DGX Spark, see
+`docs/SPARK_QA_SETUP.md`.

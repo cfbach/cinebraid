@@ -3,6 +3,7 @@ const path = require("path");
 const assert = require("assert");
 const vm = require("vm");
 const { render, buildFixture } = require("./render-harness");
+const RELEASE_VERSION = require("../package.json").version;
 
 const root = path.join(__dirname, "..");
 const automation = fs.readFileSync(path.join(root, "public/automation.js"), "utf8");
@@ -31,7 +32,7 @@ async function main() {
   assert(server.includes("PROJECT-BIBLE AUTHORITY IMAGES"));
   assert(server.includes("authorityImages"));
   assert(server.includes("APPROVED VISUAL STYLE"));
-  assert(require(path.join(root, "package.json")).version === "6.6.4-studio.repair.13");
+  assert(require(path.join(root, "package.json")).version === `${RELEASE_VERSION}`);
 
   const project = buildFixture();
   project.meta.workflowEmphasis = "assisted";

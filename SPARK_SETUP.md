@@ -1,11 +1,17 @@
-# CineBraid v6.6.4-studio.repair.13 on DGX Spark
+# CineBraid 6.6.5 Private Test 1 on DGX Spark
 
-CineBraid requires Node.js 18 or newer.
+CineBraid requires Node.js 18 or newer, and is validated on Node 24 (Active LTS).
+
+> Setting up a **private test build beside an existing Spark install**? Use
+> `docs/SPARK_QA_SETUP.md` instead. It covers the separate port, projects root and
+> config path that keep a QA copy from touching production. This page describes
+> the ordinary single install.
 
 ## Local start
 
 ```bash
-cd /path/to/CINEBRAID_v6.6.4-studio.repair.13
+cd /path/to/cinebraid-6.6.5-private.1
+npm ci
 npm start
 ```
 

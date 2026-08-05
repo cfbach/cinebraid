@@ -2,6 +2,7 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const { render, buildFixture } = require('./render-harness');
+const RELEASE_VERSION = require("../package.json").version;
 
 const ROOT = path.resolve(__dirname, '..');
 const read = (file) => fs.readFileSync(path.join(ROOT, file), 'utf8');
@@ -41,7 +42,7 @@ async function main() {
   const storedCollapsed = JSON.parse(result.context.localStorage.getItem('cinebraid-collapsed-scenes') || '[]');
   assert(storedCollapsed.includes(sceneId), 'scene collapse choice must persist');
 
-  console.log('v6.6.4-studio.repair.13 board-density suite passed compact/standard/large controls, bounded card widths, persistence, and scene-collapse storage.');
+  console.log(`v${RELEASE_VERSION} board-density suite passed compact/standard/large controls, bounded card widths, persistence, and scene-collapse storage.`);
 }
 
 main().catch((error) => { console.error(error.stack || error); process.exit(1); });

@@ -1,3 +1,12 @@
+# CineBraid 6.6.5 Private Test 1 — First Packaged Private Test
+
+- First packaged CineBraid release: a Windows ZIP, an architecture-neutral runtime tarball, `SHA256SUMS.txt` and a machine-readable manifest, all built from one commit with `git archive`.
+- `package.json` `version` is now the one authoritative version source. The window title, asset cache stamps, Git tag and archive names are derived from it, and `npm run check:version` fails the build when any surface drifts.
+- Project schema markers (`meta.hubVersion`, `meta.schemaVersion`, project `meta.version`) are asserted **not** to track the application version.
+- Adds `docs/SPARK_QA_SETUP.md` for an isolated side-by-side QA install on the DGX Spark, using the port, projects-root and config-path environment variables the code actually reads.
+- Startup scripts get pinned line endings (`*.sh`/`*.command` LF, `*.bat` CRLF) and `start.sh`/`start.command` keep their executable bit in the archives.
+- Private test build, not a public production release. See `docs/releases/v6.6.5-private.1/` for the known limitations.
+
 # CineBraid v6.6.4-studio.repair.13 — Correction Dialog Clarity
 
 - Rebuilt the frame-sequence correction dialog as a viewport-safe guided workflow.
