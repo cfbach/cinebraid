@@ -759,7 +759,14 @@ function compileProjectMotion(project, profileId, segmentId = "", refs = []) {
 function testProtectedCompilerHashes() {
   const fs = require("fs");
   const crypto = require("crypto");
-  const source = fs.readFileSync(require.resolve("../prompt-engine"), "utf8");
+  /* The hashes below pin the canonical source git stores, not the bytes one checkout
+     happens to hold. `.gitattributes` sets `* text=auto`, so a Windows clone with
+     core.autocrlf=true materialises this file with CRLF endings and every hash mismatches
+     on line endings alone — a permanently red check that says nothing about the compiler
+     and trains everyone to ignore it. Normalising to LF is what makes the assertion mean
+     what it claims: the compiler text is unchanged, on every platform. It removes no
+     strictness — a single altered character still moves the hash. */
+  const source = fs.readFileSync(require.resolve("../prompt-engine"), "utf8").replace(/\r\n/g, "\n");
   const expected = {
     compileSeedanceI2VCompact: "fc610ec962969248aedb9cb6e1d7d182543c49cf7f8029df143e61f171d356af",
     compileKlingI2VCompact: "b4b2bd06b014ba3fad11dc01eba3c226fd11d8a83fc1fb041050bc1a904abd7c",
@@ -772,12 +779,270 @@ function testProtectedCompilerHashes() {
   };
   for (const [name, hash] of Object.entries(expected)) {
     const start = source.indexOf(`function ${name}(`);
-    const next = source.indexOf("\nfunction ", start + 10);
     assert(start >= 0, `${name} should exist`);
+    const next = source.indexOf("\nfunction ", start + 10);
     const body = source.slice(start, next < 0 ? source.length : next).trimEnd();
+    /* A slice that collapsed to a signature would hash "successfully" while protecting
+       nothing, so the boundary is checked rather than assumed. */
+    assert(body.split("\n").length > 2, `${name} body should span more than its signature`);
     const actual = crypto.createHash("sha256").update(body).digest("hex");
     assert.strictEqual(actual, hash, `${name} must match the reviewed v6.3.0 compiler contract`);
   }
+  const covered = Object.keys(expected).sort();
+  const routed = PROTECTED_COMPILER_ROUTES.map((route) => route.compiler).sort();
+  assert.deepStrictEqual(routed, covered, "every protected compiler must also carry a compiled-output contract");
+}
+
+/* The compiled-output contract the hashes above exist to defend.
+ *
+ * A source hash can say that a compiler's text changed. It cannot say what the change did
+ * to a motion package, and it cannot be read by anyone deciding whether that change was
+ * intended. These assertions name the fields a package is actually judged on — prompt
+ * body, chosen references and their order, model identifier, aspect ratio, resolution,
+ * duration, and the first/last-frame and multi-keyframe contracts — so an edit that
+ * legitimately moves a hash still has to declare, in its own diff, what it did to the
+ * output. Everything here is a pure in-process compile: no server, no network, no
+ * provider, no clock and no randomness. */
+const PROTECTED_COMPILER_ROUTES = [
+  { compiler: "compileSeedanceI2VCompact", profileId: "seedance-2/i2v", refCount: 1 },
+  { compiler: "compileKlingI2VCompact", profileId: "kling-3/i2v", refCount: 1 },
+  { compiler: "compileLtxI2VFlowing", profileId: "ltx-2.3/i2v", refCount: 1 },
+  { compiler: "compileHappyHorseI2VCompact", profileId: "happy-horse-1.1/i2v", refCount: 1 },
+  { compiler: "compileWanI2VCompact", profileId: "wan-2.7/i2v", refCount: 1 },
+  /* No shipped profile reaches the generic branch — it is the fallback for an i2v family
+     the library does not yet name — so it is exercised through the same public compile()
+     entry with an unknown family rather than left hash-only and untested. */
+  { compiler: "compileGenericI2VCompact", profileId: "seedance-2/i2v", refCount: 1, unknownFamily: "unknown-vendor" },
+  { compiler: "compileCompactFLF", profileId: "seedance-2/flf", refCount: 2 },
+  { compiler: "compileSeedanceOmni", profileId: "seedance-2/r2v", refCount: 4, role: "sequential-keyframe" },
+];
+
+const PROTECTED_ACTIONS = [
+  { start: 0, end: 3, action: "The first teal strand moves through the dormant vines." },
+  { start: 3, end: 7, action: "The remaining strands spread through the greenhouse in sequence." },
+  { start: 7, end: 10, action: "One flower opens and the motion settles into a brief hold." },
+];
+
+function protectedCompilerContext(aspectRatio = "16:9") {
+  return {
+    project: { world: { setting: "Orbital greenhouse" }, styleBlocks: [], aspectRatio },
+    scene: { title: "Signal Bloom", beat: "The dormant greenhouse wakes.", feeling: "Quiet wonder" },
+    shot: {
+      id: "S02-01",
+      title: "Activation travels",
+      description: "Three strands of teal light travel through dead vines and wake a single flower.",
+      durationSeconds: 10,
+      motionDirection: "The activation travels in a controlled sequence while the camera slowly pushes in.",
+      audio: { dialogue: "Air scrubbers nominal.", speakerId: "KAI", sfx: "low electrical hum, glass resonance" },
+      risks: ["identity drift", "greenhouse geometry drift"],
+    },
+    references: [],
+  };
+}
+
+/* Endpoint roles for a two-frame package, sequential waypoints beyond that, so the
+   first/last-frame and multi-keyframe contracts are driven by the same builder. */
+function protectedCompilerRefs(count, role) {
+  return Array.from({ length: count }, (_, index) => ({
+    key: `kf-${index + 1}`,
+    label: `Approved Frame ${String.fromCharCode(65 + index)}`,
+    mediaType: "image",
+    role: role || (index === 0 ? "first-frame" : index === count - 1 ? "last-frame" : "keyframe"),
+    approved: true,
+    url: `/assets/shots/S02-01/takes/FRAME_${String.fromCharCode(65 + index)}.png`,
+    instruction: `Beat ${index + 1}`,
+  }));
+}
+
+function compileProtected(route, { aspectRatio = "16:9", refs } = {}) {
+  const context = protectedCompilerContext(aspectRatio);
+  const base = PromptEngine.getProfile(route.profileId);
+  assert(base, `${route.profileId} should exist`);
+  const profile = route.unknownFamily
+    ? { ...base, id: `${route.unknownFamily}/i2v`, family: route.unknownFamily, name: "Unnamed vendor image-to-video" }
+    : base;
+  const chosen = refs || protectedCompilerRefs(route.refCount, route.role);
+  let spec = PromptEngine.defaultSpec(context, "motion", profile.mode, chosen, null);
+  spec.durationSeconds = 10;
+  spec.actions = PROTECTED_ACTIONS.map((action) => ({ ...action }));
+  spec.camera = { ...(spec.camera || {}), movement: "slow push in", stability: "smooth" };
+  spec.audio = { ...(spec.audio || {}), sfx: "low electrical hum, glass resonance", ambience: "quiet greenhouse room tone" };
+  spec = PromptEngine.applyStructuredDirection(spec, context.shot.composition, context.shot.motionPlan, chosen);
+  return { profile, refs: chosen, compiled: PromptEngine.compile(profile, spec, chosen) };
+}
+
+function testProtectedCompilerOutputContract() {
+  for (const route of PROTECTED_COMPILER_ROUTES) {
+    const { profile, refs, compiled } = compileProtected(route);
+    const where = route.compiler;
+
+    /* Deterministic serialization: the same inputs must compile to the same bytes. */
+    const again = compileProtected(route).compiled;
+    assert.strictEqual(compiled.prompt, again.prompt, `${where} must compile deterministically`);
+    assert.deepStrictEqual(compiled.payload, again.payload, `${where} payload must serialize deterministically`);
+
+    /* Prompt text: the directed action and the camera move both survive compaction. */
+    assert(compiled.prompt.trim().length > 0, `${where} must produce a prompt`);
+    /* Case-insensitive because some families lower the first word to splice the action
+       into a lead-in clause; the directed wording itself must survive intact. */
+    assert(/first teal strand moves through the dormant vines/i.test(compiled.prompt), `${where} must carry the directed action`);
+    assert(/push in/i.test(compiled.prompt), `${where} must carry the camera move`);
+    assert(!/undefined|\[object Object\]|NaN/.test(compiled.prompt), `${where} must not leak placeholder values into the prompt`);
+
+    /* Model identifier and duration, as the dispatch layer will read them. */
+    assert.strictEqual(compiled.payload.adapter, profile.id, `${where} must name its own adapter`);
+    assert.strictEqual(compiled.payload.modelFamily, profile.family, `${where} must name its model family`);
+    assert.strictEqual(compiled.payload.mode, profile.mode, `${where} must name its workflow mode`);
+    assert.strictEqual(compiled.payload.mediaType, "video", `${where} is a video compiler`);
+    assert(compiled.payload.profileVersion, `${where} must carry a profile version`);
+    assert.strictEqual(compiled.payload.durationSeconds, 10, `${where} must carry the shot duration`);
+
+    /* Selected references and Frame ordering: input order is output order, positionally. */
+    assert.strictEqual(compiled.references.length, route.refCount, `${where} must select exactly the supplied references`);
+    assert.deepStrictEqual(
+      compiled.payload.references.map((ref) => ref.url),
+      refs.map((ref) => ref.url),
+      `${where} must preserve reference order`,
+    );
+    assert.deepStrictEqual(
+      compiled.payload.references.map((ref) => ref.role),
+      refs.map((ref) => ref.role),
+      `${where} must preserve reference roles`,
+    );
+    compiled.payload.references.forEach((ref, index) => {
+      assert(/^[@#]?image\d+$|^Image \d+$/i.test(String(ref.token || "")), `${where} reference ${index + 1} must carry a numbered token, got ${ref.token}`);
+      assert(String(ref.token).includes(String(index + 1)), `${where} reference ${index + 1} must be numbered by position`);
+    });
+
+    /* Aspect ratio must not reach a video prompt body. Format is a dispatch field for the
+       one family that carries it; a compiler that started writing the ratio into prose
+       would silently make every reformat a prompt change. */
+    for (const ratio of ["9:16", "1:1", "21:9", "2.39:1", "4:3", "3:4"]) {
+      const reformatted = compileProtected(route, { aspectRatio: ratio }).compiled;
+      assert.strictEqual(reformatted.prompt, compiled.prompt, `${where} must compile identically at ${ratio}`);
+    }
+  }
+}
+
+function testProtectedCompilerPerFamilyContract() {
+  const promptFor = (compiler) => compileProtected(PROTECTED_COMPILER_ROUTES.find((route) => route.compiler === compiler)).compiled;
+
+  /* I2V models already hold the complete visual state in the start image, so the compact
+     compilers deliberately omit reference maps and canon blocks. */
+  const seedance = promptFor("compileSeedanceI2VCompact");
+  assert(!/@image\d/.test(seedance.prompt), "Seedance I2V must not emit a reference legend");
+  assert(seedance.prompt.startsWith("The first teal strand"), "Seedance I2V leads with the action");
+  assert(/Native audio:/.test(seedance.prompt), "Seedance I2V must declare native audio");
+
+  const kling = promptFor("compileKlingI2VCompact");
+  assert(/From the supplied starting image/i.test(kling.prompt), "Kling I2V must anchor to the supplied start image");
+  assert(!/#image\d/.test(kling.prompt), "Kling I2V must not emit a reference legend");
+
+  const ltx = promptFor("compileLtxI2VFlowing");
+  assert(/The supplied first frame is the exact opening composition/i.test(ltx.prompt), "LTX I2V must lock the opening composition");
+  assert(/Across the 10-second shot/.test(ltx.prompt), "LTX I2V must state the duration in the prompt body");
+
+  const happy = promptFor("compileHappyHorseI2VCompact");
+  assert(/^Visible motion only:/.test(happy.prompt), "Happy Horse I2V must restrict itself to visible motion");
+  assert(/Camera instruction:/.test(happy.prompt), "Happy Horse I2V must label its camera instruction");
+
+  const wan = promptFor("compileWanI2VCompact");
+  assert(/^SUBJECT MOTION:/.test(wan.prompt), "Wan I2V must lead with subject motion");
+  assert(/\nCAMERA:/.test(wan.prompt), "Wan I2V must carry a separate camera line");
+  assert(wan.payload.negativePrompt, "Wan packages must carry a negative prompt field");
+
+  const generic = promptFor("compileGenericI2VCompact");
+  assert(/The first teal strand/.test(generic.prompt), "an unnamed i2v family must still receive the action");
+  assert(/push in/i.test(generic.prompt), "an unnamed i2v family must still receive the camera move");
+
+  /* First and last Frame: both endpoints, in order, and an explicit instruction to end on
+     the supplied final frame rather than drift past it. */
+  const flfRoute = PROTECTED_COMPILER_ROUTES.find((route) => route.compiler === "compileCompactFLF");
+  const flf = compileProtected(flfRoute);
+  assert(/From the first frame/i.test(flf.compiled.prompt), "FLF must anchor to the first frame");
+  assert(/End exactly on the supplied final frame/i.test(flf.compiled.prompt), "FLF must end on the supplied final frame");
+  assert.strictEqual(flf.compiled.payload.references[0].role, "first-frame");
+  assert.strictEqual(flf.compiled.payload.references[1].role, "last-frame");
+  assert.strictEqual(flf.compiled.payload.references[0].url, flf.refs[0].url);
+  assert.strictEqual(flf.compiled.payload.references[1].url, flf.refs[1].url);
+
+  /* Multi-keyframe: one contract line per waypoint, numbered by position, in the order
+     the user assigned them — and a permuted assignment must permute the output, which is
+     what proves the ordering is data-driven rather than incidentally sorted. */
+  const omniRoute = PROTECTED_COMPILER_ROUTES.find((route) => route.compiler === "compileSeedanceOmni");
+  const omni = compileProtected(omniRoute);
+  assert(/OMNI REFERENCE CONTRACT/.test(omni.compiled.prompt), "Omni must declare its reference contract");
+  const omniLines = omni.compiled.prompt.split("\n").filter((line) => /^@image\d/.test(line));
+  assert.strictEqual(omniLines.length, 4, "Omni must map every supplied waypoint");
+  assert.deepStrictEqual(
+    omniLines.map((line) => line.split(" — ")[0]),
+    ["@image1", "@image2", "@image3", "@image4"],
+    "Omni waypoints must be numbered in assignment order",
+  );
+  assert.deepStrictEqual(
+    omniLines.map((line) => line.split(": ")[1].split(";")[0]),
+    omni.refs.map((ref) => ref.label),
+    "Omni waypoint numbering must follow the assigned reference order",
+  );
+  const reversed = protectedCompilerRefs(4, "sequential-keyframe").reverse();
+  const permuted = compileProtected(omniRoute, { refs: reversed }).compiled;
+  assert.deepStrictEqual(
+    permuted.payload.references.map((ref) => ref.url),
+    reversed.map((ref) => ref.url),
+    "reordering the assigned waypoints must reorder the compiled package",
+  );
+  assert.notStrictEqual(permuted.prompt, omni.compiled.prompt, "a different waypoint order must be a different package");
+}
+
+/* Aspect ratio, resolution and the refusal boundary, for the one family that carries a
+   format field into its request. The gate itself is asserted end-to-end against a mock
+   provider in tests/launch-blockers.js; what is checked here is that the compiler agrees
+   with it — that it never advertises a format the gate will refuse without the refusal
+   being reachable, and never quietly rewrites one. */
+function testProtectedCompilerFormatAndResolution() {
+  const { h3AspectSupport, CINEBRAID_H3_ASPECT_SUPPORT } = require("../public/shared-aspect");
+  const carriers = { "minimax-h3/t2v": "16:9", "minimax-h3/multi-frame": "adaptive" };
+
+  for (const [profileId, fallback] of Object.entries(carriers)) {
+    const profile = PromptEngine.getProfile(profileId);
+    const route = { compiler: profileId, profileId, refCount: profile.mode === "r2v" ? 4 : 0, role: "sequential-keyframe" };
+    for (const ratio of CINEBRAID_H3_ASPECT_SUPPORT[profile.mode]) {
+      if (ratio === "adaptive") continue;
+      const { compiled } = compileProtected(route, { aspectRatio: ratio });
+      const gate = h3AspectSupport(profile.mode, ratio);
+      assert.strictEqual(gate.ok, true, `${profileId} must accept the supported format ${ratio}`);
+      assert.strictEqual(compiled.payload.fal.input.aspect_ratio, ratio, `${profileId} must dispatch ${ratio} unchanged`);
+      assert.strictEqual(compiled.payload.fal.input.resolution, profile.defaultResolution || "2K", `${profileId} must carry its default resolution`);
+      assert.strictEqual(compiled.payload.fal.input.duration, 10, `${profileId} must carry the shot duration`);
+      assert.strictEqual(compiled.payload.fal.endpoint, profile.falEndpoint, `${profileId} must dispatch to its own endpoint`);
+    }
+    assert.strictEqual(compileProtected(route, { aspectRatio: "" }).compiled.payload.fal.input.aspect_ratio, fallback, `${profileId} must fall back to ${fallback} when no format is set`);
+
+    /* Unsupported formats are refused, not substituted, before any request is built. */
+    for (const ratio of ["2.39:1", "3:2", "5:1"]) {
+      const gate = h3AspectSupport(profile.mode, ratio);
+      assert.strictEqual(gate.ok, false, `${profileId} must refuse ${ratio}`);
+      assert(!gate.value, `${profileId} must not substitute a format for ${ratio}`);
+      assert(gate.message.includes(ratio), `${profileId} refusal must name the requested format`);
+    }
+    /* The one approved correction: an equivalent ratio written differently is the same
+       delivery and is normalised to its supported spelling rather than refused. */
+    assert.strictEqual(h3AspectSupport(profile.mode, "1920:1080").value, "16:9", `${profileId} must treat 1920:1080 as 16:9`);
+  }
+
+  /* Image-to-video and first/last frame take their shape from the supplied frames, so
+     they must send no format at all rather than an assumed one. */
+  for (const profileId of ["minimax-h3/i2v", "minimax-h3/flf"]) {
+    const profile = PromptEngine.getProfile(profileId);
+    const route = { compiler: profileId, profileId, refCount: profile.mode === "flf" ? 2 : 1 };
+    const { compiled } = compileProtected(route, { aspectRatio: "2.39:1" });
+    assert(!("aspect_ratio" in compiled.payload.fal.input), `${profileId} must send no aspect_ratio`);
+    assert.strictEqual(compiled.payload.fal.input.resolution, profile.defaultResolution || "2K", `${profileId} must carry its default resolution`);
+    assert.strictEqual(h3AspectSupport(profile.mode, "2.39:1").carriesAspectRatio, false, `${profileId} carries no format field to refuse`);
+  }
+  const flf = compileProtected({ compiler: "minimax-h3/flf", profileId: "minimax-h3/flf", refCount: 2 });
+  assert.strictEqual(flf.compiled.payload.fal.input.image_url, flf.refs[0].url, "H3 FLF must send the first frame as image_url");
+  assert.strictEqual(flf.compiled.payload.fal.input.end_image_url, flf.refs[1].url, "H3 FLF must send the last frame as end_image_url");
 }
 
 
@@ -1054,6 +1319,9 @@ async function main() {
   await testAudioVoiceWorkspace();
   await testCandidateReviewAndCorrectionWorkspace();
   testProtectedCompilerHashes();
+  testProtectedCompilerOutputContract();
+  testProtectedCompilerPerFamilyContract();
+  testProtectedCompilerFormatAndResolution();
   testCanonicalMotionSoundBrief();
   testAudioVoiceRouting();
   testSharedEntityResolver();
@@ -1069,7 +1337,7 @@ async function main() {
   testGuideAuthoritativeFinalFrameAndVisualGrounding();
   testMultiAngleReferenceContracts();
   testBaseFrameHiddenElementsAndTargets();
-  console.log("Composer hardening checks passed: blocking inference, stored composition compatibility, grouped variants, simplified reference review, per-unit motion, direct targets, package previews, Omni audio, visible video target selection, and reference-aware identity language.");
+  console.log("Composer hardening checks passed: blocking inference, stored composition compatibility, grouped variants, simplified reference review, per-unit motion, direct targets, package previews, Omni audio, visible video target selection, reference-aware identity language, and the protected compiler contract — source hashes plus prompt text, reference selection and order, model identifier, aspect ratio, resolution, duration, first/last frame and multi-keyframe behaviour.");
 }
 
 if (require.main === module) {
