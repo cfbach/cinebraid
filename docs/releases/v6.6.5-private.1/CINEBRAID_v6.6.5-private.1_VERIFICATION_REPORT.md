@@ -72,6 +72,87 @@ Port 4477 is not used at any point.
 
 ---
 
-## Results
+## Measured results
 
-*Recorded after the packaged build. See the `Measured results` section below.*
+Both archives were built from one commit and verified independently, each
+extracted into its own temporary directory outside the repository.
+
+Asset sizes and SHA-256 hashes are not repeated here, because they are properties
+of the exact commit packaged. They are published with the release in
+`SHA256SUMS.txt` and in `cinebraid-6.6.5-private.1-manifest.json`, which also
+records the commit the archives were built from.
+
+### Archive contents
+
+| Check | Windows ZIP | Runtime tar.gz |
+|---|---|---|
+| files | 264 | 264 |
+| `projects/` | `cinebraid-sample` only | `cinebraid-sample` only |
+| `.git`, `node_modules`, `.env`, `data/config.json`, nested archive | none | none |
+| native/x64 payload (`.node`/`.so`/`.dll`/`.dylib`/`.exe`) | none | none |
+| `start.sh`, `start.command` | LF | LF, mode 0755 |
+| `start.bat` | CRLF | CRLF, mode 0644 |
+
+Dependency installation is deferred to the destination: neither archive contains
+`node_modules`, and `npm ci` is required before first start.
+
+### Clean install, both archives
+
+| Step | Result |
+|---|---|
+| checksums | 4 assets verified against `SHA256SUMS.txt` |
+| manifest | 3 asset hashes verified; commit recorded |
+| `npm ci` | added 68 packages, exit 0 |
+| route render (`tests/render-harness.js`, run inside the package) | 11 views passed |
+| `GET /` | **200**, title `CineBraid 6.6.5 Private Test 1` |
+| versioned frontend modules | 30/30 served 200 |
+| shipped sample | loaded — "CineBraid Sample — The Blue Parcel" |
+| sample schema markers | `meta.version` 6.6.4-studio.2, `hubVersion` v6.0.0, `schemaVersion` 6.6 — unchanged by this release |
+| model profiles | `/api/prompt/profiles` 200, 47 profile groups, 38035 bytes |
+| route data sources | `/api/config`, `/api/project/readiness`, `/api/agents/status`, `/api/bible`, `/api/docs` — all 200 |
+| project write on open | none — 11 sample files byte-identical, matching SHA-256 |
+| stop exact PID | stopped; port rebindable in **1 ms** |
+| unrelated processes | 2 unrelated Node processes still running |
+
+Isolation used `PORT` (4501 for the ZIP, 4502 for the tarball),
+`CINEBRAID_HOST=127.0.0.1`, `CINEBRAID_PROJECTS_ROOT` and a separate
+`CINEBRAID_CONFIG_PATH`. **Port 4477 was free throughout and never used.**
+
+### Windows ZIP specifics
+
+- `start.bat` present, CRLF, `cd /d "%~dp0"`, execs `node server.js` with no
+  `npm` or `cmd` wrapper.
+- Extraction, `npm ci` and startup all completed in a **non-elevated** shell.
+  Administrator permission is not required.
+- Path handling with spaces verified end to end: extracted to
+  `…\CineBraid QA Builds\Private Test 1\`, `npm ci` exit 0, server started,
+  `GET /` **200** with the correct title, PID stopped cleanly, port rebound.
+
+### Credential and privacy scan
+
+The scanner validated against its synthetic positive control on every run:
+**9/9 rules fired**. Both extracted archives then scanned **clean**.
+
+Three matches are suppressed, each by exact file and rule, each printed on every
+run rather than hidden:
+
+| File | Rule | Why it is allowed |
+|---|---|---|
+| `tests/automation-diagnostics.js` | `openai-key` | synthetic key pushed through the diagnostic redactor to prove secrets are stripped from support bundles |
+| `tests/readiness-feedback.js` | `openai-key` | synthetic key posted to `/api/test-feedback` to prove notes are redacted before storage |
+| `tests/readiness-feedback.js` | `personal-path` | synthetic local path posted alongside it, asserting personal paths are redacted too |
+
+No real credential, token, private key or personal path is present in either
+archive.
+
+### Continuous integration
+
+`npm run check:ci` passes, including the new `check:version` gate. Windows CI
+runs the same suite on Node 24 (Active LTS) for the pull request that introduced
+this release.
+
+### Not covered
+
+No provider or AI API was called at any point in this verification, and no
+generation was performed. Local Qwen vision/review is **not** validated by this
+report — see the known limitations in the release notes.
