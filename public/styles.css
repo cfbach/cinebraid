@@ -3552,3 +3552,109 @@ body[data-focused-workspace="1"] .guided-frame-body,
   .project-backup-list article{grid-template-columns:minmax(0,1fr)}
   .project-backup-list .backup-restore-btn{justify-self:stretch}
 }
+
+/* ============================================================================
+   v6.6.4-studio.repair.14 — image review scale and inspection
+
+   Imagery a filmmaker is asked to judge is sized to the decision, not to the
+   container that happens to hold it. Three intentional tiers:
+
+     overview   browsing density — compact but recognizable, whole frame kept
+     selection  comparing composition, identity and continuity side by side
+     inspection the media theatre — the complete source image, viewport-fitted
+
+   Judgement imagery uses an aspect-ratio-correct well plus `object-fit:contain`,
+   so a 16:9 source is never silently cropped into a 1.60:1 or 4:3 box. `cover`
+   survives only where the picture is decoration rather than evidence.
+   ============================================================================ */
+:root{
+  --img-well-bg:#080b0e;
+  --img-overview-w:128px;      /* dashboard rows and input trays */
+  --img-overview-h:72px;
+  --img-angle-w:104px;         /* reference-angle and continuity-state choices */
+}
+#app[data-surf="light"]{--img-well-bg:#e6ecf3}
+
+/* --- overview tier -------------------------------------------------------- */
+/* Production returned results: was a 64x46 (1.39:1) cover box that threw away
+   21.7% of every 16:9 candidate the user was being asked to review. */
+.production-inbox-item,.decision-inbox-row{grid-template-columns:var(--img-overview-w) minmax(0,1fr) auto}
+.production-inbox-item>div,.decision-inbox-preview{
+  width:var(--img-overview-w);height:var(--img-overview-h);aspect-ratio:16/9;background:var(--img-well-bg)}
+.production-inbox-item img,.production-inbox-item video,
+.decision-inbox-preview img,.decision-inbox-preview video{object-fit:contain}
+.production-inbox-shell{position:relative;display:grid;min-width:0}
+
+/* Shot input tray — each row is a reference the filmmaker chooses to use. */
+.guided-input-tray>article{grid-template-columns:var(--img-angle-w) minmax(0,1fr) auto}
+.guided-input-thumb{width:var(--img-angle-w);height:auto;aspect-ratio:16/9;background:var(--img-well-bg)}
+.guided-input-thumb img,.guided-input-thumb video{object-fit:contain}
+
+/* Reference-angle and continuity-state choices — pose and camera angle have to
+   be distinguishable, and the VIEW LARGE control has to stay visible with it. */
+.entity-authority-thumb-button{width:calc(var(--img-angle-w) + 12px)}
+.entity-authority-thumb-button .entity-authority-thumb{
+  width:var(--img-angle-w);height:auto;aspect-ratio:16/9;background:var(--img-well-bg)}
+.entity-authority-thumb-button img,.entity-authority-thumb-button video{object-fit:contain}
+.entity-authority-thumb-button>small{font-size:7.5px}
+
+/* --- selection tier ------------------------------------------------------- */
+/* Shot board cards at Compact, Standard and Large. The 16/10 well cropped 10%
+   off the width of every 16:9 source; the well now matches the frame. */
+.slate-thumb{aspect-ratio:16/9;background:var(--img-well-bg)}
+.slate-thumb::before{display:none}
+.slate-thumb img,.slate-thumb video{width:100%;height:100%;object-fit:contain;object-position:center}
+.slate-thumb-shell{position:relative;display:block;min-width:0}
+
+/* References grid — a 4/3 well cropped 25% off each 16:9 reference. */
+.library-preview{aspect-ratio:16/9;background:var(--img-well-bg)}
+.library-preview img,.library-preview video{object-fit:contain}
+.library-card-shell{position:relative;display:grid;min-width:0}
+.library-card-shell>.library-card{height:100%}
+
+/* Next action on the shot page — the last approved image of the shot. */
+.guided-next-action{grid-template-columns:minmax(220px,260px) minmax(0,1fr) auto}
+.guided-next-action .guided-lifecycle-preview{height:auto;aspect-ratio:16/9;background:var(--img-well-bg)}
+.guided-next-action .guided-lifecycle-preview img,
+.guided-next-action .guided-lifecycle-preview video,
+.guided-lifecycle-media img,.guided-lifecycle-media video{object-fit:contain;max-height:none}
+.guided-lifecycle-media{background:var(--img-well-bg)}
+@media(max-width:900px){.guided-next-action{grid-template-columns:1fr}}
+
+/* Frame candidates and the scene approved-stills strip. */
+.guided-candidate-preview{background:var(--img-well-bg)}
+.guided-candidate-preview img{object-fit:contain}
+.scene-review-approved-strip img{object-fit:contain;background:var(--img-well-bg)}
+
+/* Approved frames, continuity-state comparisons and approved-reference heroes —
+   the imagery that carries an approval decision, so none of it may be cropped. */
+.state-approved-preview{width:236px;height:auto;aspect-ratio:16/9;background:var(--img-well-bg)}
+.state-approved-preview img,.state-approved-preview video{object-fit:contain}
+.state-validation-thumbs button{grid-template-columns:var(--img-angle-w) 1fr}
+.state-validation-thumbs img{width:var(--img-angle-w);height:auto;aspect-ratio:16/9;object-fit:contain;background:var(--img-well-bg)}
+.frame-sequence-thumbs img{height:auto;aspect-ratio:16/9;object-fit:contain}
+.frame-sequence-correction-preview img{object-fit:contain;background:var(--img-well-bg)}
+.guided-motion-frame-preview img{aspect-ratio:16/9;object-fit:contain}
+.scene-still-preview{position:relative;display:block;width:100%;padding:0;border:0;background:transparent;cursor:zoom-in}
+.scene-still-preview:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+/* --- inspection tier ------------------------------------------------------ */
+/* One viewer for the whole product: the existing media theatre modal. */
+.media-theatre-stage img{object-fit:contain}
+.media-theatre-modal>header .cancel{flex:0 0 auto;white-space:nowrap}
+
+/* The "View larger" affordance is a real, always-visible control rather than a
+   hover-only hint, so it can be seen and reached without a pointer. */
+.guided-lifecycle-media.image>span,.guided-thumb-preview>span,
+.guided-motion-frame-preview>em,.guided-frame-approved-preview span{opacity:.82;transform:none}
+.guided-lifecycle-media.image:hover>span,.guided-lifecycle-media.image:focus-visible>span,
+.guided-thumb-preview:hover>span,.guided-thumb-preview:focus-visible>span,
+.guided-motion-frame-preview:hover>em,.guided-motion-frame-preview:focus-visible>em,
+.guided-frame-approved-preview:hover span,.guided-frame-approved-preview:focus-visible span{opacity:1}
+.media-enlarge-btn{opacity:.9}
+.media-enlarge-btn:hover,.media-enlarge-btn:focus-visible{opacity:1}
+.slate-enlarge,.library-enlarge{right:7px;bottom:7px;padding:5px 8px;font-size:8px}
+/* Sits over the candidate thumbnail rather than the right-hand column, so it
+   cannot cover the row's own "Review →" affordance. */
+.production-enlarge{left:12px;right:auto;bottom:11px;padding:3px 6px;font-size:7px;letter-spacing:.02em}
+.candidate-enlarge{margin-left:auto}
