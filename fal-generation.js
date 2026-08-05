@@ -3,7 +3,7 @@
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
-const { parseAspectRatio } = require("./public/shared-aspect");
+const { parseAspectRatio, h3AspectSupport } = require("./public/shared-aspect");
 
 function registerFalGeneration(app, context) {
   const { readConfig, readProject, writeProject, projectDir } = context;
@@ -193,8 +193,19 @@ function registerFalGeneration(app, context) {
     }
     return groups;
   }
+  /* The single format gate for MiniMax H3, applied by the submission route before a
+     job record is even created and again here, immediately before the provider call.
+     Every H3 dispatch path — manual generation, image-to-video, first/last frame,
+     multi-keyframe reference-to-video, automation steps and any retry or resume —
+     reaches the provider through submitH3, so a refusal here cannot be routed around. */
+  function h3AspectGate(job) {
+    const mode = String(job.profileMode || job.mode || "i2v");
+    return h3AspectSupport(mode, job.aspectRatio);
+  }
   async function submitH3(job, refs, cfg) {
     const mode = String(job.profileMode || job.mode || "i2v");
+    const gate = h3AspectGate(job);
+    if (!gate.ok) throw new Error(gate.message);
     const groups = h3ReferenceGroups(refs);
     let model = cfg.h3ImageModel;
     const input = {
@@ -204,7 +215,9 @@ function registerFalGeneration(app, context) {
     };
     if (mode === "t2v") {
       model = cfg.h3TextModel;
-      input.aspect_ratio = ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"].includes(job.aspectRatio) ? job.aspectRatio : "16:9";
+      /* The gate above has already refused anything outside the provider's list, so
+         this is the requested format itself rather than a fallback. */
+      input.aspect_ratio = gate.value;
     } else if (mode === "i2v" || mode === "flf") {
       model = cfg.h3ImageModel;
       if (!groups.image.length) throw new Error("MiniMax H3 image-to-video requires an approved opening frame.");
@@ -221,7 +234,7 @@ function registerFalGeneration(app, context) {
         throw new Error("MiniMax H3 reference package exceeds FAL limits: 12 total, up to 9 images, 3 videos, and 3 audio clips.");
       if (groups.audio.length && !groups.image.length && !groups.video.length)
         throw new Error("MiniMax H3 audio cannot be the only reference; add at least one image or video.");
-      input.aspect_ratio = ["adaptive", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"].includes(job.aspectRatio) ? job.aspectRatio : "adaptive";
+      input.aspect_ratio = gate.value;
       if (groups.image.length) input.reference_image_urls = groups.image.map(referenceInput);
       if (groups.video.length) input.reference_video_urls = groups.video.map(referenceInput);
       if (groups.audio.length) input.reference_audio_urls = groups.audio.map(referenceInput);
@@ -706,6 +719,18 @@ function registerFalGeneration(app, context) {
       if (job.profileFamily !== "minimax-h3") return res.status(400).json({ error: "MiniMax H3 motion generation requires a minimax-h3 prompt profile." });
       if (!job.shotId) return res.status(400).json({ error: "shotId is required." });
       if (!["t2v", "i2v", "flf", "r2v"].includes(job.profileMode)) return res.status(400).json({ error: "Unsupported MiniMax H3 workflow mode." });
+      /* Before the job record exists, before any state is written and before anything
+         leaves this machine. A refused dispatch costs nothing and changes nothing:
+         the prompt, frames, keyframes and settings the caller sent are simply not
+         acted on, so the screen it came from still holds all of them. */
+      const aspectGate = h3AspectGate(job);
+      if (!aspectGate.ok)
+        return res.status(400).json({
+          error: aspectGate.message,
+          code: "H3_ASPECT_UNSUPPORTED",
+          requestedAspectRatio: aspectGate.requested,
+          supportedAspectRatios: aspectGate.supported,
+        });
       if (!job.prompt) return res.status(400).json({ error: "Build a MiniMax H3 prompt before generating." });
       // The current fal queue OpenAPI schema enforces 2,000 characters even
       // though the launch guide describes a broader 7,000-character context.

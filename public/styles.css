@@ -2777,7 +2777,9 @@ input:focus,textarea:focus,select:focus{border-color:var(--acc);box-shadow:0 0 0
 .test-note-modal .modal-actions button{width:auto;min-width:96px}
 .toast{background:var(--panel);color:var(--ink);border-color:var(--line-2)}
 #app[data-surf="light"] .modal{background:rgba(20,33,46,.45)}
-#app[data-surf="light"] .add-btn,#app[data-surf="light"] .topbar-add,#app[data-surf="light"] .approve-btn{color:#07131b!important}
+/* The near-black label these accent-filled buttons used to carry belonged to a
+   bright cyan fill. On the light surface the fill is the readable accent ink, so
+   the label is set with the rest of the filled controls at the end of this sheet. */
 @media(max-width:760px){
   #app{grid-template-columns:1fr}
   #topbar{margin:8px 8px 0}
@@ -3617,8 +3619,32 @@ body[data-focused-workspace="1"] .guided-frame-body,
 .guided-next-action .guided-lifecycle-preview{height:auto;aspect-ratio:16/9;background:var(--img-well-bg)}
 .guided-next-action .guided-lifecycle-preview img,
 .guided-next-action .guided-lifecycle-preview video,
-.guided-lifecycle-media img,.guided-lifecycle-media video{object-fit:contain;max-height:none}
+.guided-lifecycle-media img,.guided-lifecycle-media video{object-fit:contain}
 .guided-lifecycle-media{background:var(--img-well-bg)}
+/* The hero preview is the largest image on the shot page and the one a frame is
+   actually judged from, so it may not crop.
+ *
+ * `object-fit:contain` was already declared and was already doing nothing, because
+ * the image never took the well's height to fit inside. The still is rendered as
+ * `<button class="guided-lifecycle-media image"><img></button>`, and a percentage
+ * height inside a button resolves against an indefinite anonymous content box: the
+ * `height:100%` above computed to `auto`, the image sized to its own ratio — 507x901
+ * for a 9:16 still in a 2.39:1 well — and the well's `overflow:hidden` took the
+ * bottom 689px off. The video branch renders inside a `<div>` and was unaffected,
+ * which is why the candidate strips and the media theatre were always correct.
+ *
+ * The fix is to give the image the same two computed dimensions the well already takes,
+ * as lengths rather than percentages, so nothing has to resolve through the button. The
+ * pair is declared together with the well below for exactly that reason: if the two ever
+ * disagree the crop comes back. They stay in flow — the shot column is a `fit-content`
+ * track, and an out-of-flow image contributes no width to it, which collapses the well
+ * to zero. `contain` then letterboxes the difference against --img-well-bg, and every
+ * source edge and corner survives. The well keeps the shot's format, so the frame is
+ * still judged in the shape it will be delivered in, and click-to-enlarge is untouched. */
+.guided-next-action .guided-lifecycle-media img,
+.guided-next-action .guided-lifecycle-media video{
+  width:var(--cb-selection-w,438px);max-width:100%;
+  height:var(--cb-selection-h,246px);max-height:min(var(--cb-selection-h,246px),62vh)}
 @media(max-width:900px){.guided-next-action{grid-template-columns:1fr}}
 
 /* Frame candidates and the scene approved-stills strip. */
@@ -3776,3 +3802,94 @@ body[data-focused-workspace="1"] .guided-frame-body,
    which lets the image render at full natural size. The stage keeps `overflow:auto`
    as the safety valve for the rare case of a title that wraps the header taller. */
 .media-theatre-stage img,.media-theatre-stage video{max-height:calc(100dvh - 239px)}
+
+/* ==========================================================================
+   Light canvas — the surface theme the token model never reached
+   ==========================================================================
+   The studio.4 refresh introduced a second, derived token set — --text,
+   --accent, --surface, --surface-2, --canvas, --workspace, --panel-strong —
+   declared once at the document root. Two of them are aliases
+   (`--text:var(--ink)`, `--accent:var(--acc)`), and a custom property that
+   references another is substituted where it is *declared*, not where it is
+   used. Declared at the document root they froze the dark-theme values and
+   inherited them into every surface,
+   so `#app[data-surf="light"]` redefining --ink and --acc could never move
+   them. That is why the four headline Production metrics rendered
+   rgb(238,243,249) on rgb(255,255,255) — 1.12:1 — and why the NEXT ACTION and
+   RETURNED RESULTS cards kept a dark-theme gradient under light-theme ink at
+   1.09:1. Alongside them a handful of raised surfaces are painted from dark
+   literals rather than tokens, and the accent and status hues are tuned for
+   dark surfaces, where a bright cyan reads and on white measures 1.8:1.
+
+   Everything below is scoped to the light surface, so Dark studio, Website
+   navy and Warm studio render exactly as they did before this change.
+   Thresholds: 4.5:1 for normal text, 3:1 for large text and essential
+   boundaries, measured against the composited background.  */
+
+#app[data-surf="light"]{
+  /* The accent as ink. --acc is a text colour 93 times in this sheet and a fill
+     13 times, so the token itself carries the readable value and the few filled
+     controls get light text below. --acc-soft is a translucent tint and stays
+     as it is: it is only ever a background. */
+  --acc-ink:#136a75;
+  --acc:var(--acc-ink);
+  --accent:var(--acc-ink);
+  --text:var(--ink);
+  /* Two steps of de-emphasis that both clear 4.5:1 on the darkest light
+     surface (#dfe8f1), so the hierarchy survives the correction. */
+  --muted:#46596c;
+  --faint:#506275;
+  /* Raised surfaces, previously frozen near-black. */
+  --surface:var(--panel-2);
+  --surface-2:var(--panel-2);
+  --panel-strong:var(--panel);
+  --canvas:var(--bg);
+  --workspace:var(--bg-2);
+  /* Status hues keep their identity and lose only the luminance that made them
+     unreadable on a light surface. */
+  --green:#416e5b;
+  --blue:#41698a;
+  --amber:#7e5f32;
+  --red:#945447;
+  /* A 34%-black 48px shadow is a depth cue on near-black and a stain on near-white:
+     it darkened the strip under the board controls to #d4dae1 and took the card-badge
+     legend sitting there below 4.5:1. Same geometry, tinted and lightened. */
+  --shadow-panel:0 10px 26px rgba(21,37,54,.09);
+  --shadow-raised:0 16px 34px rgba(21,37,54,.12);
+}
+#app[data-surf="light"][data-acc="blue"] {--acc-ink:#136a75}
+#app[data-surf="light"][data-acc="green"]{--acc-ink:#386a4c}
+#app[data-surf="light"][data-acc="amber"]{--acc-ink:#765a2c}
+#app[data-surf="light"][data-acc="rust"] {--acc-ink:#885040}
+
+/* The raised cards whose backgrounds are dark literals rather than tokens.
+   Same shape, same accent wash, same border — the surface underneath is the
+   only thing that changes. */
+#app[data-surf="light"] .production-next{
+  background:linear-gradient(120deg,var(--acc-soft),var(--panel) 28%,var(--panel) 100%);
+  border-color:color-mix(in srgb,var(--acc) 26%,var(--line))}
+#app[data-surf="light"] .board-list-controls,
+#app[data-surf="light"] .shot-command-summary article{
+  background:linear-gradient(180deg,var(--panel),var(--panel-2));
+  border-color:var(--line)}
+#app[data-surf="light"] .focused-taskbar{background:var(--panel)}
+#app[data-surf="light"] .automation-activity-drawer{background:var(--panel)}
+#app[data-surf="light"] .automation-drawer-list,
+#app[data-surf="light"] .automation-drawer-section>header{background:var(--panel-2)}
+/* An overlay chip that has to sit on top of judgement imagery, so it keeps its own
+   surface rather than the card's — but on a light canvas that surface is light. */
+#app[data-surf="light"] .win-badge{background:var(--panel)!important;border-color:var(--line-2)}
+/* Six-tenths of a muted grey is 2.83:1 on white. The de-emphasis is carried by the
+   colour, which is already two steps below the primary ink. */
+#app[data-surf="light"] .brand-note{opacity:1;color:var(--muted)}
+
+/* The few controls that are filled with the accent or a status hue. On a light
+   surface the fill is the dark element and the label has to be the light one. */
+#app[data-surf="light"] .add-btn,
+#app[data-surf="light"] .topbar-add,
+#app[data-surf="light"] .approve-btn,
+#app[data-surf="light"] .coverage-extractor-steps .active b,
+#app[data-surf="light"] .frame-sequence-correction-overview article.is-auto>i,
+#app[data-surf="light"] .reference-manual-actions .recommended,
+#app[data-surf="light"] .reference-manual-actions .recommended span,
+#app[data-surf="light"] .reference-manual-actions .recommended small{color:#ffffff!important}

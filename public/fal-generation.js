@@ -558,6 +558,35 @@ window.updateFalH3PromptEditor = () => {
       : "Shorten this prompt to 2,000 characters before a paid submission.";
   }
   if (submit) submit.disabled = !prompt.trim() || prompt.length > 2000 || window._falH3Submitting;
+  updateFalH3AspectGuard();
+};
+/* The format this dialog would actually send, checked against MiniMax H3's own list.
+   The same resolver runs on the server, so the screen and the dispatch cannot disagree. */
+window.falH3AspectGate = () => {
+  const request = window._falH3MotionRequest || {};
+  const select = document.getElementById("fal-h3-aspect");
+  const requested = select ? select.value : request.aspectRatio || (request.profileMode === "r2v" ? "adaptive" : "16:9");
+  return h3AspectSupport(request.profileMode, requested);
+};
+/* Shown in place, next to the control that caused it, and it takes the submit button
+   with it. Nothing is dispatched, nothing is charged, and every prompt, frame,
+   keyframe and setting in this dialog is left exactly as the user left it. */
+window.updateFalH3AspectGuard = () => {
+  const panel = document.getElementById("fal-h3-aspect-warning");
+  if (!panel) return;
+  const gate = falH3AspectGate();
+  panel.hidden = gate.ok;
+  if (!gate.ok) {
+    panel.innerHTML = `<div><b>MiniMax H3 cannot deliver ${esc(gate.requested || "this format")}</b><small>${esc(gate.message)}</small></div>`;
+  }
+  /* The full submit condition rather than a one-way disable: choosing a format H3 does
+     accept has to give the button back, or the refusal becomes a dead end. Computed here
+     rather than by calling back into the prompt updater, which calls this. */
+  const submit = document.getElementById("fal-h3-submit");
+  if (submit) {
+    const prompt = String(document.getElementById("fal-h3-prompt-editor")?.value ?? "");
+    submit.disabled = !gate.ok || !prompt.trim() || prompt.length > 2000 || !!window._falH3Submitting;
+  }
 };
 window.resetFalH3PromptEditor = () => {
   const request = window._falH3MotionRequest || {};
@@ -600,8 +629,13 @@ window.openFalH3MotionModal = (shotId, buildId = "") => {
   // location references. This prevents a misleading independent renumbering.
   const sequenceRows = images.map((ref, index) => `<li><b>Image ${index + 1}</b><span>${esc(ref.label)} · ${esc(String(ref.role || "reference").replace(/-/g," "))}${ref.instruction ? ` · ${esc(ref.instruction)}` : ""}</span></li>`).join("");
   const promptReady = build.prompt.length <= 2000;
-  openModal(`<div class="h3-generation-modal"><header class="h3-generation-head"><div><span>MINIMAX H3 · PAID GENERATION</span><h3>Generate with ${esc(profile.name)}</h3><p>Confirm provider inputs, output settings, prompt length, and estimated spend before submission.</p></div><button class="cancel" onclick="closeModal()">Close</button></header><div class="h3-generation-scroll"><div class="modal-sub">FAL · ${esc(profile.falEndpoint || "minimax/h3")}</div><div class="candidate-evidence-facts"><span>${images.length} image${images.length === 1 ? "" : "s"}</span><span>${videos.length} video${videos.length === 1 ? "" : "s"}</span><span>${audio.length} audio</span><span id="fal-h3-prompt-fact">${build.prompt.length.toLocaleString()}/2,000 prompt characters</span><span>Native stereo audio</span></div>${sequenceRows ? `<section class="h3-submit-sequence"><b>Actual FAL image order</b><small>This is the exact Image 1–N order sent to the provider.</small><ol>${sequenceRows}</ol></section>` : ""}<section class="h3-generation-settings"><h4>Output settings</h4><div class="h3-settings-grid"><label><span>Duration</span><select id="fal-h3-duration" onchange="updateFalH3CostEstimate()">${Array.from({length:11},(_,i)=>i+5).map((n)=>`<option value="${n}" ${n===duration?"selected":""}>${n} seconds</option>`).join("")}</select></label><label><span>Resolution</span><select id="fal-h3-resolution" onchange="updateFalH3CostEstimate()"><option value="2K" selected>2K</option><option value="768P">768P</option></select></label>${profile.mode === "r2v" || profile.mode === "t2v" ? `<label><span>Aspect ratio</span><select id="fal-h3-aspect">${["adaptive","21:9","16:9","4:3","1:1","3:4","9:16"].filter((value)=>profile.mode === "r2v" || value !== "adaptive").map((value)=>`<option value="${value}" ${value===ratio?"selected":""}>${value}</option>`).join("")}</select></label>` : ""}</div></section><div id="fal-h3-cost-estimate" class="h3-cost-estimate"></div><div id="fal-h3-prompt-warning" class="guided-prompt-error" ${promptReady ? "hidden" : ""}><div><b>Prompt is not ready for submission</b><small>${promptReady ? "" : "Shorten this prompt to 2,000 characters before a paid submission."}</small></div></div><section class="h3-prompt-editor"><header><div><b>Edit prompt before generation</b><small>The compiled package remains preserved. Any changes used for generation are saved as a linked manual revision.</small></div><span id="fal-h3-prompt-count">${build.prompt.length.toLocaleString()}/2,000</span></header><textarea id="fal-h3-prompt-editor" oninput="updateFalH3PromptEditor()">${esc(build.prompt)}</textarea><div class="h3-prompt-editor-actions"><label><span>Revision note · optional</span><input id="fal-h3-prompt-edit-reason" placeholder="Clarified timing, removed duplicate action…"></label><button class="ghost-btn" onclick="resetFalH3PromptEditor()">Reset compiled prompt</button></div></section><p class="hint">This submits one paid MiniMax H3 request through FAL. The returned MP4 is saved as an unapproved video candidate in this shot. The request uses an idempotency key to prevent an accidental double submission from this dialog.</p></div><footer class="modal-actions h3-generation-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button id="fal-h3-submit" class="approve-btn large" onclick="startFalH3MotionGeneration()" ${promptReady ? "" : "disabled"}>START H3 GENERATION</button></footer></div>`);
-  setTimeout(() => { updateFalH3CostEstimate(); updateFalH3PromptEditor(); }, 0);
+  /* Resolved before the dialog is built, so an unsupported production format is stated
+     as a refusal on the way in rather than discovered on the way out. The picker shows
+     the requested ratio as its own selected option: silently landing on whichever
+     supported ratio happened to be first in the list is the behaviour being repaired. */
+  const aspectGate = h3AspectSupport(profile.mode, ratio);
+  openModal(`<div class="h3-generation-modal"><header class="h3-generation-head"><div><span>MINIMAX H3 · PAID GENERATION</span><h3>Generate with ${esc(profile.name)}</h3><p>Confirm provider inputs, output settings, prompt length, and estimated spend before submission.</p></div><button class="cancel" onclick="closeModal()">Close</button></header><div class="h3-generation-scroll"><div class="modal-sub">FAL · ${esc(profile.falEndpoint || "minimax/h3")}</div><div class="candidate-evidence-facts"><span>${images.length} image${images.length === 1 ? "" : "s"}</span><span>${videos.length} video${videos.length === 1 ? "" : "s"}</span><span>${audio.length} audio</span><span id="fal-h3-prompt-fact">${build.prompt.length.toLocaleString()}/2,000 prompt characters</span><span>Native stereo audio</span></div>${sequenceRows ? `<section class="h3-submit-sequence"><b>Actual FAL image order</b><small>This is the exact Image 1–N order sent to the provider.</small><ol>${sequenceRows}</ol></section>` : ""}<section class="h3-generation-settings"><h4>Output settings</h4><div class="h3-settings-grid"><label><span>Duration</span><select id="fal-h3-duration" onchange="updateFalH3CostEstimate()">${Array.from({length:11},(_,i)=>i+5).map((n)=>`<option value="${n}" ${n===duration?"selected":""}>${n} seconds</option>`).join("")}</select></label><label><span>Resolution</span><select id="fal-h3-resolution" onchange="updateFalH3CostEstimate()"><option value="2K" selected>2K</option><option value="768P">768P</option></select></label>${aspectGate.carriesAspectRatio ? `<label><span>Aspect ratio</span><select id="fal-h3-aspect" onchange="updateFalH3AspectGuard()">${aspectGate.ok ? "" : `<option value="${attr(ratio)}" selected>${esc(ratio)} — not supported</option>`}${aspectGate.supported.map((value)=>`<option value="${attr(value)}" ${aspectGate.ok && value===aspectGate.value?"selected":""}>${esc(value)}</option>`).join("")}</select></label>` : ""}</div></section><div id="fal-h3-aspect-warning" class="guided-prompt-error" ${aspectGate.ok ? "hidden" : ""}>${aspectGate.ok ? "" : `<div><b>MiniMax H3 cannot deliver ${esc(ratio)}</b><small>${esc(aspectGate.message)}</small></div>`}</div><div id="fal-h3-cost-estimate" class="h3-cost-estimate"></div><div id="fal-h3-prompt-warning" class="guided-prompt-error" ${promptReady ? "hidden" : ""}><div><b>Prompt is not ready for submission</b><small>${promptReady ? "" : "Shorten this prompt to 2,000 characters before a paid submission."}</small></div></div><section class="h3-prompt-editor"><header><div><b>Edit prompt before generation</b><small>The compiled package remains preserved. Any changes used for generation are saved as a linked manual revision.</small></div><span id="fal-h3-prompt-count">${build.prompt.length.toLocaleString()}/2,000</span></header><textarea id="fal-h3-prompt-editor" oninput="updateFalH3PromptEditor()">${esc(build.prompt)}</textarea><div class="h3-prompt-editor-actions"><label><span>Revision note · optional</span><input id="fal-h3-prompt-edit-reason" placeholder="Clarified timing, removed duplicate action…"></label><button class="ghost-btn" onclick="resetFalH3PromptEditor()">Reset compiled prompt</button></div></section><p class="hint">This submits one paid MiniMax H3 request through FAL. The returned MP4 is saved as an unapproved video candidate in this shot. The request uses an idempotency key to prevent an accidental double submission from this dialog.</p></div><footer class="modal-actions h3-generation-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button id="fal-h3-submit" class="approve-btn large" onclick="startFalH3MotionGeneration()" ${promptReady && aspectGate.ok ? "" : "disabled"}>START H3 GENERATION</button></footer></div>`);
+  setTimeout(() => { updateFalH3CostEstimate(); updateFalH3PromptEditor(); updateFalH3AspectGuard(); }, 0);
 };
 window.startFalH3MotionGeneration = async () => {
   const request = window._falH3MotionRequest;
@@ -609,6 +643,14 @@ window.startFalH3MotionGeneration = async () => {
   const editedPrompt = String(document.getElementById("fal-h3-prompt-editor")?.value ?? request.prompt ?? "").trim();
   if (!editedPrompt) return toast("Enter a MiniMax H3 prompt before generation");
   if (editedPrompt.length > 2000) return toast("MiniMax H3 prompt exceeds the current 2,000-character FAL schema limit");
+  /* Checked again at the moment of dispatch rather than only when the dialog opened,
+     so a retry, a resumed dialog or a changed picker cannot walk past the refusal.
+     Returning here leaves the dialog, the prompt and every setting untouched. */
+  const gate = falH3AspectGate();
+  if (!gate.ok) {
+    updateFalH3AspectGuard();
+    return toast(gate.message);
+  }
   request.prompt = editedPrompt;
   const revisionReason = String(document.getElementById("fal-h3-prompt-edit-reason")?.value || "Edited in the MiniMax H3 generation preflight").trim();
   if (editedPrompt !== String(request.originalPrompt || "").trim() && typeof createManualMotionPromptRevision === "function") {
@@ -642,7 +684,7 @@ window.startFalH3MotionGeneration = async () => {
     outputCount: 1,
     durationSeconds: Number(document.getElementById("fal-h3-duration")?.value || request.duration || 5),
     resolution: document.getElementById("fal-h3-resolution")?.value || "2K",
-    aspectRatio: document.getElementById("fal-h3-aspect")?.value || request.aspectRatio || (request.profileMode === "r2v" ? "adaptive" : "16:9"),
+    aspectRatio: gate.carriesAspectRatio ? gate.value : request.aspectRatio || (request.profileMode === "r2v" ? "adaptive" : "16:9"),
   };
   try {
     await flushPendingProjectSave();
