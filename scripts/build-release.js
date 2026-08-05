@@ -89,20 +89,25 @@ fs.writeFileSync(runtimeArchive, tarGz);
 /* export-ignore is applied by `git archive`, not by `git ls-tree`, so the
    contents are read back out of the archive that actually shipped. */
 function tarEntries(buffer) {
-  const names = [];
+  const entries = [];
   for (let off = 0; off + 512 <= buffer.length; ) {
-    const name = buffer.toString("utf8", off, off + 100).replace(/\0.*$/, "");
+    const field = (start, len) => buffer.toString("utf8", off + start, off + start + len).replace(/\0.*$/, "");
+    const name = field(0, 100);
     if (!name) break;
-    const sizeField = buffer.toString("ascii", off + 124, off + 136).replace(/\0.*$/, "").trim();
-    const size = parseInt(sizeField, 8) || 0;
+    const size = parseInt(field(124, 12).trim(), 8) || 0;
     const typeflag = buffer.toString("ascii", off + 156, off + 157);
-    const mode = buffer.toString("ascii", off + 100, off + 108).replace(/\0.*$/, "").trim();
+    const mode = field(100, 8).trim();
+    /* ustar splits a path longer than 100 bytes across `prefix` and `name`.
+       Reading only `name` would reduce deep paths to their basename, which
+       would quietly weaken every exclusion check below. */
+    const prefix = field(345, 155);
+    const full = prefix ? `${prefix}/${name}` : name;
     /* "0" and NUL are regular files. "5" is a directory; "g"/"x" are pax
        headers, which git emits and which are not package contents. */
-    if (typeflag === "0" || typeflag === "\0") names.push({ name, size, mode });
+    if (typeflag === "0" || typeflag === "\0") entries.push({ name: full, size, mode });
     off += 512 + Math.ceil(size / 512) * 512;
   }
-  return names;
+  return entries;
 }
 
 const contents = tarEntries(tar);
@@ -164,10 +169,14 @@ assert.deepStrictEqual(missing, [], `release archive is missing required files:\
 function fileBytes(name) {
   let off = 0;
   while (off + 512 <= tar.length) {
-    const entryName = tar.toString("utf8", off, off + 100).replace(/\0.*$/, "");
+    const field = (start, len) => tar.toString("utf8", off + start, off + start + len).replace(/\0.*$/, "");
+    const entryName = field(0, 100);
     if (!entryName) break;
-    const size = parseInt(tar.toString("ascii", off + 124, off + 136).replace(/\0.*$/, "").trim(), 8) || 0;
-    if (entryName === PREFIX + name) return tar.subarray(off + 512, off + 512 + size);
+    const size = parseInt(field(124, 12).trim(), 8) || 0;
+    const prefix = field(345, 155);
+    if ((prefix ? `${prefix}/${entryName}` : entryName) === PREFIX + name) {
+      return tar.subarray(off + 512, off + 512 + size);
+    }
     off += 512 + Math.ceil(size / 512) * 512;
   }
   return null;
