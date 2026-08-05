@@ -97,13 +97,17 @@ function tarEntries(buffer) {
     const size = parseInt(sizeField, 8) || 0;
     const typeflag = buffer.toString("ascii", off + 156, off + 157);
     const mode = buffer.toString("ascii", off + 100, off + 108).replace(/\0.*$/, "").trim();
-    if (typeflag !== "5") names.push({ name, size, mode });
+    /* "0" and NUL are regular files. "5" is a directory; "g"/"x" are pax
+       headers, which git emits and which are not package contents. */
+    if (typeflag === "0" || typeflag === "\0") names.push({ name, size, mode });
     off += 512 + Math.ceil(size / 512) * 512;
   }
   return names;
 }
 
 const contents = tarEntries(tar);
+const stray = contents.filter((e) => !e.name.startsWith(PREFIX)).map((e) => e.name);
+assert.deepStrictEqual(stray, [], `archive contains entries outside ${PREFIX}: ${stray.join(", ")}`);
 const relative = contents.map((e) => e.name.slice(PREFIX.length)).sort();
 
 /* ---- exclusion and content assertions ------------------------------------ */

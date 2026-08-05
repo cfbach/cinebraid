@@ -18,7 +18,11 @@ const os = require("os");
 const path = require("path");
 
 const RULES = [
-  { id: "fal-key", why: "FAL API key", re: /\bfal-[A-Za-z0-9]{8,}/ },
+  /* `fal-` alone is not a signal: the tree is full of fal-generation.js,
+     .fal-settings, fal-diagnostic-job-1 and fal-h3-prompt-edit-reason. A key is
+     one long token carrying digits; those are hyphenated words. Disallowing the
+     hyphen after the prefix separates them. */
+  { id: "fal-key", why: "FAL API key", re: /\bfal-(?=[A-Za-z0-9_]*\d)[A-Za-z0-9_]{20,}\b/ },
   { id: "openai-key", why: "OpenAI API key", re: /\bsk-[A-Za-z0-9_-]{20,}/ },
   { id: "anthropic-key", why: "Anthropic API key", re: /\bsk-ant-[A-Za-z0-9_-]{20,}/ },
   { id: "github-token", why: "GitHub token", re: /\b(gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})/ },
@@ -30,6 +34,26 @@ const RULES = [
 ];
 
 const BINARY = /\.(png|jpe?g|webp|gif|mp4|webm|mov|wav|mp3|m4a|flac|ogg|zip|gz|tgz|ico|woff2?|ttf|otf|pdf)$/i;
+
+/* Known synthetic values, allowed by exact file and rule with a stated reason.
+   Every suppression is printed, so this can never quietly hide a real finding. */
+const ALLOW = [
+  {
+    file: "tests/automation-diagnostics.js",
+    rule: "openai-key",
+    why: "a synthetic key the suite feeds through the diagnostic redactor to prove secrets are stripped from support bundles",
+  },
+  {
+    file: "tests/readiness-feedback.js",
+    rule: "openai-key",
+    why: "a synthetic key posted to /api/test-feedback to prove feedback notes are redacted before they are stored",
+  },
+  {
+    file: "tests/readiness-feedback.js",
+    rule: "personal-path",
+    why: "a synthetic local path posted alongside that key, asserting personal paths are redacted too",
+  },
+];
 
 function walk(root, current = root, out = []) {
   for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
@@ -44,7 +68,7 @@ function walk(root, current = root, out = []) {
   return out;
 }
 
-function scan(root) {
+function scan(root, suppressed = []) {
   const findings = [];
   for (const file of walk(root)) {
     let text;
@@ -53,15 +77,21 @@ function scan(root) {
     } catch {
       continue;
     }
+    const rel = path.relative(root, file).replace(/\\/g, "/");
+
     /* The scanner's own rule table necessarily contains every pattern it looks
-       for, so scanning itself would report a finding on every rule. */
-    if (path.resolve(file) === path.resolve(__filename)) continue;
+       for, so scanning it would report a finding on every rule. Matched by name,
+       because the copy inside a package is not this running file. */
+    if (path.basename(file) === path.basename(__filename)) continue;
+
     const lines = text.split(/\r?\n/);
     for (const rule of RULES) {
+      const allowed = ALLOW.find((a) => a.file === rel && a.rule === rule.id);
       lines.forEach((line, i) => {
-        if (rule.re.test(line)) {
-          findings.push({ file: path.relative(root, file), line: i + 1, rule: rule.id, why: rule.why });
-        }
+        if (!rule.re.test(line)) return;
+        const hit = { file: rel, line: i + 1, rule: rule.id, why: rule.why };
+        if (allowed) suppressed.push({ ...hit, allowedBecause: allowed.why });
+        else findings.push(hit);
       });
     }
   }
@@ -109,8 +139,12 @@ let total = 0;
 for (const target of targets) {
   const root = path.resolve(target);
   assert(fs.existsSync(root), `scan target does not exist: ${root}`);
-  const findings = scan(root);
+  const suppressed = [];
+  const findings = scan(root, suppressed);
   total += findings.length;
+  for (const s of suppressed) {
+    console.log(`  allowed ${s.file}:${s.line}  ${s.rule} — ${s.allowedBecause}`);
+  }
   if (findings.length) {
     console.error(`FAIL ${root}`);
     for (const f of findings) console.error(`  ${f.file}:${f.line}  ${f.rule} — ${f.why}`);

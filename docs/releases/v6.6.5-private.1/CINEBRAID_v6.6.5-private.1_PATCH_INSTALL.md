@@ -58,7 +58,8 @@ tar -xzf cinebraid-6.6.5-private.1-runtime.tar.gz -C ~/
 ```
 
 A path containing spaces is supported. Every startup script resolves its own
-directory and quotes it, so `C:\Users\you\My CineBraid Builds\` works. When you
+directory and quotes it — `start.bat` uses `cd /d "%~dp0"` and `start.sh` uses
+`cd "$(dirname "$0")"` — so `%USERPROFILE%\My CineBraid Builds\` works. When you
 type a path with spaces yourself, quote it.
 
 ## 3. Install dependencies
