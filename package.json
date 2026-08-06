@@ -61,7 +61,7 @@
     "check:data-safety": "node tests/data-safety-repair.js",
     "check:windows-shutdown": "node tests/windows-shutdown.js",
     "check:browser-exit": "node tests/browser-workflow-exit.js",
-    "check:ci": "npm run check:version && npm run check:syntax && npm run check:package && npm run check:render && npm run check:behavior && npm run check:focused && npm run check:shot-layout && npm run check:settings && npm run check:image-scale && npm run check:multi-aspect && npm run check:composer && npm run check:launch-blockers && npm run check:fal && npm run check:browser && npm run check:browser-exit && npm run check:api && npm run check:data-safety && npm run check:project-switch && npm run check:recovery && npm run check:windows-shutdown && npm run check:custom-provider && npm run check:provider-health",
+    "check:ci": "npm run check:version && npm run check:syntax && npm run check:package && npm run check:render && npm run check:behavior && npm run check:focused && npm run check:shot-layout && npm run check:settings && npm run check:image-scale && npm run check:multi-aspect && npm run check:composer && npm run check:launch-blockers && npm run check:fal && npm run check:browser && npm run check:browser-exit && npm run check:api && npm run check:data-safety && npm run check:project-switch && npm run check:recovery && npm run check:windows-shutdown && npm run check:custom-provider && npm run check:provider-health && npm run check:local-only",
     "check:project-switch": "node tests/project-switch-safety.js",
     "check:shot-layout": "node tests/shot-workspace-responsive-layout.js",
     "check:settings": "node tests/settings-consistency.js",
@@ -69,7 +69,8 @@
     "check:multi-aspect": "node tests/multi-aspect-media.js",
     "check:launch-blockers": "node tests/launch-blockers.js",
     "check:custom-provider": "node tests/custom-provider-routing.js",
-    "check:provider-health": "node tests/provider-health.js"
+    "check:provider-health": "node tests/provider-health.js",
+    "check:local-only": "node tests/local-only-policy.js"
   },
   "dependencies": {
     "express": "^4.19.0"

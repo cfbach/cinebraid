@@ -53,6 +53,11 @@ const ALLOW = [
     rule: "personal-path",
     why: "a synthetic local path posted alongside that key, asserting personal paths are redacted too",
   },
+  {
+    file: "tests/local-only-policy.js",
+    rule: "git-credential",
+    why: "a URL whose user info is shaped like a loopback address, asserting the local-only check reads the host and not the credentials",
+  },
 ];
 
 function walk(root, current = root, out = []) {

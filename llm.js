@@ -172,6 +172,43 @@ async function callOllamaText(cfg, model, system, user, maxTokens, requestOption
   if (thinking) throw new Error("Local AI returned reasoning but no final answer after both Ollama chat and generate attempts. Try the exact model name shown by `ollama list` or switch the text model to a standard instruct model.");
   return "";
 }
+/* Whether a provider endpoint is genuinely on this machine.
+   The local-only project policy is answered with this, so it fails closed: a URL that
+   cannot be parsed, or that names anything this process cannot prove is loopback, is
+   not local. A private LAN address is somebody else's computer. */
+function isLoopbackIpv4(host) {
+  const octets = host.split(".");
+  if (octets.length !== 4) return false;
+  if (!octets.every((part) => /^\d{1,3}$/.test(part) && Number(part) <= 255)) return false;
+  return octets[0] === "127";
+}
+function isLocalProviderEndpoint(baseUrl) {
+  let host = "";
+  try {
+    host = new URL(String(baseUrl || "").trim()).hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+  if (host.startsWith("[") && host.endsWith("]")) host = host.slice(1, -1);
+  host = host.replace(/\.$/, "");
+  if (!host) return false;
+  // localhost and anything under it are reserved for the loopback interface (RFC 6761).
+  if (host === "localhost" || host.endsWith(".localhost")) return true;
+  if (host.includes(":")) {
+    // The URL parser has already collapsed the address, so ::1 is the only spelling left.
+    if (host === "::1") return true;
+    const mapped = /^::ffff:(.+)$/.exec(host);
+    if (!mapped) return false;
+    if (mapped[1].includes(".")) return isLoopbackIpv4(mapped[1]);
+    // An IPv4-mapped address the parser rewrote to hex: ::ffff:7f00:1 is 127.0.0.1.
+    const groups = mapped[1].split(":");
+    if (groups.length !== 2 || !groups.every((group) => /^[0-9a-f]{1,4}$/.test(group)))
+      return false;
+    return parseInt(groups[0], 16) >> 8 === 127;
+  }
+  return isLoopbackIpv4(host);
+}
+
 function providerForTask(cfg, task, override) {
   if (override) return override;
   const routed = cfg.routing?.[task];
@@ -398,4 +435,12 @@ async function embed(texts, modelOverride) {
   if (!r.ok) throw new Error("Local embeddings: " + (data.error || r.status));
   return data.embeddings;
 }
-module.exports = { llm, embed, vision, customRequestBody, readConfig, writeConfig };
+module.exports = {
+  llm,
+  embed,
+  vision,
+  customRequestBody,
+  isLocalProviderEndpoint,
+  readConfig,
+  writeConfig,
+};

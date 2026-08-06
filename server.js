@@ -11,7 +11,7 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const { spawnSync } = require("child_process");
-const { llm, embed, vision } = require("./llm");
+const { llm, embed, vision, isLocalProviderEndpoint } = require("./llm");
 const {
   isMasked,
   mergeConfig,
@@ -408,7 +408,34 @@ function projectAIPolicy() {
     return "project-default";
   }
 }
+/* A local-only project is asking for its material to stay on this machine. That is a
+   property of the endpoint, not of the provider's name: a custom OpenAI-compatible
+   server on loopback satisfies it, the same provider pointed at a remote host does
+   not, and neither does an Ollama URL on another computer. Per-task routing is
+   deliberately ignored here — under this policy one provider is chosen for
+   everything, and if none of them is local the request is refused rather than sent. */
+function localOnlyTextProvider() {
+  const cfg = readConfig();
+  if (
+    (cfg.assistant?.provider || "ollama") === "custom" &&
+    isLocalProviderEndpoint(cfg.customBaseUrl)
+  )
+    return "custom";
+  if (isLocalProviderEndpoint(cfg.ollamaUrl)) return "ollama";
+  throw new Error(
+    "This project is set to local-only AI, and no AI provider is configured with an endpoint on this machine. Point Ollama or the custom AI server at this computer in Settings, or change the project's AI policy.",
+  );
+}
 function aiProviderOverride() {
+  const policy = projectAIPolicy();
+  if (policy === "disabled")
+    throw new Error("AI features are disabled for this project.");
+  return policy === "local-only" ? localOnlyTextProvider() : null;
+}
+/* Vision resolves exactly as it did before. Multi-image review stays on its existing
+   provider path until the declared-entity single-image continuity engine is ported,
+   so local-only vision is not re-pointed at a custom server as part of that. */
+function aiVisionProviderOverride() {
   const policy = projectAIPolicy();
   if (policy === "disabled")
     throw new Error("AI features are disabled for this project.");
@@ -3301,7 +3328,7 @@ function resolveProjectAssetUrl(url) {
 
 app.post("/api/prompt/analyze", async (req, res) => {
   try {
-    const visionProvider = aiProviderOverride();
+    const visionProvider = aiVisionProviderOverride();
     const refs = (req.body.references || [])
       .filter((r) => r.url && /\.(png|jpe?g|webp)$/i.test(r.url))
       .slice(0, 8);
@@ -3690,7 +3717,7 @@ async function requestStrictAssistantJson(system, payload, options = {}) {
 async function requestVisionResult(system, user, images, options = {}) {
   const label = options.label || "Vision assistant";
   const maxTokens = Number(options.maxTokens || 3000);
-  const provider = options.provider || aiProviderOverride();
+  const provider = options.provider || aiVisionProviderOverride();
   const model = options.model;
   const parse = typeof options.parse === "function" ? options.parse : (raw) => raw;
   let lastError = null;
@@ -4542,7 +4569,7 @@ function reviewCriteria(P, kind, list, id, frameId = "") {
 }
 app.post("/api/llm/review", async (req, res) => {
   try {
-    const visionProvider = aiProviderOverride();
+    const visionProvider = aiVisionProviderOverride();
     const P = readJsonSync(DATA());
     const { kind, list, id, frameId } = req.body || {};
     const source = reviewCriteria(P, kind, list, id, frameId || "");
@@ -4804,7 +4831,7 @@ function normalizeSceneReview(parsed, scene, rows) {
 }
 app.post("/api/llm/review-scene", async (req, res) => {
   try {
-    const visionProvider = aiProviderOverride();
+    const visionProvider = aiVisionProviderOverride();
     const P = readJsonSync(DATA());
     const sceneId = String(req.body?.sceneId || "").trim();
     const scene = (P.scenes || []).find((item) => String(item.id) === sceneId);
@@ -4898,7 +4925,7 @@ const SCENE_CORRECTION_REVIEW_SYSTEM = `You are reviewing candidate repairs for 
 {"reviews":[{"n":1,"pass":true,"score":88,"notes":"specific visible continuity judgment"}],"ranking":[1],"suggested":1,"rationale":"one concise sentence"}`;
 app.post("/api/llm/review-scene-correction", async (req, res) => {
   try {
-    const visionProvider = aiProviderOverride();
+    const visionProvider = aiVisionProviderOverride();
     const P = readJsonSync(DATA());
     const sceneId = String(req.body?.sceneId || "").trim();
     const targetShotId = String(req.body?.targetShotId || "").trim();
@@ -4996,7 +5023,7 @@ app.post("/api/llm/review-derived-frame", async (req, res) => {
       {
         label: `Derived Frame ${frame.label || ""} review assistant`,
         maxTokens: 2400,
-        provider: aiProviderOverride(),
+        provider: aiVisionProviderOverride(),
         parse: (raw) => {
           const parsed = parseReviewJson(raw);
           if (!parsed) throw new Error("vision model returned an unstructured derived-frame review");
@@ -5082,7 +5109,7 @@ app.post("/api/llm/review-frame-sequence", async (req, res) => {
     const assistant = await requestVisionResult(FRAME_SEQUENCE_REVIEW_SYSTEM, user, images, {
       label: `Frame sequence continuity · ${shot.id}`,
       maxTokens: 2200,
-      provider: aiProviderOverride(),
+      provider: aiVisionProviderOverride(),
       parse: (raw) => {
         const parsed = parseReviewJson(raw);
         if (!parsed) throw new Error("vision model returned an unstructured frame-sequence review");
@@ -5141,7 +5168,7 @@ function candidateReviewBuild(P, shot, fileName, requestedId) {
 }
 app.post("/api/llm/review-candidate", async (req, res) => {
   try {
-    const visionProvider = aiProviderOverride();
+    const visionProvider = aiVisionProviderOverride();
     const P = readJsonSync(DATA());
     const shotId = path.basename(String(req.body?.shotId || ""));
     const frameId = String(req.body?.frameId || "");
@@ -5352,7 +5379,7 @@ function normalizeEntityCandidateReview(parsed, options = {}) {
 }
 app.post("/api/llm/review-entity-candidate", async (req, res) => {
   try {
-    const visionProvider = aiProviderOverride();
+    const visionProvider = aiVisionProviderOverride();
     const P = readJsonSync(DATA());
     const list = String(req.body?.list || "");
     const id = String(req.body?.id || "");
@@ -5462,7 +5489,7 @@ Return a score, explicit model pass/fail, all hard checks, all five factor findi
 });
 
 async function performShotCandidateReview(shotId) {
-  const visionProvider = aiProviderOverride();
+  const visionProvider = aiVisionProviderOverride();
   const P = readJsonSync(DATA());
   const source = reviewCriteria(P, "shot", null, shotId);
   const totalFiles = source.files.length;

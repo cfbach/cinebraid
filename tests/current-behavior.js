@@ -311,6 +311,7 @@ async function main() {
     "integrity-mobile-usability.js",
     "launch-blockers.js",
     "live-activity.js",
+    "local-only-policy.js",
     "manual-first-parity.js",
     "manual-first-real-browser.py",
     "manual-first-workflow.js",
