@@ -68,6 +68,23 @@ function assistantMessageText(message) {
   return "";
 }
 
+/* Extra body fields for the custom OpenAI-compatible provider.
+   "Custom" stays a genuinely generic provider: nothing is sent unless it has been
+   configured, because vLLM, LM Studio, llama.cpp and hosted OpenAI-compatible APIs
+   do not all accept the same fields. Configuring them is what makes a reasoning
+   server such as vLLM-served Nemotron usable — without enable_thinking:false a short
+   request spends its whole budget on reasoning and returns empty content. */
+function customRequestBody(cfg = {}) {
+  const body = {};
+  if (cfg.customTemperature !== "" && Number.isFinite(Number(cfg.customTemperature)))
+    body.temperature = Number(cfg.customTemperature);
+  if (cfg.customTopK !== "" && Number.isFinite(Number(cfg.customTopK)))
+    body.top_k = Math.round(Number(cfg.customTopK));
+  if (cfg.customThinking === "disabled")
+    body.chat_template_kwargs = { enable_thinking: false };
+  return body;
+}
+
 async function callOpenAICompatible(
   baseUrl,
   key,
@@ -77,6 +94,7 @@ async function callOpenAICompatible(
   maxTokens,
   label = "OpenAI-compatible",
   requestOptions = {},
+  extraBody = {},
 ) {
   if (!baseUrl) throw new Error(label + " base URL is not set.");
   if (!model) throw new Error(label + " model is not set.");
@@ -86,6 +104,8 @@ async function callOpenAICompatible(
     method: "POST",
     headers,
     body: JSON.stringify({
+      // Configured extras first: the request CineBraid actually needs always wins.
+      ...extraBody,
       model,
       max_tokens: maxTokens || 8000,
       ...(requestOptions.responseFormat === "json" ? { response_format: { type: "json_object" } } : {}),
@@ -195,6 +215,7 @@ async function llm(
       maxTokens,
       "Custom AI server",
       requestOptions,
+      customRequestBody(cfg),
     );
   return callOllamaText(
     cfg,
@@ -247,6 +268,7 @@ async function callOpenAIVision(
   imagesB64,
   maxTokens,
   label,
+  extraBody = {},
 ) {
   if (!model) throw new Error(label + " vision model is not set.");
   const headers = { "content-type": "application/json" };
@@ -262,6 +284,7 @@ async function callOpenAIVision(
     method: "POST",
     headers,
     body: JSON.stringify({
+      ...extraBody,
       model,
       max_tokens: maxTokens || 4000,
       messages: [
@@ -350,6 +373,7 @@ async function vision(
       imagesB64,
       maxTokens,
       "Custom vision",
+      customRequestBody(cfg),
     );
   return callOllamaVision(
     cfg,
@@ -374,4 +398,4 @@ async function embed(texts, modelOverride) {
   if (!r.ok) throw new Error("Local embeddings: " + (data.error || r.status));
   return data.embeddings;
 }
-module.exports = { llm, embed, vision, readConfig, writeConfig };
+module.exports = { llm, embed, vision, customRequestBody, readConfig, writeConfig };

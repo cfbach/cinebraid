@@ -298,6 +298,7 @@ async function main() {
     "continuity-correction-workflow.js",
     "coverage-workflow.js",
     "current-behavior.js",
+    "custom-provider-routing.js",
     "data-recovery-focused-state.js",
     "data-safety-repair.js",
     "deep-bot-safety.js",
