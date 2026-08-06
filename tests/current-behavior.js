@@ -322,6 +322,7 @@ async function main() {
     "private-preview-ux.js",
     "project-builder-kit.js",
     "project-switch-safety.js",
+    "provider-health.js",
     "readiness-feedback.js",
     "real-browser-workflow.py",
     "reference-angle-routing.js",
