@@ -1,3 +1,13 @@
+# CineBraid 6.6.6 Private Test 1 — Local OpenAI-Compatible Assistant Providers
+
+- A local OpenAI-compatible server can now supply CineBraid's assistant, Project Bible Q&A, prompt improvement and structured text workflows. On a machine already running a compatible multimodal server, that removes the need to keep a second large local assistant model resident beside it.
+- Adds optional custom-provider request settings — sampling temperature, Top-K and model-thinking behaviour. Each is blank or default until set, and a blank setting sends nothing, so an existing custom provider behaves exactly as it did.
+- AI readiness now reflects the provider actually selected instead of assuming Ollama. A custom server is contacted to confirm it is running and serving the configured model; an unreachable one fails closed to manual mode and recovers without a restart.
+- Provider base URLs and keys stay on the CineBraid server and are not sent to the browser.
+- Local-only projects are now judged by endpoint locality rather than by provider name: a loopback custom provider qualifies, a remote one does not, and a remote Ollama endpoint no longer qualifies either.
+- Deterministic `useLLM:false` prompt compilation, existing multi-image vision routing and Ollama-routed embeddings are all unchanged.
+- Private test build, not a public production release. See `docs/releases/v6.6.6-private.1/` for the known limitations.
+
 # CineBraid 6.6.5 Private Test 1 — First Packaged Private Test
 
 - First packaged CineBraid release: a Windows ZIP, an architecture-neutral runtime tarball, `SHA256SUMS.txt` and a machine-readable manifest, all built from one commit with `git archive`.
