@@ -68,6 +68,23 @@ function assistantMessageText(message) {
   return "";
 }
 
+/* Extra body fields for the custom OpenAI-compatible provider.
+   "Custom" stays a genuinely generic provider: nothing is sent unless it has been
+   configured, because vLLM, LM Studio, llama.cpp and hosted OpenAI-compatible APIs
+   do not all accept the same fields. Configuring them is what makes a reasoning
+   server such as vLLM-served Nemotron usable — without enable_thinking:false a short
+   request spends its whole budget on reasoning and returns empty content. */
+function customRequestBody(cfg = {}) {
+  const body = {};
+  if (cfg.customTemperature !== "" && Number.isFinite(Number(cfg.customTemperature)))
+    body.temperature = Number(cfg.customTemperature);
+  if (cfg.customTopK !== "" && Number.isFinite(Number(cfg.customTopK)))
+    body.top_k = Math.round(Number(cfg.customTopK));
+  if (cfg.customThinking === "disabled")
+    body.chat_template_kwargs = { enable_thinking: false };
+  return body;
+}
+
 async function callOpenAICompatible(
   baseUrl,
   key,
@@ -77,6 +94,7 @@ async function callOpenAICompatible(
   maxTokens,
   label = "OpenAI-compatible",
   requestOptions = {},
+  extraBody = {},
 ) {
   if (!baseUrl) throw new Error(label + " base URL is not set.");
   if (!model) throw new Error(label + " model is not set.");
@@ -86,6 +104,8 @@ async function callOpenAICompatible(
     method: "POST",
     headers,
     body: JSON.stringify({
+      // Configured extras first: the request CineBraid actually needs always wins.
+      ...extraBody,
       model,
       max_tokens: maxTokens || 8000,
       ...(requestOptions.responseFormat === "json" ? { response_format: { type: "json_object" } } : {}),
@@ -152,6 +172,43 @@ async function callOllamaText(cfg, model, system, user, maxTokens, requestOption
   if (thinking) throw new Error("Local AI returned reasoning but no final answer after both Ollama chat and generate attempts. Try the exact model name shown by `ollama list` or switch the text model to a standard instruct model.");
   return "";
 }
+/* Whether a provider endpoint is genuinely on this machine.
+   The local-only project policy is answered with this, so it fails closed: a URL that
+   cannot be parsed, or that names anything this process cannot prove is loopback, is
+   not local. A private LAN address is somebody else's computer. */
+function isLoopbackIpv4(host) {
+  const octets = host.split(".");
+  if (octets.length !== 4) return false;
+  if (!octets.every((part) => /^\d{1,3}$/.test(part) && Number(part) <= 255)) return false;
+  return octets[0] === "127";
+}
+function isLocalProviderEndpoint(baseUrl) {
+  let host = "";
+  try {
+    host = new URL(String(baseUrl || "").trim()).hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+  if (host.startsWith("[") && host.endsWith("]")) host = host.slice(1, -1);
+  host = host.replace(/\.$/, "");
+  if (!host) return false;
+  // localhost and anything under it are reserved for the loopback interface (RFC 6761).
+  if (host === "localhost" || host.endsWith(".localhost")) return true;
+  if (host.includes(":")) {
+    // The URL parser has already collapsed the address, so ::1 is the only spelling left.
+    if (host === "::1") return true;
+    const mapped = /^::ffff:(.+)$/.exec(host);
+    if (!mapped) return false;
+    if (mapped[1].includes(".")) return isLoopbackIpv4(mapped[1]);
+    // An IPv4-mapped address the parser rewrote to hex: ::ffff:7f00:1 is 127.0.0.1.
+    const groups = mapped[1].split(":");
+    if (groups.length !== 2 || !groups.every((group) => /^[0-9a-f]{1,4}$/.test(group)))
+      return false;
+    return parseInt(groups[0], 16) >> 8 === 127;
+  }
+  return isLoopbackIpv4(host);
+}
+
 function providerForTask(cfg, task, override) {
   if (override) return override;
   const routed = cfg.routing?.[task];
@@ -195,6 +252,7 @@ async function llm(
       maxTokens,
       "Custom AI server",
       requestOptions,
+      customRequestBody(cfg),
     );
   return callOllamaText(
     cfg,
@@ -247,6 +305,7 @@ async function callOpenAIVision(
   imagesB64,
   maxTokens,
   label,
+  extraBody = {},
 ) {
   if (!model) throw new Error(label + " vision model is not set.");
   const headers = { "content-type": "application/json" };
@@ -262,6 +321,7 @@ async function callOpenAIVision(
     method: "POST",
     headers,
     body: JSON.stringify({
+      ...extraBody,
       model,
       max_tokens: maxTokens || 4000,
       messages: [
@@ -350,6 +410,7 @@ async function vision(
       imagesB64,
       maxTokens,
       "Custom vision",
+      customRequestBody(cfg),
     );
   return callOllamaVision(
     cfg,
@@ -374,4 +435,12 @@ async function embed(texts, modelOverride) {
   if (!r.ok) throw new Error("Local embeddings: " + (data.error || r.status));
   return data.embeddings;
 }
-module.exports = { llm, embed, vision, readConfig, writeConfig };
+module.exports = {
+  llm,
+  embed,
+  vision,
+  customRequestBody,
+  isLocalProviderEndpoint,
+  readConfig,
+  writeConfig,
+};

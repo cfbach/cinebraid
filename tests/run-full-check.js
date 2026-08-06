@@ -32,6 +32,9 @@ const nodeSuites = [
   "check:blocking-automation",
   "check:automation-restoration",
   "check:v6641",
+  "check:custom-provider",
+  "check:provider-health",
+  "check:local-only",
 ];
 
 const browserSuites = ["check:manual-browser", "check:browser-real", "check:h3-browser", "check:preview-layout", "check:ui-state"];

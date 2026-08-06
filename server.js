@@ -11,7 +11,7 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const { spawnSync } = require("child_process");
-const { llm, embed, vision } = require("./llm");
+const { llm, embed, vision, isLocalProviderEndpoint } = require("./llm");
 const {
   isMasked,
   mergeConfig,
@@ -408,7 +408,34 @@ function projectAIPolicy() {
     return "project-default";
   }
 }
+/* A local-only project is asking for its material to stay on this machine. That is a
+   property of the endpoint, not of the provider's name: a custom OpenAI-compatible
+   server on loopback satisfies it, the same provider pointed at a remote host does
+   not, and neither does an Ollama URL on another computer. Per-task routing is
+   deliberately ignored here — under this policy one provider is chosen for
+   everything, and if none of them is local the request is refused rather than sent. */
+function localOnlyTextProvider() {
+  const cfg = readConfig();
+  if (
+    (cfg.assistant?.provider || "ollama") === "custom" &&
+    isLocalProviderEndpoint(cfg.customBaseUrl)
+  )
+    return "custom";
+  if (isLocalProviderEndpoint(cfg.ollamaUrl)) return "ollama";
+  throw new Error(
+    "This project is set to local-only AI, and no AI provider is configured with an endpoint on this machine. Point Ollama or the custom AI server at this computer in Settings, or change the project's AI policy.",
+  );
+}
 function aiProviderOverride() {
+  const policy = projectAIPolicy();
+  if (policy === "disabled")
+    throw new Error("AI features are disabled for this project.");
+  return policy === "local-only" ? localOnlyTextProvider() : null;
+}
+/* Vision resolves exactly as it did before. Multi-image review stays on its existing
+   provider path until the declared-entity single-image continuity engine is ported,
+   so local-only vision is not re-pointed at a custom server as part of that. */
+function aiVisionProviderOverride() {
   const policy = projectAIPolicy();
   if (policy === "disabled")
     throw new Error("AI features are disabled for this project.");
@@ -1222,11 +1249,11 @@ ${question}`,
 });
 
 /* ---- simple local system health ---- */
-async function probeJson(url, timeoutMs = 1800) {
+async function probeJson(url, timeoutMs = 1800, headers = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const r = await fetch(url, { signal: controller.signal });
+    const r = await fetch(url, { signal: controller.signal, headers });
     if (!r.ok) return { ok: false, error: "HTTP " + r.status };
     return { ok: true, data: await r.json().catch(() => ({})) };
   } catch (e) {
@@ -1280,10 +1307,71 @@ async function ollamaInventory(cfg = readConfig(), force = false) {
   return result;
 }
 
+/* A custom provider's failure is described without repeating anything about where it
+   lives. Network errors carry the URL they failed against, and this text reaches the
+   browser. */
+function safeProviderError(error) {
+  const text = String(error || "").trim();
+  if (!text) return "";
+  if (/^HTTP \d+$/.test(text)) return text;
+  if (text === "timeout") return "timeout";
+  return "unreachable";
+}
+const CUSTOM_MODEL_CACHE = { at: 0, base: "", result: null };
+/* Readiness for a custom OpenAI-compatible provider. The inventory deliberately
+   carries no base URL: unlike the Ollama endpoint, which the operator sets and reads
+   back in Settings, a custom endpoint may be an internal service the browser must
+   never learn about. */
+async function customInventory(cfg = readConfig(), force = false) {
+  const base = String(cfg.customBaseUrl || "").trim().replace(/\/$/, "");
+  if (!base) return { ok: false, configured: false, error: "", models: [] };
+  if (
+    !force &&
+    CUSTOM_MODEL_CACHE.result &&
+    CUSTOM_MODEL_CACHE.base === base &&
+    Date.now() - CUSTOM_MODEL_CACHE.at < 10000
+  )
+    return CUSTOM_MODEL_CACHE.result;
+  const probe = await probeJson(
+    base + "/models",
+    2200,
+    cfg.customKey ? { authorization: "Bearer " + cfg.customKey } : {},
+  );
+  const listed = Array.isArray(probe.data?.data)
+    ? probe.data.data
+    : Array.isArray(probe.data?.models)
+      ? probe.data.models
+      : [];
+  const result = {
+    ok: probe.ok,
+    configured: true,
+    error: safeProviderError(probe.error),
+    models: listed.map((x) => x?.id || x?.name || x?.model).filter(Boolean).slice(0, 40),
+  };
+  CUSTOM_MODEL_CACHE.at = Date.now();
+  CUSTOM_MODEL_CACHE.base = base;
+  CUSTOM_MODEL_CACHE.result = result;
+  return result;
+}
+const UNPROBED_CUSTOM = { ok: false, configured: false, error: "", models: [] };
+/* One inventory read per status request, for every provider that request can consult.
+   A custom endpoint is contacted only when something is actually routed to it. */
+async function providerInventories(cfg = readConfig(), force = false) {
+  const usesCustom =
+    cfg.assistant?.provider === "custom" ||
+    resolvedVisionProvider(cfg) === "custom" ||
+    Object.values(cfg.routing || {}).includes("custom");
+  return {
+    ollama: await ollamaInventory(cfg, force),
+    custom: usesCustom ? await customInventory(cfg, force) : UNPROBED_CUSTOM,
+  };
+}
+
 app.get("/api/system/health", async (req, res) => {
   const c = readConfig();
   const provider = c.assistant?.provider || "ollama";
-  const ollama = await ollamaInventory(c, req.query?.refresh === "1");
+  const inventories = await providerInventories(c, req.query?.refresh === "1");
+  const ollama = inventories.ollama;
   const names = ollama.models || [];
   const modelReady = (configuredName) =>
     exactModelReady(names, configuredName);
@@ -1298,6 +1386,14 @@ app.get("/api/system/health", async (req, res) => {
     custom: !!c.customBaseUrl && !!c.customModel,
     none: true,
   };
+  const capabilities = assistantCapabilities(c, inventories);
+  /* Health answers "can CineBraid do this", not "where does it go to do it".
+     Provider addresses and keys stay on the server. */
+  const publicCapability = (row) => ({
+    ready: !!row.ready,
+    provider: row.provider,
+    model: row.model || "",
+  });
   res.json({
     assistant: {
       provider,
@@ -1311,6 +1407,18 @@ app.get("/api/system/health", async (req, res) => {
           custom: "Custom AI server",
           none: "No AI",
         }[provider] || provider,
+      text: publicCapability(capabilities.text),
+      vision: publicCapability(capabilities.vision),
+      embedding: publicCapability(capabilities.embedding),
+    },
+    custom: {
+      configured: configured.custom,
+      inUse: inventories.custom.configured,
+      reachable: inventories.custom.ok,
+      error: inventories.custom.error,
+      textModel: c.customModel || "",
+      visionModel: c.customVisionModel || "",
+      models: inventories.custom.models,
     },
     ollama: {
       ok: ollama.ok,
@@ -3220,7 +3328,7 @@ function resolveProjectAssetUrl(url) {
 
 app.post("/api/prompt/analyze", async (req, res) => {
   try {
-    const visionProvider = aiProviderOverride();
+    const visionProvider = aiVisionProviderOverride();
     const refs = (req.body.references || [])
       .filter((r) => r.url && /\.(png|jpe?g|webp)$/i.test(r.url))
       .slice(0, 8);
@@ -3609,7 +3717,7 @@ async function requestStrictAssistantJson(system, payload, options = {}) {
 async function requestVisionResult(system, user, images, options = {}) {
   const label = options.label || "Vision assistant";
   const maxTokens = Number(options.maxTokens || 3000);
-  const provider = options.provider || aiProviderOverride();
+  const provider = options.provider || aiVisionProviderOverride();
   const model = options.model;
   const parse = typeof options.parse === "function" ? options.parse : (raw) => raw;
   let lastError = null;
@@ -4461,7 +4569,7 @@ function reviewCriteria(P, kind, list, id, frameId = "") {
 }
 app.post("/api/llm/review", async (req, res) => {
   try {
-    const visionProvider = aiProviderOverride();
+    const visionProvider = aiVisionProviderOverride();
     const P = readJsonSync(DATA());
     const { kind, list, id, frameId } = req.body || {};
     const source = reviewCriteria(P, kind, list, id, frameId || "");
@@ -4723,7 +4831,7 @@ function normalizeSceneReview(parsed, scene, rows) {
 }
 app.post("/api/llm/review-scene", async (req, res) => {
   try {
-    const visionProvider = aiProviderOverride();
+    const visionProvider = aiVisionProviderOverride();
     const P = readJsonSync(DATA());
     const sceneId = String(req.body?.sceneId || "").trim();
     const scene = (P.scenes || []).find((item) => String(item.id) === sceneId);
@@ -4817,7 +4925,7 @@ const SCENE_CORRECTION_REVIEW_SYSTEM = `You are reviewing candidate repairs for 
 {"reviews":[{"n":1,"pass":true,"score":88,"notes":"specific visible continuity judgment"}],"ranking":[1],"suggested":1,"rationale":"one concise sentence"}`;
 app.post("/api/llm/review-scene-correction", async (req, res) => {
   try {
-    const visionProvider = aiProviderOverride();
+    const visionProvider = aiVisionProviderOverride();
     const P = readJsonSync(DATA());
     const sceneId = String(req.body?.sceneId || "").trim();
     const targetShotId = String(req.body?.targetShotId || "").trim();
@@ -4915,7 +5023,7 @@ app.post("/api/llm/review-derived-frame", async (req, res) => {
       {
         label: `Derived Frame ${frame.label || ""} review assistant`,
         maxTokens: 2400,
-        provider: aiProviderOverride(),
+        provider: aiVisionProviderOverride(),
         parse: (raw) => {
           const parsed = parseReviewJson(raw);
           if (!parsed) throw new Error("vision model returned an unstructured derived-frame review");
@@ -5001,7 +5109,7 @@ app.post("/api/llm/review-frame-sequence", async (req, res) => {
     const assistant = await requestVisionResult(FRAME_SEQUENCE_REVIEW_SYSTEM, user, images, {
       label: `Frame sequence continuity · ${shot.id}`,
       maxTokens: 2200,
-      provider: aiProviderOverride(),
+      provider: aiVisionProviderOverride(),
       parse: (raw) => {
         const parsed = parseReviewJson(raw);
         if (!parsed) throw new Error("vision model returned an unstructured frame-sequence review");
@@ -5060,7 +5168,7 @@ function candidateReviewBuild(P, shot, fileName, requestedId) {
 }
 app.post("/api/llm/review-candidate", async (req, res) => {
   try {
-    const visionProvider = aiProviderOverride();
+    const visionProvider = aiVisionProviderOverride();
     const P = readJsonSync(DATA());
     const shotId = path.basename(String(req.body?.shotId || ""));
     const frameId = String(req.body?.frameId || "");
@@ -5271,7 +5379,7 @@ function normalizeEntityCandidateReview(parsed, options = {}) {
 }
 app.post("/api/llm/review-entity-candidate", async (req, res) => {
   try {
-    const visionProvider = aiProviderOverride();
+    const visionProvider = aiVisionProviderOverride();
     const P = readJsonSync(DATA());
     const list = String(req.body?.list || "");
     const id = String(req.body?.id || "");
@@ -5381,7 +5489,7 @@ Return a score, explicit model pass/fail, all hard checks, all five factor findi
 });
 
 async function performShotCandidateReview(shotId) {
-  const visionProvider = aiProviderOverride();
+  const visionProvider = aiVisionProviderOverride();
   const P = readJsonSync(DATA());
   const source = reviewCriteria(P, "shot", null, shotId);
   const totalFiles = source.files.length;
@@ -5562,7 +5670,25 @@ function providerConfigured(provider, cfg) {
     return !!cfg.customBaseUrl && !!cfg.customModel;
   return provider === "none";
 }
-function capabilityCheck(label, provider, model, inventory, cfg) {
+/* agents.models.* name exact Ollama tags, so they cannot describe a model on another
+   provider. Every other provider states its own models in its own settings. */
+function providerCapabilityModel(provider, cfg, kind) {
+  if (provider === "custom")
+    return kind === "vision"
+      ? cfg.customVisionModel || cfg.customModel || ""
+      : cfg.customModel || "";
+  if (provider === "openai")
+    return kind === "vision"
+      ? cfg.openaiVisionModel || cfg.openaiModel || ""
+      : cfg.openaiModel || "";
+  if (provider === "anthropic")
+    return kind === "vision"
+      ? cfg.anthropicVisionModel || cfg.anthropicModel || ""
+      : cfg.anthropicModel || "";
+  return "";
+}
+function capabilityCheck(label, provider, ollamaModel, inventories, cfg, kind = "text") {
+  const model = providerCapabilityModel(provider, cfg, kind) || ollamaModel;
   if (provider === "none")
     return {
       ready: false,
@@ -5573,6 +5699,7 @@ function capabilityCheck(label, provider, model, inventory, cfg) {
       action: "Choose an AI provider in Settings.",
     };
   if (provider === "ollama") {
+    const inventory = inventories.ollama;
     if (!inventory.ok)
       return {
         ready: false,
@@ -5618,6 +5745,38 @@ function capabilityCheck(label, provider, model, inventory, cfg) {
       message: `${label} provider ${provider} is not configured.`,
       action: "Complete the provider connection in Settings.",
     };
+  /* A configured custom server still has to answer. Ollama's readiness is not part of
+     this: a healthy custom text provider is enough to work with, and an unreachable
+     one fails closed rather than leaving controls enabled that cannot run. */
+  if (provider === "custom") {
+    const custom = inventories.custom || UNPROBED_CUSTOM;
+    if (!custom.ok)
+      return {
+        ready: false,
+        label,
+        provider,
+        model: model || "",
+        message: `${label} cannot reach the custom AI server${custom.error ? ` (${custom.error})` : ""}.`,
+        action: "Start the custom AI server, or correct its address and key in Settings, then retry.",
+      };
+    if (custom.models.length && !custom.models.includes(model))
+      return {
+        ready: false,
+        label,
+        provider,
+        model: model || "",
+        message: `${label} model "${model}" is not served by the custom AI server.`,
+        action: `Use one of the served model names: ${custom.models.slice(0, 6).join(", ")}.`,
+      };
+    return {
+      ready: true,
+      label,
+      provider,
+      model,
+      message: `${label} is ready with ${model}.`,
+      action: "",
+    };
+  }
   return {
     ready: true,
     label,
@@ -5655,8 +5814,8 @@ function summarizeReadiness(hard, soft, readyDetail) {
     checks,
   };
 }
-async function agentReadiness(type, cfg = readConfig(), inventory = null) {
-  const inv = inventory || (await ollamaInventory(cfg));
+async function agentReadiness(type, cfg = readConfig(), inventories = null) {
+  const inv = inventories || (await providerInventories(cfg));
   const textProvider = cfg.assistant?.provider || "ollama";
   const visionProvider = resolvedVisionProvider(cfg);
   const plannerModel = cfg.agents?.models?.coordinator || cfg.ollamaModel;
@@ -5671,7 +5830,7 @@ async function agentReadiness(type, cfg = readConfig(), inventory = null) {
   const text = (label, model = plannerModel) =>
     capabilityCheck(label, textProvider, model, inv, cfg);
   const visual = (label) =>
-    capabilityCheck(label, visionProvider, visionModel, inv, cfg);
+    capabilityCheck(label, visionProvider, visionModel, inv, cfg, "vision");
   const localEmbedding = capabilityCheck(
     "Local semantic search",
     "ollama",
@@ -5718,8 +5877,11 @@ async function agentReadiness(type, cfg = readConfig(), inventory = null) {
     );
   return summarizeReadiness([], [], "Agent is ready.");
 }
-function assistantCapabilities(cfg = readConfig(), inventory = null) {
-  const inv = inventory || { ok: false, models: [], base: cfg.ollamaUrl || "" };
+function assistantCapabilities(cfg = readConfig(), inventories = null) {
+  const inv = inventories || {
+    ollama: { ok: false, models: [], base: cfg.ollamaUrl || "" },
+    custom: UNPROBED_CUSTOM,
+  };
   const textProvider = cfg.assistant?.provider || "ollama";
   const visionProvider = resolvedVisionProvider(cfg);
   const plannerModel = cfg.agents?.models?.coordinator || cfg.ollamaModel;
@@ -5745,7 +5907,11 @@ function assistantCapabilities(cfg = readConfig(), inventory = null) {
       visionModel,
       inv,
       cfg,
+      "vision",
     ),
+    /* Embeddings stay their own route. Not every text provider serves them — the
+       qualified Nemotron deployment answers /v1/embeddings with 404 — so semantic
+       search keeps asking Ollama for a small embedding model. */
     embedding: capabilityCheck(
       "Local semantic search",
       "ollama",
@@ -6031,16 +6197,16 @@ async function maybeAutoIndex() {
 app.get("/api/agents/status", async (req, res) => {
   const cfg = readConfig();
   const P = reconcileOrphanedAgentRuns(readProject());
-  const inventory = await ollamaInventory(cfg);
+  const inventories = await providerInventories(cfg);
   const readiness = Object.fromEntries(
     await Promise.all(
       Object.keys(AGENT_LABELS).map(async (id) => [
         id,
-        await agentReadiness(id, cfg, inventory),
+        await agentReadiness(id, cfg, inventories),
       ]),
     ),
   );
-  const capabilities = assistantCapabilities(cfg, inventory);
+  const capabilities = assistantCapabilities(cfg, inventories);
   res.json({
     enabled: !!cfg.agents?.enabled,
     manualMode: !capabilities.text.ready,
@@ -6055,10 +6221,10 @@ app.get("/api/agents/status", async (req, res) => {
     },
     index: agentIndexMeta(P),
     localModels: {
-      ok: inventory.ok,
-      error: inventory.error,
-      base: inventory.base,
-      count: inventory.models.length,
+      ok: inventories.ollama.ok,
+      error: inventories.ollama.error,
+      base: inventories.ollama.base,
+      count: inventories.ollama.models.length,
     },
     playbook: {
       loaded: !!AgentSuite.PLAYBOOK,

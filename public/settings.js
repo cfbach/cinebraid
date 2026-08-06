@@ -169,6 +169,11 @@ function assistantConfigPatch() {
     patch.customKey = v("#cfg-custom-key", CONFIG.customKey || "");
     patch.customModel = v("#cfg-custom-model", CONFIG.customModel || "");
     patch.customVisionModel = v("#cfg-custom-vision", CONFIG.customVisionModel || "");
+    /* Blank stays blank: the server treats an empty optional request setting as
+       "do not send this field to the custom endpoint at all". */
+    patch.customTemperature = String(v("#cfg-custom-temperature", "")).trim();
+    patch.customTopK = String(v("#cfg-custom-top-k", "")).trim();
+    patch.customThinking = v("#cfg-custom-thinking", CONFIG.customThinking || "auto");
   }
   if ($("#cfg-ollama")) {
     patch.ollamaUrl = v("#cfg-ollama", CONFIG.ollamaUrl || "http://localhost:11434").trim();

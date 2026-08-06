@@ -37,6 +37,12 @@ const DEFAULT_CONFIG = {
   customBaseUrl: "http://127.0.0.1:8000/v1",
   customModel: "",
   customVisionModel: "",
+  /* Optional request settings for the custom OpenAI-compatible provider. Blank means
+     "do not send the field", because a custom endpoint may be vLLM, LM Studio,
+     llama.cpp or a remote API, and only some of them accept each of these. */
+  customTemperature: "",
+  customTopK: "",
+  customThinking: "auto",
   ollamaUrl: "http://127.0.0.1:11434",
   ollamaModel: "qwen3.6:35b-a3b",
   ollamaVisionModel: "qwen3-vl:30b-a3b-instruct",
@@ -118,6 +124,17 @@ function isMasked(value) {
   return typeof value === "string" && value.startsWith(MASK_PREFIX);
 }
 
+/* An optional numeric setting is either a number inside its range or blank. Anything
+   else — an empty box, a stray word, an out-of-range value — normalizes to blank so
+   the request layer can simply omit the field. */
+function optionalNumber(value, min, max, round = false) {
+  if (value === "" || value === null || value === undefined) return "";
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return "";
+  const bounded = Math.min(max, Math.max(min, parsed));
+  return round ? Math.round(bounded) : bounded;
+}
+
 function normalizeConfig(config, options = {}) {
   const source = isPlainObject(config) ? config : {};
   const legacyFalKey = !isMasked(source.execution?.fal?.apiKey)
@@ -148,6 +165,11 @@ function normalizeConfig(config, options = {}) {
   merged.naming = deepMerge(DEFAULT_CONFIG.naming, merged.naming || {});
   merged.naming.versionPadding = Math.max(2, Math.min(5, Number(merged.naming.versionPadding) || 3));
   merged.naming.collisionBehavior = ["increment", "keep-original", "ask"].includes(merged.naming.collisionBehavior) ? merged.naming.collisionBehavior : "increment";
+  merged.customTemperature = optionalNumber(merged.customTemperature, 0, 2);
+  merged.customTopK = optionalNumber(merged.customTopK, 1, 1000, true);
+  merged.customThinking = ["auto", "disabled"].includes(merged.customThinking)
+    ? merged.customThinking
+    : "auto";
   merged.agents.maxConcurrent = Math.max(
     1,
     Math.min(3, Number(merged.agents.maxConcurrent) || 1),
