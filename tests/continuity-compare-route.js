@@ -360,8 +360,10 @@ async function main() {
   assert.deepStrictEqual(described.analysis.unusableFrames, []);
   const mug = described.entities.find((row) => row.entityId === "PROP-MUG");
   assert.strictEqual(mug.outcome, "issue", "an undeclared presence loss must arrive already classed as an issue");
-  assert.strictEqual(mug.findings[0].headline, "Present in the first frame, absent in the second", "the finding must arrive in production English");
-  assert(mug.findings[0].detail.includes("Frame A") && mug.findings[0].detail.includes("Frame B"), "the detail must name the frames actually compared");
+  assert.strictEqual(mug.findings[0].headline, "Presence changed", "the finding must arrive in production English");
+  assert.deepStrictEqual([mug.findings[0].from, mug.findings[0].to], ["present", "absent"], "the transition must carry the specifics the headline leaves out");
+  /* Nothing may restate the transition in prose underneath it. */
+  assert.strictEqual(mug.findings[0].detail, "", "a presence change is fully said by its transition and needs no detail sentence");
   assert.strictEqual(mug.findings[0].canMarkExpected, true, "a real change must arrive declarable");
   assert.deepStrictEqual(mug.findings[0].expectedAction, { target: "intent", field: "allowPresenceChange", value: "may-leave" }, "the declaration to write must arrive with the finding");
   const kai = described.entities.find((row) => row.entityId === "CHAR-KAI");

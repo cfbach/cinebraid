@@ -70,7 +70,10 @@ const FIVE_OUTCOMES = emptyComparison({
      noticed the change and knew it was intended is the whole point. */
   const kai = byId["CHAR-KAI"].findings[0];
   assert.strictEqual(kai.class, "expected");
-  assert(kai.reason.includes("Declared state changed"), "an expected finding must say why it is expected");
+  /* The engine's own reason restates the transition printed above it, so the
+     card says the one thing the transition cannot: which frame declared it. */
+  assert.strictEqual(kai.reason, "Matches the state declared for Frame B.", "an expected state change must name the frame that declared it, not repeat the transition");
+  assert.strictEqual(kai.detail, "", "an attribute change is fully said by its transition");
   assert.strictEqual(kai.canMarkExpected, false, "an already-expected finding offers no declaration");
   assert.strictEqual(byId["CHAR-KAI"].findings.length, 1, "an expected change stays visible as its own finding");
   pass("expected findings stay visible and carry the reason they were expected");
@@ -293,14 +296,15 @@ async function renderCheck(payload, options = {}) {
   for (const word of ["STABLE", "ISSUE", "EXPECTED", "UNCERTAIN", "REVIEW"])
     assert(markup.includes(word), `the summary must name ${word}`);
   assert(/outcome-issue[^>]*><i[^>]*>▲<\/i><b>1<\/b>/.test(markup), "each outcome must show its count");
-  assert(markup.includes("Present in the first frame, absent in the second"), "an issue must say what changed");
+  assert(markup.includes("Presence changed"), "an issue must say what changed");
+  assert(!markup.includes("Reported present in"), "no sentence may restate the transition printed above it");
   assert(markup.includes("Restore it, or declare that it may leave during this shot."), "an issue must recommend a next action");
   assert(markup.includes("MARK EXPECTED"), "a real change must offer the declaration");
   pass("the comparison summary renders all five outcome classes with counts, findings and next actions");
 
   /* Expected is visible, and reads differently from a break. */
   assert(markup.includes("State changed — as declared"), "an expected change must stay on screen");
-  assert(markup.includes("Declared state changed from &quot;Jacket on&quot; to &quot;Jacket removed&quot;."), "an expected change must say why it was expected");
+  assert(markup.includes("Matches the state declared for Frame B."), "an expected change must say why it was expected");
   assert(markup.includes("outcome-expected"), "expected must carry its own visual class");
   const expectedCard = markup.slice(markup.indexOf("outcome-expected"), markup.indexOf("outcome-expected") + 900);
   assert(!expectedCard.includes("MARK EXPECTED"), "an already-expected finding must not offer the declaration again");
@@ -447,6 +451,34 @@ async function renderCheck(payload, options = {}) {
   assert.strictEqual(relinked["KAI-2"]?.allowColorChange, true, "a relinked entity must keep its declared intent");
   assert.strictEqual(relinked.KAI, undefined, "the old id must not keep a stale declaration");
   pass("declared intent persists on the shot, clears completely, and follows an entity through a relink");
+}
+
+/* --- what the fold headers count ------------------------------------------ */
+{
+  const { rendered } = await renderCheck(comparePayload(), { run: false });
+  const markup = () => rendered.document.getElementById("main").innerHTML;
+  /* A bare number beside a fold full of rows reads as a count of the rows. */
+  assert(!/Frame states\s*<span>0<\/span>|Frame states\s*·\s*0/.test(markup()), "an unconfigured fold must not display a bare zero");
+  assert(markup().includes("<summary>Frame states</summary>"), "with nothing declared the fold is just its name");
+  assert(markup().includes("<summary>Declared continuity intent</summary>"), "the intent fold follows the same rule");
+
+  await evaluate(rendered, `setFrameContinuityState("L1-01","frame-b","character","KAI","state-alt")`);
+  await wait(20);
+  assert(markup().includes("Frame states · 1 override"), "one override must be named as an override, in the singular");
+  await evaluate(rendered, `setFrameContinuityState("L1-01","frame-a","character","KAI","state-default")`);
+  await wait(20);
+  assert(markup().includes("Frame states · 2 overrides"), "two overrides must agree in number");
+
+  await evaluate(rendered, `setContinuityIntentField("L1-01","KAI","allowMovement",true)`);
+  await wait(20);
+  assert(markup().includes("Declared continuity intent · 1 declaration"), "one declaration must be named as a declaration");
+  await evaluate(rendered, `setContinuityIntentField("L1-01","PR-TOOL","allowMovement",true)`);
+  await wait(20);
+  assert(markup().includes("Declared continuity intent · 2 declarations"), "two declarations must agree in number");
+
+  /* The help copy stays short enough to survive a 390px column. */
+  assert(markup().includes("Set a frame-specific state when a change is intentional. Otherwise the frame follows the shot, then the reference default."), "the frame-state copy must state the precedence in two sentences");
+  pass("fold headers name what they count and stay silent at zero; the frame-state copy states frame > shot > default in two sentences");
 }
 
 /* --- frame-level state selection ------------------------------------------ */

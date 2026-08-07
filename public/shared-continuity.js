@@ -944,10 +944,12 @@ function expectedActionFor(finding) {
   return { target: "accepted", field: `${finding.entity_id}:${finding.kind}:${finding.attribute || ""}`, value: true };
 }
 
+/* Short enough that the from → to line underneath carries the specifics
+   instead of saying them a second time in prose. */
 const CHANGE_HEADLINES = {
-  removed: "Present in the first frame, absent in the second",
-  added: "Absent in the first frame, present in the second",
-  moved: "Moved within the frame",
+  removed: "Presence changed",
+  added: "Presence changed",
+  moved: "Position changed",
 };
 const CHANGE_RECOMMENDATIONS = {
   removed: "Restore it, or declare that it may leave during this shot.",
@@ -958,8 +960,15 @@ const CHANGE_RECOMMENDATIONS = {
 /* One finding, said once, in the words a production uses. `class` is the
    five-value outcome; `type` is the engine's own kind so an advanced view can
    still group by it without the normal card exposing it. */
+/* One short line saying why a change is not a break. The engine's own
+   intentReason is used verbatim wherever it adds something the card does not
+   already show; the declared-state case is the exception, because it restates
+   the from → to transition printed directly above it. */
+function intendedReason(finding, frameB) {
+  if (finding.intentSource === "declared-state-change") return `Matches the state declared for ${frameB}.`;
+  return finding.intentReason || "";
+}
 function describeFinding(finding, bucket, options = {}) {
-  const frameA = options.frameALabel || "the first frame";
   const frameB = options.frameBLabel || "the second frame";
   const base = {
     entityId: finding.entity_id,
@@ -985,14 +994,14 @@ function describeFinding(finding, bucket, options = {}) {
       severity: intended ? "" : finding.kind === "removed" || finding.kind === "added" ? "high" : "medium",
       headline: intended ? `${headline} — as declared` : headline,
       from, to,
-      detail: finding.kind === "removed"
-        ? `Reported present in ${frameA} and absent in ${frameB}.`
-        : finding.kind === "added"
-          ? `Reported absent in ${frameA} and present in ${frameB}.`
-          : finding.kind === "moved"
-            ? "Its centre moved further than a locked camera can explain."
-            : "",
-      reason: intended ? finding.intentReason || "" : finding.intentSource === "near-miss" ? finding.intentReason || "" : "",
+      /* A presence or attribute change is fully said by the transition line, so
+         there is no detail sentence to add. Movement has no transition — the
+         displacement is a number nobody should have to read — so its one line
+         is where the explanation goes. */
+      detail: finding.kind === "moved" ? "Its centre moved further than a locked camera can explain." : "",
+      reason: intended
+        ? intendedReason(finding, frameB)
+        : finding.intentSource === "near-miss" ? finding.intentReason || "" : "",
       recommendation: intended ? "" : CHANGE_RECOMMENDATIONS[finding.kind] || "Correct the change, or declare it as intentional.",
       /* Only a real observed change can be declared intentional. Unreadable
          evidence and invalid records are in other buckets and never reach here,

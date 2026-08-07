@@ -35,6 +35,13 @@ const CONTINUITY_OUTCOME_MARKS = { stable: "✓", issue: "▲", expected: "◆",
 const CONTINUITY_OUTCOME_WORDS = { stable: "Stable", issue: "Issue", expected: "Expected", uncertain: "Uncertain", review: "Review" };
 const CONTINUITY_KIND_WORDS = { character: "Character", location: "Location", prop: "Prop", vehicle: "Vehicle" };
 
+/* A bare number beside a fold that visibly contains rows reads as a count of
+   the rows. It is not — it counts what production has actually declared, which
+   is usually none of them. Say the noun, or say nothing. */
+function continuityFoldCount(total, singular, plural) {
+  return total ? ` · ${total} ${total === 1 ? singular : plural}` : "";
+}
+
 /* Readiness is the continuity provider's own, never generic vision. On the
    intended runtime the multi-image vision provider is deliberately unavailable
    while continuity is ready, so borrowing that answer would disable a working
@@ -411,7 +418,7 @@ function continuityIntentPanelMarkup(s, rows) {
       <label class="continuity-intent-note"><span>Other expected changes — one per line</span><textarea rows="2" placeholder="Kai removes the jacket" onchange="setContinuityExpectedText('${attr(s.id)}','${attr(id)}',this.value)">${esc((intent.expected || []).join("\n"))}</textarea></label>
     </article>`;
   }).join("");
-  return `<details class="fold continuity-intent" ${workspaceSectionOpen(key, false) ? "open" : ""} ontoggle="rememberWorkspaceSection('${attr(key)}',this.open)"><summary>Declared continuity intent <span>${declared}</span></summary><p class="hint">Declare a change before it is found and CineBraid reports it as expected instead of a break. Prefer a frame state below for anything the Bible can already name.</p><div class="continuity-intent-grid">${body}</div></details>`;
+  return `<details class="fold continuity-intent" ${workspaceSectionOpen(key, false) ? "open" : ""} ontoggle="rememberWorkspaceSection('${attr(key)}',this.open)"><summary>Declared continuity intent${esc(continuityFoldCount(declared, "declaration", "declarations"))}</summary><p class="hint">Declare a change before it is found and CineBraid reports it as expected instead of a break. Prefer a frame state below for anything the Bible can already name.</p><div class="continuity-intent-grid">${body}</div></details>`;
 }
 
 /* ---------- per-frame state surface --------------------------------------- */
@@ -433,7 +440,7 @@ function continuityFrameStatePanelMarkup(s, rows, pair) {
     return `<article class="continuity-state-row"><header><b>${esc(row.entity.name || row.entity.id)}</b><small>${esc(CONTINUITY_KIND_WORDS[row.type] || row.type)}</small></header><div class="continuity-state-cells">${cells}</div></article>`;
   }).join("");
   if (!body) return "";
-  return `<details class="fold continuity-frame-states" ${workspaceSectionOpen(key, false) ? "open" : ""} ontoggle="rememberWorkspaceSection('${attr(key)}',this.open)"><summary>Frame states <span>${declared}</span></summary><p class="hint">Name the state each frame is meant to be in and the change reads as expected rather than a break. A frame with no choice of its own follows the shot; the shot follows the reference's default.</p><div class="continuity-state-grid">${body}</div></details>`;
+  return `<details class="fold continuity-frame-states" ${workspaceSectionOpen(key, false) ? "open" : ""} ontoggle="rememberWorkspaceSection('${attr(key)}',this.open)"><summary>Frame states${esc(continuityFoldCount(declared, "override", "overrides"))}</summary><p class="hint">Set a frame-specific state when a change is intentional. Otherwise the frame follows the shot, then the reference default.</p><div class="continuity-state-grid">${body}</div></details>`;
 }
 
 /* ---------- the section --------------------------------------------------- */

@@ -242,7 +242,8 @@ try:
         assert outcome_count(page, 'stable') == 1, 'the bridge is unchanged'
         mug = page.locator('.continuity-entity', has_text='Enamel mug')
         assert 'ISSUE' in mug.inner_text()
-        assert 'Present in the first frame, absent in the second' in mug.inner_text()
+        assert 'Presence changed' in mug.inner_text()
+        assert 'present' in mug.inner_text() and 'absent' in mug.inner_text()
         watch = page.locator('.continuity-entity', has_text='Wristwatch')
         assert 'REVIEW' in watch.inner_text()
         assert 'Colour could not be compared' in watch.inner_text()
