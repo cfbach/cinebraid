@@ -240,22 +240,31 @@ async function main() {
   assert.strictEqual(result.body.validation.states["CHAR-KAI"], "present");
   assert.strictEqual(result.body.validation.contractVersion, "declared_entities_final");
   assert.deepStrictEqual(result.body.validation.invalidEntityIds, []);
-  assert.strictEqual(result.body.cached, false, "Phase 2 has no cache");
+  assert.strictEqual(result.body.cached, false, "the first observation of an image is never cached");
   assert.strictEqual(result.body.manifest.manifestHash.length, 20);
   /* The untracked colour was discarded before it could reach a comparison. */
   assert.strictEqual(result.body.observation.entities["PROP-WATCH"].color, "not-applicable");
   assert(result.body.validation.flags.some((flag) => flag.code === "untracked_attribute_discarded"));
   assert.strictEqual(result.body.observation.entities["PROP-MUG"].color, "white");
 
-  /* ---- 7. malformed content fails conservatively ---- */
+  /* ---- 7. malformed content fails conservatively ----
+
+     Each failure mode uses its own image so it is a genuine cache miss and
+     actually reaches the provider. Repeating an identical request would now be
+     served from cache, which is Phase 3's whole point. */
+  const distinctFrame = (tag) => {
+    const name = `S-01_${tag}.png`;
+    fs.writeFileSync(path.join(TAKES, name), Buffer.concat([PNG, Buffer.from(`::${tag}`)]));
+    return { shotId: "S-01", frameId: "frame-a", fileName: name };
+  };
   nextReply = "this is not json at all";
-  result = await postObserve({ shotId: "S-01", frameId: "frame-a" });
+  result = await postObserve(distinctFrame("malformed"));
   assert.strictEqual(result.response.status, 502);
   assert(/parsable JSON/i.test(result.body.error), result.body.error);
 
   /* A well-formed envelope that breaks the contract is reported, not accepted. */
   nextReply = JSON.stringify({ coordinate_mode: "permille", entities: { "CHAR-KAI": { presence: "absent", occlusion: "none", identifiable: "yes", bbox: [1, 2, 3, 4], color: "white", state: "not-applicable", markings: "not-applicable", evidence: "x" } } });
-  result = await postObserve({ shotId: "S-01", frameId: "frame-a" });
+  result = await postObserve(distinctFrame("badshape"));
   assert.strictEqual(result.response.status, 200);
   assert.strictEqual(result.body.validation.ok, false);
   assert.strictEqual(result.body.validation.states["CHAR-KAI"], "invalid", "an illegal record shape must not be judged");
@@ -263,7 +272,7 @@ async function main() {
 
   /* ---- 8. reasoning without a final answer fails loudly ---- */
   nextReply = { content: "", reasoning_content: "thinking about the frame" };
-  result = await postObserve({ shotId: "S-01", frameId: "frame-a" });
+  result = await postObserve(distinctFrame("reasoning"));
   assert.strictEqual(result.response.status, 500);
   assert(/reasoning but no final answer/i.test(result.body.error), result.body.error);
   nextReply = null;

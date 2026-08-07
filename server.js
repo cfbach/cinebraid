@@ -23,6 +23,7 @@ const PromptEngine = require("./prompt-engine");
 const { httpStatusForError } = require("./http-errors");
 const { resolveShotEntities, shotEntityTokenMatches, unresolvedShotDependencies } = require("./public/shared-entities");
 const Continuity = require("./public/shared-continuity");
+const { createContinuityCache } = require("./continuity-cache");
 const { resolvePromptBuild, resolvePromptBuildList, normalizePromptBuildHistory, registerPromptBuild, promptBuildRef, applyPromptBuildRetention } = require("./public/shared-build-history");
 const { SimpleZipWriter } = require("./zip-stream");
 const AgentSuite = require("./agent-suite");
@@ -5654,6 +5655,19 @@ async function performShotCandidateReview(shotId) {
    contract tests cannot drift apart. */
 const CONTINUITY_MAX_IMAGES = 1;
 
+/* HIT/MISS tracing is opt-in: it is useful during qualification and noise in
+   normal use. Cache corruption is always reported, because it silently costs
+   model calls and is worth knowing about. */
+const CONTINUITY_DEBUG = !!process.env.CINEBRAID_CONTINUITY_DEBUG;
+function continuityLog(message) {
+  if (CONTINUITY_DEBUG) console.log(`  continuity: ${message}`);
+}
+const continuityCache = createContinuityCache({
+  projectDir: PROJECT_DIR,
+  atomicWriteJson,
+  log: (message) => console.log(`  continuity: ${message}`),
+});
+
 function continuityFrameImage(P, shot, frameId, requestedFile) {
   const frames = Array.isArray(shot.keyframes) ? shot.keyframes : [];
   const frame = frameId ? frames.find((item) => String(item.id) === String(frameId)) : frames[0];
@@ -5697,63 +5711,281 @@ async function requestContinuityObservation(system, user, imageB64, schema, opti
   throw new Error(`Continuity observation failed: ${lastError?.message || "unknown error"}`);
 }
 
+/* Cache-first observation. One code path serves /observe and /compare, so a
+   comparison can never take a different route to the model than a direct
+   observation does.
+
+   On a MISS the request is byte-for-byte the qualified Phase 2 request: the
+   cache wraps that path, it does not participate in it. */
+async function observeContinuityFrame(P, shot, frameId, requestedFile, context) {
+  const image = continuityFrameImage(P, shot, frameId, requestedFile);
+  const resolvedFrameId = image.frame?.id || String(frameId || "");
+  const manifest = Continuity.buildContinuityManifest(P, shot, resolvedFrameId);
+  if (!manifest.entities.length)
+    throw Object.assign(
+      new Error("This shot declares no tracked continuity entities. Assign its cast, location or props before observing a frame."),
+      { status: 400 },
+    );
+
+  const imageHash = continuityCache.hashImageFile(image.file);
+  const identity = {
+    contractVersion: Continuity.CONTINUITY_OBSERVATION_CONTRACT_VERSION,
+    promptVersion: Continuity.OBSERVATION_PROMPT_VERSION,
+    imageHash,
+    manifestHash: manifest.manifestHash,
+    provider: context.provider,
+    model: context.model || "",
+  };
+  const key = continuityCache.observationKey(identity);
+  const entityIds = manifest.entities.map((row) => row.entity_id);
+
+  const hit = continuityCache.lookup(key, { ...identity, key, entityIds });
+  if (hit) {
+    continuityLog(`HIT  ${key.slice(0, 12)} ${shot.id}/${resolvedFrameId} img=${imageHash.slice(0, 8)} man=${manifest.manifestHash.slice(0, 8)}`);
+    return {
+      cached: true, key, imageHash, manifest, image, frameId: resolvedFrameId,
+      observation: hit.observation, validation: hit.validation, attempts: 0,
+      provider: identity.provider, model: identity.model,
+    };
+  }
+  continuityLog(`MISS ${key.slice(0, 12)} ${shot.id}/${resolvedFrameId} img=${imageHash.slice(0, 8)} man=${manifest.manifestHash.slice(0, 8)} -> ${identity.provider}`);
+
+  const schema = Continuity.buildObservationSchema(manifest);
+  const prompt = Continuity.buildObservationPrompt(manifest);
+  const images = [fs.readFileSync(image.file).toString("base64")];
+  const assistant = await requestContinuityObservation(prompt.system, prompt.user, images, schema, context);
+  let parsed = null;
+  try {
+    parsed = JSON.parse(cleanModelJson(assistant.raw));
+  } catch {
+    throw Object.assign(
+      new Error("The continuity provider did not return parsable JSON for a strict schema request."),
+      { status: 502 },
+    );
+  }
+  const validation = Continuity.validateObservationSet(manifest, parsed);
+  const observation = { coordinate_mode: validation.coordinate_mode, entities: validation.entities };
+  const stored = {
+    ok: validation.ok, flags: validation.flags, states: validation.states,
+    invalidEntityIds: validation.invalidEntityIds, contractVersion: validation.contractVersion,
+  };
+
+  /* A truthful observation is evidence even when it is uncertain: heavy
+     occlusion and unreadable attributes are answers, and re-asking the model
+     will not make them go away. What is never cached is a non-answer — a
+     provider error, an empty reply, or output that could not be parsed at all,
+     none of which reach this point. A response whose every declared record
+     failed the structural check is also not evidence, so it is not stored. */
+  const usable = validation.invalidEntityIds.length < manifest.entities.length;
+  if (usable) {
+    await continuityCache.store({
+      key, observedAt: new Date().toISOString(), lastAccessedAt: new Date().toISOString(),
+      shotId: String(shot.id), frameId: resolvedFrameId, imageName: image.name,
+      imageHash, manifestHash: manifest.manifestHash,
+      contractVersion: identity.contractVersion, promptVersion: identity.promptVersion,
+      provider: identity.provider, model: identity.model,
+      observation, validation: stored,
+    });
+  } else {
+    continuityLog(`NOSTORE ${key.slice(0, 12)} every declared record failed the structural check`);
+  }
+
+  return {
+    cached: false, key, imageHash, manifest, image, frameId: resolvedFrameId,
+    observation, validation: stored, attempts: assistant.attempts,
+    provider: identity.provider, model: identity.model,
+  };
+}
+/* A per-entity rollup of the comparison buckets, so Phase 4 can render one
+   card per entity without reassembling six parallel arrays. Presentation only:
+   every row is derived from findings the Phase 1 engine already produced, and
+   the verdict uses exactly the predicates applyIntent itself uses for review
+   and for content. No new judgement is introduced here. */
+function continuityEntityRollup(comparison, manifest) {
+  const rows = new Map();
+  for (const declaration of manifest.entities)
+    rows.set(declaration.entity_id, {
+      entityId: declaration.entity_id,
+      displayName: declaration.display_name,
+      kind: declaration.entity_type,
+      verdict: "pass",
+      changes: [], uncertain: [], shadeDrift: [],
+      attributeUnreadable: [], presenceUncertain: [], invalidRecords: [],
+    });
+  const push = (bucket, field) => {
+    for (const finding of comparison[bucket] || []) {
+      const row = rows.get(finding.entity_id);
+      if (row) row[field].push(finding);
+    }
+  };
+  push("changes", "changes");
+  push("uncertain", "uncertain");
+  push("shade_drift", "shadeDrift");
+  push("attribute_unreadable", "attributeUnreadable");
+  push("presence_uncertain", "presenceUncertain");
+  push("invalid_records", "invalidRecords");
+  for (const row of rows.values()) {
+    if (row.invalidRecords.length || row.uncertain.length || row.attributeUnreadable.length || row.presenceUncertain.length) row.verdict = "review";
+    else if (row.changes.some((finding) => finding.label === "possible-continuity-error")) row.verdict = "issue";
+    else if (row.changes.length) row.verdict = "expected";
+  }
+  return [...rows.values()];
+}
+function continuityObservationResponse(result) {
+  return {
+    cached: result.cached,
+    fileName: result.image.name,
+    imageHash: result.imageHash,
+    manifestHash: result.manifest.manifestHash,
+    observation: result.observation,
+    validation: result.validation,
+  };
+}
+
 app.post("/api/continuity/observe", async (req, res) => {
   try {
     const provider = continuityVisionProvider();
     const cfg = readConfig();
     const P = readJsonSync(DATA());
     const shotId = path.basename(String(req.body?.shotId || ""));
-    const frameId = String(req.body?.frameId || "");
     const shot = (P.shots || []).find((item) => String(item.id) === shotId);
     if (!shot) return res.status(404).json({ error: "shot not found" });
-
-    const image = continuityFrameImage(P, shot, frameId, req.body?.fileName);
-    const manifest = Continuity.buildContinuityManifest(P, shot, image.frame?.id || frameId || "");
-    if (!manifest.entities.length)
-      return res.status(400).json({
-        error: "This shot declares no tracked continuity entities. Assign its cast, location or props before observing a frame.",
-      });
-
-    const schema = Continuity.buildObservationSchema(manifest);
-    const prompt = Continuity.buildObservationPrompt(manifest);
-    const images = [fs.readFileSync(image.file).toString("base64")];
     const model = continuityVisionModel(cfg) || undefined;
-
-    const assistant = await requestContinuityObservation(prompt.system, prompt.user, images, schema, { provider, model });
-    let parsed = null;
-    try {
-      parsed = JSON.parse(cleanModelJson(assistant.raw));
-    } catch {
-      return res.status(502).json({ error: "The continuity provider did not return parsable JSON for a strict schema request." });
-    }
-    const validation = Continuity.validateObservationSet(manifest, parsed);
-
+    const result = await observeContinuityFrame(P, shot, String(req.body?.frameId || ""), req.body?.fileName, { provider, model });
     return res.json({
       ok: true,
       shotId,
-      frameId: image.frame?.id || "",
-      fileName: image.name,
+      frameId: result.frameId,
+      fileName: result.image.name,
       manifest: {
-        manifestVersion: manifest.manifestVersion,
-        contractVersion: manifest.contractVersion,
-        manifestHash: manifest.manifestHash,
-        n: manifest.n,
-        entities: manifest.entities,
+        manifestVersion: result.manifest.manifestVersion,
+        contractVersion: result.manifest.contractVersion,
+        manifestHash: result.manifest.manifestHash,
+        n: result.manifest.n,
+        entities: result.manifest.entities,
       },
-      observation: { coordinate_mode: validation.coordinate_mode, entities: validation.entities },
-      validation: {
-        ok: validation.ok,
-        flags: validation.flags,
-        states: validation.states,
-        invalidEntityIds: validation.invalidEntityIds,
-        contractVersion: validation.contractVersion,
-      },
+      observation: result.observation,
+      validation: result.validation,
       /* Provider identity only. The endpoint address and key stay server-side. */
-      engine: { provider, model: model || "", promptVersion: Continuity.OBSERVATION_PROMPT_VERSION, schemaName: Continuity.OBSERVATION_SCHEMA_NAME, imagesSent: images.length, attempts: assistant.attempts },
-      cached: false,
+      engine: {
+        provider: result.provider, model: result.model,
+        promptVersion: Continuity.OBSERVATION_PROMPT_VERSION,
+        schemaName: Continuity.OBSERVATION_SCHEMA_NAME,
+        imagesSent: result.cached ? 0 : 1, attempts: result.attempts,
+      },
+      imageHash: result.imageHash,
+      cached: result.cached,
     });
   } catch (error) {
     return res.status(error.status || 500).json({ error: error.message || "continuity observation failed" });
+  }
+});
+
+/* Deterministic comparison. Two independently observed frames are compared by
+   stable entity id inside CineBraid. The model is never shown both frames and
+   is never asked to compare anything — on a warm cache this route makes no
+   provider request at all. */
+app.post("/api/continuity/compare", async (req, res) => {
+  try {
+    const provider = continuityVisionProvider();
+    const cfg = readConfig();
+    const P = readJsonSync(DATA());
+    const shotId = path.basename(String(req.body?.shotId || ""));
+    const shot = (P.shots || []).find((item) => String(item.id) === shotId);
+    if (!shot) return res.status(404).json({ error: "shot not found" });
+    const frameA = String(req.body?.frameA || "");
+    const frameB = String(req.body?.frameB || "");
+    if (!frameA || !frameB) return res.status(400).json({ error: "Two frames are required to compare." });
+    if (frameA === frameB) return res.status(400).json({ error: "Choose two different frames to compare." });
+    const model = continuityVisionModel(cfg) || undefined;
+
+    const a = await observeContinuityFrame(P, shot, frameA, req.body?.fileNameA, { provider, model });
+    const b = await observeContinuityFrame(P, shot, frameB, req.body?.fileNameB, { provider, model });
+
+    /* Frame manifests may legitimately differ — an entity can be declared on
+       one frame and not the other. The union is compared so a declaration
+       difference surfaces as a missing record (human review) rather than being
+       silently dropped or invented. */
+    const union = [...a.manifest.entities];
+    const seen = new Set(union.map((row) => row.entity_id));
+    for (const row of b.manifest.entities) if (!seen.has(row.entity_id)) { union.push(row); seen.add(row.entity_id); }
+    union.sort((x, y) => (x.entity_id < y.entity_id ? -1 : x.entity_id > y.entity_id ? 1 : 0));
+    const comparisonManifest = { ...a.manifest, entities: union, n: union.length };
+
+    const sideA = { entities: a.observation.entities, states: a.validation.states };
+    const sideB = { entities: b.observation.entities, states: b.validation.states };
+    const raw = Continuity.compareObservations(sideA, sideB, comparisonManifest);
+    const comparison = Continuity.applyIntent(raw, {
+      shot,
+      manifestA: a.manifest,
+      manifestB: b.manifest,
+      humanIntentional: plainObject(shot.continuityIntentAccepted),
+    });
+
+    return res.json({
+      ok: true,
+      comparisonVersion: comparison.comparisonVersion,
+      shotId,
+      frameA: { frameId: a.frameId, fileName: a.image.name, label: a.image.frame?.label || "" },
+      frameB: { frameId: b.frameId, fileName: b.image.name, label: b.image.frame?.label || "" },
+      observations: { a: continuityObservationResponse(a), b: continuityObservationResponse(b) },
+      entities: continuityEntityRollup(comparison, comparisonManifest),
+      changes: comparison.changes,
+      uncertain: comparison.uncertain,
+      shadeDrift: comparison.shade_drift,
+      attributeUnreadable: comparison.attribute_unreadable,
+      presenceUncertain: comparison.presence_uncertain,
+      invalidRecords: comparison.invalid_records,
+      summary: {
+        label: comparison.label,
+        content: comparison.content,
+        needsReview: comparison.needsReview,
+        nearMissIntentCount: comparison.nearMissIntentCount,
+        nEntities: comparison.n_entities,
+        changes: comparison.changes.length,
+        uncertain: comparison.uncertain.length,
+        shadeDrift: comparison.shade_drift.length,
+        attributeUnreadable: comparison.attribute_unreadable.length,
+        presenceUncertain: comparison.presence_uncertain.length,
+        invalidRecords: comparison.invalid_records.length,
+      },
+      intentDescriptors: comparison.intentDescriptors,
+      engine: {
+        provider, model: model || "",
+        promptVersion: Continuity.OBSERVATION_PROMPT_VERSION,
+        modelComparisonCalls: 0,
+        providerRequests: (a.cached ? 0 : 1) + (b.cached ? 0 : 1),
+      },
+    });
+  } catch (error) {
+    return res.status(error.status || 500).json({ error: error.message || "continuity comparison failed" });
+  }
+});
+
+/* Purge derived evidence. Never touches media or project data. Scoped to the
+   active project and filtered only by identifiers the app already owns — no
+   cache keys and no paths are accepted from the browser. */
+app.delete("/api/continuity/cache", async (req, res) => {
+  try {
+    const shotId = req.query?.shotId ? path.basename(String(req.query.shotId)) : "";
+    const frameId = req.query?.frameId ? String(req.query.frameId) : "";
+    if (frameId && !shotId) return res.status(400).json({ error: "A frame purge needs its shot." });
+    if (shotId) {
+      const P = readJsonSync(DATA());
+      if (!(P.shots || []).some((item) => String(item.id) === shotId)) return res.status(404).json({ error: "shot not found" });
+    }
+    const before = continuityCache.stats().size;
+    const result = await continuityCache.purge({ shotId, frameId });
+    return res.json({ ok: true, scope: frameId ? "frame" : shotId ? "shot" : "project", shotId, frameId, removed: result.removed || 0, before, after: result.size });
+  } catch (error) {
+    return res.status(error.status || 500).json({ error: error.message || "continuity cache purge failed" });
+  }
+});
+app.get("/api/continuity/cache", (req, res) => {
+  try {
+    return res.json({ ok: true, ...continuityCache.stats() });
+  } catch (error) {
+    return res.status(500).json({ error: error.message || "continuity cache is unavailable" });
   }
 });
 
