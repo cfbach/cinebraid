@@ -163,9 +163,29 @@ assert(codes(broken).includes("invalid_record_shape"));
 assert.strictEqual(broken.states.prop_mug, "invalid");
 assert.deepStrictEqual(broken.entities.prop_mug.bbox, [5, 5, 9, 9], "the raw record is preserved for review rather than rewritten");
 
-/* ---- 8. out-of-vocabulary values are flagged ---- */
-const badEnum = validateObservationSet(twoEntities, wrap({ char_person: present({ color: "chartreuse" }), prop_mug: present() }));
+/* ---- 8. out-of-vocabulary values are flagged ----
+
+   Structural fields are always meaningful, so an illegal value there is always
+   an invalid_enum and makes the record itself untrustworthy. */
+const badStructural = validateObservationSet(twoEntities, wrap({ char_person: present({ occlusion: "mostly" }), prop_mug: present() }));
+assert(codes(badStructural).includes("invalid_enum"));
+assert.strictEqual(badStructural.states.char_person, "invalid");
+
+/* A TRACKED attribute with an illegal value is flagged and neutralised to
+   unreadable, so it can never become a change; the record survives. */
+const colourTracked = manifestOf([{ entity_id: "prop_mug", track_color: true }]);
+const badEnum = validateObservationSet(colourTracked, wrap({ prop_mug: present({ color: "chartreuse" }) }));
 assert(codes(badEnum).includes("invalid_enum"));
+assert.strictEqual(badEnum.flags.find((flag) => flag.code === "invalid_enum").field, "color");
+assert.strictEqual(badEnum.entities.prop_mug.color, "uncertain", "an illegal tracked value is neutralised, never coerced or kept");
+assert.strictEqual(badEnum.states.prop_mug, "present", "one bad attribute must not discard the whole record");
+
+/* An UNTRACKED attribute is never validated at all: CineBraid did not ask, so
+   whatever came back is simply discarded rather than judged. */
+const untrackedIllegal = validateObservationSet(twoEntities, wrap({ char_person: present({ color: "chartreuse" }), prop_mug: present() }));
+assert(!codes(untrackedIllegal).includes("invalid_enum"), "an untracked attribute has no vocabulary to violate");
+assert(codes(untrackedIllegal).includes("untracked_attribute_discarded"));
+assert.strictEqual(untrackedIllegal.entities.char_person.color, "not-applicable");
 const badMode = validateObservationSet(twoEntities, { coordinate_mode: "pixels", entities: { char_person: present(), prop_mug: present() } });
 assert(codes(badMode).includes("invalid_coordinate_mode"));
 

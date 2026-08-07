@@ -533,19 +533,59 @@ const OBSERVATION_FLAGS = [
   "invalid_enum",
   "untracked_attribute_discarded",
 ];
+/* How far a flag reaches. `ok` answers "did this response need any handling at
+   all", which is the right question for qualification metrics and the wrong one
+   for a UI: a deterministic policy action makes ok false while leaving the
+   evidence perfectly good.
+
+   policy  CineBraid did something deliberate and safe. The evidence stands.
+   entity  This one record cannot be trusted. Phase 1 already excludes it from
+           automatic verdicts and routes it to human review; the rest of the
+           set is untouched.
+   set     The whole response cannot be trusted, so no record in it can be.
+           Both of these are unreachable while constrained decoding is working:
+           coordinate_mode is a single-value enum and entities is a closed
+           object, so seeing them means the grammar did not hold. */
+const OBSERVATION_FLAG_SCOPE = {
+  untracked_attribute_discarded: "policy",
+  missing_entity_id: "entity",
+  undeclared_entity_id: "entity",
+  invalid_record_shape: "entity",
+  invalid_enum: "entity",
+  malformed_response: "set",
+  /* Every bbox in the response is read as permille. A different coordinate
+     frame silently corrupts movement and size for every entity at once, so it
+     poisons the set rather than one record. */
+  invalid_coordinate_mode: "set",
+};
+const OBSERVATION_STATUSES = ["clean", "usable_with_notes", "invalid"];
+
+/* Whether the RECORD SET is safe to use. Deliberately not a continuity verdict:
+   it says nothing about pass/fail, about occlusion, or about whether a change
+   was intended. A heavily occluded or uncertain observation is a truthful
+   answer and is usable — the comparison layer is what routes it to review. */
+function observationStatus(flags, states) {
+  const codes = (Array.isArray(flags) ? flags : []).map((flag) => flag && flag.code).filter(Boolean);
+  const stateValues = Object.values(states && typeof states === "object" ? states : {});
+  const poisoned = codes.some((code) => OBSERVATION_FLAG_SCOPE[code] === "set");
+  /* Nothing left to use is also unusable, however it happened. */
+  const nothingUsable = stateValues.length > 0 && stateValues.every((value) => value === "invalid");
+  if (poisoned || nothingUsable) return "invalid";
+  return codes.length ? "usable_with_notes" : "clean";
+}
 function validateObservationSet(manifest, parsed) {
   const declared = ((manifest && manifest.entities) || []);
   const flags = [];
-  const addFlag = (code, entityId, detail) => flags.push({ code, entityId: String(entityId || ""), detail: String(detail || "") });
+  const addFlag = (code, entityId, field, detail) => flags.push({ code, entityId: String(entityId || ""), field: String(field || ""), detail: String(detail || "") });
   const root = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
   const supplied = root && root.entities && typeof root.entities === "object" && !Array.isArray(root.entities) ? root.entities : null;
-  if (!supplied) addFlag("malformed_response", "", "The response did not contain an entities object.");
+  if (!supplied) addFlag("malformed_response", "", "", "The response did not contain an entities object.");
   if (root && root.coordinate_mode !== undefined && root.coordinate_mode !== "permille")
-    addFlag("invalid_coordinate_mode", "", `coordinate_mode was ${JSON.stringify(root.coordinate_mode)}; the contract is "permille".`);
+    addFlag("invalid_coordinate_mode", "", "coordinate_mode", `coordinate_mode was ${JSON.stringify(root.coordinate_mode)}; the contract is "permille".`);
 
   const declaredIds = new Set(declared.map((row) => row.entity_id));
   for (const key of supplied ? Object.keys(supplied).sort(compareStrings) : [])
-    if (!declaredIds.has(key)) addFlag("undeclared_entity_id", key, "The model returned an entity id production did not declare.");
+    if (!declaredIds.has(key)) addFlag("undeclared_entity_id", key, "", "The model returned an entity id production did not declare.");
 
   const entities = {};
   const states = {};
@@ -553,7 +593,7 @@ function validateObservationSet(manifest, parsed) {
     const id = row.entity_id;
     const raw = supplied ? supplied[id] : undefined;
     if (raw === undefined || raw === null) {
-      addFlag("missing_entity_id", id, "The model returned no record for this declared entity.");
+      addFlag("missing_entity_id", id, "", "The model returned no record for this declared entity.");
       entities[id] = { presence: "uncertain", occlusion: "uncertain", identifiable: "uncertain", bbox: null, color: "uncertain", state: "uncertain", markings: "uncertain", evidence: "" };
       states[id] = "invalid";
       continue;
@@ -568,16 +608,44 @@ function validateObservationSet(manifest, parsed) {
       markings: raw.markings,
       evidence: typeof raw.evidence === "string" ? raw.evidence.slice(0, EVIDENCE_MAX) : "",
     };
-    for (const [field, values] of [["presence", PRESENCE_VALUES], ["occlusion", OCCLUSION_VALUES], ["identifiable", IDENTIFIABLE_VALUES], ["color", COLOR_VALUES], ["markings", MARKINGS_VALUES]])
-      if (!values.includes(record[field])) addFlag("invalid_enum", id, `${field} was ${JSON.stringify(record[field])}, which is not a contract value.`);
-    if (typeof record.state !== "string") addFlag("invalid_enum", id, "state was not a string.");
-    /* An attribute the production did not ask to track must never reach the
-       comparison engine, or a multi-tone object still produces colour findings
-       no matter what the tracking policy says. */
-    for (const [field, track] of [["color", "track_color"], ["state", "track_state"], ["markings", "track_markings"]]) {
-      if (row[track] === false && record[field] !== "not-applicable" && record[field] !== undefined) {
-        addFlag("untracked_attribute_discarded", id, `${field} was returned but is not tracked for this entity; the value was discarded.`);
-        record[field] = "not-applicable";
+    /* Structural fields are always meaningful: recordState reads them, so an
+       illegal value here makes the whole record untrustworthy. */
+    for (const [field, values] of [["presence", PRESENCE_VALUES], ["occlusion", OCCLUSION_VALUES], ["identifiable", IDENTIFIABLE_VALUES]])
+      if (!values.includes(record[field])) addFlag("invalid_enum", id, field, `${field} was ${JSON.stringify(record[field])}, which is not a contract value.`);
+
+    /* Tracked attributes. Two different things can go wrong here and they mean
+       different things, so they are kept apart:
+
+         not tracked   CineBraid never asked, so whatever came back is
+                       irrelevant. It is discarded to "not-applicable" and the
+                       comparison never looks at it. A policy note.
+
+         tracked but illegal   CineBraid did ask, and the answer is unusable.
+                       The value is NOT coerced and NOT guessed at: it is
+                       neutralised to "uncertain", which is the contract's own
+                       word for "could not be read". The comparison then reports
+                       it as an unreadable attribute and routes it to review,
+                       which is exactly right — an illegal value must never be
+                       able to become a colour, markings or state CHANGE.
+
+       Neutralising one attribute leaves the rest of the record alone: presence
+       and bbox evidence on the same entity stay usable, and other entities are
+       untouched. */
+    for (const [field, track, values] of [
+      ["color", "track_color", COLOR_VALUES],
+      ["state", "track_state", [...(Array.isArray(row.allowed_state_values) ? row.allowed_state_values : []), "not-applicable", "uncertain"]],
+      ["markings", "track_markings", MARKINGS_VALUES],
+    ]) {
+      if (row[track] === false) {
+        if (record[field] !== "not-applicable" && record[field] !== undefined) {
+          addFlag("untracked_attribute_discarded", id, field, `${field} was returned but is not tracked for this entity; the value was discarded.`);
+          record[field] = "not-applicable";
+        }
+        continue;
+      }
+      if (!values.includes(record[field])) {
+        addFlag("invalid_enum", id, field, `${field} was ${JSON.stringify(record[field])}, which is not a contract value for this entity; it was treated as unreadable and never compared.`);
+        record[field] = "uncertain";
       }
     }
     const state = recordState(record);
@@ -587,10 +655,18 @@ function validateObservationSet(manifest, parsed) {
   }
 
   flags.sort((a, b) => compareStrings(a.entityId, b.entityId) || compareStrings(a.code, b.code) || compareStrings(a.detail, b.detail));
+  const status = observationStatus(flags, states);
   return {
     contractVersion: CONTINUITY_OBSERVATION_CONTRACT_VERSION,
     manifestHash: String((manifest && manifest.manifestHash) || ""),
+    /* Unchanged meaning, kept for compatibility and for the qualification
+       metrics: the response needed no handling of any kind. */
     ok: flags.length === 0,
+    /* Whether the record set is safe to use. This is the question a caller
+       almost always means, and the one ok answers badly. */
+    status,
+    usable: status !== "invalid",
+    blockingFlags: [...new Set(flags.filter((flag) => OBSERVATION_FLAG_SCOPE[flag.code] === "set").map((flag) => flag.code))].sort(compareStrings),
     flags,
     coordinate_mode: "permille",
     entities,
@@ -833,6 +909,7 @@ const CONTINUITY_EXPORTS = {
   OBSERVATION_PROMPT_VERSION, OBSERVATION_USER_MESSAGE, OBSERVATION_SCHEMA_NAME,
   OBSERVATION_REQUEST_CONTRACT, observationChecklist, buildObservationPrompt,
   bboxIsValid, recordState, validateObservationSet,
+  OBSERVATION_FLAG_SCOPE, OBSERVATION_STATUSES, observationStatus,
   compareObservations, buildIntentDescriptors, matchesDescriptor, applyIntent,
   normalizeIntentText,
 };

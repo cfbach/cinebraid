@@ -303,6 +303,7 @@ async function main() {
     "continuity-observation.js",
     "continuity-observe-route.js",
     "continuity-prompt-contract.js",
+    "continuity-validation-status.js",
     "coverage-workflow.js",
     "current-behavior.js",
     "custom-provider-routing.js",

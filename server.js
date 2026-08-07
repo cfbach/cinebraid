@@ -5741,10 +5741,19 @@ async function observeContinuityFrame(P, shot, frameId, requestedFile, context) 
 
   const hit = continuityCache.lookup(key, { ...identity, key, entityIds });
   if (hit) {
+    /* status/usable are derived, so an entry written before they existed gains
+       them on read from the flags and states it already stores. No cache format
+       bump and no re-observation. */
+    const cachedValidation = hit.validation.status
+      ? hit.validation
+      : (() => {
+        const status = Continuity.observationStatus(hit.validation.flags, hit.validation.states);
+        return { ...hit.validation, status, usable: status !== "invalid", blockingFlags: [...new Set((hit.validation.flags || []).filter((flag) => Continuity.OBSERVATION_FLAG_SCOPE[flag.code] === "set").map((flag) => flag.code))].sort() };
+      })();
     continuityLog(`HIT  ${key.slice(0, 12)} ${shot.id}/${resolvedFrameId} img=${imageHash.slice(0, 8)} man=${manifest.manifestHash.slice(0, 8)}`);
     return {
       cached: true, key, imageHash, manifest, image, frameId: resolvedFrameId,
-      observation: hit.observation, validation: hit.validation, attempts: 0,
+      observation: hit.observation, validation: cachedValidation, attempts: 0,
       provider: identity.provider, model: identity.model,
     };
   }
@@ -5766,7 +5775,8 @@ async function observeContinuityFrame(P, shot, frameId, requestedFile, context) 
   const validation = Continuity.validateObservationSet(manifest, parsed);
   const observation = { coordinate_mode: validation.coordinate_mode, entities: validation.entities };
   const stored = {
-    ok: validation.ok, flags: validation.flags, states: validation.states,
+    ok: validation.ok, status: validation.status, usable: validation.usable,
+    blockingFlags: validation.blockingFlags, flags: validation.flags, states: validation.states,
     invalidEntityIds: validation.invalidEntityIds, contractVersion: validation.contractVersion,
   };
 
@@ -5774,9 +5784,14 @@ async function observeContinuityFrame(P, shot, frameId, requestedFile, context) 
      occlusion and unreadable attributes are answers, and re-asking the model
      will not make them go away. What is never cached is a non-answer — a
      provider error, an empty reply, or output that could not be parsed at all,
-     none of which reach this point. A response whose every declared record
-     failed the structural check is also not evidence, so it is not stored. */
-  const usable = validation.invalidEntityIds.length < manifest.entities.length;
+     none of which reach this point.
+
+     Admission is the validation contract's own answer. validation.usable is
+     false exactly when the set cannot be trusted: a set-wide integrity failure
+     such as a wrong coordinate frame, or a response in which no declared record
+     survived. Deciding this here from a separate rule is how the two drifted
+     apart in the first place. */
+  const usable = validation.usable;
   if (usable) {
     await continuityCache.store({
       key, observedAt: new Date().toISOString(), lastAccessedAt: new Date().toISOString(),
@@ -5787,7 +5802,7 @@ async function observeContinuityFrame(P, shot, frameId, requestedFile, context) 
       observation, validation: stored,
     });
   } else {
-    continuityLog(`NOSTORE ${key.slice(0, 12)} every declared record failed the structural check`);
+    continuityLog(`NOSTORE ${key.slice(0, 12)} validation.status=${validation.status}${validation.blockingFlags.length ? ` (${validation.blockingFlags.join(",")})` : ""}`);
   }
 
   return {
