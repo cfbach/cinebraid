@@ -410,6 +410,99 @@ function buildObservationSchema(manifest) {
   };
 }
 
+/* ---------- observation prompt -------------------------------------------
+
+   A verbatim port of fin_contract.build_prompt(). This wording is part of the
+   qualified system, not decoration: the anti-confirmation-bias framing is what
+   stops the model treating a checklist as evidence, and the three-shape
+   summary is what keeps records inside the grammar. It must not be reworded,
+   restyled or merged with CineBraid's other review prompts.
+
+   tests/continuity-prompt-contract.js asserts byte identity against the system
+   prompts recorded in the qualification's own request bodies. */
+const OBSERVATION_PROMPT_VERSION = "arm-F-anti-confirmation-bias";
+const OBSERVATION_USER_MESSAGE = "Check each declared entity against this frame.";
+
+/* Entities are rendered in the order the manifest declares them. CineBraid's
+   builder sorts by entity id, so its own manifests render sorted; the frozen
+   reference manifests render in their own order. Both reproduce exactly. */
+function observationChecklist(manifest) {
+  const lines = [];
+  for (const entity of (manifest && manifest.entities) || []) {
+    const block = [`- ${entity.entity_id} ("${entity.display_name}", ${entity.entity_type})`];
+    if (entity.parent_entity_id) block.push(`  worn by / part of: ${entity.parent_entity_id}`);
+    if (entity.continuity_unit === "composite-parent") block.push("  COMPOSITE: report as ONE record covering the whole unit.");
+    if (entity.continuity_unit === "child") block.push("  CHILD: a distinct tracked part of its parent.");
+    block.push(`  ${entity.identity_cues}`);
+    lines.push(block.join("\n"));
+  }
+  return lines.join("\n");
+}
+function buildObservationPrompt(manifest) {
+  const system = `You are shown EXACTLY ONE photographic frame from a film set.
+
+The production has asked you to CHECK each declared entity below. This list is a
+CHECKLIST, not evidence. Declaration does NOT mean the entity is present. An entity may be
+completely absent from this frame. Report presence:"absent" whenever the visible pixels do
+not support it. Never infer presence merely because an entity id appears in the checklist.
+
+You have not been shown any other image. Do not use comparative language.
+
+THE CHECKLIST FOR THIS SET:
+${observationChecklist(manifest)}
+
+How to answer:
+- Use ONLY the visible pixels of this frame.
+- Do not infer hidden, off-screen or previously visible entities from scene context or from
+  what would normally be there.
+- Do NOT assume worn accessories are still present. A watch, ring or badge may have been
+  removed between shots. Check the pixels.
+- A declared entity that was removed between shots MUST be reported absent, even though it
+  is still on the checklist.
+- Never fabricate a bounding box for an absent entity.
+
+PRESENCE AND OCCLUSION ARE DIFFERENT QUESTIONS. Answer them separately.
+  presence  - do the visible pixels support this entity being in the frame at all?
+              present | absent | uncertain
+  occlusion - for an entity that IS present, how much of it is covered by something in
+              front of it?  none | partial | heavy | uncertain
+              For an absent entity, occlusion is "not-applicable".
+
+Each record must be exactly one of three shapes:
+  PRESENT    presence:"present",  occlusion: none | partial | heavy | uncertain,
+             bbox: four integers.
+  ABSENT     presence:"absent",   occlusion:"not-applicable", bbox: null,
+             identifiable: no | uncertain.
+  UNCERTAIN  presence:"uncertain", occlusion:"uncertain", identifiable:"uncertain",
+             bbox: four integers only if you can localise a possible remnant, else null.
+
+coordinate_mode is always "permille". bbox is EXACTLY FOUR INTEGERS from 0 to 1000, in the
+order [x0, y0, x1, y1], as thousandths of the image width and height.
+
+identifiable describes whether you could tell what it is from the visible evidence alone.
+evidence is a short factual note about what you can actually see, at most ${EVIDENCE_MAX}
+characters.
+If an attribute cannot be read from the pixels use "uncertain"; if it does not apply use
+"not-applicable". Never guess hidden content.`;
+  return { system, user: OBSERVATION_USER_MESSAGE };
+}
+
+/* ---------- qualified request contract -----------------------------------
+
+   The sampling and decoding settings the 51/51 run was qualified at. They are
+   part of the contract, not user preferences: a director changing the general
+   assistant temperature must not silently invalidate continuity
+   qualification. The provider layer applies these AFTER any configured
+   generic options so they always win. */
+const OBSERVATION_REQUEST_CONTRACT = Object.freeze({
+  temperature: 0.2,
+  top_k: 1,
+  max_tokens: 4096,
+  stream: false,
+  chat_template_kwargs: Object.freeze({ enable_thinking: false }),
+});
+const OBSERVATION_SCHEMA_NAME = "declared_entities_final";
+
 /* ---------- deterministic post-validation --------------------------------
 
    recordState is the qualified three-shape check. It classifies and never
@@ -737,6 +830,8 @@ const CONTINUITY_EXPORTS = {
   mergeTracking, resolveEntityTracking, resolveEntityIntent,
   resolveStateRecord, resolveDeclaredStateId,
   buildContinuityManifest, buildObservationSchema, entityRecordSchema,
+  OBSERVATION_PROMPT_VERSION, OBSERVATION_USER_MESSAGE, OBSERVATION_SCHEMA_NAME,
+  OBSERVATION_REQUEST_CONTRACT, observationChecklist, buildObservationPrompt,
   bboxIsValid, recordState, validateObservationSet,
   compareObservations, buildIntentDescriptors, matchesDescriptor, applyIntent,
   normalizeIntentText,

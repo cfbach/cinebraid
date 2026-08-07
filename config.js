@@ -43,6 +43,18 @@ const DEFAULT_CONFIG = {
   customTemperature: "",
   customTopK: "",
   customThinking: "auto",
+  /* Continuity observation is its own vision consumer. It is deliberately not
+     the general vision provider: the qualified single-image path reaches an
+     OpenAI-compatible server that accepts one image, while existing
+     multi-image review stays wherever it already is. */
+  continuity: {
+    /* Unset until a provider is explicitly chosen. Defaulting this to "custom"
+       would quietly make every existing install a consumer of a custom endpoint
+       it never opted into, and CineBraid does not contact an endpoint nothing is
+       routed to. */
+    visionProvider: "",
+    visionModel: "",
+  },
   ollamaUrl: "http://127.0.0.1:11434",
   ollamaModel: "qwen3.6:35b-a3b",
   ollamaVisionModel: "qwen3-vl:30b-a3b-instruct",
@@ -170,6 +182,11 @@ function normalizeConfig(config, options = {}) {
   merged.customThinking = ["auto", "disabled"].includes(merged.customThinking)
     ? merged.customThinking
     : "auto";
+  merged.continuity = deepMerge(DEFAULT_CONFIG.continuity, merged.continuity || {});
+  merged.continuity.visionProvider = ["custom", "openai"].includes(merged.continuity.visionProvider)
+    ? merged.continuity.visionProvider
+    : "";
+  merged.continuity.visionModel = String(merged.continuity.visionModel || "");
   merged.agents.maxConcurrent = Math.max(
     1,
     Math.min(3, Number(merged.agents.maxConcurrent) || 1),

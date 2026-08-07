@@ -1,0 +1,5986 @@
+{
+ "fixture": "spark-frozen-request-contract",
+ "provenance": {
+  "host": "spark-af4e (DGX Spark, aarch64)",
+  "sourceTree": "~/CineBraid-QA/6.6.5-private.1/qwen-evaluation/cross-model-qualification/phase-a3-photographic/declared-entity-final-contract",
+  "contractSource": "frozen/fin_contract.py",
+  "contractSourceSha256": "2971e4c2cb6a15506c00f2b5a6a1ee8ca40e1823035460cc1be007d39bf75348",
+  "note": "Recorded request bodies from the qualifying run. The harness stores a redacted placeholder in place of the base64 image, so no frame pixels are carried here. Prompts and schemas are verbatim."
+ },
+ "cases": [
+  {
+   "policy": "s1-entities",
+   "sourceFile": "raw-responses/arm-F/S1-01_s1-entities_r1.req.json",
+   "sourceSha256": "d427ced87a85d2f268e93812b6a28e9960a9ae040ad7078fc418d2239fe1175a",
+   "request": {
+    "model": "nemotron_3_nano_omni",
+    "stream": false,
+    "max_tokens": 4096,
+    "temperature": 0.2,
+    "top_k": 1,
+    "chat_template_kwargs": {
+     "enable_thinking": false
+    }
+   },
+   "responseFormat": {
+    "type": "json_schema",
+    "name": "declared_entities_final",
+    "strict": true
+   },
+   "schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "coordinate_mode",
+     "entities"
+    ],
+    "properties": {
+     "coordinate_mode": {
+      "type": "string",
+      "enum": [
+       "permille"
+      ]
+     },
+     "entities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+       "acc_wristwatch",
+       "char_seated_person",
+       "prop_book",
+       "prop_bowl",
+       "prop_lamp",
+       "prop_mug",
+       "prop_plant",
+       "wardrobe_jacket",
+       "wardrobe_shirt"
+      ],
+      "properties": {
+       "char_seated_person": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "presence",
+         "occlusion",
+         "identifiable",
+         "bbox",
+         "color",
+         "state",
+         "markings",
+         "evidence"
+        ],
+        "properties": {
+         "presence": {
+          "type": "string",
+          "enum": [
+           "present",
+           "absent",
+           "uncertain"
+          ]
+         },
+         "occlusion": {
+          "type": "string",
+          "enum": [
+           "none",
+           "partial",
+           "heavy",
+           "uncertain",
+           "not-applicable"
+          ]
+         },
+         "identifiable": {
+          "type": "string",
+          "enum": [
+           "yes",
+           "no",
+           "uncertain"
+          ]
+         },
+         "bbox": {
+          "anyOf": [
+           {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {
+             "type": "integer",
+             "minimum": 0,
+             "maximum": 1000
+            }
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "color": {
+          "type": "string",
+          "enum": [
+           "black",
+           "white",
+           "grey",
+           "slate",
+           "silver",
+           "cream",
+           "beige",
+           "tan",
+           "brown",
+           "red",
+           "maroon",
+           "orange",
+           "amber",
+           "yellow",
+           "gold",
+           "green",
+           "teal",
+           "blue",
+           "navy",
+           "purple",
+           "pink",
+           "multicoloured",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "state": {
+          "type": "string",
+          "enum": [
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "markings": {
+          "type": "string",
+          "enum": [
+           "none",
+           "text",
+           "pattern",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "evidence": {
+          "type": "string",
+          "maxLength": 48
+         }
+        }
+       },
+       "wardrobe_jacket": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "presence",
+         "occlusion",
+         "identifiable",
+         "bbox",
+         "color",
+         "state",
+         "markings",
+         "evidence"
+        ],
+        "properties": {
+         "presence": {
+          "type": "string",
+          "enum": [
+           "present",
+           "absent",
+           "uncertain"
+          ]
+         },
+         "occlusion": {
+          "type": "string",
+          "enum": [
+           "none",
+           "partial",
+           "heavy",
+           "uncertain",
+           "not-applicable"
+          ]
+         },
+         "identifiable": {
+          "type": "string",
+          "enum": [
+           "yes",
+           "no",
+           "uncertain"
+          ]
+         },
+         "bbox": {
+          "anyOf": [
+           {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {
+             "type": "integer",
+             "minimum": 0,
+             "maximum": 1000
+            }
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "color": {
+          "type": "string",
+          "enum": [
+           "black",
+           "white",
+           "grey",
+           "slate",
+           "silver",
+           "cream",
+           "beige",
+           "tan",
+           "brown",
+           "red",
+           "maroon",
+           "orange",
+           "amber",
+           "yellow",
+           "gold",
+           "green",
+           "teal",
+           "blue",
+           "navy",
+           "purple",
+           "pink",
+           "multicoloured",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "state": {
+          "type": "string",
+          "enum": [
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "markings": {
+          "type": "string",
+          "enum": [
+           "none",
+           "text",
+           "pattern",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "evidence": {
+          "type": "string",
+          "maxLength": 48
+         }
+        }
+       },
+       "wardrobe_shirt": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "presence",
+         "occlusion",
+         "identifiable",
+         "bbox",
+         "color",
+         "state",
+         "markings",
+         "evidence"
+        ],
+        "properties": {
+         "presence": {
+          "type": "string",
+          "enum": [
+           "present",
+           "absent",
+           "uncertain"
+          ]
+         },
+         "occlusion": {
+          "type": "string",
+          "enum": [
+           "none",
+           "partial",
+           "heavy",
+           "uncertain",
+           "not-applicable"
+          ]
+         },
+         "identifiable": {
+          "type": "string",
+          "enum": [
+           "yes",
+           "no",
+           "uncertain"
+          ]
+         },
+         "bbox": {
+          "anyOf": [
+           {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {
+             "type": "integer",
+             "minimum": 0,
+             "maximum": 1000
+            }
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "color": {
+          "type": "string",
+          "enum": [
+           "black",
+           "white",
+           "grey",
+           "slate",
+           "silver",
+           "cream",
+           "beige",
+           "tan",
+           "brown",
+           "red",
+           "maroon",
+           "orange",
+           "amber",
+           "yellow",
+           "gold",
+           "green",
+           "teal",
+           "blue",
+           "navy",
+           "purple",
+           "pink",
+           "multicoloured",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "state": {
+          "type": "string",
+          "enum": [
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "markings": {
+          "type": "string",
+          "enum": [
+           "none",
+           "text",
+           "pattern",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "evidence": {
+          "type": "string",
+          "maxLength": 48
+         }
+        }
+       },
+       "acc_wristwatch": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "presence",
+         "occlusion",
+         "identifiable",
+         "bbox",
+         "color",
+         "state",
+         "markings",
+         "evidence"
+        ],
+        "properties": {
+         "presence": {
+          "type": "string",
+          "enum": [
+           "present",
+           "absent",
+           "uncertain"
+          ]
+         },
+         "occlusion": {
+          "type": "string",
+          "enum": [
+           "none",
+           "partial",
+           "heavy",
+           "uncertain",
+           "not-applicable"
+          ]
+         },
+         "identifiable": {
+          "type": "string",
+          "enum": [
+           "yes",
+           "no",
+           "uncertain"
+          ]
+         },
+         "bbox": {
+          "anyOf": [
+           {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {
+             "type": "integer",
+             "minimum": 0,
+             "maximum": 1000
+            }
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "color": {
+          "type": "string",
+          "enum": [
+           "black",
+           "white",
+           "grey",
+           "slate",
+           "silver",
+           "cream",
+           "beige",
+           "tan",
+           "brown",
+           "red",
+           "maroon",
+           "orange",
+           "amber",
+           "yellow",
+           "gold",
+           "green",
+           "teal",
+           "blue",
+           "navy",
+           "purple",
+           "pink",
+           "multicoloured",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "state": {
+          "type": "string",
+          "enum": [
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "markings": {
+          "type": "string",
+          "enum": [
+           "none",
+           "text",
+           "pattern",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "evidence": {
+          "type": "string",
+          "maxLength": 48
+         }
+        }
+       },
+       "prop_mug": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "presence",
+         "occlusion",
+         "identifiable",
+         "bbox",
+         "color",
+         "state",
+         "markings",
+         "evidence"
+        ],
+        "properties": {
+         "presence": {
+          "type": "string",
+          "enum": [
+           "present",
+           "absent",
+           "uncertain"
+          ]
+         },
+         "occlusion": {
+          "type": "string",
+          "enum": [
+           "none",
+           "partial",
+           "heavy",
+           "uncertain",
+           "not-applicable"
+          ]
+         },
+         "identifiable": {
+          "type": "string",
+          "enum": [
+           "yes",
+           "no",
+           "uncertain"
+          ]
+         },
+         "bbox": {
+          "anyOf": [
+           {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {
+             "type": "integer",
+             "minimum": 0,
+             "maximum": 1000
+            }
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "color": {
+          "type": "string",
+          "enum": [
+           "black",
+           "white",
+           "grey",
+           "slate",
+           "silver",
+           "cream",
+           "beige",
+           "tan",
+           "brown",
+           "red",
+           "maroon",
+           "orange",
+           "amber",
+           "yellow",
+           "gold",
+           "green",
+           "teal",
+           "blue",
+           "navy",
+           "purple",
+           "pink",
+           "multicoloured",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "state": {
+          "type": "string",
+          "enum": [
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "markings": {
+          "type": "string",
+          "enum": [
+           "none",
+           "text",
+           "pattern",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "evidence": {
+          "type": "string",
+          "maxLength": 48
+         }
+        }
+       },
+       "prop_book": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "presence",
+         "occlusion",
+         "identifiable",
+         "bbox",
+         "color",
+         "state",
+         "markings",
+         "evidence"
+        ],
+        "properties": {
+         "presence": {
+          "type": "string",
+          "enum": [
+           "present",
+           "absent",
+           "uncertain"
+          ]
+         },
+         "occlusion": {
+          "type": "string",
+          "enum": [
+           "none",
+           "partial",
+           "heavy",
+           "uncertain",
+           "not-applicable"
+          ]
+         },
+         "identifiable": {
+          "type": "string",
+          "enum": [
+           "yes",
+           "no",
+           "uncertain"
+          ]
+         },
+         "bbox": {
+          "anyOf": [
+           {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {
+             "type": "integer",
+             "minimum": 0,
+             "maximum": 1000
+            }
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "color": {
+          "type": "string",
+          "enum": [
+           "black",
+           "white",
+           "grey",
+           "slate",
+           "silver",
+           "cream",
+           "beige",
+           "tan",
+           "brown",
+           "red",
+           "maroon",
+           "orange",
+           "amber",
+           "yellow",
+           "gold",
+           "green",
+           "teal",
+           "blue",
+           "navy",
+           "purple",
+           "pink",
+           "multicoloured",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "state": {
+          "type": "string",
+          "enum": [
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "markings": {
+          "type": "string",
+          "enum": [
+           "none",
+           "text",
+           "pattern",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "evidence": {
+          "type": "string",
+          "maxLength": 48
+         }
+        }
+       },
+       "prop_bowl": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "presence",
+         "occlusion",
+         "identifiable",
+         "bbox",
+         "color",
+         "state",
+         "markings",
+         "evidence"
+        ],
+        "properties": {
+         "presence": {
+          "type": "string",
+          "enum": [
+           "present",
+           "absent",
+           "uncertain"
+          ]
+         },
+         "occlusion": {
+          "type": "string",
+          "enum": [
+           "none",
+           "partial",
+           "heavy",
+           "uncertain",
+           "not-applicable"
+          ]
+         },
+         "identifiable": {
+          "type": "string",
+          "enum": [
+           "yes",
+           "no",
+           "uncertain"
+          ]
+         },
+         "bbox": {
+          "anyOf": [
+           {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {
+             "type": "integer",
+             "minimum": 0,
+             "maximum": 1000
+            }
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "color": {
+          "type": "string",
+          "enum": [
+           "black",
+           "white",
+           "grey",
+           "slate",
+           "silver",
+           "cream",
+           "beige",
+           "tan",
+           "brown",
+           "red",
+           "maroon",
+           "orange",
+           "amber",
+           "yellow",
+           "gold",
+           "green",
+           "teal",
+           "blue",
+           "navy",
+           "purple",
+           "pink",
+           "multicoloured",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "state": {
+          "type": "string",
+          "enum": [
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "markings": {
+          "type": "string",
+          "enum": [
+           "none",
+           "text",
+           "pattern",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "evidence": {
+          "type": "string",
+          "maxLength": 48
+         }
+        }
+       },
+       "prop_lamp": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "presence",
+         "occlusion",
+         "identifiable",
+         "bbox",
+         "color",
+         "state",
+         "markings",
+         "evidence"
+        ],
+        "properties": {
+         "presence": {
+          "type": "string",
+          "enum": [
+           "present",
+           "absent",
+           "uncertain"
+          ]
+         },
+         "occlusion": {
+          "type": "string",
+          "enum": [
+           "none",
+           "partial",
+           "heavy",
+           "uncertain",
+           "not-applicable"
+          ]
+         },
+         "identifiable": {
+          "type": "string",
+          "enum": [
+           "yes",
+           "no",
+           "uncertain"
+          ]
+         },
+         "bbox": {
+          "anyOf": [
+           {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {
+             "type": "integer",
+             "minimum": 0,
+             "maximum": 1000
+            }
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "color": {
+          "type": "string",
+          "enum": [
+           "black",
+           "white",
+           "grey",
+           "slate",
+           "silver",
+           "cream",
+           "beige",
+           "tan",
+           "brown",
+           "red",
+           "maroon",
+           "orange",
+           "amber",
+           "yellow",
+           "gold",
+           "green",
+           "teal",
+           "blue",
+           "navy",
+           "purple",
+           "pink",
+           "multicoloured",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "state": {
+          "type": "string",
+          "enum": [
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "markings": {
+          "type": "string",
+          "enum": [
+           "none",
+           "text",
+           "pattern",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "evidence": {
+          "type": "string",
+          "maxLength": 48
+         }
+        }
+       },
+       "prop_plant": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "presence",
+         "occlusion",
+         "identifiable",
+         "bbox",
+         "color",
+         "state",
+         "markings",
+         "evidence"
+        ],
+        "properties": {
+         "presence": {
+          "type": "string",
+          "enum": [
+           "present",
+           "absent",
+           "uncertain"
+          ]
+         },
+         "occlusion": {
+          "type": "string",
+          "enum": [
+           "none",
+           "partial",
+           "heavy",
+           "uncertain",
+           "not-applicable"
+          ]
+         },
+         "identifiable": {
+          "type": "string",
+          "enum": [
+           "yes",
+           "no",
+           "uncertain"
+          ]
+         },
+         "bbox": {
+          "anyOf": [
+           {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {
+             "type": "integer",
+             "minimum": 0,
+             "maximum": 1000
+            }
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "color": {
+          "type": "string",
+          "enum": [
+           "black",
+           "white",
+           "grey",
+           "slate",
+           "silver",
+           "cream",
+           "beige",
+           "tan",
+           "brown",
+           "red",
+           "maroon",
+           "orange",
+           "amber",
+           "yellow",
+           "gold",
+           "green",
+           "teal",
+           "blue",
+           "navy",
+           "purple",
+           "pink",
+           "multicoloured",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "state": {
+          "type": "string",
+          "enum": [
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "markings": {
+          "type": "string",
+          "enum": [
+           "none",
+           "text",
+           "pattern",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "evidence": {
+          "type": "string",
+          "maxLength": 48
+         }
+        }
+       }
+      }
+     }
+    }
+   },
+   "systemPrompt": "You are shown EXACTLY ONE photographic frame from a film set.\n\nThe production has asked you to CHECK each declared entity below. This list is a\nCHECKLIST, not evidence. Declaration does NOT mean the entity is present. An entity may be\ncompletely absent from this frame. Report presence:\"absent\" whenever the visible pixels do\nnot support it. Never infer presence merely because an entity id appears in the checklist.\n\nYou have not been shown any other image. Do not use comparative language.\n\nTHE CHECKLIST FOR THIS SET:\n- char_seated_person (\"Seated character\", character)\n  The single person seated at the table in this set.\n- wardrobe_jacket (\"Jacket\", garment)\n  worn by / part of: char_seated_person\n  The outer jacket worn by the seated character.\n- wardrobe_shirt (\"Shirt\", garment)\n  worn by / part of: char_seated_person\n  The shirt or top worn under the jacket by the seated character.\n- acc_wristwatch (\"Wristwatch\", accessory)\n  worn by / part of: char_seated_person\n  A wristwatch worn on the seated character's wrist.\n- prop_mug (\"Ceramic mug\", prop)\n  A ceramic drinking mug belonging to this set's table dressing.\n- prop_book (\"Hardcover book\", prop)\n  A closed hardcover book belonging to this set's table dressing.\n- prop_bowl (\"Shallow bowl\", prop)\n  A small shallow bowl belonging to this set's table dressing.\n- prop_lamp (\"Table lamp\", prop)\n  A table lamp with a fabric shade standing on the furniture behind the character.\n- prop_plant (\"Potted plant\", prop)\n  COMPOSITE: report as ONE record covering the whole unit.\n  A potted plant. The plant and its pot are ONE tracked prop.\n\nHow to answer:\n- Use ONLY the visible pixels of this frame.\n- Do not infer hidden, off-screen or previously visible entities from scene context or from\n  what would normally be there.\n- Do NOT assume worn accessories are still present. A watch, ring or badge may have been\n  removed between shots. Check the pixels.\n- A declared entity that was removed between shots MUST be reported absent, even though it\n  is still on the checklist.\n- Never fabricate a bounding box for an absent entity.\n\nPRESENCE AND OCCLUSION ARE DIFFERENT QUESTIONS. Answer them separately.\n  presence  - do the visible pixels support this entity being in the frame at all?\n              present | absent | uncertain\n  occlusion - for an entity that IS present, how much of it is covered by something in\n              front of it?  none | partial | heavy | uncertain\n              For an absent entity, occlusion is \"not-applicable\".\n\nEach record must be exactly one of three shapes:\n  PRESENT    presence:\"present\",  occlusion: none | partial | heavy | uncertain,\n             bbox: four integers.\n  ABSENT     presence:\"absent\",   occlusion:\"not-applicable\", bbox: null,\n             identifiable: no | uncertain.\n  UNCERTAIN  presence:\"uncertain\", occlusion:\"uncertain\", identifiable:\"uncertain\",\n             bbox: four integers only if you can localise a possible remnant, else null.\n\ncoordinate_mode is always \"permille\". bbox is EXACTLY FOUR INTEGERS from 0 to 1000, in the\norder [x0, y0, x1, y1], as thousandths of the image width and height.\n\nidentifiable describes whether you could tell what it is from the visible evidence alone.\nevidence is a short factual note about what you can actually see, at most 48\ncharacters.\nIf an attribute cannot be read from the pixels use \"uncertain\"; if it does not apply use\n\"not-applicable\". Never guess hidden content.",
+   "userText": "Check each declared entity against this frame.",
+   "imagePartCount": 1,
+   "imagePlaceholder": "<1 image redacted>"
+  },
+  {
+   "policy": "s2-composite",
+   "sourceFile": "raw-responses/arm-F/S2-00_s2-composite_r1.req.json",
+   "sourceSha256": "4d733ea7dba256988dbe90df753e564622877c3232e140f1f2ca80e570fee269",
+   "request": {
+    "model": "nemotron_3_nano_omni",
+    "stream": false,
+    "max_tokens": 4096,
+    "temperature": 0.2,
+    "top_k": 1,
+    "chat_template_kwargs": {
+     "enable_thinking": false
+    }
+   },
+   "responseFormat": {
+    "type": "json_schema",
+    "name": "declared_entities_final",
+    "strict": true
+   },
+   "schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "coordinate_mode",
+     "entities"
+    ],
+    "properties": {
+     "coordinate_mode": {
+      "type": "string",
+      "enum": [
+       "permille"
+      ]
+     },
+     "entities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+       "prop_alarm_clock",
+       "prop_amber_jar",
+       "prop_book_stack",
+       "prop_candle",
+       "prop_clothespins",
+       "prop_coiled_rope",
+       "prop_flashlight",
+       "prop_folded_cloth",
+       "prop_glass_jar",
+       "prop_gloves",
+       "prop_hammer",
+       "prop_keys",
+       "prop_mirror",
+       "prop_notebook",
+       "prop_scissors",
+       "prop_stoneware_cup",
+       "prop_tape_roll",
+       "prop_thread_spool",
+       "prop_tin_box",
+       "prop_wooden_box",
+       "set_pencil_holder_composite"
+      ],
+      "properties": {
+       "prop_hammer": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "presence",
+         "occlusion",
+         "identifiable",
+         "bbox",
+         "color",
+         "state",
+         "markings",
+         "evidence"
+        ],
+        "properties": {
+         "presence": {
+          "type": "string",
+          "enum": [
+           "present",
+           "absent",
+           "uncertain"
+          ]
+         },
+         "occlusion": {
+          "type": "string",
+          "enum": [
+           "none",
+           "partial",
+           "heavy",
+           "uncertain",
+           "not-applicable"
+          ]
+         },
+         "identifiable": {
+          "type": "string",
+          "enum": [
+           "yes",
+           "no",
+           "uncertain"
+          ]
+         },
+         "bbox": {
+          "anyOf": [
+           {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {
+             "type": "integer",
+             "minimum": 0,
+             "maximum": 1000
+            }
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "color": {
+          "type": "string",
+          "enum": [
+           "black",
+           "white",
+           "grey",
+           "slate",
+           "silver",
+           "cream",
+           "beige",
+           "tan",
+           "brown",
+           "red",
+           "maroon",
+           "orange",
+           "amber",
+           "yellow",
+           "gold",
+           "green",
+           "teal",
+           "blue",
+           "navy",
+           "purple",
+           "pink",
+           "multicoloured",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "state": {
+          "type": "string",
+          "enum": [
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "markings": {
+          "type": "string",
+          "enum": [
+           "none",
+           "text",
+           "pattern",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "evidence": {
+          "type": "string",
+          "maxLength": 48
+         }
+        }
+       },
+       "prop_stoneware_cup": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "presence",
+         "occlusion",
+         "identifiable",
+         "bbox",
+         "color",
+         "state",
+         "markings",
+         "evidence"
+        ],
+        "properties": {
+         "presence": {
+          "type": "string",
+          "enum": [
+           "present",
+           "absent",
+           "uncertain"
+          ]
+         },
+         "occlusion": {
+          "type": "string",
+          "enum": [
+           "none",
+           "partial",
+           "heavy",
+           "uncertain",
+           "not-applicable"
+          ]
+         },
+         "identifiable": {
+          "type": "string",
+          "enum": [
+           "yes",
+           "no",
+           "uncertain"
+          ]
+         },
+         "bbox": {
+          "anyOf": [
+           {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {
+             "type": "integer",
+             "minimum": 0,
+             "maximum": 1000
+            }
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "color": {
+          "type": "string",
+          "enum": [
+           "black",
+           "white",
+           "grey",
+           "slate",
+           "silver",
+           "cream",
+           "beige",
+           "tan",
+           "brown",
+           "red",
+           "maroon",
+           "orange",
+           "amber",
+           "yellow",
+           "gold",
+           "green",
+           "teal",
+           "blue",
+           "navy",
+           "purple",
+           "pink",
+           "multicoloured",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "state": {
+          "type": "string",
+          "enum": [
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "markings": {
+          "type": "string",
+          "enum": [
+           "none",
+           "text",
+           "pattern",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "evidence": {
+          "type": "string",
+          "maxLength": 48
+         }
+        }
+       },
+       "prop_coiled_rope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "presence",
+         "occlusion",
+         "identifiable",
+         "bbox",
+         "color",
+         "state",
+         "markings",
+         "evidence"
+        ],
+        "properties": {
+         "presence": {
+          "type": "string",
+          "enum": [
+           "present",
+           "absent",
+           "uncertain"
+          ]
+         },
+         "occlusion": {
+          "type": "string",
+          "enum": [
+           "none",
+           "partial",
+           "heavy",
+           "uncertain",
+           "not-applicable"
+          ]
+         },
+         "identifiable": {
+          "type": "string",
+          "enum": [
+           "yes",
+           "no",
+           "uncertain"
+          ]
+         },
+         "bbox": {
+          "anyOf": [
+           {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {
+             "type": "integer",
+             "minimum": 0,
+             "maximum": 1000
+            }
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "color": {
+          "type": "string",
+          "enum": [
+           "black",
+           "white",
+           "grey",
+           "slate",
+           "silver",
+           "cream",
+           "beige",
+           "tan",
+           "brown",
+           "red",
+           "maroon",
+           "orange",
+           "amber",
+           "yellow",
+           "gold",
+           "green",
+           "teal",
+           "blue",
+           "navy",
+           "purple",
+           "pink",
+           "multicoloured",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "state": {
+          "type": "string",
+          "enum": [
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "markings": {
+          "type": "string",
+          "enum": [
+           "none",
+           "text",
+           "pattern",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "evidence": {
+          "type": "string",
+          "maxLength": 48
+         }
+        }
+       },
+       "prop_book_stack": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "presence",
+         "occlusion",
+         "identifiable",
+         "bbox",
+         "color",
+         "state",
+         "markings",
+         "evidence"
+        ],
+        "properties": {
+         "presence": {
+          "type": "string",
+          "enum": [
+           "present",
+           "absent",
+           "uncertain"
+          ]
+         },
+         "occlusion": {
+          "type": "string",
+          "enum": [
+           "none",
+           "partial",
+           "heavy",
+           "uncertain",
+           "not-applicable"
+          ]
+         },
+         "identifiable": {
+          "type": "string",
+          "enum": [
+           "yes",
+           "no",
+           "uncertain"
+          ]
+         },
+         "bbox": {
+          "anyOf": [
+           {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {
+             "type": "integer",
+             "minimum": 0,
+             "maximum": 1000
+            }
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "color": {
+          "type": "string",
+          "enum": [
+           "black",
+           "white",
+           "grey",
+           "slate",
+           "silver",
+           "cream",
+           "beige",
+           "tan",
+           "brown",
+           "red",
+           "maroon",
+           "orange",
+           "amber",
+           "yellow",
+           "gold",
+           "green",
+           "teal",
+           "blue",
+           "navy",
+           "purple",
+           "pink",
+           "multicoloured",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "state": {
+          "type": "string",
+          "enum": [
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "markings": {
+          "type": "string",
+          "enum": [
+           "none",
+           "text",
+           "pattern",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "evidence": {
+          "type": "string",
+          "maxLength": 48
+         }
+        }
+       },
+       "prop_tin_box": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "presence",
+         "occlusion",
+         "identifiable",
+         "bbox",
+         "color",
+         "state",
+         "markings",
+         "evidence"
+        ],
+        "properties": {
+         "presence": {
+          "type": "string",
+          "enum": [
+           "present",
+           "absent",
+           "uncertain"
+          ]
+         },
+         "occlusion": {
+          "type": "string",
+          "enum": [
+           "none",
+           "partial",
+           "heavy",
+           "uncertain",
+           "not-applicable"
+          ]
+         },
+         "identifiable": {
+          "type": "string",
+          "enum": [
+           "yes",
+           "no",
+           "uncertain"
+          ]
+         },
+         "bbox": {
+          "anyOf": [
+           {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {
+             "type": "integer",
+             "minimum": 0,
+             "maximum": 1000
+            }
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "color": {
+          "type": "string",
+          "enum": [
+           "black",
+           "white",
+           "grey",
+           "slate",
+           "silver",
+           "cream",
+           "beige",
+           "tan",
+           "brown",
+           "red",
+           "maroon",
+           "orange",
+           "amber",
+           "yellow",
+           "gold",
+           "green",
+           "teal",
+           "blue",
+           "navy",
+           "purple",
+           "pink",
+           "multicoloured",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "state": {
+          "type": "string",
+          "enum": [
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "markings": {
+          "type": "string",
+          "enum": [
+           "none",
+           "text",
+           "pattern",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "evidence": {
+          "type": "string",
+          "maxLength": 48
+         }
+        }
+       },
+       "prop_scissors": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "presence",
+         "occlusion",
+         "identifiable",
+         "bbox",
+         "color",
+         "state",
+         "markings",
+         "evidence"
+        ],
+        "properties": {
+         "presence": {
+          "type": "string",
+          "enum": [
+           "present",
+           "absent",
+           "uncertain"
+          ]
+         },
+         "occlusion": {
+          "type": "string",
+          "enum": [
+           "none",
+           "partial",
+           "heavy",
+           "uncertain",
+           "not-applicable"
+          ]
+         },
+         "identifiable": {
+          "type": "string",
+          "enum": [
+           "yes",
+           "no",
+           "uncertain"
+          ]
+         },
+         "bbox": {
+          "anyOf": [
+           {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {
+             "type": "integer",
+             "minimum": 0,
+             "maximum": 1000
+            }
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "color": {
+          "type": "string",
+          "enum": [
+           "black",
+           "white",
+           "grey",
+           "slate",
+           "silver",
+           "cream",
+           "beige",
+           "tan",
+           "brown",
+           "red",
+           "maroon",
+           "orange",
+           "amber",
+           "yellow",
+           "gold",
+           "green",
+           "teal",
+           "blue",
+           "navy",
+           "purple",
+           "pink",
+           "multicoloured",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "state": {
+          "type": "string",
+          "enum": [
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "markings": {
+          "type": "string",
+          "enum": [
+           "none",
+           "text",
+           "pattern",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "evidence": {
+          "type": "string",
+          "maxLength": 48
+         }
+        }
+       },
+       "prop_tape_roll": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "presence",
+         "occlusion",
+         "identifiable",
+         "bbox",
+         "color",
+         "state",
+         "markings",
+         "evidence"
+        ],
+        "properties": {
+         "presence": {
+          "type": "string",
+          "enum": [
+           "present",
+           "absent",
+           "uncertain"
+          ]
+         },
+         "occlusion": {
+          "type": "string",
+          "enum": [
+           "none",
+           "partial",
+           "heavy",
+           "uncertain",
+           "not-applicable"
+          ]
+         },
+         "identifiable": {
+          "type": "string",
+          "enum": [
+           "yes",
+           "no",
+           "uncertain"
+          ]
+         },
+         "bbox": {
+          "anyOf": [
+           {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {
+             "type": "integer",
+             "minimum": 0,
+             "maximum": 1000
+            }
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "color": {
+          "type": "string",
+          "enum": [
+           "black",
+           "white",
+           "grey",
+           "slate",
+           "silver",
+           "cream",
+           "beige",
+           "tan",
+           "brown",
+           "red",
+           "maroon",
+           "orange",
+           "amber",
+           "yellow",
+           "gold",
+           "green",
+           "teal",
+           "blue",
+           "navy",
+           "purple",
+           "pink",
+           "multicoloured",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "state": {
+          "type": "string",
+          "enum": [
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "markings": {
+          "type": "string",
+          "enum": [
+           "none",
+           "text",
+           "pattern",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "evidence": {
+          "type": "string",
+          "maxLength": 48
+         }
+        }
+       },
+       "prop_alarm_clock": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "presence",
+         "occlusion",
+         "identifiable",
+         "bbox",
+         "color",
+         "state",
+         "markings",
+         "evidence"
+        ],
+        "properties": {
+         "presence": {
+          "type": "string",
+          "enum": [
+           "present",
+           "absent",
+           "uncertain"
+          ]
+         },
+         "occlusion": {
+          "type": "string",
+          "enum": [
+           "none",
+           "partial",
+           "heavy",
+           "uncertain",
+           "not-applicable"
+          ]
+         },
+         "identifiable": {
+          "type": "string",
+          "enum": [
+           "yes",
+           "no",
+           "uncertain"
+          ]
+         },
+         "bbox": {
+          "anyOf": [
+           {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {
+             "type": "integer",
+             "minimum": 0,
+             "maximum": 1000
+            }
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "color": {
+          "type": "string",
+          "enum": [
+           "black",
+           "white",
+           "grey",
+           "slate",
+           "silver",
+           "cream",
+           "beige",
+           "tan",
+           "brown",
+           "red",
+           "maroon",
+           "orange",
+           "amber",
+           "yellow",
+           "gold",
+           "green",
+           "teal",
+           "blue",
+           "navy",
+           "purple",
+           "pink",
+           "multicoloured",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "state": {
+          "type": "string",
+          "enum": [
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "markings": {
+          "type": "string",
+          "enum": [
+           "none",
+           "text",
+           "pattern",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "evidence": {
+          "type": "string",
+          "maxLength": 48
+         }
+        }
+       },
+       "prop_glass_jar": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "presence",
+         "occlusion",
+         "identifiable",
+         "bbox",
+         "color",
+         "state",
+         "markings",
+         "evidence"
+        ],
+        "properties": {
+         "presence": {
+          "type": "string",
+          "enum": [
+           "present",
+           "absent",
+           "uncertain"
+          ]
+         },
+         "occlusion": {
+          "type": "string",
+          "enum": [
+           "none",
+           "partial",
+           "heavy",
+           "uncertain",
+           "not-applicable"
+          ]
+         },
+         "identifiable": {
+          "type": "string",
+          "enum": [
+           "yes",
+           "no",
+           "uncertain"
+          ]
+         },
+         "bbox": {
+          "anyOf": [
+           {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {
+             "type": "integer",
+             "minimum": 0,
+             "maximum": 1000
+            }
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "color": {
+          "type": "string",
+          "enum": [
+           "black",
+           "white",
+           "grey",
+           "slate",
+           "silver",
+           "cream",
+           "beige",
+           "tan",
+           "brown",
+           "red",
+           "maroon",
+           "orange",
+           "amber",
+           "yellow",
+           "gold",
+           "green",
+           "teal",
+           "blue",
+           "navy",
+           "purple",
+           "pink",
+           "multicoloured",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "state": {
+          "type": "string",
+          "enum": [
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "markings": {
+          "type": "string",
+          "enum": [
+           "none",
+           "text",
+           "pattern",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "evidence": {
+          "type": "string",
+          "maxLength": 48
+         }
+        }
+       },
+       "prop_amber_jar": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "presence",
+         "occlusion",
+         "identifiable",
+         "bbox",
+         "color",
+         "state",
+         "markings",
+         "evidence"
+        ],
+        "properties": {
+         "presence": {
+          "type": "string",
+          "enum": [
+           "present",
+           "absent",
+           "uncertain"
+          ]
+         },
+         "occlusion": {
+          "type": "string",
+          "enum": [
+           "none",
+           "partial",
+           "heavy",
+           "uncertain",
+           "not-applicable"
+          ]
+         },
+         "identifiable": {
+          "type": "string",
+          "enum": [
+           "yes",
+           "no",
+           "uncertain"
+          ]
+         },
+         "bbox": {
+          "anyOf": [
+           {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {
+             "type": "integer",
+             "minimum": 0,
+             "maximum": 1000
+            }
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "color": {
+          "type": "string",
+          "enum": [
+           "black",
+           "white",
+           "grey",
+           "slate",
+           "silver",
+           "cream",
+           "beige",
+           "tan",
+           "brown",
+           "red",
+           "maroon",
+           "orange",
+           "amber",
+           "yellow",
+           "gold",
+           "green",
+           "teal",
+           "blue",
+           "navy",
+           "purple",
+           "pink",
+           "multicoloured",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "state": {
+          "type": "string",
+          "enum": [
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "markings": {
+          "type": "string",
+          "enum": [
+           "none",
+           "text",
+           "pattern",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "evidence": {
+          "type": "string",
+          "maxLength": 48
+         }
+        }
+       },
+       "prop_folded_cloth": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "presence",
+         "occlusion",
+         "identifiable",
+         "bbox",
+         "color",
+         "state",
+         "markings",
+         "evidence"
+        ],
+        "properties": {
+         "presence": {
+          "type": "string",
+          "enum": [
+           "present",
+           "absent",
+           "uncertain"
+          ]
+         },
+         "occlusion": {
+          "type": "string",
+          "enum": [
+           "none",
+           "partial",
+           "heavy",
+           "uncertain",
+           "not-applicable"
+          ]
+         },
+         "identifiable": {
+          "type": "string",
+          "enum": [
+           "yes",
+           "no",
+           "uncertain"
+          ]
+         },
+         "bbox": {
+          "anyOf": [
+           {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {
+             "type": "integer",
+             "minimum": 0,
+             "maximum": 1000
+            }
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "color": {
+          "type": "string",
+          "enum": [
+           "black",
+           "white",
+           "grey",
+           "slate",
+           "silver",
+           "cream",
+           "beige",
+           "tan",
+           "brown",
+           "red",
+           "maroon",
+           "orange",
+           "amber",
+           "yellow",
+           "gold",
+           "green",
+           "teal",
+           "blue",
+           "navy",
+           "purple",
+           "pink",
+           "multicoloured",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "state": {
+          "type": "string",
+          "enum": [
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "markings": {
+          "type": "string",
+          "enum": [
+           "none",
+           "text",
+           "pattern",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "evidence": {
+          "type": "string",
+          "maxLength": 48
+         }
+        }
+       },
+       "prop_gloves": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "presence",
+         "occlusion",
+         "identifiable",
+         "bbox",
+         "color",
+         "state",
+         "markings",
+         "evidence"
+        ],
+        "properties": {
+         "presence": {
+          "type": "string",
+          "enum": [
+           "present",
+           "absent",
+           "uncertain"
+          ]
+         },
+         "occlusion": {
+          "type": "string",
+          "enum": [
+           "none",
+           "partial",
+           "heavy",
+           "uncertain",
+           "not-applicable"
+          ]
+         },
+         "identifiable": {
+          "type": "string",
+          "enum": [
+           "yes",
+           "no",
+           "uncertain"
+          ]
+         },
+         "bbox": {
+          "anyOf": [
+           {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {
+             "type": "integer",
+             "minimum": 0,
+             "maximum": 1000
+            }
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "color": {
+          "type": "string",
+          "enum": [
+           "black",
+           "white",
+           "grey",
+           "slate",
+           "silver",
+           "cream",
+           "beige",
+           "tan",
+           "brown",
+           "red",
+           "maroon",
+           "orange",
+           "amber",
+           "yellow",
+           "gold",
+           "green",
+           "teal",
+           "blue",
+           "navy",
+           "purple",
+           "pink",
+           "multicoloured",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "state": {
+          "type": "string",
+          "enum": [
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "markings": {
+          "type": "string",
+          "enum": [
+           "none",
+           "text",
+           "pattern",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "evidence": {
+          "type": "string",
+          "maxLength": 48
+         }
+        }
+       },
+       "prop_wooden_box": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "presence",
+         "occlusion",
+         "identifiable",
+         "bbox",
+         "color",
+         "state",
+         "markings",
+         "evidence"
+        ],
+        "properties": {
+         "presence": {
+          "type": "string",
+          "enum": [
+           "present",
+           "absent",
+           "uncertain"
+          ]
+         },
+         "occlusion": {
+          "type": "string",
+          "enum": [
+           "none",
+           "partial",
+           "heavy",
+           "uncertain",
+           "not-applicable"
+          ]
+         },
+         "identifiable": {
+          "type": "string",
+          "enum": [
+           "yes",
+           "no",
+           "uncertain"
+          ]
+         },
+         "bbox": {
+          "anyOf": [
+           {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {
+             "type": "integer",
+             "minimum": 0,
+             "maximum": 1000
+            }
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "color": {
+          "type": "string",
+          "enum": [
+           "black",
+           "white",
+           "grey",
+           "slate",
+           "silver",
+           "cream",
+           "beige",
+           "tan",
+           "brown",
+           "red",
+           "maroon",
+           "orange",
+           "amber",
+           "yellow",
+           "gold",
+           "green",
+           "teal",
+           "blue",
+           "navy",
+           "purple",
+           "pink",
+           "multicoloured",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "state": {
+          "type": "string",
+          "enum": [
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "markings": {
+          "type": "string",
+          "enum": [
+           "none",
+           "text",
+           "pattern",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "evidence": {
+          "type": "string",
+          "maxLength": 48
+         }
+        }
+       },
+       "prop_flashlight": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "presence",
+         "occlusion",
+         "identifiable",
+         "bbox",
+         "color",
+         "state",
+         "markings",
+         "evidence"
+        ],
+        "properties": {
+         "presence": {
+          "type": "string",
+          "enum": [
+           "present",
+           "absent",
+           "uncertain"
+          ]
+         },
+         "occlusion": {
+          "type": "string",
+          "enum": [
+           "none",
+           "partial",
+           "heavy",
+           "uncertain",
+           "not-applicable"
+          ]
+         },
+         "identifiable": {
+          "type": "string",
+          "enum": [
+           "yes",
+           "no",
+           "uncertain"
+          ]
+         },
+         "bbox": {
+          "anyOf": [
+           {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {
+             "type": "integer",
+             "minimum": 0,
+             "maximum": 1000
+            }
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "color": {
+          "type": "string",
+          "enum": [
+           "black",
+           "white",
+           "grey",
+           "slate",
+           "silver",
+           "cream",
+           "beige",
+           "tan",
+           "brown",
+           "red",
+           "maroon",
+           "orange",
+           "amber",
+           "yellow",
+           "gold",
+           "green",
+           "teal",
+           "blue",
+           "navy",
+           "purple",
+           "pink",
+           "multicoloured",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "state": {
+          "type": "string",
+          "enum": [
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "markings": {
+          "type": "string",
+          "enum": [
+           "none",
+           "text",
+           "pattern",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "evidence": {
+          "type": "string",
+          "maxLength": 48
+         }
+        }
+       },
+       "prop_keys": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "presence",
+         "occlusion",
+         "identifiable",
+         "bbox",
+         "color",
+         "state",
+         "markings",
+         "evidence"
+        ],
+        "properties": {
+         "presence": {
+          "type": "string",
+          "enum": [
+           "present",
+           "absent",
+           "uncertain"
+          ]
+         },
+         "occlusion": {
+          "type": "string",
+          "enum": [
+           "none",
+           "partial",
+           "heavy",
+           "uncertain",
+           "not-applicable"
+          ]
+         },
+         "identifiable": {
+          "type": "string",
+          "enum": [
+           "yes",
+           "no",
+           "uncertain"
+          ]
+         },
+         "bbox": {
+          "anyOf": [
+           {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {
+             "type": "integer",
+             "minimum": 0,
+             "maximum": 1000
+            }
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "color": {
+          "type": "string",
+          "enum": [
+           "black",
+           "white",
+           "grey",
+           "slate",
+           "silver",
+           "cream",
+           "beige",
+           "tan",
+           "brown",
+           "red",
+           "maroon",
+           "orange",
+           "amber",
+           "yellow",
+           "gold",
+           "green",
+           "teal",
+           "blue",
+           "navy",
+           "purple",
+           "pink",
+           "multicoloured",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "state": {
+          "type": "string",
+          "enum": [
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "markings": {
+          "type": "string",
+          "enum": [
+           "none",
+           "text",
+           "pattern",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "evidence": {
+          "type": "string",
+          "maxLength": 48
+         }
+        }
+       },
+       "prop_thread_spool": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "presence",
+         "occlusion",
+         "identifiable",
+         "bbox",
+         "color",
+         "state",
+         "markings",
+         "evidence"
+        ],
+        "properties": {
+         "presence": {
+          "type": "string",
+          "enum": [
+           "present",
+           "absent",
+           "uncertain"
+          ]
+         },
+         "occlusion": {
+          "type": "string",
+          "enum": [
+           "none",
+           "partial",
+           "heavy",
+           "uncertain",
+           "not-applicable"
+          ]
+         },
+         "identifiable": {
+          "type": "string",
+          "enum": [
+           "yes",
+           "no",
+           "uncertain"
+          ]
+         },
+         "bbox": {
+          "anyOf": [
+           {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {
+             "type": "integer",
+             "minimum": 0,
+             "maximum": 1000
+            }
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "color": {
+          "type": "string",
+          "enum": [
+           "black",
+           "white",
+           "grey",
+           "slate",
+           "silver",
+           "cream",
+           "beige",
+           "tan",
+           "brown",
+           "red",
+           "maroon",
+           "orange",
+           "amber",
+           "yellow",
+           "gold",
+           "green",
+           "teal",
+           "blue",
+           "navy",
+           "purple",
+           "pink",
+           "multicoloured",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "state": {
+          "type": "string",
+          "enum": [
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "markings": {
+          "type": "string",
+          "enum": [
+           "none",
+           "text",
+           "pattern",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "evidence": {
+          "type": "string",
+          "maxLength": 48
+         }
+        }
+       },
+       "prop_candle": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "presence",
+         "occlusion",
+         "identifiable",
+         "bbox",
+         "color",
+         "state",
+         "markings",
+         "evidence"
+        ],
+        "properties": {
+         "presence": {
+          "type": "string",
+          "enum": [
+           "present",
+           "absent",
+           "uncertain"
+          ]
+         },
+         "occlusion": {
+          "type": "string",
+          "enum": [
+           "none",
+           "partial",
+           "heavy",
+           "uncertain",
+           "not-applicable"
+          ]
+         },
+         "identifiable": {
+          "type": "string",
+          "enum": [
+           "yes",
+           "no",
+           "uncertain"
+          ]
+         },
+         "bbox": {
+          "anyOf": [
+           {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {
+             "type": "integer",
+             "minimum": 0,
+             "maximum": 1000
+            }
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "color": {
+          "type": "string",
+          "enum": [
+           "black",
+           "white",
+           "grey",
+           "slate",
+           "silver",
+           "cream",
+           "beige",
+           "tan",
+           "brown",
+           "red",
+           "maroon",
+           "orange",
+           "amber",
+           "yellow",
+           "gold",
+           "green",
+           "teal",
+           "blue",
+           "navy",
+           "purple",
+           "pink",
+           "multicoloured",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "state": {
+          "type": "string",
+          "enum": [
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "markings": {
+          "type": "string",
+          "enum": [
+           "none",
+           "text",
+           "pattern",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "evidence": {
+          "type": "string",
+          "maxLength": 48
+         }
+        }
+       },
+       "prop_notebook": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "presence",
+         "occlusion",
+         "identifiable",
+         "bbox",
+         "color",
+         "state",
+         "markings",
+         "evidence"
+        ],
+        "properties": {
+         "presence": {
+          "type": "string",
+          "enum": [
+           "present",
+           "absent",
+           "uncertain"
+          ]
+         },
+         "occlusion": {
+          "type": "string",
+          "enum": [
+           "none",
+           "partial",
+           "heavy",
+           "uncertain",
+           "not-applicable"
+          ]
+         },
+         "identifiable": {
+          "type": "string",
+          "enum": [
+           "yes",
+           "no",
+           "uncertain"
+          ]
+         },
+         "bbox": {
+          "anyOf": [
+           {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {
+             "type": "integer",
+             "minimum": 0,
+             "maximum": 1000
+            }
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "color": {
+          "type": "string",
+          "enum": [
+           "black",
+           "white",
+           "grey",
+           "slate",
+           "silver",
+           "cream",
+           "beige",
+           "tan",
+           "brown",
+           "red",
+           "maroon",
+           "orange",
+           "amber",
+           "yellow",
+           "gold",
+           "green",
+           "teal",
+           "blue",
+           "navy",
+           "purple",
+           "pink",
+           "multicoloured",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "state": {
+          "type": "string",
+          "enum": [
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "markings": {
+          "type": "string",
+          "enum": [
+           "none",
+           "text",
+           "pattern",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "evidence": {
+          "type": "string",
+          "maxLength": 48
+         }
+        }
+       },
+       "prop_mirror": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "presence",
+         "occlusion",
+         "identifiable",
+         "bbox",
+         "color",
+         "state",
+         "markings",
+         "evidence"
+        ],
+        "properties": {
+         "presence": {
+          "type": "string",
+          "enum": [
+           "present",
+           "absent",
+           "uncertain"
+          ]
+         },
+         "occlusion": {
+          "type": "string",
+          "enum": [
+           "none",
+           "partial",
+           "heavy",
+           "uncertain",
+           "not-applicable"
+          ]
+         },
+         "identifiable": {
+          "type": "string",
+          "enum": [
+           "yes",
+           "no",
+           "uncertain"
+          ]
+         },
+         "bbox": {
+          "anyOf": [
+           {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {
+             "type": "integer",
+             "minimum": 0,
+             "maximum": 1000
+            }
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "color": {
+          "type": "string",
+          "enum": [
+           "black",
+           "white",
+           "grey",
+           "slate",
+           "silver",
+           "cream",
+           "beige",
+           "tan",
+           "brown",
+           "red",
+           "maroon",
+           "orange",
+           "amber",
+           "yellow",
+           "gold",
+           "green",
+           "teal",
+           "blue",
+           "navy",
+           "purple",
+           "pink",
+           "multicoloured",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "state": {
+          "type": "string",
+          "enum": [
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "markings": {
+          "type": "string",
+          "enum": [
+           "none",
+           "text",
+           "pattern",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "evidence": {
+          "type": "string",
+          "maxLength": 48
+         }
+        }
+       },
+       "prop_clothespins": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "presence",
+         "occlusion",
+         "identifiable",
+         "bbox",
+         "color",
+         "state",
+         "markings",
+         "evidence"
+        ],
+        "properties": {
+         "presence": {
+          "type": "string",
+          "enum": [
+           "present",
+           "absent",
+           "uncertain"
+          ]
+         },
+         "occlusion": {
+          "type": "string",
+          "enum": [
+           "none",
+           "partial",
+           "heavy",
+           "uncertain",
+           "not-applicable"
+          ]
+         },
+         "identifiable": {
+          "type": "string",
+          "enum": [
+           "yes",
+           "no",
+           "uncertain"
+          ]
+         },
+         "bbox": {
+          "anyOf": [
+           {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {
+             "type": "integer",
+             "minimum": 0,
+             "maximum": 1000
+            }
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "color": {
+          "type": "string",
+          "enum": [
+           "black",
+           "white",
+           "grey",
+           "slate",
+           "silver",
+           "cream",
+           "beige",
+           "tan",
+           "brown",
+           "red",
+           "maroon",
+           "orange",
+           "amber",
+           "yellow",
+           "gold",
+           "green",
+           "teal",
+           "blue",
+           "navy",
+           "purple",
+           "pink",
+           "multicoloured",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "state": {
+          "type": "string",
+          "enum": [
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "markings": {
+          "type": "string",
+          "enum": [
+           "none",
+           "text",
+           "pattern",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "evidence": {
+          "type": "string",
+          "maxLength": 48
+         }
+        }
+       },
+       "set_pencil_holder_composite": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "presence",
+         "occlusion",
+         "identifiable",
+         "bbox",
+         "color",
+         "state",
+         "markings",
+         "evidence"
+        ],
+        "properties": {
+         "presence": {
+          "type": "string",
+          "enum": [
+           "present",
+           "absent",
+           "uncertain"
+          ]
+         },
+         "occlusion": {
+          "type": "string",
+          "enum": [
+           "none",
+           "partial",
+           "heavy",
+           "uncertain",
+           "not-applicable"
+          ]
+         },
+         "identifiable": {
+          "type": "string",
+          "enum": [
+           "yes",
+           "no",
+           "uncertain"
+          ]
+         },
+         "bbox": {
+          "anyOf": [
+           {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {
+             "type": "integer",
+             "minimum": 0,
+             "maximum": 1000
+            }
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "color": {
+          "type": "string",
+          "enum": [
+           "black",
+           "white",
+           "grey",
+           "slate",
+           "silver",
+           "cream",
+           "beige",
+           "tan",
+           "brown",
+           "red",
+           "maroon",
+           "orange",
+           "amber",
+           "yellow",
+           "gold",
+           "green",
+           "teal",
+           "blue",
+           "navy",
+           "purple",
+           "pink",
+           "multicoloured",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "state": {
+          "type": "string",
+          "enum": [
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "markings": {
+          "type": "string",
+          "enum": [
+           "none",
+           "text",
+           "pattern",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "evidence": {
+          "type": "string",
+          "maxLength": 48
+         }
+        }
+       }
+      }
+     }
+    }
+   },
+   "systemPrompt": "You are shown EXACTLY ONE photographic frame from a film set.\n\nThe production has asked you to CHECK each declared entity below. This list is a\nCHECKLIST, not evidence. Declaration does NOT mean the entity is present. An entity may be\ncompletely absent from this frame. Report presence:\"absent\" whenever the visible pixels do\nnot support it. Never infer presence merely because an entity id appears in the checklist.\n\nYou have not been shown any other image. Do not use comparative language.\n\nTHE CHECKLIST FOR THIS SET:\n- prop_hammer (\"Hammer\", tool)\n  Hammer on this prop table.\n- prop_stoneware_cup (\"Stoneware cup\", prop)\n  Stoneware cup on this prop table.\n- prop_coiled_rope (\"Coiled rope\", prop)\n  Coiled rope on this prop table.\n- prop_book_stack (\"Stack of books\", prop)\n  Stack of books on this prop table.\n- prop_tin_box (\"Metal tin box\", prop)\n  Metal tin box on this prop table.\n- prop_scissors (\"Scissors\", tool)\n  Scissors on this prop table.\n- prop_tape_roll (\"Roll of tape\", prop)\n  Roll of tape on this prop table.\n- prop_alarm_clock (\"Alarm clock\", prop)\n  Alarm clock on this prop table.\n- prop_glass_jar (\"Clear glass jar\", prop)\n  Clear glass jar on this prop table.\n- prop_amber_jar (\"Amber jar\", prop)\n  Amber jar on this prop table.\n- prop_folded_cloth (\"Folded cloth\", prop)\n  Folded cloth on this prop table.\n- prop_gloves (\"Work gloves\", prop)\n  Work gloves on this prop table.\n- prop_wooden_box (\"Small wooden box\", prop)\n  Small wooden box on this prop table.\n- prop_flashlight (\"Flashlight\", prop)\n  Flashlight on this prop table.\n- prop_keys (\"Key ring\", prop)\n  Key ring on this prop table.\n- prop_thread_spool (\"Spool of thread\", prop)\n  Spool of thread on this prop table.\n- prop_candle (\"Candle\", prop)\n  Candle on this prop table.\n- prop_notebook (\"Notebook\", prop)\n  Notebook on this prop table.\n- prop_mirror (\"Round mirror\", prop)\n  Round mirror on this prop table.\n- prop_clothespins (\"Bundle of clothespins\", prop)\n  Bundle of clothespins on this prop table.\n- set_pencil_holder_composite (\"Pencil holder with pencils\", prop)\n  COMPOSITE: report as ONE record covering the whole unit.\n  A cylindrical holder containing pencils. The holder AND the pencils standing in it are ONE tracked prop. Report a single record covering the holder together with its pencils.\n\nHow to answer:\n- Use ONLY the visible pixels of this frame.\n- Do not infer hidden, off-screen or previously visible entities from scene context or from\n  what would normally be there.\n- Do NOT assume worn accessories are still present. A watch, ring or badge may have been\n  removed between shots. Check the pixels.\n- A declared entity that was removed between shots MUST be reported absent, even though it\n  is still on the checklist.\n- Never fabricate a bounding box for an absent entity.\n\nPRESENCE AND OCCLUSION ARE DIFFERENT QUESTIONS. Answer them separately.\n  presence  - do the visible pixels support this entity being in the frame at all?\n              present | absent | uncertain\n  occlusion - for an entity that IS present, how much of it is covered by something in\n              front of it?  none | partial | heavy | uncertain\n              For an absent entity, occlusion is \"not-applicable\".\n\nEach record must be exactly one of three shapes:\n  PRESENT    presence:\"present\",  occlusion: none | partial | heavy | uncertain,\n             bbox: four integers.\n  ABSENT     presence:\"absent\",   occlusion:\"not-applicable\", bbox: null,\n             identifiable: no | uncertain.\n  UNCERTAIN  presence:\"uncertain\", occlusion:\"uncertain\", identifiable:\"uncertain\",\n             bbox: four integers only if you can localise a possible remnant, else null.\n\ncoordinate_mode is always \"permille\". bbox is EXACTLY FOUR INTEGERS from 0 to 1000, in the\norder [x0, y0, x1, y1], as thousandths of the image width and height.\n\nidentifiable describes whether you could tell what it is from the visible evidence alone.\nevidence is a short factual note about what you can actually see, at most 48\ncharacters.\nIf an attribute cannot be read from the pixels use \"uncertain\"; if it does not apply use\n\"not-applicable\". Never guess hidden content.",
+   "userText": "Check each declared entity against this frame.",
+   "imagePartCount": 1,
+   "imagePlaceholder": "<1 image redacted>"
+  },
+  {
+   "policy": "s2-split",
+   "sourceFile": "raw-responses/arm-F/S2-00_s2-split_r1.req.json",
+   "sourceSha256": "557521d2ab782edf15593de39e13383da8b3078eb00928303fffda1d266b9bc8",
+   "request": {
+    "model": "nemotron_3_nano_omni",
+    "stream": false,
+    "max_tokens": 4096,
+    "temperature": 0.2,
+    "top_k": 1,
+    "chat_template_kwargs": {
+     "enable_thinking": false
+    }
+   },
+   "responseFormat": {
+    "type": "json_schema",
+    "name": "declared_entities_final",
+    "strict": true
+   },
+   "schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "coordinate_mode",
+     "entities"
+    ],
+    "properties": {
+     "coordinate_mode": {
+      "type": "string",
+      "enum": [
+       "permille"
+      ]
+     },
+     "entities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+       "prop_alarm_clock",
+       "prop_amber_jar",
+       "prop_book_stack",
+       "prop_candle",
+       "prop_clothespins",
+       "prop_coiled_rope",
+       "prop_flashlight",
+       "prop_folded_cloth",
+       "prop_glass_jar",
+       "prop_gloves",
+       "prop_hammer",
+       "prop_keys",
+       "prop_mirror",
+       "prop_notebook",
+       "prop_pencil_holder",
+       "prop_scissors",
+       "prop_stoneware_cup",
+       "prop_tape_roll",
+       "prop_thread_spool",
+       "prop_tin_box",
+       "prop_wooden_box",
+       "set_pencils_dark",
+       "set_pencils_natural"
+      ],
+      "properties": {
+       "prop_hammer": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "presence",
+         "occlusion",
+         "identifiable",
+         "bbox",
+         "color",
+         "state",
+         "markings",
+         "evidence"
+        ],
+        "properties": {
+         "presence": {
+          "type": "string",
+          "enum": [
+           "present",
+           "absent",
+           "uncertain"
+          ]
+         },
+         "occlusion": {
+          "type": "string",
+          "enum": [
+           "none",
+           "partial",
+           "heavy",
+           "uncertain",
+           "not-applicable"
+          ]
+         },
+         "identifiable": {
+          "type": "string",
+          "enum": [
+           "yes",
+           "no",
+           "uncertain"
+          ]
+         },
+         "bbox": {
+          "anyOf": [
+           {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {
+             "type": "integer",
+             "minimum": 0,
+             "maximum": 1000
+            }
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "color": {
+          "type": "string",
+          "enum": [
+           "black",
+           "white",
+           "grey",
+           "slate",
+           "silver",
+           "cream",
+           "beige",
+           "tan",
+           "brown",
+           "red",
+           "maroon",
+           "orange",
+           "amber",
+           "yellow",
+           "gold",
+           "green",
+           "teal",
+           "blue",
+           "navy",
+           "purple",
+           "pink",
+           "multicoloured",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "state": {
+          "type": "string",
+          "enum": [
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "markings": {
+          "type": "string",
+          "enum": [
+           "none",
+           "text",
+           "pattern",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "evidence": {
+          "type": "string",
+          "maxLength": 48
+         }
+        }
+       },
+       "prop_stoneware_cup": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "presence",
+         "occlusion",
+         "identifiable",
+         "bbox",
+         "color",
+         "state",
+         "markings",
+         "evidence"
+        ],
+        "properties": {
+         "presence": {
+          "type": "string",
+          "enum": [
+           "present",
+           "absent",
+           "uncertain"
+          ]
+         },
+         "occlusion": {
+          "type": "string",
+          "enum": [
+           "none",
+           "partial",
+           "heavy",
+           "uncertain",
+           "not-applicable"
+          ]
+         },
+         "identifiable": {
+          "type": "string",
+          "enum": [
+           "yes",
+           "no",
+           "uncertain"
+          ]
+         },
+         "bbox": {
+          "anyOf": [
+           {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {
+             "type": "integer",
+             "minimum": 0,
+             "maximum": 1000
+            }
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "color": {
+          "type": "string",
+          "enum": [
+           "black",
+           "white",
+           "grey",
+           "slate",
+           "silver",
+           "cream",
+           "beige",
+           "tan",
+           "brown",
+           "red",
+           "maroon",
+           "orange",
+           "amber",
+           "yellow",
+           "gold",
+           "green",
+           "teal",
+           "blue",
+           "navy",
+           "purple",
+           "pink",
+           "multicoloured",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "state": {
+          "type": "string",
+          "enum": [
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "markings": {
+          "type": "string",
+          "enum": [
+           "none",
+           "text",
+           "pattern",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "evidence": {
+          "type": "string",
+          "maxLength": 48
+         }
+        }
+       },
+       "prop_coiled_rope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "presence",
+         "occlusion",
+         "identifiable",
+         "bbox",
+         "color",
+         "state",
+         "markings",
+         "evidence"
+        ],
+        "properties": {
+         "presence": {
+          "type": "string",
+          "enum": [
+           "present",
+           "absent",
+           "uncertain"
+          ]
+         },
+         "occlusion": {
+          "type": "string",
+          "enum": [
+           "none",
+           "partial",
+           "heavy",
+           "uncertain",
+           "not-applicable"
+          ]
+         },
+         "identifiable": {
+          "type": "string",
+          "enum": [
+           "yes",
+           "no",
+           "uncertain"
+          ]
+         },
+         "bbox": {
+          "anyOf": [
+           {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {
+             "type": "integer",
+             "minimum": 0,
+             "maximum": 1000
+            }
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "color": {
+          "type": "string",
+          "enum": [
+           "black",
+           "white",
+           "grey",
+           "slate",
+           "silver",
+           "cream",
+           "beige",
+           "tan",
+           "brown",
+           "red",
+           "maroon",
+           "orange",
+           "amber",
+           "yellow",
+           "gold",
+           "green",
+           "teal",
+           "blue",
+           "navy",
+           "purple",
+           "pink",
+           "multicoloured",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "state": {
+          "type": "string",
+          "enum": [
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "markings": {
+          "type": "string",
+          "enum": [
+           "none",
+           "text",
+           "pattern",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "evidence": {
+          "type": "string",
+          "maxLength": 48
+         }
+        }
+       },
+       "prop_book_stack": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "presence",
+         "occlusion",
+         "identifiable",
+         "bbox",
+         "color",
+         "state",
+         "markings",
+         "evidence"
+        ],
+        "properties": {
+         "presence": {
+          "type": "string",
+          "enum": [
+           "present",
+           "absent",
+           "uncertain"
+          ]
+         },
+         "occlusion": {
+          "type": "string",
+          "enum": [
+           "none",
+           "partial",
+           "heavy",
+           "uncertain",
+           "not-applicable"
+          ]
+         },
+         "identifiable": {
+          "type": "string",
+          "enum": [
+           "yes",
+           "no",
+           "uncertain"
+          ]
+         },
+         "bbox": {
+          "anyOf": [
+           {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {
+             "type": "integer",
+             "minimum": 0,
+             "maximum": 1000
+            }
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "color": {
+          "type": "string",
+          "enum": [
+           "black",
+           "white",
+           "grey",
+           "slate",
+           "silver",
+           "cream",
+           "beige",
+           "tan",
+           "brown",
+           "red",
+           "maroon",
+           "orange",
+           "amber",
+           "yellow",
+           "gold",
+           "green",
+           "teal",
+           "blue",
+           "navy",
+           "purple",
+           "pink",
+           "multicoloured",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "state": {
+          "type": "string",
+          "enum": [
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "markings": {
+          "type": "string",
+          "enum": [
+           "none",
+           "text",
+           "pattern",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "evidence": {
+          "type": "string",
+          "maxLength": 48
+         }
+        }
+       },
+       "prop_tin_box": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "presence",
+         "occlusion",
+         "identifiable",
+         "bbox",
+         "color",
+         "state",
+         "markings",
+         "evidence"
+        ],
+        "properties": {
+         "presence": {
+          "type": "string",
+          "enum": [
+           "present",
+           "absent",
+           "uncertain"
+          ]
+         },
+         "occlusion": {
+          "type": "string",
+          "enum": [
+           "none",
+           "partial",
+           "heavy",
+           "uncertain",
+           "not-applicable"
+          ]
+         },
+         "identifiable": {
+          "type": "string",
+          "enum": [
+           "yes",
+           "no",
+           "uncertain"
+          ]
+         },
+         "bbox": {
+          "anyOf": [
+           {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {
+             "type": "integer",
+             "minimum": 0,
+             "maximum": 1000
+            }
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "color": {
+          "type": "string",
+          "enum": [
+           "black",
+           "white",
+           "grey",
+           "slate",
+           "silver",
+           "cream",
+           "beige",
+           "tan",
+           "brown",
+           "red",
+           "maroon",
+           "orange",
+           "amber",
+           "yellow",
+           "gold",
+           "green",
+           "teal",
+           "blue",
+           "navy",
+           "purple",
+           "pink",
+           "multicoloured",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "state": {
+          "type": "string",
+          "enum": [
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "markings": {
+          "type": "string",
+          "enum": [
+           "none",
+           "text",
+           "pattern",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "evidence": {
+          "type": "string",
+          "maxLength": 48
+         }
+        }
+       },
+       "prop_scissors": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "presence",
+         "occlusion",
+         "identifiable",
+         "bbox",
+         "color",
+         "state",
+         "markings",
+         "evidence"
+        ],
+        "properties": {
+         "presence": {
+          "type": "string",
+          "enum": [
+           "present",
+           "absent",
+           "uncertain"
+          ]
+         },
+         "occlusion": {
+          "type": "string",
+          "enum": [
+           "none",
+           "partial",
+           "heavy",
+           "uncertain",
+           "not-applicable"
+          ]
+         },
+         "identifiable": {
+          "type": "string",
+          "enum": [
+           "yes",
+           "no",
+           "uncertain"
+          ]
+         },
+         "bbox": {
+          "anyOf": [
+           {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {
+             "type": "integer",
+             "minimum": 0,
+             "maximum": 1000
+            }
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "color": {
+          "type": "string",
+          "enum": [
+           "black",
+           "white",
+           "grey",
+           "slate",
+           "silver",
+           "cream",
+           "beige",
+           "tan",
+           "brown",
+           "red",
+           "maroon",
+           "orange",
+           "amber",
+           "yellow",
+           "gold",
+           "green",
+           "teal",
+           "blue",
+           "navy",
+           "purple",
+           "pink",
+           "multicoloured",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "state": {
+          "type": "string",
+          "enum": [
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "markings": {
+          "type": "string",
+          "enum": [
+           "none",
+           "text",
+           "pattern",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "evidence": {
+          "type": "string",
+          "maxLength": 48
+         }
+        }
+       },
+       "prop_tape_roll": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "presence",
+         "occlusion",
+         "identifiable",
+         "bbox",
+         "color",
+         "state",
+         "markings",
+         "evidence"
+        ],
+        "properties": {
+         "presence": {
+          "type": "string",
+          "enum": [
+           "present",
+           "absent",
+           "uncertain"
+          ]
+         },
+         "occlusion": {
+          "type": "string",
+          "enum": [
+           "none",
+           "partial",
+           "heavy",
+           "uncertain",
+           "not-applicable"
+          ]
+         },
+         "identifiable": {
+          "type": "string",
+          "enum": [
+           "yes",
+           "no",
+           "uncertain"
+          ]
+         },
+         "bbox": {
+          "anyOf": [
+           {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {
+             "type": "integer",
+             "minimum": 0,
+             "maximum": 1000
+            }
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "color": {
+          "type": "string",
+          "enum": [
+           "black",
+           "white",
+           "grey",
+           "slate",
+           "silver",
+           "cream",
+           "beige",
+           "tan",
+           "brown",
+           "red",
+           "maroon",
+           "orange",
+           "amber",
+           "yellow",
+           "gold",
+           "green",
+           "teal",
+           "blue",
+           "navy",
+           "purple",
+           "pink",
+           "multicoloured",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "state": {
+          "type": "string",
+          "enum": [
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "markings": {
+          "type": "string",
+          "enum": [
+           "none",
+           "text",
+           "pattern",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "evidence": {
+          "type": "string",
+          "maxLength": 48
+         }
+        }
+       },
+       "prop_alarm_clock": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "presence",
+         "occlusion",
+         "identifiable",
+         "bbox",
+         "color",
+         "state",
+         "markings",
+         "evidence"
+        ],
+        "properties": {
+         "presence": {
+          "type": "string",
+          "enum": [
+           "present",
+           "absent",
+           "uncertain"
+          ]
+         },
+         "occlusion": {
+          "type": "string",
+          "enum": [
+           "none",
+           "partial",
+           "heavy",
+           "uncertain",
+           "not-applicable"
+          ]
+         },
+         "identifiable": {
+          "type": "string",
+          "enum": [
+           "yes",
+           "no",
+           "uncertain"
+          ]
+         },
+         "bbox": {
+          "anyOf": [
+           {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {
+             "type": "integer",
+             "minimum": 0,
+             "maximum": 1000
+            }
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "color": {
+          "type": "string",
+          "enum": [
+           "black",
+           "white",
+           "grey",
+           "slate",
+           "silver",
+           "cream",
+           "beige",
+           "tan",
+           "brown",
+           "red",
+           "maroon",
+           "orange",
+           "amber",
+           "yellow",
+           "gold",
+           "green",
+           "teal",
+           "blue",
+           "navy",
+           "purple",
+           "pink",
+           "multicoloured",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "state": {
+          "type": "string",
+          "enum": [
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "markings": {
+          "type": "string",
+          "enum": [
+           "none",
+           "text",
+           "pattern",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "evidence": {
+          "type": "string",
+          "maxLength": 48
+         }
+        }
+       },
+       "prop_glass_jar": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "presence",
+         "occlusion",
+         "identifiable",
+         "bbox",
+         "color",
+         "state",
+         "markings",
+         "evidence"
+        ],
+        "properties": {
+         "presence": {
+          "type": "string",
+          "enum": [
+           "present",
+           "absent",
+           "uncertain"
+          ]
+         },
+         "occlusion": {
+          "type": "string",
+          "enum": [
+           "none",
+           "partial",
+           "heavy",
+           "uncertain",
+           "not-applicable"
+          ]
+         },
+         "identifiable": {
+          "type": "string",
+          "enum": [
+           "yes",
+           "no",
+           "uncertain"
+          ]
+         },
+         "bbox": {
+          "anyOf": [
+           {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {
+             "type": "integer",
+             "minimum": 0,
+             "maximum": 1000
+            }
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "color": {
+          "type": "string",
+          "enum": [
+           "black",
+           "white",
+           "grey",
+           "slate",
+           "silver",
+           "cream",
+           "beige",
+           "tan",
+           "brown",
+           "red",
+           "maroon",
+           "orange",
+           "amber",
+           "yellow",
+           "gold",
+           "green",
+           "teal",
+           "blue",
+           "navy",
+           "purple",
+           "pink",
+           "multicoloured",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "state": {
+          "type": "string",
+          "enum": [
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "markings": {
+          "type": "string",
+          "enum": [
+           "none",
+           "text",
+           "pattern",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "evidence": {
+          "type": "string",
+          "maxLength": 48
+         }
+        }
+       },
+       "prop_amber_jar": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "presence",
+         "occlusion",
+         "identifiable",
+         "bbox",
+         "color",
+         "state",
+         "markings",
+         "evidence"
+        ],
+        "properties": {
+         "presence": {
+          "type": "string",
+          "enum": [
+           "present",
+           "absent",
+           "uncertain"
+          ]
+         },
+         "occlusion": {
+          "type": "string",
+          "enum": [
+           "none",
+           "partial",
+           "heavy",
+           "uncertain",
+           "not-applicable"
+          ]
+         },
+         "identifiable": {
+          "type": "string",
+          "enum": [
+           "yes",
+           "no",
+           "uncertain"
+          ]
+         },
+         "bbox": {
+          "anyOf": [
+           {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {
+             "type": "integer",
+             "minimum": 0,
+             "maximum": 1000
+            }
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "color": {
+          "type": "string",
+          "enum": [
+           "black",
+           "white",
+           "grey",
+           "slate",
+           "silver",
+           "cream",
+           "beige",
+           "tan",
+           "brown",
+           "red",
+           "maroon",
+           "orange",
+           "amber",
+           "yellow",
+           "gold",
+           "green",
+           "teal",
+           "blue",
+           "navy",
+           "purple",
+           "pink",
+           "multicoloured",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "state": {
+          "type": "string",
+          "enum": [
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "markings": {
+          "type": "string",
+          "enum": [
+           "none",
+           "text",
+           "pattern",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "evidence": {
+          "type": "string",
+          "maxLength": 48
+         }
+        }
+       },
+       "prop_folded_cloth": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "presence",
+         "occlusion",
+         "identifiable",
+         "bbox",
+         "color",
+         "state",
+         "markings",
+         "evidence"
+        ],
+        "properties": {
+         "presence": {
+          "type": "string",
+          "enum": [
+           "present",
+           "absent",
+           "uncertain"
+          ]
+         },
+         "occlusion": {
+          "type": "string",
+          "enum": [
+           "none",
+           "partial",
+           "heavy",
+           "uncertain",
+           "not-applicable"
+          ]
+         },
+         "identifiable": {
+          "type": "string",
+          "enum": [
+           "yes",
+           "no",
+           "uncertain"
+          ]
+         },
+         "bbox": {
+          "anyOf": [
+           {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {
+             "type": "integer",
+             "minimum": 0,
+             "maximum": 1000
+            }
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "color": {
+          "type": "string",
+          "enum": [
+           "black",
+           "white",
+           "grey",
+           "slate",
+           "silver",
+           "cream",
+           "beige",
+           "tan",
+           "brown",
+           "red",
+           "maroon",
+           "orange",
+           "amber",
+           "yellow",
+           "gold",
+           "green",
+           "teal",
+           "blue",
+           "navy",
+           "purple",
+           "pink",
+           "multicoloured",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "state": {
+          "type": "string",
+          "enum": [
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "markings": {
+          "type": "string",
+          "enum": [
+           "none",
+           "text",
+           "pattern",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "evidence": {
+          "type": "string",
+          "maxLength": 48
+         }
+        }
+       },
+       "prop_gloves": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "presence",
+         "occlusion",
+         "identifiable",
+         "bbox",
+         "color",
+         "state",
+         "markings",
+         "evidence"
+        ],
+        "properties": {
+         "presence": {
+          "type": "string",
+          "enum": [
+           "present",
+           "absent",
+           "uncertain"
+          ]
+         },
+         "occlusion": {
+          "type": "string",
+          "enum": [
+           "none",
+           "partial",
+           "heavy",
+           "uncertain",
+           "not-applicable"
+          ]
+         },
+         "identifiable": {
+          "type": "string",
+          "enum": [
+           "yes",
+           "no",
+           "uncertain"
+          ]
+         },
+         "bbox": {
+          "anyOf": [
+           {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {
+             "type": "integer",
+             "minimum": 0,
+             "maximum": 1000
+            }
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "color": {
+          "type": "string",
+          "enum": [
+           "black",
+           "white",
+           "grey",
+           "slate",
+           "silver",
+           "cream",
+           "beige",
+           "tan",
+           "brown",
+           "red",
+           "maroon",
+           "orange",
+           "amber",
+           "yellow",
+           "gold",
+           "green",
+           "teal",
+           "blue",
+           "navy",
+           "purple",
+           "pink",
+           "multicoloured",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "state": {
+          "type": "string",
+          "enum": [
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "markings": {
+          "type": "string",
+          "enum": [
+           "none",
+           "text",
+           "pattern",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "evidence": {
+          "type": "string",
+          "maxLength": 48
+         }
+        }
+       },
+       "prop_wooden_box": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "presence",
+         "occlusion",
+         "identifiable",
+         "bbox",
+         "color",
+         "state",
+         "markings",
+         "evidence"
+        ],
+        "properties": {
+         "presence": {
+          "type": "string",
+          "enum": [
+           "present",
+           "absent",
+           "uncertain"
+          ]
+         },
+         "occlusion": {
+          "type": "string",
+          "enum": [
+           "none",
+           "partial",
+           "heavy",
+           "uncertain",
+           "not-applicable"
+          ]
+         },
+         "identifiable": {
+          "type": "string",
+          "enum": [
+           "yes",
+           "no",
+           "uncertain"
+          ]
+         },
+         "bbox": {
+          "anyOf": [
+           {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {
+             "type": "integer",
+             "minimum": 0,
+             "maximum": 1000
+            }
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "color": {
+          "type": "string",
+          "enum": [
+           "black",
+           "white",
+           "grey",
+           "slate",
+           "silver",
+           "cream",
+           "beige",
+           "tan",
+           "brown",
+           "red",
+           "maroon",
+           "orange",
+           "amber",
+           "yellow",
+           "gold",
+           "green",
+           "teal",
+           "blue",
+           "navy",
+           "purple",
+           "pink",
+           "multicoloured",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "state": {
+          "type": "string",
+          "enum": [
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "markings": {
+          "type": "string",
+          "enum": [
+           "none",
+           "text",
+           "pattern",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "evidence": {
+          "type": "string",
+          "maxLength": 48
+         }
+        }
+       },
+       "prop_flashlight": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "presence",
+         "occlusion",
+         "identifiable",
+         "bbox",
+         "color",
+         "state",
+         "markings",
+         "evidence"
+        ],
+        "properties": {
+         "presence": {
+          "type": "string",
+          "enum": [
+           "present",
+           "absent",
+           "uncertain"
+          ]
+         },
+         "occlusion": {
+          "type": "string",
+          "enum": [
+           "none",
+           "partial",
+           "heavy",
+           "uncertain",
+           "not-applicable"
+          ]
+         },
+         "identifiable": {
+          "type": "string",
+          "enum": [
+           "yes",
+           "no",
+           "uncertain"
+          ]
+         },
+         "bbox": {
+          "anyOf": [
+           {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {
+             "type": "integer",
+             "minimum": 0,
+             "maximum": 1000
+            }
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "color": {
+          "type": "string",
+          "enum": [
+           "black",
+           "white",
+           "grey",
+           "slate",
+           "silver",
+           "cream",
+           "beige",
+           "tan",
+           "brown",
+           "red",
+           "maroon",
+           "orange",
+           "amber",
+           "yellow",
+           "gold",
+           "green",
+           "teal",
+           "blue",
+           "navy",
+           "purple",
+           "pink",
+           "multicoloured",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "state": {
+          "type": "string",
+          "enum": [
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "markings": {
+          "type": "string",
+          "enum": [
+           "none",
+           "text",
+           "pattern",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "evidence": {
+          "type": "string",
+          "maxLength": 48
+         }
+        }
+       },
+       "prop_keys": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "presence",
+         "occlusion",
+         "identifiable",
+         "bbox",
+         "color",
+         "state",
+         "markings",
+         "evidence"
+        ],
+        "properties": {
+         "presence": {
+          "type": "string",
+          "enum": [
+           "present",
+           "absent",
+           "uncertain"
+          ]
+         },
+         "occlusion": {
+          "type": "string",
+          "enum": [
+           "none",
+           "partial",
+           "heavy",
+           "uncertain",
+           "not-applicable"
+          ]
+         },
+         "identifiable": {
+          "type": "string",
+          "enum": [
+           "yes",
+           "no",
+           "uncertain"
+          ]
+         },
+         "bbox": {
+          "anyOf": [
+           {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {
+             "type": "integer",
+             "minimum": 0,
+             "maximum": 1000
+            }
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "color": {
+          "type": "string",
+          "enum": [
+           "black",
+           "white",
+           "grey",
+           "slate",
+           "silver",
+           "cream",
+           "beige",
+           "tan",
+           "brown",
+           "red",
+           "maroon",
+           "orange",
+           "amber",
+           "yellow",
+           "gold",
+           "green",
+           "teal",
+           "blue",
+           "navy",
+           "purple",
+           "pink",
+           "multicoloured",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "state": {
+          "type": "string",
+          "enum": [
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "markings": {
+          "type": "string",
+          "enum": [
+           "none",
+           "text",
+           "pattern",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "evidence": {
+          "type": "string",
+          "maxLength": 48
+         }
+        }
+       },
+       "prop_thread_spool": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "presence",
+         "occlusion",
+         "identifiable",
+         "bbox",
+         "color",
+         "state",
+         "markings",
+         "evidence"
+        ],
+        "properties": {
+         "presence": {
+          "type": "string",
+          "enum": [
+           "present",
+           "absent",
+           "uncertain"
+          ]
+         },
+         "occlusion": {
+          "type": "string",
+          "enum": [
+           "none",
+           "partial",
+           "heavy",
+           "uncertain",
+           "not-applicable"
+          ]
+         },
+         "identifiable": {
+          "type": "string",
+          "enum": [
+           "yes",
+           "no",
+           "uncertain"
+          ]
+         },
+         "bbox": {
+          "anyOf": [
+           {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {
+             "type": "integer",
+             "minimum": 0,
+             "maximum": 1000
+            }
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "color": {
+          "type": "string",
+          "enum": [
+           "black",
+           "white",
+           "grey",
+           "slate",
+           "silver",
+           "cream",
+           "beige",
+           "tan",
+           "brown",
+           "red",
+           "maroon",
+           "orange",
+           "amber",
+           "yellow",
+           "gold",
+           "green",
+           "teal",
+           "blue",
+           "navy",
+           "purple",
+           "pink",
+           "multicoloured",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "state": {
+          "type": "string",
+          "enum": [
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "markings": {
+          "type": "string",
+          "enum": [
+           "none",
+           "text",
+           "pattern",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "evidence": {
+          "type": "string",
+          "maxLength": 48
+         }
+        }
+       },
+       "prop_candle": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "presence",
+         "occlusion",
+         "identifiable",
+         "bbox",
+         "color",
+         "state",
+         "markings",
+         "evidence"
+        ],
+        "properties": {
+         "presence": {
+          "type": "string",
+          "enum": [
+           "present",
+           "absent",
+           "uncertain"
+          ]
+         },
+         "occlusion": {
+          "type": "string",
+          "enum": [
+           "none",
+           "partial",
+           "heavy",
+           "uncertain",
+           "not-applicable"
+          ]
+         },
+         "identifiable": {
+          "type": "string",
+          "enum": [
+           "yes",
+           "no",
+           "uncertain"
+          ]
+         },
+         "bbox": {
+          "anyOf": [
+           {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {
+             "type": "integer",
+             "minimum": 0,
+             "maximum": 1000
+            }
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "color": {
+          "type": "string",
+          "enum": [
+           "black",
+           "white",
+           "grey",
+           "slate",
+           "silver",
+           "cream",
+           "beige",
+           "tan",
+           "brown",
+           "red",
+           "maroon",
+           "orange",
+           "amber",
+           "yellow",
+           "gold",
+           "green",
+           "teal",
+           "blue",
+           "navy",
+           "purple",
+           "pink",
+           "multicoloured",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "state": {
+          "type": "string",
+          "enum": [
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "markings": {
+          "type": "string",
+          "enum": [
+           "none",
+           "text",
+           "pattern",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "evidence": {
+          "type": "string",
+          "maxLength": 48
+         }
+        }
+       },
+       "prop_notebook": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "presence",
+         "occlusion",
+         "identifiable",
+         "bbox",
+         "color",
+         "state",
+         "markings",
+         "evidence"
+        ],
+        "properties": {
+         "presence": {
+          "type": "string",
+          "enum": [
+           "present",
+           "absent",
+           "uncertain"
+          ]
+         },
+         "occlusion": {
+          "type": "string",
+          "enum": [
+           "none",
+           "partial",
+           "heavy",
+           "uncertain",
+           "not-applicable"
+          ]
+         },
+         "identifiable": {
+          "type": "string",
+          "enum": [
+           "yes",
+           "no",
+           "uncertain"
+          ]
+         },
+         "bbox": {
+          "anyOf": [
+           {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {
+             "type": "integer",
+             "minimum": 0,
+             "maximum": 1000
+            }
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "color": {
+          "type": "string",
+          "enum": [
+           "black",
+           "white",
+           "grey",
+           "slate",
+           "silver",
+           "cream",
+           "beige",
+           "tan",
+           "brown",
+           "red",
+           "maroon",
+           "orange",
+           "amber",
+           "yellow",
+           "gold",
+           "green",
+           "teal",
+           "blue",
+           "navy",
+           "purple",
+           "pink",
+           "multicoloured",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "state": {
+          "type": "string",
+          "enum": [
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "markings": {
+          "type": "string",
+          "enum": [
+           "none",
+           "text",
+           "pattern",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "evidence": {
+          "type": "string",
+          "maxLength": 48
+         }
+        }
+       },
+       "prop_mirror": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "presence",
+         "occlusion",
+         "identifiable",
+         "bbox",
+         "color",
+         "state",
+         "markings",
+         "evidence"
+        ],
+        "properties": {
+         "presence": {
+          "type": "string",
+          "enum": [
+           "present",
+           "absent",
+           "uncertain"
+          ]
+         },
+         "occlusion": {
+          "type": "string",
+          "enum": [
+           "none",
+           "partial",
+           "heavy",
+           "uncertain",
+           "not-applicable"
+          ]
+         },
+         "identifiable": {
+          "type": "string",
+          "enum": [
+           "yes",
+           "no",
+           "uncertain"
+          ]
+         },
+         "bbox": {
+          "anyOf": [
+           {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {
+             "type": "integer",
+             "minimum": 0,
+             "maximum": 1000
+            }
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "color": {
+          "type": "string",
+          "enum": [
+           "black",
+           "white",
+           "grey",
+           "slate",
+           "silver",
+           "cream",
+           "beige",
+           "tan",
+           "brown",
+           "red",
+           "maroon",
+           "orange",
+           "amber",
+           "yellow",
+           "gold",
+           "green",
+           "teal",
+           "blue",
+           "navy",
+           "purple",
+           "pink",
+           "multicoloured",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "state": {
+          "type": "string",
+          "enum": [
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "markings": {
+          "type": "string",
+          "enum": [
+           "none",
+           "text",
+           "pattern",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "evidence": {
+          "type": "string",
+          "maxLength": 48
+         }
+        }
+       },
+       "prop_clothespins": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "presence",
+         "occlusion",
+         "identifiable",
+         "bbox",
+         "color",
+         "state",
+         "markings",
+         "evidence"
+        ],
+        "properties": {
+         "presence": {
+          "type": "string",
+          "enum": [
+           "present",
+           "absent",
+           "uncertain"
+          ]
+         },
+         "occlusion": {
+          "type": "string",
+          "enum": [
+           "none",
+           "partial",
+           "heavy",
+           "uncertain",
+           "not-applicable"
+          ]
+         },
+         "identifiable": {
+          "type": "string",
+          "enum": [
+           "yes",
+           "no",
+           "uncertain"
+          ]
+         },
+         "bbox": {
+          "anyOf": [
+           {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {
+             "type": "integer",
+             "minimum": 0,
+             "maximum": 1000
+            }
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "color": {
+          "type": "string",
+          "enum": [
+           "black",
+           "white",
+           "grey",
+           "slate",
+           "silver",
+           "cream",
+           "beige",
+           "tan",
+           "brown",
+           "red",
+           "maroon",
+           "orange",
+           "amber",
+           "yellow",
+           "gold",
+           "green",
+           "teal",
+           "blue",
+           "navy",
+           "purple",
+           "pink",
+           "multicoloured",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "state": {
+          "type": "string",
+          "enum": [
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "markings": {
+          "type": "string",
+          "enum": [
+           "none",
+           "text",
+           "pattern",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "evidence": {
+          "type": "string",
+          "maxLength": 48
+         }
+        }
+       },
+       "prop_pencil_holder": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "presence",
+         "occlusion",
+         "identifiable",
+         "bbox",
+         "color",
+         "state",
+         "markings",
+         "evidence"
+        ],
+        "properties": {
+         "presence": {
+          "type": "string",
+          "enum": [
+           "present",
+           "absent",
+           "uncertain"
+          ]
+         },
+         "occlusion": {
+          "type": "string",
+          "enum": [
+           "none",
+           "partial",
+           "heavy",
+           "uncertain",
+           "not-applicable"
+          ]
+         },
+         "identifiable": {
+          "type": "string",
+          "enum": [
+           "yes",
+           "no",
+           "uncertain"
+          ]
+         },
+         "bbox": {
+          "anyOf": [
+           {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {
+             "type": "integer",
+             "minimum": 0,
+             "maximum": 1000
+            }
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "color": {
+          "type": "string",
+          "enum": [
+           "black",
+           "white",
+           "grey",
+           "slate",
+           "silver",
+           "cream",
+           "beige",
+           "tan",
+           "brown",
+           "red",
+           "maroon",
+           "orange",
+           "amber",
+           "yellow",
+           "gold",
+           "green",
+           "teal",
+           "blue",
+           "navy",
+           "purple",
+           "pink",
+           "multicoloured",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "state": {
+          "type": "string",
+          "enum": [
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "markings": {
+          "type": "string",
+          "enum": [
+           "none",
+           "text",
+           "pattern",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "evidence": {
+          "type": "string",
+          "maxLength": 48
+         }
+        }
+       },
+       "set_pencils_natural": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "presence",
+         "occlusion",
+         "identifiable",
+         "bbox",
+         "color",
+         "state",
+         "markings",
+         "evidence"
+        ],
+        "properties": {
+         "presence": {
+          "type": "string",
+          "enum": [
+           "present",
+           "absent",
+           "uncertain"
+          ]
+         },
+         "occlusion": {
+          "type": "string",
+          "enum": [
+           "none",
+           "partial",
+           "heavy",
+           "uncertain",
+           "not-applicable"
+          ]
+         },
+         "identifiable": {
+          "type": "string",
+          "enum": [
+           "yes",
+           "no",
+           "uncertain"
+          ]
+         },
+         "bbox": {
+          "anyOf": [
+           {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {
+             "type": "integer",
+             "minimum": 0,
+             "maximum": 1000
+            }
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "color": {
+          "type": "string",
+          "enum": [
+           "black",
+           "white",
+           "grey",
+           "slate",
+           "silver",
+           "cream",
+           "beige",
+           "tan",
+           "brown",
+           "red",
+           "maroon",
+           "orange",
+           "amber",
+           "yellow",
+           "gold",
+           "green",
+           "teal",
+           "blue",
+           "navy",
+           "purple",
+           "pink",
+           "multicoloured",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "state": {
+          "type": "string",
+          "enum": [
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "markings": {
+          "type": "string",
+          "enum": [
+           "none",
+           "text",
+           "pattern",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "evidence": {
+          "type": "string",
+          "maxLength": 48
+         }
+        }
+       },
+       "set_pencils_dark": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "presence",
+         "occlusion",
+         "identifiable",
+         "bbox",
+         "color",
+         "state",
+         "markings",
+         "evidence"
+        ],
+        "properties": {
+         "presence": {
+          "type": "string",
+          "enum": [
+           "present",
+           "absent",
+           "uncertain"
+          ]
+         },
+         "occlusion": {
+          "type": "string",
+          "enum": [
+           "none",
+           "partial",
+           "heavy",
+           "uncertain",
+           "not-applicable"
+          ]
+         },
+         "identifiable": {
+          "type": "string",
+          "enum": [
+           "yes",
+           "no",
+           "uncertain"
+          ]
+         },
+         "bbox": {
+          "anyOf": [
+           {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {
+             "type": "integer",
+             "minimum": 0,
+             "maximum": 1000
+            }
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "color": {
+          "type": "string",
+          "enum": [
+           "black",
+           "white",
+           "grey",
+           "slate",
+           "silver",
+           "cream",
+           "beige",
+           "tan",
+           "brown",
+           "red",
+           "maroon",
+           "orange",
+           "amber",
+           "yellow",
+           "gold",
+           "green",
+           "teal",
+           "blue",
+           "navy",
+           "purple",
+           "pink",
+           "multicoloured",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "state": {
+          "type": "string",
+          "enum": [
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "markings": {
+          "type": "string",
+          "enum": [
+           "none",
+           "text",
+           "pattern",
+           "not-applicable",
+           "uncertain"
+          ]
+         },
+         "evidence": {
+          "type": "string",
+          "maxLength": 48
+         }
+        }
+       }
+      }
+     }
+    }
+   },
+   "systemPrompt": "You are shown EXACTLY ONE photographic frame from a film set.\n\nThe production has asked you to CHECK each declared entity below. This list is a\nCHECKLIST, not evidence. Declaration does NOT mean the entity is present. An entity may be\ncompletely absent from this frame. Report presence:\"absent\" whenever the visible pixels do\nnot support it. Never infer presence merely because an entity id appears in the checklist.\n\nYou have not been shown any other image. Do not use comparative language.\n\nTHE CHECKLIST FOR THIS SET:\n- prop_hammer (\"Hammer\", tool)\n  Hammer on this prop table.\n- prop_stoneware_cup (\"Stoneware cup\", prop)\n  Stoneware cup on this prop table.\n- prop_coiled_rope (\"Coiled rope\", prop)\n  Coiled rope on this prop table.\n- prop_book_stack (\"Stack of books\", prop)\n  Stack of books on this prop table.\n- prop_tin_box (\"Metal tin box\", prop)\n  Metal tin box on this prop table.\n- prop_scissors (\"Scissors\", tool)\n  Scissors on this prop table.\n- prop_tape_roll (\"Roll of tape\", prop)\n  Roll of tape on this prop table.\n- prop_alarm_clock (\"Alarm clock\", prop)\n  Alarm clock on this prop table.\n- prop_glass_jar (\"Clear glass jar\", prop)\n  Clear glass jar on this prop table.\n- prop_amber_jar (\"Amber jar\", prop)\n  Amber jar on this prop table.\n- prop_folded_cloth (\"Folded cloth\", prop)\n  Folded cloth on this prop table.\n- prop_gloves (\"Work gloves\", prop)\n  Work gloves on this prop table.\n- prop_wooden_box (\"Small wooden box\", prop)\n  Small wooden box on this prop table.\n- prop_flashlight (\"Flashlight\", prop)\n  Flashlight on this prop table.\n- prop_keys (\"Key ring\", prop)\n  Key ring on this prop table.\n- prop_thread_spool (\"Spool of thread\", prop)\n  Spool of thread on this prop table.\n- prop_candle (\"Candle\", prop)\n  Candle on this prop table.\n- prop_notebook (\"Notebook\", prop)\n  Notebook on this prop table.\n- prop_mirror (\"Round mirror\", prop)\n  Round mirror on this prop table.\n- prop_clothespins (\"Bundle of clothespins\", prop)\n  Bundle of clothespins on this prop table.\n- prop_pencil_holder (\"Pencil holder\", prop)\n  The cylindrical ceramic holder itself, excluding the pencils standing in it.\n- set_pencils_natural (\"Natural wood pencils\", prop)\n  worn by / part of: prop_pencil_holder\n  CHILD: a distinct tracked part of its parent.\n  The unpainted light wooden pencils standing in the holder, tracked as one group.\n- set_pencils_dark (\"Dark painted pencils\", prop)\n  worn by / part of: prop_pencil_holder\n  CHILD: a distinct tracked part of its parent.\n  The dark painted pencils standing in the holder, tracked as one group.\n\nHow to answer:\n- Use ONLY the visible pixels of this frame.\n- Do not infer hidden, off-screen or previously visible entities from scene context or from\n  what would normally be there.\n- Do NOT assume worn accessories are still present. A watch, ring or badge may have been\n  removed between shots. Check the pixels.\n- A declared entity that was removed between shots MUST be reported absent, even though it\n  is still on the checklist.\n- Never fabricate a bounding box for an absent entity.\n\nPRESENCE AND OCCLUSION ARE DIFFERENT QUESTIONS. Answer them separately.\n  presence  - do the visible pixels support this entity being in the frame at all?\n              present | absent | uncertain\n  occlusion - for an entity that IS present, how much of it is covered by something in\n              front of it?  none | partial | heavy | uncertain\n              For an absent entity, occlusion is \"not-applicable\".\n\nEach record must be exactly one of three shapes:\n  PRESENT    presence:\"present\",  occlusion: none | partial | heavy | uncertain,\n             bbox: four integers.\n  ABSENT     presence:\"absent\",   occlusion:\"not-applicable\", bbox: null,\n             identifiable: no | uncertain.\n  UNCERTAIN  presence:\"uncertain\", occlusion:\"uncertain\", identifiable:\"uncertain\",\n             bbox: four integers only if you can localise a possible remnant, else null.\n\ncoordinate_mode is always \"permille\". bbox is EXACTLY FOUR INTEGERS from 0 to 1000, in the\norder [x0, y0, x1, y1], as thousandths of the image width and height.\n\nidentifiable describes whether you could tell what it is from the visible evidence alone.\nevidence is a short factual note about what you can actually see, at most 48\ncharacters.\nIf an attribute cannot be read from the pixels use \"uncertain\"; if it does not apply use\n\"not-applicable\". Never guess hidden content.",
+   "userText": "Check each declared entity against this frame.",
+   "imagePartCount": 1,
+   "imagePlaceholder": "<1 image redacted>"
+  }
+ ]
+}
