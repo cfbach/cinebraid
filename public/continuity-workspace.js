@@ -20,14 +20,50 @@
 /* The comparison is derived evidence, not project truth: the observations
    behind it are already cached server-side and a repeat check is usually
    instant, so a result lives for the session and is never written into
-   project.json. */
+   project.json.
+
+   It is keyed by PROJECT and shot, not by shot alone. Shot ids are only unique
+   inside a project — two projects routinely both have an L1-01 — and switching
+   projects replaces P in place without reloading the page, so a map keyed by
+   shot id alone served the previous project's verdict, declarations and all, to
+   the next one. Scoping the key is the fix rather than clearing on switch:
+   every project load path would otherwise need its own hook, and the one that
+   was missed is exactly how this reached acceptance. A stale entry now cannot
+   be addressed, whichever path opened the project. */
 const CONTINUITY_RUNS = new Map();
+function continuityProjectKey() {
+  if (typeof ACTIVE_PROJECT_SLUG !== "undefined" && ACTIVE_PROJECT_SLUG) return String(ACTIVE_PROJECT_SLUG);
+  if (typeof window !== "undefined" && window.ACTIVE_PROJECT_SLUG) return String(window.ACTIVE_PROJECT_SLUG);
+  return "";
+}
+function continuityRunKey(shotId) {
+  const project = continuityProjectKey();
+  return project ? `${project}::${String(shotId)}` : "";
+}
 function continuityRun(shotId) {
-  return CONTINUITY_RUNS.get(String(shotId)) || null;
+  const key = continuityRunKey(shotId);
+  if (!key) return null;
+  const run = CONTINUITY_RUNS.get(key) || null;
+  /* Read-side revalidation. The key already scopes it; this makes a mismatch
+     unrepresentable even if some future caller builds a key another way. */
+  return run && run.projectKey === continuityProjectKey() ? run : null;
 }
 function setContinuityRun(shotId, value) {
-  if (value) CONTINUITY_RUNS.set(String(shotId), value);
-  else CONTINUITY_RUNS.delete(String(shotId));
+  const project = continuityProjectKey();
+  const key = continuityRunKey(shotId);
+  if (!key) return;
+  /* Nothing from another project stays resident. */
+  for (const [existing, run] of CONTINUITY_RUNS)
+    if (run?.projectKey !== project) CONTINUITY_RUNS.delete(existing);
+  if (value) CONTINUITY_RUNS.set(key, { ...value, projectKey: project });
+  else CONTINUITY_RUNS.delete(key);
+}
+/* Called by load(), which every project open funnels through. A verdict was
+   computed against the project record being replaced, so it does not survive
+   the replacement — including a reopen of the same project, where the scoped
+   key alone would have let it through. */
+function resetContinuityWorkspaceState() {
+  CONTINUITY_RUNS.clear();
 }
 
 const CONTINUITY_OUTCOME_ORDER = ["stable", "issue", "expected", "uncertain", "review"];
@@ -232,6 +268,11 @@ window.runShotContinuityCheck = async (shotId, options = {}) => {
   const pairs = continuityFramePairs(rows);
   const pair = continuitySelectedPair(s, pairs);
   if (!pair) return toast("Continuity requires two approved frames");
+  /* A check outlives its own await. If the project is switched while the
+     comparison is in flight, the answer belongs to the project that asked for
+     it and must not be written into whichever one is open when it lands. */
+  const askedBy = continuityProjectKey();
+  const stillOurs = () => continuityProjectKey() === askedBy;
   setContinuityRun(shotId, { status: "working", pairId: pair.id, labelA: continuityFrameWord(pair.a), labelB: continuityFrameWord(pair.b) });
   route();
   try {
@@ -249,10 +290,12 @@ window.runShotContinuityCheck = async (shotId, options = {}) => {
     });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || "Continuity check failed");
+    if (!stillOurs()) return;
     setContinuityRun(shotId, { status: "done", pairId: pair.id, labelA: continuityFrameWord(pair.a), labelB: continuityFrameWord(pair.b), data });
     route();
     if (!options.silent) toast(continuityRunHeadline(data));
   } catch (error) {
+    if (!stillOurs()) return;
     setContinuityRun(shotId, { status: "error", pairId: pair.id, labelA: continuityFrameWord(pair.a), labelB: continuityFrameWord(pair.b), error: error.message });
     route();
     if (!options.silent) toast("Continuity check failed: " + error.message);
@@ -282,6 +325,7 @@ window.reobserveShotContinuity = (shotId, side = "") => {
   confirmModal(
     `Run the visual analysis again for ${names}? The stored analysis is discarded and each frame is looked at fresh. Images, candidates and project records are not touched.`,
     async () => {
+      const askedBy = continuityProjectKey();
       setContinuityRun(shotId, { status: "working", pairId: pair.id, labelA: continuityFrameWord(pair.a), labelB: continuityFrameWord(pair.b) });
       route();
       try {
@@ -290,10 +334,14 @@ window.reobserveShotContinuity = (shotId, side = "") => {
           if (!response.ok) throw new Error((await response.json()).error || "Could not clear the stored analysis");
         }
       } catch (error) {
+        if (continuityProjectKey() !== askedBy) return;
         setContinuityRun(shotId, { status: "error", pairId: pair.id, error: error.message });
         route();
         return toast("Re-observe failed: " + error.message);
       }
+      /* The purge is scoped to a shot in whichever project was active when the
+         request went out; re-checking under a different one would be nonsense. */
+      if (continuityProjectKey() !== askedBy) return;
       runShotContinuityCheck(shotId);
     },
     { title: "Re-observe frames", confirmLabel: "RE-OBSERVE", danger: false },
@@ -495,4 +543,6 @@ if (typeof window !== "undefined") {
   window.continuityCapability = continuityCapability;
   window.setContinuityRun = setContinuityRun;
   window.continuityRun = continuityRun;
+  window.continuityProjectKey = continuityProjectKey;
+  window.resetContinuityWorkspaceState = resetContinuityWorkspaceState;
 }

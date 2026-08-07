@@ -257,6 +257,58 @@ async function renderCheck(payload, options = {}) {
   pass("legacy pair review is retained, version-labelled and folded; only one prominent continuity action remains");
 }
 
+/* --- a verdict belongs to the project that produced it (D1) ---------------- */
+{
+  /* Two projects, the same shot id — routine, since ids are only unique inside
+     a project. Switching replaces P in place without reloading the page, which
+     is exactly how a previous project's verdict reached the next one's card. */
+  const projectA = workspaceFixture();
+  projectA.meta.title = "Project A";
+  const projectB = workspaceFixture();
+  projectB.meta.title = "Project B";
+  projectB.shots[0].title = "Different shot, same id";
+
+  const { rendered } = await renderCheck(comparePayload());
+  assert(rendered.document.getElementById("main").innerHTML.includes("continuity-outcome-counts"), "precondition: project A has a rendered verdict");
+  assert.strictEqual(evaluate(rendered, `!!continuityRun("L1-01")`), true, "precondition: the run is addressable while its own project is open");
+
+  /* Switch the way the app does: a new slug and a new project record. */
+  evaluate(rendered, `ACTIVE_PROJECT_SLUG = "project-b"`);
+  assert.strictEqual(evaluate(rendered, `continuityRun("L1-01")`), null, "a verdict must not be addressable from another project");
+  /* Per-project UI preferences are already project-scoped, so the new project
+     needs its own Frames selection to render the same stage. */
+  evaluate(rendered, `localStorage.setItem("cinebraid-focused:project-b:shot-task:L1-01","frames")`);
+  await evaluate(rendered, `route()`);
+  await wait(20);
+  const afterSwitch = rendered.document.getElementById("main").innerHTML;
+  assert(!afterSwitch.includes("continuity-outcome-counts"), "no stale outcome counts may survive a project switch");
+  assert(!afterSwitch.includes("Enamel mug"), "no stale finding may survive a project switch");
+  assert(!afterSwitch.includes("MARK EXPECTED"), "no stale declaration control may survive a project switch");
+  assert(afterSwitch.includes("CHECK CONTINUITY"), "the new project must start idle, offering its own check");
+
+  /* Switching back must not relabel project B's absence as project A's result,
+     and must not resurrect a verdict computed against a record that has since
+     been reloaded. Every project open funnels through load(), which discards
+     session-scoped display state. */
+  evaluate(rendered, `resetContinuityWorkspaceState()`);
+  evaluate(rendered, `ACTIVE_PROJECT_SLUG = "fixture"`);
+  assert.strictEqual(evaluate(rendered, `continuityRun("L1-01")`), null, "a run must not survive the project record being reloaded");
+  const appSource = fs.readFileSync(path.join(ROOT, "public", "app.js"), "utf8");
+  assert(/resetContinuityWorkspaceState/.test(appSource), "load() must discard continuity display state, so every open path is covered and not just the switcher");
+  assert(/async function load\(\)[\s\S]{0,600}resetContinuityWorkspaceState/.test(appSource), "the reset must happen inside load(), the funnel every project open goes through");
+
+  /* Writing under one project must never leave residue addressable by another. */
+  evaluate(rendered, `setContinuityRun("L1-01", { status: "done", pairId: "x", data: null })`);
+  evaluate(rendered, `ACTIVE_PROJECT_SLUG = "project-b"`);
+  assert.strictEqual(evaluate(rendered, `continuityRun("L1-01")`), null, "a fresh run must stay inside the project that made it");
+  evaluate(rendered, `setContinuityRun("L1-01", { status: "done", pairId: "y", data: null })`);
+  assert.strictEqual(evaluate(rendered, `CONTINUITY_RUNS.size`), 1, "a run from another project must not stay resident in memory");
+  /* An unidentified project can address nothing at all. */
+  evaluate(rendered, `ACTIVE_PROJECT_SLUG = ""`);
+  assert.strictEqual(evaluate(rendered, `continuityRun("L1-01")`), null, "with no project identity nothing may be served");
+  pass("a continuity verdict is addressable only from the project that produced it, and leaves no residue behind a switch");
+}
+
 /* --- two approved frames are required ------------------------------------- */
 {
   const project = workspaceFixture();
@@ -287,6 +339,43 @@ async function renderCheck(payload, options = {}) {
   assert(continuityDown.html.includes("Choose a continuity vision provider in Settings"), "the message must point at the continuity provider setting");
   assert(/CHECK CONTINUITY<\/button>/.test(continuityDown.html) && /disabled[^>]*>CHECK CONTINUITY/.test(continuityDown.html), "an unconfigured check must be visibly disabled rather than absent");
   pass("continuity gating is independent of generic vision and names the continuity provider");
+}
+
+/* --- readiness follows a save, without a page reload ---------------------- */
+{
+  /* Capability readiness is derived from the configuration, so it is stale the
+     moment the configuration changes. Saving asks once, on the user's own
+     action — no polling, and no reload before the workspace tells the truth. */
+  const settings = fs.readFileSync(path.join(ROOT, "public", "settings.js"), "utf8");
+  const save = settings.slice(settings.indexOf("window.saveConfig"), settings.indexOf("window.testFalGenerationConnection"));
+  assert(/refreshAgentStatus/.test(save), "saving settings must recompute capability readiness");
+  assert(/await refreshAgentStatus/.test(save), "the refresh must complete before the workspace re-renders, or the render still shows the old answer");
+  assert(save.indexOf("refreshAgentStatus") < save.lastIndexOf("route()"), "the refresh must happen before the re-render, not after it");
+  assert(!/setInterval|setTimeout\s*\(\s*[^,]*refreshAgentStatus/.test(settings), "readiness must not be polled");
+
+  /* And the workspace must actually be driven by that answer, in both
+     directions, without the page being reloaded. */
+  const ready = (label) => ({ ready: true, label, provider: "custom", model: "fixture-model", message: `${label} is ready.`, action: "" });
+  const notReady = { ready: false, provider: "none", model: "", message: "Continuity analysis isn't configured.", action: "Choose a continuity vision provider in Settings." };
+  const rendered = await render("#/shot/L1-01", workspaceFixture(), {
+    storage: FRAMES_STORAGE,
+    agentStatus: { capabilities: { text: ready("Text"), vision: ready("Vision"), continuity: notReady, embedding: ready("Embedding"), verifier: ready("Verifier"), technical: ready("Technical") } },
+  });
+  assert(rendered.html.includes("Continuity analysis isn&#39;t configured.") || rendered.html.includes("Continuity analysis isn't configured."), "precondition: continuity starts unconfigured");
+
+  evaluate(rendered, `AGENT_STATUS.capabilities.continuity = ${JSON.stringify(ready("Continuity observation"))}`);
+  await evaluate(rendered, `route()`);
+  await wait(20);
+  let markup = rendered.document.getElementById("main").innerHTML;
+  assert(/onclick="runShotContinuityCheck\('L1-01'\)"/.test(markup), "a newly configured continuity provider must make the check available without a reload");
+  assert(!markup.includes("Continuity analysis isn"), "the unconfigured message must be gone once it is configured");
+
+  evaluate(rendered, `AGENT_STATUS.capabilities.continuity = ${JSON.stringify(notReady)}`);
+  await evaluate(rendered, `route()`);
+  await wait(20);
+  markup = rendered.document.getElementById("main").innerHTML;
+  assert(/disabled[^>]*>CHECK CONTINUITY/.test(markup), "removing the configuration must disable the check again without a reload");
+  pass("saving settings recomputes readiness once, and the workspace follows it in both directions without a page reload");
 }
 
 /* --- the result ----------------------------------------------------------- */
