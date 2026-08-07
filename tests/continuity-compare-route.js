@@ -346,7 +346,43 @@ async function main() {
   assert.strictEqual(visionRequests.length, 0, "fifteen warm comparisons must make ZERO model calls");
   console.log(`Six frames -> 6 observations supporting all 15 pairwise comparisons: ${visionRequests.length} model calls for the comparisons, ${elapsedMs.toFixed(0)}ms total (pairwise model comparison would have needed 15 calls).`);
 
-  console.log("Continuity compare-route suite passed: a cold comparison makes exactly two single-image observations and never a pairwise request, a warm comparison makes none, a half-warm one makes exactly one; identical observations are stable, presence loss reproduces the Phase 1 finding, declared intent reclassifies without hiding, near-miss intent forces review, heavy occlusion and uncertainty can never become a presence finding, differing frame manifests are compared safely, unknown and unsafe inputs are refused, a deleted image cannot serve stale evidence, and the response leaks no path, endpoint or image bytes.");
+  /* ---- 14. the answer a user-facing surface is given ----------------------
+
+     Phase 4 renders this response and decides nothing of its own, so the route
+     has to hand over the five-value outcome, the described findings and an
+     explicit statement about whether the analysis itself was usable. */
+  await purgeAll();
+  replies.set("A", reply());
+  replies.set("B", reply({ "PROP-MUG": absentRecord() }));
+  let described = (await compare({ shotId: "S-01", frameA: "frame-a", frameB: "frame-b" })).body;
+  assert.deepStrictEqual(Object.keys(described.outcomeCounts).sort(), ["expected", "issue", "review", "stable", "uncertain"], "the response must count all five outcomes");
+  assert.strictEqual(described.analysis.usable, true, "two usable observations make a usable analysis");
+  assert.deepStrictEqual(described.analysis.unusableFrames, []);
+  const mug = described.entities.find((row) => row.entityId === "PROP-MUG");
+  assert.strictEqual(mug.outcome, "issue", "an undeclared presence loss must arrive already classed as an issue");
+  assert.strictEqual(mug.findings[0].headline, "Presence changed", "the finding must arrive in production English");
+  assert.deepStrictEqual([mug.findings[0].from, mug.findings[0].to], ["present", "absent"], "the transition must carry the specifics the headline leaves out");
+  /* Nothing may restate the transition in prose underneath it. */
+  assert.strictEqual(mug.findings[0].detail, "", "a presence change is fully said by its transition and needs no detail sentence");
+  assert.strictEqual(mug.findings[0].canMarkExpected, true, "a real change must arrive declarable");
+  assert.deepStrictEqual(mug.findings[0].expectedAction, { target: "intent", field: "allowPresenceChange", value: "may-leave" }, "the declaration to write must arrive with the finding");
+  const kai = described.entities.find((row) => row.entityId === "CHAR-KAI");
+  assert.strictEqual(kai.outcome, "stable", "an unchanged entity must arrive stable");
+  /* No card may need a flag code, a bbox or a coordinate mode to be rendered. */
+  const cardJson = JSON.stringify(described.entities);
+  for (const token of ["coordinate_mode", "permille", "invalid_enum", "invalid_coordinate_mode", "untracked_attribute_discarded"])
+    assert(!cardJson.includes(token), `the per-entity rollup leaked contract internals ("${token}")`);
+
+  /* And a set-wide integrity failure is reported as an analysis failure rather
+     than as a shot full of continuity breaks. */
+  await purgeAll();
+  replies.set("B", JSON.stringify({ coordinate_mode: "pixels", entities: { "CHAR-KAI": record(), "PROP-MUG": record() } }));
+  described = (await compare({ shotId: "S-01", frameA: "frame-a", frameB: "frame-b" })).body;
+  assert.strictEqual(described.analysis.usable, false, "a wrong coordinate frame must make the analysis unusable");
+  assert.deepStrictEqual(described.analysis.unusableFrames.map((row) => row.side), ["b"], "the unusable side must be named so it can be re-observed");
+  replies.delete("B");
+
+  console.log("Continuity compare-route suite passed: a cold comparison makes exactly two single-image observations and never a pairwise request, a warm comparison makes none, a half-warm one makes exactly one; identical observations are stable, presence loss reproduces the Phase 1 finding, declared intent reclassifies without hiding, near-miss intent forces review, heavy occlusion and uncertainty can never become a presence finding, differing frame manifests are compared safely, unknown and unsafe inputs are refused, a deleted image cannot serve stale evidence, the response leaks no path, endpoint or image bytes, and every finding arrives already classed, already described and already carrying the declaration that would make it expected.");
 }
 
 main()

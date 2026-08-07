@@ -3893,3 +3893,137 @@ body[data-focused-workspace="1"] .guided-frame-body,
 #app[data-surf="light"] .reference-manual-actions .recommended,
 #app[data-surf="light"] .reference-manual-actions .recommended span,
 #app[data-surf="light"] .reference-manual-actions .recommended small{color:#ffffff!important}
+
+
+/* =====================================================================
+   Declared-entity continuity — shot workspace (6.7)
+
+   Production tone, not a dashboard. Five outcome hues, each chosen so the
+   two pairs that must never be confused stay apart: EXPECTED is blue against
+   ISSUE red, and REVIEW is amber against the red an actual analysis failure
+   uses. UNCERTAIN is deliberately unsaturated — it is an absence of evidence,
+   not a status.
+   ===================================================================== */
+.shot-continuity{display:grid;gap:12px;padding:15px 16px;border:1px solid var(--line);border-radius:var(--r-card);background:var(--panel);margin:14px 0;min-width:0}
+.shot-continuity>header{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:14px;align-items:start}
+.shot-continuity>header span{display:block;color:var(--acc);font:800 8px var(--mono);letter-spacing:.14em}
+.shot-continuity>header b{display:block;margin-top:4px;font-family:var(--display);font-size:16px;letter-spacing:.02em}
+.shot-continuity>header small{display:block;margin-top:4px;color:var(--muted);line-height:1.45}
+.shot-continuity-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+.shot-continuity-actions .approve-btn{white-space:nowrap}
+.continuity-pair-choice select{min-width:190px}
+.continuity-requirement{color:var(--muted);line-height:1.5;margin:0;padding:11px 13px;border:1px dashed var(--line-2);border-radius:var(--r-tile);background:var(--panel-2)}
+
+.continuity-result{display:grid;gap:12px;min-width:0}
+.continuity-result.state-working{grid-template-columns:auto minmax(0,1fr);align-items:center;padding:13px;border:1px solid color-mix(in srgb,var(--acc) 42%,var(--line));border-radius:var(--r-tile);background:var(--acc-soft)}
+.continuity-result.state-working>i{font-size:22px;color:var(--acc)}
+.continuity-result.state-working small{display:block;color:var(--muted);margin-top:3px}
+.continuity-result.state-error{padding:13px;border:1px solid color-mix(in srgb,var(--red) 45%,var(--line));border-radius:var(--r-tile);background:var(--panel-2)}
+.continuity-result.state-error p{color:var(--muted);margin:5px 0 10px}
+
+/* --- the five-outcome count row --- */
+.continuity-outcome-counts{display:flex;flex-wrap:wrap;gap:8px;list-style:none;padding:0;margin:0}
+.continuity-outcome-counts li{display:flex;align-items:baseline;gap:7px;padding:7px 12px;border:1px solid var(--line);border-radius:var(--r-pill);background:var(--panel-2)}
+.continuity-outcome-counts i{font-style:normal;font-size:11px;line-height:1}
+.continuity-outcome-counts b{font:700 15px var(--mono);font-variant-numeric:tabular-nums}
+.continuity-outcome-counts span{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em}
+.continuity-outcome-counts .is-zero{opacity:.42}
+.continuity-outcome-counts .outcome-stable i,.continuity-outcome-counts .outcome-stable b{color:var(--green)}
+.continuity-outcome-counts .outcome-issue i,.continuity-outcome-counts .outcome-issue b{color:var(--red)}
+.continuity-outcome-counts .outcome-expected i,.continuity-outcome-counts .outcome-expected b{color:var(--blue)}
+.continuity-outcome-counts .outcome-uncertain i,.continuity-outcome-counts .outcome-uncertain b{color:var(--faint)}
+.continuity-outcome-counts .outcome-review i,.continuity-outcome-counts .outcome-review b{color:var(--amber)}
+.continuity-provenance{margin:0;color:var(--faint);font:11px var(--mono)}
+
+/* --- one card per entity that needs attention --- */
+.continuity-entity-list{display:grid;gap:10px;min-width:0}
+.continuity-entity{border:1px solid var(--line);border-left-width:3px;border-radius:var(--r-tile);background:var(--panel-2);overflow:hidden;min-width:0}
+.continuity-entity>header{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;padding:11px 13px 9px}
+.continuity-entity>header b{font-family:var(--display);font-size:15px;letter-spacing:.02em}
+.continuity-entity>header small{color:var(--faint);font:10px var(--mono);text-transform:uppercase;letter-spacing:.09em}
+.continuity-outcome{font:800 9px var(--mono);letter-spacing:.13em}
+.continuity-entity.outcome-issue{border-left-color:var(--red)}
+.continuity-entity.outcome-issue>header .continuity-outcome{color:var(--red)}
+.continuity-entity.outcome-expected{border-left-color:var(--blue)}
+.continuity-entity.outcome-expected>header .continuity-outcome{color:var(--blue)}
+.continuity-entity.outcome-review{border-left-color:var(--amber)}
+.continuity-entity.outcome-review>header .continuity-outcome{color:var(--amber)}
+.continuity-entity.outcome-uncertain{border-left-color:var(--line-2)}
+.continuity-entity.outcome-uncertain>header .continuity-outcome{color:var(--faint)}
+
+.continuity-finding-list{list-style:none;margin:0;padding:0}
+.continuity-finding{display:grid;gap:5px;padding:10px 13px;border-top:1px solid var(--line-soft);min-width:0}
+.continuity-finding>b{font-size:13px;font-weight:600}
+.continuity-finding small{color:var(--muted);line-height:1.5}
+.continuity-finding em{color:var(--blue);font-style:normal;font-size:12px;line-height:1.5}
+.continuity-finding p{margin:2px 0 0;color:var(--ink);font-size:12px;line-height:1.5}
+.continuity-finding-class{font:800 8px var(--mono);letter-spacing:.13em;color:var(--faint)}
+.continuity-finding.class-issue .continuity-finding-class{color:var(--red)}
+.continuity-finding.class-expected .continuity-finding-class{color:var(--blue)}
+.continuity-finding.class-review .continuity-finding-class{color:var(--amber)}
+.continuity-transition{display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap;font:12px var(--mono);color:var(--muted)}
+.continuity-transition b{color:var(--ink);font-weight:600}
+.continuity-transition i{font-style:normal;color:var(--faint)}
+.continuity-finding-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:5px}
+.continuity-finding-actions .chip{padding:5px 13px;font:700 10px var(--mono);letter-spacing:.08em}
+
+/* --- stable entities are a line each, never a card each --- */
+.continuity-stable{border:1px solid var(--line);border-left:3px solid var(--green);border-radius:var(--r-tile);background:var(--panel-2);padding:0 13px}
+.continuity-stable>summary{cursor:pointer;list-style:none;display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;padding:11px 0}
+.continuity-stable>summary::-webkit-details-marker{display:none}
+.continuity-stable>summary .continuity-outcome{color:var(--green)}
+.continuity-stable>summary b{font-size:13px;font-weight:600}
+.continuity-stable ul{list-style:none;margin:0;padding:0 0 11px;display:grid;gap:6px}
+.continuity-stable li{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap}
+.continuity-stable li small{color:var(--faint);font:10px var(--mono);text-transform:uppercase;letter-spacing:.09em}
+
+.continuity-secondary-actions{display:flex;justify-content:flex-end}
+.continuity-secondary-actions .ghost-btn{width:auto;font-size:11px;padding:6px 14px}
+
+/* --- an analysis failure is not a continuity verdict --- */
+.continuity-analysis-error{display:grid;gap:8px;justify-items:start;padding:13px;border:1px solid color-mix(in srgb,var(--red) 45%,var(--line));border-radius:var(--r-tile);background:color-mix(in srgb,var(--red) 6%,var(--panel-2))}
+.continuity-analysis-error b{font-family:var(--display);font-size:15px}
+.continuity-analysis-error p{margin:0;color:var(--muted);line-height:1.5}
+
+/* --- declared intent and per-frame state --- */
+.continuity-intent-grid,.continuity-state-grid{display:grid;gap:10px;padding-bottom:14px}
+.continuity-intent-row,.continuity-state-row{display:grid;gap:9px;padding:12px;border:1px solid var(--line);border-radius:var(--r-tile);background:var(--panel-2)}
+.continuity-intent-row>header,.continuity-state-row>header{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap}
+.continuity-intent-row>header b,.continuity-state-row>header b{font-family:var(--display);font-size:14px}
+.continuity-intent-row>header small,.continuity-state-row>header small{color:var(--faint);font:10px var(--mono);text-transform:uppercase;letter-spacing:.09em}
+.continuity-intent-presence,.continuity-intent-note{display:grid;gap:6px}
+.continuity-intent-presence>span,.continuity-intent-note>span{font-size:11px;color:var(--muted)}
+.continuity-intent-toggles{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.continuity-intent-toggles .checkline{border-color:var(--line)}
+.continuity-state-cells{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.continuity-state-cells label{display:grid;gap:6px;min-width:0}
+.continuity-state-cells span{font:700 10px var(--mono);letter-spacing:.09em;color:var(--muted);text-transform:uppercase}
+
+/* --- Project Bible: what continuity is allowed to judge --- */
+.continuity-tracking{margin:0 0 14px}
+.continuity-track-enabled{margin-bottom:10px;border-color:var(--line)}
+.continuity-track-options{display:grid;grid-template-columns:repeat(auto-fit,minmax(215px,1fr));gap:8px}
+.continuity-track-option{display:grid;grid-template-columns:auto minmax(0,1fr);gap:9px;align-items:start;padding:10px;border:1px solid var(--line);border-radius:var(--r-input);background:var(--panel-2)}
+.continuity-track-option input{width:auto;margin-top:2px;accent-color:var(--acc)}
+.continuity-track-option b{display:block;font-size:12px;font-weight:600}
+.continuity-track-option small{display:block;margin-top:3px;color:var(--muted);font-size:11px;line-height:1.45}
+.continuity-track-unit{display:grid;grid-template-columns:repeat(auto-fit,minmax(215px,1fr));gap:10px;margin-top:10px;max-width:760px}
+.continuity-track-unit label,.continuity-track-cues{display:grid;gap:6px}
+.continuity-track-unit span,.continuity-track-cues>span{font-size:11px;color:var(--muted)}
+.continuity-track-cues{margin:10px 0 14px}
+
+/* --- the superseded v6.6 pair review --- */
+.legacy-continuity-review{margin:14px 0}
+.legacy-continuity-review>summary span{margin-left:auto;font:700 9px var(--mono);letter-spacing:.1em;color:var(--faint);text-transform:uppercase}
+.legacy-continuity-review .frame-sequence-review{background:var(--panel-2);margin-bottom:14px}
+
+@media(max-width:900px){
+  .continuity-intent-toggles{grid-template-columns:1fr}
+}
+@media(max-width:620px){
+  .shot-continuity>header{grid-template-columns:1fr}
+  .shot-continuity-actions{justify-content:stretch}
+  .shot-continuity-actions .approve-btn,.continuity-pair-choice,.continuity-pair-choice select{width:100%}
+  .continuity-state-cells{grid-template-columns:1fr}
+  .continuity-secondary-actions .ghost-btn{width:100%}
+}

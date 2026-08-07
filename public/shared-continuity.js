@@ -891,6 +891,236 @@ function applyIntent(comparison, context = {}) {
   };
 }
 
+/* ---------- presentation semantics ---------------------------------------
+
+   Phase 4 puts continuity in front of a user, and the rule that keeps it
+   trustworthy is that the UI renders a verdict it was given rather than
+   deriving one. Every judgement below is a restatement of a finding the Phase 1
+   engine already produced: which bucket it came out of, and what applyIntent
+   labelled it. Nothing here reads a validation flag code, a bbox, an enum or a
+   raw model note, and nothing here can turn one class of finding into another.
+
+   Deliberately here rather than in the browser: the same function has to answer
+   for the offline suites, so a rendered word can be asserted without a DOM. */
+const CONTINUITY_OUTCOMES = ["stable", "issue", "expected", "uncertain", "review"];
+/* Worst first. An entity shows the single outcome that most needs a person. */
+const OUTCOME_RANK = { review: 4, issue: 3, uncertain: 2, expected: 1, stable: 0 };
+const CONTINUITY_OUTCOME_LABELS = {
+  stable: "STABLE",
+  issue: "ISSUE",
+  expected: "EXPECTED",
+  uncertain: "UNCERTAIN",
+  review: "REVIEW",
+};
+
+const ATTRIBUTE_WORDS = { color: "Colour", state: "State", markings: "Markings", centre_displacement: "Position" };
+function attributeWord(attribute) {
+  return ATTRIBUTE_WORDS[attribute] || "Attribute";
+}
+/* The contract's own vocabulary, said in production English. These are closed
+   enums, so this is a lookup and never a parse. */
+const VALUE_WORDS = {
+  present: "present", absent: "absent", uncertain: "not readable",
+  none: "unobstructed", partial: "partly obstructed", heavy: "heavily obstructed",
+  "not-applicable": "not tracked", yes: "identifiable", no: "not identifiable",
+  text: "text", pattern: "pattern", multicoloured: "multi-tone",
+};
+function valueWord(value) {
+  const key = String(value == null ? "" : value);
+  return VALUE_WORDS[key] || key.replace(/-/g, " ");
+}
+
+/* Which structured declaration would make this change expected. Returned as
+   data so the writer stays one deterministic switch and the UI never invents an
+   allowance of its own. `intent` targets shot.continuityIntent; `accepted`
+   targets the per-finding human record applyIntent already reads, and is used
+   only where the intent contract has no field that could say it. */
+function expectedActionFor(finding) {
+  if (finding.kind === "removed") return { target: "intent", field: "allowPresenceChange", value: "may-leave" };
+  if (finding.kind === "added") return { target: "intent", field: "allowPresenceChange", value: "may-enter" };
+  if (finding.kind === "moved") return { target: "intent", field: "allowMovement", value: true };
+  if (finding.kind === "attribute" && finding.attribute === "color") return { target: "intent", field: "allowColorChange", value: true };
+  if (finding.kind === "attribute" && finding.attribute === "state") return { target: "intent", field: "allowStateChange", value: true };
+  return { target: "accepted", field: `${finding.entity_id}:${finding.kind}:${finding.attribute || ""}`, value: true };
+}
+
+/* Short enough that the from → to line underneath carries the specifics
+   instead of saying them a second time in prose. */
+const CHANGE_HEADLINES = {
+  removed: "Presence changed",
+  added: "Presence changed",
+  moved: "Position changed",
+};
+const CHANGE_RECOMMENDATIONS = {
+  removed: "Restore it, or declare that it may leave during this shot.",
+  added: "Remove it, or declare that it may enter during this shot.",
+  moved: "Return it to its first position, or declare that it may move.",
+};
+
+/* One finding, said once, in the words a production uses. `class` is the
+   five-value outcome; `type` is the engine's own kind so an advanced view can
+   still group by it without the normal card exposing it. */
+/* One short line saying why a change is not a break. The engine's own
+   intentReason is used verbatim wherever it adds something the card does not
+   already show; the declared-state case is the exception, because it restates
+   the from → to transition printed directly above it. */
+function intendedReason(finding, frameB) {
+  if (finding.intentSource === "declared-state-change") return `Matches the state declared for ${frameB}.`;
+  return finding.intentReason || "";
+}
+function describeFinding(finding, bucket, options = {}) {
+  const frameB = options.frameBLabel || "the second frame";
+  const base = {
+    entityId: finding.entity_id,
+    displayName: finding.display_name || finding.entity_id,
+    type: finding.kind,
+    attribute: finding.attribute || "",
+    from: "", to: "",
+    detail: "", recommendation: "", reason: "",
+    canMarkExpected: false,
+    expectedAction: null,
+  };
+  if (bucket === "changes") {
+    const intended = finding.label === "intended";
+    const attribute = finding.kind === "attribute" ? attributeWord(finding.attribute) : "";
+    const headline = finding.kind === "attribute"
+      ? `${attribute} changed`
+      : CHANGE_HEADLINES[finding.kind] || "Changed between the two frames";
+    const from = finding.kind === "attribute" ? valueWord(finding.value_a) : finding.kind === "moved" ? "" : valueWord(finding.value_a);
+    const to = finding.kind === "attribute" ? valueWord(finding.value_b) : finding.kind === "moved" ? "" : valueWord(finding.value_b);
+    return {
+      ...base,
+      class: intended ? "expected" : "issue",
+      severity: intended ? "" : finding.kind === "removed" || finding.kind === "added" ? "high" : "medium",
+      headline: intended ? `${headline} — as declared` : headline,
+      from, to,
+      /* A presence or attribute change is fully said by the transition line, so
+         there is no detail sentence to add. Movement has no transition — the
+         displacement is a number nobody should have to read — so its one line
+         is where the explanation goes. */
+      detail: finding.kind === "moved" ? "Its centre moved further than a locked camera can explain." : "",
+      reason: intended
+        ? intendedReason(finding, frameB)
+        : finding.intentSource === "near-miss" ? finding.intentReason || "" : "",
+      recommendation: intended ? "" : CHANGE_RECOMMENDATIONS[finding.kind] || "Correct the change, or declare it as intentional.",
+      /* Only a real observed change can be declared intentional. Unreadable
+         evidence and invalid records are in other buckets and never reach here,
+         so no declaration can quietly approve them. */
+      canMarkExpected: !intended,
+      expectedAction: intended ? null : expectedActionFor(finding),
+    };
+  }
+  if (bucket === "shadeDrift")
+    return {
+      ...base, class: "uncertain", severity: "",
+      headline: "Shade drift only",
+      from: valueWord(finding.value_a), to: valueWord(finding.value_b),
+      detail: "Neighbouring shades of the same colour family are usually lighting, not a continuity break.",
+    };
+  if (bucket === "attributeUnreadable")
+    return {
+      ...base, class: "review", severity: "",
+      headline: `${attributeWord(finding.attribute)} could not be compared`,
+      from: valueWord(finding.value_a), to: valueWord(finding.value_b),
+      detail: `The ${attributeWord(finding.attribute).toLowerCase()} reading was not usable on one of the two frames, so it was never compared.`,
+      recommendation: "Check this attribute yourself, or re-observe the frame.",
+    };
+  if (bucket === "presenceUncertain")
+    return {
+      ...base, class: "review", severity: "",
+      headline: "Presence could not be established",
+      from: valueWord(finding.value_a), to: valueWord(finding.value_b),
+      detail: "One of the two frames gave no usable answer about whether this was there.",
+      recommendation: "Confirm by eye, or re-observe the frame.",
+    };
+  if (bucket === "invalidRecords")
+    return {
+      ...base, class: "review", severity: "",
+      headline: "No usable reading for this entity",
+      detail: "The analysis returned nothing that could be compared for this entity, so it was excluded from every automatic verdict.",
+      recommendation: "Re-observe the frames, or check this entity by eye.",
+    };
+  /* comparison.uncertain — evidence-quality notes. Nothing is known to have
+     changed; the reading simply was not reliable enough to say. */
+  if (finding.kind === "missing-record")
+    return {
+      ...base, class: "review", severity: "",
+      headline: "This entity was not reported on both frames",
+      detail: "It is declared on one frame and not the other, so there is nothing to compare.",
+      recommendation: "Check the declared cast, location and props for both frames.",
+    };
+  if (finding.kind === "identifiability")
+    return {
+      ...base, class: "uncertain", severity: "",
+      headline: "Not confidently identifiable",
+      from: valueWord(finding.value_a), to: valueWord(finding.value_b),
+      detail: "It was visible but could not be identified with confidence, so its details were not judged.",
+    };
+  if (finding.kind === "occlusion-transition")
+    return {
+      ...base, class: "uncertain", severity: "",
+      headline: "How much is visible changed",
+      from: valueWord(finding.value_a), to: valueWord(finding.value_b),
+      detail: "A different amount of it is obstructed in each frame, so the two readings are not directly comparable.",
+    };
+  if (finding.kind === "size")
+    return {
+      ...base, class: "uncertain", severity: "",
+      headline: "Apparent size changed sharply",
+      detail: "It occupies a very different amount of the frame, which usually means the camera moved rather than the object.",
+    };
+  return { ...base, class: "uncertain", severity: "", headline: "Could not be judged automatically" };
+}
+
+const COMPARISON_BUCKETS = [
+  ["changes", "changes"],
+  ["uncertain", "uncertain"],
+  ["shade_drift", "shadeDrift"],
+  ["attribute_unreadable", "attributeUnreadable"],
+  ["presence_uncertain", "presenceUncertain"],
+  ["invalid_records", "invalidRecords"],
+];
+
+/* A per-entity rollup carrying the five-value outcome and fully described
+   findings, so one card can be rendered per entity without reassembling six
+   parallel arrays or re-deciding anything. Presentation only. */
+function describeComparison(comparison, manifest, options = {}) {
+  const rows = new Map();
+  for (const declaration of (manifest && manifest.entities) || [])
+    rows.set(declaration.entity_id, {
+      entityId: declaration.entity_id,
+      displayName: declaration.display_name,
+      kind: declaration.entity_type,
+      outcome: "stable",
+      verdict: "pass",
+      findings: [],
+      /* Retained for callers that already group by the engine's own buckets. */
+      changes: [], uncertain: [], shadeDrift: [],
+      attributeUnreadable: [], presenceUncertain: [], invalidRecords: [],
+    });
+  for (const [source, field] of COMPARISON_BUCKETS)
+    for (const finding of (comparison && comparison[source]) || []) {
+      const row = rows.get(finding.entity_id);
+      if (!row) continue;
+      row[field].push(finding);
+      row.findings.push(describeFinding(finding, field, options));
+    }
+  for (const row of rows.values()) {
+    for (const finding of row.findings)
+      if (OUTCOME_RANK[finding.class] > OUTCOME_RANK[row.outcome]) row.outcome = finding.class;
+    /* A near-miss note is an unresolved human question even though the finding
+       itself is a plain change; applyIntent counts it into needsReview for the
+       same reason. */
+    if (row.changes.some((finding) => finding.intentSource === "near-miss")) row.outcome = "review";
+    row.verdict = row.outcome === "stable" ? "pass" : row.outcome === "uncertain" ? "review" : row.outcome;
+    row.findings.sort((a, b) => (OUTCOME_RANK[b.class] - OUTCOME_RANK[a.class]) || compareStrings(a.headline, b.headline));
+  }
+  const entities = [...rows.values()];
+  const counts = { stable: 0, issue: 0, expected: 0, uncertain: 0, review: 0 };
+  for (const row of entities) counts[row.outcome] += 1;
+  return { entities, counts };
+}
+
 const CONTINUITY_EXPORTS = {
   CONTINUITY_MANIFEST_VERSION,
   CONTINUITY_OBSERVATION_CONTRACT_VERSION,
@@ -912,6 +1142,8 @@ const CONTINUITY_EXPORTS = {
   OBSERVATION_FLAG_SCOPE, OBSERVATION_STATUSES, observationStatus,
   compareObservations, buildIntentDescriptors, matchesDescriptor, applyIntent,
   normalizeIntentText,
+  CONTINUITY_OUTCOMES, CONTINUITY_OUTCOME_LABELS,
+  expectedActionFor, describeFinding, describeComparison,
 };
 
 if (typeof window !== "undefined") for (const [key, value] of Object.entries(CONTINUITY_EXPORTS)) window[key] = value;

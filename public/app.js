@@ -745,7 +745,22 @@ function normalizeReferenceCoverageData() {
    (package.json) and not the per-project format version (P.meta.version). They must match
    the values server.js BLANK() writes for a new project. */
 const HUB_SCHEMA_VERSION = "v6.0.0";
-const PROJECT_SCHEMA_VERSION = "6.6";
+/* Two markers, because "what this build can write" and "what merely opening a
+   project guarantees" stopped being the same question in 6.7.
+
+   BASELINE is the shape normalizeProjectV5() repairs a record into. Opening a
+   project may raise a record to it, and nothing further: a load must still
+   leave a current file byte-identical.
+
+   PROJECT_SCHEMA_VERSION is the shape this build can produce. 6.7 adds three
+   user-writable continuity fields — entity.tracking, shot.continuityIntent and
+   per-frame continuity state selections — all of which are absent-means-default
+   and none of which exist until a user actually declares one. Stamping 6.7 onto
+   every project that was merely opened would claim a migration that did not
+   happen and rewrite files nobody edited, so the marker is raised by the
+   writers instead (see markContinuitySchema). */
+const PROJECT_SCHEMA_BASELINE_VERSION = "6.6";
+const PROJECT_SCHEMA_VERSION = "6.7";
 function schemaVersionParts(value) {
   const digits = String(value ?? "").match(/\d+/g);
   return digits ? digits.map(Number) : null;
@@ -766,9 +781,20 @@ function schemaVersionIsOlder(stored, current) {
 function storedSchemaIsOlder(meta) {
   return (
     schemaVersionIsOlder(meta?.hubVersion, HUB_SCHEMA_VERSION) ||
-    schemaVersionIsOlder(meta?.schemaVersion, PROJECT_SCHEMA_VERSION)
+    schemaVersionIsOlder(meta?.schemaVersion, PROJECT_SCHEMA_BASELINE_VERSION)
   );
 }
+/* Called by every writer of a 6.7 continuity field, immediately before dirty().
+   The record now genuinely contains 6.7 data, so its marker should say so —
+   and only then. schemaVersionIsOlder is the same guard normalization uses, so
+   a project already at 6.7 or ahead of it is never touched or downgraded. */
+function markContinuitySchema() {
+  P.meta = P.meta || {};
+  if (!schemaVersionIsOlder(P.meta.schemaVersion, PROJECT_SCHEMA_VERSION)) return false;
+  P.meta.schemaVersion = PROJECT_SCHEMA_VERSION;
+  return true;
+}
+if (typeof window !== "undefined") window.markContinuitySchema = markContinuitySchema;
 
 function normalizeProjectV5() {
   let changed = false;
@@ -925,8 +951,10 @@ function normalizeProjectV5() {
     P.meta.hubVersion = HUB_SCHEMA_VERSION;
     changed = true;
   }
-  if (schemaVersionIsOlder(P.meta.schemaVersion, PROJECT_SCHEMA_VERSION)) {
-    P.meta.schemaVersion = PROJECT_SCHEMA_VERSION;
+  /* Baseline, not current: opening a project repairs it to the shape this file
+     guarantees and stops there. The 6.7 marker belongs to the writers. */
+  if (schemaVersionIsOlder(P.meta.schemaVersion, PROJECT_SCHEMA_BASELINE_VERSION)) {
+    P.meta.schemaVersion = PROJECT_SCHEMA_BASELINE_VERSION;
     changed = true;
   }
   if (!P.meta.v5) {

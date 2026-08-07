@@ -476,6 +476,73 @@ window.acceptContinuityStateDifference = async (list, id, stateId) => {
   setTimeout(() => validateContinuityStateAgainstParent(list, id, stateId), 160);
 };
 
+/* ---------- continuity tracking ------------------------------------------
+
+   What CineBraid is allowed to judge about this reference when it checks two
+   frames against each other. Deliberately small: these are production
+   decisions, not model settings, and the contract's own machinery — the state
+   vocabulary, the coordinate frame, the schema — is derived and stays derived.
+
+   Absent means inherit, so an entity that has never been configured stores
+   nothing and behaves exactly as it did before 6.7. */
+const CONTINUITY_TRACK_FIELDS = [
+  ["presence", "Present or absent", "Whether it is in the frame at all."],
+  ["movement", "Position", "Whether it stays where it was, when the camera is locked."],
+  ["state", "Continuity state", "Which of its declared states it is in."],
+  ["color", "Colour", "One colour name per frame. Leave off for anything multi-tone."],
+  ["markings", "Markings", "Text, logos or patterns on its surface."],
+];
+const CONTINUITY_UNIT_WORDS = [
+  ["self", "On its own"],
+  ["composite-parent", "One unit, including its parts"],
+  ["child", "A tracked part of another reference"],
+];
+function continuityTrackingPanel(list, it) {
+  if (list === "audio") return "";
+  const defaults = typeof DEFAULT_TRACKING !== "undefined" ? DEFAULT_TRACKING : { enabled: true, presence: true, movement: true, color: false, state: true, markings: false, unit: "self", parentEntityId: "", identityCues: "" };
+  const tracking = typeof resolveEntityTracking === "function" ? resolveEntityTracking(it, null) : { ...defaults };
+  const key = `entity:${list}:${it.id}:continuity-tracking`;
+  const on = CONTINUITY_TRACK_FIELDS.filter(([name]) => tracking[name]).length;
+  const set = (name) => `setEntityContinuityTracking('${attr(list)}','${attr(it.id)}','${attr(name)}'`;
+  const others = ["characters", "locations", "props", "vehicles"]
+    .flatMap((other) => (P[other] || []).map((entity) => entity))
+    .filter((entity) => entity && entity.id !== it.id);
+  const checks = CONTINUITY_TRACK_FIELDS.map(([name, label, hint]) =>
+    `<label class="continuity-track-option"><input type="checkbox" ${tracking[name] ? "checked" : ""} ${tracking.enabled === false ? "disabled" : ""} onchange="${set(name)},this.checked)"><span><b>${esc(label)}</b><small>${esc(hint)}</small></span></label>`,
+  ).join("");
+  const parentField = tracking.unit === "child"
+    ? `<label class="continuity-track-parent"><span>Part of</span><select onchange="${set("parentEntityId")},this.value)"><option value="">Not chosen</option>${others.map((entity) => `<option value="${attr(entity.id)}" ${tracking.parentEntityId === entity.id ? "selected" : ""}>${esc(entity.name || entity.id)}</option>`).join("")}</select></label>`
+    : "";
+  return `<details class="fold continuity-tracking" ${workspaceSectionOpen(key, false) ? "open" : ""} ontoggle="rememberWorkspaceSection('${attr(key)}',this.open)"><summary>Continuity tracking <span>${tracking.enabled === false ? "off" : `${on}/${CONTINUITY_TRACK_FIELDS.length}`}</span></summary>
+    <p class="hint">Track only what genuinely has to stay the same between frames — every extra attribute is another thing that can be reported as a break. Colour is off by default because multi-tone objects rarely survive being reduced to one colour name.</p>
+    <label class="checkline continuity-track-enabled"><input type="checkbox" ${tracking.enabled === false ? "" : "checked"} onchange="${set("enabled")},this.checked)"> Check this reference for continuity</label>
+    <div class="continuity-track-options">${checks}</div>
+    <div class="continuity-track-unit">
+      <label><span>Judge it as</span><select ${tracking.enabled === false ? "disabled" : ""} onchange="${set("unit")},this.value)">${CONTINUITY_UNIT_WORDS.map(([value, label]) => `<option value="${attr(value)}" ${tracking.unit === value ? "selected" : ""}>${esc(label)}</option>`).join("")}</select></label>
+      ${parentField}
+    </div>
+    <label class="continuity-track-cues"><span>How to recognise it</span><input value="${attr(tracking.identityCues || "")}" placeholder="Two-tone by design — do not report a single colour" ${tracking.enabled === false ? "disabled" : ""} onchange="${set("identityCues")},this.value)"><small class="hint">One short line. Left blank, CineBraid uses this reference's own description.</small></label>
+  </details>`;
+}
+/* Only the key the user touched is written. An absent key still means inherit,
+   so switching one attribute on cannot quietly freeze the rest at today's
+   defaults, and an entity reset to its defaults stores nothing at all. */
+window.setEntityContinuityTracking = (list, id, key, value) => {
+  const entity = (P[list] || []).find((row) => row.id === id);
+  if (!entity) return toast("Reference is unavailable");
+  const defaults = typeof DEFAULT_TRACKING !== "undefined" ? DEFAULT_TRACKING : {};
+  entity.tracking = entity.tracking && typeof entity.tracking === "object" && !Array.isArray(entity.tracking) ? entity.tracking : {};
+  if (typeof value === "string" && !value && (key === "identityCues" || key === "parentEntityId")) delete entity.tracking[key];
+  else entity.tracking[key] = value;
+  if (key === "unit" && value !== "child") delete entity.tracking.parentEntityId;
+  for (const [name, fallback] of Object.entries(defaults))
+    if (entity.tracking[name] === fallback && name !== "allowedStateValues") delete entity.tracking[name];
+  if (!Object.keys(entity.tracking).length) delete entity.tracking;
+  markContinuitySchema();
+  dirty();
+  route();
+};
+
 function continuityStatesPanel(list, it, media = []) {
   if (list === "audio") return "";
   const states = entityStateList(it, true);
@@ -498,7 +565,7 @@ function continuityStatesPanel(list, it, media = []) {
     return `<button type="button" class="tone-${tone} ${state.id===selectedId?"selected":""}" onclick="selectBoundedItem('continuity-state','${attr(list+":"+it.id)}','${attr(state.id)}')"><i></i><span><b>${esc(state.name || `State ${index+1}`)}</b><small>${status}</small></span></button>`;
   }).join("")}</nav>`;
   const editor = st ? `<article class="continuity-state-card continuity-state-card-focused ${st.isDefault ? "is-default" : ""}" data-continuity-state-id="${attr(st.id)}"><div class="continuity-state-head"><span>${selectedIndex + 1}</span><input value="${attr(st.name || "")}" placeholder="Clean suit / Damaged sleeve / Night lighting" onchange="setContinuityState('${list}','${it.id}',${selectedIndex},'name',this.value)" ${st.isDefault ? 'data-default="1"' : ''}><div class="continuity-state-head-actions">${st.isDefault ? `<button class="chip" onclick="approveEntityFile('${list}','${it.id}','${attr(st.approvedFile || '')}','${attr(st.id)}')">CHOOSE AUTHORITY</button>` : `<button class="chip" onclick="openContinuityStateVariant('${attr(list)}','${attr(it.id)}','${attr(st.id)}')">${st.approvedFile ? "EDIT / REGENERATE" : `GENERATE FROM ${esc(parentInfo.label.toUpperCase())}`}</button><button class="ghost-btn" onclick="openStateReferenceUpload('${attr(list)}','${attr(it.id)}','${attr(st.id)}')">UPLOAD STATE REFERENCE</button><button class="chip" onclick="approveEntityFile('${attr(list)}','${attr(it.id)}','','${attr(st.id)}')">CHOOSE CANDIDATE</button><button class="icon-danger" onclick="removeContinuityState('${list}','${it.id}',${selectedIndex})">×</button>`}</div></div>${selectedApprovedHero}${continuityStateValidationMarkup(list,it,st,media)}<div class="continuity-state-scope"><label>Applies to scenes / shots<input value="${attr(st.appliesTo || "")}" placeholder="Scenes 1–2 or L2-01, L2-02" onchange="setContinuityState('${list}','${it.id}',${selectedIndex},'appliesTo',this.value)"></label>${st.isDefault ? `<label>Reference requirement<input value="Required — the main approved image" disabled></label>` : `<label>Reference requirement${referenceRequirementSelect(referenceRequirement(st), `setContinuityState('${list}','${it.id}',${selectedIndex},'referenceRequirement',this.value);dirty();route()`)}</label>`}<div class="state-approved-readout"><span>Approved image</span><b>${esc(st.approvedFile || (st.isDefault ? it.approvedFile || "None selected" : "None selected"))}</b><small>Use Upload State Reference or Choose Candidate above.</small></div></div><label class="continuity-state-delta"><span>${st.isDefault ? "Base-state notes" : "State change / delta"}</span><textarea placeholder="${st.isDefault ? "Primary appearance and any details that must always remain true." : "What changes from the parent state? Also name anything that must remain unchanged."}" onchange="setContinuityState('${list}','${it.id}',${selectedIndex},'notes',this.value)">${esc(st.notes || "")}</textarea></label>${typeof assetStatePromptStudio === "function" ? assetStatePromptStudio(list, it, st) : ""}${continuityStateCandidateTray(list,it,st,media)}</article>` : '<div class="canon-notes">No continuity states yet.</div>';
-  return `<details class="fold continuity-states" data-entity-continuity="${attr(list + ":" + it.id)}" ${workspaceSectionOpen(sectionKey, true) ? "open" : ""} ontoggle="rememberWorkspaceSection('${attr(sectionKey)}',this.open)"><summary>Continuity states <span>${states.length}</span></summary><div class="entity-coverage-intro"><div><b>Edit one state at a time</b><small>Other states stay compact so the workflow remains readable.</small></div></div>${rail}<details class="state-chain-tools"><summary><span>State tools</span><small>Add another state or automate several parent-first</small></summary><div class="state-tool-actions"><button class="add-btn" onclick="addContinuityState('${list}','${it.id}')">+ Add continuity state</button></div>${typeof entityChainAutomationPanel === "function" ? entityChainAutomationPanel(list, it) : ""}</details><div class="continuity-state-list bounded-single-state">${editor}</div></details>`;
+  return `<details class="fold continuity-states" data-entity-continuity="${attr(list + ":" + it.id)}" ${workspaceSectionOpen(sectionKey, true) ? "open" : ""} ontoggle="rememberWorkspaceSection('${attr(sectionKey)}',this.open)"><summary>Continuity states <span>${states.length}</span></summary><div class="entity-coverage-intro"><div><b>Edit one state at a time</b><small>Other states stay compact so the workflow remains readable.</small></div></div>${continuityTrackingPanel(list, it)}${rail}<details class="state-chain-tools"><summary><span>State tools</span><small>Add another state or automate several parent-first</small></summary><div class="state-tool-actions"><button class="add-btn" onclick="addContinuityState('${list}','${it.id}')">+ Add continuity state</button></div>${typeof entityChainAutomationPanel === "function" ? entityChainAutomationPanel(list, it) : ""}</details><div class="continuity-state-list bounded-single-state">${editor}</div></details>`;
 }
 window.addContinuityState = (list, id) => {
   const x = P[list].find((e) => e.id === id);

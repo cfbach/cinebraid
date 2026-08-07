@@ -9,6 +9,7 @@ const ROOT = path.join(__dirname, "..");
 const PUBLIC = path.join(ROOT, "public");
 const SCRIPT_ORDER = [
   "shared-entities.js",
+  "shared-continuity.js",
   "shared-camera.js",
   "shared-aspect.js",
   "shared-reference-views.js",
@@ -26,6 +27,7 @@ const SCRIPT_ORDER = [
   "review.js",
   "scene-review.js",
   "creation-studio.js",
+  "continuity-workspace.js",
   "fal-generation.js",
   "coverage-automation.js",
   "automation.js",
@@ -466,6 +468,9 @@ async function render(hash, project, options = {}) {
       text: readyCapability("Text assistance"),
       verifier: readyCapability("Prompt verification"),
       vision: readyCapability("Vision assistance"),
+      /* Its own capability, deliberately not derived from vision: the intended
+         runtime has continuity ready while generic multi-image vision is not. */
+      continuity: readyCapability("Continuity observation"),
       embedding: readyCapability("Local semantic search"),
       technical: readyCapability("Technical analysis"),
     },

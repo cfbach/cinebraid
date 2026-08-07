@@ -154,6 +154,12 @@ function assistantConfigPatch() {
   if ($("#assistant-vision-provider")) {
     patch.assistant = { provider: CONFIG.assistant?.provider || "ollama", visionProvider: v("#assistant-vision-provider", "same") };
   }
+  if ($("#cfg-continuity-provider")) {
+    patch.continuity = {
+      visionProvider: v("#cfg-continuity-provider", CONFIG.continuity?.visionProvider || ""),
+      visionModel: v("#cfg-continuity-model", CONFIG.continuity?.visionModel || "").trim(),
+    };
+  }
   if ($("#cfg-key")) {
     patch.anthropicKey = v("#cfg-key", CONFIG.anthropicKey || "");
     patch.anthropicModel = v("#cfg-model", CONFIG.anthropicModel || "claude-sonnet-4-6");

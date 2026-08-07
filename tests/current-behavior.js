@@ -304,6 +304,8 @@ async function main() {
     "continuity-observe-route.js",
     "continuity-prompt-contract.js",
     "continuity-validation-status.js",
+    "continuity-workflow-real-browser.py",
+    "continuity-workspace.js",
     "coverage-workflow.js",
     "current-behavior.js",
     "custom-provider-routing.js",
