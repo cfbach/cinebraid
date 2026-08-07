@@ -311,6 +311,9 @@ async function renderCheck(payload, options = {}) {
   assert(reviewCard.includes("Colour could not be compared"), "review must describe the evidence problem");
   assert(!/REVIEW · (HIGH|MEDIUM)/.test(markup), "review must never carry an issue severity");
   assert(!reviewCard.includes("MARK EXPECTED"), "review must not offer a declaration that would clear it");
+  /* A card with one finding says its outcome once. Twice reads as a debug dump. */
+  assert.strictEqual((reviewCard.match(/>REVIEW</g) || []).length, 1, "a single-finding card must not repeat its outcome word");
+  assert(markup.includes("ISSUE · HIGH"), "a single finding's severity belongs beside the entity outcome");
   pass("human-review findings describe unreadable evidence and never look like hard issues");
 
   /* Stable entities are summarized. */
@@ -496,8 +499,8 @@ async function renderCheck(payload, options = {}) {
   const project = workspaceFixture();
   const rendered = await render("#/prop/PR-TOOL", project, { storage: { "cinebraid-focused:fixture:entity-task:props:PR-TOOL": "states" } });
   assert(rendered.html.includes("Continuity tracking"), "the reference page must expose continuity tracking");
-  assert(rendered.html.includes("Track only the attributes that genuinely have to stay the same"), "tracking must explain restraint");
-  assert(rendered.html.includes("Multi-tone objects usually should not use automatic colour tracking"), "tracking must warn about colour on multi-tone objects");
+  assert(rendered.html.includes("Track only what genuinely has to stay the same between frames"), "tracking must explain restraint");
+  assert(rendered.html.includes("multi-tone objects rarely survive being reduced to one colour name"), "tracking must warn about colour on multi-tone objects");
   assert(!rendered.html.includes("allowedStateValues"), "derived contract machinery must not be presented as a production control");
 
   /* Colour is the one attribute that must stay off until asked for. */

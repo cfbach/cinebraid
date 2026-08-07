@@ -1013,7 +1013,7 @@ function describeFinding(finding, bucket, options = {}) {
       ...base, class: "review", severity: "",
       headline: `${attributeWord(finding.attribute)} could not be compared`,
       from: valueWord(finding.value_a), to: valueWord(finding.value_b),
-      detail: `The ${String(finding.attribute)} reading was not usable on one of the two frames, so it was never compared.`,
+      detail: `The ${attributeWord(finding.attribute).toLowerCase()} reading was not usable on one of the two frames, so it was never compared.`,
       recommendation: "Check this attribute yourself, or re-observe the frame.",
     };
   if (bucket === "presenceUncertain")

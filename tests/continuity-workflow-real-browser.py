@@ -246,6 +246,7 @@ try:
         watch = page.locator('.continuity-entity', has_text='Wristwatch')
         assert 'REVIEW' in watch.inner_text()
         assert 'Colour could not be compared' in watch.inner_text()
+        assert watch.inner_text().count('REVIEW') == 1, 'a single-finding card must not repeat its outcome word'
         assert 'MARK EXPECTED' not in watch.inner_text(), 'unreadable evidence must never offer a declaration'
         assert 'both cached' not in page.locator('.continuity-provenance').inner_text()
         assert '2 new analyses' in page.locator('.continuity-provenance').inner_text()

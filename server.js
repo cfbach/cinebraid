@@ -6293,15 +6293,29 @@ function assistantCapabilities(cfg = readConfig(), inventories = null) {
        search keeps asking Ollama for a small embedding model. */
     /* Continuity is its own capability. Ollama can be stopped entirely — which
        is the intended Spark runtime — and continuity must still report ready
-       while generic multi-image vision reports not ready. */
-    continuity: capabilityCheck(
-      "Continuity observation",
-      cfg.continuity?.visionProvider || "none",
-      continuityVisionModel(cfg),
-      inv,
-      cfg,
-      "vision",
-    ),
+       while generic multi-image vision reports not ready.
+
+       Unset is not the same as switched off, and the generic "disabled in AI
+       Assistant settings / choose an AI provider" answer sends a user to the
+       wrong control: continuity has its own provider precisely because it is
+       not the general vision provider. It says so in its own words. */
+    continuity: cfg.continuity?.visionProvider
+      ? capabilityCheck(
+        "Continuity observation",
+        cfg.continuity.visionProvider,
+        continuityVisionModel(cfg),
+        inv,
+        cfg,
+        "vision",
+      )
+      : {
+        ready: false,
+        label: "Continuity observation",
+        provider: "none",
+        model: "",
+        message: "Continuity analysis isn't configured.",
+        action: "Choose a continuity vision provider in Settings.",
+      },
     embedding: capabilityCheck(
       "Local semantic search",
       "ollama",

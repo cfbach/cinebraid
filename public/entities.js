@@ -514,7 +514,7 @@ function continuityTrackingPanel(list, it) {
     ? `<label class="continuity-track-parent"><span>Part of</span><select onchange="${set("parentEntityId")},this.value)"><option value="">Not chosen</option>${others.map((entity) => `<option value="${attr(entity.id)}" ${tracking.parentEntityId === entity.id ? "selected" : ""}>${esc(entity.name || entity.id)}</option>`).join("")}</select></label>`
     : "";
   return `<details class="fold continuity-tracking" ${workspaceSectionOpen(key, false) ? "open" : ""} ontoggle="rememberWorkspaceSection('${attr(key)}',this.open)"><summary>Continuity tracking <span>${tracking.enabled === false ? "off" : `${on}/${CONTINUITY_TRACK_FIELDS.length}`}</span></summary>
-    <p class="hint">Track only the attributes that genuinely have to stay the same between frames. Every extra attribute is another thing that can be reported as a break. Multi-tone objects usually should not use automatic colour tracking, which is why colour is off unless you turn it on.</p>
+    <p class="hint">Track only what genuinely has to stay the same between frames — every extra attribute is another thing that can be reported as a break. Colour is off by default because multi-tone objects rarely survive being reduced to one colour name.</p>
     <label class="checkline continuity-track-enabled"><input type="checkbox" ${tracking.enabled === false ? "" : "checked"} onchange="${set("enabled")},this.checked)"> Check this reference for continuity</label>
     <div class="continuity-track-options">${checks}</div>
     <div class="continuity-track-unit">

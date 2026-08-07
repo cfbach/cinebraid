@@ -4007,7 +4007,7 @@ body[data-focused-workspace="1"] .guided-frame-body,
 .continuity-track-option input{width:auto;margin-top:2px;accent-color:var(--acc)}
 .continuity-track-option b{display:block;font-size:12px;font-weight:600}
 .continuity-track-option small{display:block;margin-top:3px;color:var(--muted);font-size:11px;line-height:1.45}
-.continuity-track-unit{display:grid;grid-template-columns:repeat(auto-fit,minmax(215px,1fr));gap:10px;margin-top:10px}
+.continuity-track-unit{display:grid;grid-template-columns:repeat(auto-fit,minmax(215px,1fr));gap:10px;margin-top:10px;max-width:760px}
 .continuity-track-unit label,.continuity-track-cues{display:grid;gap:6px}
 .continuity-track-unit span,.continuity-track-cues>span{font-size:11px;color:var(--muted)}
 .continuity-track-cues{margin:10px 0 14px}
@@ -4024,7 +4024,6 @@ body[data-focused-workspace="1"] .guided-frame-body,
   .shot-continuity>header{grid-template-columns:1fr}
   .shot-continuity-actions{justify-content:stretch}
   .shot-continuity-actions .approve-btn,.continuity-pair-choice,.continuity-pair-choice select{width:100%}
-  .continuity-outcome-counts li{flex:1 1 100%}
   .continuity-state-cells{grid-template-columns:1fr}
   .continuity-secondary-actions .ghost-btn{width:100%}
 }

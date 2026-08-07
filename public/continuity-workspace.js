@@ -313,11 +313,15 @@ function continuityProvenanceMarkup(data) {
     : !cachedA && !cachedB
       ? "2 new analyses"
       : `${cachedA ? labelA : labelB} cached · ${cachedA ? labelB : labelA} newly analyzed`;
-  const notes = data?.analysis?.notes ? " · some readings were adjusted before comparison" : "";
+  /* Only worth saying next to a verdict. Beside a failed analysis it is noise. */
+  const notes = data?.analysis?.notes && data?.analysis?.usable ? " · some readings were adjusted before comparison" : "";
   return `<p class="continuity-provenance">Observed 2 frames · ${esc(provenance)}${esc(notes)}</p>`;
 }
 
-function continuityFindingRowMarkup(shotId, finding) {
+/* The class chip is repeated on a finding only when the card holds more than
+   one, because a single-finding card already says it once in its header and
+   reading the same word twice makes the card look like a debug dump. */
+function continuityFindingRowMarkup(shotId, finding, showClass) {
   const transition = finding.from || finding.to
     ? `<span class="continuity-transition"><b>${esc(finding.from || "—")}</b><i aria-hidden="true">→</i><b>${esc(finding.to || "—")}</b></span>`
     : "";
@@ -325,7 +329,7 @@ function continuityFindingRowMarkup(shotId, finding) {
     ? `<div class="continuity-finding-actions"><button type="button" class="chip" onclick="markContinuityExpected('${attr(shotId)}','${attr(finding.entityId)}','${attr(finding.type)}','${attr(finding.attribute || "")}')">MARK EXPECTED</button></div>`
     : "";
   return `<li class="continuity-finding class-${attr(finding.class)}">
-    <span class="continuity-finding-class">${esc(CONTINUITY_OUTCOME_LABELS[finding.class] || finding.class)}${finding.severity ? ` · ${esc(String(finding.severity).toUpperCase())}` : ""}</span>
+    ${showClass ? `<span class="continuity-finding-class">${esc(CONTINUITY_OUTCOME_LABELS[finding.class] || finding.class)}${finding.severity ? ` · ${esc(String(finding.severity).toUpperCase())}` : ""}</span>` : ""}
     <b>${esc(finding.headline)}</b>
     ${transition}
     ${finding.detail ? `<small>${esc(finding.detail)}</small>` : ""}
@@ -335,9 +339,11 @@ function continuityFindingRowMarkup(shotId, finding) {
   </li>`;
 }
 function continuityEntityCardMarkup(shotId, row) {
+  const single = row.findings.length === 1 ? row.findings[0] : null;
+  const severity = single && single.severity && single.class === row.outcome ? ` · ${esc(String(single.severity).toUpperCase())}` : "";
   return `<article class="continuity-entity outcome-${attr(row.outcome)}">
-    <header><span class="continuity-outcome">${esc(CONTINUITY_OUTCOME_LABELS[row.outcome] || row.outcome)}</span><b>${esc(row.displayName)}</b><small>${esc(CONTINUITY_KIND_WORDS[row.kind] || row.kind)}</small></header>
-    <ul class="continuity-finding-list">${row.findings.map((finding) => continuityFindingRowMarkup(shotId, finding)).join("")}</ul>
+    <header><span class="continuity-outcome">${esc(CONTINUITY_OUTCOME_LABELS[row.outcome] || row.outcome)}${severity}</span><b>${esc(row.displayName)}</b><small>${esc(CONTINUITY_KIND_WORDS[row.kind] || row.kind)}</small></header>
+    <ul class="continuity-finding-list">${row.findings.map((finding) => continuityFindingRowMarkup(shotId, finding, row.findings.length > 1)).join("")}</ul>
   </article>`;
 }
 /* Stable entities are the majority in a healthy shot and each deserves a line,
@@ -427,7 +433,7 @@ function continuityFrameStatePanelMarkup(s, rows, pair) {
     return `<article class="continuity-state-row"><header><b>${esc(row.entity.name || row.entity.id)}</b><small>${esc(CONTINUITY_KIND_WORDS[row.type] || row.type)}</small></header><div class="continuity-state-cells">${cells}</div></article>`;
   }).join("");
   if (!body) return "";
-  return `<details class="fold continuity-frame-states" ${workspaceSectionOpen(key, false) ? "open" : ""} ontoggle="rememberWorkspaceSection('${attr(key)}',this.open)"><summary>Frame states <span>${declared}</span></summary><p class="hint">Name the state each frame is meant to be in — jacket on in one, jacket removed in the next — and the change is expected rather than a break. A frame with no choice of its own follows the shot, and the shot follows the reference's default state.</p><div class="continuity-state-grid">${body}</div></details>`;
+  return `<details class="fold continuity-frame-states" ${workspaceSectionOpen(key, false) ? "open" : ""} ontoggle="rememberWorkspaceSection('${attr(key)}',this.open)"><summary>Frame states <span>${declared}</span></summary><p class="hint">Name the state each frame is meant to be in and the change reads as expected rather than a break. A frame with no choice of its own follows the shot; the shot follows the reference's default.</p><div class="continuity-state-grid">${body}</div></details>`;
 }
 
 /* ---------- the section --------------------------------------------------- */
