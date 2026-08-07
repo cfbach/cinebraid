@@ -1,0 +1,751 @@
+/* CINEBRAID — declared-entity continuity: shared deterministic core.
+
+   Browser and Node, the same way public/shared-entities.js is shared.
+
+   This is a faithful port of the contract that was qualified on the DGX Spark
+   (arm F, "declared_entities_final", 51/51 JSON-valid, 51/51 schema-valid,
+   0 missing / 0 undeclared entity ids, 0 truncations). The reference
+   implementation is harness/frozen/fin_contract.py in the evaluation tree; the
+   raw model output it was qualified against is replayed offline by
+   tests/continuity-observation.js.
+
+   Where this file and that reference disagree, the reference wins. The only
+   deliberate additions are the ones CineBraid needs and the evaluation had no
+   opinion on: building the manifest out of the Project Bible, and treating a
+   near-miss free-text intent as human review rather than as intent.
+
+   The model observes ONE image against a production-declared entity list.
+   CineBraid compares. Everything here is the CineBraid half: pure, so the same
+   inputs always produce a byte-identical result.
+
+   Deliberately absent, and required to stay absent:
+     - file or network I/O
+     - provider or model awareness
+     - Date.now(), new Date(), Math.random()
+     - any mutation of the project record passed in */
+
+const CONTINUITY_MANIFEST_VERSION = "continuity-manifest-v1";
+const CONTINUITY_OBSERVATION_CONTRACT_VERSION = "declared_entities_final";
+const CONTINUITY_COMPARISON_VERSION = "continuity-comparison-v1";
+
+/* ---------- sha-256 ------------------------------------------------------
+
+   A manifest hash must be computable in the browser and in Node, from the same
+   code, synchronously. Node's crypto is not in the browser and SubtleCrypto is
+   async, so the algorithm is carried here and checked against require("crypto")
+   by the manifest suite, including both message-padding boundaries. */
+const SHA256_K = [
+  0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+  0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+  0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+  0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+  0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+  0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+  0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+  0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+];
+function rotr32(value, bits) {
+  return ((value >>> bits) | (value << (32 - bits))) >>> 0;
+}
+function sha256Hex(text) {
+  const data = new TextEncoder().encode(String(text));
+  /* FIPS 180-4 padding is minimal: the message, one 0x80 byte, the fewest zero
+     bytes that leave room for a 64-bit big-endian bit length. */
+  const total = Math.ceil((data.length + 9) / 64) * 64;
+  const padded = new Uint8Array(total);
+  padded.set(data);
+  padded[data.length] = 0x80;
+  const view = new DataView(padded.buffer);
+  const bitLength = data.length * 8;
+  view.setUint32(total - 8, Math.floor(bitLength / 0x100000000));
+  view.setUint32(total - 4, bitLength >>> 0);
+  const h = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
+  const w = new Uint32Array(64);
+  for (let block = 0; block < total; block += 64) {
+    for (let t = 0; t < 16; t++) w[t] = view.getUint32(block + t * 4);
+    for (let t = 16; t < 64; t++) {
+      const x = w[t - 15];
+      const y = w[t - 2];
+      const s0 = (rotr32(x, 7) ^ rotr32(x, 18) ^ (x >>> 3)) >>> 0;
+      const s1 = (rotr32(y, 17) ^ rotr32(y, 19) ^ (y >>> 10)) >>> 0;
+      w[t] = (w[t - 16] + s0 + w[t - 7] + s1) >>> 0;
+    }
+    let a = h[0], b = h[1], c = h[2], d = h[3], e = h[4], f = h[5], g = h[6], hh = h[7];
+    for (let t = 0; t < 64; t++) {
+      const S1 = (rotr32(e, 6) ^ rotr32(e, 11) ^ rotr32(e, 25)) >>> 0;
+      const ch = ((e & f) ^ (~e & g)) >>> 0;
+      const temp1 = (hh + S1 + ch + SHA256_K[t] + w[t]) >>> 0;
+      const S0 = (rotr32(a, 2) ^ rotr32(a, 13) ^ rotr32(a, 22)) >>> 0;
+      const maj = ((a & b) ^ (a & c) ^ (b & c)) >>> 0;
+      const temp2 = (S0 + maj) >>> 0;
+      hh = g; g = f; f = e;
+      e = (d + temp1) >>> 0;
+      d = c; c = b; b = a;
+      a = (temp1 + temp2) >>> 0;
+    }
+    h[0] = (h[0] + a) >>> 0; h[1] = (h[1] + b) >>> 0; h[2] = (h[2] + c) >>> 0; h[3] = (h[3] + d) >>> 0;
+    h[4] = (h[4] + e) >>> 0; h[5] = (h[5] + f) >>> 0; h[6] = (h[6] + g) >>> 0; h[7] = (h[7] + hh) >>> 0;
+  }
+  return h.map((value) => value.toString(16).padStart(8, "0")).join("");
+}
+/* Canonical JSON: sorted keys, no whitespace. Hashing JSON.stringify() output
+   would make the hash depend on key insertion order, which is a property of the
+   code that built the object rather than of the data. */
+function canonicalJson(value) {
+  if (value === undefined || value === null) return "null";
+  if (typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return "[" + value.map(canonicalJson).join(",") + "]";
+  return "{" + Object.keys(value).sort().map((key) => JSON.stringify(key) + ":" + canonicalJson(value[key])).join(",") + "}";
+}
+const MANIFEST_HASH_LENGTH = 20;
+function compareStrings(a, b) {
+  /* Locale-independent: localeCompare depends on host ICU data, which would
+     make the manifest hash machine-dependent. */
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/* ---------- the qualified vocabulary -------------------------------------
+   Verbatim from fin_contract.py. These are closed enums, not free text: that
+   is what makes the comparison exact equality instead of string heuristics. */
+const PRESENCE_VALUES = ["present", "absent", "uncertain"];
+const OCCLUSION_VALUES = ["none", "partial", "heavy", "uncertain", "not-applicable"];
+const IDENTIFIABLE_VALUES = ["yes", "no", "uncertain"];
+const MARKINGS_VALUES = ["none", "text", "pattern", "not-applicable", "uncertain"];
+const COLOR_VALUES = [
+  "black", "white", "grey", "slate", "silver", "cream", "beige", "tan", "brown",
+  "red", "maroon", "orange", "amber", "yellow", "gold", "green", "teal", "blue",
+  "navy", "purple", "pink", "multicoloured", "not-applicable", "uncertain",
+];
+const EVIDENCE_MAX = 48;
+/* Shade drift is reported separately from a colour change: neighbouring names
+   inside a family are a lighting/compression artefact far more often than a
+   continuity break. */
+const COLOUR_FAMILIES = [
+  ["white", "cream", "beige"],
+  ["grey", "slate", "silver"],
+  ["blue", "navy"],
+  ["red", "maroon"],
+  ["orange", "amber", "gold"],
+  ["green", "teal"],
+];
+/* Movement is geometric, not textual: centre displacement in normalized units,
+   and an area ratio band outside which the reading is treated as unreliable. */
+const MOVE_THRESHOLD = 0.02;
+const SIZE_RATIO_LO = 0.80;
+const SIZE_RATIO_HI = 1.25;
+const CONTINUITY_UNITS = ["self", "composite-parent", "child"];
+
+function colourFamily(value) {
+  for (let index = 0; index < COLOUR_FAMILIES.length; index++)
+    if (COLOUR_FAMILIES[index].includes(value)) return index;
+  return null;
+}
+function sameColourFamily(a, b) {
+  const fa = colourFamily(a);
+  return fa !== null && fa === colourFamily(b);
+}
+
+/* ---------- tracking policy ---------------------------------------------
+
+   colour defaults to FALSE. That is not caution for its own sake: asking for
+   one colour on a genuinely multi-tone object produced every false positive
+   the qualified benchmark recorded, so a project that has never declared an
+   answer must not be able to generate that finding by default. */
+const DEFAULT_TRACKING = {
+  enabled: true,
+  presence: true,
+  movement: true,
+  color: false,
+  state: true,
+  markings: false,
+  unit: "self",
+  parentEntityId: "",
+  allowedStateValues: null,
+  identityCues: "",
+};
+const TRACKING_BOOLEAN_KEYS = ["enabled", "presence", "movement", "color", "state", "markings"];
+/* identityCues is where a production disambiguates a hard object — "two-tone by
+   design, do not report a single colour". The qualified checklist renders one
+   identity line per entity, so there is nowhere else for such a note to go. */
+const TRACKING_TEXT_KEYS = ["parentEntityId", "identityCues"];
+const VISUAL_ENTITY_KINDS = ["character", "location", "prop", "vehicle"];
+const ENTITY_KIND_LISTS = { character: "characters", location: "locations", prop: "props", vehicle: "vehicles" };
+
+function cleanText(value, limit = 400) {
+  return String(value == null ? "" : value).replace(/\s+/g, " ").trim().slice(0, limit);
+}
+/* A patch contributes only the keys it actually carries, with the right type.
+   An absent key means "inherit", not "false" — otherwise a per-state override
+   that only wants to enable colour would silently disable presence. */
+function mergeTracking(base, patch) {
+  const merged = { ...base, allowedStateValues: base.allowedStateValues ? [...base.allowedStateValues] : null };
+  if (!patch || typeof patch !== "object" || Array.isArray(patch)) return merged;
+  for (const key of TRACKING_BOOLEAN_KEYS) if (typeof patch[key] === "boolean") merged[key] = patch[key];
+  for (const key of TRACKING_TEXT_KEYS) if (typeof patch[key] === "string") merged[key] = cleanText(patch[key], 240);
+  /* "composite" is the spelling the CineBraid design used; the qualified
+     contract calls the same thing composite-parent. */
+  const unit = patch.unit === "composite" ? "composite-parent" : patch.unit;
+  if (CONTINUITY_UNITS.includes(unit)) merged.unit = unit;
+  if (Array.isArray(patch.allowedStateValues))
+    merged.allowedStateValues = patch.allowedStateValues.map((row) => cleanText(row, 48)).filter(Boolean).slice(0, 24);
+  return merged;
+}
+function resolveEntityTracking(entity, state) {
+  return mergeTracking(mergeTracking(DEFAULT_TRACKING, entity && entity.tracking), state && state.tracking);
+}
+
+/* ---------- declared shot intent ----------------------------------------
+   A missing declaration is {} and means "nothing is declared", never
+   "everything is allowed". */
+const PRESENCE_ALLOWANCES = ["no", "may-leave", "may-enter", "either"];
+const DEFAULT_INTENT = {
+  expected: [],
+  allowPresenceChange: "no",
+  allowMovement: false,
+  allowColorChange: false,
+  allowStateChange: false,
+  note: "",
+};
+function resolveEntityIntent(shot, entityId) {
+  const declared = shot && shot.continuityIntent && typeof shot.continuityIntent === "object"
+    ? shot.continuityIntent[entityId]
+    : null;
+  const intent = { ...DEFAULT_INTENT, expected: [] };
+  if (!declared || typeof declared !== "object" || Array.isArray(declared)) return intent;
+  if (Array.isArray(declared.expected))
+    intent.expected = declared.expected.map((row) => cleanText(row, 240)).filter(Boolean).slice(0, 24);
+  if (PRESENCE_ALLOWANCES.includes(declared.allowPresenceChange)) intent.allowPresenceChange = declared.allowPresenceChange;
+  for (const key of ["allowMovement", "allowColorChange", "allowStateChange"])
+    if (typeof declared[key] === "boolean") intent[key] = declared[key];
+  if (typeof declared.note === "string") intent.note = cleanText(declared.note, 400);
+  return intent;
+}
+
+/* ---------- tracked entity manifest --------------------------------------
+
+   Derived on demand, never stored. Rows carry the qualified declaration
+   verbatim (snake_case, exactly the fields fin_contract.py reads) plus two
+   cb_ annotations CineBraid needs for intent. The cb_ fields are NOT hashed:
+   they are never sent to the model, so changing a declared state selection
+   must not throw away a valid observation of an unchanged image. */
+const OBSERVATION_RELEVANT_FIELDS = [
+  "entity_id",
+  "display_name",
+  "entity_type",
+  "parent_entity_id",
+  "continuity_unit",
+  "identity_cues",
+  "allowed_state_values",
+  "track_presence",
+  "track_movement",
+  "track_color",
+  "track_state",
+  "track_markings",
+];
+
+function entityStateRecords(entity) {
+  return Array.isArray(entity && entity.continuityStates) ? entity.continuityStates.filter(Boolean) : [];
+}
+/* Read-only: unlike entityStateList() in app.js this never repairs the entity,
+   because a manifest build must not mutate the project. */
+function resolveStateRecord(entity, stateId) {
+  const states = entityStateRecords(entity);
+  const wanted = stateId ? states.find((state) => String(state.id) === String(stateId)) : null;
+  if (wanted) return wanted;
+  return states.find((state) => state && state.isDefault) || states[0] || { id: "state-default", name: "Default", notes: "" };
+}
+/* frame-level selection, then shot-level, then the entity default.
+
+   The frame-level maps have readers (server.js derivedFrameContext) and rename
+   remapping (creation-studio.js) but no writer yet — Phase 4 adds the writers.
+   Honouring them here means intra-shot declared state changes work the moment
+   they become writable, with no change to this builder. */
+function resolveDeclaredStateId(shot, frameId, kind, entityId) {
+  const workflows = shot && shot.creationBrief && shot.creationBrief.frameWorkflows;
+  const workflow = workflows && typeof workflows === "object" && frameId ? workflows[frameId] : null;
+  if (workflow && typeof workflow === "object") {
+    const maps = {
+      character: workflow.characterStateSelections,
+      prop: workflow.propStateSelections,
+      vehicle: workflow.vehicleStateSelections,
+      location: workflow.locationStateSelections,
+    };
+    const map = maps[kind];
+    if (map && typeof map === "object" && map[entityId]) return String(map[entityId]);
+    if (kind === "location" && workflow.locationStateId) return String(workflow.locationStateId);
+  }
+  const shotSelection = shot && shot.continuityStateSelections && typeof shot.continuityStateSelections === "object"
+    ? shot.continuityStateSelections[entityId]
+    : "";
+  return shotSelection ? String(shotSelection) : "";
+}
+/* One short sentence naming the object, not the full canon block: the
+   qualified checklist gives the model an identity cue, not a design brief. */
+function entityIdentityCues(entity, tracking) {
+  if (tracking.identityCues) return tracking.identityCues;
+  return cleanText(entity.creationDescription || entity.description || entity.block || entity.notes || "", 240);
+}
+/* The state vocabulary the model may answer with. Production's explicit list
+   wins; otherwise the entity's own declared continuity states are the natural
+   vocabulary, which is what makes CineBraid's Bible the authority. */
+function entityAllowedStateValues(entity, tracking) {
+  if (Array.isArray(tracking.allowedStateValues)) return tracking.allowedStateValues.length ? tracking.allowedStateValues : null;
+  if (!tracking.state) return null;
+  const names = entityStateRecords(entity)
+    .map((state) => cleanText(state.name || "", 48))
+    .filter(Boolean);
+  const unique = [...new Set(names)].sort(compareStrings);
+  return unique.length > 1 ? unique : null;
+}
+
+function buildContinuityManifest(project, shot, frameId = "") {
+  const P = project && typeof project === "object" ? project : {};
+  const s = shot && typeof shot === "object" ? shot : {};
+  const records = resolveDependencyRecords(P, s);
+  const entities = [];
+  const seen = new Set();
+  for (const record of records) {
+    if (!record || !record.resolved || !record.entity) continue;
+    if (!VISUAL_ENTITY_KINDS.includes(record.type)) continue;
+    const entity = record.entity;
+    const entityId = String(entity.id || "");
+    if (!entityId || seen.has(entityId)) continue;
+    const stateId = resolveDeclaredStateId(s, frameId, record.type, entityId);
+    const state = resolveStateRecord(entity, stateId);
+    const tracking = resolveEntityTracking(entity, state);
+    if (tracking.enabled === false) continue;
+    seen.add(entityId);
+    entities.push({
+      entity_id: entityId,
+      display_name: cleanText(entity.name || entityId, 160),
+      entity_type: record.type,
+      parent_entity_id: tracking.parentEntityId || null,
+      continuity_unit: tracking.unit,
+      identity_cues: entityIdentityCues(entity, tracking),
+      allowed_state_values: entityAllowedStateValues(entity, tracking),
+      track_presence: tracking.presence !== false,
+      track_movement: tracking.movement !== false,
+      track_color: tracking.color === true,
+      track_state: tracking.state !== false,
+      track_markings: tracking.markings === true,
+      /* CineBraid-side annotations. Never sent, never hashed. */
+      cb_declared_state_id: String(state.id || "state-default"),
+      cb_declared_state_name: cleanText(state.name || "Default", 160),
+    });
+  }
+  entities.sort((a, b) => compareStrings(a.entity_id, b.entity_id));
+  const hashPayload = entities.map((row) => {
+    const picked = {};
+    for (const field of OBSERVATION_RELEVANT_FIELDS) picked[field] = row[field];
+    return picked;
+  });
+  return {
+    manifestVersion: CONTINUITY_MANIFEST_VERSION,
+    contractVersion: CONTINUITY_OBSERVATION_CONTRACT_VERSION,
+    shotId: String(s.id || ""),
+    frameId: String(frameId || ""),
+    n: entities.length,
+    entities,
+    manifestHash: sha256Hex(CONTINUITY_OBSERVATION_CONTRACT_VERSION + "\n" + canonicalJson(hashPayload)).slice(0, MANIFEST_HASH_LENGTH),
+  };
+}
+function resolveDependencyRecords(project, shot) {
+  const fn = typeof shotDependencyRecords === "function"
+    ? shotDependencyRecords
+    : (typeof globalThis !== "undefined" && typeof globalThis.shotDependencyRecords === "function"
+      ? globalThis.shotDependencyRecords
+      : null);
+  return fn ? (fn(project, shot) || []) : [];
+}
+
+/* ---------- observation schema -------------------------------------------
+
+   Generated per manifest, because that is what makes the guarantees
+   structural rather than hopeful: `entities` is a closed object whose keys are
+   exactly the declared entity ids and whose `required` names every one of
+   them. The model cannot invent an entity, omit an entity, duplicate an
+   entity, or split one into parts, because the grammar has no room for it.
+
+   No oneOf anywhere: it caused constrained-decoding whitespace loops and
+   truncations on the qualified vLLM path. bbox uses anyOf, which did not. */
+function entityRecordSchema(entity) {
+  const states = [...(Array.isArray(entity.allowed_state_values) ? entity.allowed_state_values : []), "not-applicable", "uncertain"];
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: ["presence", "occlusion", "identifiable", "bbox", "color", "state", "markings", "evidence"],
+    properties: {
+      presence: { type: "string", enum: PRESENCE_VALUES },
+      occlusion: { type: "string", enum: OCCLUSION_VALUES },
+      identifiable: { type: "string", enum: IDENTIFIABLE_VALUES },
+      bbox: {
+        anyOf: [
+          { type: "array", minItems: 4, maxItems: 4, items: { type: "integer", minimum: 0, maximum: 1000 } },
+          { type: "null" },
+        ],
+      },
+      color: { type: "string", enum: COLOR_VALUES },
+      state: { type: "string", enum: states },
+      markings: { type: "string", enum: MARKINGS_VALUES },
+      evidence: { type: "string", maxLength: EVIDENCE_MAX },
+    },
+  };
+}
+function buildObservationSchema(manifest) {
+  const properties = {};
+  for (const entity of (manifest && manifest.entities) || []) properties[entity.entity_id] = entityRecordSchema(entity);
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: ["coordinate_mode", "entities"],
+    properties: {
+      coordinate_mode: { type: "string", enum: ["permille"] },
+      entities: {
+        type: "object",
+        additionalProperties: false,
+        required: Object.keys(properties).sort(compareStrings),
+        properties,
+      },
+    },
+  };
+}
+
+/* ---------- deterministic post-validation --------------------------------
+
+   recordState is the qualified three-shape check. It classifies and never
+   coerces: a record that does not match one of the three legal shapes is
+   invalid, and an invalid record is excluded from automatic verdicts rather
+   than repaired into a confident-looking answer. */
+function bboxIsValid(bbox) {
+  return Array.isArray(bbox) && bbox.length === 4 && bbox.every((value) => Number.isInteger(value) && value >= 0 && value <= 1000);
+}
+function recordState(record) {
+  if (!record || typeof record !== "object" || Array.isArray(record)) return "invalid";
+  const { presence, occlusion, identifiable, bbox } = record;
+  const boxOk = bboxIsValid(bbox);
+  if (presence === "present")
+    return ["none", "partial", "heavy", "uncertain"].includes(occlusion) && boxOk ? "present" : "invalid";
+  if (presence === "absent")
+    return occlusion === "not-applicable" && bbox === null && ["no", "uncertain"].includes(identifiable) ? "absent" : "invalid";
+  if (presence === "uncertain")
+    return occlusion === "uncertain" && identifiable === "uncertain" && (bbox === null || boxOk) ? "uncertain" : "invalid";
+  return "invalid";
+}
+const OBSERVATION_FLAGS = [
+  "malformed_response",
+  "missing_entity_id",
+  "undeclared_entity_id",
+  "invalid_coordinate_mode",
+  "invalid_record_shape",
+  "invalid_enum",
+  "untracked_attribute_discarded",
+];
+function validateObservationSet(manifest, parsed) {
+  const declared = ((manifest && manifest.entities) || []);
+  const flags = [];
+  const addFlag = (code, entityId, detail) => flags.push({ code, entityId: String(entityId || ""), detail: String(detail || "") });
+  const root = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+  const supplied = root && root.entities && typeof root.entities === "object" && !Array.isArray(root.entities) ? root.entities : null;
+  if (!supplied) addFlag("malformed_response", "", "The response did not contain an entities object.");
+  if (root && root.coordinate_mode !== undefined && root.coordinate_mode !== "permille")
+    addFlag("invalid_coordinate_mode", "", `coordinate_mode was ${JSON.stringify(root.coordinate_mode)}; the contract is "permille".`);
+
+  const declaredIds = new Set(declared.map((row) => row.entity_id));
+  for (const key of supplied ? Object.keys(supplied).sort(compareStrings) : [])
+    if (!declaredIds.has(key)) addFlag("undeclared_entity_id", key, "The model returned an entity id production did not declare.");
+
+  const entities = {};
+  const states = {};
+  for (const row of declared) {
+    const id = row.entity_id;
+    const raw = supplied ? supplied[id] : undefined;
+    if (raw === undefined || raw === null) {
+      addFlag("missing_entity_id", id, "The model returned no record for this declared entity.");
+      entities[id] = { presence: "uncertain", occlusion: "uncertain", identifiable: "uncertain", bbox: null, color: "uncertain", state: "uncertain", markings: "uncertain", evidence: "" };
+      states[id] = "invalid";
+      continue;
+    }
+    const record = {
+      presence: raw.presence,
+      occlusion: raw.occlusion,
+      identifiable: raw.identifiable,
+      bbox: raw.bbox === undefined ? null : raw.bbox,
+      color: raw.color,
+      state: raw.state,
+      markings: raw.markings,
+      evidence: typeof raw.evidence === "string" ? raw.evidence.slice(0, EVIDENCE_MAX) : "",
+    };
+    for (const [field, values] of [["presence", PRESENCE_VALUES], ["occlusion", OCCLUSION_VALUES], ["identifiable", IDENTIFIABLE_VALUES], ["color", COLOR_VALUES], ["markings", MARKINGS_VALUES]])
+      if (!values.includes(record[field])) addFlag("invalid_enum", id, `${field} was ${JSON.stringify(record[field])}, which is not a contract value.`);
+    if (typeof record.state !== "string") addFlag("invalid_enum", id, "state was not a string.");
+    /* An attribute the production did not ask to track must never reach the
+       comparison engine, or a multi-tone object still produces colour findings
+       no matter what the tracking policy says. */
+    for (const [field, track] of [["color", "track_color"], ["state", "track_state"], ["markings", "track_markings"]]) {
+      if (row[track] === false && record[field] !== "not-applicable" && record[field] !== undefined) {
+        addFlag("untracked_attribute_discarded", id, `${field} was returned but is not tracked for this entity; the value was discarded.`);
+        record[field] = "not-applicable";
+      }
+    }
+    const state = recordState(record);
+    if (state === "invalid") addFlag("invalid_record_shape", id, `The record does not match a legal present/absent/uncertain shape (presence=${JSON.stringify(record.presence)}, occlusion=${JSON.stringify(record.occlusion)}, bbox=${record.bbox === null ? "null" : JSON.stringify(record.bbox)}).`);
+    entities[id] = record;
+    states[id] = state;
+  }
+
+  flags.sort((a, b) => compareStrings(a.entityId, b.entityId) || compareStrings(a.code, b.code) || compareStrings(a.detail, b.detail));
+  return {
+    contractVersion: CONTINUITY_OBSERVATION_CONTRACT_VERSION,
+    manifestHash: String((manifest && manifest.manifestHash) || ""),
+    ok: flags.length === 0,
+    flags,
+    coordinate_mode: "permille",
+    entities,
+    states,
+    invalidEntityIds: Object.keys(states).filter((id) => states[id] === "invalid").sort(compareStrings),
+  };
+}
+
+/* ---------- comparison engine --------------------------------------------
+   Pure, O(n), indexed by stable entity id. No geometry matching, no model, no
+   clock. A direct port of fin_contract.compare(). */
+function bboxCentre(box) {
+  return [(box[0] + box[2]) / 2, (box[1] + box[3]) / 2];
+}
+function bboxArea(box) {
+  return Math.max(0, box[2] - box[0]) * Math.max(0, box[3] - box[1]);
+}
+function bboxNormalize(box) {
+  return box ? box.map((value) => value / 1000) : null;
+}
+function compareObservations(sideA, sideB, manifest, options = {}) {
+  const cameraLocked = options.cameraLocked !== false;
+  const rows = ((manifest && manifest.entities) || []).slice().sort((a, b) => compareStrings(a.entity_id, b.entity_id));
+  const A = (sideA && sideA.entities) || {};
+  const B = (sideB && sideB.entities) || {};
+  const statesA = (sideA && sideA.states) || {};
+  const statesB = (sideB && sideB.states) || {};
+  const changes = [], uncertain = [], shadeDrift = [], attributeUnreadable = [], presenceUncertain = [], invalidRecords = [];
+
+  for (const declaration of rows) {
+    const id = declaration.entity_id;
+    const a = A[id];
+    const b = B[id];
+    const displayName = declaration.display_name;
+    if (a === undefined || b === undefined) {
+      uncertain.push({ entity_id: id, kind: "missing-record", display_name: displayName });
+      continue;
+    }
+    const sa = statesA[id] || recordState(a);
+    const sb = statesB[id] || recordState(b);
+    if (sa === "invalid" || sb === "invalid") {
+      invalidRecords.push({ entity_id: id, kind: "entity-record-invalid", state_a: sa, state_b: sb, display_name: displayName });
+      continue;
+    }
+    if (sa === "uncertain" || sb === "uncertain")
+      presenceUncertain.push({ entity_id: id, kind: "presence-uncertain", value_a: a.presence, value_b: b.presence, display_name: displayName });
+    else if (declaration.track_presence && sa !== sb)
+      changes.push({ entity_id: id, kind: sb === "absent" ? "removed" : "added", attribute: "presence", value_a: a.presence, value_b: b.presence, display_name: displayName });
+
+    if (sa === "present" && sb === "present") {
+      if (a.identifiable !== "yes" || b.identifiable !== "yes")
+        uncertain.push({ entity_id: id, kind: "identifiability", value_a: a.identifiable, value_b: b.identifiable, display_name: displayName });
+      /* An occlusion transition is not a change, it is a reason the reading
+         may not be comparable. It goes to human review either way. */
+      if (a.occlusion !== b.occlusion)
+        uncertain.push({ entity_id: id, kind: "occlusion-transition", value_a: a.occlusion, value_b: b.occlusion, display_name: displayName });
+      for (const [attribute, track] of [["color", "track_color"], ["state", "track_state"], ["markings", "track_markings"]]) {
+        if (!declaration[track]) continue;
+        const ca = a[attribute];
+        const cb = b[attribute];
+        if (ca === cb) continue;
+        const base = { entity_id: id, attribute, value_a: ca, value_b: cb, display_name: displayName };
+        if (ca === "uncertain" || cb === "uncertain") attributeUnreadable.push({ ...base, kind: "attribute-unreadable" });
+        else if (ca === "not-applicable" || cb === "not-applicable") attributeUnreadable.push({ ...base, kind: "attribute-not-applicable" });
+        else if (attribute === "color" && sameColourFamily(ca, cb)) shadeDrift.push({ ...base, kind: "shade-drift" });
+        else changes.push({ ...base, kind: "attribute" });
+      }
+      const na = bboxNormalize(a.bbox);
+      const nb = bboxNormalize(b.bbox);
+      const [ax, ay] = bboxCentre(na);
+      const [bx, by] = bboxCentre(nb);
+      const distance = Math.sqrt((ax - bx) ** 2 + (ay - by) ** 2);
+      const areaA = bboxArea(na);
+      const areaB = bboxArea(nb);
+      const ratio = Math.max(areaA, areaB) > 0 ? Math.min(areaA, areaB) / Math.max(areaA, areaB) : 1;
+      /* Movement is only meaningful when the camera did not move. Camera and
+         framing continuity is a separate instrument that does not exist yet,
+         so an unlocked camera simply suppresses the movement finding. */
+      if (declaration.track_movement && cameraLocked && distance > MOVE_THRESHOLD)
+        changes.push({ entity_id: id, kind: "moved", attribute: "centre_displacement", distance: Math.round(distance * 10000) / 10000, display_name: displayName });
+      if (!(ratio >= SIZE_RATIO_LO && ratio <= SIZE_RATIO_HI))
+        uncertain.push({ entity_id: id, kind: "size", ratio: Math.round(ratio * 1000) / 1000, display_name: displayName });
+    }
+  }
+  return {
+    comparisonVersion: CONTINUITY_COMPARISON_VERSION,
+    changes, uncertain, shade_drift: shadeDrift,
+    attribute_unreadable: attributeUnreadable,
+    presence_uncertain: presenceUncertain,
+    invalid_records: invalidRecords,
+    n_entities: rows.length,
+  };
+}
+
+/* ---------- declared intent ----------------------------------------------
+
+   A visual change is not automatically a continuity error, and the model is
+   never asked whether one was intended: CineBraid already knows. Intent is
+   matched structurally against the finding's kind/attribute/entity, not by
+   reading prose about it.
+
+   Free text is supported because productions write in prose, but it is
+   deliberately constrained: the entity must be named AND a keyword for that
+   kind of change must appear. A near miss — the entity is named but the change
+   described is a different one — does NOT pass. It forces human review, so a
+   vague note can never silently approve a real break. */
+const INTENT_KEYWORDS = {
+  removed: ["remove", "removes", "removed", "removing", "leave", "leaves", "left", "exit", "exits", "take away", "takes away", "taken away", "put away", "puts away", "gone", "picks up", "pick up", "picked up", "carried off"],
+  added: ["enter", "enters", "entered", "arrive", "arrives", "arrived", "bring", "brings", "brought", "appear", "appears", "appeared", "set down", "sets down", "place", "places", "placed", "put down", "puts down", "added"],
+  moved: ["move", "moves", "moved", "shift", "shifts", "shifted", "reposition", "repositions", "slide", "slides", "picks up", "pick up", "sets down", "set down", "put down", "puts down", "hands", "passes"],
+  color: ["colour", "color", "colours", "colors", "recolour", "recolor", "repaint", "repainted", "stained", "dyed"],
+  state: ["change", "changes", "changed", "state", "become", "becomes", "became", "switch", "switches", "torn", "dirty", "wet", "open", "opens", "closed", "closes"],
+  markings: ["marking", "markings", "label", "logo", "text", "pattern", "printed"],
+};
+function normalizeIntentText(value) {
+  return String(value == null ? "" : value).toLowerCase().replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
+}
+function findingKeywordBucket(finding) {
+  if (finding.kind === "removed" || finding.kind === "added" || finding.kind === "moved") return finding.kind;
+  return finding.attribute;
+}
+/* Declared allowances and structural state changes become descriptors of the
+   same shape, so matching stays one deterministic comparison. */
+function buildIntentDescriptors(shot, manifestA, manifestB) {
+  const descriptors = [];
+  const byIdA = new Map(((manifestA && manifestA.entities) || []).map((row) => [row.entity_id, row]));
+  const byIdB = new Map(((manifestB && manifestB.entities) || []).map((row) => [row.entity_id, row]));
+  for (const id of [...byIdA.keys()].sort(compareStrings)) {
+    const a = byIdA.get(id);
+    const b = byIdB.get(id);
+    /* 1. Structural: production declared a different continuity state for the
+          two frames. No text matching, the strongest available signal. */
+    if (b && a.cb_declared_state_id !== b.cb_declared_state_id)
+      descriptors.push({ kind: "attribute", attribute: "state", entity_ids: [id], source: "declared-state-change", reason: `Declared state changed from "${a.cb_declared_state_name}" to "${b.cb_declared_state_name}".` });
+    /* 2. Explicit per-entity allowances. */
+    const intent = resolveEntityIntent(shot, id);
+    if (intent.allowPresenceChange === "may-leave" || intent.allowPresenceChange === "either")
+      descriptors.push({ kind: "removed", attribute: "presence", entity_ids: [id], source: "allowance", reason: "This shot declares the entity may leave." });
+    if (intent.allowPresenceChange === "may-enter" || intent.allowPresenceChange === "either")
+      descriptors.push({ kind: "added", attribute: "presence", entity_ids: [id], source: "allowance", reason: "This shot declares the entity may enter." });
+    if (intent.allowMovement)
+      descriptors.push({ kind: "moved", attribute: "centre_displacement", entity_ids: [id], source: "allowance", reason: "This shot declares the entity may move." });
+    if (intent.allowColorChange)
+      descriptors.push({ kind: "attribute", attribute: "color", entity_ids: [id], source: "allowance", reason: "This shot declares the entity's colour may change." });
+    if (intent.allowStateChange)
+      descriptors.push({ kind: "attribute", attribute: "state", entity_ids: [id], source: "allowance", reason: "This shot declares the entity's state may change." });
+  }
+  return descriptors;
+}
+function matchesDescriptor(finding, descriptor) {
+  if (descriptor.kind !== finding.kind) return false;
+  if (descriptor.attribute !== undefined && descriptor.attribute !== null && descriptor.attribute !== finding.attribute) return false;
+  if (Array.isArray(descriptor.entity_ids) && !descriptor.entity_ids.includes(finding.entity_id)) return false;
+  if (descriptor.value_b !== undefined && descriptor.value_b !== null && descriptor.value_b !== finding.value_b) return false;
+  return true;
+}
+/* Returns "matched" | "near-miss" | null for the human-authored prose. */
+function expectedTextVerdict(finding, declaration, intent) {
+  const tokens = [finding.entity_id, declaration && declaration.display_name].map(normalizeIntentText).filter(Boolean);
+  const bucket = findingKeywordBucket(finding);
+  const keywords = (INTENT_KEYWORDS[bucket] || []).map(normalizeIntentText);
+  let nearMiss = null;
+  for (const phrase of intent.expected) {
+    const normalized = normalizeIntentText(phrase);
+    if (!normalized || !tokens.some((token) => token && normalized.includes(token))) continue;
+    if (keywords.some((keyword) => normalized.includes(keyword))) return { verdict: "matched", phrase };
+    if (!nearMiss) nearMiss = phrase;
+  }
+  return nearMiss ? { verdict: "near-miss", phrase: nearMiss } : null;
+}
+
+/* Port of fin_contract.classify(), plus CineBraid's near-miss rule and the
+   per-finding provenance the UI will need. Expected findings stay VISIBLE:
+   they are relabelled, never removed. */
+function applyIntent(comparison, context = {}) {
+  const shot = context.shot || null;
+  const manifestA = context.manifestA || context.manifest || null;
+  const manifestB = context.manifestB || context.manifest || null;
+  const declarations = new Map(((manifestA && manifestA.entities) || []).map((row) => [row.entity_id, row]));
+  const humanIntentional = context.humanIntentional && typeof context.humanIntentional === "object" ? context.humanIntentional : {};
+  const descriptors = [...buildIntentDescriptors(shot, manifestA, manifestB), ...(Array.isArray(context.descriptors) ? context.descriptors : [])];
+
+  let nearMissCount = 0;
+  const changes = comparison.changes.map((finding) => {
+    const declaration = declarations.get(finding.entity_id) || null;
+    const intent = resolveEntityIntent(shot, finding.entity_id);
+    const descriptor = descriptors.find((row) => matchesDescriptor(finding, row));
+    if (descriptor)
+      return { ...finding, label: "intended", intentSource: descriptor.source || "descriptor", intentReason: descriptor.reason || "" };
+    const text = expectedTextVerdict(finding, declaration, intent);
+    if (text && text.verdict === "matched")
+      return { ...finding, label: "intended", intentSource: "expected-text", intentReason: `Matched declared expected change: "${text.phrase}".` };
+    if (text && text.verdict === "near-miss") {
+      nearMissCount += 1;
+      return { ...finding, label: "possible-continuity-error", intentSource: "near-miss", intentReason: `An expected change mentions this entity but does not describe this kind of change: "${text.phrase}".` };
+    }
+    if (humanIntentional[`${finding.entity_id}:${finding.kind}:${finding.attribute || ""}`] === true)
+      return { ...finding, label: "intended", intentSource: "human", intentReason: "A person marked this difference intentional." };
+    return { ...finding, label: "possible-continuity-error", intentSource: null, intentReason: "" };
+  });
+
+  const content = !changes.length
+    ? "no-change"
+    : changes.some((row) => row.label === "possible-continuity-error") ? "possible-continuity-error" : "intended";
+  /* The human-review floor. Nothing in this core can auto-pass heavy or
+     unreadable occlusion, an uncertain presence, an unreadable tracked
+     attribute, an invalid record, or a near-miss intent note. */
+  const needsReview = !!(comparison.uncertain.length
+    || comparison.attribute_unreadable.length
+    || comparison.presence_uncertain.length
+    || comparison.invalid_records.length
+    || nearMissCount
+    || context.designatedOcclusion === true);
+  return {
+    ...comparison,
+    changes,
+    label: needsReview ? "human-review" : content,
+    content,
+    needsReview,
+    nearMissIntentCount: nearMissCount,
+    intentDescriptors: descriptors,
+  };
+}
+
+const CONTINUITY_EXPORTS = {
+  CONTINUITY_MANIFEST_VERSION,
+  CONTINUITY_OBSERVATION_CONTRACT_VERSION,
+  CONTINUITY_COMPARISON_VERSION,
+  MANIFEST_HASH_LENGTH,
+  PRESENCE_VALUES, OCCLUSION_VALUES, IDENTIFIABLE_VALUES, MARKINGS_VALUES, COLOR_VALUES,
+  COLOUR_FAMILIES, EVIDENCE_MAX, MOVE_THRESHOLD, SIZE_RATIO_LO, SIZE_RATIO_HI, CONTINUITY_UNITS,
+  DEFAULT_TRACKING, DEFAULT_INTENT, PRESENCE_ALLOWANCES,
+  VISUAL_ENTITY_KINDS, ENTITY_KIND_LISTS, OBSERVATION_RELEVANT_FIELDS, OBSERVATION_FLAGS,
+  INTENT_KEYWORDS,
+  sha256Hex, canonicalJson,
+  colourFamily, sameColourFamily,
+  mergeTracking, resolveEntityTracking, resolveEntityIntent,
+  resolveStateRecord, resolveDeclaredStateId,
+  buildContinuityManifest, buildObservationSchema, entityRecordSchema,
+  bboxIsValid, recordState, validateObservationSet,
+  compareObservations, buildIntentDescriptors, matchesDescriptor, applyIntent,
+  normalizeIntentText,
+};
+
+if (typeof window !== "undefined") for (const [key, value] of Object.entries(CONTINUITY_EXPORTS)) window[key] = value;
+if (typeof module !== "undefined" && module.exports) {
+  /* Node has no script-tag load order, so the dependency is taken directly. */
+  const shared = require("./shared-entities");
+  globalThis.shotDependencyRecords = globalThis.shotDependencyRecords || shared.shotDependencyRecords;
+  module.exports = CONTINUITY_EXPORTS;
+}
