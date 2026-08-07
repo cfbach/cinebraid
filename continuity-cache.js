@@ -81,6 +81,33 @@ function clearImageHashMemo() {
   hashMemo.clear();
 }
 
+/* ---------- execution endpoint identity -----------------------------------
+
+   "custom" and "nemotron_3_nano_omni" are names, not an address. Two different
+   OpenAI-compatible servers can both be called custom and both serve a model
+   under the same name while holding different weights, and continuity may now
+   be pointed at its own endpoint independently of the general provider. So the
+   ADDRESS a request was actually executed against is part of what produced the
+   answer, and belongs in the key.
+
+   Only the fingerprint is carried. The address itself is a deployment detail
+   with no business being written into a project directory, and a hash answers
+   the only question the cache asks of it: is this the same connection.
+
+   Normalization is exactly the dispatcher's own equivalence and no more:
+   llm.js builds its request URL as `baseUrl.replace(/\/$/, "") + "/chat/..."`,
+   so a trailing slash is provably the same wire address and nothing else is.
+   Host casing, default ports and IPv6 spellings are deliberately NOT collapsed
+   — that would risk declaring genuinely different endpoints identical, which
+   is the failure this exists to prevent. */
+function normalizeEndpoint(baseUrl) {
+  return String(baseUrl == null ? "" : baseUrl).trim().replace(/\/$/, "");
+}
+function endpointFingerprint(baseUrl) {
+  const normalized = normalizeEndpoint(baseUrl);
+  return normalized ? sha256Hex(Buffer.from(normalized, "utf8")) : "";
+}
+
 /* ---------- cache identity -----------------------------------------------
 
    Every component answers a question that, if answered differently, would make
@@ -92,6 +119,8 @@ function clearImageHashMemo() {
      manifestHash     which entities were declared, and how (Phase 1 hashes
                       exactly the fields the prompt and schema consume)
      provider, model  who answered — a Qwen answer is not a Nemotron answer
+     endpointHash     WHERE it answered, fingerprinted. Two servers sharing a
+                      provider and a model name are not the same witness.
 
    Components are joined with NUL, which cannot occur in any of them. Joining
    provider and model with "@" instead would let provider "a" + model "b@c"
@@ -99,8 +128,8 @@ function clearImageHashMemo() {
    provider names, but a delimiter that can appear in the data is a latent way
    to serve one model's evidence as another's. */
 const KEY_SEPARATOR = "\u0000";
-function observationKey({ contractVersion, promptVersion, imageHash, manifestHash, provider, model }) {
-  const payload = [contractVersion, promptVersion, imageHash, manifestHash, provider, model]
+function observationKey({ contractVersion, promptVersion, imageHash, manifestHash, provider, model, endpointHash }) {
+  const payload = [contractVersion, promptVersion, imageHash, manifestHash, provider, model, endpointHash]
     .map((part) => String(part == null ? "" : part))
     .join(KEY_SEPARATOR);
   return sha256Hex(Buffer.from(payload, "utf8"));
@@ -228,7 +257,12 @@ function createContinuityCache({ projectDir, atomicWriteJson, log = () => {} }) 
      before it is trusted. Anything else is a miss and is dropped. */
   function entryMatches(entry, expected) {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) return false;
-    for (const field of ["key", "imageHash", "manifestHash", "contractVersion", "promptVersion", "provider", "model"])
+    /* endpointHash is checked like every other identity component, which is
+       also what makes an entry written before it existed untrusted: it carries
+       no fingerprint, so it can never match a caller that resolved one. Such an
+       entry is unaddressable under the new key anyway and simply waits for
+       eviction or a purge. */
+    for (const field of ["key", "imageHash", "manifestHash", "contractVersion", "promptVersion", "provider", "model", "endpointHash"])
       if (String(entry[field] || "") !== String(expected[field] || "")) return false;
     const observation = entry.observation;
     if (!observation || typeof observation !== "object" || Array.isArray(observation)) return false;
@@ -253,6 +287,7 @@ function createContinuityCache({ projectDir, atomicWriteJson, log = () => {} }) 
     MAX_ENTRIES,
     file,
     observationKey,
+    endpointFingerprint,
     hashImageFile,
     clearImageHashMemo,
     read,
@@ -302,6 +337,8 @@ module.exports = {
   MAX_ENTRIES,
   createContinuityCache,
   observationKey,
+  normalizeEndpoint,
+  endpointFingerprint,
   hashImageFile,
   clearImageHashMemo,
   sha256Hex,

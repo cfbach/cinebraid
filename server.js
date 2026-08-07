@@ -5696,11 +5696,21 @@ const continuityCache = createContinuityCache({
   log: (message) => console.log(`  continuity: ${message}`),
 });
 
-/* Only handed over when continuity has an endpoint of its own. Riding on the
-   chosen provider's connection stays the default path, byte-identical to Phase 2. */
-function continuityEndpointOption(cfg = readConfig()) {
+/* One resolution, used for both halves of a request: where it is dispatched
+   and how its evidence is addressed. Deriving them separately is how a cache
+   could start answering for a connection that is no longer the one in use.
+
+   `endpoint` is handed to the dispatcher only when continuity has an address of
+   its own; riding on the chosen provider's connection stays the default path,
+   byte-identical to Phase 2. `endpointHash` is always the EFFECTIVE address —
+   after the inherit-or-override rule has been applied — so an install that
+   inherits is fingerprinted by what it actually reaches, not by a blank field. */
+function continuityExecution(cfg = readConfig()) {
   const connection = continuityConnection(cfg);
-  return connection.standalone ? { baseUrl: connection.baseUrl, apiKey: connection.apiKey } : null;
+  return {
+    endpoint: connection.standalone ? { baseUrl: connection.baseUrl, apiKey: connection.apiKey } : null,
+    endpointHash: continuityCache.endpointFingerprint(connection.baseUrl),
+  };
 }
 function continuityFrameImage(P, shot, frameId, requestedFile) {
   const frames = Array.isArray(shot.keyframes) ? shot.keyframes : [];
@@ -5773,6 +5783,11 @@ async function observeContinuityFrame(P, shot, frameId, requestedFile, context) 
     manifestHash: manifest.manifestHash,
     provider: context.provider,
     model: context.model || "",
+    /* Fingerprint of the address this request will actually be executed
+       against, resolved by the same continuityConnection() call that chose
+       where to dispatch it — so cache identity IS execution identity rather
+       than a second guess at it. */
+    endpointHash: context.endpointHash || "",
   };
   const key = continuityCache.observationKey(identity);
   const entityIds = manifest.entities.map((row) => row.entity_id);
@@ -5837,6 +5852,10 @@ async function observeContinuityFrame(P, shot, frameId, requestedFile, context) 
       imageHash, manifestHash: manifest.manifestHash,
       contractVersion: identity.contractVersion, promptVersion: identity.promptVersion,
       provider: identity.provider, model: identity.model,
+      /* The fingerprint, never the address. Which connection produced this
+         evidence is internal provenance the cache needs; a deployment's
+         endpoint is not something to write into a project directory. */
+      endpointHash: identity.endpointHash,
       observation, validation: stored,
     });
   } else {
@@ -5869,8 +5888,8 @@ app.post("/api/continuity/observe", async (req, res) => {
     const shot = (P.shots || []).find((item) => String(item.id) === shotId);
     if (!shot) return res.status(404).json({ error: "shot not found" });
     const model = continuityVisionModel(cfg) || undefined;
-    const endpoint = continuityEndpointOption(cfg);
-    const result = await observeContinuityFrame(P, shot, String(req.body?.frameId || ""), req.body?.fileName, { provider, model, endpoint });
+    const execution = continuityExecution(cfg);
+    const result = await observeContinuityFrame(P, shot, String(req.body?.frameId || ""), req.body?.fileName, { provider, model, ...execution });
     return res.json({
       ok: true,
       shotId,
@@ -5917,10 +5936,10 @@ app.post("/api/continuity/compare", async (req, res) => {
     if (!frameA || !frameB) return res.status(400).json({ error: "Two frames are required to compare." });
     if (frameA === frameB) return res.status(400).json({ error: "Choose two different frames to compare." });
     const model = continuityVisionModel(cfg) || undefined;
-    const endpoint = continuityEndpointOption(cfg);
+    const execution = continuityExecution(cfg);
 
-    const a = await observeContinuityFrame(P, shot, frameA, req.body?.fileNameA, { provider, model, endpoint });
-    const b = await observeContinuityFrame(P, shot, frameB, req.body?.fileNameB, { provider, model, endpoint });
+    const a = await observeContinuityFrame(P, shot, frameA, req.body?.fileNameA, { provider, model, ...execution });
+    const b = await observeContinuityFrame(P, shot, frameB, req.body?.fileNameB, { provider, model, ...execution });
 
     /* Frame manifests may legitimately differ — an entity can be declared on
        one frame and not the other. The union is compared so a declaration

@@ -22,6 +22,7 @@ const ROOT = path.join(__dirname, "..");
 const {
   createContinuityCache,
   observationKey,
+  endpointFingerprint,
   hashImageFile,
   clearImageHashMemo,
   CACHE_VERSION,
@@ -46,6 +47,7 @@ const BASE = {
   manifestHash: "0123456789abcdef0123",
   provider: "custom",
   model: "nemotron_3_nano_omni",
+  endpointHash: "e".repeat(64),
 };
 
 /* ---- 1. same inputs -> same key, and the key is a well-formed digest ---- */
@@ -65,7 +67,44 @@ for (const [field, value] of Object.entries({
   manifestHash: "ffffffffffffffffffff",
   provider: "openai",
   model: "gpt-5.2",
+  endpointHash: "f".repeat(64),
 })) assert.notStrictEqual(observationKey({ ...BASE, [field]: value }), baseKey, `${field} must be part of the cache key`);
+
+/* ---- 2b. the execution endpoint is part of the identity ----
+
+   A provider name and a model name are not an address. Two OpenAI-compatible
+   servers can both be called "custom" and both serve a model under the same
+   name while holding different weights — and continuity may be pointed at its
+   own endpoint independently of the general provider, so this is reachable by
+   changing one settings field. */
+const endpointA = endpointFingerprint("http://server-a:11436/v1");
+const endpointB = endpointFingerprint("http://server-b:11436/v1");
+assert.notStrictEqual(endpointA, endpointB, "different endpoints must fingerprint differently");
+assert.notStrictEqual(
+  observationKey({ ...BASE, endpointHash: endpointA }),
+  observationKey({ ...BASE, endpointHash: endpointB }),
+  "the same provider and model at two addresses must not share cached evidence",
+);
+assert.strictEqual(
+  observationKey({ ...BASE, endpointHash: endpointA }),
+  observationKey({ ...BASE, endpointHash: endpointA }),
+  "the same endpoint must address the same evidence",
+);
+/* Normalization is exactly the dispatcher's own equivalence — llm.js requests
+   `baseUrl.replace(/\/$/, "") + "/chat/completions"` — and no more. */
+assert.strictEqual(endpointFingerprint("http://server-a:11436/v1/"), endpointA, "a trailing slash reaches the identical wire address");
+assert.strictEqual(endpointFingerprint("  http://server-a:11436/v1  "), endpointA, "surrounding whitespace is not an address");
+for (const genuinelyDifferent of [
+  "http://server-a:11436/v2",
+  "https://server-a:11436/v1",
+  "http://server-a:11437/v1",
+  "http://SERVER-A:11436/v1",
+  "http://server-a/v1",
+]) assert.notStrictEqual(endpointFingerprint(genuinelyDifferent), endpointA, `${genuinelyDifferent} must not be collapsed onto another endpoint`);
+/* The fingerprint is a digest, so the address itself is never carried. */
+assert(/^[0-9a-f]{64}$/.test(endpointA), "the endpoint identity must be a digest");
+assert(!endpointA.includes("server-a") && !endpointA.includes("11436"));
+assert.strictEqual(endpointFingerprint(""), "", "no endpoint is an empty identity, not a hash of nothing");
 
 /* The provider and model are joined, not concatenated ambiguously: a provider
    "a" with model "b@c" must not collide with provider "a@b" model "c". */
@@ -156,7 +195,7 @@ function entryFor(key, patch = {}) {
     shotId: "S-01", frameId: "frame-a", imageName: "a.png",
     imageHash: BASE.imageHash, manifestHash: BASE.manifestHash,
     contractVersion: BASE.contractVersion, promptVersion: BASE.promptVersion,
-    provider: BASE.provider, model: BASE.model,
+    provider: BASE.provider, model: BASE.model, endpointHash: BASE.endpointHash,
     observation: { coordinate_mode: "permille", entities: { "PROP-MUG": { presence: "present", occlusion: "none", identifiable: "yes", bbox: [1, 2, 3, 4], color: "white", state: "not-applicable", markings: "not-applicable", evidence: "seen" } } },
     validation: { ok: true, flags: [], states: { "PROP-MUG": "present" }, invalidEntityIds: [], contractVersion: BASE.contractVersion },
     ...patch,
@@ -307,6 +346,11 @@ let upstream = null, upstreamPort = 0, ollamaPort = 0, ollamaServer = null;
 let child = null, base = "", output = "";
 let visionRequests = [];
 let nextReply = null;
+/* A second OpenAI-compatible server, serving the same model name under the same
+   provider name at a different address. It exists to prove that a name is not
+   an address: without the endpoint in the key, its answers and the first
+   server's would be the same cache entry. */
+let upstreamB = null, upstreamBPort = 0, visionRequestsB = [];
 
 function freePort() {
   return new Promise((resolve, reject) => {
@@ -371,6 +415,17 @@ function validReplyFor(body) {
   return JSON.stringify({ coordinate_mode: "permille", entities });
 }
 const cacheFile = () => path.join(PROJECT_DIR, CACHE_FILE);
+const purgeAll = () => request("/api/continuity/cache", { method: "DELETE" });
+const readCacheFile = () => JSON.parse(fs.readFileSync(cacheFile(), "utf8"));
+/* Edits the cache the way an older build would have left it, so the trust rule
+   for entries without an execution identity can be exercised directly. */
+async function writeCacheFile(mutate) {
+  const cache = readCacheFile();
+  mutate(cache.entries);
+  fs.writeFileSync(cacheFile(), JSON.stringify(cache, null, 2));
+  /* The parse memo keys on size and mtime, so give the write a distinct one. */
+  await new Promise((r) => setTimeout(r, 20));
+}
 
 async function partC() {
   upstreamPort = await freePort();
@@ -388,6 +443,18 @@ async function partC() {
     res.statusCode = 404; res.end(JSON.stringify({ error: { message: "not found" } }));
   });
   await new Promise((r) => upstream.listen(upstreamPort, "127.0.0.1", r));
+  upstreamBPort = await freePort();
+  upstreamB = http.createServer(async (req, res) => {
+    const body = await readBody(req);
+    res.setHeader("content-type", "application/json");
+    if (req.url.endsWith("/models")) return res.end(JSON.stringify({ data: [{ id: "nemotron_3_nano_omni" }] }));
+    if (req.url.endsWith("/chat/completions")) {
+      if (countImages(body)) visionRequestsB.push(body);
+      return res.end(JSON.stringify({ choices: [{ message: { content: validReplyFor(body) } }] }));
+    }
+    res.statusCode = 404; res.end(JSON.stringify({ error: { message: "not found" } }));
+  });
+  await new Promise((r) => upstreamB.listen(upstreamBPort, "127.0.0.1", r));
   ollamaServer = http.createServer(async (req, res) => {
     await readBody(req);
     res.setHeader("content-type", "application/json");
@@ -516,6 +583,97 @@ async function partC() {
   assert.strictEqual(result.body.cached, false, "a model change must invalidate the evidence");
   assert.strictEqual(visionRequests.length, before + 1);
   writeConfig();
+
+  /* ---- 22b. the execution ENDPOINT is part of the key ---------------------
+
+     PR #18 lets continuity have an address of its own, which makes "same
+     provider, same model, different server" a one-field change in Settings.
+     Cached evidence must not cross that line: an answer is evidence about what
+     a particular service saw. */
+
+  /* A. same endpoint, everything else equal -> HIT */
+  await purgeAll();
+  writeConfig();
+  before = visionRequests.length;
+  result = await observe({ shotId: "S-01", frameId: "frame-a" });
+  assert.strictEqual(result.body.cached, false, "the first observation through endpoint A is a miss");
+  assert.strictEqual(visionRequests.length, before + 1);
+  result = await observe({ shotId: "S-01", frameId: "frame-a" });
+  assert.strictEqual(result.body.cached, true, "the same endpoint must serve the same evidence");
+  assert.strictEqual(visionRequests.length, before + 1, "a HIT makes no provider request");
+
+  /* B. only the endpoint changes -> MISS, and the OTHER server is asked */
+  visionRequestsB = [];
+  const endpointBConfig = { continuity: { visionProvider: "custom", visionModel: "nemotron_3_nano_omni", baseUrl: `http://127.0.0.1:${upstreamBPort}/v1` } };
+  writeConfig(endpointBConfig);
+  before = visionRequests.length;
+  result = await observe({ shotId: "S-01", frameId: "frame-a" });
+  assert.strictEqual(result.body.cached, false, "the same provider and model at another address must not reuse cached evidence");
+  assert.strictEqual(visionRequestsB.length, 1, "the new endpoint must actually be asked");
+  assert.strictEqual(visionRequests.length, before, "the previous endpoint must not be contacted at all");
+  result = await observe({ shotId: "S-01", frameId: "frame-a" });
+  assert.strictEqual(result.body.cached, true, "endpoint B's own evidence is cached under its own identity");
+  assert.strictEqual(visionRequestsB.length, 1);
+
+  /* C. switching back reuses endpoint A's original entry */
+  writeConfig();
+  before = visionRequests.length;
+  result = await observe({ shotId: "S-01", frameId: "frame-a" });
+  assert.strictEqual(result.body.cached, true, "endpoint A's evidence must still be addressable after switching away and back");
+  assert.strictEqual(visionRequests.length, before, "switching back must make no provider request");
+
+  /* D. a config written before continuity.baseUrl existed is fingerprinted by
+        the endpoint it EFFECTIVELY reaches, not by its blank field. Its entry
+        from the inherit path is the one served here. */
+  const inheritedKeys = () => Object.keys(readCacheFile().entries);
+  const afterInherit = inheritedKeys().length;
+  writeConfig({ continuity: { visionProvider: "custom", visionModel: "nemotron_3_nano_omni" } });
+  before = visionRequests.length;
+  result = await observe({ shotId: "S-01", frameId: "frame-a" });
+  assert.strictEqual(result.body.cached, true, "an inherited endpoint must resolve to the same identity as naming it explicitly");
+  assert.strictEqual(visionRequests.length, before);
+  assert.strictEqual(inheritedKeys().length, afterInherit, "no new entry may be created for the same effective endpoint");
+
+  /* E. an explicit continuity endpoint wins over the inherited one */
+  writeConfig({ ...endpointBConfig, customBaseUrl: `http://127.0.0.1:${upstreamPort}/v1` });
+  visionRequestsB = [];
+  before = visionRequests.length;
+  result = await observe({ shotId: "S-01", frameId: "frame-a" });
+  assert.strictEqual(result.body.cached, true, "the explicit endpoint's own evidence is served, not the inherited endpoint's");
+  assert.strictEqual(visionRequests.length, before, "the inherited endpoint must not be consulted when an explicit one is set");
+
+  /* F. the address itself is never written to disk — only its fingerprint */
+  const cacheText = fs.readFileSync(path.join(PROJECT_DIR, CACHE_FILE), "utf8");
+  for (const secret of [`127.0.0.1:${upstreamPort}`, `127.0.0.1:${upstreamBPort}`, "127.0.0.1", "/v1", "http://", "baseUrl"])
+    assert(!cacheText.includes(secret), `the cache file leaked the endpoint (${secret})`);
+  const anyEntry = Object.values(readCacheFile().entries)[0];
+  assert(/^[0-9a-f]{64}$/.test(String(anyEntry.endpointHash || "")), "a stored entry must carry the endpoint identity as a digest");
+
+  /* An entry written before this existed carries no fingerprint, so it can
+     never satisfy a caller that resolved one — untrusted without a format
+     bump, and left for normal eviction rather than migrated. Start from an
+     empty cache so exactly one entry exists to age backwards. */
+  await purgeAll();
+  writeConfig();
+  await observe({ shotId: "S-01", frameId: "frame-a" });
+  const keysNow = Object.keys(readCacheFile().entries);
+  assert.strictEqual(keysNow.length, 1, "precondition: exactly one entry to age backwards");
+  await writeCacheFile((entries) => {
+    const legacy = { ...entries[keysNow[0]] };
+    delete legacy.endpointHash;
+    entries[keysNow[0]] = legacy;
+  });
+  assert.strictEqual(readCacheFile().version, CACHE_VERSION, "an entry without execution identity needs no cache-format bump to be refused");
+  before = visionRequests.length;
+  result = await observe({ shotId: "S-01", frameId: "frame-a" });
+  assert.strictEqual(result.body.cached, false, "an entry with no execution identity must not be trusted");
+  assert.strictEqual(visionRequests.length, before + 1, "an untrusted entry is re-observed rather than served");
+  /* Hand the following sections the state they expect: the default inherited
+     configuration, frame A warm, and a second write so the .bak sidecar the
+     corruption test relies on holds it too. */
+  writeConfig();
+  await observe({ shotId: "S-01", frameId: "frame-a" });
+  await observe({ shotId: "S-01", frameId: "frame-b" });
 
   /* ---- 23. uncertain evidence is cached; non-answers are not ---- */
   const uncertain = JSON.stringify({
@@ -805,7 +963,7 @@ async function main() {
   await partB();
   await partC();
   await partD();
-  console.log("Continuity cache suite passed: evidence is addressed by image bytes rather than filename, every key component is load-bearing, a declared-state-only change stays a HIT while every observation-relevant manifest change is a MISS, uncertain observations are cached but provider errors, unparsable output and wholly invalid answers are not, corruption is quarantined and degrades to a miss without breaking the project, concurrent writes all survive, retention is capped at " + MAX_ENTRIES + " oldest-accessed-first, purge is scoped and never touches media, the cache travels with archive/restore/delete and is never read across projects while staying out of portable project backups, cache admission now follows validation.usable so a wrong coordinate frame is refused while occluded and uncertain evidence is kept, and the cache-miss request is still byte-shape-identical to the qualified Phase 2 request.");
+  console.log("Continuity cache suite passed: evidence is addressed by image bytes rather than filename, every key component is load-bearing, a declared-state-only change stays a HIT while every observation-relevant manifest change is a MISS, uncertain observations are cached but provider errors, unparsable output and wholly invalid answers are not, corruption is quarantined and degrades to a miss without breaking the project, concurrent writes all survive, retention is capped at " + MAX_ENTRIES + " oldest-accessed-first, purge is scoped and never touches media, the cache travels with archive/restore/delete and is never read across projects while staying out of portable project backups, cache admission now follows validation.usable so a wrong coordinate frame is refused while occluded and uncertain evidence is kept, the cache-miss request is still byte-shape-identical to the qualified Phase 2 request, and evidence is scoped to the endpoint that produced it — the same provider and model at another address is a MISS that asks the other server, switching back reuses the original entry, an inherited endpoint resolves to the same identity as naming it explicitly, an explicit continuity endpoint wins, an entry carrying no execution identity is refused without a format bump, and the address itself is never written to disk.");
 }
 
 main()
