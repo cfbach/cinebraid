@@ -533,6 +533,46 @@ const OBSERVATION_FLAGS = [
   "invalid_enum",
   "untracked_attribute_discarded",
 ];
+/* How far a flag reaches. `ok` answers "did this response need any handling at
+   all", which is the right question for qualification metrics and the wrong one
+   for a UI: a deterministic policy action makes ok false while leaving the
+   evidence perfectly good.
+
+   policy  CineBraid did something deliberate and safe. The evidence stands.
+   entity  This one record cannot be trusted. Phase 1 already excludes it from
+           automatic verdicts and routes it to human review; the rest of the
+           set is untouched.
+   set     The whole response cannot be trusted, so no record in it can be.
+           Both of these are unreachable while constrained decoding is working:
+           coordinate_mode is a single-value enum and entities is a closed
+           object, so seeing them means the grammar did not hold. */
+const OBSERVATION_FLAG_SCOPE = {
+  untracked_attribute_discarded: "policy",
+  missing_entity_id: "entity",
+  undeclared_entity_id: "entity",
+  invalid_record_shape: "entity",
+  invalid_enum: "entity",
+  malformed_response: "set",
+  /* Every bbox in the response is read as permille. A different coordinate
+     frame silently corrupts movement and size for every entity at once, so it
+     poisons the set rather than one record. */
+  invalid_coordinate_mode: "set",
+};
+const OBSERVATION_STATUSES = ["clean", "usable_with_notes", "invalid"];
+
+/* Whether the RECORD SET is safe to use. Deliberately not a continuity verdict:
+   it says nothing about pass/fail, about occlusion, or about whether a change
+   was intended. A heavily occluded or uncertain observation is a truthful
+   answer and is usable — the comparison layer is what routes it to review. */
+function observationStatus(flags, states) {
+  const codes = (Array.isArray(flags) ? flags : []).map((flag) => flag && flag.code).filter(Boolean);
+  const stateValues = Object.values(states && typeof states === "object" ? states : {});
+  const poisoned = codes.some((code) => OBSERVATION_FLAG_SCOPE[code] === "set");
+  /* Nothing left to use is also unusable, however it happened. */
+  const nothingUsable = stateValues.length > 0 && stateValues.every((value) => value === "invalid");
+  if (poisoned || nothingUsable) return "invalid";
+  return codes.length ? "usable_with_notes" : "clean";
+}
 function validateObservationSet(manifest, parsed) {
   const declared = ((manifest && manifest.entities) || []);
   const flags = [];
@@ -587,10 +627,18 @@ function validateObservationSet(manifest, parsed) {
   }
 
   flags.sort((a, b) => compareStrings(a.entityId, b.entityId) || compareStrings(a.code, b.code) || compareStrings(a.detail, b.detail));
+  const status = observationStatus(flags, states);
   return {
     contractVersion: CONTINUITY_OBSERVATION_CONTRACT_VERSION,
     manifestHash: String((manifest && manifest.manifestHash) || ""),
+    /* Unchanged meaning, kept for compatibility and for the qualification
+       metrics: the response needed no handling of any kind. */
     ok: flags.length === 0,
+    /* Whether the record set is safe to use. This is the question a caller
+       almost always means, and the one ok answers badly. */
+    status,
+    usable: status !== "invalid",
+    blockingFlags: [...new Set(flags.filter((flag) => OBSERVATION_FLAG_SCOPE[flag.code] === "set").map((flag) => flag.code))].sort(compareStrings),
     flags,
     coordinate_mode: "permille",
     entities,
@@ -833,6 +881,7 @@ const CONTINUITY_EXPORTS = {
   OBSERVATION_PROMPT_VERSION, OBSERVATION_USER_MESSAGE, OBSERVATION_SCHEMA_NAME,
   OBSERVATION_REQUEST_CONTRACT, observationChecklist, buildObservationPrompt,
   bboxIsValid, recordState, validateObservationSet,
+  OBSERVATION_FLAG_SCOPE, OBSERVATION_STATUSES, observationStatus,
   compareObservations, buildIntentDescriptors, matchesDescriptor, applyIntent,
   normalizeIntentText,
 };

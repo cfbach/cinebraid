@@ -5741,10 +5741,19 @@ async function observeContinuityFrame(P, shot, frameId, requestedFile, context) 
 
   const hit = continuityCache.lookup(key, { ...identity, key, entityIds });
   if (hit) {
+    /* status/usable are derived, so an entry written before they existed gains
+       them on read from the flags and states it already stores. No cache format
+       bump and no re-observation. */
+    const cachedValidation = hit.validation.status
+      ? hit.validation
+      : (() => {
+        const status = Continuity.observationStatus(hit.validation.flags, hit.validation.states);
+        return { ...hit.validation, status, usable: status !== "invalid", blockingFlags: [...new Set((hit.validation.flags || []).filter((flag) => Continuity.OBSERVATION_FLAG_SCOPE[flag.code] === "set").map((flag) => flag.code))].sort() };
+      })();
     continuityLog(`HIT  ${key.slice(0, 12)} ${shot.id}/${resolvedFrameId} img=${imageHash.slice(0, 8)} man=${manifest.manifestHash.slice(0, 8)}`);
     return {
       cached: true, key, imageHash, manifest, image, frameId: resolvedFrameId,
-      observation: hit.observation, validation: hit.validation, attempts: 0,
+      observation: hit.observation, validation: cachedValidation, attempts: 0,
       provider: identity.provider, model: identity.model,
     };
   }
@@ -5766,7 +5775,8 @@ async function observeContinuityFrame(P, shot, frameId, requestedFile, context) 
   const validation = Continuity.validateObservationSet(manifest, parsed);
   const observation = { coordinate_mode: validation.coordinate_mode, entities: validation.entities };
   const stored = {
-    ok: validation.ok, flags: validation.flags, states: validation.states,
+    ok: validation.ok, status: validation.status, usable: validation.usable,
+    blockingFlags: validation.blockingFlags, flags: validation.flags, states: validation.states,
     invalidEntityIds: validation.invalidEntityIds, contractVersion: validation.contractVersion,
   };
 
