@@ -35,6 +35,9 @@ const nodeSuites = [
   "check:custom-provider",
   "check:provider-health",
   "check:local-only",
+  "check:continuity-manifest",
+  "check:continuity-observation",
+  "check:continuity-comparison",
 ];
 
 const browserSuites = ["check:manual-browser", "check:browser-real", "check:h3-browser", "check:preview-layout", "check:ui-state"];

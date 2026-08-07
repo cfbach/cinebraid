@@ -1606,6 +1606,15 @@ function updateShotDependencyRelationship(shot, rawId, nextId = "") {
       if (nextId) workflow[key][nextId] = stateId;
     }
   }
+  /* Declared continuity intent is keyed by entity id like every other relation
+     above, so it has to move with the entity. Left out, a rename would orphan
+     the record that says a change was planned, and the next continuity run
+     would report an intended change as a break. */
+  if (shot.continuityIntent && Object.prototype.hasOwnProperty.call(shot.continuityIntent, rawId)) {
+    const intent = shot.continuityIntent[rawId];
+    delete shot.continuityIntent[rawId];
+    if (nextId) shot.continuityIntent[nextId] = intent;
+  }
 }
 window.updateShotDependencyRelationship = updateShotDependencyRelationship;
 window.removeShotDependency = (shotId, rawId) => {
