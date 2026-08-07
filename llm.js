@@ -296,6 +296,24 @@ async function callOllamaVision(
   if (!r.ok) throw new Error("Local vision: " + (data.error || r.status));
   return data.message?.content || "";
 }
+/* Strict structured output for an OpenAI-compatible vision request.
+
+   Only ever added when a caller asks for it. The generic multi-image review
+   path passes no request options and its body is unchanged. */
+function structuredVisionBody(requestOptions = {}) {
+  const schema = requestOptions.jsonSchema;
+  if (!schema) return {};
+  return {
+    response_format: {
+      type: "json_schema",
+      json_schema: {
+        name: String(requestOptions.schemaName || "structured_output"),
+        strict: true,
+        schema,
+      },
+    },
+  };
+}
 async function callOpenAIVision(
   baseUrl,
   key,
@@ -306,6 +324,7 @@ async function callOpenAIVision(
   maxTokens,
   label,
   extraBody = {},
+  requestOptions = {},
 ) {
   if (!model) throw new Error(label + " vision model is not set.");
   const headers = { "content-type": "application/json" };
@@ -317,13 +336,19 @@ async function callOpenAIVision(
       image_url: { url: "data:" + mimeForB64(x) + ";base64," + x },
     })),
   ];
+  /* Contract parameters are applied AFTER the configured generic options, so a
+     caller whose request was qualified at specific sampling settings keeps them
+     even when the user has set different general assistant preferences. */
+  const contract = requestOptions.contract && typeof requestOptions.contract === "object" ? requestOptions.contract : {};
   const { response: r, data } = await requestJson(baseUrl.replace(/\/$/, "") + "/chat/completions", {
     method: "POST",
     headers,
     body: JSON.stringify({
       ...extraBody,
+      ...contract,
       model,
-      max_tokens: maxTokens || 4000,
+      max_tokens: contract.max_tokens || maxTokens || 4000,
+      ...structuredVisionBody(requestOptions),
       messages: [
         { role: "system", content: system },
         { role: "user", content },
@@ -334,7 +359,15 @@ async function callOpenAIVision(
     throw new Error(
       label + ": " + (data.error?.message || data.message || r.status),
     );
-  return data.choices?.[0]?.message?.content || "";
+  const message = data.choices?.[0]?.message;
+  const text = message?.content || "";
+  if (text) return text;
+  /* Same failure the text path already guards: a reasoning server that spends
+     its whole budget thinking returns an empty answer, which must never be
+     mistaken for a valid structured observation. */
+  const reasoning = String(message?.reasoning_content || message?.reasoning || "").trim();
+  if (reasoning) throw new Error(`${label} returned reasoning but no final answer. Disable thinking for this provider, or raise its token budget.`);
+  return "";
 }
 async function callAnthropicVision(cfg, system, user, imagesB64, maxTokens) {
   if (!cfg.anthropicKey) throw new Error("No Anthropic API key set.");
@@ -373,11 +406,17 @@ async function vision(
   maxTokens,
   providerOverride,
   modelOverride,
+  requestOptions = {},
 ) {
   const cfg = readConfig();
   let provider = providerOverride || cfg.assistant?.visionProvider || "same";
   if (provider === "same") provider = cfg.assistant?.provider || "ollama";
   if (provider === "none") throw new Error("Vision assistance is disabled.");
+  /* Strict structured output is an OpenAI-compatible feature. Failing here is
+     better than silently sending an unconstrained request and trying to parse
+     whatever prose comes back. */
+  if (requestOptions.jsonSchema && !["openai", "custom"].includes(provider))
+    throw new Error(`The ${provider} vision provider cannot return strict structured output. Point continuity observation at an OpenAI-compatible server.`);
   if (provider === "anthropic")
     return callAnthropicVision(
       {
@@ -399,6 +438,8 @@ async function vision(
       imagesB64,
       maxTokens,
       "OpenAI vision",
+      {},
+      requestOptions,
     );
   if (provider === "custom")
     return callOpenAIVision(
@@ -411,6 +452,7 @@ async function vision(
       maxTokens,
       "Custom vision",
       customRequestBody(cfg),
+      requestOptions,
     );
   return callOllamaVision(
     cfg,
@@ -440,6 +482,7 @@ module.exports = {
   embed,
   vision,
   customRequestBody,
+  structuredVisionBody,
   isLocalProviderEndpoint,
   readConfig,
   writeConfig,

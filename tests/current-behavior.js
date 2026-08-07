@@ -299,6 +299,8 @@ async function main() {
     "continuity-correction-workflow.js",
     "continuity-manifest.js",
     "continuity-observation.js",
+    "continuity-observe-route.js",
+    "continuity-prompt-contract.js",
     "coverage-workflow.js",
     "current-behavior.js",
     "custom-provider-routing.js",

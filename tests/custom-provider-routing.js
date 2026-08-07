@@ -182,6 +182,76 @@ async function main() {
   assert.strictEqual(visionSent.temperature, 0.2);
   assert.deepStrictEqual(visionSent.chat_template_kwargs, { enable_thinking: false });
 
+  /* ---- 7b. REGRESSION GUARD: a generic vision call is byte-for-byte what it
+       was before continuity existed. The structured single-image path is opt-in
+       through request options; a caller that passes none must be unchanged. ---- */
+  writeConfigFile({});
+  await vision("system", "user", twoImages, 400, "custom");
+  const genericBody = visionBodies.at(-1);
+  assert.deepStrictEqual(
+    Object.keys(genericBody).sort(),
+    ["max_tokens", "messages", "model"],
+    "a generic custom vision request must carry exactly the fields it always carried",
+  );
+  for (const field of ["response_format", "guided_json", "json_schema", "temperature", "top_k", "chat_template_kwargs", "stream"])
+    assert(!(field in genericBody), `a generic vision request must never be given the continuity field ${field}`);
+  assert.strictEqual(hasImages(genericBody), 2, "generic vision still sends every image in one request");
+  assert.deepStrictEqual(genericBody.messages.map((m) => m.role), ["system", "user"]);
+  assert.strictEqual(genericBody.messages[1].content[0].type, "text", "generic vision message structure is unchanged");
+
+  /* ---- 7c. the structured single-image continuity request ---- */
+  const { buildObservationSchema, OBSERVATION_REQUEST_CONTRACT, OBSERVATION_SCHEMA_NAME } = require("../public/shared-continuity");
+  const manifest = {
+    entities: [{
+      entity_id: "prop_mug", display_name: "Mug", entity_type: "prop", parent_entity_id: null,
+      continuity_unit: "self", identity_cues: "A mug.", allowed_state_values: null,
+      track_presence: true, track_movement: true, track_color: true, track_state: false, track_markings: false,
+    }],
+  };
+  const schema = buildObservationSchema(manifest);
+  await vision("system", "user", ["iVBORoneimage"], 400, "custom", "", {
+    jsonSchema: schema,
+    schemaName: OBSERVATION_SCHEMA_NAME,
+    contract: OBSERVATION_REQUEST_CONTRACT,
+  });
+  const structured = visionBodies.at(-1);
+  assert.strictEqual(hasImages(structured), 1, "the continuity path sends exactly one image");
+  assert.strictEqual(structured.response_format.type, "json_schema");
+  assert.strictEqual(structured.response_format.json_schema.name, "declared_entities_final");
+  assert.strictEqual(structured.response_format.json_schema.strict, true);
+  assert.deepStrictEqual(structured.response_format.json_schema.schema, schema);
+  assert.strictEqual(structured.temperature, 0.2);
+  assert.strictEqual(structured.top_k, 1);
+  assert.strictEqual(structured.max_tokens, 4096);
+  assert.strictEqual(structured.stream, false);
+  assert.deepStrictEqual(structured.chat_template_kwargs, { enable_thinking: false });
+  assert(!("guided_json" in structured), "guided_json was never the qualified path");
+
+  /* The qualified contract wins over the user's general assistant preferences.
+     A director raising their assistant temperature must not silently
+     invalidate the continuity qualification. */
+  writeConfigFile({ customTemperature: "1.8", customTopK: "80", customThinking: "auto" });
+  await vision("system", "user", ["iVBORoneimage"], 400, "custom", "", {
+    jsonSchema: schema, schemaName: OBSERVATION_SCHEMA_NAME, contract: OBSERVATION_REQUEST_CONTRACT,
+  });
+  const pinned = visionBodies.at(-1);
+  assert.strictEqual(pinned.temperature, 0.2, "the qualified temperature must survive a conflicting user setting");
+  assert.strictEqual(pinned.top_k, 1, "the qualified top_k must survive a conflicting user setting");
+  assert.deepStrictEqual(pinned.chat_template_kwargs, { enable_thinking: false }, "the qualified thinking setting must survive customThinking:auto");
+  /* And that same conflicting configuration still reaches a generic call. */
+  await vision("system", "user", twoImages, 400, "custom");
+  assert.strictEqual(visionBodies.at(-1).temperature, 1.8, "generic vision still honours the user's own setting");
+  assert(!("response_format" in visionBodies.at(-1)));
+  writeConfigFile({});
+
+  /* ---- 7d. strict structured output is refused on providers that cannot do it ---- */
+  for (const provider of ["ollama", "anthropic"])
+    await assert.rejects(
+      () => vision("system", "user", ["iVBORoneimage"], 400, provider, "", { jsonSchema: schema }),
+      /cannot return strict structured output/i,
+      `${provider} must refuse a strict structured request rather than send an unconstrained one`,
+    );
+
   /* ---- 8. reasoning with no answer is still reported as a failure ---- */
   chatReply = { content: "", reasoning_content: "thinking about it" };
   writeConfigFile({});

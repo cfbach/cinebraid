@@ -22,6 +22,7 @@ const {
 const PromptEngine = require("./prompt-engine");
 const { httpStatusForError } = require("./http-errors");
 const { resolveShotEntities, shotEntityTokenMatches, unresolvedShotDependencies } = require("./public/shared-entities");
+const Continuity = require("./public/shared-continuity");
 const { resolvePromptBuild, resolvePromptBuildList, normalizePromptBuildHistory, registerPromptBuild, promptBuildRef, applyPromptBuildRetention } = require("./public/shared-build-history");
 const { SimpleZipWriter } = require("./zip-stream");
 const AgentSuite = require("./agent-suite");
@@ -440,6 +441,34 @@ function aiVisionProviderOverride() {
   if (policy === "disabled")
     throw new Error("AI features are disabled for this project.");
   return policy === "local-only" ? "ollama" : null;
+}
+/* Continuity observation resolves separately from general vision, and is the
+   only vision consumer that reaches the single-image service. Repointing
+   aiVisionProviderOverride() would drag the multi-image review routes there
+   too, and those send up to 32 images. */
+function continuityVisionProvider() {
+  const cfg = readConfig();
+  const policy = projectAIPolicy();
+  if (policy === "disabled")
+    throw new Error("AI features are disabled for this project.");
+  const selected = cfg.continuity?.visionProvider || "";
+  if (!selected)
+    throw new Error(
+      "Continuity observation has no provider. Choose an OpenAI-compatible AI server for continuity in Settings — it is configured separately from general vision because it sends exactly one image per request.",
+    );
+  if (policy === "local-only") {
+    const baseUrl = selected === "openai" ? cfg.openaiBaseUrl : cfg.customBaseUrl;
+    if (!isLocalProviderEndpoint(baseUrl))
+      throw new Error(
+        "This project is set to local-only AI, and the continuity observation provider is not on this machine. Point the custom AI server at this computer in Settings, or change the project's AI policy.",
+      );
+  }
+  return selected;
+}
+function continuityVisionModel(cfg = readConfig()) {
+  const provider = cfg.continuity?.visionProvider || "";
+  if (!provider) return "";
+  return cfg.continuity?.visionModel || providerCapabilityModel(provider, cfg, "vision") || "";
 }
 const SUBDIRS = ["anchors", "plates", "props", "vehicles", "audio", "media", "shots", "docs"];
 function ensureDirs(dir) {
@@ -1360,6 +1389,10 @@ async function providerInventories(cfg = readConfig(), force = false) {
   const usesCustom =
     cfg.assistant?.provider === "custom" ||
     resolvedVisionProvider(cfg) === "custom" ||
+    /* Continuity can be the only consumer pointed at the custom endpoint —
+       that is the intended Spark runtime, where general vision is Ollama and
+       Ollama may be stopped. Its readiness still has to be answerable. */
+    cfg.continuity?.visionProvider === "custom" ||
     Object.values(cfg.routing || {}).includes("custom");
   return {
     ollama: await ollamaInventory(cfg, force),
@@ -1409,6 +1442,7 @@ app.get("/api/system/health", async (req, res) => {
         }[provider] || provider,
       text: publicCapability(capabilities.text),
       vision: publicCapability(capabilities.vision),
+      continuity: publicCapability(capabilities.continuity),
       embedding: publicCapability(capabilities.embedding),
     },
     custom: {
@@ -5611,6 +5645,118 @@ async function performShotCandidateReview(shotId) {
   };
 }
 
+/* ---- declared-entity continuity: single-image observation ----------------
+
+   The only vision consumer that sends exactly one image. Everything about the
+   request is the contract qualified on the Spark: the prompt, the generated
+   entity-keyed schema, and the sampling settings. None of it is assembled
+   here — it comes from public/shared-continuity.js so the app and the offline
+   contract tests cannot drift apart. */
+const CONTINUITY_MAX_IMAGES = 1;
+
+function continuityFrameImage(P, shot, frameId, requestedFile) {
+  const frames = Array.isArray(shot.keyframes) ? shot.keyframes : [];
+  const frame = frameId ? frames.find((item) => String(item.id) === String(frameId)) : frames[0];
+  if (frameId && !frame) throw Object.assign(new Error("frame not found"), { status: 404 });
+  /* Only a basename is ever accepted, and only from this shot's own takes
+     directory. The browser never names a path. */
+  const name = path.basename(String(requestedFile || frame?.winner || shot.winner || ""));
+  if (!name) throw Object.assign(new Error("This frame has no approved still to observe."), { status: 400 });
+  if (!IMG_ONLY(name)) throw Object.assign(new Error("Continuity observation needs a still image."), { status: 400 });
+  const file = path.join(PROJECT_DIR(), "shots", String(shot.id), "takes", name);
+  const root = path.resolve(PROJECT_DIR());
+  if (!path.resolve(file).startsWith(root + path.sep) || !fs.existsSync(file))
+    throw Object.assign(new Error("The requested frame image is not available."), { status: 400 });
+  return { frame: frame || null, name, file };
+}
+/* Deliberately not requestVisionResult(): that helper appends recovery text to
+   the user message between attempts, and the observation prompt is part of the
+   qualified contract. A retry here re-sends the identical request. */
+async function requestContinuityObservation(system, user, imageB64, schema, options = {}) {
+  if (!Array.isArray(imageB64) || imageB64.length !== CONTINUITY_MAX_IMAGES)
+    throw Object.assign(
+      new Error(`Continuity observation sends exactly one image; ${Array.isArray(imageB64) ? imageB64.length : 0} were prepared.`),
+      { status: 500 },
+    );
+  const requestOptions = {
+    jsonSchema: schema,
+    schemaName: Continuity.OBSERVATION_SCHEMA_NAME,
+    contract: Continuity.OBSERVATION_REQUEST_CONTRACT,
+  };
+  let lastError = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const raw = await vision(system, user, imageB64, Continuity.OBSERVATION_REQUEST_CONTRACT.max_tokens, options.provider, options.model, requestOptions);
+      if (!String(raw || "").trim()) throw new Error("Continuity observation returned an empty response.");
+      return { raw, attempts: attempt + 1 };
+    } catch (error) {
+      lastError = error;
+      if (assistantErrorIsPermanent(error) || /reasoning but no final answer/i.test(String(error?.message || ""))) break;
+    }
+  }
+  throw new Error(`Continuity observation failed: ${lastError?.message || "unknown error"}`);
+}
+
+app.post("/api/continuity/observe", async (req, res) => {
+  try {
+    const provider = continuityVisionProvider();
+    const cfg = readConfig();
+    const P = readJsonSync(DATA());
+    const shotId = path.basename(String(req.body?.shotId || ""));
+    const frameId = String(req.body?.frameId || "");
+    const shot = (P.shots || []).find((item) => String(item.id) === shotId);
+    if (!shot) return res.status(404).json({ error: "shot not found" });
+
+    const image = continuityFrameImage(P, shot, frameId, req.body?.fileName);
+    const manifest = Continuity.buildContinuityManifest(P, shot, image.frame?.id || frameId || "");
+    if (!manifest.entities.length)
+      return res.status(400).json({
+        error: "This shot declares no tracked continuity entities. Assign its cast, location or props before observing a frame.",
+      });
+
+    const schema = Continuity.buildObservationSchema(manifest);
+    const prompt = Continuity.buildObservationPrompt(manifest);
+    const images = [fs.readFileSync(image.file).toString("base64")];
+    const model = continuityVisionModel(cfg) || undefined;
+
+    const assistant = await requestContinuityObservation(prompt.system, prompt.user, images, schema, { provider, model });
+    let parsed = null;
+    try {
+      parsed = JSON.parse(cleanModelJson(assistant.raw));
+    } catch {
+      return res.status(502).json({ error: "The continuity provider did not return parsable JSON for a strict schema request." });
+    }
+    const validation = Continuity.validateObservationSet(manifest, parsed);
+
+    return res.json({
+      ok: true,
+      shotId,
+      frameId: image.frame?.id || "",
+      fileName: image.name,
+      manifest: {
+        manifestVersion: manifest.manifestVersion,
+        contractVersion: manifest.contractVersion,
+        manifestHash: manifest.manifestHash,
+        n: manifest.n,
+        entities: manifest.entities,
+      },
+      observation: { coordinate_mode: validation.coordinate_mode, entities: validation.entities },
+      validation: {
+        ok: validation.ok,
+        flags: validation.flags,
+        states: validation.states,
+        invalidEntityIds: validation.invalidEntityIds,
+        contractVersion: validation.contractVersion,
+      },
+      /* Provider identity only. The endpoint address and key stay server-side. */
+      engine: { provider, model: model || "", promptVersion: Continuity.OBSERVATION_PROMPT_VERSION, schemaName: Continuity.OBSERVATION_SCHEMA_NAME, imagesSent: images.length, attempts: assistant.attempts },
+      cached: false,
+    });
+  } catch (error) {
+    return res.status(error.status || 500).json({ error: error.message || "continuity observation failed" });
+  }
+});
+
 /* ---- bounded local agent suite ---- */
 const AGENT_LABELS = {
   coordinator: "Production Coordinator",
@@ -5912,6 +6058,17 @@ function assistantCapabilities(cfg = readConfig(), inventories = null) {
     /* Embeddings stay their own route. Not every text provider serves them — the
        qualified Nemotron deployment answers /v1/embeddings with 404 — so semantic
        search keeps asking Ollama for a small embedding model. */
+    /* Continuity is its own capability. Ollama can be stopped entirely — which
+       is the intended Spark runtime — and continuity must still report ready
+       while generic multi-image vision reports not ready. */
+    continuity: capabilityCheck(
+      "Continuity observation",
+      cfg.continuity?.visionProvider || "none",
+      continuityVisionModel(cfg),
+      inv,
+      cfg,
+      "vision",
+    ),
     embedding: capabilityCheck(
       "Local semantic search",
       "ollama",
