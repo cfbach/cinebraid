@@ -61,6 +61,24 @@ for (const [marker, expected] of Object.entries(SCHEMA_MARKERS)) {
   assert(!found.includes(identity.version), `${marker} was renumbered to the application version`);
 }
 
+/* The client carries two markers. BASELINE is what opening a project repairs a
+   record to, and must stay equal to the marker server.js writes for a blank
+   project — otherwise every load would rewrite a file nobody edited. CURRENT is
+   what this build can write, raised only once a 6.7 field is actually saved.
+   Neither may follow the application version. */
+const app = fs.readFileSync(path.join(ROOT, "public", "app.js"), "utf8");
+const CLIENT_MARKERS = { PROJECT_SCHEMA_BASELINE_VERSION: "6.6", PROJECT_SCHEMA_VERSION: "6.7" };
+for (const [marker, expected] of Object.entries(CLIENT_MARKERS)) {
+  const found = [...app.matchAll(new RegExp(`const ${marker} = "([^"]*)"`, "g"))].map((m) => m[1]);
+  assert.deepStrictEqual(found, [expected], `public/app.js must declare ${marker} exactly once as "${expected}"`);
+  assert.notStrictEqual(expected, identity.version, `${marker} was renumbered to the application version`);
+}
+assert.strictEqual(
+  CLIENT_MARKERS.PROJECT_SCHEMA_BASELINE_VERSION,
+  SCHEMA_MARKERS.schemaVersion,
+  "the client baseline marker and the marker server.js writes for a blank project must match",
+);
+
 const sample = JSON.parse(fs.readFileSync(path.join(ROOT, "projects", "cinebraid-sample", "project.json"), "utf8"));
 assert(sample.meta, "the shipped sample has no meta block");
 assert.notStrictEqual(sample.meta.version, identity.version, "the shipped sample was renumbered to advertise the application version");
@@ -97,5 +115,6 @@ console.log(
   `  display name:  ${identity.displayName}\n` +
   `  git tag:       ${identity.tag}\n` +
   `  derived:       public/index.html title + ${stamps.length} cache stamps, package-lock.json\n` +
-  `  schema markers unchanged: hubVersion ${SCHEMA_MARKERS.hubVersion}, schemaVersion ${SCHEMA_MARKERS.schemaVersion}, sample meta.version ${sample.meta.version}`
+  `  schema markers unchanged: hubVersion ${SCHEMA_MARKERS.hubVersion}, schemaVersion ${SCHEMA_MARKERS.schemaVersion}, sample meta.version ${sample.meta.version}\n` +
+  `  client schema:  baseline ${CLIENT_MARKERS.PROJECT_SCHEMA_BASELINE_VERSION} on open, ${CLIENT_MARKERS.PROJECT_SCHEMA_VERSION} once a continuity field is written`
 );

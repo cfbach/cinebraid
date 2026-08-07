@@ -5811,41 +5811,6 @@ async function observeContinuityFrame(P, shot, frameId, requestedFile, context) 
     provider: identity.provider, model: identity.model,
   };
 }
-/* A per-entity rollup of the comparison buckets, so Phase 4 can render one
-   card per entity without reassembling six parallel arrays. Presentation only:
-   every row is derived from findings the Phase 1 engine already produced, and
-   the verdict uses exactly the predicates applyIntent itself uses for review
-   and for content. No new judgement is introduced here. */
-function continuityEntityRollup(comparison, manifest) {
-  const rows = new Map();
-  for (const declaration of manifest.entities)
-    rows.set(declaration.entity_id, {
-      entityId: declaration.entity_id,
-      displayName: declaration.display_name,
-      kind: declaration.entity_type,
-      verdict: "pass",
-      changes: [], uncertain: [], shadeDrift: [],
-      attributeUnreadable: [], presenceUncertain: [], invalidRecords: [],
-    });
-  const push = (bucket, field) => {
-    for (const finding of comparison[bucket] || []) {
-      const row = rows.get(finding.entity_id);
-      if (row) row[field].push(finding);
-    }
-  };
-  push("changes", "changes");
-  push("uncertain", "uncertain");
-  push("shade_drift", "shadeDrift");
-  push("attribute_unreadable", "attributeUnreadable");
-  push("presence_uncertain", "presenceUncertain");
-  push("invalid_records", "invalidRecords");
-  for (const row of rows.values()) {
-    if (row.invalidRecords.length || row.uncertain.length || row.attributeUnreadable.length || row.presenceUncertain.length) row.verdict = "review";
-    else if (row.changes.some((finding) => finding.label === "possible-continuity-error")) row.verdict = "issue";
-    else if (row.changes.length) row.verdict = "expected";
-  }
-  return [...rows.values()];
-}
 function continuityObservationResponse(result) {
   return {
     cached: result.cached,
@@ -5937,6 +5902,25 @@ app.post("/api/continuity/compare", async (req, res) => {
       humanIntentional: plainObject(shot.continuityIntentAccepted),
     });
 
+    const labelA = a.image.frame?.label ? `Frame ${a.image.frame.label}` : "the first frame";
+    const labelB = b.image.frame?.label ? `Frame ${b.image.frame.label}` : "the second frame";
+    /* Presentation semantics come from the shared core, so the words a user
+       reads are the same words the offline suites assert. */
+    const described = Continuity.describeComparison(comparison, comparisonManifest, {
+      frameALabel: labelA,
+      frameBLabel: labelB,
+    });
+    /* An unusable observation is an analysis failure, not a continuity verdict.
+       Saying so here keeps every caller from re-deriving it from flags. */
+    const analysis = {
+      usable: a.validation.usable !== false && b.validation.usable !== false,
+      unusableFrames: [
+        ...(a.validation.usable === false ? [{ side: "a", frameId: a.frameId, label: labelA }] : []),
+        ...(b.validation.usable === false ? [{ side: "b", frameId: b.frameId, label: labelB }] : []),
+      ],
+      notes: a.validation.status === "usable_with_notes" || b.validation.status === "usable_with_notes",
+    };
+
     return res.json({
       ok: true,
       comparisonVersion: comparison.comparisonVersion,
@@ -5944,7 +5928,9 @@ app.post("/api/continuity/compare", async (req, res) => {
       frameA: { frameId: a.frameId, fileName: a.image.name, label: a.image.frame?.label || "" },
       frameB: { frameId: b.frameId, fileName: b.image.name, label: b.image.frame?.label || "" },
       observations: { a: continuityObservationResponse(a), b: continuityObservationResponse(b) },
-      entities: continuityEntityRollup(comparison, comparisonManifest),
+      analysis,
+      entities: described.entities,
+      outcomeCounts: described.counts,
       changes: comparison.changes,
       uncertain: comparison.uncertain,
       shadeDrift: comparison.shade_drift,

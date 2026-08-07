@@ -752,7 +752,13 @@ function guidedFrameState(s, frame, index = 0) {
   const c = ensureShotCreation(s);
   const existing = c.frameWorkflows[frame.id] || {};
   const isFirst = index === 0;
+  /* `...existing` first, because this rebuilds the record on every render and a
+     literal without it silently deleted every key it did not name. That is why
+     the per-frame continuity state selections had readers and no writer: a
+     saved selection survived only until the next frame card rendered. Spreading
+     first keeps this a normalizer of the keys below and nothing more. */
   const state = c.frameWorkflows[frame.id] = {
+    ...existing,
     action: existing.action ?? (isFirst ? c.action || frame.description || s.desc || "" : frame.description || ""),
     staging: existing.staging ?? (isFirst ? c.staging || s.positioning || "" : ""),
     camera: existing.camera ?? (isFirst ? c.camera || "" : ""),
@@ -2041,14 +2047,27 @@ function guidedFrameWorkflowPanel(s, takes) {
   if (progress.requiredApproved && approvedAnchors.length === 1) {
     motionCta = `<section class="frames-to-motion-cta"><div><span>NEXT STEP</span><b>${motionMode} is ready</b><small>1 approved visual anchor. Open Motion & sound without leaving this shot.</small></div><button type="button" class="approve-btn large" onclick="openGuidedMotionFromFrames('${attr(s.id)}','create')">CREATE MOTION →</button></section>`;
   } else if (progress.requiredApproved && approvedAnchors.length >= 2 && sequenceReview?.pass) {
-    motionCta = `<section class="frames-to-motion-cta state-pass"><div><span>NEXT STEP · CONTINUITY PASSED ${Math.round(Number(sequenceReview.score||0))}/100</span><b>${motionMode} is ready</b><small>${approvedAnchors.length} approved anchors passed sequence continuity review.</small></div><button type="button" class="approve-btn large" onclick="openGuidedMotionFromFrames('${attr(s.id)}','create')">CREATE MOTION →</button></section>`;
+    motionCta = `<section class="frames-to-motion-cta state-pass"><div><span>NEXT STEP · MOTION READINESS ${Math.round(Number(sequenceReview.score||0))}/100</span><b>${motionMode} is ready</b><small>${approvedAnchors.length} approved anchors passed the motion readiness check.</small></div><button type="button" class="approve-btn large" onclick="openGuidedMotionFromFrames('${attr(s.id)}','create')">CREATE MOTION →</button></section>`;
   } else if (progress.requiredApproved && approvedAnchors.length >= 2 && sequenceReview?.status === "working") {
-    motionCta = `<section class="frames-to-motion-cta state-blocked"><div><span>SEQUENCE REVIEW IN PROGRESS</span><b>Checking whether these anchors are motion-ready</b><small>Motion remains locked until the continuity review finishes.</small></div><button type="button" class="approve-btn large" disabled><span class="spin">◌</span> REVIEWING</button></section>`;
+    motionCta = `<section class="frames-to-motion-cta state-blocked"><div><span>MOTION READINESS CHECK IN PROGRESS</span><b>Checking whether these anchors are motion-ready</b><small>Motion remains locked until the readiness check finishes.</small></div><button type="button" class="approve-btn large" disabled><span class="spin">◌</span> REVIEWING</button></section>`;
   } else if (progress.requiredApproved && approvedAnchors.length >= 2) {
-    motionCta = `<section class="frames-to-motion-cta state-blocked"><div><span>${sequenceReview ? "CONTINUITY CORRECTION REQUIRED" : "SEQUENCE REVIEW REQUIRED"}</span><b>${sequenceReview ? "These anchors are not motion-ready" : "Review the approved anchors together"}</b><small>${sequenceReview?.summary ? esc(sequenceReview.summary) : "First/last and multi-frame motion stay locked until camera, environment, lighting, character, and prop continuity pass."}</small></div><button type="button" class="approve-btn large" onclick="reviewGuidedFrameSequence('${attr(s.id)}')">${sequenceReview ? "REVIEW AGAIN" : "REVIEW SEQUENCE"}</button></section>`;
+    /* Motion readiness, not continuity. The declared-entity continuity check
+       below is the continuity instrument; this gate only decides whether these
+       anchors can drive a first/last or multi-frame generation, and naming it
+       "continuity" put two competing continuity buttons on one screen. */
+    motionCta = `<section class="frames-to-motion-cta state-blocked"><div><span>${sequenceReview ? "MOTION BLOCKED" : "MOTION READINESS CHECK REQUIRED"}</span><b>${sequenceReview ? "These anchors are not motion-ready" : "Check the approved anchors together"}</b><small>${sequenceReview?.summary ? esc(sequenceReview.summary) : "First/last and multi-frame motion stay locked until camera, environment, lighting, character, and prop continuity pass."}</small></div><button type="button" class="approve-btn large" onclick="reviewGuidedFrameSequence('${attr(s.id)}')">${sequenceReview ? "CHECK AGAIN" : "CHECK MOTION READINESS"}</button></section>`;
   }
   const sequenceReviewMarkup = progress.requiredApproved && sequenceInputs.length >= 2 ? guidedFrameSequenceReviewMarkup(s, sequenceInputs, sequenceReview) : "";
-  return `<details class="guided-frame-workflow compact-work-section ${complete ? "is-complete" : ""}" ${workspaceSectionOpen(`${s.id}:frames-workflow`, openDefault) ? "open" : ""} ontoggle="rememberWorkspaceSection('${attr(s.id)}:frames-workflow',this.open)"><summary class="guided-workflow-title"><div><span>FRAMES</span><h2>Import, choose, and approve images</h2><span class="sr-only">Create and choose the images</span><p>Edit one frame at a time. Use the compact frame strip to move between start, end, and additional compositions.</p></div>${workspaceStatusPill(label, tone)}<i class="compact-chevron">⌄</i></summary><div class="guided-frame-workflow-body">${guidedFrameRailMarkup(s,progress.frames,takes,selectedId)}${motionCta}${sequenceReviewMarkup}${selectedFrame ? guidedFrameCard(s, selectedFrame, selectedIndex, takes) : ""}<button class="guided-add-frame" onclick="addGuidedFrame('${s.id}')"><b>＋ Add frame</b><span>Add an end frame or another required composition only when the motion needs it.</span></button></div></details>`;
+  /* The v6.6 pair review is a model scoring two images together. The declared-
+     entity check above is the current continuity instrument, so the older panel
+     is kept for the results already stored against it and folded away rather
+     than competing with it for the same decision. Its scores are never mixed
+     into the deterministic findings. */
+  const legacyReviewMarkup = sequenceReviewMarkup
+    ? `<details class="fold legacy-continuity-review" ${workspaceSectionOpen(`${s.id}:legacy-sequence-review`, false) ? "open" : ""} ontoggle="rememberWorkspaceSection('${attr(s.id)}:legacy-sequence-review',this.open)"><summary>Pair continuity review (v6.6) <span>${sequenceReview ? (sequenceReview.pass ? "passed" : sequenceReview.status === "working" ? "running" : "failed") : "not run"}</span></summary><p class="hint">The earlier whole-image review, kept for its stored results and for motion readiness. Continuity findings above come from the declared-entity check and do not use these scores.</p>${sequenceReviewMarkup}</details>`
+    : "";
+  const continuityMarkup = typeof guidedContinuityPanel === "function" ? guidedContinuityPanel(s, takes) : "";
+  return `<details class="guided-frame-workflow compact-work-section ${complete ? "is-complete" : ""}" ${workspaceSectionOpen(`${s.id}:frames-workflow`, openDefault) ? "open" : ""} ontoggle="rememberWorkspaceSection('${attr(s.id)}:frames-workflow',this.open)"><summary class="guided-workflow-title"><div><span>FRAMES</span><h2>Import, choose, and approve images</h2><span class="sr-only">Create and choose the images</span><p>Edit one frame at a time. Use the compact frame strip to move between start, end, and additional compositions.</p></div>${workspaceStatusPill(label, tone)}<i class="compact-chevron">⌄</i></summary><div class="guided-frame-workflow-body">${guidedFrameRailMarkup(s,progress.frames,takes,selectedId)}${motionCta}${continuityMarkup}${legacyReviewMarkup}${selectedFrame ? guidedFrameCard(s, selectedFrame, selectedIndex, takes) : ""}<button class="guided-add-frame" onclick="addGuidedFrame('${s.id}')"><b>＋ Add frame</b><span>Add an end frame or another required composition only when the motion needs it.</span></button></div></details>`;
 }
 function profileSupportsGuidedAudio(profile) {
   return !!(profile && (profile.mode === "audio-video" || profile.mode === "r2v" && (profile.limits?.maxAudio || profile.family === "happy-horse-1.1")));
