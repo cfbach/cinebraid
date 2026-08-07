@@ -24,6 +24,7 @@ const { httpStatusForError } = require("./http-errors");
 const { resolveShotEntities, shotEntityTokenMatches, unresolvedShotDependencies } = require("./public/shared-entities");
 const Continuity = require("./public/shared-continuity");
 const { createContinuityCache } = require("./continuity-cache");
+const ContinuityJson = require("./continuity-json");
 const { resolvePromptBuild, resolvePromptBuildList, normalizePromptBuildHistory, registerPromptBuild, promptBuildRef, applyPromptBuildRetention } = require("./public/shared-build-history");
 const { SimpleZipWriter } = require("./zip-stream");
 const AgentSuite = require("./agent-suite");
@@ -5808,6 +5809,7 @@ async function observeContinuityFrame(P, shot, frameId, requestedFile, context) 
       cached: true, key, imageHash, manifest, image, frameId: resolvedFrameId,
       observation: hit.observation, validation: cachedValidation, attempts: 0,
       provider: identity.provider, model: identity.model,
+      recovery: ContinuityJson.RECOVERY_NONE,
     };
   }
   continuityLog(`MISS ${key.slice(0, 12)} ${shot.id}/${resolvedFrameId} img=${imageHash.slice(0, 8)} man=${manifest.manifestHash.slice(0, 8)} -> ${identity.provider}`);
@@ -5816,15 +5818,22 @@ async function observeContinuityFrame(P, shot, frameId, requestedFile, context) 
   const prompt = Continuity.buildObservationPrompt(manifest);
   const images = [fs.readFileSync(image.file).toString("base64")];
   const assistant = await requestContinuityObservation(prompt.system, prompt.user, images, schema, context);
-  let parsed = null;
-  try {
-    parsed = JSON.parse(cleanModelJson(assistant.raw));
-  } catch {
+  /* Tolerant only about the serialization envelope. A valid response takes the
+     normal path untouched; a response the decoder failed to terminate is closed
+     structurally and then judged by exactly the same validator. Recovery cannot
+     make a schema-invalid answer acceptable — it can only stop a complete,
+     correct observation being discarded over a missing brace. */
+  const decoded = ContinuityJson.parseContinuityResponse(cleanModelJson(assistant.raw));
+  if (!decoded.ok)
     throw Object.assign(
       new Error("The continuity provider did not return parsable JSON for a strict schema request."),
       { status: 502 },
     );
-  }
+  if (decoded.recovery !== ContinuityJson.RECOVERY_NONE)
+    /* Always logged, like cache corruption: it is a provider anomaly worth
+       knowing about. Identifiers only — never the response, never the image. */
+    console.log(`  continuity: continuity_response_recovered method=${decoded.recovery} shot=${shot.id} frame=${resolvedFrameId}`);
+  const parsed = decoded.value;
   const validation = Continuity.validateObservationSet(manifest, parsed);
   const observation = { coordinate_mode: validation.coordinate_mode, entities: validation.entities };
   const stored = {
@@ -5866,6 +5875,10 @@ async function observeContinuityFrame(P, shot, frameId, requestedFile, context) 
     cached: false, key, imageHash, manifest, image, frameId: resolvedFrameId,
     observation, validation: stored, attempts: assistant.attempts,
     provider: identity.provider, model: identity.model,
+    /* Diagnostics for the next qualification run, deliberately NOT persisted:
+       the cache stores the normalized observation, and how its transport
+       envelope arrived says nothing about the evidence. */
+    recovery: decoded.recovery,
   };
 }
 function continuityObservationResponse(result) {
@@ -5910,6 +5923,10 @@ app.post("/api/continuity/observe", async (req, res) => {
         promptVersion: Continuity.OBSERVATION_PROMPT_VERSION,
         schemaName: Continuity.OBSERVATION_SCHEMA_NAME,
         imagesSent: result.cached ? 0 : 1, attempts: result.attempts,
+        /* "none" unless the decoder failed to terminate its JSON and CineBraid
+           closed it. Reported so a qualification run can measure the rate
+           without scraping logs; nothing stores or renders it. */
+        recovery: result.recovery || ContinuityJson.RECOVERY_NONE,
       },
       imageHash: result.imageHash,
       cached: result.cached,
