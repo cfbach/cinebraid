@@ -627,6 +627,95 @@ async function partC() {
   const traversal = await request("/api/continuity/cache?shotId=" + encodeURIComponent("../../etc"), { method: "DELETE" });
   assert.strictEqual(traversal.response.status, 404, "a traversal attempt must not resolve to a project");
 
+  /* ---- 27. cache admission follows validation.usable ------------------------
+
+     Uncertainty is evidence and must be reused: re-asking the model will not
+     make heavy occlusion or an unreadable attribute go away, and paying for a
+     model call each time it is looked at would be the wrong answer twice over.
+     What is never admitted is a response the validation contract says cannot be
+     trusted at all. */
+  const admissionFrame = (tag) => {
+    const name = `ADMIT_${tag}.png`;
+    fs.writeFileSync(path.join(TAKES, name), Buffer.concat([PNG_A, Buffer.from(`::${tag}`)]));
+    return { shotId: "S-01", frameId: "frame-a", fileName: name };
+  };
+  const entitiesFor = (perEntity) => {
+    const out = {};
+    /* colour and markings are untracked in this project, so a genuinely clean
+       record must leave them not-applicable. */
+    for (const id of ["CHAR-KAI", "PROP-MUG"]) out[id] = perEntity[id] || { presence: "present", occlusion: "none", identifiable: "yes", bbox: [100, 100, 200, 200], color: "not-applicable", state: "not-applicable", markings: "not-applicable", evidence: "seen" };
+    return out;
+  };
+  /* Each case is observed twice on its own image: the second call reveals
+     whether the first was admitted, and the mock request count is the proof. */
+  async function admission(tag, reply, expected) {
+    const payload = admissionFrame(tag);
+    nextReply = reply;
+    const first = await observe(payload);
+    nextReply = null;
+    const between = visionRequests.length;
+    const second = await observe(payload);
+    const cachedOnSecond = second.response.status === 200 && second.body.cached === true;
+    const calls = visionRequests.length - between;
+    assert.strictEqual(cachedOnSecond, expected.cached, `${tag}: expected cached=${expected.cached} on re-observation, got ${cachedOnSecond}`);
+    assert.strictEqual(calls, expected.cached ? 0 : 1, `${tag}: expected ${expected.cached ? 0 : 1} further model call, got ${calls}`);
+    if (expected.status) assert.strictEqual(first.body?.validation?.status, expected.status, `${tag}: unexpected validation status`);
+    return first;
+  }
+
+  /* A. clean -> cached */
+  let admitted = await admission("clean", JSON.stringify({ coordinate_mode: "permille", entities: entitiesFor({}) }), { cached: true, status: "clean" });
+  assert.strictEqual(admitted.body.validation.usable, true);
+
+  /* B. usable_with_notes (untracked attribute discarded) -> cached */
+  admitted = await admission("notes", JSON.stringify({ coordinate_mode: "permille", entities: entitiesFor({ "CHAR-KAI": { presence: "present", occlusion: "none", identifiable: "yes", bbox: [1, 2, 3, 4], color: "gold", state: "not-applicable", markings: "not-applicable", evidence: "x" } }) }), { cached: true, status: "usable_with_notes" });
+  assert(admitted.body.validation.flags.some((flag) => flag.code === "untracked_attribute_discarded"));
+  assert.strictEqual(admitted.body.validation.ok, false, "ok is still false for a policy action");
+
+  /* C. heavy occlusion -> cached */
+  admitted = await admission("occluded", JSON.stringify({ coordinate_mode: "permille", entities: entitiesFor({ "PROP-MUG": { presence: "present", occlusion: "heavy", identifiable: "yes", bbox: [1, 2, 3, 4], color: "not-applicable", state: "not-applicable", markings: "not-applicable", evidence: "mostly hidden" } }) }), { cached: true, status: "clean" });
+  assert.strictEqual(admitted.body.validation.states["PROP-MUG"], "present");
+
+  /* D. uncertain presence -> cached */
+  await admission("uncertain", JSON.stringify({ coordinate_mode: "permille", entities: entitiesFor({ "PROP-MUG": { presence: "uncertain", occlusion: "uncertain", identifiable: "uncertain", bbox: null, color: "uncertain", state: "uncertain", markings: "uncertain", evidence: "unclear" } }) }), { cached: true });
+
+  /* E. invalid coordinate frame -> NOT cached.
+
+     Every record still passes its own shape check, which is exactly why the old
+     per-entity admission rule let this through: a wrong frame silently corrupts
+     every bbox at once. */
+  const poisoned = await admission("badframe", JSON.stringify({ coordinate_mode: "pixels", entities: entitiesFor({}) }), { cached: false, status: "invalid" });
+  assert.strictEqual(poisoned.body.validation.usable, false);
+  assert.deepStrictEqual(poisoned.body.validation.blockingFlags, ["invalid_coordinate_mode"]);
+  assert.strictEqual(poisoned.body.validation.states["CHAR-KAI"], "present", "the individual records still pass — the set is what is untrustworthy");
+
+  /* F. no declared record survived -> NOT cached */
+  await admission("allbad", JSON.stringify({ coordinate_mode: "permille", entities: entitiesFor({
+    "CHAR-KAI": { presence: "present", occlusion: "none", identifiable: "yes", bbox: null, color: "white", state: "not-applicable", markings: "not-applicable", evidence: "x" },
+    "PROP-MUG": { presence: "absent", occlusion: "none", identifiable: "yes", bbox: [1, 2, 3, 4], color: "white", state: "not-applicable", markings: "not-applicable", evidence: "x" },
+  }) }), { cached: false, status: "invalid" });
+
+  /* G. an illegal value on a TRACKED attribute is still evidence: presence and
+        position are fine, only that attribute is unreadable. Colour has to be
+        genuinely tracked for this to be the illegal-value case rather than the
+        untracked-discard case — the two mean different things. */
+  const trackedProject = baseProject();
+  trackedProject.props[0].tracking = { color: true };
+  writeProject(trackedProject);
+  const illegal = await admission("badenum", JSON.stringify({ coordinate_mode: "permille", entities: entitiesFor({ "PROP-MUG": { presence: "present", occlusion: "none", identifiable: "yes", bbox: [1, 2, 3, 4], color: "not-a-colour", state: "not-applicable", markings: "not-applicable", evidence: "x" } }) }), { cached: true, status: "usable_with_notes" });
+  assert.strictEqual(illegal.body.observation.entities["PROP-MUG"].color, "uncertain", "an illegal tracked value is neutralised, never coerced");
+  assert(illegal.body.validation.flags.some((flag) => flag.code === "invalid_enum" && flag.field === "color"));
+  assert.strictEqual(illegal.body.validation.states["PROP-MUG"], "present", "presence evidence survives one bad attribute");
+
+  writeProject(baseProject());
+
+  /* And the persisted entry carries the new semantics. */
+  const admissionCache = JSON.parse(fs.readFileSync(cacheFile(), "utf8"));
+  for (const entry of Object.values(admissionCache.entries)) {
+    assert(["clean", "usable_with_notes"].includes(entry.validation.status), `an unusable observation reached the cache: ${entry.validation.status}`);
+    assert.strictEqual(entry.validation.usable, true);
+  }
+
   /* ---- 26. the cache-miss request is still the qualified Phase 2 request ---- */
   const miss = visionRequests.at(-1);
   assert.strictEqual(countImages(miss), 1);
@@ -716,7 +805,7 @@ async function main() {
   await partB();
   await partC();
   await partD();
-  console.log("Continuity cache suite passed: evidence is addressed by image bytes rather than filename, every key component is load-bearing, a declared-state-only change stays a HIT while every observation-relevant manifest change is a MISS, uncertain observations are cached but provider errors, unparsable output and wholly invalid answers are not, corruption is quarantined and degrades to a miss without breaking the project, concurrent writes all survive, retention is capped at " + MAX_ENTRIES + " oldest-accessed-first, purge is scoped and never touches media, the cache travels with archive/restore/delete and is never read across projects while staying out of portable project backups, and the cache-miss request is still byte-shape-identical to the qualified Phase 2 request.");
+  console.log("Continuity cache suite passed: evidence is addressed by image bytes rather than filename, every key component is load-bearing, a declared-state-only change stays a HIT while every observation-relevant manifest change is a MISS, uncertain observations are cached but provider errors, unparsable output and wholly invalid answers are not, corruption is quarantined and degrades to a miss without breaking the project, concurrent writes all survive, retention is capped at " + MAX_ENTRIES + " oldest-accessed-first, purge is scoped and never touches media, the cache travels with archive/restore/delete and is never read across projects while staying out of portable project backups, cache admission now follows validation.usable so a wrong coordinate frame is refused while occluded and uncertain evidence is kept, and the cache-miss request is still byte-shape-identical to the qualified Phase 2 request.");
 }
 
 main()

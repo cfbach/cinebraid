@@ -243,4 +243,96 @@ assert.strictEqual(comparison.changes[0].kind, "removed", "a clean, usable obser
 assert.strictEqual(comparison.label, "possible-continuity-error");
 assert.strictEqual(recordState(after.entities.A), "absent");
 
-console.log("Continuity validation-status suite passed: ok keeps its original meaning while status/usable answer whether the record set is safe to use; a discarded untracked attribute is usable_with_notes, heavy occlusion and uncertainty stay clean and usable while the comparison layer routes them to review, one broken record does not condemn a set but a total loss or a set-wide integrity failure does, and the status is derived deterministically from flags and states so it can be recomputed for evidence stored before it existed.");
+/* ---- 10. an illegal TRACKED value can never become a change ---------------
+
+   The distinction that matters: an untracked attribute is one CineBraid never
+   asked about, so its value is irrelevant and is discarded. A tracked attribute
+   with an illegal value is one CineBraid DID ask about and got an unusable
+   answer — it is neutralised to the contract's own word for "could not be
+   read", so the comparison reports it unreadable and routes it to review
+   instead of inventing a change out of a value that means nothing. */
+const TRACKED_ONE = manifestOf([{ entity_id: "A", track_color: true, track_markings: true, track_state: true }]);
+
+/* Baseline: a valid tracked colour comparison still works normally. */
+const white = validateObservationSet(TRACKED_ONE, wrap({ A: present({ color: "white", markings: "none" }) }));
+const green = validateObservationSet(TRACKED_ONE, wrap({ A: present({ color: "green", markings: "none" }) }));
+assert.strictEqual(white.status, "clean");
+assert.strictEqual(green.status, "clean");
+let cmp = compareObservations(side(white, white), side(green, green), TRACKED_ONE);
+assert.strictEqual(cmp.changes.length, 1, "a legitimate colour change is still reported");
+assert.strictEqual(cmp.changes[0].attribute, "color");
+assert.deepStrictEqual(cmp.attribute_unreadable, []);
+
+for (const [field, legal, illegal, second] of [
+  ["color", "white", "bluish-purple?", "also-not-a-colour"],
+  ["markings", "none", "squiggles", "doodles"],
+  ["state", "not-applicable", "half-open", "half-shut"],
+]) {
+  const good = validateObservationSet(TRACKED_ONE, wrap({ A: present({ [field]: legal }) }));
+  const bad = validateObservationSet(TRACKED_ONE, wrap({ A: present({ [field]: illegal }) }));
+
+  assert.strictEqual(bad.ok, false, `${field}: an illegal tracked value must be flagged`);
+  assert.strictEqual(bad.status, "usable_with_notes", `${field}: one bad attribute must not condemn the record`);
+  assert.strictEqual(bad.usable, true);
+  const flag = bad.flags.find((row) => row.code === "invalid_enum" && row.field === field);
+  assert(flag, `${field}: the flag must name the attribute structurally, not only in prose`);
+  assert.strictEqual(flag.entityId, "A");
+  /* Neutralised, never coerced to a plausible value and never left as-is. */
+  assert.strictEqual(bad.entities.A[field], "uncertain", `${field}: an illegal tracked value must be neutralised to unreadable`);
+  assert.notStrictEqual(bad.entities.A[field], illegal);
+  /* The rest of the record is untouched. */
+  assert.strictEqual(bad.states.A, "present", `${field}: presence evidence must survive one bad attribute`);
+  assert.deepStrictEqual(bad.entities.A.bbox, [100, 100, 200, 200], `${field}: bbox evidence must survive`);
+
+  /* And the comparison can never turn it into a change, in either direction. */
+  for (const [left, right, label] of [[good, bad, "valid -> illegal"], [bad, good, "illegal -> valid"]]) {
+    const result = compareObservations(side(left, left), side(right, right), TRACKED_ONE);
+    assert(!result.changes.some((row) => row.attribute === field), `${field} (${label}): an illegal value must NEVER produce a ${field} change`);
+    assert(result.attribute_unreadable.some((row) => row.attribute === field && row.kind === "attribute-unreadable"), `${field} (${label}): it must surface as unreadable evidence`);
+    const applied = applyIntent(result, { manifestA: TRACKED_ONE, manifestB: TRACKED_ONE });
+    assert.strictEqual(applied.label, "human-review", `${field} (${label}): unreadable tracked evidence must reach human review`);
+  }
+  /* Two different illegal values are still not a change between themselves. */
+  const alsoBad = validateObservationSet(TRACKED_ONE, wrap({ A: present({ [field]: second }) }));
+  const both = compareObservations(side(bad, bad), side(alsoBad, alsoBad), TRACKED_ONE);
+  assert(!both.changes.some((row) => row.attribute === field), `${field}: two unreadable values must not be a change`);
+}
+
+/* ---- 11. one bad attribute does not spread ---- */
+const TRACKED_PAIR = manifestOf([
+  { entity_id: "A", track_color: true, track_markings: true },
+  { entity_id: "B", track_color: true, track_markings: true },
+]);
+const mixedGood = validateObservationSet(TRACKED_PAIR, wrap({ A: present({ color: "white", markings: "none" }), B: present({ color: "white", markings: "none" }) }));
+const mixedBad = validateObservationSet(TRACKED_PAIR, wrap({ A: present({ color: "not-a-colour", markings: "none" }), B: present({ color: "green", markings: "none" }) }));
+assert.strictEqual(mixedBad.entities.A.color, "uncertain");
+assert.strictEqual(mixedBad.entities.A.markings, "none", "a sibling attribute on the same entity is untouched");
+assert.strictEqual(mixedBad.entities.B.color, "green", "another entity is untouched");
+cmp = compareObservations(side(mixedGood, mixedGood), side(mixedBad, mixedBad), TRACKED_PAIR);
+assert(!cmp.changes.some((row) => row.entity_id === "A" && row.attribute === "color"));
+assert(cmp.attribute_unreadable.some((row) => row.entity_id === "A" && row.attribute === "color"));
+assert(cmp.changes.some((row) => row.entity_id === "B" && row.attribute === "color"), "an unaffected entity still produces its real finding");
+
+/* ---- 12. untracked and illegal-tracked stay distinct ---- */
+const untrackedColour = manifestOf([{ entity_id: "A", track_color: false }]);
+const untracked = validateObservationSet(untrackedColour, wrap({ A: present({ color: "gold" }) }));
+assert.strictEqual(untracked.entities.A.color, "not-applicable", "never asked -> discarded");
+assert.deepStrictEqual(untracked.flags.map((row) => row.code), ["untracked_attribute_discarded"]);
+const trackedIllegal = validateObservationSet(TRACKED_ONE, wrap({ A: present({ color: "gold-ish" }) }));
+assert.strictEqual(trackedIllegal.entities.A.color, "uncertain", "asked but unusable -> unreadable");
+assert(trackedIllegal.flags.some((row) => row.code === "invalid_enum" && row.field === "color"));
+assert(!trackedIllegal.flags.some((row) => row.code === "untracked_attribute_discarded"));
+/* An untracked attribute is never validated at all: we did not ask, so its
+   value cannot be "wrong". */
+const untrackedIllegal = validateObservationSet(untrackedColour, wrap({ A: present({ color: "not-a-colour" }) }));
+assert.deepStrictEqual(untrackedIllegal.flags.map((row) => row.code), ["untracked_attribute_discarded"], "an untracked attribute must not also be reported as an illegal value");
+
+/* ---- 13. every flag carries a structured field, so no caller parses prose ---- */
+for (const sample of [trackedIllegal, untracked, validateObservationSet(ONE, wrap({})), validateObservationSet(ONE, null)])
+  for (const flag of sample.flags) {
+    assert.strictEqual(typeof flag.field, "string", "every flag must carry a field, even if empty");
+    assert.strictEqual(typeof flag.entityId, "string");
+    assert(OBSERVATION_FLAGS.includes(flag.code));
+  }
+
+console.log("Continuity validation-status suite passed: ok keeps its original meaning while status/usable answer whether the record set is safe to use; a discarded untracked attribute is usable_with_notes, heavy occlusion and uncertainty stay clean and usable while the comparison layer routes them to review, one broken record does not condemn a set but a total loss or a set-wide integrity failure does, the status is derived deterministically from flags and states so it can be recomputed for evidence stored before it existed, and an illegal value on a TRACKED attribute is neutralised to unreadable so it can never become a colour, markings or state change while presence, bbox, sibling attributes and other entities all stay usable.");

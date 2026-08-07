@@ -576,16 +576,16 @@ function observationStatus(flags, states) {
 function validateObservationSet(manifest, parsed) {
   const declared = ((manifest && manifest.entities) || []);
   const flags = [];
-  const addFlag = (code, entityId, detail) => flags.push({ code, entityId: String(entityId || ""), detail: String(detail || "") });
+  const addFlag = (code, entityId, field, detail) => flags.push({ code, entityId: String(entityId || ""), field: String(field || ""), detail: String(detail || "") });
   const root = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
   const supplied = root && root.entities && typeof root.entities === "object" && !Array.isArray(root.entities) ? root.entities : null;
-  if (!supplied) addFlag("malformed_response", "", "The response did not contain an entities object.");
+  if (!supplied) addFlag("malformed_response", "", "", "The response did not contain an entities object.");
   if (root && root.coordinate_mode !== undefined && root.coordinate_mode !== "permille")
-    addFlag("invalid_coordinate_mode", "", `coordinate_mode was ${JSON.stringify(root.coordinate_mode)}; the contract is "permille".`);
+    addFlag("invalid_coordinate_mode", "", "coordinate_mode", `coordinate_mode was ${JSON.stringify(root.coordinate_mode)}; the contract is "permille".`);
 
   const declaredIds = new Set(declared.map((row) => row.entity_id));
   for (const key of supplied ? Object.keys(supplied).sort(compareStrings) : [])
-    if (!declaredIds.has(key)) addFlag("undeclared_entity_id", key, "The model returned an entity id production did not declare.");
+    if (!declaredIds.has(key)) addFlag("undeclared_entity_id", key, "", "The model returned an entity id production did not declare.");
 
   const entities = {};
   const states = {};
@@ -593,7 +593,7 @@ function validateObservationSet(manifest, parsed) {
     const id = row.entity_id;
     const raw = supplied ? supplied[id] : undefined;
     if (raw === undefined || raw === null) {
-      addFlag("missing_entity_id", id, "The model returned no record for this declared entity.");
+      addFlag("missing_entity_id", id, "", "The model returned no record for this declared entity.");
       entities[id] = { presence: "uncertain", occlusion: "uncertain", identifiable: "uncertain", bbox: null, color: "uncertain", state: "uncertain", markings: "uncertain", evidence: "" };
       states[id] = "invalid";
       continue;
@@ -608,16 +608,44 @@ function validateObservationSet(manifest, parsed) {
       markings: raw.markings,
       evidence: typeof raw.evidence === "string" ? raw.evidence.slice(0, EVIDENCE_MAX) : "",
     };
-    for (const [field, values] of [["presence", PRESENCE_VALUES], ["occlusion", OCCLUSION_VALUES], ["identifiable", IDENTIFIABLE_VALUES], ["color", COLOR_VALUES], ["markings", MARKINGS_VALUES]])
-      if (!values.includes(record[field])) addFlag("invalid_enum", id, `${field} was ${JSON.stringify(record[field])}, which is not a contract value.`);
-    if (typeof record.state !== "string") addFlag("invalid_enum", id, "state was not a string.");
-    /* An attribute the production did not ask to track must never reach the
-       comparison engine, or a multi-tone object still produces colour findings
-       no matter what the tracking policy says. */
-    for (const [field, track] of [["color", "track_color"], ["state", "track_state"], ["markings", "track_markings"]]) {
-      if (row[track] === false && record[field] !== "not-applicable" && record[field] !== undefined) {
-        addFlag("untracked_attribute_discarded", id, `${field} was returned but is not tracked for this entity; the value was discarded.`);
-        record[field] = "not-applicable";
+    /* Structural fields are always meaningful: recordState reads them, so an
+       illegal value here makes the whole record untrustworthy. */
+    for (const [field, values] of [["presence", PRESENCE_VALUES], ["occlusion", OCCLUSION_VALUES], ["identifiable", IDENTIFIABLE_VALUES]])
+      if (!values.includes(record[field])) addFlag("invalid_enum", id, field, `${field} was ${JSON.stringify(record[field])}, which is not a contract value.`);
+
+    /* Tracked attributes. Two different things can go wrong here and they mean
+       different things, so they are kept apart:
+
+         not tracked   CineBraid never asked, so whatever came back is
+                       irrelevant. It is discarded to "not-applicable" and the
+                       comparison never looks at it. A policy note.
+
+         tracked but illegal   CineBraid did ask, and the answer is unusable.
+                       The value is NOT coerced and NOT guessed at: it is
+                       neutralised to "uncertain", which is the contract's own
+                       word for "could not be read". The comparison then reports
+                       it as an unreadable attribute and routes it to review,
+                       which is exactly right — an illegal value must never be
+                       able to become a colour, markings or state CHANGE.
+
+       Neutralising one attribute leaves the rest of the record alone: presence
+       and bbox evidence on the same entity stay usable, and other entities are
+       untouched. */
+    for (const [field, track, values] of [
+      ["color", "track_color", COLOR_VALUES],
+      ["state", "track_state", [...(Array.isArray(row.allowed_state_values) ? row.allowed_state_values : []), "not-applicable", "uncertain"]],
+      ["markings", "track_markings", MARKINGS_VALUES],
+    ]) {
+      if (row[track] === false) {
+        if (record[field] !== "not-applicable" && record[field] !== undefined) {
+          addFlag("untracked_attribute_discarded", id, field, `${field} was returned but is not tracked for this entity; the value was discarded.`);
+          record[field] = "not-applicable";
+        }
+        continue;
+      }
+      if (!values.includes(record[field])) {
+        addFlag("invalid_enum", id, field, `${field} was ${JSON.stringify(record[field])}, which is not a contract value for this entity; it was treated as unreadable and never compared.`);
+        record[field] = "uncertain";
       }
     }
     const state = recordState(record);

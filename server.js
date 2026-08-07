@@ -5784,9 +5784,14 @@ async function observeContinuityFrame(P, shot, frameId, requestedFile, context) 
      occlusion and unreadable attributes are answers, and re-asking the model
      will not make them go away. What is never cached is a non-answer — a
      provider error, an empty reply, or output that could not be parsed at all,
-     none of which reach this point. A response whose every declared record
-     failed the structural check is also not evidence, so it is not stored. */
-  const usable = validation.invalidEntityIds.length < manifest.entities.length;
+     none of which reach this point.
+
+     Admission is the validation contract's own answer. validation.usable is
+     false exactly when the set cannot be trusted: a set-wide integrity failure
+     such as a wrong coordinate frame, or a response in which no declared record
+     survived. Deciding this here from a separate rule is how the two drifted
+     apart in the first place. */
+  const usable = validation.usable;
   if (usable) {
     await continuityCache.store({
       key, observedAt: new Date().toISOString(), lastAccessedAt: new Date().toISOString(),
@@ -5797,7 +5802,7 @@ async function observeContinuityFrame(P, shot, frameId, requestedFile, context) 
       observation, validation: stored,
     });
   } else {
-    continuityLog(`NOSTORE ${key.slice(0, 12)} every declared record failed the structural check`);
+    continuityLog(`NOSTORE ${key.slice(0, 12)} validation.status=${validation.status}${validation.blockingFlags.length ? ` (${validation.blockingFlags.join(",")})` : ""}`);
   }
 
   return {
