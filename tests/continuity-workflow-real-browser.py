@@ -169,6 +169,19 @@ for tag in ('A', 'B'):
     (takes / f'{tag}.png').write_bytes(base64.b64decode(PNG) + tag.encode())
 (project_dir / 'project.json').write_text(json.dumps(project_json(), indent=2), encoding='utf-8')
 
+# A second project with the SAME shot id. Ids are only unique inside a project,
+# so this is the routine case in which a verdict could be shown under the wrong
+# one — which is exactly what packaged acceptance caught.
+project_b = projects_root / 'continuity-audit-b'
+(project_b / 'shots' / 'S-01' / 'takes').mkdir(parents=True)
+for folder in ('anchors', 'plates', 'props', 'vehicles', 'audio', 'media', 'docs'):
+    (project_b / folder).mkdir(parents=True, exist_ok=True)
+other = project_json()
+other['meta']['title'] = 'Second project, same shot id'
+(project_b / 'project.json').write_text(json.dumps(other, indent=2), encoding='utf-8')
+for tag in ('A', 'B'):
+    (project_b / 'shots' / 'S-01' / 'takes' / f'{tag}.png').write_bytes(base64.b64decode(PNG) + tag.encode())
+
 config_path = TEMP / 'config.json'
 config_path.write_text(json.dumps({
     'activeProject': 'continuity-audit',
@@ -327,6 +340,65 @@ try:
         page.wait_for_timeout(200)
         overflow = page.evaluate('document.documentElement.scrollWidth - document.documentElement.clientWidth')
         assert overflow <= 2, f'the continuity workspace overflowed by {overflow}px at 390px'
+
+        # 17. a verdict belongs to the project that produced it (acceptance D1)
+        open_shot(page, 'switch-a')
+        check_continuity(page)
+        assert page.locator('.continuity-outcome-counts').count() == 1
+        page.evaluate("switchProject('continuity-audit-b')")
+        # ACTIVE_PROJECT_SLUG is a script-scoped binding, not a window property.
+        page.wait_for_function("continuityProjectKey() === 'continuity-audit-b'", timeout=20000)
+        page.evaluate("localStorage.setItem('cinebraid-focused:continuity-audit-b:shot-task:S-01','frames');"
+                      "location.hash = '#/shot/S-01'; route();")
+        page.wait_for_selector('.shot-continuity', timeout=15000)
+        page.wait_for_timeout(200)
+        card = page.locator('.shot-continuity').inner_text()
+        assert 'STABLE' not in card, 'no stale verdict may survive a project switch'
+        assert 'Enamel mug' not in card, 'no stale finding may survive a project switch'
+        assert 'CHECK CONTINUITY' in card, 'the second project must start idle'
+        page.evaluate("switchProject('continuity-audit')")
+        page.wait_for_function("window.ACTIVE_PROJECT_SLUG === 'continuity-audit'", timeout=20000)
+
+        # 18. continuity configures independently of the main assistant (D2)
+        page.request.put(f'{BASE}/api/config', data={'assistant': {'provider': 'ollama', 'visionProvider': 'ollama'},
+                                                     'customBaseUrl': '', 'customModel': '', 'customVisionModel': '',
+                                                     'continuity': {'visionProvider': 'custom',
+                                                                    'baseUrl': f'http://127.0.0.1:{provider_port}/v1',
+                                                                    'visionModel': 'stub-continuity-model'}})
+        open_shot(page, 'independent')
+        assert "isn't configured" not in page.locator('.shot-continuity').inner_text(), \
+            'continuity must be ready on its own endpoint with no generic custom text model'
+        assert page.get_by_role('button', name='CHECK CONTINUITY').or_(
+            page.get_by_role('button', name='CHECK AGAIN')).first.is_enabled()
+
+        # 19. readiness follows a save, with no page reload
+        page.goto(f'{BASE}/?audit=settings#/settings', wait_until='domcontentloaded', timeout=30000)
+        page.wait_for_function("document.body.dataset.renderReady === '1'", timeout=30000)
+        page.evaluate("selectBoundedTask('settings-task','settings','assistant')")
+        page.wait_for_selector('#cfg-continuity-provider', timeout=10000)
+        assert page.locator('#cfg-continuity-base').input_value() == f'http://127.0.0.1:{provider_port}/v1'
+        page.locator('#cfg-continuity-provider').select_option('')
+        page.get_by_role('button', name='Save assistant settings').click()
+        page.wait_for_timeout(1200)
+        # Same document — no reload between the save and the workspace.
+        page.evaluate("localStorage.setItem('cinebraid-focused:continuity-audit:shot-task:S-01','frames');"
+                      "location.hash = '#/shot/S-01'; route();")
+        page.wait_for_selector('.shot-continuity', timeout=15000)
+        page.wait_for_timeout(200)
+        assert "isn't configured" in page.locator('.shot-continuity').inner_text(), \
+            'removing the continuity provider must be reflected without a page reload'
+        page.evaluate("selectBoundedTask('settings-task','settings','assistant'); location.hash = '#/settings'; route();")
+        page.wait_for_selector('#cfg-continuity-provider', timeout=10000)
+        page.locator('#cfg-continuity-provider').select_option('custom')
+        page.locator('#cfg-continuity-model').fill('stub-continuity-model')
+        page.locator('#cfg-continuity-base').fill(f'http://127.0.0.1:{provider_port}/v1')
+        page.get_by_role('button', name='Save assistant settings').click()
+        page.wait_for_timeout(1200)
+        page.evaluate("location.hash = '#/shot/S-01'; route();")
+        page.wait_for_selector('.shot-continuity', timeout=15000)
+        page.wait_for_timeout(200)
+        assert "isn't configured" not in page.locator('.shot-continuity').inner_text(), \
+            'saving a valid continuity provider must become available without a page reload'
 
         # 16. nothing broke on the way
         assert not console_errors, f'console errors: {console_errors}'

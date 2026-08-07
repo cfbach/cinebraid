@@ -447,24 +447,44 @@ function aiVisionProviderOverride() {
    only vision consumer that reaches the single-image service. Repointing
    aiVisionProviderOverride() would drag the multi-image review routes there
    too, and those send up to 32 images. */
+/* Where continuity's single-image requests actually go.
+
+   Its own endpoint when one is configured, otherwise the connection the chosen
+   provider already has. That fallback is what makes the field additive: an
+   install written before it existed resolves exactly as it did.
+
+   A key is inherited only alongside an inherited address. Sending the general
+   custom server's credential to a different host because both happen to be
+   called "custom" would be a leak, not a convenience. */
+function continuityConnection(cfg = readConfig()) {
+  const provider = cfg.continuity?.visionProvider || "";
+  const ownBase = String(cfg.continuity?.baseUrl || "").trim();
+  const inheritedBase = provider === "openai" ? cfg.openaiBaseUrl : provider === "custom" ? cfg.customBaseUrl : "";
+  const inheritedKey = provider === "openai" ? cfg.openaiKey : provider === "custom" ? cfg.customKey : "";
+  return {
+    provider,
+    baseUrl: ownBase || String(inheritedBase || ""),
+    apiKey: String(cfg.continuity?.apiKey || (ownBase ? "" : inheritedKey || "")),
+    model: continuityVisionModel(cfg),
+    /* True when continuity is not riding on the general provider's connection. */
+    standalone: !!ownBase,
+  };
+}
 function continuityVisionProvider() {
   const cfg = readConfig();
   const policy = projectAIPolicy();
   if (policy === "disabled")
     throw new Error("AI features are disabled for this project.");
-  const selected = cfg.continuity?.visionProvider || "";
-  if (!selected)
+  const connection = continuityConnection(cfg);
+  if (!connection.provider)
     throw new Error(
       "Continuity observation has no provider. Choose an OpenAI-compatible AI server for continuity in Settings — it is configured separately from general vision because it sends exactly one image per request.",
     );
-  if (policy === "local-only") {
-    const baseUrl = selected === "openai" ? cfg.openaiBaseUrl : cfg.customBaseUrl;
-    if (!isLocalProviderEndpoint(baseUrl))
-      throw new Error(
-        "This project is set to local-only AI, and the continuity observation provider is not on this machine. Point the custom AI server at this computer in Settings, or change the project's AI policy.",
-      );
-  }
-  return selected;
+  if (policy === "local-only" && !isLocalProviderEndpoint(connection.baseUrl))
+    throw new Error(
+      "This project is set to local-only AI, and the continuity observation provider is not on this machine. Point the continuity endpoint at this computer in Settings, or change the project's AI policy.",
+    );
+  return connection.provider;
 }
 function continuityVisionModel(cfg = readConfig()) {
   const provider = cfg.continuity?.visionProvider || "";
@@ -1352,21 +1372,15 @@ const CUSTOM_MODEL_CACHE = { at: 0, base: "", result: null };
    carries no base URL: unlike the Ollama endpoint, which the operator sets and reads
    back in Settings, a custom endpoint may be an internal service the browser must
    never learn about. */
-async function customInventory(cfg = readConfig(), force = false) {
-  const base = String(cfg.customBaseUrl || "").trim().replace(/\/$/, "");
-  if (!base) return { ok: false, configured: false, error: "", models: [] };
-  if (
-    !force &&
-    CUSTOM_MODEL_CACHE.result &&
-    CUSTOM_MODEL_CACHE.base === base &&
-    Date.now() - CUSTOM_MODEL_CACHE.at < 10000
-  )
-    return CUSTOM_MODEL_CACHE.result;
-  const probe = await probeJson(
-    base + "/models",
-    2200,
-    cfg.customKey ? { authorization: "Bearer " + cfg.customKey } : {},
-  );
+/* One probe of one OpenAI-compatible endpoint. Each caller brings its own memo
+   slot, because continuity may be pointed at a different address than the
+   general custom provider and the two answers must not overwrite each other. */
+async function openAiCompatibleInventory(base, key, cache, force = false) {
+  const address = String(base || "").trim().replace(/\/$/, "");
+  if (!address) return { ok: false, configured: false, error: "", models: [] };
+  if (!force && cache.result && cache.base === address && Date.now() - cache.at < 10000)
+    return cache.result;
+  const probe = await probeJson(address + "/models", 2200, key ? { authorization: "Bearer " + key } : {});
   const listed = Array.isArray(probe.data?.data)
     ? probe.data.data
     : Array.isArray(probe.data?.models)
@@ -1378,10 +1392,22 @@ async function customInventory(cfg = readConfig(), force = false) {
     error: safeProviderError(probe.error),
     models: listed.map((x) => x?.id || x?.name || x?.model).filter(Boolean).slice(0, 40),
   };
-  CUSTOM_MODEL_CACHE.at = Date.now();
-  CUSTOM_MODEL_CACHE.base = base;
-  CUSTOM_MODEL_CACHE.result = result;
+  cache.at = Date.now();
+  cache.base = address;
+  cache.result = result;
   return result;
+}
+async function customInventory(cfg = readConfig(), force = false) {
+  return openAiCompatibleInventory(cfg.customBaseUrl, cfg.customKey, CUSTOM_MODEL_CACHE, force);
+}
+const CONTINUITY_MODEL_CACHE = { at: 0, base: "", result: null };
+/* Continuity's own endpoint answers for itself. When it is riding on the
+   general custom connection this is the same probe, so nothing is asked twice. */
+async function continuityInventory(cfg = readConfig(), force = false) {
+  const connection = continuityConnection(cfg);
+  if (!connection.provider || !connection.baseUrl) return { ok: false, configured: false, error: "", models: [] };
+  if (!connection.standalone && connection.provider === "custom") return customInventory(cfg, force);
+  return openAiCompatibleInventory(connection.baseUrl, connection.apiKey, CONTINUITY_MODEL_CACHE, force);
 }
 const UNPROBED_CUSTOM = { ok: false, configured: false, error: "", models: [] };
 /* One inventory read per status request, for every provider that request can consult.
@@ -1393,11 +1419,13 @@ async function providerInventories(cfg = readConfig(), force = false) {
     /* Continuity can be the only consumer pointed at the custom endpoint —
        that is the intended Spark runtime, where general vision is Ollama and
        Ollama may be stopped. Its readiness still has to be answerable. */
-    cfg.continuity?.visionProvider === "custom" ||
+    (cfg.continuity?.visionProvider === "custom" && !String(cfg.continuity?.baseUrl || "").trim()) ||
     Object.values(cfg.routing || {}).includes("custom");
+  const usesContinuity = !!cfg.continuity?.visionProvider;
   return {
     ollama: await ollamaInventory(cfg, force),
     custom: usesCustom ? await customInventory(cfg, force) : UNPROBED_CUSTOM,
+    continuity: usesContinuity ? await continuityInventory(cfg, force) : UNPROBED_CUSTOM,
   };
 }
 
@@ -5668,6 +5696,12 @@ const continuityCache = createContinuityCache({
   log: (message) => console.log(`  continuity: ${message}`),
 });
 
+/* Only handed over when continuity has an endpoint of its own. Riding on the
+   chosen provider's connection stays the default path, byte-identical to Phase 2. */
+function continuityEndpointOption(cfg = readConfig()) {
+  const connection = continuityConnection(cfg);
+  return connection.standalone ? { baseUrl: connection.baseUrl, apiKey: connection.apiKey } : null;
+}
 function continuityFrameImage(P, shot, frameId, requestedFile) {
   const frames = Array.isArray(shot.keyframes) ? shot.keyframes : [];
   const frame = frameId ? frames.find((item) => String(item.id) === String(frameId)) : frames[0];
@@ -5696,6 +5730,10 @@ async function requestContinuityObservation(system, user, imageB64, schema, opti
     jsonSchema: schema,
     schemaName: Continuity.OBSERVATION_SCHEMA_NAME,
     contract: Continuity.OBSERVATION_REQUEST_CONTRACT,
+    /* Where, not what. The body below is unchanged — this only says which
+       OpenAI-compatible service receives it, because continuity's endpoint is
+       configured separately from the general custom provider's. */
+    endpoint: options.endpoint || null,
   };
   let lastError = null;
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -5831,7 +5869,8 @@ app.post("/api/continuity/observe", async (req, res) => {
     const shot = (P.shots || []).find((item) => String(item.id) === shotId);
     if (!shot) return res.status(404).json({ error: "shot not found" });
     const model = continuityVisionModel(cfg) || undefined;
-    const result = await observeContinuityFrame(P, shot, String(req.body?.frameId || ""), req.body?.fileName, { provider, model });
+    const endpoint = continuityEndpointOption(cfg);
+    const result = await observeContinuityFrame(P, shot, String(req.body?.frameId || ""), req.body?.fileName, { provider, model, endpoint });
     return res.json({
       ok: true,
       shotId,
@@ -5878,9 +5917,10 @@ app.post("/api/continuity/compare", async (req, res) => {
     if (!frameA || !frameB) return res.status(400).json({ error: "Two frames are required to compare." });
     if (frameA === frameB) return res.status(400).json({ error: "Choose two different frames to compare." });
     const model = continuityVisionModel(cfg) || undefined;
+    const endpoint = continuityEndpointOption(cfg);
 
-    const a = await observeContinuityFrame(P, shot, frameA, req.body?.fileNameA, { provider, model });
-    const b = await observeContinuityFrame(P, shot, frameB, req.body?.fileNameB, { provider, model });
+    const a = await observeContinuityFrame(P, shot, frameA, req.body?.fileNameA, { provider, model, endpoint });
+    const b = await observeContinuityFrame(P, shot, frameB, req.body?.fileNameB, { provider, model, endpoint });
 
     /* Frame manifests may legitimately differ — an entity can be declared on
        one frame and not the other. The union is compared so a declaration
@@ -6256,6 +6296,39 @@ async function agentReadiness(type, cfg = readConfig(), inventories = null) {
     );
   return summarizeReadiness([], [], "Agent is ready.");
 }
+/* Continuity's readiness, answered from the fields continuity actually uses.
+
+   It deliberately does NOT go through providerConfigured(), which asks a custom
+   provider for customBaseUrl AND customModel — customModel being the general
+   TEXT model, which continuity never sends anything to. A valid standalone
+   continuity service was reported unready because an unrelated text model was
+   blank. Readiness now asks the three questions that are true of continuity:
+   which provider, at which address, serving which model. */
+function continuityCapability(cfg = readConfig(), inventories = null) {
+  const label = "Continuity observation";
+  const connection = continuityConnection(cfg);
+  const base = { label, provider: connection.provider || "none", model: connection.model || "" };
+  /* Unset is not the same as switched off, and the generic "disabled in AI
+     Assistant settings / choose an AI provider" answer sends a user to the
+     wrong control: continuity has its own provider precisely because it is not
+     the general vision provider. It says so in its own words. */
+  if (!connection.provider)
+    return { ...base, ready: false, message: "Continuity analysis isn't configured.", action: "Choose a continuity vision provider in Settings." };
+  if (!connection.baseUrl)
+    return { ...base, ready: false, message: `${label} has no endpoint.`, action: "Set the continuity endpoint in Settings — the OpenAI-compatible base URL, including /v1." };
+  if (!connection.model)
+    return { ...base, ready: false, message: `${label} has no model.`, action: "Name the model the continuity server serves, in Settings." };
+  if (connection.provider === "openai" && !connection.apiKey)
+    return { ...base, ready: false, message: `${label} has no OpenAI key.`, action: "Complete the OpenAI connection in Settings." };
+  const inventory = (inventories && inventories.continuity) || UNPROBED_CUSTOM;
+  if (!inventory.configured)
+    return { ...base, ready: false, message: `${label} has not been contacted yet.`, action: "Reopen Settings to retry the connection." };
+  if (!inventory.ok)
+    return { ...base, ready: false, message: `${label} cannot reach its AI server${inventory.error ? ` (${inventory.error})` : ""}.`, action: "Start the continuity AI server, or correct its address in Settings, then retry." };
+  if (inventory.models.length && !inventory.models.includes(connection.model))
+    return { ...base, ready: false, message: `${label} model "${connection.model}" is not served by the continuity AI server.`, action: `Use one of the served model names: ${inventory.models.slice(0, 6).join(", ")}.` };
+  return { ...base, ready: true, message: `${label} is ready with ${connection.model}.`, action: "" };
+}
 function assistantCapabilities(cfg = readConfig(), inventories = null) {
   const inv = inventories || {
     ollama: { ok: false, models: [], base: cfg.ollamaUrl || "" },
@@ -6291,31 +6364,7 @@ function assistantCapabilities(cfg = readConfig(), inventories = null) {
     /* Embeddings stay their own route. Not every text provider serves them — the
        qualified Nemotron deployment answers /v1/embeddings with 404 — so semantic
        search keeps asking Ollama for a small embedding model. */
-    /* Continuity is its own capability. Ollama can be stopped entirely — which
-       is the intended Spark runtime — and continuity must still report ready
-       while generic multi-image vision reports not ready.
-
-       Unset is not the same as switched off, and the generic "disabled in AI
-       Assistant settings / choose an AI provider" answer sends a user to the
-       wrong control: continuity has its own provider precisely because it is
-       not the general vision provider. It says so in its own words. */
-    continuity: cfg.continuity?.visionProvider
-      ? capabilityCheck(
-        "Continuity observation",
-        cfg.continuity.visionProvider,
-        continuityVisionModel(cfg),
-        inv,
-        cfg,
-        "vision",
-      )
-      : {
-        ready: false,
-        label: "Continuity observation",
-        provider: "none",
-        model: "",
-        message: "Continuity analysis isn't configured.",
-        action: "Choose a continuity vision provider in Settings.",
-      },
+    continuity: continuityCapability(cfg, inv),
     embedding: capabilityCheck(
       "Local semantic search",
       "ollama",

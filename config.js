@@ -54,6 +54,18 @@ const DEFAULT_CONFIG = {
        routed to. */
     visionProvider: "",
     visionModel: "",
+    /* Continuity's own connection. Blank means "use the connection the chosen
+       provider already has" — customBaseUrl/customKey, or openaiBaseUrl/openaiKey
+       — which is what every install written before this field had, so nothing
+       needs migrating.
+
+       Set, it stands alone: the intended Spark runtime has the general assistant
+       on Ollama and continuity on a separate OpenAI-compatible service, and that
+       must not require configuring a generic custom text provider that nothing
+       else uses. A key is deliberately NOT inherited alongside an explicit
+       baseUrl — a credential belongs to the endpoint it was issued for. */
+    baseUrl: "",
+    apiKey: "",
   },
   ollamaUrl: "http://127.0.0.1:11434",
   ollamaModel: "qwen3.6:35b-a3b",
@@ -187,6 +199,8 @@ function normalizeConfig(config, options = {}) {
     ? merged.continuity.visionProvider
     : "";
   merged.continuity.visionModel = String(merged.continuity.visionModel || "");
+  merged.continuity.baseUrl = String(merged.continuity.baseUrl || "").trim();
+  merged.continuity.apiKey = String(merged.continuity.apiKey || "");
   merged.agents.maxConcurrent = Math.max(
     1,
     Math.min(3, Number(merged.agents.maxConcurrent) || 1),

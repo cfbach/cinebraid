@@ -430,8 +430,8 @@ async function vision(
     );
   if (provider === "openai")
     return callOpenAIVision(
-      cfg.openaiBaseUrl,
-      cfg.openaiKey,
+      (requestOptions.endpoint && requestOptions.endpoint.baseUrl) || cfg.openaiBaseUrl,
+      (requestOptions.endpoint && requestOptions.endpoint.apiKey) || cfg.openaiKey,
       modelOverride || cfg.openaiVisionModel || cfg.openaiModel,
       system,
       user,
@@ -441,10 +441,16 @@ async function vision(
       {},
       requestOptions,
     );
+  /* An explicit connection, used only by continuity. Its endpoint is configured
+     separately from the general custom provider's, so the caller that resolved
+     it hands it over rather than this function guessing from a provider name.
+     Absent — every other caller — the provider's own connection is used and the
+     request is byte-for-byte what it was. */
+  const endpoint = requestOptions.endpoint && typeof requestOptions.endpoint === "object" ? requestOptions.endpoint : null;
   if (provider === "custom")
     return callOpenAIVision(
-      cfg.customBaseUrl,
-      cfg.customKey,
+      endpoint?.baseUrl || cfg.customBaseUrl,
+      endpoint ? endpoint.apiKey || "" : cfg.customKey,
       modelOverride || cfg.customVisionModel || cfg.customModel,
       system,
       user,

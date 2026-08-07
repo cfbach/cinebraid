@@ -28,6 +28,7 @@ let ollamaPort = 0;
 let ollamaServer = null;
 const visionRequests = [];
 const ollamaRequests = [];
+let deadPort = 0;
 let child = null;
 let base = "";
 let output = "";
@@ -172,6 +173,9 @@ async function main() {
 
   writeProject();
   writeConfig();
+  /* A port nothing listens on, for the endpoint-precedence and fail-closed
+     cases below. Reserved and released so it stays free. */
+  deadPort = await freePort();
   const port = await freePort();
   base = `http://127.0.0.1:${port}`;
   child = spawn(process.execPath, ["server.js"], {
@@ -358,6 +362,90 @@ async function main() {
   assert(!JSON.stringify(unsetHealth.body).includes("/v1"), "no endpoint may leak even when unconfigured");
   writeConfig();
 
+  /* ---- 14c. continuity stands alone (packaged-acceptance defect D2) --------
+
+     The intended runtime has the general assistant on Ollama and continuity on
+     its own OpenAI-compatible service. Readiness used to go through
+     providerConfigured("custom"), which demands customBaseUrl AND customModel —
+     customModel being the general TEXT model, which continuity never sends
+     anything to. A valid standalone continuity service reported not ready
+     because an unrelated text model was blank. */
+  const standalone = {
+    assistant: { provider: "ollama", visionProvider: "ollama" },
+    customBaseUrl: "",
+    customModel: "",
+    customVisionModel: "",
+    continuity: {
+      visionProvider: "custom",
+      baseUrl: `http://127.0.0.1:${upstreamPort}/v1`,
+      visionModel: "nemotron_3_nano_omni",
+    },
+  };
+  writeConfig(standalone);
+  const alone = await request("/api/system/health");
+  assert.strictEqual(alone.body.assistant.continuity.ready, true, "continuity with its own endpoint and model must be ready without any generic custom text model");
+  assert.strictEqual(alone.body.assistant.continuity.model, "nemotron_3_nano_omni");
+  assert.strictEqual(alone.body.assistant.text.provider, "ollama", "the general assistant is untouched by continuity's connection");
+  assert(!JSON.stringify(alone.body).includes(`127.0.0.1:${upstreamPort}`), "a standalone continuity endpoint must not leak into health either");
+
+  /* And it really reaches its own address, not the shared one.
+
+     The cache is purged first because its key is deliberately the qualified
+     identity — contract, prompt, image, manifest, provider, model — and does not
+     include the endpoint address, so an already-observed frame would answer from
+     store and prove nothing about dispatch. */
+  const purgeCache = () => request("/api/continuity/cache", { method: "DELETE" });
+  await purgeCache();
+  const beforeStandalone = visionRequests.length;
+  const aloneObserve = await postObserve({ shotId: "S-01", frameId: "frame-a" });
+  assert.strictEqual(aloneObserve.response.status, 200, JSON.stringify(aloneObserve.body));
+  assert.strictEqual(visionRequests.length, beforeStandalone + 1, "a standalone continuity endpoint must still dispatch exactly one observation");
+  assert.strictEqual(countImages(visionRequests.at(-1)), 1, "one image per request is unchanged by the endpoint split");
+
+  /* Loosening continuity must not loosen the generic text provider. */
+  writeConfig({ ...standalone, assistant: { provider: "custom", visionProvider: "ollama" } });
+  const textAlone = await request("/api/system/health");
+  assert.strictEqual(textAlone.body.assistant.text.ready, false, "a custom TEXT provider must still require its own base URL and model");
+  assert.strictEqual(textAlone.body.assistant.continuity.ready, true, "continuity readiness must not be dragged down with it");
+
+  /* A continuity endpoint takes precedence over the shared one when both exist. */
+  writeConfig({
+    continuity: { visionProvider: "custom", baseUrl: `http://127.0.0.1:${upstreamPort}/v1`, visionModel: "nemotron_3_nano_omni" },
+    customBaseUrl: `http://127.0.0.1:${deadPort}/v1`,
+    customModel: "nemotron_3_nano_omni",
+  });
+  const precedence = await request("/api/system/health");
+  assert.strictEqual(precedence.body.assistant.continuity.ready, true, "continuity must use its own endpoint, not the shared unreachable one");
+  await purgeCache();
+  const beforePrecedence = visionRequests.length;
+  assert.strictEqual((await postObserve({ shotId: "S-01", frameId: "frame-b" })).response.status, 200, "continuity must reach its own endpoint while the shared one is dead");
+  assert.strictEqual(visionRequests.length, beforePrecedence + 1);
+
+  /* An unreachable continuity endpoint fails closed rather than silently
+     falling back to the shared connection. */
+  writeConfig({ continuity: { visionProvider: "custom", baseUrl: `http://127.0.0.1:${deadPort}/v1`, visionModel: "nemotron_3_nano_omni" } });
+  /* health exposes only ready/provider/model; the wording lives on agents/status. */
+  const unreachable = await request("/api/agents/status");
+  assert.strictEqual(unreachable.body.capabilities.continuity.ready, false, "an unreachable continuity endpoint must fail closed");
+  assert(/cannot reach/i.test(unreachable.body.capabilities.continuity.message || ""), unreachable.body.capabilities.continuity.message);
+  assert(!JSON.stringify(unreachable.body).includes(`127.0.0.1:${deadPort}`), "a failing continuity endpoint must not be named to the browser");
+
+  /* An endpoint but no model is not configured, and says which field is missing. */
+  writeConfig({ continuity: { visionProvider: "custom", baseUrl: `http://127.0.0.1:${upstreamPort}/v1`, visionModel: "" }, customVisionModel: "", customModel: "" });
+  const noModel = await request("/api/agents/status");
+  assert.strictEqual(noModel.body.capabilities.continuity.ready, false, "continuity with no model must report not ready");
+  assert(/no model/i.test(noModel.body.capabilities.continuity.message || ""), noModel.body.capabilities.continuity.message);
+
+  /* BACKWARD COMPATIBILITY: a config written before continuity.baseUrl existed
+     inherits the shared custom connection exactly as it did. */
+  writeConfig();
+  const inherited = await request("/api/system/health");
+  assert.strictEqual(inherited.body.assistant.continuity.ready, true, "a pre-existing config with no continuity endpoint must keep working through the shared custom connection");
+  await purgeCache();
+  const beforeInherited = visionRequests.length;
+  assert.strictEqual((await postObserve({ shotId: "S-01", frameId: "frame-a" })).response.status, 200);
+  assert.strictEqual(visionRequests.length, beforeInherited + 1, "the inherited connection must still dispatch to the shared endpoint");
+
   /* ---- 15. REGRESSION: existing multi-image routes are unchanged ---- */
   const beforeMulti = ollamaRequests.length;
   const continuityBeforeMulti = visionRequests.length;
@@ -378,7 +466,7 @@ async function main() {
   /* And the continuity provider was not touched by the multi-image route. */
   assert.strictEqual(visionRequests.length, continuityBeforeMulti, "the existing review route must not reach the continuity provider");
 
-  console.log(`Continuity observe-route suite passed: exactly one image per request across ${visionRequests.length} observations, the frozen prompt and Phase 1 generated schema are sent verbatim with temperature 0.2 / top_k 1 / max_tokens 4096 / thinking disabled, malformed and reasoning-only replies fail loudly, unknown shot/frame/image and empty manifests are refused before dispatch, local-only refuses a remote endpoint without sending anything, health reports continuity ready while generic vision is not and never leaks the endpoint, and the existing multi-image review route is byte-for-byte unchanged.`);
+  console.log(`Continuity observe-route suite passed: exactly one image per request across ${visionRequests.length} observations, the frozen prompt and Phase 1 generated schema are sent verbatim with temperature 0.2 / top_k 1 / max_tokens 4096 / thinking disabled, malformed and reasoning-only replies fail loudly, unknown shot/frame/image and empty manifests are refused before dispatch, local-only refuses a remote endpoint without sending anything, health reports continuity ready while generic vision is not and never leaks the endpoint, continuity stands alone on its own endpoint without any generic custom text model while a custom TEXT provider still requires its own, its endpoint takes precedence over the shared one and fails closed rather than falling back, a config written before that field still inherits the shared connection, and the existing multi-image review route is byte-for-byte unchanged.`);
 }
 
 main()

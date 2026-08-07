@@ -157,6 +157,9 @@ function assistantConfigPatch() {
   if ($("#cfg-continuity-provider")) {
     patch.continuity = {
       visionProvider: v("#cfg-continuity-provider", CONFIG.continuity?.visionProvider || ""),
+      /* Blank keeps continuity on the chosen provider's own connection, which is
+         how every install written before this field behaved. */
+      baseUrl: v("#cfg-continuity-base", CONFIG.continuity?.baseUrl || "").trim(),
       visionModel: v("#cfg-continuity-model", CONFIG.continuity?.visionModel || "").trim(),
     };
   }
@@ -233,6 +236,12 @@ window.saveConfig = async (scope = "assistant") => {
     return toast(failed);
   }
   CONFIG = await fetch("/api/config").then((response) => response.json()).catch(() => ({ ...CONFIG, ...body, generation: { ...(CONFIG.generation || {}), ...(body.generation || {}), fal: { ...(CONFIG.generation?.fal || {}), ...(body.generation?.fal || {}), apiKey: body.generation?.fal?.apiKey ? "••••saved" : "" } } }));
+  /* Capability readiness is derived from this configuration, so it is stale the
+     moment the configuration changes. Ask once, here, on the save the user just
+     made — the workspace then shows a newly configured provider as available
+     without a page reload, and a removed one as unavailable. Deliberately one
+     request on an explicit action rather than any kind of polling. */
+  if (typeof refreshAgentStatus === "function") await refreshAgentStatus(false);
   settingsPanelSaved();
   toast(generation ? "Generation settings saved" : "Assistant settings saved");
   route();
