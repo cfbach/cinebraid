@@ -293,6 +293,8 @@ async function main() {
     "build-history.js",
     "clarity-consolidation.js",
     "composer-motion.js",
+    "continuity-cache.js",
+    "continuity-compare-route.js",
     "continuity-comparison.js",
     "continuity-correction-modal.js",
     "continuity-correction-real-browser.py",

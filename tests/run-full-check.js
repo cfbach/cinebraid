@@ -40,6 +40,8 @@ const nodeSuites = [
   "check:continuity-comparison",
   "check:continuity-prompt",
   "check:continuity-observe",
+  "check:continuity-cache",
+  "check:continuity-compare",
 ];
 
 const browserSuites = ["check:manual-browser", "check:browser-real", "check:h3-browser", "check:preview-layout", "check:ui-state"];
