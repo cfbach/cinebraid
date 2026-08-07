@@ -34,6 +34,9 @@ let base = "";
 let output = "";
 /* What the mock returns for the next structured request. */
 let nextReply = null;
+/* Rewrites an otherwise-valid reply, so a decoder termination defect can be
+   reproduced against whatever entity set the request actually declared. */
+let upstreamTransform = null;
 
 /* A tiny valid PNG so the route has a real image to read and base64. */
 const PNG = Buffer.from(
@@ -153,6 +156,8 @@ async function main() {
     res.setHeader("content-type", "application/json");
     if (req.url.endsWith("/chat/completions")) {
       if (countImages(body)) visionRequests.push(body);
+      if (upstreamTransform && nextReply === null && countImages(body))
+        return res.end(JSON.stringify({ choices: [{ message: { content: upstreamTransform(body) } }] }));
       const content = nextReply === null ? validReplyFor(body) : nextReply;
       return res.end(JSON.stringify({ choices: [{ message: typeof content === "object" ? content : { content } }] }));
     }
@@ -446,6 +451,104 @@ async function main() {
   assert.strictEqual((await postObserve({ shotId: "S-01", frameId: "frame-a" })).response.status, 200);
   assert.strictEqual(visionRequests.length, beforeInherited + 1, "the inherited connection must still dispatch to the shared endpoint");
 
+  /* ---- 14d. decoder termination defects recover end to end ---------------
+
+     The Spark qualification found the model omitting one closing brace and then
+     spending its whole token budget on legal whitespace. The answer inside is
+     complete and correct; only the envelope is broken. It must reach the same
+     validator, be cached like any other observation, and cost exactly one
+     provider request — no retry, because nothing about the request was wrong. */
+  await purgeCache();
+  writeConfig();
+
+  /* A. a normal valid response is unaffected. */
+  nextReply = null;
+  let count = visionRequests.length;
+  let observed = await postObserve({ shotId: "S-01", frameId: "frame-a" });
+  assert.strictEqual(observed.response.status, 200, JSON.stringify(observed.body));
+  assert.strictEqual(observed.body.engine.recovery, "none", "a valid response reports no recovery");
+  assert.strictEqual(observed.body.validation.usable, true);
+  assert.strictEqual(visionRequests.length, count + 1, "one observation, one request");
+  /* The intact reading, to compare the recovered one against field by field. */
+  const intactValidation = observed.body.validation;
+  const intactObservation = observed.body.observation;
+
+  /* B. missing final brace plus pathological trailing whitespace. */
+  await purgeCache();
+  nextReply = null;
+  const truncate = (body) => validReplyFor(body).slice(0, -1) + " \n\t".repeat(1500);
+  upstreamTransform = truncate;
+  count = visionRequests.length;
+  observed = await postObserve({ shotId: "S-01", frameId: "frame-a" });
+  assert.strictEqual(observed.response.status, 200, `an unterminated but complete observation must not be discarded: ${JSON.stringify(observed.body)}`);
+  assert.strictEqual(observed.body.engine.recovery, "eof-closure");
+  assert.strictEqual(observed.body.validation.usable, true, "the recovered observation must pass the existing validator");
+  /* The strongest statement available: recovering the envelope produces exactly
+     the reading the intact reply produced. Recovery is never reported as visual
+     uncertainty, because it says nothing about the image. */
+  assert.deepStrictEqual(observed.body.observation, intactObservation, "a recovered observation must be identical to the intact one");
+  assert.strictEqual(observed.body.validation.status, intactValidation.status, "recovery must not change the validation status");
+  assert.deepStrictEqual(observed.body.validation.flags, intactValidation.flags, "recovery must raise no new validation flag");
+  assert.strictEqual(visionRequests.length, count + 1, "recovery must not cost a retry");
+  assert.strictEqual(observed.body.engine.attempts, 1, "the request itself was never wrong, so it is never re-sent");
+
+  /* The recovered observation is cached like any other, and only the
+     normalized observation is stored. */
+  observed = await postObserve({ shotId: "S-01", frameId: "frame-a" });
+  assert.strictEqual(observed.body.cached, true, "a recovered observation is ordinary evidence and is cached");
+  assert.strictEqual(observed.body.engine.recovery, "none", "a cache hit parsed nothing");
+  const storedCache = JSON.parse(fs.readFileSync(path.join(PROJECT_DIR, "continuity-observations.json"), "utf8"));
+  const storedEntry = Object.values(storedCache.entries)[0];
+  assert.strictEqual(storedEntry.observation.coordinate_mode, "permille");
+  assert(!JSON.stringify(storedCache).includes("recovery"), "how the envelope arrived is not evidence and is not persisted");
+
+  /* C. a raw form feed inside a string. */
+  await purgeCache();
+  upstreamTransform = (body) => validReplyFor(body).replace("visible in frame", "visible" + String.fromCharCode(0x0c) + " in frame");
+  count = visionRequests.length;
+  observed = await postObserve({ shotId: "S-01", frameId: "frame-b" });
+  assert.strictEqual(observed.response.status, 200, JSON.stringify(observed.body));
+  assert.strictEqual(observed.body.engine.recovery, "control-character");
+  assert.strictEqual(observed.body.validation.usable, true);
+  assert.strictEqual(visionRequests.length, count + 1, "control-character recovery must not cost a retry");
+
+  /* A recovered pair compares normally afterwards. */
+  upstreamTransform = truncate;
+  const compared = await request("/api/continuity/compare", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ shotId: "S-01", frameA: "frame-a", frameB: "frame-b" }),
+  });
+  assert.strictEqual(compared.response.status, 200, JSON.stringify(compared.body));
+  assert.strictEqual(compared.body.analysis.usable, true, "recovered observations compare like any other");
+  assert(Array.isArray(compared.body.entities) && compared.body.entities.length > 0);
+
+  /* D. genuinely malformed output is still refused, and still costs the
+        existing explicit failure rather than a fabricated observation. */
+  await purgeCache();
+  upstreamTransform = null;
+  nextReply = '{"coordinate_mode":"permille","entities":{"CHAR-KAI":{"presence":"present" "occlusion":"none"}}}';
+  const malformed = await postObserve({ shotId: "S-01", frameId: "frame-a" });
+  assert.strictEqual(malformed.response.status, 502, "JSON needing a comma must remain unparsable");
+  assert(/parsable JSON/i.test(malformed.body.error || ""), malformed.body.error);
+  nextReply = '{"coordinate_mode":"permille","entities":{"CHAR-KAI":{"presence":"present","evidence":"unterminat';
+  const unterminated = await postObserve({ shotId: "S-01", frameId: "frame-a" });
+  assert.strictEqual(unterminated.response.status, 502, "an unterminated string must never be closed");
+
+  /* E. structurally recoverable but semantically wrong stays wrong. */
+  nextReply = null;
+  upstreamTransform = (body) => {
+    const parsed = JSON.parse(validReplyFor(body));
+    parsed.coordinate_mode = "pixels";
+    return JSON.stringify(parsed).slice(0, -1);
+  };
+  const wrongFrame = await postObserve({ shotId: "S-01", frameId: "frame-a" });
+  assert.strictEqual(wrongFrame.response.status, 200);
+  assert.strictEqual(wrongFrame.body.engine.recovery, "eof-closure", "it recovered structurally");
+  assert.strictEqual(wrongFrame.body.validation.usable, false, "and was still refused on its merits");
+  assert(wrongFrame.body.validation.blockingFlags.includes("invalid_coordinate_mode"));
+  upstreamTransform = null;
+  await purgeCache();
+
   /* ---- 15. REGRESSION: existing multi-image routes are unchanged ---- */
   const beforeMulti = ollamaRequests.length;
   const continuityBeforeMulti = visionRequests.length;
@@ -466,7 +569,7 @@ async function main() {
   /* And the continuity provider was not touched by the multi-image route. */
   assert.strictEqual(visionRequests.length, continuityBeforeMulti, "the existing review route must not reach the continuity provider");
 
-  console.log(`Continuity observe-route suite passed: exactly one image per request across ${visionRequests.length} observations, the frozen prompt and Phase 1 generated schema are sent verbatim with temperature 0.2 / top_k 1 / max_tokens 4096 / thinking disabled, malformed and reasoning-only replies fail loudly, unknown shot/frame/image and empty manifests are refused before dispatch, local-only refuses a remote endpoint without sending anything, health reports continuity ready while generic vision is not and never leaks the endpoint, continuity stands alone on its own endpoint without any generic custom text model while a custom TEXT provider still requires its own, its endpoint takes precedence over the shared one and fails closed rather than falling back, a config written before that field still inherits the shared connection, and the existing multi-image review route is byte-for-byte unchanged.`);
+  console.log(`Continuity observe-route suite passed: exactly one image per request across ${visionRequests.length} observations, the frozen prompt and Phase 1 generated schema are sent verbatim with temperature 0.2 / top_k 1 / max_tokens 4096 / thinking disabled, malformed and reasoning-only replies fail loudly, unknown shot/frame/image and empty manifests are refused before dispatch, local-only refuses a remote endpoint without sending anything, health reports continuity ready while generic vision is not and never leaks the endpoint, continuity stands alone on its own endpoint without any generic custom text model while a custom TEXT provider still requires its own, its endpoint takes precedence over the shared one and fails closed rather than falling back, a config written before that field still inherits the shared connection, a decoder that omits a closing brace or emits a raw control character is recovered into the identical reading at the cost of no retry, cached like any other evidence and compared normally, while JSON needing a comma or an unterminated string stays unparsable and a structurally recovered but wrong-coordinate answer is still refused, and the existing multi-image review route is byte-for-byte unchanged.`);
 }
 
 main()

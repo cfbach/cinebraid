@@ -299,6 +299,7 @@ async function main() {
     "continuity-correction-modal.js",
     "continuity-correction-real-browser.py",
     "continuity-correction-workflow.js",
+    "continuity-json-recovery.js",
     "continuity-manifest.js",
     "continuity-observation.js",
     "continuity-observe-route.js",
