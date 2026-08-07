@@ -1036,6 +1036,14 @@ function renderProjectFailureScreen(failure, message) {
 }
 async function load() {
   applyTheme();
+  /* Every project open goes through here — boot, the switcher, a rollback, a
+     restore, a delete, an import — so this is the one place that can honestly
+     say "the record on screen is being replaced". Session-scoped derived
+     display state is discarded with it. The continuity map is additionally
+     keyed by project, so a leak is structurally impossible either way; this
+     also covers reopening the SAME project, where the slug never changes but
+     the record does. */
+  if (typeof resetContinuityWorkspaceState === "function") resetContinuityWorkspaceState();
   const projectResponse = await fetch("/api/project");
   if (projectResponse.status === 404) {
     const data = await projectResponse.json().catch(() => ({}));

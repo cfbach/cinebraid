@@ -45,24 +45,85 @@ node --version
 If it is older than 24, install Node 24 from NodeSource or `nvm` **for your user
 only**. Do not change a Node that the existing CineBraid depends on.
 
-## 2. A separate application directory
+## 2. A QA candidate, built from a merged commit
 
-```bash
-mkdir -p "$HOME/cinebraid-qa"
-cd "$HOME/cinebraid-qa"
+The accepted internal flow is:
+
+```
+MERGED MAIN
+    -> Spark fetches the exact merged SHA from GitHub
+    -> package on the Spark
+    -> record the artifact SHA256
+    -> install as a NEW immutable QA candidate
+    -> packaged acceptance
+    -> ACCEPTED
+    -> release eligible
 ```
 
-Copy `cinebraid-6.6.5-private.1-runtime.tar.gz` here, verify it, and extract:
+Every step exists for a reason. Building **on the Spark from a named commit**
+means the candidate provably corresponds to something on `main` rather than to
+whatever happened to be in a working tree. Recording the **artifact SHA256**
+means an acceptance verdict is attached to specific bytes. Installing a **new**
+candidate directory rather than overwriting the previous one means a failed
+candidate can be compared against, and rolled back to, without rebuilding.
 
 ```bash
-sha256sum -c SHA256SUMS.txt
-tar -xzf cinebraid-6.6.5-private.1-runtime.tar.gz
-cd cinebraid-6.6.5-private.1
+mkdir -p "$HOME/cinebraid-qa/src" "$HOME/cinebraid-qa/artifacts"
+cd "$HOME/cinebraid-qa/src"
+
+# First time only.
+git clone https://github.com/cfbach/cinebraid-app.git .
+
+MERGED_SHA=<the merge commit on main>
+git fetch origin main
+git checkout --detach "$MERGED_SHA"
+git rev-parse HEAD          # must print $MERGED_SHA
+git status --porcelain      # must print nothing
 ```
+
+Build the runtime archive from that exact tree and record what came out:
+
+```bash
+npm ci
+npm run release:build
+
+ARTIFACT=$(ls -t dist/*-runtime.tar.gz | head -n1)
+sha256sum "$ARTIFACT" | tee "$HOME/cinebraid-qa/artifacts/$(basename "$ARTIFACT").sha256"
+cp "$ARTIFACT" "$HOME/cinebraid-qa/artifacts/"
+```
+
+Keep that `.sha256` file. It is what a later acceptance verdict refers to, and
+it is how you prove months from now which bytes were accepted.
 
 Use the **runtime tarball**, not the Windows ZIP. It carries no `node_modules`,
 so nothing x64-specific reaches the Spark's arm64 Linux — dependencies are built
-and installed here, in the next step.
+and installed in the candidate directory, in step 4.
+
+### Install it as a new immutable candidate
+
+One directory per candidate, named for the commit. Never extract a new build
+over an old one: a stale file left behind by an overwrite is exactly the kind of
+thing packaged acceptance is supposed to rule out.
+
+```bash
+CANDIDATE="$HOME/cinebraid-qa/candidate-${MERGED_SHA:0:7}"
+mkdir -p "$CANDIDATE"
+cd "$CANDIDATE"
+
+sha256sum -c "$HOME/cinebraid-qa/artifacts/$(basename "$ARTIFACT").sha256"
+tar -xzf "$HOME/cinebraid-qa/artifacts/$(basename "$ARTIFACT")"
+cd cinebraid-*
+```
+
+Treat the candidate directory as read-only from here on. Projects and config
+live outside it (steps 3 and 5), so a candidate can be replaced without
+disturbing either.
+
+> **Copying a prebuilt artifact from a workstation is no longer the supported
+> flow.** It cannot answer "which commit is this?" and it puts an x64 machine in
+> the chain for an arm64 install. If you have to do it for a one-off, record the
+> SHA256 and the commit by hand and say so in the acceptance note — but the
+> fetch-and-build-on-Spark path above is what an acceptance verdict assumes.
 
 ## 3. Separate projects root and config path
 
@@ -89,7 +150,8 @@ Start it directly rather than through `./start.sh`. The launcher hardcodes
 rather than `npm ci`, neither of which is what an isolated QA install wants.
 
 ```bash
-cd "$HOME/cinebraid-qa/cinebraid-6.6.5-private.1"
+# The candidate directory from step 2 — one per merged commit.
+cd "$CANDIDATE"/cinebraid-*
 
 PORT=4488 \
 CINEBRAID_HOST=127.0.0.1 \
@@ -186,20 +248,28 @@ That is the whole rollback. The QA install writes only inside
 `$HOME/cinebraid-qa`, so removing it leaves no trace and cannot affect the
 production install, its projects or its configuration.
 
-## 11. Update to a later release
+## 11. Move to a later candidate
+
+Stop the server, then repeat step 2 for the new merged SHA — fetch it, build on
+the Spark, record the artifact SHA256, and extract into a **new** candidate
+directory:
 
 ```bash
 kill "$(cat "$HOME/cinebraid-qa/qa-server.pid")"
-cd "$HOME/cinebraid-qa"
-tar -xzf cinebraid-<new-version>-runtime.tar.gz
-cd cinebraid-<new-version>
-npm ci
 ```
 
-Then start it with the **same** `PORT`, `CINEBRAID_PROJECTS_ROOT` and
-`CINEBRAID_CONFIG_PATH` as before. Because both live outside the extracted
-directory, your QA projects and settings survive the upgrade, and the old
-version directory can be deleted once the new one is confirmed working.
+Then start the new candidate with the **same** `PORT`,
+`CINEBRAID_PROJECTS_ROOT` and `CINEBRAID_CONFIG_PATH` as before. Because both
+live outside the candidate directory, your QA projects and settings survive the
+change, and the previous candidate stays on disk until the new one is accepted —
+which is what makes rolling back a matter of starting the old directory again.
+
+### Acceptance and what it entitles
+
+A candidate is **accepted** when packaged acceptance passes against that exact
+artifact SHA256, on this install, with the real resident models. Only an
+accepted candidate is **release eligible**. Acceptance is a statement about
+specific bytes: rebuild, and the verdict does not carry over.
 
 ## 12. Collect local-model logs without exposing project content
 

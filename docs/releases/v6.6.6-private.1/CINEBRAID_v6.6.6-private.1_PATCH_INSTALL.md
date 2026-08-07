@@ -113,8 +113,38 @@ Set **Vision assistant** explicitly. Leaving it on *Same as main assistant* poin
 multi-image review at your custom server, which is only correct if that server
 accepts multiple images in one request.
 
-The base URL and key stay on the CineBraid server; the browser never receives them
-and never contacts the model service directly.
+**API keys** stay on the CineBraid server. They are stored server-side and read
+back masked (`••••` plus the last four characters), so a key you have saved is
+never returned to the browser in full.
+
+**The base URL is not a secret and is not treated as one.** `GET /api/config`
+returns it, because Settings has to show you the address you configured in the
+field you type it into. What the address does *not* appear in is the normal
+status surfaces — `/api/system/health` and `/api/agents/status` report whether a
+capability is ready, with its provider and model, and never its address. The
+browser also never contacts the model service directly: every request goes
+through the CineBraid server.
+
+If your endpoint address is itself sensitive, treat access to CineBraid's own
+port as the control. Keep it on loopback and reach it over SSH.
+
+## 6b. Optional — continuity analysis on its own server
+
+Continuity is configured separately from the main assistant, in the same
+**Settings → Assistant** panel, because it sends exactly one image per request
+against a frozen schema. It does **not** require the main assistant to be a
+custom server, and it does not use the generic custom text model.
+
+| Field | Value |
+|---|---|
+| Continuity provider | *Custom / OpenAI-compatible server*, or *OpenAI API* |
+| Continuity endpoint | that server's base URL including `/v1`; blank uses the chosen provider's own address |
+| Continuity model | the model that server serves |
+
+So a valid configuration is: main assistant on **Local AI (Ollama)**, generic
+vision on Ollama or unavailable, and continuity on a separate OpenAI-compatible
+service. Saving takes effect immediately — the shot workspace picks up the new
+readiness without reloading the page.
 
 ## Choosing a different port, projects root or config path
 
