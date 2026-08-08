@@ -13,10 +13,12 @@ const crypto = require("crypto");
 const { spawnSync } = require("child_process");
 const { llm, embed, vision, isLocalProviderEndpoint } = require("./llm");
 const {
-  isMasked,
+  maskSecretValue,
+  maskSecrets,
   mergeConfig,
   migrateConfigFile,
   readConfig,
+  restoreSecrets,
   writeConfig,
 } = require("./config");
 const PromptEngine = require("./prompt-engine");
@@ -1089,44 +1091,28 @@ app.get("/api/docs/:name", (req, res) => {
   res.type("text/plain").send(fs.readFileSync(f, "utf8"));
 });
 
-/* ---- config (API key stays server-side; masked on read) ---- */
+/* ---- config (credentials stay server-side; masked on read) ----
+   Which fields are credentials is declared once, in config.js's CONFIG_SECRETS.
+   Both halves below derive from it, so a new secret is a line in that list rather
+   than an edit to a mask list here and a restore list a few lines down. */
 app.get("/api/config", (req, res) => {
   const c = readConfig();
-  const mask = (v) => (v ? "••••" + String(v).slice(-4) : "");
-  res.json({
-    ...c,
-    anthropicKey: mask(c.anthropicKey),
-    openaiKey: mask(c.openaiKey),
-    customKey: mask(c.customKey),
-    generation: {
-      ...(c.generation || {}),
-      fal: {
-        ...((c.generation || {}).fal || {}),
-        apiKey: mask(process.env.FAL_KEY || c.generation?.fal?.apiKey),
-        keySource: process.env.FAL_KEY ? "environment" : c.generation?.fal?.apiKey ? "settings" : "none",
-      },
-    },
-    editorPass: c.editorPass ? "(set)" : "",
-    viewerPass: c.viewerPass ? "(set)" : "",
-    authSecret: undefined,
-  });
+  const safe = maskSecrets(c);
+  /* FAL's displayed key reflects the FAL_KEY environment override, which is not
+     part of the stored config and so is not something the registry can see. */
+  if (safe.generation?.fal) {
+    const envFalKey = process.env.FAL_KEY || "";
+    safe.generation.fal.apiKey = maskSecretValue(envFalKey || c.generation?.fal?.apiKey);
+    safe.generation.fal.keySource = envFalKey ? "environment" : c.generation?.fal?.apiKey ? "settings" : "none";
+  }
+  res.json(safe);
 });
 app.put("/api/config", (req, res) => {
   const current = readConfig();
-  const patch =
-    req.body && typeof req.body === "object" ? structuredClone(req.body) : {};
-
-  if (typeof patch.editorPass !== "string") delete patch.editorPass;
-  if (typeof patch.viewerPass !== "string") delete patch.viewerPass;
-
-  for (const key of ["anthropicKey", "openaiKey", "customKey"]) {
-    if (isMasked(patch[key])) patch[key] = current[key] || "";
-  }
-
-  const incomingFalGenerationKey = patch.generation?.fal?.apiKey;
-  if (isMasked(incomingFalGenerationKey)) {
-    patch.generation.fal.apiKey = current.generation?.fal?.apiKey || "";
-  }
+  const patch = restoreSecrets(
+    req.body && typeof req.body === "object" ? req.body : {},
+    current,
+  );
 
   const storageKeys = ["projectRoot", "mediaRoot", "outputRoot", "backupRoot"];
   const attemptedStorageKeys = storageKeys.filter((key) => Object.prototype.hasOwnProperty.call(patch.workspace || {}, key));

@@ -148,6 +148,143 @@ function isMasked(value) {
   return typeof value === "string" && value.startsWith(MASK_PREFIX);
 }
 
+/* ---------------------------------------------------------------------------
+   The config secret registry.
+
+   Which configuration fields are credentials is declared HERE, once. The
+   read path (masking on GET /api/config) and the write path (restoring a
+   round-tripped placeholder on PUT /api/config) both derive from this list.
+
+   They used to be two hand-maintained enumerations in the route handlers, and
+   continuity.apiKey was added without updating either — so it left the server in
+   cleartext. A field is secret because it is declared secret, never because a
+   handler happened to remember it and never because its name contains "key".
+
+   Three presentation modes, all of which already existed and are preserved:
+
+     masked    the value is replaced by MASK_PREFIX + its last four characters.
+               A masked value sent back means "keep what is stored".
+     presence  the value is replaced by a set/unset marker. Used for passcodes,
+               where even the last four characters are worth withholding.
+     omit      the key is removed entirely, and is never accepted from a patch.
+               Used for a secret the client has no business seeing or setting.
+
+   `path` is dot-separated. A segment written `name[*]` means "every element of
+   that array", and must be followed by at least one further segment; when array
+   elements carry a stable id, `identity` names the field to correlate patch
+   elements to stored elements by, rather than by position. Nothing uses arrays
+   today — the grammar exists so that a future collection of account credentials
+   is a line in this list rather than another pair of hand-written handlers. */
+const SECRET_PRESENCE_SET = "(set)";
+const SECRET_PRESENCE_UNSET = "";
+const CONFIG_SECRETS = [
+  { path: "anthropicKey", mode: "masked" },
+  { path: "openaiKey", mode: "masked" },
+  { path: "customKey", mode: "masked" },
+  { path: "continuity.apiKey", mode: "masked" },
+  { path: "generation.fal.apiKey", mode: "masked" },
+  { path: "editorPass", mode: "presence" },
+  { path: "viewerPass", mode: "presence" },
+  { path: "authSecret", mode: "omit" },
+];
+
+function maskSecretValue(value) {
+  return value ? MASK_PREFIX + String(value).slice(-4) : "";
+}
+
+function parseSecretPath(path) {
+  return String(path)
+    .split(".")
+    .map((segment) => {
+      const each = /^(.+)\[\*\]$/.exec(segment);
+      return each ? { key: each[1], each: true } : { key: segment, each: false };
+    });
+}
+
+/* Walks a declared path through a value and its stored counterpart together, so a
+   restore can see both the incoming placeholder and the secret it stands for.
+   `stored` may be undefined throughout; masking passes nothing for it. Only
+   existing objects are descended into — a patch that omits a branch keeps
+   omitting it, because creating the branch here would merge empty defaults over
+   settings the caller never sent. */
+function visitSecretPath(node, stored, segments, index, visit) {
+  if (!isPlainObject(node)) return;
+  const segment = segments[index];
+  const storedNode = isPlainObject(stored) ? stored : null;
+  if (segment.each) {
+    const items = node[segment.key];
+    if (!Array.isArray(items) || index === segments.length - 1) return;
+    const storedItems = storedNode && Array.isArray(storedNode[segment.key]) ? storedNode[segment.key] : [];
+    const identity = segments[index].identity;
+    items.forEach((item, position) => {
+      const match = identity && isPlainObject(item)
+        ? storedItems.find((candidate) => isPlainObject(candidate) && candidate[identity] === item[identity])
+        : storedItems[position];
+      visitSecretPath(item, match, segments, index + 1, visit);
+    });
+    return;
+  }
+  if (index === segments.length - 1) {
+    visit(node, storedNode, segment.key);
+    return;
+  }
+  visitSecretPath(node[segment.key], storedNode ? storedNode[segment.key] : undefined, segments, index + 1, visit);
+}
+
+function secretSegments(secret) {
+  const segments = parseSecretPath(secret.path);
+  if (secret.identity) {
+    for (const segment of segments) if (segment.each) segment.identity = secret.identity;
+  }
+  return segments;
+}
+
+/* A copy of the config safe to send to a browser. Never mutates the input. */
+function maskSecrets(config, registry = CONFIG_SECRETS) {
+  const safe = structuredClone(isPlainObject(config) ? config : {});
+  for (const secret of registry) {
+    visitSecretPath(safe, undefined, secretSegments(secret), 0, (node, _stored, key) => {
+      if (secret.mode === "omit") {
+        delete node[key];
+        return;
+      }
+      if (secret.mode === "presence") {
+        node[key] = node[key] ? SECRET_PRESENCE_SET : SECRET_PRESENCE_UNSET;
+        return;
+      }
+      node[key] = maskSecretValue(node[key]);
+    });
+  }
+  return safe;
+}
+
+/* Replaces placeholders in an incoming patch with the secrets they stand for, so
+   a client that round-trips what GET gave it changes nothing. A genuinely new
+   value passes through, and so does "" — clearing a secret by sending an empty
+   string is existing behaviour and stays. Never mutates the input. */
+function restoreSecrets(patch, current, registry = CONFIG_SECRETS) {
+  const next = structuredClone(isPlainObject(patch) ? patch : {});
+  for (const secret of registry) {
+    visitSecretPath(next, current, secretSegments(secret), 0, (node, stored, key) => {
+      if (!Object.prototype.hasOwnProperty.call(node, key)) return;
+      const storedValue = stored ? stored[key] : undefined;
+      if (secret.mode === "omit") {
+        delete node[key];
+        return;
+      }
+      if (secret.mode === "presence") {
+        /* A non-string was already ignored before this registry existed, and the
+           set-marker is a placeholder like any other: storing it would make the
+           literal "(set)" the passcode. */
+        if (typeof node[key] !== "string" || node[key] === SECRET_PRESENCE_SET) delete node[key];
+        return;
+      }
+      if (isMasked(node[key])) node[key] = storedValue || "";
+    });
+  }
+  return next;
+}
+
 /* An optional numeric setting is either a number inside its range or blank. Anything
    else — an empty box, a stray word, an out-of-range value — normalizes to blank so
    the request layer can simply omit the field. */
@@ -244,13 +381,19 @@ function migrateConfigFile() {
 
 module.exports = {
   CONFIG_PATH,
+  CONFIG_SECRETS,
   DEFAULT_CONFIG,
   MASK_PREFIX,
+  SECRET_PRESENCE_SET,
+  SECRET_PRESENCE_UNSET,
   deepMerge,
   isMasked,
+  maskSecretValue,
+  maskSecrets,
   mergeConfig,
   migrateConfigFile,
   normalizeConfig,
   readConfig,
+  restoreSecrets,
   writeConfig,
 };
