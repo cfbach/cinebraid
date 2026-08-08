@@ -218,10 +218,20 @@ function generationConfigPatch() {
     },
   };
 }
+/* The Accounts panel holds exactly one setting: the public application id Civitai
+   uses to recognise CineBraid. The connections themselves are not settings and are
+   never patched through here — /api/config refuses to touch `accounts` at all, so
+   a credential cannot be created, changed or blanked by a configuration save. */
+function accountsConfigPatch() {
+  const input = $("#cfg-civitai-client-id");
+  if (!input) return {};
+  return { accountProviders: { civitai: { clientId: String(input.value || "").trim() } } };
+}
 window.saveConfig = async (scope = "assistant") => {
   const generation = scope === "generation";
-  const body = generation ? generationConfigPatch() : assistantConfigPatch();
-  const failed = generation ? "Could not save generation settings" : "Could not save assistant settings";
+  const accounts = scope === "accounts";
+  const body = accounts ? accountsConfigPatch() : generation ? generationConfigPatch() : assistantConfigPatch();
+  const failed = accounts ? "Could not save account settings" : generation ? "Could not save generation settings" : "Could not save assistant settings";
   setSettingsPanelState("saving");
   let r;
   try {
@@ -243,8 +253,91 @@ window.saveConfig = async (scope = "assistant") => {
      request on an explicit action rather than any kind of polling. */
   if (typeof refreshAgentStatus === "function") await refreshAgentStatus(false);
   settingsPanelSaved();
-  toast(generation ? "Generation settings saved" : "Assistant settings saved");
+  toast(accounts ? "Account settings saved" : generation ? "Generation settings saved" : "Assistant settings saved");
   route();
+};
+
+/* ---------- account connections ----------
+   Every credential-bearing exchange below happens between this CineBraid server
+   and the provider. The browser starts a connection and pastes a key; it never
+   receives a token, a refresh token or an authorization code back. */
+function accountProviderId(value) {
+  /* The panel only ever passes an id this server registered, but an onclick is a
+     string in a page, so it is re-checked rather than trusted. */
+  return /^[a-z0-9][a-z0-9-]*$/.test(String(value || "")) ? String(value) : "";
+}
+window.startAccountConnection = async (providerId) => {
+  const id = accountProviderId(providerId);
+  if (!id) return toast("That account service is not available");
+  try {
+    const response = await fetch(`/api/accounts/${encodeURIComponent(id)}/oauth/start`, { method: "POST" });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.authorizationUrl) throw new Error(data.error || "Could not start the connection");
+    /* A full-page navigation rather than a popup: the sign-in page belongs to the
+       provider, and a blocked popup is indistinguishable from a broken button. */
+    window.location.assign(data.authorizationUrl);
+  } catch (error) {
+    toast(error.message || "Could not start the connection");
+  }
+};
+window.openAccountApiKeyPrompt = (providerId) => {
+  const id = accountProviderId(providerId);
+  if (!id) return toast("That account service is not available");
+  openModal(`<h3>Use a Civitai API key</h3><p class="modal-confirm-message">Paste a personal API key from your Civitai account settings. CineBraid checks it with Civitai and keeps it on this server — it is never shown in the browser again.</p><label class="account-key-field"><span>Civitai API key</span><input id="account-api-key-input" type="password" autocomplete="off" spellcheck="false"></label><p id="account-api-key-note" class="hint" role="status"></p><div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button class="approve-btn" onclick="submitAccountApiKey('${id}')">Connect</button></div>`);
+};
+window.submitAccountApiKey = async (providerId) => {
+  const id = accountProviderId(providerId);
+  const input = $("#account-api-key-input");
+  const note = $("#account-api-key-note");
+  const apiKey = String(input?.value || "").trim();
+  if (!id || !apiKey) { if (note) note.textContent = "Enter the API key first."; return; }
+  if (note) note.textContent = "Checking the key with Civitai…";
+  try {
+    const response = await fetch(`/api/accounts/${encodeURIComponent(id)}/api-key`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ apiKey }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || "Civitai rejected this credential.");
+    if (input) input.value = "";
+    closeModal();
+    toast("Civitai connected");
+    route();
+  } catch (error) {
+    if (note) note.textContent = error.message || "Civitai rejected this credential.";
+  }
+};
+window.recheckAccountConnection = async (connectionId) => {
+  const note = $("#account-note");
+  if (note) note.textContent = "Checking with Civitai…";
+  try {
+    const response = await fetch(`/api/accounts/${encodeURIComponent(String(connectionId || ""))}/verify`, { method: "POST" });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || "Could not check the connection");
+    if (note) note.textContent = "";
+    toast("Connection checked");
+  } catch (error) {
+    if (note) note.textContent = error.message || "Could not check the connection";
+  }
+  route();
+};
+window.disconnectAccount = (connectionId) => {
+  confirmModal(
+    "Disconnect this account? CineBraid deletes the stored credential from this computer. Nothing in your production changes, and you can connect again at any time.",
+    async () => {
+      try {
+        const response = await fetch(`/api/accounts/${encodeURIComponent(String(connectionId || ""))}`, { method: "DELETE" });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.error || "Could not disconnect the account");
+        toast("Account disconnected");
+      } catch (error) {
+        toast(error.message || "Could not disconnect the account");
+      }
+      route();
+    },
+    { title: "Disconnect account", confirmLabel: "DISCONNECT" },
+  );
 };
 window.testFalGenerationConnection = async () => {
   const note = $("#fal-test-note");

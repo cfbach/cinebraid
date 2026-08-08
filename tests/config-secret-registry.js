@@ -323,12 +323,30 @@ async function main() {
     editorPass: EDITOR_PASS, viewerPass: VIEWER_PASS, authSecret: AUTH_SECRET,
   });
 
-  /* ---- B1. every declared secret is masked, and nothing leaks ---- */
+  /* ---- B1. every declared secret is masked, and nothing leaks ----
+     Two shapes, walked differently. A scalar path is a plain dot-reduce. A
+     collection path (`accounts[*].credential.…`) names every element of an array,
+     which a dot-reduce cannot express and which has nothing to walk on a config
+     with no connections — so those declarations are checked against a fixture of
+     their own, immediately below, rather than passing vacuously here. */
   const masked = maskSecrets(stored);
   assertNoSecretIn("maskSecrets output", masked);
-  for (const secret of CONFIG_SECRETS.filter((x) => x.mode === "masked")) {
+  const collectionSecrets = CONFIG_SECRETS.filter((x) => x.path.includes("[*]"));
+  for (const secret of CONFIG_SECRETS.filter((x) => x.mode === "masked" && !x.path.includes("[*]"))) {
     const value = secret.path.split(".").reduce((node, key) => (node || {})[key], masked);
     assert(String(value).startsWith(MASK_PREFIX), `${secret.path} must be masked`);
+  }
+  assert(collectionSecrets.length, "the collection grammar must stay in use, not become dead syntax");
+  {
+    const withCollection = maskSecrets({
+      accounts: [{ connectionId: "conn-fixture", credential: { accessToken: "tok-AAAA1111", refreshToken: "ref-AAAA2222", apiKey: "key-AAAA3333" } }],
+    });
+    const credential = withCollection.accounts[0].credential;
+    for (const secret of collectionSecrets) {
+      const field = secret.path.split(".").pop();
+      if (secret.mode === "omit") assert(!(field in credential), `${secret.path} must be removed entirely`);
+      else assert(String(credential[field]).startsWith(MASK_PREFIX), `${secret.path} must be masked`);
+    }
   }
   assert.strictEqual(masked.continuity.apiKey, `${MASK_PREFIX}4444`, "continuity.apiKey must be masked");
   assert.strictEqual(masked.editorPass, SECRET_PRESENCE_SET);
