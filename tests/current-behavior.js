@@ -284,6 +284,10 @@ async function main() {
 
   const tests = fs.readdirSync(path.join(ROOT, "tests")).sort();
   assert.deepStrictEqual(tests, [
+    "account-connection-contract.js",
+    "account-lan-safety.js",
+    "account-provider-adapter.js",
+    "account-secret-handling.js",
     "api-smoke.js",
     "asset-lifecycle.js",
     "automation-diagnostics.js",

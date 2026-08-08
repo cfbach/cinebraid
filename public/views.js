@@ -163,10 +163,11 @@ const ROUTES = {
 
 
   async settings() {
-    const [c, health, backupData] = await Promise.all([
+    const [c, health, backupData, accountData] = await Promise.all([
       fetch("/api/config").then((r) => r.json()),
       fetch("/api/system/health").then((r) => r.json()).catch(() => ({})),
       projectBackupList(),
+      fetch("/api/accounts").then((r) => r.json()).catch(() => ({})),
     ]);
     CONFIG = c || {};
     applyTheme();
@@ -179,6 +180,7 @@ const ROUTES = {
       ["project", "Project", "Title, prompts and exports"],
       ["assistant", "Assistant", "AI provider configuration"],
       ["generation", "Generation", "Optional FAL image defaults"],
+      ["accounts", "Accounts", "Connect the services you have an account with"],
       ["recovery", "Recovery & advanced", "Backups and diagnostics"],
     ];
     const selected = boundedFocusedTask("settings-task", "settings", tabs.map((row) => row[0]), "appearance");
@@ -186,7 +188,7 @@ const ROUTES = {
     /* Backups, server status and diagnostics are not AI-assisted services, so they no
        longer sit under a heading that says they are. */
     const tabGroup = (heading, rows) => `<section><span>${heading}</span><div class="settings-tabs">${rows.map(tabButton).join("")}</div></section>`;
-    const tabbar = `<nav class="settings-nav-shell" aria-label="Settings sections">${tabGroup("WORKSPACE", tabs.slice(0, 4))}${tabGroup("OPTIONAL ASSISTED SERVICES", tabs.slice(4, 6))}${tabGroup("BACKUPS & DIAGNOSTICS", tabs.slice(6))}</nav>`;
+    const tabbar = `<nav class="settings-nav-shell" aria-label="Settings sections">${tabGroup("WORKSPACE", tabs.slice(0, 4))}${tabGroup("OPTIONAL ASSISTED SERVICES", tabs.slice(4, 7))}${tabGroup("BACKUPS & DIAGNOSTICS", tabs.slice(7))}</nav>`;
     /* One statement per subsection about how it stores changes, in the same place on
        every panel. "Save" records the setting; "Apply" records it and acts on the
        folders on disk straight away; the project record saves itself. */
@@ -259,8 +261,42 @@ const ROUTES = {
       ${field("Frame resolution", `<select id="cfg-fal-frame-resolution">${[["1k","1K"],["2k","2K"],["4k","4K"]].map(([v,l]) => `<option value="${v}" ${(fal.frameResolution || "1k") === v ? "selected" : ""}>${l}</option>`).join("")}</select>`)}
       ${field("Estimated cost per image (USD)", `<input id="cfg-fal-cost-per-image" type="number" min="0" max="100" step="0.001" value="${attr(Number(fal.estimatedCostPerImage || 0))}" placeholder="0.00">`)}
     </div><div class="settings-actions"><button class="add-btn" onclick="saveConfig('generation')">Save generation settings</button><span id="fal-test-note" class="settings-state-chip" data-tone="${fal.enabled ? (fal.apiKey || fal.keySource === "environment" ? "ready" : "attention") : "off"}">${fal.enabled ? (fal.apiKey || fal.keySource === "environment" ? "FAL generation is set up" : "FAL generation is on, but needs a key") : "FAL generation is off"}</span>${panelState("manual", "Save records these defaults; nothing is generated and nothing is charged.")}</div><p class="hint fal-security-note">Paid generation is only submitted after confirmation.</p></section>`;
+    /* Accounts. Deliberately plain: an account is either connected to a named
+       person or it is not, and everything a user can do about it is one button.
+       None of the machinery behind it — the grant type, the redirect, the token
+       lifetime, the scope bitmask — is a setting, so none of it is shown.
+
+       There is no balance row. Civitai's public API exposes no balance, and a
+       confident "0" would be a wrong number in a currency field. */
+    const accountRows = Array.isArray(accountData?.accounts) ? accountData.accounts : [];
+    const accountProviders = Array.isArray(accountData?.providers) ? accountData.providers : [];
+    /* A browser on another machine may read the status; it cannot establish a
+       credential, because the routes that receive one answer only this computer. */
+    const onLocalMachine = accountData?.localMachine !== false;
+    const accountStateWords = (row) => (
+      row.status === "connected" ? (row.stale ? "Connected — not checked recently" : "Connected")
+        : row.status === "expired" ? "Connection expired"
+          : row.status === "connecting" ? "Connecting…"
+            : row.status === "error" ? "Needs attention"
+              : "Not connected");
+    const accountConnectedRow = (row) => `<article class="account-row" data-account-status="${attr(row.status)}"><div><b>${esc(row.providerLabel || row.providerId)}</b><span class="account-identity">${esc(row.identity?.displayName ? `@${row.identity.displayName}` : "Connected account")}</span><small>${esc(accountStateWords(row))}${row.identity?.tier ? ` · ${esc(row.identity.tier)}` : ""}${row.identity?.accountStatus && row.identity.accountStatus !== "active" ? ` · ${esc(row.identity.accountStatus)}` : ""}</small>${row.lastError ? `<small class="account-note" role="status">${esc(row.lastError.message)}</small>` : ""}</div><div class="account-row-actions"><button class="ghost-btn" onclick="recheckAccountConnection('${attr(row.connectionId)}')">Recheck</button><button class="ghost-btn" onclick="disconnectAccount('${attr(row.connectionId)}')">Disconnect</button></div></article>`;
+    /* The service is named from its own label rather than written in, so this row
+       is still correct the day a second provider is registered. Today that renders
+       exactly "Connect Civitai". */
+    const accountOfferRow = (provider) => {
+      const name = esc(provider.label || provider.providerId);
+      return `<article class="account-row" data-account-status="disconnected"><div><b>${name}</b><span class="account-identity">Not connected</span><small>${provider.oauthConfigured ? `Sign in with your ${name} account, or use an API key instead.` : `Add the ${name} application ID below before signing in, or use an API key.`}</small></div><div class="account-row-actions">${onLocalMachine ? `${provider.supportsOAuth && provider.oauthConfigured ? `<button class="add-btn" onclick="startAccountConnection('${attr(provider.providerId)}')">Connect ${name}</button>` : ""}${provider.supportsApiKey ? `<button class="ghost-btn" onclick="openAccountApiKeyPrompt('${attr(provider.providerId)}')">Use API key</button>` : ""}` : `<small class="account-note" role="status">${name} account connection must be completed on the computer running CineBraid.</small>`}</div></article>`;
+    };
+    const accountsPanel = `<section class="settings-block account-settings"><div class="settings-title-row"><div><h3>Accounts</h3><p class="hint">Connect the services you already have an account with. The connection is kept on this CineBraid server and is never sent to the browser. Connecting an account generates nothing and spends nothing.</p></div></div><div class="account-list">${accountProviders.map((provider) => {
+      const connected = accountRows.filter((row) => row.providerId === provider.providerId);
+      return connected.length
+        ? connected.map(accountConnectedRow).join("") + (onLocalMachine ? accountOfferRow(provider) : "")
+        : accountOfferRow(provider);
+    }).join("") || `<p class="hint">No account services are available in this build.</p>`}</div><div class="two-col">
+      ${field("Civitai application ID", `<input id="cfg-civitai-client-id" value="${attr(c.accountProviders?.civitai?.clientId || "")}" placeholder="from your Civitai account's application list"><span class="hint">Not a secret. It is how Civitai recognises CineBraid when you sign in.</span>`)}
+    </div><div class="settings-actions"><button class="add-btn" onclick="saveConfig('accounts')">Save account settings</button><span id="account-note" class="hint"></span>${panelState("manual", "Save records the application ID; connecting an account is the button above.")}</div></section>`;
     const recoveryPanel = `<section class="settings-block project-recovery"><div class="settings-title-row"><div><h3>Recovery & advanced</h3><p class="hint">Rotating backups, diagnostics and support records.</p></div><button class="ghost-btn" onclick="createManualProjectBackup()">Create backup now</button></div><div class="settings-health-grid"><article><span>Server</span><b>${health.ok === false ? "Needs attention" : "Running"}</b><small>${esc(health.message || health.status || "Local CineBraid service")}</small></article><article><span>Project folder</span><b>${esc(activeProjectSlug() || "—")}</b><small>The folder name this project is stored under. Use Reports for integrity checks and the project log.</small></article></div><div id="project-backup-note" class="hint"></div>${backupData.error ? `<p class="hint backup-list-error" role="alert">${esc(backupData.error)}</p>` : (backupData.backups || []).length ? `<div class="project-backup-list">${backupData.backups.map((item) => `<article><div><b title="${attr(item.name)}">${esc(item.name)}</b><small>${esc(new Date(item.modifiedAt).toLocaleString())} · ${Math.max(1,Math.round(Number(item.size || 0) / 1024))} KB</small></div><button class="ghost-btn backup-restore-btn" onclick="restoreProjectBackup('${attr(item.name)}')">Restore</button></article>`).join("")}</div>` : `<p class="hint">No rotating backups yet. A backup is created before each validated save.</p>`}<div class="settings-save-line"><span class="settings-save-state" data-state="none" role="status">Nothing on this panel is a setting.</span><small class="settings-save-model">Every control here acts as soon as you use it, so there is nothing to save.</small></div><div class="settings-actions"><a class="ghost-btn" href="#/reports">Open project log & reports</a><button class="ghost-btn" onclick="downloadJSON()">Download JSON backup</button></div></section>`;
-    const body = { appearance: appearancePanel, files: filesPanel, naming: namingPanel, project: projectPanel, assistant: assistantPanel, generation: generationPanel, recovery: recoveryPanel }[selected] || appearancePanel;
+    const body = { appearance: appearancePanel, files: filesPanel, naming: namingPanel, project: projectPanel, assistant: assistantPanel, generation: generationPanel, accounts: accountsPanel, recovery: recoveryPanel }[selected] || appearancePanel;
     setTimeout(() => { if (typeof initSettingsPanel === "function") initSettingsPanel(); }, 0);
     return `<div class="view-head"><div><div class="eyebrow">Settings</div><span class="view-title">Settings</span><div class="view-sub">Appearance, where files are kept, how they are named, and the optional services CineBraid may use.</div></div></div>${tabbar}<div class="settings-selected-tab" data-settings-tab="${attr(selected)}">${body}</div>`;
   },

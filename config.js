@@ -115,6 +115,19 @@ const DEFAULT_CONFIG = {
     versionPadding: 3,
     collisionBehavior: "increment",
   },
+  /* Account connections — who this CineBraid is at an external provider. Config,
+     never project data: a connection outlives every project and belongs to the
+     machine, and putting it in project.json would copy a credential into every
+     backup, export and sync of that project. Keyed by connectionId throughout, so
+     two accounts at one provider are representable from the start. */
+  accounts: [],
+  /* Non-secret, per-provider settings. An OAuth client_id is public by
+     definition — it travels in the authorization URL the user's browser opens —
+     so it is deliberately absent from CONFIG_SECRETS. Masking it would only hide
+     it from the person who has to paste it in. */
+  accountProviders: {
+    civitai: { clientId: "" },
+  },
   policy: "suggest",
   routing: {
     extract: "assistant",
@@ -172,9 +185,9 @@ function isMasked(value) {
    `path` is dot-separated. A segment written `name[*]` means "every element of
    that array", and must be followed by at least one further segment; when array
    elements carry a stable id, `identity` names the field to correlate patch
-   elements to stored elements by, rather than by position. Nothing uses arrays
-   today — the grammar exists so that a future collection of account credentials
-   is a line in this list rather than another pair of hand-written handlers. */
+   elements to stored elements by, rather than by position. The account
+   credentials below are what that grammar was built for — three declarations
+   instead of another pair of hand-written handlers. */
 const SECRET_PRESENCE_SET = "(set)";
 const SECRET_PRESENCE_UNSET = "";
 const CONFIG_SECRETS = [
@@ -186,6 +199,16 @@ const CONFIG_SECRETS = [
   { path: "editorPass", mode: "presence" },
   { path: "viewerPass", mode: "presence" },
   { path: "authSecret", mode: "omit" },
+  /* OAuth tokens are `omit`, not `masked`. The browser never sees one, never sets
+     one and has no use for even its last four characters: the whole flow runs
+     server-side. `masked` would put a fragment of a live token in a response for
+     no reason at all.
+
+     A personal API key is `masked` because it is the one credential a user pastes
+     by hand and may reasonably want to confirm is the one they meant. */
+  { path: "accounts[*].credential.accessToken", mode: "omit", identity: "connectionId" },
+  { path: "accounts[*].credential.refreshToken", mode: "omit", identity: "connectionId" },
+  { path: "accounts[*].credential.apiKey", mode: "masked", identity: "connectionId" },
 ];
 
 function maskSecretValue(value) {
@@ -342,6 +365,14 @@ function normalizeConfig(config, options = {}) {
     1,
     Math.min(3, Number(merged.agents.maxConcurrent) || 1),
   );
+  /* Structural only. What a valid connection looks like is account-connections.js's
+     question, and answering it here would put provider knowledge in the config
+     layer; all this guarantees is that readers get an array to iterate. */
+  merged.accounts = Array.isArray(merged.accounts)
+    ? merged.accounts.filter((entry) => isPlainObject(entry))
+    : [];
+  merged.accountProviders = deepMerge(DEFAULT_CONFIG.accountProviders, merged.accountProviders || {});
+  merged.accountProviders.civitai.clientId = String(merged.accountProviders.civitai.clientId || "").trim();
   return merged;
 }
 

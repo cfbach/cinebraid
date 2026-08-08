@@ -32,6 +32,7 @@ const { SimpleZipWriter } = require("./zip-stream");
 const AgentSuite = require("./agent-suite");
 const { registerFalGeneration } = require("./fal-generation");
 const { registerAutomationRuns } = require("./automation-runs");
+const { isAccountCallbackPath, registerAccountConnections } = require("./accounts-api");
 
 const app = express();
 const PORT = process.env.PORT || 4477;
@@ -686,6 +687,12 @@ app.use((req, res, next) => {
     ].includes(p)
   )
     return next();
+  /* The OAuth callback is a navigation the provider caused, not one the app made,
+     so it cannot be gated on a passcode session the way a settings route is. It is
+     not ungated: the route itself refuses any peer that is not this machine, and
+     accepts only a `state` this server minted, that has not expired, and that can
+     be spent once. That is a stronger claim than "someone has an editor cookie". */
+  if (isAccountCallbackPath(p)) return next();
   const bibleScope =
     p === "/bible.html" ||
     p === "/bible.js" ||
@@ -1142,10 +1149,39 @@ app.get("/api/config", (req, res) => {
 });
 app.put("/api/config", (req, res) => {
   const current = readConfig();
-  const patch = restoreSecrets(
-    req.body && typeof req.body === "object" ? req.body : {},
-    current,
-  );
+  const body = req.body && typeof req.body === "object" ? req.body : {};
+
+  /* Account connections are not editable through the general config endpoint.
+     Two distinct failures are prevented by one rule.
+
+     The first is silent credential loss: `accounts` is an array, so a merge
+     replaces it wholesale, and the masked projection a client echoes back has the
+     OAuth tokens removed by the registry. Merging that echo would store accounts
+     whose credentials had quietly become empty.
+
+     The second is the mirror image: a patch that adds an ACCOUNT THE SERVER HAS
+     NEVER SEEN, carrying a mask marker where a credential goes. The registry
+     correctly refuses to turn a marker into a secret, so the result would be a
+     connection recorded with an empty credential — a broken account that looks
+     configured.
+
+     Compared against the projection BEFORE restoreSecrets runs, because restore is
+     what turns the echo back into stored values and would make every incoming
+     shape look different. A client that round-trips exactly what GET returned
+     changes nothing and is accepted; anything else is refused by name, so a caller
+     is told where account changes belong rather than having them ignored. */
+  if (Object.prototype.hasOwnProperty.call(body, "accounts")) {
+    const projection = JSON.stringify(maskSecrets(current).accounts || []);
+    if (JSON.stringify(body.accounts) !== projection) {
+      return res.status(400).json({
+        error: "Account connections are managed from Settings → Accounts, not through general configuration.",
+        code: "ACCOUNT_ENDPOINT_REQUIRED",
+      });
+    }
+  }
+
+  const patch = restoreSecrets(body, current);
+  delete patch.accounts;
 
   const storageKeys = ["projectRoot", "mediaRoot", "outputRoot", "backupRoot"];
   const attemptedStorageKeys = storageKeys.filter((key) => Object.prototype.hasOwnProperty.call(patch.workspace || {}, key));
@@ -3117,6 +3153,16 @@ registerAutomationRuns(app, {
   readProject,
   activeSlug,
   projectReadinessIssues,
+});
+/* Account connections take config and the listening port and nothing else. No
+   project reader, no project writer, no project directory — the absence of those
+   three is the structural statement that connecting an account cannot touch a
+   production. The port is passed because the OAuth redirect must name this
+   machine's own loopback address, and a request header is not evidence of that. */
+registerAccountConnections(app, {
+  readConfig,
+  writeConfig,
+  serverPort: PORT,
 });
 
 /* ---- model-aware Prompt Compiler ---- */

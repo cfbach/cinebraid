@@ -503,6 +503,23 @@ async function render(hash, project, options = {}) {
     },
     ffmpeg: { ok: true },
   };
+  /* The safe AccountConnection projection, in exactly the shape the real route
+     emits: no credential of any kind, and `balance.supported:false` rather than a
+     zero. `localMachine` defaults true because the harness stands in for a browser
+     on the CineBraid computer; a suite that wants the LAN copy overrides it. */
+  const accounts = {
+    accounts: [],
+    providers: [{
+      providerId: "civitai",
+      label: "Civitai",
+      supportsOAuth: true,
+      supportsApiKey: true,
+      balanceSupported: false,
+      oauthConfigured: true,
+    }],
+    localMachine: true,
+    ...(options.accounts || {}),
+  };
 
   async function fetchStub(input, options = {}) {
     const url = String(input);
@@ -516,6 +533,7 @@ async function render(hash, project, options = {}) {
     if (url === "/api/prompt/profiles")
       return response(PromptEngine.profileLibrary());
     if (url === "/api/config") return response(config);
+    if (url === "/api/accounts") return response(accounts);
     if (url === "/api/agents/status") return response(agentStatus);
     if (url === "/api/system/health") return response(health);
     if (url === "/api/docs") return response([]);

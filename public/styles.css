@@ -2055,6 +2055,17 @@ body.automation-activity-open{overflow:hidden}
 .project-backup-list article{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:rgba(255,255,255,.02)}
 .project-backup-list article div{display:grid;gap:3px;min-width:0}
 .project-backup-list article b,.project-backup-list article small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.account-list{display:grid;gap:8px;margin:4px 0 16px}
+.account-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 13px;border:1px solid var(--line);border-radius:12px;background:rgba(255,255,255,.02)}
+.account-row>div:first-child{display:grid;gap:3px;min-width:0}
+.account-identity{font-size:13px;color:var(--ink-2,#9aa7b4);overflow-wrap:anywhere}
+.account-row[data-account-status="connected"]{border-color:rgba(60,170,120,.45)}
+.account-row[data-account-status="expired"],.account-row[data-account-status="error"]{border-color:rgba(190,120,40,.5)}
+.account-row-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.account-note{max-width:44ch;text-align:right}
+.account-key-field{display:grid;gap:6px;margin:12px 0}
+.account-key-field input{width:100%}
+@media (max-width:640px){.account-row{flex-direction:column;align-items:stretch}.account-row-actions{justify-content:stretch}.account-note{text-align:left}}
 .dependency-delete-modal{display:grid;gap:14px;min-width:min(680px,92vw)}
 .dependency-impact-list{display:grid;gap:8px;padding:12px;border:1px solid var(--line);border-radius:12px;background:rgba(255,255,255,.025)}
 .dependency-impact-list ul{margin:0;padding-left:20px;max-height:220px;overflow:auto}
