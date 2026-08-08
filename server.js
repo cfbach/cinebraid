@@ -13,6 +13,7 @@ const crypto = require("crypto");
 const { spawnSync } = require("child_process");
 const { llm, embed, vision, isLocalProviderEndpoint } = require("./llm");
 const {
+  configHealth,
   maskSecretValue,
   maskSecrets,
   mergeConfig,
@@ -33,6 +34,7 @@ const AgentSuite = require("./agent-suite");
 const { registerFalGeneration } = require("./fal-generation");
 const { registerAutomationRuns } = require("./automation-runs");
 const { isAccountCallbackPath, registerAccountConnections } = require("./accounts-api");
+const { createRequestBoundary, createRequestPosture } = require("./request-origin");
 
 const app = express();
 const PORT = process.env.PORT || 4477;
@@ -125,8 +127,28 @@ const MEDIA_EXT = new Set([
   ".ogg",
 ]);
 
-// Reconcile legacy defaults before any route reads the configuration.
-migrateConfigFile();
+/* Reconcile legacy defaults before any route reads the configuration.
+
+   A configuration that cannot be read is NOT resolved here by inventing defaults.
+   Doing that is what destroyed credentials and switched off passcodes: the corrupt
+   bytes were replaced by DEFAULT_CONFIG, which has no editorPass. The startup path
+   now records the fault and lets the request boundary refuse, so the file is left
+   exactly as it was found and the user can still recover from it. */
+let CONFIG_FAULT = null;
+try {
+  migrateConfigFile();
+} catch (error) {
+  if (error?.code !== "CONFIG_UNREADABLE") throw error;
+  CONFIG_FAULT = error;
+  console.error(
+    "CineBraid could not read its settings, and the backup copy could not be read either.\n"
+    + `  settings : ${error.detail?.path || ""}\n`
+    + `  backup   : ${error.detail?.backupPath || ""}\n`
+    + "Nothing has been changed. CineBraid is refusing to start with empty settings, because that\n"
+    + "would switch off any passcode you had set and discard every connected account. Repair or\n"
+    + "remove the settings file and start CineBraid again.",
+  );
+}
 
 /* ---- multi-project: each folder under projects/ is fully self-contained ---- */
 function activeSlug() {
@@ -253,9 +275,23 @@ function containedProjectSlug(value, root = projectsRoot()) {
   if (rel.split(/[\\/]/).length !== 1) return ""; /* must be a direct child */
   return slug;
 }
+/* Every :slug route resolves its directory here, so this is the second call site of
+   the containment rule above — and until now it was the one that did not use it.
+
+   cleanProjectSlug alone is not containment: ".." is its own basename, so it passed,
+   and `path.join(projectsRoot(), "..")` is the PARENT of the projects root. A raw
+   `PUT /api/projects/../project` therefore wrote fully caller-controlled JSON to a
+   file outside the root, left a `.bak` beside it, and `GET /api/projects/../backups`
+   listed that directory. Browsers and Node's fetch normalise `..` away, which is why
+   this survived every existing test; curl --path-as-is and a raw socket do not.
+
+   containedProjectSlug already proves the resolved directory is a direct child by
+   path semantics. Using it here rather than adding a third sanitizer keeps one
+   answer to "is this slug inside the root". */
 function projectDirForSlug(value, requireExisting = true) {
-  const slug = cleanProjectSlug(value),
-    dir = path.join(projectsRoot(), slug),
+  const slug = containedProjectSlug(value);
+  if (!slug) throw new Error("Invalid project slug.");
+  const dir = path.join(projectsRoot(), slug),
     file = path.join(dir, "project.json");
   if (requireExisting && !fs.existsSync(file))
     throw new Error(`No such project: ${slug}`);
@@ -274,11 +310,26 @@ function projectBackupName(reason = "save") {
   const cleanReason = String(reason || "save").toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "") || "save";
   return `project-${stamp}-${cleanReason}.json`;
 }
+/* The exact grammar projectBackupName produces, and nothing else.
+
+   This regex is a DELETION AUTHORITY, not a display filter: createProjectBackup
+   unlinks everything past the retention limit that this matches. It used to be
+   /^project-.*\.json$/i, which matches project-plan.json, project-notes.json,
+   project-2019-budget.json and any exported project a user keeps — and
+   workspace.backupRoot is a free-text path field, so pointing it at an existing
+   folder was one paste away. A single ordinary autosave then permanently deleted
+   the user's files, with no trash, no .bak, and a try/catch that swallowed every
+   error. Ownership is now established by the filename CineBraid itself emits:
+   an ISO stamp with `:`/`.` replaced by `-`, then a lowercase reason. */
+const PROJECT_BACKUP_NAME = /^project-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-[a-z0-9_-]+\.json$/;
+function isCineBraidBackupName(name) {
+  return PROJECT_BACKUP_NAME.test(String(name || ""));
+}
 function listProjectBackups(file) {
   const dir = projectBackupDir(file);
   if (!fs.existsSync(dir)) return [];
   return fs.readdirSync(dir)
-    .filter((name) => /^project-.*\.json$/i.test(name))
+    .filter(isCineBraidBackupName)
     .map((name) => {
       const full = path.join(dir, name);
       const stat = fs.statSync(full);
@@ -300,6 +351,10 @@ function createProjectBackup(file, reason = "save") {
   fs.copyFileSync(file, destination);
   const backups = listProjectBackups(file);
   backups.slice(PROJECT_BACKUP_LIMIT).forEach((entry) => {
+    /* Re-checked at the point of deletion, not only at the point of listing. The
+       list is what decides retention order; this is what decides that a file may
+       be unlinked at all, and the two are worth keeping separate. */
+    if (!isCineBraidBackupName(entry.name)) return;
     try { fs.unlinkSync(path.join(dir, entry.name)); } catch {}
   });
   return name;
@@ -615,6 +670,37 @@ const BLANK = () => ({
       carryForward: ["Set the global visual style, then create the first reusable reference."],
     },
   ],
+});
+
+/* ---- request provenance: Host, then Origin ----
+   Mounted before the body parser and before the auth gate, so it applies in the
+   shipped default posture too — the posture where no passcode is set and every
+   caller is otherwise treated as an editor, which is exactly where a page the user
+   merely visited could drive the whole API. */
+app.use(createRequestBoundary(createRequestPosture({
+  host: HOST,
+  port: PORT,
+  lanOptIn: LAN_OPT_IN,
+  allowedHosts: process.env.CINEBRAID_ALLOWED_HOSTS,
+})));
+
+/* ---- configuration health ----
+   Every route below reads the configuration, so a configuration that cannot be read
+   is answered once, here, with an explanation — rather than 57 call sites each
+   silently receiving defaults. Re-checked per request so repairing the file brings
+   CineBraid back without a restart. */
+app.use((req, res, next) => {
+  const health = CONFIG_FAULT ? { ok: false } : configHealth();
+  if (health.ok) { CONFIG_FAULT = null; return next(); }
+  const message = "CineBraid could not read its settings, and the backup copy could not be read either. "
+    + "Nothing has been changed — your settings file is exactly as CineBraid found it. Repair or remove it, "
+    + "then start CineBraid again.";
+  if (req.path.startsWith("/api/")) return res.status(503).json({ error: message, code: "CONFIG_UNREADABLE" });
+  return res.status(503).type("html").send(
+    `<!doctype html><meta charset="utf-8"><title>CineBraid — settings unreadable</title>`
+    + `<body style="font:16px system-ui;margin:3rem;max-width:38rem"><h1 style="font-size:1.2rem">CineBraid could not read its settings</h1>`
+    + `<p>${message}</p></body>`,
+  );
 });
 
 app.use(express.json({ limit: "25mb" }));

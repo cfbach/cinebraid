@@ -52,6 +52,27 @@ async function request(url) {
   const body = await response.json().catch(() => ({}));
   return { response, body };
 }
+/* A path-preserving client. Node's fetch normalises `..` out of a URL before the
+   request is sent, so a traversal probe written with it silently tests something
+   else — which is precisely how the :slug consumer stayed unprotected. */
+function rawRequest(requestLine, headers = {}, body = "") {
+  const port = Number(new URL(base).port);
+  return new Promise((resolve, reject) => {
+    const socket = net.connect(port, "127.0.0.1", () => {
+      const head = Object.entries({ host: `127.0.0.1:${port}`, connection: "close", ...headers })
+        .map(([key, value]) => `${key}: ${value}`).join("\r\n");
+      const length = body ? `content-length: ${Buffer.byteLength(body)}\r\n` : "";
+      socket.write(`${requestLine} HTTP/1.1\r\n${head}\r\n${length}\r\n${body}`);
+    });
+    let data = "";
+    socket.on("data", (chunk) => { data += chunk; });
+    socket.on("end", () => resolve({
+      status: Number(/^HTTP\/1\.1 (\d{3})/.exec(data)?.[1] || 0),
+      body: data.split("\r\n\r\n").slice(1).join("\r\n\r\n"),
+    }));
+    socket.on("error", reject);
+  });
+}
 function writeProject(dir, title) {
   fs.mkdirSync(path.join(dir, "docs"), { recursive: true });
   fs.writeFileSync(path.join(dir, "project.json"), JSON.stringify({
@@ -223,9 +244,61 @@ async function main() {
     "a rejected active project must fall back to a real project, not to nothing",
   );
 
+  /* ---- 5. the OTHER consumer of the slug: the :slug route parameter ----
+     This suite's own header explained that cleanProjectSlug ACCEPTS ".." because it
+     is its own basename, and that containedProjectSlug was the fix. It was wired
+     into activeSlug() only. projectDirForSlug — which every /api/projects/:slug
+     route resolves through — still used the unsafe one, so a raw
+     `PUT /api/projects/../project` wrote fully caller-controlled JSON to a file
+     OUTSIDE the projects root, left a .bak beside it, and
+     `GET /api/projects/../backups` listed that directory.
+
+     It has to be driven over a raw socket. Browsers and Node's fetch both collapse
+     `..` before the request leaves, which is exactly why every existing test missed
+     it; curl --path-as-is and any hand-written client do not. */
+  setActiveProject("real-project");
+  const parentFile = path.join(TEMP, "project.json");
+  const parentSentinel = { meta: { title: "OUTSIDE-THE-ROOT" } };
+  fs.writeFileSync(parentFile, JSON.stringify(parentSentinel, null, 2));
+  const decoyFile = path.join(PREFIX_SIBLING, "project.json");
+  fs.mkdirSync(PREFIX_SIBLING, { recursive: true });
+  fs.writeFileSync(decoyFile, JSON.stringify({ meta: { title: "PREFIX-SIBLING" } }, null, 2));
+
+  const hostileBody = JSON.stringify({
+    meta: { title: "TRAVERSAL-PWNED", format: "x", version: "v1", schemaVersion: "6.6" },
+    qcChecklist: [], characters: [], locations: [], props: [], vehicles: [], audio: [], mediaAssets: [],
+    scenes: [], shots: [], agentRuns: [], decisions: [], sessions: [], finishJobs: [],
+  });
+
+  for (const shape of ["..", ".", "..%2f..", "%2e%2e", `..${B}..`, "..%5c..", "%252e%252e", "../..", "....//"]) {
+    const write = await rawRequest(`PUT /api/projects/${shape}/project`, { "content-type": "application/json" }, hostileBody);
+    assert.notStrictEqual(write.status, 200, `PUT /api/projects/${shape}/project must be refused (got ${write.status})`);
+    const list = await rawRequest(`GET /api/projects/${shape}/backups`);
+    assert.notStrictEqual(list.status, 200, `GET /api/projects/${shape}/backups must be refused (got ${list.status})`);
+    const backup = await rawRequest(`POST /api/projects/${shape}/backups`);
+    assert.notStrictEqual(backup.status, 200, `POST /api/projects/${shape}/backups must be refused (got ${backup.status})`);
+    const remove = await rawRequest(`DELETE /api/projects/${shape}`);
+    assert.notStrictEqual(remove.status, 200, `DELETE /api/projects/${shape} must be refused (got ${remove.status})`);
+  }
+
+  /* Nothing outside the root was written, listed or created. */
+  assert.deepStrictEqual(
+    JSON.parse(fs.readFileSync(parentFile, "utf8")), parentSentinel,
+    "a file outside the projects root must be byte-identical after every traversal attempt",
+  );
+  assert.strictEqual(JSON.parse(fs.readFileSync(decoyFile, "utf8")).meta.title, "PREFIX-SIBLING");
+  for (const stray of [`${parentFile}.bak`, path.join(TEMP, "backups"), path.join(PREFIX_SIBLING, "backups"), `${decoyFile}.bak`])
+    assert(!fs.existsSync(stray), `traversal must not create ${stray}`);
+
+  /* And a legitimate slug still resolves through the very same function. */
+  const legitimate = await rawRequest("GET /api/projects/real-project/backups");
+  assert.strictEqual(legitimate.status, 200, `a valid slug must still work: ${legitimate.body}`);
+
   console.log(
     `Active-project containment suite passed: ${MATRIX.length} slug shapes resolved, `
-    + "every accepted value stays a direct child of the projects root, and no traversal reached the parent or a prefix sibling.",
+    + "every accepted value stays a direct child of the projects root, no traversal reached the parent or a prefix "
+    + "sibling, and nine traversal shapes sent over a raw socket to the :slug routes — the consumer the original fix "
+    + "did not reach — write, list, back up and delete nothing outside the root.",
   );
 }
 
