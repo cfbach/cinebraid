@@ -1,3 +1,4 @@
+const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 
@@ -376,19 +377,175 @@ function normalizeConfig(config, options = {}) {
   return merged;
 }
 
-function readConfig() {
-  try {
-    const saved = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8"));
-    return normalizeConfig(saved);
-  } catch {
-    return normalizeConfig(DEFAULT_CONFIG);
+/* ---------------------------------------------------------------------------
+   Durability.
+
+   config.json is the only file in CineBraid that holds credentials — every
+   provider key, both passcodes, the cookie signing secret, and since Phase 3 the
+   Civitai OAuth tokens and API keys. It was also the only store written with a
+   bare writeFileSync and read with `catch { return defaults }`.
+
+   The consequences were not theoretical. A truncated, empty, NUL-padded or
+   wrongly-encoded file read as DEFAULTS, and startup then wrote those defaults
+   over the remains — so a config whose bytes still physically contained the user's
+   keys in cleartext was destroyed rather than recovered. Because DEFAULT_CONFIG
+   has no editorPass, an install running --lan with passcodes configured came back
+   up with AUTHENTICATION SILENTLY OFF and nothing in the interface said so.
+
+   Every other durable store in this repository already meets the standard this one
+   now meets — project.json's atomicWriteJson, automation-runs.js's `.bak` and
+   read-side recovery, media-asset-store.js's both-corrupt refusal. The discipline
+   is reimplemented here rather than imported, because config.js sits underneath
+   all of them and must not depend on any.
+
+   The distinction that drives the whole design:
+
+     MISSING is a valid first-run state -> defaults, and writing them is correct.
+     CORRUPT is not missing            -> recover, or refuse. Never invent. */
+const CONFIG_BACKUP_PATH = `${CONFIG_PATH}.bak`;
+/* The corrupt bytes are kept once, beside the file, so a user who lost a key can
+   still see it and a support request has something to look at. Deliberately not a
+   growing series: the most recent corruption is the useful one. */
+const CONFIG_CORRUPT_PATH = `${CONFIG_PATH}.corrupt`;
+
+class ConfigUnreadableError extends Error {
+  constructor(message, detail) {
+    super(message);
+    this.name = "ConfigUnreadableError";
+    this.code = "CONFIG_UNREADABLE";
+    this.statusCode = 503;
+    this.detail = detail || {};
   }
 }
 
+/* A BOM is what PowerShell's Out-File and Notepad leave behind; every other JSON
+   reader in this repository tolerates one, and a config the user edited by hand is
+   exactly where one shows up. An empty file is treated as corruption rather than as
+   an empty document, because a zero-byte config.json is what an interrupted
+   truncate leaves and has never been a thing CineBraid writes. */
+function parseConfigDocument(target) {
+  const raw = String(fs.readFileSync(target, "utf8")).replace(/^﻿/, "");
+  if (!raw.trim()) {
+    const error = new Error("The file is empty.");
+    error.configEmpty = true;
+    throw error;
+  }
+  const parsed = JSON.parse(raw);
+  if (!isPlainObject(parsed)) throw new Error("The file is not a configuration document.");
+  return parsed;
+}
+
+/* Reads the configuration document without normalising it.
+
+   Returns { config, exists, recovered, warning }.
+
+     missing         -> DEFAULT_CONFIG, exists:false. Normal. Not an error.
+     primary valid   -> the primary
+     primary corrupt -> the backup, recovered:true
+     both unusable   -> THROWS ConfigUnreadableError, having written nothing   */
+function loadConfigDocument() {
+  let primaryError = null;
+  try {
+    return { config: parseConfigDocument(CONFIG_PATH), exists: true, recovered: false, warning: "" };
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return { config: DEFAULT_CONFIG, exists: false, recovered: false, warning: "" };
+    }
+    primaryError = error;
+  }
+
+  let recoveredConfig = null;
+  let backupError = null;
+  try {
+    recoveredConfig = parseConfigDocument(CONFIG_BACKUP_PATH);
+  } catch (error) {
+    backupError = error;
+  }
+
+  if (!recoveredConfig) {
+    throw new ConfigUnreadableError(
+      "CineBraid settings could not be read, and the backup copy could not be read either. "
+      + "Nothing has been changed: your settings file is exactly as CineBraid found it, so the "
+      + "credentials and passcodes inside it are still there to recover. CineBraid will not start "
+      + "with empty settings, because that would switch off any passcode you had set and discard "
+      + "every connected account.",
+      {
+        path: CONFIG_PATH,
+        backupPath: CONFIG_BACKUP_PATH,
+        primary: String(primaryError?.message || primaryError),
+        backup: String(backupError?.message || backupError),
+      },
+    );
+  }
+
+  /* Preserve the evidence before anything is allowed to replace the primary. */
+  try {
+    if (fs.existsSync(CONFIG_PATH)) fs.copyFileSync(CONFIG_PATH, CONFIG_CORRUPT_PATH);
+  } catch { /* evidence is best-effort; recovery is not */ }
+
+  return {
+    config: recoveredConfig,
+    exists: true,
+    recovered: true,
+    warning: "CineBraid settings were unreadable and were restored from the backup copy.",
+  };
+}
+
+function readConfig() {
+  return normalizeConfig(loadConfigDocument().config);
+}
+
+/* True when the primary parses. Used to decide whether it may become the backup —
+   copying a corrupt primary over a good `.bak` would destroy the very copy the
+   recovery above just depended on, which is the mistake automation-runs.js makes
+   and this one must not. */
+function primaryConfigIsReadable() {
+  try {
+    parseConfigDocument(CONFIG_PATH);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/* Atomic, fsynced, backed up. Same discipline as server.js's atomicWriteJson, which
+   is the proven in-repo standard for a file that must survive a crash.
+
+   Writes are synchronous and contain no await, so two callers in this process
+   cannot interleave; the temp name additionally carries the pid and random bytes so
+   a second PROCESS writing the same file cannot collide either, and the rename is
+   the atomic commit. */
 function writeConfig(config) {
-  fs.mkdirSync(path.dirname(CONFIG_PATH), { recursive: true });
   const normalized = normalizeConfig(config);
-  fs.writeFileSync(CONFIG_PATH, JSON.stringify(normalized, null, 2));
+  const payload = JSON.stringify(normalized, null, 2);
+  JSON.parse(payload); /* never rename a temp file we cannot read back */
+
+  const dir = path.dirname(CONFIG_PATH);
+  fs.mkdirSync(dir, { recursive: true });
+  const temp = path.join(
+    dir,
+    `.${path.basename(CONFIG_PATH)}.${process.pid}.${Date.now()}.${crypto.randomBytes(4).toString("hex")}.tmp`,
+  );
+
+  let fd;
+  try {
+    fd = fs.openSync(temp, "wx");
+    fs.writeFileSync(fd, payload, "utf8");
+    fs.fsyncSync(fd);
+    fs.closeSync(fd);
+    fd = undefined;
+    /* Backup BEFORE the primary is replaced, so a crash between the two leaves a
+       readable previous configuration rather than nothing — and only when the
+       primary is worth keeping. */
+    if (fs.existsSync(CONFIG_PATH) && primaryConfigIsReadable()) fs.copyFileSync(CONFIG_PATH, CONFIG_BACKUP_PATH);
+    fs.renameSync(temp, CONFIG_PATH);
+  } catch (error) {
+    if (fd !== undefined) { try { fs.closeSync(fd); } catch {} }
+    /* A failure before the rename leaves only the temp file; the configuration on
+       disk is whatever it was. */
+    try { if (fs.existsSync(temp)) fs.unlinkSync(temp); } catch {}
+    throw error;
+  }
   return normalized;
 }
 
@@ -396,25 +553,51 @@ function mergeConfig(current, patch) {
   return normalizeConfig(deepMerge(current || DEFAULT_CONFIG, patch || {}));
 }
 
+/* Startup normalisation.
+
+   This used to be where the damage was committed: it swallowed a parse failure,
+   normalised `{}` into DEFAULT_CONFIG, saw that it differed from the corrupt bytes,
+   and wrote the defaults over them. It now normalises whatever loadConfigDocument
+   was able to establish — the primary, or the backup — and PROPAGATES the
+   both-unusable refusal instead of resolving it by invention.
+
+   A missing file still normalises to defaults and is still written: that is a first
+   run, and creating the file is the correct thing to do. */
 function migrateConfigFile() {
-  let saved = {};
-  try {
-    saved = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8"));
-  } catch {
-    // A missing or invalid config is replaced with readable defaults.
-  }
-  const normalized = normalizeConfig(saved);
-  const before = JSON.stringify(saved);
+  const loaded = loadConfigDocument();
+  const normalized = normalizeConfig(loaded.config);
+  const before = JSON.stringify(loaded.config);
   const after = JSON.stringify(normalized);
-  if (before !== after) writeConfig(normalized);
+  /* Three reasons to write, and only these three:
+       - a first run, so the file comes into existence (unchanged behaviour);
+       - a recovery, so the repaired primary replaces the corrupt one;
+       - a normalisation that actually changed something. */
+  if (!loaded.exists || loaded.recovered || before !== after) writeConfig(normalized);
   return normalized;
 }
 
+/* Whether the configuration can be read at all, for a caller that must answer
+   rather than throw — the request boundary in server.js. Never writes. */
+function configHealth() {
+  try {
+    const loaded = loadConfigDocument();
+    return { ok: true, exists: loaded.exists, recovered: loaded.recovered, warning: loaded.warning, error: null };
+  } catch (error) {
+    if (error?.code !== "CONFIG_UNREADABLE") throw error;
+    return { ok: false, exists: true, recovered: false, warning: "", error };
+  }
+}
+
 module.exports = {
+  CONFIG_BACKUP_PATH,
+  CONFIG_CORRUPT_PATH,
   CONFIG_PATH,
   CONFIG_SECRETS,
+  ConfigUnreadableError,
   DEFAULT_CONFIG,
   MASK_PREFIX,
+  configHealth,
+  loadConfigDocument,
   SECRET_PRESENCE_SET,
   SECRET_PRESENCE_UNSET,
   deepMerge,
