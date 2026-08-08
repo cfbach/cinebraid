@@ -4,9 +4,42 @@ const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 const { parseAspectRatio, h3AspectSupport } = require("./public/shared-aspect");
+const { readJobLedger, writeJobLedgerSync, JobLedgerUnreadableError } = require("./generation-job-store");
 
 function registerFalGeneration(app, context) {
-  const { readConfig, readProject, writeProject, projectDir } = context;
+  const { readConfig, readProject, writeProject, activeSlug, projectDirForSlug } = context;
+
+  /* ---- project ownership ----------------------------------------------------
+
+     An asynchronous generation operation belongs permanently to the project it
+     started for. Every path this module touches used to be derived from a
+     zero-argument PROJECT_DIR()/readProject()/writeProject(), which resolve the
+     GLOBALLY ACTIVE project at the moment they are called. A generation is a
+     long chain of awaits — submit, poll, download, ingest — and the user is free
+     to switch projects during it. When they did, the download landed in the new
+     project's shots folder and the OLD project's whole document was written over
+     the NEW project's project.json: project A's title, shots and characters
+     replacing project B's, with A itself receiving nothing.
+
+     Ownership is therefore captured ONCE, before the first await, and every
+     later read, write and path is addressed through that captured record. The
+     project switcher stays fully available; what changes is that switching can
+     no longer redirect work that is already in flight. */
+  function captureOwner() {
+    const slug = activeSlug();
+    if (!slug) throw new Error("No active project.");
+    const { dir, file } = projectDirForSlug(slug);
+    return { slug, dir, file };
+  }
+  /* The owner a job record already belongs to. A job is only ever handled
+     through the project whose ledger it was found in, so this is the captured
+     owner of the route that loaded it. */
+  function ownerProject(owner) {
+    return readProject(owner.slug);
+  }
+  function saveOwnerProject(owner, project) {
+    return writeProject(project, owner.slug);
+  }
 
   function now() { return new Date().toISOString(); }
   function uid(prefix = "fal-job") {
@@ -40,33 +73,112 @@ function registerFalGeneration(app, context) {
     const n = Number(value);
     return Number.isFinite(n) ? Math.max(min, Math.min(max, Math.round(n))) : fallback;
   }
-  function jobsFile() { return path.join(projectDir(), "generation-jobs.json"); }
-  function readJobs() {
-    try {
-      const parsed = JSON.parse(fs.readFileSync(jobsFile(), "utf8"));
-      return Array.isArray(parsed) ? parsed : [];
-    } catch { return []; }
+  /* Durable, owner-addressed ledger access. A missing ledger is an empty list;
+     a CORRUPT ledger is a typed refusal, never an empty list. See
+     generation-job-store.js for why that distinction is load-bearing. */
+  function readJobs(owner) {
+    return readJobLedger(owner.dir).jobs;
   }
-  function writeJobs(jobs) {
-    const file = jobsFile(), dir = path.dirname(file);
-    fs.mkdirSync(dir, { recursive: true });
-    const temp = `${file}.${process.pid}.${Date.now()}.tmp`;
-    fs.writeFileSync(temp, JSON.stringify(jobs, null, 2), "utf8");
-    fs.renameSync(temp, file);
+  /* A refusal the user can act on, rather than a blank history. The message says
+     which file is unreadable and that nothing was overwritten, because the
+     recovery is manual: restore the `.bak`, or move the corrupt file aside. */
+  function ledgerFailureStatus(error) {
+    if (error instanceof JobLedgerUnreadableError) return error.status;
+    return /No such project|Invalid project slug|No active project/.test(String(error?.message || "")) ? 404 : 500;
   }
-  function automationRunsFile() { return path.join(projectDir(), "automation-runs.json"); }
-  function readAutomationRuns() {
+  function ledgerFailurePayload(error) {
+    if (error instanceof JobLedgerUnreadableError)
+      return { error: error.message, code: error.code, detail: error.detail };
+    return { error: error?.message || "Could not read generation jobs." };
+  }
+
+  /* ---- one commit turn per project ------------------------------------------
+
+     Every generation-job mutation used to follow the shape
+
+         const jobs = readJobs();      // snapshot
+         ... await provider ...        // seconds of network
+         writeJobs(jobs);              // snapshot wins
+
+     so any job created or advanced by an overlapping request during the await
+     was erased by whichever snapshot was written last. A refresh that had
+     already downloaded and ingested its images could be rolled back to
+     IN_QUEUE, losing `ingestedAt` and inviting a second paid ingest of the same
+     result.
+
+     `commit` serialises mutations per project and RE-READS the durable ledger
+     inside its own turn, so a mutation always applies to current state rather
+     than to what the request saw minutes ago. Provider I/O happens outside the
+     turn; `mutate` is synchronous by contract and must not await. */
+  const commitChains = new Map();
+  function commit(owner, mutate) {
+    const key = owner.dir;
+    const previous = commitChains.get(key) || Promise.resolve();
+    const next = previous.catch(() => {}).then(() => {
+      const jobs = readJobs(owner);
+      const result = mutate(jobs);
+      writeJobLedgerSync(owner.dir, jobs);
+      return result;
+    });
+    commitChains.set(key, next.catch(() => {}));
+    return next;
+  }
+
+  /* Whole-operation serialisation for one job. Two refreshes of the same job
+     must not both pass the `!job.ingestedAt` check and ingest the same result
+     twice; ordering them makes the second observe the first's durable outcome. */
+  const jobOperationChains = new Map();
+  function serializeJobOperation(owner, jobId, run) {
+    const key = `${owner.dir}::${jobId}`;
+    const previous = jobOperationChains.get(key) || Promise.resolve();
+    const next = previous.catch(() => {}).then(run);
+    jobOperationChains.set(key, next.catch(() => {}));
+    return next;
+  }
+  /* Express 4 does not catch a rejected async handler, and an unanswered request
+     is worse than an error: the browser waits forever on a generation it cannot
+     see the state of. Every serialized route ends here. */
+  function guardRoute(res, promise) {
+    return promise.catch((error) => {
+      if (res.headersSent) return;
+      res.status(ledgerFailureStatus(error)).json(ledgerFailurePayload(error));
+    });
+  }
+
+  /* Merges the outcome of a provider round-trip onto the CURRENT durable row.
+     A terminal, already-ingested job is never walked backwards by a slower
+     response arriving out of order, and identifiers that only the provider can
+     supply are never cleared by a later update that lacks them. */
+  const TERMINAL = ["COMPLETED", "FAILED", "CANCELLED"];
+  function mergeJobOutcome(target, source) {
+    if (!target || !source) return target;
+    const settled = TERMINAL.includes(String(target.status || "")) && !!target.ingestedAt;
+    for (const [key, value] of Object.entries(source)) {
+      if (key === "status") continue;
+      if (["externalId", "statusUrl", "responseUrl", "cancelUrl", "model", "modelFamily"].includes(key)) {
+        if (value) target[key] = value; // never clear provenance with a blank
+        continue;
+      }
+      if (key === "ingestedAt" && target.ingestedAt) continue;
+      if (key === "outputs" && settled && (!Array.isArray(value) || !value.length)) continue;
+      target[key] = value;
+    }
+    if (!settled && source.status) target.status = source.status;
+    return target;
+  }
+
+  function readAutomationRuns(owner) {
     try {
-      const parsed = JSON.parse(fs.readFileSync(automationRunsFile(), "utf8"));
+      const parsed = JSON.parse(fs.readFileSync(path.join(owner.dir, "automation-runs.json"), "utf8"));
       return Array.isArray(parsed) ? parsed : Array.isArray(parsed?.runs) ? parsed.runs : [];
     } catch { return []; }
   }
-  function automationSubmissionError(jobs, body, outputCount) {
+  function automationSubmissionError(owner, jobs, body, outputCount) {
     const runId = String(body?.automationRunId || "").trim();
     const stepKey = String(body?.automationStepKey || "").trim();
     if (!runId && !stepKey) return null;
     if (!runId || !stepKey) return { status: 400, message: "Automation generation requires both automationRunId and automationStepKey." };
-    const run = readAutomationRuns().find((item) => String(item.id) === runId);
+    const run = readAutomationRuns(owner).find((item) => String(item.id) === runId);
     if (!run) return { status: 409, message: "Automation run was not found. No paid request was submitted." };
     const maxImages = Number(run.config?.maxImages);
     if (!Number.isInteger(maxImages) || maxImages <= 0) return { status: 409, message: "Automation credit guard has no valid positive image cap. No paid request was submitted." };
@@ -100,13 +212,13 @@ function registerFalGeneration(app, context) {
     while (fs.existsSync(path.join(dir, name))) name = `${stem}_${++i}${ext}`;
     return name;
   }
-  function localAssetFile(url) {
+  function localAssetFile(owner, url) {
     const raw = String(url || "");
     if (!raw.startsWith("/assets/")) return "";
     const rel = decodeURIComponent(raw.slice("/assets/".length)).replace(/\\/g, "/");
     const allowed = /^(anchors|plates|props|vehicles|audio|media)\/[^/]+$/.test(rel) || /^shots\/[\w.-]+\/(takes|locked|blocking)\/[^/]+$/.test(rel);
     if (!allowed) throw new Error("Reference URL is outside CineBraid media storage.");
-    const root = path.resolve(projectDir()), file = path.resolve(root, rel);
+    const root = path.resolve(owner.dir), file = path.resolve(root, rel);
     if (!file.startsWith(root + path.sep) || !fs.existsSync(file)) throw new Error(`Reference file is missing: ${rel}`);
     return file;
   }
@@ -125,10 +237,10 @@ function registerFalGeneration(app, context) {
     if (ext === ".ogg") return "audio/ogg";
     return "image/png";
   }
-  function referenceInput(ref) {
+  function referenceInput(owner, ref) {
     const url = String(ref?.url || "");
     if (/^(https?:|data:)/i.test(url)) return url;
-    const file = localAssetFile(url);
+    const file = localAssetFile(owner, url);
     if (!file) throw new Error(`Reference ${ref?.label || ref?.key || "image"} has no usable URL.`);
     return `data:${mimeFor(file)};base64,${fs.readFileSync(file).toString("base64")}`;
   }
@@ -202,7 +314,7 @@ function registerFalGeneration(app, context) {
     const mode = String(job.profileMode || job.mode || "i2v");
     return h3AspectSupport(mode, job.aspectRatio);
   }
-  async function submitH3(job, refs, cfg) {
+  async function submitH3(owner, job, refs, cfg) {
     const mode = String(job.profileMode || job.mode || "i2v");
     const gate = h3AspectGate(job);
     if (!gate.ok) throw new Error(gate.message);
@@ -221,10 +333,10 @@ function registerFalGeneration(app, context) {
     } else if (mode === "i2v" || mode === "flf") {
       model = cfg.h3ImageModel;
       if (!groups.image.length) throw new Error("MiniMax H3 image-to-video requires an approved opening frame.");
-      input.image_url = referenceInput(groups.image[0]);
+      input.image_url = referenceInput(owner, groups.image[0]);
       if (mode === "flf") {
         if (groups.image.length < 2) throw new Error("MiniMax H3 first/last-frame generation requires both approved endpoint images.");
-        input.end_image_url = referenceInput(groups.image[1]);
+        input.end_image_url = referenceInput(owner, groups.image[1]);
       }
     } else {
       model = cfg.h3ReferenceModel;
@@ -235,9 +347,9 @@ function registerFalGeneration(app, context) {
       if (groups.audio.length && !groups.image.length && !groups.video.length)
         throw new Error("MiniMax H3 audio cannot be the only reference; add at least one image or video.");
       input.aspect_ratio = gate.value;
-      if (groups.image.length) input.reference_image_urls = groups.image.map(referenceInput);
-      if (groups.video.length) input.reference_video_urls = groups.video.map(referenceInput);
-      if (groups.audio.length) input.reference_audio_urls = groups.audio.map(referenceInput);
+      if (groups.image.length) input.reference_image_urls = groups.image.map((ref) => referenceInput(owner, ref));
+      if (groups.video.length) input.reference_video_urls = groups.video.map((ref) => referenceInput(owner, ref));
+      if (groups.audio.length) input.reference_audio_urls = groups.audio.map((ref) => referenceInput(owner, ref));
     }
     const response = await fetch(`${cfg.baseUrl}/${model}`, {
       method: "POST",
@@ -258,9 +370,9 @@ function registerFalGeneration(app, context) {
       status: "IN_QUEUE",
     };
   }
-  async function submit(job, refs) {
+  async function submit(owner, job, refs) {
     const cfg = config();
-    if (job.profileFamily === "minimax-h3" || job.purpose === "motion-h3") return submitH3(job, refs, cfg);
+    if (job.profileFamily === "minimax-h3" || job.purpose === "motion-h3") return submitH3(owner, job, refs, cfg);
     const edit = job.mode === "edit";
     const model = edit ? cfg.editModel : cfg.textModel;
     const compatibility = modelCompatibilityError(job, model);
@@ -274,7 +386,7 @@ function registerFalGeneration(app, context) {
     };
     if (edit) {
       if (!refs.length) throw new Error("The configured edit endpoint needs at least one input image.");
-      input.image_urls = refs.slice(0, 16).map(referenceInput);
+      input.image_urls = refs.slice(0, 16).map((ref) => referenceInput(owner, ref));
     }
     const response = await fetch(`${cfg.baseUrl}/${model}`, {
       method: "POST",
@@ -349,25 +461,25 @@ function registerFalGeneration(app, context) {
     if (!entity) throw new Error("Entity no longer exists.");
     return { list, folder, entity };
   }
-  function updateEntityCoverageRun(job, status, error = "") {
+  function updateEntityCoverageRun(owner, job, status, error = "") {
     if (job?.purpose !== "entity-reference" || !job.entityList || !job.entityId) return;
     try {
-      const project = readProject();
+      const project = ownerProject(owner);
       const entity = (project[job.entityList] || []).find((item) => String(item.id) === String(job.entityId));
       if (!entity?.coverageAutomation) return;
       entity.coverageAutomation.status = status;
       entity.coverageAutomation.updatedAt = now();
       if (error) entity.coverageAutomation.error = String(error);
       if (["failed", "cancelled", "needs-attention"].includes(status)) entity.coverageAutomation.needsAttentionAt = now();
-      writeProject(project);
+      saveOwnerProject(owner, project);
     } catch {}
   }
   function entityRole(list) {
     return { characters: "character-reference", locations: "location-reference", props: "prop-reference", vehicles: "vehicle-reference" }[list] || "planning-reference";
   }
-  async function ingestEntity(job, images, project) {
+  async function ingestEntity(owner, job, images, project) {
     const { list, folder, entity } = entityTarget(job, project);
-    const dir = path.join(projectDir(), folder);
+    const dir = path.join(owner.dir, folder);
     fs.mkdirSync(dir, { recursive: true });
     entity.candidateFiles = Array.isArray(entity.candidateFiles) ? entity.candidateFiles : [];
     entity.generatedCandidates = Array.isArray(entity.generatedCandidates) ? entity.generatedCandidates : [];
@@ -407,23 +519,23 @@ function registerFalGeneration(app, context) {
       entity.coverageAutomation = entity.coverageAutomation && typeof entity.coverageAutomation === "object" ? entity.coverageAutomation : { list, entityId: entity.id, mode: job.coverageJobType === "sheet" ? "sheet" : "individual", sheetType: job.coverageSheetType || "angles", startedAt: job.createdAt || now(), jobs: [] };
       entity.coverageAutomation.jobs = Array.isArray(entity.coverageAutomation.jobs) ? entity.coverageAutomation.jobs : [];
       if (!entity.coverageAutomation.jobs.includes(job.id)) entity.coverageAutomation.jobs.push(job.id);
-      const knownJobs = readJobs();
+      const knownJobs = readJobs(owner);
       const pending = knownJobs.filter((item) => entity.coverageAutomation.jobs.includes(item.id) && item.id !== job.id && !["COMPLETED", "FAILED", "CANCELLED"].includes(String(item.status || "").toUpperCase()));
       if (!pending.length) {
         entity.coverageAutomation.status = job.coverageJobType === "sheet" ? "sheet-ready-for-review" : "slot-candidates-ready";
         entity.coverageAutomation.readyAt = now();
       }
     }
-    writeProject(project);
+    saveOwnerProject(owner, project);
     job.outputs = outputs;
     job.ingestedAt = now();
     return job;
   }
-  async function ingestMotion(job, assets, project) {
+  async function ingestMotion(owner, job, assets, project) {
     if (job.ingestedAt) return job;
     const shot = (project.shots || []).find((item) => String(item.id) === String(job.shotId));
     if (!shot) throw new Error("Shot no longer exists.");
-    const dir = path.join(projectDir(), "shots", shot.id, "takes");
+    const dir = path.join(owner.dir, "shots", shot.id, "takes");
     fs.mkdirSync(dir, { recursive: true });
     shot.candidateFiles = Array.isArray(shot.candidateFiles) ? shot.candidateFiles : [];
     const outputs = [];
@@ -447,17 +559,17 @@ function registerFalGeneration(app, context) {
     shot.workflowStatus = "IN PROGRESS";
     shot.status = "BUILT";
     shot.reviewStatus = "PENDING";
-    writeProject(project);
+    saveOwnerProject(owner, project);
     job.outputs = outputs;
     job.ingestedAt = now();
     return job;
   }
 
-  async function ingest(job, images) {
+  async function ingest(owner, job, images) {
     if (job.ingestedAt) return job;
-    const P = readProject();
-    if (job.purpose === "motion-h3" || job.profileFamily === "minimax-h3") return ingestMotion(job, images, P);
-    if (job.purpose === "entity-reference") return ingestEntity(job, images, P);
+    const P = ownerProject(owner);
+    if (job.purpose === "motion-h3" || job.profileFamily === "minimax-h3") return ingestMotion(owner, job, images, P);
+    if (job.purpose === "entity-reference") return ingestEntity(owner, job, images, P);
     const shot = (P.shots || []).find((item) => String(item.id) === String(job.shotId));
     if (!shot) throw new Error("Shot no longer exists.");
     const outputs = [];
@@ -467,7 +579,7 @@ function registerFalGeneration(app, context) {
       const downloaded = await downloadImage(images[index]);
       const ext = downloaded.mime.includes("jpeg") ? ".jpg" : downloaded.mime.includes("webp") ? ".webp" : ".png";
       if (job.purpose === "blocking") {
-        const dir = path.join(projectDir(), "shots", shot.id, "blocking");
+        const dir = path.join(owner.dir, "shots", shot.id, "blocking");
         fs.mkdirSync(dir, { recursive: true });
         const name = nextFile(dir, safeName(`${shot.id}_BLOCKING_FAL_${index + 1}${ext}`, `${shot.id}_BLOCKING${ext}`));
         fs.writeFileSync(path.join(dir, name), downloaded.buffer);
@@ -505,7 +617,7 @@ function registerFalGeneration(app, context) {
         P.mediaAssets.push(asset);
         outputs.push({ type: "blocking", assetId: asset.id, frameId: job.frameId || "", frameLabel: job.frameLabel || "", name, url: `/assets/${asset.storagePath}` });
       } else {
-        const dir = path.join(projectDir(), "shots", shot.id, "takes");
+        const dir = path.join(owner.dir, "shots", shot.id, "takes");
         fs.mkdirSync(dir, { recursive: true });
         const frameLabel = job.frameLabel || "A";
         const correction = job.purpose === "correction";
@@ -559,12 +671,12 @@ function registerFalGeneration(app, context) {
       shot.status = "BUILT";
       shot.reviewStatus = "PENDING";
     }
-    writeProject(P);
+    saveOwnerProject(owner, P);
     job.outputs = outputs;
     job.ingestedAt = now();
     return job;
   }
-  async function refresh(job) {
+  async function refresh(owner, job) {
     const cfg = config();
     if (["COMPLETED", "FAILED", "CANCELLED"].includes(job.status) && job.ingestedAt) return job;
     const statusResponse = await fetch(job.statusUrl, {
@@ -584,7 +696,7 @@ function registerFalGeneration(app, context) {
       if (!resultResponse.ok) throw new Error(normalizeError(resultData, resultResponse.status));
       const assets = resultAssets(resultData, job);
       if (!assets.length) throw new Error(job.profileFamily === "minimax-h3" ? "fal completed the MiniMax H3 request but returned no video." : "fal completed the request but returned no images.");
-      await ingest(job, assets);
+      await ingest(owner, job, assets);
     }
     return job;
   }
@@ -602,9 +714,14 @@ function registerFalGeneration(app, context) {
     });
   });
   app.get("/api/generation/fal/jobs", (req, res) => {
-    const shotId = String(req.query.shotId || ""), entityId = String(req.query.entityId || ""), entityList = String(req.query.entityList || "");
-    const jobs = readJobs().filter((job) => (!shotId || String(job.shotId) === shotId) && (!entityId || String(job.entityId) === entityId) && (!entityList || String(job.entityList) === entityList));
-    res.json({ jobs: jobs.map(publicJob) });
+    try {
+      const owner = captureOwner();
+      const shotId = String(req.query.shotId || ""), entityId = String(req.query.entityId || ""), entityList = String(req.query.entityList || "");
+      const jobs = readJobs(owner).filter((job) => (!shotId || String(job.shotId) === shotId) && (!entityId || String(job.entityId) === entityId) && (!entityList || String(job.entityList) === entityList));
+      res.json({ jobs: jobs.map(publicJob) });
+    } catch (error) {
+      res.status(ledgerFailureStatus(error)).json(ledgerFailurePayload(error));
+    }
   });
   app.post("/api/generation/fal/test", (req, res) => {
     const cfg = config();
@@ -614,7 +731,18 @@ function registerFalGeneration(app, context) {
   });
   app.post("/api/generation/fal/jobs", async (req, res) => {
     const cfg = config();
-    const jobs = readJobs();
+    /* Captured before the first await. Everything this request writes — the
+       ledger row, the downloaded media, the project document — is addressed
+       through this record, so switching projects mid-generation cannot redirect
+       it. A corrupt ledger refuses here rather than presenting an empty history
+       that would free the concurrency guard and re-dispatch paid work. */
+    let owner, jobs;
+    try {
+      owner = captureOwner();
+      jobs = readJobs(owner);
+    } catch (error) {
+      return res.status(ledgerFailureStatus(error)).json(ledgerFailurePayload(error));
+    }
     if (!cfg.enabled) return res.status(400).json({ error: "FAL generation is disabled in Settings." });
     if (!cfg.apiKey) return res.status(400).json({ error: "FAL API key is not configured." });
     const automationRunId = String(req.body?.automationRunId || "").trim();
@@ -649,7 +777,7 @@ function registerFalGeneration(app, context) {
     const requestedPurpose = String(req.body?.purpose || "frame");
     const purpose = ["blocking", "frame", "correction", "entity-reference", "motion-h3"].includes(requestedPurpose) ? requestedPurpose : "frame";
     const requestedOutputCount = purpose === "motion-h3" ? 1 : clamp(req.body?.outputCount, purpose === "blocking" ? cfg.blockingOutputs : cfg.frameOutputs, 1, 4);
-    const guardError = automationSubmissionError(jobs, req.body, requestedOutputCount);
+    const guardError = automationSubmissionError(owner, jobs, req.body, requestedOutputCount);
     if (guardError) return res.status(guardError.status).json({ error: guardError.message, code: guardError.code || "AUTOMATION_GUARD" });
     const refs = Array.isArray(req.body?.references) ? req.body.references.filter((ref) => ref && ref.url) : [];
     const edit = refs.length > 0;
@@ -743,7 +871,7 @@ function registerFalGeneration(app, context) {
     } else if (purpose === "entity-reference") {
       if (!["characters", "locations", "props", "vehicles"].includes(job.entityList)) return res.status(400).json({ error: "A supported entityList is required." });
       if (!job.entityId) return res.status(400).json({ error: "entityId is required." });
-      const project = readProject();
+      const project = ownerProject(owner);
       const entity = (project[job.entityList] || []).find((item) => String(item.id) === job.entityId);
       if (!entity) return res.status(404).json({ error: "Entity no longer exists." });
       if (job.continuityStateId) {
@@ -769,48 +897,111 @@ function registerFalGeneration(app, context) {
     }
     if (purpose === "correction" && !job.sourceCandidate)
       return res.status(400).json({ error: "Correction generation requires sourceCandidate provenance and no safe editable-base filename could be recovered.", code: "SOURCE_CANDIDATE_REQUIRED" });
-    jobs.push(job);
-    writeJobs(jobs);
+    /* The row is committed against CURRENT durable state, not against the
+       snapshot this request read minutes ago — a job created by an overlapping
+       request in between must survive. */
     try {
-      Object.assign(job, await submit(job, job.references), { updatedAt: now() });
-      writeJobs(jobs);
+      await commit(owner, (current) => { current.push(job); });
+    } catch (error) {
+      return res.status(ledgerFailureStatus(error)).json(ledgerFailurePayload(error));
+    }
+    try {
+      const outcome = await submit(owner, job, job.references);
+      await commit(owner, (current) => {
+        const row = current.find((item) => item.id === job.id);
+        if (row) mergeJobOutcome(row, { ...outcome, status: outcome.status, updatedAt: now() });
+        Object.assign(job, row || {});
+      });
       res.json({ ok: true, job: publicJob(job) });
     } catch (error) {
-      job.status = "FAILED";
-      job.error = error.message;
-      job.updatedAt = now();
-      writeJobs(jobs);
-      updateEntityCoverageRun(job, "needs-attention", error.message);
+      await commit(owner, (current) => {
+        const row = current.find((item) => item.id === job.id);
+        if (row) {
+          row.status = "FAILED";
+          row.error = error.message;
+          row.updatedAt = now();
+          Object.assign(job, row);
+        }
+      }).catch(() => {});
+      updateEntityCoverageRun(owner, job, "needs-attention", error.message);
       res.status(502).json({ error: error.message, job: publicJob(job) });
     }
   });
   app.post("/api/generation/fal/jobs/:id/refresh", async (req, res) => {
-    const jobs = readJobs(), job = jobs.find((item) => item.id === req.params.id);
-    if (!job) return res.status(404).json({ error: "Generation job not found." });
+    let owner;
     try {
-      await refresh(job);
-      writeJobs(jobs);
-      res.json({ ok: true, job: publicJob(job) });
+      owner = captureOwner();
     } catch (error) {
-      job.status = "FAILED";
-      job.error = error.message;
-      job.updatedAt = now();
-      writeJobs(jobs);
-      updateEntityCoverageRun(job, "needs-attention", error.message);
-      res.status(502).json({ error: error.message, job: publicJob(job) });
+      return res.status(ledgerFailureStatus(error)).json(ledgerFailurePayload(error));
     }
+    /* Serialised per job: two overlapping refreshes must not both observe
+       `!ingestedAt` and ingest the same paid result twice. */
+    return guardRoute(res, serializeJobOperation(owner, req.params.id, async () => {
+      let job;
+      try {
+        job = readJobs(owner).find((item) => item.id === req.params.id);
+      } catch (error) {
+        return res.status(ledgerFailureStatus(error)).json(ledgerFailurePayload(error));
+      }
+      if (!job) return res.status(404).json({ error: "Generation job not found." });
+      try {
+        await refresh(owner, job);
+        await commit(owner, (current) => {
+          const row = current.find((item) => item.id === job.id);
+          if (row) Object.assign(job, mergeJobOutcome(row, job));
+          else current.push(job); // the row vanished underneath us; do not lose it
+        });
+        res.json({ ok: true, job: publicJob(job) });
+      } catch (error) {
+        await commit(owner, (current) => {
+          const row = current.find((item) => item.id === job.id);
+          if (row) {
+            row.status = "FAILED";
+            row.error = error.message;
+            row.updatedAt = now();
+            Object.assign(job, row);
+          }
+        }).catch(() => {});
+        updateEntityCoverageRun(owner, job, "needs-attention", error.message);
+        res.status(502).json({ error: error.message, job: publicJob(job) });
+      }
+    }));
   });
   app.post("/api/generation/fal/jobs/:id/cancel", async (req, res) => {
-    const cfg = config(), jobs = readJobs(), job = jobs.find((item) => item.id === req.params.id);
-    if (!job) return res.status(404).json({ error: "Generation job not found." });
-    if (job.cancelUrl && !["COMPLETED", "FAILED", "CANCELLED"].includes(job.status)) {
-      await fetch(job.cancelUrl, { method: "PUT", headers: { Authorization: `Key ${cfg.apiKey}` } }).catch(() => null);
+    const cfg = config();
+    let owner;
+    try {
+      owner = captureOwner();
+    } catch (error) {
+      return res.status(ledgerFailureStatus(error)).json(ledgerFailurePayload(error));
     }
-    job.status = "CANCELLED";
-    job.updatedAt = now();
-    writeJobs(jobs);
-    updateEntityCoverageRun(job, "cancelled", "Provider job cancelled by user.");
-    res.json({ ok: true, job: publicJob(job) });
+    return guardRoute(res, serializeJobOperation(owner, req.params.id, async () => {
+      let job;
+      try {
+        job = readJobs(owner).find((item) => item.id === req.params.id);
+      } catch (error) {
+        return res.status(ledgerFailureStatus(error)).json(ledgerFailurePayload(error));
+      }
+      if (!job) return res.status(404).json({ error: "Generation job not found." });
+      if (job.cancelUrl && !["COMPLETED", "FAILED", "CANCELLED"].includes(job.status)) {
+        await fetch(job.cancelUrl, { method: "PUT", headers: { Authorization: `Key ${cfg.apiKey}` } }).catch(() => null);
+      }
+      try {
+        await commit(owner, (current) => {
+          const row = current.find((item) => item.id === job.id);
+          if (!row) return;
+          /* A cancel that lands after the result was already ingested must not
+             erase the delivery the user paid for. */
+          if (!(row.status === "COMPLETED" && row.ingestedAt)) row.status = "CANCELLED";
+          row.updatedAt = now();
+          Object.assign(job, row);
+        });
+      } catch (error) {
+        return res.status(ledgerFailureStatus(error)).json(ledgerFailurePayload(error));
+      }
+      updateEntityCoverageRun(owner, job, "cancelled", "Provider job cancelled by user.");
+      res.json({ ok: true, job: publicJob(job) });
+    }));
   });
 }
 

@@ -428,11 +428,24 @@ async function providerRefusal() {
   } } };
   const app = express();
   app.use(express.json({ limit: '5mb' }));
+  /* Generation captures an explicit project slug before its first await, so the
+     harness supplies a resolver rather than a zero-argument directory. */
+  const FIXTURE_SLUG = 'h3-guard-fixture';
   registerFalGeneration(app, {
     readConfig: () => JSON.parse(JSON.stringify(config)),
-    readProject: () => JSON.parse(fs.readFileSync(projectFile, 'utf8')),
-    writeProject: (project) => fs.writeFileSync(projectFile, JSON.stringify(project, null, 2)),
-    projectDir: () => projectDir,
+    readProject: (slug = FIXTURE_SLUG) => {
+      if (slug !== FIXTURE_SLUG) throw new Error(`No such project: ${slug}`);
+      return JSON.parse(fs.readFileSync(projectFile, 'utf8'));
+    },
+    writeProject: (project, slug = FIXTURE_SLUG) => {
+      if (slug !== FIXTURE_SLUG) throw new Error(`No such project: ${slug}`);
+      fs.writeFileSync(projectFile, JSON.stringify(project, null, 2));
+    },
+    activeSlug: () => FIXTURE_SLUG,
+    projectDirForSlug: (slug) => {
+      if (slug !== FIXTURE_SLUG) throw new Error(`No such project: ${slug}`);
+      return { slug, dir: projectDir, file: projectFile };
+    },
   });
   const appServer = await listen(app);
   const appOrigin = `http://127.0.0.1:${appServer.address().port}`;

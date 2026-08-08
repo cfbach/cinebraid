@@ -174,7 +174,7 @@ async function serverChecks() {
   const edited = projectFixture("Project A edited after a failed switch");
   result = await request(`/api/projects/${A}/project`, {
     method: "PUT",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", "if-match": "*" },
     body: JSON.stringify(edited),
   });
   assert.strictEqual(result.response.status, 200, "editing the still-active project must work");

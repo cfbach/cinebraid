@@ -39,12 +39,12 @@ async function main(){
   let stderr=''; child.stderr.on('data',d=>stderr+=d);
   try{
     const base=`http://127.0.0.1:${port}`; await wait(`${base}/api/project`);
-    let r=await fetch(`${base}/api/projects/recovery/project`,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({meta:{title:'Broken'},scenes:'bad',shots:[]})});
+    let r=await fetch(`${base}/api/projects/recovery/project`,{method:'PUT',headers:{'content-type':'application/json','if-match':'*'},body:JSON.stringify({meta:{title:'Broken'},scenes:'bad',shots:[]})});
     assert.strictEqual(r.status,422,'invalid project save must be rejected');
     assert.strictEqual(JSON.parse(fs.readFileSync(path.join(projectDir,'project.json'),'utf8')).meta.title,'Recovery','rejected save must not replace project');
     for(let i=1;i<=12;i++){
       const next=structuredClone(initial); next.meta.title=`Recovery ${i}`;
-      r=await fetch(`${base}/api/projects/recovery/project`,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify(next)});
+      r=await fetch(`${base}/api/projects/recovery/project`,{method:'PUT',headers:{'content-type':'application/json','if-match':'*'},body:JSON.stringify(next)});
       assert(r.ok,`validated save ${i} failed`);
     }
     r=await fetch(`${base}/api/projects/recovery/backups`); const list=await r.json();

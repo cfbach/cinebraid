@@ -320,7 +320,7 @@ window.uploadProjectMedia = async (targetType, targetId, fileList, role) => {
       storedName = `MEDIA-${String(targetId).replace(/[^a-z0-9]/gi, "-")}-${Date.now().toString(36)}-${i + 1}${ext}`;
     try {
       const r = await fetch(
-          "/api/media/upload?type=media&name=" + encodeURIComponent(storedName),
+          "/api/media/upload?type=media&name=" + encodeURIComponent(storedName) + projectSlugParam(),
           {
             method: "POST",
             headers: { "Content-Type": file.type || "application/octet-stream" },
