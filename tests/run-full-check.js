@@ -1,4 +1,6 @@
 const { spawn } = require("child_process");
+const fs = require("fs");
+const path = require("path");
 
 const nodeSuites = [
   "check:syntax",
@@ -49,21 +51,77 @@ const nodeSuites = [
   "check:continuity-cache",
   "check:continuity-compare",
   "check:continuity-validation",
+  /* Suites check:ci runs that this runner used to omit. Each is a plain Node suite
+     with no reason to be excluded; they were simply never added, so `npm run check`
+     silently claimed to pass while covering less than CI did. The invariant in
+     tests/current-behavior.js now fails if that happens again. */
+  "check:continuity-json",
+  "check:continuity-workspace",
+  "check:version",
+  "check:shot-layout",
+  "check:settings",
+  "check:image-scale",
+  "check:multi-aspect",
+  "check:launch-blockers",
+  "check:browser-exit",
+  "check:data-safety",
+  "check:project-switch",
 ];
+
+/* Suites that assert something about the whole machine and therefore cannot share it.
+
+   check:windows-shutdown snapshots every node PID on the box, terminates its own
+   server, and asserts that no OTHER node process disappeared - which is exactly the
+   orphan-killing defect worth guarding. Run beside three concurrent suites, other
+   suites' processes exit inside that window and the assertion fires on them. The
+   suite is right and the placement was wrong, so it runs on its own rather than
+   having its assertion weakened. */
+const serialSuites = ["check:windows-shutdown"];
 
 const browserSuites = ["check:manual-browser", "check:browser-real", "check:h3-browser", "check:preview-layout", "check:ui-state"];
 const releaseSuites = ["check:environment", "check:package"];
-const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
+/* How a suite is launched, without a shell.
+
+   This used to spawn "npm.cmd" directly. Node's hardening for CVE-2024-27980
+   refuses to spawn a .cmd or .bat without a shell, so on current Node for Windows
+   every spawn threw EINVAL — and because each suite prints its banner BEFORE
+   spawning, the output looked like a failure partway through when in fact nothing
+   ran at all.
+
+   npm tells a script it launched exactly where its own CLI lives, and that CLI is a
+   plain .js file. Running it with this same Node binary is a real executable with a
+   plain file argument: no shell, no quoting rules, and one call that behaves
+   identically on Windows and POSIX. */
+function resolveNpmLauncher() {
+  const fromNpm = process.env.npm_execpath;
+  if (fromNpm && fromNpm.endsWith(".js") && fs.existsSync(fromNpm))
+    return { command: process.execPath, prefix: [fromNpm], shell: false, how: "npm_execpath" };
+  /* Running this file directly (node tests/run-full-check.js) leaves npm_execpath
+     unset. npm ships beside the Node binary on Windows and on most POSIX installs. */
+  const beside = path.join(path.dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js");
+  if (fs.existsSync(beside))
+    return { command: process.execPath, prefix: [beside], shell: false, how: "beside-node" };
+  /* Last resort. Only the literal suite names declared above are ever placed on this
+     command line, so nothing untrusted is interpolated into a shell. */
+  return {
+    command: process.platform === "win32" ? "npm.cmd" : "npm",
+    prefix: [],
+    shell: process.platform === "win32",
+    how: "npm-on-path",
+  };
+}
+const launcher = resolveNpmLauncher();
 
 function runScript(name) {
   return new Promise((resolve, reject) => {
     const startedAt = Date.now();
     console.log(`\n=== ${name} ===`);
-    const child = spawn(npmCommand, ["run", name], {
+    const child = spawn(launcher.command, [...launcher.prefix, "run", name], {
       cwd: process.cwd(),
       env: process.env,
       stdio: "inherit",
       windowsHide: true,
+      shell: launcher.shell,
     });
     child.on("error", reject);
     child.on("exit", (code, signal) => {
@@ -99,6 +157,7 @@ async function runWithConcurrency(names, limit) {
     })(),
   ]);
   results.push(...nodeResults, ...browserResults);
+  for (const script of serialSuites) results.push(await runScript(script));
   for (const script of releaseSuites) results.push(await runScript(script));
   const elapsedSeconds = ((Date.now() - startedAt) / 1000).toFixed(1);
   const slowest = [...results].sort((a, b) => b.seconds - a.seconds).slice(0, 5)
