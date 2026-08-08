@@ -285,6 +285,7 @@ async function main() {
   const tests = fs.readdirSync(path.join(ROOT, "tests")).sort();
   assert.deepStrictEqual(tests, [
     "api-smoke.js",
+    "asset-lifecycle.js",
     "automation-diagnostics.js",
     "automation-restoration.js",
     "blocking-automation-discoverability.js",
@@ -331,6 +332,10 @@ async function main() {
     "manual-first-parity.js",
     "manual-first-real-browser.py",
     "manual-first-workflow.js",
+    "media-asset-identity.js",
+    "media-asset-inertness.js",
+    "media-asset-store.js",
+    "media-hash-extraction.js",
     "minimax-h3-real-browser.py",
     "minimax-h3.js",
     "model-definition-registry.js",
