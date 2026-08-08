@@ -290,13 +290,43 @@ function main() {
     assert(!masked.value.includes("accessToken"), "OAuth tokens stay omitted after recovery");
   }
 
+  /* ---- 13. restarts after a recovery are stable ----
+     One boot repairing the file is not enough: the question a user actually has is
+     whether the machine is still theirs tomorrow. Three consecutive startups on the
+     recovered configuration must leave the passcodes set, the signing secret
+     unchanged (a regenerated one silently invalidates every session), both
+     AccountConnections present with their credentials, and the workspace root
+     intact — the field whose loss makes the whole project library vanish from the
+     interface even though the directories are fine. */
+  {
+    const c = newCase();
+    const good = JSON.stringify(POPULATED, null, 2);
+    fs.writeFileSync(c.backup, good, "utf8");
+    fs.writeFileSync(c.config, good.slice(0, 200), "utf8");
+    for (const boot of [1, 2, 3]) {
+      const started = drive(c.config, "(c.migrateConfigFile(), true)");
+      assert(started.ok, `boot ${boot} must start: ${JSON.stringify(started)}`);
+      const state = readState(c.config);
+      assert(state.ok, `boot ${boot} must read: ${JSON.stringify(state)}`);
+      assertEverySecretPresent(state.value, `boot ${boot} after recovery`);
+    }
+    /* And a subsequent ordinary write still keeps a usable backup. */
+    const changed = drive(c.config, `(() => { const cfg = c.readConfig(); cfg.ollamaModel = "after-recovery"; c.writeConfig(cfg); return true; })()`);
+    assert(changed.ok);
+    assert.strictEqual(JSON.parse(fs.readFileSync(c.backup, "utf8")).editorPass, EDITOR_PASS,
+      "the backup after a recovery is the repaired configuration, not the corrupt one");
+    const final = readState(c.config);
+    assertEverySecretPresent(final.value, "after a write following recovery");
+  }
+
   console.log(
     "Config durability suite passed: a missing file is a first run, a valid primary reads exactly, five corruption "
     + "shapes and a UTF-8 BOM recover from the backup with every passcode, provider key, signing secret, workspace "
     + "root and AccountConnection credential intact, a corrupt primary never overwrites a good backup and is kept as "
     + "evidence, both-unusable refuses with a typed error while touching neither file, 25 overlapping writes leave no "
-    + "temp file and erode no secret, recovery cannot switch authentication off, and the secret registry still masks "
-    + "a recovered document.",
+    + "temp file and erode no secret, recovery cannot switch authentication off, the secret registry still masks "
+    + "a recovered document, and three consecutive restarts after a recovery keep every passcode, the signing "
+    + "secret, both AccountConnections and the workspace root.",
   );
 }
 
