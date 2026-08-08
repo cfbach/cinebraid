@@ -399,6 +399,27 @@ async function callAnthropicVision(cfg, system, user, imagesB64, maxTokens) {
     .map((x) => x.text)
     .join("\n");
 }
+/* Where an OpenAI-compatible request is actually sent, and with which credential.
+
+   A caller may hand over an explicit endpoint — today only continuity, which can
+   be pointed at a service of its own. That override replaces the provider's whole
+   CONNECTION, not merely its address, because a credential belongs to the endpoint
+   it was issued for. So a blank key on an explicit endpoint means NO credential;
+   inheriting the general provider's key would transmit it to a host it was never
+   configured for. Absent an override — every other caller — the provider's own
+   connection is used and the request is byte-for-byte what it was.
+
+   Both OpenAI-compatible branches resolve through here so a second explicit
+   endpoint cannot reintroduce the same defect by copying one branch and not the
+   other. */
+function resolveProviderConnection(requestOptions, providerBaseUrl, providerKey) {
+  const endpoint =
+    requestOptions && typeof requestOptions.endpoint === "object" && requestOptions.endpoint
+      ? requestOptions.endpoint
+      : null;
+  if (!endpoint) return { baseUrl: providerBaseUrl, apiKey: providerKey };
+  return { baseUrl: endpoint.baseUrl || providerBaseUrl, apiKey: endpoint.apiKey || "" };
+}
 async function vision(
   system,
   user,
@@ -428,10 +449,11 @@ async function vision(
       imagesB64,
       maxTokens,
     );
-  if (provider === "openai")
+  if (provider === "openai") {
+    const connection = resolveProviderConnection(requestOptions, cfg.openaiBaseUrl, cfg.openaiKey);
     return callOpenAIVision(
-      (requestOptions.endpoint && requestOptions.endpoint.baseUrl) || cfg.openaiBaseUrl,
-      (requestOptions.endpoint && requestOptions.endpoint.apiKey) || cfg.openaiKey,
+      connection.baseUrl,
+      connection.apiKey,
       modelOverride || cfg.openaiVisionModel || cfg.openaiModel,
       system,
       user,
@@ -441,16 +463,12 @@ async function vision(
       {},
       requestOptions,
     );
-  /* An explicit connection, used only by continuity. Its endpoint is configured
-     separately from the general custom provider's, so the caller that resolved
-     it hands it over rather than this function guessing from a provider name.
-     Absent — every other caller — the provider's own connection is used and the
-     request is byte-for-byte what it was. */
-  const endpoint = requestOptions.endpoint && typeof requestOptions.endpoint === "object" ? requestOptions.endpoint : null;
-  if (provider === "custom")
+  }
+  if (provider === "custom") {
+    const connection = resolveProviderConnection(requestOptions, cfg.customBaseUrl, cfg.customKey);
     return callOpenAIVision(
-      endpoint?.baseUrl || cfg.customBaseUrl,
-      endpoint ? endpoint.apiKey || "" : cfg.customKey,
+      connection.baseUrl,
+      connection.apiKey,
       modelOverride || cfg.customVisionModel || cfg.customModel,
       system,
       user,
@@ -460,6 +478,7 @@ async function vision(
       customRequestBody(cfg),
       requestOptions,
     );
+  }
   return callOllamaVision(
     cfg,
     system,
@@ -490,6 +509,7 @@ module.exports = {
   customRequestBody,
   structuredVisionBody,
   isLocalProviderEndpoint,
+  resolveProviderConnection,
   readConfig,
   writeConfig,
 };

@@ -35,6 +35,7 @@ const nodeSuites = [
   "check:custom-provider",
   "check:provider-health",
   "check:local-only",
+  "check:secret-registry",
   "check:continuity-manifest",
   "check:continuity-observation",
   "check:continuity-comparison",
