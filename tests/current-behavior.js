@@ -564,6 +564,47 @@ async function main() {
   assert(reportsRender.html.includes("Export production summary"), "Reports must expose the production summary export action");
   assert(labels.size <= 80, `distinct rendered button labels: ${labels.size}`);
 
+  /* ---- the two aggregate runners must not diverge ----
+
+     `npm run check:ci` and `npm run check` are separate lists maintained by hand, and
+     they had silently drifted: twelve suites CI ran were missing from the full runner,
+     so `npm run check` reported a pass while covering less. Rather than adding a third
+     hand-maintained list, this derives the CI leaf set from package.json and requires
+     the runner to account for every one of them.
+
+     A suite is a leaf when its script does not chain other scripts; aggregates like
+     check:continuity-core exist only to group leaves and are expanded rather than
+     listed. */
+  const scripts = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8")).scripts;
+  const runnerSource = fs.readFileSync(path.join(ROOT, "tests", "run-full-check.js"), "utf8");
+  const declaredSuites = (arrayName) => {
+    const body = runnerSource.split(`const ${arrayName} = [`)[1];
+    assert(body, `run-full-check.js must declare ${arrayName}`);
+    return body.split("];")[0].match(/"(check:[a-z0-9-]+)"/g)?.map((entry) => entry.slice(1, -1)) || [];
+  };
+  const runnerCovers = new Set([
+    ...declaredSuites("nodeSuites"),
+    ...declaredSuites("browserSuites"),
+    ...declaredSuites("serialSuites"),
+    ...declaredSuites("releaseSuites"),
+  ]);
+  const leavesOf = (name, seen = new Set()) => {
+    const command = scripts[name];
+    if (!command) return [name];
+    const chained = [...command.matchAll(/npm run (check:[a-z0-9-]+)/g)].map((match) => match[1]);
+    if (!chained.length) return [name];
+    return chained.flatMap((child) => (seen.has(child) ? [] : (seen.add(child), leavesOf(child, seen))));
+  };
+  const ciLeaves = [...new Set(leavesOf("check:ci"))];
+  assert(ciLeaves.length > 30, `expected check:ci to expand to many suites, got ${ciLeaves.length}`);
+  const uncovered = ciLeaves.filter((suite) => !runnerCovers.has(suite));
+  assert.deepStrictEqual(
+    uncovered, [],
+    `every suite check:ci runs must also be reachable from npm run check. Missing from tests/run-full-check.js: ${uncovered.join(", ")}`,
+  );
+  for (const suite of runnerCovers)
+    assert(scripts[suite], `tests/run-full-check.js names "${suite}", which is not a package.json script`);
+
   console.log(`Current behavior suite passed navigation, single workflow, repository hygiene, golden-path controls <=7, control budgets ${controls.visible} shot / ${globalControls.visible} global chrome / ${consoleControls.visible} automation console, ${controls.total} reachable shot controls, and ${labels.size} distinct button labels.`);
 }
 
