@@ -146,7 +146,10 @@ dist
 
 # Shipped assets required for a working clone (see prompt-engine.js and
 # tests/release-package-smoke.js, both of which hard-require these).
+# Each negation names ONE file: data/ also holds config.json and, later, render-node
+# and account records, and a directory-wide negation here would ship credentials.
 !/data/model-profiles.json
+!/data/model-definitions.json
 !/projects/cinebraid-sample/
 
 # Runtime artifacts CineBraid writes inside the sample - never track these.

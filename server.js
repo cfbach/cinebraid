@@ -130,11 +130,13 @@ migrateConfigFile();
 /* ---- multi-project: each folder under projects/ is fully self-contained ---- */
 function activeSlug() {
   const c = readConfig();
-  if (
-    c.activeProject &&
-    fs.existsSync(path.join(projectsRoot(), c.activeProject))
-  )
-    return c.activeProject;
+  /* config.activeProject is the one project reference that never passed through a
+     route: data/config.json can be hand-edited, and PUT /api/config merges whatever
+     it is given. Since PROJECT_DIR() is derived from this value and is the root every
+     path-containment check trusts, it is proven contained here — at the single
+     boundary where the stored value becomes a directory. */
+  const slug = containedProjectSlug(c.activeProject);
+  if (slug && fs.existsSync(path.join(projectsRoot(), slug))) return slug;
   const list = listProjects();
   return list[0]?.slug || null;
 }
@@ -217,6 +219,37 @@ function cleanProjectSlug(value) {
   const slug = path.basename(String(value || "").trim());
   if (!slug || slug !== String(value || "").trim())
     throw new Error("Invalid project slug.");
+  return slug;
+}
+/* A project slug that provably addresses a directory INSIDE projectsRoot().
+
+   cleanProjectSlug rejects every separator-bearing form, but two values survive it
+   because they are their own basename: "." and "..". The second is the dangerous one.
+   PROJECT_DIR() is path.join(projectsRoot(), activeSlug()), so an activeProject of
+   ".." moves it to the PARENT of the projects root — and PROJECT_DIR() is the root
+   that every containment check in this codebase resolves against. A poisoned value
+   therefore RELOCATES the boundary rather than tripping any check, which is why the
+   slug being sanitised-looking is not enough and its resolved directory has to be
+   proven contained.
+
+   Containment is proven by path semantics, never by string prefix: `path.relative`
+   cannot be fooled by a sibling whose name merely starts with the root's
+   (projects-good vs projects), and a legitimate slug is by definition exactly one
+   path segment below the root. */
+function containedProjectSlug(value, root = projectsRoot()) {
+  let slug;
+  try {
+    slug = cleanProjectSlug(value);
+  } catch {
+    return "";
+  }
+  const base = path.resolve(root);
+  const target = path.resolve(base, slug);
+  const rel = path.relative(base, target);
+  if (!rel) return ""; /* "." — the projects root itself is not a project */
+  if (path.isAbsolute(rel)) return ""; /* a different drive or share */
+  if (rel === ".." || rel.startsWith(".." + path.sep) || rel.startsWith("../")) return "";
+  if (rel.split(/[\\/]/).length !== 1) return ""; /* must be a direct child */
   return slug;
 }
 function projectDirForSlug(value, requireExisting = true) {

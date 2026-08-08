@@ -159,6 +159,7 @@ async function main() {
   assert(index.includes(`shared-aspect.js?v=${RELEASE_VERSION}`), "shared aspect-ratio model must load before the app");
   assert(index.includes(`shared-reference-views.js?v=${RELEASE_VERSION}`), "shared reference-view vocabulary must load before media and composer modules");
   assert(index.includes(`shared-build-history.js?v=${RELEASE_VERSION}`), "shared prompt-history compatibility must load before the app");
+  assert(index.includes(`shared-generation-capability.js?v=${RELEASE_VERSION}`), "shared generation capability must load before the app");
   assert(index.includes(`v607-composer.js?v=${RELEASE_VERSION}`), "composer module must be cache-busted after patch updates");
   assert(index.includes(`motion-sound-composer.js?v=${RELEASE_VERSION}`), "Motion & Sound Composer must load after the shot composer");
   assert(index.includes(`scene-automation.js?v=${RELEASE_VERSION}`), "scene automation must load after the durable automation runner");
@@ -318,6 +319,9 @@ async function main() {
     "fal-generation.js",
     "fixtures",
     "focused-workspaces.js",
+    "generation-capability.js",
+    "generation-job-contract.js",
+    "generation-policy-contracts.js",
     "image-review-scale.js",
     "import-benchmark.js",
     "integrity-mobile-usability.js",
@@ -329,11 +333,13 @@ async function main() {
     "manual-first-workflow.js",
     "minimax-h3-real-browser.py",
     "minimax-h3.js",
+    "model-definition-registry.js",
     "motion-prompt-editing-real-browser.py",
     "multi-aspect-media.js",
     "private-preview-layout-real-browser.py",
     "private-preview-ux.js",
     "project-builder-kit.js",
+    "project-path-containment.js",
     "project-switch-safety.js",
     "provider-health.js",
     "readiness-feedback.js",

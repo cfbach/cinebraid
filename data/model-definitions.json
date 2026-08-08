@@ -1,0 +1,239 @@
+{
+  "schemaVersion": 1,
+  "updated": "2026-08-08",
+  "_readme": [
+    "Model IDENTITY, CAPABILITY and EXECUTION metadata.",
+    "",
+    "Deliberately separate from data/model-profiles.json, which is the PROMPT-AUTHORING",
+    "registry the compiler consumes: 47 profiles of rules and sections that describe how",
+    "to write for a model. This file describes what a model IS, what it can do, and where",
+    "it could run. A definition links to a prompt profile by id; it never restates one.",
+    "",
+    "`id` is the only identity. displayName is a label, and a FAL route is execution",
+    "metadata belonging to an adapter - neither may ever be used to select behaviour.",
+    "Adding a model must be a data change, never application-wide conditional logic.",
+    "",
+    "PHASE 1: nothing reads this file at runtime. It is validated by",
+    "tests/model-definition-registry.js and consumed by later phases.",
+    "",
+    "Capability values here are taken from data/model-profiles.json and from official",
+    "ComfyUI workflow templates. Where a fact is not established by either, the field is",
+    "null or omitted rather than guessed - an invented capability is worse than an absent",
+    "one, because something will eventually trust it."
+  ],
+  "models": [
+    {
+      "id": "gpt-image-2/standard",
+      "family": "gpt-image-2",
+      "variant": "standard",
+      "displayName": "GPT Image 2",
+      "vendor": "OpenAI",
+      "openWeights": false,
+      "license": null,
+      "origin": null,
+      "role": "inference",
+      "outputModalities": ["image"],
+      "promptProfiles": {
+        "t2i": "gpt-image-2/t2i",
+        "edit": "gpt-image-2/edit",
+        "multi-reference": "gpt-image-2/multi-reference",
+        "blocking": "gpt-image-2/blocking"
+      },
+      "capabilities": {
+        "modes": ["t2i", "edit", "multi-reference", "blocking"],
+        "inputModalities": ["text", "image"],
+        "referenceRoles": ["identity", "location", "prop", "style", "composition", "base", "reference"],
+        "maxReferenceImages": 16,
+        "maxReferenceVideos": 0,
+        "maxReferenceAudio": 0,
+        "textRendering": true,
+        "flags": {
+          "mask": true,
+          "firstFrame": false,
+          "lastFrame": false,
+          "nativeAudio": false,
+          "referenceWeights": false,
+          "controlNet": false,
+          "lora": false
+        }
+      },
+      "constraints": {
+        "resolutions": null,
+        "aspectRatios": null,
+        "durationSeconds": null,
+        "fps": null,
+        "frameQuantiser": null,
+        "maxPromptCharacters": null,
+        "vramGuidanceGb": null
+      },
+      "execution": [
+        {
+          "backendId": "fal",
+          "state": "available",
+          "note": "Dispatched today through generation.fal.textModel / editModel. The route is adapter configuration, not identity."
+        }
+      ],
+      "provenance": {
+        "capabilitySource": "data/model-profiles.json gpt-image-2/{t2i,edit,multi-reference,blocking} supports{} and limits{}",
+        "verified": true
+      }
+    },
+    {
+      "id": "minimax-h3/fl2va",
+      "family": "minimax-h3",
+      "variant": "fl2va",
+      "displayName": "MiniMax H3 - first/last frame",
+      "vendor": "MiniMax",
+      "openWeights": true,
+      "license": null,
+      "origin": null,
+      "role": "inference",
+      "outputModalities": ["video"],
+      "promptProfiles": {
+        "t2v": "minimax-h3/t2v",
+        "i2v": "minimax-h3/i2v",
+        "flf": "minimax-h3/flf"
+      },
+      "capabilities": {
+        "modes": ["t2v", "i2v", "flf"],
+        "inputModalities": ["text", "image"],
+        "referenceRoles": ["first-frame", "last-frame", "base"],
+        "maxReferenceImages": 2,
+        "maxReferenceVideos": 0,
+        "maxReferenceAudio": 0,
+        "flags": {
+          "firstFrame": true,
+          "lastFrame": true,
+          "nativeAudio": true,
+          "mask": false,
+          "referenceWeights": false
+        }
+      },
+      "constraints": {
+        "resolutions": ["768P", "2K"],
+        "aspectRatios": null,
+        "durationSeconds": [5, 15],
+        "fps": null,
+        "frameQuantiser": null,
+        "maxPromptCharacters": 2000,
+        "vramGuidanceGb": null
+      },
+      "execution": [
+        {
+          "backendId": "fal",
+          "state": "available",
+          "note": "Dispatched today through generation.fal.h3TextModel / h3ImageModel."
+        }
+      ],
+      "provenance": {
+        "capabilitySource": "data/model-profiles.json minimax-h3/{t2v,i2v,flf}; nativeAudio asserted here from the official ComfyUI template wiring VAEDecodeAudio into CreateVideo, NOT from the unread supports.nativeStereoAudio flag",
+        "verified": true
+      }
+    },
+    {
+      "id": "minimax-h3/ref2va",
+      "family": "minimax-h3",
+      "variant": "ref2va",
+      "displayName": "MiniMax H3 - reference to video",
+      "vendor": "MiniMax",
+      "openWeights": true,
+      "license": null,
+      "origin": null,
+      "role": "inference",
+      "outputModalities": ["video"],
+      "promptProfiles": {
+        "r2v": "minimax-h3/multi-frame"
+      },
+      "capabilities": {
+        "modes": ["r2v"],
+        "inputModalities": ["text", "image", "video", "audio"],
+        "referenceRoles": ["identity", "location", "prop", "motion-reference", "voice", "first-frame", "last-frame"],
+        "maxReferenceImages": 9,
+        "maxReferenceVideos": 3,
+        "maxReferenceAudio": 3,
+        "flags": {
+          "firstFrame": true,
+          "lastFrame": true,
+          "nativeAudio": true,
+          "mask": false,
+          "referenceWeights": false
+        }
+      },
+      "constraints": {
+        "resolutions": ["768P", "2K"],
+        "aspectRatios": null,
+        "durationSeconds": [5, 15],
+        "fps": null,
+        "frameQuantiser": null,
+        "maxPromptCharacters": 2000,
+        "vramGuidanceGb": null
+      },
+      "execution": [
+        {
+          "backendId": "fal",
+          "state": "available",
+          "note": "Dispatched today through generation.fal.h3ReferenceModel. A DIFFERENT checkpoint from fl2va - this is why variant is part of identity."
+        }
+      ],
+      "provenance": {
+        "capabilitySource": "data/model-profiles.json minimax-h3/multi-frame supports{} and limits{}; nativeAudio asserted here from the official ComfyUI template video_minimax_h3_r2v.json wiring VAEDecodeAudio and an audio VAE into CreateVideo, NOT from the unread supports.nativeStereoAudio flag",
+        "verified": true
+      }
+    },
+    {
+      "id": "z-image/turbo",
+      "family": "z-image",
+      "variant": "turbo",
+      "displayName": "Z-Image Turbo",
+      "vendor": "Tongyi Lab",
+      "openWeights": true,
+      "license": null,
+      "origin": null,
+      "role": "inference",
+      "outputModalities": ["image"],
+      "promptProfiles": {
+        "t2i": null
+      },
+      "capabilities": {
+        "modes": ["t2i", "variation"],
+        "inputModalities": ["text"],
+        "referenceRoles": [],
+        "maxReferenceImages": 0,
+        "maxReferenceVideos": 0,
+        "maxReferenceAudio": 0,
+        "flags": {
+          "seed": true,
+          "candidateBatching": true,
+          "lora": true,
+          "controlNet": true,
+          "nativeAudio": false,
+          "mask": false,
+          "firstFrame": false,
+          "lastFrame": false,
+          "referenceWeights": false
+        }
+      },
+      "constraints": {
+        "resolutions": null,
+        "aspectRatios": null,
+        "durationSeconds": null,
+        "fps": null,
+        "frameQuantiser": null,
+        "maxPromptCharacters": null,
+        "vramGuidanceGb": 16
+      },
+      "execution": [
+        {
+          "backendId": "comfy",
+          "state": "preparation",
+          "recipeIds": ["zimage-turbo-t2i"],
+          "note": "No WorkflowRecipe ships yet. This records the intended local path; nothing can dispatch to it."
+        }
+      ],
+      "provenance": {
+        "capabilitySource": "Official ComfyUI template image_z_image_turbo.json: UNETLoader(z_image_turbo_bf16), EmptySD3LatentImage(batch_size), KSampler(seed, 8 steps, cfg 1.0). No prompt profile ships for this family yet, so promptProfiles.t2i is null.",
+        "verified": true
+      }
+    }
+  ]
+}
