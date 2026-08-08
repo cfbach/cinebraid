@@ -1,14 +1,19 @@
-/* CineBraid Phase 2a boundary — the foundation is inert.
+/* CineBraid MediaAsset boundary — the ledger is inert with respect to the product.
  *
- * Phase 2a lands MediaAsset identity, schema, lifecycle and the durable store, and
- * deliberately wires none of it up. Phase 2b adds discovery and indexing. Until
- * then a project with no `media-assets.json` is the normal state, and this suite is
- * what stops "inert" from being a claim in a PR description rather than a property
- * of the code.
+ * Phase 2a landed identity, schema, lifecycle and the store. Phase 2b adds
+ * discovery, indexing and explicit verification. What has NOT changed, and is the
+ * point of this suite, is that none of it is reachable from CineBraid itself: no
+ * route invokes it, opening a project does not trigger it, and a project with no
+ * `media-assets.json` remains the normal state.
  *
- * It proves the boundary two ways, because either alone is weak: a source scan
- * (nothing outside tests/ imports the store) and a runtime proof (opening a real
- * project through the real server creates no ledger, reads no media, and PUTs
+ * That matters because indexing writes a file and verification reads media bytes.
+ * Wiring either to project open would create a sidecar in every project and, on a
+ * cloud-synced root, could pull a media corpus over the network. Activation is a
+ * deliberate later decision, and this suite is what stops it happening by accident.
+ *
+ * The boundary is proved two ways, because either alone is weak: a source scan
+ * (no production module imports or calls the ledger) and a runtime proof (opening a
+ * real project through the real server creates no ledger, reads no media, PUTs
  * nothing).
  */
 const assert = require("assert");
@@ -48,27 +53,28 @@ function stripComments(source) {
   return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
 }
 
-/* ---- 1. source scan: no production module imports the Phase 2a modules ----
-   Store code may exist and tests may exercise it. What must not exist is a
-   production import that could grow a call site. */
-const PHASE_2A_MODULES = ["media-assets", "media-asset-store"];
+/* ---- 1. source scan: no production module reaches the ledger ----
+   The ledger modules import each other — that is the pipeline. What must not exist
+   is an import or a call from anything else, because that is how a call site grows. */
+const LEDGER_MODULES = ["media-assets", "media-asset-store", "media-asset-indexer", "media-asset-verify"];
 const productionFiles = [
   ...fs.readdirSync(ROOT).filter((name) => name.endsWith(".js")),
   ...fs.readdirSync(path.join(ROOT, "public")).filter((name) => name.endsWith(".js")).map((name) => `public/${name}`),
   ...fs.readdirSync(path.join(ROOT, "scripts")).filter((name) => name.endsWith(".js")).map((name) => `scripts/${name}`),
-].filter((rel) => !PHASE_2A_MODULES.includes(path.basename(rel, ".js")));
+].filter((rel) => !LEDGER_MODULES.includes(path.basename(rel, ".js")));
 
 for (const rel of productionFiles) {
   const source = stripComments(fs.readFileSync(path.join(ROOT, rel), "utf8"));
-  for (const moduleName of PHASE_2A_MODULES)
+  for (const moduleName of LEDGER_MODULES)
     assert(
       !new RegExp(`require\\(["'.\\/]*${moduleName}["']\\)`).test(source),
-      `${rel} imports ${moduleName}. Phase 2a must have no production call site.`,
+      `${rel} imports ${moduleName}. The ledger must have no production call site.`,
     );
-  /* The store's own writer must not be reachable from product code either. */
-  for (const symbol of ["writeLedger", "writeLedgerSync", "readLedger"])
+  /* Persistence, indexing and verification must all be unreachable by name too —
+     an import is not the only way to acquire a function. */
+  for (const symbol of ["writeLedger", "writeLedgerSync", "readLedger", "indexProject", "verifyAssets"])
     assert(!new RegExp(`\\b${symbol}\\s*\\(`).test(source),
-      `${rel} calls ${symbol}. Phase 2a must not activate ledger persistence.`);
+      `${rel} calls ${symbol}. Indexing and verification are not activated by this phase.`);
 }
 
 /* media-hash.js IS imported — by continuity-cache.js, which is the point of the
@@ -78,15 +84,28 @@ const continuitySource = fs.readFileSync(path.join(ROOT, "continuity-cache.js"),
 assert(/require\("\.\/media-hash"\)/.test(continuitySource),
   "continuity-cache.js must consume the shared hasher — that is the extraction");
 
-/* ---- 2. no automatic hashing or discovery anywhere in Phase 2a ---- */
-const phase2aSource = PHASE_2A_MODULES
+/* ---- 2. the schema and store layers stay free of discovery and hashing ----
+   Discovery belongs to the indexer and hashing to the verifier, and keeping both
+   out of the layers underneath is what makes the separation checkable. */
+const foundationSource = ["media-assets", "media-asset-store"]
   .map((name) => stripComments(fs.readFileSync(path.join(ROOT, `${name}.js`), "utf8")))
   .join("\n");
 for (const forbidden of ["readdirSync", "readdir", "opendirSync", "globSync", "hashMediaFile", "hashImageFile"])
-  assert(!new RegExp(`\\b${forbidden}\\b`).test(phase2aSource),
-    `Phase 2a modules must not reference ${forbidden} — no discovery, no automatic hashing`);
-assert(!/readFileSync\s*\(\s*[^)]*\bmedia\b/i.test(phase2aSource),
-  "Phase 2a must not read media files");
+  assert(!new RegExp(`\\b${forbidden}\\b`).test(foundationSource),
+    `The schema and store layers must not reference ${forbidden} — no discovery, no hashing`);
+assert(!/readFileSync\s*\(\s*[^)]*\bmedia\b/i.test(foundationSource),
+  "The schema and store layers must not read media files");
+
+/* ---- 2b. the indexer cannot hash, and the verifier is the only module that can ----
+   This is the cloud-sync guarantee in structural form: the default pass is
+   incapable of hydrating a placeholder because it has no hasher to call. */
+const indexerSource = stripComments(fs.readFileSync(path.join(ROOT, "media-asset-indexer.js"), "utf8"));
+for (const forbidden of ["media-hash", "hashMediaFile", "hashImageFile", "readFileSync", "createReadStream"])
+  assert(!indexerSource.includes(forbidden),
+    `media-asset-indexer.js references ${forbidden} — the default index must be unable to read bytes`);
+const verifierSource = stripComments(fs.readFileSync(path.join(ROOT, "media-asset-verify.js"), "utf8"));
+assert(/require\("\.\/media-hash"\)/.test(verifierSource),
+  "media-asset-verify.js is the one module allowed to hash, and must use the shared hasher");
 
 /* ---- 3. runtime proof: opening a real project changes nothing ---- */
 function writeProject() {
@@ -186,15 +205,16 @@ async function main() {
   const untouched = ["fal-generation.js", "public/fal-generation.js", "public/app.js", "public/index.html"];
   for (const rel of untouched) {
     const source = fs.readFileSync(path.join(ROOT, rel), "utf8");
-    for (const moduleName of [...PHASE_2A_MODULES, "media-hash"])
+    for (const moduleName of [...LEDGER_MODULES, "media-hash"])
       assert(!source.includes(moduleName),
-        `${rel} must not reference ${moduleName} — no FAL or browser behaviour changes in Phase 2a`);
+        `${rel} must not reference ${moduleName} — no FAL or browser behaviour changes in this phase`);
   }
 
   console.log(
-    "Phase 2a inertness suite passed: no production module imports the ledger or calls its reader or writer, "
-    + "the Phase 2a modules contain no discovery or hashing, and opening a real project with media on disk creates "
-    + "no media-assets.json, leaves project.json byte-identical with no backup written, and modifies no media file.",
+    "MediaAsset inertness suite passed: no production module imports the ledger or calls its reader, writer, indexer "
+    + "or verifier; the schema and store layers contain no discovery or hashing and the indexer cannot read bytes at "
+    + "all; and opening a real project with media on disk creates no media-assets.json, leaves project.json "
+    + "byte-identical with no backup written, and modifies no media file.",
   );
 }
 
