@@ -43,6 +43,8 @@ const nodeSuites = [
   "check:generation-capability",
   "check:generation-policy",
   "check:model-definitions",
+  "check:generation-plan",
+  "check:generation-negative",
   "check:media-hash",
   "check:media-asset-identity",
   "check:media-asset-store",

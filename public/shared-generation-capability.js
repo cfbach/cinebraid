@@ -76,7 +76,13 @@ const CINEBRAID_CAPABILITY_FLAGS = [
 ];
 
 const CINEBRAID_ENUM_FIELDS = ["modes", "referenceRoles", "resolutions", "aspectRatios", "fps"];
-const CINEBRAID_MAXIMUM_FIELDS = ["maxReferenceImages", "maxReferenceVideos", "maxReferenceAudio"];
+/* maxPromptCharacters is a maximum like the reference counts and intersects the same
+   way, which is the point: MiniMax H3 accepts 7,000 characters and fal's queue schema
+   accepts 2,000. Encoding the smaller number as the model's limit would make a backend
+   restriction look like a model limitation, and would follow the model to a backend
+   that has no such rule. Declared by whichever layers have an opinion; the tightest
+   wins, exactly as it does for reference counts. */
+const CINEBRAID_MAXIMUM_FIELDS = ["maxReferenceImages", "maxReferenceVideos", "maxReferenceAudio", "maxPromptCharacters"];
 const CINEBRAID_RANGE_FIELDS = ["durationSeconds"];
 
 function isPlainRecord(value) {
@@ -267,6 +273,7 @@ function resolveCapability(layers) {
     maxReferenceImages: null,
     maxReferenceVideos: null,
     maxReferenceAudio: null,
+    maxPromptCharacters: null,
     resolutions: null,
     aspectRatios: null,
     fps: null,

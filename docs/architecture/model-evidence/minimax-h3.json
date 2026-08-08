@@ -1,0 +1,155 @@
+{
+  "schemaVersion": 1,
+  "modelFamily": "minimax-h3",
+  "vendor": "MiniMax",
+  "checkedOn": "2026-08-08",
+  "_readme": [
+    "Evidence for every H3 capability claim CineBraid relies on.",
+    "",
+    "This is the pattern every future model pack follows. It records WHERE a fact came",
+    "from, not the vendor's documentation itself: primary sources are cited and",
+    "summarised, never copied wholesale.",
+    "",
+    "Three rules keep it honest.",
+    "",
+    "1. A claim with no primary source does not appear in model-packs/minimax-h3.js.",
+    "   It appears in notEstablished below, and the pack treats it as unsupported.",
+    "2. A provider's constraint is not a model fact. fal's 2,000-character queue schema",
+    "   and MiniMax's 7,000-character model limit are separate rows for that reason.",
+    "3. Local open-weight capability and hosted API capability are recorded separately.",
+    "   The open weights are H3-Base; two of the three modules the hosted 2K workflow",
+    "   uses are not open-sourced, so a local install is a different capability set and",
+    "   not a smaller one."
+  ],
+
+  "sources": [
+    {
+      "id": "model-card",
+      "type": "official-model-card",
+      "url": "https://huggingface.co/MiniMaxAI/MiniMax-H3",
+      "checkedOn": "2026-08-08",
+      "appliesTo": ["local", "api"]
+    },
+    {
+      "id": "api-reference",
+      "type": "official-api-documentation",
+      "url": "https://platform.minimax.io/docs/guides/video-generation",
+      "checkedOn": "2026-08-08",
+      "appliesTo": ["api"]
+    },
+    {
+      "id": "prompt-guide-base",
+      "type": "official-prompt-guide",
+      "url": "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/docs/VIDEO_PROMPT_WRITING_GUIDE_base_en.md",
+      "checkedOn": "2026-08-08",
+      "appliesTo": ["local", "api"],
+      "covers": ["t2v", "i2v", "flf"]
+    },
+    {
+      "id": "prompt-guide-ref",
+      "type": "official-prompt-guide",
+      "url": "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/docs/VIDEO_PROMPT_WRITING_GUIDE_ref_en.md",
+      "checkedOn": "2026-08-08",
+      "appliesTo": ["local", "api"],
+      "covers": ["r2v"]
+    }
+  ],
+
+  "identity": {
+    "apiModelIdentifier": "MiniMax-H3",
+    "releasedCheckpoints": [
+      { "variant": "fl2va", "tasks": ["T2VA", "I2VA", "L2VA", "FL2VA"], "source": "model-card" },
+      { "variant": "ref2va", "tasks": ["Ref2VA"], "source": "model-card" }
+    ],
+    "modules": [
+      { "name": "H3-Context-IR", "role": "multimodal preprocessing", "openSourced": false, "source": "model-card" },
+      { "name": "H3-Base", "role": "generation at 768p", "openSourced": true, "source": "model-card" },
+      { "name": "H3-Regenerate-2K", "role": "2K regeneration", "openSourced": false, "source": "model-card" }
+    ],
+    "license": { "name": "MiniMax H3 Community License Agreement", "source": "model-card" }
+  },
+
+  "capabilities": [
+    { "claim": "Text-to-video is supported.", "value": true, "modes": ["t2v"], "source": "model-card", "appliesTo": ["local", "api"] },
+    { "claim": "First-frame (image-to-video) is supported.", "value": true, "modes": ["i2v"], "source": "model-card", "appliesTo": ["local", "api"] },
+    { "claim": "First-and-last-frame is supported.", "value": true, "modes": ["flf"], "source": "model-card", "appliesTo": ["local", "api"] },
+    { "claim": "Last-frame-only is supported; FL2VA accepts zero, one or two images.", "value": true, "modes": ["flf"], "source": "model-card", "appliesTo": ["local", "api"], "note": "CineBraid does not yet offer a last-frame-only workflow; the capability is recorded, not exposed." },
+    { "claim": "Reference-to-video is supported, on a different checkpoint.", "value": true, "modes": ["r2v"], "source": "model-card", "appliesTo": ["local", "api"] },
+    { "claim": "Reference images per generation.", "value": 9, "modes": ["r2v"], "source": "model-card", "appliesTo": ["local", "api"] },
+    { "claim": "Reference video clips per generation.", "value": 3, "modes": ["r2v"], "source": "model-card", "appliesTo": ["local", "api"], "note": "Each clip 2-15s; combined reference video no more than 15s." },
+    { "claim": "Reference audio clips per generation.", "value": 3, "modes": ["r2v"], "source": "model-card", "appliesTo": ["local", "api"], "note": "Each clip 2-15s; combined no more than 15s." },
+    { "claim": "Total reference files across all modalities.", "value": 12, "modes": ["r2v"], "source": "model-card", "appliesTo": ["local", "api"] },
+    { "claim": "Audio cannot be the only reference input.", "value": true, "modes": ["r2v"], "source": "model-card", "appliesTo": ["local", "api"] },
+    { "claim": "Output duration range in seconds.", "value": [4, 15], "source": "model-card", "appliesTo": ["local", "api"], "note": "The API reference states integer seconds only." },
+    { "claim": "Frame rate.", "value": 24, "source": "model-card", "appliesTo": ["local", "api"] },
+    { "claim": "Native audio is generated with the video.", "value": "32 kHz stereo", "source": "model-card", "appliesTo": ["local", "api"] },
+    { "claim": "Speech and lip-sync languages.", "value": 11, "source": "model-card", "appliesTo": ["local", "api"] },
+    { "claim": "Aspect ratios.", "value": ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"], "source": "model-card", "appliesTo": ["local", "api"] },
+    { "claim": "Text-to-video requires an explicit ratio and cannot use adaptive.", "value": true, "modes": ["t2v"], "source": "api-reference", "appliesTo": ["api"] },
+    { "claim": "A mode with an image input takes its ratio from that image.", "value": "adaptive", "modes": ["i2v", "flf"], "source": "api-reference", "appliesTo": ["api"] },
+    { "claim": "Maximum prompt length accepted by the model.", "value": 7000, "source": "api-reference", "appliesTo": ["api"], "note": "A MODEL limit. Backend limits are separate; see providerConstraints." },
+    { "claim": "Resolutions available on the open-weight local path.", "value": ["768P"], "source": "model-card", "appliesTo": ["local"] },
+    { "claim": "Resolutions available on the hosted API.", "value": ["768P", "2K"], "source": "api-reference", "appliesTo": ["api"] }
+  ],
+
+  "notEstablished": [
+    {
+      "claim": "Seed or any other deterministic-reproduction control.",
+      "status": "no official source documents one",
+      "checkedIn": ["model-card", "api-reference", "prompt-guide-base", "prompt-guide-ref"],
+      "cineBraidBehaviour": "The capability flag is false. A supplied seed produces an unsupported coverage entry and a warning; no seed is invented in the request."
+    },
+    {
+      "claim": "Whether a local SGLang, vLLM, diffusers or ComfyUI deployment exposes duration, fps or resolution as caller arguments.",
+      "status": "the model card documents deployment but not a per-call argument list",
+      "cineBraidBehaviour": "The local surface declares only what the model card establishes: 768p, 24fps, 4-15s."
+    },
+    {
+      "claim": "Whether a hosted route operated by a third party runs H3-Context-IR before H3-Base.",
+      "status": "not a MiniMax fact; it is a property of each backend",
+      "cineBraidBehaviour": "Serialisation is chosen by surface. The hosted surface emits prose sections; the local surface emits the documented H3-Base three-field document."
+    },
+    {
+      "claim": "Per-reference weighting.",
+      "status": "no official source documents a weight parameter",
+      "cineBraidBehaviour": "referenceWeights is false, so a weighted reference is refused by the capability check rather than silently dropped."
+    }
+  ],
+
+  "conflicts": [
+    {
+      "topic": "maximum prompt length",
+      "positions": [
+        { "value": 7000, "source": "api-reference", "scope": "MiniMax H3 model, hosted API" },
+        { "value": 2000, "source": "backend", "scope": "fal queue schema, recorded in data/model-profiles.json" }
+      ],
+      "resolution": "Both are kept. The pack warns at the model limit; a backend adapter applies its own. Neither is written into the other's layer."
+    },
+    {
+      "topic": "default resolution",
+      "positions": [
+        { "value": "768P", "source": "model-card", "scope": "open-weight H3-Base" },
+        { "value": "2K", "source": "api-reference", "scope": "hosted, via H3-Regenerate-2K" }
+      ],
+      "resolution": "Recorded per surface. A local install is not offered 2K, because the module that produces it is not open-sourced."
+    },
+    {
+      "topic": "minimum duration",
+      "positions": [
+        { "value": 4, "source": "model-card", "scope": "MiniMax H3" },
+        { "value": 5, "source": "existing CineBraid profile", "scope": "data/model-profiles.json minimax-h3/*" }
+      ],
+      "resolution": "The pack uses the official 4s floor. The existing prompt profiles are left untouched in this phase; they belong to the prompt-authoring registry, and changing them is a separate, wider change."
+    }
+  ],
+
+  "promptingPolicySources": {
+    "cameraExpression": "prompt-guide-base: motion type, amplitude and speed, written as prose within the shot rather than stacked labels.",
+    "shotChronology": "prompt-guide-base: the first shot carries no timestamp; later shots use strictly increasing cut times.",
+    "imageAnchoring": "prompt-guide-base: with an anchoring image, describe forward development and do not duplicate what the image already shows.",
+    "firstLastTrajectory": "prompt-guide-base: first-frame state, intermediate change, then last-frame state; single-shot construction; no unrequested cuts.",
+    "dialogue": "prompt-guide-base: stable speaker identifiers, spoken content preserved verbatim, delivery and identification stated outside it.",
+    "soundSeparation": "prompt-guide-base: the soundscape field excludes dialogue and any music the characters can hear; non-diegetic music is directed separately.",
+    "referenceSemantics": "prompt-guide-ref: references are labelled and numbered per modality, and each definition states what it fixes - identity, environment, motion or voice."
+  }
+}
