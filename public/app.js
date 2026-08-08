@@ -10,7 +10,11 @@ let P = null,
   ACTIVE_PROJECT_SLUG = "",
   SAVE_CHAIN = Promise.resolve(),
   SAVE_REVISION = 0,
-  SAVED_REVISION = 0;
+  SAVED_REVISION = 0,
+  /* The server's token for the stored document this view was loaded from.
+     SAVE_REVISION counts local edits; this identifies what is on disk. */
+  PROJECT_REVISION = "",
+  PROJECT_CONFLICT = false;
 let FILTER = { status: "", route: "", char: "", action: "unfinished" };
 const storedValue = (key, fallback = null) => localStorage.getItem(key) ?? fallback;
 FILTER.action = storedValue("cinebraid-shot-action-filter", "unfinished") || "unfinished";
@@ -1060,6 +1064,13 @@ async function load() {
         projectResponse.headers?.get?.("x-cinebraid-project-slug") ||
         ACTIVE_PROJECT_SLUG ||
         "fixture";
+      /* The revision of the exact document this view was built from. Every save
+         echoes it, so a save from a view that has fallen behind is refused
+         rather than silently overwriting the newer project. */
+      PROJECT_REVISION =
+        projectResponse.headers?.get?.("x-cinebraid-project-revision") ||
+        projectResponse.headers?.get?.("etag") ||
+        "";
       return projectResponse.json();
     })(),
     fetch("/api/scan").then((r) => r.json()),
@@ -1081,6 +1092,7 @@ async function load() {
   saveTimer = null;
   SAVE_REVISION = 0;
   SAVED_REVISION = 0;
+  PROJECT_CONFLICT = false; // a fresh load is in step with storage again
   SCAN = loaded[1];
   PROMPT_LIBRARY = loaded[2] || { profiles: [] };
   CONFIG = loaded[3] || {};
@@ -1177,32 +1189,75 @@ function dirty() {
     queueProjectSave(captureProjectSave()).catch(() => {});
   }, 500);
 }
+/* Media writes name the project they belong to, so a switch that happens while
+   an upload body is still arriving cannot redirect the file. Empty before the
+   first load, which the server reads as "the active project" — the old
+   behaviour, kept for any caller that genuinely has nothing to name. */
+function projectSlugParam() {
+  return ACTIVE_PROJECT_SLUG
+    ? `&slug=${encodeURIComponent(ACTIVE_PROJECT_SLUG)}`
+    : "";
+}
 function captureProjectSave() {
   if (!P || !ACTIVE_PROJECT_SLUG) return null;
   return {
     slug: ACTIVE_PROJECT_SLUG,
     revision: SAVE_REVISION,
+    documentRevision: PROJECT_REVISION,
     body: JSON.stringify(P),
   };
+}
+/* A stale view must stop writing, not keep retrying with a body that will be
+   refused again. The message says what happened in one sentence and offers the
+   only safe action; reconciling two divergent documents is not attempted. */
+function projectConflict(data) {
+  PROJECT_CONFLICT = true;
+  clearTimeout(saveTimer);
+  saveTimer = null;
+  setSaveState("error", "Not saved — project changed");
+  const message = data?.error
+    || "This project changed while this view was open. Reload to continue from the current project.";
+  if (typeof toast === "function") toast(message);
+  if (typeof openModal === "function")
+    openModal(
+      `<h3>This project changed while this view was open</h3>`
+      + `<div class="modal-sub">YOUR LAST EDITS IN THIS TAB WERE NOT SAVED</div>`
+      + `<p>${message}</p>`
+      + `<div class="modal-actions"><button class="approve-btn large" onclick="location.reload()">RELOAD PROJECT</button></div>`,
+    );
 }
 function queueProjectSave(job) {
   if (!job) return SAVE_CHAIN;
   const run = SAVE_CHAIN.catch(() => {}).then(async () => {
+    if (PROJECT_CONFLICT) return; // this view is known stale; stop writing
     if (ACTIVE_PROJECT_SLUG === job.slug)
       setSaveState("saving", "Saving…");
+    const headers = { "Content-Type": "application/json" };
+    /* "*" only for a document that has never been stored; otherwise the exact
+       revision this view loaded or last wrote. */
+    headers["If-Match"] = job.documentRevision || "*";
     const r = await fetch(
       `/api/projects/${encodeURIComponent(job.slug)}/project`,
       {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: job.body,
       },
     );
     if (!r.ok) {
       const data = await r.json().catch(() => ({}));
+      if (r.status === 409 || r.status === 428) {
+        if (ACTIVE_PROJECT_SLUG === job.slug) projectConflict(data);
+        return;
+      }
       throw new Error(data.error || "Project save failed");
     }
+    const saved = await r.json().catch(() => ({}));
     if (ACTIVE_PROJECT_SLUG === job.slug) {
+      /* The document this view is now in step with. Without this the next save
+         would carry the pre-save revision and be refused as stale. */
+      PROJECT_REVISION =
+        saved.revision || r.headers?.get?.("x-cinebraid-project-revision") || r.headers?.get?.("etag") || PROJECT_REVISION;
       SAVED_REVISION = Math.max(SAVED_REVISION, job.revision);
       if (job.revision === SAVE_REVISION) {
         setSaveState("saved", "Saved");

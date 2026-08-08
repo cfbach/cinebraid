@@ -59,12 +59,51 @@ function normalizeCandidateReviewSchema(s, takes = []) {
   }
   return changed;
 }
+/* The live "which candidate is selected" references, by exact path.
+
+   These are SEMANTIC pointers: each one says "the candidate currently chosen for
+   this frame". When approval renames the file on disk, a pointer still holding
+   the old filename names something that is no longer there.
+
+   Deliberately a named list rather than a walk-and-replace. `candidateFiles[].original`
+   and `candidateFiles[].renamedFrom[]` are HISTORICAL by design — they record what
+   the file used to be called, and a blanket string replacement would erase exactly
+   the provenance that makes a rename auditable. Only the fields below move. */
+function selectedCandidateSlots(s) {
+  const slots = [];
+  const creation = s.creationBrief && typeof s.creationBrief === "object" ? s.creationBrief : null;
+  for (const frame of s.keyframes || []) if (frame && typeof frame === "object") slots.push(frame);
+  for (const frame of (creation && Array.isArray(creation.frames) ? creation.frames : []))
+    if (frame && typeof frame === "object") slots.push(frame);
+  const workflows = creation && creation.frameWorkflows && typeof creation.frameWorkflows === "object"
+    ? creation.frameWorkflows
+    : null;
+  if (workflows) for (const key of Object.keys(workflows)) {
+    const state = workflows[key];
+    if (state && typeof state === "object") slots.push(state);
+  }
+  return slots;
+}
+function retargetSelectedCandidates(s, from, to) {
+  if (!from || from === to) return 0;
+  let moved = 0;
+  for (const slot of selectedCandidateSlots(s)) {
+    if (slot.selectedCandidate === from) {
+      slot.selectedCandidate = to;
+      moved += 1;
+    }
+  }
+  return moved;
+}
 function renameCandidateRecord(s, from, to) {
   const row = candidateRecord(s, from, false);
   if (!row || from === to) return;
   row.stored = to;
   row.renamedFrom = [...new Set([...(row.renamedFrom || []), from])].slice(-8);
   row.renamedAt = new Date().toISOString();
+  /* Same mutation that moves `stored`, so the document is never written with a
+     selection pointing at a filename the rename has already retired. */
+  retargetSelectedCandidates(s, from, to);
   if (CANDIDATE_COMPARE.has(`${s.id}:${from}`)) {
     CANDIDATE_COMPARE.delete(`${s.id}:${from}`);
     CANDIDATE_COMPARE.add(`${s.id}:${to}`);

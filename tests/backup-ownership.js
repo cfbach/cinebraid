@@ -115,7 +115,7 @@ async function main() {
   /* ---- 2. one ordinary autosave prunes CineBraid's backups and nothing else ---- */
   const current = await server.request("/api/project");
   const saved = await server.request("/api/projects/owned-project/project", {
-    method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(current.body),
+    method: "PUT", headers: { "content-type": "application/json", "if-match": "*" }, body: JSON.stringify(current.body),
   });
   assert.strictEqual(saved.status, 200, JSON.stringify(saved.body));
 
@@ -137,7 +137,7 @@ async function main() {
   /* ---- 3. repeated saves never reach the foreign files ---- */
   for (let i = 0; i < 6; i += 1) {
     const again = await server.request("/api/projects/owned-project/project", {
-      method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(current.body),
+      method: "PUT", headers: { "content-type": "application/json", "if-match": "*" }, body: JSON.stringify(current.body),
     });
     assert.strictEqual(again.status, 200);
   }
@@ -167,7 +167,7 @@ async function main() {
   fs.writeFileSync(path.join(inProject, "project-plan.json"), '{"user":"kept"}');
   for (let i = 0; i < 14; i += 1) fs.writeFileSync(path.join(inProject, ownedBackupName(i, "manual")), "{}");
   await server.request("/api/projects/owned-project/project", {
-    method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(current.body),
+    method: "PUT", headers: { "content-type": "application/json", "if-match": "*" }, body: JSON.stringify(current.body),
   });
   assert(fs.existsSync(path.join(inProject, "project-plan.json")),
     "a foreign file in the default backup folder is protected by the same rule");

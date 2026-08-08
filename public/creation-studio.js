@@ -2703,7 +2703,7 @@ window.useApprovedBaseAsShot = async (id) => {
     const r = await fetch(`/api/shots/${encodeURIComponent(id)}/use-reference`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url: base.url, name: `${id}_APPROVED_BASE` }),
+      body: JSON.stringify({ projectSlug: ACTIVE_PROJECT_SLUG, url: base.url, name: `${id}_APPROVED_BASE` }),
     });
     const d = await r.json();
     if (!r.ok) throw new Error(d.error || "Could not copy the plate");

@@ -439,7 +439,7 @@
     if (!blob) return toast("Could not create the crop");
     const safeSlot = String(slot.id || "view").replace(/[^a-z0-9]+/gi, "-").toUpperCase();
     const name = `${entity.id}-COVERAGE-${safeSlot}-${Date.now().toString(36).toUpperCase()}.png`;
-    const response = await fetch(`/api/media/upload?type=${encodeURIComponent(entityFolder(state.list))}&name=${encodeURIComponent(name)}`, { method: "POST", headers: { "Content-Type": "image/png" }, body: blob });
+    const response = await fetch(`/api/media/upload?type=${encodeURIComponent(entityFolder(state.list))}&name=${encodeURIComponent(name)}${projectSlugParam()}`, { method: "POST", headers: { "Content-Type": "image/png" }, body: blob });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) return toast(data.error || "Could not save the extracted crop");
     const approve = document.getElementById("coverage-crop-approve")?.checked === true;

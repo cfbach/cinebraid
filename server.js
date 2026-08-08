@@ -492,6 +492,52 @@ function atomicWriteJson(file, value, { backup = true } = {}) {
     throw error;
   }
 }
+/* ---- project save revision --------------------------------------------------
+
+   A token for the EXACT bytes currently stored for a project, used as an ETag.
+
+   The whole-document save had no concurrency control of any kind: PUT replaced
+   the file with whatever the client sent and answered 200. Two tabs — or one tab
+   left open while a generation ingested on the server — meant the slower client
+   silently destroyed the other's work and was told "Saved".
+
+   Deliberately NOT meta.version: that is a product-version string ("6.6.4-studio.2"
+   in the shipped sample, "v1" on new projects) that nothing increments and nothing
+   checks, and reusing it would make a display field load-bearing. Hashing the
+   stored bytes needs no schema change, no migration and no bookkeeping, and is
+   automatically correct for the server-side writers that never go through this
+   route (agent runs, generation ingest, coordinator applies): whatever changed
+   the file changed the revision. */
+function projectRevisionFor(file) {
+  try {
+    return `"${crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex")}"`;
+  } catch (error) {
+    if (error?.code === "ENOENT") return ""; // nothing stored yet
+    throw error;
+  }
+}
+/* ---- explicit project ownership for media writes ----------------------------
+
+   The media routes resolved their destination from PROJECT_DIR() — the globally
+   active project at the moment the write ran. An upload is a request body that
+   can take a long time to arrive; a rename follows a modal the user may leave
+   open. Switching projects in between silently redirected the write into a
+   project that had nothing to do with it.
+
+   A caller that knows which project it means says so, and that project is
+   resolved through the contained helper Repair A established. A caller that does
+   not is served the active project exactly as before, so nothing that worked
+   stops working — but every browser path now names its project. */
+function ownedProjectDir(req) {
+  const requested = String(
+    req.query?.slug ?? req.body?.projectSlug ?? req.query?.projectSlug ?? "",
+  ).trim();
+  if (!requested) return PROJECT_DIR();
+  return projectDirForSlug(requested).dir; // throws on unknown or out-of-root
+}
+function mediaOwnerStatus(error) {
+  return /No such project|Invalid project slug/.test(String(error?.message || "")) ? 404 : 400;
+}
 function projectAIPolicy() {
   try {
     return (
@@ -836,6 +882,13 @@ app.get("/api/project", (req, res) => {
     if (!inspected.ok)
       return res.status(inspected.status).json(projectFailurePayload(inspected));
     res.setHeader("X-CineBraid-Project-Slug", inspected.slug);
+    /* The revision the client must echo back on save. Read straight from the
+       stored bytes, so it describes the document this response was built from. */
+    const revision = projectRevisionFor(projectDirForSlug(inspected.slug).file);
+    if (revision) {
+      res.setHeader("ETag", revision);
+      res.setHeader("X-CineBraid-Project-Revision", revision);
+    }
     const project = inspected.project;
     normalizePromptBuildHistory(project, { applyRetention: false });
     res.json(project);
@@ -895,10 +948,36 @@ app.get("/api/project/readiness", (req, res) => {
 });
 app.put("/api/projects/:slug/project", (req, res) => {
   try {
+    /* Containment first, unconditionally: an out-of-root slug is refused before
+       any revision reasoning, so Repair A's boundary stays the outermost gate. */
     const { slug, file } = projectDirForSlug(req.params.slug),
       current = fs.existsSync(file)
       ? readJsonSync(file)
       : {};
+
+    /* Optimistic concurrency. The client must say which document it edited; if
+       storage has moved on, its body is stale by definition and is refused
+       whole. No deep merge is attempted — silently interleaving two divergent
+       documents is how a lost update becomes an unexplainable one. */
+    const storedRevision = projectRevisionFor(file);
+    const requested = String(req.headers["if-match"] || "").trim();
+    if (storedRevision && !requested)
+      return res.status(428).json({
+        error: "This save did not say which version of the project it edited. Reload CineBraid and try again.",
+        code: "PROJECT_REVISION_REQUIRED",
+        slug,
+        revision: storedRevision,
+      });
+    if (storedRevision && requested !== "*" && requested !== storedRevision)
+      return res.status(409).json({
+        error: "This project changed while this view was open, so the save was refused to protect the newer version. Reload to continue from the current project.",
+        code: "PROJECT_REVISION_CONFLICT",
+        slug,
+        revision: storedRevision,
+        yourRevision: requested,
+        action: "reload",
+      });
+
     const incoming = normalizeProjectCollections({
       ...req.body,
       agentRuns: Array.isArray(current.agentRuns) ? current.agentRuns : [],
@@ -908,7 +987,12 @@ app.put("/api/projects/:slug/project", (req, res) => {
     if (!validation.ok) return res.status(422).json({ error: "Project validation failed.", issues: validation.errors });
     const backup = createProjectBackup(file, "autosave");
     atomicWriteJson(file, incoming);
-    res.json({ ok: true, slug, backup });
+    const revision = projectRevisionFor(file);
+    if (revision) {
+      res.setHeader("ETag", revision);
+      res.setHeader("X-CineBraid-Project-Revision", revision);
+    }
+    res.json({ ok: true, slug, backup, revision });
     setTimeout(() => {
       if (activeSlug() === slug) maybeAutoIndex();
     }, 100);
@@ -958,8 +1042,11 @@ app.put("/api/project", (req, res) =>
   }),
 );
 
-function readProject() {
-  const project = readJsonSync(DATA());
+/* Reads a project by slug. The default is the active project, which is what
+   every synchronous route wants; asynchronous work passes the slug it captured
+   when it started so a project switch cannot move it. */
+function readProject(slug = activeSlug()) {
+  const project = readJsonSync(slug ? projectDirForSlug(slug).file : DATA());
   normalizePromptBuildHistory(project, { applyRetention: false });
   project.jobs = Array.isArray(project.jobs) ? project.jobs : [];
   project.decisions = Array.isArray(project.decisions) ? project.decisions : [];
@@ -1028,20 +1115,24 @@ app.post(
   "/api/shots/:id/take",
   express.raw({ type: "*/*", limit: "400mb" }),
   (req, res) => {
-    const id = path.basename(req.params.id);
-    const name = path
-      .basename(String(req.query.name || "take.png"))
-      .replace(/[^\w.\-]/g, "_");
-    const dir = path.join(PROJECT_DIR(), "shots", id, "takes");
-    fs.mkdirSync(dir, { recursive: true });
-    let final = name,
-      n = 1;
-    while (fs.existsSync(path.join(dir, final))) {
-      const dot = name.lastIndexOf(".");
-      final = name.slice(0, dot) + "_" + ++n + name.slice(dot);
+    try {
+      const id = path.basename(req.params.id);
+      const name = path
+        .basename(String(req.query.name || "take.png"))
+        .replace(/[^\w.\-]/g, "_");
+      const dir = path.join(ownedProjectDir(req), "shots", id, "takes");
+      fs.mkdirSync(dir, { recursive: true });
+      let final = name,
+        n = 1;
+      while (fs.existsSync(path.join(dir, final))) {
+        const dot = name.lastIndexOf(".");
+        final = name.slice(0, dot) + "_" + ++n + name.slice(dot);
+      }
+      fs.writeFileSync(path.join(dir, final), req.body);
+      res.json({ ok: true, name: final });
+    } catch (error) {
+      res.status(mediaOwnerStatus(error)).json({ error: error.message });
     }
-    fs.writeFileSync(path.join(dir, final), req.body);
-    res.json({ ok: true, name: final });
   },
 );
 
@@ -1058,7 +1149,7 @@ app.post(
       const ext = path.extname(requested).toLowerCase();
       if (![".png", ".jpg", ".jpeg", ".webp"].includes(ext))
         return res.status(400).json({ error: "Blocking frames must be still images" });
-      const dir = path.join(PROJECT_DIR(), "shots", id, "blocking");
+      const dir = path.join(ownedProjectDir(req), "shots", id, "blocking");
       fs.mkdirSync(dir, { recursive: true });
       const stem = path.basename(requested, ext) || `${id}_BLOCKING`;
       let final = stem + ext, n = 1;
@@ -1076,13 +1167,14 @@ app.post(
   "/api/media/upload",
   express.raw({ type: "*/*", limit: "400mb" }),
   (req, res) => {
+    try {
     const type = String(req.query.type || "");
     if (!["anchors", "plates", "props", "vehicles", "audio", "media"].includes(type))
       return res.status(400).json({ error: "bad type" });
     const name = path
       .basename(String(req.query.name || "file.png"))
       .replace(/[^\w.\-]/g, "_");
-    const dir = path.join(PROJECT_DIR(), type);
+    const dir = path.join(ownedProjectDir(req), type);
     fs.mkdirSync(dir, { recursive: true });
     let final = name,
       n = 1;
@@ -1092,6 +1184,9 @@ app.post(
     }
     fs.writeFileSync(path.join(dir, final), req.body);
     res.json({ ok: true, name: final });
+    } catch (error) {
+      res.status(mediaOwnerStatus(error)).json({ error: error.message });
+    }
   },
 );
 app.post("/api/media/rename", (req, res) => {
@@ -1102,15 +1197,21 @@ app.post("/api/media/rename", (req, res) => {
       ? dir
       : null;
   if (!safeDir) return res.status(400).json({ error: "bad dir" });
+  let owned;
+  try {
+    owned = ownedProjectDir(req);
+  } catch (error) {
+    return res.status(mediaOwnerStatus(error)).json({ error: error.message });
+  }
   const src = path.join(
-    PROJECT_DIR(),
+    owned,
     safeDir,
     path.basename(String(from || "")),
   );
   const ext = path.extname(String(from || ""));
   let toName = path.basename(String(to || "")).replace(/[^\w.\-]/g, "_");
   if (!toName.toLowerCase().endsWith(ext.toLowerCase())) toName += ext;
-  const dst = path.join(PROJECT_DIR(), safeDir, toName);
+  const dst = path.join(owned, safeDir, toName);
   if (!fs.existsSync(src))
     return res.status(404).json({ error: "source missing" });
   if (fs.existsSync(dst)) return res.status(409).json({ error: "name taken" });
@@ -1126,7 +1227,7 @@ app.post("/api/shots/:id/use-reference", (req, res) => {
     const ext = path.extname(source).toLowerCase();
     if (![".png", ".jpg", ".jpeg", ".webp"].includes(ext))
       return res.status(400).json({ error: "Only still-image references can become a shot image" });
-    const dir = path.join(PROJECT_DIR(), "shots", id, "takes");
+    const dir = path.join(ownedProjectDir(req), "shots", id, "takes");
     fs.mkdirSync(dir, { recursive: true });
     const requested = path.basename(
       String(req.body?.name || `${id}_APPROVED_BASE${ext}`),
@@ -1148,14 +1249,15 @@ app.post("/api/shots/:id/use-reference", (req, res) => {
 });
 
 app.post("/api/shots/:id/folder", (req, res) => {
-  const id = path.basename(req.params.id);
-  fs.mkdirSync(path.join(PROJECT_DIR(), "shots", id, "takes"), {
-    recursive: true,
-  });
-  fs.mkdirSync(path.join(PROJECT_DIR(), "shots", id, "locked"), {
-    recursive: true,
-  });
-  res.json({ ok: true });
+  try {
+    const id = path.basename(req.params.id);
+    const owned = ownedProjectDir(req);
+    fs.mkdirSync(path.join(owned, "shots", id, "takes"), { recursive: true });
+    fs.mkdirSync(path.join(owned, "shots", id, "locked"), { recursive: true });
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(mediaOwnerStatus(error)).json({ error: error.message });
+  }
 });
 
 app.post("/api/reference-pack", async (req, res) => {
@@ -3228,11 +3330,17 @@ function buildMarkdown(P) {
   return L.join("\n");
 }
 
+/* No zero-argument projectDir. Generation is the longest-running asynchronous
+   work in the product, and handing it a resolver that follows the globally
+   active project is what let a switch mid-generation write one project's
+   document over another's. It receives the means to resolve an EXPLICIT slug
+   instead, and captures one before its first await. */
 registerFalGeneration(app, {
   readConfig,
   readProject,
   writeProject,
-  projectDir: PROJECT_DIR,
+  activeSlug,
+  projectDirForSlug,
 });
 registerAutomationRuns(app, {
   projectDir: PROJECT_DIR,
@@ -4700,7 +4808,7 @@ function reviewCriteria(P, kind, list, id, frameId = "") {
     const type = { characters: "anchors", locations: "plates", props: "props", vehicles: "vehicles" }[
       list
     ];
-    const dir = path.join(PROJECT_DIR(), type);
+    const dir = path.join(ownedProjectDir(req), type);
     const prefix = (e.prefix || e.anchorPrefix || e.id).toUpperCase();
     files = (fs.existsSync(dir) ? fs.readdirSync(dir) : [])
       .filter((f) => f.toUpperCase().startsWith(prefix) && IMG_ONLY(f))

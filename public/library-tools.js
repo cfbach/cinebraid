@@ -150,7 +150,7 @@ window.doIntake = async () => {
         : ".png";
     const name = `${prefix}-CANDIDATE-${stamp}-${String(i + 1).padStart(2, "0")}${ext}`;
     const r = await fetch(
-      "/api/media/upload?type=" + type + "&name=" + encodeURIComponent(name),
+      "/api/media/upload?type=" + type + "&name=" + encodeURIComponent(name) + projectSlugParam(),
       {
         method: "POST",
         headers: { "Content-Type": f.type || "application/octet-stream" },
@@ -334,6 +334,7 @@ window.confirmApproveTake = async () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        projectSlug: ACTIVE_PROJECT_SLUG,
         dir: "shots/" + id + "/takes",
         from: name,
         to: requested,
@@ -530,7 +531,7 @@ window.confirmEntityApproval = async (continueToNext = false) => {
     const r = await fetch("/api/media/rename", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ dir: ENTITY_MEDIA[list], from: name, to }),
+      body: JSON.stringify({ projectSlug: ACTIVE_PROJECT_SLUG, dir: ENTITY_MEDIA[list], from: name, to }),
     });
     const d = await r.json();
     if (r.ok) {

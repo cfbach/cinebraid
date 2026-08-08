@@ -537,7 +537,7 @@ async function main() {
 
     result = await request("/api/project", {
       method: "PUT",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", "if-match": "*" },
       body: JSON.stringify(result.body),
     });
     assert.strictEqual(result.response.status, 409);
@@ -567,7 +567,7 @@ async function main() {
     firstProject.meta.title = "Smoke Project Scoped Save";
     result = await request("/api/projects/smoke-project/project", {
       method: "PUT",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", "if-match": "*" },
       body: JSON.stringify(firstProject),
     });
     assert.strictEqual(result.response.status, 200);
@@ -857,7 +857,7 @@ async function main() {
     ];
     result = await request("/api/projects/smoke-project/project", {
       method: "PUT",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", "if-match": "*" },
       body: JSON.stringify(mediaProject),
     });
     assert.strictEqual(result.response.status, 200);
@@ -1050,7 +1050,7 @@ async function main() {
     projectBeforeChange.meta.version = "v2";
     result = await request("/api/projects/smoke-project/project", {
       method: "PUT",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", "if-match": "*" },
       body: JSON.stringify(projectBeforeChange),
     });
     assert.strictEqual(result.response.status, 200);
@@ -1371,7 +1371,7 @@ async function main() {
     ];
     result = await request("/api/projects/smoke-project/project", {
       method: "PUT",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", "if-match": "*" },
       body: JSON.stringify(entityReviewProject),
     });
     assert.strictEqual(result.response.status, 200);
@@ -1421,7 +1421,7 @@ async function main() {
     entityReviewProject.props[0].continuityStates[1].notes = "FORCE_MAJOR_PASS Scratched casing and chipped grip.";
     result = await request("/api/projects/smoke-project/project", {
       method: "PUT",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", "if-match": "*" },
       body: JSON.stringify(entityReviewProject),
     });
     assert.strictEqual(result.response.status, 200);
@@ -1441,7 +1441,7 @@ async function main() {
     entityReviewProject.props[0].continuityStates[1].notes = "FORCE_EMBEDDED_MISMATCH Tape the exact same photograph to the tile; change only the tape and placement.";
     result = await request("/api/projects/smoke-project/project", {
       method: "PUT",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", "if-match": "*" },
       body: JSON.stringify(entityReviewProject),
     });
     assert.strictEqual(result.response.status, 200);
@@ -1471,7 +1471,7 @@ async function main() {
     for (const name of ["LOC-REVIEW-MASTER.png", "LOC-REVIEW-REVERSE.png", "LOC-REVIEW-LEFT.png"]) fs.writeFileSync(path.join(PROJECT_DIR, "plates", name), Buffer.from(`mock-${name}`));
     result = await request("/api/projects/smoke-project/project", {
       method: "PUT",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", "if-match": "*" },
       body: JSON.stringify(entityReviewProject),
     });
     assert.strictEqual(result.response.status, 200);
@@ -1522,7 +1522,7 @@ async function main() {
     });
     result = await request("/api/projects/smoke-project/project", {
       method: "PUT",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", "if-match": "*" },
       body: JSON.stringify(guardianProject),
     });
     assert.strictEqual(result.response.status, 200);
@@ -1564,7 +1564,7 @@ async function main() {
     });
     result = await request("/api/projects/smoke-project/project", {
       method: "PUT",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", "if-match": "*" },
       body: JSON.stringify(weakProject),
     });
     assert.strictEqual(result.response.status, 200);
@@ -1620,7 +1620,7 @@ async function main() {
     stageProject.shots[0].positioning = "";
     result = await request("/api/projects/smoke-project/project", {
       method: "PUT",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", "if-match": "*" },
       body: JSON.stringify(stageProject),
     });
     assert.strictEqual(result.response.status, 200);
