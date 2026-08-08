@@ -5,10 +5,10 @@
  * from, and it is what lets ancestry survive the approval rename that breaks
  * filename-keyed edges today.
  *
- * PHASE 2a SCOPE. This module is INERT. It has no caller in the product: nothing
- * walks a directory, nothing hashes anything, and no `media-assets.json` is created
- * by opening a project. Phase 2b adds discovery and indexing; until then a project
- * with no sidecar is the normal state, and every reader must tolerate it.
+ * SCOPE. media-asset-indexer.js discovers project media and records it here, and
+ * media-asset-verify.js reads bytes only when explicitly asked to. Neither runs on
+ * project open, so a project with no sidecar remains the normal state and every
+ * reader must tolerate it. Nothing in this ledger is authoritative for approval.
  *
  * Two decisions shape everything below, and both are deliberate:
  *
