@@ -77,6 +77,25 @@ function listenersOnPort(port) {
   } catch { return null; }
 }
 
+/* Windows reports the process object as gone before the kernel has finished tearing
+   down its listening socket, so netstat can still attribute the port to a PID that
+   process.kill(pid, 0) already says does not exist. Observed on a GitHub Windows
+   runner: the assertion below failed with the test's OWN just-killed child still
+   listed as LISTENING, and the identical commit passed on re-run.
+
+   Poll for the same bounded window waitForBindable already allows, for the same
+   reason. This does not weaken the guarantee: an orphaned server holds its port for
+   its entire lifetime, so it is still LISTENING after the window and still fails. */
+async function waitForNoListeners(port, timeoutMs = 3000) {
+  const startedAt = Date.now();
+  let listeners = listenersOnPort(port);
+  while (listeners && listeners.length && Date.now() - startedAt <= timeoutMs) {
+    await wait(100);
+    listeners = listenersOnPort(port);
+  }
+  return listeners;
+}
+
 function get(port) {
   return new Promise((resolve, reject) => {
     const req = http.get({ host: "127.0.0.1", port, path: "/", timeout: 3000 }, (res) => {
@@ -158,7 +177,7 @@ async function testDirectSpawnTerminatesCleanly() {
 
     assert(!processAlive(child.pid), `server PID ${child.pid} must be gone after termination`);
 
-    const stillListening = listenersOnPort(port);
+    const stillListening = await waitForNoListeners(port);
     if (stillListening) {
       assert.deepStrictEqual(stillListening, [],
         `no process may still be LISTENING on ${port} - that is the orphan defect:\n${stillListening.join("\n")}`);
