@@ -17,7 +17,6 @@
    Server-side only, like automation-runs.js, and stored the same way: a
    project-scoped JSON file written through the repository's existing
    atomicWriteJson (temp + fsync + .bak + rename). */
-const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 
@@ -25,61 +24,28 @@ const CACHE_VERSION = "continuity-observation-cache-v1";
 const CACHE_FILE = "continuity-observations.json";
 const MAX_ENTRIES = 5000;
 
-function sha256Hex(buffer) {
-  return crypto.createHash("sha256").update(buffer).digest("hex");
-}
 function nowIso() {
   return new Date().toISOString();
 }
 
 /* ---------- image content identity ---------------------------------------
 
-   The hash is of the BYTES. Filenames are not identity: CineBraid renames
-   media (/api/media/rename, renameCandidateRecord), and a renamed file with
-   identical bytes is the same evidence. Conversely a filename reused for
-   different bytes is different evidence.
+   The hash, its memo and both of the memo's bounds now live in media-hash.js so
+   the MediaAsset ledger can share exactly this primitive rather than growing a
+   second one that drifts. Nothing about the behaviour moved with it: same
+   SHA-256 over the same bytes, same stat-keyed memo, same settle window, same
+   refusal for a non-file — and therefore the same digests, so observations
+   written before the extraction are still admissible.
 
-   The memo is only an optimisation. It never decides identity — it only
-   avoids re-reading a file whose path, size and mtime are all unchanged
-   within this process. Any doubt re-reads. */
-const hashMemo = new Map();
-const HASH_MEMO_LIMIT = 4096;
-/* Filesystem metadata cannot prove content identity. A file rewritten in place
-   with the same byte length, within the same filesystem timestamp tick as the
-   write the memo recorded, presents an identical (size, mtime, ctime, inode)
-   fingerprint while holding different pixels — and serving one image's
-   observation for another is the worst failure this cache can have.
-
-   So the memo is only consulted for files that have been settled for a while.
-   A file modified within this window is always re-hashed, which closes the
-   collision entirely: to be dangerous a rewrite must land in the same tick as
-   the recorded write, and such a file is by definition recent. Approved
-   production media is stable and takes the fast path. */
-const HASH_MEMO_SETTLE_MS = 2000;
-
-function hashImageFile(absolutePath) {
-  const stat = fs.statSync(absolutePath);
-  if (!stat.isFile()) {
-    const error = new Error("Continuity observation needs a regular image file.");
-    error.status = 400;
-    throw error;
-  }
-  const settled = Date.now() - stat.mtimeMs > HASH_MEMO_SETTLE_MS;
-  const memoKey = `${absolutePath}|${stat.size}|${stat.mtimeMs}|${stat.ctimeMs}|${stat.ino}`;
-  if (settled) {
-    const memoized = hashMemo.get(memoKey);
-    if (memoized) return memoized;
-  }
-  const hash = sha256Hex(fs.readFileSync(absolutePath));
-  /* Bounded so a long-lived server scanning a large library cannot grow the
-     memo without limit. Eviction only costs a re-read. */
-  if (hashMemo.size >= HASH_MEMO_LIMIT) hashMemo.clear();
-  if (settled) hashMemo.set(memoKey, hash);
-  return hash;
-}
-function clearImageHashMemo() {
-  hashMemo.clear();
-}
+   These names are re-exported below because continuity's route, its suite and
+   this module all spell it hashImageFile. */
+const {
+  HASH_MEMO_LIMIT,
+  HASH_MEMO_SETTLE_MS,
+  clearImageHashMemo,
+  hashImageFile,
+  sha256Hex,
+} = require("./media-hash");
 
 /* ---------- execution endpoint identity -----------------------------------
 
