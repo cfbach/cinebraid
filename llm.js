@@ -85,6 +85,48 @@ function customRequestBody(cfg = {}) {
   return body;
 }
 
+/* Which Chat Completions dialect a request is written in.
+
+   "OpenAI-compatible" describes a wire format, not a promise that every server
+   implements every parameter the official API currently accepts. The official
+   API has retired max_tokens on its current model families and rejects the whole
+   request — "Unsupported parameter: 'max_tokens' is not supported with this
+   model. Use 'max_completion_tokens' instead." — while the servers the Custom
+   provider exists for (vLLM, LM Studio, llama.cpp, hosted OpenAI-compatible
+   APIs) are the ones that still take max_tokens, and CineBraid cannot know
+   which of them has ever heard of the newer name. So the two are serialized
+   differently, and the generic shape is the DEFAULT: a caller that says nothing
+   gets the request shape that is already qualified against a real server. */
+const OPENAI_DIALECT = "openai";
+const COMPATIBLE_DIALECT = "compatible";
+/* A caller-supplied endpoint replaces the provider's whole connection — see
+   resolveProviderConnection below — and a service CineBraid was merely pointed
+   at is one it can make no dialect claim about. Both questions read the override
+   through this, so they can never disagree about whether there is one. */
+function hasEndpointOverride(requestOptions) {
+  return !!(requestOptions && typeof requestOptions.endpoint === "object" && requestOptions.endpoint);
+}
+function openAiProviderDialect(requestOptions) {
+  return hasEndpointOverride(requestOptions) ? COMPATIBLE_DIALECT : OPENAI_DIALECT;
+}
+/* The completion-token budget, under the name the receiving service knows.
+   Exactly one of the two field names is ever sent: the official API rejects a
+   request for carrying max_tokens at all, so offering both is not a fallback. */
+function tokenLimitBody(dialect, tokens) {
+  return dialect === OPENAI_DIALECT
+    ? { max_completion_tokens: tokens }
+    : { max_tokens: tokens };
+}
+/* A qualified contract is spread into the body whole, so on the official dialect
+   its own max_tokens has to be lifted out rather than left behind — the budget
+   is re-stated under the correct name immediately afterwards. Every other
+   contract parameter is untouched: this repair is about one field's name. */
+function contractBody(contract, dialect) {
+  if (dialect !== OPENAI_DIALECT) return contract;
+  const { max_tokens, ...rest } = contract;
+  return rest;
+}
+
 async function callOpenAICompatible(
   baseUrl,
   key,
@@ -95,6 +137,7 @@ async function callOpenAICompatible(
   label = "OpenAI-compatible",
   requestOptions = {},
   extraBody = {},
+  dialect = COMPATIBLE_DIALECT,
 ) {
   if (!baseUrl) throw new Error(label + " base URL is not set.");
   if (!model) throw new Error(label + " model is not set.");
@@ -107,7 +150,7 @@ async function callOpenAICompatible(
       // Configured extras first: the request CineBraid actually needs always wins.
       ...extraBody,
       model,
-      max_tokens: maxTokens || 8000,
+      ...tokenLimitBody(dialect, maxTokens || 8000),
       ...(requestOptions.responseFormat === "json" ? { response_format: { type: "json_object" } } : {}),
       messages: [
         { role: "system", content: system },
@@ -240,6 +283,9 @@ async function llm(
       maxTokens,
       "OpenAI API",
       requestOptions,
+      {},
+      /* Text has no endpoint override: this is always the official connection. */
+      OPENAI_DIALECT,
     );
   }
   if (provider === "custom")
@@ -325,6 +371,7 @@ async function callOpenAIVision(
   label,
   extraBody = {},
   requestOptions = {},
+  dialect = COMPATIBLE_DIALECT,
 ) {
   if (!model) throw new Error(label + " vision model is not set.");
   const headers = { "content-type": "application/json" };
@@ -345,9 +392,9 @@ async function callOpenAIVision(
     headers,
     body: JSON.stringify({
       ...extraBody,
-      ...contract,
+      ...contractBody(contract, dialect),
       model,
-      max_tokens: contract.max_tokens || maxTokens || 4000,
+      ...tokenLimitBody(dialect, contract.max_tokens || maxTokens || 4000),
       ...structuredVisionBody(requestOptions),
       messages: [
         { role: "system", content: system },
@@ -413,10 +460,7 @@ async function callAnthropicVision(cfg, system, user, imagesB64, maxTokens) {
    endpoint cannot reintroduce the same defect by copying one branch and not the
    other. */
 function resolveProviderConnection(requestOptions, providerBaseUrl, providerKey) {
-  const endpoint =
-    requestOptions && typeof requestOptions.endpoint === "object" && requestOptions.endpoint
-      ? requestOptions.endpoint
-      : null;
+  const endpoint = hasEndpointOverride(requestOptions) ? requestOptions.endpoint : null;
   if (!endpoint) return { baseUrl: providerBaseUrl, apiKey: providerKey };
   return { baseUrl: endpoint.baseUrl || providerBaseUrl, apiKey: endpoint.apiKey || "" };
 }
@@ -462,6 +506,7 @@ async function vision(
       "OpenAI vision",
       {},
       requestOptions,
+      openAiProviderDialect(requestOptions),
     );
   }
   if (provider === "custom") {
@@ -510,6 +555,10 @@ module.exports = {
   structuredVisionBody,
   isLocalProviderEndpoint,
   resolveProviderConnection,
+  openAiProviderDialect,
+  tokenLimitBody,
+  OPENAI_DIALECT,
+  COMPATIBLE_DIALECT,
   readConfig,
   writeConfig,
 };
