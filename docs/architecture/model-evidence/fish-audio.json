@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "modelFamily": "fish-audio",
+  "vendor": "Fish Audio",
+  "checkedOn": "2026-08-08",
+  "evidenceStrength": "vendor",
+  "_readme": [
+    "Evidence for Fish Audio's text-to-speech line.",
+    "",
+    "One capability here is genuinely production-shaped and worth carrying into the",
+    "catalogue even though nothing dispatches: MULTI-SPEAKER in a single request, with",
+    "speaker tags inline in the text. A scene of dialogue generated as one take is a",
+    "different artefact from two takes stitched together, and no other audio model in this",
+    "catalogue documents it.",
+    "",
+    "Note the discipline about emotion markers. Fish Audio's S1 announcement describes",
+    "emotion markers like (angry) and (in a hurry). The S2 API reference documents none.",
+    "Those are two different models and the claim is not carried across."
+  ],
+  "sources": [
+    { "id": "tts-api", "type": "official-api-documentation", "url": "https://docs.fish.audio/api-reference/endpoint/openapi-v1/text-to-speech", "checkedOn": "2026-08-08", "appliesTo": ["api"] }
+  ],
+  "identity": {
+    "acceptedModelIds": ["s1", "s2-pro", "s2.1-pro", "s2.1-pro-free"],
+    "default": "s2.1-pro",
+    "source": "tts-api"
+  },
+  "capabilities": [
+    { "claim": "Zero-shot voice cloning from a reference id or an inline references array.", "value": true, "modes": ["tts"], "source": "tts-api", "appliesTo": ["api"] },
+    { "claim": "Multi-speaker generation in one request, on the S2 family, via inline speaker tags.", "value": true, "modes": ["tts"], "source": "tts-api", "appliesTo": ["api"] },
+    { "claim": "Speed multiplier.", "value": [0.5, 2.0], "source": "tts-api", "appliesTo": ["api"], "note": "Default 1.0." },
+    { "claim": "Temperature and top_p are caller parameters.", "value": [0, 1], "source": "tts-api", "appliesTo": ["api"], "note": "Both default 0.7." },
+    { "claim": "Output formats and sample rates.", "value": { "wav_pcm": [8000, 16000, 24000, 32000, 44100, 48000], "mp3": [32000, 44100], "opus": [48000] }, "source": "tts-api", "appliesTo": ["api"] },
+    { "claim": "Streaming via chunked transfer encoding.", "value": true, "source": "tts-api", "appliesTo": ["api"] },
+    { "claim": "A latency dial with named levels.", "value": ["low", "balanced", "normal"], "source": "tts-api", "appliesTo": ["api"] },
+    { "claim": "Recommended reference audio length.", "value": [10, 30], "source": "tts-api", "appliesTo": ["api"], "note": "Seconds of clear speech with minimal background noise." }
+  ],
+  "notEstablished": [
+    {
+      "claim": "A maximum input text length.",
+      "status": "the API reference documents none",
+      "cineBraidBehaviour": "constraints.maxPromptCharacters is null. No documented limit is not the same as no limit, and this is recorded as a caveat rather than treated as unlimited."
+    },
+    {
+      "claim": "Emotion markers on the S2 family.",
+      "status": "described in the vendor's S1 announcement; NOT documented in the S2 API reference",
+      "cineBraidBehaviour": "Not encoded. A capability from one checkpoint is not carried onto another."
+    },
+    { "claim": "Open weights for S2.1 Pro.", "status": "an S1-mini distillation is described as available on a model hub; nothing establishes S2.1 Pro's status", "cineBraidBehaviour": "openWeights is null." }
+  ],
+  "conflicts": []
+}

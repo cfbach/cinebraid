@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "modelFamily": "seedream",
+  "vendor": "ByteDance",
+  "checkedOn": "2026-08-08",
+  "evidenceStrength": "provider-only",
+  "_readme": [
+    "Evidence for Seedream 5.0 Pro.",
+    "",
+    "BytePlus ModelArk publishes a Seedream 5.0 Pro tutorial and serves its documentation",
+    "through client-side rendering, so every request returned navigation and no content.",
+    "Everything below is therefore one provider's account of the model."
+  ],
+  "sources": [
+    { "id": "runware-model", "type": "provider-model-page", "url": "https://runware.ai/docs/models/bytedance-seedream-5-0-pro", "checkedOn": "2026-08-08", "appliesTo": ["api"] }
+  ],
+  "identity": { "providerModelId": "bytedance:seedream@5.0-pro" },
+  "capabilities": [
+    { "claim": "Modes.", "value": ["t2i", "i2i", "edit"], "source": "runware-model", "appliesTo": ["api"] },
+    { "claim": "Input images for multi-image fusion and reference-guided editing.", "value": 10, "source": "runware-model", "appliesTo": ["api"] },
+    { "claim": "Dimension bounds in pixels.", "value": [256, 16383], "source": "runware-model", "appliesTo": ["api"] },
+    { "claim": "Total output area in pixels.", "value": [921600, 4624220], "source": "runware-model", "appliesTo": ["api"] },
+    { "claim": "Aspect ratio bounds.", "value": "1:16 to 16:1", "source": "runware-model", "appliesTo": ["api"], "note": "Far wider than GPT Image 2's 3:1, which is the one place this model clearly wins." },
+    { "claim": "Prompt length.", "value": [1, 3000], "source": "runware-model", "appliesTo": ["api"] },
+    { "claim": "Seed is supported.", "value": true, "source": "runware-model", "appliesTo": ["api"] }
+  ],
+  "notEstablished": [
+    { "claim": "Anything from ByteDance's own documentation.", "status": "docs.byteplus.com renders client-side and returned only navigation", "cineBraidBehaviour": "evidenceStrength is provider-only, which bars a launch recommendation." },
+    { "claim": "A mask or inpainting contract.", "status": "not documented in what was read", "cineBraidBehaviour": "capabilities.flags.mask is false." },
+    { "claim": "An official prompt-writing guide.", "status": "a BytePlus tutorial exists and could not be retrieved", "cineBraidBehaviour": "promptPolicy.state is not-established." }
+  ],
+  "conflicts": []
+}

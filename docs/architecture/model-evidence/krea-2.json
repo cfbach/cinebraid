@@ -1,0 +1,95 @@
+{
+  "schemaVersion": 1,
+  "modelFamily": "krea-2",
+  "vendor": "Krea",
+  "checkedOn": "2026-08-08",
+  "evidenceStrength": "vendor-partial",
+  "_readme": [
+    "Evidence for Krea 2, and the phase's sharpest example of why local and hosted",
+    "capability are recorded separately.",
+    "",
+    "The HOSTED Krea 2 Large endpoint accepts ten references, each with an independent",
+    "0-1 strength and positive or negative guidance. That is a real per-reference weight,",
+    "and it is the reason CineBraid's capability vocabulary has a referenceWeights flag",
+    "that anything actually sets.",
+    "",
+    "The PUBLISHED WEIGHTS are text-to-image only. Krea's own model card for Krea 2 Turbo",
+    "documents no image-to-image, no reference images and no editing. Carrying the hosted",
+    "endpoint's ten weighted references onto the open checkpoint would put an approved",
+    "identity reference on a local render that has nowhere to receive it.",
+    "",
+    "An earlier draft of this record had openWeights null on the strength of a provider",
+    "describing an endpoint as open-source. That was too weak a source for the claim and",
+    "also, as it turns out, understated the truth: Krea publishes both checkpoints, an",
+    "inference repository and a licence. The correction is recorded rather than quietly",
+    "applied, because the reason the first answer was wrong is worth keeping."
+  ],
+  "sources": [
+    { "id": "turbo-card", "type": "official-model-card", "url": "https://huggingface.co/krea/Krea-2-Turbo", "checkedOn": "2026-08-08", "appliesTo": ["local"] },
+    { "id": "raw-card", "type": "official-model-card", "url": "https://huggingface.co/krea/Krea-2-Raw", "checkedOn": "2026-08-08", "appliesTo": ["local"] },
+    { "id": "inference-repo", "type": "official-repository", "url": "https://github.com/krea-ai/krea-2", "checkedOn": "2026-08-08", "appliesTo": ["local"] },
+    { "id": "open-source-page", "type": "official-vendor-page", "url": "https://www.krea.ai/krea-2-open-source", "checkedOn": "2026-08-08", "appliesTo": ["local"] },
+    { "id": "runware-large", "type": "provider-model-page", "url": "https://runware.ai/docs/models/krea-2-large", "checkedOn": "2026-08-08", "appliesTo": ["api"] },
+    { "id": "runware-turbo", "type": "provider-model-page", "url": "https://runware.ai/docs/models/krea-2-turbo", "checkedOn": "2026-08-08", "appliesTo": ["api"] }
+  ],
+  "identity": {
+    "openCheckpoints": [
+      { "variant": "raw", "role": "undistilled base, published for fine-tuning, post-training and LoRA training", "source": "open-source-page" },
+      { "variant": "turbo", "role": "8-step distilled checkpoint for fast text-to-image", "source": "open-source-page" }
+    ],
+    "hostedVariantsCatalogued": [
+      { "variant": "large", "providerModelId": "krea:krea@2-large", "source": "runware-large" },
+      { "variant": "turbo", "providerModelId": "krea:krea@2-turbo", "source": "runware-turbo" }
+    ],
+    "license": { "name": "Krea 2 Community License", "source": "turbo-card", "note": "A commercial licence is offered separately. The terms have NOT been read and must be before anything ships on these weights." },
+    "note": "Krea 2 Raw is NOT given its own catalogue entry. Its job is to be trained on, not to generate, and giving it a definition would mean inventing a capability difference from Turbo that the vendor does not document. It is recorded here, which is where the LoRA claim on Turbo comes from."
+  },
+  "capabilities": [
+    { "claim": "Architecture.", "value": "12B dense DiT with a Qwen Image VAE and a Qwen3-VL text encoder", "source": "open-source-page", "appliesTo": ["local"] },
+    { "claim": "Krea 2 Turbo is TEXT-TO-IMAGE ONLY in the open release.", "value": true, "modes": ["t2i"], "source": "turbo-card", "appliesTo": ["local"], "note": "The card documents no image-to-image, reference-image or editing capability." },
+    { "claim": "Sampling budget for the distilled checkpoint.", "value": "8 steps at guidance_scale 0.0", "source": "turbo-card", "appliesTo": ["local"] },
+    { "claim": "Demonstrated output dimensions.", "value": ["1024x1024", "2048x2048"], "source": "turbo-card", "appliesTo": ["local"] },
+    { "claim": "Krea 2 Raw is published as the fine-tuning and LoRA-training base.", "value": true, "source": "open-source-page", "appliesTo": ["local"], "note": "This is what makes local production identity possible for this family without a reference image." },
+    { "claim": "Hosted Krea 2 Large accepts weighted reference images.", "value": 10, "source": "runware-large", "appliesTo": ["api"], "note": "Each with an independent 0-1 strength and positive or negative guidance. HOSTED ONLY." },
+    { "claim": "Hosted Krea 2 Large exposes a named creativity control rather than a raw CFG number.", "value": ["raw", "low", "medium", "high"], "source": "runware-large", "appliesTo": ["api"] },
+    { "claim": "Hosted Krea 2 Turbo is text-to-image with no reference images, agreeing with the open checkpoint.", "value": 0, "source": "runware-turbo", "appliesTo": ["api"] },
+    { "claim": "Hosted Krea 2 Turbo dimensions.", "value": [64, 2048], "source": "runware-turbo", "appliesTo": ["api"], "note": "In 16px increments." }
+  ],
+  "notEstablished": [
+    {
+      "claim": "Whether the hosted Krea 2 Large corresponds to Krea 2 Raw, to Krea 2 Turbo, or to neither.",
+      "status": "no vendor source read connects the hosted variant names to the published checkpoints",
+      "cineBraidBehaviour": "krea-2/large records openWeights false and inherits NOTHING from the open release. Its ten weighted references stay a hosted capability, and the catalogue caveat says so in the words a filmmaker would read."
+    },
+    {
+      "claim": "VRAM requirements for local inference.",
+      "status": "not published on either card",
+      "cineBraidBehaviour": "constraints.vramGuidanceGb is null. A 12B model is not a light one, and CineBraid does not publish a number it cannot cite."
+    },
+    {
+      "claim": "The Krea 2 Community License terms.",
+      "status": "named but not read",
+      "cineBraidBehaviour": "Recorded as a caveat on the catalogue entry. This is why Z-Image Turbo under Apache 2.0 is the launch local option and Krea 2 Turbo is next-up."
+    },
+    {
+      "claim": "A maximum output resolution for the open checkpoint.",
+      "status": "the card demonstrates 1024 and 2048 and publishes no ceiling",
+      "cineBraidBehaviour": "constraints.resolutions is null, meaning unrestricted rather than those two sizes only."
+    },
+    { "claim": "An official prompt-writing guide.", "status": "none located", "cineBraidBehaviour": "promptPolicy.state is not-established." }
+  ],
+  "conflicts": [
+    {
+      "topic": "reference images",
+      "positions": [
+        { "value": 10, "source": "runware-large", "scope": "the hosted Krea 2 Large endpoint" },
+        { "value": 0, "source": "turbo-card", "scope": "the published Krea 2 Turbo weights" },
+        { "value": 0, "source": "runware-turbo", "scope": "the hosted Krea 2 Turbo endpoint" }
+      ],
+      "resolution": "Not a contradiction - three different things. Recorded as three rows against three surfaces. krea-2/turbo carries a surfaceCapabilities block whose local and api faces agree at zero, which turns 'the open checkpoint takes no references' from an assumption into an observation."
+    }
+  ],
+  "cineBraidGap": {
+    "referenceWeights": "CineBraid can REFUSE a weighted reference correctly and cannot yet EXPRESS one: a plan reference carries a role, a source and production meaning, but no strength. Encoding this family made the gap visible, which is the point of encoding a model before wiring it."
+  }
+}

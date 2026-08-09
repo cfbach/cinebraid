@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "modelFamily": "minimax-music",
+  "vendor": "MiniMax",
+  "checkedOn": "2026-08-08",
+  "evidenceStrength": "vendor",
+  "_readme": [
+    "Evidence for MiniMax's music generation line.",
+    "",
+    "This record contains the phase's clearest example of research changing an answer. The",
+    "brief named MiniMax Music 2.6 as the music candidate. MiniMax's own API reference",
+    "lists music-3.0 as recommended and music-2.6 as the previous generation, so 2.6 is",
+    "catalogued as superseded and 3.0 carries the recommendation.",
+    "",
+    "It is also the best-documented music API read in this pass, which is why it, and not",
+    "Suno, is the next-up music entry: structure tags inside the lyrics make musical form",
+    "directable, and a cue that has to land on a cut needs exactly that."
+  ],
+  "sources": [
+    { "id": "music-api", "type": "official-api-documentation", "url": "https://platform.minimax.io/docs/api-reference/music-generation", "checkedOn": "2026-08-08", "appliesTo": ["api"] }
+  ],
+  "identity": {
+    "documentedModelIds": [
+      { "modelId": "music-3.0", "role": "recommended", "source": "music-api" },
+      { "modelId": "music-2.6", "role": "previous generation", "source": "music-api" },
+      { "modelId": "music-cover", "role": "cover generation", "source": "music-api" },
+      { "modelId": "music-3.0-free", "role": "free tier", "source": "music-api" },
+      { "modelId": "music-2.6-free", "role": "free tier", "source": "music-api" },
+      { "modelId": "music-cover-free", "role": "free tier", "source": "music-api" }
+    ],
+    "note": "music-1.5 is NOT documented in this reference."
+  },
+  "capabilities": [
+    { "claim": "Prompt describes style, mood and scenario.", "value": [0, 2000], "modes": ["music"], "source": "music-api", "appliesTo": ["api"] },
+    { "claim": "Lyrics are required for a vocal track and carry structure tags such as [Verse], [Chorus] and [Bridge].", "value": [1, 3500], "modes": ["music"], "source": "music-api", "appliesTo": ["api"] },
+    { "claim": "Reference audio for the cover models.", "value": { "durationSeconds": [6, 360], "maxBytes": 52428800 }, "source": "music-api", "appliesTo": ["api"] },
+    { "claim": "Output formats.", "value": ["mp3", "wav", "pcm"], "source": "music-api", "appliesTo": ["api"] },
+    { "claim": "Output sample rates.", "value": [16000, 24000, 32000, 44100], "source": "music-api", "appliesTo": ["api"] },
+    { "claim": "Rate limits.", "value": { "paidRpm": 120, "freeRpm": 3 }, "source": "music-api", "appliesTo": ["api"] }
+  ],
+  "notEstablished": [
+    {
+      "claim": "Song duration, minimum or maximum.",
+      "status": "NOT documented",
+      "cineBraidBehaviour": "constraints.durationSeconds is null. This is the gap that matters most for a film cue: fitting music to a scene is an experiment until a duration control is established."
+    },
+    { "claim": "Whether a seed or any reproducibility control exists.", "status": "not documented", "cineBraidBehaviour": "capabilities.flags.seed is false." },
+    { "claim": "An official prompt-writing guide for music description.", "status": "none located", "cineBraidBehaviour": "promptPolicy.state is not-established." }
+  ],
+  "conflicts": [
+    {
+      "topic": "which MiniMax music model to carry",
+      "positions": [
+        { "value": "music-2.6", "source": "the C2a brief's candidate list", "scope": "a launch announcement" },
+        { "value": "music-3.0", "source": "music-api", "scope": "the vendor's current model list, which marks 3.0 recommended and 2.6 previous-generation" }
+      ],
+      "resolution": "3.0 is next-up and 2.6 is watchlist with supersededBy pointing at 3.0. Both stay in the catalogue so the change is visible rather than silent."
+    }
+  ]
+}

@@ -1,0 +1,66 @@
+{
+  "schemaVersion": 1,
+  "modelFamily": "z-image",
+  "vendor": "Tongyi Lab",
+  "checkedOn": "2026-08-08",
+  "evidenceStrength": "vendor",
+  "_readme": [
+    "Evidence for Z-Image Turbo, CineBraid's cheap-and-local image candidate.",
+    "",
+    "The important discipline here is family versus checkpoint, the same one MiniMax H3",
+    "forced. The Z-Image family contains at least four distinct models and they are not",
+    "interchangeable: Z-Image-Turbo generates, Z-Image-Edit edits. Recording 'Z-Image can",
+    "edit' would put an editing control on a screen that the distilled checkpoint cannot",
+    "answer."
+  ],
+  "sources": [
+    { "id": "model-card", "type": "official-model-card", "url": "https://huggingface.co/Tongyi-MAI/Z-Image-Turbo", "checkedOn": "2026-08-08", "appliesTo": ["local"] },
+    { "id": "comfy-template", "type": "official-workflow-template", "url": "image_z_image_turbo.json", "checkedOn": "2026-08-03", "appliesTo": ["local"], "note": "The official ComfyUI template, read during Phase 1 and unchanged." }
+  ],
+  "identity": {
+    "family": "Z-Image",
+    "releasedCheckpoints": [
+      { "variant": "turbo", "role": "distilled generation at 8 NFEs", "source": "model-card" },
+      { "variant": "base", "role": "undistilled generation, 50 steps with CFG", "source": "model-card" },
+      { "variant": "edit", "role": "image editing and image-to-image", "source": "model-card", "note": "A DIFFERENT model. Not encoded; CineBraid has no capability record for it." },
+      { "variant": "omni-base", "role": "generation and editing", "source": "model-card", "note": "Not encoded." }
+    ],
+    "license": { "name": "Apache-2.0", "source": "model-card" }
+  },
+  "capabilities": [
+    { "claim": "Parameter count.", "value": "6B", "source": "model-card", "appliesTo": ["local"] },
+    { "claim": "Z-Image-Turbo is text-to-image only.", "value": true, "modes": ["t2i"], "source": "model-card", "appliesTo": ["local"] },
+    { "claim": "Sampling budget.", "value": "8 NFEs at guidance_scale 0.0", "source": "model-card", "appliesTo": ["local"] },
+    { "claim": "Fits consumer VRAM.", "value": 16, "source": "model-card", "appliesTo": ["local"], "note": "Stated as fitting comfortably within 16GB, with CPU offloading available below that." },
+    { "claim": "Bilingual text rendering, Chinese and English.", "value": true, "source": "model-card", "appliesTo": ["local"] },
+    { "claim": "Seed and batch size are caller arguments.", "value": true, "source": "comfy-template", "appliesTo": ["local"], "note": "KSampler(seed) and EmptySD3LatentImage(batch_size) in the official template." },
+    { "claim": "LoRA and ControlNet are wired in the official template.", "value": true, "source": "comfy-template", "appliesTo": ["local"] }
+  ],
+  "notEstablished": [
+    {
+      "claim": "A maximum or recommended resolution.",
+      "status": "the card demonstrates 1024x1024 and publishes no ceiling",
+      "cineBraidBehaviour": "constraints.resolutions is null, meaning unrestricted rather than 1024-only."
+    },
+    {
+      "claim": "An official prompt-writing guide.",
+      "status": "none located",
+      "cineBraidBehaviour": "promptPolicy.state is not-established. No pack ships for this family and no prompting rules are invented."
+    },
+    {
+      "claim": "Hosted availability.",
+      "status": "not investigated - the reason to carry this model is that it runs locally",
+      "cineBraidBehaviour": "Only the comfy-local surface records an offering."
+    }
+  ],
+  "conflicts": [
+    {
+      "topic": "output diversity",
+      "positions": [
+        { "value": "state-of-the-art among open-source models", "source": "model-card", "scope": "quality benchmarks" },
+        { "value": "Low", "source": "model-card", "scope": "the card's own model-zoo diversity column for the Turbo variant" }
+      ],
+      "resolution": "Both are the vendor's. Recorded as a caveat on the catalogue entry rather than resolved - a distilled speed model trading diversity for latency is exactly what it is for."
+    }
+  ]
+}

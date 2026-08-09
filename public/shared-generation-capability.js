@@ -48,6 +48,14 @@ const CINEBRAID_GENERATION_MODES = [
   "t2v", "i2v", "flf", "r2v", "video-edit", "audio-video", "retake",
   /* added by RFC v2 */
   "variation", "inpaint", "outpaint", "control-guided", "v2v", "upscale", "restore",
+  /* audio — added by C2a.
+     Three names rather than one `t2a`, because they are not one task with three moods:
+     a speech model, a music model and a sound-effects model are different weights with
+     different inputs, and a vocabulary that could not tell them apart would make
+     "which model does this" unanswerable the moment more than one audio family exists.
+     Nothing dispatches to any of them; the vocabulary exists so an audio model can be
+     described at all. */
+  "tts", "music", "sfx",
 ];
 
 /* Semantic reference roles. The first block is what public/media.js mediaPromptRole()

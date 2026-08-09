@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 1,
+  "modelFamily": "flux-3-video",
+  "vendor": "Black Forest Labs",
+  "checkedOn": "2026-08-08",
+  "evidenceStrength": "vendor",
+  "_readme": [
+    "Evidence for FLUX 3 Video, read from Black Forest Labs' own endpoint documentation.",
+    "",
+    "This is the model whose input contract maps most directly onto CineBraid's existing",
+    "reference vocabulary: up to ten keyframes, each pinned to a frame index or a",
+    "timestamp, is precisely what the sequential-keyframe and waypoint roles already mean.",
+    "That is recorded as a fact, not as a plan - nothing compiles to it yet."
+  ],
+  "sources": [
+    { "id": "endpoint-docs", "type": "official-api-documentation", "url": "https://docs.bfl.ml/flux_3/flux3_video", "checkedOn": "2026-08-08", "appliesTo": ["api"] },
+    { "id": "docs-index", "type": "official-api-documentation", "url": "https://docs.bfl.ai/", "checkedOn": "2026-08-08", "appliesTo": ["api"] }
+  ],
+  "identity": {
+    "endpoint": "https://api.bfl.ai/v1/flux-3-video",
+    "family": "FLUX 3",
+    "note": "Described by the vendor as one model family behind one API, covering text-to-video, image-to-video and audio."
+  },
+  "capabilities": [
+    { "claim": "Modes.", "value": ["t2v", "i2v", "v2v", "draft_enhance"], "source": "endpoint-docs", "appliesTo": ["api"], "note": "draft_enhance is a preview-then-finish workflow, not a generation mode in CineBraid's vocabulary, and is not encoded as one." },
+    { "claim": "Duration range in whole seconds, or auto.", "value": [5, 20], "source": "endpoint-docs", "appliesTo": ["api"] },
+    { "claim": "Resolution options.", "value": ["hd", "fhd"], "source": "endpoint-docs", "appliesTo": ["api"], "note": "hd is the default. These are the vendor's own tokens; Runware exposes the same tiers as 720p and 1080p." },
+    { "claim": "Aspect ratios.", "value": ["auto", "21:9", "2:1", "16:9", "4:3", "1:1", "3:4", "9:16"], "source": "endpoint-docs", "appliesTo": ["api"] },
+    { "claim": "Synchronised audio is generated in the same call and is on by default.", "value": true, "source": "endpoint-docs", "appliesTo": ["api"], "note": "generate_audio, default true." },
+    { "claim": "Keyframes accepted.", "value": 10, "source": "endpoint-docs", "appliesTo": ["api"], "note": "One image opens the shot; a pair interpolates; three or more are pinned to timestamps." },
+    { "claim": "Video-to-video continues from the final frames of an existing clip.", "value": true, "modes": ["v2v"], "source": "endpoint-docs", "appliesTo": ["api"] },
+    { "claim": "Safety tolerance is a caller parameter.", "value": [0, 4], "source": "endpoint-docs", "appliesTo": ["api"], "note": "Default 2." },
+    { "claim": "A draft mode returns a cacheable preview bundle that a later full render can consume.", "value": true, "source": "endpoint-docs", "appliesTo": ["api"] }
+  ],
+  "notEstablished": [
+    {
+      "claim": "A seed.",
+      "status": "not documented on the vendor endpoint",
+      "checkedIn": ["endpoint-docs"],
+      "cineBraidBehaviour": "capabilities.flags.seed is false. Runware's offering of the same model declares a seed; that is recorded against the Runware surface and produces a `declares-unestablished` divergence rather than changing the model."
+    },
+    { "claim": "A maximum prompt length.", "status": "not documented", "cineBraidBehaviour": "constraints.maxPromptCharacters is null." },
+    { "claim": "Frame rate.", "status": "not documented", "cineBraidBehaviour": "constraints.fps is null; no quantiser is asserted." },
+    { "claim": "An official prompt-writing guide.", "status": "none located", "cineBraidBehaviour": "promptPolicy.state is not-established." },
+    { "claim": "FLUX.2 [pro] parameter schema.", "status": "the reachable documentation index is organised around FLUX 3; no FLUX.2 [pro] schema was retrieved", "cineBraidBehaviour": "flux-2/pro is catalogued at watchlist with evidenceStrength none and every constraint null." }
+  ],
+  "conflicts": [
+    {
+      "topic": "seed",
+      "positions": [
+        { "value": "not documented", "source": "endpoint-docs", "scope": "the vendor's own endpoint" },
+        { "value": true, "source": "Runware model page for bfl:flux@3-video", "scope": "one provider's offering" }
+      ],
+      "resolution": "Both kept. Neither is promoted; the model flag stays false and the surface records its own answer."
+    },
+    {
+      "topic": "resolution vocabulary",
+      "positions": [
+        { "value": ["hd", "fhd"], "source": "endpoint-docs", "scope": "vendor tokens" },
+        { "value": ["720P", "1080P"], "source": "Runware model page", "scope": "provider tokens" }
+      ],
+      "resolution": "Each layer keeps its own tokens. Translating one into the other in the catalogue would invent a mapping the vendor has not published, and the capability intersection would then compare two strings that are not the same string."
+    }
+  ]
+}

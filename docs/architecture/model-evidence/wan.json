@@ -1,0 +1,67 @@
+{
+  "schemaVersion": 1,
+  "modelFamily": "wan",
+  "vendor": "Alibaba",
+  "checkedOn": "2026-08-08",
+  "evidenceStrength": "none",
+  "_readme": [
+    "A NEGATIVE evidence record. It exists because the most valuable thing research can",
+    "produce is sometimes a correction.",
+    "",
+    "Wan 2.7 was expected to be CineBraid's open, local, high-resolution video option -",
+    "the one a filmmaker runs on their own GPU for free. The official Wan-AI model",
+    "organisation publishes Wan 2.2 and nothing later. There is no 2.5, no 2.6, no 2.7 and",
+    "no 3.0 repository there.",
+    "",
+    "A plan built on 'Wan 2.7, local' would have had nothing to run. So the entry stays,",
+    "the absence is written down, openWeights is null rather than true or false, and the",
+    "local-video recommendation points at LTX-2.3, which does publish weights, code and a",
+    "trainer under a named licence.",
+    "",
+    "null and not false, deliberately: the absence of a repository in the vendor's own hub",
+    "is strong evidence and is still not a vendor statement that the weights are closed."
+  ],
+  "sources": [
+    { "id": "wan-ai-org", "type": "official-model-hub-organisation", "url": "https://huggingface.co/Wan-AI", "checkedOn": "2026-08-08", "appliesTo": ["local"] }
+  ],
+  "identity": {
+    "publishedOpenWeightRepositories": [
+      { "name": "Wan2.2-T2V-A14B-Diffusers", "source": "wan-ai-org" },
+      { "name": "Wan2.2-I2V-A14B-Diffusers", "source": "wan-ai-org" },
+      { "name": "Wan2.2-TI2V-5B-Diffusers", "source": "wan-ai-org" },
+      { "name": "Wan2.2-S2V-14B", "source": "wan-ai-org" },
+      { "name": "Wan2.2-Animate-2-14B", "source": "wan-ai-org" },
+      { "name": "Wan-Dancer-14B", "source": "wan-ai-org" }
+    ],
+    "highestOpenWeightVersion": { "value": "2.2", "source": "wan-ai-org" }
+  },
+  "capabilities": [],
+  "notEstablished": [
+    {
+      "claim": "That Wan 2.7 has open weights.",
+      "status": "NOT established. No 2.7 repository exists in the vendor's own model organisation.",
+      "checkedIn": ["wan-ai-org"],
+      "cineBraidBehaviour": "openWeights is null. The model is watchlist. No local execution entry is recorded, so nothing can be planned against a local Wan 2.7."
+    },
+    {
+      "claim": "Any Wan 2.7 capability figure - duration, resolution, reference limits, audio.",
+      "status": "no primary source read",
+      "cineBraidBehaviour": "Every constraint is null and capabilities.modes carries only the family's baseline text-to-video task, marked unverified in provenance."
+    },
+    {
+      "claim": "That Wan 3.0 exists as a documented model.",
+      "status": "no vendor page, model card, API reference or repository located",
+      "cineBraidBehaviour": "Catalogue status not-recommended, so the question has a recorded answer instead of being asked again."
+    }
+  ],
+  "conflicts": [
+    {
+      "topic": "Wan 2.7 open-weight status",
+      "positions": [
+        { "value": "open weights available", "source": "third-party write-ups", "scope": "not admissible - no primary source" },
+        { "value": "no repository published", "source": "wan-ai-org", "scope": "the vendor's own model organisation" }
+      ],
+      "resolution": "Only the primary source counts. Third-party claims are recorded here as the reason the check was made, and are not used to establish anything."
+    }
+  ]
+}

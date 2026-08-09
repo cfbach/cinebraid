@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "surfaceId": "fal-queue",
+  "operator": "fal.ai",
+  "checkedOn": "2026-08-08",
+  "evidenceStrength": "vendor",
+  "_readme": [
+    "Evidence for the FAL SURFACE.",
+    "",
+    "fal is the only surface CineBraid dispatches to. Its H3 facts are not restated here:",
+    "fal-h3-backend.js is the shipped adapter, it carries its own verified record with its",
+    "own checked date, and it stays the authority for that path. A second copy of those",
+    "numbers in the catalogue would be a second source of truth that drifts.",
+    "",
+    "What this file records is what the CATALOGUE needs: that the surface exists, what",
+    "kind of thing it is, and which of its offerings CineBraid can actually reach today.",
+    "",
+    "fal is an aggregator and a host, not a model vendor. Nothing in its schema is",
+    "evidence about weights - which is the rule that produced the 4-versus-5-second",
+    "duration split and the retired 2,000-character prompt refusal."
+  ],
+  "sources": [
+    { "id": "fal-t2v-schema", "type": "provider-endpoint-schema", "url": "https://fal.ai/models/minimax/h3/text-to-video/api", "checkedOn": "2026-08-08" },
+    { "id": "fal-i2v-schema", "type": "provider-endpoint-schema", "url": "https://fal.ai/models/minimax/h3/image-to-video/api", "checkedOn": "2026-08-08" },
+    { "id": "fal-r2v-schema", "type": "provider-endpoint-schema", "url": "https://fal.ai/models/minimax/h3/reference-to-video/api", "checkedOn": "2026-08-08" }
+  ],
+  "surfaceFacts": [
+    { "claim": "Delivery is queue-based: submit, then poll for status and result.", "value": true, "source": "fal-t2v-schema" },
+    { "claim": "A route is of the form vendor/model/task and is adapter configuration, never identity.", "value": true, "source": "fal-t2v-schema" },
+    { "claim": "The authority for every fal H3 constraint is fal-h3-backend.js, which records its own evidence and checked date.", "value": "fal-h3-backend.js", "source": "fal-t2v-schema" }
+  ],
+  "role": {
+    "catalogue": "Not used as one. fal's model listing was not read as a research source in this phase; Runware's was.",
+    "execution": "The shipped path. MiniMax H3 in four modes and GPT Image 2 dispatch through it today."
+  },
+  "notEstablished": [
+    {
+      "claim": "Whether fal narrows GPT Image 2 in any way.",
+      "status": "no fal narrowing of the OpenAI image schema has been read",
+      "cineBraidBehaviour": "The gpt-image-2 offering carries an empty constraints block. That means 'no narrowing established', NOT 'no narrowing exists', and the offering note says so."
+    },
+    {
+      "claim": "Which other catalogued models fal serves.",
+      "status": "not investigated in this phase",
+      "cineBraidBehaviour": "Only the two families CineBraid dispatches are recorded as fal offerings. A model absent from this surface is not a claim that fal lacks it."
+    }
+  ],
+  "conflicts": [
+    {
+      "topic": "MiniMax H3 minimum duration",
+      "positions": [
+        { "value": 4, "source": "MiniMax model card", "scope": "the model" },
+        { "value": 5, "source": "fal-t2v-schema", "scope": "this surface" }
+      ],
+      "resolution": "Unchanged from C1.1. The model keeps 4, the surface keeps 5, the intersection is 5, and a paid submission REFUSES rather than converting a 4-second shot into a 5-second one."
+    }
+  ]
+}

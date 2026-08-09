@@ -1,0 +1,76 @@
+{
+  "schemaVersion": 1,
+  "modelFamily": "seedance",
+  "vendor": "ByteDance",
+  "checkedOn": "2026-08-08",
+  "evidenceStrength": "vendor-partial",
+  "_readme": [
+    "Evidence for Seedance 2.5.",
+    "",
+    "A split record, and worth reading as the example of what vendor-partial means.",
+    "ByteDance Seed's own product page establishes what the model IS - thirty seconds in",
+    "one pass, reference video understood as framing and cinematic intent, timestamp-level",
+    "editing. It publishes no parameter schema. BytePlus ModelArk, which does, serves its",
+    "documentation through client-side rendering and returned only navigation.",
+    "",
+    "So the numbers - reference counts, the duration range, seed, audio - come from",
+    "Runware's model page and are recorded as what a PROVIDER accepts. Resolution is left",
+    "null on the model because the two sources disagree and neither is a model-level",
+    "statement CineBraid has read."
+  ],
+  "sources": [
+    { "id": "seed-product", "type": "official-vendor-page", "url": "https://seed.bytedance.com/en/seedance2_5", "checkedOn": "2026-08-08", "appliesTo": ["api"] },
+    { "id": "runware-model", "type": "provider-model-page", "url": "https://runware.ai/docs/models/bytedance-seedance-2-5", "checkedOn": "2026-08-08", "appliesTo": ["api"], "note": "A PROVIDER source. Admissible for surface facts and, where flagged, for capability figures no vendor source publishes." }
+  ],
+  "identity": {
+    "family": "Seedance",
+    "generation": "2.5",
+    "predecessor": "2.0",
+    "note": "ByteDance states 2.5 extends single-pass generation from 15 to 30 seconds, which is what establishes 2.0 as superseded."
+  },
+  "capabilities": [
+    { "claim": "Single-pass generation up to 30 seconds, extendable twice.", "value": 30, "source": "seed-product", "appliesTo": ["api"] },
+    { "claim": "Multiple logically connected shots can be organised inside one generation.", "value": true, "source": "seed-product", "appliesTo": ["api"] },
+    { "claim": "Reference video is understood as intention, framing and cinematic language rather than motion to copy.", "value": true, "source": "seed-product", "appliesTo": ["api"] },
+    { "claim": "Timestamp-level control for targeted audio and video editing.", "value": true, "modes": ["video-edit"], "source": "seed-product", "appliesTo": ["api"] },
+    { "claim": "Reference images per generation.", "value": 30, "source": "runware-model", "appliesTo": ["api"], "note": "PROVIDER FIGURE." },
+    { "claim": "Reference video clips per generation.", "value": 10, "source": "runware-model", "appliesTo": ["api"], "note": "PROVIDER FIGURE." },
+    { "claim": "Reference audio clips per generation.", "value": 10, "source": "runware-model", "appliesTo": ["api"], "note": "PROVIDER FIGURE." },
+    { "claim": "Frame images for first and last position.", "value": 2, "source": "runware-model", "appliesTo": ["api"], "note": "PROVIDER FIGURE." },
+    { "claim": "Duration range in seconds.", "value": [4, 30], "source": "runware-model", "appliesTo": ["api"], "note": "PROVIDER FIGURE; the 30 agrees with the vendor page." },
+    { "claim": "Audio generation is supported and enabled by default.", "value": true, "source": "runware-model", "appliesTo": ["api"], "note": "PROVIDER FIGURE." },
+    { "claim": "Seed is supported.", "value": true, "source": "runware-model", "appliesTo": ["api"], "note": "PROVIDER FIGURE. No ByteDance source read confirms it." }
+  ],
+  "notEstablished": [
+    {
+      "claim": "Output resolution.",
+      "status": "Runware serves 480p and 720p; ByteDance describes higher output. No vendor parameter list was read.",
+      "cineBraidBehaviour": "constraints.resolutions is null on the model and the 480p/720p ceiling is recorded against the Runware offering only."
+    },
+    {
+      "claim": "Frame rate.",
+      "status": "Runware states frames are duration multiplied by the model's fps and does not disclose the fps",
+      "cineBraidBehaviour": "constraints.fps is null and no quantiser is asserted."
+    },
+    {
+      "claim": "The reference-citation syntax used in prompts.",
+      "status": "ByteDance publishes a Seedance 2.5 prompt guide. It could not be retrieved.",
+      "cineBraidBehaviour": "promptPolicy.state is not-established. This is the single most consequential gap for this model - a reference-heavy model whose citation syntax is unknown cannot be compiled to, and no syntax has been guessed."
+    },
+    {
+      "claim": "Whether audio may be the only reference input.",
+      "status": "not documented in anything read",
+      "cineBraidBehaviour": "No audioRequiresVisual rule is asserted for this family, unlike MiniMax H3 where the vendor states one."
+    }
+  ],
+  "conflicts": [
+    {
+      "topic": "output resolution",
+      "positions": [
+        { "value": ["480P", "720P"], "source": "runware-model", "scope": "one provider's offering" },
+        { "value": "higher output described qualitatively", "source": "seed-product", "scope": "the model" }
+      ],
+      "resolution": "Neither written into the other. The provider's ceiling belongs to the provider; the model records nothing it cannot cite."
+    }
+  ]
+}

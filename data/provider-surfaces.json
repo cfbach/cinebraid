@@ -1,0 +1,759 @@
+{
+  "schemaVersion": 1,
+  "updated": "2026-08-08",
+  "_readme": [
+    "PROVIDER surfaces. What an organisation OFFERS, on what terms.",
+    "",
+    "data/model-definitions.json says what a model IS. This file says who serves it and",
+    "what they will actually accept. The two are never merged, because a provider's",
+    "schema is not evidence about weights: fal's 5-second floor is not MiniMax H3's,",
+    "Runware's 720p ceiling on Seedance 2.5 is not ByteDance's, and Runware's H3 seed",
+    "is not a MiniMax capability. Each of those is recorded here, against the surface",
+    "that declares it, and public/shared-model-intelligence.js reports the divergence",
+    "rather than letting either side win.",
+    "",
+    "`surfaceId` is identity. An `offerings[].providerModelId` is that provider's own",
+    "handle for the model - Runware's AIR string, fal's route - and is NEVER CineBraid",
+    "identity: two providers name the same weights differently, and Runware's identifier",
+    "for Nano Banana 2 is not the one Google publishes.",
+    "",
+    "`state` is a promise, and only `available` is one a screen may keep:",
+    "  catalogued     researched and recorded; CineBraid cannot dispatch to it",
+    "  adapter-ready  an adapter exists but is not wired to a route",
+    "  available      a filmmaker can press Generate today",
+    "",
+    "A constraint that no cited source establishes is ABSENT, never guessed. An empty",
+    "`constraints` block means CineBraid has established no narrowing, not that none",
+    "exists."
+  ],
+  "surfaces": [
+    {
+      "surfaceId": "fal-queue",
+      "displayName": "fal",
+      "operator": "fal.ai",
+      "kind": "aggregator_host",
+      "roles": ["catalogue", "execution"],
+      "state": "available",
+      "backendId": "fal-queue",
+      "executionSurface": "api",
+      "executionKind": "hosted_api",
+      "orchestratorLocation": "hosted_api",
+      "inferenceLocation": "hosted_api",
+      "costClass": "metered_api",
+      "identifierScheme": {
+        "format": "vendor/model/task",
+        "example": "minimax/h3/image-to-video",
+        "note": "A route. Adapter configuration, never identity."
+      },
+      "delivery": {
+        "modes": ["async"],
+        "polling": true,
+        "webhooks": false
+      },
+      "evidence": "docs/architecture/model-evidence/_provider-fal.json",
+      "note": "The only surface CineBraid dispatches to today. Its H3 facts live in fal-h3-backend.js, which is the shipped adapter and stays the authority for that path; the offerings below restate only what the catalogue needs to join on.",
+      "offerings": [
+        {
+          "modelId": "minimax-h3/fl2va",
+          "providerModelId": "minimax/h3/text-to-video",
+          "state": "available",
+          "modes": ["t2v", "i2v", "flf"],
+          "constraints": {
+            "durationSeconds": [5, 15],
+            "resolutions": ["768P", "2K", "4K"],
+            "aspectRatios": {
+              "t2v": ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
+              "i2v": null,
+              "flf": null
+            },
+            "maxPromptCharacters": 7000
+          },
+          "references": {
+            "maxImages": 2,
+            "maxVideos": 0,
+            "maxAudio": 0
+          },
+          "flags": {
+            "firstFrame": true,
+            "lastFrame": true,
+            "seed": false
+          },
+          "authority": "fal-h3-backend.js",
+          "note": "4K is offered by fal and established by no MiniMax source; the intersection correctly withholds it."
+        },
+        {
+          "modelId": "minimax-h3/ref2va",
+          "providerModelId": "minimax/h3/reference-to-video",
+          "state": "available",
+          "modes": ["r2v"],
+          "constraints": {
+            "durationSeconds": [5, 15],
+            "resolutions": ["768P", "2K", "4K"],
+            "aspectRatios": {
+              "r2v": ["adaptive", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"]
+            },
+            "maxPromptCharacters": 7000
+          },
+          "references": {
+            "maxImages": 9,
+            "maxVideos": 3,
+            "maxAudio": 3,
+            "maxTotal": 12,
+            "audioRequiresVisual": true
+          },
+          "flags": {
+            "seed": false
+          },
+          "authority": "fal-h3-backend.js"
+        },
+        {
+          "modelId": "gpt-image-2/standard",
+          "providerModelId": "fal-ai/gpt-image-2",
+          "state": "available",
+          "modes": ["t2i", "edit", "multi-reference", "blocking"],
+          "constraints": {},
+          "references": {},
+          "flags": {},
+          "note": "Dispatched today through generation.fal.textModel / editModel. fal publishes no narrowing of the OpenAI image schema that CineBraid has established, so no constraint is asserted here."
+        }
+      ]
+    },
+    {
+      "surfaceId": "runware",
+      "displayName": "Runware",
+      "operator": "Runware",
+      "kind": "aggregator_host",
+      "roles": ["catalogue", "execution"],
+      "state": "catalogued",
+      "backendId": "runware",
+      "executionSurface": "api",
+      "executionKind": "hosted_api",
+      "orchestratorLocation": "hosted_api",
+      "inferenceLocation": "hosted_api",
+      "costClass": "metered_api",
+      "identifierScheme": {
+        "format": "creator:model@version",
+        "example": "bytedance:seedance@2.5",
+        "note": "Runware calls this an AIR identifier. It is Runware's handle, not model identity - its Nano Banana 2 identifier does not match the one Google publishes."
+      },
+      "taskTypes": ["imageInference", "videoInference", "audioInference", "3dInference", "textInference"],
+      "delivery": {
+        "modes": ["sync", "async"],
+        "polling": true,
+        "webhooks": true
+      },
+      "evidence": "docs/architecture/model-evidence/_provider-runware.json",
+      "note": "BOTH a catalogue and an execution surface, and it is worth being precise about why that matters. As a catalogue it is a research source of the same kind as a vendor model card for one narrow question - which models exist, under which provider, with which provider-side limits - and it covers far more of the field than any single vendor. As an execution surface it is one hosted API among several. CineBraid uses it today for the first job only. No adapter, no credential path, no dispatch.",
+      "offerings": [
+        {
+          "modelId": "minimax-h3/fl2va",
+          "providerModelId": "minimax:h3@0",
+          "state": "catalogued",
+          "modes": ["t2v", "i2v", "flf"],
+          "constraints": {
+            "durationSeconds": [5, 15],
+            "resolutions": ["768P", "2K"],
+            "aspectRatios": {
+              "t2v": ["16:9", "4:3", "1:1", "3:4", "9:16", "21:9"],
+              "i2v": null,
+              "flf": null
+            }
+          },
+          "references": {
+            "maxImages": 2,
+            "maxVideos": 0,
+            "maxAudio": 0,
+            "maxTotalBytes": 67108864
+          },
+          "flags": {
+            "seed": true,
+            "nativeAudio": true,
+            "firstFrame": true,
+            "lastFrame": true
+          },
+          "note": "SEED. Runware documents a seed on its H3 offering. MiniMax's own model card and API reference document none, and neither does fal. CineBraid does not promote this to a model fact: the H3-on-fal path stays seed-unsupported, and this offering is the reason the divergence report exists."
+        },
+        {
+          "modelId": "minimax-h3/ref2va",
+          "providerModelId": "minimax:h3@0",
+          "state": "catalogued",
+          "modes": ["r2v"],
+          "constraints": {
+            "durationSeconds": [5, 15],
+            "resolutions": ["768P", "2K"]
+          },
+          "references": {
+            "maxImages": 9,
+            "maxVideos": 3,
+            "maxAudio": 3,
+            "maxTotalBytes": 67108864
+          },
+          "flags": {
+            "seed": true,
+            "nativeAudio": true
+          }
+        },
+        {
+          "modelId": "seedance/2.5",
+          "providerModelId": "bytedance:seedance@2.5",
+          "state": "catalogued",
+          "modes": ["t2v", "i2v", "flf", "r2v", "video-edit"],
+          "constraints": {
+            "durationSeconds": [4, 30],
+            "resolutions": ["480P", "720P"],
+            "aspectRatios": {
+              "t2v": ["16:9", "4:3", "1:1", "3:4", "9:16", "21:9"],
+              "i2v": null,
+              "flf": null,
+              "r2v": ["16:9", "4:3", "1:1", "3:4", "9:16", "21:9"],
+              "video-edit": null
+            }
+          },
+          "references": {
+            "maxImages": 30,
+            "maxVideos": 10,
+            "maxAudio": 10,
+            "maxFrameImages": 2
+          },
+          "flags": {
+            "seed": true,
+            "nativeAudio": true,
+            "firstFrame": true,
+            "lastFrame": true
+          },
+          "pricing": {
+            "unit": "usd_per_second",
+            "480P": 0.115,
+            "720P": 0.249
+          },
+          "note": "Runware serves 480p and 720p only. ByteDance's own material describes higher output; the ceiling here is Runware's, and is exactly why it is recorded against the surface and not against the model."
+        },
+        {
+          "modelId": "seedream/5.0-pro",
+          "providerModelId": "bytedance:seedream@5.0-pro",
+          "state": "catalogued",
+          "modes": ["t2i", "edit", "multi-reference"],
+          "constraints": {
+            "maxPromptCharacters": 3000
+          },
+          "references": {
+            "maxImages": 10
+          },
+          "flags": {
+            "seed": true
+          },
+          "pricing": {
+            "unit": "usd_per_image",
+            "1.5K": 0.04815,
+            "2K": 0.0963,
+            "extraReferenceImage": 0.00321
+          },
+          "note": "Width and height 256-16383 with a total area of 921,600-4,624,220 pixels and a ratio between 1:16 and 16:1."
+        },
+        {
+          "modelId": "kling-video/3-pro",
+          "providerModelId": "klingai:kling-video@3-pro",
+          "state": "catalogued",
+          "modes": ["t2v", "i2v", "flf", "v2v"],
+          "constraints": {
+            "durationSeconds": [3, 15],
+            "resolutions": ["1080P"],
+            "aspectRatios": {
+              "t2v": ["16:9", "1:1", "9:16"],
+              "i2v": null,
+              "flf": null,
+              "v2v": null
+            }
+          },
+          "references": {
+            "maxImages": 2,
+            "maxVideos": 1,
+            "maxFrameImages": 2,
+            "maxGuidanceImages": 1,
+            "guidanceExcludesFrameImages": true
+          },
+          "flags": {
+            "seed": true,
+            "nativeAudio": true,
+            "firstFrame": true,
+            "lastFrame": true
+          },
+          "pricing": {
+            "unit": "usd_per_second",
+            "withoutAudio": 0.112,
+            "withAudio": 0.168
+          },
+          "note": "Runware is currently CineBraid's ONLY established source for Kling: kling.ai's own API documentation refused every request from this environment (HTTP 446). Everything recorded for Kling is therefore a surface fact, and the model definition asserts nothing beyond it. multiPrompt carries up to 6 sequential segments whose durations must sum to the root duration - a native multi-shot control CineBraid has no equivalent of yet."
+        },
+        {
+          "modelId": "flux-3-video/pro",
+          "providerModelId": "bfl:flux@3-video",
+          "state": "catalogued",
+          "modes": ["t2v", "i2v", "flf", "v2v"],
+          "constraints": {
+            "durationSeconds": [5, 20],
+            "resolutions": ["720P", "1080P"],
+            "aspectRatios": {
+              "t2v": ["21:9", "2:1", "16:9", "4:3", "1:1", "3:4", "9:16"],
+              "i2v": null,
+              "flf": null,
+              "v2v": null
+            }
+          },
+          "references": {
+            "maxFrameImages": 10
+          },
+          "flags": {
+            "seed": true,
+            "nativeAudio": true,
+            "firstFrame": true,
+            "lastFrame": true
+          },
+          "pricing": {
+            "unit": "usd_per_second",
+            "draft720P": 0.04,
+            "full720P": 0.17,
+            "full1080P": 0.29,
+            "v2vFull1080P": 0.54
+          },
+          "note": "Runware exposes a seed; Black Forest Labs' own endpoint documentation does not mention one."
+        },
+        {
+          "modelId": "gemini-image/3.1-flash",
+          "providerModelId": "google:4@3",
+          "state": "catalogued",
+          "modes": ["t2i", "edit", "multi-reference"],
+          "constraints": {
+            "resolutions": ["0.5K", "1K", "2K", "4K"],
+            "maxPromptCharacters": 45000
+          },
+          "references": {
+            "maxImages": 14
+          },
+          "flags": {
+            "seed": true
+          },
+          "pricing": {
+            "unit": "usd_per_image",
+            "0.5K": 0.04657,
+            "1K": 0.06895,
+            "2K": 0.10255,
+            "4K": 0.15295
+          },
+          "note": "Runware's identifier for this model bears no resemblance to Google's `gemini-3.1-flash-image`. A catalogue that treated a provider handle as identity would list them as two models."
+        },
+        {
+          "modelId": "gemini-image/3.1-flash-lite",
+          "providerModelId": "google:nano-banana@2-lite",
+          "state": "catalogued",
+          "modes": ["t2i", "edit", "multi-reference"],
+          "constraints": {
+            "resolutions": ["1K"],
+            "maxPromptCharacters": 45000
+          },
+          "references": {
+            "maxImages": 14
+          },
+          "flags": {
+            "seed": true
+          },
+          "pricing": {
+            "unit": "usd_per_image",
+            "1K": 0.033603
+          },
+          "note": "Google documents 0.5K and 1K for this model; Runware exposes 1K only. The narrowing belongs to the surface, and the divergence report names it. Note also that Runware's identifier for the Lite tier follows a different scheme from its identifier for Nano Banana 2 - two handles for one family, neither of them identity."
+        },
+        {
+          "modelId": "qwen-image/3.0",
+          "providerModelId": "alibaba:qwen-image@3.0",
+          "state": "catalogued",
+          "modes": ["t2i", "edit"],
+          "constraints": {},
+          "references": {
+            "maxImages": 3
+          },
+          "flags": {
+            "seed": true
+          },
+          "pricing": {
+            "unit": "usd_per_image",
+            "image": 0.03,
+            "perInputImage": 0.003
+          },
+          "note": "Area 0.26-4.19 MP, ratio 1:8 to 8:1. Runware is CineBraid's only established source for this model; qwen.ai's own model page could not be read."
+        },
+        {
+          "modelId": "happyhorse/1.1",
+          "providerModelId": "alibaba:happyhorse@1.1",
+          "state": "catalogued",
+          "modes": ["t2v", "i2v", "r2v"],
+          "constraints": {
+            "durationSeconds": [3, 15],
+            "resolutions": ["720P", "1080P"]
+          },
+          "references": {
+            "maxImages": 9,
+            "maxFrameImages": 1
+          },
+          "flags": {
+            "seed": true,
+            "firstFrame": true
+          },
+          "pricing": {
+            "unit": "usd_per_second",
+            "720P": 0.14,
+            "1080P": 0.18
+          }
+        },
+        {
+          "modelId": "gemini-omni-flash/1",
+          "providerModelId": "google:gemini@omni-flash",
+          "state": "catalogued",
+          "modes": ["t2v", "i2v", "v2v"],
+          "constraints": {
+            "durationSeconds": [3, 10],
+            "resolutions": ["720P"]
+          },
+          "references": {
+            "maxImages": 7,
+            "maxFrameImages": 1
+          },
+          "flags": {
+            "seed": true,
+            "nativeAudio": true,
+            "firstFrame": true
+          }
+        },
+        {
+          "modelId": "krea-2/large",
+          "providerModelId": "krea:krea@2-large",
+          "state": "catalogued",
+          "modes": ["t2i", "multi-reference", "style-reference"],
+          "constraints": {},
+          "references": {
+            "maxImages": 10
+          },
+          "flags": {
+            "seed": true,
+            "referenceWeights": true
+          },
+          "pricing": {
+            "unit": "usd_per_image",
+            "image": 0.06,
+            "withReferenceImage": 0.065
+          },
+          "note": "Ten WEIGHTED references, each with an independent 0-1 strength and positive or negative guidance. This is the first model in CineBraid's catalogue with a real per-reference weight, and it is why the capability flag `referenceWeights` exists rather than being assumed false everywhere."
+        },
+        {
+          "modelId": "krea-2/turbo",
+          "providerModelId": "krea:krea@2-turbo",
+          "state": "catalogued",
+          "modes": ["t2i"],
+          "constraints": {},
+          "references": {
+            "maxImages": 0
+          },
+          "flags": {
+            "seed": true
+          },
+          "pricing": {
+            "unit": "usd_per_image",
+            "image": 0.015
+          }
+        },
+        {
+          "modelId": "minimax-music/2.6",
+          "providerModelId": "minimax:music@2.6",
+          "state": "catalogued",
+          "modes": [],
+          "constraints": {},
+          "references": {},
+          "flags": {},
+          "note": "Runware lists MiniMax Music 2.6 under audioInference. CineBraid has no audio generation mode vocabulary yet, so `modes` is deliberately empty rather than populated with an invented value."
+        },
+        {
+          "modelId": "fish-audio/s2.1-pro",
+          "providerModelId": "fishaudio:s@2.1-pro",
+          "state": "catalogued",
+          "modes": [],
+          "constraints": {},
+          "references": {},
+          "flags": {},
+          "note": "Runware lists Fish Audio S2.1 Pro under text-to-speech. The AIR identifier is inferred from Runware's scheme and has NOT been read from a Runware model page; it is recorded as unverified and nothing joins on it."
+        }
+      ]
+    },
+    {
+      "surfaceId": "openai-images",
+      "displayName": "OpenAI Images API",
+      "operator": "OpenAI",
+      "kind": "vendor_api",
+      "roles": ["catalogue", "execution"],
+      "state": "catalogued",
+      "backendId": "openai-images",
+      "executionSurface": "api",
+      "executionKind": "hosted_api",
+      "orchestratorLocation": "hosted_api",
+      "inferenceLocation": "hosted_api",
+      "costClass": "metered_api",
+      "identifierScheme": {
+        "format": "model-name",
+        "example": "gpt-image-2",
+        "note": "Snapshots are dated, e.g. gpt-image-2-2026-04-21."
+      },
+      "delivery": {
+        "modes": ["sync"],
+        "polling": false,
+        "webhooks": false
+      },
+      "evidence": "docs/architecture/model-evidence/gpt-image-2.json",
+      "note": "The model's own vendor. Its documentation IS model evidence for hosted behaviour, which is why gpt-image-2's definition can assert exact sizes while Kling's cannot assert anything. CineBraid reaches GPT Image 2 through fal today and has no direct OpenAI image credential path.",
+      "offerings": [
+        {
+          "modelId": "gpt-image-2/standard",
+          "providerModelId": "gpt-image-2",
+          "state": "catalogued",
+          "modes": ["t2i", "edit", "multi-reference", "inpaint", "blocking"],
+          "constraints": {
+            "resolutions": ["1024x1024", "1536x1024", "1024x1536", "2048x2048", "2048x1152", "3840x2160", "2160x3840", "auto"]
+          },
+          "references": {
+            "maxImages": 16
+          },
+          "flags": {
+            "mask": true,
+            "seed": false
+          },
+          "note": "Endpoints v1/images/generations and v1/images/edits. Quality low|medium|high|auto. No seed and no transparent background on this model."
+        }
+      ]
+    },
+    {
+      "surfaceId": "bfl-api",
+      "displayName": "Black Forest Labs API",
+      "operator": "Black Forest Labs",
+      "kind": "vendor_api",
+      "roles": ["catalogue", "execution"],
+      "state": "catalogued",
+      "backendId": "bfl-api",
+      "executionSurface": "api",
+      "executionKind": "hosted_api",
+      "orchestratorLocation": "hosted_api",
+      "inferenceLocation": "hosted_api",
+      "costClass": "metered_api",
+      "identifierScheme": {
+        "format": "endpoint-path",
+        "example": "v1/flux-3-video"
+      },
+      "delivery": {
+        "modes": ["async"],
+        "polling": true,
+        "webhooks": false
+      },
+      "evidence": "docs/architecture/model-evidence/flux-3-video.json",
+      "offerings": [
+        {
+          "modelId": "flux-3-video/pro",
+          "providerModelId": "v1/flux-3-video",
+          "state": "catalogued",
+          "modes": ["t2v", "i2v", "flf", "v2v"],
+          "constraints": {
+            "durationSeconds": [5, 20],
+            "resolutions": ["hd", "fhd"],
+            "aspectRatios": {
+              "t2v": ["21:9", "2:1", "16:9", "4:3", "1:1", "3:4", "9:16"],
+              "i2v": null,
+              "flf": null,
+              "v2v": null
+            }
+          },
+          "references": {
+            "maxFrameImages": 10
+          },
+          "flags": {
+            "nativeAudio": true,
+            "firstFrame": true,
+            "lastFrame": true
+          },
+          "note": "The vendor's own endpoint documents no seed. Runware's offering of the same model does. Neither is promoted to a model fact."
+        }
+      ]
+    },
+    {
+      "surfaceId": "elevenlabs-api",
+      "displayName": "ElevenLabs API",
+      "operator": "ElevenLabs",
+      "kind": "vendor_api",
+      "roles": ["catalogue", "execution"],
+      "state": "catalogued",
+      "backendId": "elevenlabs",
+      "executionSurface": "api",
+      "executionKind": "hosted_api",
+      "orchestratorLocation": "hosted_api",
+      "inferenceLocation": "hosted_api",
+      "costClass": "metered_api",
+      "identifierScheme": {
+        "format": "model-name",
+        "example": "eleven_v3"
+      },
+      "delivery": {
+        "modes": ["sync"],
+        "polling": false,
+        "webhooks": false
+      },
+      "evidence": "docs/architecture/model-evidence/elevenlabs.json",
+      "note": "Recorded so an audio model has somewhere real to point at. CineBraid has no audio dispatch path, no voice-casting concept and no way to attach a generated line to a shot, so this is catalogued and nothing more.",
+      "offerings": [
+        {
+          "modelId": "elevenlabs/v3",
+          "providerModelId": "eleven_v3",
+          "state": "catalogued",
+          "modes": ["tts"],
+          "constraints": {
+            "maxPromptCharacters": 5000
+          },
+          "references": {
+            "maxAudio": 1
+          },
+          "flags": {},
+          "note": "The vendor publishes per-model character limits, so a long speech can be budgeted before it is sent."
+        },
+        {
+          "modelId": "elevenlabs/music-v2",
+          "providerModelId": "music_v2",
+          "state": "catalogued",
+          "modes": ["music"],
+          "constraints": {},
+          "references": {},
+          "flags": {}
+        }
+      ]
+    },
+    {
+      "surfaceId": "minimax-api",
+      "displayName": "MiniMax Platform",
+      "operator": "MiniMax",
+      "kind": "vendor_api",
+      "roles": ["catalogue", "execution"],
+      "state": "catalogued",
+      "backendId": "minimax",
+      "executionSurface": "api",
+      "executionKind": "hosted_api",
+      "orchestratorLocation": "hosted_api",
+      "inferenceLocation": "hosted_api",
+      "costClass": "metered_api",
+      "identifierScheme": {
+        "format": "model-name",
+        "example": "music-3.0"
+      },
+      "delivery": {
+        "modes": ["async"],
+        "polling": true,
+        "webhooks": false
+      },
+      "evidence": "docs/architecture/model-evidence/minimax-music.json",
+      "note": "MiniMax's own platform also serves H3, and that is deliberately NOT modelled as an execution offering here: CineBraid reaches H3 through fal, fal-h3-backend.js is the authority for that path, and a third copy of H3's numbers would be a third thing to keep in step. The H3 vendor API is recorded where it belongs - as a SOURCE, in the H3 evidence file.",
+      "offerings": [
+        {
+          "modelId": "minimax-music/3.0",
+          "providerModelId": "music-3.0",
+          "state": "catalogued",
+          "modes": ["music"],
+          "constraints": {
+            "maxPromptCharacters": 2000
+          },
+          "references": {
+            "maxAudio": 1
+          },
+          "flags": {},
+          "note": "Lyrics 1-3500 characters with structure tags. Cover reference audio 6s-6min, 50MB. Rate limit 120 RPM paid, 3 RPM free."
+        },
+        {
+          "modelId": "minimax-music/2.6",
+          "providerModelId": "music-2.6",
+          "state": "catalogued",
+          "modes": ["music"],
+          "constraints": {
+            "maxPromptCharacters": 2000
+          },
+          "references": {},
+          "flags": {},
+          "note": "The vendor's own list marks this the previous generation to music-3.0."
+        }
+      ]
+    },
+    {
+      "surfaceId": "comfy-local",
+      "displayName": "Local ComfyUI",
+      "operator": "operator-controlled",
+      "kind": "local_runtime",
+      "roles": ["execution"],
+      "state": "catalogued",
+      "backendId": "comfy",
+      "executionSurface": "local",
+      "executionKind": "local_native",
+      "orchestratorLocation": "same_host",
+      "inferenceLocation": "same_host",
+      "costClass": "free_local",
+      "identifierScheme": {
+        "format": "recipe-id",
+        "example": "zimage-turbo-t2i",
+        "note": "A WorkflowRecipe id. No recipe ships in this phase."
+      },
+      "delivery": {
+        "modes": ["async"],
+        "polling": true,
+        "webhooks": false
+      },
+      "evidence": null,
+      "note": "The intended local path. No WorkflowRecipe ships, so every offering here is catalogued and nothing can dispatch. Recorded so that an open-weight model's LOCAL capability set has somewhere to live that is not its hosted one - the two are different sets, not a large one and a small one.",
+      "offerings": [
+        {
+          "modelId": "z-image/turbo",
+          "providerModelId": "zimage-turbo-t2i",
+          "state": "catalogued",
+          "modes": ["t2i", "variation"],
+          "constraints": {},
+          "references": {
+            "maxImages": 0
+          },
+          "flags": {
+            "seed": true,
+            "candidateBatching": true,
+            "lora": true,
+            "controlNet": true
+          }
+        },
+        {
+          "modelId": "ltx-2/2.3-distilled",
+          "providerModelId": "ltx-2-3-distilled",
+          "state": "catalogued",
+          "modes": ["t2v", "i2v"],
+          "constraints": {},
+          "references": {},
+          "flags": {
+            "seed": true,
+            "lora": true,
+            "nativeAudio": true
+          },
+          "note": "Lightricks ships its own inference package as well; this records the ComfyUI path CineBraid would use, and neither exists as a recipe yet."
+        },
+        {
+          "modelId": "krea-2/turbo",
+          "providerModelId": "krea-2-turbo-t2i",
+          "state": "catalogued",
+          "modes": ["t2i"],
+          "constraints": {},
+          "references": {
+            "maxImages": 0
+          },
+          "flags": {
+            "seed": true,
+            "lora": true
+          },
+          "note": "The OPEN checkpoint. Text-to-image only, with no reference images - which is the whole point of recording it separately from krea-2/large's hosted ten weighted references. Lightricks-style: the vendor also publishes its own inference package, a second local path CineBraid has not modelled."
+        }
+      ]
+    }
+  ]
+}

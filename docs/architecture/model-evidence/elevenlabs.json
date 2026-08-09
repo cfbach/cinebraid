@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "modelFamily": "elevenlabs",
+  "vendor": "ElevenLabs",
+  "checkedOn": "2026-08-08",
+  "evidenceStrength": "vendor",
+  "_readme": [
+    "Evidence for the ElevenLabs model line.",
+    "",
+    "Audio is INVENTORY AND INTELLIGENCE in this phase. Nothing generates sound: CineBraid",
+    "has no audio dispatch path, no casting concept and no way to attach a generated line",
+    "to a shot. What this record buys is the ability to describe audio models in the same",
+    "vocabulary as everything else, so that when audio is wired the catalogue is already",
+    "there and the vocabulary does not have to be invented under deadline.",
+    "",
+    "The vendor publishes per-model character limits, which is unusually useful: a long",
+    "speech can be budgeted before it is sent rather than discovered at truncation."
+  ],
+  "sources": [
+    { "id": "models-page", "type": "official-model-list", "url": "https://elevenlabs.io/docs/models", "checkedOn": "2026-08-08", "appliesTo": ["api"] }
+  ],
+  "identity": {
+    "textToSpeech": [
+      { "modelId": "eleven_v3", "languages": "70+", "maxCharacters": 5000, "source": "models-page" },
+      { "modelId": "eleven_multilingual_v2", "languages": 29, "maxCharacters": 10000, "source": "models-page" },
+      { "modelId": "eleven_flash_v2_5", "languages": 32, "maxCharacters": 40000, "latencyMs": 75, "source": "models-page" },
+      { "modelId": "eleven_flash_v2", "languages": "English only", "maxCharacters": 30000, "latencyMs": 75, "source": "models-page" }
+    ],
+    "voiceDesign": [
+      { "modelId": "eleven_ttv_v3", "languages": "70+", "source": "models-page" },
+      { "modelId": "eleven_multilingual_ttv_v2", "languages": 29, "source": "models-page" }
+    ],
+    "voiceConversion": [
+      { "modelId": "eleven_multilingual_sts_v2", "languages": 29, "maxCharacters": 10000, "source": "models-page" },
+      { "modelId": "eleven_english_sts_v2", "languages": "English only", "maxCharacters": 10000, "source": "models-page" }
+    ],
+    "speechToText": [
+      { "modelId": "scribe_v2", "languages": "90+", "source": "models-page" },
+      { "modelId": "scribe_v2_realtime", "languages": "90+", "latencyMs": 150, "source": "models-page" }
+    ],
+    "creative": [
+      { "modelId": "music_v2", "role": "studio-grade music generation", "source": "models-page" },
+      { "modelId": "music_v1", "role": "music generation", "source": "models-page", "note": "The vendor's own list states v1 is outclassed by v2." },
+      { "modelId": "eleven_text_to_sound_v2", "role": "sound effects", "source": "models-page" }
+    ]
+  },
+  "capabilities": [
+    { "claim": "eleven_v3 supports 70+ languages with a 5,000-character request limit.", "value": 5000, "modes": ["tts"], "source": "models-page", "appliesTo": ["api"] },
+    { "claim": "A separate voice-DESIGN model line exists, distinct from voice selection.", "value": true, "source": "models-page", "appliesTo": ["api"], "note": "This is what a production needs to cast a character rather than pick a preset." },
+    { "claim": "Music and sound-effects generation are separate models in the same line.", "value": true, "modes": ["music", "sfx"], "source": "models-page", "appliesTo": ["api"] },
+    { "claim": "Latency figures exclude application and network latency.", "value": true, "source": "models-page", "appliesTo": ["api"] }
+  ],
+  "notEstablished": [
+    { "claim": "Request parameters, output formats and sample rates.", "status": "the API reference introduction did not carry them and no endpoint reference was read", "cineBraidBehaviour": "No parameter is encoded. Only the model line, language counts and character limits are." },
+    { "claim": "Music model duration, structure controls or reference audio.", "status": "not documented in what was read", "cineBraidBehaviour": "elevenlabs/music-v2 is watchlist with every constraint null." },
+    { "claim": "Pricing.", "status": "not read", "cineBraidBehaviour": "No pricing is recorded for this family." }
+  ],
+  "conflicts": []
+}
