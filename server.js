@@ -24,7 +24,7 @@ const {
 } = require("./config");
 const PromptEngine = require("./prompt-engine");
 const { httpStatusForError } = require("./http-errors");
-const { resolveShotEntities, shotEntityTokenMatches, unresolvedShotDependencies } = require("./public/shared-entities");
+const { resolveShotEntities, shotEntityTokenMatches, unresolvedShotDependencies, entityVisualDescription, resolveShotDuration, lossyShotCodeTokens } = require("./public/shared-entities");
 const Continuity = require("./public/shared-continuity");
 const { createContinuityCache } = require("./continuity-cache");
 const ContinuityJson = require("./continuity-json");
@@ -911,6 +911,15 @@ app.get("/api/project", (req, res) => {
     res.status(500).json({ error: "Could not open the active project — " + e.message });
   }
 });
+/* Seconds a shot actually declares, under any supported alias, and 0 when it
+   declares none. Report surfaces want the stored number or nothing — never the
+   compiler's invented default — so this reads the shared resolver but refuses
+   its fallback. Both readers used to consult only `sec || duration`, which
+   reported 0 for every shot the current editor wrote. */
+function shotListDurationSeconds(shot) {
+  const resolved = resolveShotDuration(shot);
+  return resolved.wasDefaulted ? 0 : resolved.seconds;
+}
 function projectReadinessIssues(P) {
   const issues = [], seenShotIssues = new Set(), entityIssues = new Map();
   const addShotIssue = (kind, message, href, shotId = "", entityId = "") => {
@@ -929,9 +938,27 @@ function projectReadinessIssues(P) {
   const entityLists = { character: "characters", location: "locations", prop: "props", vehicle: "vehicles" };
   const entityRoutes = { character: "character", location: "location", prop: "prop", vehicle: "vehicle" };
   for (const shot of P.shots || []) {
-    for (const dependency of unresolvedShotDependencies(P, shot)) {
+    const unresolved = unresolvedShotDependencies(P, shot);
+    for (const dependency of unresolved) {
       const type = String(dependency.type || "reference").replace(/-/g, " ");
       addShotIssue("unresolved-reference", `${shot.id} references missing ${type} ${dependency.id}. Relink or remove it in Shot Inputs.`, `#/shot/${encodeURIComponent(shot.id)}`, shot.id, dependency.id);
+    }
+    /* `codes[]` resolution is deliberately unchanged; only its losses are now
+       reported. A token that is not an exact id either had specificity thrown
+       away by the prefix compatibility rule, matched more than one entity, or
+       named nothing — and until now all three were silent. */
+    const reportedUnresolved = new Set(unresolved.map((row) => String(row.id)));
+    for (const code of lossyShotCodeTokens(P, shot)) {
+      if (code.status === "unresolved") {
+        if (reportedUnresolved.has(code.token)) continue;
+        addShotIssue("code-unresolved", `${shot.id} lists ${code.token} in its shot codes, but it does not name a known production entity. Relink or remove it in Shot Inputs.`, `#/shot/${encodeURIComponent(shot.id)}`, shot.id, code.token);
+        continue;
+      }
+      if (code.status === "ambiguous") {
+        addShotIssue("code-ambiguous", `${shot.id} shot code ${code.token} matches more than one entity (${code.matches.map((match) => match.id).join(", ")}); CineBraid is using ${code.id}. Use the exact id in Shot Inputs.`, `#/shot/${encodeURIComponent(shot.id)}`, shot.id, code.id);
+        continue;
+      }
+      addShotIssue("code-reinterpreted", `${shot.id} shot code ${code.token} resolves to ${code.id} using legacy compatibility; the "${code.discarded}" part is ignored, so any reference-view specificity it carried is lost.`, `#/shot/${encodeURIComponent(shot.id)}`, shot.id, code.id);
     }
     const context = PromptEngine.buildContext(P, shot.id, "");
     if (!String(context.shot.description || "").trim() && !String(context.scene.beat || "").trim()) addShotIssue("shot-description", `${shot.id} has no description or scene beat.`, `#/shot/${encodeURIComponent(shot.id)}`, shot.id);
@@ -2736,19 +2763,14 @@ function projectBuilderReview(project, warnings = [], sourceCounts = {}) {
   walk(project, "");
   if (!(project.scenes || []).length) missing.push("Project: no scenes imported");
   if (!(project.shots || []).length) missing.push("Project: no shots imported");
-  for (const [kind, list, fallbackKey] of [
-    ["Character", project.characters || [], "block"],
-    ["Location", project.locations || [], "notes"],
-    ["Prop", project.props || [], "notes"],
-    ["Vehicle", project.vehicles || [], "notes"],
+  for (const [kind, list, type] of [
+    ["Character", project.characters || [], "character"],
+    ["Location", project.locations || [], "location"],
+    ["Prop", project.props || [], "prop"],
+    ["Vehicle", project.vehicles || [], "vehicle"],
   ])
     for (const item of list) {
-      const description = String(
-        item.creationDescription ||
-          item.visualDescription ||
-          item[fallbackKey] ||
-          "",
-      ).trim();
+      const description = entityVisualDescription(item, type);
       if (!description) missing.push(`${kind} ${item.id}: visual description`);
       if (!(item.continuityStates || []).length)
         missing.push(`${kind} ${item.id}: continuity state`);
@@ -3402,11 +3424,7 @@ function serverContinuityStateDelta(state) {
 
 function assetPromptContext(P, list, entity, state = null, parentState = null, generationMode = "independent") {
   const type = list === "characters" ? "character" : list === "locations" ? "location" : list === "vehicles" ? "vehicle" : "prop";
-  const baseDescription = String(
-    entity.creationDescription ||
-      (type === "character" ? entity.block : entity.notes) ||
-      "",
-  ).trim();
+  const baseDescription = entityVisualDescription(entity, type);
   const stateName = String(state?.name || "").trim();
   const stateDelta = serverContinuityStateDelta(state);
   const parentName = String(parentState?.name || "").trim();
@@ -4708,7 +4726,7 @@ app.post("/api/llm/build-scene-audio-prompts", async (req, res) => {
       return pieces.length ? `${shot.id} · ${shot.title || "Untitled shot"}\n${pieces.join("\n")}` : "";
     }).filter(Boolean);
     const source = {
-      scene: { id: scene.id, title: scene.title || "", beat: scene.whatHappens || "", feel: scene.howItFeels || "", durationSeconds: shots.reduce((sum, shot) => sum + Number(shot.sec || shot.duration || 0), 0) },
+      scene: { id: scene.id, title: scene.title || "", beat: scene.whatHappens || "", feel: scene.howItFeels || "", durationSeconds: shots.reduce((sum, shot) => sum + shotListDurationSeconds(shot), 0) },
       sourceDirection: String(req.body?.sourceDirection || ""),
       existing: req.body?.existing || scene.audio || {},
       shotAudio,
@@ -5204,7 +5222,7 @@ app.post("/api/llm/review-scene", async (req, res) => {
       const locationIds = (resolved.locations || []).map((item) => item.name || item.id).join(", ");
       const propIds = [...(resolved.props || []), ...(resolved.vehicles || [])].map((item) => item.name || item.id).join(", ");
       return [
-        `${index + 1} = ${shot.id} · ${shot.title || "Untitled shot"} · ${Math.round(Number(shot.sec || shot.duration || 0) || 0)}s`,
+        `${index + 1} = ${shot.id} · ${shot.title || "Untitled shot"} · ${Math.round(shotListDurationSeconds(shot))}s`,
         shot.desc ? `Action: ${shot.desc}` : "",
         shot.positioning ? `Staging: ${shot.positioning}` : "",
         characterIds ? `Characters: ${characterIds}` : "",

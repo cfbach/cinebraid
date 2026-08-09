@@ -45,7 +45,15 @@ assert(entities.includes('GENERATE FROM ${esc(parentInfo.label.toUpperCase())}')
 assert(entities.includes('UPLOAD STATE REFERENCE'), 'empty state cards must expose targeted state upload');
 assert(entities.includes('openContinuityStateVariantHub'), 'state variant chooser must be available from the creation hub');
 assert(coverage.includes('No automatic guess'), 'character primary references must require explicit angle assignment');
-assert(app.includes('character primary references require explicit angle assignment'), 'legacy silent angle assignments must be migrated away');
+/* The legacy silent angle is still detected on load — that has not changed —
+   but it is now reported rather than cleared. Withdrawing an approval the
+   filmmaker had never revisited was a destructive migration performed during a
+   read, and P-1 ended it; the correction belongs to an explicit migration.
+   See tests/intent-loss-safety.js. */
+assert(app.includes('wasSilentCharacterSeed'), 'legacy silent angle assignments must still be detected when a project is opened');
+assert(app.includes('not chosen. The approval is kept as stored'), 'a detected legacy silent angle must be reported to the filmmaker');
+const seedBranch = app.slice(app.indexOf('const wasSilentCharacterSeed'), app.indexOf('return next;'));
+assert(seedBranch && !/approvedFile\s*=\s*""/.test(seedBranch), 'opening a project must not clear a legacy silent angle assignment');
 assert(!libraryTools.includes('characters: "front-three-quarter"'), 'primary approval must not silently seed character 3/4 coverage');
 
 

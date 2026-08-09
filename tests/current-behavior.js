@@ -357,6 +357,7 @@ async function main() {
     "image-review-scale.js",
     "import-benchmark.js",
     "integrity-mobile-usability.js",
+    "intent-loss-safety.js",
     "lan-passcode-real-browser.py",
     "lan-passcode-settings.js",
     "launch-blockers.js",

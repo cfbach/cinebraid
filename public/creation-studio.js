@@ -203,11 +203,7 @@ function preferredCreationProfile(mode, selected = "") {
   return preferred.find((id) => profiles.some((p) => p.id === id)) || profiles[0]?.id || "";
 }
 function creationAssetDescription(list, x) {
-  return String(
-    x.creationDescription ||
-      (list === "characters" ? x.block : x.notes) ||
-      "",
-  );
+  return entityVisualDescription(x, list);
 }
 function assetPromptBuilds(x) {
   x.assetPromptBuilds = Array.isArray(x.assetPromptBuilds)

@@ -97,6 +97,7 @@ const nodeSuites = [
   "check:launch-blockers",
   "check:browser-exit",
   "check:data-safety",
+  "check:intent-loss",
   "check:project-switch",
   "check:brand-logo",
 ];

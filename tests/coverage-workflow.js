@@ -186,10 +186,17 @@ async function testLegacySilentThreeQuarterMigrationAndStateVariantFlow() {
     scan: coverageScan(),
     storage: { "cinebraid-focused:fixture:entity-task:characters:CHAR-IREN": "states", "cinebraid-bounded:fixture:selected:continuity-state:characters:CHAR-IREN": "state-night" },
   });
-  const migrated = vm.runInContext(`(() => { const e=P.characters.find((item)=>item.id==='CHAR-IREN'); const slot=(ensureCoverageSlots('characters',e)||[]).find((item)=>item.id==='front-three-quarter'); return {file:slot.approvedFile, status:slot.status, history:e.coverageMigrationHistory||[]}; })()`, rendered.context);
-  assert.strictEqual(migrated.file, "", "legacy auto-seeded 3/4 assignments must be cleared during migration");
-  assert.strictEqual(migrated.status, "missing", "cleared legacy angle must return to missing status");
-  assert(migrated.history.some((row) => /explicit angle assignment/.test(row.reason)), "migration history must explain why the silent angle was removed");
+  /* This used to assert that opening the project cleared the slot. It did, and
+     that was the defect: a project became less complete for having been
+     opened, before the filmmaker was ever asked. The condition is real — an
+     angle nobody chose is not an authority — but correcting it belongs to an
+     explicit migration, not to a read. So the approval is now preserved and
+     the condition is reported instead. See tests/intent-loss-safety.js. */
+  const migrated = vm.runInContext(`(() => { const e=P.characters.find((item)=>item.id==='CHAR-IREN'); const slot=(ensureCoverageSlots('characters',e)||[]).find((item)=>item.id==='front-three-quarter'); return {file:slot.approvedFile, status:slot.status, history:e.coverageMigrationHistory||[], warnings:(P.meta.dataIntegrityWarnings||[])}; })()`, rendered.context);
+  assert.strictEqual(migrated.file, "CHAR-IREN-PRIMARY.png", "opening a project must not clear a legacy auto-seeded angle assignment");
+  assert.strictEqual(migrated.status, "approved", "a preserved assignment must keep the status it was stored with");
+  assert.deepStrictEqual(Array.from(migrated.history), [], "a load must not record a migration it did not perform");
+  assert(migrated.warnings.some((row) => /automatically|not chosen/i.test(row) && row.includes("CHAR-IREN-PRIMARY.png")), "the legacy condition must be reported rather than silently corrected");
 
   const html = rendered.context.document.getElementById("main").innerHTML;
   assert(html.includes("GENERATE FROM CLEAN OVERALL"), "empty alternate-state cards must provide a direct generation action");
