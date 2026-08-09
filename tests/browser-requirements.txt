@@ -1,0 +1,12 @@
+# Python dependencies for CineBraid's real-browser suites.
+#
+# Installed into the project-managed .venv-browser by `npm run setup:browser-tests`,
+# never into a system Python: the browser suites are QA tooling and have no business
+# changing the interpreter the rest of the machine uses.
+#
+# Pinned rather than ranged on purpose. Playwright ships a Chromium build matched to
+# the package version, so an exact pin is what makes a layout assertion mean the same
+# thing on the founder's workstation as it does on a Windows CI runner. To move the
+# browser forward, bump this line and re-run `npm run setup:browser-tests`, which
+# downloads the newly matched Chromium; the layout suites are the check on that bump.
+playwright==1.62.0

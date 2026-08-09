@@ -282,7 +282,12 @@ async function main() {
   assert(!planning.includes("buildGenerationPackage"));
   assert(!planning.includes("promptBuilderPanel"));
 
-  const tests = fs.readdirSync(path.join(ROOT, "tests")).sort();
+  /* __pycache__ is Python bytecode for the real-browser suites. It is gitignored
+     build output rather than a test file, and it appears the moment anything
+     imports tests/browser_runtime.py without PYTHONDONTWRITEBYTECODE - which the
+     runners set but an ad-hoc `python tests/...` does not. Listing it here would
+     make this manifest fail based on how the suites were last invoked. */
+  const tests = fs.readdirSync(path.join(ROOT, "tests")).filter((name) => name !== "__pycache__").sort();
   assert.deepStrictEqual(tests, [
     "account-connection-contract.js",
     "account-lan-safety.js",
@@ -296,9 +301,14 @@ async function main() {
     "backup-ownership.js",
     "blocking-automation-discoverability.js",
     "bounded-rendering.js",
+    "brand-logo-asset.js",
+    "brand-logo-real-browser.py",
+    "browser-requirements.txt",
     "browser-workflow-exit.js",
     "browser-workflow.js",
+    "browser_runtime.py",
     "build-history.js",
+    "c2b-generation-real-browser.py",
     "clarity-consolidation.js",
     "composer-motion.js",
     "config-durability.js",
@@ -383,6 +393,7 @@ async function main() {
     "release-package-smoke.js",
     "render-harness.js",
     "request-boundary.js",
+    "run-browser-gate.js",
     "run-full-check.js",
     "run-python-check.js",
     "safety-integrity.js",
@@ -426,6 +437,43 @@ async function main() {
     [],
     "top-level frontend functions must have a reachable call site or explicit entry-point registration",
   );
+
+  /* ---- the shipped scripts share one global scope ----
+
+     public/*.js are plain <script> tags, not modules, so every top-level
+     `const`, `let` and `class` lands in one shared lexical scope. Two files
+     declaring the same name is a SyntaxError that stops the second script dead;
+     C2b shipped exactly that - two shared files each declaring `const EXPORTS` -
+     and it blanked the entire application. Every Node suite passed, because each
+     file is individually valid and no Node suite ever loads them together.
+
+     Rather than hand-parse for declarations, this hands the concatenation to the
+     same V8 parser the browser uses and asks it to compile. `new vm.Script`
+     parses without executing, so the check is exact and free of side effects: a
+     duplicate top-level binding is a SyntaxError here for precisely the reason it
+     is one in Chrome. `var` and `function` redeclarations are legal in both
+     places and are correctly not flagged.
+
+     The load order comes from index.html so it matches what the browser does,
+     which also means a script that is shipped but never loaded cannot hide in
+     here. */
+  const indexHtml = read("public/index.html");
+  const loadedScripts = [...indexHtml.matchAll(/<script src="([^"?]+)/g)].map((match) => match[1]);
+  assert(loadedScripts.length > 30, `expected index.html to load the frontend scripts, found ${loadedScripts.length}`);
+  for (const name of loadedScripts)
+    assert(fs.existsSync(path.join(ROOT, "public", name)), `index.html loads public/${name}, which does not exist`);
+  const globalScope = loadedScripts
+    .map((name) => `/* ${name} */\n${read(`public/${name}`)}`)
+    .join("\n;\n");
+  try {
+    new vm.Script(globalScope, { filename: "public/<all shipped scripts>" });
+  } catch (error) {
+    assert.fail(
+      `public/*.js do not share one global scope cleanly: ${error.message}\n` +
+      "Two shipped scripts declare the same top-level const/let/class. In the browser the " +
+      "second script throws and the application renders blank. Rename one binding - see the " +
+      "GENERATION_OPTION_EXPORTS convention in public/shared-generation-options.js.");
+  }
 
   const app = read("public/app.js");
   const settings = read("public/settings.js");

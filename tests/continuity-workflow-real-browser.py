@@ -19,15 +19,9 @@ import json, os, pathlib, shutil, socket, subprocess, tempfile, threading, time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-try:
-    from playwright.sync_api import sync_playwright
-except Exception:
-    print('Continuity workspace real-browser audit skipped: Python Playwright is not installed.')
-    raise SystemExit(0)
-CHROMIUM = shutil.which('chromium') or shutil.which('chromium-browser') or shutil.which('google-chrome')
-if not CHROMIUM:
-    print('Continuity workspace real-browser audit skipped: Chromium is unavailable.')
-    raise SystemExit(0)
+from browser_runtime import require_browser, launch_chromium
+LABEL = 'Continuity workspace real-browser audit'
+sync_playwright = require_browser(LABEL)
 
 
 def free_port():
@@ -231,8 +225,7 @@ def outcome_count(page, outcome):
 try:
     wait_for(port)
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(executable_path=CHROMIUM, headless=True,
-                                     args=['--no-sandbox', '--disable-dev-shm-usage'])
+        browser = launch_chromium(pw, label=LABEL)
         page = browser.new_page(viewport={'width': 1440, 'height': 1000})
         page.on('console', lambda m: console_errors.append(m.text) if m.type == 'error' else None)
         page.on('pageerror', lambda e: console_errors.append(str(e)))

@@ -7,15 +7,9 @@ SCREENSHOT_DIR = pathlib.Path(os.environ["CINEBRAID_SCREENSHOT_DIR"]) if os.envi
 if SCREENSHOT_DIR: SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
 def checkpoint(label):
     print(f"[browser] {label}", flush=True)
-try:
-    from playwright.sync_api import sync_playwright
-except Exception:
-    print("Real browser workflow skipped: Python Playwright is not installed.")
-    raise SystemExit(0)
-CHROMIUM = shutil.which("chromium") or shutil.which("chromium-browser") or shutil.which("google-chrome")
-if not CHROMIUM:
-    print("Real browser workflow skipped: Chromium is unavailable.")
-    raise SystemExit(0)
+from browser_runtime import require_browser, launch_chromium
+LABEL = "Real browser workflow"
+sync_playwright = require_browser(LABEL)
 
 def free_port():
     sock = socket.socket(); sock.bind(("127.0.0.1", 0)); port = sock.getsockname()[1]; sock.close(); return port
@@ -72,7 +66,7 @@ try:
     audit_scan = {"anchors": [{"name": name, "url": tiny_image} for name in audit_names], "plates": [], "props": [], "vehicles": [], "audio": [], "media": [], "shots": {}}
     audit_mode = {"enabled": False, "compiledProfile": ""}
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(executable_path=CHROMIUM, headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"])
+        browser = launch_chromium(pw, label=LABEL)
         page = browser.new_page(viewport={"width": 1600, "height": 1000})
         page.evaluate("""() => {
           const data = new Map();

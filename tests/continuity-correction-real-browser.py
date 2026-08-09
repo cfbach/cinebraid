@@ -1,14 +1,8 @@
 import os, pathlib, shutil, socket, subprocess, time, re, urllib.request, urllib.error, urllib.parse
 ROOT=pathlib.Path(__file__).resolve().parents[1]
-try:
-    from playwright.sync_api import sync_playwright
-except Exception:
-    print('Continuity correction real-browser audit skipped: Python Playwright is not installed.')
-    raise SystemExit(0)
-CHROMIUM=shutil.which('chromium') or shutil.which('chromium-browser') or shutil.which('google-chrome')
-if not CHROMIUM:
-    print('Continuity correction real-browser audit skipped: Chromium is unavailable.')
-    raise SystemExit(0)
+from browser_runtime import require_browser, launch_chromium
+LABEL='Continuity correction real-browser audit'
+sync_playwright=require_browser(LABEL)
 def free_port():
     s=socket.socket(); s.bind(('127.0.0.1',0)); p=s.getsockname()[1]; s.close(); return p
 def wait(p):
@@ -21,7 +15,7 @@ port=free_port(); server=subprocess.Popen(['node','server.js'],cwd=ROOT,env={**o
 try:
     wait(port)
     with sync_playwright() as pw:
-        browser=pw.chromium.launch(executable_path=CHROMIUM,headless=True,args=['--no-sandbox','--disable-dev-shm-usage'])
+        browser=launch_chromium(pw,label=LABEL)
         page=browser.new_page(viewport={'width':1440,'height':1000})
         page.evaluate("""() => {
           const data = new Map();

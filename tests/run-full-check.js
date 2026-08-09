@@ -97,6 +97,7 @@ const nodeSuites = [
   "check:browser-exit",
   "check:data-safety",
   "check:project-switch",
+  "check:brand-logo",
 ];
 
 /* Suites that assert something about the whole machine and therefore cannot share it.
@@ -109,7 +110,12 @@ const nodeSuites = [
    having its assertion weakened. */
 const serialSuites = ["check:windows-shutdown"];
 
-const browserSuites = ["check:manual-browser", "check:browser-real", "check:h3-browser", "check:preview-layout", "check:ui-state"];
+/* Real-browser suites, run best-effort here: without a browser runtime they skip and
+   this runner still passes, so a fresh clone can verify everything portable. The tier
+   that refuses to accept a skip is `npm run check:browser-gate`, which every one of
+   these also belongs to. See docs/qa/BROWSER_TESTS.md. */
+const browserSuites = ["check:manual-browser", "check:browser-real", "check:h3-browser", "check:preview-layout",
+  "check:ui-state", "check:c2b-browser", "check:brand-logo-browser"];
 const releaseSuites = ["check:environment", "check:package"];
 /* How a suite is launched, without a shell.
 

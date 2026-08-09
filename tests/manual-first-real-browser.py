@@ -6,15 +6,9 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 SCREENSHOT_DIR = pathlib.Path(os.environ["CINEBRAID_MANUAL_SCREENSHOT_DIR"]) if os.environ.get("CINEBRAID_MANUAL_SCREENSHOT_DIR") else None
 if SCREENSHOT_DIR:
     SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
-try:
-    from playwright.sync_api import sync_playwright
-except Exception:
-    print("Manual-first real browser audit skipped: Python Playwright is not installed.")
-    raise SystemExit(0)
-CHROMIUM = shutil.which("chromium") or shutil.which("chromium-browser") or shutil.which("google-chrome")
-if not CHROMIUM:
-    print("Manual-first real browser audit skipped: Chromium is unavailable.")
-    raise SystemExit(0)
+from browser_runtime import require_browser, launch_chromium
+LABEL = "Manual-first real browser audit"
+sync_playwright = require_browser(LABEL)
 
 def free_port():
     sock = socket.socket(); sock.bind(("127.0.0.1", 0)); port = sock.getsockname()[1]; sock.close(); return port
@@ -65,7 +59,7 @@ try:
     agents = {"enabled":False,"manualMode":True,"active":0,"queued":0,"maxConcurrent":1,"capabilities":{k:disabled for k in ["text","verifier","vision","embedding","technical"]},"agents":[],"runs":[],"index":{"ready":False,"stale":True}}
 
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(executable_path=CHROMIUM, headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"])
+        browser = launch_chromium(pw, label=LABEL)
         page = browser.new_page(viewport={"width": 1440, "height": 1000})
         page.set_default_timeout(7000)
         page.evaluate("""() => {
@@ -160,7 +154,12 @@ try:
             page.screenshot(path=str(SCREENSHOT_DIR / "manual-reference-coverage.png"), full_page=True)
 
         open_hash("#/library/approved")
-        assert page.get_by_text("Approved reference library").count() == 1
+        # The heading became "References" in 7bc1470 ("Speak one language for sections,
+        # statuses and counts"). tests/manual-first-workflow.js was updated with it; this
+        # line was not, and nothing noticed because this file had never actually run. The
+        # subtitle is what distinguishes the approved tab from the full library, so it is
+        # the assertion that carries the meaning.
+        assert page.locator(".view-head .view-title").inner_text().strip() == "References"
         assert page.get_by_text("Candidates and automation are hidden", exact=False).count() == 1
 
         open_hash(f"#/shot/{shot_id}")

@@ -56,3 +56,58 @@ jobs:
       # repository secrets, no real browser, and no writes to projects/ or data/.
       - name: Run the CI-safe validation suite
         run: npm run check:ci
+
+  # The real-browser gate, deliberately a SECOND job rather than more steps in the
+  # first. The frontend is a set of plain <script> tags in one global scope, so a
+  # duplicate top-level `const` or an unsized image blanks the application while
+  # every Node suite passes - C2b shipped exactly that. Node validation cannot see
+  # it, which is why this exists; and it is separate so that a browser flake never
+  # delays the fast deterministic answer.
+  #
+  # Cost: roughly 4-6 minutes. Chromium is ~115 MB and is cached between runs on
+  # the pinned Playwright version, so a warm run pays only the suite time (~3 min
+  # for eleven suites on this hardware).
+  #
+  # Three of the eleven suites are quarantined: they must still launch a browser and
+  # still fail for their recorded reason. See docs/qa/BROWSER_TESTS.md.
+  browser-validation:
+    name: Browser validation
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out the branch under test
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js 24 (Active LTS)
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies from the lockfile
+        run: npm ci
+
+      # Keyed on the pinned Playwright version: bumping tests/browser-requirements.txt
+      # is exactly when a different Chromium build must be fetched.
+      - name: Restore the Playwright browser cache
+        uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('tests/browser-requirements.txt') }}
+
+      - name: Provision the browser test runtime
+        run: npm run setup:browser-tests
+
+      - name: Report what will actually run
+        run: npm run check:browser-setup
+
+      # CINEBRAID_BROWSER_REQUIRED is set by the gate itself, so a runner without a
+      # working browser fails here instead of reporting a green run over zero
+      # browser assertions - which is the failure this whole job exists to prevent.
+      - name: Run the real-browser gate
+        run: npm run check:browser-gate
