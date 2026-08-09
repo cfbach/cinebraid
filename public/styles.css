@@ -2964,6 +2964,37 @@ button:disabled,
 .h3-plan-warnings b{color:var(--ink);font-size:12px}.h3-plan-warnings ul{display:grid;gap:6px;margin:0;padding-left:16px}
 .h3-plan-warnings li{display:grid;gap:2px;color:var(--muted);font-size:11px;line-height:1.45}.h3-plan-warnings li small{opacity:.8}
 
+/* ===== C2b capability-aware generation options =====
+   One presentation for every filmmaker task. A row says what the model is, where it
+   runs, whether it can be pressed, and — when it cannot — why, in one sentence. */
+.gen-options{display:grid;gap:8px;margin:12px 0}
+.gen-options>header{display:flex;justify-content:space-between;align-items:baseline;gap:10px}
+.gen-options>header b{font-size:12px;color:var(--ink)}
+.gen-options>header small{color:var(--muted);font-size:11px}
+.gen-option{display:grid;grid-template-columns:1fr auto;gap:4px 12px;align-items:center;padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:var(--panel)}
+.gen-option-main{display:grid;gap:3px;min-width:0}
+.gen-option-name{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px}
+.gen-option-name b{color:var(--ink);font-size:12.5px}
+.gen-option-where{font:800 9.5px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:2px 7px}
+.gen-option-note{color:var(--muted);font-size:11px;line-height:1.45}
+.gen-option-note em{font-style:normal;color:var(--ink)}
+.gen-option-state{font:800 9.5px var(--mono);letter-spacing:.1em;text-transform:uppercase;white-space:nowrap}
+.gen-option.is-ready{border-color:color-mix(in srgb,var(--green) 38%,var(--line));background:color-mix(in srgb,var(--green) 7%,var(--panel))}
+.gen-option.is-ready .gen-option-state{color:var(--green)}
+.gen-option.is-setup-required{border-color:color-mix(in srgb,var(--amber) 32%,var(--line))}
+.gen-option.is-setup-required .gen-option-state{color:var(--amber)}
+.gen-option.is-not-implemented,.gen-option.is-incompatible{opacity:.72}
+.gen-option.is-not-implemented .gen-option-state,.gen-option.is-incompatible .gen-option-state{color:var(--muted)}
+.gen-option.is-selected{border-color:var(--acc);background:color-mix(in srgb,var(--acc-soft) 46%,var(--panel))}
+.gen-option button:disabled{opacity:.4;cursor:not-allowed}
+.gen-options-guide{display:grid;gap:3px;padding:10px 12px;border:1px dashed var(--line);border-radius:12px;color:var(--muted);font-size:11px;line-height:1.45}
+.gen-options-guide b{color:var(--ink);font-size:11.5px}
+.gen-prompt-count{font:700 10px var(--mono);color:var(--muted);margin:-4px 0 8px}
+.gen-prompt-count.over{color:var(--amber)}
+.gen-options-advanced summary{cursor:pointer;color:var(--muted);font-size:11px;padding:4px 0}
+.gen-options-advanced .gen-option-detail{font:600 10px var(--mono);color:var(--muted);word-break:break-all}
+@media(max-width:640px){.gen-option{grid-template-columns:1fr}}
+
 /* ===== v6.6.4-studio.repair.8 private-preview UX stabilization ===== */
 :root{--media-well:#080c11;--media-well-border:rgba(145,190,232,.17);--preview-overlay:rgba(3,10,17,.78)}
 #app[data-surf="night"],#app[data-surf="cool"]{--media-well:#070d14;--media-well-border:rgba(145,190,232,.17);--preview-overlay:rgba(3,10,17,.82)}

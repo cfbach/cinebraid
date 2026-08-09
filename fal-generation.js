@@ -7,6 +7,9 @@ const { parseAspectRatio, h3AspectSupport } = require("./public/shared-aspect");
 const { readJobLedger, writeJobLedgerSync, JobLedgerUnreadableError } = require("./generation-job-store");
 const { compileH3ExecutionPlan, planProvenance, H3ExecutionError } = require("./h3-execution");
 const { serializeH3PlanForFal, H3BackendError, FAL_H3_BACKEND } = require("./fal-h3-backend");
+const { compileImageExecutionPlan, imagePlanProvenance, ImageExecutionError, IMAGE_MODEL_ID } = require("./image-execution");
+const { serializeImagePlanForFal, FalImageBackendError, FAL_IMAGE_BACKEND } = require("./fal-image-backend");
+const { generationOptionsFor, generationConnections } = require("./generation-options");
 const Lifecycle = require("./generation-lifecycle");
 
 function registerFalGeneration(app, context) {
@@ -395,6 +398,119 @@ function registerFalGeneration(app, context) {
       ...(typed && error.detail && Object.keys(error.detail).length ? { detail: error.detail } : {}),
     });
   }
+  function imageRefusal(res, error) {
+    const typed = error instanceof ImageExecutionError || error instanceof FalImageBackendError;
+    const status = typed ? error.status || 400 : 500;
+    return res.status(status).json({
+      error: error?.message || "Frame preparation failed.",
+      code: typed ? error.code : "IMAGE_PREPARATION_FAILED",
+      ...(typed && error.detail && Object.keys(error.detail).length ? { detail: error.detail } : {}),
+    });
+  }
+
+  /* Everything the image compilation decided, written onto the job record. After this
+     the job IS the compiled request: its prompt, references, size, quality and count
+     are the plan's, not the caller's. The mirror of applyCompilationToJob, and
+     deliberately a separate function rather than a branch inside it — the two write
+     different fields and sharing one body would mean an image job carrying a duration
+     because a video field happened to be assigned unconditionally. */
+  function applyImageCompilationToJob(job, compiled) {
+    const plan = compiled.plan;
+    const extensions = plan.settings?.extensions?.[plan.model?.modelId] || {};
+    job.compilation = imagePlanProvenance(compiled);
+    job.mode = compiled.mode;
+    job.profileMode = compiled.mode;
+    job.profileId = compiled.profile.id || job.profileId;
+    job.profileName = compiled.profile.name || job.profileName;
+    job.profileFamily = "gpt-image-2";
+    job.sourceBuildId = compiled.source.buildId || job.sourceBuildId;
+    job.packageId = compiled.source.packageId || job.packageId;
+    /* Both prompts, always. They are identical unless the filmmaker edited one, and a
+       reader must never have to guess which of the two a frame was made from. */
+    job.compiledPrompt = compiled.compiledPrompt;
+    job.prompt = compiled.submittedPrompt;
+    job.promptEdited = compiled.promptEdited;
+    /* The size the model documents, not a long edge and a ratio. A still has no
+       duration and this never writes one. */
+    job.resolution = String(extensions.size || job.resolution);
+    job.quality = String(extensions.quality || job.quality);
+    job.outputCount = Number(plan.output?.candidateCount) || job.outputCount;
+    job.aspectRatio = compiled.aspectRatio || job.aspectRatio;
+    job.references = plan.inputs.references.map((row) => ({
+      key: row.refId,
+      token: "",
+      label: row.production?.label || row.refId,
+      role: row.role,
+      instruction: row.production?.purpose || "",
+      mediaType: row.mediaType,
+      url: String(row.source?.path || ""),
+    }));
+  }
+
+  /* THE ONLY COMPILED IMAGE DISPATCH.
+   *
+   * Its input is the compiled plan the job was minted from. There is no argument here
+   * carrying a shot, a spec, a profile or a raw prompt, so this function cannot
+   * rebuild filmmaking intent — it renames fields, picks the endpoint and resolves
+   * bytes. It goes through the same providerPost boundary as every other paid
+   * request, so C1.2's uncertainty handling applies to it without a line of its own. */
+  async function submitImage(owner, job, cfg) {
+    const compilation = job.compilation;
+    if (!compilation || !compilation.plan)
+      throw new ImageExecutionError(
+        "IMAGE_PLAN_REQUIRED",
+        "This request carries no compiled generation plan, so CineBraid will not submit it. Rebuild the prompt on this shot and generate again.",
+        { jobId: job.id },
+      );
+    const serialized = serializeImagePlanForFal(compilation.plan, compilation.capability, {
+      resolveReference: (row) => planReferenceInput(owner, row),
+      config: cfg,
+      ...(job.promptEdited ? { promptOverride: job.prompt } : {}),
+    });
+    /* The configured endpoint has to be the model the plan was compiled for. An
+       operator who points textModel at a different family would otherwise get a
+       request built from GPT Image 2's rules and sent to something else. */
+    const configuredFamily = inferModelFamily(serialized.model);
+    if (configuredFamily && configuredFamily !== serialized.modelFamily)
+      throw new FalImageBackendError(
+        "IMAGE_ENDPOINT_MISMATCH",
+        `This frame was compiled for ${serialized.modelFamily}, but the configured FAL endpoint ${serialized.model} behaves like ${configuredFamily}. Fix the endpoint in Settings before submitting a paid request — nothing was sent.`,
+        { endpoint: serialized.model, expected: serialized.modelFamily, configured: configuredFamily },
+      );
+    const { data } = await providerPost(`${cfg.baseUrl}/${serialized.model}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", Authorization: `Key ${cfg.apiKey}`, "X-Fal-No-Retry": "1" },
+      body: JSON.stringify(serialized.input),
+    }, serialized.model);
+    return {
+      model: serialized.model,
+      modelFamily: serialized.modelFamily,
+      backendId: serialized.backendId,
+      providerRequest: redactedImageRequest(serialized),
+      providerBindings: serialized.bindings,
+      submittedPromptCharacters: serialized.submittedPromptCharacters,
+      externalId: data.request_id || "",
+      statusUrl: data.status_url || "",
+      responseUrl: data.response_url || "",
+      cancelUrl: data.cancel_url || "",
+      queuePosition: data.queue_position,
+      status: "IN_QUEUE",
+    };
+  }
+
+  /* The request as sent, minus the payload bytes. Every media field is replaced by the
+     refIds the serializer bound to it, so the record stays small and still answers
+     "which approved reference did this frame come from". */
+  function redactedImageRequest(serialized) {
+    const media = new Set(["image_urls", "mask_url"]);
+    const out = {};
+    for (const [key, value] of Object.entries(serialized.input)) {
+      if (!media.has(key)) { out[key] = value; continue; }
+      const bound = serialized.bindings.filter((row) => row.field === key).map((row) => row.refId);
+      out[key] = Array.isArray(value) ? bound : bound[0] || "";
+    }
+    return out;
+  }
 
   /* THE ONLY H3 DISPATCH.
    *
@@ -501,6 +617,11 @@ function registerFalGeneration(app, context) {
   async function submit(owner, job, refs) {
     const cfg = config();
     if (job.profileFamily === "minimax-h3" || job.purpose === "motion-h3") return submitH3(owner, job, cfg);
+    /* A job that was compiled goes through its plan, whatever it produces. The test is
+       the presence of a plan rather than a purpose string, so nothing has to be kept
+       in step with a list of which purposes compile — and a job minted before this
+       phase simply has no plan and takes the path it always took. */
+    if (job.compilation?.plan && String(job.compilation.plan.outputType) === "image") return submitImage(owner, job, cfg);
     const edit = job.mode === "edit";
     const model = edit ? cfg.editModel : cfg.textModel;
     const compatibility = modelCompatibilityError(job, model);
@@ -941,6 +1062,132 @@ function registerFalGeneration(app, context) {
       seedSupported: !!compiled.capability.flags?.seed,
     });
   });
+  /* The same preview for a still frame. Nothing durable is written and no provider is
+     contacted; the compilation is the identical one the submission runs. */
+  app.post("/api/generation/fal/image/plan", (req, res) => {
+    let owner;
+    try {
+      owner = captureOwner();
+    } catch (error) {
+      return res.status(ledgerFailureStatus(error)).json(ledgerFailurePayload(error));
+    }
+    let compiled;
+    try {
+      compiled = compileImageExecutionPlan({
+        project: ownerProject(owner),
+        purpose: String(req.body?.purpose || "frame"),
+        shotId: String(req.body?.shotId || ""),
+        buildId: String(req.body?.sourceBuildId || ""),
+        aspectRatio: String(req.body?.aspectRatio || ""),
+        resolution: String(req.body?.resolution || ""),
+        quality: String(req.body?.quality || ""),
+        candidateCount: req.body?.outputCount,
+        submittedPrompt: req.body?.prompt,
+      });
+    } catch (error) {
+      return imageRefusal(res, error);
+    }
+    const plan = compiled.plan;
+    /* Serialised too, so an unsendable size or a missing reference file is reported on
+       the way IN rather than discovered when the filmmaker presses the paid button. */
+    let dispatch = null;
+    let refusal = null;
+    try {
+      const serialized = serializeImagePlanForFal(plan, compiled.capability, {
+        resolveReference: (row) => { planReferenceAddress(owner, row); return "preflight"; },
+        config: config(),
+        ...(compiled.promptEdited ? { promptOverride: compiled.submittedPrompt } : {}),
+      });
+      dispatch = { model: serialized.model, backendId: serialized.backendId, bindings: serialized.bindings };
+    } catch (error) {
+      const typed = error instanceof FalImageBackendError || error instanceof ImageExecutionError;
+      refusal = { error: error?.message || "This package cannot be submitted.", code: typed ? error.code : "IMAGE_PREPARATION_FAILED", detail: typed ? error.detail : {} };
+    }
+    res.json({
+      ok: !refusal,
+      refusal,
+      dispatch,
+      mode: compiled.mode,
+      purpose: compiled.purpose,
+      profile: compiled.profile,
+      source: compiled.source,
+      compiledPrompt: compiled.compiledPrompt,
+      compiledPromptCharacters: compiled.compiledPrompt.length,
+      /* Null where neither the model nor the backend documents a ceiling, which is the
+         honest answer for this family and is not the same as zero. */
+      maxPromptCharacters: compiled.capability.maxPromptCharacters,
+      modelMaxPromptCharacters: compiled.model.maxPromptCharacters,
+      size: compiled.size,
+      sizes: compiled.capability.resolutions,
+      quality: compiled.quality,
+      qualityTiers: compiled.model.qualityTiers,
+      outputCount: compiled.candidateCount,
+      aspectRatio: compiled.aspectRatio,
+      maxReferenceImages: compiled.capability.maxReferenceImages,
+      references: plan.inputs.references.map((row) => ({
+        refId: row.refId, role: row.role, mediaType: row.mediaType, order: row.order,
+        required: row.required, label: row.production?.label || "", purpose: row.production?.purpose || "",
+      })),
+      coverage: plan.coverage,
+      warnings: plan.warnings,
+      editedCoverage: compiled.editedCoverage,
+      promptEdited: compiled.promptEdited,
+      compiler: plan.compiler,
+      seedSupported: !!compiled.capability.flags?.seed,
+    });
+  });
+
+  /* WHAT CAN BE PRESSED, and why the rest cannot.
+   *
+   * One route for every filmmaker task, so the picker on a blocking frame and the
+   * picker on a motion pass are the same code answering the same six questions. The
+   * connection map is read here because only the server can see a key; the adapter
+   * inventory comes from generation-options.js because only code knows what CineBraid
+   * can serialise; and neither is inferred from the catalogue. */
+  app.post("/api/generation/options", (req, res) => {
+    try {
+      const references = Array.isArray(req.body?.references) ? req.body.references : [];
+      const inputs = {
+        references: references.map((row) => ({
+          role: String(row?.role || "reference"),
+          mediaType: String(row?.mediaType || "image"),
+        })),
+      };
+      const resolved = generationOptionsFor({
+        task: String(req.body?.task || ""),
+        inputs,
+        request: {
+          references: inputs.references,
+          ...(Number(req.body?.durationSeconds) > 0 ? { durationSeconds: Number(req.body.durationSeconds) } : {}),
+        },
+        config: readConfig(),
+      });
+      res.json({
+        task: resolved.task,
+        taskLabel: resolved.taskLabel,
+        taskSummary: resolved.taskSummary,
+        outputType: resolved.outputType,
+        modes: resolved.modes,
+        options: resolved.options,
+        normal: resolved.normal.map((option) => option.optionId),
+        /* The use-case guide verbatim, decision state included. A screen renders
+           "awaiting evaluation" from this and never fills a slot itself. */
+        guide: resolved.guide
+          ? {
+            useCase: resolved.guide.useCase,
+            headline: resolved.guide.headline,
+            decisionState: resolved.guide.decision?.state || "",
+            recommended: resolved.guide.decision?.recommended || null,
+            localOption: resolved.guide.decision?.localOption || null,
+            premiumAlternative: resolved.guide.decision?.premiumAlternative || null,
+          }
+          : null,
+      });
+    } catch (error) {
+      res.status(500).json({ error: error?.message || "Could not resolve generation options." });
+    }
+  });
+
   app.post("/api/generation/fal/test", (req, res) => {
     const cfg = config();
     if (!cfg.enabled) return res.status(400).json({ error: "Enable FAL image generation first." });
@@ -1159,6 +1406,57 @@ function registerFalGeneration(app, context) {
         job.submittedPromptCharacters = preflight.submittedPromptCharacters;
       } catch (error) {
         return h3Refusal(res, error);
+      }
+    } else if (req.body?.imagePlan === true && ["blocking", "frame"].includes(purpose)) {
+      /* ONE compilation, here.
+         Everything the provider is about to be told — the prompt, which approved
+         references travel and what each is for, the output size, the quality tier and
+         how many options come back — is decided by this call and by nothing after it.
+         The prompt and references the caller posted are not the request; the shot's
+         own approved package is, and this compiles it. */
+      if (!job.shotId) return res.status(400).json({ error: "shotId is required." });
+      /* A blocking REVISION edits an existing attempt, and the compiled path does not
+         carry one: blocking mode takes no references at all, so the source frame would
+         be dropped without a word. Refused rather than half-converted — the revision
+         flow still works, on the path it has always used. */
+      if (purpose === "blocking" && (job.revisedFromAssetId || job.revisionRequest))
+        return res.status(400).json({
+          error: "Revising an existing blocking attempt does not use the compiled path yet. Generate a fresh blocking frame, or revise from the blocking panel.",
+          code: "IMAGE_PLAN_REVISION_UNSUPPORTED",
+        });
+      let compiled;
+      try {
+        compiled = compileImageExecutionPlan({
+          project: ownerProject(owner),
+          purpose,
+          shotId: job.shotId,
+          buildId: job.sourceBuildId,
+          aspectRatio: job.aspectRatio,
+          resolution: String(req.body?.resolution || ""),
+          quality: String(req.body?.quality || ""),
+          candidateCount: requestedOutputCount,
+          submittedPrompt: req.body?.prompt,
+        });
+        applyImageCompilationToJob(job, compiled);
+        /* Serialised against the effective capability with the provider call left
+           out, so an unsupported size, an over-limit reference set or a file that has
+           gone all refuse HERE — before a durable row exists, before anything leaves
+           the machine, and before anything is charged. */
+        const preflight = serializeImagePlanForFal(compiled.plan, compiled.capability, {
+          resolveReference: (row) => { planReferenceAddress(owner, row); return "preflight"; },
+          config: cfg,
+          ...(job.promptEdited ? { promptOverride: job.prompt } : {}),
+        });
+        /* WHERE the paid request is about to go, recorded on the row BEFORE the row is
+           committed. Deterministic: submitImage re-derives the identical values from
+           the same plan. */
+        job.model = preflight.model;
+        job.modelFamily = preflight.modelFamily;
+        job.backendId = preflight.backendId;
+        job.providerBindings = preflight.bindings;
+        job.submittedPromptCharacters = preflight.submittedPromptCharacters;
+      } catch (error) {
+        return imageRefusal(res, error);
       }
     } else if (purpose === "entity-reference") {
       if (!["characters", "locations", "props", "vehicles"].includes(job.entityList)) return res.status(400).json({ error: "A supported entityList is required." });

@@ -1130,7 +1130,7 @@
       "catalogue": {
         "status": "next-up",
         "maturity": "generally-available",
-        "reviewedOn": "2026-08-08",
+        "reviewedOn": "2026-08-09",
         "priority": 10
       },
       "useCases": ["cinematic-ref2vid", "long-form-video", "audio-native-video", "keyframe-video"],
@@ -1204,6 +1204,12 @@
       },
       "execution": [
         {
+          "surfaceId": "fal-queue",
+          "state": "preparation",
+          "local": false,
+          "note": "C2b established that fal serves Seedance 2.5 on three routes, which is the surface CineBraid already dispatches to. It stays `preparation` because no model pack and no serializer exist: the prompt reference-citation syntax is established only by a provider sentence, and fal publishes no per-modality split of its 50-reference total. See the offering note on the fal surface."
+        },
+        {
           "surfaceId": "runware",
           "state": "preparation",
           "local": false,
@@ -1212,7 +1218,7 @@
       ],
       "evidence": {
         "file": "docs/architecture/model-evidence/seedance.json",
-        "checkedOn": "2026-08-08"
+        "checkedOn": "2026-08-09"
       },
       "provenance": {
         "capabilitySource": "ByteDance Seed's own Seedance 2.5 page establishes 30-second single-pass generation, reference-video understanding, and timestamp-level audio and video editing. Reference counts (30 images / 10 videos / 10 audio), the 4-30s range, seed and native audio come from Runware's model documentation - resolutions are deliberately null because the two sources disagree and neither is a model-level statement CineBraid has read.",

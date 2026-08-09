@@ -347,6 +347,25 @@ function pickSize(requestedSize, requestedRatio, capability, coverage) {
   return { size: candidates[0], via: resolved === ratio ? "ratio" : "approximated" };
 }
 
+/* The cost-and-speed tier. A filmmaker's explicit choice wins where the model
+   documents it; anything else is refused BY NAME rather than silently replaced, for
+   the same reason an unsupported size is. The defaults are unchanged: a blocking
+   frame is a disposable layout and renders at the cheapest tier the vendor
+   documents, and everything else lets the model decide. */
+function pickQuality(requested, mode, coverage) {
+  const fallback = mode === "blocking" ? GPT_IMAGE_2_PLAYBOOK.blocking.quality : "auto";
+  const wanted = text(requested);
+  if (!wanted) return fallback;
+  if (GPT_IMAGE_2_FACTS.qualityTiers.includes(wanted)) return wanted;
+  coverage.warn({
+    code: "quality-unsupported",
+    field: "settings.quality",
+    message: `GPT Image 2 has no "${wanted}" quality tier, so ${fallback} was used instead.`,
+    action: `Choose one of: ${GPT_IMAGE_2_FACTS.qualityTiers.join(", ")}.`,
+  });
+  return fallback;
+}
+
 /* ---------------------------------------------------------------------------
    Section builders. */
 
@@ -582,7 +601,7 @@ function compileMode(context) {
 
   const sections = build(ctx);
   const chosen = pickSize(context.resolution, ctx.aspectRatio, capability, context.coverage);
-  const quality = mode === "blocking" ? GPT_IMAGE_2_PLAYBOOK.blocking.quality : "auto";
+  const quality = pickQuality(context.quality, mode, context.coverage);
 
   /* Which reference fills which model input, namespaced by model in the plan's
      settings.extensions, because it is adapter knowledge and production intent must
@@ -632,5 +651,6 @@ module.exports = {
   checkpointForMode,
   compileMode,
   pack,
+  pickQuality,
   pickSize,
 };
