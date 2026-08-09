@@ -34,6 +34,7 @@ const net = require("net");
 const os = require("os");
 const path = require("path");
 const { spawn } = require("child_process");
+const { addMotionPromptBuild } = require("./h3-execution-fixture");
 
 const ROOT = path.join(__dirname, "..");
 const TEMP = fs.mkdtempSync(path.join(os.tmpdir(), "cinebraid-interleave-"));
@@ -57,18 +58,24 @@ const fileFor = (slug) => path.join(PROJECTS_ROOT, slug, "project.json");
 const jobsFileFor = (slug) => path.join(PROJECTS_ROOT, slug, "generation-jobs.json");
 
 function projectFixture(title) {
-  return {
+  const project = {
     meta: { title, format: "Test", version: "v1", hubVersion: "v6.0.0", aiPolicy: "project-default" },
     qcChecklist: [],
     scenes: [{ id: "SC-01", title: "Scene one" }],
     shots: [{
       id: "S-01", scene: "SC-01", title: "Shot one", dur: 5,
-      workflowStatus: "DRAFT", keyframes: [], clips: [], candidateFiles: [],
+      workflowStatus: "DRAFT", keyframes: [], clips: [], candidateFiles: [], creationBrief: {},
     }],
     characters: [{ id: "CH-01", name: "Courier", canon: "A courier.", approvedFile: "", candidateFiles: [], generatedCandidates: [] }],
     locations: [], props: [], vehicles: [], audio: [],
     mediaAssets: [], jobs: [], agentRuns: [], decisions: [], sessions: [],
   };
+  /* A MiniMax H3 request now compiles from the shot's durable motion package, so both
+     projects carry one. Each is built for its OWN shot, which is what makes the
+     ownership assertion below meaningful: if a switch could redirect the compilation,
+     the plan would name the other project's package. */
+  addMotionPromptBuild(project, "S-01", { mode: "t2v", id: `h3-${title.replace(/\W+/g, "-").toLowerCase()}`, durationSeconds: 8, references: [] });
+  return project;
 }
 
 function getFreePort() {
@@ -279,11 +286,28 @@ async function testAsyncProjectOwnership() {
     "frame ingest: media must be written under the owning project",
   );
 
-  /* Motion ingest: a different ingest branch with its own writer. */
+  /* Motion ingest: a different ingest branch with its own writer, and since C1.1 also a
+     COMPILED one. The job carries the plan it was compiled from, so ownership can be
+     checked at the level that matters: not merely "the file landed in A" but "the
+     request was compiled from A's approved package". */
   const afterMotion = await asyncOwnership("motion-h3", "motion ingest", {
     purpose: "motion-h3", profileFamily: "minimax-h3", profileMode: "t2v", aspectRatio: "16:9",
+    sourceBuildId: "h3-project-alpha",
   });
   assert(afterMotion.shots[0], "motion ingest: project A's shot must still exist");
+  {
+    const ledger = JSON.parse(fs.readFileSync(path.join(PROJECTS_ROOT, A, "generation-jobs.json"), "utf8"));
+    const h3 = (Array.isArray(ledger) ? ledger : ledger.jobs).find((row) => row.purpose === "motion-h3");
+    assert(h3, "motion ingest: project A must own the H3 job");
+    assert(h3.compilation, "motion ingest: the H3 job must carry the plan it was compiled from");
+    assert.strictEqual(
+      h3.compilation.source.buildId, "h3-project-alpha",
+      "motion ingest: the request must be compiled from project A's package, not from whichever project became active",
+    );
+    assert.strictEqual(h3.compilation.source.shotId, "S-01");
+    assert(!fs.existsSync(path.join(PROJECTS_ROOT, B, "generation-jobs.json")),
+      "motion ingest: no ledger may be created in project B by A's generation");
+  }
 
   /* Entity ingest: writes to an entity folder rather than a shot folder. */
   await switchTo(A);

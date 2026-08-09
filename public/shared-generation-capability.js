@@ -61,6 +61,12 @@ const CINEBRAID_REFERENCE_ROLES = [
   "camera-reference", "performance-reference", "audio-timing", "sound-reference",
   /* added by RFC v2 */
   "first-frame", "last-frame", "depth", "edge", "mask", "voice", "colour-palette",
+  /* The multi-frame workflow's own roles. An ordered waypoint is a production
+     decision — "the shot passes through this approved beat, here, in this order" —
+     and public/creation-studio.js has emitted it since the H3 keyframe panel shipped.
+     RFC v2 listed the two endpoint roles and missed the middle, so a real
+     multi-frame package could not be expressed in this vocabulary at all. */
+  "sequential-keyframe", "waypoint",
 ];
 
 /* The four layers, in the order a refusal should name them: the most specific thing

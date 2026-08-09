@@ -5,6 +5,8 @@ const fs = require("fs");
 const path = require("path");
 const { parseAspectRatio, h3AspectSupport } = require("./public/shared-aspect");
 const { readJobLedger, writeJobLedgerSync, JobLedgerUnreadableError } = require("./generation-job-store");
+const { compileH3ExecutionPlan, planProvenance, H3ExecutionError } = require("./h3-execution");
+const { serializeH3PlanForFal, H3BackendError, FAL_H3_BACKEND } = require("./fal-h3-backend");
 
 function registerFalGeneration(app, context) {
   const { readConfig, readProject, writeProject, activeSlug, projectDirForSlug } = context;
@@ -293,75 +295,141 @@ function registerFalGeneration(app, context) {
     if (!modelFamily || modelFamily === requestedFamily) return "";
     return `Prompt profile ${job.profileName || job.profileId || requestedFamily} expects ${requestedFamily}, but the configured FAL endpoint ${model} behaves like ${modelFamily}. Switch the selected prompt adapter or the configured FAL endpoint so they match before submitting a paid request.`;
   }
-  function h3ReferenceGroups(refs) {
-    const groups = { image: [], video: [], audio: [] };
-    for (const ref of refs || []) {
-      const explicit = String(ref.mediaType || "").toLowerCase();
-      const url = String(ref.url || "").toLowerCase().split(/[?#]/)[0];
-      const kind = ["image", "video", "audio"].includes(explicit) ? explicit
-        : /\.(mp4|mov|m4v|webm)$/.test(url) ? "video"
-        : /\.(wav|mp3|m4a|ogg|aac|flac)$/.test(url) ? "audio" : "image";
-      groups[kind].push(ref);
-    }
-    return groups;
-  }
+  /* h3ReferenceGroups() was here. It bucketed the caller's reference array by media
+     type so the dispatcher could take image[0] as the opening frame and image[1] as the
+     ending one. That is the defect C1.1 exists to remove — the same two frames sent in
+     the other order produced a shot that ended on its own first frame — so the function
+     is deleted rather than left unused. Endpoints are bound by ROLE, through the plan's
+     structured endpoint contract, in fal-h3-backend.js. */
   /* The single format gate for MiniMax H3, applied by the submission route before a
-     job record is even created and again here, immediately before the provider call.
-     Every H3 dispatch path — manual generation, image-to-video, first/last frame,
-     multi-keyframe reference-to-video, automation steps and any retry or resume —
-     reaches the provider through submitH3, so a refusal here cannot be routed around. */
+     job record is even created. It stays because a refused format must cost nothing;
+     the compiler applies the same resolver, so the two cannot disagree. */
   function h3AspectGate(job) {
     const mode = String(job.profileMode || job.mode || "i2v");
     return h3AspectSupport(mode, job.aspectRatio);
   }
-  async function submitH3(owner, job, refs, cfg) {
-    const mode = String(job.profileMode || job.mode || "i2v");
-    const gate = h3AspectGate(job);
-    if (!gate.ok) throw new Error(gate.message);
-    const groups = h3ReferenceGroups(refs);
-    let model = cfg.h3ImageModel;
-    const input = {
-      prompt: job.prompt,
-      duration: clamp(job.durationSeconds, 5, 5, 15),
-      resolution: ["768P", "2K"].includes(String(job.resolution || "").toUpperCase()) ? String(job.resolution).toUpperCase() : cfg.h3Resolution,
-    };
-    if (mode === "t2v") {
-      model = cfg.h3TextModel;
-      /* The gate above has already refused anything outside the provider's list, so
-         this is the requested format itself rather than a fallback. */
-      input.aspect_ratio = gate.value;
-    } else if (mode === "i2v" || mode === "flf") {
-      model = cfg.h3ImageModel;
-      if (!groups.image.length) throw new Error("MiniMax H3 image-to-video requires an approved opening frame.");
-      input.image_url = referenceInput(owner, groups.image[0]);
-      if (mode === "flf") {
-        if (groups.image.length < 2) throw new Error("MiniMax H3 first/last-frame generation requires both approved endpoint images.");
-        input.end_image_url = referenceInput(owner, groups.image[1]);
-      }
-    } else {
-      model = cfg.h3ReferenceModel;
-      const total = groups.image.length + groups.video.length + groups.audio.length;
-      if (!total) throw new Error("MiniMax H3 reference-to-video requires at least one image or video reference.");
-      if (total > 12 || groups.image.length > 9 || groups.video.length > 3 || groups.audio.length > 3)
-        throw new Error("MiniMax H3 reference package exceeds FAL limits: 12 total, up to 9 images, 3 videos, and 3 audio clips.");
-      if (groups.audio.length && !groups.image.length && !groups.video.length)
-        throw new Error("MiniMax H3 audio cannot be the only reference; add at least one image or video.");
-      input.aspect_ratio = gate.value;
-      if (groups.image.length) input.reference_image_urls = groups.image.map((ref) => referenceInput(owner, ref));
-      if (groups.video.length) input.reference_video_urls = groups.video.map((ref) => referenceInput(owner, ref));
-      if (groups.audio.length) input.reference_audio_urls = groups.audio.map((ref) => referenceInput(owner, ref));
+
+  /* Bytes for one PLAN reference. The plan carries a source — an assetId, a content
+     hash, or a project-relative address — and never a provider URL, so turning one into
+     something fal can fetch is transport work and lives here rather than in the
+     compiler. Containment is unchanged: the same allowlist as every other reference. */
+  function planReferenceAddress(owner, row) {
+    const source = row?.source || {};
+    const named = row?.production?.label || row?.refId || "input";
+    if (source.kind === "data-uri" && source.dataUri) return { inline: source.dataUri };
+    const address = String(source.path || "");
+    if (/^https?:/i.test(address)) return { inline: address };
+    if (!address)
+      throw new H3BackendError("H3_REFERENCE_UNREADABLE", `Reference ${named} has no stored file to send.`, { refId: row?.refId });
+    /* Refuses when the file is outside CineBraid media storage or has gone missing.
+       Called during pre-flight as well as at dispatch, so a deleted approved frame is
+       a refusal on the way in rather than a failed paid job — and a typed one, because
+       "the frame you approved is no longer on disk" is something a filmmaker can fix
+       and not a server fault. */
+    let file = "";
+    try {
+      file = localAssetFile(owner, address);
+    } catch (error) {
+      throw new H3BackendError("H3_REFERENCE_UNREADABLE", `Reference ${named}: ${error.message}`, { refId: row?.refId });
     }
-    const response = await fetch(`${cfg.baseUrl}/${model}`, {
+    if (!file)
+      throw new H3BackendError("H3_REFERENCE_UNREADABLE", `Reference ${named} has no usable file.`, { refId: row?.refId });
+    return { file };
+  }
+  function planReferenceInput(owner, row) {
+    const resolved = planReferenceAddress(owner, row);
+    if (resolved.inline) return resolved.inline;
+    return `data:${mimeFor(resolved.file)};base64,${fs.readFileSync(resolved.file).toString("base64")}`;
+  }
+
+  /* Everything the compilation decided, written onto the job record. After this the job
+     IS the compiled request: its prompt, references, duration, resolution and format are
+     the plan's, not the caller's. */
+  function applyCompilationToJob(job, compiled) {
+    const plan = compiled.plan;
+    const extensions = plan.settings?.extensions?.[plan.model?.modelId] || {};
+    job.compilation = planProvenance(compiled);
+    job.mode = compiled.mode;
+    job.profileMode = compiled.mode;
+    job.profileId = compiled.profile.id || job.profileId;
+    job.profileName = compiled.profile.name || job.profileName;
+    job.sourceBuildId = compiled.source.buildId || job.sourceBuildId;
+    job.packageId = compiled.source.packageId || job.packageId;
+    /* Both prompts, always. They are identical unless the filmmaker edited one, and a
+       reader must never have to guess which of the two a shot was made from. */
+    job.compiledPrompt = compiled.compiledPrompt;
+    job.prompt = compiled.submittedPrompt;
+    job.promptEdited = compiled.promptEdited;
+    job.durationSeconds = Number(plan.output?.durationSeconds) || Number(extensions.duration) || job.durationSeconds;
+    job.resolution = String(extensions.resolution || job.resolution);
+    job.aspectRatio = compiled.aspect.carriesAspectRatio ? String(extensions.ratio || compiled.aspect.value || "") : "source image";
+    /* The plan's references, in the plan's order, in the shape the rest of this module
+       and the ingest record already speak. Addresses only — no bytes in the ledger. */
+    job.references = plan.inputs.references.map((row) => ({
+      key: row.refId,
+      token: "",
+      label: row.production?.label || row.refId,
+      role: row.role,
+      instruction: row.production?.purpose || "",
+      mediaType: row.mediaType,
+      url: String(row.source?.path || ""),
+    }));
+  }
+
+  /* A refusal a filmmaker can act on. The typed code is what a screen switches on; the
+     message is what a person reads. Nothing here leaks a stack or a provider internal. */
+  function h3Refusal(res, error) {
+    const typed = error instanceof H3ExecutionError || error instanceof H3BackendError;
+    const status = typed ? error.status || 400 : 500;
+    return res.status(status).json({
+      error: error?.message || "MiniMax H3 preparation failed.",
+      code: typed ? error.code : "H3_PREPARATION_FAILED",
+      ...(typed && error.detail && Object.keys(error.detail).length ? { detail: error.detail } : {}),
+    });
+  }
+
+  /* THE ONLY H3 DISPATCH.
+   *
+   * Its input is the compiled plan the job was minted from. There is no argument here
+   * carrying a shot, a spec, a profile or a raw prompt, so this function cannot rebuild
+   * filmmaking intent — it renames fields, picks the endpoint and resolves bytes.
+   *
+   * A job with no compiled plan is refused rather than served by an older code path.
+   * That is the whole of the no-legacy-fallback rule: there is nothing left to fall
+   * back to, and a stored job from before this wiring can still be read, refreshed and
+   * cancelled, but cannot originate a new provider request. */
+  async function submitH3(owner, job, cfg) {
+    const compilation = job.compilation;
+    if (!compilation || !compilation.plan)
+      throw new H3ExecutionError(
+        "H3_PLAN_REQUIRED",
+        "This MiniMax H3 request carries no compiled generation plan, so CineBraid will not submit it. Rebuild the motion prompt on this shot and generate again.",
+        { jobId: job.id },
+      );
+    const serialized = serializeH3PlanForFal(compilation.plan, compilation.capability, {
+      resolveReference: (row) => planReferenceInput(owner, row),
+      config: cfg,
+      /* Present only when the filmmaker edited the compiled text. It replaces the
+         prompt string and reaches nothing else in the request. */
+      ...(job.promptEdited ? { promptOverride: job.prompt } : {}),
+    });
+    const response = await fetch(`${cfg.baseUrl}/${serialized.model}`, {
       method: "POST",
       headers: { "content-type": "application/json", Authorization: `Key ${cfg.apiKey}`, "X-Fal-No-Retry": "1" },
-      body: JSON.stringify(input),
+      body: JSON.stringify(serialized.input),
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(normalizeError(data, response.status));
     return {
-      model,
-      modelFamily: "minimax-h3",
-      providerRequest: { ...input, image_url: input.image_url ? "local-or-hosted-image" : undefined, end_image_url: input.end_image_url ? "local-or-hosted-image" : undefined, reference_image_urls: groups.image.map((ref) => ref.url), reference_video_urls: groups.video.map((ref) => ref.url), reference_audio_urls: groups.audio.map((ref) => ref.url) },
+      model: serialized.model,
+      modelFamily: serialized.modelFamily,
+      backendId: serialized.backendId,
+      /* What was actually sent, with the media replaced by the plan's own reference
+         identity. The bytes are not repeated into the ledger; which reference filled
+         which provider field is exactly what a later reader needs. */
+      providerRequest: redactedProviderRequest(serialized),
+      providerBindings: serialized.bindings,
+      submittedPromptCharacters: serialized.submittedPromptCharacters,
       externalId: data.request_id || "",
       statusUrl: data.status_url || "",
       responseUrl: data.response_url || "",
@@ -370,9 +438,24 @@ function registerFalGeneration(app, context) {
       status: "IN_QUEUE",
     };
   }
+
+  /* The request as sent, minus the payload bytes. Every media field is replaced by the
+     refIds the serializer bound to it, so the record stays small and still answers
+     "which approved frame opened this shot". */
+  function redactedProviderRequest(serialized) {
+    const media = new Set(["image_url", "end_image_url", "reference_image_urls", "reference_video_urls", "reference_audio_urls"]);
+    const out = {};
+    for (const [key, value] of Object.entries(serialized.input)) {
+      if (!media.has(key)) { out[key] = value; continue; }
+      const bound = serialized.bindings.filter((row) => row.field === key).map((row) => row.refId);
+      out[key] = Array.isArray(value) ? bound : bound[0] || "";
+    }
+    return out;
+  }
+
   async function submit(owner, job, refs) {
     const cfg = config();
-    if (job.profileFamily === "minimax-h3" || job.purpose === "motion-h3") return submitH3(owner, job, refs, cfg);
+    if (job.profileFamily === "minimax-h3" || job.purpose === "motion-h3") return submitH3(owner, job, cfg);
     const edit = job.mode === "edit";
     const model = edit ? cfg.editModel : cfg.textModel;
     const compatibility = modelCompatibilityError(job, model);
@@ -723,6 +806,92 @@ function registerFalGeneration(app, context) {
       res.status(ledgerFailureStatus(error)).json(ledgerFailurePayload(error));
     }
   });
+  /* What WILL be sent, compiled and shown before anything is charged.
+   *
+   * The dialog used to display the prompt-engine's own text and the server used to
+   * dispatch it, so "what you see" and "what is sent" were the same string by accident.
+   * They are the same string here by construction: this route runs the identical
+   * compilation the submission runs, and the compiler is deterministic — no clock, no
+   * network, no assistant — so the same shot, package and settings produce the same
+   * plan on both sides.
+   *
+   * Nothing durable is written and no provider is contacted. */
+  app.post("/api/generation/fal/h3/plan", (req, res) => {
+    let owner;
+    try {
+      owner = captureOwner();
+    } catch (error) {
+      return res.status(ledgerFailureStatus(error)).json(ledgerFailurePayload(error));
+    }
+    let compiled;
+    try {
+      compiled = compileH3ExecutionPlan({
+        project: ownerProject(owner),
+        shotId: String(req.body?.shotId || ""),
+        buildId: String(req.body?.sourceBuildId || ""),
+        mode: String(req.body?.profileMode || ""),
+        durationSeconds: req.body?.durationSeconds,
+        resolution: String(req.body?.resolution || ""),
+        aspectRatio: String(req.body?.aspectRatio || ""),
+        submittedPrompt: req.body?.prompt,
+      });
+    } catch (error) {
+      return h3Refusal(res, error);
+    }
+    const plan = compiled.plan;
+    const extensions = plan.settings?.extensions?.[plan.model?.modelId] || {};
+    /* Serialised too, so an over-limit prompt or an unsendable reference is reported on
+       the way IN rather than discovered when the filmmaker presses the paid button. */
+    let dispatch = null;
+    let refusal = null;
+    try {
+      const serialized = serializeH3PlanForFal(plan, compiled.capability, {
+        resolveReference: (row) => { planReferenceAddress(owner, row); return "preflight"; },
+        config: config(),
+        ...(compiled.promptEdited ? { promptOverride: compiled.submittedPrompt } : {}),
+      });
+      dispatch = { model: serialized.model, backendId: serialized.backendId, bindings: serialized.bindings };
+    } catch (error) {
+      const typed = error instanceof H3BackendError || error instanceof H3ExecutionError;
+      refusal = { error: error?.message || "This package cannot be submitted.", code: typed ? error.code : "H3_PREPARATION_FAILED", detail: typed ? error.detail : {} };
+    }
+    res.json({
+      ok: !refusal,
+      refusal,
+      dispatch,
+      mode: compiled.mode,
+      profile: compiled.profile,
+      source: compiled.source,
+      compiledPrompt: compiled.compiledPrompt,
+      compiledPromptCharacters: compiled.compiledPrompt.length,
+      /* The one number the dialog may show as "the limit". It is the intersection of
+         what MiniMax H3 reads and what fal accepts, never either one on its own. */
+      maxPromptCharacters: compiled.capability.maxPromptCharacters,
+      modelMaxPromptCharacters: 7000,
+      backendMaxPromptCharacters: FAL_H3_BACKEND.maxPromptCharacters,
+      durationSeconds: Number(plan.output?.durationSeconds) || null,
+      durationRange: compiled.capability.durationSeconds,
+      modelDurationRange: [4, 15],
+      resolution: extensions.resolution || "",
+      resolutions: compiled.capability.resolutions,
+      aspectRatio: compiled.aspect.carriesAspectRatio ? String(extensions.ratio || compiled.aspect.value || "") : "",
+      carriesAspectRatio: compiled.aspect.carriesAspectRatio,
+      endpoints: plan.endpoints,
+      references: plan.inputs.references.map((row) => ({
+        refId: row.refId, role: row.role, mediaType: row.mediaType, order: row.order,
+        required: row.required, label: row.production?.label || "", purpose: row.production?.purpose || "",
+      })),
+      coverage: plan.coverage,
+      warnings: plan.warnings,
+      /* Only present when the caller sent edited text. Names what the compiler wrote and
+         the edit removed, so a filmmaker can see the cost of their own change before
+         paying for it — and can decide it was worth it. */
+      editedCoverage: compiled.editedCoverage,
+      promptEdited: compiled.promptEdited,
+      compiler: plan.compiler,
+      seedSupported: !!compiled.capability.flags?.seed,
+    });
+  });
   app.post("/api/generation/fal/test", (req, res) => {
     const cfg = config();
     if (!cfg.enabled) return res.status(400).json({ error: "Enable FAL image generation first." });
@@ -833,7 +1002,11 @@ function registerFalGeneration(app, context) {
       outputCount: requestedOutputCount,
       quality: ["low", "medium", "high", "auto"].includes(req.body?.quality) ? req.body.quality : purpose === "blocking" ? cfg.blockingQuality : cfg.frameQuality,
       resolution: purpose === "motion-h3" ? (["768P", "2K"].includes(String(req.body?.resolution || "").toUpperCase()) ? String(req.body.resolution).toUpperCase() : cfg.h3Resolution) : (["1k", "2k", "4k"].includes(String(req.body?.resolution || "").toLowerCase()) ? String(req.body.resolution).toLowerCase() : (purpose === "blocking" ? cfg.blockingResolution : cfg.frameResolution)),
-      durationSeconds: purpose === "motion-h3" ? clamp(req.body?.durationSeconds, 5, 5, 15) : 0,
+      /* Recorded as requested. For MiniMax H3 the compiled plan decides the value that
+         is actually rendered, snapping it onto the effective range and warning about the
+         difference; clamping here as well would apply a floor this module has no
+         evidence for and would hide the adjustment. */
+      durationSeconds: purpose === "motion-h3" ? Math.max(0, Math.round(Number(req.body?.durationSeconds) || 0)) : 0,
       aspectRatio: String(req.body?.aspectRatio || (purpose === "motion-h3" && String(req.body?.profileMode || "") === "r2v" ? "adaptive" : "16:9")),
       revisionRequest: String(req.body?.revisionRequest || "").trim(),
       revisedFromAssetId: String(req.body?.revisedFromAssetId || ""),
@@ -859,15 +1032,37 @@ function registerFalGeneration(app, context) {
           requestedAspectRatio: aspectGate.requested,
           supportedAspectRatios: aspectGate.supported,
         });
-      if (!job.prompt) return res.status(400).json({ error: "Build a MiniMax H3 prompt before generating." });
-      // The current fal queue OpenAPI schema enforces 2,000 characters even
-      // though the launch guide describes a broader 7,000-character context.
-      // Stop before a paid submission rather than relying on provider rejection.
-      if (job.prompt.length > 2000) return res.status(400).json({ error: `MiniMax H3 prompt is ${job.prompt.length} characters; the current fal queue schema accepts at most 2,000. Rebuild or shorten the prompt before submitting.` });
-      const groups = h3ReferenceGroups(job.references);
-      if (job.profileMode === "i2v" && groups.image.length < 1) return res.status(400).json({ error: "MiniMax H3 image-to-video requires one approved opening frame." });
-      if (job.profileMode === "flf" && groups.image.length < 2) return res.status(400).json({ error: "MiniMax H3 first/last-frame requires two approved endpoint images." });
-      if (job.profileMode === "r2v" && groups.image.length + groups.video.length < 1) return res.status(400).json({ error: "MiniMax H3 reference-to-video requires at least one image or video reference." });
+      /* ONE compilation, here.
+         Everything the provider is about to be told — the prompt, which frame opens the
+         shot, which frame ends it, which references travel and what each is for, the
+         duration, the format — is decided by this call and by nothing after it. The
+         prompt, references and settings the caller posted are not the request; the
+         shot's own approved package is, and this compiles it. */
+      let compiled;
+      try {
+        compiled = compileH3ExecutionPlan({
+          project: ownerProject(owner),
+          shotId: job.shotId,
+          buildId: job.sourceBuildId,
+          mode: job.profileMode,
+          durationSeconds: req.body?.durationSeconds,
+          resolution: job.resolution,
+          aspectRatio: job.aspectRatio,
+          submittedPrompt: req.body?.prompt,
+        });
+        applyCompilationToJob(job, compiled);
+        /* Serialised against the effective capability with the provider call left out,
+           so an over-limit prompt, an unsupported modality, a missing endpoint or a
+           reference whose file has gone all refuse HERE — before a durable row exists,
+           before anything leaves the machine, and before anything is charged. */
+        serializeH3PlanForFal(compiled.plan, compiled.capability, {
+          resolveReference: (row) => { planReferenceAddress(owner, row); return "preflight"; },
+          config: cfg,
+          ...(job.promptEdited ? { promptOverride: job.prompt } : {}),
+        });
+      } catch (error) {
+        return h3Refusal(res, error);
+      }
     } else if (purpose === "entity-reference") {
       if (!["characters", "locations", "props", "vehicles"].includes(job.entityList)) return res.status(400).json({ error: "A supported entityList is required." });
       if (!job.entityId) return res.status(400).json({ error: "entityId is required." });

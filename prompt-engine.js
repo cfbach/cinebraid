@@ -2574,7 +2574,11 @@ function payloadPreview(profile, prompt, refs, spec) {
       duration: "5–15 seconds",
       resolution: "2K default; 768P available",
       nativeStereoAudio: true,
-      promptLimit: "2,000 characters on the current fal queue schema (fal guide/marketing pages describe up to 7,000)",
+      /* CineBraid's own budget for this written package, not a provider ceiling. fal's
+         queue schema documents no prompt maxLength for any H3 endpoint, and both fal
+         and MiniMax state 7,000 characters; the dispatch ceiling is resolved from model
+         and backend capability when a generation plan is compiled. */
+      promptLimit: "2,000 characters in this written package; dispatch is limited by model ∩ backend capability (currently 7,000)",
       referenceLimit: profile.mode === "r2v" ? "12 total · up to 9 images · 3 videos · 3 audio clips" : profile.mode === "flf" ? "first and optional last frame" : profile.mode === "i2v" ? "one opening frame" : "prompt only",
       note: profile.mode === "r2v" ? "Give every reference one explicit job. Multiple approved frames are ordered as sequential keyframes in the prompt." : "Use timed shot-list blocks when the shot contains more than one beat.",
     };

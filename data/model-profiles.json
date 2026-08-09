@@ -1092,7 +1092,7 @@
         "Direct sound, dialogue, ambience and music as deliberately as the picture.",
         "Keep the action physically plausible inside 5\u201315 seconds.",
         "Avoid vague camera language and conflicting simultaneous actions.",
-        "Keep the final provider prompt within the current fal queue schema limit of 2,000 characters; preserve reference assignments, chronology, continuity locks, and audio before optional stylistic detail."
+        "Keep this written package within CineBraid's own 2,000-character brevity budget; preserve reference assignments, chronology, continuity locks, and audio before optional stylistic detail. The dispatch ceiling is a separate question, resolved from model and backend capability at generation time."
       ],
       "sections": [
         "production objective",
@@ -1145,7 +1145,7 @@
         "Describe the motion that begins from Image 1 instead of re-describing the whole image.",
         "Separate subject performance, camera movement, environment motion and sound.",
         "Use timed blocks only when the clip contains more than one beat.",
-        "Keep the final provider prompt within the current fal queue schema limit of 2,000 characters; preserve reference assignments, chronology, continuity locks, and audio before optional stylistic detail."
+        "Keep this written package within CineBraid's own 2,000-character brevity budget; preserve reference assignments, chronology, continuity locks, and audio before optional stylistic detail. The dispatch ceiling is a separate question, resolved from model and backend capability at generation time."
       ],
       "sections": [
         "opening-frame contract",
@@ -1200,7 +1200,7 @@
         "Keep identity, wardrobe, location geometry and screen direction stable.",
         "Use chronological timing when the bridge has multiple beats.",
         "Do not invent cuts, new props or extra story beats unless explicitly requested.",
-        "Keep the final provider prompt within the current fal queue schema limit of 2,000 characters; preserve reference assignments, chronology, continuity locks, and audio before optional stylistic detail."
+        "Keep this written package within CineBraid's own 2,000-character brevity budget; preserve reference assignments, chronology, continuity locks, and audio before optional stylistic detail. The dispatch ceiling is a separate question, resolved from model and backend capability at generation time."
       ],
       "sections": [
         "endpoint contract",
@@ -1270,7 +1270,7 @@
         "Use reference video only for the assigned motion, performance, camera rhythm or source-video edit.",
         "Direct native stereo audio deliberately and identify any Audio reference by number.",
         "Keep the total reference package within 12 files: at most 9 images, 3 videos and 3 audio clips.",
-        "Keep the final provider prompt within the current fal queue schema limit of 2,000 characters; preserve reference assignments, chronology, continuity locks, and audio before optional stylistic detail."
+        "Keep this written package within CineBraid's own 2,000-character brevity budget; preserve reference assignments, chronology, continuity locks, and audio before optional stylistic detail. The dispatch ceiling is a separate question, resolved from model and backend capability at generation time."
       ],
       "sections": [
         "reference job map",

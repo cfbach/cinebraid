@@ -77,6 +77,10 @@ const H3_FACTS = {
         "continuity-state", "location", "prop", "scale", "style", "reference",
         "reference-sheet", "alternate-view", "detail",
         "first-frame", "last-frame",
+        /* Ref2VA's Picture inputs are ordered, and CineBraid's multi-frame workflow
+           is the thing that orders them. */
+        "sequential-keyframe", "waypoint",
+        "composition", "base",
         "motion-reference", "camera-reference", "performance-reference",
         "voice", "audio-timing", "sound-reference",
       ],
@@ -573,14 +577,28 @@ function continuitySection(intent, coverage, titles, { includeCanon = true } = {
 function outputParameters(ctx, coverage) {
   const { mode, spec, capability, surface } = ctx;
   const requested = Number(ctx.durationSeconds) || Number(spec.durationSeconds) || 0;
-  const [floor, ceiling] = H3_FACTS.durationSeconds;
+  /* The EFFECTIVE range, not the model's. H3 itself renders from 4 seconds; a backend
+     that starts at 5 has already narrowed that through the capability intersection, and
+     snapping to the model's floor here would compile a plan the backend must reject.
+     H3_FACTS stays the model fact and is the fallback when nothing has narrowed it. */
+  const range = Array.isArray(capability?.durationSeconds) && capability.durationSeconds.length === 2
+    && capability.durationSeconds.every((value) => Number.isFinite(Number(value)))
+    ? capability.durationSeconds.map(Number)
+    : H3_FACTS.durationSeconds;
+  const [floor, ceiling] = range;
+  const [modelFloor, modelCeiling] = H3_FACTS.durationSeconds;
   let duration = Math.min(ceiling, Math.max(floor, requested || floor));
   if (H3_FACTS.durationIsInteger) duration = Math.round(duration);
   if (requested && duration !== requested)
     coverage.warn({
       code: "duration-adjusted",
       field: "output.durationSeconds",
-      message: `MiniMax H3 renders whole seconds from ${floor} to ${ceiling}; ${requested}s becomes ${duration}s.`,
+      /* Named honestly: when the configuration is tighter than the model, saying "H3
+         renders 5 to 15" would be false about H3 and would follow the number to a
+         backend that has no such rule. */
+      message: floor === modelFloor && ceiling === modelCeiling
+        ? `MiniMax H3 renders whole seconds from ${floor} to ${ceiling}; ${requested}s becomes ${duration}s.`
+        : `This configuration renders whole seconds from ${floor} to ${ceiling} (MiniMax H3 itself renders ${modelFloor} to ${modelCeiling}); ${requested}s becomes ${duration}s.`,
       action: `Set the shot to ${duration} seconds to remove this adjustment.`,
     });
   if (requested) coverage.represent("timing.duration", "parameter");
@@ -589,36 +607,83 @@ function outputParameters(ctx, coverage) {
   const allowed = Array.isArray(capability?.resolutions) && capability.resolutions.length
     ? capability.resolutions
     : face.resolutions;
-  const parameters = { duration, resolution: allowed[allowed.length - 1], fps: H3_FACTS.fps };
+  /* The REQUESTED resolution, checked against what the configuration allows.
+     `capability.resolutions` arrives in the resolver's canonical sort, which its own
+     documentation says carries no preference — reading the last entry of it picked
+     "768P" out of ["2K","768P"] and quietly downgraded every render. The fallback is
+     the surface's own authored list, which IS written low-to-high. */
+  const wantedResolution = text(ctx.resolution).toUpperCase();
+  const preferred = face.resolutions.filter((value) => allowed.includes(value));
+  const fallbackResolution = preferred[preferred.length - 1] || allowed[allowed.length - 1];
+  let resolution = fallbackResolution;
+  if (wantedResolution && allowed.includes(wantedResolution)) {
+    resolution = wantedResolution;
+  } else if (wantedResolution) {
+    coverage.warn({
+      code: "resolution-unsupported",
+      field: "output.resolution",
+      message: `This configuration cannot render ${wantedResolution}; ${fallbackResolution} is used instead.`,
+      action: `Choose one of ${allowed.join(", ")}.`,
+    });
+  }
+  const parameters = { duration, resolution, fps: H3_FACTS.fps };
 
   const aspect = text(ctx.aspectRatio);
+  const unsupportedAspect = () => {
+    coverage.unsupported("output.aspectRatio", `MiniMax H3 does not offer ${aspect}.`, {
+      code: "aspect-unsupported",
+      field: "output.aspectRatio",
+      message: `MiniMax H3 does not offer ${aspect}; supported ratios are ${H3_FACTS.aspectRatios.join(", ")}.`,
+      action: `Set the project aspect ratio to one of ${H3_FACTS.aspectRatios.join(", ")}.`,
+    });
+    /* Recorded as asked for, not silently replaced. The plan is a faithful record of
+       what the production wanted; refusing it is the backend's job, and it can only
+       refuse a ratio by name if the ratio is still there to name. */
+    parameters.ratio = aspect;
+  };
   if (mode === "t2v") {
     /* Text-to-video must name a ratio and may not be adaptive. */
     if (aspect && H3_FACTS.aspectRatios.includes(aspect)) {
       parameters.ratio = aspect;
       coverage.represent("output.aspectRatio", "parameter");
     } else if (aspect) {
-      coverage.unsupported("output.aspectRatio", `MiniMax H3 does not offer ${aspect}.`, {
-        code: "aspect-unsupported",
-        field: "output.aspectRatio",
-        message: `MiniMax H3 does not offer ${aspect}; supported ratios are ${H3_FACTS.aspectRatios.join(", ")}.`,
-        action: `Set the project aspect ratio to one of ${H3_FACTS.aspectRatios.join(", ")}.`,
-      });
+      unsupportedAspect();
+    }
+  } else if (mode === "r2v") {
+    /* Ref2VA is the one media-carrying mode with a real ratio field AND a documented
+       "adaptive" value. A production that has declared a format keeps it; only a
+       production that declared none, or asked for adaptive, lets the references decide.
+       Forcing adaptive here would deliver a vertical production as whatever shape its
+       first keyframe happened to be, which is the same class of defect as substituting
+       16:9 for 2.39:1. */
+    const wantsAdaptive = !aspect || aspect === "adaptive";
+    if (!wantsAdaptive && H3_FACTS.aspectRatios.includes(aspect)) {
+      parameters.ratio = aspect;
+      coverage.represent("output.aspectRatio", "parameter");
+    } else if (!wantsAdaptive) {
+      unsupportedAspect();
+    } else {
+      parameters.ratio = "adaptive";
+      anchorAspectToMedia(ctx, coverage, mode);
     }
   } else if (aspect) {
-    /* Every mode with supplied media takes its ratio from that media, so the project's
-       ratio is genuinely established elsewhere rather than ignored — but only if there
-       is media to establish it. Naming the actual reference keeps the anchor checkable;
-       claiming "the supplied image" when none was selected would read as accounted for
-       while nothing held it. */
     parameters.ratio = "adaptive";
-    const visual = (ctx.manifest || []).find((row) => row.mediaType === "image")
-      || (ctx.manifest || []).find((row) => row.mediaType === "video");
-    if (visual) coverage.anchor("output.aspectRatio", `${visual.production.label}, whose ratio the shot adopts`);
-    else coverage.omit("output.aspectRatio",
-      `MiniMax H3 derives the ratio from the supplied media in ${mode}; with no visual reference selected there is nothing for the project ratio to apply to.`);
+    anchorAspectToMedia(ctx, coverage, mode);
   }
   return parameters;
+}
+
+/* Every mode with supplied media takes its ratio from that media, so the project's
+   ratio is genuinely established elsewhere rather than ignored — but only if there is
+   media to establish it. Naming the actual reference keeps the anchor checkable;
+   claiming "the supplied image" when none was selected would read as accounted for
+   while nothing held it. */
+function anchorAspectToMedia(ctx, coverage, mode) {
+  const visual = (ctx.manifest || []).find((row) => row.mediaType === "image")
+    || (ctx.manifest || []).find((row) => row.mediaType === "video");
+  if (visual) coverage.anchor("output.aspectRatio", `${visual.production.label}, whose ratio the shot adopts`);
+  else coverage.omit("output.aspectRatio",
+    `MiniMax H3 derives the ratio from the supplied media in ${mode}; with no visual reference selected there is nothing for the project ratio to apply to.`);
 }
 
 /* ---------------------------------------------------------------------------
@@ -772,10 +837,28 @@ function compileR2V(ctx) {
   const definitions = [];
   const retention = [];
 
+  /* An ordered waypoint's job is its POSITION in the sequence, so the numbering is
+     counted over the keyframes themselves rather than over every Picture — an identity
+     reference sitting between two beats must not be announced as beat two. */
+  const waypointRoles = ["sequential-keyframe", "waypoint"];
+  const waypoints = manifest.filter((row) => waypointRoles.includes(row.role));
+  let waypointIndex = 0;
   for (const row of manifest) {
     const token = referenceToken(row, counters);
     tokens.set(row.refId, token);
     definitions.push(describeReference(row, token));
+    if (waypointRoles.includes(row.role)) {
+      waypointIndex += 1;
+      const position = waypointIndex === 1
+        ? "Open on"
+        : waypointIndex === waypoints.length
+          ? "Resolve onto"
+          : "Pass through";
+      retention.push(
+        `${position} ${token} as beat ${waypointIndex} of ${waypoints.length}${waypointIndex === 1 || waypointIndex === waypoints.length ? "" : ", settling briefly without holding on it"}.`,
+      );
+      continue;
+    }
     if (row.role === "identity" || row.role === "continuity-state" || row.role === "outfit")
       retention.push(`Keep ${row.production.entityName || row.production.label} exactly as ${token} shows.`);
     else if (row.role === "location")
@@ -792,6 +875,12 @@ function compileR2V(ctx) {
       retention.push(`Land on ${token}.`);
   }
   if (definitions.length) sections.push({ title: titles.definitions, body: definitions.join("\n") });
+  /* Two or more ordered beats are a trajectory, and saying only what each one fixes
+     invites the model to cut between them. The contract has to say "continuous". */
+  if (waypoints.length > 1)
+    retention.unshift(
+      `Treat ${waypoints.map((row) => tokens.get(row.refId)).join(", ")} as ${waypoints.length} sequential beats in that exact order, with continuous motion between each pair and no cut, dissolve or slideshow.`,
+    );
   if (retention.length) sections.push({ title: titles.retention, body: retention.join("\n") });
 
   /* References carry identity and place, so those intents are anchored by a named
@@ -1012,8 +1101,11 @@ function compileMode(context) {
      it is adapter knowledge and production intent must stay portable without it. */
   const bindings = {};
   for (const row of manifest) {
-    if (row.role === "first-frame") bindings[row.refId] = "first_frame";
-    else if (row.role === "last-frame") bindings[row.refId] = "last_frame";
+    /* An endpoint is an endpoint only where the mode HAS endpoints. Ref2VA takes no
+       first/last frame field — its opening and closing beats are ordered Picture
+       inputs — so binding one there would name a field the request does not have. */
+    if (row.role === "first-frame" && mode !== "r2v") bindings[row.refId] = "first_frame";
+    else if (row.role === "last-frame" && mode !== "r2v") bindings[row.refId] = "last_frame";
     else if (row.mediaType === "video") bindings[row.refId] = "reference_video";
     else if (row.mediaType === "audio") bindings[row.refId] = "reference_audio";
     else bindings[row.refId] = "reference_image";

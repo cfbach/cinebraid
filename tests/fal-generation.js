@@ -4,6 +4,7 @@ const os = require("os");
 const path = require("path");
 const express = require("express");
 const { registerFalGeneration } = require("../fal-generation");
+const { addMotionPromptBuild } = require("./h3-execution-fixture");
 
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z5xkAAAAASUVORK5CYII=", "base64");
 const MP4 = Buffer.from("00000018667479706d703432000000006d703432", "hex");
@@ -165,13 +166,29 @@ async function main() {
     assert.strictEqual(status.data.configured, true);
     assert.strictEqual(JSON.stringify(status.data).includes("fal-secret-test-key"), false, "status must never expose the key");
 
+    /* A live H3 request is compiled from the shot's durable motion package, so the
+       package has to exist before the dispatch does. Posting a finished prompt string
+       is no longer a way to originate one; that is asserted directly further down. */
+    const h3Project0 = JSON.parse(fs.readFileSync(projectFile, "utf8"));
+    const h3BuildId = addMotionPromptBuild(h3Project0, "S1", {
+      mode: "r2v",
+      durationSeconds: 10,
+      aspectRatio: "16:9",
+      references: [
+        { key: "kf-1", label: "Opening", role: "sequential-keyframe", mediaType: "image", url: "/assets/shots/S1/takes/H3-A.png" },
+        { key: "kf-2", label: "Middle", role: "sequential-keyframe", mediaType: "image", url: "/assets/shots/S1/takes/H3-B.png" },
+        { key: "kf-3", label: "Ending", role: "sequential-keyframe", mediaType: "image", url: "/assets/shots/S1/takes/H3-C.png" },
+      ],
+    });
+    fs.writeFileSync(projectFile, JSON.stringify(h3Project0, null, 2));
+
     const h3Submit = await json(`${appOrigin}/api/generation/fal/jobs`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         purpose: "motion-h3",
         shotId: "S1",
-        prompt: "Use Images 1–3 as sequential keyframes in this exact order. Create continuous motion between each approved beat.",
+        sourceBuildId: h3BuildId,
         profileId: "minimax-h3/multi-frame",
         profileName: "MiniMax H3 — Multi-Frame / Reference Video",
         profileFamily: "minimax-h3",
@@ -179,11 +196,6 @@ async function main() {
         durationSeconds: 10,
         resolution: "2K",
         aspectRatio: "16:9",
-        references: [
-          { role: "sequential-keyframe", mediaType: "image", label: "Opening", url: "/assets/shots/S1/takes/H3-A.png" },
-          { role: "sequential-keyframe", mediaType: "image", label: "Middle", url: "/assets/shots/S1/takes/H3-B.png" },
-          { role: "sequential-keyframe", mediaType: "image", label: "Ending", url: "/assets/shots/S1/takes/H3-C.png" },
-        ],
       }),
     });
     assert(h3Submit.response.ok, JSON.stringify(h3Submit.data));
@@ -193,6 +205,10 @@ async function main() {
     assert.strictEqual(h3Call.body.reference_image_urls.length, 3);
     assert.strictEqual(h3Call.body.duration, 10);
     assert.strictEqual(h3Call.body.resolution, "2K");
+    assert.strictEqual(h3Call.body.prompt, h3Submit.data.job.compilation.compiledPrompt,
+      "the provider prompt is the compiled plan's, not a string the caller supplied");
+    assert(h3Submit.data.job.compilation.plan.compiler.packId === "minimax-h3",
+      "the durable job records which pack compiled it");
     const h3Refresh = await json(`${appOrigin}/api/generation/fal/jobs/${h3Submit.data.job.id}/refresh`, { method: "POST" });
     assert(h3Refresh.response.ok, JSON.stringify(h3Refresh.data));
     assert.strictEqual(h3Refresh.data.job.status, "COMPLETED");

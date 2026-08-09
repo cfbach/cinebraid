@@ -157,6 +157,10 @@ function inventoryIntent(spec, sanitize) {
    they are what a shot is about; then the modalities that shape motion and sound. */
 const ROLE_PRIORITY = [
   "first-frame", "last-frame",
+  /* Ordered waypoints sit with the endpoints because they are the same kind of thing:
+     a temporal contract rather than an influence. Within the band they keep the
+     director's supplied order, which is the whole meaning of a keyframe sequence. */
+  "sequential-keyframe", "waypoint",
   "identity", "expression", "body", "outfit", "pose", "turnaround",
   "continuity-state", "location", "prop", "scale",
   "composition", "base", "reference", "reference-sheet", "alternate-view", "detail",
@@ -170,6 +174,8 @@ const ROLE_PRIORITY = [
 const ROLE_PURPOSE = {
   "first-frame": "the exact opening frame",
   "last-frame": "the exact final frame",
+  "sequential-keyframe": "an approved beat the shot passes through, in order",
+  waypoint: "an approved beat the shot passes through, in order",
   identity: "approved identity and appearance",
   outfit: "approved wardrobe state",
   expression: "approved expression",
@@ -261,7 +267,7 @@ function planReferences(spec, references, options = {}) {
         },
         /* An endpoint contract and an identity reference are not optional; an influence
            is. A pack that must drop something needs to know which is which. */
-        required: ["first-frame", "last-frame", "identity", "voice"].includes(role),
+        required: ["first-frame", "last-frame", "sequential-keyframe", "waypoint", "identity", "voice"].includes(role),
         roleKnown: roles.includes(role),
         entityId,
         suppliedOrder: Number.isFinite(Number(reference.order)) ? Number(reference.order) : index,
@@ -402,13 +408,19 @@ function sanitizePromptText(prompt, spec, manifest) {
   for (const identifier of internalIdentifiers(spec, manifest)) {
     if (!out.includes(identifier)) continue;
     const name = displayNameFor(identifier, spec, manifest);
+    /* A name that still contains the identifier cannot be the replacement for it — the
+       substitution would put back exactly what it was removing, and the contract check
+       downstream would then refuse the plan outright. A reference labelled after its own
+       key is unusual but entirely possible, and losing the whole generation to it is a
+       far worse outcome than a slightly flatter sentence. */
+    const usable = name && !name.includes(identifier) ? name : "";
     /* Whole tokens only: an identifier that happens to be a substring of a longer word
        is not that identifier. */
     const pattern = new RegExp(`\\b${escapeRegExp(identifier)}\\b`, "g");
-    out = name
-      ? out.replace(pattern, name)
-      /* No production name exists for it, so the id is removed rather than described.
-         Tidying the spacing keeps the sentence readable. */
+    out = usable
+      ? out.replace(pattern, usable)
+      /* No usable production name exists for it, so the id is described rather than
+         printed. Tidying the spacing keeps the sentence readable. */
       : out.replace(pattern, "the referenced element");
   }
   return out.replace(/[ \t]{2,}/g, " ").replace(/ +([,.;:])/g, "$1").replace(/\n{3,}/g, "\n\n").trim();
@@ -525,6 +537,10 @@ function compileGenerationPlan(request) {
     coverage,
     durationSeconds: Number(spec.durationSeconds) || null,
     aspectRatio: text(spec.aspectRatio || spec.world?.aspectRatio),
+    /* What the production ASKED for. A pack validates it against the resolved
+       capability and says so when it cannot be met; it is not a pack's job to guess
+       which of the allowed values the filmmaker meant. */
+    resolution: text(input.resolution || spec.resolution),
   }) || {};
 
   /* The check a pack cannot do for itself. Anything the shot carried and the pack did
@@ -645,11 +661,49 @@ function compileValidatedGenerationPlan(request) {
   return { plan, validation };
 }
 
+/* ---------------------------------------------------------------------------
+   Coverage against a prompt the compiler did not write.
+
+   A filmmaker may edit the compiled prompt before sending it, and they should be able
+   to — the words that reach the model are theirs. What must not happen is the plan's
+   coverage record silently transferring to text it was never computed from: the plan
+   would go on saying "camera movement: represented in the prompt" about a prompt that
+   no longer mentions the move.
+
+   So the SAME deterministic check the compiler applies to its own output is applied to
+   the edited text, and anything that no longer survives is reported. This is not a
+   review and makes no judgement about whether the edit was a good one; it answers one
+   narrow question — which of the intents the compiler claimed to have written are still
+   there. The compiler's own coverage is left exactly as compiled, because it remains a
+   true record of what CineBraid wrote. */
+function checkPromptCoverage(request, prompt) {
+  const input = isRecord(request) ? request : {};
+  const spec = isRecord(input.spec) ? input.spec : {};
+  const manifest = planReferences(spec, input.references, input);
+  const scrub = (value) => sanitizePromptText(value, spec, manifest);
+  const inventory = inventoryIntent(spec, scrub);
+  const claimed = new Set(
+    (Array.isArray(input.coverage) ? input.coverage : [])
+      .filter((row) => isRecord(row) && row.state === "represented" && row.via === "prompt")
+      .map((row) => text(row.intent)),
+  );
+  const checked = [];
+  const lost = [];
+  for (const row of inventory) {
+    if (!claimed.has(row.key)) continue;
+    const survived = survivedIntoPrompt(row.value, prompt);
+    checked.push({ intent: row.key, label: row.label, survived });
+    if (!survived) lost.push({ intent: row.key, label: row.label });
+  }
+  return { checked, lost };
+}
+
 module.exports = {
   COMPILER_VERSION,
   INTENT_FIELDS,
   ROLE_PRIORITY,
   ROLE_PURPOSE,
+  checkPromptCoverage,
   compileGenerationPlan,
   compileValidatedGenerationPlan,
   createCoverage,
