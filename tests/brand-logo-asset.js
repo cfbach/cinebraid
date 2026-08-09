@@ -101,6 +101,33 @@ for (const [label, body] of [
 assert(!/\.bible-brand::before\s*\{/.test(css),
   "the bible sidebar must not draw a CB text chip beside the real mini logo");
 
+/* ---- the sign-in page can actually load it ------------------------------ */
+
+/* Everything above was already true on the day the login screen shipped a broken
+   image. The asset existed, the src was right, the CSS was right — and with an
+   editor passcode set the server answered /cinebraid-logo-xs.png with a 302 to
+   /login.html, because the pre-auth allowlist named the page and its stylesheet
+   but not its pictures. The <img> got HTML instead of a PNG and drew the broken-
+   image icon on the first screen a LAN user ever sees.
+
+   So the claim is reachability, not existence: every file the sign-in page loads
+   from this server must be fetchable BEFORE anyone has signed in. Stated over the
+   whole page rather than over the logo alone, because the next asset added to
+   login.html would fail in exactly the same way. */
+const serverSource = read("server.js");
+const allowlist = serverSource.split("const PRE_AUTH_PATHS = [")[1];
+assert(allowlist, "server.js must declare PRE_AUTH_PATHS — the pre-auth allowlist this check reads");
+const preAuth = new Set((allowlist.split("];")[0].match(/"([^"]+)"/g) || []).map((entry) => entry.slice(1, -1)));
+
+assert(preAuth.has(LOGO_URL),
+  `${LOGO_URL} must be reachable before sign-in, or the login screen renders a broken image`);
+for (const attribute of [...login.matchAll(/\b(?:src|href)="(\/[^"]*)"/g)].map((match) => match[1])) {
+  const file = attribute.split(/[?#]/)[0];
+  assert(preAuth.has(file),
+    `public/login.html loads ${file}, which an unauthenticated browser cannot fetch. `
+    + "Add it to PRE_AUTH_PATHS in server.js or the sign-in page loads it broken.");
+}
+
 /* ---- the release carries the asset -------------------------------------- */
 
 const gitignore = read(".gitignore");
@@ -109,4 +136,5 @@ assert(!/cinebraid-logo-xs/.test(gitignore), "the mini logo must not be ignored 
 console.log(
   `Brand mini logo suite passed: ${LOGO} ships at ${size.width}x${size.height} (ratio ${sourceRatio.toFixed(4)}), ` +
   `${MARKUP.length} shipped pages reference it with intrinsic dimensions, no <img> still uses ${OLD_MARK}, ` +
-  "and all three sizing rules fix height with an automatic width under object-fit:contain.");
+  "all three sizing rules fix height with an automatic width under object-fit:contain, and every file the " +
+  "sign-in page loads is reachable before sign-in.");
