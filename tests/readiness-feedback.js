@@ -133,12 +133,21 @@ async function main() {
 
     let response = await request(port, "/api/project/readiness");
     assert.strictEqual(response.status, 200);
-    assert.strictEqual(response.data.issues.length, 2, "the sample must open with exactly two deliberate readiness lessons");
-    const sampleCanon = response.data.issues.find((row) => row.kind === "entity-canon" && row.entityId === "PROP-PARCEL");
-    const sampleDuration = response.data.issues.find((row) => row.kind === "shot-duration" && row.shotId === "SAMPLE-03");
-    assert(sampleCanon, "the sample must deliberately teach one shared entity-canon issue");
-    assert.deepStrictEqual(sampleCanon.shotIds, ["SAMPLE-01", "SAMPLE-02", "SAMPLE-03"]);
-    assert(sampleDuration, "the sample must deliberately teach one shot-duration issue");
+    /* The sample used to open with two readiness issues, described here as
+       deliberate teaching material. Neither was: both were the product failing
+       to read its own data.
+
+       PROP-PARCEL stores its visual description in `notes`, which Creation
+       Studio and the asset compiler both read, but the prompt compiler
+       resolved `block || description` and so reported the prop as having no
+       canon. SAMPLE-03 declares `duration: 4` and the compiler read only
+       `dur`, so it reported the shot as having no explicit duration while
+       quietly compiling it as five seconds.
+
+       P-1 repaired both readers, so the sample now opens ready — which is what
+       a shipped sample should do. Anything appearing here again is a real
+       regression, not a lesson. See tests/intent-loss-safety.js. */
+    assert.deepStrictEqual(response.data.issues, [], `the shipped sample must open with no readiness issues, got ${JSON.stringify(response.data.issues.map((row) => row.kind))}`);
 
     response = await request(port, "/api/projects/switch", { method: "POST", body: { slug: "scale-test" } });
     assert.strictEqual(response.status, 200);
@@ -187,7 +196,7 @@ async function main() {
     assert(index.includes("Leave feedback"), "the feedback control must remain available from every route");
     for (const fn of ["openTestNote", "saveTestNote", "copySavedTestNote", "downloadSavedTestNote"]) assert(app.includes(`window.${fn}`), `manual feedback UI is missing ${fn}`);
 
-    console.log("Readiness and feedback suite passed entity-scoped deduplication (22 shots → 1 row), deliberate two-item sample readiness, and locally persisted redacted test-note copy/download output.");
+    console.log("Readiness and feedback suite passed entity-scoped deduplication (22 shots → 1 row), a shipped sample that opens ready, and locally persisted redacted test-note copy/download output.");
   } finally {
     await stopServer();
     fs.rmSync(TEMP, { recursive: true, force: true });

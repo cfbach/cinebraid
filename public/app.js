@@ -686,27 +686,26 @@ function normalizeReferenceCoverageData() {
         next.notes = String(next.notes || "");
         next.status = next.approvedFile ? "approved" : "missing";
         next.replacementHistory = Array.isArray(next.replacementHistory) ? next.replacementHistory : [];
+        /* Two legacy conditions used to be corrected here, by clearing the
+           slot's approvedFile while the project was merely being opened. Both
+           corrections were right about the data and wrong about the moment:
+           opening a project is not a migration, and a filmmaker's approval is
+           not CineBraid's to withdraw without being asked.
+
+           So the value is preserved and the condition is reported instead,
+           through dataIntegrityWarnings — the channel this function already
+           owns, which the entity view lists and the app toasts on load. The
+           correction itself belongs to the explicit migration framework. */
+        const entityLabel = String(entity.name || entity.id || "entity");
         if (next.approvedFile && projectCandidateIsCoverageSheet(entity, next.approvedFile)) {
-          entity.coverageMigrationHistory = Array.isArray(entity.coverageMigrationHistory) ? entity.coverageMigrationHistory : [];
-          entity.coverageMigrationHistory.push({ at: new Date().toISOString(), slotId: next.id, removedFile: next.approvedFile, reason: "multi-view sheet cannot be a single-angle authority" });
-          next.approvedFile = "";
-          next.status = "missing";
-          next.notes = next.notes && !/automatically seeded/i.test(next.notes) ? next.notes : "";
-          changed = true;
+          warnings.push(`${entityLabel} — the "${next.label || next.id}" view is approved to ${next.approvedFile}, which is a multi-view sheet rather than a single angle. The approval is kept as stored; extract the panel you meant before relying on this view.`);
         }
         const wasSilentCharacterSeed = list === "characters"
           && next.approvedFile
           && next.approvedFile === String(entity.approvedFile || "")
           && (next.provenance?.source === "primary-approved-reference" || /automatically seeded from (?:the )?(?:first )?approved primary reference/i.test(next.notes || ""));
         if (wasSilentCharacterSeed) {
-          entity.coverageMigrationHistory = Array.isArray(entity.coverageMigrationHistory) ? entity.coverageMigrationHistory : [];
-          entity.coverageMigrationHistory.push({ at: new Date().toISOString(), slotId: next.id, removedFile: next.approvedFile, reason: "character primary references require explicit angle assignment" });
-          next.approvedFile = "";
-          next.status = "missing";
-          next.notes = "";
-          next.provenance = { source: "migration-cleared-silent-angle", clearedAt: new Date().toISOString() };
-          entity.primaryAngleAssignment = { status: "unassigned", sourceFile: String(entity.approvedFile || ""), updatedAt: new Date().toISOString() };
-          changed = true;
+          warnings.push(`${entityLabel} — the "${next.label || next.id}" view was filled in automatically from the primary reference ${next.approvedFile}, not chosen. The approval is kept as stored; confirm or reassign the angle before relying on it.`);
         }
         return next;
       });
@@ -735,8 +734,14 @@ function normalizeReferenceCoverageData() {
     }
   }
   P.meta = P.meta || {};
+  /* Recomputed from the record on every load, so it is a reading of the data
+     rather than a change to it. Noticing a problem must not dirty the project:
+     if writing the warning list counted as a change, a project would be saved
+     for having been looked at, which is the behaviour this pass exists to end.
+     A project with nothing to warn about and no stored list is left alone
+     entirely, so opening a clean record adds not even an empty key. */
   const uniqueWarnings = [...new Set(warnings)];
-  if (JSON.stringify(P.meta.dataIntegrityWarnings || []) !== JSON.stringify(uniqueWarnings)) { P.meta.dataIntegrityWarnings = uniqueWarnings; changed = true; }
+  if (uniqueWarnings.length || Array.isArray(P.meta.dataIntegrityWarnings)) P.meta.dataIntegrityWarnings = uniqueWarnings;
   if (changed) {
     P.meta.schemaMigrations = P.meta.schemaMigrations || {};
     if (!P.meta.schemaMigrations.coverageV6533) P.meta.schemaMigrations.coverageV6533 = new Date().toISOString();

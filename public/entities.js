@@ -952,7 +952,7 @@ function boundedEntityTaskStatus(list, entity, taskId, activeCandidates, states)
     return active ? {tone:"active",label:STAGE_STATUS.running} : missing ? {tone:"attention",label:STAGE_STATUS.incomplete,note:`${plural(missing, "required view")} missing`} : planned ? {tone:"pending",label:STAGE_STATUS.inProgress,note:`${plural(planned, "view")} planned`} : {tone:"complete",label:STAGE_STATUS.complete};
   }
   if (taskId === "details") {
-    const hasDetails = String(entity.block || entity.notes || entity.creationDescription || "").trim() || (entity.planningMedia || []).length;
+    const hasDetails = entityVisualDescription(entity, list) || String(entity.notes || "").trim() || (entity.planningMedia || []).length;
     return hasDetails ? {tone:"complete",label:STAGE_STATUS.complete} : {tone:"pending",label:STAGE_STATUS.notStarted};
   }
   if (taskId === "history") {

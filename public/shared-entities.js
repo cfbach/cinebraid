@@ -5,6 +5,94 @@ function shotEntityTokenMatches(token, entityId) {
   return !!id && (value === id || value.startsWith(id + "-") || value.startsWith(id + "_"));
 }
 
+function entityTextValue(value) {
+  return String(value == null ? "" : value).trim();
+}
+/* Is this list/type name a character? Callers hold either a project list key
+   ("characters") or an entity type ("character"), so both are accepted. */
+function entityKindIsCharacter(kind) {
+  return /^character/i.test(String(kind || ""));
+}
+/* One production visual description for the whole product.
+
+   Before this existed, five consumers each guessed their own order and
+   Creation Studio's own field was missing from the one that matters most:
+   the prompt compiler resolved `block || description`, so a description
+   authored through the current UI reached continuity but never reached
+   image generation.
+
+   Precedence, from what actually writes each field today:
+
+     creationDescription  the field Creation Studio writes (setCreationDescription)
+     visualDescription    the Project Builder import contract's name for it
+     block                characters only — the historical canon block, and
+                          already first for characters in every current reader
+     description          the generic legacy visual description, and already
+                          first for non-characters in the prompt compiler
+     notes                the legacy production note the non-character editors
+                          wrote, and the last-resort description elsewhere
+
+   The final entry re-checks the other type's field so no stored text is ever
+   unreachable. Order beyond the first entry is chosen so that every entity
+   that resolves to something today keeps resolving to the same text; the only
+   change is that entities which resolved to nothing can now resolve. */
+function entityVisualDescription(entity, kind = "") {
+  const record = entity && typeof entity === "object" ? entity : {};
+  const ordered = entityKindIsCharacter(kind)
+    ? [record.creationDescription, record.visualDescription, record.block, record.description, record.notes]
+    : [record.creationDescription, record.visualDescription, record.description, record.notes, record.block];
+  for (const value of ordered) {
+    const text = entityTextValue(value);
+    if (text) return text;
+  }
+  return "";
+}
+
+/* Shot duration carries three historical aliases. `dur` is what every current
+   writer produces (Project Builder normalization, the shot editor, the guided
+   composer), so it wins. `sec` precedes `duration` because the two report
+   readers that consult both — the scene beat sheet and the shot list — have
+   always read `shot.sec || shot.duration`.
+
+   Only a positive finite number counts as supplied; anything else falls
+   through, which is what keeps a stored 0 or "" meaning "not declared". */
+const SHOT_DURATION_ALIASES = Object.freeze(["dur", "sec", "duration"]);
+function shotDurationAlias(source) {
+  const record = source && typeof source === "object" ? source : {};
+  for (const field of SHOT_DURATION_ALIASES) {
+    const seconds = Number(record[field]);
+    if (Number.isFinite(seconds) && seconds > 0) return { seconds, field };
+  }
+  return null;
+}
+/* Seconds declared by any supported alias, or 0 when none of them did. */
+function shotDurationSeconds(source) {
+  return shotDurationAlias(source)?.seconds || 0;
+}
+/* The effective duration of a shot or one of its segments, plus whether the
+   number had to be invented. A shot's own aliases lose to its motion units,
+   because a shot split into clips is as long as its clips — that ordering is
+   unchanged from the original expression this replaced. */
+function resolveShotDuration(shot, segment = null, fallbackSeconds = 5) {
+  const fallback = Number(fallbackSeconds) > 0 ? Number(fallbackSeconds) : 5;
+  if (segment) {
+    const declared = shotDurationAlias(segment);
+    return {
+      seconds: declared ? declared.seconds : fallback,
+      wasDefaulted: !declared,
+      field: declared ? declared.field : "",
+      source: declared ? "segment" : "default",
+    };
+  }
+  const record = shot && typeof shot === "object" ? shot : {};
+  const clips = Array.isArray(record.clips) ? record.clips : [];
+  const planned = clips.reduce((total, clip) => total + shotDurationSeconds(clip), 0);
+  if (planned > 0) return { seconds: planned, wasDefaulted: false, field: "clips", source: "clips" };
+  const declared = shotDurationAlias(record);
+  if (declared) return { seconds: declared.seconds, wasDefaulted: false, field: declared.field, source: "shot" };
+  return { seconds: fallback, wasDefaulted: true, field: "", source: "default" };
+}
+
 function resolveShotEntities(project, shot) {
   const P = project && typeof project === "object" ? project : {};
   const s = shot && typeof shot === "object" ? shot : {};
@@ -27,6 +115,60 @@ function resolveShotEntities(project, shot) {
   };
 }
 
+
+/* What each `codes[]` token actually resolved to, so the loss becomes visible.
+
+   `codes[]` is an undeclared union namespace: one token is offered to every
+   entity list, and shotEntityTokenMatches accepts an exact id, or an id
+   followed by "-" or "_". So LOC-HULL-A resolves to LOC-HULL and the "-A"
+   — which carried a reference view in real productions — is discarded, and
+   STAGE-3 resolves to nothing at all. Both happen silently today.
+
+   This classifies; it does not resolve. The winner is still whatever the
+   existing resolvers pick, and no token is rewritten. */
+function classifyShotCodeTokens(project, shot) {
+  const P = project && typeof project === "object" ? project : {};
+  const s = shot && typeof shot === "object" ? shot : {};
+  const lists = [
+    ["character", Array.isArray(P.characters) ? P.characters : []],
+    ["location", Array.isArray(P.locations) ? P.locations : []],
+    ["prop", Array.isArray(P.props) ? P.props : []],
+    ["vehicle", Array.isArray(P.vehicles) ? P.vehicles : []],
+    ["audio", Array.isArray(P.audio) ? P.audio : []],
+  ];
+  return (Array.isArray(s.codes) ? s.codes : []).map((raw) => {
+    const token = String(raw == null ? "" : raw);
+    const matches = [];
+    for (const [type, list] of lists)
+      for (const entity of list)
+        if (shotEntityTokenMatches(token, entity?.id))
+          matches.push({ type, id: String(entity.id), name: String(entity.name || entity.id) });
+    const exact = matches.find((match) => match.id === token) || null;
+    const primary = exact || matches[0] || null;
+    const status = !primary
+      ? "unresolved"
+      : matches.length > 1
+        ? "ambiguous"
+        : exact
+          ? "exact"
+          : "reinterpreted";
+    return {
+      token,
+      status,
+      type: primary ? primary.type : shotDependencyTokenType(token),
+      id: primary ? primary.id : "",
+      name: primary ? primary.name : "",
+      /* The specificity the compatibility rule threw away, when it threw any away. */
+      discarded: primary && primary.id !== token ? token.slice(primary.id.length) : "",
+      matches,
+    };
+  });
+}
+/* Tokens whose stored specificity did not survive resolution, or that named
+   nothing at all. Exact matches are quiet by design. */
+function lossyShotCodeTokens(project, shot) {
+  return classifyShotCodeTokens(project, shot).filter((row) => row.status !== "exact");
+}
 
 function shotDependencyTokenType(token) {
   const value = String(token || "").trim().toUpperCase();
@@ -131,11 +273,29 @@ function unresolvedShotDependencies(project, shot) {
 
 if (typeof window !== "undefined") {
   window.shotEntityTokenMatches = shotEntityTokenMatches;
+  window.entityVisualDescription = entityVisualDescription;
+  window.resolveShotDuration = resolveShotDuration;
+  window.shotDurationSeconds = shotDurationSeconds;
   window.resolveShotEntities = resolveShotEntities;
+  window.classifyShotCodeTokens = classifyShotCodeTokens;
+  window.lossyShotCodeTokens = lossyShotCodeTokens;
   window.shotDependencyTokenType = shotDependencyTokenType;
   window.shotDependencyRecords = shotDependencyRecords;
   window.unresolvedShotDependencies = unresolvedShotDependencies;
 }
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { shotEntityTokenMatches, resolveShotEntities, shotDependencyTokenType, shotDependencyRecords, unresolvedShotDependencies };
+  module.exports = {
+    shotEntityTokenMatches,
+    entityKindIsCharacter,
+    entityVisualDescription,
+    SHOT_DURATION_ALIASES,
+    shotDurationSeconds,
+    resolveShotDuration,
+    resolveShotEntities,
+    classifyShotCodeTokens,
+    lossyShotCodeTokens,
+    shotDependencyTokenType,
+    shotDependencyRecords,
+    unresolvedShotDependencies,
+  };
 }

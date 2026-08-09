@@ -1,6 +1,6 @@
 const fs = require("fs");
 const path = require("path");
-const { resolveShotEntities } = require("./public/shared-entities");
+const { resolveShotEntities, entityVisualDescription, resolveShotDuration } = require("./public/shared-entities");
 const { buildCameraPhrases } = require("./public/shared-camera");
 /* One parser for the whole product. It lives in the shared module so the browser can use
    the same rule the prompt compiler does; this re-export keeps the Node API unchanged. */
@@ -319,7 +319,7 @@ function shotRefs(P, shot) {
       name: x.name || x.id,
       role: "identity",
       approvedFile: x.approvedFile || "",
-      canon: x.block || x.description || "",
+      canon: entityVisualDescription(x, "character"),
       drift: x.driftNotes || "",
       notes: x.notes || "",
       blockingNote: x.blockingNote || "",
@@ -337,7 +337,7 @@ function shotRefs(P, shot) {
           name: x.name || x.id,
           role,
           approvedFile: x.approvedFile || "",
-          canon: x.block || x.description || "",
+          canon: entityVisualDescription(x, type),
           drift: x.driftNotes || "",
           notes: x.notes || "",
           blockingNote: x.blockingNote || "",
@@ -418,7 +418,7 @@ function promptCharactersForContext(P, shot, scene, segment, resolvedCharacters 
     id: character.id,
     name: character.name || character.id,
     type: "character",
-    canon: character.block || character.description || "",
+    canon: entityVisualDescription(character, "character"),
     notes: character.notes || "",
   }));
 }
@@ -438,6 +438,7 @@ function buildContext(P, shotId, segmentId = "") {
       )
     : null;
   const resolvedForPrompt = resolveShotEntities(P, shot);
+  const duration = resolveShotDuration(shot, segment);
   return {
     promptEntities: promptCharactersForContext(P, shot, scene, segment, resolvedForPrompt.characters),
     project: {
@@ -475,14 +476,11 @@ function buildContext(P, shotId, segmentId = "") {
       positioning: segment
         ? segment.positioning || shot.positioning || ""
         : shot.positioning || "",
-      durationSeconds: Number(
-        segment
-          ? +segment.dur || 5
-          : shot.clips?.reduce((a, c) => a + (+c.dur || 0), 0) || shot.dur || 5,
-      ),
-      durationWasDefaulted: segment
-        ? !(Number(segment.dur) > 0)
-        : !((shot.clips || []).some((c) => Number(c.dur) > 0) || Number(shot.dur) > 0),
+      /* One resolver, so a duration stored under any supported alias is the
+         duration generation compiles against. Reading only `shot.dur` turned
+         the sample's declared 4-second shot into a defaulted 5-second one. */
+      durationSeconds: duration.seconds,
+      durationWasDefaulted: duration.wasDefaulted,
       motionDirection: segment
         ? segment.motionPrompt || segment.note || ""
         : shot.motionPrompt || "",

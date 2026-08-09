@@ -18,8 +18,11 @@
   function entityFor(list, id) { return (P[list] || []).find((item) => item.id === id); }
   function entityTypeLabel(list) { return ({ characters: "character", locations: "location", props: "prop", vehicles: "vehicle" })[list] || "asset"; }
   function entityFolder(list) { return ({ characters: "anchors", locations: "plates", props: "props", vehicles: "vehicles" })[list] || "media"; }
+  /* Coverage keeps its own override first — a coverage sheet may describe the
+     entity differently from the production canon — then defers to the one
+     shared rule instead of repeating a fourth guess at the same question. */
   function entityIdentityText(list, entity) {
-    return String(entity.coverageDescription || entity.creationDescription || (list === "characters" ? entity.block : entity.notes) || entity.visualDescription || "").trim();
+    return String(entity.coverageDescription || "").trim() || entityVisualDescription(entity, list);
   }
   function primaryReference(list, entity) {
     const file = entity.approvedFile || (entity.continuityStates || []).find((state) => state.isDefault)?.approvedFile || "";
