@@ -1,25 +1,36 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "updated": "2026-08-08",
   "_readme": [
-    "Model IDENTITY, CAPABILITY and EXECUTION metadata.",
+    "Model IDENTITY, CAPABILITY, EXECUTION and CATALOGUE metadata.",
     "",
     "Deliberately separate from data/model-profiles.json, which is the PROMPT-AUTHORING",
-    "registry the compiler consumes: 47 profiles of rules and sections that describe how",
-    "to write for a model. This file describes what a model IS, what it can do, and where",
-    "it could run. A definition links to a prompt profile by id; it never restates one.",
+    "registry the compiler consumes, and from data/provider-surfaces.json, which is what",
+    "a PROVIDER offers. This file describes what a model IS, what it can do, and what",
+    "CineBraid is prepared to say about it today.",
     "",
-    "`id` is the only identity. displayName is a label, and a FAL route is execution",
-    "metadata belonging to an adapter - neither may ever be used to select behaviour.",
-    "Adding a model must be a data change, never application-wide conditional logic.",
+    "`id` is the only identity. displayName is a label and a provider's own handle is",
+    "surface configuration - neither may ever be used to select behaviour. Adding a model",
+    "must be a data change, never application-wide conditional logic.",
     "",
-    "PHASE 1: nothing reads this file at runtime. It is validated by",
-    "tests/model-definition-registry.js and consumed by later phases.",
+    "SCHEMA 2 (C2a) adds the four things a catalogue needs and a fixture did not:",
+    "  catalogue        launch | next-up | watchlist | not-recommended | deprecated,",
+    "                   with maturity, a review date and an explicit recommendation",
+    "                   priority. Priority is a number a human wrote, never a sort of a",
+    "                   capability list - a longer resolution list is not a better model.",
+    "  useCases         what a filmmaker would reach for this to do.",
+    "  evidenceStrength WHO established the capabilities below. `provider-only` means a",
+    "                   provider's catalogue is the sole source; a launch model may not",
+    "                   be one, and that rule is enforced by test.",
+    "  promptPolicy     whether CineBraid can write for this model yet.",
     "",
-    "Capability values here are taken from data/model-profiles.json and from official",
-    "ComfyUI workflow templates. Where a fact is not established by either, the field is",
-    "null or omitted rather than guessed - an invented capability is worse than an absent",
-    "one, because something will eventually trust it."
+    "Capability values are taken from primary vendor sources where they exist, and from",
+    "a provider surface where they do not - never invented. Where a fact is unestablished",
+    "the field is null or omitted, and provenance says so. An invented capability is worse",
+    "than an absent one, because something will eventually trust it.",
+    "",
+    "Nothing reads this file at runtime yet. model-intelligence.js loads it; the shipped",
+    "generation paths are unchanged."
   ],
   "models": [
     {
@@ -33,16 +44,43 @@
       "origin": null,
       "role": "inference",
       "outputModalities": ["image"],
+      "evidenceStrength": "vendor",
+      "catalogue": {
+        "status": "launch",
+        "maturity": "generally-available",
+        "reviewedOn": "2026-08-08",
+        "priority": 10
+      },
+      "useCases": ["image-editing", "hero-still", "text-in-image", "blocking-frame"],
+      "recommendation": {
+        "headline": "The editing and text-rendering workhorse, and the one CineBraid can already dispatch.",
+        "strengths": [
+          "Inpainting with a real alpha-channel mask, so a change can be confined to part of a frame.",
+          "Documented text rendering, which is what makes signage, titles and readable props usable.",
+          "Sixteen reference images, and every input processed at high fidelity with no fidelity dial to get wrong.",
+          "The only model in this catalogue with both a full CineBraid model pack and a live dispatch path."
+        ],
+        "caveats": [
+          "No seed. Nothing about a result is reproducible from parameters.",
+          "No transparent background on this model, so a cut-out has to be produced another way.",
+          "Long edge capped at 3840px and the ratio at 3:1, which rules out extreme scope formats."
+        ]
+      },
       "promptProfiles": {
         "t2i": "gpt-image-2/t2i",
         "edit": "gpt-image-2/edit",
         "multi-reference": "gpt-image-2/multi-reference",
-        "blocking": "gpt-image-2/blocking"
+        "blocking": "gpt-image-2/blocking",
+        "inpaint": null
+      },
+      "promptPolicy": {
+        "state": "pack",
+        "packId": "gpt-image-2"
       },
       "capabilities": {
-        "modes": ["t2i", "edit", "multi-reference", "blocking"],
+        "modes": ["t2i", "edit", "multi-reference", "blocking", "inpaint"],
         "inputModalities": ["text", "image"],
-        "referenceRoles": ["identity", "location", "prop", "style", "composition", "base", "reference"],
+        "referenceRoles": ["identity", "location", "prop", "style", "composition", "base", "reference", "mask"],
         "maxReferenceImages": 16,
         "maxReferenceVideos": 0,
         "maxReferenceAudio": 0,
@@ -54,11 +92,13 @@
           "nativeAudio": false,
           "referenceWeights": false,
           "controlNet": false,
-          "lora": false
+          "lora": false,
+          "seed": false,
+          "candidateBatching": true
         }
       },
       "constraints": {
-        "resolutions": null,
+        "resolutions": ["1024x1024", "1536x1024", "1024x1536", "2048x2048", "2048x1152", "3840x2160", "2160x3840", "auto"],
         "aspectRatios": null,
         "durationSeconds": null,
         "fps": null,
@@ -68,115 +108,24 @@
       },
       "execution": [
         {
-          "backendId": "fal",
+          "surfaceId": "fal-queue",
           "state": "available",
+          "local": false,
           "note": "Dispatched today through generation.fal.textModel / editModel. The route is adapter configuration, not identity."
-        }
-      ],
-      "provenance": {
-        "capabilitySource": "data/model-profiles.json gpt-image-2/{t2i,edit,multi-reference,blocking} supports{} and limits{}",
-        "verified": true
-      }
-    },
-    {
-      "id": "minimax-h3/fl2va",
-      "family": "minimax-h3",
-      "variant": "fl2va",
-      "displayName": "MiniMax H3 - first/last frame",
-      "vendor": "MiniMax",
-      "openWeights": true,
-      "license": null,
-      "origin": null,
-      "role": "inference",
-      "outputModalities": ["video"],
-      "promptProfiles": {
-        "t2v": "minimax-h3/t2v",
-        "i2v": "minimax-h3/i2v",
-        "flf": "minimax-h3/flf"
-      },
-      "capabilities": {
-        "modes": ["t2v", "i2v", "flf"],
-        "inputModalities": ["text", "image"],
-        "referenceRoles": ["first-frame", "last-frame", "base"],
-        "maxReferenceImages": 2,
-        "maxReferenceVideos": 0,
-        "maxReferenceAudio": 0,
-        "flags": {
-          "firstFrame": true,
-          "lastFrame": true,
-          "nativeAudio": true,
-          "mask": false,
-          "referenceWeights": false
-        }
-      },
-      "constraints": {
-        "resolutions": ["768P", "2K"],
-        "aspectRatios": null,
-        "durationSeconds": [5, 15],
-        "fps": null,
-        "frameQuantiser": null,
-        "maxPromptCharacters": 2000,
-        "vramGuidanceGb": null
-      },
-      "execution": [
+        },
         {
-          "backendId": "fal",
-          "state": "available",
-          "note": "Dispatched today through generation.fal.h3TextModel / h3ImageModel."
+          "surfaceId": "openai-images",
+          "state": "preparation",
+          "local": false,
+          "note": "The vendor's own API. No OpenAI image credential path exists in CineBraid."
         }
       ],
+      "evidence": {
+        "file": "docs/architecture/model-evidence/gpt-image-2.json",
+        "checkedOn": "2026-08-08"
+      },
       "provenance": {
-        "capabilitySource": "data/model-profiles.json minimax-h3/{t2v,i2v,flf}; nativeAudio asserted here from the official ComfyUI template wiring VAEDecodeAudio into CreateVideo, NOT from the unread supports.nativeStereoAudio flag",
-        "verified": true
-      }
-    },
-    {
-      "id": "minimax-h3/ref2va",
-      "family": "minimax-h3",
-      "variant": "ref2va",
-      "displayName": "MiniMax H3 - reference to video",
-      "vendor": "MiniMax",
-      "openWeights": true,
-      "license": null,
-      "origin": null,
-      "role": "inference",
-      "outputModalities": ["video"],
-      "promptProfiles": {
-        "r2v": "minimax-h3/multi-frame"
-      },
-      "capabilities": {
-        "modes": ["r2v"],
-        "inputModalities": ["text", "image", "video", "audio"],
-        "referenceRoles": ["identity", "location", "prop", "motion-reference", "voice", "first-frame", "last-frame"],
-        "maxReferenceImages": 9,
-        "maxReferenceVideos": 3,
-        "maxReferenceAudio": 3,
-        "flags": {
-          "firstFrame": true,
-          "lastFrame": true,
-          "nativeAudio": true,
-          "mask": false,
-          "referenceWeights": false
-        }
-      },
-      "constraints": {
-        "resolutions": ["768P", "2K"],
-        "aspectRatios": null,
-        "durationSeconds": [5, 15],
-        "fps": null,
-        "frameQuantiser": null,
-        "maxPromptCharacters": 2000,
-        "vramGuidanceGb": null
-      },
-      "execution": [
-        {
-          "backendId": "fal",
-          "state": "available",
-          "note": "Dispatched today through generation.fal.h3ReferenceModel. A DIFFERENT checkpoint from fl2va - this is why variant is part of identity."
-        }
-      ],
-      "provenance": {
-        "capabilitySource": "data/model-profiles.json minimax-h3/multi-frame supports{} and limits{}; nativeAudio asserted here from the official ComfyUI template video_minimax_h3_r2v.json wiring VAEDecodeAudio and an audio VAE into CreateVideo, NOT from the unread supports.nativeStereoAudio flag",
+        "capabilitySource": "OpenAI model page for gpt-image-2 and the official image-generation guide: exact size strings, edges divisible by 16, long:short ratio no more than 3:1, total pixels 655,360-8,294,400, quality low|medium|high|auto, inpainting via an alpha-channel mask, no transparent background, input_fidelity not settable. Reference count 16 retained from data/model-profiles.json gpt-image-2/t2i limits.maxReferences.",
         "verified": true
       }
     },
@@ -187,12 +136,41 @@
       "displayName": "Z-Image Turbo",
       "vendor": "Tongyi Lab",
       "openWeights": true,
-      "license": null,
-      "origin": null,
+      "license": "Apache-2.0",
+      "origin": "https://huggingface.co/Tongyi-MAI/Z-Image-Turbo",
       "role": "inference",
       "outputModalities": ["image"],
+      "evidenceStrength": "vendor",
+      "catalogue": {
+        "status": "launch",
+        "maturity": "generally-available",
+        "reviewedOn": "2026-08-08",
+        "priority": 10
+      },
+      "useCases": ["fast-image-iteration", "local-image", "blocking-frame"],
+      "recommendation": {
+        "headline": "Cheap, fast looks that cost nothing per frame, on the filmmaker's own machine.",
+        "strengths": [
+          "6B parameters inside 16GB of VRAM, with CPU offloading below that.",
+          "Eight function evaluations with guidance disabled, so a look is a few seconds rather than a minute.",
+          "Apache 2.0 - no downstream conditions to read before shipping.",
+          "Accurate Chinese and English text rendering, which most fast models give up on.",
+          "ControlNet in the official template: a pose or depth input is a legitimate way to fix staging on a model that cannot accept an approved reference image."
+        ],
+        "caveats": [
+          "Text-to-image only. Editing is Z-Image-Edit, a different model.",
+          "The vendor's own model zoo rates its output diversity Low: it is a distilled speed model and it looks like one.",
+          "No WorkflowRecipe ships, so the local path is recorded and cannot run yet."
+        ]
+      },
       "promptProfiles": {
-        "t2i": null
+        "t2i": null,
+        "variation": null
+      },
+      "promptPolicy": {
+        "state": "not-established",
+        "packId": null,
+        "note": "No official Tongyi prompt-writing guide has been located. CineBraid must not invent one; a pack for this family would need a documented policy first."
       },
       "capabilities": {
         "modes": ["t2i", "variation"],
@@ -201,6 +179,7 @@
         "maxReferenceImages": 0,
         "maxReferenceVideos": 0,
         "maxReferenceAudio": 0,
+        "textRendering": true,
         "flags": {
           "seed": true,
           "candidateBatching": true,
@@ -224,15 +203,2542 @@
       },
       "execution": [
         {
-          "backendId": "comfy",
+          "surfaceId": "comfy-local",
           "state": "preparation",
+          "local": true,
           "recipeIds": ["zimage-turbo-t2i"],
-          "note": "No WorkflowRecipe ships yet. This records the intended local path; nothing can dispatch to it."
+          "note": "No WorkflowRecipe ships. This records the intended local path; nothing can dispatch to it."
         }
       ],
+      "evidence": {
+        "file": "docs/architecture/model-evidence/z-image.json",
+        "checkedOn": "2026-08-08"
+      },
       "provenance": {
-        "capabilitySource": "Official ComfyUI template image_z_image_turbo.json: UNETLoader(z_image_turbo_bf16), EmptySD3LatentImage(batch_size), KSampler(seed, 8 steps, cfg 1.0). No prompt profile ships for this family yet, so promptProfiles.t2i is null.",
+        "capabilitySource": "Official Tongyi-MAI/Z-Image-Turbo model card: 6B parameters, Apache 2.0, 8 NFEs at guidance_scale 0.0, fits 16GB VRAM, bilingual text rendering, text-to-image only. LoRA and ControlNet from the official ComfyUI template image_z_image_turbo.json: UNETLoader(z_image_turbo_bf16), EmptySD3LatentImage(batch_size), KSampler(seed).",
         "verified": true
+      }
+    },
+    {
+      "id": "krea-2/large",
+      "family": "krea-2",
+      "variant": "large",
+      "displayName": "Krea 2 Large",
+      "vendor": "Krea",
+      "openWeights": false,
+      "license": null,
+      "origin": null,
+      "role": "inference",
+      "outputModalities": ["image"],
+      "evidenceStrength": "provider-only",
+      "catalogue": {
+        "status": "next-up",
+        "maturity": "generally-available",
+        "reviewedOn": "2026-08-08",
+        "priority": 10
+      },
+      "useCases": ["hero-still", "style-reference", "blocking-frame"],
+      "recommendation": {
+        "headline": "Ten weighted references - the first model here that can be told how much each reference matters.",
+        "strengths": [
+          "Ten reference images, each with its own 0-1 strength and positive or negative guidance.",
+          "A creativity control with four named levels rather than a raw CFG number.",
+          "Photorealism that keeps motion blur, grain and low dynamic range rather than polishing them out."
+        ],
+        "caveats": [
+          "Provider-only evidence. Krea's own documentation for this HOSTED variant has not been read.",
+          "The open release is Krea 2 Raw and Krea 2 Turbo, both text-to-image only. Whether Large corresponds to either is NOT established, so its ten weighted references must never be assumed to exist in the published weights.",
+          "CineBraid cannot express a per-reference weight in a plan yet, so the model's best feature is currently unreachable."
+        ]
+      },
+      "promptProfiles": {
+        "t2i": null,
+        "multi-reference": null,
+        "style-reference": null
+      },
+      "promptPolicy": {
+        "state": "not-established",
+        "packId": null
+      },
+      "capabilities": {
+        "modes": ["t2i", "multi-reference", "style-reference"],
+        "inputModalities": ["text", "image"],
+        "referenceRoles": ["identity", "style", "reference", "composition", "colour-palette", "location"],
+        "maxReferenceImages": 10,
+        "maxReferenceVideos": 0,
+        "maxReferenceAudio": 0,
+        "flags": {
+          "seed": true,
+          "referenceWeights": true,
+          "candidateBatching": true,
+          "mask": false,
+          "nativeAudio": false,
+          "firstFrame": false,
+          "lastFrame": false
+        }
+      },
+      "constraints": {
+        "resolutions": null,
+        "aspectRatios": null,
+        "durationSeconds": null,
+        "fps": null,
+        "frameQuantiser": null,
+        "maxPromptCharacters": null,
+        "vramGuidanceGb": null
+      },
+      "execution": [
+        {
+          "surfaceId": "runware",
+          "state": "preparation",
+          "local": false,
+          "note": "Catalogued only. No Runware adapter exists."
+        }
+      ],
+      "evidence": {
+        "file": "docs/architecture/model-evidence/krea-2.json",
+        "checkedOn": "2026-08-08"
+      },
+      "provenance": {
+        "capabilitySource": "Runware model documentation for krea:krea@2-large: up to 10 weighted reference images with independent 0-1 strength and positive/negative guidance, seed, creativity levels raw|low|medium|high, moodboard presets. PROVIDER-ONLY - no Krea vendor documentation has been read. Krea's open release covers Raw and Turbo only; the relationship between this hosted variant and either published checkpoint is NOT established, so no open-weight capability is inherited here.",
+        "verified": true
+      }
+    },
+    {
+      "id": "krea-2/turbo",
+      "family": "krea-2",
+      "variant": "turbo",
+      "displayName": "Krea 2 Turbo",
+      "vendor": "Krea",
+      "openWeights": true,
+      "license": "Krea 2 Community License",
+      "origin": "https://huggingface.co/krea/Krea-2-Turbo",
+      "role": "inference",
+      "outputModalities": ["image"],
+      "evidenceStrength": "vendor",
+      "catalogue": {
+        "status": "next-up",
+        "maturity": "generally-available",
+        "reviewedOn": "2026-08-08",
+        "priority": 20
+      },
+      "useCases": ["fast-image-iteration", "local-image", "blocking-frame"],
+      "recommendation": {
+        "headline": "12B open weights that run in eight steps - and a checkpoint that cannot accept a reference image.",
+        "strengths": [
+          "Open weights, official inference code and a published community licence.",
+          "Eight steps at cfg 0.0: the checkpoint is its own fast mode.",
+          "Krea 2 Raw is published specifically as the LoRA-training base, so production identity can be trained locally rather than referenced."
+        ],
+        "caveats": [
+          "THE OPEN CHECKPOINT IS TEXT-TO-IMAGE ONLY. The hosted endpoint's ten weighted references are a hosted capability and are NOT in these weights.",
+          "12B, against Z-Image Turbo's 6B - a heavier local model for the same job.",
+          "A community licence, not Apache. Its terms must be read before anything ships on it.",
+          "No WorkflowRecipe ships, so the local path is recorded and cannot run."
+        ]
+      },
+      "promptProfiles": {
+        "t2i": null
+      },
+      "promptPolicy": {
+        "state": "not-established",
+        "packId": null
+      },
+      "capabilities": {
+        "modes": ["t2i"],
+        "inputModalities": ["text"],
+        "referenceRoles": [],
+        "maxReferenceImages": 0,
+        "maxReferenceVideos": 0,
+        "maxReferenceAudio": 0,
+        "flags": {
+          "seed": true,
+          "candidateBatching": true,
+          "referenceWeights": false,
+          "nativeAudio": false,
+          "mask": false,
+          "lora": true
+        }
+      },
+      "constraints": {
+        "resolutions": null,
+        "aspectRatios": null,
+        "durationSeconds": null,
+        "fps": null,
+        "frameQuantiser": null,
+        "maxPromptCharacters": null,
+        "vramGuidanceGb": null
+      },
+      "execution": [
+        {
+          "surfaceId": "comfy-local",
+          "state": "preparation",
+          "local": true,
+          "recipeIds": ["krea-2-turbo-t2i"],
+          "note": "Open weights with official inference code. No WorkflowRecipe ships, so nothing can dispatch to it."
+        },
+        {
+          "surfaceId": "runware",
+          "state": "preparation",
+          "local": false,
+          "note": "Catalogued only."
+        }
+      ],
+      "evidence": {
+        "file": "docs/architecture/model-evidence/krea-2.json",
+        "checkedOn": "2026-08-08"
+      },
+      "provenance": {
+        "capabilitySource": "Official krea/Krea-2-Turbo model card and the krea-ai/krea-2 inference repository: 12B dense DiT, Krea 2 Community License, 8 steps at guidance_scale 0.0, 1024x1024 and 2048x2048 demonstrated, TEXT-TO-IMAGE ONLY - the card documents no image-to-image, reference-image or editing capability. Krea 2 Raw is the undistilled base published for fine-tuning and LoRA training, which is where the lora flag comes from. Runware's hosted krea:krea@2-turbo endpoint agrees: no reference images.",
+        "verified": true
+      },
+      "surfaceCapabilities": {
+        "local": {
+          "modes": ["t2i"],
+          "referenceRoles": [],
+          "maxReferenceImages": 0
+        },
+        "api": {
+          "modes": ["t2i"],
+          "referenceRoles": [],
+          "maxReferenceImages": 0
+        }
+      }
+    },
+    {
+      "id": "seedream/5.0-pro",
+      "family": "seedream",
+      "variant": "5.0-pro",
+      "displayName": "Seedream 5.0 Pro",
+      "vendor": "ByteDance",
+      "openWeights": false,
+      "license": null,
+      "origin": null,
+      "role": "inference",
+      "outputModalities": ["image"],
+      "evidenceStrength": "provider-only",
+      "catalogue": {
+        "status": "next-up",
+        "maturity": "generally-available",
+        "reviewedOn": "2026-08-08",
+        "priority": 20
+      },
+      "useCases": ["hero-still", "image-editing", "blocking-frame"],
+      "recommendation": {
+        "headline": "Very large output and ten-image fusion, at roughly half GPT Image 2's ceiling price.",
+        "strengths": [
+          "Up to ten input images for multi-image fusion and reference-guided editing.",
+          "Output area up to 4.6 megapixels with ratios from 1:16 to 16:1 - far past the 3:1 GPT Image 2 allows.",
+          "First reference image priced at zero."
+        ],
+        "caveats": [
+          "Provider-only evidence: BytePlus's own documentation renders client-side and could not be read.",
+          "Prompt capped at 3,000 characters on the surface examined.",
+          "No mask, so an edit cannot be confined the way an inpaint can."
+        ]
+      },
+      "promptProfiles": {
+        "t2i": null,
+        "edit": null,
+        "multi-reference": null
+      },
+      "promptPolicy": {
+        "state": "not-established",
+        "packId": null
+      },
+      "capabilities": {
+        "modes": ["t2i", "edit", "multi-reference"],
+        "inputModalities": ["text", "image"],
+        "referenceRoles": ["identity", "location", "prop", "style", "composition", "base", "reference"],
+        "maxReferenceImages": 10,
+        "maxReferenceVideos": 0,
+        "maxReferenceAudio": 0,
+        "flags": {
+          "seed": true,
+          "mask": false,
+          "referenceWeights": false,
+          "nativeAudio": false,
+          "firstFrame": false,
+          "lastFrame": false
+        }
+      },
+      "constraints": {
+        "resolutions": null,
+        "aspectRatios": null,
+        "durationSeconds": null,
+        "fps": null,
+        "frameQuantiser": null,
+        "maxPromptCharacters": 3000,
+        "vramGuidanceGb": null
+      },
+      "execution": [
+        {
+          "surfaceId": "runware",
+          "state": "preparation",
+          "local": false,
+          "note": "Catalogued only."
+        }
+      ],
+      "evidence": {
+        "file": "docs/architecture/model-evidence/seedream.json",
+        "checkedOn": "2026-08-08"
+      },
+      "provenance": {
+        "capabilitySource": "Runware model documentation for bytedance:seedream@5.0-pro. PROVIDER-ONLY - docs.byteplus.com serves its ModelArk pages through client-side rendering and returned only navigation.",
+        "verified": true
+      }
+    },
+    {
+      "id": "gemini-image/3.1-flash",
+      "family": "gemini-image",
+      "variant": "3.1-flash",
+      "displayName": "Nano Banana 2",
+      "vendor": "Google",
+      "openWeights": false,
+      "license": null,
+      "origin": null,
+      "role": "inference",
+      "outputModalities": ["image"],
+      "evidenceStrength": "vendor",
+      "catalogue": {
+        "status": "next-up",
+        "maturity": "generally-available",
+        "reviewedOn": "2026-08-08",
+        "priority": 20
+      },
+      "useCases": ["image-editing", "hero-still", "text-in-image", "blocking-frame"],
+      "recommendation": {
+        "headline": "Character consistency as a first-class input, and 4K without a separate upscale.",
+        "strengths": [
+          "Reference images are TYPED: up to 10 object, 4 character and 3 style references, which is closer to how a production actually thinks than one undifferentiated pile.",
+          "512px to 4K in one model, with ten documented aspect ratios.",
+          "Multi-turn editing carried by a conversation id rather than by re-uploading the frame."
+        ],
+        "caveats": [
+          "Every output carries a SynthID watermark. That is a production fact, not a footnote - it ships in the frame.",
+          "No CineBraid execution path and no prompt policy yet.",
+          "Runware's identifier for this model resembles nothing Google publishes, so provider handles must never be treated as identity."
+        ]
+      },
+      "promptProfiles": {
+        "t2i": null,
+        "edit": null,
+        "multi-reference": null
+      },
+      "promptPolicy": {
+        "state": "not-established",
+        "packId": null,
+        "note": "Google publishes a prompting guide for this family. It has not been read into an evidence record, so no policy may be encoded yet."
+      },
+      "capabilities": {
+        "modes": ["t2i", "edit", "multi-reference"],
+        "inputModalities": ["text", "image"],
+        "referenceRoles": ["identity", "location", "prop", "style", "composition", "base", "reference"],
+        "maxReferenceImages": 14,
+        "maxReferenceVideos": 0,
+        "maxReferenceAudio": 0,
+        "textRendering": true,
+        "flags": {
+          "seed": false,
+          "mask": false,
+          "referenceWeights": false,
+          "nativeAudio": false,
+          "firstFrame": false,
+          "lastFrame": false
+        }
+      },
+      "constraints": {
+        "resolutions": ["0.5K", "1K", "2K", "4K"],
+        "aspectRatios": ["1:1", "3:2", "2:3", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"],
+        "durationSeconds": null,
+        "fps": null,
+        "frameQuantiser": null,
+        "maxPromptCharacters": null,
+        "vramGuidanceGb": null
+      },
+      "execution": [
+        {
+          "surfaceId": "runware",
+          "state": "preparation",
+          "local": false,
+          "note": "Catalogued only."
+        }
+      ],
+      "evidence": {
+        "file": "docs/architecture/model-evidence/gemini-image.json",
+        "checkedOn": "2026-08-08"
+      },
+      "provenance": {
+        "capabilitySource": "Google's official Gemini image-generation documentation: model id gemini-3.1-flash-image, resolutions 512px/1K/2K/4K, up to 10 object + 4 character + 3 style reference images (14 total), advanced text rendering, multi-turn editing via previous_interaction_id, SynthID watermark on all output. The 14 total is corroborated by Runware's own limit for the same model.",
+        "verified": true
+      }
+    },
+    {
+      "id": "gemini-image/3.1-flash-lite",
+      "family": "gemini-image",
+      "variant": "3.1-flash-lite",
+      "displayName": "Nano Banana 2 Lite",
+      "vendor": "Google",
+      "openWeights": false,
+      "license": null,
+      "origin": null,
+      "role": "inference",
+      "outputModalities": ["image"],
+      "evidenceStrength": "vendor",
+      "catalogue": {
+        "status": "next-up",
+        "maturity": "generally-available",
+        "reviewedOn": "2026-08-08",
+        "priority": 30
+      },
+      "useCases": ["fast-image-iteration", "blocking-frame"],
+      "recommendation": {
+        "headline": "The vendor's own fastest and cheapest image tier, and the cheapest hosted blocking candidate.",
+        "strengths": [
+          "Fourteen reference images at the lowest hosted price per frame in this catalogue.",
+          "0.5K and 1K, which is the right size range for a frame nobody intends to keep.",
+          "The documented transition target for the legacy Nano Banana."
+        ],
+        "caveats": [
+          "The references are UNTYPED: the vendor documents an object budget and no character or style budget, unlike Nano Banana 2. For two characters in one frame that may be the whole difference.",
+          "No 2K or 4K, so it cannot double as a hero-still model.",
+          "SynthID watermark on every output."
+        ]
+      },
+      "promptProfiles": {
+        "t2i": null,
+        "edit": null,
+        "multi-reference": null
+      },
+      "promptPolicy": {
+        "state": "not-established",
+        "packId": null
+      },
+      "capabilities": {
+        "modes": ["t2i", "edit", "multi-reference"],
+        "inputModalities": ["text", "image"],
+        "referenceRoles": ["identity", "location", "prop", "composition", "base", "reference"],
+        "maxReferenceImages": 14,
+        "maxReferenceVideos": 0,
+        "maxReferenceAudio": 0,
+        "textRendering": true,
+        "flags": {
+          "seed": false,
+          "mask": false,
+          "referenceWeights": false,
+          "nativeAudio": false,
+          "firstFrame": false,
+          "lastFrame": false
+        }
+      },
+      "constraints": {
+        "resolutions": ["0.5K", "1K"],
+        "aspectRatios": ["1:1", "3:2", "2:3", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"],
+        "durationSeconds": null,
+        "fps": null,
+        "frameQuantiser": null,
+        "maxPromptCharacters": null,
+        "vramGuidanceGb": null
+      },
+      "execution": [
+        {
+          "surfaceId": "runware",
+          "state": "preparation",
+          "local": false,
+          "note": "Catalogued only."
+        }
+      ],
+      "evidence": {
+        "file": "docs/architecture/model-evidence/gemini-image.json",
+        "checkedOn": "2026-08-08"
+      },
+      "provenance": {
+        "capabilitySource": "Google's official Gemini image-generation documentation: model id gemini-3.1-flash-lite-image, described as the fastest and cheapest Gemini image model, 512px and 1K only, up to 14 object images, ten documented aspect ratios, no Google Search grounding, SynthID on all output. Corroborated by Runware's model page, which exposes 1K only and prices it at $0.033603.",
+        "verified": true
+      }
+    },
+    {
+      "id": "gemini-image/3-pro",
+      "family": "gemini-image",
+      "variant": "3-pro",
+      "displayName": "Nano Banana Pro",
+      "vendor": "Google",
+      "openWeights": false,
+      "license": null,
+      "origin": null,
+      "role": "inference",
+      "outputModalities": ["image"],
+      "evidenceStrength": "vendor-partial",
+      "catalogue": {
+        "status": "watchlist",
+        "maturity": "generally-available",
+        "reviewedOn": "2026-08-08",
+        "priority": 60
+      },
+      "useCases": ["hero-still", "blocking-frame"],
+      "recommendation": {
+        "headline": "Google's premium image tier; fewer references than Nano Banana 2 and no established CineBraid advantage yet.",
+        "strengths": ["1K to 4K.", "A character-consistency mode with up to 5 character references."],
+        "caveats": [
+          "Fewer total references than the Flash tier.",
+          "No pricing or execution path established.",
+          "SynthID watermark applies."
+        ]
+      },
+      "promptProfiles": {},
+      "promptPolicy": {
+        "state": "not-established",
+        "packId": null
+      },
+      "capabilities": {
+        "modes": ["t2i", "edit", "multi-reference"],
+        "inputModalities": ["text", "image"],
+        "referenceRoles": ["identity", "prop", "reference"],
+        "maxReferenceImages": 11,
+        "maxReferenceVideos": 0,
+        "maxReferenceAudio": 0,
+        "flags": {
+          "seed": false,
+          "mask": false,
+          "nativeAudio": false
+        }
+      },
+      "constraints": {
+        "resolutions": ["1K", "2K", "4K"],
+        "aspectRatios": null,
+        "durationSeconds": null,
+        "fps": null,
+        "frameQuantiser": null,
+        "maxPromptCharacters": null,
+        "vramGuidanceGb": null
+      },
+      "execution": [
+        {
+          "surfaceId": "runware",
+          "state": "preparation",
+          "local": false,
+          "note": "Not catalogued as a Runware offering; recorded from Google's documentation only."
+        }
+      ],
+      "evidence": null,
+      "provenance": {
+        "capabilitySource": "Google's official Gemini image-generation documentation: model id gemini-3-pro-image, 1K/2K/4K, up to 6 object + 5 character references in character-consistency mode.",
+        "verified": true
+      }
+    },
+    {
+      "id": "gemini-image/2.5-flash",
+      "family": "gemini-image",
+      "variant": "2.5-flash",
+      "displayName": "Nano Banana (legacy)",
+      "vendor": "Google",
+      "openWeights": false,
+      "license": null,
+      "origin": null,
+      "role": "inference",
+      "outputModalities": ["image"],
+      "evidenceStrength": "vendor",
+      "catalogue": {
+        "status": "deprecated",
+        "maturity": "superseded",
+        "reviewedOn": "2026-08-08",
+        "priority": 900,
+        "supersededBy": "gemini-image/3.1-flash"
+      },
+      "useCases": [],
+      "recommendation": {
+        "headline": "Superseded. Google's own documentation recommends moving off it.",
+        "strengths": [],
+        "caveats": ["Marked legacy by the vendor, with a documented transition target."]
+      },
+      "promptProfiles": {},
+      "promptPolicy": {
+        "state": "not-established",
+        "packId": null
+      },
+      "capabilities": {
+        "modes": ["t2i", "edit"],
+        "inputModalities": ["text", "image"],
+        "referenceRoles": ["reference"],
+        "maxReferenceImages": 1,
+        "maxReferenceVideos": 0,
+        "maxReferenceAudio": 0,
+        "flags": {
+          "seed": false,
+          "nativeAudio": false
+        }
+      },
+      "constraints": {
+        "resolutions": ["1K"],
+        "aspectRatios": null,
+        "durationSeconds": null,
+        "fps": null,
+        "frameQuantiser": null,
+        "maxPromptCharacters": null,
+        "vramGuidanceGb": null
+      },
+      "execution": [
+        {
+          "surfaceId": "runware",
+          "state": "preparation",
+          "local": false,
+          "note": "Recorded so a deprecation has something to point at."
+        }
+      ],
+      "evidence": null,
+      "provenance": {
+        "capabilitySource": "Google's official Gemini image-generation documentation lists gemini-2.5-flash-image as a legacy model with a recommended transition to gemini-3.1-flash-lite-image.",
+        "verified": true
+      }
+    },
+    {
+      "id": "qwen-image/3.0",
+      "family": "qwen-image",
+      "variant": "3.0",
+      "displayName": "Qwen-Image 3.0",
+      "vendor": "Alibaba",
+      "openWeights": null,
+      "license": null,
+      "origin": null,
+      "role": "inference",
+      "outputModalities": ["image"],
+      "evidenceStrength": "provider-only",
+      "catalogue": {
+        "status": "watchlist",
+        "maturity": "generally-available",
+        "reviewedOn": "2026-08-08",
+        "priority": 60
+      },
+      "useCases": ["fast-image-iteration", "blocking-frame"],
+      "recommendation": {
+        "headline": "Cheap per image, but three references and no vendor documentation CineBraid could read.",
+        "strengths": ["$0.03 per image on the surface examined.", "Ratios 1:8 to 8:1."],
+        "caveats": [
+          "Provider-only evidence; qwen.ai's own model page returned no content.",
+          "Three reference images is thin for identity work.",
+          "An earlier Qwen-Image was Apache 2.0; whether 3.0 is open is NOT established and openWeights is null."
+        ]
+      },
+      "promptProfiles": {},
+      "promptPolicy": {
+        "state": "not-established",
+        "packId": null
+      },
+      "capabilities": {
+        "modes": ["t2i", "edit"],
+        "inputModalities": ["text", "image"],
+        "referenceRoles": ["reference", "base", "style"],
+        "maxReferenceImages": 3,
+        "maxReferenceVideos": 0,
+        "maxReferenceAudio": 0,
+        "flags": {
+          "seed": true,
+          "mask": false,
+          "nativeAudio": false
+        }
+      },
+      "constraints": {
+        "resolutions": null,
+        "aspectRatios": null,
+        "durationSeconds": null,
+        "fps": null,
+        "frameQuantiser": null,
+        "maxPromptCharacters": null,
+        "vramGuidanceGb": null
+      },
+      "execution": [
+        {
+          "surfaceId": "runware",
+          "state": "preparation",
+          "local": false,
+          "note": "Catalogued only."
+        }
+      ],
+      "evidence": null,
+      "provenance": {
+        "capabilitySource": "Runware model documentation for alibaba:qwen-image@3.0: 3 reference images, area 0.26-4.19 MP, ratios 1:8 to 8:1, seed 0-2147483647. PROVIDER-ONLY.",
+        "verified": true
+      }
+    },
+    {
+      "id": "flux-2/pro",
+      "family": "flux-2",
+      "variant": "pro",
+      "displayName": "FLUX.2 [pro]",
+      "vendor": "Black Forest Labs",
+      "openWeights": false,
+      "license": null,
+      "origin": null,
+      "role": "inference",
+      "outputModalities": ["image"],
+      "evidenceStrength": "none",
+      "catalogue": {
+        "status": "watchlist",
+        "maturity": "generally-available",
+        "reviewedOn": "2026-08-08",
+        "priority": 70
+      },
+      "useCases": [],
+      "recommendation": {
+        "headline": "Named as a candidate; nothing about it is established well enough to encode.",
+        "strengths": [],
+        "caveats": [
+          "The BFL documentation index reachable from here is now organised around FLUX 3; no FLUX.2 [pro] parameter schema was retrieved.",
+          "Its own vendor points at a newer family, which is a reason to look at FLUX 3 rather than back-fill this."
+        ]
+      },
+      "promptProfiles": {},
+      "promptPolicy": {
+        "state": "not-established",
+        "packId": null
+      },
+      "capabilities": {
+        "modes": ["t2i"],
+        "inputModalities": ["text", "image"],
+        "referenceRoles": [],
+        "maxReferenceImages": 0,
+        "maxReferenceVideos": 0,
+        "maxReferenceAudio": 0,
+        "flags": {}
+      },
+      "constraints": {
+        "resolutions": null,
+        "aspectRatios": null,
+        "durationSeconds": null,
+        "fps": null,
+        "frameQuantiser": null,
+        "maxPromptCharacters": null,
+        "vramGuidanceGb": null
+      },
+      "execution": [
+        {
+          "surfaceId": "bfl-api",
+          "state": "preparation",
+          "local": false,
+          "note": "Vendor API. No schema established."
+        }
+      ],
+      "evidence": null,
+      "provenance": {
+        "capabilitySource": "NOT ESTABLISHED. Text-to-image is asserted only because the model is documented as an image generation and editing model; no parameter list, resolution ceiling or reference limit was retrieved from a primary source.",
+        "verified": false
+      }
+    },
+    {
+      "id": "minimax-h3/fl2va",
+      "family": "minimax-h3",
+      "variant": "fl2va",
+      "displayName": "MiniMax H3 - first/last frame",
+      "vendor": "MiniMax",
+      "openWeights": true,
+      "license": "MiniMax H3 Community License Agreement",
+      "origin": "https://huggingface.co/MiniMaxAI/MiniMax-H3",
+      "role": "inference",
+      "outputModalities": ["video"],
+      "evidenceStrength": "vendor",
+      "catalogue": {
+        "status": "launch",
+        "maturity": "generally-available",
+        "reviewedOn": "2026-08-08",
+        "priority": 10
+      },
+      "useCases": ["image-to-video", "keyframe-video", "prompt-adherent-video", "audio-native-video"],
+      "recommendation": {
+        "headline": "The one video model CineBraid can actually dispatch, end to end, with intent coverage proven.",
+        "strengths": [
+          "First and last frame bound structurally, so an ending is a contract rather than a sentence.",
+          "Native 32kHz stereo audio generated with the picture.",
+          "A full model pack, a live fal path, a durable job record and an unresolved-submission lifecycle."
+        ],
+        "caveats": [
+          "No seed anywhere in MiniMax's or fal's documentation, so nothing is reproducible from parameters.",
+          "fal's 5-second floor is above the model's own 4, and a submission refuses rather than silently converting.",
+          "Open weights render 768p only; 2K comes from a module that is not open-sourced."
+        ]
+      },
+      "promptProfiles": {
+        "t2v": "minimax-h3/t2v",
+        "i2v": "minimax-h3/i2v",
+        "flf": "minimax-h3/flf"
+      },
+      "promptPolicy": {
+        "state": "pack",
+        "packId": "minimax-h3"
+      },
+      "capabilities": {
+        "modes": ["t2v", "i2v", "flf"],
+        "inputModalities": ["text", "image"],
+        "referenceRoles": ["first-frame", "last-frame", "base"],
+        "maxReferenceImages": 2,
+        "maxReferenceVideos": 0,
+        "maxReferenceAudio": 0,
+        "flags": {
+          "firstFrame": true,
+          "lastFrame": true,
+          "nativeAudio": true,
+          "mask": false,
+          "referenceWeights": false,
+          "seed": false
+        }
+      },
+      "constraints": {
+        "resolutions": ["768P", "2K"],
+        "aspectRatios": ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
+        "durationSeconds": [4, 15],
+        "fps": ["24"],
+        "frameQuantiser": null,
+        "maxPromptCharacters": 7000,
+        "vramGuidanceGb": null
+      },
+      "surfaceCapabilities": {
+        "local": {
+          "resolutions": ["768P"]
+        },
+        "api": {
+          "resolutions": ["768P", "2K"]
+        }
+      },
+      "execution": [
+        {
+          "surfaceId": "fal-queue",
+          "state": "available",
+          "local": false,
+          "note": "Dispatched today through generation.fal.h3TextModel / h3ImageModel."
+        },
+        {
+          "surfaceId": "runware",
+          "state": "preparation",
+          "local": false,
+          "note": "Catalogued only; Runware's H3 offering declares a seed that MiniMax does not."
+        }
+      ],
+      "evidence": {
+        "file": "docs/architecture/model-evidence/minimax-h3.json",
+        "checkedOn": "2026-08-08"
+      },
+      "provenance": {
+        "capabilitySource": "MiniMax's own model card and API reference, recorded claim by claim in the evidence file. Duration 4-15s corrected to the official floor in C1; nativeAudio asserted from the official ComfyUI template wiring VAEDecodeAudio into CreateVideo, NOT from the unread supports.nativeStereoAudio flag.",
+        "verified": true
+      }
+    },
+    {
+      "id": "minimax-h3/ref2va",
+      "family": "minimax-h3",
+      "variant": "ref2va",
+      "displayName": "MiniMax H3 - reference to video",
+      "vendor": "MiniMax",
+      "openWeights": true,
+      "license": "MiniMax H3 Community License Agreement",
+      "origin": "https://huggingface.co/MiniMaxAI/MiniMax-H3",
+      "role": "inference",
+      "outputModalities": ["video"],
+      "evidenceStrength": "vendor",
+      "catalogue": {
+        "status": "launch",
+        "maturity": "generally-available",
+        "reviewedOn": "2026-08-08",
+        "priority": 20
+      },
+      "useCases": ["cinematic-ref2vid", "audio-native-video", "prompt-adherent-video"],
+      "recommendation": {
+        "headline": "Approved identities, locations, motion and voice all carried into one directed shot.",
+        "strengths": [
+          "Nine images, three video clips and three audio clips in one request, with production meaning attached to each.",
+          "A different checkpoint from the first/last-frame model, which is why variant is part of identity.",
+          "Live today through fal."
+        ],
+        "caveats": [
+          "Audio cannot be the only reference input.",
+          "Twelve reference files total across all modalities.",
+          "No seed."
+        ]
+      },
+      "promptProfiles": {
+        "r2v": "minimax-h3/multi-frame"
+      },
+      "promptPolicy": {
+        "state": "pack",
+        "packId": "minimax-h3"
+      },
+      "capabilities": {
+        "modes": ["r2v"],
+        "inputModalities": ["text", "image", "video", "audio"],
+        "referenceRoles": ["identity", "location", "prop", "motion-reference", "voice", "first-frame", "last-frame"],
+        "maxReferenceImages": 9,
+        "maxReferenceVideos": 3,
+        "maxReferenceAudio": 3,
+        "flags": {
+          "firstFrame": true,
+          "lastFrame": true,
+          "nativeAudio": true,
+          "mask": false,
+          "referenceWeights": false,
+          "seed": false
+        }
+      },
+      "constraints": {
+        "resolutions": ["768P", "2K"],
+        "aspectRatios": ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
+        "durationSeconds": [4, 15],
+        "fps": ["24"],
+        "frameQuantiser": null,
+        "maxPromptCharacters": 7000,
+        "vramGuidanceGb": null
+      },
+      "surfaceCapabilities": {
+        "local": {
+          "resolutions": ["768P"]
+        },
+        "api": {
+          "resolutions": ["768P", "2K"]
+        }
+      },
+      "execution": [
+        {
+          "surfaceId": "fal-queue",
+          "state": "available",
+          "local": false,
+          "note": "Dispatched today through generation.fal.h3ReferenceModel. A DIFFERENT checkpoint from fl2va."
+        },
+        {
+          "surfaceId": "runware",
+          "state": "preparation",
+          "local": false,
+          "note": "Catalogued only."
+        }
+      ],
+      "evidence": {
+        "file": "docs/architecture/model-evidence/minimax-h3.json",
+        "checkedOn": "2026-08-08"
+      },
+      "provenance": {
+        "capabilitySource": "MiniMax's own model card: 9 images, 3 video clips, 3 audio clips, 12 files total, audio requires a visual reference. nativeAudio from the official ComfyUI template video_minimax_h3_r2v.json wiring VAEDecodeAudio and an audio VAE into CreateVideo, NOT from the unread supports.nativeStereoAudio flag.",
+        "verified": true
+      }
+    },
+    {
+      "id": "seedance/2.5",
+      "family": "seedance",
+      "variant": "2.5",
+      "displayName": "Seedance 2.5",
+      "vendor": "ByteDance",
+      "openWeights": false,
+      "license": null,
+      "origin": "https://seed.bytedance.com/en/seedance2_5",
+      "role": "inference",
+      "outputModalities": ["video"],
+      "evidenceStrength": "vendor-partial",
+      "catalogue": {
+        "status": "next-up",
+        "maturity": "generally-available",
+        "reviewedOn": "2026-08-08",
+        "priority": 10
+      },
+      "useCases": ["cinematic-ref2vid", "long-form-video", "audio-native-video", "keyframe-video"],
+      "recommendation": {
+        "headline": "Thirty seconds in one pass, with more reference material than anything else here.",
+        "strengths": [
+          "Up to 30 seconds in a single generation, which is the difference between a clip and a scene.",
+          "Thirty images, ten video clips and ten audio clips - the widest reference budget in this catalogue by a factor of three.",
+          "Timestamp-level editing of audio and video, and reference video understood as framing and cinematic intent rather than motion to copy."
+        ],
+        "caveats": [
+          "The surface CineBraid examined serves 480p and 720p only. Higher output is described by the vendor and is not available there.",
+          "ByteDance's own API documentation could not be read; duration, reference counts and pricing are the provider's numbers.",
+          "No execution path, no prompt policy, and a 30-second shot is a large paid experiment to get wrong."
+        ]
+      },
+      "promptProfiles": {
+        "t2v": null,
+        "i2v": null,
+        "flf": null,
+        "r2v": null,
+        "video-edit": null
+      },
+      "promptPolicy": {
+        "state": "not-established",
+        "packId": null,
+        "note": "ByteDance publishes a Seedance 2.5 prompt guide. It could not be retrieved, so no prompt policy may be encoded - including the reference-citation syntax, which is the single most important thing to get right for this model."
+      },
+      "capabilities": {
+        "modes": ["t2v", "i2v", "flf", "r2v", "video-edit"],
+        "inputModalities": ["text", "image", "video", "audio"],
+        "referenceRoles": [
+          "identity",
+          "location",
+          "prop",
+          "style",
+          "reference",
+          "composition",
+          "base",
+          "first-frame",
+          "last-frame",
+          "sequential-keyframe",
+          "waypoint",
+          "motion-reference",
+          "camera-reference",
+          "performance-reference",
+          "voice",
+          "audio-timing",
+          "sound-reference"
+        ],
+        "maxReferenceImages": 30,
+        "maxReferenceVideos": 10,
+        "maxReferenceAudio": 10,
+        "flags": {
+          "firstFrame": true,
+          "lastFrame": true,
+          "nativeAudio": true,
+          "seed": true,
+          "mask": false,
+          "referenceWeights": false
+        }
+      },
+      "constraints": {
+        "resolutions": null,
+        "aspectRatios": ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
+        "durationSeconds": [4, 30],
+        "fps": null,
+        "frameQuantiser": null,
+        "maxPromptCharacters": null,
+        "vramGuidanceGb": null
+      },
+      "execution": [
+        {
+          "surfaceId": "runware",
+          "state": "preparation",
+          "local": false,
+          "note": "Catalogued only. No Runware adapter exists."
+        }
+      ],
+      "evidence": {
+        "file": "docs/architecture/model-evidence/seedance.json",
+        "checkedOn": "2026-08-08"
+      },
+      "provenance": {
+        "capabilitySource": "ByteDance Seed's own Seedance 2.5 page establishes 30-second single-pass generation, reference-video understanding, and timestamp-level audio and video editing. Reference counts (30 images / 10 videos / 10 audio), the 4-30s range, seed and native audio come from Runware's model documentation - resolutions are deliberately null because the two sources disagree and neither is a model-level statement CineBraid has read.",
+        "verified": true
+      }
+    },
+    {
+      "id": "kling-video/3-pro",
+      "family": "kling-video",
+      "variant": "3-pro",
+      "displayName": "Kling 3.0 Pro",
+      "vendor": "Kuaishou",
+      "openWeights": false,
+      "license": null,
+      "origin": null,
+      "role": "inference",
+      "outputModalities": ["video"],
+      "evidenceStrength": "provider-only",
+      "catalogue": {
+        "status": "next-up",
+        "maturity": "generally-available",
+        "reviewedOn": "2026-08-08",
+        "priority": 20
+      },
+      "useCases": ["image-to-video", "audio-native-video", "prompt-adherent-video"],
+      "recommendation": {
+        "headline": "The mainstream image-to-video choice, with a native multi-shot control CineBraid has no equivalent of.",
+        "strengths": [
+          "multiPrompt: up to six sequential prompt segments whose durations must sum to the shot - a storyboard expressed as a parameter.",
+          "Native audio priced separately, so a silent shot costs a third less.",
+          "1080p at three ratios, first and last frame, and motion control from a reference video."
+        ],
+        "caveats": [
+          "PROVIDER-ONLY, and not by choice: kling.ai's own API documentation refused every request from this environment. Nothing here is a Kuaishou claim.",
+          "That is precisely why it is not a launch model - a paid video path should not rest on a single second-hand source.",
+          "One reference image only, and it cannot be combined with frame images."
+        ]
+      },
+      "promptProfiles": {
+        "t2v": null,
+        "i2v": null,
+        "flf": null,
+        "v2v": null
+      },
+      "promptPolicy": {
+        "state": "not-established",
+        "packId": null
+      },
+      "capabilities": {
+        "modes": ["t2v", "i2v", "flf", "v2v"],
+        "inputModalities": ["text", "image", "video"],
+        "referenceRoles": ["first-frame", "last-frame", "reference", "identity", "motion-reference", "camera-reference"],
+        "maxReferenceImages": 2,
+        "maxReferenceVideos": 1,
+        "maxReferenceAudio": 0,
+        "flags": {
+          "firstFrame": true,
+          "lastFrame": true,
+          "nativeAudio": true,
+          "seed": true,
+          "mask": false,
+          "referenceWeights": false
+        }
+      },
+      "constraints": {
+        "resolutions": ["1080P"],
+        "aspectRatios": ["16:9", "1:1", "9:16"],
+        "durationSeconds": [3, 15],
+        "fps": null,
+        "frameQuantiser": null,
+        "maxPromptCharacters": null,
+        "vramGuidanceGb": null
+      },
+      "execution": [
+        {
+          "surfaceId": "runware",
+          "state": "preparation",
+          "local": false,
+          "note": "Catalogued only."
+        }
+      ],
+      "evidence": {
+        "file": "docs/architecture/model-evidence/kling-video.json",
+        "checkedOn": "2026-08-08"
+      },
+      "provenance": {
+        "capabilitySource": "Runware model documentation for klingai:kling-video@3-pro, including its separately priced native audio generation. PROVIDER-ONLY - kling.ai's API documentation returned HTTP 446 for every request. maxReferenceImages is 2 because Runware allows two frame images OR one guidance reference, never both.",
+        "verified": true
+      }
+    },
+    {
+      "id": "kling-video/3-omni-pro",
+      "family": "kling-video",
+      "variant": "3-omni-pro",
+      "displayName": "Kling 3.0 Omni Pro",
+      "vendor": "Kuaishou",
+      "openWeights": false,
+      "license": null,
+      "origin": null,
+      "role": "inference",
+      "outputModalities": ["video"],
+      "evidenceStrength": "provider-only",
+      "catalogue": {
+        "status": "watchlist",
+        "maturity": "generally-available",
+        "reviewedOn": "2026-08-08",
+        "priority": 60
+      },
+      "useCases": ["cinematic-ref2vid"],
+      "recommendation": {
+        "headline": "The reference-driven Kling tier. Listed by a provider; no parameter schema read.",
+        "strengths": ["Described as reference-driven with temporal consistency and prompt-based editing."],
+        "caveats": ["Only a capability tag establishes any of this.", "No duration, resolution or reference limits retrieved."]
+      },
+      "promptProfiles": {},
+      "promptPolicy": {
+        "state": "not-established",
+        "packId": null
+      },
+      "capabilities": {
+        "modes": ["t2v", "i2v", "r2v"],
+        "inputModalities": ["text", "image"],
+        "referenceRoles": ["reference", "identity"],
+        "maxReferenceImages": 1,
+        "maxReferenceVideos": 0,
+        "maxReferenceAudio": 0,
+        "flags": {
+          "nativeAudio": false,
+          "seed": false
+        }
+      },
+      "constraints": {
+        "resolutions": null,
+        "aspectRatios": null,
+        "durationSeconds": null,
+        "fps": null,
+        "frameQuantiser": null,
+        "maxPromptCharacters": null,
+        "vramGuidanceGb": null
+      },
+      "execution": [
+        {
+          "surfaceId": "runware",
+          "state": "preparation",
+          "local": false,
+          "note": "Listed on Runware's Kling creator page; no model page read."
+        }
+      ],
+      "evidence": null,
+      "provenance": {
+        "capabilitySource": "Runware's Kling creator listing names Kling VIDEO 3.0 Omni Standard / Pro / 4K with text-to-video, image-to-video, reference-driven generation and temporal consistency. No parameter schema was read; maxReferenceImages 1 is the minimum the reference-driven tag implies and is deliberately conservative.",
+        "verified": false
+      }
+    },
+    {
+      "id": "flux-3-video/pro",
+      "family": "flux-3-video",
+      "variant": "pro",
+      "displayName": "FLUX 3 Video",
+      "vendor": "Black Forest Labs",
+      "openWeights": false,
+      "license": null,
+      "origin": null,
+      "role": "inference",
+      "outputModalities": ["video"],
+      "evidenceStrength": "vendor",
+      "catalogue": {
+        "status": "next-up",
+        "maturity": "generally-available",
+        "reviewedOn": "2026-08-08",
+        "priority": 30
+      },
+      "useCases": ["keyframe-video", "audio-native-video", "long-form-video"],
+      "recommendation": {
+        "headline": "Ten keyframes pinned to timestamps - the closest thing here to a directed sequence.",
+        "strengths": [
+          "Up to ten keyframes, each pinned to a frame index or a timestamp, which is exactly CineBraid's sequential-keyframe and waypoint roles.",
+          "Five to twenty seconds with synchronised audio on by default.",
+          "A draft mode that produces a cacheable preview before the full render, so an expensive model can be iterated cheaply."
+        ],
+        "caveats": [
+          "Expensive at full quality: roughly four times the draft rate, and video-to-video more again.",
+          "The vendor documents no seed. A provider surface offers one; the two are recorded separately and neither is promoted.",
+          "No execution path and no prompt policy yet."
+        ]
+      },
+      "promptProfiles": {
+        "t2v": null,
+        "i2v": null,
+        "flf": null,
+        "v2v": null
+      },
+      "promptPolicy": {
+        "state": "not-established",
+        "packId": null
+      },
+      "capabilities": {
+        "modes": ["t2v", "i2v", "flf", "v2v"],
+        "inputModalities": ["text", "image", "video"],
+        "referenceRoles": ["first-frame", "last-frame", "sequential-keyframe", "waypoint", "base"],
+        "maxReferenceImages": 10,
+        "maxReferenceVideos": 1,
+        "maxReferenceAudio": 0,
+        "flags": {
+          "firstFrame": true,
+          "lastFrame": true,
+          "nativeAudio": true,
+          "seed": false,
+          "mask": false,
+          "referenceWeights": false
+        }
+      },
+      "constraints": {
+        "resolutions": ["hd", "fhd"],
+        "aspectRatios": ["21:9", "2:1", "16:9", "4:3", "1:1", "3:4", "9:16"],
+        "durationSeconds": [5, 20],
+        "fps": null,
+        "frameQuantiser": null,
+        "maxPromptCharacters": null,
+        "vramGuidanceGb": null
+      },
+      "execution": [
+        {
+          "surfaceId": "bfl-api",
+          "state": "preparation",
+          "local": false,
+          "note": "The vendor's own endpoint. No BFL credential path exists in CineBraid."
+        },
+        {
+          "surfaceId": "runware",
+          "state": "preparation",
+          "local": false,
+          "note": "Catalogued only."
+        }
+      ],
+      "evidence": {
+        "file": "docs/architecture/model-evidence/flux-3-video.json",
+        "checkedOn": "2026-08-08"
+      },
+      "provenance": {
+        "capabilitySource": "Black Forest Labs' own FLUX 3 Video endpoint documentation: modes t2v/i2v/v2v/draft_enhance, 5-20 whole seconds or auto, resolution hd|fhd, ratios auto/21:9/2:1/16:9/4:3/1:1/3:4/9:16, generate_audio default true, up to ten keyframes pinned by index or timestamp, safety_tolerance 0-4. Seed is NOT documented by the vendor and the flag is false accordingly.",
+        "verified": true
+      }
+    },
+    {
+      "id": "ltx-2/2.3-distilled",
+      "family": "ltx-2",
+      "variant": "2.3-distilled",
+      "displayName": "LTX-2.3 Distilled",
+      "vendor": "Lightricks",
+      "openWeights": true,
+      "license": "ltx-2-community-license-agreement",
+      "origin": "https://huggingface.co/Lightricks/LTX-2.3",
+      "role": "inference",
+      "outputModalities": ["video"],
+      "evidenceStrength": "vendor",
+      "catalogue": {
+        "status": "next-up",
+        "maturity": "generally-available",
+        "reviewedOn": "2026-08-08",
+        "priority": 10
+      },
+      "useCases": ["local-video", "audio-native-video"],
+      "recommendation": {
+        "headline": "The open-weight local video option that actually exists - and the one Wan 2.7 is usually assumed to be.",
+        "strengths": [
+          "Weights, inference code and a LoRA trainer published by the vendor under a named licence.",
+          "Joint audio-video in one model, so a local render is not silent.",
+          "A real frame grid - width and height divisible by 32, frame count divisible by 8 plus 1 - which CineBraid's existing quantiser already expresses without a new mechanism."
+        ],
+        "caveats": [
+          "22B parameters. This is not a laptop model, and no VRAM guidance was published.",
+          "No WorkflowRecipe ships, so the local path is recorded and cannot run.",
+          "A community licence, not Apache: its terms must be read before anything ships on it."
+        ]
+      },
+      "promptProfiles": {
+        "t2v": null,
+        "i2v": null
+      },
+      "promptPolicy": {
+        "state": "not-established",
+        "packId": null
+      },
+      "capabilities": {
+        "modes": ["t2v", "i2v"],
+        "inputModalities": ["text", "image"],
+        "referenceRoles": ["first-frame", "base"],
+        "maxReferenceImages": 1,
+        "maxReferenceVideos": 0,
+        "maxReferenceAudio": 0,
+        "flags": {
+          "firstFrame": true,
+          "lastFrame": false,
+          "nativeAudio": true,
+          "seed": true,
+          "lora": true,
+          "mask": false,
+          "referenceWeights": false
+        }
+      },
+      "constraints": {
+        "resolutions": null,
+        "aspectRatios": null,
+        "durationSeconds": null,
+        "fps": null,
+        "frameQuantiser": {
+          "kind": "linear",
+          "plus": 1,
+          "fps": 24,
+          "note": "Frame count must be divisible by 8 plus 1. fps is CineBraid's assumption for expressing the grid and is NOT established by the model card; it is recorded here so the quantiser can be exercised, and must be confirmed before anything dispatches."
+        },
+        "maxPromptCharacters": null,
+        "vramGuidanceGb": null
+      },
+      "execution": [
+        {
+          "surfaceId": "comfy-local",
+          "state": "preparation",
+          "local": true,
+          "recipeIds": ["ltx-2-3-distilled-t2v"],
+          "note": "No WorkflowRecipe ships. Lightricks also publishes its own inference package, which is a second local path CineBraid has not modelled."
+        }
+      ],
+      "evidence": {
+        "file": "docs/architecture/model-evidence/ltx-2.json",
+        "checkedOn": "2026-08-08"
+      },
+      "provenance": {
+        "capabilitySource": "Official Lightricks/LTX-2.3 model card and the Lightricks/LTX-2 repository: 22B dev and distilled variants plus spatial and temporal upscalers, ltx-2-community-license-agreement, joint audio-video generation, width and height divisible by 32, frame count divisible by 8 + 1, LoRA and IC-LoRA training supported. Duration limits and VRAM guidance are NOT published and are null.",
+        "verified": true
+      }
+    },
+    {
+      "id": "wan/2.7",
+      "family": "wan",
+      "variant": "2.7",
+      "displayName": "Wan 2.7",
+      "vendor": "Alibaba",
+      "openWeights": null,
+      "license": null,
+      "origin": null,
+      "role": "inference",
+      "outputModalities": ["video"],
+      "evidenceStrength": "none",
+      "catalogue": {
+        "status": "watchlist",
+        "maturity": "generally-available",
+        "reviewedOn": "2026-08-08",
+        "priority": 80
+      },
+      "useCases": [],
+      "recommendation": {
+        "headline": "Widely described as the open local video model. Alibaba's own model hub does not publish its weights.",
+        "strengths": [],
+        "caveats": [
+          "The official Wan-AI organisation publishes Wan 2.2 and nothing later. No 2.5, 2.6, 2.7 or 3.0 repository exists there.",
+          "openWeights is null, not false: the absence of a repository is strong evidence and not a vendor statement.",
+          "This is the single largest correction this research pass produced. A local-video plan built on Wan 2.7 would have had nothing to run.",
+          "LTX-2.3 is the option that does what Wan 2.7 is assumed to do, and it is encoded above."
+        ]
+      },
+      "promptProfiles": {},
+      "promptPolicy": {
+        "state": "not-established",
+        "packId": null
+      },
+      "capabilities": {
+        "modes": ["t2v"],
+        "inputModalities": ["text"],
+        "referenceRoles": [],
+        "maxReferenceImages": 0,
+        "maxReferenceVideos": 0,
+        "maxReferenceAudio": 0,
+        "flags": {}
+      },
+      "constraints": {
+        "resolutions": null,
+        "aspectRatios": null,
+        "durationSeconds": null,
+        "fps": null,
+        "frameQuantiser": null,
+        "maxPromptCharacters": null,
+        "vramGuidanceGb": null
+      },
+      "execution": [],
+      "evidence": {
+        "file": "docs/architecture/model-evidence/wan.json",
+        "checkedOn": "2026-08-08"
+      },
+      "provenance": {
+        "capabilitySource": "NOT ESTABLISHED. The official Wan-AI model organisation lists Wan 2.2 variants (T2V, I2V, TI2V, S2V, Animate) and no 2.7 repository. Text-to-video is asserted only as the family's baseline task. No capability figure for 2.7 has been read from any primary source.",
+        "verified": false
+      }
+    },
+    {
+      "id": "wan/3.0",
+      "family": "wan",
+      "variant": "3.0",
+      "displayName": "Wan 3.0",
+      "vendor": "Alibaba",
+      "openWeights": null,
+      "license": null,
+      "origin": null,
+      "role": "inference",
+      "outputModalities": ["video"],
+      "evidenceStrength": "none",
+      "catalogue": {
+        "status": "not-recommended",
+        "maturity": "announced",
+        "reviewedOn": "2026-08-08",
+        "priority": 900
+      },
+      "useCases": [],
+      "recommendation": {
+        "headline": "No official documentation of any kind. Nothing to encode and nothing to plan around.",
+        "strengths": [],
+        "caveats": [
+          "No vendor page, model card, API reference or repository was located.",
+          "Kept in the catalogue only so the question has a recorded answer."
+        ]
+      },
+      "promptProfiles": {},
+      "promptPolicy": {
+        "state": "not-established",
+        "packId": null
+      },
+      "capabilities": {
+        "modes": ["t2v"],
+        "inputModalities": ["text"],
+        "referenceRoles": [],
+        "maxReferenceImages": 0,
+        "maxReferenceVideos": 0,
+        "maxReferenceAudio": 0,
+        "flags": {}
+      },
+      "constraints": {
+        "resolutions": null,
+        "aspectRatios": null,
+        "durationSeconds": null,
+        "fps": null,
+        "frameQuantiser": null,
+        "maxPromptCharacters": null,
+        "vramGuidanceGb": null
+      },
+      "execution": [],
+      "evidence": null,
+      "provenance": {
+        "capabilitySource": "NOT ESTABLISHED. No primary source located.",
+        "verified": false
+      }
+    },
+    {
+      "id": "happyhorse/1.1",
+      "family": "happyhorse",
+      "variant": "1.1",
+      "displayName": "HappyHorse 1.1",
+      "vendor": "Alibaba",
+      "openWeights": null,
+      "license": null,
+      "origin": null,
+      "role": "inference",
+      "outputModalities": ["video"],
+      "evidenceStrength": "provider-only",
+      "catalogue": {
+        "status": "watchlist",
+        "maturity": "generally-available",
+        "reviewedOn": "2026-08-08",
+        "priority": 60
+      },
+      "useCases": ["image-to-video"],
+      "recommendation": {
+        "headline": "Nine reference images at 1080p, and no vendor documentation at all.",
+        "strengths": ["1-9 reference images.", "3-15 seconds at 720p or 1080p."],
+        "caveats": [
+          "Provider-only.",
+          "One frame image, first position only.",
+          "Audio support not mentioned anywhere CineBraid has read."
+        ]
+      },
+      "promptProfiles": {},
+      "promptPolicy": {
+        "state": "not-established",
+        "packId": null
+      },
+      "capabilities": {
+        "modes": ["t2v", "i2v", "r2v"],
+        "inputModalities": ["text", "image"],
+        "referenceRoles": ["first-frame", "identity", "reference", "location"],
+        "maxReferenceImages": 9,
+        "maxReferenceVideos": 0,
+        "maxReferenceAudio": 0,
+        "flags": {
+          "firstFrame": true,
+          "lastFrame": false,
+          "seed": true,
+          "nativeAudio": false
+        }
+      },
+      "constraints": {
+        "resolutions": ["720P", "1080P"],
+        "aspectRatios": null,
+        "durationSeconds": [3, 15],
+        "fps": null,
+        "frameQuantiser": null,
+        "maxPromptCharacters": null,
+        "vramGuidanceGb": null
+      },
+      "execution": [
+        {
+          "surfaceId": "runware",
+          "state": "preparation",
+          "local": false,
+          "note": "Catalogued only."
+        }
+      ],
+      "evidence": null,
+      "provenance": {
+        "capabilitySource": "Runware model documentation for alibaba:happyhorse@1.1. PROVIDER-ONLY.",
+        "verified": true
+      }
+    },
+    {
+      "id": "gemini-omni-flash/1",
+      "family": "gemini-omni-flash",
+      "variant": "1",
+      "displayName": "Gemini Omni Flash",
+      "vendor": "Google",
+      "openWeights": false,
+      "license": null,
+      "origin": null,
+      "role": "inference",
+      "outputModalities": ["video"],
+      "evidenceStrength": "provider-only",
+      "catalogue": {
+        "status": "watchlist",
+        "maturity": "generally-available",
+        "reviewedOn": "2026-08-08",
+        "priority": 60
+      },
+      "useCases": ["image-to-video", "audio-native-video"],
+      "recommendation": {
+        "headline": "Conversational video editing; short, 720p only, and priced per token rather than per second.",
+        "strengths": [
+          "Multi-turn editing of a generated video.",
+          "Photo-to-video from several reference images.",
+          "Native audio."
+        ],
+        "caveats": [
+          "3-10 seconds and 720p only - too short and too small for a hero shot.",
+          "Token pricing makes cost per shot hard to predict, which matters when a filmmaker is authorising a spend.",
+          "Provider-only."
+        ]
+      },
+      "promptProfiles": {},
+      "promptPolicy": {
+        "state": "not-established",
+        "packId": null
+      },
+      "capabilities": {
+        "modes": ["t2v", "i2v", "v2v"],
+        "inputModalities": ["text", "image", "video"],
+        "referenceRoles": ["first-frame", "identity", "reference"],
+        "maxReferenceImages": 7,
+        "maxReferenceVideos": 1,
+        "maxReferenceAudio": 0,
+        "flags": {
+          "firstFrame": true,
+          "lastFrame": false,
+          "nativeAudio": true,
+          "seed": true
+        }
+      },
+      "constraints": {
+        "resolutions": ["720P"],
+        "aspectRatios": ["16:9", "9:16"],
+        "durationSeconds": [3, 10],
+        "fps": null,
+        "frameQuantiser": null,
+        "maxPromptCharacters": null,
+        "vramGuidanceGb": null
+      },
+      "execution": [
+        {
+          "surfaceId": "runware",
+          "state": "preparation",
+          "local": false,
+          "note": "Catalogued only."
+        }
+      ],
+      "evidence": null,
+      "provenance": {
+        "capabilitySource": "Runware model documentation for google:gemini@omni-flash, which states native audio generation is included. PROVIDER-ONLY.",
+        "verified": true
+      }
+    },
+    {
+      "id": "grok-imagine-video/1",
+      "family": "grok-imagine-video",
+      "variant": "1",
+      "displayName": "Grok Imagine Video",
+      "vendor": "xAI",
+      "openWeights": false,
+      "license": null,
+      "origin": null,
+      "role": "inference",
+      "outputModalities": ["video"],
+      "evidenceStrength": "vendor-partial",
+      "catalogue": {
+        "status": "watchlist",
+        "maturity": "preview",
+        "reviewedOn": "2026-08-08",
+        "priority": 70
+      },
+      "useCases": [],
+      "recommendation": {
+        "headline": "A real documented API at a low flat rate; nothing that a directed production needs.",
+        "strengths": ["Official xAI documentation with a deferred request/poll model.", "Flat $0.05 per second."],
+        "caveats": [
+          "Up to three reference images on the image path; the video path's reference model was not established.",
+          "No first/last frame contract, no reference roles, no native audio established.",
+          "Nothing here addresses continuity, which is what CineBraid exists to protect."
+        ]
+      },
+      "promptProfiles": {},
+      "promptPolicy": {
+        "state": "not-established",
+        "packId": null
+      },
+      "capabilities": {
+        "modes": ["t2v", "i2v"],
+        "inputModalities": ["text", "image"],
+        "referenceRoles": ["base"],
+        "maxReferenceImages": 1,
+        "maxReferenceVideos": 0,
+        "maxReferenceAudio": 0,
+        "flags": {
+          "seed": false,
+          "nativeAudio": false
+        }
+      },
+      "constraints": {
+        "resolutions": null,
+        "aspectRatios": null,
+        "durationSeconds": null,
+        "fps": null,
+        "frameQuantiser": null,
+        "maxPromptCharacters": null,
+        "vramGuidanceGb": null
+      },
+      "execution": [],
+      "evidence": null,
+      "provenance": {
+        "capabilitySource": "xAI's official Imagine documentation establishes video generation from text or a still image, deferred request/poll delivery, configurable duration, aspect ratio and resolution, and $0.05 per second. Exact allowed values were not retrieved, so every constraint is null.",
+        "verified": true
+      }
+    },
+    {
+      "id": "vidu/q3",
+      "family": "vidu",
+      "variant": "q3",
+      "displayName": "Vidu Q3",
+      "vendor": "Shengshu",
+      "openWeights": false,
+      "license": null,
+      "origin": null,
+      "role": "inference",
+      "outputModalities": ["video"],
+      "evidenceStrength": "provider-only",
+      "catalogue": {
+        "status": "watchlist",
+        "maturity": "generally-available",
+        "reviewedOn": "2026-08-08",
+        "priority": 70
+      },
+      "useCases": [],
+      "recommendation": {
+        "headline": "Multi-shot sequencing with embedded subtitles. Only a provider summary establishes it.",
+        "strengths": ["Described as producing synchronised audio and intelligent multi-shot sequencing."],
+        "caveats": [
+          "No parameter schema read.",
+          "Embedded subtitles are a liability, not a feature, for a production that has its own titles."
+        ]
+      },
+      "promptProfiles": {},
+      "promptPolicy": {
+        "state": "not-established",
+        "packId": null
+      },
+      "capabilities": {
+        "modes": ["t2v", "i2v"],
+        "inputModalities": ["text", "image"],
+        "referenceRoles": ["base"],
+        "maxReferenceImages": 1,
+        "maxReferenceVideos": 0,
+        "maxReferenceAudio": 0,
+        "flags": {
+          "nativeAudio": true,
+          "seed": false
+        }
+      },
+      "constraints": {
+        "resolutions": null,
+        "aspectRatios": null,
+        "durationSeconds": null,
+        "fps": null,
+        "frameQuantiser": null,
+        "maxPromptCharacters": null,
+        "vramGuidanceGb": null
+      },
+      "execution": [
+        {
+          "surfaceId": "runware",
+          "state": "preparation",
+          "local": false,
+          "note": "Named in Runware's video model collection; no model page read."
+        }
+      ],
+      "evidence": null,
+      "provenance": {
+        "capabilitySource": "Runware's video model collection describes Vidu Q3 as multimodal video with synchronised audio, multi-shot sequencing and embedded subtitles. No parameter schema read.",
+        "verified": false
+      }
+    },
+    {
+      "id": "pixverse/v6",
+      "family": "pixverse",
+      "variant": "v6",
+      "displayName": "PixVerse V6",
+      "vendor": "PixVerse",
+      "openWeights": false,
+      "license": null,
+      "origin": null,
+      "role": "inference",
+      "outputModalities": ["video"],
+      "evidenceStrength": "provider-only",
+      "catalogue": {
+        "status": "watchlist",
+        "maturity": "generally-available",
+        "reviewedOn": "2026-08-08",
+        "priority": 70
+      },
+      "useCases": [],
+      "recommendation": {
+        "headline": "Over twenty cinematic camera controls - the most interesting thing on the watchlist for a camera-led product.",
+        "strengths": [
+          "Described as exposing focal length, aperture, depth of field, lens distortion and vignetting as controls.",
+          "Multi-image references for character consistency across shots; 1080p up to 15 seconds."
+        ],
+        "caveats": [
+          "Provider summary only. None of those controls has been read as a parameter, and a camera control CineBraid cannot name is a camera control it cannot compile to.",
+          "Worth a full research pass precisely because CineBraid already models lens intent."
+        ]
+      },
+      "promptProfiles": {},
+      "promptPolicy": {
+        "state": "not-established",
+        "packId": null
+      },
+      "capabilities": {
+        "modes": ["t2v", "i2v"],
+        "inputModalities": ["text", "image"],
+        "referenceRoles": ["identity", "reference", "base"],
+        "maxReferenceImages": 1,
+        "maxReferenceVideos": 0,
+        "maxReferenceAudio": 0,
+        "flags": {
+          "nativeAudio": true,
+          "seed": false
+        }
+      },
+      "constraints": {
+        "resolutions": ["1080P"],
+        "aspectRatios": null,
+        "durationSeconds": [1, 15],
+        "fps": null,
+        "frameQuantiser": null,
+        "maxPromptCharacters": null,
+        "vramGuidanceGb": null
+      },
+      "execution": [
+        {
+          "surfaceId": "runware",
+          "state": "preparation",
+          "local": false,
+          "note": "Named in Runware's video model collection; no model page read."
+        }
+      ],
+      "evidence": null,
+      "provenance": {
+        "capabilitySource": "Runware's video model collection describes PixVerse V6 as multi-shot storytelling with native synchronised audio, over 20 cinematic camera controls, multi-image references and 1080p up to 15 seconds. The duration floor of 1 is CineBraid's conservative reading of 'up to 15 seconds' and is not a published minimum.",
+        "verified": false
+      }
+    },
+    {
+      "id": "seedance/2.0",
+      "family": "seedance",
+      "variant": "2.0",
+      "displayName": "Seedance 2.0",
+      "vendor": "ByteDance",
+      "openWeights": false,
+      "license": null,
+      "origin": null,
+      "role": "inference",
+      "outputModalities": ["video"],
+      "evidenceStrength": "provider-only",
+      "catalogue": {
+        "status": "deprecated",
+        "maturity": "superseded",
+        "reviewedOn": "2026-08-08",
+        "priority": 900,
+        "supersededBy": "seedance/2.5"
+      },
+      "useCases": [],
+      "recommendation": {
+        "headline": "Superseded by 2.5 within the same family. No reason to encode it.",
+        "strengths": [],
+        "caveats": ["Half the single-pass duration of 2.5 and a smaller reference budget."]
+      },
+      "promptProfiles": {},
+      "promptPolicy": {
+        "state": "not-established",
+        "packId": null
+      },
+      "capabilities": {
+        "modes": ["t2v", "i2v"],
+        "inputModalities": ["text", "image"],
+        "referenceRoles": ["base"],
+        "maxReferenceImages": 1,
+        "maxReferenceVideos": 0,
+        "maxReferenceAudio": 0,
+        "flags": {
+          "nativeAudio": true,
+          "seed": true
+        }
+      },
+      "constraints": {
+        "resolutions": null,
+        "aspectRatios": null,
+        "durationSeconds": null,
+        "fps": null,
+        "frameQuantiser": null,
+        "maxPromptCharacters": null,
+        "vramGuidanceGb": null
+      },
+      "execution": [
+        {
+          "surfaceId": "runware",
+          "state": "preparation",
+          "local": false,
+          "note": "Listed by Runware; recorded only to carry the deprecation."
+        }
+      ],
+      "evidence": null,
+      "provenance": {
+        "capabilitySource": "Runware's model catalogue lists Seedance 2.0 and 2.0 Mini as audio-video models. ByteDance Seed's own Seedance 2.5 page states 2.5 extends single-pass generation from 15 to 30 seconds, which establishes the supersession.",
+        "verified": true
+      }
+    },
+    {
+      "id": "elevenlabs/v3",
+      "family": "elevenlabs",
+      "variant": "v3",
+      "displayName": "ElevenLabs v3",
+      "vendor": "ElevenLabs",
+      "openWeights": false,
+      "license": null,
+      "origin": null,
+      "role": "inference",
+      "outputModalities": ["audio"],
+      "evidenceStrength": "vendor",
+      "catalogue": {
+        "status": "next-up",
+        "maturity": "generally-available",
+        "reviewedOn": "2026-08-08",
+        "priority": 10
+      },
+      "useCases": ["voice-generation"],
+      "recommendation": {
+        "headline": "The documented default for spoken performance, at 70+ languages.",
+        "strengths": [
+          "70+ languages with expressive delivery.",
+          "A published model line with explicit character limits per model, so a long speech can be budgeted before it is sent.",
+          "A separate voice-design model, which is what a production actually needs to cast a character rather than pick a preset."
+        ],
+        "caveats": [
+          "5,000 characters per request on v3 - a fraction of the flash tier's 40,000, so long-form needs chunking.",
+          "CineBraid has no audio dispatch path, no voice-casting concept and no way to attach a generated line to a shot.",
+          "Audio is inventory and intelligence in this phase. Nothing generates sound."
+        ]
+      },
+      "promptProfiles": {},
+      "promptPolicy": {
+        "state": "not-established",
+        "packId": null
+      },
+      "capabilities": {
+        "modes": ["tts"],
+        "inputModalities": ["text", "audio"],
+        "referenceRoles": ["voice"],
+        "maxReferenceImages": 0,
+        "maxReferenceVideos": 0,
+        "maxReferenceAudio": 1,
+        "flags": {
+          "seed": false,
+          "nativeAudio": false
+        }
+      },
+      "constraints": {
+        "resolutions": null,
+        "aspectRatios": null,
+        "durationSeconds": null,
+        "fps": null,
+        "frameQuantiser": null,
+        "maxPromptCharacters": 5000,
+        "vramGuidanceGb": null
+      },
+      "execution": [
+        {
+          "surfaceId": "elevenlabs-api",
+          "state": "preparation",
+          "local": false,
+          "note": "The vendor's own API. CineBraid has no audio dispatch path."
+        }
+      ],
+      "evidence": {
+        "file": "docs/architecture/model-evidence/elevenlabs.json",
+        "checkedOn": "2026-08-08"
+      },
+      "provenance": {
+        "capabilitySource": "ElevenLabs' official models page: eleven_v3 at 70+ languages and a 5,000-character limit, alongside eleven_multilingual_v2 (29 languages, 10,000), eleven_flash_v2_5 (32 languages, ~75ms, 40,000) and the eleven_ttv_v3 voice-design model.",
+        "verified": true
+      }
+    },
+    {
+      "id": "elevenlabs/music-v2",
+      "family": "elevenlabs",
+      "variant": "music-v2",
+      "displayName": "ElevenLabs Music v2",
+      "vendor": "ElevenLabs",
+      "openWeights": false,
+      "license": null,
+      "origin": null,
+      "role": "inference",
+      "outputModalities": ["audio"],
+      "evidenceStrength": "vendor-partial",
+      "catalogue": {
+        "status": "watchlist",
+        "maturity": "generally-available",
+        "reviewedOn": "2026-08-08",
+        "priority": 60
+      },
+      "useCases": ["music-generation"],
+      "recommendation": {
+        "headline": "Named in the vendor's own model list; no parameter schema read.",
+        "strengths": ["Documented by the vendor as its current music model, with v1 explicitly outclassed."],
+        "caveats": ["No duration, structure or reference-audio parameters established."]
+      },
+      "promptProfiles": {},
+      "promptPolicy": {
+        "state": "not-established",
+        "packId": null
+      },
+      "capabilities": {
+        "modes": ["music"],
+        "inputModalities": ["text"],
+        "referenceRoles": [],
+        "maxReferenceImages": 0,
+        "maxReferenceVideos": 0,
+        "maxReferenceAudio": 0,
+        "flags": {}
+      },
+      "constraints": {
+        "resolutions": null,
+        "aspectRatios": null,
+        "durationSeconds": null,
+        "fps": null,
+        "frameQuantiser": null,
+        "maxPromptCharacters": null,
+        "vramGuidanceGb": null
+      },
+      "execution": [
+        {
+          "surfaceId": "elevenlabs-api",
+          "state": "preparation",
+          "local": false,
+          "note": "The vendor's own API."
+        }
+      ],
+      "evidence": {
+        "file": "docs/architecture/model-evidence/elevenlabs.json",
+        "checkedOn": "2026-08-08"
+      },
+      "provenance": {
+        "capabilitySource": "ElevenLabs' official models page lists music_v2 for studio-grade music generation and music_v1 as outclassed by it, plus eleven_text_to_sound_v2 for sound effects.",
+        "verified": true
+      }
+    },
+    {
+      "id": "fish-audio/s2.1-pro",
+      "family": "fish-audio",
+      "variant": "s2.1-pro",
+      "displayName": "Fish Audio S2.1 Pro",
+      "vendor": "Fish Audio",
+      "openWeights": null,
+      "license": null,
+      "origin": null,
+      "role": "inference",
+      "outputModalities": ["audio"],
+      "evidenceStrength": "vendor",
+      "catalogue": {
+        "status": "next-up",
+        "maturity": "generally-available",
+        "reviewedOn": "2026-08-08",
+        "priority": 20
+      },
+      "useCases": ["voice-generation"],
+      "recommendation": {
+        "headline": "Multi-speaker in one request, which is what a scene of dialogue actually needs.",
+        "strengths": [
+          "Speaker tags inside the text let two characters share one generation instead of being stitched together afterwards.",
+          "Zero-shot cloning from 10-30 seconds of clean speech.",
+          "Documented output formats and sample rates, including 48kHz WAV, and a latency dial."
+        ],
+        "caveats": [
+          "No documented text length limit, which is not the same as no limit.",
+          "The S1 blog describes emotion markers; the S2 API reference documents none. The two are not merged.",
+          "Same as every audio entry: CineBraid has no audio dispatch path."
+        ]
+      },
+      "promptProfiles": {},
+      "promptPolicy": {
+        "state": "not-established",
+        "packId": null
+      },
+      "capabilities": {
+        "modes": ["tts"],
+        "inputModalities": ["text", "audio"],
+        "referenceRoles": ["voice"],
+        "maxReferenceImages": 0,
+        "maxReferenceVideos": 0,
+        "maxReferenceAudio": 1,
+        "flags": {
+          "seed": false,
+          "nativeAudio": false
+        }
+      },
+      "constraints": {
+        "resolutions": null,
+        "aspectRatios": null,
+        "durationSeconds": null,
+        "fps": null,
+        "frameQuantiser": null,
+        "maxPromptCharacters": null,
+        "vramGuidanceGb": null
+      },
+      "execution": [
+        {
+          "surfaceId": "runware",
+          "state": "preparation",
+          "local": false,
+          "note": "Runware lists Fish Audio S2.1 Pro under text-to-speech."
+        }
+      ],
+      "evidence": {
+        "file": "docs/architecture/model-evidence/fish-audio.json",
+        "checkedOn": "2026-08-08"
+      },
+      "provenance": {
+        "capabilitySource": "Fish Audio's official text-to-speech API reference: models s1, s2-pro, s2.1-pro, s2.1-pro-free with s2.1-pro the default; reference_id or a references array for zero-shot cloning; multi-speaker via speaker tags on the S2 family; speed 0.5-2.0; WAV/PCM to 48kHz, MP3 and Opus; chunked streaming; no documented text length limit.",
+        "verified": true
+      }
+    },
+    {
+      "id": "minimax-music/3.0",
+      "family": "minimax-music",
+      "variant": "3.0",
+      "displayName": "MiniMax Music 3.0",
+      "vendor": "MiniMax",
+      "openWeights": false,
+      "license": null,
+      "origin": null,
+      "role": "inference",
+      "outputModalities": ["audio"],
+      "evidenceStrength": "vendor",
+      "catalogue": {
+        "status": "next-up",
+        "maturity": "generally-available",
+        "reviewedOn": "2026-08-08",
+        "priority": 10
+      },
+      "useCases": ["music-generation"],
+      "recommendation": {
+        "headline": "Structured lyrics with section tags, which is the only way to place a cue against a cut.",
+        "strengths": [
+          "Lyrics carry [Verse] / [Chorus] / [Bridge] structure tags, so musical form is directable rather than hoped for.",
+          "A documented cover model with reference audio from 6 seconds to 6 minutes.",
+          "Documented output formats and sample rates up to 44.1kHz."
+        ],
+        "caveats": [
+          "Song duration is not documented, which makes fitting a cue to a scene an experiment.",
+          "Prompt capped at 2,000 characters and lyrics at 3,500.",
+          "MiniMax's own documentation marks 3.0 recommended and 2.6 the previous generation, so the user-named 2.6 is already superseded."
+        ]
+      },
+      "promptProfiles": {},
+      "promptPolicy": {
+        "state": "not-established",
+        "packId": null
+      },
+      "capabilities": {
+        "modes": ["music"],
+        "inputModalities": ["text", "audio"],
+        "referenceRoles": ["sound-reference"],
+        "maxReferenceImages": 0,
+        "maxReferenceVideos": 0,
+        "maxReferenceAudio": 1,
+        "flags": {
+          "seed": false,
+          "nativeAudio": false
+        }
+      },
+      "constraints": {
+        "resolutions": null,
+        "aspectRatios": null,
+        "durationSeconds": null,
+        "fps": null,
+        "frameQuantiser": null,
+        "maxPromptCharacters": 2000,
+        "vramGuidanceGb": null
+      },
+      "execution": [
+        {
+          "surfaceId": "minimax-api",
+          "state": "preparation",
+          "local": false,
+          "note": "The vendor's own API. CineBraid has no audio dispatch path."
+        }
+      ],
+      "evidence": {
+        "file": "docs/architecture/model-evidence/minimax-music.json",
+        "checkedOn": "2026-08-08"
+      },
+      "provenance": {
+        "capabilitySource": "MiniMax's official music-generation API reference: models music-3.0 (recommended), music-2.6 (previous generation) and music-cover, plus free-tier variants; prompt 0-2000 characters; lyrics 1-3500 with structure tags; cover reference audio 6s-6min and 50MB; MP3/WAV/PCM at 16000-44100Hz. Song duration is NOT documented.",
+        "verified": true
+      }
+    },
+    {
+      "id": "minimax-music/2.6",
+      "family": "minimax-music",
+      "variant": "2.6",
+      "displayName": "MiniMax Music 2.6",
+      "vendor": "MiniMax",
+      "openWeights": false,
+      "license": null,
+      "origin": null,
+      "role": "inference",
+      "outputModalities": ["audio"],
+      "evidenceStrength": "vendor",
+      "catalogue": {
+        "status": "watchlist",
+        "maturity": "superseded",
+        "reviewedOn": "2026-08-08",
+        "priority": 60,
+        "supersededBy": "minimax-music/3.0"
+      },
+      "useCases": ["music-generation"],
+      "recommendation": {
+        "headline": "Still served, and MiniMax's own documentation calls it the previous generation.",
+        "strengths": ["Documented alongside 3.0 with the same request shape."],
+        "caveats": [
+          "Superseded by 3.0 in the vendor's own model list.",
+          "Named as a candidate on the strength of a launch announcement rather than a current comparison."
+        ]
+      },
+      "promptProfiles": {},
+      "promptPolicy": {
+        "state": "not-established",
+        "packId": null
+      },
+      "capabilities": {
+        "modes": ["music"],
+        "inputModalities": ["text"],
+        "referenceRoles": [],
+        "maxReferenceImages": 0,
+        "maxReferenceVideos": 0,
+        "maxReferenceAudio": 0,
+        "flags": {
+          "seed": false
+        }
+      },
+      "constraints": {
+        "resolutions": null,
+        "aspectRatios": null,
+        "durationSeconds": null,
+        "fps": null,
+        "frameQuantiser": null,
+        "maxPromptCharacters": 2000,
+        "vramGuidanceGb": null
+      },
+      "execution": [
+        {
+          "surfaceId": "minimax-api",
+          "state": "preparation",
+          "local": false,
+          "note": "The vendor's own API, which documents it as the previous generation."
+        },
+        {
+          "surfaceId": "runware",
+          "state": "preparation",
+          "local": false,
+          "note": "Runware lists it under audio generation."
+        }
+      ],
+      "evidence": {
+        "file": "docs/architecture/model-evidence/minimax-music.json",
+        "checkedOn": "2026-08-08"
+      },
+      "provenance": {
+        "capabilitySource": "MiniMax's official music-generation API reference lists music-2.6 as the previous generation to the recommended music-3.0.",
+        "verified": true
+      }
+    },
+    {
+      "id": "suno/platform",
+      "family": "suno",
+      "variant": "platform",
+      "displayName": "Suno (platform API)",
+      "vendor": "Suno",
+      "openWeights": false,
+      "license": null,
+      "origin": null,
+      "role": "inference",
+      "outputModalities": ["audio"],
+      "evidenceStrength": "none",
+      "catalogue": {
+        "status": "watchlist",
+        "maturity": "announced",
+        "reviewedOn": "2026-08-08",
+        "priority": 80
+      },
+      "useCases": ["music-generation"],
+      "recommendation": {
+        "headline": "A developer platform exists behind a login. No public API documentation was reachable.",
+        "strengths": [],
+        "caveats": [
+          "The variant is `platform` and NOT a version number, because no model version is established. It names a surface, not weights.",
+          "No parameter schema, no duration limits, no model identifier.",
+          "Cannot be recommended over MiniMax Music, whose API reference is public and complete."
+        ]
+      },
+      "promptProfiles": {},
+      "promptPolicy": {
+        "state": "not-established",
+        "packId": null
+      },
+      "capabilities": {
+        "modes": ["music"],
+        "inputModalities": ["text"],
+        "referenceRoles": [],
+        "maxReferenceImages": 0,
+        "maxReferenceVideos": 0,
+        "maxReferenceAudio": 0,
+        "flags": {}
+      },
+      "constraints": {
+        "resolutions": null,
+        "aspectRatios": null,
+        "durationSeconds": null,
+        "fps": null,
+        "frameQuantiser": null,
+        "maxPromptCharacters": null,
+        "vramGuidanceGb": null
+      },
+      "execution": [],
+      "evidence": null,
+      "provenance": {
+        "capabilitySource": "NOT ESTABLISHED. platform.suno.com requires authentication and no public API reference was retrieved. Music generation is asserted only because it is what the product does.",
+        "verified": false
+      }
+    }
+  ],
+  "useCaseGuides": [
+    {
+      "useCase": "blocking-frame",
+      "headline": "A blocking frame establishes composition, framing, subject placement, staging, rough identity, current wardrobe state, location, key props and tone - fast and cheaply enough to iterate, and accurate enough to hand to a video model as a starting frame.",
+      "optimiseFor": [
+        "speed",
+        "cost",
+        "instruction-adherence",
+        "composition-and-staging-accuracy",
+        "reference-adherence",
+        "iteration-and-editability",
+        "local-availability"
+      ],
+      "deprioritise": [
+        "final-image aesthetic quality - a beautiful frame that staged the two characters on the wrong sides has failed at this job, and a plain one that got them right has not"
+      ],
+      "decision": {
+        "state": "undecided-pending-evaluation",
+        "recommended": null,
+        "localOption": null,
+        "premiumAlternative": null,
+        "note": "Deliberately unfilled. The candidates below are separated by capability facts, and what nothing here has measured is the only thing that would settle it: whether those capabilities actually produce accurate staging on production-like shots. Filling a slot needs the evaluation in docs/architecture/BLOCKING_FRAME_EVALUATION.md to have been run.",
+        "shortlist": {
+          "recommended": [
+            {
+              "modelId": "gpt-image-2/standard",
+              "why": "The only candidate CineBraid can dispatch today, with a shipped blocking prompt profile, a model pack, 16 references, a documented low quality tier for disposable frames, and a real alpha-channel mask for re-blocking part of a frame."
+            },
+            {
+              "modelId": "gemini-image/3.1-flash",
+              "why": "The only candidate whose references are TYPED - 10 object, 4 character, 3 style - which is the closest thing in the field to how a production thinks, and the most likely to hold two characters apart. Multi-turn editing carries a re-block without re-uploading the frame."
+            }
+          ],
+          "localOption": [
+            {
+              "modelId": "z-image/turbo",
+              "why": "6B inside 16GB of VRAM under Apache 2.0, eight steps, ControlNet in the official template for composition control, and LoRA for production identity. Free per frame, which matters more here than anywhere else because blocking is iterated."
+            },
+            {
+              "modelId": "krea-2/turbo",
+              "why": "12B open weights with an official inference repo, and Krea 2 Raw published specifically as the LoRA-training base. Heavier than Z-Image and under a community licence rather than Apache."
+            }
+          ],
+          "premiumAlternative": [
+            {
+              "modelId": "gemini-image/3-pro",
+              "why": "A character-consistency mode with up to five character references - the highest character budget documented anywhere in this catalogue."
+            },
+            {
+              "modelId": "seedream/5.0-pro",
+              "why": "Ten reference images and ratios from 1:16 to 16:1: the only candidate that can block a scope format GPT Image 2 refuses outright."
+            }
+          ]
+        }
+      },
+      "distinctions": [
+        "acceptsApprovedReferences",
+        "maxReferenceImages",
+        "typedOrMultiCharacterReferences",
+        "canEditExistingFrame",
+        "canConsumePriorBlockingFrame",
+        "seed",
+        "availability",
+        "practicalOutputResolution",
+        "fastCheapModeForBlocking",
+        "localIdentityViaLoraOrFinetune",
+        "costAndSpeed"
+      ],
+      "_distinctionsReadme": [
+        "The eleven questions, answered per candidate AND per surface. `null` means NOT ESTABLISHED;",
+        "it never means no.",
+        "",
+        "A hosted capability is never carried onto an open checkpoint. The two Krea rows are the",
+        "worked example: the hosted endpoint takes ten weighted references, and the published",
+        "weights are text-to-image only. Reading one row as the other would put an approved",
+        "identity reference on a local render that has nowhere to receive it."
+      ],
+      "candidates": [
+        {
+          "modelId": "gpt-image-2/standard",
+          "surface": "api",
+          "surfaceId": "fal-queue",
+          "acceptsApprovedReferences": true,
+          "maxReferenceImages": 16,
+          "typedOrMultiCharacterReferences": false,
+          "canEditExistingFrame": true,
+          "canConsumePriorBlockingFrame": true,
+          "seed": false,
+          "availability": "api-only",
+          "practicalOutputResolution": "1024x1024 up to 3840x2160; long:short capped at 3:1",
+          "fastCheapModeForBlocking": "quality: low, documented by the vendor",
+          "localIdentityViaLoraOrFinetune": false,
+          "costAndSpeed": null,
+          "note": "Level 3 today: a model pack compiles blocking through the same core as everything else, and the shipped profile already forbids production identity, wardrobe, colour and lighting in a blocking frame. Complex prompts are documented as taking up to two minutes, which is slow for a frame meant to be iterated. No seed means five passes at the same shot vary for reasons nobody can hold still."
+        },
+        {
+          "modelId": "gemini-image/3.1-flash",
+          "surface": "api",
+          "surfaceId": "runware",
+          "acceptsApprovedReferences": true,
+          "maxReferenceImages": 14,
+          "typedOrMultiCharacterReferences": true,
+          "canEditExistingFrame": true,
+          "canConsumePriorBlockingFrame": true,
+          "seed": false,
+          "availability": "api-only",
+          "practicalOutputResolution": "0.5K for blocking; 1K, 2K and 4K available",
+          "fastCheapModeForBlocking": "0.5K at $0.04657 per image",
+          "localIdentityViaLoraOrFinetune": false,
+          "costAndSpeed": "$0.04657 at 0.5K, $0.06895 at 1K (provider figures)",
+          "note": "10 object + 4 character + 3 style references is the strongest declared answer to two-characters-plus-props in the catalogue. Every output carries a SynthID watermark, which is tolerable on a disposable frame and is a real consideration if that frame is handed onward. The vendor documents no seed; one provider exposes one."
+        },
+        {
+          "modelId": "gemini-image/3.1-flash-lite",
+          "surface": "api",
+          "surfaceId": "runware",
+          "acceptsApprovedReferences": true,
+          "maxReferenceImages": 14,
+          "typedOrMultiCharacterReferences": false,
+          "canEditExistingFrame": true,
+          "canConsumePriorBlockingFrame": true,
+          "seed": false,
+          "availability": "api-only",
+          "practicalOutputResolution": "0.5K and 1K only",
+          "fastCheapModeForBlocking": "the vendor's own fastest and cheapest tier",
+          "localIdentityViaLoraOrFinetune": false,
+          "costAndSpeed": "$0.033603 per 1K image (provider figure) - the cheapest hosted candidate",
+          "note": "Fourteen references but UNTYPED: the vendor documents object images only, with no character or style budget. For one figure in a location that may be all this job needs; for two characters it is the difference between the strongest candidate and a middling one, and it is exactly what fixture B exists to settle."
+        },
+        {
+          "modelId": "gemini-image/3-pro",
+          "surface": "api",
+          "surfaceId": "runware",
+          "acceptsApprovedReferences": true,
+          "maxReferenceImages": 11,
+          "typedOrMultiCharacterReferences": true,
+          "canEditExistingFrame": true,
+          "canConsumePriorBlockingFrame": true,
+          "seed": false,
+          "availability": "api-only",
+          "practicalOutputResolution": "1K minimum - no 0.5K tier",
+          "fastCheapModeForBlocking": null,
+          "localIdentityViaLoraOrFinetune": false,
+          "costAndSpeed": null,
+          "note": "Up to five character references in a character-consistency mode. No cheap tier and no established pricing, which is what makes it a premium alternative rather than an iteration model."
+        },
+        {
+          "modelId": "krea-2/turbo",
+          "surface": "local",
+          "surfaceId": "comfy-local",
+          "acceptsApprovedReferences": false,
+          "maxReferenceImages": 0,
+          "typedOrMultiCharacterReferences": false,
+          "canEditExistingFrame": false,
+          "canConsumePriorBlockingFrame": false,
+          "seed": true,
+          "availability": "open-weights",
+          "practicalOutputResolution": "1024x1024 to 2048x2048 demonstrated",
+          "fastCheapModeForBlocking": "8 steps at cfg 0.0 - the checkpoint IS the fast mode",
+          "localIdentityViaLoraOrFinetune": true,
+          "costAndSpeed": "free per frame on operator hardware",
+          "note": "THE DISTINCTION THAT MATTERS MOST IN THIS TABLE. The OPEN checkpoint is text-to-image only: no reference images, no weighted references, no editing. It cannot carry an approved identity by reference at all - identity would have to come from a LoRA trained on Krea 2 Raw, which the vendor publishes for that purpose. 12B, so materially heavier than Z-Image."
+        },
+        {
+          "modelId": "krea-2/large",
+          "surface": "api",
+          "surfaceId": "runware",
+          "acceptsApprovedReferences": true,
+          "maxReferenceImages": 10,
+          "typedOrMultiCharacterReferences": false,
+          "canEditExistingFrame": true,
+          "canConsumePriorBlockingFrame": true,
+          "seed": true,
+          "availability": "api-only",
+          "practicalOutputResolution": "768x1376 to 1568x672 documented",
+          "fastCheapModeForBlocking": "the hosted Krea 2 Turbo endpoint at $0.015 per image, with no references",
+          "localIdentityViaLoraOrFinetune": false,
+          "costAndSpeed": "$0.060 per image, $0.065 with a reference (provider figures)",
+          "note": "Ten WEIGHTED references with independent 0-1 strengths - the only candidate that can say how much a reference matters, which is directly useful when a location should dominate and a character should merely be present. A HOSTED capability, absent from the open weights. CineBraid cannot express a per-reference weight in a plan yet either."
+        },
+        {
+          "modelId": "z-image/turbo",
+          "surface": "local",
+          "surfaceId": "comfy-local",
+          "acceptsApprovedReferences": false,
+          "maxReferenceImages": 0,
+          "typedOrMultiCharacterReferences": false,
+          "canEditExistingFrame": false,
+          "canConsumePriorBlockingFrame": false,
+          "seed": true,
+          "availability": "open-weights",
+          "practicalOutputResolution": "1024x1024 demonstrated; no published ceiling",
+          "fastCheapModeForBlocking": "8 NFEs at guidance_scale 0.0",
+          "localIdentityViaLoraOrFinetune": true,
+          "costAndSpeed": "free per frame; sub-second on an H800, and 16GB VRAM on consumer hardware",
+          "note": "The cheapest and most iterable candidate by a wide margin, and one that cannot accept an approved reference at all. ControlNet in the official template is the compensating control: a pose or depth input is a legitimate way to fix staging without a reference image, and fixture D and F are designed to find out whether it is enough. Editing is Z-Image-Edit, a different checkpoint CineBraid has not encoded."
+        },
+        {
+          "modelId": "seedream/5.0-pro",
+          "surface": "api",
+          "surfaceId": "runware",
+          "acceptsApprovedReferences": true,
+          "maxReferenceImages": 10,
+          "typedOrMultiCharacterReferences": false,
+          "canEditExistingFrame": true,
+          "canConsumePriorBlockingFrame": true,
+          "seed": true,
+          "availability": "api-only",
+          "practicalOutputResolution": "ratios 1:16 to 16:1, area up to 4.6MP",
+          "fastCheapModeForBlocking": "1.5K at $0.04815, with the first reference image free",
+          "localIdentityViaLoraOrFinetune": false,
+          "costAndSpeed": "$0.04815 at 1.5K, $0.00321 per extra reference (provider figures)",
+          "note": "The only candidate that can block a scope format - GPT Image 2 refuses anything past 3:1. No mask, so a re-block cannot be confined to part of the frame. Provider-only evidence."
+        },
+        {
+          "modelId": "qwen-image/3.0",
+          "surface": "api",
+          "surfaceId": "runware",
+          "acceptsApprovedReferences": true,
+          "maxReferenceImages": 3,
+          "typedOrMultiCharacterReferences": false,
+          "canEditExistingFrame": true,
+          "canConsumePriorBlockingFrame": true,
+          "seed": true,
+          "availability": null,
+          "practicalOutputResolution": "0.26MP to 4.19MP, ratios 1:8 to 8:1",
+          "fastCheapModeForBlocking": "$0.03 per image",
+          "localIdentityViaLoraOrFinetune": null,
+          "costAndSpeed": "$0.03 per image plus $0.003 per input image (provider figures)",
+          "note": "Cheap, and three references is thin for two characters plus a location plus a prop - which is precisely fixture C. Provider-only evidence, and no established open-weight status for 3.0."
+        }
+      ],
+      "openQuestions": [
+        "Does a TYPED character-reference budget (Nano Banana 2, Nano Banana Pro) actually hold two characters apart better than an untyped pile of the same size (Nano Banana 2 Lite, GPT Image 2)? Nothing in the field's documentation answers this, and it is the highest-value thing the evaluation can measure.",
+        "Is a ControlNet pose or depth input a workable substitute for reference-carried identity on a local blocking frame? If it is, Z-Image Turbo is far stronger for this job than its reference count of zero suggests.",
+        "Does the absence of a seed on GPT Image 2 and the Gemini image family materially hurt iteration stability, or is prompt determinism enough in practice? Fixture I exists for this.",
+        "How much does a SynthID watermark matter on a frame whose only downstream use is as a video model's starting frame?",
+        "Can a blocking frame produced by one model be re-blocked by another, or does a re-block have to stay inside one family?"
+      ],
+      "evaluation": {
+        "fixtures": "docs/architecture/BLOCKING_FRAME_EVALUATION.md",
+        "state": "designed-not-run",
+        "budget": "NONE APPROVED. No paid benchmark has been run and none may be run under this phase. The two local candidates could be exercised at zero cost once a WorkflowRecipe exists, which is the cheapest way to start."
       }
     }
   ]

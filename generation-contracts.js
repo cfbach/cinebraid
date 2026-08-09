@@ -52,6 +52,7 @@ const MODE_OUTPUT_TYPES = {
   outpaint: "image", "control-guided": "image", upscale: "image", restore: "image",
   t2v: "video", i2v: "video", flf: "video", r2v: "video", "video-edit": "video",
   "audio-video": "video", retake: "video", v2v: "video",
+  tts: "audio", music: "audio", sfx: "audio",
 };
 
 const OUTPUT_TYPES = ["image", "video", "audio", "multi_artifact"];
@@ -316,10 +317,17 @@ function validateGenerationJob(job, options = {}) {
       fail(errors, "output.candidateCount", "out-of-range", "candidateCount must be a positive integer.");
   }
   const producesVideo = job.outputType === "video" || expected === "video";
+  /* Duration belongs to anything that occupies time, and that is not only video: a
+     generated line of dialogue or a music cue has a length in exactly the same sense.
+     Frame rate does not — a waveform has no frames — and native audio ON a result is a
+     property of a picture that carries sound, so both stay video-only. Collapsing the
+     three questions into one "is it video" was fine while nothing produced audio. */
+  const producesTimed = producesVideo || job.outputType === "audio" || expected === "audio";
+  if (!producesTimed && output.durationSeconds != null)
+    fail(errors, "output.durationSeconds", "contradiction", `durationSeconds is meaningless for a ${job.outputType} result.`);
   if (!producesVideo) {
-    for (const field of ["durationSeconds", "fps"])
-      if (output[field] != null)
-        fail(errors, `output.${field}`, "contradiction", `${field} is meaningless for a ${job.outputType} result.`);
+    if (output.fps != null)
+      fail(errors, "output.fps", "contradiction", `fps is meaningless for a ${job.outputType} result.`);
     if (["native", "required"].includes(String(output.audio)))
       fail(errors, "output.audio", "contradiction", `A ${job.outputType} result cannot carry ${output.audio} audio.`);
   }

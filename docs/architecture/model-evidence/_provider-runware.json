@@ -1,0 +1,105 @@
+{
+  "schemaVersion": 1,
+  "surfaceId": "runware",
+  "operator": "Runware",
+  "checkedOn": "2026-08-08",
+  "evidenceStrength": "vendor",
+  "_readme": [
+    "Evidence for the RUNWARE SURFACE, not for any model on it.",
+    "",
+    "The distinction is the whole reason this file has a different name shape from a",
+    "model-evidence file. Runware's documentation is authoritative about Runware: what",
+    "its API accepts, what it charges, what limits it imposes. It is NOT authoritative",
+    "about the weights behind any of it, and a catalogue that forgets that will publish",
+    "'MiniMax H3 supports a seed' on the strength of Runware exposing one.",
+    "",
+    "Where Runware IS the only source CineBraid has for a model - Kling, Qwen-Image 3.0,",
+    "HappyHorse, Seedream - the model's definition records evidenceStrength",
+    "provider-only, and a test refuses to let such a model be a launch recommendation."
+  ],
+  "sources": [
+    { "id": "platform-intro", "type": "official-api-documentation", "url": "https://runware.ai/docs/platform/introduction", "checkedOn": "2026-08-08" },
+    { "id": "models-overview", "type": "official-catalogue", "url": "https://runware.ai/docs/models", "checkedOn": "2026-08-08" },
+    { "id": "model-catalogue", "type": "official-catalogue", "url": "https://runware.ai/models", "checkedOn": "2026-08-08" },
+    { "id": "video-intro", "type": "official-api-documentation", "url": "https://runware.ai/docs/video-inference/introduction", "checkedOn": "2026-08-08" },
+    { "id": "model-seedance-2-5", "type": "official-model-page", "url": "https://runware.ai/docs/models/bytedance-seedance-2-5", "checkedOn": "2026-08-08" },
+    { "id": "model-seedream-5-0-pro", "type": "official-model-page", "url": "https://runware.ai/docs/models/bytedance-seedream-5-0-pro", "checkedOn": "2026-08-08" },
+    { "id": "model-flux-3-video", "type": "official-model-page", "url": "https://runware.ai/docs/models/bfl-flux-3-video", "checkedOn": "2026-08-08" },
+    { "id": "model-kling-3-pro", "type": "official-model-page", "url": "https://runware.ai/docs/models/klingai-video-3-0-pro", "checkedOn": "2026-08-08" },
+    { "id": "model-minimax-h3", "type": "official-model-page", "url": "https://runware.ai/docs/models/minimax-h3", "checkedOn": "2026-08-08" },
+    { "id": "model-nano-banana-2", "type": "official-model-page", "url": "https://runware.ai/docs/models/google-nano-banana-2", "checkedOn": "2026-08-08" },
+    { "id": "model-qwen-image-3-0", "type": "official-model-page", "url": "https://runware.ai/docs/models/alibaba-qwen-image-3-0", "checkedOn": "2026-08-08" },
+    { "id": "model-happyhorse-1-1", "type": "official-model-page", "url": "https://runware.ai/docs/models/alibaba-happyhorse-1-1", "checkedOn": "2026-08-08" },
+    { "id": "model-gemini-omni-flash", "type": "official-model-page", "url": "https://runware.ai/docs/models/google-gemini-omni-flash", "checkedOn": "2026-08-08" },
+    { "id": "model-krea-2-large", "type": "official-model-page", "url": "https://runware.ai/docs/models/krea-2-large", "checkedOn": "2026-08-08" },
+    { "id": "model-krea-2-turbo", "type": "official-model-page", "url": "https://runware.ai/docs/models/krea-2-turbo", "checkedOn": "2026-08-08" },
+    { "id": "creator-klingai", "type": "official-catalogue", "url": "https://runware.ai/creators/klingai", "checkedOn": "2026-08-08" }
+  ],
+  "surfaceFacts": [
+    { "claim": "Runware is BOTH an aggregator of third-party providers and a host of open-weight models on its own infrastructure.", "value": "aggregator_host", "source": "platform-intro" },
+    { "claim": "Catalogue size, as Runware states it.", "value": "418 hosted models plus community and user-uploaded models", "source": "platform-intro" },
+    { "claim": "Inference task types.", "value": ["imageInference", "videoInference", "audioInference", "3dInference", "textInference"], "source": "platform-intro" },
+    { "claim": "Model identifier scheme.", "value": "creator:model@version", "source": "models-overview", "note": "Runware calls it an AIR identifier. Examples read: alibaba:qwen-image@3.0, bfl:flux@3-video, bytedance:seedance@2.5, klingai:kling-video@3-pro, minimax:h3@0, krea:krea@2-large, google:gemini@omni-flash." },
+    { "claim": "Delivery is synchronous or asynchronous, with polling via getResponse and optional webhooks.", "value": true, "source": "platform-intro" },
+    { "claim": "Per-task cost is returned when includeCost is set.", "value": true, "source": "platform-intro" },
+    { "claim": "Default output retention.", "value": "7 days, configurable via ttl", "source": "platform-intro" },
+    { "claim": "Models are browsable by creator and by capability tag, which is what makes the catalogue usable as a research source rather than only as an endpoint list.", "value": true, "source": "models-overview" }
+  ],
+  "role": {
+    "catalogue": "First-class. Runware's per-model documentation pages carry duration ranges, resolution sets, reference limits, seed behaviour and pricing in a consistent shape across vendors, which no single vendor site does. For several models in CineBraid's catalogue it is the ONLY source that could be read at all.",
+    "execution": "One hosted API among several, and not one CineBraid uses. No adapter, no credential path, no dispatch. Recorded as an execution surface because it is one, and stated as `catalogued` because CineBraid cannot reach it.",
+    "dependencyRisk": "CineBraid must not become dependent on Runware alone. Every model whose evidence is provider-only is marked as such, cannot be a launch recommendation, and names the vendor source that is still missing. The fal path stays the shipped one."
+  },
+  "notEstablished": [
+    {
+      "claim": "The full videoInference request schema.",
+      "status": "the API reference page returned catalogue content rather than the schema; per-model pages were used instead",
+      "cineBraidBehaviour": "Only per-model facts are recorded. No generic Runware request shape is encoded, and no adapter is written against an unread schema."
+    },
+    {
+      "claim": "Runware's AIR identifier for Fish Audio S2.1 Pro.",
+      "status": "the model is listed but its model page was not read; the identifier in provider-surfaces.json is inferred from the scheme",
+      "cineBraidBehaviour": "Marked unverified in the offering note. Nothing joins on a providerModelId, so an inferred one cannot cause a wrong dispatch."
+    },
+    {
+      "claim": "Whether Runware's offerings pass provider parameters through unchanged or reimplement them.",
+      "status": "not documented in anything read",
+      "cineBraidBehaviour": "Every Runware-declared capability is treated as a SURFACE fact and never promoted to a model fact - which is the correct behaviour under either answer."
+    }
+  ],
+  "conflicts": [
+    {
+      "topic": "MiniMax H3 seed",
+      "positions": [
+        { "value": true, "source": "model-minimax-h3", "scope": "Runware's H3 offering" },
+        { "value": false, "source": "MiniMax model card and API reference", "scope": "the model itself" },
+        { "value": false, "source": "fal endpoint schema", "scope": "the surface CineBraid dispatches to" }
+      ],
+      "resolution": "All three kept. The model flag stays false, the fal offering stays false, the Runware offering records true, and public/shared-model-intelligence.js reports the divergence as `declares-unestablished`. The shipped H3 path is unchanged: it still refuses a seed and says why."
+    },
+    {
+      "topic": "Seedance 2.5 output resolution",
+      "positions": [
+        { "value": ["480P", "720P"], "source": "model-seedance-2-5", "scope": "Runware's offering" },
+        { "value": "higher output described", "source": "ByteDance Seed's own Seedance 2.5 page", "scope": "the model" }
+      ],
+      "resolution": "The model definition records resolutions as null - unestablished - and the 480p/720p ceiling is recorded against the Runware offering, where it belongs. Writing Runware's ceiling into the model would have made a provider limit follow Seedance to every other provider."
+    },
+    {
+      "topic": "Nano Banana 2 identifier",
+      "positions": [
+        { "value": "google:4@3", "source": "model-nano-banana-2", "scope": "Runware" },
+        { "value": "gemini-3.1-flash-image", "source": "Google's Gemini image documentation", "scope": "the vendor" }
+      ],
+      "resolution": "CineBraid identity is gemini-image/3.1-flash and neither string. A provider handle is recorded as providerModelId and nothing selects on it."
+    },
+    {
+      "topic": "FLUX 3 Video seed",
+      "positions": [
+        { "value": true, "source": "model-flux-3-video", "scope": "Runware's offering" },
+        { "value": "not documented", "source": "Black Forest Labs' own endpoint documentation", "scope": "the vendor API" }
+      ],
+      "resolution": "The model flag stays false. The Runware offering records true and the divergence report names it."
+    }
+  ]
+}

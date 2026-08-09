@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "modelFamily": "kling-video",
+  "vendor": "Kuaishou",
+  "checkedOn": "2026-08-08",
+  "evidenceStrength": "provider-only",
+  "_readme": [
+    "Evidence for Kling 3.0 Pro, and a worked example of why evidenceStrength exists.",
+    "",
+    "Every attempt to read kling.ai's own API documentation from this environment was",
+    "refused with HTTP 446 - both the get-started overview and the model reference. So",
+    "everything CineBraid knows about Kling comes from one provider's catalogue.",
+    "",
+    "That is enough to CATALOGUE the model and not enough to LAUNCH on it. A paid video",
+    "path resting on a single second-hand source is the kind of risk that only looks",
+    "acceptable until the source is wrong. Kling is therefore next-up, not launch, and a",
+    "test enforces the general rule rather than trusting this note."
+  ],
+  "sources": [
+    { "id": "runware-model", "type": "provider-model-page", "url": "https://runware.ai/docs/models/klingai-video-3-0-pro", "checkedOn": "2026-08-08", "appliesTo": ["api"] },
+    { "id": "runware-creator", "type": "provider-catalogue", "url": "https://runware.ai/creators/klingai", "checkedOn": "2026-08-08", "appliesTo": ["api"] }
+  ],
+  "identity": {
+    "providerModelId": "klingai:kling-video@3-pro",
+    "siblingTiers": ["3.0 Standard", "3.0 Turbo", "3.0 4K", "3.0 Omni Standard", "3.0 Omni Pro", "3.0 Omni 4K", "O1 Standard", "O1 Pro"],
+    "note": "Kling Omni is a real tier in this family, listed as reference-driven with prompt-based editing. Only its existence and capability tags are established; no parameter schema was read, so it is catalogued at watchlist."
+  },
+  "capabilities": [
+    { "claim": "Modes.", "value": ["t2v", "i2v", "motion-control"], "source": "runware-model", "appliesTo": ["api"], "note": "Motion control takes a reference video plus an optional reference image; CineBraid records it as v2v." },
+    { "claim": "Duration range in seconds.", "value": [3, 15], "source": "runware-model", "appliesTo": ["api"], "note": "Default 5." },
+    { "claim": "Output dimensions.", "value": ["1920x1080", "1440x1440", "1080x1920"], "source": "runware-model", "appliesTo": ["api"] },
+    { "claim": "Frame images.", "value": 2, "source": "runware-model", "appliesTo": ["api"], "note": "One image is the first frame; two are first and last. Position given as first|last|0|-1." },
+    { "claim": "Guidance reference images.", "value": 1, "source": "runware-model", "appliesTo": ["api"], "note": "Cannot be combined with frame images - which is why the model definition records 2 as its ceiling and not 3." },
+    { "claim": "Reference videos.", "value": 1, "source": "runware-model", "appliesTo": ["api"] },
+    { "claim": "Native audio generation is available and separately priced.", "value": true, "source": "runware-model", "appliesTo": ["api"], "note": "$0.112/s without, $0.168/s with." },
+    { "claim": "Sequential multi-prompt segments.", "value": 6, "source": "runware-model", "appliesTo": ["api"], "note": "Each segment carries its own duration and the segment durations must sum to the root duration. CineBraid has no equivalent control and cannot express this yet." },
+    { "claim": "Seed is echoed in the response and generated when omitted.", "value": true, "source": "runware-model", "appliesTo": ["api"] }
+  ],
+  "notEstablished": [
+    {
+      "claim": "Anything at all from Kuaishou's own documentation.",
+      "status": "kling.ai returned HTTP 446 for every request made from this environment",
+      "checkedIn": ["https://kling.ai/document-api/guides/get-started/overview", "https://app.klingai.com/global/dev/document-api/apiReference/model/videoGeneration"],
+      "cineBraidBehaviour": "evidenceStrength is provider-only and the catalogue status is next-up. No launch recommendation may be made on provider-only evidence."
+    },
+    {
+      "claim": "Whether the provider's limits are Kling's own or the provider's.",
+      "status": "unknowable without the vendor schema",
+      "cineBraidBehaviour": "The same figures appear on the model and on the offering, so the divergence report is silent for Kling. That silence means 'one source', not 'two sources agree', and provenance says so."
+    },
+    { "claim": "An official prompt-writing guide.", "status": "none reachable", "cineBraidBehaviour": "promptPolicy.state is not-established." },
+    { "claim": "Kling Omni's parameter schema.", "status": "only a capability tag on a provider listing", "cineBraidBehaviour": "kling-video/3-omni-pro is watchlist with verified false and conservative minimums." }
+  ],
+  "conflicts": []
+}

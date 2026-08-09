@@ -150,6 +150,7 @@ dist
 # and account records, and a directory-wide negation here would ship credentials.
 !/data/model-profiles.json
 !/data/model-definitions.json
+!/data/provider-surfaces.json
 !/projects/cinebraid-sample/
 
 # Runtime artifacts CineBraid writes inside the sample - never track these.

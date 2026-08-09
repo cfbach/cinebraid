@@ -627,9 +627,16 @@ function compileGenerationPlan(request) {
     endpoints,
     /* The pack's duration wins where it produced one: it has already snapped the request
        onto what the model will actually render and warned about the difference, so
-       carrying the unadjusted request forward would make the plan disagree with itself. */
+       carrying the unadjusted request forward would make the plan disagree with itself.
+       And the shot's duration is seeded only where the MODE produces something that
+       occupies time. A directed shot carries a length whichever pass is being compiled;
+       putting that length on a still frame's output block makes the plan claim a
+       three-second photograph, which the job contract then correctly refuses. Nothing
+       caught it while every pack was a video pack. */
     output: {
-      durationSeconds: Number(spec.durationSeconds) || undefined,
+      ...(["video", "audio"].includes(text(input.outputType) || MODE_OUTPUT_TYPES[mode])
+        ? { durationSeconds: Number(spec.durationSeconds) || undefined }
+        : {}),
       ...(isRecord(compiled.output) ? compiled.output : {}),
     },
     settings: {

@@ -1,0 +1,95 @@
+{
+  "schemaVersion": 1,
+  "modelFamily": "gpt-image-2",
+  "vendor": "OpenAI",
+  "checkedOn": "2026-08-08",
+  "evidenceStrength": "vendor",
+  "_readme": [
+    "Evidence for every GPT Image 2 capability CineBraid relies on.",
+    "",
+    "This family is the C2a proof that the compiler is not video-shaped: it is a still",
+    "image model, on a different vendor, with a different input contract, and it compiles",
+    "through the same core with no change to generation-compiler.js.",
+    "",
+    "OpenAI is the model's own vendor, so its documentation is model evidence for hosted",
+    "behaviour. It is NOT evidence about fal, which is how CineBraid actually reaches this",
+    "model today - fal's narrowing, if any, belongs to data/provider-surfaces.json."
+  ],
+  "sources": [
+    {
+      "id": "model-page",
+      "type": "official-model-page",
+      "url": "https://developers.openai.com/api/docs/models/gpt-image-2",
+      "checkedOn": "2026-08-08",
+      "appliesTo": ["api"]
+    },
+    {
+      "id": "image-guide",
+      "type": "official-api-documentation",
+      "url": "https://developers.openai.com/api/docs/guides/image-generation",
+      "checkedOn": "2026-08-08",
+      "appliesTo": ["api"]
+    },
+    {
+      "id": "cinebraid-profiles",
+      "type": "cinebraid-prompt-registry",
+      "url": "data/model-profiles.json",
+      "checkedOn": "2026-08-08",
+      "appliesTo": ["api"],
+      "note": "CineBraid's own shipped prompt profiles for this family, authored before C2a. Used only where OpenAI publishes no number."
+    }
+  ],
+  "identity": {
+    "apiModelIdentifier": "gpt-image-2",
+    "snapshots": [{ "id": "gpt-image-2-2026-04-21", "default": true, "source": "model-page" }],
+    "endpoints": [
+      { "path": "v1/images/generations", "source": "model-page" },
+      { "path": "v1/images/edits", "source": "model-page" },
+      { "path": "v1/batch", "source": "model-page" }
+    ]
+  },
+  "capabilities": [
+    { "claim": "Input modalities.", "value": ["text", "image"], "source": "model-page", "appliesTo": ["api"] },
+    { "claim": "Output modality.", "value": ["image"], "source": "model-page", "appliesTo": ["api"] },
+    { "claim": "Inpainting is a supported feature.", "value": true, "modes": ["inpaint", "edit"], "source": "model-page", "appliesTo": ["api"] },
+    { "claim": "A mask must match the input image's format and size, be under 50MB, and contain an alpha channel.", "value": true, "modes": ["inpaint"], "source": "image-guide", "appliesTo": ["api"] },
+    { "claim": "Named output sizes.", "value": ["1024x1024", "1536x1024", "1024x1536", "2048x2048", "2048x1152", "3840x2160", "2160x3840", "auto"], "source": "image-guide", "appliesTo": ["api"] },
+    { "claim": "Maximum edge length in pixels.", "value": 3840, "source": "image-guide", "appliesTo": ["api"] },
+    { "claim": "Both edges must be multiples of 16 pixels.", "value": 16, "source": "image-guide", "appliesTo": ["api"] },
+    { "claim": "Long edge to short edge ratio must not exceed 3:1.", "value": 3, "source": "image-guide", "appliesTo": ["api"] },
+    { "claim": "Total pixels must be between 655,360 and 8,294,400.", "value": [655360, 8294400], "source": "image-guide", "appliesTo": ["api"] },
+    { "claim": "Quality tiers.", "value": ["low", "medium", "high", "auto"], "source": "image-guide", "appliesTo": ["api"] },
+    { "claim": "Output formats.", "value": ["png", "jpeg", "webp"], "source": "image-guide", "appliesTo": ["api"] },
+    { "claim": "Streaming partial images.", "value": [0, 3], "source": "image-guide", "appliesTo": ["api"], "note": "Each partial costs 100 additional output tokens." },
+    { "claim": "input_fidelity is not settable; every image input is processed at high fidelity.", "value": true, "source": "image-guide", "appliesTo": ["api"] },
+    { "claim": "Reference images accepted for editing.", "value": 16, "source": "cinebraid-profiles", "appliesTo": ["api"], "note": "From data/model-profiles.json gpt-image-2/t2i limits.maxReferences. OpenAI's guide shows multiple inputs but publishes no ceiling; the shipped profile's number is retained rather than replaced with a guess." }
+  ],
+  "notEstablished": [
+    {
+      "claim": "A seed or any other deterministic-reproduction control.",
+      "status": "no OpenAI image documentation reachable from here documents one",
+      "checkedIn": ["model-page", "image-guide"],
+      "cineBraidBehaviour": "capabilities.flags.seed is false. A supplied seed produces an unsupported coverage entry and a warning; no seed is invented."
+    },
+    {
+      "claim": "Transparent background.",
+      "status": "explicitly NOT supported - the guide states requests with background: transparent are not supported for this model",
+      "cineBraidBehaviour": "Recorded as a caveat on the catalogue entry so a cut-out workflow is planned another way rather than discovered at dispatch."
+    },
+    {
+      "claim": "A maximum prompt length.",
+      "status": "the guide states no explicit prompt length limit",
+      "cineBraidBehaviour": "constraints.maxPromptCharacters is null. Nothing refuses on length for this model."
+    },
+    {
+      "claim": "Whether fal narrows any of the above.",
+      "status": "fal publishes no narrowing that CineBraid has read",
+      "cineBraidBehaviour": "The fal offering records an empty constraints block, which means 'no narrowing established' and NOT 'no narrowing exists'."
+    }
+  ],
+  "conflicts": [],
+  "promptingPolicySources": {
+    "status": "CineBraid's own, not OpenAI's.",
+    "note": "data/model-profiles.json has carried four authored profiles for this family since long before C2a - t2i, edit, multi-reference and blocking, each with rules and section orders. model-packs/gpt-image-2.js encodes that existing editorial policy as a versioned playbook. It is NOT presented as vendor prompting guidance, because it is not: no OpenAI prompt-writing guide was read into this record."
+  }
+}

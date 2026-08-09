@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 1,
+  "modelFamily": "ltx-2",
+  "vendor": "Lightricks",
+  "checkedOn": "2026-08-08",
+  "evidenceStrength": "vendor",
+  "_readme": [
+    "Evidence for LTX-2.3 - the open-weight local video option that actually has weights.",
+    "",
+    "It earns its place in this phase for two reasons beyond being open. First, it is the",
+    "honest answer to the local-video question that Wan 2.7 was expected to answer and",
+    "cannot (see wan.json). Second, it has a real legal-value GRID rather than a range,",
+    "and CineBraid's existing quantiser already expresses it - which is the useful kind of",
+    "proof that an architecture generalises: a second model needed no new mechanism."
+  ],
+  "sources": [
+    { "id": "model-card", "type": "official-model-card", "url": "https://huggingface.co/Lightricks/LTX-2.3", "checkedOn": "2026-08-08", "appliesTo": ["local"] },
+    { "id": "repo", "type": "official-repository", "url": "https://github.com/Lightricks/LTX-2", "checkedOn": "2026-08-08", "appliesTo": ["local"] }
+  ],
+  "identity": {
+    "releasedCheckpoints": [
+      { "variant": "2.3-22b-dev", "role": "full model, trainable in bf16", "source": "model-card" },
+      { "variant": "2.3-22b-distilled", "role": "8-step, CFG 1", "source": "model-card" },
+      { "variant": "2.3-22b-distilled-1.1", "role": "improved audio", "source": "model-card" },
+      { "variant": "2.3-spatial-upscaler-x2-1.1", "role": "2x spatial upscale", "source": "model-card" },
+      { "variant": "2.3-temporal-upscaler-x2-1.0", "role": "2x temporal upscale", "source": "model-card" }
+    ],
+    "license": { "name": "ltx-2-community-license-agreement", "source": "model-card", "note": "NOT Apache. Its terms have not been read and must be before anything ships on it." }
+  },
+  "capabilities": [
+    { "claim": "Joint audio-video generation in a single model.", "value": true, "source": "model-card", "appliesTo": ["local"] },
+    { "claim": "Text-to-video and image-to-video pipelines are published.", "value": ["t2v", "i2v"], "source": "repo", "appliesTo": ["local"] },
+    { "claim": "Width and height must be divisible by 32.", "value": 32, "source": "model-card", "appliesTo": ["local"] },
+    { "claim": "Frame count must be divisible by 8 plus 1.", "value": { "kind": "linear", "base": 8, "plus": 1 }, "source": "model-card", "appliesTo": ["local"] },
+    { "claim": "LoRA and IC-LoRA training are supported and reproducible.", "value": true, "source": "model-card", "appliesTo": ["local"] },
+    { "claim": "Parameter count.", "value": "22B", "source": "model-card", "appliesTo": ["local"] },
+    { "claim": "LTX-2.3 improves audio and visual quality and prompt adherence over LTX-2.", "value": true, "source": "model-card", "appliesTo": ["local"] }
+  ],
+  "notEstablished": [
+    {
+      "claim": "Duration limits.",
+      "status": "not published",
+      "cineBraidBehaviour": "constraints.durationSeconds is null."
+    },
+    {
+      "claim": "Frame rate.",
+      "status": "not published on the model card",
+      "cineBraidBehaviour": "IMPORTANT. constraints.frameQuantiser carries fps 24 so the grid can be expressed and exercised at all, and the quantiser record says in its own note that the fps is CineBraid's assumption and must be confirmed before dispatch. This is the one place in the C2a catalogue where a number CineBraid supplied sits beside vendor facts, and it is labelled where a reader will see it."
+    },
+    {
+      "claim": "VRAM guidance.",
+      "status": "not published; the repo states CUDA >12.7 and PyTorch ~=2.7 only",
+      "cineBraidBehaviour": "constraints.vramGuidanceGb is null. A 22B video model is not a laptop model, but CineBraid does not publish a number it cannot cite."
+    },
+    {
+      "claim": "An official prompt-writing guide.",
+      "status": "none located",
+      "cineBraidBehaviour": "promptPolicy.state is not-established."
+    }
+  ],
+  "conflicts": []
+}
