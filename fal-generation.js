@@ -7,6 +7,7 @@ const { parseAspectRatio, h3AspectSupport } = require("./public/shared-aspect");
 const { readJobLedger, writeJobLedgerSync, JobLedgerUnreadableError } = require("./generation-job-store");
 const { compileH3ExecutionPlan, planProvenance, H3ExecutionError } = require("./h3-execution");
 const { serializeH3PlanForFal, H3BackendError, FAL_H3_BACKEND } = require("./fal-h3-backend");
+const Lifecycle = require("./generation-lifecycle");
 
 function registerFalGeneration(app, context) {
   const { readConfig, readProject, writeProject, activeSlug, projectDirForSlug } = context;
@@ -151,8 +152,11 @@ function registerFalGeneration(app, context) {
      A terminal, already-ingested job is never walked backwards by a slower
      response arriving out of order, and identifiers that only the provider can
      supply are never cleared by a later update that lacks them. */
-  const TERMINAL = ["COMPLETED", "FAILED", "CANCELLED"];
-  function mergeJobOutcome(target, source) {
+  const TERMINAL = Lifecycle.TERMINAL_LEDGER_STATUSES;
+  /* `authoritative` says the incoming status came from the provider or from a person who
+     checked it. It is the only thing that may displace UNRESOLVED — a stale write from
+     an unrelated request must never turn "we do not know" into "we know it failed". */
+  function mergeJobOutcome(target, source, options = {}) {
     if (!target || !source) return target;
     const settled = TERMINAL.includes(String(target.status || "")) && !!target.ingestedAt;
     for (const [key, value] of Object.entries(source)) {
@@ -165,7 +169,11 @@ function registerFalGeneration(app, context) {
       if (key === "outputs" && settled && (!Array.isArray(value) || !value.length)) continue;
       target[key] = value;
     }
-    if (!settled && source.status) target.status = source.status;
+    if (source.status)
+      target.status = Lifecycle.nextStatus(target.status, source.status, {
+        ingested: !!target.ingestedAt,
+        authoritative: options.authoritative === true,
+      });
     return target;
   }
 
@@ -398,6 +406,45 @@ function registerFalGeneration(app, context) {
    * That is the whole of the no-legacy-fallback rule: there is nothing left to fall
    * back to, and a stored job from before this wiring can still be read, refreshed and
    * cancelled, but cannot originate a new provider request. */
+  /* THE PROVIDER BOUNDARY.
+   *
+   * Every paid dispatch in this module goes through here, so exactly one place decides
+   * what a failure ESTABLISHED. The evidence it attaches is provider-neutral — did the
+   * request leave, did anything answer, with what status — and generation-lifecycle.js
+   * turns that into FAILED or UNRESOLVED without knowing which adapter called it.
+   *
+   * The line that matters is the `fetch` call itself: before it, nothing was sent and a
+   * failure is ordinary; after it, the queue may hold the job whatever happens next. */
+  async function providerPost(url, init, label) {
+    let response;
+    try {
+      response = await fetch(url, init);
+    } catch (error) {
+      const failure = new Error(
+        `${label} did not answer (${error.message}). The request had already been sent, so it may have been accepted and charged — check the provider before generating this shot again.`,
+      );
+      failure.providerEvidence = { transmitted: true, httpStatus: null };
+      throw failure;
+    }
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const answered = new Error(normalizeError(data, response.status));
+      answered.providerEvidence = { transmitted: true, httpStatus: response.status };
+      throw answered;
+    }
+    /* A success CineBraid cannot identify a job from is not a success it can act on: the
+       render may be running and there is no handle to follow or cancel it. Treated as
+       uncertainty rather than recorded as a queued job with no id. */
+    if (!data || !data.request_id) {
+      const opaque = new Error(
+        `${label} accepted the request but returned no request id, so CineBraid cannot follow it. The generation may be running and may have been charged — check the provider before generating this shot again.`,
+      );
+      opaque.providerEvidence = { transmitted: true, httpStatus: response.status };
+      throw opaque;
+    }
+    return { response, data };
+  }
+
   async function submitH3(owner, job, cfg) {
     const compilation = job.compilation;
     if (!compilation || !compilation.plan)
@@ -413,33 +460,11 @@ function registerFalGeneration(app, context) {
          prompt string and reaches nothing else in the request. */
       ...(job.promptEdited ? { promptOverride: job.prompt } : {}),
     });
-    /* From here on the request has left the machine, and a failure no longer means
-       "nothing happened". A transport error is the ambiguous case — the queue may have
-       accepted the job and the answer may simply not have come back — so the failure
-       says so and the row records it. "FAILED" that silently means "possibly charged"
-       is the kind of state nobody reconciles because nobody knows to look. */
-    let response;
-    try {
-      response = await fetch(`${cfg.baseUrl}/${serialized.model}`, {
-        method: "POST",
-        headers: { "content-type": "application/json", Authorization: `Key ${cfg.apiKey}`, "X-Fal-No-Retry": "1" },
-        body: JSON.stringify(serialized.input),
-      });
-    } catch (error) {
-      const failure = new Error(
-        `fal did not answer the MiniMax H3 request (${error.message}). The request had already been sent, so it may have been accepted and charged — check the fal dashboard for ${serialized.model} before generating again.`,
-      );
-      failure.providerContacted = true;
-      throw failure;
-    }
-    const data = await response.json().catch(() => ({}));
-    /* A refusal the provider answered is unambiguous: it was received and declined. */
-    if (!response.ok) {
-      const refused = new Error(normalizeError(data, response.status));
-      refused.providerContacted = true;
-      refused.providerAnswered = true;
-      throw refused;
-    }
+    const { data } = await providerPost(`${cfg.baseUrl}/${serialized.model}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", Authorization: `Key ${cfg.apiKey}`, "X-Fal-No-Retry": "1" },
+      body: JSON.stringify(serialized.input),
+    }, serialized.model);
     return {
       model: serialized.model,
       modelFamily: serialized.modelFamily,
@@ -491,7 +516,9 @@ function registerFalGeneration(app, context) {
       if (!refs.length) throw new Error("The configured edit endpoint needs at least one input image.");
       input.image_urls = refs.slice(0, 16).map((ref) => referenceInput(owner, ref));
     }
-    const response = await fetch(`${cfg.baseUrl}/${model}`, {
+    /* The same boundary the H3 path uses. The uncertainty state is a property of paid
+       submission, not of one model family, so the image path earns it for free. */
+    const { data } = await providerPost(`${cfg.baseUrl}/${model}`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -499,9 +526,7 @@ function registerFalGeneration(app, context) {
         "X-Fal-No-Retry": "1",
       },
       body: JSON.stringify(input),
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(normalizeError(data, response.status));
+    }, model);
     return {
       model,
       modelFamily: inferModelFamily(model),
@@ -966,6 +991,40 @@ function registerFalGeneration(app, context) {
       );
       if (duplicateActive) return res.json({ ok: true, reused: true, duplicatePrevented: true, job: publicJob(duplicateActive) });
     }
+    /* THE DUPLICATE-PAID-WORK GUARD.
+     *
+     * An earlier submission for this same production result was sent and never answered.
+     * It may be rendering right now and it may already have been charged for. Generating
+     * again is the one action that turns an uncertainty into a certain second bill, and
+     * it is also the most natural thing to reach for when a job looks like it failed —
+     * which is precisely why UNRESOLVED is a separate state and why this refuses.
+     *
+     * Only a human who has gone and looked can clear it. There is deliberately no
+     * time-based expiry: waiting is not evidence that a request was refused.
+     *
+     * Note what this does NOT do — it does not consume a concurrency slot. With a cap of
+     * one or two, an unresolved job holding a slot forever would deadlock generation for
+     * the whole project. Blocking the specific duplicate and leaving the global cap alone
+     * is the narrower guarantee, and it is the one that matters. */
+    const requestContext = Lifecycle.generationContextKey({
+      purpose: String(req.body?.purpose || "frame"),
+      shotId: String(req.body?.shotId || ""),
+      entityList: String(req.body?.entityList || ""),
+      entityId: String(req.body?.entityId || ""),
+      frameId: String(req.body?.frameId || ""),
+      sourceBuildId: String(req.body?.sourceBuildId || ""),
+    });
+    const unresolvedTwin = jobs.find((item) =>
+      Lifecycle.blocksResubmission(item) && Lifecycle.generationContextKey(item) === requestContext);
+    if (unresolvedTwin)
+      return res.status(409).json({
+        error: Lifecycle.resubmissionBlockReason(unresolvedTwin) === "unresolved"
+          ? "CineBraid already sent this generation to the provider and never found out whether it was accepted. It may be running now and may already have been charged. Check the provider, then record what you found on that job before generating this again."
+          : "CineBraid is still sending an earlier submission of this generation and has no provider reference for it yet. Wait for it to settle, or check the provider, before generating this again.",
+        code: "GENERATION_UNRESOLVED",
+        unresolvedJobId: unresolvedTwin.id,
+        job: publicJob(unresolvedTwin),
+      });
     if (activeCount(jobs) >= cfg.maxConcurrent) return res.status(409).json({ error: `FAL already has ${cfg.maxConcurrent} active CineBraid job${cfg.maxConcurrent === 1 ? "" : "s"}. Wait for completion or cancel it.` });
     const requestedPurpose = String(req.body?.purpose || "frame");
     const purpose = ["blocking", "frame", "correction", "entity-reference", "motion-h3"].includes(requestedPurpose) ? requestedPurpose : "frame";
@@ -1140,32 +1199,120 @@ function registerFalGeneration(app, context) {
     }
     try {
       const outcome = await submit(owner, job, job.references);
-      await commit(owner, (current) => {
-        const row = current.find((item) => item.id === job.id);
-        if (row) mergeJobOutcome(row, { ...outcome, status: outcome.status, updatedAt: now() });
-        Object.assign(job, row || {});
-      });
+      try {
+        await commit(owner, (current) => {
+          const row = current.find((item) => item.id === job.id);
+          if (row) mergeJobOutcome(row, { ...outcome, status: outcome.status, updatedAt: now() }, { authoritative: true });
+          Object.assign(job, row || {});
+        });
+      } catch (persistError) {
+        /* The provider ACCEPTED — we are holding its request id — and the ledger write
+           failed. Calling that FAILED would be the worst answer available: a render is
+           running, it has been charged for, and the record would say it never happened.
+           Recorded as unresolved, carrying the identifier so it can still be followed. */
+        await commit(owner, (current) => {
+          const row = current.find((item) => item.id === job.id);
+          if (!row) return;
+          row.status = Lifecycle.UNRESOLVED;
+          row.providerContacted = true;
+          row.providerAnswered = true;
+          row.externalId = row.externalId || outcome.externalId || "";
+          row.unresolvedReason = `The provider accepted this request${outcome.externalId ? ` as ${outcome.externalId}` : ""}, but CineBraid could not record the result: ${persistError.message}`;
+          row.unresolvedAt = now();
+          row.updatedAt = now();
+          Object.assign(job, row);
+        }).catch(() => {});
+        return res.status(502).json({
+          error: job.unresolvedReason || persistError.message,
+          code: "GENERATION_UNRESOLVED",
+          job: publicJob(job),
+        });
+      }
       res.json({ ok: true, job: publicJob(job) });
     } catch (error) {
+      /* What the failure ESTABLISHED, decided by the generic lifecycle rules rather than
+         here. A request that was sent and never answered is not a known failure, and the
+         durable state has to say which of the two this was — the difference decides
+         whether "Generate again" is safe. */
+      const verdict = Lifecycle.describeSubmissionFailure(error);
       await commit(owner, (current) => {
         const row = current.find((item) => item.id === job.id);
         if (row) {
-          row.status = "FAILED";
+          row.status = verdict.status;
           row.error = error.message;
-          /* Whether the request reached the provider before it failed. Without this,
-             a failure that left the machine and a failure that never did look
-             identical in the ledger, and only one of them can have cost money.
-             `providerAnswered` narrows it further: the provider replied and declined,
-             so there is nothing to reconcile. */
-          if (error.providerContacted) row.providerContacted = true;
-          if (error.providerAnswered) row.providerAnswered = true;
+          row.providerContacted = verdict.providerContacted;
+          row.providerAnswered = verdict.providerAnswered;
+          if (verdict.status === Lifecycle.UNRESOLVED) {
+            row.unresolvedReason = verdict.reason;
+            row.unresolvedAt = now();
+          }
           row.updatedAt = now();
           Object.assign(job, row);
         }
       }).catch(() => {});
       updateEntityCoverageRun(owner, job, "needs-attention", error.message);
-      res.status(502).json({ error: error.message, job: publicJob(job) });
+      res.status(502).json({
+        error: error.message,
+        ...(verdict.status === Lifecycle.UNRESOLVED ? { code: "GENERATION_UNRESOLVED" } : {}),
+        job: publicJob(job),
+      });
     }
+  });
+
+  /* The way out of UNRESOLVED, and the only one that does not involve guessing.
+   *
+   * A person goes and looks at the provider and records what they found. CineBraid never
+   * infers this: no time-based expiry, no "probably failed by now". Waiting is not
+   * evidence that a request was refused, and a job that quietly aged into FAILED would
+   * put the duplicate-charge back exactly where this phase removed it from. */
+  app.post("/api/generation/fal/jobs/:id/reconcile", async (req, res) => {
+    let owner;
+    try {
+      owner = captureOwner();
+    } catch (error) {
+      return res.status(ledgerFailureStatus(error)).json(ledgerFailurePayload(error));
+    }
+    const outcome = String(req.body?.outcome || "");
+    if (!Lifecycle.isReconciliationOutcome(outcome))
+      return res.status(400).json({
+        error: `Record what you found at the provider: ${Object.keys(Lifecycle.RECONCILIATION_OUTCOMES).join(" or ")}.`,
+        code: "GENERATION_RECONCILE_OUTCOME_REQUIRED",
+      });
+    return guardRoute(res, serializeJobOperation(owner, req.params.id, async () => {
+      let job;
+      try {
+        job = readJobs(owner).find((item) => item.id === req.params.id);
+      } catch (error) {
+        return res.status(ledgerFailureStatus(error)).json(ledgerFailurePayload(error));
+      }
+      if (!job) return res.status(404).json({ error: "Generation job not found." });
+      if (!Lifecycle.isUnresolved(job))
+        return res.status(409).json({
+          error: "Only a job whose provider outcome is unknown can be reconciled.",
+          code: "GENERATION_NOT_UNRESOLVED",
+        });
+      const mutation = Lifecycle.reconcileUnresolved(job, outcome, {
+        at: now(),
+        by: "user",
+        note: String(req.body?.note || "").slice(0, 500),
+      });
+      try {
+        await commit(owner, (current) => {
+          const row = current.find((item) => item.id === job.id);
+          if (!row) return;
+          /* Applied ON TOP of the record, never in place of it. The compiled plan, the
+             endpoint, the bindings and the fact that this was once unresolved all
+             survive — a reconciled job must still be able to explain itself. */
+          row.status = mutation.status;
+          row.reconciliation = mutation.reconciliation;
+          row.updatedAt = now();
+          Object.assign(job, row);
+        });
+      } catch (error) {
+        return res.status(ledgerFailureStatus(error)).json(ledgerFailurePayload(error));
+      }
+      res.json({ ok: true, job: publicJob(job) });
+    }));
   });
   app.post("/api/generation/fal/jobs/:id/refresh", async (req, res) => {
     let owner;
@@ -1184,11 +1331,22 @@ function registerFalGeneration(app, context) {
         return res.status(ledgerFailureStatus(error)).json(ledgerFailurePayload(error));
       }
       if (!job) return res.status(404).json({ error: "Generation job not found." });
+      /* An unresolved job with no request id has nothing to poll. Pretending otherwise
+         would fetch an empty URL and report the resulting error as though the provider
+         had answered — inventing a status out of a failure. */
+      if (Lifecycle.isUnresolved(job) && !job.externalId)
+        return res.status(409).json({
+          error: "CineBraid never received a request id for this submission, so there is nothing it can check. Look for it at the provider and record what you find.",
+          code: "GENERATION_UNRESOLVED_NO_HANDLE",
+          job: publicJob(job),
+        });
       try {
         await refresh(owner, job);
         await commit(owner, (current) => {
           const row = current.find((item) => item.id === job.id);
-          if (row) Object.assign(job, mergeJobOutcome(row, job));
+          /* Authoritative: this status came from the provider itself, so it is allowed
+             to resolve an unresolved job in either direction. */
+          if (row) Object.assign(job, mergeJobOutcome(row, job, { authoritative: true }));
           else current.push(job); // the row vanished underneath us; do not lose it
         });
         res.json({ ok: true, job: publicJob(job) });
@@ -1196,7 +1354,13 @@ function registerFalGeneration(app, context) {
         await commit(owner, (current) => {
           const row = current.find((item) => item.id === job.id);
           if (row) {
-            row.status = "FAILED";
+            /* A poll that FAILED is not a provider answer, so it is never authoritative:
+               an unresolved job stays unresolved. Not being able to ask is not an answer,
+               and every other status keeps its existing behaviour. */
+            row.status = Lifecycle.nextStatus(row.status, "FAILED", {
+              ingested: !!row.ingestedAt,
+              authoritative: false,
+            });
             row.error = error.message;
             row.updatedAt = now();
             Object.assign(job, row);
@@ -1223,6 +1387,16 @@ function registerFalGeneration(app, context) {
         return res.status(ledgerFailureStatus(error)).json(ledgerFailurePayload(error));
       }
       if (!job) return res.status(404).json({ error: "Generation job not found." });
+      /* Cancelling an unresolved job with no provider handle would write CANCELLED over
+         a request that may well be rendering — turning an honest "unknown" into a
+         confident falsehood, and unblocking the retry that this state exists to hold.
+         There is nothing to cancel; there is something to go and check. */
+      if (Lifecycle.isUnresolved(job) && !job.cancelUrl)
+        return res.status(409).json({
+          error: "CineBraid never received a handle for this submission, so it cannot cancel it. The generation may be running at the provider. Check there, then record what you found on this job.",
+          code: "GENERATION_UNRESOLVED_NO_HANDLE",
+          job: publicJob(job),
+        });
       if (job.cancelUrl && !["COMPLETED", "FAILED", "CANCELLED"].includes(job.status)) {
         await fetch(job.cancelUrl, { method: "PUT", headers: { Authorization: `Key ${cfg.apiKey}` } }).catch(() => null);
       }

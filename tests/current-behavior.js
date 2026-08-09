@@ -334,6 +334,8 @@ async function main() {
     "generation-job-contract.js",
     "generation-job-durability.js",
     "generation-policy-contracts.js",
+    "generation-unresolved-negative-controls.js",
+    "generation-unresolved.js",
     "h3-execution-fixture.js",
     "h3-execution-negative-controls.js",
     "h3-execution-wiring.js",

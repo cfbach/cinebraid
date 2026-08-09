@@ -31,14 +31,56 @@ function falJobStatusLabel(job) {
     COMPLETED: "Results returned",
     FAILED: "Generation failed",
     CANCELLED: "Cancelled",
+    /* Deliberately not a variety of "failed". The filmmaker's next move after a failure
+       is to generate again, and that is the one move that can buy this shot twice. */
+    UNRESOLVED: "Submission status unknown",
+    ORPHANED: "Ran at the provider · not collected here",
   };
   return map[job?.status] || String(job?.status || "");
 }
+/* Where CineBraid does not know what happened to a paid request. */
+function falJobUnresolved(job) {
+  return String(job?.status || "") === "UNRESOLVED";
+}
+/* Plain language, no jargon, no stack traces, and no reassurance CineBraid cannot give.
+   It says what was done, what is unknown, and what to do about it. */
+function falUnresolvedExplanation(job) {
+  const where = job?.model ? ` (${job.model})` : "";
+  return `CineBraid sent this request to the provider${where} but lost contact before it could confirm whether it was accepted. The generation may be running and may have been charged. Check the provider before generating this shot again.`;
+}
+/* The only exit, and it needs a person who has actually looked. CineBraid never guesses
+   and never times this out — waiting is not evidence that a request was refused. */
+window.reconcileFalGeneration = async (jobId, outcome) => {
+  try {
+    const response = await fetch(`/api/generation/fal/jobs/${jobId}/reconcile`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ outcome }),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || "Could not record what you found.");
+    FAL_GENERATION_JOBS = [...(FAL_GENERATION_JOBS || []).filter((job) => job.id !== data.job.id), data.job];
+    closeModal();
+    route();
+    toast(outcome === "not-accepted" ? "Recorded as not accepted — you can generate this again" : "Recorded as accepted at the provider");
+  } catch (error) {
+    toast("Could not record the outcome: " + error.message);
+  }
+};
+window.openFalUnresolvedModal = (jobId) => {
+  const job = (FAL_GENERATION_JOBS || []).find((row) => row.id === jobId);
+  if (!job) return toast("That generation is no longer listed");
+  const fact = (label, value) => (value ? `<span>${esc(label)}: ${esc(String(value))}</span>` : "");
+  openModal(`<h3>Submission status unknown</h3><p class="modal-confirm-message">${esc(falUnresolvedExplanation(job))}</p><div class="candidate-evidence-facts">${fact("Provider", job.provider || "fal")}${fact("Model", job.model)}${fact("Backend", job.backendId)}${fact("Sent", job.createdAt)}${fact("Request id", job.externalId || "never received")}${fact("Shot", job.shotId)}</div><p class="hint">Open the provider's dashboard and look for this request. Then record what you found — CineBraid will not decide this for you, and it will not let you generate this shot again until you do.</p><div class="modal-actions"><button class="cancel" onclick="closeModal()">Close</button><button class="chip" onclick="reconcileFalGeneration('${attr(job.id)}','accepted')">It was accepted</button><button class="approve-btn" onclick="reconcileFalGeneration('${attr(job.id)}','not-accepted')">It was NOT accepted — safe to retry</button></div>`);
+};
 function falGenerationInline(shotId, purpose, frameId = "") {
   const job = falGenerationJob(shotId, purpose, frameId);
   if (!job) return "";
   const active = falJobActive(job), done = job.status === "COMPLETED", failed = job.status === "FAILED";
-  return `<div class="fal-job-strip ${active ? "active" : done ? "done" : failed ? "failed" : ""}"><div><span>${active ? '<i class="spin">◌</i>' : done ? "✓" : failed ? "!" : "·"}</span><div><b>${esc(falJobStatusLabel(job))}</b><small>${esc(job.model || "GPT Image 2")}${job.outputCount ? ` · ${job.outputCount} option${job.outputCount === 1 ? "" : "s"}` : ""}${job.error ? ` · ${esc(job.error)}` : ""}</small></div></div><div>${active ? `<button class="chip" onclick="refreshFalGeneration('${job.id}',true)">Refresh</button><button class="chip danger" onclick="cancelFalGeneration('${job.id}')">Cancel</button>` : failed ? `<button class="chip" onclick="openFalGenerationModal('${purpose}','${shotId}','${frameId}')">Try again</button>` : ""}</div></div>`;
+  const unknown = falJobUnresolved(job);
+  /* An unresolved job gets its own class, its own icon and its own action. What it must
+     never get is a "Try again" button sitting where a failure's would be. */
+  return `<div class="fal-job-strip ${unknown ? "unresolved" : active ? "active" : done ? "done" : failed ? "failed" : ""}"><div><span>${unknown ? "?" : active ? '<i class="spin">◌</i>' : done ? "✓" : failed ? "!" : "·"}</span><div><b>${esc(falJobStatusLabel(job))}</b><small>${unknown ? esc(falUnresolvedExplanation(job)) : `${esc(job.model || "GPT Image 2")}${job.outputCount ? ` · ${job.outputCount} option${job.outputCount === 1 ? "" : "s"}` : ""}${job.error ? ` · ${esc(job.error)}` : ""}`}</small></div></div><div>${unknown ? `<button class="chip" onclick="openFalUnresolvedModal('${attr(job.id)}')">Check and resolve</button>` : active ? `<button class="chip" onclick="refreshFalGeneration('${job.id}',true)">Refresh</button><button class="chip danger" onclick="cancelFalGeneration('${job.id}')">Cancel</button>` : failed ? `<button class="chip" onclick="openFalGenerationModal('${purpose}','${shotId}','${frameId}')">Try again</button>` : ""}</div></div>`;
 }
 function falPromptAction(shotId, purpose, frameId, buildId, fallbackDownload) {
   if (!falGenerationReady()) return fallbackDownload || "";
@@ -505,7 +547,8 @@ function falH3MotionInline(shotId) {
   const job = falH3MotionJob(shotId);
   if (!job) return "";
   const active = falJobActive(job), done = job.status === "COMPLETED", failed = job.status === "FAILED";
-  return `<div class="fal-job-strip h3 ${active ? "active" : done ? "done" : failed ? "failed" : ""}"><div><span>${active ? '<i class="spin">◌</i>' : done ? "✓" : failed ? "!" : "·"}</span><div><b>${esc(falJobStatusLabel(job))}</b><small>${esc(job.profileName || "MiniMax H3")} · ${esc(String(job.profileMode || "motion").toUpperCase())}${job.durationSeconds ? ` · ${job.durationSeconds}s` : ""}${job.error ? ` · ${esc(job.error)}` : ""}</small></div></div><div>${active ? `<button class="chip" onclick="refreshFalGeneration('${job.id}',true)">Refresh</button><button class="chip danger" onclick="cancelFalGeneration('${job.id}')">Cancel</button>` : failed ? `<button class="chip" onclick="openFalH3MotionModal('${job.shotId}','${job.sourceBuildId || ""}')">Try again</button>` : ""}</div></div>`;
+  const unknown = falJobUnresolved(job);
+  return `<div class="fal-job-strip h3 ${unknown ? "unresolved" : active ? "active" : done ? "done" : failed ? "failed" : ""}"><div><span>${unknown ? "?" : active ? '<i class="spin">◌</i>' : done ? "✓" : failed ? "!" : "·"}</span><div><b>${esc(falJobStatusLabel(job))}</b><small>${unknown ? esc(falUnresolvedExplanation(job)) : `${esc(job.profileName || "MiniMax H3")} · ${esc(String(job.profileMode || "motion").toUpperCase())}${job.durationSeconds ? ` · ${job.durationSeconds}s` : ""}${job.error ? ` · ${esc(job.error)}` : ""}`}</small></div></div><div>${unknown ? `<button class="chip" onclick="openFalUnresolvedModal('${attr(job.id)}')">Check and resolve</button>` : active ? `<button class="chip" onclick="refreshFalGeneration('${job.id}',true)">Refresh</button><button class="chip danger" onclick="cancelFalGeneration('${job.id}')">Cancel</button>` : failed ? `<button class="chip" onclick="openFalH3MotionModal('${job.shotId}','${job.sourceBuildId || ""}')">Try again</button>` : ""}</div></div>`;
 }
 function falH3MotionPromptAction(shotId, buildId, profile) {
   if (!falGenerationReady() || profile?.family !== "minimax-h3") return "";
