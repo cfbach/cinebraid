@@ -33,6 +33,12 @@ const {
 } = require("./public/shared-generation-capability");
 
 const GENERATION_CONTRACT_VERSION = 1;
+/* A GenerationPlan is a compiled GenerationJob intent, not a second IR. It reuses the
+   job's own blocks — target, mode, outputType, model, inputs, output, settings — so a
+   job is minted from a plan by adding a jobId and routing, with nothing translated.
+   What a plan adds is the record of the compilation itself: which model pack produced
+   it, where every piece of filmmaking intent ended up, and what could not be carried. */
+const GENERATION_PLAN_VERSION = 1;
 
 /* ---------------------------------------------------------------------------
    Vocabulary. Every list here is data that validators read; none of it is a switch
@@ -86,6 +92,27 @@ const RESULT_STATUSES = ["completed", "failed", "cancelled", "partial"];
 const ARTIFACT_KINDS = ["image", "video", "audio", "metadata"];
 const ARTIFACT_ROLES = ["candidate", "preview", "sidecar", "mask"];
 const AUDIO_SOURCES = ["none", "native", "external", "replaced"];
+
+/* ---------------------------------------------------------------------------
+   Intent coverage.
+
+   The one property the compiler exists to guarantee: every piece of filmmaking
+   intent a shot actually carries ends in exactly one of these states, and the state
+   is recorded. Nothing may simply stop existing between the shot and the model.
+
+     represented       it is in the prompt, an API parameter, or a generation control
+     anchored          an input already establishes it authoritatively — a first
+                       frame, a last frame, an approved identity or location
+                       reference — so restating it would compete with that input
+     omitted-by-design  deliberately left out, with the reason recorded
+     unsupported       the chosen model and mode cannot express it; a warning is
+                       raised instead of the value being dropped
+
+   `via` says HOW, and is what makes the record checkable rather than decorative: an
+   anchored intent must name the input that anchors it, and a represented intent must
+   name where it landed. */
+const INTENT_COVERAGE_STATES = ["represented", "anchored", "omitted-by-design", "unsupported"];
+const INTENT_REPRESENTATION_CHANNELS = ["prompt", "parameter", "control"];
 
 const DATA_CLASSIFICATIONS = ["PUBLIC", "INTERNAL", "CONFIDENTIAL", "RESTRICTED"];
 /* Ordered least to most sensitive, so a derived asset can inherit the highest of its
@@ -358,6 +385,144 @@ function validateGenerationJob(job, options = {}) {
 }
 
 /* ---------------------------------------------------------------------------
+   GenerationPlan.
+
+   Validated by delegating the shared blocks to validateGenerationJob — a plan that
+   would not make a legal job is not a legal plan — and then checking the three things
+   that are true of a compiled result and of nothing else:
+
+     1. every coverage entry is well formed, and the ones that claim something
+        (anchored, omitted-by-design, unsupported) actually say what;
+     2. a first or last frame is a STRUCTURED binding to a real reference of the right
+        role, not a sentence in the prompt that happens to mention an ending;
+     3. no internal identifier the compiler recorded as machine-only appears in the
+        model-facing prompt text.
+
+   Rule 3 is enforced here rather than left to a linter because a raw UUID in prose is
+   not a cosmetic defect: it is a token the model will try to render. */
+function validateGenerationPlan(plan, options = {}) {
+  const errors = [];
+  const warnings = [];
+  if (!isRecord(plan)) {
+    fail(errors, "plan", "missing", "A generation plan must be an object.");
+    return { ok: false, errors, warnings };
+  }
+
+  if (plan.planVersion != null && !Number.isInteger(plan.planVersion))
+    fail(errors, "planVersion", "invalid-type", "planVersion must be an integer.");
+
+  /* The plan's intent blocks are a job's intent blocks. Borrow a jobId so the shared
+     validator can run; the plan itself does not own one, because a plan may be
+     compiled, inspected and discarded without any job ever existing. */
+  const asJob = { ...plan, jobId: isNonEmptyString(plan.jobId) ? plan.jobId : "plan" };
+  const job = validateGenerationJob(asJob, options);
+  for (const error of job.errors) fail(errors, error.field, error.code, error.message);
+  for (const warning of job.warnings) warnings.push(warning);
+
+  /* --- compiler identity --- */
+  const compiler = isRecord(plan.compiler) ? plan.compiler : null;
+  if (!compiler) fail(errors, "compiler", "missing", "A plan must record the model pack that compiled it.");
+  else {
+    if (!isNonEmptyString(compiler.packId))
+      fail(errors, "compiler.packId", "missing", "compiler.packId is required.");
+    if (!isNonEmptyString(compiler.packVersion))
+      /* A version, not a timestamp: two runs of the same pack must be comparable, and
+         a prompt that changed because the pack changed must be distinguishable from
+         one that changed because the shot did. */
+      fail(errors, "compiler.packVersion", "missing", "compiler.packVersion is required.");
+  }
+
+  /* --- endpoint bindings --- */
+  const references = Array.isArray(plan.inputs?.references) ? plan.inputs.references : [];
+  const byRefId = new Map(references.filter(isRecord).map((reference) => [String(reference.refId), reference]));
+  const endpoints = isRecord(plan.endpoints) ? plan.endpoints : {};
+  for (const [field, role] of [["firstFrame", "first-frame"], ["lastFrame", "last-frame"]]) {
+    const binding = endpoints[field];
+    if (binding == null) continue;
+    if (!isRecord(binding) || !isNonEmptyString(binding.refId)) {
+      fail(errors, `endpoints.${field}`, "invalid-type",
+        `endpoints.${field} must name a reference by refId.`);
+      continue;
+    }
+    const reference = byRefId.get(String(binding.refId));
+    if (!reference)
+      fail(errors, `endpoints.${field}.refId`, "unresolvable",
+        `endpoints.${field} names ${binding.refId}, which is not among the plan's references.`);
+    else if (String(reference.role) !== role)
+      fail(errors, `endpoints.${field}.refId`, "contradiction",
+        `endpoints.${field} must bind a ${role} reference; ${binding.refId} is ${reference.role}.`);
+  }
+  /* An ending described only in prose is the failure this field exists to prevent. */
+  if (String(plan.mode) === "flf" && !isRecord(endpoints.lastFrame))
+    fail(errors, "endpoints.lastFrame", "missing",
+      "A first/last-frame plan must bind its ending frame structurally; prose describing the ending is not the contract.");
+  if (["i2v", "flf"].includes(String(plan.mode)) && !isRecord(endpoints.firstFrame))
+    fail(errors, "endpoints.firstFrame", "missing",
+      `A ${plan.mode} plan must bind its opening frame structurally.`);
+
+  /* --- coverage --- */
+  const coverage = Array.isArray(plan.coverage) ? plan.coverage : null;
+  if (!coverage) fail(errors, "coverage", "missing", "coverage must be an array.");
+  else {
+    const seen = new Set();
+    coverage.forEach((entry, index) => {
+      const at = `coverage[${index}]`;
+      if (!isRecord(entry)) {
+        fail(errors, at, "invalid-type", "A coverage entry must be an object.");
+        return;
+      }
+      if (!isNonEmptyString(entry.intent)) fail(errors, `${at}.intent`, "missing", "intent is required.");
+      else if (seen.has(entry.intent))
+        /* Two states for one intent is exactly the ambiguity coverage removes. */
+        fail(errors, `${at}.intent`, "duplicate", `intent ${entry.intent} is recorded twice.`);
+      else seen.add(entry.intent);
+      checkEnum(errors, `${at}.state`, entry.state, INTENT_COVERAGE_STATES, { required: true });
+      const state = String(entry.state);
+      if (state === "represented") {
+        checkEnum(errors, `${at}.via`, entry.via, INTENT_REPRESENTATION_CHANNELS, { required: true });
+      } else if (state === "anchored" && !isNonEmptyString(entry.via)) {
+        fail(errors, `${at}.via`, "missing",
+          "An anchored intent must name the input that anchors it.");
+      } else if (state === "omitted-by-design" && !isNonEmptyString(entry.reason)) {
+        fail(errors, `${at}.reason`, "missing",
+          "An intent omitted by design must record why.");
+      } else if (state === "unsupported" && !isNonEmptyString(entry.reason)) {
+        fail(errors, `${at}.reason`, "missing",
+          "An unsupported intent must record what refused it.");
+      }
+    });
+    /* Unsupported is the state that loses information, so it may never be silent. */
+    const warned = new Set((Array.isArray(plan.warnings) ? plan.warnings : [])
+      .filter(isRecord).map((warning) => String(warning.intent || "")));
+    for (const entry of coverage)
+      if (isRecord(entry) && String(entry.state) === "unsupported" && !warned.has(String(entry.intent)))
+        fail(errors, "warnings", "silent-loss",
+          `${entry.intent} is unsupported but no warning names it.`);
+  }
+
+  /* --- warnings --- */
+  if (plan.warnings != null && !Array.isArray(plan.warnings))
+    fail(errors, "warnings", "invalid-type", "warnings must be an array.");
+  else
+    (plan.warnings || []).forEach((warning, index) => {
+      if (!isRecord(warning) || !isNonEmptyString(warning.code) || !isNonEmptyString(warning.message))
+        fail(errors, `warnings[${index}]`, "invalid-type", "A warning needs a code and a message.");
+    });
+
+  /* --- raw-identifier hygiene --- */
+  const identifiers = Array.isArray(plan.provenance?.entityIdentifiers)
+    ? plan.provenance.entityIdentifiers.filter(isNonEmptyString)
+    : [];
+  const prompt = typeof plan.inputs?.prompt === "string" ? plan.inputs.prompt : "";
+  for (const identifier of identifiers)
+    if (prompt.includes(identifier))
+      fail(errors, "inputs.prompt", "internal-identifier-in-prompt",
+        `The prompt contains the internal identifier ${identifier}. Model-facing text uses production names.`);
+
+  return { ok: errors.length === 0, errors, warnings };
+}
+
+/* ---------------------------------------------------------------------------
    GenerationResult. */
 function validateGenerationResult(result) {
   const errors = [];
@@ -574,6 +739,9 @@ function resolveGovernance(job, context = {}) {
 
 module.exports = {
   GENERATION_CONTRACT_VERSION,
+  GENERATION_PLAN_VERSION,
+  INTENT_COVERAGE_STATES,
+  INTENT_REPRESENTATION_CHANNELS,
   MODE_OUTPUT_TYPES,
   OUTPUT_TYPES,
   TARGET_KINDS,
@@ -606,5 +774,6 @@ module.exports = {
   resolveReferenceSource,
   validateCostEstimate,
   validateGenerationJob,
+  validateGenerationPlan,
   validateGenerationResult,
 };
