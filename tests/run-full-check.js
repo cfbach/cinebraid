@@ -37,6 +37,7 @@ const nodeSuites = [
   "check:custom-provider",
   "check:provider-health",
   "check:local-only",
+  "check:lan-passcodes",
   "check:secret-registry",
   "check:project-paths",
   "check:generation-contract",
@@ -115,7 +116,7 @@ const serialSuites = ["check:windows-shutdown"];
    that refuses to accept a skip is `npm run check:browser-gate`, which every one of
    these also belongs to. See docs/qa/BROWSER_TESTS.md. */
 const browserSuites = ["check:manual-browser", "check:browser-real", "check:h3-browser", "check:preview-layout",
-  "check:ui-state", "check:c2b-browser", "check:brand-logo-browser"];
+  "check:ui-state", "check:c2b-browser", "check:brand-logo-browser", "check:lan-passcode-browser"];
 const releaseSuites = ["check:environment", "check:package"];
 /* How a suite is launched, without a shell.
 

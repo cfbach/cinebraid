@@ -81,16 +81,71 @@ function settingsPanelSaved(detail = "") {
   setSettingsPanelState("saved", detail);
 }
 
-async function persistPassSettings(body) {
-  const r = await fetch("/api/config", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+/* ---------- LAN access passcodes ----------
+   The editor and viewer passcodes are stored settings like any other, but they are
+   the only ones whose current value the browser is never given: the config secret
+   registry replaces each with a set/unset marker. So the two boxes are write-only,
+   they always start empty, and a blank box means "leave the stored one alone".
+
+   For three phases these functions had no controls to read. Settings rendered no
+   passcode panel at all, so savePass() dereferenced a null input and died with a
+   bare TypeError — while the product told LAN users to set an editor passcode.
+   Missing controls are now a stated failure that sends nothing, rather than a
+   stack trace that looks like a save which quietly did not happen. */
+function passcodeInputs() {
+  const editor = $("#cfg-epass"), viewer = $("#cfg-vpass");
+  return editor && viewer ? { editor, viewer } : null;
+}
+function passcodeSaveFailed(reason) {
   const note = $("#pass-note");
-  if (note) note.textContent = r.ok
-    ? "saved — sign in at /login.html once auth is on"
-    : "save failed";
+  if (note) note.textContent = reason;
+  setSettingsPanelState("error", reason);
+  toast("Could not save passcodes");
+}
+async function persistPassSettings(body) {
+  const fields = passcodeInputs();
+  if (!fields) return passcodeSaveFailed("The passcode fields are not on screen — open Settings → Access & security and try again.");
+  setSettingsPanelState("saving");
+  let r;
+  try {
+    r = await fetch("/api/config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch (error) {
+    return passcodeSaveFailed("The CineBraid server did not respond — check that it is still running.");
+  }
+  if (!r.ok) {
+    const data = await r.json().catch(() => ({}));
+    return passcodeSaveFailed(data.error || "The server rejected the change.");
+  }
+  /* A passcode that has been stored does not stay sitting in the page, and the
+     stored one is never read back to replace it. */
+  fields.editor.value = "";
+  fields.viewer.value = "";
+  const held = Object.prototype.hasOwnProperty.call(body, "editorPass") ? !!body.editorPass : !!CONFIG?.editorPass;
+  const state = (id, on) => { const el = $(id); if (el) el.textContent = on ? "Set" : "Not set"; };
+  if (Object.prototype.hasOwnProperty.call(body, "editorPass")) state("#cfg-epass-state", !!body.editorPass);
+  if (Object.prototype.hasOwnProperty.call(body, "viewerPass")) state("#cfg-vpass-state", !!body.viewerPass);
+  if (CONFIG) {
+    if (Object.prototype.hasOwnProperty.call(body, "editorPass")) CONFIG.editorPass = body.editorPass ? "(set)" : "";
+    if (Object.prototype.hasOwnProperty.call(body, "viewerPass")) CONFIG.viewerPass = body.viewerPass ? "(set)" : "";
+  }
+  settingsPanelSaved();
+  /* Deliberately no re-render. The moment an editor passcode exists the server gates
+     every request, so this browser's next call is answered with "Sign in" until it
+     has been through /login.html — re-reading the configuration here would replace a
+     working panel with the empty defaults of a refused response. */
+  const note = $("#pass-note");
+  if (note) note.textContent = !Object.keys(body).length
+    ? "Nothing changed — both boxes were left blank, so the stored passcodes are untouched."
+    : held
+      ? "Saved. This browser and every other device must now sign in at /login.html."
+      : body.editorPass === ""
+        ? "Saved. Editor authentication is off — CineBraid no longer asks anyone for a passcode."
+        : "Saved. A viewer passcode only takes effect once an editor passcode is set.";
+  toast("Passcodes saved");
 }
 window.finishBlankEditorPass = async (mode) => {
   const body = window._pendingPassSettings || {};
@@ -100,13 +155,20 @@ window.finishBlankEditorPass = async (mode) => {
   await persistPassSettings(body);
 };
 window.savePass = async () => {
+  const fields = passcodeInputs();
+  if (!fields) return passcodeSaveFailed("The passcode fields are not on screen — open Settings → Access & security and try again.");
   const body = {};
-  const e = $("#cfg-epass").value, v = $("#cfg-vpass").value;
+  const e = fields.editor.value, v = fields.viewer.value;
   if (e !== "") body.editorPass = e;
   if (v !== "") body.viewerPass = v;
-  if (e === "") {
+  /* A blank editor box is ambiguous only while there is a passcode to lose, so that
+     is the only time it is worth a question. The choice is preserved exactly as it
+     was written: KEEP UNCHANGED omits editorPass, TURN AUTH OFF sends "". With no
+     passcode stored, both branches produce the same request, and asking would offer
+     to switch off something that is already off. */
+  if (e === "" && CONFIG?.editorPass) {
     window._pendingPassSettings = body;
-    openModal(`<h3>Editor passcode is blank</h3><p class="modal-confirm-message">Choose whether to leave the existing editor passcode unchanged or turn editor authentication off.</p><div class="modal-actions"><button class="cancel" onclick="window._pendingPassSettings=null;closeModal()">Cancel</button><button class="ghost-btn" onclick="finishBlankEditorPass('keep')">KEEP UNCHANGED</button><button class="danger-btn" onclick="finishBlankEditorPass('clear')">TURN AUTH OFF</button></div>`);
+    openModal(`<h3>Editor passcode is blank</h3><p class="modal-confirm-message">Choose whether to leave the existing editor passcode unchanged or turn editor authentication off. Turning it off lets anyone who can reach this address edit the production.</p><div class="modal-actions"><button class="cancel" onclick="window._pendingPassSettings=null;closeModal()">Cancel</button><button class="ghost-btn" onclick="finishBlankEditorPass('keep')">KEEP UNCHANGED</button><button class="danger-btn" onclick="finishBlankEditorPass('clear')">TURN AUTH OFF</button></div>`);
     return;
   }
   await persistPassSettings(body);
