@@ -112,11 +112,28 @@ A quarantine that only tolerates failure is how the original skips became invisi
 
 ## Isolation
 
-Every suite that needs data builds a temporary directory and points the server at it
-with `CINEBRAID_CONFIG_PATH` and `CINEBRAID_PROJECTS_ROOT`, then deletes it. Nothing
-reads or writes `data/`, `projects/` or the shipped sample. `scripts/qa-sandbox.js`
-builds the same kind of environment for hand testing and refuses to build one inside
-the repository.
+The suites added in Q1 — and the continuity workspace suite — build a temporary
+directory and point the server at it with `CINEBRAID_CONFIG_PATH` and
+`CINEBRAID_PROJECTS_ROOT`, then delete it. `scripts/qa-sandbox.js` builds the same
+kind of environment for hand testing and refuses to build one inside the repository.
+
+Six older suites predate those variables and still start `node server.js` against
+the repository's own roots. Rather than trust that they only ever read, the gate
+brackets its whole run with a byte census of `data/` and `projects/` and fails naming
+any file that changed. On a machine that already has `data/config.json`, nothing
+changes. On a **fresh clone** the first server start creates that file — the
+application bootstrapping its own defaults — and the gate reports it as such:
+
+```
+isolation  26 files under data/ and projects/ byte-identical after the run
+           first run created data/config.json — six suites still start the server
+           against the repository's own roots
+```
+
+Creation of that one file is tolerated. *Modifying* it is not, and nothing under
+`projects/` is exempt at all: a stray test project appearing there is exactly what
+the census exists to catch. Moving those six suites onto sandbox roots is the
+follow-up this line is here to keep visible.
 
 ## Troubleshooting
 

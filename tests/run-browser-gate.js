@@ -128,6 +128,15 @@ function runSuite(name) {
    machine, so line endings cannot differ between the two reads. */
 const WATCHED = ["data", "projects"];
 
+/* Files CineBraid writes for itself the first time it starts, which a fresh clone
+   legitimately does not have. Their CREATION is the application bootstrapping, not a
+   test writing where it should not - CI proved this by failing on exactly it. Their
+   MODIFICATION is still damage and still fails: on a real machine data/config.json
+   holds the founder's settings, and a suite overwriting it is the thing being
+   guarded against. Nothing under projects/ is exempt at all, because a stray test
+   project appearing there is precisely the failure this census exists to catch. */
+const FIRST_RUN_ARTIFACTS = new Set(["data/config.json"]);
+
 function census() {
   const seen = new Map();
   const walk = (dir) => {
@@ -136,7 +145,8 @@ function census() {
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) walk(full);
       else if (entry.isFile())
-        seen.set(path.relative(ROOT, full), crypto.createHash("sha256").update(fs.readFileSync(full)).digest("hex"));
+        seen.set(path.relative(ROOT, full).split(path.sep).join("/"),
+          crypto.createHash("sha256").update(fs.readFileSync(full)).digest("hex"));
     }
   };
   for (const dir of WATCHED) walk(path.join(ROOT, dir));
@@ -154,7 +164,12 @@ for (const [file, hash] of before) {
   if (!after.has(file)) damage.push(`deleted  ${file}`);
   else if (after.get(file) !== hash) damage.push(`modified ${file}`);
 }
-for (const file of after.keys()) if (!before.has(file)) damage.push(`created  ${file}`);
+const bootstrapped = [];
+for (const file of after.keys()) {
+  if (before.has(file)) continue;
+  if (FIRST_RUN_ARTIFACTS.has(file)) bootstrapped.push(file);
+  else damage.push(`created  ${file}`);
+}
 
 const names = [...results, ...quarantine].map((row) => row.name);
 const column = Math.max(...names.map((name) => name.length));
@@ -181,6 +196,8 @@ console.log(`\ngated     launched ${SUITES.length}   executed ${executed.length}
 console.log(`quarantine launched ${QUARANTINED.length}   failing as recorded ${pinned.length}`);
 console.log(`browser launches ${totalReceipts}`);
 console.log(`isolation  ${before.size} files under ${WATCHED.join("/ and ")}/ ${damage.length ? `CHANGED (${damage.length})` : "byte-identical after the run"}`);
+if (bootstrapped.length)
+  console.log(`           first run created ${bootstrapped.join(", ")} — six suites still start the server against the repository's own roots (docs/qa/BROWSER_TESTS.md)`);
 for (const row of pinned) console.log(`  known stale  ${row.name} — ${row.why}`);
 
 if (failed.length || silent.length || escaped.length || drifted.length || mute.length || damage.length) {
