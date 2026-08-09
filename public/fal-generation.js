@@ -525,10 +525,22 @@ function falH3CostEstimate(duration, imageCount, videoCount, resolution = "2K") 
     detail: `${seconds}s output${extraImages ? ` + $${extraImages.toFixed(2)} for ${Math.max(0, imageCount - 5)} image${imageCount - 5 === 1 ? "" : "s"} beyond the first five` : ""}${videoCount ? "; reference-video usage is billed separately" : ""}. Pricing can change before submission.`,
   };
 }
+/* The dialog shows the COMPILED PLAN, because the compiled plan is what is sent.
+ *
+ * It used to show the prompt-engine's own text and the server used to dispatch that
+ * same string, so "what you confirmed" and "what was sent" matched by coincidence. Now
+ * the server compiles the shot's approved package into a GenerationPlan and serialises
+ * that; this dialog asks for the identical compilation and renders it. The compiler is
+ * deterministic — no clock, no network, no assistant — so the preview and the dispatch
+ * cannot drift apart.
+ *
+ * Every number here comes from that response. Nothing about MiniMax H3 or about fal is
+ * hard-coded on this screen any more, which is why a stale 2,000-character limit could
+ * sit in the interface for as long as it did. */
 window.updateFalH3CostEstimate = () => {
   const request = window._falH3MotionRequest || {};
-  const duration = Number(document.getElementById("fal-h3-duration")?.value || request.duration || 5);
-  const resolution = document.getElementById("fal-h3-resolution")?.value || "2K";
+  const duration = Number(document.getElementById("fal-h3-duration")?.value || request.durationSeconds || 5);
+  const resolution = document.getElementById("fal-h3-resolution")?.value || request.resolution || "2K";
   const refs = request.references || [];
   const images = refs.filter((ref) => ref.mediaType === "image").length;
   const videos = refs.filter((ref) => ref.mediaType === "video").length;
@@ -536,28 +548,65 @@ window.updateFalH3CostEstimate = () => {
   const target = document.getElementById("fal-h3-cost-estimate");
   if (target) target.innerHTML = `<b>${esc(estimate.label)}</b><span>${esc(estimate.detail)}</span>`;
 };
+/* The effective ceiling: MiniMax H3's own limit intersected with fal's. The dialog is
+   told the number rather than deciding it, and says which layer set it. */
+function falH3PromptLimit() {
+  return Number(window._falH3MotionRequest?.maxPromptCharacters) || 7000;
+}
+/* What an edit removed, checked against the compiler's own record with the same
+   deterministic test the compiler uses on its own output. Not a review and not a
+   refusal — the words are the filmmaker's — but the cost of the change is stated before
+   it is paid for rather than discovered in the result. */
+window.reviewFalH3PromptEdit = async () => {
+  const request = window._falH3MotionRequest;
+  const panel = document.getElementById("fal-h3-edit-coverage");
+  if (!request || !panel) return;
+  const prompt = String(document.getElementById("fal-h3-prompt-editor")?.value ?? "");
+  if (prompt.trim() === String(request.compiledPrompt || "").trim()) {
+    panel.hidden = true;
+    panel.innerHTML = "";
+    return;
+  }
+  const gate = falH3AspectGate();
+  const preview = await fetchFalH3Plan(request.shotId, request.buildId, {
+    durationSeconds: Number(document.getElementById("fal-h3-duration")?.value || request.durationSeconds),
+    resolution: document.getElementById("fal-h3-resolution")?.value || request.resolution,
+    aspectRatio: gate.carriesAspectRatio ? gate.value : "",
+    profileMode: request.profileMode,
+    prompt,
+  });
+  if (!preview) return;
+  const lost = preview.editedCoverage?.lost || [];
+  const checked = preview.editedCoverage?.checked || [];
+  panel.hidden = false;
+  panel.innerHTML = lost.length
+    ? `<div><b>Your edit drops ${lost.length} of ${checked.length} directed element${lost.length === 1 ? "" : "s"}</b><small>${esc(lost.map((row) => row.label).join(", "))}. That may be exactly what you intended — CineBraid is recording it, not blocking it. The compiled original is preserved either way.</small></div>`
+    : `<div class="ok"><b>Your edit keeps all ${checked.length} directed elements</b><small>Every piece of direction CineBraid wrote into the prompt is still present in your version.</small></div>`;
+};
 window.updateFalH3PromptEditor = () => {
   const request = window._falH3MotionRequest || {};
   const editor = document.getElementById("fal-h3-prompt-editor");
   const prompt = String(editor?.value ?? request.prompt ?? "");
   request.prompt = prompt;
+  const limit = falH3PromptLimit();
   const count = document.getElementById("fal-h3-prompt-count");
   const fact = document.getElementById("fal-h3-prompt-fact");
-  const submit = document.getElementById("fal-h3-submit");
   const warning = document.getElementById("fal-h3-prompt-warning");
-  const changed = prompt.trim() !== String(request.originalPrompt || "").trim();
+  const changed = prompt.trim() !== String(request.compiledPrompt || "").trim();
   if (count) {
-    count.textContent = `${prompt.length.toLocaleString()}/2,000`;
-    count.classList.toggle("over", prompt.length > 2000);
+    count.textContent = `${prompt.length.toLocaleString()}/${limit.toLocaleString()}`;
+    count.classList.toggle("over", prompt.length > limit);
   }
-  if (fact) fact.textContent = `${prompt.length.toLocaleString()}/2,000 prompt characters${changed ? " · edited" : ""}`;
+  if (fact) fact.textContent = `${prompt.length.toLocaleString()}/${limit.toLocaleString()} prompt characters${changed ? " · edited" : ""}`;
   if (warning) {
-    warning.hidden = !!prompt.trim() && prompt.length <= 2000;
-    warning.querySelector("small").textContent = !prompt.trim()
+    warning.hidden = !!prompt.trim() && prompt.length <= limit;
+    /* Guarded: the counter is not worth losing the whole dialog over if the panel's
+       markup ever changes underneath it. */
+    const detail = warning.querySelector && warning.querySelector("small");
+    if (detail) detail.textContent = !prompt.trim()
       ? "Enter a prompt before submitting a paid request."
-      : "Shorten this prompt to 2,000 characters before a paid submission.";
+      : `Shorten this prompt to ${limit.toLocaleString()} characters before a paid submission. CineBraid will not trim it for you — a prompt cut to fit is a shot you did not direct.`;
   }
-  if (submit) submit.disabled = !prompt.trim() || prompt.length > 2000 || window._falH3Submitting;
   updateFalH3AspectGuard();
 };
 /* The format this dialog would actually send, checked against MiniMax H3's own list.
@@ -573,28 +622,121 @@ window.falH3AspectGate = () => {
    keyframe and setting in this dialog is left exactly as the user left it. */
 window.updateFalH3AspectGuard = () => {
   const panel = document.getElementById("fal-h3-aspect-warning");
-  if (!panel) return;
   const gate = falH3AspectGate();
-  panel.hidden = gate.ok;
-  if (!gate.ok) {
-    panel.innerHTML = `<div><b>MiniMax H3 cannot deliver ${esc(gate.requested || "this format")}</b><small>${esc(gate.message)}</small></div>`;
+  if (panel) {
+    panel.hidden = gate.ok;
+    if (!gate.ok) panel.innerHTML = `<div><b>MiniMax H3 cannot deliver ${esc(gate.requested || "this format")}</b><small>${esc(gate.message)}</small></div>`;
   }
   /* The full submit condition rather than a one-way disable: choosing a format H3 does
-     accept has to give the button back, or the refusal becomes a dead end. Computed here
-     rather than by calling back into the prompt updater, which calls this. */
+     accept has to give the button back, or the refusal becomes a dead end. A backend
+     refusal from the compiled plan holds the button down on its own. */
   const submit = document.getElementById("fal-h3-submit");
   if (submit) {
     const prompt = String(document.getElementById("fal-h3-prompt-editor")?.value ?? "");
-    submit.disabled = !gate.ok || !prompt.trim() || prompt.length > 2000 || !!window._falH3Submitting;
+    submit.disabled = !gate.ok
+      || !prompt.trim()
+      || prompt.length > falH3PromptLimit()
+      || !!window._falH3MotionRequest?.refusal
+      || !!window._falH3Submitting;
   }
 };
 window.resetFalH3PromptEditor = () => {
   const request = window._falH3MotionRequest || {};
   const editor = document.getElementById("fal-h3-prompt-editor");
-  if (editor) editor.value = request.originalPrompt || "";
+  if (editor) editor.value = request.compiledPrompt || "";
+  const panel = document.getElementById("fal-h3-edit-coverage");
+  if (panel) { panel.hidden = true; panel.innerHTML = ""; }
   updateFalH3PromptEditor();
 };
-window.openFalH3MotionModal = (shotId, buildId = "") => {
+/* Re-compiles when an output setting changes, because duration and format are compiler
+   inputs: a different duration is a different plan, and showing the old prompt beside a
+   new duration would put the dialog back to guessing. */
+window.refreshFalH3Plan = async () => {
+  const request = window._falH3MotionRequest;
+  if (!request || window._falH3Submitting) return;
+  const duration = Number(document.getElementById("fal-h3-duration")?.value || request.durationSeconds);
+  const resolution = document.getElementById("fal-h3-resolution")?.value || request.resolution;
+  const gate = falH3AspectGate();
+  const edited = String(document.getElementById("fal-h3-prompt-editor")?.value ?? "");
+  const keepEdit = edited.trim() && edited.trim() !== String(request.compiledPrompt || "").trim();
+  const preview = await fetchFalH3Plan(request.shotId, request.buildId, {
+    durationSeconds: duration,
+    resolution,
+    aspectRatio: gate.carriesAspectRatio ? gate.value : "",
+    profileMode: request.profileMode,
+  });
+  if (!preview) return;
+  Object.assign(request, preview, { prompt: keepEdit ? edited : preview.compiledPrompt });
+  const editor = document.getElementById("fal-h3-prompt-editor");
+  if (editor && !keepEdit) editor.value = preview.compiledPrompt;
+  renderFalH3PlanPanels();
+  updateFalH3CostEstimate();
+  updateFalH3PromptEditor();
+};
+async function fetchFalH3Plan(shotId, buildId, extra = {}) {
+  try {
+    const response = await fetch("/api/generation/fal/h3/plan", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ shotId, sourceBuildId: buildId, ...extra }),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      toast(data.error || "CineBraid could not compile this MiniMax H3 package");
+      return null;
+    }
+    return data;
+  } catch (error) {
+    toast("Could not compile the MiniMax H3 request: " + error.message);
+    return null;
+  }
+}
+/* The provider input order, read from the plan's own bindings rather than renumbered
+   here. "Image 1" on this screen is the reference the request will actually carry in
+   that slot — which is the whole point of binding by role instead of array position. */
+function falH3BindingRows(request) {
+  const bindings = request?.dispatch?.bindings || [];
+  if (!bindings.length) return "";
+  const byRef = new Map((request.references || []).map((ref) => [ref.refId, ref]));
+  const FIELD_LABELS = {
+    image_url: "Opening frame",
+    end_image_url: "Final frame",
+    reference_image_urls: "Image",
+    reference_video_urls: "Video",
+    reference_audio_urls: "Audio",
+  };
+  return bindings.map((binding) => {
+    const ref = byRef.get(binding.refId) || {};
+    const label = FIELD_LABELS[binding.field] || binding.field;
+    const slot = binding.index == null ? label : `${label} ${binding.index + 1}`;
+    return `<li><b>${esc(slot)}</b><span>${esc(ref.label || binding.refId)} · ${esc(String(binding.role || "reference").replace(/-/g, " "))}${ref.purpose ? ` · ${esc(ref.purpose)}` : ""}</span></li>`;
+  }).join("");
+}
+/* What the compiler could not carry, in the compiler's own words. A shot that loses a
+   piece of direction now says so on the way in rather than silently. */
+function falH3WarningRows(request) {
+  const rows = (request?.warnings || []).filter((row) => row && row.message);
+  if (!rows.length) return "";
+  return `<section class="h3-plan-warnings"><b>${rows.length} note${rows.length === 1 ? "" : "s"} from compilation</b><ul>${rows.map((row) => `<li><span>${esc(row.message)}</span>${row.action ? `<small>${esc(row.action)}</small>` : ""}</li>`).join("")}</ul></section>`;
+}
+function renderFalH3PlanPanels() {
+  const request = window._falH3MotionRequest || {};
+  const sequence = document.getElementById("fal-h3-sequence");
+  if (sequence) {
+    const rows = falH3BindingRows(request);
+    sequence.innerHTML = rows ? `<b>Exact provider inputs</b><small>Each approved reference and the request field it fills. Bound by its production role, not by list order.</small><ol>${rows}</ol>` : "";
+    sequence.hidden = !rows;
+  }
+  const notes = document.getElementById("fal-h3-plan-warnings");
+  if (notes) notes.innerHTML = falH3WarningRows(request);
+  const refusalPanel = document.getElementById("fal-h3-refusal");
+  if (refusalPanel) {
+    const refusal = request.refusal;
+    refusalPanel.hidden = !refusal;
+    if (refusal) refusalPanel.innerHTML = `<div><b>This package cannot be submitted as it stands</b><small>${esc(refusal.error)}</small></div>`;
+  }
+}
+window.openFalH3MotionModal = async (shotId, buildId = "") => {
   const s = shotById(shotId), c = s && ensureShotCreation(s);
   if (!s || !c) return toast("Shot is unavailable");
   if (!falGenerationReady()) {
@@ -606,43 +748,74 @@ window.openFalH3MotionModal = (shotId, buildId = "") => {
   if (!build?.prompt) return toast("Build the MiniMax H3 prompt first");
   const profile = typeof profileById === "function" ? profileById(build.profileId || "") : (PROMPT_LIBRARY?.profiles || []).find((item) => item.id === build.profileId);
   if (profile?.family !== "minimax-h3") return toast("Select and build a MiniMax H3 motion profile first");
-  const refs = (build.references || []).filter((ref) => ref.url).map((ref, index) => ({
-    key: ref.key || `reference-${index + 1}`,
-    token: ref.token || "",
-    label: ref.label || ref.name || `Reference ${index + 1}`,
-    role: ref.role || "reference",
-    mediaType: ref.mediaType || (/\.(mp4|mov|m4v|webm)(?:$|[?#])/i.test(ref.url) ? "video" : /\.(wav|mp3|m4a|ogg|aac|flac)(?:$|[?#])/i.test(ref.url) ? "audio" : "image"),
-    instruction: ref.instruction || "",
-    url: ref.url,
-  }));
-  const duration = Math.max(5, Math.min(15, Number(build.durationSeconds || c.motionDuration || 5) || 5));
-  /* Same resolver the screen uses, so motion cannot be requested at a format the shot
-     was never shown in. r2v keeps its "adaptive" default when the project declares none. */
+  /* Unsaved edits reach the server through the project document, and the plan is
+     compiled from the stored package — so the save has to land before the compile. */
+  if (typeof flushPendingProjectSave === "function") await flushPendingProjectSave();
+  const requestedDuration = Math.max(1, Math.min(60, Number(build.durationSeconds || c.motionDuration || 5) || 5));
   const ratio = profile.mode === "r2v" ? (productionAspect(P)?.label || "adaptive") : projectAspectLabel(P);
-  const clientRequestId = `h3-${shotId}-${build.id}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`;
-  window._falH3MotionRequest = { shotId, buildId: build.id, profileId: profile.id, profileName: profile.name, profileMode: profile.mode, prompt: build.prompt, originalPrompt: build.prompt, references: refs, packageId: build.packageId || "", duration, aspectRatio: ratio, clientRequestId };
-  window._falH3Submitting = false;
-  const images = refs.filter((ref) => ref.mediaType === "image");
-  const videos = refs.filter((ref) => ref.mediaType === "video");
-  const audio = refs.filter((ref) => ref.mediaType === "audio");
-  // Show the actual provider image order, including non-keyframe identity or
-  // location references. This prevents a misleading independent renumbering.
-  const sequenceRows = images.map((ref, index) => `<li><b>Image ${index + 1}</b><span>${esc(ref.label)} · ${esc(String(ref.role || "reference").replace(/-/g," "))}${ref.instruction ? ` · ${esc(ref.instruction)}` : ""}</span></li>`).join("");
-  const promptReady = build.prompt.length <= 2000;
-  /* Resolved before the dialog is built, so an unsupported production format is stated
-     as a refusal on the way in rather than discovered on the way out. The picker shows
-     the requested ratio as its own selected option: silently landing on whichever
-     supported ratio happened to be first in the list is the behaviour being repaired. */
   const aspectGate = h3AspectSupport(profile.mode, ratio);
-  openModal(`<div class="h3-generation-modal"><header class="h3-generation-head"><div><span>MINIMAX H3 · PAID GENERATION</span><h3>Generate with ${esc(profile.name)}</h3><p>Confirm provider inputs, output settings, prompt length, and estimated spend before submission.</p></div><button class="cancel" onclick="closeModal()">Close</button></header><div class="h3-generation-scroll"><div class="modal-sub">FAL · ${esc(profile.falEndpoint || "minimax/h3")}</div><div class="candidate-evidence-facts"><span>${images.length} image${images.length === 1 ? "" : "s"}</span><span>${videos.length} video${videos.length === 1 ? "" : "s"}</span><span>${audio.length} audio</span><span id="fal-h3-prompt-fact">${build.prompt.length.toLocaleString()}/2,000 prompt characters</span><span>Native stereo audio</span></div>${sequenceRows ? `<section class="h3-submit-sequence"><b>Actual FAL image order</b><small>This is the exact Image 1–N order sent to the provider.</small><ol>${sequenceRows}</ol></section>` : ""}<section class="h3-generation-settings"><h4>Output settings</h4><div class="h3-settings-grid"><label><span>Duration</span><select id="fal-h3-duration" onchange="updateFalH3CostEstimate()">${Array.from({length:11},(_,i)=>i+5).map((n)=>`<option value="${n}" ${n===duration?"selected":""}>${n} seconds</option>`).join("")}</select></label><label><span>Resolution</span><select id="fal-h3-resolution" onchange="updateFalH3CostEstimate()"><option value="2K" selected>2K</option><option value="768P">768P</option></select></label>${aspectGate.carriesAspectRatio ? `<label><span>Aspect ratio</span><select id="fal-h3-aspect" onchange="updateFalH3AspectGuard()">${aspectGate.ok ? "" : `<option value="${attr(ratio)}" selected>${esc(ratio)} — not supported</option>`}${aspectGate.supported.map((value)=>`<option value="${attr(value)}" ${aspectGate.ok && value===aspectGate.value?"selected":""}>${esc(value)}</option>`).join("")}</select></label>` : ""}</div></section><div id="fal-h3-aspect-warning" class="guided-prompt-error" ${aspectGate.ok ? "hidden" : ""}>${aspectGate.ok ? "" : `<div><b>MiniMax H3 cannot deliver ${esc(ratio)}</b><small>${esc(aspectGate.message)}</small></div>`}</div><div id="fal-h3-cost-estimate" class="h3-cost-estimate"></div><div id="fal-h3-prompt-warning" class="guided-prompt-error" ${promptReady ? "hidden" : ""}><div><b>Prompt is not ready for submission</b><small>${promptReady ? "" : "Shorten this prompt to 2,000 characters before a paid submission."}</small></div></div><section class="h3-prompt-editor"><header><div><b>Edit prompt before generation</b><small>The compiled package remains preserved. Any changes used for generation are saved as a linked manual revision.</small></div><span id="fal-h3-prompt-count">${build.prompt.length.toLocaleString()}/2,000</span></header><textarea id="fal-h3-prompt-editor" oninput="updateFalH3PromptEditor()">${esc(build.prompt)}</textarea><div class="h3-prompt-editor-actions"><label><span>Revision note · optional</span><input id="fal-h3-prompt-edit-reason" placeholder="Clarified timing, removed duplicate action…"></label><button class="ghost-btn" onclick="resetFalH3PromptEditor()">Reset compiled prompt</button></div></section><p class="hint">This submits one paid MiniMax H3 request through FAL. The returned MP4 is saved as an unapproved video candidate in this shot. The request uses an idempotency key to prevent an accidental double submission from this dialog.</p></div><footer class="modal-actions h3-generation-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button id="fal-h3-submit" class="approve-btn large" onclick="startFalH3MotionGeneration()" ${promptReady && aspectGate.ok ? "" : "disabled"}>START H3 GENERATION</button></footer></div>`);
-  setTimeout(() => { updateFalH3CostEstimate(); updateFalH3PromptEditor(); updateFalH3AspectGuard(); }, 0);
+  const preview = await fetchFalH3Plan(shotId, build.id, {
+    durationSeconds: requestedDuration,
+    resolution: "2K",
+    aspectRatio: aspectGate.carriesAspectRatio && aspectGate.ok ? aspectGate.value : ratio,
+    profileMode: profile.mode,
+  });
+  if (!preview) return;
+
+  const clientRequestId = `h3-${shotId}-${build.id}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`;
+  window._falH3MotionRequest = {
+    ...preview,
+    shotId,
+    buildId: build.id,
+    profileId: preview.profile?.id || profile.id,
+    profileName: preview.profile?.name || profile.name,
+    profileMode: preview.mode || profile.mode,
+    packageId: build.packageId || "",
+    prompt: preview.compiledPrompt,
+    clientRequestId,
+  };
+  window._falH3Submitting = false;
+  const request = window._falH3MotionRequest;
+  const images = (preview.references || []).filter((ref) => ref.mediaType === "image");
+  const videos = (preview.references || []).filter((ref) => ref.mediaType === "video");
+  const audio = (preview.references || []).filter((ref) => ref.mediaType === "audio");
+  const limit = Number(preview.maxPromptCharacters) || 7000;
+  const promptReady = preview.compiledPrompt.length <= limit;
+  const [durationLow, durationHigh] = Array.isArray(preview.durationRange) && preview.durationRange.length === 2
+    ? preview.durationRange
+    : [5, 15];
+  const durationOptions = Array.from({ length: Math.max(1, durationHigh - durationLow + 1) }, (_, i) => durationLow + i);
+  const resolutions = Array.isArray(preview.resolutions) && preview.resolutions.length ? preview.resolutions : ["2K", "768P"];
+  /* Named honestly: where the effective ceiling is tighter than MiniMax H3's own, the
+     screen says which layer narrowed it instead of asserting either number as "the
+     H3 limit". */
+  const limitNote = limit < Number(preview.modelMaxPromptCharacters || 7000)
+    ? `MiniMax H3 reads ${Number(preview.modelMaxPromptCharacters).toLocaleString()} characters; this backend accepts ${limit.toLocaleString()}.`
+    : `MiniMax H3 and this backend both accept ${limit.toLocaleString()} characters.`;
+  const durationNote = Array.isArray(preview.modelDurationRange) && (durationLow !== preview.modelDurationRange[0] || durationHigh !== preview.modelDurationRange[1])
+    ? `MiniMax H3 itself renders ${preview.modelDurationRange[0]}–${preview.modelDurationRange[1]}s; this backend renders ${durationLow}–${durationHigh}s.`
+    : `${durationLow}–${durationHigh} seconds.`;
+  /* The shot asked for a length this backend cannot render. Said plainly, next to the
+     picker, BEFORE the paid action — because submitting will refuse it rather than
+     quietly render a different length, and the filmmaker is the one who chooses the
+     replacement. */
+  const askedDuration = Number(preview.durationRequested) || 0;
+  const durationChanged = askedDuration > 0 && askedDuration !== Number(preview.durationSeconds);
+  const durationBanner = durationChanged
+    ? `<div id="fal-h3-duration-notice" class="guided-prompt-error"><div><b>This shot is written as ${esc(String(askedDuration))} seconds, which this backend cannot render</b><small>MiniMax H3 renders from ${preview.modelDurationRange[0]}s, but fal accepts ${durationLow}–${durationHigh}s. ${preview.durationSeconds}s is selected below — confirm it or choose another length. CineBraid will not change the length of your shot for you: submitting ${esc(String(askedDuration))}s is refused, not adjusted.</small></div></div>`
+    : "";
+
+  openModal(`<div class="h3-generation-modal"><header class="h3-generation-head"><div><span>MINIMAX H3 · PAID GENERATION</span><h3>Generate with ${esc(request.profileName)}</h3><p>This is the request CineBraid compiled from the approved package. Confirm the inputs, the prompt and the estimated spend before submission.</p></div><button class="cancel" onclick="closeModal()">Close</button></header><div class="h3-generation-scroll"><div class="modal-sub">FAL · ${esc(preview.dispatch?.model || "minimax/h3")} · compiled by ${esc(preview.compiler?.packId || "minimax-h3")} ${esc(preview.compiler?.packVersion || "")}</div><div class="candidate-evidence-facts"><span>${images.length} image${images.length === 1 ? "" : "s"}</span><span>${videos.length} video${videos.length === 1 ? "" : "s"}</span><span>${audio.length} audio</span><span id="fal-h3-prompt-fact">${preview.compiledPrompt.length.toLocaleString()}/${limit.toLocaleString()} prompt characters</span><span>Native stereo audio</span></div><div id="fal-h3-refusal" class="guided-prompt-error" hidden></div><section id="fal-h3-sequence" class="h3-submit-sequence" hidden></section>${durationBanner}<section class="h3-generation-settings"><h4>Output settings</h4><div class="h3-settings-grid"><label><span>Duration</span><select id="fal-h3-duration" onchange="refreshFalH3Plan()">${durationOptions.map((n)=>`<option value="${n}" ${n===Number(preview.durationSeconds)?"selected":""}>${n} seconds</option>`).join("")}</select><small>${esc(durationNote)}</small></label><label><span>Resolution</span><select id="fal-h3-resolution" onchange="refreshFalH3Plan()">${resolutions.map((value)=>`<option value="${attr(value)}" ${value===preview.resolution?"selected":""}>${esc(value)}</option>`).join("")}</select></label>${preview.carriesAspectRatio ? `<label><span>Aspect ratio</span><select id="fal-h3-aspect" onchange="refreshFalH3Plan()">${aspectGate.ok ? "" : `<option value="${attr(ratio)}" selected>${esc(ratio)} — not supported</option>`}${aspectGate.supported.map((value)=>`<option value="${attr(value)}" ${value===preview.aspectRatio?"selected":""}>${esc(value)}</option>`).join("")}</select></label>` : ""}</div></section><div id="fal-h3-aspect-warning" class="guided-prompt-error" ${aspectGate.ok ? "hidden" : ""}>${aspectGate.ok ? "" : `<div><b>MiniMax H3 cannot deliver ${esc(ratio)}</b><small>${esc(aspectGate.message)}</small></div>`}</div><div id="fal-h3-cost-estimate" class="h3-cost-estimate"></div><div id="fal-h3-plan-warnings"></div><div id="fal-h3-prompt-warning" class="guided-prompt-error" ${promptReady ? "hidden" : ""}><div><b>Prompt is not ready for submission</b><small>${promptReady ? "" : `Shorten this prompt to ${limit.toLocaleString()} characters before a paid submission.`}</small></div></div><section class="h3-prompt-editor"><header><div><b>Edit prompt before generation</b><small>This is the prompt CineBraid compiled and the exact text that will be sent. ${esc(limitNote)} The compiled package is preserved; any change is saved as a linked manual revision and recorded beside the compiled original.</small></div><span id="fal-h3-prompt-count">${preview.compiledPrompt.length.toLocaleString()}/${limit.toLocaleString()}</span></header><textarea id="fal-h3-prompt-editor" oninput="updateFalH3PromptEditor()" onchange="reviewFalH3PromptEdit()">${esc(preview.compiledPrompt)}</textarea><div id="fal-h3-edit-coverage" class="h3-edit-coverage" hidden></div><div class="h3-prompt-editor-actions"><label><span>Revision note · optional</span><input id="fal-h3-prompt-edit-reason" placeholder="Clarified timing, removed duplicate action…"></label><button class="ghost-btn" onclick="resetFalH3PromptEditor()">Reset compiled prompt</button></div></section><p class="hint">This submits one paid MiniMax H3 request through FAL. The returned MP4 is saved as an unapproved video candidate in this shot. The request uses an idempotency key to prevent an accidental double submission from this dialog.</p></div><footer class="modal-actions h3-generation-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button id="fal-h3-submit" class="approve-btn large" onclick="startFalH3MotionGeneration()" ${promptReady && aspectGate.ok && !preview.refusal ? "" : "disabled"}>START H3 GENERATION</button></footer></div>`);
+  setTimeout(() => { renderFalH3PlanPanels(); updateFalH3CostEstimate(); updateFalH3PromptEditor(); }, 0);
 };
 window.startFalH3MotionGeneration = async () => {
   const request = window._falH3MotionRequest;
   if (!request || window._falH3Submitting) return;
+  const limit = falH3PromptLimit();
   const editedPrompt = String(document.getElementById("fal-h3-prompt-editor")?.value ?? request.prompt ?? "").trim();
   if (!editedPrompt) return toast("Enter a MiniMax H3 prompt before generation");
-  if (editedPrompt.length > 2000) return toast("MiniMax H3 prompt exceeds the current 2,000-character FAL schema limit");
+  if (editedPrompt.length > limit) return toast(`MiniMax H3 prompt exceeds this configuration's ${limit.toLocaleString()}-character limit`);
+  if (request.refusal) return toast(request.refusal.error);
   /* Checked again at the moment of dispatch rather than only when the dialog opened,
      so a retry, a resumed dialog or a changed picker cannot walk past the refusal.
      Returning here leaves the dialog, the prompt and every setting untouched. */
@@ -653,15 +826,14 @@ window.startFalH3MotionGeneration = async () => {
   }
   request.prompt = editedPrompt;
   const revisionReason = String(document.getElementById("fal-h3-prompt-edit-reason")?.value || "Edited in the MiniMax H3 generation preflight").trim();
-  if (editedPrompt !== String(request.originalPrompt || "").trim() && typeof createManualMotionPromptRevision === "function") {
+  /* An edit is recorded as its own revision of the package, so the compiled original
+     and the text the filmmaker chose to send both survive. The build the SERVER
+     compiles from is deliberately left as the original: an edit changes the prompt
+     that is dispatched, never the structured direction it was compiled from. */
+  if (editedPrompt !== String(request.compiledPrompt || "").trim() && typeof createManualMotionPromptRevision === "function") {
     try {
       const revised = createManualMotionPromptRevision(request.shotId, request.buildId, editedPrompt, revisionReason);
-      if (revised?.id) {
-        request.buildId = revised.id;
-        request.packageId = revised.packageId || request.packageId;
-        request.profileId = revised.profileId || request.profileId;
-        request.profileName = revised.profileName || request.profileName;
-      }
+      if (revised?.id) request.revisionBuildId = revised.id;
     } catch (error) {
       return toast("Could not preserve the edited prompt revision: " + error.message);
     }
@@ -673,18 +845,22 @@ window.startFalH3MotionGeneration = async () => {
     purpose: "motion-h3",
     clientRequestId: request.clientRequestId,
     shotId: request.shotId,
+    /* The package the server compiles. References, endpoints, roles and settings all
+       come from it; this request body carries no reference list of its own, because a
+       second list is a second chance to disagree with the one that was approved. */
     sourceBuildId: request.buildId,
     packageId: request.packageId,
     profileId: request.profileId,
     profileName: request.profileName,
     profileFamily: "minimax-h3",
     profileMode: request.profileMode,
+    /* The text to send. Identical to the compiled prompt unless it was edited above, in
+       which case the server records both. */
     prompt: request.prompt,
-    references: request.references,
     outputCount: 1,
-    durationSeconds: Number(document.getElementById("fal-h3-duration")?.value || request.duration || 5),
-    resolution: document.getElementById("fal-h3-resolution")?.value || "2K",
-    aspectRatio: gate.carriesAspectRatio ? gate.value : request.aspectRatio || (request.profileMode === "r2v" ? "adaptive" : "16:9"),
+    durationSeconds: Number(document.getElementById("fal-h3-duration")?.value || request.durationSeconds || 5),
+    resolution: document.getElementById("fal-h3-resolution")?.value || request.resolution || "2K",
+    aspectRatio: gate.carriesAspectRatio ? gate.value : request.aspectRatio || "",
   };
   try {
     await flushPendingProjectSave();

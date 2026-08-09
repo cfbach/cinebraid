@@ -31,6 +31,7 @@ const path = require('path');
 const vm = require('vm');
 const Aspect = require('../public/shared-aspect');
 const { registerFalGeneration } = require('../fal-generation');
+const { addMotionPromptBuild } = require('./h3-execution-fixture');
 
 const ROOT = path.join(__dirname, '..');
 const css = fs.readFileSync(path.join(ROOT, 'public', 'styles.css'), 'utf8');
@@ -395,6 +396,16 @@ async function providerRefusal() {
   for (const name of ['A.png', 'B.png', 'C.png']) fs.writeFileSync(path.join(projectDir, 'shots', 'S1', 'takes', name), PNG);
   const projectFile = path.join(projectDir, 'project.json');
   fs.writeFileSync(projectFile, JSON.stringify({ meta: { title: 'H3 guard', aspectRatio: '2.39:1' }, shots: [{ id: 'S1', candidateFiles: [], creationBrief: {} }], mediaAssets: [] }, null, 2));
+  /* A live H3 request now compiles from the shot's durable motion package, so the guard
+     is exercised against a shot that genuinely could dispatch. Without this the refusals
+     below would be "no package built" rather than "that format is not supported", and
+     the thing under test — that no unsupported format reaches the provider from ANY
+     dispatch shape — would pass for the wrong reason. */
+  {
+    const seeded = JSON.parse(fs.readFileSync(projectFile, 'utf8'));
+    addMotionPromptBuild(seeded, 'S1', { mode: 't2v', id: 'h3-guard-build', durationSeconds: 8, references: [] });
+    fs.writeFileSync(projectFile, JSON.stringify(seeded, null, 2));
+  }
   const projectBefore = fs.readFileSync(projectFile, 'utf8');
   /* A live automation run, so the automation dispatch path clears its own guard and
      genuinely reaches the format gate rather than being turned away earlier. */

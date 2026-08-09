@@ -146,6 +146,7 @@ function testSourceIntegration() {
   const ui = fs.readFileSync(path.join(root, 'public', 'creation-studio.js'), 'utf8');
   const client = fs.readFileSync(path.join(root, 'public', 'fal-generation.js'), 'utf8');
   const server = fs.readFileSync(path.join(root, 'fal-generation.js'), 'utf8');
+  const backend = fs.readFileSync(path.join(root, 'fal-h3-backend.js'), 'utf8');
   const motionComposer = fs.readFileSync(path.join(root, 'public', 'motion-sound-composer.js'), 'utf8');
   assert(ui.includes('MINIMAX H3 · MULTI-FRAME INPUT'));
   assert(ui.includes('setH3KeyframeEnabled'));
@@ -161,9 +162,21 @@ function testSourceIntegration() {
   assert(ui.includes('openMediaTheatre'));
   assert(client.includes('h3-generation-scroll'));
   assert(client.includes('h3-generation-actions'));
-  assert(server.includes('minimax/h3/reference-to-video'));
-  assert(server.includes('MiniMax H3 reference package exceeds FAL limits'));
-  assert(server.includes('current fal queue schema accepts at most 2,000'));
+  /* The provider endpoints and the reference ceilings moved into the backend module
+     when execution started consuming the compiled plan. They are asserted where they
+     now live rather than dropped. */
+  assert(backend.includes('minimax/h3/reference-to-video'));
+  assert(backend.includes('maxTotal: 12'));
+  assert(backend.includes('H3_REFERENCE_OVER_LIMIT'));
+  /* The 2,000-character refusal is GONE, and its absence is the assertion. fal's queue
+     schema documents no maxLength on any H3 endpoint and fal's own model page states
+     7,000 — the same number MiniMax documents — so refusing at 2,000 destroyed
+     direction a filmmaker had written for a limit that no longer exists. The ceiling is
+     now the model ∩ backend intersection, and it refuses rather than truncating. */
+  assert(!server.includes('current fal queue schema accepts at most 2,000'),
+    'the stale 2,000-character dispatch refusal must not come back');
+  assert(backend.includes('maxPromptCharacters: 7000'));
+  assert(server.includes('H3_PROMPT_OVER_LIMIT') || backend.includes('H3_PROMPT_OVER_LIMIT'));
   assert(server.includes('ingestMotion'));
   assert(motionComposer.includes('\"minimax-h3\"') || motionComposer.includes('\"minimax-h3\"'.replace(/\\/g,'')), 'Motion & Sound Composer must allow MiniMax H3 profiles');
 }
