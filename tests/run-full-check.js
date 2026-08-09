@@ -47,6 +47,8 @@ const nodeSuites = [
   "check:generation-negative",
   "check:h3-execution",
   "check:h3-execution-negative",
+  "check:generation-unresolved",
+  "check:generation-unresolved-negative",
   "check:media-hash",
   "check:media-asset-identity",
   "check:media-asset-store",

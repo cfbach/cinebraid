@@ -806,8 +806,11 @@ async function main() {
       note("concurrency: two overlapping H3 submissions keep separate plans, durations and ledger rows");
     }
     {
-      /* A provider error fails the job and never invents a result. */
-      h.setProviderFailure(502, { detail: "upstream capacity" });
+      /* A provider error fails the job and never invents a result.
+         422 rather than 502 since C1.2: a 4xx is the provider reading the request and
+         declining it, which is a KNOWN failure. A 5xx says nothing about whether the job
+         was queued first and is now classified as uncertainty instead. */
+      h.setProviderFailure(422, { detail: "the provider declined this prompt" });
       const { result } = await submitBuild(h, { mode: "t2v", id: "b-provider-fail", durationSeconds: 8, references: [] });
       h.setProviderFailure(200, null);
       assert.strictEqual(result.status, 502, JSON.stringify(result.data));
@@ -913,11 +916,16 @@ async function main() {
       const { result } = await submitBuild(h, { mode: "t2v", id: "b-timeout", durationSeconds: 8, references: [] });
       h.setProviderDropsConnection(false);
       assert.strictEqual(result.status, 502, JSON.stringify(result.data));
-      assert.strictEqual(result.data.job.status, "FAILED");
+      /* Since C1.2 this is UNRESOLVED, not FAILED: the request had already crossed the
+         provider boundary, so the outcome is unknown rather than known to have failed.
+         The properties C1.1 cares about are unchanged — a reason, the plan, no invented
+         result — and are asserted here against the state that now carries them. */
+      assert.strictEqual(result.data.job.status, "UNRESOLVED");
       assert(result.data.job.error, "the failure carries a reason");
       assert(result.data.job.compilation, "and the plan survives the failure");
       assert.deepStrictEqual(result.data.job.outputs, []);
-      note("provider transport failure: the job fails with a reason, keeps its plan, and fabricates no result");
+      await h.api(`/api/generation/fal/jobs/${result.data.job.id}/reconcile`, { body: { outcome: "not-accepted" } });
+      note("provider transport failure: the outcome is recorded as unknown, keeps its plan, and fabricates no result");
     }
     {
       /* A restart: the row is re-read from disk with nothing in memory, and everything
@@ -1115,10 +1123,13 @@ async function main() {
       assert.strictEqual(result.status, 502, JSON.stringify(result.data));
       assert(call, "the request reached the provider before the failure");
       const row = h.ledger().find((r) => r.id === result.data.job.id);
-      assert.strictEqual(row.status, "FAILED");
+      /* C1.1 recorded this as FAILED-but-contacted. C1.2 promoted the distinction into
+         the state itself, which is what this assertion now holds: a request that may
+         have been charged is never presented as a known ordinary failure. */
+      assert.strictEqual(row.status, "UNRESOLVED");
       assert.strictEqual(row.providerContacted, true,
         "a failure that already left the machine must be distinguishable from one that never did");
-      assert.notStrictEqual(row.providerAnswered, true, "a dropped connection is not a provider refusal");
+      assert.strictEqual(row.providerAnswered, false, "a dropped connection is not a provider refusal");
       assert(/may have been accepted and charged/i.test(row.error),
         `the recorded reason must warn that a charge is possible, got: ${row.error}`);
       assert(/minimax\/h3\/text-to-video/.test(row.error), "and name the endpoint to check");
