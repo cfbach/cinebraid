@@ -381,6 +381,7 @@ async function main() {
     "model-intelligence.js",
     "motion-prompt-editing-real-browser.py",
     "multi-aspect-media.js",
+    "openai-request-dialect.js",
     "private-preview-layout-real-browser.py",
     "private-preview-ux.js",
     "project-builder-kit.js",

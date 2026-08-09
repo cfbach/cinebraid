@@ -35,6 +35,7 @@ const nodeSuites = [
   "check:automation-restoration",
   "check:v6641",
   "check:custom-provider",
+  "check:openai-dialect",
   "check:provider-health",
   "check:local-only",
   "check:lan-passcodes",
