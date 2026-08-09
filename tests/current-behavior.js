@@ -447,32 +447,40 @@ async function main() {
      and it blanked the entire application. Every Node suite passed, because each
      file is individually valid and no Node suite ever loads them together.
 
-     Rather than hand-parse for declarations, this hands the concatenation to the
-     same V8 parser the browser uses and asks it to compile. `new vm.Script`
-     parses without executing, so the check is exact and free of side effects: a
-     duplicate top-level binding is a SyntaxError here for precisely the reason it
-     is one in Chrome. `var` and `function` redeclarations are legal in both
-     places and are correctly not flagged.
+     tests/generation-options.js section 12 already checks this by scanning each
+     file for `^(const|let|class) name`. This is deliberately a second, different
+     technique rather than a copy: a regex anchored at column 0 cannot see an
+     indented top-level declaration, the second binding in `let a = 1, b = 2`, or
+     a destructured one, and all three are real collisions. Handing the
+     concatenation to the same V8 parser the browser uses answers the question
+     exactly. `new vm.Script` parses without executing, so there are no side
+     effects, and `var`/`function` redeclarations - legal in a browser - are
+     correctly not flagged.
 
-     The load order comes from index.html so it matches what the browser does,
-     which also means a script that is shipped but never loaded cannot hide in
-     here. */
-  const indexHtml = read("public/index.html");
-  const loadedScripts = [...indexHtml.matchAll(/<script src="([^"?]+)/g)].map((match) => match[1]);
-  assert(loadedScripts.length > 30, `expected index.html to load the frontend scripts, found ${loadedScripts.length}`);
-  for (const name of loadedScripts)
-    assert(fs.existsSync(path.join(ROOT, "public", name)), `index.html loads public/${name}, which does not exist`);
-  const globalScope = loadedScripts
-    .map((name) => `/* ${name} */\n${read(`public/${name}`)}`)
-    .join("\n;\n");
-  try {
-    new vm.Script(globalScope, { filename: "public/<all shipped scripts>" });
-  } catch (error) {
-    assert.fail(
-      `public/*.js do not share one global scope cleanly: ${error.message}\n` +
-      "Two shipped scripts declare the same top-level const/let/class. In the browser the " +
-      "second script throws and the application renders blank. Rename one binding - see the " +
-      "GENERATION_OPTION_EXPORTS convention in public/shared-generation-options.js.");
+     Per PAGE, because each page is its own global scope: app.js and bible.js both
+     declare `esc`, which is fine precisely because no page loads both. The load
+     order comes from the HTML, so a script that is shipped but never loaded
+     cannot hide in here either. */
+  for (const page of ["index.html", "bible.html"]) {
+    const html = read(`public/${page}`);
+    const loadedScripts = [...html.matchAll(/<script src="([^"?]+\.js)/g)].map((match) => match[1]);
+    assert(loadedScripts.length, `expected ${page} to load frontend scripts, found none`);
+    if (page === "index.html")
+      assert(loadedScripts.length > 30, `expected index.html to load the frontend scripts, found ${loadedScripts.length}`);
+    for (const name of loadedScripts)
+      assert(fs.existsSync(path.join(ROOT, "public", name)), `${page} loads public/${name}, which does not exist`);
+    const globalScope = loadedScripts
+      .map((name) => `/* ${name} */\n${read(`public/${name}`)}`)
+      .join("\n;\n");
+    try {
+      new vm.Script(globalScope, { filename: `public/<scripts loaded by ${page}>` });
+    } catch (error) {
+      assert.fail(
+        `the scripts ${page} loads do not share one global scope cleanly: ${error.message}\n` +
+        "Two of them declare the same top-level const/let/class. In the browser the second " +
+        "script throws and the page renders blank. Rename one binding - see the " +
+        "GENERATION_OPTION_EXPORTS convention in public/shared-generation-options.js.");
+    }
   }
 
   const app = read("public/app.js");
