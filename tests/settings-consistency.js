@@ -35,9 +35,9 @@ const views = fs.readFileSync(path.join(ROOT, "public", "views.js"), "utf8");
 const settingsSource = fs.readFileSync(path.join(ROOT, "public", "settings.js"), "utf8");
 const appSource = fs.readFileSync(path.join(ROOT, "public", "app.js"), "utf8");
 
-const TABS = ["appearance", "files", "naming", "project", "assistant", "generation", "recovery"];
+const TABS = ["appearance", "files", "access", "naming", "project", "assistant", "generation", "recovery"];
 /* Subsections holding editable settings that are stored only on an explicit action. */
-const EXPLICIT = ["appearance", "files", "naming", "assistant", "generation"];
+const EXPLICIT = ["appearance", "files", "access", "naming", "assistant", "generation"];
 
 /* The desktop column model lives outside any @media block; a narrow-width override
    must never be able to stand in for the rule these checks are about. */
@@ -428,7 +428,7 @@ async function main() {
     /Apply storage paths/.test(views) && /creates these folders/.test(views),
     "files: Apply is only justified if the panel explains that it also acts on disk",
   );
-  for (const [tab, label] of [["appearance", "Save appearance"], ["naming", "Save naming rules"], ["assistant", "Save assistant settings"], ["generation", "Save generation settings"]]) {
+  for (const [tab, label] of [["appearance", "Save appearance"], ["access", "Save passcodes"], ["naming", "Save naming rules"], ["assistant", "Save assistant settings"], ["generation", "Save generation settings"]]) {
     assert(panels[tab].html.includes(label), `${tab}: must offer "${label}"`);
   }
   assert(!views.includes("Apply storage settings"), "the old mixed storage verb must be gone");
@@ -448,6 +448,21 @@ async function main() {
       : panels.recovery.html.indexOf("Recovery & advanced");
     assert(services !== -1 && backups > services, "the backups group must follow the assisted-services group");
     assert(recoveryTab > backups, "Recovery must sit inside the backups group");
+  }
+  /* The LAN passcodes are a setting like any other and belong in a subsection that
+     says so. The panel that reads them existed for three phases with nowhere to
+     render, which is what tests/lan-passcode-settings.js exists for; the claim here
+     is narrower — Access & security is a real Settings subsection, filed with the
+     rest of this workspace's own settings rather than among the optional services. */
+  {
+    const nav = panels.access.html;
+    const workspace = nav.indexOf("WORKSPACE");
+    const services = nav.indexOf("OPTIONAL ASSISTED SERVICES");
+    const access = nav.indexOf("<b>Access & security</b>");
+    assert(workspace !== -1 && access > workspace && access < services,
+      "Access & security must sit with this workspace's own settings, not among the optional services");
+    assert(/id="cfg-epass"[^>]*type="password"/.test(nav) && /id="cfg-vpass"[^>]*type="password"/.test(nav),
+      "the passcode subsection must render both write-only controls");
   }
   assert(
     /Prompt versions kept per shot/.test(panels.project.html),
