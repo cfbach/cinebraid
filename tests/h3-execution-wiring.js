@@ -19,6 +19,7 @@ const express = require("express");
 
 const { registerFalGeneration } = require("../fal-generation");
 const { compileH3ExecutionPlan, H3ExecutionError } = require("../h3-execution");
+const { compileValidatedGenerationPlan } = require("../generation-compiler");
 const { serializeH3PlanForFal, H3BackendError, FAL_H3_BACKEND, falH3BackendLayer, resolveH3FalCapability } = require("../fal-h3-backend");
 const H3Pack = require("../model-packs/minimax-h3");
 const { resolveCapability } = require("../public/shared-generation-capability");
@@ -100,7 +101,16 @@ async function harness() {
   let mockOrigin = "";
   mock.post(["/minimax/h3/text-to-video", "/minimax/h3/image-to-video", "/minimax/h3/reference-to-video"], (req, res) => {
     const id = `h3-${calls.length + 1}`;
-    calls.push({ endpoint: req.path, body: req.body, authorization: req.headers.authorization });
+    /* THE BARRIER.
+       The paid request has arrived and has not been answered. Whatever is on disk at
+       this instant is exactly what a process that died mid-POST would leave behind, so
+       it is captured here rather than reconstructed afterwards. */
+    let ledgerAtRequest = [];
+    try {
+      const raw = fs.readFileSync(path.join(dir, "generation-jobs.json"), "utf8");
+      ledgerAtRequest = JSON.parse(raw);
+    } catch { ledgerAtRequest = []; }
+    calls.push({ endpoint: req.path, body: req.body, authorization: req.headers.authorization, ledgerAtRequest });
     /* A transport failure rather than a status code: the request left, and nothing
        came back. Deterministic here, where a real timeout would only be slow. */
     if (providerDropsConnection) return req.socket.destroy();
@@ -433,17 +443,99 @@ async function main() {
       note("duration: native 4–15 and fal 5–15 held separately; the intersection is 5–15 and 4 survives without fal");
     }
     {
-      /* A 4-second shot is H3-valid and fal-invalid. It must be snapped to the effective
-         floor, WARNED about, and dispatched at the value the plan actually carries. */
-      const { result, call } = await submitBuild(h, { mode: "t2v", id: "b-4s", durationSeconds: 4, references: [] }, { durationSeconds: 4 });
-      assert.strictEqual(result.status, 200, JSON.stringify(result.data));
-      assert.strictEqual(call.body.duration, 5, "an H3-valid 4s becomes the backend's 5s floor");
-      const warning = result.data.job.compilation.plan.warnings.find((row) => row.code === "duration-adjusted");
-      assert(warning, "the adjustment must be recorded rather than applied silently");
-      assert(/MiniMax H3 itself renders 4 to 15/.test(warning.message),
-        `the warning must name both layers honestly, got: ${warning.message}`);
-      assert.strictEqual(result.data.job.durationSeconds, 5, "the job records what will be rendered");
-      note("duration: a 4s request is snapped to 5s with a warning that names the model AND the backend");
+      /* A 4-second shot is H3-valid and fal-invalid.
+         It is REFUSED, not converted. A 4-second shot silently rendered as a 5-second
+         shot because of which backend happens to be selected is a different shot than
+         the one that was directed, and a warning buried in a plan is not a decision the
+         filmmaker took. */
+      const project = h.project();
+      const buildId = addMotionPromptBuild(project, "SH-1", { mode: "t2v", id: "b-4s", durationSeconds: 4, references: [] });
+      h.saveProject(project);
+      const before = h.calls.length;
+      const beforeLedger = h.ledger().length;
+      const refused = await h.api("/api/generation/fal/jobs", {
+        body: { purpose: "motion-h3", shotId: "SH-1", sourceBuildId: buildId, profileFamily: "minimax-h3", profileMode: "t2v", durationSeconds: 4, resolution: "2K", aspectRatio: "16:9", clientRequestId: "dur-4s" },
+      });
+      assert.strictEqual(refused.status, 400, JSON.stringify(refused.data));
+      assert.strictEqual(refused.data.code, "H3_DURATION_UNSUPPORTED");
+      assert(/4 seconds/.test(refused.data.error), "the refusal must name what was asked for");
+      assert(/MiniMax H3 itself renders 4–15 seconds/.test(refused.data.error),
+        `and keep the model's own range true, got: ${refused.data.error}`);
+      assert(/fal backend accepts 5–15/.test(refused.data.error), "and name the backend as the thing that narrowed it");
+      assert(/nothing was sent and nothing was charged/i.test(refused.data.error));
+      assert.strictEqual(h.calls.length, before, "no provider POST may occur for a refused duration");
+      assert.strictEqual(h.ledger().length, beforeLedger, "and a locally refused request must not litter the ledger");
+
+      /* The filmmaker can choose 5 and retry. Same package, explicit choice, accepted. */
+      const accepted = await h.api("/api/generation/fal/jobs", {
+        body: { purpose: "motion-h3", shotId: "SH-1", sourceBuildId: buildId, profileFamily: "minimax-h3", profileMode: "t2v", durationSeconds: 5, resolution: "2K", aspectRatio: "16:9", clientRequestId: "dur-5s" },
+      });
+      assert.strictEqual(accepted.status, 200, JSON.stringify(accepted.data));
+      assert.strictEqual(h.calls[h.calls.length - 1].body.duration, 5, "and 5 seconds is what is sent");
+      assert.strictEqual(accepted.data.job.durationSeconds, 5);
+      await settle(h, accepted.data.job.id);
+      note("duration: a 4s shot is REFUSED on fal, names both ranges, reaches no provider, leaves no row — and 5s then works");
+    }
+    {
+      /* No hidden mutation, in either direction: every in-range integer this backend
+         accepts is dispatched as exactly itself. */
+      for (const seconds of [5, 8, 15]) {
+        const project = h.project();
+        const buildId = addMotionPromptBuild(project, "SH-1", { mode: "t2v", id: `b-exact-${seconds}`, durationSeconds: seconds, references: [] });
+        h.saveProject(project);
+        const result = await h.api("/api/generation/fal/jobs", {
+          body: { purpose: "motion-h3", shotId: "SH-1", sourceBuildId: buildId, profileFamily: "minimax-h3", profileMode: "t2v", durationSeconds: seconds, resolution: "2K", aspectRatio: "16:9", clientRequestId: `exact-${seconds}` },
+        });
+        assert.strictEqual(result.status, 200, JSON.stringify(result.data));
+        assert.strictEqual(h.calls[h.calls.length - 1].body.duration, seconds, `${seconds}s must be dispatched as ${seconds}s`);
+        assert.strictEqual(result.data.job.durationSeconds, seconds);
+        assert(!result.data.job.compilation.plan.warnings.some((row) => row.code === "duration-adjusted"),
+          `${seconds}s must not be adjusted at all`);
+        await settle(h, result.data.job.id);
+      }
+      /* Above the ceiling refuses too — the rule is the range, not just the floor. */
+      const project = h.project();
+      const buildId = addMotionPromptBuild(project, "SH-1", { mode: "t2v", id: "b-20s", durationSeconds: 20, references: [] });
+      h.saveProject(project);
+      const before = h.calls.length;
+      const over = await h.api("/api/generation/fal/jobs", {
+        body: { purpose: "motion-h3", shotId: "SH-1", sourceBuildId: buildId, profileFamily: "minimax-h3", profileMode: "t2v", durationSeconds: 20, resolution: "2K", aspectRatio: "16:9", clientRequestId: "dur-20s" },
+      });
+      assert.strictEqual(over.data.code, "H3_DURATION_UNSUPPORTED");
+      assert.strictEqual(h.calls.length, before);
+      note("duration: 5s, 8s and 15s dispatch as themselves with no adjustment; 20s refuses like 4s does");
+    }
+    {
+      /* The MODEL still renders from 4 seconds. Nothing was globally rewritten to 5:
+         a model-only capability stack compiles a 4-second plan exactly as C1 did. */
+      const modelOnly = resolveCapability({ model: H3Pack.capabilityLayer("t2v", "api") });
+      assert.deepStrictEqual(modelOnly.durationSeconds, [4, 15]);
+      const { plan } = compileValidatedGenerationPlan({
+        mode: "t2v", modelId: "minimax-h3/fl2va", surface: "api",
+        spec: baseSpec({ shotId: "SH-1", durationSeconds: 4 }), references: [], capability: modelOnly,
+      });
+      assert.strictEqual(plan.output.durationSeconds, 4, "native H3 still accepts a 4-second shot");
+      assert(!plan.warnings.some((row) => row.code === "duration-adjusted"), "and does not adjust it");
+      note("duration: model-only H3 still compiles 4 seconds unadjusted — the floor belongs to fal, not to H3");
+    }
+    {
+      /* The dialog is where the filmmaker chooses, so a 4-second shot must still be able
+         to OPEN it. The preview does not enforce; it reports both numbers so the screen
+         can say what happened instead of presenting 5 as though it were the request. */
+      const project = h.project();
+      const buildId = addMotionPromptBuild(project, "SH-1", { mode: "t2v", id: "b-4s-preview", durationSeconds: 4, references: [] });
+      h.saveProject(project);
+      const before = h.calls.length;
+      const preview = await h.api("/api/generation/fal/h3/plan", {
+        body: { shotId: "SH-1", sourceBuildId: buildId, profileMode: "t2v", durationSeconds: 4, resolution: "2K", aspectRatio: "16:9" },
+      });
+      assert.strictEqual(preview.status, 200, `a 4s shot must still be able to open the dialog: ${JSON.stringify(preview.data)}`);
+      assert.strictEqual(preview.data.durationRequested, 4, "the preview reports what the shot asked for");
+      assert.strictEqual(preview.data.durationSeconds, 5, "and what this backend would render");
+      assert.deepStrictEqual(preview.data.durationRange, [5, 15]);
+      assert.deepStrictEqual(preview.data.modelDurationRange, [4, 15]);
+      assert.strictEqual(h.calls.length, before, "and contacts no provider to say so");
+      note("duration: a 4s shot still opens the dialog, which is told both the requested and the renderable length");
     }
     {
       /* Over the effective ceiling: refused, and refused BEFORE the provider. */
@@ -931,6 +1023,120 @@ async function main() {
       assert(sequence.indexOf("Approved opening frame") < sequence.indexOf("Approved ending frame"),
         "the listed order must be the plan's, not the package's array order");
       note("ui: the dialog compiles through the server, shows the compiled prompt, the effective 7,000 ceiling and the real provider bindings");
+
+      /* A 4-second shot: the dialog must OPEN — refusing here would be a dead end,
+         since the dialog is the only place the filmmaker can choose a valid length —
+         and it must say plainly that the length will not be changed for them. */
+      const shortView = await render("#/shot/L1-01", fixture, { storage: { "cinebraid-focused:fixture:shot-task:L1-01": "motion" } });
+      vm.runInContext(`CONFIG = { ...(typeof CONFIG === "object" ? CONFIG : {}), generation: { fal: { enabled: true, apiKey: "test-key" } } };`, shortView.context);
+      shortView.context.fetch = async () => ({
+        ok: true,
+        json: async () => ({ ...previewPayload, durationRequested: 4, durationSeconds: 5 }),
+      });
+      await shortView.context.openFalH3MotionModal("L1-01", buildId);
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      const shortModal = shortView.context.document.getElementById("modal").innerHTML;
+      assert(shortModal.includes("h3-generation-modal"), "a 4-second shot must still be able to open the dialog");
+      assert(shortModal.includes("written as 4 seconds"), "the dialog must name the length the shot asks for");
+      assert(shortModal.includes("refused, not adjusted"), "and state that submitting it will refuse rather than convert");
+      assert(shortModal.includes(">5 seconds<") && !shortModal.includes(">4 seconds<"),
+        "and offer only the lengths this backend can render");
+      note("ui: a 4s shot opens the dialog, is told 4s will be refused rather than converted, and is offered only 5–15s");
+    }
+
+    /* ===================================================================
+       11d. THE DURABLE ROW EXISTS BEFORE THE PAID POST
+       =================================================================== */
+    {
+      /* The invariant: a paid fal POST must never leave CineBraid without a durable job
+         record representing that attempt. Asserted at the only moment that proves it —
+         inside the provider handler, with the request received and unanswered — against
+         what is actually on disk, not against what the response later says. */
+      const { result, call } = await submitBuild(h, {
+        mode: "flf", id: "b-barrier", durationSeconds: 9,
+        references: [ref("kf-b", "last-frame", "image", B_PNG), ref("kf-a", "first-frame", "image", A_PNG)],
+      });
+      assert.strictEqual(result.status, 200, JSON.stringify(result.data));
+      const jobId = result.data.job.id;
+      const atRequest = call.ledgerAtRequest.find((row) => row.id === jobId);
+      assert(atRequest, "the durable row must already exist when the paid request arrives at the provider");
+      assert.strictEqual(atRequest.status, "SUBMITTING",
+        "and must say a submission is in flight, so a crash here reads as 'may have been charged'");
+      /* Enough to reconcile without the response ever coming back. */
+      assert(atRequest.compilation && atRequest.compilation.plan, "the row carries the compiled plan");
+      assert.strictEqual(atRequest.compilation.plan.compiler.packId, "minimax-h3");
+      assert.strictEqual(atRequest.model, "minimax/h3/image-to-video",
+        "the row already names the fal endpoint the paid request went to");
+      assert.strictEqual(atRequest.backendId, "fal-queue");
+      assert.strictEqual(atRequest.modelFamily, "minimax-h3");
+      assert.deepStrictEqual(
+        atRequest.providerBindings.map((row) => `${row.field}:${row.refId}`),
+        ["image_url:kf-a", "end_image_url:kf-b"],
+        "and which reference filled which provider field",
+      );
+      assert.strictEqual(atRequest.shotId, "SH-1");
+      assert(atRequest.createdAt, "with a timestamp to reconcile against a provider dashboard");
+      assert(atRequest.compilation.source.buildId, "and the package it came from");
+      /* The provider identifiers are the one thing that cannot exist yet — they only
+         exist in the answer. Everything needed to go and FIND them is already durable. */
+      assert(!atRequest.externalId, "the provider request id cannot exist before the answer");
+      /* Ordering, stated as an assertion rather than as a comment: the row that was on
+         disk at request time is the same row the response returns, advanced. */
+      const settled = h.ledger().find((row) => row.id === jobId);
+      assert.strictEqual(settled.compilation.compiledPrompt, atRequest.compilation.compiledPrompt);
+      assert.strictEqual(settled.model, atRequest.model, "the endpoint recorded before the POST is the one used");
+      note("paid safety: at the instant the paid POST reaches the provider, the durable row already carries the plan, the endpoint, the backend and every binding");
+    }
+    {
+      /* A locally refused request must not leave a row behind — the ledger records
+         attempts to spend, not attempts to validate. */
+      const beforeLedger = h.ledger().length;
+      const beforeCalls = h.calls.length;
+      const project = h.project();
+      const buildId = addMotionPromptBuild(project, "SH-1", {
+        mode: "flf", id: "b-no-litter", durationSeconds: 8,
+        references: [ref("kf-a", "first-frame", "image", A_PNG)],
+      });
+      h.saveProject(project);
+      const refused = await h.api("/api/generation/fal/jobs", {
+        body: { purpose: "motion-h3", shotId: "SH-1", sourceBuildId: buildId, profileFamily: "minimax-h3", profileMode: "flf", durationSeconds: 8, resolution: "2K", aspectRatio: "16:9", clientRequestId: "no-litter" },
+      });
+      assert(refused.status >= 400);
+      assert.strictEqual(h.ledger().length, beforeLedger, "local validation failure must not create a durable row");
+      assert.strictEqual(h.calls.length, beforeCalls, "nor reach the provider");
+      note("paid safety: a locally refused request creates no ledger row — the ledger records spending attempts, not validation attempts");
+    }
+    {
+      /* Failure immediately after the POST. The request WAS sent and the answer never
+         came, so the row must be reconcilable and must not read as "nothing happened". */
+      h.setProviderDropsConnection(true);
+      const { result, call } = await submitBuild(h, { mode: "t2v", id: "b-post-crash", durationSeconds: 8, references: [] });
+      h.setProviderDropsConnection(false);
+      assert.strictEqual(result.status, 502, JSON.stringify(result.data));
+      assert(call, "the request reached the provider before the failure");
+      const row = h.ledger().find((r) => r.id === result.data.job.id);
+      assert.strictEqual(row.status, "FAILED");
+      assert.strictEqual(row.providerContacted, true,
+        "a failure that already left the machine must be distinguishable from one that never did");
+      assert.notStrictEqual(row.providerAnswered, true, "a dropped connection is not a provider refusal");
+      assert(/may have been accepted and charged/i.test(row.error),
+        `the recorded reason must warn that a charge is possible, got: ${row.error}`);
+      assert(/minimax\/h3\/text-to-video/.test(row.error), "and name the endpoint to check");
+      assert(row.compilation && row.compilation.plan, "the plan survives for reconciliation");
+      assert.strictEqual(row.model, "minimax/h3/text-to-video", "as does the endpoint it went to");
+      note("paid safety: a failure after the POST is recorded as provider-contacted, names the endpoint, and keeps the plan to reconcile against");
+    }
+    {
+      /* A provider that answers and declines is unambiguous — nothing to reconcile. */
+      h.setProviderFailure(422, { detail: "prompt rejected" });
+      const { result } = await submitBuild(h, { mode: "t2v", id: "b-post-declined", durationSeconds: 8, references: [] });
+      h.setProviderFailure(200, null);
+      assert.strictEqual(result.status, 502);
+      const row = h.ledger().find((r) => r.id === result.data.job.id);
+      assert.strictEqual(row.status, "FAILED");
+      assert.strictEqual(row.providerContacted, true);
+      assert.strictEqual(row.providerAnswered, true, "an answered refusal is not an orphan");
+      note("paid safety: an answered provider refusal is marked as answered, so it is not mistaken for a possible charge");
     }
 
     /* ===================================================================

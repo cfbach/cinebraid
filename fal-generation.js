@@ -413,13 +413,33 @@ function registerFalGeneration(app, context) {
          prompt string and reaches nothing else in the request. */
       ...(job.promptEdited ? { promptOverride: job.prompt } : {}),
     });
-    const response = await fetch(`${cfg.baseUrl}/${serialized.model}`, {
-      method: "POST",
-      headers: { "content-type": "application/json", Authorization: `Key ${cfg.apiKey}`, "X-Fal-No-Retry": "1" },
-      body: JSON.stringify(serialized.input),
-    });
+    /* From here on the request has left the machine, and a failure no longer means
+       "nothing happened". A transport error is the ambiguous case — the queue may have
+       accepted the job and the answer may simply not have come back — so the failure
+       says so and the row records it. "FAILED" that silently means "possibly charged"
+       is the kind of state nobody reconciles because nobody knows to look. */
+    let response;
+    try {
+      response = await fetch(`${cfg.baseUrl}/${serialized.model}`, {
+        method: "POST",
+        headers: { "content-type": "application/json", Authorization: `Key ${cfg.apiKey}`, "X-Fal-No-Retry": "1" },
+        body: JSON.stringify(serialized.input),
+      });
+    } catch (error) {
+      const failure = new Error(
+        `fal did not answer the MiniMax H3 request (${error.message}). The request had already been sent, so it may have been accepted and charged — check the fal dashboard for ${serialized.model} before generating again.`,
+      );
+      failure.providerContacted = true;
+      throw failure;
+    }
     const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(normalizeError(data, response.status));
+    /* A refusal the provider answered is unambiguous: it was received and declined. */
+    if (!response.ok) {
+      const refused = new Error(normalizeError(data, response.status));
+      refused.providerContacted = true;
+      refused.providerAnswered = true;
+      throw refused;
+    }
     return {
       model: serialized.model,
       modelFamily: serialized.modelFamily,
@@ -867,11 +887,15 @@ function registerFalGeneration(app, context) {
       /* The one number the dialog may show as "the limit". It is the intersection of
          what MiniMax H3 reads and what fal accepts, never either one on its own. */
       maxPromptCharacters: compiled.capability.maxPromptCharacters,
-      modelMaxPromptCharacters: 7000,
+      modelMaxPromptCharacters: compiled.model.maxPromptCharacters,
       backendMaxPromptCharacters: FAL_H3_BACKEND.maxPromptCharacters,
       durationSeconds: Number(plan.output?.durationSeconds) || null,
+      /* Both numbers, always. Where they differ the shot asked for something this
+         backend cannot render, and the dialog has to say that rather than present the
+         adjusted value as the request. A paid submission refuses the difference. */
+      durationRequested: compiled.durationRequested,
       durationRange: compiled.capability.durationSeconds,
-      modelDurationRange: [4, 15],
+      modelDurationRange: compiled.model.durationSeconds,
       resolution: extensions.resolution || "",
       resolutions: compiled.capability.resolutions,
       aspectRatio: compiled.aspect.carriesAspectRatio ? String(extensions.ratio || compiled.aspect.value || "") : "",
@@ -1049,17 +1073,31 @@ function registerFalGeneration(app, context) {
           resolution: job.resolution,
           aspectRatio: job.aspectRatio,
           submittedPrompt: req.body?.prompt,
+          /* A paid submission takes the requested duration or refuses it. It never
+             quietly renders a different length than the one that was asked for. */
+          enforceDuration: true,
         });
         applyCompilationToJob(job, compiled);
         /* Serialised against the effective capability with the provider call left out,
            so an over-limit prompt, an unsupported modality, a missing endpoint or a
            reference whose file has gone all refuse HERE — before a durable row exists,
            before anything leaves the machine, and before anything is charged. */
-        serializeH3PlanForFal(compiled.plan, compiled.capability, {
+        const preflight = serializeH3PlanForFal(compiled.plan, compiled.capability, {
           resolveReference: (row) => { planReferenceAddress(owner, row); return "preflight"; },
           config: cfg,
           ...(job.promptEdited ? { promptOverride: job.prompt } : {}),
         });
+        /* WHERE the paid request is about to go, recorded on the row BEFORE the row is
+           committed — so it is durable before the POST rather than arriving with the
+           response. A process that dies between sending and answering leaves a row that
+           still names the endpoint, the backend and which reference filled which field,
+           which is the difference between a reconcilable orphan and a mystery.
+           Deterministic: submitH3 re-derives the identical values from the same plan. */
+        job.model = preflight.model;
+        job.modelFamily = preflight.modelFamily;
+        job.backendId = preflight.backendId;
+        job.providerBindings = preflight.bindings;
+        job.submittedPromptCharacters = preflight.submittedPromptCharacters;
       } catch (error) {
         return h3Refusal(res, error);
       }
@@ -1114,6 +1152,13 @@ function registerFalGeneration(app, context) {
         if (row) {
           row.status = "FAILED";
           row.error = error.message;
+          /* Whether the request reached the provider before it failed. Without this,
+             a failure that left the machine and a failure that never did look
+             identical in the ledger, and only one of them can have cost money.
+             `providerAnswered` narrows it further: the provider replied and declined,
+             so there is nothing to reconcile. */
+          if (error.providerContacted) row.providerContacted = true;
+          if (error.providerAnswered) row.providerAnswered = true;
           row.updatedAt = now();
           Object.assign(job, row);
         }

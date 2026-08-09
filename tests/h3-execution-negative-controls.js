@@ -440,6 +440,101 @@ async function main() {
   });
 
   /* =========================================================================
+     11. The paid POST happens before the durable row exists.
+         The property: at the instant the request reaches the provider, the ledger
+         already contains a row representing that attempt. */
+  await control("committing the job only after the provider answers", "the durable row exists before the paid POST", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "cinebraid-h3-order-"));
+    const dir = path.join(tmp, "project");
+    fs.mkdirSync(path.join(dir, "shots", "SH-1", "takes"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "shots", "SH-1", "takes", "A.png"), PNG_A);
+    const file = path.join(dir, "project.json");
+    const project = fixtureProject();
+    addMotionPromptBuild(project, "SH-1", {
+      mode: "i2v", id: "order-pkg", durationSeconds: 8,
+      references: [ref("kf-a", "first-frame", "image", A_PNG, "Approved opening frame")],
+    });
+    fs.writeFileSync(file, JSON.stringify(project, null, 2));
+
+    /* The defect: nothing durable until the provider has answered. */
+    const falGeneration = loadModified("fal-generation.js", [
+      [
+        "      await commit(owner, (current) => { current.push(job); });",
+        "      await Promise.resolve(); /* control: no durable row before the POST */",
+      ],
+      [
+        "        if (row) mergeJobOutcome(row, { ...outcome, status: outcome.status, updatedAt: now() });",
+        "        if (row) mergeJobOutcome(row, { ...outcome, status: outcome.status, updatedAt: now() });\n        else current.push(Object.assign(job, outcome, { status: outcome.status, updatedAt: now() }));",
+      ],
+    ]);
+
+    const calls = [];
+    const mock = express();
+    mock.use(express.json({ limit: "25mb" }));
+    let mockOrigin = "";
+    mock.post(["/minimax/h3/image-to-video"], (req, res) => {
+      /* The same barrier the real suite uses: what is on disk with the paid request
+         received and unanswered. */
+      let ledgerAtRequest = [];
+      try { ledgerAtRequest = JSON.parse(fs.readFileSync(path.join(dir, "generation-jobs.json"), "utf8")); } catch { ledgerAtRequest = []; }
+      calls.push({ ledgerAtRequest });
+      res.json({ request_id: "x", status_url: `${mockOrigin}/s`, response_url: `${mockOrigin}/r` });
+    });
+    const mockServer = await new Promise((resolve) => { const s = mock.listen(0, "127.0.0.1", () => resolve(s)); });
+    mockOrigin = `http://127.0.0.1:${mockServer.address().port}`;
+
+    const app = express();
+    app.use(express.json({ limit: "8mb" }));
+    falGeneration.registerFalGeneration(app, {
+      readConfig: () => ({ generation: { fal: { enabled: true, apiKey: "k", baseUrl: mockOrigin, h3ImageModel: "minimax/h3/image-to-video", h3TextModel: "minimax/h3/text-to-video", h3ReferenceModel: "minimax/h3/reference-to-video", h3Resolution: "2K", maxConcurrent: 2 } } }),
+      readProject: () => JSON.parse(fs.readFileSync(file, "utf8")),
+      writeProject: (next) => fs.writeFileSync(file, JSON.stringify(next, null, 2)),
+      activeSlug: () => "ctrl",
+      projectDirForSlug: () => ({ slug: "ctrl", dir, file }),
+    });
+    const appServer = await new Promise((resolve) => { const s = app.listen(0, "127.0.0.1", () => resolve(s)); });
+    const origin = `http://127.0.0.1:${appServer.address().port}`;
+
+    try {
+      const response = await fetch(`${origin}/api/generation/fal/jobs`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ purpose: "motion-h3", shotId: "SH-1", sourceBuildId: "order-pkg", profileFamily: "minimax-h3", profileMode: "i2v", durationSeconds: 8, resolution: "2K", aspectRatio: "16:9" }),
+      });
+      const data = await response.json();
+      assert.strictEqual(response.status, 200, JSON.stringify(data));
+      const atRequest = (calls[0]?.ledgerAtRequest || []).find((row) => row.id === data.job.id);
+      assert(atRequest, "the durable row must already exist when the paid request arrives at the provider");
+      assert.strictEqual(atRequest.status, "SUBMITTING");
+    } finally {
+      mockServer.close();
+      appServer.close();
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  /* =========================================================================
+     12. Duration silently normalised during a paid submission.
+         The property: a duration this backend cannot render is refused, not converted. */
+  await control("silent 4s→5s normalisation at submission", "a 4-second shot is refused on fal rather than converted", () => {
+    const execution = loadModified("h3-execution.js", [
+      ["  if (request.enforceDuration && duration > 0) {", "  if (false) {"],
+    ]);
+    const project = fixtureProject();
+    const buildId = addMotionPromptBuild(project, "SH-1", { mode: "t2v", id: "ctrl-dur", durationSeconds: 4, references: [] });
+    let refused = null;
+    try {
+      execution.compileH3ExecutionPlan({
+        project, shotId: "SH-1", buildId, durationSeconds: 4, resolution: "2K", aspectRatio: "16:9",
+        enforceDuration: true,
+      });
+    } catch (error) {
+      refused = error;
+    }
+    assert(refused && refused.code === "H3_DURATION_UNSUPPORTED",
+      "a 4-second shot must be refused on the fal backend, not quietly rendered as 5");
+  });
+
+  /* =========================================================================
      Everything real, afterwards. A control that leaves the process damaged would make
      every later suite unreliable in a way nobody would attribute to this file. */
   {

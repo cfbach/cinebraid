@@ -32,6 +32,11 @@ const { compileValidatedGenerationPlan, checkPromptCoverage } = require("./gener
 const H3Pack = require("./model-packs/minimax-h3");
 const { resolveH3FalCapability, FAL_H3_MODES } = require("./fal-h3-backend");
 const { h3AspectSupport } = require("./public/shared-aspect");
+const { checkRequestAgainstCapability } = require("./public/shared-generation-capability");
+
+/* Quoted in refusals so a filmmaker can see that the limit they hit is the backend's
+   and not the model's. Read from the pack rather than restated. */
+const H3_NATIVE_DURATION = H3Pack.H3_FACTS.durationSeconds;
 
 /* Registering the pack is a side effect of requiring it; naming it here makes the
    dependency explicit rather than incidental. */
@@ -188,13 +193,43 @@ function compileH3ExecutionPlan(request = {}) {
      the stored spec. The durable package is production state and is never edited by a
      dispatch. */
   const requestedDuration = Number(request.durationSeconds);
+  const duration = Number.isFinite(requestedDuration) && requestedDuration > 0
+    ? requestedDuration
+    : Number(build.durationSeconds) || Number(build.spec.durationSeconds) || 0;
   const spec = {
     ...build.spec,
     shotId: text(build.spec.shotId) || text(shot.id),
-    durationSeconds: Number.isFinite(requestedDuration) && requestedDuration > 0
-      ? requestedDuration
-      : Number(build.durationSeconds) || Number(build.spec.durationSeconds) || 0,
+    durationSeconds: duration,
   };
+
+  /* DURATION IS NOT NEGOTIATED DURING A PAID SUBMISSION.
+   *
+   * MiniMax H3 renders from 4 seconds; the fal backend accepts 5 to 15. Both are true,
+   * and the compiler's own behaviour — snap onto the effective range and warn — is right
+   * for a preview, where the filmmaker is still choosing and the adjustment is on screen
+   * in front of them.
+   *
+   * It is wrong at the moment of dispatch. A 4-second shot that becomes a 5-second shot
+   * because of which backend happens to be selected is a different shot than the one
+   * that was directed, and the fact that a warning existed somewhere does not make it a
+   * decision the filmmaker took. So a submission takes the duration it was given or
+   * refuses it, and the refusal says what to choose instead.
+   *
+   * This asks the SHARED capability checker rather than re-deriving a floor here, so the
+   * model ∩ backend intersection stays the only place a limit lives. */
+  if (request.enforceDuration && duration > 0) {
+    const check = checkRequestAgainstCapability({ mode, durationSeconds: duration }, capability);
+    const blocked = check.blockedBy.find((row) => row.field === "durationSeconds");
+    const [floor, ceiling] = Array.isArray(capability.durationSeconds) ? capability.durationSeconds : [];
+    if (blocked || !Number.isInteger(duration))
+      throw new H3ExecutionError(
+        "H3_DURATION_UNSUPPORTED",
+        blocked
+          ? `This shot asks for ${duration} seconds. MiniMax H3 itself renders ${H3_NATIVE_DURATION[0]}–${H3_NATIVE_DURATION[1]} seconds, but the fal backend accepts ${floor}–${ceiling}. Choose a duration between ${floor} and ${ceiling} seconds and generate again — nothing was sent and nothing was charged.`
+          : `This shot asks for ${duration} seconds. MiniMax H3 renders whole seconds only. Choose ${Math.max(floor || 1, Math.round(duration))} seconds and generate again — nothing was sent and nothing was charged.`,
+        { requested: duration, range: capability.durationSeconds, modelRange: H3_NATIVE_DURATION },
+      );
+  }
 
   /* Aspect ratio goes through the one resolver every H3 path already shares, so a
      format the model cannot deliver is refused here rather than substituted. i2v and
@@ -266,6 +301,14 @@ function compileH3ExecutionPlan(request = {}) {
     promptEdited,
     editedCoverage,
     aspect: aspectGate,
+    /* What was ASKED for, kept beside what the plan compiled to. Without enforcement —
+       the preview — these differ whenever the backend's floor is above the shot's
+       duration, and the dialog says so instead of quietly showing the adjusted number
+       as though it had always been the request. */
+    durationRequested: duration || null,
+    /* The MODEL's own limits, carried alongside the effective ones so a screen can name
+       which layer narrowed what without hard-coding either number. */
+    model: { durationSeconds: H3_NATIVE_DURATION, maxPromptCharacters: H3Pack.H3_FACTS.maxPromptCharacters },
   };
 }
 
