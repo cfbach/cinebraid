@@ -801,6 +801,30 @@ app.get("/api/me", (req, res) => {
   const enabled = !!readConfig().editorPass;
   res.json({ authEnabled: enabled, role: enabled ? roleFrom(req) : "editor" });
 });
+/* What an unauthenticated browser may fetch: the sign-in page, and exactly the
+   files that page loads from this server.
+
+   The brand images were missing from this list. The sign-in page itself was
+   exempt and its stylesheet was exempt, so with a passcode set the page rendered
+   perfectly — except that /cinebraid-logo-xs.png was answered with a 302 to
+   /login.html. The <img> received an HTML document where a PNG should have been,
+   failed to decode, and drew a broken-image icon on the first screen any LAN
+   user ever sees. A page you cannot fully load until you have signed in is no
+   use as the page you sign in on.
+
+   Nothing here is a disclosure: these are the brand assets that page has always
+   served to anyone who can reach it, alongside the stylesheet that was already
+   exempt. Add a file to login.html and it belongs here too —
+   tests/brand-logo-asset.js fails until it is. */
+const PRE_AUTH_PATHS = [
+  "/login.html",
+  "/styles.css",
+  "/cinebraid-logo-xs.png",
+  "/cinebraid-mark.svg",
+  "/api/login",
+  "/api/me",
+  "/favicon.ico",
+];
 app.use((req, res, next) => {
   const c = readConfig();
   if (!c.editorPass) {
@@ -809,16 +833,7 @@ app.use((req, res, next) => {
   } // auth off → local mode
   req.role = roleFrom(req);
   const p = req.path;
-  if (
-    [
-      "/login.html",
-      "/styles.css",
-      "/api/login",
-      "/api/me",
-      "/favicon.ico",
-    ].includes(p)
-  )
-    return next();
+  if (PRE_AUTH_PATHS.includes(p)) return next();
   /* The OAuth callback is a navigation the provider caused, not one the app made,
      so it cannot be gated on a passcode session the way a settings route is. It is
      not ungated: the route itself refuses any peer that is not this machine, and
