@@ -9,10 +9,25 @@ const VERSION = require(path.join(ROOT, "package.json")).version;
 const SAMPLE_PROJECT = "cinebraid-sample";
 const MEDIA_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif", ".mp4", ".webm", ".mov", ".wav", ".mp3", ".m4a", ".flac", ".ogg"]);
 
+/* Directories this walk must not descend into. Releases are built with
+   `git archive`, so anything gitignored is excluded from a real release by
+   construction - but this walk reads the filesystem, where they are still present.
+   Without .venv-browser here, installing the browser test runtime makes the release
+   check fail on Playwright's own bundled icons. */
+const NOT_SHIPPED = new Set(["node_modules", ".venv-browser", ".git", "dist"]);
+
+/* Media that ships on purpose, named one file at a time.
+
+   The rule this list qualifies exists to stop a private project's media reaching a
+   release, so it is deliberately not relaxed into "anything under public/". The
+   application's own brand mark is the one image outside the sanitized sample that
+   belongs in a release; a stray PNG anywhere else still fails. */
+const SHIPPED_MEDIA = new Set(["public/cinebraid-logo-xs.png"]);
+
 function walkFiles(root, current = root, out = []) {
   if (!fs.existsSync(current)) return out;
   for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
-    if (entry.name === "node_modules") continue;
+    if (NOT_SHIPPED.has(entry.name)) continue;
     const file = path.join(current, entry.name);
     if (entry.isDirectory()) walkFiles(root, file, out);
     else out.push(path.relative(root, file).split(path.sep).join("/"));
@@ -33,7 +48,13 @@ function sanitizedProjectCheck(root) {
   const sample = JSON.parse(fs.readFileSync(sampleFile, "utf8"));
   assert.strictEqual(sample.meta?.workflowEmphasis, "manual", "sample project must open in manual-first mode");
   const files = walkFiles(root);
-  const strayMedia = files.filter((file) => MEDIA_EXTENSIONS.has(path.extname(file).toLowerCase()) && !file.startsWith(`projects/${SAMPLE_PROJECT}/`));
+  const strayMedia = files.filter((file) => MEDIA_EXTENSIONS.has(path.extname(file).toLowerCase())
+    && !file.startsWith(`projects/${SAMPLE_PROJECT}/`)
+    && !SHIPPED_MEDIA.has(file));
+  /* The allowlist must name something that is actually there: a renamed or dropped
+     brand asset would otherwise leave a permanently unused exemption behind. */
+  for (const shipped of SHIPPED_MEDIA)
+    assert(files.includes(shipped), `${shipped} is allowlisted as shipped media but is not in the release`);
   assert.deepStrictEqual(strayMedia, [], `release contains media outside the sanitized sample: ${strayMedia.join(", ")}`);
 }
 

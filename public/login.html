@@ -7,13 +7,13 @@
 <style>
 .login-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center}
 .login-box{background:linear-gradient(180deg,rgba(16,38,62,.96),rgba(8,27,48,.96));border:1px solid rgba(34,211,238,.24);border-radius:22px;padding:34px 34px;width:min(390px,92vw);box-shadow:0 24px 80px rgba(0,0,0,.35)}
-.login-brand{display:flex;align-items:center;gap:13px;margin-bottom:22px}.login-brand img{width:52px;height:52px}.login-brand .wordmark{font-size:22px}.login-tag{font:800 8px var(--mono);letter-spacing:.17em;color:var(--acc);text-transform:uppercase}
+.login-brand{display:flex;align-items:center;gap:13px;margin-bottom:22px}.login-brand img{height:52px;width:auto;object-fit:contain}.login-brand .wordmark{font-size:22px}.login-tag{font:800 8px var(--mono);letter-spacing:.17em;color:var(--acc);text-transform:uppercase}
 .login-box input{margin:8px 0 14px}
 .login-box .lock-btn{width:100%}
 .login-err{color:var(--red);font-family:var(--mono);font-size:11px;margin-top:10px;min-height:14px}
 </style></head>
 <body><div class="login-wrap"><form class="login-box" onsubmit="go(event)">
-  <div class="login-brand"><img src="/cinebraid-mark.svg" alt=""><div><div class="login-tag">YOUR PRODUCTION, YOUR CONTROL</div><div class="wordmark">Cine<span class="wm-accent">Braid</span></div></div></div>
+  <div class="login-brand"><img src="/cinebraid-logo-xs.png" alt="" width="80" height="103"><div><div class="login-tag">YOUR PRODUCTION, YOUR CONTROL</div><div class="wordmark">Cine<span class="wm-accent">Braid</span></div></div></div>
   <label class="form-field"><span style="font-family:var(--mono);font-size:10px;letter-spacing:.14em;color:var(--faint)">PASSCODE</span>
   <input id="pass" type="password" autofocus autocomplete="current-password"></label>
   <button class="lock-btn add-btn" type="submit">ENTER CINEBRAID</button>

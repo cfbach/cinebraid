@@ -2557,7 +2557,12 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;background:li
 .bible-app{grid-template-columns:280px minmax(0,1fr);background:transparent}
 .bible-sidebar{padding:22px 18px 20px;border-right-color:rgba(196,214,235,.12);background:linear-gradient(180deg, rgba(9,14,21,.98), rgba(8,12,18,.99))}
 .bible-brand{display:flex;align-items:center;gap:10px;font-size:15px;letter-spacing:.03em}
-.bible-brand::before{content:"CB";display:grid;place-items:center;width:26px;height:26px;border-radius:8px;border:1px solid rgba(79,216,204,.28);background:linear-gradient(180deg, rgba(79,216,204,.16), rgba(114,184,242,.08));font:700 11px var(--mono);color:var(--acc)}
+/* The <img> in bible.html had NO size rule anywhere, so it rendered at its intrinsic
+   size - a 256px mark inside a 250px sidebar, overflowing it completely. A "CB" text
+   chip was drawn here as ::before and had been standing in for the mark, because the
+   real one was too broken to read as a logo at all. Sizing the image is the fix; the
+   chip goes with it rather than leaving the sidebar showing two marks. */
+.bible-brand img{display:block;height:26px;width:auto;flex:0 0 auto;object-fit:contain}
 .bible-project-mini{margin-top:24px}
 .bible-search-wrap{border-radius:12px;background:rgba(255,255,255,.03);border-color:rgba(196,214,235,.12)}
 .bible-toc a{padding:10px 11px;border-radius:12px}
@@ -2748,7 +2753,12 @@ body{font-family:var(--body);background:var(--bg);color:var(--ink)}
 #rail{background:var(--panel);border-color:var(--line)}
 .rail-head{padding:14px;border-color:var(--line)}
 .brand-lockup{display:flex;align-items:center;gap:10px;margin:0 0 12px;min-width:0}
-.brand-logo{display:block;width:30px;height:30px;flex:0 0 30px}
+/* Height is the fixed dimension and width follows the asset. The rule used to pin
+   both to 30px with the default object-fit:fill, which only looked right because the
+   mark it pointed at happened to be square; the mini logo is 80x103, and a square box
+   would squash it. `contain` is belt and braces so a future asset of any ratio is
+   letterboxed rather than distorted. */
+.brand-logo{display:block;height:30px;width:auto;flex:0 0 auto;object-fit:contain}
 .brand-copy{display:flex;flex-direction:column;gap:2px;min-width:0}
 .wordmark{display:block!important;white-space:nowrap;font:700 14px/1.1 var(--body);letter-spacing:-.02em;color:var(--ink)}
 .wordmark::before{display:none!important;content:none!important}

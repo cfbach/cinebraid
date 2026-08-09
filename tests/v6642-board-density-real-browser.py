@@ -13,16 +13,10 @@ import urllib.error
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 VERSION = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))["version"]
-try:
-    from playwright.sync_api import sync_playwright
-except Exception:
-    print(f"v{VERSION} board-density browser check skipped: Python Playwright is not installed.")
-    raise SystemExit(0)
+from browser_runtime import require_browser, launch_chromium
 
-CHROMIUM = shutil.which("chromium") or shutil.which("chromium-browser") or shutil.which("google-chrome")
-if not CHROMIUM:
-    print("v6.6.4-studio.4 board-density browser check skipped: Chromium is unavailable.")
-    raise SystemExit(0)
+LABEL = f"v{VERSION} board-density browser check"
+sync_playwright = require_browser(LABEL)
 
 
 def free_port():
@@ -55,7 +49,7 @@ server = subprocess.Popen(
 try:
     wait_server(port)
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(executable_path=CHROMIUM, headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"])
+        browser = launch_chromium(pw, label=LABEL)
         page = browser.new_page(viewport={"width": 1600, "height": 1000})
         page.evaluate("""() => {
           const data = new Map();

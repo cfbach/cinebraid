@@ -165,6 +165,12 @@ dist
 /.claude/settings.local.json
 /.claude/worktrees/
 
+# Real-browser test runtime. Created by `npm run setup:browser-tests`, holds the
+# pinned Python Playwright install and nothing the application needs. Releases are
+# built with `git archive`, so ignoring it here is also what keeps it out of them.
+/.venv-browser/
+__pycache__/
+
 # Local QA, diagnostic and export output
 /deep-product-audit-v2-results.json
 /diagnostic.json

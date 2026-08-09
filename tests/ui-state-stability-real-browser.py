@@ -6,15 +6,9 @@ No paid requests are sent: prompt and FAL endpoints are intercepted.
 import copy, json, os, pathlib, re, shutil, socket, subprocess, sys, time, urllib.error, urllib.request
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-try:
-    from playwright.sync_api import sync_playwright
-except Exception:
-    print("UI state stability browser check skipped: Python Playwright is not installed.")
-    raise SystemExit(0)
-CHROMIUM = shutil.which("chromium") or shutil.which("chromium-browser") or shutil.which("google-chrome")
-if not CHROMIUM:
-    print("UI state stability browser check skipped: Chromium is unavailable.")
-    raise SystemExit(0)
+from browser_runtime import require_browser, launch_chromium
+LABEL = "UI state stability browser check"
+sync_playwright = require_browser(LABEL)
 
 def free_port():
     sock = socket.socket(); sock.bind(("127.0.0.1", 0)); port = sock.getsockname()[1]; sock.close(); return port
@@ -48,7 +42,7 @@ try:
     wait_server(port)
     upstream = f"http://127.0.0.1:{port}"; base = "http://cinebraid.test"
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(executable_path=CHROMIUM, headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"])
+        browser = launch_chromium(pw, label=LABEL)
         page = browser.new_page(viewport={"width": 1440, "height": 900})
         page.set_default_timeout(6000)
         page.evaluate("""() => {
@@ -210,7 +204,14 @@ try:
           location.hash = '#/shot/SAMPLE-01'; route();
           setTimeout(() => { location.hash = '#/reports'; route(); }, 20);
         }""")
-        page.wait_for_timeout(500)
+        # The stubbed shot route resolves at 220ms. A fixed 500ms sleep had to cover
+        # that plus rendering Reports, and on a loaded machine - running this suite
+        # beside the rest of the browser gate - it did not, so the suite failed on
+        # timing rather than on behaviour. Waiting for the newer route to arrive and
+        # THEN outliving the older one asserts strictly more: Reports must win, and
+        # must still be winning after the stale route has had its chance to land.
+        page.wait_for_selector(".reports-layout", timeout=10000)
+        page.wait_for_timeout(400)
         assert page.locator("#stale-route-result").count() == 0, "an older async route overwrote newer navigation"
         assert page.locator(".reports-layout").count() == 1, "newer Reports navigation was not retained"
         page.evaluate("() => { ROUTES.shot = window.__uiStateOriginalShotRoute; delete window.__uiStateOriginalShotRoute; }")
