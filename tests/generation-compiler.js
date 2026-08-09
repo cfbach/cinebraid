@@ -160,9 +160,10 @@ function compile(mode, references, options = {}) {
   assert(carries(t2v, "anamorphic"), "T2V must construct the visual style");
   assert.strictEqual(state(t2v, "identity.canon"), "represented");
 
-  /* I2V has one, so it must not compete with it. */
-  assert(!carries(i2v, "torn left cuff"), "I2V must not re-describe identity the first frame already fixes");
-  assert(!carries(i2v, "corrugated walls"), "I2V must not re-describe the environment the first frame already fixes");
+  /* I2V has one, so it names the anchors rather than rebuilding them. See the dedicated
+     block below for what "names" is allowed to mean. */
+  assert(!carries(i2v, "steel-toed boots"), "I2V must not carry canon detail the first frame already fixes");
+  assert(!carries(i2v, "chalk line across the floor"), "nor environment detail the first frame already fixes");
   assert.strictEqual(state(i2v, "identity.canon"), "anchored");
   assert.strictEqual(covered(i2v, "environment").via, "the supplied first frame");
 }
@@ -194,7 +195,8 @@ function compile(mode, references, options = {}) {
   assert(carries(plan, "push-in"), "camera survives");
   assert(carries(plan, "jaw set"), "performance survives");
   assert.strictEqual(state(plan, "continuity.preserve"), "represented", "must-preserve intent survives");
-  assert(carries(plan, "do not restate"), "the prompt tells the model not to re-describe the anchored frame");
+  assert(carries(plan, "do not reconstruct the image in words"),
+    "the prompt tells the model not to rebuild the anchored frame");
   for (const anchored of ["state.initial", "environment", "identity.canon", "style.visual"])
     assert.strictEqual(state(plan, anchored), "anchored", `${anchored} is established by Frame A`);
   assert.strictEqual(state(plan, "output.aspectRatio"), "anchored",
@@ -469,6 +471,69 @@ function compile(mode, references, options = {}) {
   assert(!JSON.stringify(H3.H3_PLAYBOOK).includes("maxReferenceImages"), "capability facts must not live in the playbook");
 }
 
+/* ---------------------------------------------------------------------------
+   Anchoring is verbal orientation, not reconstruction.
+
+   MiniMax's base guide, section 3.1, is explicit that an image-anchored description
+   should FIRST establish the style, subjects, composition and scene anchors visible in
+   the frame, and THEN describe the action. Reading "the frame carries it, so say
+   nothing" as the whole policy was too absolute: the frame is what the model sees, and
+   the prompt is what it has committed to.
+
+   Both halves are load-bearing, so both are asserted. The anchors are NAMED — briefly,
+   in the guide's own order — and the detail past the naming stays in the frame. The
+   coverage state does not move: the frame is still what establishes them. */
+{
+  const t2v = compile("t2v", []);
+  const i2v = compile("i2v", [FRAME_A]);
+  const flf = compile("flf", [FRAME_A, FRAME_B]);
+  const alignment = i2v.inputs.prompt.split("IMAGE ALIGNMENT\n")[1].split("\n\n")[0];
+  const construction = t2v.inputs.prompt.split("SUBJECT AND ENVIRONMENT\n")[1].split("\n\n")[0];
+
+  /* Established, per the guide. */
+  for (const anchor of ["anamorphic", "olive flight jacket", "corrugated walls", "east door"])
+    assert(alignment.toLowerCase().includes(anchor), `the orientation must name ${anchor}`);
+  /* In the guide's order: style, subjects, scene. */
+  assert(alignment.indexOf("Anamorphic") < alignment.indexOf("olive flight jacket"),
+    "style is established before subjects");
+  assert(alignment.indexOf("olive flight jacket") < alignment.indexOf("corrugated walls"),
+    "subjects before scene anchors");
+
+  /* But not reconstructed. Each anchor is clipped to a naming length, and the tail of
+     every one of them stays where it already is — in the frame. */
+  for (const tail of ["steel-toed boots", "chalk line across the floor"]) {
+    assert(!i2v.inputs.prompt.toLowerCase().includes(tail), `${tail} is in the frame and must not be rebuilt in prose`);
+    assert(carries(t2v, tail), `whereas T2V, with nothing anchored, must construct ${tail}`);
+  }
+  /* Brevity asserted against the policy rather than against a length ratio: a ratio
+     depends on how long this fixture's canon happens to be, and would pass or fail for
+     reasons that have nothing to do with the rule. The rule is that each anchor is
+     NAMED, so each named anchor is checked against the naming length. */
+  const clause = alignment.slice(alignment.indexOf("It establishes ") + "It establishes ".length);
+  const named = clause.slice(0, clause.indexOf(". ")).split("; ");
+  assert.strictEqual(named.length, 4, "all four anchors are named");
+  for (const anchor of named)
+    assert(anchor.split(/\s+/).filter(Boolean).length <= H3.H3_PLAYBOOK.anchorOrientation.maxWordsPerAnchor,
+      `"${anchor}" exceeds the naming length; that is reconstruction, not orientation`);
+  assert(construction.length > named.join("; ").length, "and T2V still builds more than I2V names");
+  assert(carries(i2v, "do not reconstruct the image in words"), "and the instruction is explicit");
+
+  /* Naming changes nothing about what establishes the fact. */
+  for (const key of ["style.visual", "state.initial", "identity.canon", "environment"])
+    assert.strictEqual(state(i2v, key), "anchored", `${key} is still anchored by the frame, not represented`);
+
+  /* The same guidance applies to the first frame of a first/last pair — and to that
+     frame ONLY. Naming the ending in prose is the exact failure the endpoint binding
+     exists to prevent, so the orientation must never reach for it. */
+  const endpoints = flf.inputs.prompt.split("ENDPOINT CONTRACT\n")[1].split("\n\n")[0];
+  assert(endpoints.includes("It establishes"), "the first frame is verbally anchored in FLF too");
+  assert(!endpoints.toLowerCase().includes("standing one pace back"),
+    "but the required ending state is never named; the bound final frame is the contract");
+  assert.strictEqual(state(flf, "state.final"), "anchored");
+  assert(!H3.H3_PLAYBOOK.anchorOrientation.order.includes("state.final"),
+    "and the policy excludes the ending structurally, not by accident");
+}
+
 /* ===========================================================================
    9. The evidence record. Every capability claim the pack relies on is sourced, and
    every unsourced one is declared as such. */
@@ -504,6 +569,20 @@ function compile(mode, references, options = {}) {
   assert.strictEqual(H3.H3_FACTS.seed.supported, false, "and the pack must not invent one");
   assert(evidence.conflicts.some((row) => /prompt length/i.test(row.topic)),
     "the model/provider prompt-length disagreement is preserved rather than silently resolved");
+
+  /* H3-Context-IR is a separate, optional endpoint, and the record must say so rather
+     than treating it as something the hosted API does for you. The distinction decides
+     whether CineBraid's deterministic compilation is the point of the layer or a
+     duplicate of it, so it is pinned here and not left to prose that can drift. */
+  const contextIr = evidence.capabilities.find((row) => /h3-context-ir is a separate endpoint/i.test(row.claim));
+  assert(contextIr, "the record must state what Context-IR actually is");
+  assert(/does not create a video-generation task/i.test(contextIr.claim));
+  assert(evidence.capabilities.some((row) => /plain natural-language text item directly/i.test(row.claim)),
+    "and that the hosted API takes a prompt directly, which is why prose is the right serialisation");
+  const packSource = fs.readFileSync(path.join(__dirname, "..", "model-packs", "minimax-h3.js"), "utf8");
+  for (const overstatement of [/fronted by (?:H3-)?Context-IR/i, /Context-IR (?:runs|is run) (?:before|for)/i])
+    assert(!overstatement.test(packSource),
+      "the pack must not claim the hosted API is fronted by Context-IR; nothing documents that");
 
   /* A compiled plan states which sources its capability claims rest on, and every one
      of them exists in the record. */
@@ -554,12 +633,12 @@ function compile(mode, references, options = {}) {
   assert(/At 3\.00s,/.test(plan.inputs.prompt), "declared beat times are used when they genuinely advance");
   assert(/At 6\.00s,/.test(plan.inputs.prompt));
 }
-/* 5. I2V with detailed visual canon that should be anchored, not repeated */
+/* 5. I2V with detailed visual canon that should be anchored, not rebuilt */
 {
   const plan = compile("i2v", [FRAME_A]);
-  assert(!carries(plan, "olive flight jacket"), "canon the frame already carries is not repeated");
   assert.strictEqual(state(plan, "identity.canon"), "anchored");
-  assert(carries(plan, "torn cuff"), "but a drift instruction about it still reaches the model");
+  assert(!carries(plan, "steel-toed boots"), "canon detail beyond the naming stays in the frame");
+  assert(carries(plan, "torn cuff"), "and a drift instruction about it still reaches the model");
 }
 /* 6. T2V with no visual anchors */
 {

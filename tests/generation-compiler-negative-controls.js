@@ -136,6 +136,34 @@ control("the unaccounted-intent check", "an intent no pack claims becomes a visi
 });
 
 /* ===========================================================================
+   3b. The image-anchor orientation -> the I2VA policy test must fail.
+
+   MiniMax's guidance is to establish the frame's anchors in language before describing
+   the action. Removing the orientation is the "too absolute" reading of anchoring, and
+   the test that caught it must keep catching it. */
+control("the image-anchor orientation", "the orientation names the anchors the guide says to establish", () => {
+  const pack = loadModified("model-packs/minimax-h3.js", [
+    ['  return named.length ? `It establishes ${named.join("; ")}.` : "";', '  return "";'],
+  ]);
+  const plan = planWith({ pack: pack.pack, mode: "i2v", references: [FRAME_A] });
+  const alignment = plan.inputs.prompt.split("IMAGE ALIGNMENT\n")[1].split("\n\n")[0];
+  for (const anchor of ["anamorphic", "olive flight jacket", "corrugated walls"])
+    assert(alignment.toLowerCase().includes(anchor), `the orientation must name ${anchor}`);
+});
+/* And the other direction: an orientation that stops clipping is reconstruction, which
+   is the failure the anchoring principle exists to prevent. */
+control("the naming-length clip", "detail past the naming stays in the frame", () => {
+  const pack = loadModified("model-packs/minimax-h3.js", [
+    ["  if (words.length <= maxWords) return text(value).replace(/[.,;:]+$/, \"\");",
+      "  return text(value).replace(/[.,;:]+$/, \"\");"],
+  ]);
+  const plan = planWith({ pack: pack.pack, mode: "i2v", references: [FRAME_A] });
+  for (const tail of ["steel-toed boots", "chalk line across the floor"])
+    assert(!plan.inputs.prompt.toLowerCase().includes(tail),
+      `${tail} is in the frame and must not be rebuilt in prose`);
+});
+
+/* ===========================================================================
    4. The unsupported-reference warning -> the reference tests must fail. */
 control("the over-limit reference warning", "the excess warns and nothing is silently discarded", () => {
   const pack = loadModified("model-packs/minimax-h3.js", [
@@ -218,6 +246,10 @@ control("seed persistence into the job", "the seed survives compile -> job", () 
   const seeded = planWith({ mode: "t2v", capability: seedCapableCapability("t2v"), seed: 90210 });
   assert.strictEqual(seeded.settings.seed, 90210, "seed propagation is intact");
 
+  const i2v = planWith({ mode: "i2v", references: [FRAME_A] });
+  assert(i2v.inputs.prompt.includes("It establishes"), "the image-anchor orientation is intact");
+  assert(!i2v.inputs.prompt.includes("steel-toed boots"), "and it is still clipped to a naming length");
+
   const many = Array.from({ length: 11 }, (_, index) => ({
     key: `extra-${index}`, label: `Approved still ${index + 1}`, mediaType: "image", role: "reference", url: `/x${index}.png`,
   }));
@@ -232,7 +264,8 @@ control("seed persistence into the job", "the seed survives compile -> job", () 
 console.log(
   `Negative controls passed: ${results.length} deliberate defects reintroduced in memory — action propagation, `
   + "both halves of the last-frame binding, camera propagation, the core's unaccounted-intent backstop, the "
-  + "over-limit reference warning, identifier sanitation at the compiler and at the contract, and seed persistence "
-  + "into the plan and into the job — every one detected by the test that guards it, with the registry restored and "
-  + "all real properties green afterwards.",
+  + "image-anchor orientation and its naming-length clip in both directions, the over-limit reference warning, "
+  + "identifier sanitation at the compiler and at the contract, and seed persistence into the plan and into the "
+  + "job — every one detected by the test that guards it, with the registry restored and all real properties "
+  + "green afterwards.",
 );

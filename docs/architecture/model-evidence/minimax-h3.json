@@ -87,7 +87,9 @@
     { "claim": "Aspect ratios.", "value": ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"], "source": "model-card", "appliesTo": ["local", "api"] },
     { "claim": "Text-to-video requires an explicit ratio and cannot use adaptive.", "value": true, "modes": ["t2v"], "source": "api-reference", "appliesTo": ["api"] },
     { "claim": "A mode with an image input takes its ratio from that image.", "value": "adaptive", "modes": ["i2v", "flf"], "source": "api-reference", "appliesTo": ["api"] },
-    { "claim": "Maximum prompt length accepted by the model.", "value": 7000, "source": "api-reference", "appliesTo": ["api"], "note": "A MODEL limit. Backend limits are separate; see providerConstraints." },
+    { "claim": "Maximum prompt length accepted by the model.", "value": 7000, "source": "api-reference", "appliesTo": ["api"], "note": "A MODEL limit, per text item. Backend limits are separate; see conflicts." },
+    { "claim": "POST /v2/video_generation accepts a plain natural-language text item directly, for every mode, with no documented required structure.", "value": true, "source": "api-reference", "appliesTo": ["api"], "note": "Every request must carry one non-empty text item. This is why the hosted surface is serialised as readable prose." },
+    { "claim": "H3-Context-IR is a SEPARATE endpoint (POST /v2/h3_context_ir) that returns an enhanced prompt and explicitly does not create a video-generation task.", "value": true, "source": "api-reference", "appliesTo": ["api"], "note": "Nothing documents it as a prerequisite for /v2/video_generation. It is one optional way to produce a well-formed prompt; CineBraid produces one deterministically instead." },
     { "claim": "Resolutions available on the open-weight local path.", "value": ["768P"], "source": "model-card", "appliesTo": ["local"] },
     { "claim": "Resolutions available on the hosted API.", "value": ["768P", "2K"], "source": "api-reference", "appliesTo": ["api"] }
   ],
@@ -105,9 +107,9 @@
       "cineBraidBehaviour": "The local surface declares only what the model card establishes: 768p, 24fps, 4-15s."
     },
     {
-      "claim": "Whether a hosted route operated by a third party runs H3-Context-IR before H3-Base.",
-      "status": "not a MiniMax fact; it is a property of each backend",
-      "cineBraidBehaviour": "Serialisation is chosen by surface. The hosted surface emits prose sections; the local surface emits the documented H3-Base three-field document."
+      "claim": "Whether any hosted route runs H3-Context-IR before H3-Base.",
+      "status": "checked and NOT supported for MiniMax's own API - /v2/h3_context_ir is a separate call a client makes deliberately, and /v2/video_generation documents no prerequisite. What a third-party backend does internally is a property of that backend, not of H3",
+      "cineBraidBehaviour": "Serialisation is chosen by surface from the two documented INPUT CONTRACTS, not from any assumption about preprocessing: the hosted API documents a plain text item, so it gets prose sections; an open-weight H3-Base deployment is given the prompt directly, so it gets the document the base guide specifies. CineBraid never calls Context-IR."
     },
     {
       "claim": "Per-reference weighting.",
@@ -146,7 +148,7 @@
   "promptingPolicySources": {
     "cameraExpression": "prompt-guide-base: motion type, amplitude and speed, written as prose within the shot rather than stacked labels.",
     "shotChronology": "prompt-guide-base: the first shot carries no timestamp; later shots use strictly increasing cut times.",
-    "imageAnchoring": "prompt-guide-base: with an anchoring image, describe forward development and do not duplicate what the image already shows.",
+    "imageAnchoring": "prompt-guide-base section 3.1: the description should FIRST establish the style, subjects, composition and scene anchors in the image, and THEN describe the next action - first-frame anchor, action onset, continuous development, result. The same guide says not to duplicate static image content. Both hold: the anchors are named in language so the generation commits to them, and the detail past the naming stays in the frame. CineBraid clips each named anchor to a naming length and leaves its coverage state as anchored, because the frame remains what establishes it.",
     "firstLastTrajectory": "prompt-guide-base: first-frame state, intermediate change, then last-frame state; single-shot construction; no unrequested cuts.",
     "dialogue": "prompt-guide-base: stable speaker identifiers, spoken content preserved verbatim, delivery and identification stated outside it.",
     "soundSeparation": "prompt-guide-base: the soundscape field excludes dialogue and any music the characters can hear; non-diegetic music is directed separately.",

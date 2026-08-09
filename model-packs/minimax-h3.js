@@ -28,10 +28,16 @@
  *                         one can do says nothing about the other, which is why
  *                         variant is part of model identity rather than a label.
  *
- * H3-Context-IR is deliberately NOT integrated. It is MiniMax's hosted preprocessor
- * that turns a casual prompt into a well-formed H3-Base prompt. CineBraid does that job
- * itself, deterministically, from production state — that is the entire point of this
- * layer, and it is why a baseline plan needs no LLM.
+ * H3-Context-IR is deliberately NOT integrated, and it is worth being precise about what
+ * it is, because "the hosted API runs it for you" would be wrong. It is a SEPARATE
+ * hosted endpoint — POST /v2/h3_context_ir — that interprets multimodal inputs and
+ * returns an enhanced prompt. MiniMax's own reference states it does not create a video
+ * generation task. Nothing documents it as a prerequisite: POST /v2/video_generation
+ * takes a plain natural-language text item directly, for every mode.
+ *
+ * So Context-IR is one optional way to turn loose intent into a well-formed prompt.
+ * CineBraid does that job itself, deterministically, from production state — which is
+ * the entire point of this layer, and why a baseline plan needs no LLM and no network.
  */
 
 const { registerModelPack } = require("../generation-compiler");
@@ -173,9 +179,27 @@ const H3_PLAYBOOK = {
     fastWords: /\b(fast|rapid|quick|snap|whip|sudden)\b/i,
     lockedWords: /\b(locked|static|stationary|fixed|no camera movement|does not move)\b/i,
   },
-  /* The guides are explicit that a shot with an anchoring image should not restate what
-     the image already shows. These are the intents an image input makes authoritative,
-     per mode; the compiler marks them anchored rather than dropping them. */
+  /* MiniMax's I2VA guidance is more specific than "do not repeat the image", and getting
+     this wrong in either direction costs quality. Section 3.1 of the base guide says the
+     description should FIRST establish the style, subjects, composition and scene anchors
+     in the image, and THEN describe the next action.
+
+     That is not a contradiction of the anchoring principle, it is the distinction between
+     what the model can see and what the prompt has committed to: naming the anchors in
+     language is what stops the generation drifting off them. What it does not license is
+     reconstructing the frame in prose, which competes with the frame itself.
+
+     So the orientation is deliberately CLIPPED — enough words to name each anchor, not
+     enough to reproduce it — and it changes nothing about coverage. These intents stay
+     `anchored`, because the frame is still what establishes them; the sentence is a
+     pointer, not the carrier. */
+  anchorOrientation: {
+    /* The guide's own order: style, subjects, composition, scene. */
+    order: ["style.visual", "state.initial", "identity.canon", "environment"],
+    maxWordsPerAnchor: 10,
+  },
+  /* The intents an image input makes authoritative, per mode; the compiler marks them
+     anchored rather than dropping them. */
   anchoredBy: {
     i2v: {
       "state.initial": { via: "the supplied first frame", requires: "first-frame" },
@@ -212,10 +236,20 @@ const H3_PLAYBOOK = {
     music: "MUSIC",
     continuity: "CONTINUITY",
   },
-  /* The open-weight path consumes H3-Base's own three-field document; the hosted route
-     is fronted by H3-Context-IR and reads ordinary prose. Same content, different
-     serialisation — which is precisely the local/hosted difference that must not be
-     collapsed. */
+  /* Two surfaces, two documented input contracts.
+
+     LOCAL: an open-weight H3-Base deployment is given the prompt directly, and the base
+     guide documents the document it expects — an image-alignment instruction followed by
+     integrated_multimodal_description, overall_soundscape and non_diegetic_music.
+
+     API: POST /v2/video_generation documents a plain natural-language text item, up to
+     7,000 characters, with no required structure. Readable prose sections are what that
+     contract asks for.
+
+     Note what this is NOT: it is not "the API runs Context-IR so it wants prose". Nothing
+     documents Context-IR as part of a /v2/video_generation call. The two serialisations
+     exist because MiniMax documents two different input contracts, and collapsing them
+     would send one surface a document the other was specified for. */
   serialisation: {
     local: "h3-base-fields",
     api: "sections",
@@ -640,7 +674,12 @@ function compileI2V(ctx) {
   anchorFor(ctx, "i2v");
   sections.push({
     title: titles.alignment,
-    body: `The supplied first frame is the exact opening frame. Begin from it and develop forward; do not restate, restage, mirror or reframe what it already shows.${first ? ` It is ${first.production.label}.` : ""}`,
+    body: joinClauses([
+      `The supplied first frame is the exact opening frame${first ? ` — ${first.production.label}` : ""}.`,
+      anchorOrientation(ctx),
+      "Hold those exactly as the frame shows them; do not restage, mirror, reframe or re-invent them, and do not reconstruct the image in words.",
+      "Everything below describes what changes from there.",
+    ]),
   });
 
   /* The whole document is about change, because everything static is already fixed by
@@ -687,10 +726,15 @@ function compileFLF(ctx) {
 
   /* Both endpoints are inputs. The prompt describes the route between them and says so
      explicitly; it never substitutes a description of the ending for the ending. */
+  /* The same verbal anchoring the I2VA guidance asks for, and the FL2VA structure the
+     guide documents — first-frame state, intermediate change, last-frame state. The
+     orientation names the FIRST frame only: describing the ending in prose is the exact
+     failure the endpoint binding exists to prevent. */
   sections.push({
     title: titles.endpoints,
     body: joinClauses([
       `The supplied first and final frames are fixed endpoints${first ? ` — ${first.production.label}` : ""}${last ? ` and ${last.production.label}` : ""}.`,
+      anchorOrientation(ctx),
       "Describe only the continuous physical change between them: first-frame state, intermediate change, then convergence onto the supplied final frame.",
       "Build it as a single continuous shot with no cut, dissolve or detour unless one is explicitly requested.",
     ]),
@@ -859,6 +903,41 @@ function closeProductionOnlyIntent(ctx, mode) {
     );
 }
 
+/* Clip a production field to a naming length. Cut back to the last clause boundary in
+   the tail of the slice where there is one, so the result ends on a complete idea
+   instead of mid-phrase, and never add an ellipsis — this is a pointer to something the
+   frame already carries, not a truncated copy of it. */
+function compactClause(value, maxWords) {
+  const words = text(value).replace(/\s+/g, " ").split(" ").filter(Boolean);
+  if (!words.length) return "";
+  if (words.length <= maxWords) return text(value).replace(/[.,;:]+$/, "");
+  const slice = words.slice(0, maxWords).join(" ");
+  const boundary = Math.max(slice.lastIndexOf(","), slice.lastIndexOf(";"), slice.lastIndexOf(":"));
+  const cut = boundary > slice.length * 0.55 ? slice.slice(0, boundary) : slice;
+  /* A clip that lands on "…sets the parcel on the" reads as a sentence someone forgot to
+     finish. Dropping the dangling function words leaves a complete phrase. */
+  return cut
+    .replace(/[\s.,;:]+$/, "")
+    .replace(/(?:\s+(?:the|a|an|and|or|of|to|on|in|at|by|for|with|from|into|onto|as|that|its|his|her|their))+$/i, "");
+}
+
+/* The verbal anchor MiniMax's I2VA guidance asks for: the style, subjects and scene the
+   supplied frame establishes, named briefly so the generation commits to them, then out
+   of the way. Clipped per anchor, in the guide's own order, and only for intents that
+   are actually anchored — so it can never quietly become a second description of a frame
+   nobody selected. */
+function anchorOrientation(ctx) {
+  const { order, maxWordsPerAnchor } = H3_PLAYBOOK.anchorOrientation;
+  const named = [];
+  for (const key of order) {
+    const entry = ctx.coverage.get(key);
+    if (!entry || entry.state !== "anchored") continue;
+    const clipped = compactClause(intentValue(ctx.intent, key), maxWordsPerAnchor);
+    if (clipped) named.push(clipped);
+  }
+  return named.length ? `It establishes ${named.join("; ")}.` : "";
+}
+
 /* Containment de-duplication: two production fields legitimately overlap when one
    quotes the other, and repeating a paragraph is not emphasis. */
 function dedupe(value, against) {
@@ -871,9 +950,9 @@ function dedupe(value, against) {
 /* ---------------------------------------------------------------------------
    Serialisation.
 
-   The hosted route is fronted by H3-Context-IR and reads prose sections. The
-   open-weight path consumes H3-Base's documented three-field document. Same compiled
-   content either way — only the envelope differs. */
+   The hosted API documents a plain-text prompt item; an open-weight H3-Base deployment
+   is given the document the base guide specifies. Same compiled content either way —
+   only the envelope differs. */
 function serialise(surface, header, sections) {
   const body = [header, ...sections.filter((section) => section && text(section.body))
     .map((section) => (text(section.title) ? `${section.title}\n${text(section.body)}` : text(section.body)))]

@@ -126,6 +126,14 @@ nothing holds it — worse than the silence it replaced. A pack declares what ea
 depends on and the anchor does not apply without it, so the intent falls through to check
 1 and surfaces.
 
+**`anchored` does not mean "say nothing about it".** A pack may still name an anchored fact
+in the prompt where the model's own guidance asks for it — MiniMax's base guide, for
+instance, wants an image-anchored description to establish the frame's style, subjects and
+scene before describing the action. What separates naming from reconstruction is length:
+the pack clips each named anchor to a naming length, the detail past it stays in the input,
+and the coverage state does not move, because the input is still what establishes the fact.
+The prompt is a pointer to it, not a second copy of it.
+
 ## How unsupported capability warns
 
 Never by dropping a value. A refusal produces a coverage entry AND a warning carrying a
@@ -193,9 +201,12 @@ pack.
 
 - **No model recommender.** No ranking, scoring or "best model" selection. That needs
   current capability data, current packs and evaluation evidence for more than one family.
-- **No H3-Context-IR integration.** MiniMax's hosted preprocessor turns a casual prompt
-  into a well-formed H3-Base prompt. CineBraid does that job itself, deterministically,
-  from production state. That is the point of this layer.
+- **No H3-Context-IR integration.** `POST /v2/h3_context_ir` is a *separate* MiniMax
+  endpoint that returns an enhanced prompt and, in MiniMax's own words, does not create a
+  video-generation task. It is not a prerequisite — `POST /v2/video_generation` takes a
+  plain text item directly for every mode. It is one optional way to turn loose intent
+  into a well-formed prompt; CineBraid produces one deterministically from production
+  state instead. That is the point of this layer.
 - **No execution wiring.** The compiler stops at a validated plan. The existing FAL path
   still builds its own request bodies from the prompt-engine profile registry; adapting it
   to consume a plan is a separate, bounded change.
