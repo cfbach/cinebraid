@@ -108,13 +108,33 @@
         },
         {
           "modelId": "gpt-image-2/standard",
-          "providerModelId": "fal-ai/gpt-image-2",
+          "providerModelId": "openai/gpt-image-2",
           "state": "available",
-          "modes": ["t2i", "edit", "multi-reference", "blocking"],
+          "modes": ["t2i", "edit", "multi-reference", "blocking", "inpaint"],
           "constraints": {},
-          "references": {},
-          "flags": {},
-          "note": "Dispatched today through generation.fal.textModel / editModel. fal publishes no narrowing of the OpenAI image schema that CineBraid has established, so no constraint is asserted here."
+          "references": { "maxImages": 16 },
+          "flags": { "mask": true, "seed": false, "candidateBatching": true },
+          "authority": "fal-image-backend.js",
+          "note": "Dispatched through generation.fal.textModel / editModel. C2b read both fal routes: text-to-image carries NO image input, so multi-reference and edit both go through openai/gpt-image-2/edit, and mask_url exists only there. fal's custom image_size is a RULE and not a legal-value list - multiples of 16, longest edge 3840, ratio at most 3:1, 655,360 to 8,294,400 pixels - so no `resolutions` narrowing is asserted here and the rule is enforced by the adapter, which carries its own checked date."
+        },
+        {
+          "modelId": "seedance/2.5",
+          "providerModelId": "bytedance/seedance-2.5",
+          "state": "catalogued",
+          "modes": ["t2v", "i2v", "flf", "r2v"],
+          "constraints": {
+            "durationSeconds": [4, 30],
+            "resolutions": ["480p", "720p"],
+            "aspectRatios": {
+              "t2v": ["auto", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
+              "i2v": ["auto", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
+              "flf": ["auto", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
+              "r2v": ["auto", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"]
+            }
+          },
+          "references": { "maxTotal": 50 },
+          "flags": { "seed": true, "nativeAudio": true, "firstFrame": true, "lastFrame": true },
+          "note": "READ IN C2b AND DELIBERATELY NOT DISPATCHABLE. fal serves Seedance 2.5 on three routes - text-to-video, image-to-video (whose optional end_image_url is the whole of first/last-frame support, exactly as it is for H3) and reference-to-video. So the C2a record that Runware was its only surface is now out of date, and this offering exists so the capability-aware picker says 'fal serves this and CineBraid cannot send to it yet' rather than 'no provider'. It stays `catalogued` because no CineBraid adapter exists: fal documents no per-modality split of its 50-reference total, and the reference-citation syntax the model needs in its prompt is established only by a provider sentence rather than by any ByteDance source CineBraid has read. A model pack built on that would be a guess with a version number on it."
         }
       ]
     },

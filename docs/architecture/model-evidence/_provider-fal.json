@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "surfaceId": "fal-queue",
   "operator": "fal.ai",
-  "checkedOn": "2026-08-08",
+  "checkedOn": "2026-08-09",
   "evidenceStrength": "vendor",
   "_readme": [
     "Evidence for the FAL SURFACE.",
@@ -22,7 +22,10 @@
   "sources": [
     { "id": "fal-t2v-schema", "type": "provider-endpoint-schema", "url": "https://fal.ai/models/minimax/h3/text-to-video/api", "checkedOn": "2026-08-08" },
     { "id": "fal-i2v-schema", "type": "provider-endpoint-schema", "url": "https://fal.ai/models/minimax/h3/image-to-video/api", "checkedOn": "2026-08-08" },
-    { "id": "fal-r2v-schema", "type": "provider-endpoint-schema", "url": "https://fal.ai/models/minimax/h3/reference-to-video/api", "checkedOn": "2026-08-08" }
+    { "id": "fal-r2v-schema", "type": "provider-endpoint-schema", "url": "https://fal.ai/models/minimax/h3/reference-to-video/api", "checkedOn": "2026-08-08" },
+    { "id": "fal-gpt-image-2-schema", "type": "provider-endpoint-schema", "url": "https://fal.ai/models/openai/gpt-image-2/api", "checkedOn": "2026-08-09" },
+    { "id": "fal-gpt-image-2-edit-schema", "type": "provider-endpoint-schema", "url": "https://fal.ai/models/openai/gpt-image-2/edit/api", "checkedOn": "2026-08-09" },
+    { "id": "fal-seedance-schema", "type": "provider-endpoint-schema", "url": "https://fal.ai/models/bytedance/seedance-2.5/reference-to-video", "checkedOn": "2026-08-09" }
   ],
   "surfaceFacts": [
     { "claim": "Delivery is queue-based: submit, then poll for status and result.", "value": true, "source": "fal-t2v-schema" },
@@ -33,16 +36,29 @@
     "catalogue": "Not used as one. fal's model listing was not read as a research source in this phase; Runware's was.",
     "execution": "The shipped path. MiniMax H3 in four modes and GPT Image 2 dispatch through it today."
   },
+  "imageSurfaceFacts": [
+    { "claim": "The text-to-image route carries NO image input. Every mode that sends a reference, including multi-reference, goes through the /edit route.", "value": true, "source": "fal-gpt-image-2-schema", "checkedOn": "2026-08-09" },
+    { "claim": "The /edit route accepts image_urls with a maximum of 16, and an optional mask_url.", "value": 16, "source": "fal-gpt-image-2-edit-schema", "checkedOn": "2026-08-09" },
+    { "claim": "quality is auto, low, medium or high, defaulting to high.", "value": ["auto", "low", "medium", "high"], "source": "fal-gpt-image-2-schema", "checkedOn": "2026-08-09" },
+    { "claim": "output_format is jpeg, png or webp, defaulting to png.", "value": ["jpeg", "png", "webp"], "source": "fal-gpt-image-2-schema", "checkedOn": "2026-08-09" },
+    { "claim": "A custom image_size must satisfy four rules: both edges multiples of 16, longest edge at most 3840, ratio at most 3:1, and total pixels between 655,360 and 8,294,400.", "value": { "edgeMultiple": 16, "maxEdge": 3840, "maxLongToShortRatio": 3, "minTotalPixels": 655360, "maxTotalPixels": 8294400 }, "source": "fal-gpt-image-2-schema", "checkedOn": "2026-08-09", "note": "A RULE, not a legal-value list. It is therefore enforced by the adapter and asserted as no `resolutions` narrowing in the catalogue. Every size OpenAI documents satisfies all four; the pixel floor is what CineBraid's pre-C2b path violated on every 16:9 frame at its default resolution." },
+    { "claim": "No seed field exists on either GPT Image 2 route.", "value": false, "source": "fal-gpt-image-2-schema", "checkedOn": "2026-08-09" }
+  ],
   "notEstablished": [
     {
-      "claim": "Whether fal narrows GPT Image 2 in any way.",
-      "status": "no fal narrowing of the OpenAI image schema has been read",
-      "cineBraidBehaviour": "The gpt-image-2 offering carries an empty constraints block. That means 'no narrowing established', NOT 'no narrowing exists', and the offering note says so."
+      "claim": "Whether fal narrows GPT Image 2's output SIZES.",
+      "status": "read in C2b. fal imposes a dimension RULE rather than a list, and every documented OpenAI size satisfies it.",
+      "cineBraidBehaviour": "The gpt-image-2 offering still carries an empty `constraints` block, because a rule is not a legal-value grid and encoding one as the other would either forbid legal sizes or permit illegal ones. The rule lives in fal-image-backend.js, which carries its own checked date and refuses by name."
     },
     {
       "claim": "Which other catalogued models fal serves.",
-      "status": "not investigated in this phase",
-      "cineBraidBehaviour": "Only the two families CineBraid dispatches are recorded as fal offerings. A model absent from this surface is not a claim that fal lacks it."
+      "status": "partially investigated. C2b established Seedance 2.5 on three fal routes; the rest of the catalogue was not re-checked.",
+      "cineBraidBehaviour": "A model absent from this surface is still not a claim that fal lacks it. Seedance 2.5 is now recorded as an offering and stays `catalogued`: fal serving it and CineBraid being able to send to it are different facts, and only the first is established."
+    },
+    {
+      "claim": "fal's per-modality split of Seedance 2.5's 50-reference total.",
+      "status": "fal documents the combined ceiling only",
+      "cineBraidBehaviour": "The offering records maxTotal and no split. Runware's 30/10/10 belongs to Runware."
     }
   ],
   "conflicts": [

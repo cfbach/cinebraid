@@ -2,10 +2,25 @@
   "schemaVersion": 1,
   "modelFamily": "seedance",
   "vendor": "ByteDance",
-  "checkedOn": "2026-08-08",
+  "checkedOn": "2026-08-09",
   "evidenceStrength": "vendor-partial",
   "_readme": [
     "Evidence for Seedance 2.5.",
+    "",
+    "C2b UPDATE. C2a recorded Runware as the only surface serving this model. That is no",
+    "longer true: fal serves it on three routes, and fal is the surface CineBraid already",
+    "dispatches to. The fal schema is recorded below as a SURFACE fact and changes nothing",
+    "about the model - the ceilings, the reference counts and the seed all still come from",
+    "provider pages rather than from ByteDance.",
+    "",
+    "It also does NOT make Seedance dispatchable, and the reason is the gap already named",
+    "at the bottom of this file. fal states that a reference-to-video prompt cites its",
+    "inputs as [Image1], [Video1], [Audio1]. That is one provider sentence about how to",
+    "WRITE for a model, which is the one kind of claim this catalogue refuses to promote:",
+    "a prompting playbook is CineBraid's own editorial policy built on vendor guidance, and",
+    "building one on a single line of a provider page would be a guess with a version",
+    "number on it. So the fal offering stays `catalogued`, no model pack was written, and",
+    "the capability-aware picker says exactly that.",
     "",
     "A split record, and worth reading as the example of what vendor-partial means.",
     "ByteDance Seed's own product page establishes what the model IS - thirty seconds in",
@@ -20,7 +35,19 @@
   ],
   "sources": [
     { "id": "seed-product", "type": "official-vendor-page", "url": "https://seed.bytedance.com/en/seedance2_5", "checkedOn": "2026-08-08", "appliesTo": ["api"] },
-    { "id": "runware-model", "type": "provider-model-page", "url": "https://runware.ai/docs/models/bytedance-seedance-2-5", "checkedOn": "2026-08-08", "appliesTo": ["api"], "note": "A PROVIDER source. Admissible for surface facts and, where flagged, for capability figures no vendor source publishes." }
+    { "id": "runware-model", "type": "provider-model-page", "url": "https://runware.ai/docs/models/bytedance-seedance-2-5", "checkedOn": "2026-08-08", "appliesTo": ["api"], "note": "A PROVIDER source. Admissible for surface facts and, where flagged, for capability figures no vendor source publishes." },
+    { "id": "fal-seedance-i2v-schema", "type": "provider-endpoint-schema", "url": "https://fal.ai/models/bytedance/seedance-2.5/image-to-video", "checkedOn": "2026-08-09", "appliesTo": ["api"], "note": "A PROVIDER source, read in C2b. Surface facts only." },
+    { "id": "fal-seedance-r2v-schema", "type": "provider-endpoint-schema", "url": "https://fal.ai/models/bytedance/seedance-2.5/reference-to-video", "checkedOn": "2026-08-09", "appliesTo": ["api"], "note": "A PROVIDER source, read in C2b. Surface facts only." }
+  ],
+  "surfaceFacts": [
+    { "claim": "fal serves Seedance 2.5 on text-to-video, image-to-video and reference-to-video.", "value": ["bytedance/seedance-2.5/text-to-video", "bytedance/seedance-2.5/image-to-video", "bytedance/seedance-2.5/reference-to-video"], "source": "fal-seedance-i2v-schema", "surfaceId": "fal-queue" },
+    { "claim": "First/last-frame is an optional end_image_url on the image-to-video route, not a separate endpoint - structurally identical to MiniMax H3 on the same provider.", "value": "end_image_url", "source": "fal-seedance-i2v-schema", "surfaceId": "fal-queue" },
+    { "claim": "Duration is a string, 'auto' or whole seconds from 4 to 30.", "value": [4, 30], "source": "fal-seedance-i2v-schema", "surfaceId": "fal-queue" },
+    { "claim": "Resolution is 480p or 720p, default 720p.", "value": ["480p", "720p"], "source": "fal-seedance-i2v-schema", "surfaceId": "fal-queue" },
+    { "claim": "Aspect ratio is available on every route including image-to-video, with an 'auto' member - which is a real divergence from MiniMax H3 on the same provider, where the image route has no ratio field at all.", "value": ["auto", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"], "source": "fal-seedance-i2v-schema", "surfaceId": "fal-queue" },
+    { "claim": "References are capped at 50 in total across images, videos and audio.", "value": 50, "source": "fal-seedance-r2v-schema", "surfaceId": "fal-queue" },
+    { "claim": "Audio generation is a boolean, default true.", "value": true, "source": "fal-seedance-r2v-schema", "surfaceId": "fal-queue" },
+    { "claim": "A seed is accepted and returned with the result.", "value": true, "source": "fal-seedance-r2v-schema", "surfaceId": "fal-queue" }
   ],
   "identity": {
     "family": "Seedance",
@@ -54,8 +81,13 @@
     },
     {
       "claim": "The reference-citation syntax used in prompts.",
-      "status": "ByteDance publishes a Seedance 2.5 prompt guide. It could not be retrieved.",
-      "cineBraidBehaviour": "promptPolicy.state is not-established. This is the single most consequential gap for this model - a reference-heavy model whose citation syntax is unknown cannot be compiled to, and no syntax has been guessed."
+      "status": "ByteDance publishes a Seedance 2.5 prompt guide. It could not be retrieved. C2b found one provider sentence - fal's reference-to-video page describes citing inputs as [Image1], [Video1], [Audio1] - which is a provider's account of how to write for someone else's model.",
+      "cineBraidBehaviour": "promptPolicy.state is still not-established, and no model pack was written in C2b. This remains the single most consequential gap for this model: a reference-heavy model whose citation syntax rests on one provider line cannot be compiled to, and no syntax has been guessed. Closing it means reading ByteDance's own prompt guide."
+    },
+    {
+      "claim": "How fal splits its 50-reference total between images, video and audio.",
+      "status": "fal documents the combined ceiling and no per-modality split. Runware's separate offering documents 30/10/10, which is Runware's figure and not fal's.",
+      "cineBraidBehaviour": "The fal offering records maxTotal only. Copying Runware's split onto fal would be one provider's number wearing another provider's name."
     },
     {
       "claim": "Whether audio may be the only reference input.",

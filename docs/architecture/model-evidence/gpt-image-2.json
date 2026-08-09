@@ -13,7 +13,19 @@
     "",
     "OpenAI is the model's own vendor, so its documentation is model evidence for hosted",
     "behaviour. It is NOT evidence about fal, which is how CineBraid actually reaches this",
-    "model today - fal's narrowing, if any, belongs to data/provider-surfaces.json."
+    "model today - fal's narrowing, if any, belongs to data/provider-surfaces.json.",
+    "",
+    "C2b UPDATE. fal's two GPT Image 2 routes were read for the first time and execution was",
+    "wired through the pack. Nothing in the MODEL record below changed: fal's schema is a",
+    "surface fact and lives in _provider-fal.json and in fal-image-backend.js, which carries",
+    "its own checked date.",
+    "",
+    "One thing that reading settled is worth stating here, because it is about the sizes",
+    "recorded below. fal's custom image_size requires at least 655,360 total pixels, and",
+    "every documented OpenAI size satisfies it. CineBraid's pre-C2b image path did not send",
+    "them - it derived its own dimensions from an aspect ratio and a long edge, and 16:9 at",
+    "its default resolution is 1024x576, which is 589,824 pixels. The sizes below were",
+    "already right. Nothing was reading them."
   ],
   "sources": [
     {

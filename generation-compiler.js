@@ -541,6 +541,14 @@ function compileGenerationPlan(request) {
        capability and says so when it cannot be met; it is not a pack's job to guess
        which of the allowed values the filmmaker meant. */
     resolution: text(input.resolution || spec.resolution),
+    /* The other two output requests, carried the same way and for the same reason.
+       `quality` is a cost-and-speed tier where a model documents one and is ignored
+       where it does not, and `candidateCount` is how many options to return — the
+       image pack has read it since C2a and nothing was passing it, so a dialog
+       offering four options produced one. Neither is interpreted here: a pack that
+       has no such control simply does not look. */
+    quality: text(input.quality),
+    candidateCount: input.candidateCount,
   }) || {};
 
   /* The check a pack cannot do for itself. Anything the shot carried and the pack did
