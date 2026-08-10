@@ -1,3 +1,14 @@
+# CineBraid 6.7.0 Private Test 1 — Open Film Project 1.0-draft.1 Contract
+
+- First CineBraid build carrying the Open Film Project draft contract: `format.id` `open-film-project`, `format.version` `1.0-draft.1`, with report-only validation over 24 synthetic fixtures.
+- OFP is inert in this build. It is reachable from the test suites and `scripts/validate-ofp.js` and from nowhere else, so no ordinary use of the app can enter it by accident.
+- Project persistence is unchanged. The runtime reads and writes legacy `schemaVersion` 6.7 exactly as it did, and no project is stored in the OFP format.
+- The three version concepts stay separate: the application is `6.7.0-private.1`, the legacy project schema is `schemaVersion` 6.7, and the OFP contract is `format.version` `1.0-draft.1`. Only the first moved.
+- Validation applies no defaults and repairs nothing; unknown extensions and unknown enum values survive parse, validate and write, reported and never coerced.
+- Opening or validating an OFP document writes nothing — held by a filesystem wrapper over the project root rather than by discipline, and proven across ten document classes.
+- No behaviour change otherwise. Provider and model configuration, generation and authentication are untouched; `npm run sync:version` stamped the window title, the 36 asset cache stamps and the lockfile from `package.json`.
+- Private test build, not a public production release. See `docs/releases/v6.7.0-private.1/` for the known limitations.
+
 # CineBraid 6.6.6 Private Test 1 — Local OpenAI-Compatible Assistant Providers
 
 - A local OpenAI-compatible server can now supply CineBraid's assistant, Project Bible Q&A, prompt improvement and structured text workflows. On a machine already running a compatible multimodal server, that removes the need to keep a second large local assistant model resident beside it.

@@ -1,7 +1,7 @@
 {
   "name": "cinebraid",
-  "version": "6.6.6-private.1",
-  "description": "CineBraid 6.6.6 Private Test 1 — adds reliable support for local OpenAI-compatible assistant providers, for isolated QA installation alongside an existing CineBraid rather than in place of it.",
+  "version": "6.7.0-private.1",
+  "description": "CineBraid 6.7.0 Private Test 1 — the first build carrying the Open Film Project 1.0-draft.1 contract and its report-only validation, for isolated QA installation alongside an existing CineBraid rather than in place of it.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
