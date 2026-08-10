@@ -3614,6 +3614,18 @@ app.post("/api/prompt/asset-compile", async (req, res) => {
     if (continuityAction || directive) {
       fallback.actions = [{ start: 0, end: 1, action: [continuityAction, directive].filter(Boolean).join("\n") }];
       if (directive) fallback.initialState.staging = [fallback.initialState.staging, directive].filter(Boolean).join("\n");
+      /* stagingBlock() reads initialState.staging only when stagingLines is empty,
+         and for an asset brief it never is - positioning always fills it. Written
+         to initialState alone, the directive reached the spec and then vanished
+         from every compiled prompt: the reference workspace's own "Asset-specific
+         direction" field and durable automation's pass-to-pass correction were
+         both being discarded at exactly this line. */
+      if (directive) {
+        fallback.stagingLines = [
+          ...(fallback.stagingLines || []),
+          ...directive.split("\n").map((line) => line.trim()).filter(Boolean),
+        ];
+      }
     }
     let spec = fallback;
     let llmUsed = false;

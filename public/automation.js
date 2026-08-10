@@ -449,15 +449,57 @@ function v627HumanReviewMarkup(run) {
   const step = v627AwaitingReviewStep(run);
   if (!step) return "";
   const candidates = v627ReviewCandidates(run, step);
+  /* Two separate facts: another pass is inside the confirmed pass count, AND the
+     confirmed image cap still has room for it. Offering a continuation the credit
+     guard would refuse is how a bounded run starts feeling unbounded. */
   const canNextRound = Number(step.attempt || 0) < Number(step.maxAttempts || 0);
-  return `<section class="automation-human-review"><header><div><span>HUMAN REVIEW GATE</span><b>${esc(step.label || "Candidate approval required")}</b><small>The assistant suggestion is not canon until you approve it.</small></div><span>${Math.round(Number(step.score || 0))}/100 suggested</span></header><div class="automation-review-grid">${candidates.map((candidate) => { const url = v627CandidateUrl(run, step, candidate.file); const suggested = candidate.file === step.winner; return `<article class="${suggested ? "suggested" : ""}">${url ? `<img src="${attr(url)}" alt="${attr(candidate.file)}">` : `<div class="automation-review-placeholder">IMAGE</div>`}<div><b>${esc(candidate.file)}</b><small>${candidate.score}/100 · ${candidate.pass ? "assistant pass" : "flagged"}</small>${candidate.note ? `<p>${esc(candidate.note)}</p>` : ""}</div><button class="${suggested ? "approve-btn" : "ghost-btn"}" onclick="approveAutomationCandidate('${run.id}','${attr(step.key)}','${attr(candidate.file)}')">${suggested ? "APPROVE SUGGESTED" : "APPROVE THIS"}</button></article>`; }).join("")}</div><footer>${canNextRound ? `<button class="changes-btn" onclick="continueAutomationRevision('${run.id}')">REVISE AND TRY NEXT ROUND</button>` : `<button class="changes-btn" onclick="startFreshAutomationRun('${run.id}','${run.type}','${attr(run.targetId)}')">START A FRESH RUN</button>`}<button class="ghost-btn" onclick="archiveAutomationRun('${run.id}')">STOP AND ARCHIVE</button></footer></section>`;
+  const remaining = v666RemainingImageBudget(run), perPass = v640OutputsPerRequest(run);
+  const canSpendNextRound = canNextRound && remaining >= perPass;
+  const continuation = canSpendNextRound
+    ? `<button class="changes-btn" onclick="continueAutomationRevision('${run.id}')">IMPROVE PROMPT &amp; RUN NEXT PASS · ${perPass} MORE</button>`
+    : `<button class="changes-btn" onclick="startFreshAutomationRun('${run.id}','${run.type}','${attr(run.targetId)}')">START A FRESH RUN</button>`;
+  const budgetNote = canSpendNextRound
+    ? `<small class="automation-review-budget">Pass ${Number(step.attempt || 0) + 1} of ${Number(step.maxAttempts || 0)} is already authorized · ${remaining} of ${Number(run.config?.maxImages || 0)} candidate generations remain.</small>`
+    : `<small class="automation-review-budget">No further pass is authorized in this run. Starting more generation is a new decision.</small>`;
+  return `<section class="automation-human-review"><header><div><span>HUMAN REVIEW GATE</span><b>${esc(step.label || "Candidate approval required")}</b><small>The assistant suggestion is not canon until you approve it. CineBraid never approves a reference on its own.</small></div><span>${Math.round(Number(step.score || 0))}/100 suggested</span></header><div class="automation-review-grid">${candidates.map((candidate) => { const url = v627CandidateUrl(run, step, candidate.file); const suggested = candidate.file === step.winner; return `<article class="${suggested ? "suggested" : ""}">${url ? `<img src="${attr(url)}" alt="${attr(candidate.file)}">` : `<div class="automation-review-placeholder">IMAGE</div>`}<div><b>${esc(candidate.file)}</b><small>${candidate.score}/100 · ${candidate.pass ? "assistant pass" : "flagged"}</small>${candidate.note ? `<p>${esc(candidate.note)}</p>` : ""}</div><button class="${suggested ? "approve-btn" : "ghost-btn"}" onclick="approveAutomationCandidate('${run.id}','${attr(step.key)}','${attr(candidate.file)}')">${suggested ? "APPROVE SUGGESTED" : "APPROVE THIS"}</button></article>`; }).join("")}</div><footer>${continuation}<button class="ghost-btn" onclick="archiveAutomationRun('${run.id}')">STOP AND ARCHIVE</button>${budgetNote}</footer></section>`;
+}
+/* How many candidate generations the confirmed authorization still allows. The
+   cap is run.config.maxImages and it is the same number v626WaitFalJob refuses
+   to cross; reading it here keeps the offer and the guard in agreement. */
+function v666RemainingImageBudget(run) {
+  const max = Number(run?.config?.maxImages), used = Number(run?.usage?.imagesGenerated);
+  if (!Number.isFinite(max) || !Number.isFinite(used)) return 0;
+  return Math.max(0, max - used);
+}
+function v666PassCorrectionListMarkup(rows, kind) {
+  if (!rows?.length) return `<p class="automation-pass-empty">${kind === "preserve" ? "No criterion was confirmed clean across every candidate." : "The reviewer returned no structured findings for this pass."}</p>`;
+  return `<ul class="automation-pass-${attr(kind)}">${rows.map((row) => `<li><b>${esc(row.label || "Finding")}</b>${row.note ? `<span>${esc(row.note)}</span>` : ""}${kind === "correct" && Number(row.candidateCount) ? `<em>seen on ${Number(row.candidateCount)} candidate${Number(row.candidateCount) === 1 ? "" : "s"}</em>` : ""}</li>`).join("")}</ul>`;
+}
+/* The audit trail a director can read: what each pass asked for, what came back,
+   why it failed, and the exact correction carried into the next prompt. Results
+   and production reasoning only — never the reviewer's internal deliberation. */
+function v666ReferenceProgressionMarkup(run) {
+  const passes = v666RunPasses(run);
+  if (!passes.length) return "";
+  const maxPasses = Math.max(...passes.map((row) => Number(row.maxPasses || row.passNumber || 1)));
+  const used = Number(run.usage?.imagesGenerated || 0), cap = Number(run.config?.maxImages || 0);
+  const exhaustion = run.result?.referenceExhaustion || null;
+  const items = passes.map((pass) => {
+    const delta = pass.promptDelta || {};
+    const changed = (delta.added || []).filter(Boolean);
+    return `<li class="automation-pass ${pass.passed ? "passed" : "failed"}"><header><span>PASS ${Number(pass.passNumber)} OF ${maxPasses}</span><b>${Number(pass.candidates?.length || 0)} candidate${Number(pass.candidates?.length || 0) === 1 ? "" : "s"} · best ${Number(pass.bestScore || 0)}/100</b><small>${pass.passed ? "A candidate met the strong-pass rule; your approval is required." : pass.reviewUnavailable ? "AI review was unavailable for this pass." : "No candidate was approvable."}</small></header><div class="automation-pass-scores">${(pass.candidates || []).map((row) => `<span class="${row.pass ? "pass" : "flag"}"><b>${esc(row.file)}</b><em>${Number(row.score || 0)} · ${row.pass ? "PASS" : "FLAG"}</em></span>`).join("")}</div>${changed.length ? `<details class="automation-pass-delta"><summary>What changed from pass ${Number(pass.passNumber) - 1} <span>${changed.length}</span></summary><ul>${changed.map((line) => `<li>${esc(line)}</li>`).join("")}</ul></details>` : ""}<details class="automation-pass-plan"><summary>Why it failed and what pass ${Number(pass.passNumber) + 1} was told to change</summary><div class="automation-pass-plan-body"><section><h5>Preserve — already correct</h5>${v666PassCorrectionListMarkup(pass.preserve, "preserve")}</section><section><h5>Correct — recurring reasons first</h5>${v666PassCorrectionListMarkup(pass.correct, "correct")}</section></div></details><details class="automation-pass-prompt"><summary>Pass ${Number(pass.passNumber)} prompt</summary><pre>${esc(pass.prompt || "No prompt was recorded.")}</pre></details></li>`;
+  }).join("");
+  const exhaustionMarkup = exhaustion
+    ? `<div class="automation-pass-exhaustion"><b>No candidate passed after ${Number(exhaustion.passes)} pass${Number(exhaustion.passes) === 1 ? "" : "es"} / ${Number(exhaustion.candidates)} candidate${Number(exhaustion.candidates) === 1 ? "" : "s"}.</b><small>Recurring issues: ${esc(exhaustion.recurring?.join(" · ") || "no structured findings were returned")}</small><span>Every candidate and every review above stays available. Generating more requires a new authorization.</span></div>`
+    : "";
+  return `<section class="automation-pass-progression"><header><div><span>PASS PROGRESSION</span><b>${passes.length} of ${maxPasses} authorized pass${maxPasses === 1 ? "" : "es"} used${cap ? ` · ${used} of ${cap} candidates` : ""}</b><small>What CineBraid changed between passes, and the review evidence it changed it for.</small></div></header>${exhaustionMarkup}<ol class="automation-pass-list">${items}</ol></section>`;
 }
 function v626RunReportMarkup(run) {
   if (!run) return "";
   const winners = v626RunWinners(run);
   const report = winners.length ? `<div class="automation-report">${winners.map((step) => `<article><span>${esc(step.label || step.kind || "Result")}</span><b>${esc(step.winner)}</b><small>${Number.isFinite(Number(step.score)) ? `${Math.round(Number(step.score))}/100` : "Approved"}${step.result?.rationale ? ` · ${esc(step.result.rationale)}` : ""}</small></article>`).join("")}</div>` : "";
   const logs = run.logs?.length ? `<details class="automation-run-log" ${run.status === "running" ? "open" : ""}><summary>Run log <span>${run.logs.length}</span></summary><div>${run.logs.map((entry) => `<p class="${v626ToneClass(entry.tone)}"><b>${esc(new Date(entry.at).toLocaleTimeString())}</b> ${esc(entry.message)}</p>`).join("")}</div></details>` : "";
-  return `${v6211GenerationProfileMarkup(v6211RunGenerationSettings(run))}${v626RunUsageMarkup(run)}${typeof v641LiveActivityMarkup === "function" ? "" : v627RunConsoleMarkup(run)}${v627HumanReviewMarkup(run)}${report}${logs}<div class="automation-debug-actions"><a class="chip" href="#/reports/${encodeURIComponent(run.id)}">VIEW REPORT</a></div>`;
+  return `${v6211GenerationProfileMarkup(v6211RunGenerationSettings(run))}${v626RunUsageMarkup(run)}${typeof v641LiveActivityMarkup === "function" ? "" : v627RunConsoleMarkup(run)}${v666ReferenceProgressionMarkup(run)}${v627HumanReviewMarkup(run)}${report}${logs}<div class="automation-debug-actions"><a class="chip" href="#/reports/${encodeURIComponent(run.id)}">VIEW REPORT</a></div>`;
 }
 function v626RunActions(run, type, targetId, scope, startMarkup) {
   if (!run) return startMarkup;
@@ -813,7 +855,7 @@ window.openAssetAutomationModal = (list, id) => {
   const stateIds = [state?.id || "state-default"], preflight = v627EntityPreflight(list, entity, stateIds);
   const generationSettings = v6211AutomationGenerationSettings();
   window._v626EntityAutomationDraft = { list, id, stateIds, scope: "default-only", generationSettings };
-  openModal(`<div class="automation-plan-modal compact"><h3>Automate default reference — ${esc(entity.name || id)}</h3><div class="modal-sub">DURABLE STILL AUTOMATION · THREE PASSES MAXIMUM${v628CostEstimateText(9)}</div>${v6211GenerationControlsMarkup(generationSettings,"entity",{includeBlocking:false,outputs:3})}<p class="hint">CineBraid builds and improves the reference prompt, generates the selected number of candidates per pass, reviews each against canon, and pauses for you unless a candidate earns an explicit strong pass.</p><label class="checkline"><input id="v626-reuse-approved-states" type="checkbox" checked> Reuse the existing approved default instead of spending credits again</label><div>${v627PreflightMarkup(preflight)}</div><div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button class="approve-btn" ${preflight.errors.length ? "disabled" : ""} onclick="startPlannedEntityAutomation()">START</button></div></div>`);
+  openModal(`<div class="automation-plan-modal compact"><h3>Automate default reference — ${esc(entity.name || id)}</h3><div class="modal-sub">DURABLE STILL AUTOMATION · THREE PASSES MAXIMUM${v628CostEstimateText(9)}</div>${v6211GenerationControlsMarkup(generationSettings,"entity",{includeBlocking:false,outputs:3})}<p class="hint">CineBraid builds and improves the reference prompt, generates the selected number of candidates per pass, and reviews each against canon. When a pass produces nothing approvable it aggregates why every candidate failed, corrects the prompt, and runs the next authorized pass. It stops as soon as a candidate earns a strong pass — and always waits for your approval before anything becomes canon.</p><label class="checkline"><input id="v626-reuse-approved-states" type="checkbox" checked> Reuse the existing approved default instead of spending credits again</label><div>${v627PreflightMarkup(preflight)}</div><div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button class="approve-btn" ${preflight.errors.length ? "disabled" : ""} onclick="startPlannedEntityAutomation()">START</button></div></div>`);
 };
 window.openEntityStateAutomationModal = (list, id, stateId) => {
   const entity = P[list]?.find((item) => item.id === id), state = entityStateById(entity, stateId);
@@ -822,7 +864,7 @@ window.openEntityStateAutomationModal = (list, id, stateId) => {
   const generationSettings = v6211AutomationGenerationSettings();
   window._v626EntityAutomationDraft = { list, id, stateIds, scope: `state:${state.id}`, generationSettings };
   const parent = assetStateParent(entity, state);
-  openModal(`<div class="automation-plan-modal compact"><h3>Automate ${esc(state.name || "state")} — ${esc(entity.name || id)}</h3><div class="modal-sub">DERIVED REFERENCE · THREE PASSES MAXIMUM${v628CostEstimateText(9)}</div>${v6211GenerationControlsMarkup(generationSettings,"entity",{includeBlocking:false,outputs:3})}<p class="hint">The approved ${esc(parent?.name || "base")} reference becomes the editable input. Review checks identity preservation and only the requested visible state delta. If no candidate passes, automation revises the prompt and retries within the confirmed cap.</p><label class="checkline"><input id="v626-reuse-approved-states" type="checkbox" checked> Reuse this state when it is already approved</label><div>${v627PreflightMarkup(preflight)}</div><div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button class="approve-btn" ${preflight.errors.length ? "disabled" : ""} onclick="startPlannedEntityAutomation()">START</button></div></div>`);
+  openModal(`<div class="automation-plan-modal compact"><h3>Automate ${esc(state.name || "state")} — ${esc(entity.name || id)}</h3><div class="modal-sub">DERIVED REFERENCE · THREE PASSES MAXIMUM${v628CostEstimateText(9)}</div>${v6211GenerationControlsMarkup(generationSettings,"entity",{includeBlocking:false,outputs:3})}<p class="hint">The approved ${esc(parent?.name || "base")} reference becomes the editable input. Review checks identity preservation and only the requested visible state delta. If no candidate passes, automation aggregates why they failed, corrects the prompt, and retries within the confirmed cap. Approval always stays with you.</p><label class="checkline"><input id="v626-reuse-approved-states" type="checkbox" checked> Reuse this state when it is already approved</label><div>${v627PreflightMarkup(preflight)}</div><div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button class="approve-btn" ${preflight.errors.length ? "disabled" : ""} onclick="startPlannedEntityAutomation()">START</button></div></div>`);
 };
 window.openEntityChainAutomationModal = (list, id) => {
   const entity = P[list]?.find((item) => item.id === id), states = entityStateList(entity, true);
@@ -1457,7 +1499,10 @@ async function v626EntityBuild(run, list, entityId, stateId, round, revision = "
   entity = P[list]?.find((item) => item.id === entityId); state = entityStateById(entity, stateId);
   if (!build?.prompt) throw new Error(`${state.name || "State"} prompt was not built`);
   if (!build.llmUsed) await v626Log(run, `${state.name || "State"} automation is using deterministic prompt compilation.`, "warn");
-  await v626CompleteStep(run, key, { buildId: build.id, stateId, result: { llmUsed: !!build.llmUsed, deterministicFallback: !improvedBuild?.prompt } });
+  /* The compiled prompt is recorded on the step itself. The run report already
+     renders step.result.prompt, so "what exactly did PASS 2 ask for?" is
+     answerable without reopening the entity and guessing which build was used. */
+  await v626CompleteStep(run, key, { buildId: build.id, stateId, revision: String(revision || ""), result: { llmUsed: !!build.llmUsed, deterministicFallback: !improvedBuild?.prompt, prompt: String(build.prompt || "").slice(0, 8000) } });
   return build;
 }
 function v663StoreEntityAutomationReview(entity, state, fileName, data) {
@@ -1477,7 +1522,9 @@ function v663StoreEntityAutomationReview(entity, state, fileName, data) {
   row.structuredReviews[state.id] = review;
   row.targetStateId = state.id;
   row.targetStateName = state.name || "Default";
-  row.decision = row.decision === "rejected" ? "unreviewed" : row.decision || "unreviewed";
+  /* Same rule on the automation path: the reviewer records a finding, it does
+     not restore a candidate the director already turned down. */
+  row.decision = row.decision || "unreviewed";
   return review;
 }
 function v663EntityReviewCorrection(review, list = "") {
@@ -1506,6 +1553,189 @@ function v663EntityReviewCorrection(review, list = "") {
   return [...new Set(lines.map((line) => String(line || "").trim()).filter(Boolean))].join("\n");
 }
 
+/* ------------------------------------------------------------------------- *
+   V666 — the closed loop between one failed pass and the next one.
+
+   A pass that produces no approvable reference is evidence, not a dead end. The
+   three things below turn the reviews CineBraid already received into the next
+   prompt, and they are deliberately separate:
+
+     v666ReviewFindings   one review  → the individual attributable findings
+     v666PassCorrectionPlan  every review in the pass → PRESERVE / CORRECT
+     v666CorrectionPlanText  that plan → the directive the compiler receives
+
+   Every CORRECT line is traceable to a criterion a reviewer actually failed and
+   carries the candidates it was seen on; nothing is authored here. That is what
+   keeps the next prompt a correction rather than a rewrite of canon.          */
+
+const V666_HARD_GATE_LABELS = {
+  sameUnderlyingEntity: "Keep the exact same underlying subject/design as the approved authority",
+  onlyRequestedDelta: "Apply only the requested state delta and no unrelated changes",
+  sameEmbeddedContent: "Preserve the exact embedded photograph, artwork, print, text, map, or screen content pixel-for-pixel in identity and composition",
+  sameSpatialGeometry: "Preserve the exact spatial geometry, topology, openings, fixtures, and object placement established by the approved location authorities",
+  requestedViewCorrect: "Use the requested viewpoint while remaining spatially consistent with the approved views",
+};
+/* The reviewer scores these five criteria for every reference. A criterion that
+   no candidate flagged is a thing the prompt already gets right, which is what
+   makes it eligible for PRESERVE rather than silently drifting next pass. */
+function v666ReviewFactorLabels(list) {
+  const table = typeof ENTITY_REVIEW_FACTOR_LABELS === "object" && ENTITY_REVIEW_FACTOR_LABELS ? ENTITY_REVIEW_FACTOR_LABELS : {};
+  return table[list] || table.props || { design: "Identity & design", state: "Target state", requirements: "Required details", usefulness: "Production-reference clarity", cleanliness: "Cleanliness & artifacts" };
+}
+function v666ReviewFindings(review, list = "") {
+  const source = review && typeof review === "object" ? review : {};
+  const factors = v666ReviewFactorLabels(list), findings = [];
+  const push = (key, label, note) => {
+    if (findings.some((item) => item.key === key)) return;
+    findings.push({ key, label: String(label || key), note: String(note || "").trim() });
+  };
+  for (const [key, row] of Object.entries(source.hardChecks || {})) {
+    if (row?.required && row?.pass !== true) push(`gate:${key}`, V666_HARD_GATE_LABELS[key] || key, row.note || "");
+  }
+  for (const key of source.hardGateFailures || []) {
+    if (V666_HARD_GATE_LABELS[key]) push(`gate:${key}`, V666_HARD_GATE_LABELS[key], "");
+  }
+  for (const [key, row] of Object.entries(source.categories || {})) {
+    if (["major", "blocking"].includes(String(row?.severity || "").toLowerCase())) push(`category:${key}`, factors[key] || key, row.note || "");
+  }
+  return findings;
+}
+/* Criteria this review left unflagged, so the aggregate can tell the next pass
+   what it must not disturb while fixing what it must. */
+function v666ReviewStrengths(review, list = "") {
+  const source = review && typeof review === "object" ? review : {};
+  const factors = v666ReviewFactorLabels(list), strengths = [];
+  for (const [key, row] of Object.entries(source.categories || {})) {
+    if (["pass", "minor"].includes(String(row?.severity || "pass").toLowerCase())) strengths.push({ key: `category:${key}`, label: factors[key] || key, note: String(row?.note || "").trim() });
+  }
+  return strengths;
+}
+function v666CleanLine(value, limit = 400) {
+  return String(value || "").replace(/\s+/g, " ").trim().slice(0, limit);
+}
+/* The aggregate. `results` is the whole pass — every candidate and its review —
+   so a fault seen on all three candidates outranks one seen on the weakest, and
+   a fault only the top scorer had can no longer be the only thing acted on. */
+function v666PassCorrectionPlan(results, options = {}) {
+  const list = String(options.list || ""), state = options.state || null, entity = options.entity || null;
+  const rows = (Array.isArray(results) ? results : []).filter((row) => row && row.file);
+  const candidates = rows.map((row) => ({
+    file: String(row.file),
+    score: Math.round(Number(row.review?.score || 0)),
+    pass: row.review?.pass === true,
+    reviewUnavailable: row.review?.reviewUnavailable === true,
+    summary: v666CleanLine(row.review?.summary, 600),
+  }));
+  const reviewed = rows.filter((row) => !row.review?.reviewUnavailable);
+  const correctMap = new Map();
+  for (const row of reviewed) {
+    for (const finding of v666ReviewFindings(row.review, list)) {
+      const entry = correctMap.get(finding.key) || { key: finding.key, label: finding.label, notes: [], files: [] };
+      if (finding.note && !entry.notes.includes(finding.note)) entry.notes.push(v666CleanLine(finding.note));
+      if (!entry.files.includes(row.file)) entry.files.push(row.file);
+      correctMap.set(finding.key, entry);
+    }
+  }
+  /* Recurring first: how many candidates shared the fault decides the order the
+     next prompt argues about it. Ties keep the reviewer's own ordering. */
+  const ordered = [...correctMap.values()].sort((a, b) => b.files.length - a.files.length);
+  const correct = ordered.slice(0, 8).map((entry) => ({
+    key: entry.key,
+    label: entry.label,
+    note: entry.notes.join(" ").trim(),
+    files: entry.files,
+    candidateCount: entry.files.length,
+    recurring: entry.files.length > 1,
+  }));
+  /* A criterion is preserved only when no candidate flagged it. One flag is
+     enough to disqualify it: the next pass has to be free to change it. */
+  const flaggedKeys = new Set(ordered.map((entry) => entry.key));
+  const strengthCounts = new Map();
+  for (const row of reviewed) {
+    for (const strength of v666ReviewStrengths(row.review, list)) {
+      if (flaggedKeys.has(strength.key)) continue;
+      const entry = strengthCounts.get(strength.key) || { ...strength, count: 0 };
+      entry.count += 1;
+      strengthCounts.set(strength.key, entry);
+    }
+  }
+  const preserve = [];
+  const stateName = String(state?.name || "").trim();
+  const stateDelta = v666CleanLine(state?.notes || (typeof continuityStateDeltaText === "function" && state && !state.isDefault ? continuityStateDeltaText(state) : ""), 600);
+  if (stateName) preserve.push({ key: "canon:state", label: `Target state — ${stateName}`, note: stateDelta || "Keep the target state exactly as the brief already defines it." });
+  if (entity?.name) preserve.push({ key: "canon:identity", label: `${entity.name} as already established`, note: "Identity, design, wardrobe, age, hair, setting and props stay exactly as the current brief describes them." });
+  for (const entry of [...strengthCounts.values()].filter((item) => item.count === reviewed.length && reviewed.length > 0)) {
+    preserve.push({ key: entry.key, label: entry.label, note: entry.note || "No candidate was flagged on this criterion." });
+  }
+  const bestScore = candidates.reduce((best, row) => Math.max(best, Number(row.score || 0)), 0);
+  return {
+    stateId: String(state?.id || options.stateId || ""),
+    stateName: stateName || "Default",
+    passNumber: Math.max(1, Number(options.passNumber || 1)),
+    maxPasses: Math.max(1, Number(options.maxPasses || 1)),
+    candidates,
+    candidateCount: candidates.length,
+    reviewedCount: reviewed.length,
+    bestScore,
+    passed: candidates.some((row) => row.pass),
+    preserve,
+    correct,
+    recurring: correct.filter((item) => item.recurring).map((item) => item.label),
+  };
+}
+/* The directive the prompt compiler receives. It is the plan in the compiler's
+   own register: what to keep, what to fix, and an explicit refusal to invent
+   anything the brief did not already contain. */
+function v666CorrectionPlanText(plan, options = {}) {
+  if (!plan || !plan.correct?.length && !plan.preserve?.length) return "";
+  const list = String(options.list || "");
+  const header = `PASS ${plan.passNumber} REVIEW EVIDENCE — ${plan.candidateCount} candidate${plan.candidateCount === 1 ? "" : "s"} reviewed, none approvable (best ${plan.bestScore}/100).`;
+  const preserve = plan.preserve.map((item) => `- ${item.label}${item.note ? `: ${item.note}` : ""}`);
+  const correct = plan.correct.map((item) => `- ${item.label}${item.note ? `: ${item.note}` : ""} [seen on ${item.candidateCount} of ${plan.candidateCount} candidate${plan.candidateCount === 1 ? "" : "s"}]`);
+  const guards = [];
+  if (list === "locations") guards.push("Do not redesign or invent a different room. Treat every approved angle as one shared 3D space and solve the requested camera from that same space.");
+  if (list === "props") guards.push("Do not replace, redraw, restage, or reinterpret any photograph, mural, artwork, printed material, label, or other content carried by the prop.");
+  guards.push("Change only what the CORRECT list names. Do not introduce new wardrobe, age, hair, location, props, mood or story facts that the brief above does not already contain.");
+  return [
+    header,
+    preserve.length ? `\nPRESERVE — already correct, do not change:\n${preserve.join("\n")}` : "",
+    correct.length ? `\nCORRECT — why every candidate failed, most recurring first:\n${correct.join("\n")}` : "",
+    `\n${guards.join("\n")}`,
+  ].filter(Boolean).join("\n");
+}
+/* One filmmaker-readable line for the run log. Production reasoning, not a trace. */
+function v666CorrectionLogLine(plan) {
+  const reasons = plan.correct.slice(0, 3).map((item) => item.label).join("; ");
+  return `Pass ${plan.passNumber}: ${plan.candidateCount} candidate${plan.candidateCount === 1 ? "" : "s"} reviewed, best ${plan.bestScore}/100, none approvable. Recurring: ${reasons || "no structured findings were returned"}. Pass ${plan.passNumber + 1} will preserve ${plan.preserve.length} confirmed element${plan.preserve.length === 1 ? "" : "s"} and correct ${plan.correct.length} named issue${plan.correct.length === 1 ? "" : "s"}.`;
+}
+/* The per-pass ledger the workspace reads. It lives in run.result, which the run
+   store already passes through untouched, so this needs no schema of its own. */
+function v666RecordPass(run, entry) {
+  run.result = run.result && typeof run.result === "object" ? run.result : {};
+  const passes = Array.isArray(run.result.referencePasses) ? run.result.referencePasses : [];
+  const index = passes.findIndex((row) => row.stateId === entry.stateId && Number(row.passNumber) === Number(entry.passNumber));
+  const merged = index >= 0 ? { ...passes[index], ...entry } : entry;
+  if (index >= 0) passes[index] = merged; else passes.push(merged);
+  run.result.referencePasses = passes.sort((a, b) => String(a.stateId).localeCompare(String(b.stateId)) || Number(a.passNumber) - Number(b.passNumber));
+  return merged;
+}
+function v666RunPasses(run, stateId = "") {
+  const passes = Array.isArray(run?.result?.referencePasses) ? run.result.referencePasses : [];
+  return stateId ? passes.filter((row) => String(row.stateId) === String(stateId)) : passes;
+}
+/* What actually changed between two prompts, in the terms the director cares
+   about: the correction directive that was injected, and the compiled length. */
+function v666PromptDelta(previous, current) {
+  const before = String(previous || ""), after = String(current || "");
+  if (!before || !after) return { added: [], removed: [], changed: before !== after };
+  const beforeLines = new Set(before.split(/\n+/).map((line) => line.trim()).filter(Boolean));
+  const afterLines = after.split(/\n+/).map((line) => line.trim()).filter(Boolean);
+  const added = afterLines.filter((line) => !beforeLines.has(line));
+  const afterSet = new Set(afterLines);
+  const removed = [...beforeLines].filter((line) => !afterSet.has(line));
+  return { added: added.slice(0, 12), removed: removed.slice(0, 12), changed: before !== after };
+}
+
 async function v626AutomateEntityState(run, list, entityId, stateId) {
   let entity = P[list]?.find((item) => item.id === entityId), state = entityStateById(entity, stateId);
   if (run.config.reuseApproved && state.approvedFile) {
@@ -1521,9 +1751,13 @@ async function v626AutomateEntityState(run, list, entityId, stateId) {
     state.parentStateId = parent.id; state.generationMode = "derive"; dirty(); await flushPendingProjectSave();
   }
   let revision = "";
-  for (let round = 1; round <= Number(run.config.stateRounds || 2); round++) {
+  const maxRounds = Math.max(1, Number(run.config.stateRounds || 2));
+  for (let round = 1; round <= maxRounds; round++) {
     const reviewKey = `entity:${stateId}:round-${round}:review`, prior = v626Step(run, reviewKey);
-    if (prior.status === "completed" && prior.pass && prior.winner) { v626ApproveEntity(list, entityId, stateId, prior.winner); await flushPendingProjectSave(); return prior.winner; }
+    /* The only route to completed + pass + winner is a director approving at the
+       human gate, which stamps humanApproved. Resuming after that re-states the
+       approval it already made; it never invents one. */
+    if (prior.status === "completed" && prior.pass && prior.winner && prior.result?.humanApproved) { v626ApproveEntity(list, entityId, stateId, prior.winner); await flushPendingProjectSave(); return prior.winner; }
     if (round > 1) revision = v626Step(run, `entity:${stateId}:round-${round - 1}:review`).revision || "";
     const build = await v626EntityBuild(run, list, entityId, stateId, round, revision);
     entity = P[list]?.find((item) => item.id === entityId); state = entityStateById(entity, stateId);
@@ -1587,23 +1821,50 @@ async function v626AutomateEntityState(run, list, entityId, stateId) {
       results.sort((a, b) => (+b.review.score || 0) - (+a.review.score || 0));
       const picked = results.find((item) => item.review.pass) || results[0];
       const reviewUnavailable = results.length > 0 && results.every((item) => item.review?.reviewUnavailable);
-      const correction = picked?.review?.pass || reviewUnavailable ? "" : v663EntityReviewCorrection(picked?.review, list);
-      await v626CompleteStep(run, reviewKey, { kind: "entity-review", label: `${state.name || "State"} review`, stateId, pass: !!picked?.review?.pass, score: Math.round(+picked?.review?.score || 0), winner: picked?.file || "", files: media.map((item) => item.name), review: { contractVersion: ENTITY_REFERENCE_REVIEW_CONTRACT_VERSION, candidates: results }, revision: correction || (reviewUnavailable ? "" : "Preserve the parent identity more strictly and apply only the requested state delta."), result: { rationale: picked?.review?.summary || "", hardGateFailures: picked?.review?.hardGateFailures || [], autoApprove: picked?.review?.autoApprove === true, explicitPass: picked?.review?.explicitPass === true, explicitScore: picked?.review?.explicitScore === true, reviewUnavailable, threshold: V627_AUTOMATION_AUTO_APPROVE_SCORE } });
+      /* Every candidate in the pass feeds the plan, not just the top scorer. A
+         fault the weakest two shared is the one most worth correcting, and it
+         used to leave no trace at all. */
+      const plan = v666PassCorrectionPlan(results, { list, state, entity, stateId, passNumber: round, maxPasses: maxRounds });
+      const correction = picked?.review?.pass || reviewUnavailable ? "" : v666CorrectionPlanText(plan, { list });
+      await v626CompleteStep(run, reviewKey, { kind: "entity-review", label: `${state.name || "State"} review`, stateId, pass: !!picked?.review?.pass, score: Math.round(+picked?.review?.score || 0), winner: picked?.file || "", files: media.map((item) => item.name), review: { contractVersion: ENTITY_REFERENCE_REVIEW_CONTRACT_VERSION, candidates: results }, revision: correction || (reviewUnavailable ? "" : "Preserve the parent identity more strictly and apply only the requested state delta."), result: { rationale: picked?.review?.summary || "", hardGateFailures: picked?.review?.hardGateFailures || [], autoApprove: picked?.review?.autoApprove === true, explicitPass: picked?.review?.explicitPass === true, explicitScore: picked?.review?.explicitScore === true, reviewUnavailable, threshold: V627_AUTOMATION_AUTO_APPROVE_SCORE, correctionPlan: plan } });
+      /* The pass ledger: what this pass was asked for, what came back, why it
+         failed, and what the next pass was told to change. */
+      const previousPass = v666RunPasses(run, stateId).find((row) => Number(row.passNumber) === round - 1) || null;
+      v666RecordPass(run, {
+        stateId, stateName: plan.stateName, passNumber: round, maxPasses: maxRounds,
+        at: v626Now(), promptBuildId: build.id || "", prompt: String(build.prompt || "").slice(0, 4000),
+        promptDelta: previousPass ? v666PromptDelta(previousPass.prompt, build.prompt) : { added: [], removed: [], changed: false },
+        appliedRevision: String(revision || ""), candidates: plan.candidates,
+        bestScore: plan.bestScore, passed: plan.passed, reviewUnavailable,
+        preserve: plan.preserve, correct: plan.correct, recurring: plan.recurring,
+        nextRevision: correction,
+      });
+      await v626SaveRun(run, false, false);
       if (reviewUnavailable) await v627PauseForHumanReview(run, v626Step(run, reviewKey), `Review ${state.name || "state"} candidates`);
     }
     const reviewed = v626Step(run, reviewKey);
-    if (reviewed.pass && reviewed.winner && reviewed.result?.autoApprove) {
-      await v628RequireAutomationLease(run);
-      v626ApproveEntity(list, entityId, stateId, reviewed.winner);
-      const approvalKey = `entity:${stateId}:approval`;
-      v628AttachEntityAutomationProvenance(run, list, entityId, stateId, reviewed.winner, approvalKey, { score: reviewed.score });
-      await flushPendingProjectSave();
-      await v626CompleteStep(run, approvalKey, { kind: "entity-approval", label: `${state.name || "State"} approved`, stateId, winner: reviewed.winner, score: reviewed.score, pass: true, result: { rationale: reviewed.result?.rationale || "Best passing state candidate" } });
-      await v626Log(run, `${state.name || "State"} approved: ${reviewed.winner} (${Math.round(Number(reviewed.score || 0))}/100).`, "success");
-      return reviewed.winner;
+    /* A strong pass stops the loop and spends nothing further, but it does not
+       approve. Canon is a director's decision; the reviewer only nominates. */
+    if (reviewed.pass && reviewed.winner) {
+      await v626Log(run, `${state.name || "State"} pass ${round} produced a strong candidate: ${reviewed.winner} (${Math.round(Number(reviewed.score || 0))}/100). Remaining authorized passes will not be generated. Your approval makes it canon.`, "success");
+      /* Re-read the step: saving the log replaced run.steps with the stored copy,
+         and pausing a detached object would leave the gate open on disk. */
+      await v627PauseForHumanReview(run, v626Step(run, reviewKey), `Approve ${state.name || "state"}`);
     }
-    if ((reviewed.pass && reviewed.winner) || round >= Number(run.config.stateRounds || 2)) await v627PauseForHumanReview(run, reviewed, `Approve ${state.name || "state"}`);
-    await v626Log(run, `${state.name || "State"} round ${round} did not pass. ${reviewed.revision || "Revising the state delta prompt."}`, "warn");
+    if (round >= maxRounds) {
+      /* Exhaustion is a distinct outcome, not a generic pause: it names what was
+         spent and what kept failing so the next decision is an informed one. */
+      const plan = reviewed.result?.correctionPlan || null;
+      const reasons = (plan?.correct || []).slice(0, 3).map((item) => item.label);
+      run.result = run.result && typeof run.result === "object" ? run.result : {};
+      run.result.referenceExhaustion = {
+        stateId, stateName: state.name || "Default", passes: round, candidates: Number(run.usage?.imagesGenerated || 0),
+        bestScore: Number(plan?.bestScore || reviewed.score || 0), recurring: reasons, at: v626Now(),
+      };
+      await v626Log(run, `No ${state.name || "state"} candidate passed after ${round} authorized pass${round === 1 ? "" : "es"} and ${Number(run.usage?.imagesGenerated || 0)} generated candidate${Number(run.usage?.imagesGenerated || 0) === 1 ? "" : "s"}. Recurring: ${reasons.join("; ") || "no structured findings were returned"}. No further pass is authorized.`, "warn");
+      await v627PauseForHumanReview(run, v626Step(run, reviewKey), `Approve ${state.name || "state"}`);
+    }
+    await v626Log(run, v666CorrectionLogLine(reviewed.result?.correctionPlan || v666PassCorrectionPlan([], { list, state, entity, stateId, passNumber: round, maxPasses: maxRounds })), "warn");
   }
   throw new Error(`${state.name || "State"} did not pass after ${Number(run.config.stateRounds || 3)} rounds`);
 }
@@ -1696,6 +1957,10 @@ window.startFreshAutomationRun = async (runId, type, targetId) => {
 window.continueAutomationRevision = async (runId) => {
   const run = await v626RefreshRun(runId, false), step = v627AwaitingReviewStep(run);
   if (!step) return toast("No review gate is waiting");
+  /* The offer is gated in the markup; the action is gated again here, because a
+     continuation reached any other way still spends real credits. */
+  if (Number(step.attempt || 0) >= Number(step.maxAttempts || 0)) return toast("Every authorized pass in this run is used. Start a fresh run to authorize more generation.");
+  if (v666RemainingImageBudget(run) < v640OutputsPerRequest(run)) return toast(`This run's confirmed ${Number(run.config?.maxImages || 0)}-image cap has no room for another pass. Start a fresh run to authorize more generation.`);
   step.status = "completed";
   step.pass = false;
   run.status = "interrupted";
