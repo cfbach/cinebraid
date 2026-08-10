@@ -575,8 +575,13 @@ async function render(hash, project, options = {}) {
   context.window.document = document;
 
   vm.createContext(context);
+  /* options.mutateSource lets a negative control break a guarantee IN MEMORY and
+     prove the suite goes red for it. Nothing on disk is touched, so a control
+     can never be "restored" by a checkout that also discards real work. */
+  const mutate = typeof options.mutateSource === "function" ? options.mutateSource : null;
   for (const file of SCRIPT_ORDER) {
-    const source = fs.readFileSync(path.join(PUBLIC, file), "utf8");
+    const original = fs.readFileSync(path.join(PUBLIC, file), "utf8");
+    const source = mutate ? String(mutate(file, original) ?? original) : original;
     vm.runInContext(source, context, { filename: file });
   }
 
@@ -636,7 +641,7 @@ async function main() {
     { id: "state-damaged", name: "Damaged", isDefault: false, approvedFile: "PR-TOOL_PRIMARY_DAMAGED_V001.png", appliesTo: "SC-01", notes: "Chipped grip and scratched casing.", parentStateId: "state-default", generationMode: "derive", assetPromptBuilds: [] },
   ];
   stateProp.candidateFiles = [
-    { stored: "PR-TOOL-CANDIDATE-A.png", decision: "unreviewed", targetStateId: "state-damaged", targetStateName: "Damaged", derivationMode: "derive", structuredReviews: { "state-damaged": { contractVersion: "reference-authority-v2", score: 84, pass: true, stateName: "Damaged", reviewedAt: "2026-07-27T20:00:00Z" } } },
+    { stored: "PR-TOOL-CANDIDATE-A.png", decision: "unreviewed", targetStateId: "state-damaged", targetStateName: "Damaged", derivationMode: "derive", structuredReviews: { "state-damaged": { contractVersion: "reference-authority-v3", score: 84, pass: true, stateName: "Damaged", reviewedAt: "2026-07-27T20:00:00Z" } } },
     { stored: "PR-TOOL-CANDIDATE-B.png", decision: "rejected" },
   ];
   const stateScan = scanFor(stateFixture);

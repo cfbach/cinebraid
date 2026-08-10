@@ -21,7 +21,7 @@ function coverageFixture() {
     coverageSheetType: "angles",
     generationProvider: "fal",
     structuredReviews: {
-      "state-default": { contractVersion: "reference-authority-v2", score: 87, pass: true, stateName: "Default", reviewedAt: "2026-07-29T20:00:00Z", summary: "Consistent four-view sheet." },
+      "state-default": { contractVersion: "reference-authority-v3", score: 87, pass: true, stateName: "Default", reviewedAt: "2026-07-29T20:00:00Z", summary: "Consistent four-view sheet." },
     },
   }];
   project.shots[0].characters = [character.id];

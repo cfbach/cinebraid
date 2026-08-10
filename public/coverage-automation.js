@@ -160,7 +160,9 @@
       prompt: options.prompt,
       references: refs,
       authorityManifest: refs.map((ref) => ({ token: ref.token, label: ref.label, role: ref.role, sourceFile: ref.sourceFile || "" })),
-      authorityContractVersion: "reference-authority-v2",
+      /* One source of truth for the contract version: a hard-coded copy here
+         silently kept stamping v2 onto jobs after the contract moved on. */
+      authorityContractVersion: typeof ENTITY_REFERENCE_REVIEW_CONTRACT_VERSION === "string" ? ENTITY_REFERENCE_REVIEW_CONTRACT_VERSION : "reference-authority-v3",
       outputCount: options.outputCount || 1,
       quality: options.quality || "high",
       resolution: options.resolution || "4k",

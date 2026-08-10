@@ -58,20 +58,35 @@ def free_port():
     sock = socket.socket(); sock.bind(("127.0.0.1", 0)); port = sock.getsockname()[1]; sock.close(); return port
 
 
+CATEGORY_LABELS = {"design": "Identity & design", "state": "Target state",
+                   "requirements": "Subject-owned required details", "context": "Setting & context",
+                   "usefulness": "Production-reference clarity", "cleanliness": "Cleanliness & artifacts"}
+
+
 def flag(score, categories, summary):
+    """A FLAG shaped the way the review contract now returns one: establishing
+    the first authority, with each blocker carrying who can act on it."""
+    blockers = [{"key": f"category:{key}", "label": CATEGORY_LABELS[key], "note": row["note"],
+                 "severity": row["severity"], "actionability": "generation-correctable"}
+                for key, row in categories.items() if row["severity"] in ("major", "blocking")]
     return {"score": score, "pass": False, "modelPass": False, "explicitPass": False, "explicitScore": True,
-            "autoApprove": False, "contractVersion": "reference-authority-v2", "requiredHardChecks": [],
+            "autoApprove": False, "contractVersion": "reference-authority-v3", "requiredHardChecks": [],
             "hardChecks": {}, "hardGateFailures": ["score-below-85", "model-did-not-pass"],
+            "authorityMode": "establish", "outcome": "correctable", "generationCorrectable": bool(blockers),
+            "readyToEstablishAuthority": False, "blockers": blockers,
+            "stateMatch": {"matchesRequestedState": True, "returned": True, "closerState": "", "note": "Correct state."},
             "categories": categories, "summary": summary, "recommendation": "correct"}
 
 
 def strong(score, summary):
-    clean = {key: {"severity": "pass", "note": "Correct."} for key in
-             ("design", "state", "requirements", "usefulness", "cleanliness")}
+    clean = {key: {"severity": "pass", "note": "Correct."} for key in CATEGORY_LABELS}
     return {"score": score, "pass": True, "modelPass": True, "explicitPass": True, "explicitScore": True,
-            "autoApprove": True, "contractVersion": "reference-authority-v2", "requiredHardChecks": [],
-            "hardChecks": {}, "hardGateFailures": [], "categories": clean, "summary": summary,
-            "recommendation": "approve"}
+            "autoApprove": True, "contractVersion": "reference-authority-v3", "requiredHardChecks": [],
+            "hardChecks": {}, "hardGateFailures": [], "authorityMode": "establish",
+            "outcome": "validated-strong", "generationCorrectable": False, "readyToEstablishAuthority": False,
+            "blockers": [],
+            "stateMatch": {"matchesRequestedState": True, "returned": True, "closerState": "", "note": "Correct state."},
+            "categories": clean, "summary": summary, "recommendation": "approve"}
 
 
 # The dogfood pass 1, verbatim: three candidates, three different reasons, one
@@ -109,9 +124,12 @@ REVIEWS = {
     "MARA-P2-C.png": strong(82, "Readable and usable."),
 }
 # The exhaustion entity: nine candidates, never approvable.
+# The real regression: 49 -> 64 -> 56. The best candidate of the run belongs to
+# pass 2, and pass 3 must not be allowed to bury it.
+NELL_SCORES = {1: (45, 47, 49), 2: (52, 58, 64), 3: (50, 54, 56)}
 for _pass in (1, 2, 3):
-    for _slot, _score in zip("ABC", (44, 46, 48)):
-        REVIEWS[f"NELL-P{_pass}-{_slot}.png"] = flag(_score + _pass, {
+    for _slot, _score in zip("ABC", NELL_SCORES[_pass]):
+        REVIEWS[f"NELL-P{_pass}-{_slot}.png"] = flag(_score, {
             "design": {"severity": "major", "note": "Identity cannot be verified in this light."},
             "state": {"severity": "pass", "note": "State correct."},
             "requirements": {"severity": "pass", "note": "Details present."},
@@ -408,6 +426,46 @@ try:
         assert len([row for row in submissions if row["entity"] == "NELL"]) == 3, \
             "I: rendering the exhausted state must not generate anything"
 
+        # ---- J. the champion survives a later, worse pass ----------------
+        # The run scored 49, then 64, then 56. The 64 belongs to pass 2 and a
+        # regression in pass 3 must not be able to present itself as the best
+        # work the run produced.
+        champions = ((nell_run.get("result") or {}).get("referenceChampions") or {})
+        champion = champions.get("state-default") or {}
+        assert champion.get("file") == "NELL-P2-C.png", \
+            f"J: the champion should be the pass-2 64, got {champion.get('file')!r}"
+        assert champion.get("score") == 64 and champion.get("passNumber") == 2, \
+            f"J: the champion regressed to a later pass: {champion!r}"
+        assert exhaustion["bestScore"] == 64, \
+            f"J: the exhaustion summary reported {exhaustion['bestScore']} instead of the run's best"
+        assert exhaustion["bestFile"] == "NELL-P2-C.png"
+        assert "Best across every pass" in panel, "J: the champion is not named on screen"
+        assert "NELL-P2-C.png" in panel, "J: the champion file is not shown in the progression panel"
+        assert "a later pass scored lower and did not replace it" in panel, \
+            f"J: the panel does not explain that a later pass was worse: {panel[:400]!r}"
+        assert "NELL-P2-C.png" in gate_text, \
+            "J: the human review gate must still offer the run's best candidate, not only the last pass"
+        assert "BEST CANDIDATE OF THE WHOLE RUN" in gate_text, \
+            f"J: the gate does not surface the champion: {gate_text!r}"
+
+        # ---- K. the review modal states which job the reviewer was doing --
+        page.evaluate("() => openEntityCandidateReview('characters','NELL','NELL-P2-C.png','state-default')")
+        page.wait_for_timeout(400)
+        modal = page.locator("#modal").first.inner_text()
+        assert "NELL-P2-C.png" in modal, f"K: the champion's own review did not open: {modal[:200]!r}"
+        assert "ESTABLISHING FIRST AUTHORITY" in modal, \
+            f"K: the review must say it was establishing the first authority: {modal[:400]!r}"
+        assert "a missing prior authority is not a fault here" in modal, \
+            "K: the modal must state that no prior authority is expected here"
+        assert "GENERATION CAN FIX THIS" in modal, \
+            f"K: findings must be grouped by who can act on them: {modal[:400]!r}"
+        assert "Setting & context" in modal, \
+            "K: the context criterion must be visible as its own factor"
+        assert "Anatomy & required details" not in modal, \
+            "K: the criterion that absorbed location facts must be gone"
+        page.evaluate("() => closeModal()")
+        page.wait_for_timeout(200)
+
         # ---- A again, after everything ----------------------------------
         assert not page_errors, f"the automation flow raised uncaught errors: {page_errors}"
         assert not product_console_errors(), f"the automation flow logged console errors: {console_errors}"
@@ -427,7 +485,8 @@ try:
         f"screen, a strong pass stopped the run at 2 of 3 passes without approving anything, a rejected candidate "
         f"kept a VIEW REVIEW action independent of its image viewer and stayed rejected after it was read, and a "
         f"second entity exhausted at exactly 3 passes / 9 candidates with the recurring reason stated and no fourth "
-        f"pass offered. {len(submissions)} simulated generation submissions, {len(review_calls)} simulated reviews, "
+        f"pass offered, the pass-2 champion survived a lower-scoring pass 3 on screen and in the approval gate, and "
+        f"the review modal named the authority mode and grouped findings by who can act on them. {len(submissions)} simulated generation submissions, {len(review_calls)} simulated reviews, "
         f"no request left the loopback host and nothing paid was called.")
 finally:
     server.terminate()

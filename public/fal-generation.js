@@ -291,7 +291,8 @@ DERIVED STATE EDIT
 Edit #image1 directly. The parent image is the source of truth. Apply only the continuity delta below and preserve every unmentioned pixel, object, material, light source, camera choice, crop, and spatial relationship as closely as the model allows.
 
 TARGET STATE
-${state.name || "Continuity state"}
+${state.name || "Continuity state"}${state.appliesTo ? `
+SCENE / SHOT SCOPE: ${String(state.appliesTo).trim()} — honour any setting, location or moment this names.` : ""}
 
 REQUIRED DELTA
 ${delta || "No concrete delta supplied. Do not generate until the state delta is defined."}${extra ? `
