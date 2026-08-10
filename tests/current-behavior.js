@@ -391,6 +391,7 @@ async function main() {
     "readiness-feedback.js",
     "real-browser-workflow.py",
     "reference-angle-routing.js",
+    "reference-aspect-consistency.js",
     "reference-authority-deep-dive.js",
     "reference-automation-closed-loop.js",
     "reference-automation-real-browser.py",

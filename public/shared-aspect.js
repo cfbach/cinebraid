@@ -120,6 +120,67 @@ function shotAspectLabel(project, shot) {
   return shotOutputAspect(project, shot)?.label || CINEBRAID_ASPECT_FALLBACK;
 }
 
+/* ---- reference-generation formats ------------------------------------------------
+ *
+ * A durable reference is not a shot. A character anchor is a full-body portrait, a
+ * location plate is a wide master, a prop or vehicle card is a neutral three-quarter
+ * view — and none of them is the production delivery format. CineBraid already knew
+ * that: the three literals below were written out at five separate call sites. What it
+ * did not have was one place to read them from, so only the provider REQUEST knew the
+ * reference format. The compiled prompt was built from the production format instead,
+ * and a 16:9 project asked for a 3:4 image in a prompt that said "Output at 16:9". The
+ * request won and the frame came back portrait, with the prompt still arguing.
+ *
+ * One resolver, read by every request builder and by the reference compiler, is what
+ * makes it impossible to say two things. This is not a new setting — there is nothing
+ * here a user chooses that they could not choose before.
+ */
+const CINEBRAID_REFERENCE_ASPECTS = Object.freeze({
+  characters: "3:4",
+  locations: "16:9",
+  props: "4:3",
+  vehicles: "4:3",
+});
+
+/* An unrecognised list is an entity card like any other, and 4:3 is what props and
+   vehicles — the two lists that are not a portrait or a plate — already used. */
+const CINEBRAID_REFERENCE_ASPECT_FALLBACK = "4:3";
+
+function referenceAspectLabel(list) {
+  return CINEBRAID_REFERENCE_ASPECTS[String(list || "").trim()] || CINEBRAID_REFERENCE_ASPECT_FALLBACK;
+}
+function referenceAspect(list) {
+  return resolveAspect(referenceAspectLabel(list));
+}
+
+/* Every believable ratio written anywhere in a block of text, in the order it appears.
+   Same 0.4–3.2 clamp as the parser, so a duration, a lens note or a scale reading that
+   happens to contain a colon is not mistaken for a format. */
+function aspectRatioMentions(value) {
+  const out = [];
+  for (const match of aspectCleanText(value).matchAll(/(\d+(?:\.\d+)?)\s*:\s*(\d+(?:\.\d+)?)/g)) {
+    const left = Number(match[1]), right = Number(match[2]), ratio = left / right;
+    if (left > 0 && right > 0 && ratio >= CINEBRAID_ASPECT_MIN && ratio <= CINEBRAID_ASPECT_MAX)
+      out.push(`${match[1]}:${match[2]}`);
+  }
+  return out;
+}
+
+/* Which ratios in this prompt disagree with the ratio the request is about to carry.
+   Empty means the prompt is either silent about shape or says the same thing the
+   request says; anything returned is a contradiction the model has to resolve on its
+   own, which is exactly the bug. Written in the same form the text used, so a report
+   can quote it back. Pass "" for a request that authorises no literal ratio at all —
+   then every literal is a contradiction, which is the source-preserving edit rule. */
+function aspectPromptConflicts(value, label) {
+  const wanted = resolveAspect(label);
+  return aspectRatioMentions(value).filter((mention) => {
+    const found = resolveAspect(mention);
+    if (!wanted || !found) return true;
+    return Math.abs(found.ratio - wanted.ratio) / wanted.ratio > 0.005;
+  });
+}
+
 /* ---- MiniMax H3 output formats --------------------------------------------------
  *
  * H3 accepts a fixed list of aspect ratios and nothing else. The provider request
@@ -267,6 +328,7 @@ if (typeof window !== "undefined") {
   Object.assign(window, {
     CINEBRAID_ASPECT_PRESETS,
     CINEBRAID_ASPECT_FALLBACK,
+    CINEBRAID_REFERENCE_ASPECTS,
     CINEBRAID_H3_ASPECT_SUPPORT,
     h3AspectSupport,
     parseAspectRatio,
@@ -278,6 +340,10 @@ if (typeof window !== "undefined") {
     resolveDisplayAspect,
     projectAspectLabel,
     shotAspectLabel,
+    referenceAspectLabel,
+    referenceAspect,
+    aspectRatioMentions,
+    aspectPromptConflicts,
     overviewAspect,
     overviewAspectCss,
     overviewWellCap,
@@ -291,6 +357,8 @@ if (typeof module !== "undefined" && module.exports) {
     CINEBRAID_ASPECT_MAX,
     CINEBRAID_ASPECT_PRESETS,
     CINEBRAID_ASPECT_FALLBACK,
+    CINEBRAID_REFERENCE_ASPECTS,
+    CINEBRAID_REFERENCE_ASPECT_FALLBACK,
     CINEBRAID_SELECTION_AREA,
     CINEBRAID_H3_ASPECT_SUPPORT,
     h3AspectSupport,
@@ -303,6 +371,10 @@ if (typeof module !== "undefined" && module.exports) {
     resolveDisplayAspect,
     projectAspectLabel,
     shotAspectLabel,
+    referenceAspectLabel,
+    referenceAspect,
+    aspectRatioMentions,
+    aspectPromptConflicts,
     overviewAspect,
     overviewAspectCss,
     overviewWellCap,
