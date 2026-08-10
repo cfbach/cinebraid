@@ -1,0 +1,28 @@
+{
+  "meta": {
+    "title": "State And Coverage Aliases",
+    "schemaVersion": "6.6"
+  },
+  "scenes": [],
+  "shots": [],
+  "characters": [],
+  "locations": [
+    {
+      "id": "LOC-YARD",
+      "name": "The yard",
+      "description": "Gravel, a gate, one sodium lamp.",
+      "continuityStates": [
+        { "id": "st-dry", "name": "Dry", "isDefault": true, "stateDelta": "Gravel pale, gate closed." },
+        { "id": "st-wet", "name": "Wet", "parentStateId": "st-dry", "changeOnly": "Gravel dark; puddles at the gate.", "notes": "Also spelled in notes, which loses to changeOnly." },
+        { "id": "st-night", "name": "Night", "instructions": "Sodium lamp on; everything else unchanged." }
+      ],
+      "coverageSlots": [
+        { "id": "cov-master", "label": "Master", "required": true, "requirement": "required", "notes": "The gate and the lamp in one frame." },
+        { "id": "cov-gate", "label": "Gate detail", "required": true, "requirement": "not-required", "notes": "The boolean and the enum disagree here." },
+        { "id": "cov-lamp", "label": "Lamp", "required": false, "notes": "Only the boolean is present." }
+      ]
+    }
+  ],
+  "props": [],
+  "vehicles": []
+}

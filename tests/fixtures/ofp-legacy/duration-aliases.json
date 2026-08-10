@@ -1,0 +1,50 @@
+{
+  "meta": {
+    "title": "Duration Aliases",
+    "schemaVersion": "6.6"
+  },
+  "scenes": [{ "id": "SC-A", "title": "One scene" }],
+  "shots": [
+    {
+      "id": "DUR-DUR",
+      "scene": "SC-A",
+      "title": "dur only",
+      "desc": "The current writer.",
+      "dur": 4
+    },
+    {
+      "id": "DUR-DURATION",
+      "scene": "SC-A",
+      "title": "duration only",
+      "desc": "The shape that is silently defaulted to five today.",
+      "duration": 4
+    },
+    {
+      "id": "DUR-SEC",
+      "scene": "SC-A",
+      "title": "sec only",
+      "desc": "Read by nothing in the current build.",
+      "sec": 7
+    },
+    {
+      "id": "DUR-AGREE",
+      "scene": "SC-A",
+      "title": "two aliases agreeing",
+      "desc": "One value, two spellings.",
+      "dur": 6,
+      "duration": 6
+    },
+    {
+      "id": "DUR-DISAGREE",
+      "scene": "SC-A",
+      "title": "two aliases disagreeing",
+      "desc": "Two values, and nothing in the document says which is the film.",
+      "dur": 4,
+      "duration": 9
+    }
+  ],
+  "characters": [],
+  "locations": [],
+  "props": [],
+  "vehicles": []
+}

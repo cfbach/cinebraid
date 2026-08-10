@@ -1,0 +1,31 @@
+{
+  "meta": {
+    "title": "Absent, Null And Explicitly Empty",
+    "schemaVersion": "6.7",
+    "aspectRatio": null
+  },
+  "scenes": [],
+  "shots": [
+    {
+      "id": "NULL-01",
+      "title": "A shot whose duration slot exists and was never set",
+      "desc": null,
+      "dur": null,
+      "risks": [],
+      "keyframes": [],
+      "clips": [],
+      "codes": [],
+      "characters": []
+    },
+    {
+      "id": "ABSENT-01",
+      "title": "A shot with no duration slot at all"
+    }
+  ],
+  "characters": [],
+  "locations": [],
+  "props": [],
+  "vehicles": [],
+  "audio": [],
+  "mediaAssets": []
+}

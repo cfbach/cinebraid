@@ -1,0 +1,28 @@
+{
+  "meta": {
+    "title": "Unknown Legacy Fields",
+    "schemaVersion": "6.7",
+    "someFieldNobodyDocumented": { "nested": [1, 2, { "deep": true }] }
+  },
+  "iterations": 4,
+  "iterBudget": 12,
+  "contextDoc": "A workflow-era field with no current consumer.",
+  "scenes": [],
+  "shots": [
+    {
+      "id": "UNK-01",
+      "title": "A shot with fields this contract does not model",
+      "desc": "Everything unrecognised must still have a home.",
+      "dur": 4,
+      "positioning": "Locked, readable composition.",
+      "safe": "Nothing hazardous.",
+      "route": "Bay door to counter.",
+      "targetRuntime": 90,
+      "someShotFieldFromTheFuture": ["a", "b"]
+    }
+  ],
+  "characters": [],
+  "locations": [],
+  "props": [],
+  "vehicles": []
+}

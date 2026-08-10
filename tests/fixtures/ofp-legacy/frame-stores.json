@@ -1,0 +1,56 @@
+{
+  "meta": {
+    "title": "Three Frame Stores",
+    "schemaVersion": "6.7"
+  },
+  "scenes": [],
+  "shots": [
+    {
+      "id": "FRAME-01",
+      "title": "The two stores agree",
+      "desc": "One description, written twice.",
+      "dur": 4,
+      "winner": "FRAME-01-A.png",
+      "keyframes": [
+        { "id": "kf-a", "label": "A", "description": "The clerk closes the ledger.", "selectedCandidate": "FRAME-01-CAND.png" }
+      ],
+      "creationBrief": {
+        "frames": [
+          { "id": "kf-a", "label": "A", "action": "The clerk closes the ledger.", "promptBuilds": [] }
+        ],
+        "frameWorkflows": { "kf-a": { "stage": "still", "note": "workflow state" } },
+        "finalStillFile": "FRAME-01-FINAL.png"
+      }
+    },
+    {
+      "id": "FRAME-02",
+      "title": "The two stores disagree",
+      "desc": "Two descriptions of one frame.",
+      "dur": 4,
+      "keyframes": [
+        { "id": "kf-a", "label": "A", "description": "The crate is already open." }
+      ],
+      "creationBrief": {
+        "frames": [
+          { "id": "kf-a", "label": "A", "action": "The crate is still sealed." }
+        ]
+      }
+    },
+    {
+      "id": "FRAME-03",
+      "title": "A shot-level winner with two frames",
+      "desc": "Nobody can say which frame the single still approved.",
+      "dur": 4,
+      "winner": "FRAME-03-OLD.png",
+      "keyframes": [
+        { "id": "kf-a", "description": "First." },
+        { "id": "kf-b", "description": "Last." }
+      ]
+    }
+  ],
+  "characters": [],
+  "locations": [],
+  "props": [],
+  "vehicles": [],
+  "promptBuildsById": { "pb-1": { "payload": "a compiled provider request" } }
+}

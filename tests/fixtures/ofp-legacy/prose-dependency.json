@@ -1,0 +1,40 @@
+{
+  "meta": {
+    "title": "Prose Dependency",
+    "schemaVersion": "6.7"
+  },
+  "scenes": [{ "id": "SC-HULL", "title": "The hull" }],
+  "shots": [
+    {
+      "id": "L0-01",
+      "scene": "SC-HULL",
+      "title": "The plate",
+      "desc": "Wide on the seam. This EXACT framing is mirrored at the end (L7-03).",
+      "notes": "Shared-asset: L7-03 depends on this plate LOCKED first.",
+      "risks": ["LOCK this framing — L7-03 derives from it (bookend dependency)"],
+      "dur": 6
+    },
+    {
+      "id": "L7-03",
+      "scene": "SC-HULL",
+      "title": "The bookend",
+      "desc": "The same framing, at the end.",
+      "notes": "",
+      "risks": [],
+      "dur": 6
+    },
+    {
+      "id": "L4-01",
+      "scene": "SC-HULL",
+      "title": "No dependency prose",
+      "desc": "An ordinary shot with an ordinary note.",
+      "notes": "Watch the light on the scaffold.",
+      "risks": [],
+      "dur": 3
+    }
+  ],
+  "characters": [],
+  "locations": [],
+  "props": [],
+  "vehicles": []
+}

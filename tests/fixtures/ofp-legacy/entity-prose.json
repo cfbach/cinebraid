@@ -1,0 +1,44 @@
+{
+  "meta": {
+    "title": "Entity Prose",
+    "schemaVersion": "6.7"
+  },
+  "scenes": [],
+  "shots": [],
+  "characters": [
+    {
+      "id": "CHAR-DIVERGENT",
+      "name": "Two descriptions",
+      "block": "Tall, in a long oilskin coat. Hair cropped short.",
+      "creationDescription": "Tall, in a canvas jacket. Hair tied back.",
+      "continuityStates": [],
+      "coverageSlots": []
+    },
+    {
+      "id": "CHAR-AGREES",
+      "name": "One description, two spellings",
+      "block": "Short, round glasses, always carrying the same brown folder.",
+      "creationDescription": "Short, round glasses, always carrying the same brown folder.",
+      "continuityStates": [],
+      "coverageSlots": []
+    },
+    {
+      "id": "CHAR-SINGLE",
+      "name": "One description",
+      "creationDescription": "Sits at the back of every room.",
+      "continuityStates": [],
+      "coverageSlots": []
+    },
+    {
+      "id": "CHAR-EMPTY",
+      "name": "No description at all",
+      "block": "",
+      "creationDescription": "",
+      "continuityStates": [],
+      "coverageSlots": []
+    }
+  ],
+  "locations": [],
+  "props": [],
+  "vehicles": []
+}

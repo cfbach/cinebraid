@@ -1,0 +1,25 @@
+{
+  "meta": {
+    "title": "New Project",
+    "version": "v1",
+    "hubVersion": "v6.0.0",
+    "schemaVersion": "6.6",
+    "statusVocab": ["UNBUILT", "BUILT", "NEEDS POST", "LOCKED"]
+  },
+  "qcChecklist": [
+    "Identity & side continuity — checked against anchor sheet, mirror-check done, drift-prone features verified",
+    "Geometry & contact points — hands touch what they touch, correct orientation",
+    "Tone drift — not too clean, not too pretty; era and world correct",
+    "Motif & continuity compliance — recurring details per canon",
+    "Text accuracy — all legible strings; rechecked after upscale/edit"
+  ],
+  "scenes": [],
+  "shots": [],
+  "characters": [],
+  "locations": [],
+  "props": [],
+  "vehicles": [],
+  "sessions": [
+    { "n": 1, "date": "2026-08-10", "summary": "Project created in CineBraid.", "carryForward": ["Set the global visual style."] }
+  ]
+}

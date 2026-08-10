@@ -1,0 +1,34 @@
+{
+  "meta": {
+    "title": "Exact Codes",
+    "schemaVersion": "6.7"
+  },
+  "scenes": [{ "id": "SC-BAY", "title": "The bay" }],
+  "shots": [
+    {
+      "id": "BAY-01",
+      "scene": "SC-BAY",
+      "title": "Everything resolves",
+      "desc": "Every token in this shot names a record exactly.",
+      "characters": ["CHAR-KAI"],
+      "codes": ["LOC-GALLEY", "PROP-SPOON", "VEH-TENDER"],
+      "creationBrief": {
+        "locationId": "LOC-GALLEY",
+        "propIds": ["PROP-SPOON"]
+      },
+      "dur": 3
+    }
+  ],
+  "characters": [
+    { "id": "CHAR-KAI", "name": "Kai", "description": "Deck crew.", "continuityStates": [], "coverageSlots": [] }
+  ],
+  "locations": [
+    { "id": "LOC-GALLEY", "name": "Galley", "description": "Two benches and a kettle.", "continuityStates": [], "coverageSlots": [] }
+  ],
+  "props": [
+    { "id": "PROP-SPOON", "name": "Bent spoon", "description": "A spoon with a bent handle.", "continuityStates": [], "coverageSlots": [] }
+  ],
+  "vehicles": [
+    { "id": "VEH-TENDER", "name": "Tender", "description": "A small orange boat.", "continuityStates": [], "coverageSlots": [] }
+  ]
+}

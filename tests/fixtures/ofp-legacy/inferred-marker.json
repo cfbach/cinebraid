@@ -1,0 +1,27 @@
+{
+  "meta": {
+    "title": "Inferred For Planning",
+    "schemaVersion": "6.7"
+  },
+  "scenes": [],
+  "shots": [
+    {
+      "id": "INF-01",
+      "title": "A description carrying a planning marker",
+      "desc": "The courier waits by the rail. [INFERRED FOR PLANNING] The screenplay does not say where she stands.",
+      "dur": 4
+    }
+  ],
+  "characters": [
+    {
+      "id": "CHAR-COURIER",
+      "name": "The courier",
+      "creationDescription": "[INFERRED FOR PLANNING] Canvas coat and a satchel; wardrobe is not described in the script.",
+      "continuityStates": [],
+      "coverageSlots": []
+    }
+  ],
+  "locations": [],
+  "props": [],
+  "vehicles": []
+}

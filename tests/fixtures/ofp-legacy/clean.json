@@ -1,0 +1,134 @@
+{
+  "meta": {
+    "title": "The Quiet Depot",
+    "format": "Two-shot sample",
+    "version": "6.7.0-private.1",
+    "hubVersion": "v6.0.0",
+    "schemaVersion": "6.7",
+    "aspectRatio": "16:9",
+    "workflowEmphasis": "manual",
+    "promptDefaults": {
+      "imageProfile": "gpt-image-2/t2i",
+      "videoProfile": "minimax-h3/i2v"
+    }
+  },
+  "scenes": [
+    {
+      "id": "SC-DEPOT",
+      "title": "The depot",
+      "whatHappens": "A clerk logs a crate that should not be there.",
+      "howItFeels": "Procedural, then wrong.",
+      "tier": "A"
+    }
+  ],
+  "shots": [
+    {
+      "id": "DEPOT-01",
+      "scene": "SC-DEPOT",
+      "title": "Clerk at the ledger",
+      "desc": "The clerk works down the ledger without looking up.",
+      "workflowStatus": "APPROVED",
+      "reviewStatus": "PENDING",
+      "characters": ["CHAR-CLERK"],
+      "codes": ["LOC-DEPOT", "PROP-CRATE"],
+      "risks": ["The ledger text must stay legible."],
+      "dur": 6,
+      "stillModel": "gpt-image-2",
+      "keyframes": [
+        {
+          "id": "frame-a",
+          "description": "Clerk mid-entry, crate out of focus behind.",
+          "winner": "DEPOT-01-LEDGER.png"
+        }
+      ],
+      "clips": []
+    },
+    {
+      "id": "DEPOT-02",
+      "scene": "SC-DEPOT",
+      "title": "The crate",
+      "desc": "The crate sits where nothing should sit.",
+      "workflowStatus": "IN PROGRESS",
+      "reviewStatus": "PENDING",
+      "codes": ["LOC-DEPOT", "PROP-CRATE"],
+      "risks": [],
+      "dur": 4,
+      "keyframes": [
+        {
+          "id": "frame-a",
+          "description": "Wide on the crate, seal intact."
+        },
+        {
+          "id": "frame-b",
+          "description": "Closer. The seal number is wrong."
+        }
+      ],
+      "clips": []
+    }
+  ],
+  "characters": [
+    {
+      "id": "CHAR-CLERK",
+      "name": "The clerk",
+      "role": "lead",
+      "workflowStatus": "APPROVED",
+      "creationDescription": "Middle-aged, grey cardigan, reading glasses pushed up.",
+      "approvedFile": "CHAR-CLERK-FRONT.png",
+      "continuityStates": [
+        {
+          "id": "state-default",
+          "name": "At the desk",
+          "isDefault": true,
+          "notes": "Cardigan on, glasses up."
+        }
+      ],
+      "coverageSlots": []
+    }
+  ],
+  "locations": [
+    {
+      "id": "LOC-DEPOT",
+      "name": "Goods depot",
+      "description": "Long counter, roller door, one hanging lamp.",
+      "workflowStatus": "APPROVED",
+      "continuityStates": [],
+      "coverageSlots": [
+        {
+          "id": "master",
+          "label": "Master establishing",
+          "requirement": "required",
+          "notes": "Defines the counter and the roller door.",
+          "approvedFile": "LOC-DEPOT-MASTER.png"
+        }
+      ]
+    }
+  ],
+  "props": [
+    {
+      "id": "PROP-CRATE",
+      "name": "Sealed crate",
+      "description": "Pale timber crate with a numbered lead seal.",
+      "continuityStates": [
+        {
+          "id": "state-sealed",
+          "name": "Sealed",
+          "isDefault": true,
+          "notes": "Seal intact and legible."
+        },
+        {
+          "id": "state-opened",
+          "name": "Opened",
+          "parentStateId": "state-sealed",
+          "notes": "Seal cut; lid lifted a finger's width."
+        }
+      ],
+      "coverageSlots": []
+    }
+  ],
+  "vehicles": [],
+  "audio": [],
+  "mediaAssets": [],
+  "jobs": [],
+  "decisions": [],
+  "agentRuns": []
+}
