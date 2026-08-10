@@ -47,13 +47,13 @@ const read = (file) => fs.readFileSync(path.join(ROOT, file), "utf8");
    that only the weakest had. */
 const FLAG = (score, categories, summary) => ({
   score, pass: false, modelPass: false, explicitPass: false, explicitScore: true, autoApprove: false,
-  contractVersion: "reference-authority-v2",
+  contractVersion: "reference-authority-v3",
   requiredHardChecks: [], hardChecks: {}, hardGateFailures: ["score-below-85", "model-did-not-pass"],
   categories, summary, recommendation: "correct",
 });
 const PASS = (score, summary) => ({
   score, pass: true, modelPass: true, explicitPass: true, explicitScore: true, autoApprove: true,
-  contractVersion: "reference-authority-v2",
+  contractVersion: "reference-authority-v3",
   requiredHardChecks: [], hardChecks: {}, hardGateFailures: [],
   categories: {
     design: { severity: "pass", note: "Identity reads clearly." },
@@ -281,7 +281,7 @@ async function testAllFailedPassAdvances() {
   const labels = plan.correct.map((row) => row.label).join(" | ");
   assert(/Identity & design/.test(labels), "the identity fault two candidates shared must be in the plan");
   assert(/Production-reference clarity/.test(labels), "candidate B and C's usefulness fault must be in the plan");
-  assert(/Anatomy & required details/.test(labels), "candidate B's readability fault must be in the plan");
+  assert(/Anatomy & character-owned details/.test(labels), "candidate B's readability fault must be in the plan");
   const notes = plan.correct.map((row) => row.note).join(" ");
   assert(/Face too dark/.test(notes), "candidate A's finding must survive aggregation");
   assert(/Framing too wide/.test(notes), "candidate B's finding must survive aggregation");

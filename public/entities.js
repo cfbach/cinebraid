@@ -150,7 +150,7 @@ function entityCandidateRow(entity, fileName, create = false) {
   }
   return row || null;
 }
-const ENTITY_REFERENCE_REVIEW_CONTRACT_VERSION = "reference-authority-v2";
+const ENTITY_REFERENCE_REVIEW_CONTRACT_VERSION = "reference-authority-v3";
 function entityCandidateReviewForState(entity, fileName, stateId = "state-default") {
   const row = entityCandidateRow(entity, fileName, false);
   return row?.structuredReviews?.[stateId] || null;

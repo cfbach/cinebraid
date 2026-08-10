@@ -216,6 +216,22 @@ function startMockOllama() {
               authorityReview.categories.design = { severity: "major", note: "The model changed a major design feature." };
               authorityReview.summary = "Attractive but materially redesigned.";
             }
+            /* The stub obeys the contract it is handed. In ESTABLISH mode a
+               real reviewer has no authority to compare against, so it returns
+               no comparison verdicts at all — which is exactly the shape the
+               route must stop treating as a failure. */
+            if (user.includes("AUTHORITY MODE: ESTABLISH_AUTHORITY")) {
+              authorityReview.hardChecks = {};
+              authorityReview.categories.state = { severity: "pass", note: "The requested state reads correctly." };
+              authorityReview.score = 82;
+              authorityReview.pass = false;
+              authorityReview.summary = "Strong visual match; no approved authority exists to compare against yet.";
+              authorityReview.recommendation = "approve";
+            }
+            if (user.includes("FORCE_STATE_MISMATCH")) {
+              authorityReview.stateMatch = { matchesRequestedState: false, closerState: "Damp inside", note: "The candidate depicts the related interior state." };
+              authorityReview.score = 82;
+            }
             if (user.includes("FORCE_EMBEDDED_MISMATCH")) {
               authorityReview.score = 94;
               authorityReview.hardChecks.sameEmbeddedContent = { pass: false, note: "The photograph inside the prop was replaced with a different image." };
@@ -1443,7 +1459,62 @@ async function main() {
     assert.strictEqual(result.body.state.name, "Damaged");
     assert.strictEqual(result.body.inputLabels[0].role, "candidate under review");
     assert.strictEqual(result.body.inputLabels[1].role, "exact parent-state editable authority");
-    assert.strictEqual(result.body.review.contractVersion, "reference-authority-v2");
+    assert.strictEqual(result.body.review.contractVersion, "reference-authority-v3");
+    assert.strictEqual(result.body.authorityMode, "validate", "an approved parent reference means the route is validating, not establishing");
+    assert(result.body.requiredHardChecks.includes("sameUnderlyingEntity"), "identity stays gated when authority exists");
+    assert(result.body.requiredHardChecks.includes("onlyRequestedDelta"), "a derived state's delta stays gated when authority exists");
+
+    /* v667 — the same route, with no approved authority anywhere. The workflow
+       that creates the first reference must not be blocked for not already
+       having one. */
+    const bootstrapProject = JSON.parse(JSON.stringify(entityReviewProject));
+    bootstrapProject.props[0].approvedFile = "";
+    bootstrapProject.props[0].continuityStates[0].approvedFile = "";
+    bootstrapProject.props[0].continuityStates[1].approvedFile = "";
+    result = await request("/api/projects/smoke-project/project", {
+      method: "PUT",
+      headers: { "content-type": "application/json", "if-match": "*" },
+      body: JSON.stringify(bootstrapProject),
+    });
+    assert.strictEqual(result.response.status, 200);
+    result = await request("/api/llm/review-entity-candidate", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ list: "props", id: "PROP-REVIEW", fileName: "PROP-REVIEW-CANDIDATE.png", stateId: "state-default" }),
+    });
+    assert.strictEqual(result.response.status, 200);
+    assert.strictEqual(result.body.authorityMode, "establish", "no approved authority means the route is establishing one");
+    assert.deepStrictEqual(result.body.requiredHardChecks, [], "no comparison gate may be required when there is nothing to compare against");
+    assert.strictEqual(result.body.review.outcome, "ready-to-establish-authority");
+    assert.strictEqual(result.body.review.generationCorrectable, false, "a missing prior authority must never become a generation correction");
+    assert(result.body.review.blockers.every((row) => row.actionability !== "generation-correctable"));
+    assert(result.body.relatedStates.some((row) => row.name === "Damaged"), "sibling states must reach the reviewer so a wrong-state candidate is nameable");
+
+    /* And a candidate that belongs to a sibling state still cannot pass. */
+    const mismatchProject = JSON.parse(JSON.stringify(bootstrapProject));
+    mismatchProject.props[0].continuityStates[0].notes = "FORCE_STATE_MISMATCH Clean tool.";
+    result = await request("/api/projects/smoke-project/project", {
+      method: "PUT",
+      headers: { "content-type": "application/json", "if-match": "*" },
+      body: JSON.stringify(mismatchProject),
+    });
+    assert.strictEqual(result.response.status, 200);
+    result = await request("/api/llm/review-entity-candidate", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ list: "props", id: "PROP-REVIEW", fileName: "PROP-REVIEW-CANDIDATE.png", stateId: "state-default" }),
+    });
+    assert.strictEqual(result.response.status, 200);
+    assert.strictEqual(result.body.review.pass, false, "a sibling-state candidate must not pass the requested state");
+    assert.strictEqual(result.body.review.stateMatch.closerState, "Damp inside");
+    assert.strictEqual(result.body.review.outcome, "correctable", "moving the subject back is something generation can do");
+
+    result = await request("/api/projects/smoke-project/project", {
+      method: "PUT",
+      headers: { "content-type": "application/json", "if-match": "*" },
+      body: JSON.stringify(entityReviewProject),
+    });
+    assert.strictEqual(result.response.status, 200);
 
     entityReviewProject.props[0].continuityStates[1].notes = "FORCE_MAJOR_PASS Scratched casing and chipped grip.";
     result = await request("/api/projects/smoke-project/project", {

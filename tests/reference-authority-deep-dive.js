@@ -58,7 +58,7 @@ async function testLocationAuthorityPackage() {
   vm.runInContext(`CONFIG.generation=CONFIG.generation||{};CONFIG.generation.fal={enabled:true,apiKey:'test'};pollFalGeneration=()=>{};`, rendered.context);
   await rendered.context.generateCoverageSlot("locations", "LOC-SPATIAL", "left-coverage");
   assert(submitted, "location slot generation must submit a job");
-  assert.strictEqual(submitted.authorityContractVersion, "reference-authority-v2");
+  assert.strictEqual(submitted.authorityContractVersion, "reference-authority-v3");
   assert(submitted.prompt.includes("SPATIAL CONTINUITY LOCK"), "location prompts must carry the hard spatial lock");
   assert(submitted.prompt.includes("Do not invent, remove, mirror, relocate or redesign architecture"));
   assert(submitted.references.some((ref) => ref.url.endsWith("LOC-SPATIAL-MASTER.png")));
@@ -91,7 +91,7 @@ async function testImportedMappingAndAssignment() {
   assert.strictEqual(mapped.coverageJobType, "imported-reference");
   assert.strictEqual(mapped.reviewRequired, true);
 
-  mapped.structuredReviews = { "state-default": { contractVersion: "reference-authority-v2", score: 92, pass: true, stateId: "state-default", stateName: "Default", reviewedAt: new Date().toISOString() } };
+  mapped.structuredReviews = { "state-default": { contractVersion: "reference-authority-v3", score: 92, pass: true, stateId: "state-default", stateName: "Default", reviewedAt: new Date().toISOString() } };
   rendered.context.approveCoverageCandidate("characters", "CHAR-IMPORT", "CHAR-IMPORT-PROFILE.png", "profile");
   const assigned = vm.runInContext(`P.characters[0].coverageSlots.find((slot)=>slot.id==='profile').approvedFile`, rendered.context);
   assert.strictEqual(assigned, "CHAR-IMPORT-PROFILE.png", "a current passing imported review must assign the exact target slot");
@@ -137,11 +137,11 @@ async function testAutomationReviewPersistenceAndCorrection() {
   prop.candidateFiles = [{ stored: "PROP-PHOTO-CANDIDATE.png", decision: "unreviewed", targetStateId: "state-taped" }];
   const rendered = await render("#/prop/PROP-PHOTO", project, { scan: scanFor(project) });
   const reviewData = {
-    contractVersion: "reference-authority-v2",
+    contractVersion: "reference-authority-v3",
     authoritySignature: "authority-123",
     inputLabels: [{ image: 1, fileName: "PROP-PHOTO-CANDIDATE.png", role: "candidate under review" }, { image: 2, fileName: "PROP-PHOTO-PRIMARY.png", role: "exact parent-state editable authority" }],
     review: {
-      contractVersion: "reference-authority-v2", score: 94, pass: false, modelPass: true, explicitPass: true, explicitScore: true,
+      contractVersion: "reference-authority-v3", score: 94, pass: false, modelPass: true, explicitPass: true, explicitScore: true,
       hardGateFailures: ["sameEmbeddedContent", "category:major"],
       hardChecks: { sameEmbeddedContent: { required: true, pass: false, note: "The photograph inside the paper was replaced." } },
       categories: { state: { severity: "major", note: "The taped version changed unrelated image content." } },
@@ -150,7 +150,7 @@ async function testAutomationReviewPersistenceAndCorrection() {
   };
   const stored = rendered.context.v663StoreEntityAutomationReview(prop, prop.continuityStates[1], "PROP-PHOTO-CANDIDATE.png", reviewData);
   assert.strictEqual(stored.source, "state-automation");
-  assert.strictEqual(stored.contractVersion, "reference-authority-v2");
+  assert.strictEqual(stored.contractVersion, "reference-authority-v3");
   assert.strictEqual(prop.candidateFiles[0].structuredReviews["state-taped"].authoritySignature, "authority-123");
   const correction = rendered.context.v663EntityReviewCorrection(stored, "props");
   assert(correction.includes("Preserve the exact embedded photograph"));
@@ -159,12 +159,21 @@ async function testAutomationReviewPersistenceAndCorrection() {
 }
 
 function testSourceContracts() {
-  const server = fs.readFileSync(path.join(__dirname, "..", "server.js"), "utf8");
+  const contract = fs.readFileSync(path.join(__dirname, "..", "reference-review-contract.js"), "utf8");
+  const entities = fs.readFileSync(path.join(__dirname, "..", "public", "entities.js"), "utf8");
   const generation = fs.readFileSync(path.join(__dirname, "..", "public", "fal-generation.js"), "utf8");
-  assert(server.includes('const ENTITY_REFERENCE_REVIEW_CONTRACT_VERSION = "reference-authority-v2"'));
-  assert(server.includes('hardGateFailures.push(`category:${worstSeverity}`)'), "major/blocking category findings must override a model pass");
-  assert(server.includes('hardGateFailures.push("score-below-85")'));
-  assert(server.includes('requiredHardChecks.includes("sameEmbeddedContent")') || server.includes('required.push("sameEmbeddedContent")'));
+  const ReferenceReview = require("../reference-review-contract");
+  assert.strictEqual(ReferenceReview.ENTITY_REFERENCE_REVIEW_CONTRACT_VERSION, "reference-authority-v3");
+  /* The browser cannot require the module, so it carries its own copy of the
+     version. A silent divergence would mark every fresh review stale, so the
+     two are pinned to each other here. */
+  assert(
+    entities.includes(`const ENTITY_REFERENCE_REVIEW_CONTRACT_VERSION = "${ReferenceReview.ENTITY_REFERENCE_REVIEW_CONTRACT_VERSION}"`),
+    "public/entities.js must declare the same contract version as the server module",
+  );
+  assert(contract.includes('hardGateFailures.push(`category:${worstSeverity}`)'), "major/blocking category findings must override a model pass");
+  assert(contract.includes('hardGateFailures.push("score-below-85")'));
+  assert(contract.includes('required.push("sameEmbeddedContent")'));
   assert(generation.includes("OBJECT/CONTENT LOCK"));
   assert(generation.includes("SPATIAL LOCK"));
 }

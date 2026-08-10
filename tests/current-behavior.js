@@ -394,6 +394,7 @@ async function main() {
     "reference-authority-deep-dive.js",
     "reference-automation-closed-loop.js",
     "reference-automation-real-browser.py",
+    "reference-review-contract.js",
     "reference-workflow-repair.js",
     "reference-workspace-ux.js",
     "release-package-smoke.js",

@@ -3427,15 +3427,30 @@ function assetPromptContext(P, list, entity, state = null, parentState = null, g
   const baseDescription = entityVisualDescription(entity, type);
   const stateName = String(state?.name || "").trim();
   const stateDelta = serverContinuityStateDelta(state);
+  const stateScope = String(state?.appliesTo || "").trim();
   const parentName = String(parentState?.name || "").trim();
+  /* The scene/shot scope is production intent about where and when the state
+     happens. The reviewer is given it, so the compiler must be too — otherwise
+     generation and review are arguing about two different states. */
+  const scopeLine = stateScope ? `This state is used for: ${stateScope}. Honour any setting, location or moment it names.` : "";
   const description = state && !state.isDefault
     ? [
         baseDescription,
         `Continuity target: ${stateName || "alternate state"}.`,
+        scopeLine,
         stateDelta ? `Apply only this state change: ${stateDelta}` : "Apply the named continuity state without redesigning the entity.",
         parentName ? `The visual parent is ${parentName}; preserve every feature not explicitly changed by this state.` : "Preserve every base-canon feature not explicitly changed by this state.",
       ].filter(Boolean).join("\n")
-    : baseDescription;
+    /* A base state is still a named state. "Rain-soaked arrival · Exterior
+       arrival" carried both the moment and the setting, and the default-state
+       branch used to discard both, leaving generation with the description
+       alone while review was judging against the state. */
+    : [
+        baseDescription,
+        stateName && stateName.toLowerCase() !== "default" ? `Base continuity state: ${stateName}.` : "",
+        scopeLine,
+        stateDelta ? `Base-state requirements: ${stateDelta}` : "",
+      ].filter(Boolean).join("\n");
   const globalStyle = String(P.meta?.globalStylePrompt || "").trim();
   const styleBlocks = [
     ...(P.meta?.styleBlocks || []).filter((b) => b.id !== "global-style"),
@@ -3523,7 +3538,13 @@ app.post("/api/prompt/asset-compile", async (req, res) => {
     if (!entity) return res.status(404).json({ error: "Asset not found" });
     const states = Array.isArray(entity.continuityStates) ? entity.continuityStates.filter(Boolean) : [];
     const requestedStateId = String(req.body.stateId || "").trim();
-    const state = requestedStateId ? states.find((item) => String(item.id) === requestedStateId) : null;
+    /* No stateId means "the base reference", which is still a named state the
+       director may have titled and scoped. Resolving the entity's own default
+       record here is what lets its name and scene scope reach the compiler; it
+       is the same record the reviewer is already judging against. */
+    const state = requestedStateId
+      ? states.find((item) => String(item.id) === requestedStateId)
+      : states.find((item) => item.isDefault) || null;
     if (requestedStateId && !state) return res.status(400).json({ error: "Continuity state not found" });
     const requestedParentId = String(req.body.parentStateId || state?.parentStateId || "").trim();
     const parentState = state && !state.isDefault
@@ -5587,164 +5608,25 @@ app.post("/api/llm/review-candidate", async (req, res) => {
   }
 });
 
-const ENTITY_REFERENCE_REVIEW_CONTRACT_VERSION = "reference-authority-v2";
-const ENTITY_REFERENCE_HARD_CHECK_KEYS = [
-  "sameUnderlyingEntity",
-  "onlyRequestedDelta",
-  "sameEmbeddedContent",
-  "sameSpatialGeometry",
-  "requestedViewCorrect",
-];
-const ENTITY_CANDIDATE_REVIEW_SYSTEM = `You are a strict production-reference reviewer for an AI filmmaking workflow, specializing in continuity authority. Image 1 is the candidate being judged. Any later images are labelled approved authorities. Treat approved authorities as evidence, not inspiration.
+/* The reference-review contract: authority mode, criterion ownership, state
+   semantics and finding classification. Extracted so it can be exercised on its
+   own; the route below assembles inputs and this decides what they mean. */
+const ReferenceReview = require("./reference-review-contract");
+const {
+  ENTITY_REFERENCE_REVIEW_CONTRACT_VERSION,
+  ENTITY_CANDIDATE_REVIEW_SYSTEM,
+  entityReviewStateRecord,
+  entityReviewParentState,
+  entityReviewFolder,
+  entityReviewType,
+  entityReviewCanon,
+  entityReviewHardCheckRequirements,
+  entityReviewAuthorityMode,
+  entityReviewRelatedStates,
+  entityReviewAuthoritySignature,
+  normalizeEntityCandidateReview,
+} = ReferenceReview;
 
-A visually attractive image MUST FAIL when it changes the underlying character, prop, embedded photograph/artwork/text, vehicle construction, or location geometry. A continuity-state candidate MUST preserve everything except the explicitly requested delta. A location angle MUST depict the same navigable physical space: the same walls, openings, doors, windows, fixed fixtures, topology, proportions, materials and landmark placement from a different camera position. Never accept a plausible but newly invented room. A prop containing a photograph, painting, mural, poster, map, document, screen, label, card, print or other embedded content MUST retain that exact internal content unless the requested delta explicitly changes it.
-
-Return ONLY valid JSON, no markdown fences:
-{"score":85,"pass":true,"hardChecks":{"sameUnderlyingEntity":{"pass":true,"note":"specific comparison"},"onlyRequestedDelta":{"pass":true,"note":"specific comparison"},"sameEmbeddedContent":{"pass":true,"note":"specific comparison"},"sameSpatialGeometry":{"pass":true,"note":"specific comparison"},"requestedViewCorrect":{"pass":true,"note":"specific comparison"}},"categories":{"design":{"severity":"pass|minor|major|blocking","note":"specific visible finding"},"state":{"severity":"pass|minor|major|blocking","note":"specific visible finding"},"requirements":{"severity":"pass|minor|major|blocking","note":"specific visible finding"},"usefulness":{"severity":"pass|minor|major|blocking","note":"specific visible finding"},"cleanliness":{"severity":"pass|minor|major|blocking","note":"specific visible finding"}},"referenceNotes":[{"label":"reference label","note":"specific comparison"}],"summary":"concise director-facing summary","recommendation":"approve|alternate|correct|reject"}`;
-function entityReviewStateRecord(entity, stateId) {
-  const states = Array.isArray(entity?.continuityStates) ? entity.continuityStates.filter(Boolean) : [];
-  const existingDefault = states.find((state) => state.isDefault);
-  const defaultState = existingDefault || {
-    id: "state-default",
-    name: "Default",
-    appliesTo: "",
-    approvedFile: entity?.approvedFile || "",
-    notes: "Primary project-wide appearance and design.",
-    isDefault: true,
-  };
-  if (!stateId || stateId === "state-default") return defaultState;
-  return states.find((state) => String(state.id) === String(stateId)) || defaultState;
-}
-function entityReviewParentState(entity, state) {
-  if (!state || state.isDefault) return null;
-  const states = Array.isArray(entity?.continuityStates) ? entity.continuityStates.filter(Boolean) : [];
-  return states.find((item) => String(item.id) === String(state.parentStateId) && String(item.id) !== String(state.id))
-    || states.find((item) => item.isDefault)
-    || null;
-}
-function entityReviewFolder(list) {
-  return { characters: "anchors", locations: "plates", props: "props", vehicles: "vehicles" }[list] || "";
-}
-function entityReviewType(list) {
-  return { characters: "character", locations: "location", props: "prop", vehicles: "vehicle" }[list] || "entity";
-}
-function entityReviewCanon(P, list, entity, state) {
-  const parentState = entityReviewParentState(entity, state);
-  const common = [
-    `ENTITY: ${entity.name || entity.id} (${entity.id})`,
-    `TYPE: ${entityReviewType(list)}`,
-    `TARGET CONTINUITY STATE: ${state.name || "Default"}`,
-    state.appliesTo ? `STATE APPLIES TO: ${state.appliesTo}` : "",
-    state.notes ? `STATE REQUIREMENT: ${state.notes}` : "",
-    parentState ? `PARENT STATE: ${parentState.name || "Default"}. Preserve all parent-state features not explicitly changed by the target state.` : "",
-    entity.block ? `CANON / IDENTITY: ${entity.block}` : "",
-    entity.creationDescription ? `GENERATION DESCRIPTION: ${entity.creationDescription}` : "",
-    entity.description ? `DESCRIPTION: ${entity.description}` : "",
-    entity.notes ? `PRODUCTION NOTES: ${entity.notes}` : "",
-    entity.driftNotes ? `DRIFT-PRONE DETAILS: ${entity.driftNotes}` : "",
-    entity.coveragePolicy ? `LOCATION COVERAGE POLICY: ${entity.coveragePolicy}` : "",
-    P.meta?.world?.setting ? `WORLD / ERA: ${P.meta.world.setting}` : "",
-    P.meta?.world?.include ? `MUST INCLUDE: ${P.meta.world.include}` : "",
-    P.meta?.world?.reject ? `MUST NOT CONTAIN: ${P.meta.world.reject}` : "",
-  ];
-  const factorContract = list === "characters"
-    ? "FACTORS: identity and design; target state and wardrobe; anatomy and required details; production-reference clarity; cleanliness and artifacts."
-    : list === "locations"
-      ? "FACTORS: architecture and layout; target time/weather/state; world, materials, and set dressing; production-reference clarity; cleanliness and artifacts."
-      : list === "vehicles"
-        ? "FACTORS: silhouette and vehicle identity; target condition/state; components, proportions, and functional details; production-reference clarity; cleanliness and artifacts."
-        : "FACTORS: design, scale, and materials; target condition/state; functional and required details; production-reference clarity; cleanliness and artifacts.";
-  return [...common.filter(Boolean), factorContract].join("\n");
-}
-function entityReviewEmbeddedContentRequired(list, entity) {
-  if (list !== "props") return false;
-  const text = [entity?.name, entity?.id, entity?.block, entity?.description, entity?.creationDescription, entity?.notes, entity?.driftNotes]
-    .filter(Boolean).join("\n").toLowerCase();
-  return /\b(photo|photograph|snapshot|portrait|mural|painting|poster|artwork|illustration|print|document|newspaper|letter|map|sign|label|card|book|magazine|screen|display|tile image|emblem|logo)\b/.test(text);
-}
-function entityReviewHardCheckRequirements(list, entity, state, coverageSlot, candidateRow, hasAuthority) {
-  const required = [];
-  const isDerivedState = !!state && !state.isDefault;
-  if (hasAuthority || isDerivedState || coverageSlot) required.push("sameUnderlyingEntity");
-  if (isDerivedState) required.push("onlyRequestedDelta");
-  if (entityReviewEmbeddedContentRequired(list, entity) && (hasAuthority || isDerivedState)) required.push("sameEmbeddedContent");
-  if (list === "locations" && (hasAuthority || isDerivedState || coverageSlot)) required.push("sameSpatialGeometry");
-  if (coverageSlot || candidateRow?.targetCoverageSlotId) required.push("requestedViewCorrect");
-  return [...new Set(required)];
-}
-function entityReviewAuthoritySignature(list, entity, state, coverageSlot, inputLabels, requiredHardChecks) {
-  const payload = JSON.stringify({
-    version: ENTITY_REFERENCE_REVIEW_CONTRACT_VERSION,
-    list,
-    entityId: entity?.id || "",
-    stateId: state?.id || "state-default",
-    stateNotes: state?.notes || "",
-    coverageSlotId: coverageSlot?.id || "",
-    coverageSlotNotes: coverageSlot?.notes || "",
-    authorities: (inputLabels || []).slice(1).map((row) => [row.label, row.role]),
-    requiredHardChecks,
-  });
-  return crypto.createHash("sha256").update(payload).digest("hex").slice(0, 20);
-}
-function normalizeEntityCandidateReview(parsed, options = {}) {
-  const source = parsed && typeof parsed === "object" ? parsed : {};
-  const categories = {};
-  for (const key of ["design", "state", "requirements", "usefulness", "cleanliness"]) {
-    const row = source.categories?.[key] || {};
-    categories[key] = {
-      severity: candidateReviewSeverity(row.severity),
-      note: String(row.note || "").trim(),
-    };
-  }
-  const rank = { pass: 0, minor: 1, major: 2, blocking: 3 };
-  const worstSeverity = Object.values(categories).reduce((current, row) => rank[row.severity] > rank[current] ? row.severity : current, "pass");
-  const explicitPass = typeof source.pass === "boolean";
-  const modelPass = source.pass === true;
-  const explicitScore = source.score !== null && source.score !== "" && typeof source.score !== "undefined" && Number.isFinite(Number(source.score));
-  const score = Math.max(0, Math.min(100, explicitScore ? Number(source.score) : 0));
-  const requiredHardChecks = [...new Set((options.requiredHardChecks || []).filter((key) => ENTITY_REFERENCE_HARD_CHECK_KEYS.includes(key)))];
-  const hardChecks = {};
-  for (const key of ENTITY_REFERENCE_HARD_CHECK_KEYS) {
-    const row = source.hardChecks?.[key];
-    hardChecks[key] = {
-      pass: row?.pass === true,
-      note: String(row?.note || "").trim(),
-      required: requiredHardChecks.includes(key),
-      returned: !!row && typeof row === "object" && typeof row.pass === "boolean",
-    };
-  }
-  const hardGateFailures = requiredHardChecks.filter((key) => !hardChecks[key].returned || !hardChecks[key].pass);
-  if (rank[worstSeverity] >= rank.major) hardGateFailures.push(`category:${worstSeverity}`);
-  if (!explicitScore || score < 85) hardGateFailures.push("score-below-85");
-  if (!explicitPass || !modelPass) hardGateFailures.push("model-did-not-pass");
-  const uniqueFailures = [...new Set(hardGateFailures)];
-  const pass = uniqueFailures.length === 0;
-  let recommendation = ["approve", "alternate", "correct", "reject"].includes(String(source.recommendation || "").toLowerCase())
-    ? String(source.recommendation).toLowerCase()
-    : pass ? "approve" : "correct";
-  if (!pass && recommendation === "approve") recommendation = rank[worstSeverity] >= rank.blocking ? "reject" : "correct";
-  return {
-    contractVersion: ENTITY_REFERENCE_REVIEW_CONTRACT_VERSION,
-    authoritySignature: String(options.authoritySignature || ""),
-    score,
-    pass,
-    modelPass,
-    explicitPass,
-    explicitScore,
-    autoApprove: pass,
-    worstSeverity,
-    requiredHardChecks,
-    hardChecks,
-    hardGateFailures: uniqueFailures,
-    categories,
-    referenceNotes: (Array.isArray(source.referenceNotes) ? source.referenceNotes : []).slice(0, 12).map((row) => ({
-      label: String(row?.label || "Reference").trim(),
-      note: String(row?.note || "").trim(),
-    })).filter((row) => row.note),
-    summary: String(source.summary || "").trim(),
-    recommendation,
-  };
-}
 app.post("/api/llm/review-entity-candidate", async (req, res) => {
   try {
     const visionProvider = aiVisionProviderOverride();
@@ -5800,14 +5682,40 @@ app.post("/api/llm/review-entity-candidate", async (req, res) => {
       inputLabels.push({ image: images.length, label: asset.title || asset.file || "Supporting reference", role: link.role || "supporting entity reference", fileName: safe });
     }
     const hasAuthority = inputLabels.length > 1;
+    const authorityMode = entityReviewAuthorityMode(hasAuthority);
     const requiredHardChecks = entityReviewHardCheckRequirements(list, entity, state, coverageSlot, candidateRow, hasAuthority);
-    const authoritySignature = entityReviewAuthoritySignature(list, entity, state, coverageSlot, inputLabels, requiredHardChecks);
+    const authoritySignature = entityReviewAuthoritySignature(list, entity, state, coverageSlot, inputLabels, requiredHardChecks, authorityMode);
     const hardCheckContract = requiredHardChecks.length
       ? `
 
 MANDATORY HARD CHECKS
 ${requiredHardChecks.map((key) => `- ${key}: MUST be returned and true or the candidate fails.`).join("\n")}`
       : "";
+    /* The mode block is the fix for the circular bootstrap: the reviewer is told
+       in the request whether an authority is supposed to exist, so "none was
+       supplied" stops reading as a fault in the workflow that creates it. */
+    const authorityContract = hasAuthority
+      ? `
+
+AUTHORITY MODE: VALIDATE_AGAINST_AUTHORITY
+${inputLabels.length - 1} approved authority image${inputLabels.length === 2 ? "" : "s"} accompany this candidate. Compare against them and report identity drift honestly.`
+      : `
+
+AUTHORITY MODE: ESTABLISH_AUTHORITY
+No approved visual authority exists for ${entity.name || entity.id} · ${state.name || "Default"} yet. This workflow exists to create the first one, so there is nothing to compare against and that is correct. Judge the candidate ONLY against the written canon and target-state semantics above. Do not lower the score, raise any category, fail any hard check, or write any finding because approved authority images were not supplied. If the candidate satisfies the canon and the target state, say so plainly — a human will decide whether it becomes the authority.`;
+    const relatedStates = entityReviewRelatedStates(entity, state);
+    /* Phase 5: a candidate that belongs to a sibling state must be nameable as
+       such. The roster is evidence for that judgement, never a reassignment. */
+    const relatedStateContract = relatedStates.length
+      ? `
+
+RELATED STATES OF THIS ${entityReviewType(list).toUpperCase()} — DO NOT ACCEPT ONE OF THESE INSTEAD
+${relatedStates.map((row) => `- ${row.name}${row.appliesTo ? ` · scope: ${row.appliesTo}` : ""} (${row.relation})${row.notes ? ` · ${row.notes}` : ""}`).join("\n")}
+Decide which state the candidate actually depicts. Set stateMatch.matchesRequestedState to false and name the closer state in stateMatch.closerState whenever the candidate matches one of the above more closely than the requested "${state.name || "Default"}". A candidate that is visually coherent but belongs to a related state is not a pass for the requested state.`
+      : `
+
+STATE MATCH
+Confirm the candidate depicts the requested "${state.name || "Default"}" state. Set stateMatch.matchesRequestedState to false if it depicts a materially different moment, setting or condition.`;
     const coverageContract = coverageSlot
       ? `
 
@@ -5826,12 +5734,12 @@ Only this requested delta may change: ${state.notes || "No concrete visual delta
 Everything else—including camera/crop, identity, dimensions, embedded imagery or artwork, architecture, materials, wear not named in the delta, and fixed layout—must remain unchanged.`
       : "";
     const user = `INPUT IMAGE ORDER
-${inputLabels.map((item) => `Image ${item.image} = ${item.label} · ${item.role}`).join("\n")}
+${inputLabels.map((item) => `Image ${item.image} = ${item.label} · ${item.role}`).join("\n")}${authorityContract}
 
 REVIEW CONTRACT
-${entityReviewCanon(P, list, entity, state)}${stateContract}${coverageContract}${hardCheckContract}
+${entityReviewCanon(P, list, entity, state)}${stateContract}${relatedStateContract}${coverageContract}${hardCheckContract}
 
-Return a score, explicit model pass/fail, all hard checks, all five factor findings, a concise summary, and a recommendation. A required hard check must be false when evidence is insufficient; never guess continuity.`;
+Return a score, explicit model pass/fail, all hard checks, the stateMatch decision, all six factor findings, a concise summary, and a recommendation.${hasAuthority ? " A required hard check must be false when evidence is insufficient; never guess continuity." : " No hard check may be failed for the absence of approved authority images."}`;
     const assistant = await requestVisionResult(ENTITY_CANDIDATE_REVIEW_SYSTEM, user, images, {
       label: "Entity candidate reviewer",
       maxTokens: 3200,
@@ -5839,14 +5747,22 @@ Return a score, explicit model pass/fail, all hard checks, all five factor findi
       parse: (raw) => {
         const parsed = parseReviewJson(raw);
         if (!parsed) throw new Error("vision model returned an unstructured review");
-        return normalizeEntityCandidateReview(parsed, { requiredHardChecks, authoritySignature });
+        return normalizeEntityCandidateReview(parsed, {
+          requiredHardChecks,
+          authoritySignature,
+          authorityMode,
+          derivedState: !state.isDefault,
+          parentStateName: entityReviewParentState(entity, state)?.name || "",
+        });
       },
     });
     res.json({
       review: assistant.value,
       state: { id: state.id || "state-default", name: state.name || "Default", appliesTo: state.appliesTo || "" },
+      relatedStates,
       inputLabels,
       requiredHardChecks,
+      authorityMode,
       authoritySignature,
       contractVersion: ENTITY_REFERENCE_REVIEW_CONTRACT_VERSION,
       assistantAttempts: assistant.attempts,
