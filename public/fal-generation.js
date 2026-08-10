@@ -334,9 +334,12 @@ window.openFalEntityGenerationModal = (list, entityId, buildId = "", stateId = "
   const typeLabel = { characters: "character", locations: "location", props: "prop", vehicles: "vehicle" }[list] || "entity";
   const workspaceAnchor = document.querySelector("details.asset-creation-card");
   window._falEntityGenerationRequest = { list, entityId, buildId: build.id, stateId: state?.id || "", requestedMode, effectiveMode, anchorTop: workspaceAnchor?.getBoundingClientRect?.().top };
-  const defaultAspect = list === "characters" ? "3:4" : list === "locations" ? "16:9" : "4:3";
+  /* Shown, not chosen. The prompt in `build` was compiled at this ratio minutes ago;
+     a picker here could only disagree with it, and when it did the request won and the
+     prompt was left describing a frame nobody was going to get. */
+  const aspectLabel = referenceAspectLabel(list);
   const stateSummary = state ? `<div class="fal-revision-summary"><b>${esc(state.name || "Continuity state")}</b><p>${esc(state.notes || "No state delta entered.")}</p><small>${effectiveMode === "derive" ? `Editing from ${esc(parentInfo?.parent?.name || "parent state")} · ${esc(parentInfo?.file || "")}` : requestedMode === "derive" ? `The selected parent has no approved image, so this run will create independently.` : "Creating independently from entity canon and the state delta."}</small></div>` : "";
-  openModal(`<h3>Generate ${state ? `${esc(state.name || "state")} ` : ""}${esc(typeLabel)} reference candidates</h3><div class="modal-sub">FAL · GPT IMAGE 2${refs.length ? " EDIT / REFERENCE-GUIDED" : " TEXT-TO-IMAGE"}</div>${stateSummary}<div class="candidate-evidence-facts"><span>${esc(entity.id)}</span>${state ? `<span>Target · ${esc(state.name || "State")}</span>` : ""}<span>${refs.length} input${refs.length === 1 ? "" : "s"}</span><span>Candidate only · approval required</span></div><div class="two-col"><label><span>Number of options</span><select id="fal-entity-output-count">${[1,2,3,4].map((n) => `<option value="${n}" ${n === count ? "selected" : ""}>${n}</option>`).join("")}</select></label><label><span>Quality</span><select id="fal-entity-quality">${["low","medium","high"].map((value) => `<option value="${value}" ${value === quality ? "selected" : ""}>${value[0].toUpperCase() + value.slice(1)}</option>`).join("")}</select></label><label><span>Resolution</span><select id="fal-entity-resolution">${falResolutionOptions(resolution)}</select></label></div><label><span>Aspect ratio</span><select id="fal-entity-aspect">${["1:1","4:3","3:4","16:9","9:16"].map((value) => `<option value="${value}" ${value === defaultAspect ? "selected" : ""}>${value}</option>`).join("")}</select></label><p class="hint">This submits a paid FAL image request. Returned files are added as unapproved ${esc(typeLabel)} candidates${state ? ` targeted to ${esc(state.name || "this state")}` : ""}. They do not become canon until you explicitly approve one.</p><div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button class="approve-btn large" onclick="startFalEntityGeneration()">START GENERATION</button></div>`);
+  openModal(`<h3>Generate ${state ? `${esc(state.name || "state")} ` : ""}${esc(typeLabel)} reference candidates</h3><div class="modal-sub">FAL · GPT IMAGE 2${refs.length ? " EDIT / REFERENCE-GUIDED" : " TEXT-TO-IMAGE"}</div>${stateSummary}<div class="candidate-evidence-facts"><span>${esc(entity.id)}</span>${state ? `<span>Target · ${esc(state.name || "State")}</span>` : ""}<span>${refs.length} input${refs.length === 1 ? "" : "s"}</span><span>Candidate only · approval required</span></div><div class="two-col"><label><span>Number of options</span><select id="fal-entity-output-count">${[1,2,3,4].map((n) => `<option value="${n}" ${n === count ? "selected" : ""}>${n}</option>`).join("")}</select></label><label><span>Quality</span><select id="fal-entity-quality">${["low","medium","high"].map((value) => `<option value="${value}" ${value === quality ? "selected" : ""}>${value[0].toUpperCase() + value.slice(1)}</option>`).join("")}</select></label><label><span>Resolution</span><select id="fal-entity-resolution">${falResolutionOptions(resolution)}</select></label></div><div class="candidate-evidence-facts" data-fal-entity-aspect="${attr(aspectLabel)}"><span>Aspect ratio · ${esc(aspectLabel)}</span><span>${esc(typeLabel)} reference format · matches the compiled prompt</span></div><p class="hint">This submits a paid FAL image request. Returned files are added as unapproved ${esc(typeLabel)} candidates${state ? ` targeted to ${esc(state.name || "this state")}` : ""}. They do not become canon until you explicitly approve one.</p><div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button class="approve-btn large" onclick="startFalEntityGeneration()">START GENERATION</button></div>`);
 };
 
 window.generateMoreEntityStateCandidates = async (list, entityId, stateId, buildId = "", improve = false) => {
@@ -375,7 +378,7 @@ window.generateMoreEntityStateCandidates = async (list, entityId, stateId, build
     outputCount: 3,
     quality: falGenerationConfig().frameQuality || "high",
     resolution: falResolutionValue("frame"),
-    aspectRatio: list === "characters" ? "3:4" : list === "locations" ? "16:9" : "4:3",
+    aspectRatio: referenceAspectLabel(list),
   };
   try {
     await flushPendingProjectSave();
@@ -423,7 +426,9 @@ window.startFalEntityGeneration = async () => {
     outputCount: Number(document.getElementById("fal-entity-output-count")?.value || 1),
     quality: document.getElementById("fal-entity-quality")?.value || "high",
     resolution: document.getElementById("fal-entity-resolution")?.value || falResolutionValue("frame"),
-    aspectRatio: document.getElementById("fal-entity-aspect")?.value || "4:3",
+    /* From the resolver, not from the modal. The compiled prompt already committed to
+       this shape; reading a control here is what let the two disagree. */
+    aspectRatio: referenceAspectLabel(request.list),
   };
   try {
     await flushPendingProjectSave();

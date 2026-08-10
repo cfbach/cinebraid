@@ -534,7 +534,12 @@ function testNoProviderRegression() {
   const automation = read("public/automation.js");
   assert(automation.includes("V627_AUTOMATION_AUTO_APPROVE_SCORE = 85"), "the strong-pass threshold must remain explicit");
   assert(automation.includes('purpose: "entity-reference"'), "reference generation must still submit as entity-reference work");
-  assert(automation.includes('aspectRatio: list === "characters" ? "3:4"'), "the FAL aspect-ratio wiring must be unchanged");
+  /* The three per-list literals moved into public/shared-aspect.js so the reference
+     COMPILER could read the same value the request carries. What this anchor protects
+     is unchanged: reference generation still names a ratio on the job, and a character
+     reference is still 3:4. */
+  assert(automation.includes("aspectRatio: referenceAspectLabel(list)"), "the FAL aspect ratio must come from the one reference-format resolver");
+  assert.strictEqual(require(path.join(ROOT, "public/shared-aspect")).referenceAspectLabel("characters"), "3:4", "a character reference is still generated at 3:4");
   assert(automation.includes("v6211RunGenerationSettings(run).frameQuality"), "quality must still come from the confirmed run settings");
   assert(!/autoApprove\s*\?\s*v626ApproveEntity/.test(automation));
   assert(automation.includes("Credit guard stopped the run before exceeding"), "the image cap guard must remain");

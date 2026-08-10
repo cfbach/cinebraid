@@ -25,6 +25,7 @@ const {
 const PromptEngine = require("./prompt-engine");
 const { httpStatusForError } = require("./http-errors");
 const { resolveShotEntities, shotEntityTokenMatches, unresolvedShotDependencies, entityVisualDescription, resolveShotDuration, lossyShotCodeTokens } = require("./public/shared-entities");
+const { referenceAspectLabel, aspectRatioMentions } = require("./public/shared-aspect");
 const Continuity = require("./public/shared-continuity");
 const { createContinuityCache } = require("./continuity-cache");
 const ContinuityJson = require("./continuity-json");
@@ -3475,18 +3476,38 @@ function assetPromptContext(P, list, entity, state = null, parentState = null, g
         : type === "vehicle"
           ? "Vehicle fully visible at a useful three-quarter angle, with silhouette, proportions, construction, materials, finish, scale and functional details clearly readable."
           : "Object centered and fully visible at a useful three-quarter angle, with scale, construction, materials and wear clearly readable.";
+  /* THE reference-generation format, from the one resolver every request builder
+     already reads. It is not the production delivery format and never was: this
+     compile produces a character anchor, a location plate or an object card, and the
+     provider request has always asked for exactly that shape. Handing the compiler
+     `meta.aspectRatio` instead is what let a 16:9 project write "Output at 16:9" into
+     a prompt whose request said 3:4 — the model was given two answers and the request
+     won, silently. */
+  const referenceRatio = referenceAspectLabel(list);
+  /* The legacy free-text format ("Short film · 16:9") reaches the prompt advisor as
+     context, and it carried the same contradiction one indirection further back: the
+     advisor reads the delivery ratio and writes "16:9 composition" into staging or
+     camera prose the compiler then emits verbatim. The medium survives; the ratio
+     inside it is restated as the one this reference is actually being generated at. */
+  const productionFormat = String(P.meta?.format || "");
+  const referenceFormat = aspectRatioMentions(productionFormat)
+    .reduce((text, mention) => text.split(mention).join(referenceRatio), productionFormat);
   return {
     project: {
       title: P.meta?.title || "",
-      format: P.meta?.format || "",
+      format: referenceFormat,
       world: {
         ...(P.meta?.world || {}),
         reject:
           P.meta?.globalNegativePrompt || P.meta?.world?.reject || "",
+        /* world.aspectRatio is the compiler's second reader (`spec.aspectRatio ||
+           spec.world?.aspectRatio`). Left at the production format it would reinstate
+           the contradiction the moment the first reader was empty. */
+        aspectRatio: referenceRatio,
       },
       styleBlocks,
       qcChecklist: P.qcChecklist || [],
-      aspectRatio: P.meta?.aspectRatio || "",
+      aspectRatio: referenceRatio,
     },
     scene: {
       id: "ASSET",

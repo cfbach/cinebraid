@@ -253,7 +253,7 @@
         entity.coverageAutomation.status = "individual-running";
         for (const slot of slots) {
           const prompt = coverageSlotPrompt(req.list, entity, slot, direction);
-          const job = await submitCoverageJob(req.list, entity, { prompt, outputCount: 3, resolution, aspectRatio: req.list === "characters" ? "3:4" : req.list === "locations" ? "16:9" : "4:3", coverageJobType: "slot", coverageSheetType: "", slot, clientRequestId: coverageClientRequestId(req.list, req.entityId, "slot", slot.id) });
+          const job = await submitCoverageJob(req.list, entity, { prompt, outputCount: 3, resolution, aspectRatio: referenceAspectLabel(req.list), coverageJobType: "slot", coverageSheetType: "", slot, clientRequestId: coverageClientRequestId(req.list, req.entityId, "slot", slot.id) });
           entity.coverageAutomation.jobs.push(job.id);
         }
         toast(`${slots.length} missing coverage slot generation job${slots.length === 1 ? "" : "s"} queued`);
@@ -281,7 +281,7 @@
     setCoverageLock(lockKey, true);
     try {
       const prompt = coverageSlotPrompt(list, entity, slot, entity.coverageGenerationNotes || "");
-      await submitCoverageJob(list, entity, { prompt, outputCount: 3, resolution: "4k", aspectRatio: list === "characters" ? "3:4" : list === "locations" ? "16:9" : "4:3", coverageJobType: "slot", slot, clientRequestId: coverageClientRequestId(list, entityId, "slot", slotId) });
+      await submitCoverageJob(list, entity, { prompt, outputCount: 3, resolution: "4k", aspectRatio: referenceAspectLabel(list), coverageJobType: "slot", slot, clientRequestId: coverageClientRequestId(list, entityId, "slot", slotId) });
       toast(`${slot.label} coverage candidates queued`);
       route();
     } catch (error) { toast("Coverage slot generation failed: " + error.message); }

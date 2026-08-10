@@ -766,8 +766,8 @@ async function testPinnedQualityRefusesEscalation(C) {
     /* The escalation a pinned run exists to catch: the settings say high while
        the acceptance run is authorized for low. */
     mutateSource: mutateScript("automation.js",
-      'quality: v6211RunGenerationSettings(run).frameQuality, resolution: v6211RunGenerationSettings(run).frameResolution, aspectRatio: list === "characters"',
-      'quality: "high", resolution: v6211RunGenerationSettings(run).frameResolution, aspectRatio: list === "characters"', "pinned run escalation"),
+      'quality: v6211RunGenerationSettings(run).frameQuality, resolution: v6211RunGenerationSettings(run).frameResolution, aspectRatio: referenceAspectLabel(list)',
+      'quality: "high", resolution: v6211RunGenerationSettings(run).frameResolution, aspectRatio: referenceAspectLabel(list)', "pinned run escalation"),
   });
   let failed = false;
   try { await startReferenceAutomation(world, { stateRounds: 1, outputsPerRequest: 1, frameQuality: "low", requiredQuality: "low" }); }
@@ -1011,8 +1011,8 @@ async function testNegativeControls() {
       passes: [[{ file: "MARA-N5.png", review: CASE_82_EXTERIOR_CLEAN }]],
       mutateSource: (file, source) => file !== "automation.js" ? source : mutateOnce(
         mutateOnce(source, "v667AssertRequestQuality(body, run);", "", "G boundary assertion removed"),
-        'quality: v6211RunGenerationSettings(run).frameQuality, resolution: v6211RunGenerationSettings(run).frameResolution, aspectRatio: list === "characters"',
-        'resolution: v6211RunGenerationSettings(run).frameResolution, aspectRatio: list === "characters"', "G quality dropped from the request"),
+        'quality: v6211RunGenerationSettings(run).frameQuality, resolution: v6211RunGenerationSettings(run).frameResolution, aspectRatio: referenceAspectLabel(list)',
+        'resolution: v6211RunGenerationSettings(run).frameResolution, aspectRatio: referenceAspectLabel(list)', "G quality dropped from the request"),
     });
     await startReferenceAutomation(world, { stateRounds: 1, outputsPerRequest: 1, frameQuality: "low" });
     assert.strictEqual(world.counts.falBodies[0]?.quality, "low", "every request must carry the chosen quality");
@@ -1025,8 +1025,8 @@ async function testNegativeControls() {
       passes: [[{ file: "MARA-N6.png", review: CASE_82_EXTERIOR_CLEAN }]],
       mutateSource: (file, source) => file !== "automation.js" ? source : mutateOnce(
         mutateOnce(source, 'const required = String(run?.config?.requiredQuality || "").toLowerCase();', 'const required = "";', "H pin check removed"),
-        'quality: v6211RunGenerationSettings(run).frameQuality, resolution: v6211RunGenerationSettings(run).frameResolution, aspectRatio: list === "characters"',
-        'quality: "high", resolution: v6211RunGenerationSettings(run).frameResolution, aspectRatio: list === "characters"', "H tier escalated"),
+        'quality: v6211RunGenerationSettings(run).frameQuality, resolution: v6211RunGenerationSettings(run).frameResolution, aspectRatio: referenceAspectLabel(list)',
+        'quality: "high", resolution: v6211RunGenerationSettings(run).frameResolution, aspectRatio: referenceAspectLabel(list)', "H tier escalated"),
     });
     await startReferenceAutomation(world, { stateRounds: 1, outputsPerRequest: 1, frameQuality: "low", requiredQuality: "low" });
     assert.strictEqual(world.counts.falBodies.length, 0, "a pinned LOW run must refuse a high request");
