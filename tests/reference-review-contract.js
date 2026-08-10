@@ -42,7 +42,12 @@ const ROOT = path.join(__dirname, "..");
 /* ------------------------------------------------- the contract under test */
 
 const CONTRACT_PATH = path.join(ROOT, "reference-review-contract.js");
-const CONTRACT_SOURCE = fs.readFileSync(CONTRACT_PATH, "utf8");
+/* Line endings are a checkout detail, not a fact about the source. This repo
+   checks out CRLF on Windows and CI, so a multi-line mutation anchor written
+   with \n would match locally and silently match nothing there. Normalising
+   before any matching keeps the negative controls honest on both. */
+const normalize = (value) => String(value).replace(/\r\n/g, "\n");
+const CONTRACT_SOURCE = normalize(fs.readFileSync(CONTRACT_PATH, "utf8"));
 
 /* The contract is a module, so the ordinary case is a require. A negative
    control instead evaluates a MUTATED COPY of the same source in a sandbox —
@@ -728,10 +733,11 @@ async function expectRed(label, run) {
    being mistaken for the control working. */
 const MUTATIONS_APPLIED = [];
 function mutateOnce(source, needle, replacement, label) {
-  const occurrences = source.split(needle).length - 1;
+  const text = normalize(source);
+  const occurrences = text.split(needle).length - 1;
   assert.strictEqual(occurrences, 1, `NEGATIVE CONTROL ANCHOR STALE — ${label} matched ${occurrences} times, expected exactly 1`);
   MUTATIONS_APPLIED.push(label);
-  return source.replace(needle, replacement);
+  return text.replace(needle, replacement);
 }
 /* Only the named public script is rewritten; every other file loads intact. */
 function mutateScript(fileName, needle, replacement, label) {
