@@ -99,6 +99,8 @@ const nodeSuites = [
   "check:ofp-negative",
   "check:ofp-migration",
   "check:ofp-migration-negative",
+  "check:ofp-overfit",
+  "check:ofp-overfit-negative",
   "check:version",
   "check:shot-layout",
   "check:settings",

@@ -1,0 +1,3790 @@
+{
+  "note": "Pinned migration results for the sanitized Overfit corpus. Regenerated only by scripts/build-overfit-golden-fixtures.js; tests/ofp-overfit-conformance.js verifies and never rewrites.",
+  "contractVersion": "1.0-draft.1",
+  "migrationAt": "2026-08-10T00:00:00Z",
+  "fullGoldens": [
+    "overfit-01-anchorhub-v1",
+    "overfit-04-anchorhub-22",
+    "overfit-18-cinebraid-581"
+  ],
+  "goldens": [
+    {
+      "id": "overfit-01-anchorhub-v1",
+      "ok": true,
+      "source": {
+        "family": "cinebraid-legacy",
+        "generation": "pre-6.6",
+        "confidence": "sniffed",
+        "schemaVersion": null,
+        "hubVersion": "v1",
+        "metaVersion": "v2.1",
+        "metaVersionClass": "film-draft",
+        "markers": [
+          "shot.codes"
+        ],
+        "fingerprint": "sha256:2e16463de8c689f17d5a1235515eeb169d4eb192a62084852832d49d5938c38f"
+      },
+      "rulesApplied": [
+        "M001",
+        "M002",
+        "M003",
+        "M053",
+        "M004",
+        "M006",
+        "M011",
+        "M005",
+        "M010",
+        "M013",
+        "M012",
+        "M020",
+        "M050",
+        "M051",
+        "M052",
+        "M070"
+      ],
+      "ruleStatements": {
+        "M002": 1,
+        "M020": 19
+      },
+      "accounting": {
+        "leaves": 406,
+        "unaccounted": 0,
+        "byDisposition": {
+          "mapped": 159,
+          "preserved": 223,
+          "dropped": 24,
+          "stated": 20,
+          "unmapped": 0
+        },
+        "byRule": {
+          "M002": 3,
+          "M003": 21,
+          "M053": 5,
+          "M004": 49,
+          "M006": 31,
+          "M011": 8,
+          "M005": 122,
+          "M010": 11,
+          "M013": 11,
+          "M012": 19,
+          "M020": 52,
+          "M050": 49,
+          "M051": 14,
+          "M052": 9,
+          "M070": 22
+        }
+      },
+      "counts": {
+        "scenes": {
+          "before": 7,
+          "after": 7
+        },
+        "shots": {
+          "before": 11,
+          "after": 11
+        },
+        "characters": {
+          "before": 1,
+          "after": 1
+        },
+        "locations": {
+          "before": 4,
+          "after": 4
+        },
+        "props": {
+          "before": 3,
+          "after": 3
+        },
+        "statements": {
+          "before": 0,
+          "after": 20
+        }
+      },
+      "identity": {
+        "source": 26,
+        "preserved": 26,
+        "lost": 0,
+        "minted": 0
+      },
+      "statements": {
+        "total": 20,
+        "kinds": {
+          "suggested": 1,
+          "disputed": 19
+        },
+        "ids": [
+          "stm-m002-0001",
+          "stm-m020-0001",
+          "stm-m020-0002",
+          "stm-m020-0003",
+          "stm-m020-0004",
+          "stm-m020-0005",
+          "stm-m020-0006",
+          "stm-m020-0007",
+          "stm-m020-0008",
+          "stm-m020-0009",
+          "stm-m020-0010",
+          "stm-m020-0011",
+          "stm-m020-0012",
+          "stm-m020-0013",
+          "stm-m020-0014",
+          "stm-m020-0015",
+          "stm-m020-0016",
+          "stm-m020-0017",
+          "stm-m020-0018",
+          "stm-m020-0019"
+        ]
+      },
+      "diagnostics": [
+        "info:migration.source.sniffed"
+      ],
+      "validation": {
+        "ok": true,
+        "counts": {
+          "error": 0,
+          "warning": 0,
+          "info": 1
+        }
+      },
+      "summary": {
+        "deterministicMappings": 159,
+        "inferredMappings": 1,
+        "disputes": 19,
+        "preservedValues": 223,
+        "droppedValues": 24,
+        "unmappedValues": 0,
+        "warnings": 0,
+        "errors": 0
+      },
+      "candidateSha256": "f0c867a308a47fd0777b855e852af8142af3195f2e6c0a35398fd025fa1bae97",
+      "candidateBytes": 74861
+    },
+    {
+      "id": "overfit-02-anchorhub-18",
+      "ok": true,
+      "source": {
+        "family": "cinebraid-legacy",
+        "generation": "pre-6.6",
+        "confidence": "sniffed",
+        "schemaVersion": null,
+        "hubVersion": "v1",
+        "metaVersion": "v2.1",
+        "metaVersionClass": "film-draft",
+        "markers": [
+          "shot.codes"
+        ],
+        "fingerprint": "sha256:ad9cd38a02d63e103f661b2d9693167e52b857851cc171e3ebe9ddc52f506dc8"
+      },
+      "rulesApplied": [
+        "M001",
+        "M002",
+        "M003",
+        "M053",
+        "M004",
+        "M006",
+        "M011",
+        "M005",
+        "M010",
+        "M013",
+        "M012",
+        "M020",
+        "M050",
+        "M051",
+        "M052",
+        "M070"
+      ],
+      "ruleStatements": {
+        "M002": 1,
+        "M020": 19
+      },
+      "accounting": {
+        "leaves": 413,
+        "unaccounted": 0,
+        "byDisposition": {
+          "mapped": 159,
+          "preserved": 230,
+          "dropped": 24,
+          "stated": 20,
+          "unmapped": 0
+        },
+        "byRule": {
+          "M002": 3,
+          "M003": 21,
+          "M053": 5,
+          "M004": 49,
+          "M006": 39,
+          "M011": 8,
+          "M005": 122,
+          "M010": 11,
+          "M013": 11,
+          "M012": 19,
+          "M020": 52,
+          "M050": 49,
+          "M051": 14,
+          "M052": 9,
+          "M070": 21
+        }
+      },
+      "counts": {
+        "scenes": {
+          "before": 7,
+          "after": 7
+        },
+        "shots": {
+          "before": 11,
+          "after": 11
+        },
+        "characters": {
+          "before": 1,
+          "after": 1
+        },
+        "locations": {
+          "before": 4,
+          "after": 4
+        },
+        "props": {
+          "before": 3,
+          "after": 3
+        },
+        "statements": {
+          "before": 0,
+          "after": 20
+        }
+      },
+      "identity": {
+        "source": 26,
+        "preserved": 26,
+        "lost": 0,
+        "minted": 0
+      },
+      "statements": {
+        "total": 20,
+        "kinds": {
+          "suggested": 1,
+          "disputed": 19
+        },
+        "ids": [
+          "stm-m002-0001",
+          "stm-m020-0001",
+          "stm-m020-0002",
+          "stm-m020-0003",
+          "stm-m020-0004",
+          "stm-m020-0005",
+          "stm-m020-0006",
+          "stm-m020-0007",
+          "stm-m020-0008",
+          "stm-m020-0009",
+          "stm-m020-0010",
+          "stm-m020-0011",
+          "stm-m020-0012",
+          "stm-m020-0013",
+          "stm-m020-0014",
+          "stm-m020-0015",
+          "stm-m020-0016",
+          "stm-m020-0017",
+          "stm-m020-0018",
+          "stm-m020-0019"
+        ]
+      },
+      "diagnostics": [
+        "info:migration.source.sniffed"
+      ],
+      "validation": {
+        "ok": true,
+        "counts": {
+          "error": 0,
+          "warning": 0,
+          "info": 1
+        }
+      },
+      "summary": {
+        "deterministicMappings": 159,
+        "inferredMappings": 1,
+        "disputes": 19,
+        "preservedValues": 230,
+        "droppedValues": 24,
+        "unmappedValues": 0,
+        "warnings": 0,
+        "errors": 0
+      },
+      "candidateSha256": "d5420db9fc0ebec62cbf5a6a9da192756dc1c06da0409b1438c2fd3d33e21cb2",
+      "candidateBytes": 75540
+    },
+    {
+      "id": "overfit-03-anchorhub-19",
+      "ok": true,
+      "source": {
+        "family": "cinebraid-legacy",
+        "generation": "pre-6.6",
+        "confidence": "sniffed",
+        "schemaVersion": null,
+        "hubVersion": "v1",
+        "metaVersion": "v2.1",
+        "metaVersionClass": "film-draft",
+        "markers": [
+          "shot.codes"
+        ],
+        "fingerprint": "sha256:39d82f026fe95749f929f992f3130bab396a54a6dc1a40021b39f657366e7251"
+      },
+      "rulesApplied": [
+        "M001",
+        "M002",
+        "M003",
+        "M053",
+        "M004",
+        "M006",
+        "M011",
+        "M005",
+        "M010",
+        "M013",
+        "M012",
+        "M020",
+        "M050",
+        "M051",
+        "M052",
+        "M070"
+      ],
+      "ruleStatements": {
+        "M002": 1,
+        "M020": 19
+      },
+      "accounting": {
+        "leaves": 400,
+        "unaccounted": 0,
+        "byDisposition": {
+          "mapped": 159,
+          "preserved": 217,
+          "dropped": 24,
+          "stated": 20,
+          "unmapped": 0
+        },
+        "byRule": {
+          "M002": 3,
+          "M003": 21,
+          "M053": 5,
+          "M004": 49,
+          "M006": 31,
+          "M011": 8,
+          "M005": 122,
+          "M010": 11,
+          "M013": 11,
+          "M012": 19,
+          "M020": 52,
+          "M050": 49,
+          "M051": 14,
+          "M052": 9,
+          "M070": 16
+        }
+      },
+      "counts": {
+        "scenes": {
+          "before": 7,
+          "after": 7
+        },
+        "shots": {
+          "before": 11,
+          "after": 11
+        },
+        "characters": {
+          "before": 1,
+          "after": 1
+        },
+        "locations": {
+          "before": 4,
+          "after": 4
+        },
+        "props": {
+          "before": 3,
+          "after": 3
+        },
+        "statements": {
+          "before": 0,
+          "after": 20
+        }
+      },
+      "identity": {
+        "source": 26,
+        "preserved": 26,
+        "lost": 0,
+        "minted": 0
+      },
+      "statements": {
+        "total": 20,
+        "kinds": {
+          "suggested": 1,
+          "disputed": 19
+        },
+        "ids": [
+          "stm-m002-0001",
+          "stm-m020-0001",
+          "stm-m020-0002",
+          "stm-m020-0003",
+          "stm-m020-0004",
+          "stm-m020-0005",
+          "stm-m020-0006",
+          "stm-m020-0007",
+          "stm-m020-0008",
+          "stm-m020-0009",
+          "stm-m020-0010",
+          "stm-m020-0011",
+          "stm-m020-0012",
+          "stm-m020-0013",
+          "stm-m020-0014",
+          "stm-m020-0015",
+          "stm-m020-0016",
+          "stm-m020-0017",
+          "stm-m020-0018",
+          "stm-m020-0019"
+        ]
+      },
+      "diagnostics": [
+        "info:migration.source.sniffed"
+      ],
+      "validation": {
+        "ok": true,
+        "counts": {
+          "error": 0,
+          "warning": 0,
+          "info": 1
+        }
+      },
+      "summary": {
+        "deterministicMappings": 159,
+        "inferredMappings": 1,
+        "disputes": 19,
+        "preservedValues": 217,
+        "droppedValues": 24,
+        "unmappedValues": 0,
+        "warnings": 0,
+        "errors": 0
+      },
+      "candidateSha256": "5571e455049691d074f245fc613337d921f9357073abf715f7320b3e857060b4",
+      "candidateBytes": 71006
+    },
+    {
+      "id": "overfit-04-anchorhub-22",
+      "ok": false,
+      "source": {
+        "family": "cinebraid-legacy",
+        "generation": "pre-6.6",
+        "confidence": "sniffed",
+        "schemaVersion": null,
+        "hubVersion": "v2.2",
+        "metaVersion": "v2.1",
+        "metaVersionClass": "film-draft",
+        "markers": [
+          "shot.atomic/parentShot/fallbackFor",
+          "shot.codes"
+        ],
+        "fingerprint": "sha256:0a0ac49e06a6ddb931fecafa017f230f67272ccfaa868dd34a88b7d338eeec4f"
+      },
+      "rulesApplied": [
+        "M001",
+        "M002",
+        "M003",
+        "M053",
+        "M004",
+        "M006",
+        "M011",
+        "M005",
+        "M010",
+        "M013",
+        "M012",
+        "M020",
+        "M021",
+        "M022",
+        "M050",
+        "M051",
+        "M052",
+        "M070"
+      ],
+      "ruleStatements": {
+        "M002": 1,
+        "M020": 45,
+        "M022": 6
+      },
+      "accounting": {
+        "leaves": 1225,
+        "unaccounted": 0,
+        "byDisposition": {
+          "mapped": 492,
+          "preserved": 653,
+          "dropped": 80,
+          "stated": 53,
+          "unmapped": 0
+        },
+        "byRule": {
+          "M002": 3,
+          "M003": 21,
+          "M053": 5,
+          "M004": 96,
+          "M006": 34,
+          "M011": 9,
+          "M005": 462,
+          "M022": 7,
+          "M010": 39,
+          "M013": 39,
+          "M012": 48,
+          "M020": 155,
+          "M021": 34,
+          "M050": 120,
+          "M051": 39,
+          "M052": 40,
+          "M070": 127
+        }
+      },
+      "counts": {
+        "scenes": {
+          "before": 8,
+          "after": 8
+        },
+        "shots": {
+          "before": 39,
+          "after": 39
+        },
+        "characters": {
+          "before": 1,
+          "after": 1
+        },
+        "locations": {
+          "before": 4,
+          "after": 4
+        },
+        "props": {
+          "before": 4,
+          "after": 4
+        },
+        "relations": {
+          "before": 0,
+          "after": 39
+        },
+        "statements": {
+          "before": 0,
+          "after": 52
+        }
+      },
+      "identity": {
+        "source": 56,
+        "preserved": 56,
+        "lost": 0,
+        "minted": 39
+      },
+      "statements": {
+        "total": 52,
+        "kinds": {
+          "suggested": 7,
+          "disputed": 45
+        },
+        "ids": [
+          "stm-m002-0001",
+          "stm-m020-0001",
+          "stm-m020-0002",
+          "stm-m020-0003",
+          "stm-m020-0004",
+          "stm-m020-0005",
+          "stm-m020-0006",
+          "stm-m020-0007",
+          "stm-m020-0008",
+          "stm-m020-0009",
+          "stm-m020-0010",
+          "stm-m020-0011",
+          "stm-m020-0012",
+          "stm-m020-0013",
+          "stm-m020-0014",
+          "stm-m020-0015",
+          "stm-m020-0016",
+          "stm-m020-0017",
+          "stm-m020-0018",
+          "stm-m020-0019",
+          "stm-m020-0020",
+          "stm-m020-0021",
+          "stm-m020-0022",
+          "stm-m020-0023",
+          "stm-m020-0024",
+          "stm-m020-0025",
+          "stm-m020-0026",
+          "stm-m020-0027",
+          "stm-m020-0028",
+          "stm-m020-0029",
+          "stm-m020-0030",
+          "stm-m020-0031",
+          "stm-m020-0032",
+          "stm-m020-0033",
+          "stm-m020-0034",
+          "stm-m020-0035",
+          "stm-m020-0036",
+          "stm-m020-0037",
+          "stm-m020-0038",
+          "stm-m020-0039",
+          "stm-m020-0040",
+          "stm-m020-0041",
+          "stm-m020-0042",
+          "stm-m020-0043",
+          "stm-m020-0044",
+          "stm-m020-0045",
+          "stm-m022-0001",
+          "stm-m022-0002",
+          "stm-m022-0003",
+          "stm-m022-0004",
+          "stm-m022-0005",
+          "stm-m022-0006"
+        ]
+      },
+      "diagnostics": [
+        "error:migration.validation.failed",
+        "info:migration.source.sniffed",
+        "warning:migration.code.unresolved",
+        "warning:migration.code.unresolved",
+        "warning:migration.code.unresolved",
+        "warning:migration.code.unresolved",
+        "warning:migration.code.unresolved",
+        "warning:migration.code.unresolved",
+        "warning:migration.code.unresolved",
+        "warning:migration.code.unresolved",
+        "warning:migration.code.unresolved",
+        "warning:migration.code.unresolved",
+        "warning:migration.id.not-portable",
+        "warning:migration.id.not-portable",
+        "warning:migration.id.not-portable",
+        "warning:migration.id.not-portable",
+        "warning:migration.id.not-portable"
+      ],
+      "validation": {
+        "ok": false,
+        "counts": {
+          "error": 28,
+          "warning": 5,
+          "info": 1
+        }
+      },
+      "summary": {
+        "deterministicMappings": 492,
+        "inferredMappings": 7,
+        "disputes": 45,
+        "preservedValues": 653,
+        "droppedValues": 80,
+        "unmappedValues": 0,
+        "warnings": 15,
+        "errors": 1
+      },
+      "candidateSha256": "aa2ecd462ab02b4afa1faad1069c702a7b0f600e9f5168fe7231a2125829bd49",
+      "candidateBytes": 229707
+    },
+    {
+      "id": "overfit-05-anchorhub-30",
+      "ok": true,
+      "source": {
+        "family": "cinebraid-legacy",
+        "generation": "pre-6.6",
+        "confidence": "sniffed",
+        "schemaVersion": null,
+        "hubVersion": "v3",
+        "metaVersion": "v2.1",
+        "metaVersionClass": "film-draft",
+        "markers": [
+          "shot.clips",
+          "shot.atomic/parentShot/fallbackFor",
+          "shot.codes"
+        ],
+        "fingerprint": "sha256:67bde8310045b7d34d43028ccb49cace2eb9aaab1aadf3abfab3b9b7c8e24a21"
+      },
+      "rulesApplied": [
+        "M001",
+        "M002",
+        "M003",
+        "M053",
+        "M004",
+        "M006",
+        "M011",
+        "M005",
+        "M010",
+        "M009",
+        "M013",
+        "M012",
+        "M020",
+        "M021",
+        "M050",
+        "M051",
+        "M052",
+        "M070"
+      ],
+      "ruleStatements": {
+        "M002": 1,
+        "M020": 19
+      },
+      "accounting": {
+        "leaves": 1185,
+        "unaccounted": 0,
+        "byDisposition": {
+          "mapped": 307,
+          "preserved": 818,
+          "dropped": 60,
+          "stated": 20,
+          "unmapped": 0
+        },
+        "byRule": {
+          "M002": 3,
+          "M003": 21,
+          "M053": 5,
+          "M004": 96,
+          "M006": 34,
+          "M011": 9,
+          "M005": 187,
+          "M010": 16,
+          "M009": 87,
+          "M013": 16,
+          "M012": 25,
+          "M020": 63,
+          "M021": 1,
+          "M050": 74,
+          "M051": 19,
+          "M052": 40,
+          "M070": 509
+        }
+      },
+      "counts": {
+        "scenes": {
+          "before": 8,
+          "after": 8
+        },
+        "shots": {
+          "before": 16,
+          "after": 16
+        },
+        "characters": {
+          "before": 1,
+          "after": 1
+        },
+        "locations": {
+          "before": 4,
+          "after": 4
+        },
+        "props": {
+          "before": 4,
+          "after": 4
+        },
+        "motion": {
+          "before": 29,
+          "after": 29
+        },
+        "statements": {
+          "before": 0,
+          "after": 20
+        }
+      },
+      "identity": {
+        "source": 62,
+        "preserved": 62,
+        "lost": 0,
+        "minted": 0
+      },
+      "statements": {
+        "total": 20,
+        "kinds": {
+          "suggested": 1,
+          "disputed": 19
+        },
+        "ids": [
+          "stm-m002-0001",
+          "stm-m020-0001",
+          "stm-m020-0002",
+          "stm-m020-0003",
+          "stm-m020-0004",
+          "stm-m020-0005",
+          "stm-m020-0006",
+          "stm-m020-0007",
+          "stm-m020-0008",
+          "stm-m020-0009",
+          "stm-m020-0010",
+          "stm-m020-0011",
+          "stm-m020-0012",
+          "stm-m020-0013",
+          "stm-m020-0014",
+          "stm-m020-0015",
+          "stm-m020-0016",
+          "stm-m020-0017",
+          "stm-m020-0018",
+          "stm-m020-0019"
+        ]
+      },
+      "diagnostics": [
+        "info:migration.source.sniffed",
+        "warning:migration.code.unresolved",
+        "warning:migration.id.not-portable",
+        "warning:migration.id.not-portable",
+        "warning:migration.id.not-portable",
+        "warning:migration.id.not-portable",
+        "warning:migration.id.not-portable"
+      ],
+      "validation": {
+        "ok": true,
+        "counts": {
+          "error": 0,
+          "warning": 5,
+          "info": 1
+        }
+      },
+      "summary": {
+        "deterministicMappings": 307,
+        "inferredMappings": 1,
+        "disputes": 19,
+        "preservedValues": 818,
+        "droppedValues": 60,
+        "unmappedValues": 0,
+        "warnings": 6,
+        "errors": 0
+      },
+      "candidateSha256": "4b96ff57d63de77049f7e6e96f1bea21b245787f289336d8c984593ee2889c83",
+      "candidateBytes": 260331
+    },
+    {
+      "id": "overfit-06-pre-v32",
+      "ok": true,
+      "source": {
+        "family": "cinebraid-legacy",
+        "generation": "pre-6.6",
+        "confidence": "sniffed",
+        "schemaVersion": null,
+        "hubVersion": "v3.1",
+        "metaVersion": "v2.1",
+        "metaVersionClass": "film-draft",
+        "markers": [
+          "shot.clips",
+          "shot.atomic/parentShot/fallbackFor",
+          "shot.codes"
+        ],
+        "fingerprint": "sha256:c625af6d1920cdee1dfeff468232c4b15733014af9e53f672273b00019b7c36a"
+      },
+      "rulesApplied": [
+        "M001",
+        "M002",
+        "M003",
+        "M053",
+        "M060",
+        "M004",
+        "M006",
+        "M011",
+        "M005",
+        "M010",
+        "M009",
+        "M013",
+        "M012",
+        "M020",
+        "M021",
+        "M050",
+        "M051",
+        "M052",
+        "M070"
+      ],
+      "ruleStatements": {
+        "M002": 1,
+        "M020": 19
+      },
+      "accounting": {
+        "leaves": 792,
+        "unaccounted": 0,
+        "byDisposition": {
+          "mapped": 249,
+          "preserved": 483,
+          "dropped": 60,
+          "stated": 20,
+          "unmapped": 0
+        },
+        "byRule": {
+          "M002": 3,
+          "M003": 21,
+          "M053": 5,
+          "M004": 96,
+          "M006": 34,
+          "M011": 9,
+          "M005": 187,
+          "M010": 16,
+          "M009": 29,
+          "M013": 16,
+          "M012": 25,
+          "M020": 63,
+          "M021": 1,
+          "M050": 74,
+          "M051": 19,
+          "M052": 40,
+          "M070": 174
+        }
+      },
+      "counts": {
+        "scenes": {
+          "before": 8,
+          "after": 8
+        },
+        "shots": {
+          "before": 16,
+          "after": 16
+        },
+        "characters": {
+          "before": 1,
+          "after": 1
+        },
+        "locations": {
+          "before": 4,
+          "after": 4
+        },
+        "props": {
+          "before": 4,
+          "after": 4
+        },
+        "motion": {
+          "before": 29,
+          "after": 29
+        },
+        "statements": {
+          "before": 0,
+          "after": 20
+        }
+      },
+      "identity": {
+        "source": 33,
+        "preserved": 33,
+        "lost": 0,
+        "minted": 29
+      },
+      "statements": {
+        "total": 20,
+        "kinds": {
+          "suggested": 1,
+          "disputed": 19
+        },
+        "ids": [
+          "stm-m002-0001",
+          "stm-m020-0001",
+          "stm-m020-0002",
+          "stm-m020-0003",
+          "stm-m020-0004",
+          "stm-m020-0005",
+          "stm-m020-0006",
+          "stm-m020-0007",
+          "stm-m020-0008",
+          "stm-m020-0009",
+          "stm-m020-0010",
+          "stm-m020-0011",
+          "stm-m020-0012",
+          "stm-m020-0013",
+          "stm-m020-0014",
+          "stm-m020-0015",
+          "stm-m020-0016",
+          "stm-m020-0017",
+          "stm-m020-0018",
+          "stm-m020-0019"
+        ]
+      },
+      "diagnostics": [
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.source.sniffed",
+        "warning:migration.code.unresolved",
+        "warning:migration.id.not-portable",
+        "warning:migration.id.not-portable",
+        "warning:migration.id.not-portable",
+        "warning:migration.id.not-portable",
+        "warning:migration.id.not-portable"
+      ],
+      "validation": {
+        "ok": true,
+        "counts": {
+          "error": 0,
+          "warning": 5,
+          "info": 1
+        }
+      },
+      "summary": {
+        "deterministicMappings": 249,
+        "inferredMappings": 1,
+        "disputes": 19,
+        "preservedValues": 483,
+        "droppedValues": 60,
+        "unmappedValues": 0,
+        "warnings": 6,
+        "errors": 0
+      },
+      "candidateSha256": "fceb5e4255be5d3fa34359e65eea84e83e64014797e4e5ef39870d7ec9ccce64",
+      "candidateBytes": 160207
+    },
+    {
+      "id": "overfit-07-anchorhub-32",
+      "ok": true,
+      "source": {
+        "family": "cinebraid-legacy",
+        "generation": "pre-6.6",
+        "confidence": "sniffed",
+        "schemaVersion": null,
+        "hubVersion": "v3.1",
+        "metaVersion": "v2.1",
+        "metaVersionClass": "film-draft",
+        "markers": [
+          "shot.clips",
+          "shot.atomic/parentShot/fallbackFor",
+          "shot.codes"
+        ],
+        "fingerprint": "sha256:e22d38fd9ceceb7bc5021f3e4b84ee253bd2074385ff6317a4821813bd5df4af"
+      },
+      "rulesApplied": [
+        "M001",
+        "M002",
+        "M003",
+        "M053",
+        "M060",
+        "M004",
+        "M006",
+        "M011",
+        "M017",
+        "M005",
+        "M010",
+        "M009",
+        "M013",
+        "M012",
+        "M020",
+        "M021",
+        "M022",
+        "M050",
+        "M051",
+        "M052",
+        "M070"
+      ],
+      "ruleStatements": {
+        "M002": 1,
+        "M020": 28,
+        "M022": 2
+      },
+      "accounting": {
+        "leaves": 1062,
+        "unaccounted": 0,
+        "byDisposition": {
+          "mapped": 343,
+          "preserved": 637,
+          "dropped": 82,
+          "stated": 31,
+          "unmapped": 0
+        },
+        "byRule": {
+          "M002": 3,
+          "M003": 21,
+          "M053": 5,
+          "M004": 108,
+          "M006": 50,
+          "M011": 12,
+          "M017": 15,
+          "M005": 261,
+          "M022": 2,
+          "M010": 22,
+          "M009": 31,
+          "M013": 22,
+          "M012": 34,
+          "M020": 90,
+          "M021": 1,
+          "M050": 101,
+          "M051": 29,
+          "M052": 52,
+          "M070": 234
+        }
+      },
+      "counts": {
+        "scenes": {
+          "before": 9,
+          "after": 9
+        },
+        "shots": {
+          "before": 22,
+          "after": 22
+        },
+        "characters": {
+          "before": 1,
+          "after": 1
+        },
+        "locations": {
+          "before": 5,
+          "after": 5
+        },
+        "props": {
+          "before": 6,
+          "after": 6
+        },
+        "voices": {
+          "before": 5,
+          "after": 5
+        },
+        "motion": {
+          "before": 31,
+          "after": 31
+        },
+        "relations": {
+          "before": 0,
+          "after": 2
+        },
+        "statements": {
+          "before": 0,
+          "after": 31
+        }
+      },
+      "identity": {
+        "source": 48,
+        "preserved": 48,
+        "lost": 0,
+        "minted": 33
+      },
+      "statements": {
+        "total": 31,
+        "kinds": {
+          "suggested": 3,
+          "disputed": 28
+        },
+        "ids": [
+          "stm-m002-0001",
+          "stm-m020-0001",
+          "stm-m020-0002",
+          "stm-m020-0003",
+          "stm-m020-0004",
+          "stm-m020-0005",
+          "stm-m020-0006",
+          "stm-m020-0007",
+          "stm-m020-0008",
+          "stm-m020-0009",
+          "stm-m020-0010",
+          "stm-m020-0011",
+          "stm-m020-0012",
+          "stm-m020-0013",
+          "stm-m020-0014",
+          "stm-m020-0015",
+          "stm-m020-0016",
+          "stm-m020-0017",
+          "stm-m020-0018",
+          "stm-m020-0019",
+          "stm-m020-0020",
+          "stm-m020-0021",
+          "stm-m020-0022",
+          "stm-m020-0023",
+          "stm-m020-0024",
+          "stm-m020-0025",
+          "stm-m020-0026",
+          "stm-m020-0027",
+          "stm-m020-0028",
+          "stm-m022-0001",
+          "stm-m022-0002"
+        ]
+      },
+      "diagnostics": [
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.source.sniffed",
+        "warning:migration.code.unresolved",
+        "warning:migration.code.unresolved",
+        "warning:migration.code.unresolved",
+        "warning:migration.id.not-portable",
+        "warning:migration.id.not-portable",
+        "warning:migration.id.not-portable",
+        "warning:migration.id.not-portable",
+        "warning:migration.id.not-portable",
+        "warning:migration.review.required"
+      ],
+      "validation": {
+        "ok": true,
+        "counts": {
+          "error": 0,
+          "warning": 5,
+          "info": 1
+        }
+      },
+      "summary": {
+        "deterministicMappings": 343,
+        "inferredMappings": 3,
+        "disputes": 28,
+        "preservedValues": 637,
+        "droppedValues": 82,
+        "unmappedValues": 0,
+        "warnings": 9,
+        "errors": 0
+      },
+      "candidateSha256": "c13c34bda805de8282c7db551f13dc9b4f13020772d0048ee99e824000dabe25",
+      "candidateBytes": 216894
+    },
+    {
+      "id": "overfit-08-pre-v33",
+      "ok": true,
+      "source": {
+        "family": "cinebraid-legacy",
+        "generation": "pre-6.6",
+        "confidence": "sniffed",
+        "schemaVersion": null,
+        "hubVersion": "v3.1",
+        "metaVersion": "v2.1",
+        "metaVersionClass": "film-draft",
+        "markers": [
+          "shot.clips",
+          "shot.atomic/parentShot/fallbackFor",
+          "shot.codes"
+        ],
+        "fingerprint": "sha256:5bf75fefa8e6e86a999fa6960c230d6ad562e1f4372cd7182278e8c580968272"
+      },
+      "rulesApplied": [
+        "M001",
+        "M002",
+        "M003",
+        "M053",
+        "M060",
+        "M004",
+        "M006",
+        "M011",
+        "M017",
+        "M005",
+        "M010",
+        "M009",
+        "M013",
+        "M012",
+        "M020",
+        "M021",
+        "M022",
+        "M050",
+        "M051",
+        "M052",
+        "M070"
+      ],
+      "ruleStatements": {
+        "M002": 1,
+        "M020": 28,
+        "M022": 2
+      },
+      "accounting": {
+        "leaves": 1048,
+        "unaccounted": 0,
+        "byDisposition": {
+          "mapped": 343,
+          "preserved": 627,
+          "dropped": 78,
+          "stated": 31,
+          "unmapped": 0
+        },
+        "byRule": {
+          "M002": 3,
+          "M003": 21,
+          "M053": 5,
+          "M004": 108,
+          "M006": 50,
+          "M011": 12,
+          "M017": 15,
+          "M005": 261,
+          "M022": 2,
+          "M010": 22,
+          "M009": 31,
+          "M013": 22,
+          "M012": 34,
+          "M020": 90,
+          "M021": 1,
+          "M050": 101,
+          "M051": 25,
+          "M052": 52,
+          "M070": 224
+        }
+      },
+      "counts": {
+        "scenes": {
+          "before": 9,
+          "after": 9
+        },
+        "shots": {
+          "before": 22,
+          "after": 22
+        },
+        "characters": {
+          "before": 1,
+          "after": 1
+        },
+        "locations": {
+          "before": 5,
+          "after": 5
+        },
+        "props": {
+          "before": 6,
+          "after": 6
+        },
+        "voices": {
+          "before": 5,
+          "after": 5
+        },
+        "motion": {
+          "before": 31,
+          "after": 31
+        },
+        "relations": {
+          "before": 0,
+          "after": 2
+        },
+        "statements": {
+          "before": 0,
+          "after": 31
+        }
+      },
+      "identity": {
+        "source": 48,
+        "preserved": 48,
+        "lost": 0,
+        "minted": 33
+      },
+      "statements": {
+        "total": 31,
+        "kinds": {
+          "suggested": 3,
+          "disputed": 28
+        },
+        "ids": [
+          "stm-m002-0001",
+          "stm-m020-0001",
+          "stm-m020-0002",
+          "stm-m020-0003",
+          "stm-m020-0004",
+          "stm-m020-0005",
+          "stm-m020-0006",
+          "stm-m020-0007",
+          "stm-m020-0008",
+          "stm-m020-0009",
+          "stm-m020-0010",
+          "stm-m020-0011",
+          "stm-m020-0012",
+          "stm-m020-0013",
+          "stm-m020-0014",
+          "stm-m020-0015",
+          "stm-m020-0016",
+          "stm-m020-0017",
+          "stm-m020-0018",
+          "stm-m020-0019",
+          "stm-m020-0020",
+          "stm-m020-0021",
+          "stm-m020-0022",
+          "stm-m020-0023",
+          "stm-m020-0024",
+          "stm-m020-0025",
+          "stm-m020-0026",
+          "stm-m020-0027",
+          "stm-m020-0028",
+          "stm-m022-0001",
+          "stm-m022-0002"
+        ]
+      },
+      "diagnostics": [
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.source.sniffed",
+        "warning:migration.code.unresolved",
+        "warning:migration.code.unresolved",
+        "warning:migration.code.unresolved",
+        "warning:migration.id.not-portable",
+        "warning:migration.id.not-portable",
+        "warning:migration.id.not-portable",
+        "warning:migration.id.not-portable",
+        "warning:migration.id.not-portable",
+        "warning:migration.review.required"
+      ],
+      "validation": {
+        "ok": true,
+        "counts": {
+          "error": 0,
+          "warning": 5,
+          "info": 1
+        }
+      },
+      "summary": {
+        "deterministicMappings": 343,
+        "inferredMappings": 3,
+        "disputes": 28,
+        "preservedValues": 627,
+        "droppedValues": 78,
+        "unmappedValues": 0,
+        "warnings": 9,
+        "errors": 0
+      },
+      "candidateSha256": "80565024000012e1f100c796617f0654003125d823db909554315c5c4a8f44d1",
+      "candidateBytes": 210300
+    },
+    {
+      "id": "overfit-09-anchorhub-33",
+      "ok": true,
+      "source": {
+        "family": "cinebraid-legacy",
+        "generation": "pre-6.6",
+        "confidence": "sniffed",
+        "schemaVersion": null,
+        "hubVersion": "v3.1",
+        "metaVersion": "v2.1",
+        "metaVersionClass": "film-draft",
+        "markers": [
+          "shot.clips",
+          "shot.atomic/parentShot/fallbackFor",
+          "shot.codes"
+        ],
+        "fingerprint": "sha256:1d0b60f26ca81d245aed9e0fe695c021145b734d17ccee8d8d54ce123ca64e37"
+      },
+      "rulesApplied": [
+        "M001",
+        "M002",
+        "M003",
+        "M053",
+        "M060",
+        "M004",
+        "M006",
+        "M011",
+        "M017",
+        "M005",
+        "M010",
+        "M009",
+        "M013",
+        "M012",
+        "M020",
+        "M021",
+        "M022",
+        "M050",
+        "M051",
+        "M052",
+        "M070"
+      ],
+      "ruleStatements": {
+        "M002": 1,
+        "M020": 28,
+        "M022": 2
+      },
+      "accounting": {
+        "leaves": 1071,
+        "unaccounted": 0,
+        "byDisposition": {
+          "mapped": 346,
+          "preserved": 647,
+          "dropped": 78,
+          "stated": 31,
+          "unmapped": 0
+        },
+        "byRule": {
+          "M002": 3,
+          "M003": 21,
+          "M053": 5,
+          "M004": 108,
+          "M006": 50,
+          "M011": 12,
+          "M017": 15,
+          "M005": 261,
+          "M022": 2,
+          "M010": 22,
+          "M009": 34,
+          "M013": 22,
+          "M012": 34,
+          "M020": 90,
+          "M021": 1,
+          "M050": 101,
+          "M051": 25,
+          "M052": 52,
+          "M070": 244
+        }
+      },
+      "counts": {
+        "scenes": {
+          "before": 9,
+          "after": 9
+        },
+        "shots": {
+          "before": 22,
+          "after": 22
+        },
+        "characters": {
+          "before": 1,
+          "after": 1
+        },
+        "locations": {
+          "before": 5,
+          "after": 5
+        },
+        "props": {
+          "before": 6,
+          "after": 6
+        },
+        "voices": {
+          "before": 5,
+          "after": 5
+        },
+        "motion": {
+          "before": 34,
+          "after": 34
+        },
+        "relations": {
+          "before": 0,
+          "after": 2
+        },
+        "statements": {
+          "before": 0,
+          "after": 31
+        }
+      },
+      "identity": {
+        "source": 48,
+        "preserved": 48,
+        "lost": 0,
+        "minted": 36
+      },
+      "statements": {
+        "total": 31,
+        "kinds": {
+          "suggested": 3,
+          "disputed": 28
+        },
+        "ids": [
+          "stm-m002-0001",
+          "stm-m020-0001",
+          "stm-m020-0002",
+          "stm-m020-0003",
+          "stm-m020-0004",
+          "stm-m020-0005",
+          "stm-m020-0006",
+          "stm-m020-0007",
+          "stm-m020-0008",
+          "stm-m020-0009",
+          "stm-m020-0010",
+          "stm-m020-0011",
+          "stm-m020-0012",
+          "stm-m020-0013",
+          "stm-m020-0014",
+          "stm-m020-0015",
+          "stm-m020-0016",
+          "stm-m020-0017",
+          "stm-m020-0018",
+          "stm-m020-0019",
+          "stm-m020-0020",
+          "stm-m020-0021",
+          "stm-m020-0022",
+          "stm-m020-0023",
+          "stm-m020-0024",
+          "stm-m020-0025",
+          "stm-m020-0026",
+          "stm-m020-0027",
+          "stm-m020-0028",
+          "stm-m022-0001",
+          "stm-m022-0002"
+        ]
+      },
+      "diagnostics": [
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.source.sniffed",
+        "warning:migration.code.unresolved",
+        "warning:migration.code.unresolved",
+        "warning:migration.code.unresolved",
+        "warning:migration.id.not-portable",
+        "warning:migration.id.not-portable",
+        "warning:migration.id.not-portable",
+        "warning:migration.id.not-portable",
+        "warning:migration.id.not-portable",
+        "warning:migration.review.required"
+      ],
+      "validation": {
+        "ok": true,
+        "counts": {
+          "error": 0,
+          "warning": 5,
+          "info": 1
+        }
+      },
+      "summary": {
+        "deterministicMappings": 346,
+        "inferredMappings": 3,
+        "disputes": 28,
+        "preservedValues": 647,
+        "droppedValues": 78,
+        "unmappedValues": 0,
+        "warnings": 9,
+        "errors": 0
+      },
+      "candidateSha256": "228448b7b427b3cd340fc871d36fde23c9d30eb72d6c9b8e8e03497cbb4b4161",
+      "candidateBytes": 217032
+    },
+    {
+      "id": "overfit-10-pre-v40",
+      "ok": true,
+      "source": {
+        "family": "cinebraid-legacy",
+        "generation": "pre-6.6",
+        "confidence": "sniffed",
+        "schemaVersion": null,
+        "hubVersion": "v3.1",
+        "metaVersion": "v2.1",
+        "metaVersionClass": "film-draft",
+        "markers": [
+          "shot.clips",
+          "shot.atomic/parentShot/fallbackFor",
+          "shot.codes"
+        ],
+        "fingerprint": "sha256:1e3209e42bec01e7fdc90ded5298e93fa956ddadd51cb8557be390687a02f86f"
+      },
+      "rulesApplied": [
+        "M001",
+        "M002",
+        "M003",
+        "M053",
+        "M060",
+        "M004",
+        "M006",
+        "M011",
+        "M017",
+        "M005",
+        "M010",
+        "M009",
+        "M013",
+        "M012",
+        "M020",
+        "M021",
+        "M022",
+        "M050",
+        "M051",
+        "M052",
+        "M070"
+      ],
+      "ruleStatements": {
+        "M002": 1,
+        "M020": 28,
+        "M022": 2
+      },
+      "accounting": {
+        "leaves": 1053,
+        "unaccounted": 0,
+        "byDisposition": {
+          "mapped": 344,
+          "preserved": 631,
+          "dropped": 78,
+          "stated": 31,
+          "unmapped": 0
+        },
+        "byRule": {
+          "M002": 3,
+          "M003": 21,
+          "M053": 5,
+          "M004": 108,
+          "M006": 50,
+          "M011": 12,
+          "M017": 15,
+          "M005": 261,
+          "M022": 2,
+          "M010": 22,
+          "M009": 32,
+          "M013": 22,
+          "M012": 34,
+          "M020": 90,
+          "M021": 1,
+          "M050": 101,
+          "M051": 25,
+          "M052": 52,
+          "M070": 228
+        }
+      },
+      "counts": {
+        "scenes": {
+          "before": 9,
+          "after": 9
+        },
+        "shots": {
+          "before": 22,
+          "after": 22
+        },
+        "characters": {
+          "before": 1,
+          "after": 1
+        },
+        "locations": {
+          "before": 5,
+          "after": 5
+        },
+        "props": {
+          "before": 6,
+          "after": 6
+        },
+        "voices": {
+          "before": 5,
+          "after": 5
+        },
+        "motion": {
+          "before": 32,
+          "after": 32
+        },
+        "relations": {
+          "before": 0,
+          "after": 2
+        },
+        "statements": {
+          "before": 0,
+          "after": 31
+        }
+      },
+      "identity": {
+        "source": 48,
+        "preserved": 48,
+        "lost": 0,
+        "minted": 34
+      },
+      "statements": {
+        "total": 31,
+        "kinds": {
+          "suggested": 3,
+          "disputed": 28
+        },
+        "ids": [
+          "stm-m002-0001",
+          "stm-m020-0001",
+          "stm-m020-0002",
+          "stm-m020-0003",
+          "stm-m020-0004",
+          "stm-m020-0005",
+          "stm-m020-0006",
+          "stm-m020-0007",
+          "stm-m020-0008",
+          "stm-m020-0009",
+          "stm-m020-0010",
+          "stm-m020-0011",
+          "stm-m020-0012",
+          "stm-m020-0013",
+          "stm-m020-0014",
+          "stm-m020-0015",
+          "stm-m020-0016",
+          "stm-m020-0017",
+          "stm-m020-0018",
+          "stm-m020-0019",
+          "stm-m020-0020",
+          "stm-m020-0021",
+          "stm-m020-0022",
+          "stm-m020-0023",
+          "stm-m020-0024",
+          "stm-m020-0025",
+          "stm-m020-0026",
+          "stm-m020-0027",
+          "stm-m020-0028",
+          "stm-m022-0001",
+          "stm-m022-0002"
+        ]
+      },
+      "diagnostics": [
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.source.sniffed",
+        "warning:migration.code.unresolved",
+        "warning:migration.code.unresolved",
+        "warning:migration.code.unresolved",
+        "warning:migration.id.not-portable",
+        "warning:migration.id.not-portable",
+        "warning:migration.id.not-portable",
+        "warning:migration.id.not-portable",
+        "warning:migration.id.not-portable",
+        "warning:migration.review.required"
+      ],
+      "validation": {
+        "ok": true,
+        "counts": {
+          "error": 0,
+          "warning": 5,
+          "info": 1
+        }
+      },
+      "summary": {
+        "deterministicMappings": 344,
+        "inferredMappings": 3,
+        "disputes": 28,
+        "preservedValues": 631,
+        "droppedValues": 78,
+        "unmappedValues": 0,
+        "warnings": 9,
+        "errors": 0
+      },
+      "candidateSha256": "a9efbb11a9cfa5e639a9d4977f65e99799654dcd7cd42efbddcec96d8160800d",
+      "candidateBytes": 211792
+    },
+    {
+      "id": "overfit-11-hub-v4-0",
+      "ok": true,
+      "source": {
+        "family": "cinebraid-legacy",
+        "generation": "pre-6.6",
+        "confidence": "sniffed",
+        "schemaVersion": null,
+        "hubVersion": "v4",
+        "metaVersion": "v2.1",
+        "metaVersionClass": "film-draft",
+        "markers": [
+          "shot.clips",
+          "shot.atomic/parentShot/fallbackFor",
+          "shot.codes"
+        ],
+        "fingerprint": "sha256:b614f131608ac38f139a3f3b07a3e36b4e9536c5e2de20eb3e00942168d1ee04"
+      },
+      "rulesApplied": [
+        "M001",
+        "M002",
+        "M003",
+        "M053",
+        "M060",
+        "M004",
+        "M006",
+        "M011",
+        "M017",
+        "M005",
+        "M010",
+        "M009",
+        "M013",
+        "M012",
+        "M020",
+        "M021",
+        "M022",
+        "M050",
+        "M051",
+        "M052",
+        "M070"
+      ],
+      "ruleStatements": {
+        "M002": 1,
+        "M020": 28,
+        "M022": 2
+      },
+      "accounting": {
+        "leaves": 1086,
+        "unaccounted": 0,
+        "byDisposition": {
+          "mapped": 344,
+          "preserved": 664,
+          "dropped": 78,
+          "stated": 31,
+          "unmapped": 0
+        },
+        "byRule": {
+          "M002": 3,
+          "M003": 21,
+          "M053": 5,
+          "M004": 108,
+          "M006": 50,
+          "M011": 12,
+          "M017": 15,
+          "M005": 261,
+          "M022": 2,
+          "M010": 22,
+          "M009": 32,
+          "M013": 22,
+          "M012": 34,
+          "M020": 90,
+          "M021": 1,
+          "M050": 101,
+          "M051": 25,
+          "M052": 52,
+          "M070": 261
+        }
+      },
+      "counts": {
+        "scenes": {
+          "before": 9,
+          "after": 9
+        },
+        "shots": {
+          "before": 22,
+          "after": 22
+        },
+        "characters": {
+          "before": 1,
+          "after": 1
+        },
+        "locations": {
+          "before": 5,
+          "after": 5
+        },
+        "props": {
+          "before": 6,
+          "after": 6
+        },
+        "voices": {
+          "before": 5,
+          "after": 5
+        },
+        "motion": {
+          "before": 32,
+          "after": 32
+        },
+        "relations": {
+          "before": 0,
+          "after": 2
+        },
+        "statements": {
+          "before": 0,
+          "after": 31
+        }
+      },
+      "identity": {
+        "source": 48,
+        "preserved": 48,
+        "lost": 0,
+        "minted": 34
+      },
+      "statements": {
+        "total": 31,
+        "kinds": {
+          "suggested": 3,
+          "disputed": 28
+        },
+        "ids": [
+          "stm-m002-0001",
+          "stm-m020-0001",
+          "stm-m020-0002",
+          "stm-m020-0003",
+          "stm-m020-0004",
+          "stm-m020-0005",
+          "stm-m020-0006",
+          "stm-m020-0007",
+          "stm-m020-0008",
+          "stm-m020-0009",
+          "stm-m020-0010",
+          "stm-m020-0011",
+          "stm-m020-0012",
+          "stm-m020-0013",
+          "stm-m020-0014",
+          "stm-m020-0015",
+          "stm-m020-0016",
+          "stm-m020-0017",
+          "stm-m020-0018",
+          "stm-m020-0019",
+          "stm-m020-0020",
+          "stm-m020-0021",
+          "stm-m020-0022",
+          "stm-m020-0023",
+          "stm-m020-0024",
+          "stm-m020-0025",
+          "stm-m020-0026",
+          "stm-m020-0027",
+          "stm-m020-0028",
+          "stm-m022-0001",
+          "stm-m022-0002"
+        ]
+      },
+      "diagnostics": [
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.source.sniffed",
+        "warning:migration.code.unresolved",
+        "warning:migration.code.unresolved",
+        "warning:migration.code.unresolved",
+        "warning:migration.id.not-portable",
+        "warning:migration.id.not-portable",
+        "warning:migration.id.not-portable",
+        "warning:migration.id.not-portable",
+        "warning:migration.id.not-portable",
+        "warning:migration.review.required"
+      ],
+      "validation": {
+        "ok": true,
+        "counts": {
+          "error": 0,
+          "warning": 5,
+          "info": 1
+        }
+      },
+      "summary": {
+        "deterministicMappings": 344,
+        "inferredMappings": 3,
+        "disputes": 28,
+        "preservedValues": 664,
+        "droppedValues": 78,
+        "unmappedValues": 0,
+        "warnings": 9,
+        "errors": 0
+      },
+      "candidateSha256": "a4ed561f6a7c92e3f2a02f89f8770a0dc2d9c4e0210de3a3e88071fb4003f5a4",
+      "candidateBytes": 221191
+    },
+    {
+      "id": "overfit-12-hub-v4-1",
+      "ok": true,
+      "source": {
+        "family": "cinebraid-legacy",
+        "generation": "pre-6.6",
+        "confidence": "sniffed",
+        "schemaVersion": null,
+        "hubVersion": "v4",
+        "metaVersion": "v2.1",
+        "metaVersionClass": "film-draft",
+        "markers": [
+          "shot.clips",
+          "shot.atomic/parentShot/fallbackFor",
+          "shot.codes"
+        ],
+        "fingerprint": "sha256:27c3f1bc47064862aa8a26a72071e50207832aeb2ce3d788c25c8c89a1b5a64c"
+      },
+      "rulesApplied": [
+        "M001",
+        "M002",
+        "M003",
+        "M053",
+        "M060",
+        "M004",
+        "M006",
+        "M011",
+        "M017",
+        "M005",
+        "M010",
+        "M009",
+        "M013",
+        "M012",
+        "M020",
+        "M021",
+        "M022",
+        "M050",
+        "M051",
+        "M052",
+        "M070"
+      ],
+      "ruleStatements": {
+        "M002": 1,
+        "M020": 28,
+        "M022": 2
+      },
+      "accounting": {
+        "leaves": 1088,
+        "unaccounted": 0,
+        "byDisposition": {
+          "mapped": 344,
+          "preserved": 666,
+          "dropped": 78,
+          "stated": 31,
+          "unmapped": 0
+        },
+        "byRule": {
+          "M002": 3,
+          "M003": 21,
+          "M053": 5,
+          "M004": 108,
+          "M006": 50,
+          "M011": 12,
+          "M017": 15,
+          "M005": 261,
+          "M022": 2,
+          "M010": 22,
+          "M009": 32,
+          "M013": 22,
+          "M012": 34,
+          "M020": 90,
+          "M021": 1,
+          "M050": 101,
+          "M051": 25,
+          "M052": 52,
+          "M070": 263
+        }
+      },
+      "counts": {
+        "scenes": {
+          "before": 9,
+          "after": 9
+        },
+        "shots": {
+          "before": 22,
+          "after": 22
+        },
+        "characters": {
+          "before": 1,
+          "after": 1
+        },
+        "locations": {
+          "before": 5,
+          "after": 5
+        },
+        "props": {
+          "before": 6,
+          "after": 6
+        },
+        "voices": {
+          "before": 5,
+          "after": 5
+        },
+        "motion": {
+          "before": 32,
+          "after": 32
+        },
+        "relations": {
+          "before": 0,
+          "after": 2
+        },
+        "statements": {
+          "before": 0,
+          "after": 31
+        }
+      },
+      "identity": {
+        "source": 48,
+        "preserved": 48,
+        "lost": 0,
+        "minted": 34
+      },
+      "statements": {
+        "total": 31,
+        "kinds": {
+          "suggested": 3,
+          "disputed": 28
+        },
+        "ids": [
+          "stm-m002-0001",
+          "stm-m020-0001",
+          "stm-m020-0002",
+          "stm-m020-0003",
+          "stm-m020-0004",
+          "stm-m020-0005",
+          "stm-m020-0006",
+          "stm-m020-0007",
+          "stm-m020-0008",
+          "stm-m020-0009",
+          "stm-m020-0010",
+          "stm-m020-0011",
+          "stm-m020-0012",
+          "stm-m020-0013",
+          "stm-m020-0014",
+          "stm-m020-0015",
+          "stm-m020-0016",
+          "stm-m020-0017",
+          "stm-m020-0018",
+          "stm-m020-0019",
+          "stm-m020-0020",
+          "stm-m020-0021",
+          "stm-m020-0022",
+          "stm-m020-0023",
+          "stm-m020-0024",
+          "stm-m020-0025",
+          "stm-m020-0026",
+          "stm-m020-0027",
+          "stm-m020-0028",
+          "stm-m022-0001",
+          "stm-m022-0002"
+        ]
+      },
+      "diagnostics": [
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.source.sniffed",
+        "warning:migration.code.unresolved",
+        "warning:migration.code.unresolved",
+        "warning:migration.code.unresolved",
+        "warning:migration.id.not-portable",
+        "warning:migration.id.not-portable",
+        "warning:migration.id.not-portable",
+        "warning:migration.id.not-portable",
+        "warning:migration.id.not-portable",
+        "warning:migration.review.required"
+      ],
+      "validation": {
+        "ok": true,
+        "counts": {
+          "error": 0,
+          "warning": 5,
+          "info": 1
+        }
+      },
+      "summary": {
+        "deterministicMappings": 344,
+        "inferredMappings": 3,
+        "disputes": 28,
+        "preservedValues": 666,
+        "droppedValues": 78,
+        "unmappedValues": 0,
+        "warnings": 9,
+        "errors": 0
+      },
+      "candidateSha256": "6428a2e1f8bb4e879aabac9d7e2f3345fcd66c916e27571d6477f469b9d7b215",
+      "candidateBytes": 221856
+    },
+    {
+      "id": "overfit-13-hub-v4-2",
+      "ok": true,
+      "source": {
+        "family": "cinebraid-legacy",
+        "generation": "pre-6.6",
+        "confidence": "sniffed",
+        "schemaVersion": null,
+        "hubVersion": "v4",
+        "metaVersion": "v2.1",
+        "metaVersionClass": "film-draft",
+        "markers": [
+          "shot.clips",
+          "shot.atomic/parentShot/fallbackFor",
+          "shot.codes"
+        ],
+        "fingerprint": "sha256:5e3ab4c0754c687117c2f6cbe538bc2e6ce364f9a289be6afdb0b3529dd448b6"
+      },
+      "rulesApplied": [
+        "M001",
+        "M002",
+        "M003",
+        "M053",
+        "M060",
+        "M004",
+        "M006",
+        "M011",
+        "M017",
+        "M005",
+        "M010",
+        "M009",
+        "M013",
+        "M012",
+        "M020",
+        "M021",
+        "M022",
+        "M030",
+        "M050",
+        "M051",
+        "M052",
+        "M070"
+      ],
+      "ruleStatements": {
+        "M002": 1,
+        "M020": 28,
+        "M022": 2
+      },
+      "accounting": {
+        "leaves": 1157,
+        "unaccounted": 0,
+        "byDisposition": {
+          "mapped": 351,
+          "preserved": 721,
+          "dropped": 85,
+          "stated": 31,
+          "unmapped": 0
+        },
+        "byRule": {
+          "M002": 3,
+          "M003": 21,
+          "M053": 5,
+          "M004": 108,
+          "M006": 50,
+          "M011": 12,
+          "M017": 15,
+          "M005": 261,
+          "M022": 2,
+          "M010": 22,
+          "M009": 33,
+          "M013": 28,
+          "M012": 55,
+          "M020": 90,
+          "M021": 1,
+          "M030": 6,
+          "M050": 102,
+          "M051": 31,
+          "M052": 53,
+          "M070": 290
+        }
+      },
+      "counts": {
+        "scenes": {
+          "before": 9,
+          "after": 9
+        },
+        "shots": {
+          "before": 22,
+          "after": 22
+        },
+        "characters": {
+          "before": 1,
+          "after": 1
+        },
+        "locations": {
+          "before": 5,
+          "after": 5
+        },
+        "props": {
+          "before": 6,
+          "after": 6
+        },
+        "voices": {
+          "before": 5,
+          "after": 5
+        },
+        "motion": {
+          "before": 33,
+          "after": 33
+        },
+        "relations": {
+          "before": 0,
+          "after": 2
+        },
+        "references": {
+          "before": 0,
+          "after": 6
+        },
+        "assets": {
+          "before": 0,
+          "after": 6
+        },
+        "statements": {
+          "before": 0,
+          "after": 31
+        }
+      },
+      "identity": {
+        "source": 48,
+        "preserved": 48,
+        "lost": 0,
+        "minted": 47
+      },
+      "statements": {
+        "total": 31,
+        "kinds": {
+          "suggested": 3,
+          "disputed": 28
+        },
+        "ids": [
+          "stm-m002-0001",
+          "stm-m020-0001",
+          "stm-m020-0002",
+          "stm-m020-0003",
+          "stm-m020-0004",
+          "stm-m020-0005",
+          "stm-m020-0006",
+          "stm-m020-0007",
+          "stm-m020-0008",
+          "stm-m020-0009",
+          "stm-m020-0010",
+          "stm-m020-0011",
+          "stm-m020-0012",
+          "stm-m020-0013",
+          "stm-m020-0014",
+          "stm-m020-0015",
+          "stm-m020-0016",
+          "stm-m020-0017",
+          "stm-m020-0018",
+          "stm-m020-0019",
+          "stm-m020-0020",
+          "stm-m020-0021",
+          "stm-m020-0022",
+          "stm-m020-0023",
+          "stm-m020-0024",
+          "stm-m020-0025",
+          "stm-m020-0026",
+          "stm-m020-0027",
+          "stm-m020-0028",
+          "stm-m022-0001",
+          "stm-m022-0002"
+        ]
+      },
+      "diagnostics": [
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.source.sniffed",
+        "warning:migration.code.unresolved",
+        "warning:migration.code.unresolved",
+        "warning:migration.code.unresolved",
+        "warning:migration.id.not-portable",
+        "warning:migration.id.not-portable",
+        "warning:migration.id.not-portable",
+        "warning:migration.id.not-portable",
+        "warning:migration.id.not-portable",
+        "warning:migration.review.required"
+      ],
+      "validation": {
+        "ok": true,
+        "counts": {
+          "error": 0,
+          "warning": 5,
+          "info": 1
+        }
+      },
+      "summary": {
+        "deterministicMappings": 351,
+        "inferredMappings": 3,
+        "disputes": 28,
+        "preservedValues": 721,
+        "droppedValues": 85,
+        "unmappedValues": 0,
+        "warnings": 9,
+        "errors": 0
+      },
+      "candidateSha256": "23a0901bd2827918b71a580229087c80bb299a685a803656157fc66a123c9eba",
+      "candidateBytes": 234884
+    },
+    {
+      "id": "overfit-14-hub-v4-3",
+      "ok": true,
+      "source": {
+        "family": "cinebraid-legacy",
+        "generation": "pre-6.6",
+        "confidence": "sniffed",
+        "schemaVersion": null,
+        "hubVersion": "v4.3",
+        "metaVersion": "v2.1",
+        "metaVersionClass": "film-draft",
+        "markers": [
+          "shot.clips",
+          "shot.atomic/parentShot/fallbackFor",
+          "shot.codes"
+        ],
+        "fingerprint": "sha256:21fac98ea17d9b9b0b2b13c1a310149b123afed6b38fd45546db5dcaff461704"
+      },
+      "rulesApplied": [
+        "M080",
+        "M001",
+        "M002",
+        "M003",
+        "M053",
+        "M060",
+        "M004",
+        "M006",
+        "M011",
+        "M017",
+        "M005",
+        "M010",
+        "M009",
+        "M013",
+        "M012",
+        "M020",
+        "M021",
+        "M022",
+        "M030",
+        "M050",
+        "M051",
+        "M052",
+        "M070"
+      ],
+      "ruleStatements": {
+        "M002": 1,
+        "M020": 28,
+        "M022": 2
+      },
+      "accounting": {
+        "leaves": 1254,
+        "unaccounted": 0,
+        "byDisposition": {
+          "mapped": 347,
+          "preserved": 804,
+          "dropped": 103,
+          "stated": 31,
+          "unmapped": 0
+        },
+        "byRule": {
+          "M080": 2,
+          "M002": 3,
+          "M003": 21,
+          "M053": 5,
+          "M004": 108,
+          "M006": 50,
+          "M011": 12,
+          "M017": 15,
+          "M005": 261,
+          "M022": 2,
+          "M010": 22,
+          "M009": 33,
+          "M013": 22,
+          "M012": 40,
+          "M020": 90,
+          "M021": 1,
+          "M030": 2,
+          "M050": 105,
+          "M051": 47,
+          "M052": 53,
+          "M070": 391
+        }
+      },
+      "counts": {
+        "scenes": {
+          "before": 9,
+          "after": 9
+        },
+        "shots": {
+          "before": 22,
+          "after": 22
+        },
+        "characters": {
+          "before": 1,
+          "after": 1
+        },
+        "locations": {
+          "before": 5,
+          "after": 5
+        },
+        "props": {
+          "before": 6,
+          "after": 6
+        },
+        "voices": {
+          "before": 5,
+          "after": 5
+        },
+        "motion": {
+          "before": 33,
+          "after": 33
+        },
+        "relations": {
+          "before": 0,
+          "after": 2
+        },
+        "references": {
+          "before": 0,
+          "after": 2
+        },
+        "assets": {
+          "before": 0,
+          "after": 2
+        },
+        "statements": {
+          "before": 0,
+          "after": 31
+        }
+      },
+      "identity": {
+        "source": 48,
+        "preserved": 48,
+        "lost": 0,
+        "minted": 39
+      },
+      "statements": {
+        "total": 31,
+        "kinds": {
+          "suggested": 3,
+          "disputed": 28
+        },
+        "ids": [
+          "stm-m002-0001",
+          "stm-m020-0001",
+          "stm-m020-0002",
+          "stm-m020-0003",
+          "stm-m020-0004",
+          "stm-m020-0005",
+          "stm-m020-0006",
+          "stm-m020-0007",
+          "stm-m020-0008",
+          "stm-m020-0009",
+          "stm-m020-0010",
+          "stm-m020-0011",
+          "stm-m020-0012",
+          "stm-m020-0013",
+          "stm-m020-0014",
+          "stm-m020-0015",
+          "stm-m020-0016",
+          "stm-m020-0017",
+          "stm-m020-0018",
+          "stm-m020-0019",
+          "stm-m020-0020",
+          "stm-m020-0021",
+          "stm-m020-0022",
+          "stm-m020-0023",
+          "stm-m020-0024",
+          "stm-m020-0025",
+          "stm-m020-0026",
+          "stm-m020-0027",
+          "stm-m020-0028",
+          "stm-m022-0001",
+          "stm-m022-0002"
+        ]
+      },
+      "diagnostics": [
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.source.sniffed",
+        "warning:migration.code.unresolved",
+        "warning:migration.code.unresolved",
+        "warning:migration.code.unresolved",
+        "warning:migration.id.not-portable",
+        "warning:migration.id.not-portable",
+        "warning:migration.id.not-portable",
+        "warning:migration.id.not-portable",
+        "warning:migration.id.not-portable",
+        "warning:migration.review.required",
+        "warning:migration.secret.quarantined",
+        "warning:migration.secret.quarantined"
+      ],
+      "validation": {
+        "ok": true,
+        "counts": {
+          "error": 0,
+          "warning": 5,
+          "info": 1
+        }
+      },
+      "summary": {
+        "deterministicMappings": 347,
+        "inferredMappings": 3,
+        "disputes": 28,
+        "preservedValues": 804,
+        "droppedValues": 103,
+        "unmappedValues": 0,
+        "warnings": 11,
+        "errors": 0
+      },
+      "candidateSha256": "7fadad1f963760192d4deef1c1f37bdde874820c0171b6e52296b462ec3aafec",
+      "candidateBytes": 269316
+    },
+    {
+      "id": "overfit-15-hub-v4-5",
+      "ok": true,
+      "source": {
+        "family": "cinebraid-legacy",
+        "generation": "pre-6.6",
+        "confidence": "sniffed",
+        "schemaVersion": null,
+        "hubVersion": "v4.3",
+        "metaVersion": "v2.1",
+        "metaVersionClass": "film-draft",
+        "markers": [
+          "shot.clips",
+          "shot.atomic/parentShot/fallbackFor",
+          "shot.codes"
+        ],
+        "fingerprint": "sha256:8c379cd3ab3cd222eaed2c29bebb0ee09ada910212089a7ffe27f3bc479197f6"
+      },
+      "rulesApplied": [
+        "M001",
+        "M002",
+        "M003",
+        "M053",
+        "M060",
+        "M004",
+        "M006",
+        "M011",
+        "M017",
+        "M005",
+        "M010",
+        "M009",
+        "M013",
+        "M012",
+        "M020",
+        "M021",
+        "M022",
+        "M030",
+        "M050",
+        "M051",
+        "M052",
+        "M070"
+      ],
+      "ruleStatements": {
+        "M002": 1,
+        "M020": 28,
+        "M022": 2
+      },
+      "accounting": {
+        "leaves": 1127,
+        "unaccounted": 0,
+        "byDisposition": {
+          "mapped": 345,
+          "preserved": 680,
+          "dropped": 102,
+          "stated": 31,
+          "unmapped": 0
+        },
+        "byRule": {
+          "M002": 3,
+          "M003": 21,
+          "M053": 5,
+          "M004": 108,
+          "M006": 50,
+          "M011": 12,
+          "M017": 15,
+          "M005": 261,
+          "M022": 2,
+          "M010": 22,
+          "M009": 32,
+          "M013": 22,
+          "M012": 36,
+          "M020": 90,
+          "M021": 1,
+          "M030": 1,
+          "M050": 105,
+          "M051": 47,
+          "M052": 54,
+          "M070": 271
+        }
+      },
+      "counts": {
+        "scenes": {
+          "before": 9,
+          "after": 9
+        },
+        "shots": {
+          "before": 22,
+          "after": 22
+        },
+        "characters": {
+          "before": 1,
+          "after": 1
+        },
+        "locations": {
+          "before": 5,
+          "after": 5
+        },
+        "props": {
+          "before": 6,
+          "after": 6
+        },
+        "voices": {
+          "before": 5,
+          "after": 5
+        },
+        "motion": {
+          "before": 32,
+          "after": 32
+        },
+        "relations": {
+          "before": 0,
+          "after": 2
+        },
+        "references": {
+          "before": 0,
+          "after": 1
+        },
+        "assets": {
+          "before": 0,
+          "after": 1
+        },
+        "statements": {
+          "before": 0,
+          "after": 31
+        }
+      },
+      "identity": {
+        "source": 48,
+        "preserved": 48,
+        "lost": 0,
+        "minted": 36
+      },
+      "statements": {
+        "total": 31,
+        "kinds": {
+          "suggested": 3,
+          "disputed": 28
+        },
+        "ids": [
+          "stm-m002-0001",
+          "stm-m020-0001",
+          "stm-m020-0002",
+          "stm-m020-0003",
+          "stm-m020-0004",
+          "stm-m020-0005",
+          "stm-m020-0006",
+          "stm-m020-0007",
+          "stm-m020-0008",
+          "stm-m020-0009",
+          "stm-m020-0010",
+          "stm-m020-0011",
+          "stm-m020-0012",
+          "stm-m020-0013",
+          "stm-m020-0014",
+          "stm-m020-0015",
+          "stm-m020-0016",
+          "stm-m020-0017",
+          "stm-m020-0018",
+          "stm-m020-0019",
+          "stm-m020-0020",
+          "stm-m020-0021",
+          "stm-m020-0022",
+          "stm-m020-0023",
+          "stm-m020-0024",
+          "stm-m020-0025",
+          "stm-m020-0026",
+          "stm-m020-0027",
+          "stm-m020-0028",
+          "stm-m022-0001",
+          "stm-m022-0002"
+        ]
+      },
+      "diagnostics": [
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.source.sniffed",
+        "warning:migration.code.unresolved",
+        "warning:migration.code.unresolved",
+        "warning:migration.code.unresolved",
+        "warning:migration.id.not-portable",
+        "warning:migration.id.not-portable",
+        "warning:migration.id.not-portable",
+        "warning:migration.id.not-portable",
+        "warning:migration.id.not-portable",
+        "warning:migration.review.required"
+      ],
+      "validation": {
+        "ok": true,
+        "counts": {
+          "error": 0,
+          "warning": 5,
+          "info": 1
+        }
+      },
+      "summary": {
+        "deterministicMappings": 345,
+        "inferredMappings": 3,
+        "disputes": 28,
+        "preservedValues": 680,
+        "droppedValues": 102,
+        "unmappedValues": 0,
+        "warnings": 9,
+        "errors": 0
+      },
+      "candidateSha256": "961cbb9e2364d80a80c39695b3f066fa9f39d625bedf64c7aeb421a40dafd291",
+      "candidateBytes": 225061
+    },
+    {
+      "id": "overfit-16-hub-v4-6",
+      "ok": true,
+      "source": {
+        "family": "cinebraid-legacy",
+        "generation": "pre-6.6",
+        "confidence": "sniffed",
+        "schemaVersion": null,
+        "hubVersion": "v4.6",
+        "metaVersion": "v2.1",
+        "metaVersionClass": "film-draft",
+        "markers": [
+          "shot.clips",
+          "shot.atomic/parentShot/fallbackFor",
+          "shot.codes"
+        ],
+        "fingerprint": "sha256:829af0ff31f1caf4b2bf51caa9265e7d9345639437a24a90fb22df01ae334305"
+      },
+      "rulesApplied": [
+        "M001",
+        "M002",
+        "M003",
+        "M053",
+        "M060",
+        "M004",
+        "M006",
+        "M011",
+        "M017",
+        "M005",
+        "M010",
+        "M009",
+        "M013",
+        "M012",
+        "M020",
+        "M021",
+        "M022",
+        "M050",
+        "M051",
+        "M052",
+        "M070"
+      ],
+      "ruleStatements": {
+        "M002": 1,
+        "M020": 28,
+        "M022": 2
+      },
+      "accounting": {
+        "leaves": 1129,
+        "unaccounted": 0,
+        "byDisposition": {
+          "mapped": 342,
+          "preserved": 685,
+          "dropped": 102,
+          "stated": 31,
+          "unmapped": 0
+        },
+        "byRule": {
+          "M002": 3,
+          "M003": 21,
+          "M053": 5,
+          "M004": 108,
+          "M006": 50,
+          "M011": 12,
+          "M017": 15,
+          "M005": 261,
+          "M022": 2,
+          "M010": 22,
+          "M009": 30,
+          "M013": 22,
+          "M012": 37,
+          "M020": 90,
+          "M021": 1,
+          "M050": 105,
+          "M051": 47,
+          "M052": 54,
+          "M070": 275
+        }
+      },
+      "counts": {
+        "scenes": {
+          "before": 9,
+          "after": 9
+        },
+        "shots": {
+          "before": 22,
+          "after": 22
+        },
+        "characters": {
+          "before": 1,
+          "after": 1
+        },
+        "locations": {
+          "before": 5,
+          "after": 5
+        },
+        "props": {
+          "before": 6,
+          "after": 6
+        },
+        "voices": {
+          "before": 5,
+          "after": 5
+        },
+        "motion": {
+          "before": 30,
+          "after": 30
+        },
+        "relations": {
+          "before": 0,
+          "after": 2
+        },
+        "statements": {
+          "before": 0,
+          "after": 31
+        }
+      },
+      "identity": {
+        "source": 48,
+        "preserved": 48,
+        "lost": 0,
+        "minted": 32
+      },
+      "statements": {
+        "total": 31,
+        "kinds": {
+          "suggested": 3,
+          "disputed": 28
+        },
+        "ids": [
+          "stm-m002-0001",
+          "stm-m020-0001",
+          "stm-m020-0002",
+          "stm-m020-0003",
+          "stm-m020-0004",
+          "stm-m020-0005",
+          "stm-m020-0006",
+          "stm-m020-0007",
+          "stm-m020-0008",
+          "stm-m020-0009",
+          "stm-m020-0010",
+          "stm-m020-0011",
+          "stm-m020-0012",
+          "stm-m020-0013",
+          "stm-m020-0014",
+          "stm-m020-0015",
+          "stm-m020-0016",
+          "stm-m020-0017",
+          "stm-m020-0018",
+          "stm-m020-0019",
+          "stm-m020-0020",
+          "stm-m020-0021",
+          "stm-m020-0022",
+          "stm-m020-0023",
+          "stm-m020-0024",
+          "stm-m020-0025",
+          "stm-m020-0026",
+          "stm-m020-0027",
+          "stm-m020-0028",
+          "stm-m022-0001",
+          "stm-m022-0002"
+        ]
+      },
+      "diagnostics": [
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.source.sniffed",
+        "warning:migration.code.unresolved",
+        "warning:migration.code.unresolved",
+        "warning:migration.code.unresolved",
+        "warning:migration.id.not-portable",
+        "warning:migration.id.not-portable",
+        "warning:migration.id.not-portable",
+        "warning:migration.id.not-portable",
+        "warning:migration.id.not-portable",
+        "warning:migration.review.required"
+      ],
+      "validation": {
+        "ok": true,
+        "counts": {
+          "error": 0,
+          "warning": 5,
+          "info": 1
+        }
+      },
+      "summary": {
+        "deterministicMappings": 342,
+        "inferredMappings": 3,
+        "disputes": 28,
+        "preservedValues": 685,
+        "droppedValues": 102,
+        "unmappedValues": 0,
+        "warnings": 9,
+        "errors": 0
+      },
+      "candidateSha256": "8459a6450411a7a01a456b8ac9916b141e512a792013dc6889c936edc8a28066",
+      "candidateBytes": 225716
+    },
+    {
+      "id": "overfit-17-hub-v4-7",
+      "ok": true,
+      "source": {
+        "family": "cinebraid-legacy",
+        "generation": "pre-6.6",
+        "confidence": "sniffed",
+        "schemaVersion": null,
+        "hubVersion": "v4.7",
+        "metaVersion": "v2.1",
+        "metaVersionClass": "film-draft",
+        "markers": [
+          "shot.clips",
+          "shot.atomic/parentShot/fallbackFor",
+          "shot.codes"
+        ],
+        "fingerprint": "sha256:50b7c80a9ff5126fe379238a94d4620dff2ccf05e021d6161c43930d62097f57"
+      },
+      "rulesApplied": [
+        "M001",
+        "M002",
+        "M003",
+        "M053",
+        "M060",
+        "M004",
+        "M006",
+        "M011",
+        "M017",
+        "M005",
+        "M010",
+        "M009",
+        "M013",
+        "M012",
+        "M020",
+        "M021",
+        "M022",
+        "M030",
+        "M050",
+        "M051",
+        "M052",
+        "M070"
+      ],
+      "ruleStatements": {
+        "M002": 1,
+        "M020": 28,
+        "M022": 2
+      },
+      "accounting": {
+        "leaves": 1143,
+        "unaccounted": 0,
+        "byDisposition": {
+          "mapped": 345,
+          "preserved": 684,
+          "dropped": 114,
+          "stated": 31,
+          "unmapped": 0
+        },
+        "byRule": {
+          "M002": 3,
+          "M003": 21,
+          "M053": 5,
+          "M004": 108,
+          "M006": 50,
+          "M011": 12,
+          "M017": 15,
+          "M005": 261,
+          "M022": 2,
+          "M010": 22,
+          "M009": 32,
+          "M013": 31,
+          "M012": 38,
+          "M020": 90,
+          "M021": 1,
+          "M030": 1,
+          "M050": 105,
+          "M051": 59,
+          "M052": 54,
+          "M070": 264
+        }
+      },
+      "counts": {
+        "scenes": {
+          "before": 9,
+          "after": 9
+        },
+        "shots": {
+          "before": 22,
+          "after": 22
+        },
+        "characters": {
+          "before": 1,
+          "after": 1
+        },
+        "locations": {
+          "before": 5,
+          "after": 5
+        },
+        "props": {
+          "before": 6,
+          "after": 6
+        },
+        "voices": {
+          "before": 5,
+          "after": 5
+        },
+        "motion": {
+          "before": 32,
+          "after": 32
+        },
+        "relations": {
+          "before": 0,
+          "after": 2
+        },
+        "references": {
+          "before": 0,
+          "after": 1
+        },
+        "assets": {
+          "before": 0,
+          "after": 1
+        },
+        "statements": {
+          "before": 0,
+          "after": 31
+        }
+      },
+      "identity": {
+        "source": 48,
+        "preserved": 48,
+        "lost": 0,
+        "minted": 36
+      },
+      "statements": {
+        "total": 31,
+        "kinds": {
+          "suggested": 3,
+          "disputed": 28
+        },
+        "ids": [
+          "stm-m002-0001",
+          "stm-m020-0001",
+          "stm-m020-0002",
+          "stm-m020-0003",
+          "stm-m020-0004",
+          "stm-m020-0005",
+          "stm-m020-0006",
+          "stm-m020-0007",
+          "stm-m020-0008",
+          "stm-m020-0009",
+          "stm-m020-0010",
+          "stm-m020-0011",
+          "stm-m020-0012",
+          "stm-m020-0013",
+          "stm-m020-0014",
+          "stm-m020-0015",
+          "stm-m020-0016",
+          "stm-m020-0017",
+          "stm-m020-0018",
+          "stm-m020-0019",
+          "stm-m020-0020",
+          "stm-m020-0021",
+          "stm-m020-0022",
+          "stm-m020-0023",
+          "stm-m020-0024",
+          "stm-m020-0025",
+          "stm-m020-0026",
+          "stm-m020-0027",
+          "stm-m020-0028",
+          "stm-m022-0001",
+          "stm-m022-0002"
+        ]
+      },
+      "diagnostics": [
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.id.minted",
+        "info:migration.source.sniffed",
+        "warning:migration.code.unresolved",
+        "warning:migration.code.unresolved",
+        "warning:migration.code.unresolved",
+        "warning:migration.id.not-portable",
+        "warning:migration.id.not-portable",
+        "warning:migration.id.not-portable",
+        "warning:migration.id.not-portable",
+        "warning:migration.id.not-portable",
+        "warning:migration.review.required"
+      ],
+      "validation": {
+        "ok": true,
+        "counts": {
+          "error": 0,
+          "warning": 5,
+          "info": 1
+        }
+      },
+      "summary": {
+        "deterministicMappings": 345,
+        "inferredMappings": 3,
+        "disputes": 28,
+        "preservedValues": 684,
+        "droppedValues": 114,
+        "unmappedValues": 0,
+        "warnings": 9,
+        "errors": 0
+      },
+      "candidateSha256": "0b066d6109387d995fe84172916560447cd75de6f0847c1408f0fe96b073efad",
+      "candidateBytes": 223835
+    },
+    {
+      "id": "overfit-18-cinebraid-581",
+      "ok": true,
+      "source": {
+        "family": "cinebraid-legacy",
+        "generation": "6.6",
+        "confidence": "sniffed",
+        "schemaVersion": null,
+        "hubVersion": "v5.8.1",
+        "metaVersion": "v2.1",
+        "metaVersionClass": "film-draft",
+        "markers": [
+          "shot.creationBrief",
+          "entity.continuityStates",
+          "shot.keyframes",
+          "shot.clips",
+          "shot.atomic/parentShot/fallbackFor",
+          "shot.codes"
+        ],
+        "fingerprint": "sha256:0e6efe308ac6993e070834951543b918535550320d26a68a95783c7ff379e9cb"
+      },
+      "rulesApplied": [
+        "M001",
+        "M002",
+        "M003",
+        "M053",
+        "M004",
+        "M006",
+        "M011",
+        "M007",
+        "M016",
+        "M017",
+        "M005",
+        "M010",
+        "M009",
+        "M013",
+        "M012",
+        "M020",
+        "M021",
+        "M022",
+        "M031",
+        "M050",
+        "M051",
+        "M052",
+        "M070"
+      ],
+      "ruleStatements": {
+        "M002": 1,
+        "M020": 28,
+        "M022": 2
+      },
+      "accounting": {
+        "leaves": 1792,
+        "unaccounted": 0,
+        "byDisposition": {
+          "mapped": 534,
+          "preserved": 1044,
+          "dropped": 214,
+          "stated": 31,
+          "unmapped": 0
+        },
+        "byRule": {
+          "M002": 3,
+          "M003": 25,
+          "M053": 5,
+          "M004": 108,
+          "M006": 50,
+          "M011": 24,
+          "M007": 48,
+          "M016": 12,
+          "M017": 15,
+          "M005": 261,
+          "M022": 2,
+          "M010": 22,
+          "M009": 223,
+          "M013": 58,
+          "M012": 34,
+          "M020": 134,
+          "M021": 1,
+          "M031": 1,
+          "M050": 105,
+          "M051": 86,
+          "M052": 56,
+          "M070": 550
+        }
+      },
+      "counts": {
+        "scenes": {
+          "before": 9,
+          "after": 9
+        },
+        "shots": {
+          "before": 22,
+          "after": 22
+        },
+        "characters": {
+          "before": 1,
+          "after": 1
+        },
+        "locations": {
+          "before": 5,
+          "after": 5
+        },
+        "props": {
+          "before": 6,
+          "after": 6
+        },
+        "voices": {
+          "before": 5,
+          "after": 5
+        },
+        "states": {
+          "before": 12,
+          "after": 12
+        },
+        "frames": {
+          "before": 24,
+          "after": 24
+        },
+        "motion": {
+          "before": 45,
+          "after": 45
+        },
+        "relations": {
+          "before": 0,
+          "after": 2
+        },
+        "statements": {
+          "before": 0,
+          "after": 31
+        }
+      },
+      "identity": {
+        "source": 129,
+        "preserved": 129,
+        "lost": 0,
+        "minted": 2
+      },
+      "statements": {
+        "total": 31,
+        "kinds": {
+          "suggested": 3,
+          "disputed": 28
+        },
+        "ids": [
+          "stm-m002-0001",
+          "stm-m020-0001",
+          "stm-m020-0002",
+          "stm-m020-0003",
+          "stm-m020-0004",
+          "stm-m020-0005",
+          "stm-m020-0006",
+          "stm-m020-0007",
+          "stm-m020-0008",
+          "stm-m020-0009",
+          "stm-m020-0010",
+          "stm-m020-0011",
+          "stm-m020-0012",
+          "stm-m020-0013",
+          "stm-m020-0014",
+          "stm-m020-0015",
+          "stm-m020-0016",
+          "stm-m020-0017",
+          "stm-m020-0018",
+          "stm-m020-0019",
+          "stm-m020-0020",
+          "stm-m020-0021",
+          "stm-m020-0022",
+          "stm-m020-0023",
+          "stm-m020-0024",
+          "stm-m020-0025",
+          "stm-m020-0026",
+          "stm-m020-0027",
+          "stm-m020-0028",
+          "stm-m022-0001",
+          "stm-m022-0002"
+        ]
+      },
+      "diagnostics": [
+        "info:migration.source.sniffed",
+        "warning:migration.code.unresolved",
+        "warning:migration.code.unresolved",
+        "warning:migration.code.unresolved",
+        "warning:migration.id.not-portable",
+        "warning:migration.id.not-portable",
+        "warning:migration.id.not-portable",
+        "warning:migration.id.not-portable",
+        "warning:migration.id.not-portable",
+        "warning:migration.review.required"
+      ],
+      "validation": {
+        "ok": true,
+        "counts": {
+          "error": 0,
+          "warning": 5,
+          "info": 1
+        }
+      },
+      "summary": {
+        "deterministicMappings": 534,
+        "inferredMappings": 3,
+        "disputes": 28,
+        "preservedValues": 1044,
+        "droppedValues": 214,
+        "unmappedValues": 0,
+        "warnings": 9,
+        "errors": 0
+      },
+      "candidateSha256": "2da1c0d9459443035058c23fce1b6fdeecc60f429bfaa2f66aefb3e02aca2941",
+      "candidateBytes": 331818
+    }
+  ]
+}

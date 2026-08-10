@@ -385,6 +385,8 @@ async function main() {
     "ofp-migration-negative-controls.js",
     "ofp-migration.js",
     "ofp-negative-controls.js",
+    "ofp-overfit-conformance.js",
+    "ofp-overfit-negative-controls.js",
     "ofp-read-invariant.js",
     "ofp-serialization.js",
     "openai-request-dialect.js",
