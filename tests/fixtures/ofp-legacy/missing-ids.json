@@ -1,0 +1,44 @@
+{
+  "meta": {
+    "title": "Missing And Non-Portable Identifiers",
+    "schemaVersion": "6.6"
+  },
+  "scenes": [],
+  "shots": [
+    {
+      "id": "INT-1->2",
+      "title": "A legacy identifier outside the portability profile",
+      "desc": "Five real shots look like this; nothing renames them.",
+      "dur": 4,
+      "keyframes": [
+        { "id": "", "description": "First frame with no identifier." },
+        { "description": "Second frame with no identifier key at all." }
+      ],
+      "clips": [
+        { "id": "", "motionPrompt": "Slow push in.", "dur": 4 }
+      ]
+    },
+    {
+      "id": "INT-2->3",
+      "title": "A second non-portable identifier",
+      "desc": "The same shape, so the report shows more than one.",
+      "dur": 4,
+      "keyframes": []
+    }
+  ],
+  "characters": [
+    {
+      "id": "CHAR-A",
+      "name": "A",
+      "description": "One character with unidentified states.",
+      "continuityStates": [
+        { "name": "Default", "isDefault": true, "notes": "No identifier on this state." },
+        { "id": "", "name": "Wet", "notes": "Nor on this one." }
+      ],
+      "coverageSlots": []
+    }
+  ],
+  "locations": [],
+  "props": [],
+  "vehicles": []
+}

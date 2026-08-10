@@ -1,0 +1,40 @@
+{
+  "meta": {
+    "title": "Voice Linkage",
+    "schemaVersion": "6.7"
+  },
+  "scenes": [],
+  "shots": [],
+  "characters": [
+    {
+      "id": "CHAR-MARA",
+      "name": "Mara",
+      "description": "Weather-worn canvas coat.",
+      "voiceId": "AUD-MARA",
+      "continuityStates": [],
+      "coverageSlots": []
+    },
+    {
+      "id": "CHAR-SILENT",
+      "name": "The silent one",
+      "description": "Never speaks.",
+      "continuityStates": [],
+      "coverageSlots": []
+    },
+    {
+      "id": "CHAR-DANGLING",
+      "name": "Points at nothing",
+      "description": "Carries a voice reference that names no audio entity.",
+      "voiceId": "AUD-MISSING",
+      "continuityStates": [],
+      "coverageSlots": []
+    }
+  ],
+  "locations": [],
+  "props": [],
+  "vehicles": [],
+  "audio": [
+    { "id": "AUD-MARA", "name": "Mara", "notes": "Low, unhurried.", "language": "en-GB" },
+    { "id": "AUD-NARRATOR", "name": "Narrator", "notes": "Linked by nobody, and that is legal." }
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "name": "New Project 3",
+  "workspacePath": "D:\\Projects\\Spy NF\\NFSpy",
+  "ambientLight": { "intensity": 0.4 },
+  "envMap": "studio.hdr",
+  "shadowQuality": "high",
+  "objects": []
+}

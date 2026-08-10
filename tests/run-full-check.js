@@ -97,6 +97,8 @@ const nodeSuites = [
   "check:ofp-serialization",
   "check:ofp-invariant",
   "check:ofp-negative",
+  "check:ofp-migration",
+  "check:ofp-migration-negative",
   "check:version",
   "check:shot-layout",
   "check:settings",

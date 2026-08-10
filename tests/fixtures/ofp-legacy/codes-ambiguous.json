@@ -1,0 +1,64 @@
+{
+  "meta": {
+    "title": "Ambiguous Codes",
+    "schemaVersion": "6.7"
+  },
+  "scenes": [{ "id": "SC-HULL", "title": "The hull" }],
+  "shots": [
+    {
+      "id": "L1-01",
+      "scene": "SC-HULL",
+      "title": "Suffix matching a coverage record",
+      "desc": "The suffix happens to name a coverage view that exists.",
+      "codes": ["LOC-HULL-A"],
+      "dur": 4
+    },
+    {
+      "id": "L1-02",
+      "scene": "SC-HULL",
+      "title": "Suffix matching nothing",
+      "desc": "The suffix names no coverage view on that location.",
+      "codes": ["LOC-GALLEY-A"],
+      "dur": 4
+    },
+    {
+      "id": "L1-03",
+      "scene": "SC-HULL",
+      "title": "Suffixed character token",
+      "desc": "A reference-sheet suffix on an entity id.",
+      "codes": ["KAI-ANCHOR-01"],
+      "dur": 4
+    },
+    {
+      "id": "L1-04",
+      "scene": "SC-HULL",
+      "title": "Unresolved token",
+      "desc": "A pipeline marker that resolves to nothing and vanishes today.",
+      "codes": ["STAGE-3"],
+      "dur": 4
+    }
+  ],
+  "characters": [
+    { "id": "KAI", "name": "Kai", "description": "Deck crew.", "continuityStates": [], "coverageSlots": [] }
+  ],
+  "locations": [
+    {
+      "id": "LOC-HULL",
+      "name": "Hull bay",
+      "description": "Scaffold and one work light.",
+      "continuityStates": [],
+      "coverageSlots": [
+        { "id": "A", "label": "View A", "requirement": "required", "notes": "From the scaffold." }
+      ]
+    },
+    {
+      "id": "LOC-GALLEY",
+      "name": "Galley",
+      "description": "Two benches and a kettle.",
+      "continuityStates": [],
+      "coverageSlots": []
+    }
+  ],
+  "props": [],
+  "vehicles": []
+}

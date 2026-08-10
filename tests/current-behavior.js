@@ -382,6 +382,8 @@ async function main() {
     "motion-prompt-editing-real-browser.py",
     "multi-aspect-media.js",
     "ofp-contract.js",
+    "ofp-migration-negative-controls.js",
+    "ofp-migration.js",
     "ofp-negative-controls.js",
     "ofp-read-invariant.js",
     "ofp-serialization.js",

@@ -1,0 +1,58 @@
+{
+  "meta": {
+    "title": "Anchor Hub Era",
+    "version": "v2.1",
+    "hubVersion": "v2.2"
+  },
+  "scenes": [
+    {
+      "id": "SC-HULL",
+      "title": "The hull",
+      "whatHappens": "Two passes over the same weld."
+    }
+  ],
+  "shots": [
+    {
+      "id": "L0-01",
+      "scene": "SC-HULL",
+      "title": "Establishing weld",
+      "desc": "Wide on the weld seam.",
+      "atomic": true,
+      "codes": ["LOC-HULL"],
+      "dur": 5,
+      "keyframes": [{ "id": "kf-1", "description": "The seam, cold." }]
+    },
+    {
+      "id": "L0-02",
+      "scene": "SC-HULL",
+      "title": "Insert",
+      "desc": "Tighter on the same seam.",
+      "parentShot": "L0-01",
+      "codes": ["LOC-HULL"],
+      "dur": 2,
+      "keyframes": [{ "id": "kf-1", "description": "The seam, closer." }]
+    },
+    {
+      "id": "L0-02-ALT",
+      "scene": "SC-HULL",
+      "title": "Insert alternate",
+      "desc": "A safer version of the insert.",
+      "fallbackFor": "L0-02",
+      "codes": ["LOC-HULL"],
+      "dur": 2,
+      "keyframes": [{ "id": "kf-1", "description": "The seam, wider safety." }]
+    }
+  ],
+  "characters": [],
+  "locations": [
+    {
+      "id": "LOC-HULL",
+      "name": "Hull bay",
+      "description": "Scaffold, one work light, a long weld seam.",
+      "continuityStates": [],
+      "coverageSlots": []
+    }
+  ],
+  "props": [],
+  "vehicles": []
+}
