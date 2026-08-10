@@ -17,6 +17,14 @@
 # and need the same guarantee.
 *.ofp.json  text eol=lf
 
+# The sanitized Overfit corpus (P3). Same reasoning as the line above, for a
+# different reason: these are legacy documents rather than OFP ones, but their
+# SHA-256 is pinned in manifest.json and in the migration goldens, so a checkout
+# that rewrote their line endings would fail the drift gate on every Windows
+# clone while passing in CI. Pin the whole tree, including the manifest and the
+# summary, because all three are hashed.
+tests/fixtures/ofp-migration/overfit/**  text eol=lf
+
 # Never ship in a release archive. `git archive` honours export-ignore, so the
 # packaged runtime is the tracked source minus continuous-integration wiring,
 # local agent state and historical QA evidence. Everything else a fresh install
