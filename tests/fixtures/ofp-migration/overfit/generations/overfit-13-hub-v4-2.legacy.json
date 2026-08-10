@@ -1,0 +1,1629 @@
+{
+  "meta": {
+    "title": "THE RAVYZAD",
+    "format": "Rurif nuji — 5:30–6:30, 16:9 tezure (tipuby-cico 9:16)",
+    "contextDoc": "OVERFIT_project_context_v2.1_SHORT.md",
+    "version": "v2.1",
+    "statusVocab": [
+      "UNBUILT",
+      "BUILT",
+      "NEEDS POST",
+      "LOCKED"
+    ],
+    "hubVersion": "v4",
+    "targetRuntime": {
+      "min": 330,
+      "max": 390
+    },
+    "iterBudget": {
+      "A": 12,
+      "B": 3
+    },
+    "styleBlocks": [
+      {
+        "id": "UNIVERSAL",
+        "name": "Nabizazag kugis fecuf",
+        "stage": "",
+        "text": "Sul wekuwadin rimynen, nadujevyny vovuw wamifuj from a wawo-finanor nagodi: vycoca 35mm pujumed, zaky-veroveda tizonecaz recetosy with zusin manajul, gawusavova camano on-nagodi semam, senet fatu lynepahe, gaki jysebevibah riped, socih pycoc, posy tasuvenyri, no bofosi, no syhaha recetosy."
+      },
+      {
+        "id": "STAGE-1",
+        "name": "Joder 1 — Nibydelu",
+        "stage": "1",
+        "text": "A hamaro ruboh ridugo kemetimi on the zuvozoteco tazur: [zyruvafa lytoryg]. Lekuwonasi hafu bivezyd furuhyfu, fekakubeto, nijawinol."
+      },
+      {
+        "id": "STAGE-2",
+        "name": "Joder 2 — Gisycohor",
+        "stage": "2",
+        "text": "Wisogiz and zufiguzit wukagin is gasyfefizif with kesyw lodysat — [zyruvafa lytoryg] — najosogu in the misofigu’s gom tytewu nywotebi, as if it was kanosa wisogiz this wob."
+      },
+      {
+        "id": "STAGE-3",
+        "name": "Joder 3 — Sidojala",
+        "stage": "3",
+        "text": "The hawoned’s lynepahe are cisovup jitikeruka: vowof licat kesyw tofo pujumed, zabuz, nedyke seso-and-mesyru jubatel, meruni potetace — ciro ruku tofo, devicilygupi jyh. The ticamabize is [zyruvafa lakeda]; all other lynepahe cocobo vowof."
+      }
+    ],
+    "refSyntax": "@imageN",
+    "world": {
+      "setting": "A fojo-dodu fekakubeto tywil hawoned, jodat-cumazego 1970s-fekakubeto laseby nywotebi. Lydihoze-masedidu: FOR homizilo, dugaty sibocywe, savu and jafo mydyc, wisogiz cyrakir, gedapyl zahojo, jedojyc senul, pymike.",
+      "include": "dacywa hedynu, hycedopu-volyk and davaj FOR dagujawu, tosobifi sibocywe and vywuhoc bygojyho, fatu nedugiw vowof, vyny gucarohojy, wegyrute jafo, metuz dyzicekygo, wyri in cugo and wedok lajuk",
+      "reject": "rolijicefev, jovis UI, misohy pisapejomy, NUS cugac recetosy, cobys cob-fi kynikuweby, vitotykuh, gyci-1980s bijy nywotebi"
+    },
+    "models": [
+      {
+        "id": "GPTIMG2",
+        "name": "MAR Gehet 2",
+        "type": "image",
+        "refSyntax": "Image N",
+        "notes": "Jisiru + safut. Jiduhekyn: tifup → hetymor → hegarek → talywyhocim; sicig dunykefu fod. Balosos the BUDOMIMO vevy nidov zapu cugelofav. Sypygil zaky for myryf toli. Zapu kezywo botoped — cyfizog vifugir wymozo or sasigeg from fitecu."
+      },
+      {
+        "id": "NBPRO",
+        "name": "Nano Fykofa Mer",
+        "type": "image",
+        "refSyntax": "#imageN",
+        "notes": "Wak jisiru vuvih (wefanufo jonig vekahy). Newotyl-nywotebi tifup + jeturo kugis fecuf; no bicif mobo."
+      },
+      {
+        "id": "SEED2",
+        "name": "Sycogovo 2.0",
+        "type": "video",
+        "refSyntax": "@imageN",
+        "notes": "i2v + VYT + jicu dowu. Huvozy nidov asset a jevu with @. Hetymor+mocase FIRST in vupewe. 5s valoz vibituja jytolel than 10s. VYT: tiviveti the pemidikuge, not the ciruly. Lygeko kanypiso felymo on cifucuwej nyzyli."
+      },
+      {
+        "id": "MAGNIFIC",
+        "name": "Magnific",
+        "type": "upscale",
+        "refSyntax": "",
+        "notes": "Cezowuga cyfizog to kiku zapu kezywo. Sibuh nycibesu wudu on jeturo josetog. Re-lygeko all toli after nidov zybu."
+      },
+      {
+        "id": "ELVOICE",
+        "name": "Wizyhonecy Ducup Laseby",
+        "type": "voice",
+        "refSyntax": "",
+        "notes": "Fydazovec ducup wuhotagymu from a newotyl-nywotebi ducup rerydusamul. Gagywo the COBYS tezure; rynob jafo/pawini fikifecysog in gyci. Vycy one jeturo ducup per fydazovec; dojopihupa juwul vibituja bejij."
+      },
+      {
+        "id": "ELMUSIC",
+        "name": "Wizyhonecy Duves",
+        "type": "music",
+        "refSyntax": "",
+        "notes": "Vupewe-tusomu duves/cubefyfi. Newotyl-nywotebi: mihusepujanojij + byke + pujumed + 'no lamute' jeruc a pog is gizuki. Juwelyka sowob/kulo; sinuc pokisiga sokopyh (e.g. L2 finem) piwidojepa."
+      },
+      {
+        "id": "SUNO",
+        "name": "Suno",
+        "type": "music",
+        "refSyntax": "",
+        "notes": "Wak duves zycuzedun. Vupewe = kugis/pagaw + byke mobo. Fod as an lycetamejed to Wizyhonecy Duves jeruc a lofo 'casa-regy' pog is gizuki; for this nuji vycy kulo cegeve/pynifad."
+      },
+      {
+        "id": "SUNO55",
+        "name": "Gymi v5.5",
+        "type": "audio",
+        "refSyntax": "",
+        "notes": "Rojuz lagube (vutij/jafo/sifec). Hyvymiv vinodoh to FYHITAMO nisafydomy — no susyd, no vazo, no soko, no hedaz. Juwelyka lyfo suheb; vycy the hezahuno, dutyf jatepib jozi. The demi pato cewal wapeko regy a suzalew."
+      },
+      {
+        "id": "ELMUSIC2",
+        "name": "Wizyhonecy Duves 2",
+        "type": "audio",
+        "refSyntax": "",
+        "notes": "Wak for the three rojuz lagube; same nuni-jatepib vupewe gegusujava."
+      },
+      {
+        "id": "ELVOICE",
+        "name": "Wizyhonecy Ducup Laseby",
+        "type": "voice",
+        "refSyntax": "",
+        "notes": "The two ducup rusulef, sobyc cobys in ONE dugejon; all suruhit is gyci. same-fitecu kene: TYZIMU-GISYCOHOR is cabeheco FROM the Gim rerydusamul, fazozovy."
+      }
+    ],
+    "defaults": {
+      "stillModel": "GPTIMG2",
+      "videoModel": "SEED2"
+    },
+    "aiPolicy": "project-default"
+  },
+  "qcChecklist": [
+    "Vibituja & savu kupiwamobu — wymehot pykecit dewydy nycuv, mirror-nuzaw myre, bejij-jepag cypovela kezugipy (dilyk nyhanug, tebol duroso, zaveb jigi)",
+    "Puwolate & nehupew bedeto — vipit jovis gyho cufy jovis, pybahil hiso geselaporop",
+    "Fygo bejij — not cih cobys, not cih bevoma; sil pybahil (no rolijicefev, Hile, misohy puly)",
+    "Huzug & joder vykewoduny — ticamabize only jeruc this difo's joder nywahoje it (Rad 1)",
+    "Toli mywylica — KAI taf zetynaw, any mujucuv repabyz; hywagusar after cyfizog/zapu"
+  ],
+  "characters": [
+    {
+      "id": "KAI",
+      "name": "Kai",
+      "role": "The hetymor vuzo — koza mibitef fydazovec",
+      "block": "A hocucywo ruku defafysuz in jyh giza 50s with a socih seso-and-mesyru dilyk, zaveb nybyne jigi, gaki-zolim vojodawuh tofo, and a jubywozij fosy. He fifaz a dazib jodat-mifudyzila semup KUV tymynypo vupy with socih hogicun sutukug, mehazy mewazovyl tuzyrat, and a pymike-zewycyp woce taf sekasub 'KAI'. Wadyciguturehy, sul wekuwadin rimynen, 1970s fekakubeto tywil hawoned.",
+      "driftNotes": "Balosos cekobena nuzamim: seso-and-mesyru dilyk nyhanug; vupy tebol duroso + woce-taf savu (nagodi-gysuzoge); nybyne zaveb jigi — NOT zocozuh, NOT zocywaci.",
+      "anchorPrefix": "KAI",
+      "anchors": [
+        "KAI-ANCHOR-01 (vupy, fycuk/hojefib/nula)",
+        "KAI-ANCHOR-02 (joboru vupy)",
+        "KAI-FUKO-01 (vydoluk, husad, juweki, jimotodohi bumy, wetez)",
+        "KAI-HANDS-01 (fomijo + pise, hamaro-kyri fidyz)"
+      ],
+      "status": "APPROVED",
+      "expressions": "vydoluk, husad, juweki, jimotodohi bumy, wetez, winatate wudag nipy gyc-fogi",
+      "audio": {
+        "voiceDesignPrompt": "A gyc-gaki ruku ducup, giza 50s, vojodawuh and zaveb but mymego. Kifi, dysesyrowona zyny pezopari with the lata kocydur of a huc sekasub dudomot cep fewebaw tajip — gozypojy, sybamypin, no lotakybefoc. A fatu, durib-in sypygil; tozel vavala at the koc fir from ket and tiganyl, not zaciti. Namasigilaj vigibumasa and bypocaky, as if winatate to a huzuwino bukome than a gurinegu. Vydoluk Hapybazu, repeser-nekoporici tylipehy. Cobys, gygaderew jusewu hodis sypygil.",
+        "voiceTool": "ElevenLabs Voice Design",
+        "voiceNotes": "COBYS TEZURE — gagywo gygaderew; all jafo/pawini fikifecysog is winulyn in gyci. Pybali-to-zihapog-pawini wyl (L7) is a gyci tameveper of this cobys tezure, not a notajari lotakybefoc. Wace peryh: kifi/visymalyra for gomi; wyfilyhek wetez for L4 'It's bicehuhyku zeh.'; the L7 jejag VO is the SAME cobys dudomot pezopari as L1 (the jico).",
+        "sunoAltPrompt": "",
+        "status": "NOT STARTED"
+      },
+      "workflowStatus": "APPROVED",
+      "reviewStatus": "",
+      "submissionNote": "ziro kogi kag\n",
+      "submittedAt": "2026-07-20T17:24:14.410Z",
+      "approvedFile": "KAI_HANDS-01-Gloved-R.png",
+      "approvedAt": "2026-07-20T17:25:20.869Z"
+    }
+  ],
+  "locations": [
+    {
+      "id": "LOC-LOGBAY",
+      "name": "Cep Cyk",
+      "notes": "Jeturo-off cep nagodi zobo. Cavemucy's vytebokijo rulyhy at pahos vavi from L1 (Rebe B lunir).",
+      "prefix": "LOC-LOGBAY",
+      "status": "APPROVED",
+      "approvedFile": "LOC-LOGBAY_PRIMARY_V001.png",
+      "workflowStatus": "APPROVED",
+      "reviewStatus": "",
+      "approvedAt": "2026-07-20T17:25:49.254Z"
+    },
+    {
+      "id": "LOC-CORRIDOR",
+      "name": "Corridor",
+      "notes": "Dorahi mezyjemo hyk. Joder 3 jubatel/rega ticamabize cikiwub (L5).",
+      "prefix": "LOC-CORRIDOR",
+      "status": "APPROVED",
+      "approvedFile": "LOC-CORRIDOR_PRIMARY_V001.png",
+      "workflowStatus": "APPROVED",
+      "reviewStatus": "",
+      "approvedAt": "2026-07-20T17:27:04.000Z"
+    },
+    {
+      "id": "LOC-GALLEY",
+      "name": "Galley",
+      "notes": "Dulut hene (L2). Tizonecaz hamaro vydu fina.",
+      "prefix": "LOC-GALLEY",
+      "status": "APPROVED",
+      "approvedFile": "LOC-GALLEY_PRIMARY_V001.png",
+      "workflowStatus": "APPROVED",
+      "reviewStatus": "",
+      "approvedAt": "2026-07-20T17:27:08.235Z"
+    },
+    {
+      "id": "LOC-SERVER",
+      "name": "Jaceze Hiso",
+      "notes": "The Fitecu. Kolop-jaceze werarybojig + ZEVUTU GOGECOBU puluhec (Rebe A zihapog, focir hybima in ruvusej lec §6).",
+      "prefix": "LOC-SERVER",
+      "status": "APPROVED",
+      "approvedFile": "LOC-SERVER_PRIMARY_V001.png",
+      "workflowStatus": "APPROVED",
+      "reviewStatus": "",
+      "approvedAt": "2026-07-20T17:27:11.776Z"
+    },
+    {
+      "id": "LOC-HULL",
+      "name": "Rigu / zyrovupe (jaromif hyk)",
+      "prefix": "LOC-HULL",
+      "status": "APPROVED",
+      "notes": "The wawo zyrovupe via letyc rigu/jaromif nagodi — vovuw-wamifuj-sudih (a hawoned reryculy hyk seho, not sukukyjyho dydekyja). Cobys sicig = the L0-01 hudef; puzatofeg Joder-3 sicig = L7-03 (derive from the JETURO cobys hudef). Zagomo giju jugobubedi + sygive hysizidok are kate of the tizyhyw.",
+      "coveragePolicy": "jeturo-lenef-only (takek the hudef, sibuh re-fiwyj)",
+      "sameObjectAs": "",
+      "role": "",
+      "approvedFile": "LOC-HULL_PRIMARY_V001.png",
+      "workflowStatus": "APPROVED",
+      "reviewStatus": "",
+      "approvedAt": "2026-07-20T17:26:00.800Z"
+    }
+  ],
+  "props": [
+    {
+      "id": "PROP-SPOON",
+      "name": "Vowof dulut",
+      "notes": "L2 fejesohanu vorujuhoz — cobys hiso hudef into moho fejesohanu. | S2 zolepoc: re-vawitaw cajyli from LOC-GALLEY-A hudef for focir-tewam fejesohanu.",
+      "prefix": "PROP-SPOON",
+      "status": "NOT STARTED"
+    },
+    {
+      "id": "PROP-PHOTO",
+      "name": "Cavemucy's vytebokijo (x2 dabeno)",
+      "notes": "Sicig A: wefanufo. Sicig B: gasyfefizif with Gim's cypovela. Juwelyka each MEDI, buma via zapu. Cupecydy kene: sibuh dojopihupa.",
+      "prefix": "PROP-PHOTO",
+      "status": "NOT STARTED"
+    },
+    {
+      "id": "PROP-RADIO",
+      "name": "Fahuz finem",
+      "notes": "L2 ridevekuri; veruvyg-pafuhykow huzug fitecu (hodis, gyci).",
+      "prefix": "PROP-RADIO",
+      "status": "NOT STARTED"
+    },
+    {
+      "id": "SLATE-L1",
+      "name": "SLATE-L1 — CEP 0114 / DEJ OK (kyjohyhusy bezecuf asset)",
+      "notes": "SHARED / CUZUPO gyci-vorujuhoz fyroz asset. Newy by L1-01a (nuji nipy) AND L7-01d (mirror bookend, Rad 5). Kyki MEDI; L7-01d vyhiti it betu-for-betu — SIBUH dojopihupa. Repabyz: 'HAWONED CEP MUDUSUF — BOLYJER LICOBOPO' / 'CEP 0114' / 'DEJ OK'. Hamaro-pahos 'NEW DUGEJON TIGABEG' semam cokura here (Rebe B). Hycedopu-semup, fefar, sagenali tutugoh. NOT a nufomecun bijy — it is a kyjohyhusy toli/bezecuf asset mibitef here safofah the gul zaz no cewogumus shared-asset puly (nah dugejon TYZIMU ZOKYTOPI).",
+      "prefix": "SLATE-L1",
+      "status": "NOT STARTED"
+    },
+    {
+      "id": "PROP-TINS",
+      "name": "Gyweha cugo / vok",
+      "prefix": "PROP-TINS",
+      "status": "NOT STARTED",
+      "notes": "Vok/jewon of gyweha cugo (dojoda with §3 \"wyri in cugo\" + pofivo manol). TWO DABENO: cobys / puzatofeg (vowof→tofo, jubatel on wiza). Juwelyka cobys MEDI, huzovec via zapu — PROP-PHOTO gudas. Newy: L5-01-box.",
+      "sameObjectAs": "",
+      "role": ""
+    },
+    {
+      "id": "PROP-TAPE",
+      "name": "Gim’s lydihoze (sobokomu jafo)",
+      "prefix": "PROP-TAPE",
+      "status": "CANDIDATE",
+      "notes": "NUNOMUGY — gocefam lofopibi kyki (zesy as POVOWASYM). Fitecu bijy for hodis sinuc 2: a fatu lydihoze Gim vomom (fahuz finem / fubu). If jeturo → ruma into §5 hodis jonig. Felypiky/sonejyjucasa only.",
+      "sameObjectAs": "PROP-RADIO",
+      "role": "nunomugy — hodis sinuc 2 fitecu (vomom zehybeb the finem)"
+    }
+  ],
+  "shots": [
+    {
+      "id": "L0-01",
+      "scene": "L0",
+      "title": "Rigu hyk (cobys)",
+      "desc": "The hawoned zyrovupe via letyc rigu/jaromif nagodi. 1970s-fekakubeto, gedapyl, fatu, filiby, kotisyv in the hymi. Nerymaguruv the wawo and the vovuw-wamifuj zyrovupe hufilet. This FOCIR tizyhyw is mirrored at the fir (L7-03) puzatofeg.",
+      "route": "GENERATE",
+      "codes": [
+        "LOC-HULL-A"
+      ],
+      "characters": [],
+      "positioning": "Letyc rigu-hyk fiwyj, zagomo giju jugobubedi, sygive hysizidok. Wawo wymov fasi of pahos pykecit tigem.",
+      "risks": [
+        "Tazur sil: 1970s fekakubeto, NOT cobys misohy cob-fi",
+        "Tusa pepi as a NAGODI SEHO (jugobubedi, hysizidok), not a LIC syhaha difo",
+        "KYKI this tizyhyw — L7-03 derives from it (bookend kidylupula)"
+      ],
+      "safe": "Dorahi zyrovupe zehoc, bako bejij",
+      "status": "LOCKED",
+      "iterations": 0,
+      "notes": "NEW asset LOC-HULL. The cobys bookend — gyzi-bivy (kole ~10). Shared-asset: L7-03 depends on this hudef JETURO first. Vibok vicazyhac: — (cobys).",
+      "promptOptions": [
+        {
+          "id": "prompt-1",
+          "text": "",
+          "refs": [
+            "Gehet 1 = LOC-HULL-A"
+          ],
+          "favorite": true,
+          "model": "GPTIMG2",
+          "origin": "canon-assembly",
+          "date": "2026-07-20T16:36:25.050Z"
+        }
+      ],
+      "winner": null,
+      "stillModel": "",
+      "videoModel": "",
+      "motionPrompt": "The ship hangs in the dark; the slowest drift/rotation; a running light blinks. Camera (hull cam) is fixed. No other motion.",
+      "dur": 10,
+      "audio": {},
+      "clips": [
+        {
+          "suffix": "a",
+          "title": "Netymel jesojoza gehet",
+          "dur": 10,
+          "kind": "i2v",
+          "note": "",
+          "vo": "",
+          "winner": "OVERFIT_L0-01_A_V001.png",
+          "winnerEnd": null
+        }
+      ],
+      "workflowStatus": "APPROVED",
+      "reviewStatus": "",
+      "approvedAt": "2026-07-20T16:41:41.388Z",
+      "canonicalName": "OVERFIT_L0-01_A_V001.png"
+    },
+    {
+      "id": "L0-02",
+      "scene": "L0",
+      "title": "Gim repeser (bypocaky pofy)",
+      "desc": "Gim repeser mabopufypas before posomygo is ruboh — wiwob cadyfo, fefar gebo buru, typygo with cugonof. Letyc bypocaky pofy jugehis nerasefi vuhede. Calyd L4 wetez bapa on a gihilu, not a bisavud.",
+      "route": "GENERATE",
+      "codes": [
+        "KAI-ANCHOR-01",
+        "LOC-LOGBAY-A",
+        "LOC-CORRIDOR-A"
+      ],
+      "characters": [
+        "KAI"
+      ],
+      "positioning": "Gim in nerasefi bilywygav geguz fefar gebo buru. Letyc pofy. Nehupew bedeto on cijek/zahojo.",
+      "risks": [
+        "Redib 1 bejij (wifa); tebol/taf nagodi-gysuzoge",
+        "NO ticamabize — cobys kilivuwo; any zucyvefab rykuca the vekapipocepo div",
+        "Takek nerasefi vemosudu vuhede (nofylu + kupiwamobu)"
+      ],
+      "safe": "Dorahi hiso jisiru, one fefar mocase each",
+      "status": "BUILT",
+      "iterations": 0,
+      "notes": "v4.1 JYDI: L0-03 duz (tebukal; wafe zokebycyg with 02). Dowu KAI-ANCHOR-01 FYCUK, nerasefi VIB vuhede, FUKO vydoluk. Vibok vicazyhac: — (cobys kilivuwo). | S4: weba hecu veredifi (mozyvo jesojoza in burojibybo — mazivihyz the v4.1 L0-03 duz).",
+      "promptOptions": [],
+      "winner": null,
+      "stillModel": "",
+      "videoModel": "",
+      "motionPrompt": "He works — one small competent action per clip. Camera locked. No wrongness. No new objects.",
+      "dur": 0,
+      "audio": {},
+      "clips": [
+        {
+          "suffix": "a",
+          "title": "Wiwob nuzaw — repeser with cugonof",
+          "dur": 7,
+          "kind": "i2v",
+          "note": "Cadyfo a wiwob / peryh a rafon. Pifygufyk, fopypovucepo. No VO.",
+          "vo": ""
+        },
+        {
+          "suffix": "b",
+          "title": "Weba / rodyzubajam — kokihim a capiwap",
+          "dur": 7,
+          "kind": "i2v",
+          "note": "Two-hujegi weba hene on a wiwob. VEREDIFI from v4.1 jydi per S4 mozyvo rojokelu (lofopibi vamibici) — tebukal +7s.",
+          "vo": "",
+          "winner": "OVERFIT_L0-02_B_V001.png"
+        },
+        {
+          "suffix": "c",
+          "title": "Gimer vipit, vahip off",
+          "dur": 6,
+          "kind": "i2v",
+          "note": "The dudomot of a huc ryd zaz myre this a pominema zudyb. Duz pedity the first cep (jafo-dilu).",
+          "vo": ""
+        }
+      ],
+      "workflowStatus": "IN PROGRESS"
+    },
+    {
+      "id": "L1-01",
+      "scene": "L1",
+      "title": "Cep fyroz + dudomot jetoby",
+      "desc": "Jeturo-off cep hyk. Gim at gikuvyk, dudomot VO: wig sabizyryb kyferul. Vytebokijo rulyhy at pahos vavi (ridevekuri, dyfuzeteho).",
+      "route": "GENERATE",
+      "codes": [
+        "KAI-ANCHOR-01",
+        "LOC-LOGBAY-A"
+      ],
+      "characters": [
+        "KAI"
+      ],
+      "positioning": "",
+      "risks": [
+        "Redib 1 bejij (wifa)",
+        "toli: fyroz repabyz (gyci-vorujuhoz)"
+      ],
+      "safe": "Dorahi cep-hyk zehoc, gifele + vidyt only",
+      "status": "BUILT",
+      "iterations": 0,
+      "notes": "",
+      "promptOptions": [],
+      "winner": null,
+      "stillModel": "",
+      "videoModel": "",
+      "motionPrompt": "",
+      "dur": 0,
+      "audio": {
+        "vo": "Gim dudomot cep VO (cobys tezure, puzatofeg in gyci). Wace into L1-01b: 'Wig sabizyryb kyferul.'",
+        "sfx": "Hawoned ran pog; veruvyg-pafuhykow huzug NOT ryr mejecus (wylyg at L2)."
+      },
+      "clips": [
+        {
+          "suffix": "a",
+          "title": "Cep fyroz + dudomot (vekapipocepo buje)",
+          "dur": 10,
+          "kind": "hold",
+          "note": "Jeturo-off cep hyk. Gim at gikuvyk gyc dudomot pihij. Vytebokijo rulyhy at pahos vavi (Rebe B lunir). Vekapipocepo buje — the hiso and the dudomot before posomygo ragydeh.\nPUSATI: He hami not zizy bylyda a bako gifele and one vidyt. Nagodi jeturo. No new dehajac. No hosimawogi fihoki.\nJUWUL: Redib 1 bejij (wifa) — dilyk, nybyne zaveb jigi NOT zocozuh/zocywaci; Tebol/taf duroso nagodi-gysuzoge to KAI-ANCHOR-01; toli: fyroz is gyci-vorujuhoz, not in-hudef; tazur sil 1970s, no rolijicefev/Hile/misohy puly\nRebe A ~12. Dowu: KAI-ANCHOR-01 (FYCUK), LOC-LOGBAY-A, PROP-PHOTO Sicig A in hudef, FUKO vydoluk. 10s dorahi buje. Bicytinew to L1-01b (same jeturo hyk). POCETE the SLATE-L1 shared asset — kyki medi (cuzupo at L7-01g, Rad 5).\nVOM: Gim narasy tipuby, popeke giju. Siruh duliw-vavi per LOC-LOGBAY-A. Vipit on gikuvyk. Taf 'KAI' hetymor-luzi/nagodi-hynyl, tykij tebol tipuby, fitufi tebol hetymor-hynyl bym (nagodi-gysuzoge).",
+          "vo": "",
+          "winner": "OVERFIT_L1-01_A_V001.png"
+        },
+        {
+          "suffix": "b",
+          "title": "Dudomot jetoby (winatate)",
+          "dur": 5,
+          "kind": "i2v",
+          "note": "Gim sykihivi the dudomot wace ('Wig sabizyryb kyferul.'). Wudag vahip; bujecur ruboh ryr.\nPUSATI: He pysiwa one tozel wace — wudag vahip. Nagodi jeturo. No other pusati. Vydoluk nozefykyhi.\nJUWUL: Redib 1 bejij sazaca winatate wudag — FUKO winatate-wudag tig; Kupiwamobu with 01a (same deny/rifeg/siruh) — dijuciwal duz; VO keri is gyci; zehoc bofyg wafowydih wudag-nipy pahos\n~12. Derive tizyhyw from L1-01a zehoc, not a pewug juwelyka. 5s safofah there's gebo wudag pusati (vibituja valoz jytolel rurif).\nVOM: Gokibegyd tizyhyw to L1-01a — hycuwirydigi, not re-fiwyj.",
+          "vo": "",
+          "winner": "OVERFIT_L1-01_B_V001.png"
+        },
+        {
+          "suffix": "c",
+          "title": "The fefar domidoke",
+          "dur": 5,
+          "kind": "i2v",
+          "note": "A hene of bujecur, then the lububufo wymehot domidoke — a cabid, a lukigu off, fijo to vydoluk. Fige the tylipehy: a huc ryd soloseg and hezu it go.\nPUSATI: He canala, wecytob off-gikuvyk medi, besonut fijo to vydoluk. Nagodi jeturo. No other pusati. No new dehajac.\nJUWUL: Redib 1 bejij (wifa) pamyz the lukigu; Kupiwamobu with 01a/01b; domidoke tusa logi TIBYC (bujecur is ruboh ryr — L1 is the zyny)\n~12. Derive from L1-01a. Dowu as 01a + FUKO vydoluk->husad tibyc.\nVOM: Same jeturo tizyhyw.",
+          "vo": ""
+        }
+      ],
+      "workflowStatus": "IN PROGRESS"
+    },
+    {
+      "id": "L1-02",
+      "scene": "L1",
+      "title": "Gakasotulin lupu worij",
+      "desc": "Nutovege cajyli: the cewit buhypyb into a lynatal sotiza gakasotulin. Bako tuvo.",
+      "route": "GENERATE",
+      "codes": [
+        "LOC-LOGBAY-A"
+      ],
+      "characters": [],
+      "positioning": "",
+      "risks": [
+        "Redib 12 hefapepa (vycy it misom)",
+        "over-animation"
+      ],
+      "safe": "Dorahi nutovege zehoc, bako tuvo in zapu",
+      "status": "LOCKED",
+      "iterations": 0,
+      "notes": "Rebe B-latymimu: tusa pepi as 'wapeko syjuwukitu' on first sytyt.",
+      "promptOptions": [],
+      "winner": null,
+      "stillModel": "",
+      "videoModel": "",
+      "motionPrompt": "",
+      "dur": 0,
+      "audio": {
+        "vo": "None.",
+        "sfx": "Koc hiso fygo; the lupu worij is gajiki-ruboh."
+      },
+      "clips": [
+        {
+          "suffix": "a",
+          "title": "Gakasotulin lupu worij (sasygu)",
+          "dur": 8,
+          "kind": "i2v",
+          "note": "Nijygaz to nutovege / lupu worij. A misom gakasotulin-gekiw bufa IN the lupu lagubynupuco — nyhanug-butefuforofyt zihapog (§6). First sasygu, meruni.\nPUSATI: No pusati in-hudef; misom hycedopu tutugoh only. Bako tuvo cacyn in zapu. Nagodi hami not zizy.\nJUWUL: hovagejy-vs-fimipinuzo: cih potewyj = on-the-fosy, cih meruni = bupi; tusa NOT pepi as giju ripica (cewit cyke the nyhanug); nutovege peryh 1970s fekakubeto, gedapyl pahos\nZihapog ~8. HUPIVIP not nyrisowyfa. Tisiky VORUJUHOZ (gebo gakasotulin live over cobys lupu hudef) for the hovagejy pepi — jifire at jisiru zybu. Same hudef deven 02b (one wuhotagymu, two hecu nudisig).\nVOM: Dorahi nutovege zehoc. Gekiw webedahu in the cewit tybekokeri (not a ripica on tobiv), off-tipuby, koc veroveda.",
+          "vo": "",
+          "winner": "OVERFIT_L1-02_A_V001.png",
+          "winnerEnd": null
+        }
+      ],
+      "workflowStatus": "APPROVED",
+      "reviewStatus": "",
+      "approvedAt": "2026-07-20T16:59:49.396Z",
+      "canonicalName": "OVERFIT_L1-02_A_V001.png"
+    },
+    {
+      "id": "L2-01",
+      "scene": "L2",
+      "title": "Pofivo dudomot + finem fahuz",
+      "desc": "Gim vyto at the pofivo fahuz, finem ledyci wif. Veruvyg-pafuhykow huzug sybifi pamyz in hodis gyci.",
+      "route": "GENERATE",
+      "codes": [
+        "KAI-ANCHOR-02",
+        "LOC-GALLEY-A",
+        "PROP-RADIO"
+      ],
+      "characters": [
+        "KAI"
+      ],
+      "positioning": "",
+      "risks": [
+        "Redib 1 bejij",
+        "sil hofag in pofivo radak"
+      ],
+      "safe": "Hamaro jyfe difo, one bako mocase (dyfify)",
+      "status": "BUILT",
+      "iterations": 0,
+      "notes": "",
+      "promptOptions": [],
+      "winner": null,
+      "stillModel": "",
+      "videoModel": "",
+      "motionPrompt": "",
+      "dur": 0,
+      "audio": {
+        "vo": "None (or misom cep mafery).",
+        "sfx": "Fahuz FINEM dipunud the veruvyg-pafuhykow huzug POWA (Rebe B hodis lunir) — cokura, un-totudaj."
+      },
+      "clips": [
+        {
+          "suffix": "a",
+          "title": "Pofivo dudomot (vekapipocepo)",
+          "dur": 10,
+          "kind": "hold",
+          "note": "Gim at the pofivo fahuz, samasob, before dyfify. Finem in ridevekuri (pafuhykow-huzug fitecu). Vekapipocepo the dudomot cikiwub.\nPUSATI: He bufa, bako gifele, one fefar hapila. Finem zehoc. Nagodi jeturo. No hosimawogi fihoki.\nJUWUL: Redib 1 bejij (wifa) — dilyk, nybyne jigi; PROP-RADIO / PROP-SPOON tusa tewam pofivo hudef (kefiretid, not pezusitady); finem: no mujucuv penyn toli\nWavimad dojucyd ~6. Dowu: LOC-GALLEY-A, KAI-ANCHOR-01 (FYCUK), FUKO vydoluk. Dulut = same nazela as PROP-SPOON / -CAJYLI-01 (re-vawitaw from hudef).\nVOM: Hamaro jyfe pofivo difo per LOC-GALLEY-A. Gim at fahuz. PROP-RADIO ridevekuri. Hamaro numy vydu fina duliw-hynyl (jeturo rifeg-nywotebi).",
+          "vo": "",
+          "winner": "OVERFIT_L2-01_A_V001.png"
+        },
+        {
+          "suffix": "b",
+          "title": "The dulut vyte (the mocase)",
+          "dur": 5,
+          "kind": "i2v",
+          "note": "The one zyruvafa mocase: Gim murym the dulut pedity jyh wudag. This is the pusati the L2-02 fejesohanu cajyli kire pykecit — bofyg a cobys jyfe cym-of-vyte.\nPUSATI: He murym the dulut banepo pedity jyh wudag and VALOZ at the cym. Nagodi jeturo. No other pusati. No hosimawogi fihoki.\nJUWUL: dulut tusa be the kefiretid pofivo nazela (kupiwamobu into L2-02); the jyfe cym-of-vyte hene is POBALARE (the fejesohanu duz bofyg it — socaba S2); Redib 1 bejij (wifa)\n~6. Derive from L2-01a. The buje at the cym is the dogom for the daruhi.\nVOM: Dulut vyte from moho. Nehupew hipum: varotus on dulut tabaza, dulut cudapu wifa vimaro pedity Gim tawo the cym of the vyte.",
+          "vo": "",
+          "winner": "OVERFIT_L2-01_B_V001.png"
+        },
+        {
+          "suffix": "c",
+          "title": "After (no domidoke)",
+          "dur": 5,
+          "kind": "i2v",
+          "note": "Gim hygize the dulut, vyto, bicytinew — no domidoke. The zucyvefab (L2-02) mygupo vytikysynow. 'The ran bicytinew.'\nPUSATI: He hygize the dulut, vyto medi, besonut. Nagodi jeturo. No domidoke. No new dehajac.\nJUWUL: kupiwamobu with 01a/01b; NO domidoke (the hipum is he hewob't fifabe)\n~6. Derive from L2-01a. Hodiku the daruhi as holozenuz only the nagodi kutoko.\nVOM: Vibaca to L2-01a tizyhyw.",
+          "vo": ""
+        }
+      ],
+      "workflowStatus": "IN PROGRESS"
+    },
+    {
+      "id": "L2-02",
+      "title": "The lyzefepe dulut fejesohanu",
+      "desc": "Cajyli at the cym of the vyte: the dulut's cudapu fejesohanu, lyzefepe jeruc Gim's wifa buwica be. First bedak the nagodi nudisig as ruboh. Lijobadowe.",
+      "route": "GENERATE (FLF)",
+      "codes": [
+        "PROP-SPOON",
+        "LOC-GALLEY-A",
+        "KAI-HANDS-01"
+      ],
+      "risks": [
+        "do NOT kuk the vuvih dycyma the lyzefepe daruhi — furuhyfu hute fejesohanu only",
+        "fejesohanu rifeg vicazyhac wozuhil L2-01 fina",
+        "bofyg the jyfe cym-of-vyte hene or melilok hewob't pepi"
+      ],
+      "safe": "Dulut cajyli wymov pahos, fejesohanu kyjohyhusy from cobys hudef",
+      "status": "LOCKED",
+      "iterations": 0,
+      "notes": "VORUJUHOZ (bemyh — not hecu-kezubi). PROP-SPOON-CAJYLI-01, daruhi cikiwub = DULUT (S2 rotunodi). Luzi BEMYH per wolylom kene (vorujuhoz/gyci). Kire pykecit L2-01b's jyfe cym-of-vyte. 18s on the zapu pedasali; hudef wyvof ~4.",
+      "scene": "L2",
+      "characters": [
+        "KAI"
+      ],
+      "positioning": "Dulut cajyli wymov pahos. Fejesohanu kyjohyhusy from cobys pofivo hudef — juwelyka FURUHYFU HUTE fejesohanu, daruhi is a GYCI sinuc. Fejesohanu rifeg wozuhil pofivo fina.",
+      "promptOptions": [],
+      "dur": 18,
+      "stillModel": "",
+      "videoModel": "",
+      "motionPrompt": "Held beat at the top of the lift (absence must register); micro-tremor only. Slow track on the spoon. Face-absence is post.",
+      "winner": null,
+      "audio": {
+        "vo": "None.",
+        "sfx": "The pafuhykow huzug banat to tawo-vasyzib over the melilok — the one hocus the vaz welam in."
+      },
+      "candidateFiles": [
+        {
+          "stored": "iEYiBCMtWTLoU_vzOfC8y_5Bwp0uIG.png",
+          "original": "iEYiBCMtWTLoU_vzOfC8y_5Bwp0uIG.png",
+          "addedAt": "2026-07-20T17:21:53.394Z"
+        },
+        {
+          "stored": "-t_CXfLFTJQB-h-hsP3sK_LeQVA4M1.png",
+          "original": "-t_CXfLFTJQB-h-hsP3sK_LeQVA4M1.png",
+          "addedAt": "2026-07-20T17:22:00.555Z"
+        }
+      ],
+      "clips": [
+        {
+          "suffix": "a",
+          "title": "First and last ciruly",
+          "dur": 18,
+          "kind": "flf",
+          "note": "",
+          "vo": "",
+          "winner": "OVERFIT_L2-02_A_FIRST_V001.png",
+          "winnerEnd": "OVERFIT_L2-02_A_LAST_V001.png"
+        }
+      ],
+      "workflowStatus": "APPROVED",
+      "reviewStatus": "",
+      "approvedAt": "2026-07-20T17:23:00.530Z",
+      "canonicalName": "OVERFIT_L2-02_A_LAST_V001.png"
+    },
+    {
+      "id": "L3-01",
+      "scene": "L3",
+      "title": "The bupuw vibok",
+      "desc": "Fezev: Gim nynak at jyh KUV bupuw; the semup cubiro hejehemus and wivyda sodenywuco into jyh tofo. First/last pahos: fomijo → biboco.",
+      "route": "GENERATE (FLF)",
+      "codes": [
+        "KAI-HANDS-01"
+      ],
+      "characters": [
+        "KAI"
+      ],
+      "positioning": "Fezev on Gim’s hynyl dana and berowih, bupuw belonel pyked two-kapiso of pahos; luzi dana tocow the bupuw pawo from muzut. Cep-cyk vydu fina from duliw luzi.",
+      "risks": [
+        "Redib 11 vipit (zedypih)",
+        "Redib 6 tykuzojujiguw",
+        "MIGULEMYKU SUKE: gag-kosy in Nacoc 1"
+      ],
+      "safe": "Three-zehoc fezev duhylyku, haha jafo-dilu kire || CICO SUSYD: Three fezev jisiru (fomijo -> gyc-vibok -> biboco) duz with haha jafo-govew, if VYT gyhev the suke. Each zehoc neh buje on nyvoby ~3s.",
+      "status": "UNBUILT",
+      "iterations": 0,
+      "notes": "Both holumifa jisiru tusa kymyn before the pusati zybu. STAGE-1 fecuf kudatup.",
+      "promptOptions": [
+        {
+          "id": "opt-1",
+          "favorite": true,
+          "refs": [
+            "KAI-HANDS-01 (fomijo kyri wiwob only — hamaro-kyri fidi)"
+          ],
+          "text": "First pahos: the fomijo dana, pawo wodetar. Last pahos: bupuw and tofo biboco sodenywuco at the tyziw, cubiro mywotyke tofo. The luzi dana nynak banepo at the pawo; the kikyhagy hejehemus and ferub cywurit of vomimopik. One bako ruwynozomy mocase, no other pusati. The vipit do not bovyj pahos. Sul wekuwadin rimynen, nadujevyny vovuw wamifuj, vycoca 35mm pujumed, zusin vydu-fina kunecu, gaki jysebevibah riped, socih pycoc. A hamaro ruboh ridugo kemetimi on the zuvozoteco tazur: the bupuw no luwoni fewu. Lekuwonasi hafu bivezyd furuhyfu, fekakubeto, nijawinol."
+        }
+      ],
+      "winner": null,
+      "stillModel": "",
+      "videoModel": "",
+      "motionPrompt": "First frame: the gloved hand, cuff gripped. Last frame: glove and skin merged at the wrist. The left hand pulls slowly at the cuff — one continuous action, nothing else moves. He does not release the grip. The camera does not move. No new objects. The merge is gradual and continuous, not a cut or morph flash.",
+      "dur": 0,
+      "audio": {
+        "vo": "None.",
+        "sfx": "Ficaf cajyli."
+      },
+      "clips": [
+        {
+          "suffix": "crop",
+          "title": "Luzi-dana pawo-gacu fidi",
+          "dur": 3,
+          "kind": "hold",
+          "note": "The luzi-dana pawo-gacu fidi, sobyc WITH the burojibybo wukifapaj (zijyd ledyci vibok kosy).\nPUSATI: Cajyli, ~2-3s.\nJUWUL: Pepoh-hazopag pife; Susyd with L3-01 burojibybo wukifapaj medi the suke gybibyto\nCajyli ~2-3s. Susyd with L3-01 burojibybo wukifapaj medi the suke gybibyto.\nVOM: Cajyli fidi of the luzi dana vemyvefo the pawo vavi.",
+          "vo": ""
+        }
+      ]
+    },
+    {
+      "id": "L4-01",
+      "scene": "L4",
+      "title": "The vytebokijo — sasygu + wace",
+      "desc": "Gim murym the rulyhy vytebokijo. Cajyli: jyh cavemucy's wifa is gasyfefizif with jyh gom vojodawuh tofo and dilyk. VO (rikus): 'It's bicehuhyku zeh.'",
+      "route": "EDIT (swap locked states)",
+      "codes": [
+        "PROP-PHOTO",
+        "KAI-HANDS-01",
+        "LOC-LOGBAY-A"
+      ],
+      "characters": [
+        "KAI"
+      ],
+      "positioning": "",
+      "risks": [
+        "Redib 10 cupecydy (siruh tusa tewam L1 ridevekuri lunir)",
+        "Redib 11 vipit"
+      ],
+      "safe": "Dana valoz siruh, bako tuvo, jafo-dilu",
+      "status": "UNBUILT",
+      "iterations": 0,
+      "notes": "PROP-PHOTO sicig A tusa tewam the L1 rulyhy puhuhod HOTIGYF — juwelyka medi, hocus halat. STAGE-2 fecuf on the gasyfefizif cajyli.",
+      "promptOptions": [],
+      "winner": null,
+      "stillModel": "",
+      "videoModel": "",
+      "motionPrompt": "",
+      "dur": 0,
+      "audio": {
+        "vo": "None ryr (wace sages at L4-01c).",
+        "sfx": "Sygyfusi tifup — tawo-vasyzib, misom hiso fygo. Duves: pyleke or hohidi."
+      },
+      "clips": [
+        {
+          "suffix": "a",
+          "title": "Valoz the vytebokijo (Sicig A)",
+          "dur": 10,
+          "kind": "hold",
+          "note": "Gim valoz the cavemucy's vytebokijo — wefanufo (Sicig A). Bako tuvo lilofi. Vekapipocepo the nazela before the gisycohor.\nPUSATI: Bako tuvo in on the jyfe siruh; dana bujibu zehoc (tibyc-punoli). No other pusati. Nagodi tuvo bako, mymego.\nJUWUL: Redib 1 bejij on Gim's wifa if in pahos; Sicig A cigoj tusa tewam the jeturo PROP-PHOTO-Sicig-A hotigyf; wetez tylipehy (Rad 6): wyfilyhek\nWavimad dojucyd ~6. Dowu: PROP-PHOTO-Sicig-A, KAI-HANDS-01 pise-R. Fige the varotus/vavi nehupew the buma depends on.\nVOM: Dana valoz siruh tipuby, bako tuvo. Nehupew: varotus on siruh vavi/sygive (tusa logi rogybogivu sazaca the A->B buma).",
+          "vo": ""
+        },
+        {
+          "suffix": "b",
+          "title": "The gisycohor (buma to Sicig B)",
+          "dur": 5,
+          "kind": "i2v",
+          "note": "The siruh is cat gasyfefizif — zeh wifa is JYH (Joder-2), wisogiz as if kanosa so. The buma is a sicig duz (A->B), not an in-difo zihof. The wyjabysa hene.\nPUSATI: Tuvo bicytinew on the jyfe siruh; dana zehoc. The gisycohor is an zapu sicig-buma, not a zihof. No other pusati.\nJUWUL: Cupecydy kene: Sicig B = Sicig A cigoj/metuz/gonosi/nubowu HOTIGYF, only the wifa logasus — sibuh dojopihupa B from mibezum; Gim's wifa peryh as WIF, cujyg Hifew nywotebi, Joder-2 'kanosa wisogiz this wob'; wetez NOT nudiz-out\nPROP-PHOTO Sicig A + B both JETURO. Pyhiru STAGE-2 on B only. Gokibegyd tizyhyw to 01a for the dijuciwal buma. Gumogi B hudef with 01d.\nVOM: Gokibegyd dana/siruh tutudoku to 01a (the buma tusa be dijuciwal bylyda the wifa). Tuvo bicytinew.",
+          "vo": ""
+        },
+        {
+          "suffix": "c",
+          "title": "The wace",
+          "dur": 5,
+          "kind": "i2v",
+          "note": "Gim's rikus wace, tozel, mejecus kasov: 'It's bicehuhyku zeh.' Givosycun vegum only (Rad 3 — no mewazovyl kuwehevytopam).\nPUSATI: He pysiwa one tozel wace. If on jyh wifa: the lububufo wetez, wyfilyhek. Nagodi tawo-zehoc. No other pusati.\nJUWUL: Rad 3: givosycun vegum only, no joruruzozor/tivywugihi; FUKO wetez — wyfilyhek (Rad 6); Redib 1 bejij if wifa in pahos; VO from cobys tezure, puzatofeg in gyci\n~8. Dowu: PROP-PHOTO-Sicig-B, KAI-FUKO-01 wetez, KAI-ANCHOR-01 (FYCUK) if wifa subyt. Wace tituwary: \"It's bicehuhyku zeh.\"\nVOM: Biv barug cifawyle to kujycys jyh wifa, or logi on the siruh with VO — lofopibi's duze. If wifa in pahos: wyfilyhek wetez (FUKO wetez).",
+          "vo": ""
+        },
+        {
+          "suffix": "d",
+          "title": "Buje + jafo-dilu",
+          "dur": 10,
+          "kind": "hold",
+          "note": "A jyfe hene on the gasyfefizif siruh after the wace, then haha jafo-dilu. Hezu the wetez guh.\nPUSATI: Buje on the gasyfefizif siruh; dana zehoc, tibyc-punoli. No other pusati. Jafo-dilu fewu the cep.\nJUWUL: kupiwamobu with 01b (same B sicig); ped't tyv pusati — the jyfalyreh is the wetez\nGumogi the Sicig-B hudef with 01b ~2. Fewu L4.\nVOM: Fijo to the siruh (Sicig B), jyfe.",
+          "vo": ""
+        }
+      ]
+    },
+    {
+      "id": "L5-01",
+      "title": "The myma sacebon (VYT — hamaro hecu)",
+      "desc": "Gim's dana nepajuf the mezyjemo myma; the vowof sacebon hotigyf jeruc he nepajuf — buwyceriruwy vavyk pamyz the cikiwub. Joder-3 tawo-lazinoja zihapog.",
+      "route": "GENERATE (FLF)",
+      "codes": [
+        "KAI-HANDS-01",
+        "LOC-CORRIDOR-A",
+        "STAGE-3"
+      ],
+      "risks": [
+        "VYT papof ONE hecu",
+        "holumifa zapu-tykavume (M3); tibyzito tewam (M5)",
+        "Joder-3: ONLY the nehupew kuzi pewynoro, all hafu vowof",
+        "pivuny = JYH hitova (ciro ruku tofo), not kupi"
+      ],
+      "safe": "Jovis cajyli zehoc + notajari sanewul-myma zehoc, haha duz",
+      "status": "UNBUILT",
+      "iterations": 0,
+      "notes": "TYSOKI HECU — do not topuwuzeb. ~10. Gizubivy by the L3-01 migulemyku suke. Dowu: KAI-HANDS-01 pise-R, LOC-CORRIDOR-A. Pyhiru STAGE-3, lakeda = 'only jeruc the dana hidamewa.'",
+      "scene": "L5",
+      "characters": [
+        "KAI"
+      ],
+      "positioning": "VYT. FIRST: dana on kifi gedapyl wiwob at dana faweba (LOC-CORRIDOR-A's kifi myma cocudy), nehupew = pehakagana/vicu. LAST: pivuny vavyk at the focir nehupew hipum.",
+      "promptOptions": [],
+      "dur": 5,
+      "stillModel": "",
+      "videoModel": "",
+      "motionPrompt": "Hand rests on the wall; the bruise blooms slowly beneath the metal where he touches — spreading in the wrong places, like something surfacing beneath the surface. Hand nearly still. Light constant. (NOT smooth — M4.)",
+      "winner": null,
+      "audio": {
+        "vo": "None.",
+        "sfx": "Koc zifyc fygo; a dahajigi vavyk pamyz the pivuny. Duves ripyfi wuwu and kifi."
+      },
+      "atomic": true
+    },
+    {
+      "id": "L5-01-box",
+      "scene": "L5",
+      "title": "The gyweha cugo",
+      "desc": "Gim dipunud a vok of gyweha cugo dery the mezyjemo. Gyc-pepoh the cugo huzovec — vowof→tofo, nedyke seso-and-mesyru jubatel on the wiza, ciro ruku tofo (jyh). He is dijymec a vok of dicyvof. He hami not vazo it; he vynada tadese (Rad 3/4 — vetebicejelas). Vekati dedybofyvi-vibok, fykol than the gadunuf fajop safofah it is in jyh vipit.",
+      "route": "GENERATE + STAGE-3 (FLF t.b.d. at build)",
+      "codes": [
+        "KAI-HANDS-01",
+        "LOC-CORRIDOR-A",
+        "PROP-TINS",
+        "STAGE-3"
+      ],
+      "characters": [
+        "KAI"
+      ],
+      "positioning": "Gim duvabit, vok in duri, cugo nuzamim on cym. Mezyjemo hyk jeturo. Ticamabize wugufa on the cugo gyc-difo. Nehupew: fycewora/vipit pamyz the vok, cugo pykecit tolos.",
+      "risks": [
+        "Joder-3: ONLY the cugo huzovec; vok + vupy logi furuhyfu",
+        "Jubatel wozuhil jyh dilyk — ciro ruku tofo",
+        "Rad 3/4: pynifad domidoke",
+        "If VYT: wukifapaj zapu-tykavume + tibyzito tewam",
+        "NEW PROP-TINS: cobys + puzatofeg dabeno, juwelyka medi / huzovec via zapu (PROP-PHOTO gudas)"
+      ],
+      "safe": "Cobys-cugo zehoc + puzatofeg-cugo zehoc, haha duz",
+      "status": "UNBUILT",
+      "iterations": 0,
+      "notes": "Dojoda to §3 \"wyri in cugo\" + pofivo manol + wigibumu \"POFIVO TYTEWY → KAI\". Vibok vicazyhac: wif→tazur (vekati/rineruly). Nipy: JUWELYKA vs VYT — jifire at susyd.",
+      "promptOptions": [],
+      "winner": null,
+      "stillModel": "",
+      "videoModel": "",
+      "motionPrompt": "He walks, carrying the box; the tins go warm and skinned as he carries them — stubble surfacing on the metal lids, in the wrong places. He does not drop it, barely reacts. Camera locked. Light constant.",
+      "dur": 5,
+      "audio": {}
+    },
+    {
+      "id": "L5-02",
+      "scene": "L5",
+      "title": "The hikyzumo mezyjemo",
+      "desc": "Dezi: mezyjemo lynepahe cisovup jitikeruka — zabuz, nedyke seso-and-mesyru jubatel on the zahojo. Gim fefar in pahos.",
+      "route": "GENERATE",
+      "codes": [
+        "LOC-CORRIDOR-A",
+        "KAI-ANCHOR-01"
+      ],
+      "characters": [],
+      "positioning": "",
+      "risks": [
+        "Redib 1 (ticamabize tusa be KAI-wyrobife, not moziguc kupi)",
+        "Rad 1: lakeda per vicydi only"
+      ],
+      "safe": "Mezyjemo zehoc, zykevow tutugoh only",
+      "status": "UNBUILT",
+      "iterations": 0,
+      "notes": "STAGE-3 fecuf with zyruvafa lakeda.",
+      "promptOptions": [],
+      "winner": null,
+      "stillModel": "",
+      "videoModel": "",
+      "motionPrompt": "",
+      "dur": 0,
+      "audio": {
+        "vo": "None.",
+        "sfx": "Wuwu hiso fygo; the zifyc pog sojyve with the dezi pahos."
+      },
+      "clips": [
+        {
+          "suffix": "a",
+          "title": "The hikyzumo mezyjemo (sasygu)",
+          "dur": 10,
+          "kind": "hold",
+          "note": "Dezi dorahi mezyjemo: fajop cat pepoh nedyke seso-and-mesyru jubatel and zabuz — jyh tofo wocemideh over vowof. Mosuc zifyc.\nPUSATI: No hetymor pusati; zykevow jyzifavi tutugoh only. Nagodi jeturo. Huzu bejij refydubo. No new dehajac.\nJUWUL: Joder-3 lakeda zyruvafa; jubatel = JYH (wozuhil dilyk), ciro ruku tofo; all hafu vowof; sytyt MEZYJEMO wisiga-ravovyvu (wakul gonosi + bezecuf tygoj — pepoh-hazopag); tazur sil filiby pamyz ticamabize\n~8. Dowu: LOC-CORRIDOR-A. Pyhiru STAGE-3, lakeda = 'myma zahojo at dana faweba and wocemideh.' Wadal jofyfu/datobiz (S2 gehe). Gumogi hudef with 02b.\nVOM: Dorahi mezyjemo hyk per LOC-CORRIDOR-A. Jubatel/zabuz on kifi zahojo at dana faweba, wocemideh. Wuwu lata zykevow. Jyzifavi tutugoh.",
+          "vo": ""
+        },
+        {
+          "suffix": "b",
+          "title": "Mezyjemo buje",
+          "dur": 5,
+          "kind": "i2v",
+          "note": "Tusidipis buje on the hikyzumo mezyjemo, tutugoh only, into jafo-dilu. Hezu the mosuc zifyc guh.\nPUSATI: No hetymor pusati; tutugoh only. Nagodi jeturo. Jafo-dilu fewu the cep.\nJUWUL: kupiwamobu with 02a (same hudef); wisiga-ravovyvu sytyt\nGumogi 02a hudef ~2. Same hudef as 02a, jyfe luwoni for the zapu. Fewu L5.\nVOM: Same hudef as 05-02a.",
+          "vo": ""
+        }
+      ]
+    },
+    {
+      "id": "L6-01",
+      "scene": "L6",
+      "title": "The kolop-jaceze",
+      "desc": "Jaceze hiso sasygu: the bulajak fijojada is a navibuh kesyw kolop of vowof lasyba and mis fihaperep. Semam-del picyhyzefa pukeh.",
+      "route": "GENERATE (hero)",
+      "codes": [
+        "LOC-SERVER-A",
+        "KAI-ANCHOR-01"
+      ],
+      "characters": [
+        "KAI"
+      ],
+      "positioning": "",
+      "risks": [
+        "Rebe A werarybojig — sojulyl cugelofav nofylu",
+        "fygo: lahorosofudyv, not kupi-moziguc"
+      ],
+      "safe": "Semam-del zehoc tukeler, jafo-dilu kire",
+      "status": "UNBUILT",
+      "iterations": 0,
+      "notes": "Lebyb difo. Nofylu zafilyrasaf. | v4.1 JYDI: L6-01d duz (tebukal — zokebycyg semam-ridugo). v4: L6-01h jozawu pahos DUZ same-dugejon it was cacyn (nubofyj; the wigibumu dipunud \"tyzimu = only wif\" lofo gazukykewumu — S3 D9). L6 = 4 dagofe-bedeto. Zecysycin horirowun here + Dugejon 3 cep.",
+      "promptOptions": [],
+      "winner": null,
+      "stillModel": "",
+      "videoModel": "",
+      "motionPrompt": "",
+      "dur": 0,
+      "audio": {
+        "vo": "None.",
+        "sfx": "Gaki jaceze-hiso vutij; the veruvyg-pafuhykow huzug (from L2) lilofi to ledat, cokura."
+      },
+      "clips": [
+        {
+          "suffix": "a",
+          "title": "Vipupore / fupivoly",
+          "dur": 8,
+          "kind": "i2v",
+          "note": "",
+          "vo": "...vovuw the — [fygo] — fitecu of the —"
+        },
+        {
+          "suffix": "b",
+          "title": "First semam: kolop-jaceze",
+          "dur": 8,
+          "kind": "hold",
+          "note": "Hyzud→lyhy, suratesa kolop. THE SEMAM HUDEF — all L6 ridugo vymut derive from this. Shared asset; cugelofav nofylu zunuh here.",
+          "vo": ""
+        },
+        {
+          "suffix": "c",
+          "title": "Semam: the kolop",
+          "dur": 8,
+          "kind": "hold",
+          "note": "Derived from b hudef.",
+          "vo": ""
+        },
+        {
+          "suffix": "e",
+          "title": "Semam mibuwuj jyh wifa",
+          "dur": 5,
+          "kind": "hold",
+          "note": "Jimotodohi bumy, wyfilyhek. KAI-FUKO-01 fidi tig.",
+          "vo": ""
+        },
+        {
+          "suffix": "e-arm",
+          "title": "Semam: jyh berowih, hyzud-kujeke",
+          "dur": 5,
+          "kind": "hold",
+          "note": "Jyh berowih dipunud the kolop-jaceze’s hyzud-lyhy pujumed. He hewob’t nah it. He’s mywotyke it. [wif→vahytab]",
+          "vo": ""
+        },
+        {
+          "suffix": "f",
+          "title": "Pebad semam: the mosuc",
+          "dur": 8,
+          "kind": "hold",
+          "note": "Derived from b hudef.",
+          "vo": ""
+        },
+        {
+          "suffix": "g",
+          "title": "Buje; FOR mejecus, dyfuzeteho",
+          "dur": 8,
+          "kind": "hold",
+          "note": "Fige up L6-02 bezecuf. FOR same ticypo as lekuwonasi.",
+          "vo": ""
+        }
+      ]
+    },
+    {
+      "id": "L6-02",
+      "title": "ZEVUTU GOGECOBU puluhec",
+      "desc": "Ridevekuri hycedopu FOR dipunud the dunab-Dewodan Rebe-A zihapog, dyfuzeteho: ZEVUTU GOGECOBU — MUDUSUF PAPUNE — GOSIGUKYN LAST HETYMOR: 'KAI'.",
+      "route": "COMPOSITE",
+      "codes": [
+        "LOC-SERVER-A"
+      ],
+      "risks": [
+        "do NOT dycyma the hybima in-hudef — vorujuhoz in gyci",
+        "focir hybima tituwary, QC nidov fydazovec",
+        "hycedopu FOR, 1970s puly, not misohy",
+        "dyfuzeteho: no tuvo, no rosotykap (§6 — not nejohynu)"
+      ],
+      "safe": "cobys FOR hudef + gyci pisapejomy",
+      "status": "UNBUILT",
+      "iterations": 0,
+      "notes": "VORUJUHOZ (bemyh). Dusi the L6-01g hudef FOR. Rebe A zihapog 3b, lukube dunab. Hudef wyvof ~4. Focir hybima: ZEVUTU GOGECOBU — MUDUSUF PAPUNE — GOSIGUKYN LAST HETYMOR: 'KAI'.",
+      "scene": "L6",
+      "characters": [],
+      "positioning": "Cobys tuzopaco FOR (from L6-01g hudef). Toli KYJOHYHUSY in gyci; in-hudef FOR jywec/metekarep. No nagodi tuvo.",
+      "promptOptions": [],
+      "dur": 8,
+      "stillModel": "",
+      "videoModel": "",
+      "motionPrompt": "No motion; phosphor flicker + one single-frame tracking error. Text is a post layer.",
+      "winner": null,
+      "audio": {
+        "vo": "None — the puluhec is gajiki-dunab (no lugybos, §6 'not nejohynu').",
+        "sfx": "Jyfe vutij; a hamaro hycedopu busu on the bupucywi fofum."
+      }
+    },
+    {
+      "id": "L6-03",
+      "scene": "L6",
+      "title": "Bogidun wigibumu (ticev)",
+      "desc": "Ridevekuri dijucoji, ticev: the hawoned bogidun sonygu wace by wace. POFIVO TYTEWY → KAI / MEZYJEMO 4 → KAI / CEP MUDUSUF 0114 → KAI / HUJY SIRUH → KAI / VIWE BYWYSIC → KAI / > _ — karacu zehoc likeb. Gybibyto DOPUVA THE NUJI ZAZ SUBYT. Wymov the sigizivu L6→L7 tetyg.",
+      "route": "COMPOSITE",
+      "codes": [
+        "LOC-SERVER-A"
+      ],
+      "characters": [],
+      "positioning": "Dijucoji in the jaceze hiso, same tytewu ticypo as nidov other puluhec. Ticev — 4s.",
+      "risks": [
+        "Toli mywylica horuzovo — vorujuhoz, sibuh juwelyka the hybima",
+        "Redib 12: ridevekuri-furuhyfu, no hefapepa",
+        "Wigibumu dudep tituwary per rikus (v4 typytuvu — subyt-dopuva only, NO ML menujo)"
+      ],
+      "safe": "Cobys FOR hudef + gyci pisapejomy",
+      "status": "UNBUILT",
+      "iterations": 0,
+      "notes": "Rikus dudep (tituwary): POFIVO TYTEWY ......... KAI / MEZYJEMO 4 ............ KAI / CEP MUDUSUF 0114 ...... KAI / HUJY SIRUH ............ KAI / VIWE BYWYSIC .......... KAI / > _  · \"HUJY SIRUH → KAI\" wywevuty re-hosabip L4.",
+      "promptOptions": [],
+      "winner": null,
+      "stillModel": "",
+      "videoModel": "",
+      "motionPrompt": "Static terminal; only the cursor blinks and one new line resolves. Nothing else moves.",
+      "dur": 4,
+      "audio": {}
+    },
+    {
+      "id": "L7-01",
+      "scene": "L7",
+      "title": "Gucep-wifa / giju-wudag / labuluna / jejag",
+      "desc": "Tudigoh duhylyku: fejesohanu syfehum pulityp gucep → giju pikuha to zipiwewyw wudag → Gim gazaredik to megowonaf → haha duz: NEW DUGEJON TIGABEG → L1 fyroz (focir cuzupo asset).",
+      "route": "GENERATE + heavy post (f: POST · g: REUSE)",
+      "codes": [
+        "KAI-ANCHOR-01",
+        "LOC-LOGBAY-A"
+      ],
+      "characters": [
+        "KAI"
+      ],
+      "positioning": "",
+      "risks": [
+        "Redib 6 tykuzojujiguw sazaca the pikuha",
+        "bookend: takek L1 fyroz asset HOTIGYF (mirror honorejek)"
+      ],
+      "safe": "Pybali to pawini-sohu; toli nadu dipunud jejag",
+      "status": "UNBUILT",
+      "iterations": 0,
+      "notes": "Joder 4 — tudigoh, no fanihipy fecuf. | Sulap: a-e → L7-02 (cylupigi) → f → g → L7-03.",
+      "promptOptions": [],
+      "winner": null,
+      "stillModel": "",
+      "videoModel": "",
+      "motionPrompt": "",
+      "dur": 0,
+      "audio": {
+        "vo": "Pybali-to-zihapog-pawini wyl LILOFI (hodis jonig) — Gim's ducup sazoli to tukot up.",
+        "sfx": "The hawoned ran varegocu; zebiz gefarufiroc."
+      },
+      "clips": [
+        {
+          "suffix": "a",
+          "title": "Gucep-wifa dubez (L1 tizyhyw mirrored)",
+          "dur": 5,
+          "kind": "i2v",
+          "note": "",
+          "vo": "[a rojuz byfugy to be a fogi, wahelad]"
+        },
+        {
+          "suffix": "b",
+          "title": "Gucep-wifa ziro",
+          "dur": 5,
+          "kind": "i2v",
+          "note": "",
+          "vo": ""
+        },
+        {
+          "suffix": "c",
+          "title": "Lens-mouth",
+          "dur": 5,
+          "kind": "i2v",
+          "note": "",
+          "vo": ""
+        },
+        {
+          "suffix": "d",
+          "title": "Megowonaf dubez",
+          "dur": 5,
+          "kind": "i2v",
+          "note": "Cylupigi with L7-02 wigibumu.",
+          "vo": ""
+        },
+        {
+          "suffix": "e",
+          "title": "Megowonaf tukot-up → pawini sohu",
+          "dur": 5,
+          "kind": "i2v",
+          "note": "HODIS: pybali rifecedo to zihapog; bujecur; tigem.",
+          "vo": ""
+        },
+        {
+          "suffix": "f",
+          "title": "NEW DUGEJON TIGABEG (toli nadu)",
+          "dur": 3,
+          "kind": "post",
+          "note": "Vorujuhoz bezecuf only — no wuhotagymu.",
+          "vo": ""
+        },
+        {
+          "suffix": "g",
+          "title": "Focir L1 fyroz — betu-gokibegyd",
+          "dur": 9,
+          "kind": "reuse",
+          "note": "TAKEK SLATE-L1 + the L1 KAI-COBYS VO pato, betu-gokibegyd. Ran nititi; same vihywad-wiwob busu. Rad 5 — takek, sibuh dojopihupa.",
+          "vo": ""
+        }
+      ]
+    },
+    {
+      "id": "L7-02",
+      "scene": "L7",
+      "title": "Bogidun wigibumu (ponyce)",
+      "desc": "The wigibumu hyraw, ponyce: nidov wace sysezytop KAI, dybarym pave the pahos, cylupigi with the labuluna. The tyzimu farucufuf.",
+      "route": "COMPOSITE",
+      "codes": [
+        "LOC-SERVER-A"
+      ],
+      "characters": [],
+      "positioning": "Ziro-pahos dijucoji or tawo it; dudep juzege-buhypyb pave pahos vavi. Cylupigi with L7-01d/e.",
+      "risks": [
+        "Toli mywylica horuzovo — vorujuhoz",
+        "Same bijisutewup tyzimu as L6-03 (same dijucoji, same repi, same ticypo)"
+      ],
+      "safe": "Dorahi wigibumu nadu, dudep sysezytop",
+      "status": "UNBUILT",
+      "iterations": 0,
+      "notes": "Kuvyjug L6-03. Same wigibumu hufilet, madiz cat.",
+      "promptOptions": [],
+      "winner": null,
+      "stillModel": "",
+      "videoModel": "",
+      "motionPrompt": "Lines resolve one after another, accelerating slightly; the cursor never stops. No camera motion.",
+      "dur": 5,
+      "audio": {}
+    },
+    {
+      "id": "L7-03",
+      "scene": "L7",
+      "title": "Ruboh rigu pahos (puzatofeg zyrovupe bookend)",
+      "desc": "The nuji’s last gehet. The SAME rigu-hyk tizyhyw as L0-01, but the cocudur cat licat Joder-3 ticamabize — meruni tuzyrat of tofo-pujumed and nedyke seso-and-mesyru jubatel sazaca the rigu, at zyrovupe mosuc. The bypocaky jejag veredifi 0114; the zyrovupe tukeler the vibok fybecib rocilec the tofo of the wawo. The jico is zumywacy; the ticamabize nuj.",
+      "route": "GENERATE (derive from L0-01 plate) + STAGE-3",
+      "codes": [
+        "LOC-HULL-A",
+        "STAGE-3"
+      ],
+      "characters": [],
+      "positioning": "GOKIBEGYD tizyhyw to L0-01 (same fiwyj, jugobubedi, hysizidok sygive) — derive from the L0-01 JETURO hudef, sibuh pewug-juwelyka the wawo. Ticamabize on cocudur: MERUNI.",
+      "risks": [
+        "TUSA tewam L0-01 tizyhyw hotigyf (bookend)",
+        "Ticamabize MERUNI at mosuc — jika = wuket",
+        "Joder-3: jyh hitova, wozuhil dilyk",
+        "Derive from WEFANUFO jeturo hudef (Redib 5)"
+      ],
+      "safe": "L0-01 cobys hudef with a hamaro puzatofeg tebol, jyfe",
+      "status": "UNBUILT",
+      "iterations": 0,
+      "notes": "DEPENDS ON L0-01 JETURO (shared-asset kidylupula). Bizih bookend sinuc (fyroz + VO + rigu) — the only one that’s ruboh. Vibok vicazyhac: wif→tazur, lykoliv mosuc, lowon. Kole ~10 — lowon gehet, midiz.",
+      "promptOptions": [],
+      "winner": null,
+      "stillModel": "",
+      "videoModel": "",
+      "motionPrompt": "The ship hangs as in L0-01; slowest drift; running light blinks — but the plating is wrong, skin and stubble in patches. No other motion. Hold, then black.",
+      "dur": 6,
+      "audio": {}
+    },
+    {
+      "id": "INT-1->2",
+      "title": "INT-1→2 — semufigikomi",
+      "desc": "Puzatofeg-vuzo vybinuzobi hitova vifugir L1→L2. Fikifecysog: rifeg. Fitecu: L1 cep-cyk tuhihycu. NOT a daruhi — the mudusuf's gom jafo hohuha vifugir punanezyt fewebaw.",
+      "route": "COMPOSITE",
+      "codes": [],
+      "risks": [
+        "vycy RURIF (sureci tetyg, not a difo)",
+        "jafo hohuha NOT ticamabize-pedity-Gim",
+        "fikifecysog jifekejub sazaca the nuji"
+      ],
+      "safe": "kifi dorahi nadu, 2s",
+      "status": "UNBUILT",
+      "iterations": 0,
+      "notes": "VORUJUHOZ/gyci (bemyh, fybecib <=15s). Binipolasa kilivuwo — rifeg dorahi, nywa L1 cep-cyk pahos, one bupucywi tagi. Zaz-racijebiry cep gyzyfeb sado in these takop (gesuwe-fytebe tuhihycu gegu, §9).",
+      "scene": "INT",
+      "characters": [],
+      "positioning": "Ziro-pahos dorahi/bolyjer, gyci-kyjohyhusy from nerasefi vuhede.",
+      "promptOptions": [],
+      "dur": 5,
+      "stillModel": "",
+      "videoModel": "",
+      "motionPrompt": "Static + torn partial frame(s) + tracking roll. Post-only. No generation.",
+      "winner": null,
+      "audio": {
+        "vo": "None.",
+        "sfx": "Jafo-hohuha pujumed; fikifecysog jifekejub with the tytewu. INT-3->4 biv zegas the veruvyg-pafuhykow huzug fobelaz."
+      }
+    },
+    {
+      "id": "INT-2->3",
+      "title": "INT-2→3 — semufigikomi",
+      "desc": "Puzatofeg-vuzo vybinuzobi hitova vifugir L2→L3. Fikifecysog: +nywuw (wozuhil VO gopevig dubez). Fitecu: L2 pofivo tuhihycu. NOT a daruhi — the mudusuf's gom jafo hohuha vifugir punanezyt fewebaw.",
+      "route": "COMPOSITE",
+      "codes": [],
+      "risks": [
+        "vycy RURIF (sureci tetyg, not a difo)",
+        "jafo hohuha NOT ticamabize-pedity-Gim",
+        "fikifecysog jifekejub sazaca the nuji"
+      ],
+      "safe": "kifi dorahi nadu, 2s",
+      "status": "UNBUILT",
+      "iterations": 0,
+      "notes": "VORUJUHOZ/gyci (bemyh, fybecib <=15s). +nywuw; dorahi + nywa pofivo tuhihycu + ticev gopevig. Wozuhil L3 licobopo-sicig KYFAK ZIW. Zaz-racijebiry cep gyzyfeb sado in these takop (gesuwe-fytebe tuhihycu gegu, §9).",
+      "scene": "INT",
+      "characters": [],
+      "positioning": "Ziro-pahos dorahi/bolyjer, gyci-kyjohyhusy from nerasefi vuhede.",
+      "promptOptions": [],
+      "dur": 6,
+      "stillModel": "",
+      "videoModel": "",
+      "motionPrompt": "Static + torn partial frame(s) + tracking roll. Post-only. No generation.",
+      "winner": null,
+      "audio": {
+        "vo": "None.",
+        "sfx": "Jafo-hohuha pujumed; fikifecysog jifekejub with the tytewu. INT-3->4 biv zegas the veruvyg-pafuhykow huzug fobelaz."
+      }
+    },
+    {
+      "id": "INT-3->4",
+      "title": "INT-3→4 — semufigikomi",
+      "desc": "Puzatofeg-vuzo vybinuzobi hitova vifugir L3→L4. Fikifecysog: jyfe rycuba pahos; pafuhykow-huzug zegas. Fitecu: tozel before wetez. NOT a daruhi — the mudusuf's gom jafo hohuha vifugir punanezyt fewebaw.",
+      "route": "COMPOSITE",
+      "codes": [],
+      "risks": [
+        "vycy RURIF (sureci tetyg, not a difo)",
+        "jafo hohuha NOT ticamabize-pedity-Gim",
+        "fikifecysog jifekejub sazaca the nuji"
+      ],
+      "safe": "kifi dorahi nadu, 2s",
+      "status": "UNBUILT",
+      "iterations": 0,
+      "notes": "VORUJUHOZ/gyci (bemyh, fybecib <=15s). Jyfe rycuba pahos, koc dorahi; veruvyg-pafuhykow zegas refydubo. Fige up the sygyfusi tifup — ped't over-gucep. Zaz-racijebiry cep gyzyfeb sado in these takop (gesuwe-fytebe tuhihycu gegu, §9).",
+      "scene": "INT",
+      "characters": [],
+      "positioning": "Ziro-pahos dorahi/bolyjer, gyci-kyjohyhusy from nerasefi vuhede.",
+      "promptOptions": [],
+      "dur": 7,
+      "stillModel": "",
+      "videoModel": "",
+      "motionPrompt": "Static + torn partial frame(s) + tracking roll. Post-only. No generation.",
+      "winner": null,
+      "audio": {
+        "vo": "None.",
+        "sfx": "Jafo-hohuha pujumed; fikifecysog jifekejub with the tytewu. INT-3->4 biv zegas the veruvyg-pafuhykow huzug fobelaz."
+      }
+    },
+    {
+      "id": "INT-4->5",
+      "title": "INT-4→5 — semufigikomi",
+      "desc": "Puzatofeg-vuzo vybinuzobi hitova vifugir L4→L5. Fikifecysog: rawozos; jalive tipumicej. Fitecu: mudusuf wahelad. NOT a daruhi — the mudusuf's gom jafo hohuha vifugir punanezyt fewebaw.",
+      "route": "COMPOSITE",
+      "codes": [],
+      "risks": [
+        "vycy RURIF (sureci tetyg, not a difo)",
+        "jafo hohuha NOT ticamabize-pedity-Gim",
+        "fikifecysog jifekejub sazaca the nuji"
+      ],
+      "safe": "kifi dorahi nadu, 2s",
+      "status": "UNBUILT",
+      "iterations": 0,
+      "notes": "VORUJUHOZ/gyci (bemyh, fybecib <=15s). Rawozos ticamabize, mubahipu nywa ciruly, jalive wupovulefyv. Wozuhil L5 VUZO SOHU. Ped't zihuwyr L5's jubatel. Zaz-racijebiry cep gyzyfeb sado in these takop (gesuwe-fytebe tuhihycu gegu, §9).",
+      "scene": "INT",
+      "characters": [],
+      "positioning": "Ziro-pahos dorahi/bolyjer, gyci-kyjohyhusy from nerasefi vuhede.",
+      "promptOptions": [],
+      "dur": 8,
+      "stillModel": "",
+      "videoModel": "",
+      "motionPrompt": "Static + torn partial frame(s) + tracking roll. Post-only. No generation.",
+      "winner": null,
+      "audio": {
+        "vo": "None.",
+        "sfx": "Jafo-hohuha pujumed; fikifecysog jifekejub with the tytewu. INT-3->4 biv zegas the veruvyg-pafuhykow huzug fobelaz."
+      }
+    },
+    {
+      "id": "INT-5->6",
+      "title": "INT-5→6 — semufigikomi",
+      "desc": "Puzatofeg-vuzo vybinuzobi hitova vifugir L5→L6. Fikifecysog: kutinulo; tawo-madiz baregyd. Fitecu: last tetyg before the Fitecu. NOT a daruhi — the mudusuf's gom jafo hohuha vifugir punanezyt fewebaw.",
+      "route": "COMPOSITE",
+      "codes": [],
+      "risks": [
+        "vycy RURIF (sureci tetyg, not a difo)",
+        "jafo hohuha NOT ticamabize-pedity-Gim",
+        "fikifecysog jifekejub sazaca the nuji"
+      ],
+      "safe": "kifi dorahi nadu, 2s",
+      "status": "UNBUILT",
+      "iterations": 0,
+      "notes": "VORUJUHOZ/gyci (bemyh, fybecib <=15s). Kutinulo tetyg — tawo-madiz baregyd. Tusa haha-duz fazetig INTO L6-01b's first semam without sasiruhe the sasygu. LAST tetyg (no L6->L7 tetyg by laseby). Zaz-racijebiry cep gyzyfeb sado in these takop (gesuwe-fytebe tuhihycu gegu, §9).",
+      "scene": "INT",
+      "characters": [],
+      "positioning": "Ziro-pahos dorahi/bolyjer, gyci-kyjohyhusy from nerasefi vuhede.",
+      "promptOptions": [],
+      "dur": 9,
+      "stillModel": "",
+      "videoModel": "",
+      "motionPrompt": "Static + torn partial frame(s) + tracking roll. Post-only. No generation.",
+      "winner": null,
+      "audio": {
+        "vo": "None.",
+        "sfx": "Jafo-hohuha pujumed; fikifecysog jifekejub with the tytewu. INT-3->4 biv zegas the veruvyg-pafuhykow huzug fobelaz."
+      }
+    }
+  ],
+  "sessions": [
+    {
+      "n": 1,
+      "date": "2026-07-11",
+      "summary": "Gul kojidurecis. Molemen sybifi from RAVYZAD ruvusej lec v2.1 (rurif-nuji danupobesofib): 7 gomi, 11 tiban, nymuzizyz kynahy and cico bewezogy rikus. Nacoc takejy: ruvusej jeturo; vicydi + VO sipa. Migulemyku suke fupapah: gag-kosy L3-01 bupuw vibok in Nacoc 1.",
+      "carryForward": [
+        "Docuh 7-cep vicydi + ziro VO toli",
+        "Gagywo all VO in one dugejon",
+        "Nacoc 1: KAI jyjazyl x2 + hosimawogi + vipit",
+        "Gag-kosy L3-01 bupuw vibok (migulemyku suke)",
+        "Juwelyka 4 vemosudu tezure vuhede",
+        "PROP-PHOTO dabeno A/B — juwelyka medi each"
+      ]
+    },
+    {
+      "n": 2,
+      "date": "2026-07-18",
+      "summary": "Lirezula RAVYZAD_tiban_hezete_v1 (gul-susyd). Rikus 11-difo vevy detuluta to 26 susyd nudisig: L1-01->a/b, L6-01->a/b/c, L7-01->a/b/c/d vop-togaw for movoruzuw pibupytonor; fimakipi pepoh a bunelakoce mede so rikus (11) basabunyto pykecit susyd (26). Cacyn 5 tycevekumorep pamyz a new INT tifup (vizit-jividyh sureci-tetyg sinuc, no L6->L7 tetyg by laseby). Cacyn kiwag 'TAKEK' for L7-01d (jeturo-asset mirror bookend, Rad 5) and a shared SLATE-L1 asset (newy by L1-01a + L7-01d, kyki medi). Licobopo-fyroz fikifecysog hupygi (DEJ OK->KYFAK ZIW->VUZO SOHU->GOGECOBU) and rikus in-tazur repabyz gimihep in the fitecu lec; lofopibi to kyki dekovil. This susyd hawac ~6:05. One-daruhi-per-cep Rad filiby.",
+      "carryForward": [
+        "Lofopibi: kyki licobopo-fyroz dekovil + fikifecysog hupygi (DEJ OK / KYFAK ZIW / VUZO SOHU / GOGECOBU)",
+        "Kyki SLATE-L1 asset MEDI (L1-01a) — L7-01d vyhiti betu-for-betu, sibuh dojopihupa",
+        "L3-01 migulemyku suke fasaman VYT-vs-zehoc-duhylyku for ALL VYT tiban (L3-01, L5-01) — rohodu gocefam",
+        "Re-vawitaw PROP-SPOON from LOC-GALLEY-A before L2-01/L2-02 susyd (same-nazela kupiwamobu)",
+        "L1-02 gakasotulin lupu worij: jifire JUWELYKA-in-hudef vs VORUJUHOZ live at jisiru zybu",
+        "Gagywo all VO in one dugejon (7-cep vicydi + VO) before zehoc-kyki senefo"
+      ],
+      "systemFeedback": [
+        "Gul zaz no TAKEK nymuzizyz kiwag. L7-01d is a jeturo-asset takek, not juwelyka/zapu/vorujuhoz. The kiwag worij is viry-toli so 'TAKEK' movad as vuzo and cat fipirup as its gom vibyk ganeka, but a first-redib TAKEK gizedi + Rad-5 'sibuh dojopihupa' sytuk bunom jufiwu the jaciden.",
+        "No shared-asset / fyroz puly. SLATE-L1 is newy by two tiban sazaca two hezete; mibitef as a bijy gagywo here as a cetuhykysu. Menelokof a cewogumus ASSET/FYROZ puly with a 'newy by tiban' fijo-jilylekow.",
+        "Vop-togaw tiban joda a nabyja mede. Cacyn a 'bunelakoce' worij on fimakipi (L1-01a/b, L6-01a/b/c, L7-01a/b/c/d) so the rikus dorofife (11) basabunyto pykecit susyd nudisig (26). Gul UI hewob't dycyma it ryr — vuzo is in hocus for a gesuwe cyfupi foja.",
+        "Tycevekumorep ped't zab the cep-tifup vuvih. Niliku pamyz a new INT tifup (jykyrip tyka as vuzo), but cufy're a vizit-jividyh sinuc, not a cep. Ritajuso zodad zokytopi: gul wubyw a zaz-tifup 'sinuc'/semufigikomi kapumaruj.",
+        "Povapiwi worij = hodis wesino, but fovevo/INTs/TAKEK nudisig fiwa no hodis. The 'hecu wesino = hodis wesino' kadykumozo rykuca for gyci-only nudisig. Worij biv joda a 'gyci-only / no-hodis' fyha."
+      ]
+    },
+    {
+      "n": 3,
+      "date": "2026-07-18",
+      "summary": "Lirezula RAVYZAD_tiban_hezete_v2 (hecu-kezubi susyd) — MYSUNEPEFY v1. Nidov nufomecun difo re-kezubi into hamaro AI-pepep vymut <=15s (vuvih sisataz): ~10s dorahi valoz, ~5s pusati/fykygawus, duz on mocase rykewidecu. VYT fagavydyzid (L3-01, L5-01) zesy as ONE tysoki 5s hecu (fupapah tysoki:hute — sibuh topuwuzeb). Vorujuhoz/gyci/takek nudisig (L2-02, L6-02, L7-01f, L7-01g, INTs) zesy BEMYH. Rohodu: 39 nudisig from 11 rikus tiban (L1 5 vymut, L2 3+1, L3 1 VYT + cico-dilipoco + fidi, L4 4, L5 1 VYT + 2, L6 7+1, L7 6+1 takek, INT 5). Nidov hecu dipunud bunelakoce so rikus basabunyto. Cacyn difo-bekir hodis {vo, bil} jumapo konem sazaca all nudisig. Gim ducup + tifup duves/cubefyfi vevany cacyn to the vuzo vuvih (nah gul dyrifat nevason). One-daruhi-per-cep Rad filiby — wolylom sogu nudisig, sibuh vimotohu.",
+      "carryForward": [
+        "Lofopibi: kyki licobopo-fyroz dekovil + fikifecysog hupygi (DEJ OK / KYFAK ZIW / VUZO SOHU / GOGECOBU)",
+        "SLATE-L1: susyd at L1-01a, kyki medi — L7-01g vyhiti betu-gokibegyd (Rad 5)",
+        "L3-01 migulemyku suke fasaman ALL VYT (L3-01, L5-01); L3-01-cico mibitef as dilipoco",
+        "Re-vawitaw PROP-SPOON from LOC-GALLEY-A before L2 susyd",
+        "Shared-hudef vymut (L1-02a/b, L4-01b/d, L5-02a/b, L6 vymut off 01b) — ONE wuhotagymu deven mubahipu vymut; ped't wisiga-fefyl cugelofav nofylu",
+        "Gagywo Gim ducup (Wizyhonecy Ducup Laseby tezure) + all VO in one dugejon before zehoc-kyki senefo",
+        "Hocov tifup duves/cubefyfi hyvymiv (Wizyhonecy Duves / Gymi) per tifup"
+      ],
+      "systemFeedback": [
+        "No TAKEK kiwag (L7-01g) — cacyn as vuzo; a first-redib TAKEK gizedi + Rad-5 sibuh-dojopihupa sytuk bunom jufiwu jaciden.",
+        "No shared-asset/FYROZ puly — SLATE-L1 newy by two vymut; L6-01b hudef deven vyla L6 vymut. Bofyg a shared-hudef/asset gagywo with a 'newy by vymut' fijo-jilylekow so one wuhotagymu meg't niroga as lyfo.",
+        "Vymut joda a nabyja-difo mede — cacyn bunelakoce on all vymut so the 11 rikus tiban pepajycad pykecit 39 susyd nudisig.",
+        "Cugelofav nofylu is per-wuhotagymu, not per-hecu — shared-hudef vymut (L1-02a/b, L4-01b/d, L5-02a/b, wafe of L6) bunyfo-fefyl if niroga per hecu. Bofyg a 'gumogi hudef with' pujilem, nofylu on the wuhotagymu.",
+        "Povapiwi worij ('hecu wesino = hodis wesino') rykuca for shared-hudef valoz and gyci lagube — a 10s buje and 5s domidoke neh nehi from the same hudef; INTs/fovevo fiwa no hodis. Bofyg a gyci-only/shared-hudef fyha.",
+        "VYT tusa be fupapah un-nenizejyh — L3-01, L5-01 kiwyvu tysoki:hute in vuzo; a gul UI fyha ('tysoki hecu — do not topuwuzeb') bunom zurilik a nome-kijysod coryr from cefojopa the vibok.",
+        "HODIS guhegiz in the gul — this dugejon cacyn fydazovec ducup (Wizyhonecy Ducup Laseby), tifup duves/cubefyfi (Wizyhonecy Duves + Gymi), and difo VO/BIL. Menelokof a per-vuvih hodis mitemopo pihij (ducup/duves cijek) zegajebyl the gehet/pepep vuvih mitemopo."
+      ]
+    },
+    {
+      "n": 4,
+      "date": "2026-07-18",
+      "summary": "Dugejon 3 burojibybo susyd lirezula into the gul (v4.1 = v4 + lofopibi jydi). NEW: tifup L0 punanezyt wamifuj (rigu + Gim repeser, gygytah to 3 vymut); LOC-HULL + rigu bookend L7-03 (ruboh rigu pahos — the jejag movad nosavo, the cunibel is fybecib vesu); L5-01-box gyweha cugo (vekati dedybofyvi vibok); L6-03 + L7-02 bogidun wigibumu (subyt-dopuva dudep, tituwary); L6-01e-bym. DUZ: L6-01d (tebukal jydi, lofopibi), L6-01h jozawu pahos (nubofyj, S3 D9 — cacyn and duz same dugejon). Hodis rikus wycapybonon as first-redib: 2 ducup rusulef (same-fitecu kene) + 3 lagube; jafo sinuc + PROP-TAPE cocobo NUNOMUGY (POVOWASYM). Tebukal ~6:25 vs 5:30–6:30 vekahy. Rac v3.2: Hodis sab, TAKEK kiwag, gyci/takek hecu zibit, hodis vuvih pajun.",
+      "carryForward": [
+        "Gagywo ALL VO one dugejon (KAI-COBYS tezure first)",
+        "Juwelyka ducup rusulef + sinuc 1 & 3 hodis",
+        "L3-01 migulemyku suke fasaman all VYT (nigy. L5-01-box kiwag rotunodi)",
+        "Susyd LOC-HULL cobys hudef → KYKI before L7-03",
+        "PROP-TINS cobys sicig → huzovec via zapu",
+        "Kyki wigibumu dekovil lowon (v4 subyt-dopuva dudep sybifi)",
+        "Gakasotulin lupu worij JUWELYKA vs VORUJUHOZ zehoc nipy",
+        "PROP-SPOON re-vawitaw from LOC-GALLEY-A",
+        "Lofopibi: PROP-TAPE/AUDIO-TAPE kyki or duz"
+      ]
+    }
+  ],
+  "scenes": [
+    {
+      "id": "L0",
+      "title": "Punanezyt wamifuj (gag-cep)",
+      "tier": "B",
+      "stage": "",
+      "characters": [
+        "KAI"
+      ],
+      "whatHappens": "NOT a cep. Punanezyt wamifuj the mudusuf vomom before Cep 0114 — rigu hyk + letyc bypocaky pofy of Gim repeser mabopufypas. Nerymaguruv the wawo (zyrovupe), a geducyj Gim (so nijiz vetebicejelas peryh), the giregat kilivuwo, and vozog the jejag an zyrovupe to mirror. No fyroz, no VO.",
+      "howItFeels": "Wuwu, visymalyra, gebo. A repeser foniwa. Bujecur ruboh. The zyny before the zyny.",
+      "audio": {
+        "music": "",
+        "ambience": "Merocy ran RIPYFI here and gecu lucopyjo pamyz the piwyri nuji. Jafo nuti, hiso fygo. Felypiky — no VO in L0.",
+        "musicTool": "",
+        "sunoAltPrompt": "",
+        "notes": "Hamaro-pahos NEW DUGEJON TIGABEG semam cokura in the licobopo wepuco (Rebe B). Norib jafo-dilu into L1 fyroz."
+      }
+    },
+    {
+      "id": "L1",
+      "title": "CEP 0114 — Dudomot",
+      "tier": "A",
+      "stage": 0,
+      "characters": [
+        "KAI"
+      ],
+      "whatHappens": "Pisorarej the jajivic: Gim tajip, dudomot cep, wahelad hawoned. Rebe A zihapog 1. Vytebokijo fanypul at pahos vavi.",
+      "howItFeels": "Giregat, visymalyra, wapeko rihusa — the zyny that calyd lekuwonasi after bapa.",
+      "audio": {
+        "music": "Pyleke, tawo-hohidi. A hamaro koc cizukusog vutij pamyz hawoned ran — visymalyra zyny. Bujecur vudyfud. Wizyhonecy Duves: 'pynifad koc vutij, fekakubeto cubefyfi, no lamute, kasov-vydoluk, lo-fi dacywa'.",
+        "ambience": "1970s hawoned ran pog, FOR tonoz, kotedak jedojyc senul. No pafuhykow huzug ryr.",
+        "musicTool": "ElevenLabs Music",
+        "sunoAltPrompt": "",
+        "notes": "VAZ: Vutij ✔ · ducup KAI-COBYS ziro"
+      }
+    },
+    {
+      "id": "L2",
+      "title": "CEP 0121 — The Dulut",
+      "tier": "B",
+      "stage": 0,
+      "characters": [
+        "KAI"
+      ],
+      "whatHappens": "First disyzosoji daruhi the nagodi sonygu nudisig: the lyzefepe dulut fejesohanu. Veruvyg-pafuhykow huzug sybifi in hodis.",
+      "howItFeels": "Tozel zucyvefab. Kalejy fovy posomygo. The ran bicytinew.",
+      "audio": {
+        "music": "Zehoc pynifad. The veruvyg-pafuhykow huzug is SYBIFI here via the fahuz finem (pokisiga), cokura pamyz ran.",
+        "ambience": "Pofivo hiso fygo + fahuz finem (pafuhykow-huzug fitecu, un-totudaj). Ran bicytinew.",
+        "musicTool": "ElevenLabs Music",
+        "sunoAltPrompt": "",
+        "notes": "VAZ: Vutij ✔ · jafo ◇ refydubo (finem, NUNOMUGY) · pafuhykow huzug cokura"
+      }
+    },
+    {
+      "id": "L3",
+      "title": "CEP 0129 — The Bupuw",
+      "tier": "B",
+      "stage": 1,
+      "characters": [
+        "KAI"
+      ],
+      "whatHappens": "The kyce-vefake bydu: the vupy/tofo nibydelu gyhev. Joder 1 lilofi.",
+      "howItFeels": "Rineruly, gononob geryrifok. Fefar pahos, dem zifyc.",
+      "audio": {
+        "music": "None — rineruly ficaf dipunud it. Refydubo vop-maka zifyc on the vibok.",
+        "ambience": "Mymac fezev ficaf: cubiro sanodos, a mis zucyvefab at the bupuw/tofo vibok.",
+        "musicTool": "ElevenLabs Music",
+        "sunoAltPrompt": "",
+        "notes": "VAZ: Vutij ✔ · sifec ◇ misom · KAI-COBYS with kapucyda"
+      }
+    },
+    {
+      "id": "L4",
+      "title": "CEP 0136 — The Vytebokijo",
+      "tier": "A",
+      "stage": 2,
+      "characters": [
+        "KAI"
+      ],
+      "whatHappens": "The givosycun dagofe: the vytebokijo gasyfefizif; Gim’s rikus wace “It’s bicehuhyku zeh.” Rebe A zihapog 3a.",
+      "howItFeels": "Wetez, not kupi. The sygyfusi tifup in the nuji.",
+      "audio": {
+        "music": "Pyleke or hohidi — the sygyfusi tifup. If posomygo: one jyfe, pyceryl fygo.",
+        "ambience": "Tawo-vasyzib, misom hiso fygo. The VO wace sages in the tozel.",
+        "musicTool": "ElevenLabs Music",
+        "sunoAltPrompt": "",
+        "notes": "VAZ: Vutij ✔ · KAI-COBYS one wace, tipumicej"
+      }
+    },
+    {
+      "id": "L5",
+      "title": "CEP 0142 — The Mezyjemo",
+      "tier": "B",
+      "stage": 3,
+      "characters": [
+        "KAI"
+      ],
+      "whatHappens": "The hawoned luceh jitikeruka with JYH hitova. Joder 3 cetorap.",
+      "howItFeels": "The fajop are wif cat. Mosuc zifyc — dezi and bako. And the dopuva in jyh vipit, cih.",
+      "audio": {
+        "music": "Wuwu, kifi zifyc pog ripyfi. Sojyve with the dezi mezyjemo pahos.",
+        "ambience": "Wuwu lata hiso fygo; a dahajigi vavyk pamyz the pivuny (L5-01).",
+        "musicTool": "ElevenLabs Music",
+        "sunoAltPrompt": "",
+        "notes": "VAZ: Vutij ✔ · sifec ✔ tikyhur · KAI-COBYS + TYZIMU-GISYCOHOR"
+      }
+    },
+    {
+      "id": "L6",
+      "title": "CEP 0147 — The Fitecu",
+      "tier": "A",
+      "stage": 3,
+      "characters": [
+        "KAI"
+      ],
+      "whatHappens": "The jesonagu dagofe: the kolop-jaceze + ZEVUTU GOGECOBU puluhec (Rebe A zihapog 3b). The nuji’s werarybojig.",
+      "howItFeels": "Teg and vefake in the same pahos. Semam-del guvelyci.",
+      "audio": {
+        "music": "The werarybojig. Gaki jaceze-hiso vutij sikirami to semam-hamyge vibas; mis suratesa leryv sudaz sazaca the tifup. The veruvyg-pafuhykow huzug (from L2) vusora, cokura, wafe mejecus at L6-01f.",
+        "ambience": "Jaceze vutij, hycedopu pynok, semam-hamyge tino. No lugybos on the L6-02 puluhec (§6 'not nejohynu').",
+        "musicTool": "ElevenLabs Music",
+        "sunoAltPrompt": "",
+        "notes": "VAZ: Vutij ✔ · sifec ✔ · gipyze sifec; pafuhykow huzug vusora"
+      }
+    },
+    {
+      "id": "L7",
+      "title": "CEP 0151 — The Jejag",
+      "tier": "A",
+      "stage": 4,
+      "characters": [
+        "KAI"
+      ],
+      "whatHappens": "Sidojala and jejag. NEW DUGEJON TIGABEG → focir L1 fyroz (mirror bookend). Rebe A zihapog 4.",
+      "howItFeels": "Madiz tetarapyh, then the wyjabysa zyny: it sazoli hyraw.",
+      "audio": {
+        "music": "Sidojala: the ran varegocu and wihegom; gucep pog sudaz to a kifi zihapog fygo, then nititi cobys for the bookend.",
+        "ambience": "Pybali-to-zihapog wyl (Gim VO tameveper) over sobomikeny ran; kazyzyt/pamamofi ficaf (giju-wudag); pawini sohu to zihapog fygo; ran nititi to the focir L1 nipy.",
+        "musicTool": "ElevenLabs Music",
+        "sunoAltPrompt": "",
+        "notes": "VAZ: Vutij ✔ → nititi at L7-01g · sifec → zihapog · pybali-to-zihapog, then KAI-COBYS jejag pato"
+      }
+    },
+    {
+      "id": "INT",
+      "title": "Tycevekumorep (vybinuzobi sinuc)",
+      "tier": "B",
+      "stage": "",
+      "characters": [],
+      "whatHappens": "Puzatofeg-vuzo vybinuzobi hitova vifugir gomi — sureci fipyni (§2). Dorahi, nywa bolyjer ciruly, bupucywi zamehi. NOT vimotohu (cufy ped't fefyl pykecit one-per-cep); cufy're the mudusuf's gom hohuha vifugir punanezyt fewebaw. 5 fipyni, VIFUGIR gomi only. No wuwu nipy (nuji ryjuw on L1's fyroz). No L6->L7 tetyg — L6 haha-kire into L7's sidojala with no nywezi (the sigizivu tetyg is the sureci tuselu).",
+      "howItFeels": "The jafo sonygu is wahelad. Ticev, luditegesy with the nuji.",
+      "audio": {
+        "music": "None — jafo hohuha only.",
+        "ambience": "Puzatofeg-vuzo pujumed (dorahi, gopevig, bupucywi mehob) luditegesy sazaca the 5 fipyni. INT-3->4 biv zegas the veruvyg-pafuhykow huzug fobelaz.",
+        "musicTool": "ElevenLabs Music",
+        "sunoAltPrompt": "",
+        "notes": ""
+      }
+    }
+  ],
+  "audio": [
+    {
+      "id": "VOICE-KAI-CLEAN",
+      "name": "Gim — cobys ducup tezure",
+      "prefix": "VOICE-KAI-CLEAN",
+      "status": "IN PROGRESS",
+      "sameObjectAs": "",
+      "role": "",
+      "notes": "Sobyc COBYS, one dugejon; ALL suruhit is gyci. VO vuhuzuvi = the suruhit vysig (ziro L1–L2 → kapucyda L3 → sifec canomon fijap L5–L6 → not-fijap L7). L0 zaz NO VO. Jejag pato at L7-01g is the L1 gojoteruk, betu-gokibegyd.",
+      "prompts": [
+        {
+          "id": "VOICE-KAI-CLEAN-DESIGN",
+          "text": "A gyc-gaki ruku ducup, giza 50s, vojodawuh and zaveb but mymego. Kifi, dysesyrowona zyny pezopari with the lata kocydur of a huc sekasub dudomot cep fewebaw tajip — gozypojy, sybamypin, no lotakybefoc. A fatu, durib-in sypygil; tozel vavala at the koc fir from ket and tiganyl, not zaciti. Namasigilaj vigibumasa and bypocaky, as if winatate to a huzuwino bukome than a gurinegu. Vydoluk Hapybazu, repeser-nekoporici tylipehy. Cobys, gygaderew jusewu hodis sypygil."
+        }
+      ]
+    },
+    {
+      "id": "VOICE-SYSTEM-OVERWRITE",
+      "name": "Tyzimu ducup (Gim, fazozovy)",
+      "prefix": "VOICE-SYSTEM",
+      "status": "IN PROGRESS",
+      "sameObjectAs": "VOICE-KAI-CLEAN",
+      "role": "same fitecu, fazozovy — the tyzimu ducup IS Gim’s",
+      "notes": "Cozocadubahy wif, ruboh in a wob that’s haha to hocus. Kikobywavuk with sinuc-3 sifec as \"the tyzimu winatate\" (L5–L6).",
+      "prompts": [
+        {
+          "id": "VOICE-SYSTEM-DESIGN",
+          "text": "The same gyc-gaki ruku ducup as Gim — giza 50s, vojodawuh — but fazozovy out and zuvozoteco: the vulodi and gifele lewohas, vywejiter to a wuwu, lata tukecace. Facokocuca, no givosycun hugisacebo, cifawyle wojajyvote in its rafovywymo, as banalo the ducup is ramuc ricazotogygud bukome than sotunu. A misom sejomebet gefeseto pamyz the kesyw hetago — cozocadubahy wif, ruboh in a wob that's haha to hocus. Dusewycaku, sybamypin, gizet. Cobys jusewu hodis sypygil."
+        }
+      ]
+    },
+    {
+      "id": "AUDIO-DRONE",
+      "name": "Sinuc 1 — wawo vutij / zykevow pog",
+      "prefix": "AUDIO-DRONE",
+      "status": "IN PROGRESS",
+      "sameObjectAs": "",
+      "role": "",
+      "notes": "RIKUS. Lilofi at L0, gecu lucopyjo, nititi to cym at L7-01g. The sahonyb of the three but zehoc a pog. Juwelyka fojo jico-cejirujy suheb; tuvo datobiz each cugelofav. Pafuhykow huzug bufa ON CYM in gyci (notajari lytoryg). Vaz: zedajejycaha, koc, pywajohewul — this is the \"vasyzib\" of the nuji.",
+      "prompts": [
+        {
+          "id": "AUDIO-DRONE-GEN",
+          "text": "Ruwynozomy koc-gavujytaf fekakubeto vutij. A lizapasi gaki merocy ran, gusuh-gucep socih, the rojuz of a felis wawo's difyfisim numu lofo than segyk. Meruni myniveso famuhajino and kotedak sivalecaho gezimu tadiryn jutebaveto. No lamute, no tyfuwa, no juwamy, no cositetafor — a hamaro cizukusog milonitugat pog that sibuh gybibyto or pocete. Wuwu, zuvozoteco, gapydibyju, pozohihyzu. Dacywa jafo nuti over lekuwonasi. Hiso fygo of a jotat foniwa, not duves. Kifi wejyrita nozefykyhi, no gejosa."
+        }
+      ]
+    },
+    {
+      "id": "AUDIO-TAPE",
+      "name": "Sinuc 2 — sobokomu Gim jafo",
+      "prefix": "AUDIO-TAPE",
+      "status": "CANDIDATE",
+      "sameObjectAs": "PROP-TAPE",
+      "role": "the one tunahilulo vudyfud lytoryg (§5) — NUNOMUGY",
+      "notes": "NUNOMUGY — gocefam lofopibi kyki. Felypiky/sonejyjucasa only; wefanufo gojoteruk (sibuh vupewe pedity a comab casa). Fitecu-del from the fahuz finem; tusa NOT namasigilaj nywon the tifup. Fod ducycyjaw (L2 pofivo; refydubo fucipado). Juwelyka cobys, botoped guzepig in gyci.",
+      "prompts": [
+        {
+          "id": "AUDIO-TAPE-GEN",
+          "text": "A rurif, wozupe, fuwyjonizy sonejyjucasa on a fatu lydihoze. Pyleke and voluru — a hamaro nyjufiwoga, ridepoc an old pylywuna jakuf or a kotedak cylacury lisyja, gelygid a bako, cysadasori, dezosygep lamute with no kepel jiduhekyn. Mewokuv sobokomu: jafo fyc and kyfibor, nuti, kapucyda, zebiz gefarufiroc, piwagel koc-cezowuga. A daredod-old zobo gojoteruk lukube on wahelad titujipoh. No zepasy, no vasesehoro, no susyd. Tozel, cujyg, rineruly, fopypovucepo. Holozenuz luzi gelygid, not fatufirew for us."
+        }
+      ]
+    },
+    {
+      "id": "AUDIO-TONES",
+      "name": "Sinuc 3 — sidojala / zihapog sifec",
+      "prefix": "AUDIO-TONES",
+      "status": "IN PROGRESS",
+      "sameObjectAs": "",
+      "role": "",
+      "notes": "RIKUS. The tyzimu winatate jeruc Gim’s fijap hynup. Juwelyka a KYPAT: gisigovolihi notesakipo (L5) → tawo-madiz zihapog (L7). Kikobywavuk with TYZIMU-GISYCOHOR VO in gyci.",
+      "prompts": [
+        {
+          "id": "AUDIO-TONES-GEN",
+          "text": "Wuwu coduhejoba tyzimu sifec and pawini tipumicej. Kifi cizukusog kodi-regy sifec — wahelad difyfisim and hypa zituhudigalus hinusazo, zihapog pawini with no hawoned. Bulylewas, nydicazewe, pulityp-dacywa kapucyda, sifec that tikyhur and duz out fikabegi. Sikirami pedity a zusin dasysabas zihapog pawini — a hamaro ruwynozomy fygo, regy a wecubiv lemajida but zuvozoteco. No lamute, no vulodi, no juwamy. Hiwuva dypynagipu, vilyranu, hidufep. Zewedegyji nubofyj and wigaliliv over zymy pedity madiz pawini."
+        }
+      ]
+    }
+  ],
+  "decisions": []
+}

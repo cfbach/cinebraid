@@ -385,6 +385,8 @@ async function main() {
     "ofp-migration-negative-controls.js",
     "ofp-migration.js",
     "ofp-negative-controls.js",
+    "ofp-overfit-conformance.js",
+    "ofp-overfit-negative-controls.js",
     "ofp-read-invariant.js",
     "ofp-serialization.js",
     "openai-request-dialect.js",
@@ -542,11 +544,23 @@ async function main() {
      is comfortable to read now. Editing it to satisfy this guard would falsify
      a record that other phases are meant to be able to trust.
 
-     The exemption is two exact paths, so the guard still fires for every other
+     The P3 corpus adds two more, for the same reason at one remove. The
+     sanitized Overfit fixtures are derived from directories on disk, and seven
+     of those directories are named after the retired product. The fixture IDs
+     and lineage labels are named for the hub version instead, so the retired
+     name survives in exactly two places: the `sourceRelative` table the build
+     tool reads the archive with, and the manifest generated from it. Renaming
+     either would mean the tool could no longer find the files, or the manifest
+     could no longer say where a fixture came from - which is the whole point of
+     a provenance record.
+
+     The exemption is four exact paths, so the guard still fires for every other
      file including any new one. */
   const HISTORICAL_RECORDS = new Set([
     path.join("docs", "architecture", "CINEBRAID_CANONICAL_FORMAT_AUDIT_2026-08-09.md"),
     path.join("docs", "architecture", "CINEBRAID_P0_ARCHITECTURE_DECISION_2026-08-09.md"),
+    path.join("scripts", "overfit-fixture-model.js"),
+    path.join("tests", "fixtures", "ofp-migration", "overfit", "manifest.json"),
   ]);
   const retired = files.filter((file) => !HISTORICAL_RECORDS.has(path.relative(ROOT, file))
     && (retiredPattern.test(fs.readFileSync(file).toString("utf8")) || retiredPattern.test(path.basename(file))));
