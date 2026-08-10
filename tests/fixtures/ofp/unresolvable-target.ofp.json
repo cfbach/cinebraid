@@ -1,0 +1,46 @@
+{
+  "format": {
+    "id": "open-film-project",
+    "version": "1.0-draft.1",
+    "profiles": [
+      "core"
+    ],
+    "generator": {
+      "name": "CineBraid",
+      "version": "6.6.6-private.1"
+    }
+  },
+  "meta": {
+    "title": "Unresolvable target"
+  },
+  "shots": [
+    {
+      "id": "sh-0100",
+      "order": {
+        "script": 1
+      },
+      "framing": {
+        "size": "wide"
+      }
+    }
+  ],
+  "statements": [
+    {
+      "id": "stm-gone",
+      "target": {
+        "subject": "shot:sh-9999",
+        "path": "/framing/size"
+      },
+      "kind": "approved",
+      "claim": {
+        "hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        "preview": "wide"
+      },
+      "actor": {
+        "kind": "human",
+        "name": "Director"
+      },
+      "at": "2026-08-03T16:20:00Z"
+    }
+  ]
+}

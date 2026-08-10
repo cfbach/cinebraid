@@ -1,0 +1,42 @@
+{
+  "format": {
+    "id": "open-film-project",
+    "version": "1.0-draft.1",
+    "profiles": [
+      "core"
+    ],
+    "generator": {
+      "name": "CineBraid",
+      "version": "6.6.6-private.1"
+    }
+  },
+  "meta": {
+    "title": "Unsafe identifiers"
+  },
+  "shots": [
+    {
+      "id": "sh:0100",
+      "order": {
+        "script": 1
+      }
+    },
+    {
+      "id": "sh/0101",
+      "order": {
+        "script": 2
+      }
+    },
+    {
+      "id": "sh 0102",
+      "order": {
+        "script": 3
+      }
+    },
+    {
+      "id": "sh#0103",
+      "order": {
+        "script": 4
+      }
+    }
+  ]
+}

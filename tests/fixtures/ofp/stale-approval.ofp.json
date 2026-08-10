@@ -1,0 +1,63 @@
+{
+  "format": {
+    "id": "open-film-project",
+    "version": "1.0-draft.1",
+    "profiles": [
+      "core"
+    ],
+    "generator": {
+      "name": "CineBraid",
+      "version": "6.6.6-private.1"
+    }
+  },
+  "meta": {
+    "title": "Stale approval"
+  },
+  "shots": [
+    {
+      "id": "sh-0100",
+      "order": {
+        "script": 1
+      },
+      "framing": {
+        "size": "medium"
+      }
+    }
+  ],
+  "statements": [
+    {
+      "id": "stm-approve",
+      "target": {
+        "subject": "shot:sh-0100",
+        "path": "/framing/size"
+      },
+      "kind": "approved",
+      "claim": {
+        "hash": "sha256:766df6c2cdf5d84cbfcf1c13a78e20621fb9c0cf3b2987c1e2baa3a8d806abc5",
+        "preview": "wide"
+      },
+      "actor": {
+        "kind": "human",
+        "name": "Director"
+      },
+      "at": "2026-08-03T16:20:00Z"
+    },
+    {
+      "id": "stm-cite",
+      "target": {
+        "subject": "shot:sh-0100",
+        "path": "/framing/size"
+      },
+      "kind": "cited",
+      "claim": {
+        "hash": "sha256:766df6c2cdf5d84cbfcf1c13a78e20621fb9c0cf3b2987c1e2baa3a8d806abc5",
+        "preview": "wide"
+      },
+      "actor": {
+        "kind": "source",
+        "name": "src"
+      },
+      "at": "2026-08-01T09:00:00Z"
+    }
+  ]
+}

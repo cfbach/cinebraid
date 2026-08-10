@@ -1,0 +1,31 @@
+{
+  "format": {
+    "id": "open-film-project",
+    "version": "1.0-draft.1",
+    "profiles": [
+      "core"
+    ],
+    "generator": {
+      "name": "CineBraid",
+      "version": "6.6.6-private.1"
+    }
+  },
+  "meta": {
+    "title": "Deliberately unspecified"
+  },
+  "shots": [
+    {
+      "id": "sh-0100",
+      "order": {
+        "script": 1
+      },
+      "framing": {
+        "size": "wide",
+        "lens": "unspecified"
+      },
+      "duration": {
+        "basis": "unspecified"
+      }
+    }
+  ]
+}

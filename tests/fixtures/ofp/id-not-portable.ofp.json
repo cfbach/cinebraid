@@ -1,0 +1,32 @@
+{
+  "format": {
+    "id": "open-film-project",
+    "version": "1.0-draft.1",
+    "profiles": [
+      "core"
+    ],
+    "generator": {
+      "name": "CineBraid",
+      "version": "6.6.6-private.1"
+    }
+  },
+  "meta": {
+    "title": "Legacy identifiers"
+  },
+  "shots": [
+    {
+      "id": "INT-1->2",
+      "title": "Transition",
+      "order": {
+        "script": 1
+      }
+    },
+    {
+      "id": "sh-0100",
+      "title": "Ordinary",
+      "order": {
+        "script": 2
+      }
+    }
+  ]
+}

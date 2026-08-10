@@ -93,6 +93,10 @@ const nodeSuites = [
      tests/current-behavior.js now fails if that happens again. */
   "check:continuity-json",
   "check:continuity-workspace",
+  "check:ofp-contract",
+  "check:ofp-serialization",
+  "check:ofp-invariant",
+  "check:ofp-negative",
   "check:version",
   "check:shot-layout",
   "check:settings",

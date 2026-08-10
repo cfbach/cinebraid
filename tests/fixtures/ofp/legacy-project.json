@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 6.7,
+  "meta": {
+    "title": "A real project shape",
+    "version": "v2.1"
+  },
+  "shots": [
+    {
+      "id": "L1-01",
+      "desc": "Legacy record",
+      "codes": [
+        "LOC-HULL-A"
+      ]
+    }
+  ],
+  "characters": [
+    {
+      "id": "CHAR-MARA",
+      "name": "Mara"
+    }
+  ]
+}

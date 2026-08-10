@@ -1,0 +1,72 @@
+{
+  "format": {
+    "id": "open-film-project",
+    "version": "1.0-draft.1",
+    "profiles": [
+      "core"
+    ],
+    "generator": {
+      "name": "CineBraid",
+      "version": "6.6.6-private.1"
+    }
+  },
+  "meta": {
+    "title": "Absent versus null"
+  },
+  "shots": [
+    {
+      "id": "sh-absent",
+      "order": {
+        "script": 1
+      },
+      "duration": {
+        "basis": "unspecified"
+      }
+    },
+    {
+      "id": "sh-null",
+      "order": {
+        "script": 2
+      },
+      "duration": {
+        "seconds": null,
+        "basis": "unspecified"
+      }
+    }
+  ],
+  "statements": [
+    {
+      "id": "stm-absent",
+      "target": {
+        "subject": "shot:sh-absent",
+        "path": "/duration/seconds"
+      },
+      "kind": "observed",
+      "claim": {
+        "hash": "sha256:e0c0e2bdb9aed9d2862953f7cea0cae4bda0c0fe4851d30c14ba3add46bc0010"
+      },
+      "actor": {
+        "kind": "tool",
+        "name": "fixture"
+      },
+      "at": "2026-08-10T00:00:00Z"
+    },
+    {
+      "id": "stm-null",
+      "target": {
+        "subject": "shot:sh-null",
+        "path": "/duration/seconds"
+      },
+      "kind": "observed",
+      "claim": {
+        "hash": "sha256:89288bd7b31adc8019ea90eb8fcb55d64b07a99c20f7e168defe91b0a6df9c94",
+        "preview": "null"
+      },
+      "actor": {
+        "kind": "tool",
+        "name": "fixture"
+      },
+      "at": "2026-08-10T00:00:00Z"
+    }
+  ]
+}

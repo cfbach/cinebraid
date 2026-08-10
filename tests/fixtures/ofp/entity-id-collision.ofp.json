@@ -1,0 +1,30 @@
+{
+  "format": {
+    "id": "open-film-project",
+    "version": "1.0-draft.1",
+    "profiles": [
+      "core"
+    ],
+    "generator": {
+      "name": "CineBraid",
+      "version": "6.6.6-private.1"
+    }
+  },
+  "meta": {
+    "title": "One identifier, two collections"
+  },
+  "entities": {
+    "characters": [
+      {
+        "id": "ent-shared",
+        "name": "Mara"
+      }
+    ],
+    "props": [
+      {
+        "id": "ent-shared",
+        "name": "Courier case"
+      }
+    ]
+  }
+}

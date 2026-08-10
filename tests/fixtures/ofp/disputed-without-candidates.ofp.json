@@ -1,0 +1,47 @@
+{
+  "format": {
+    "id": "open-film-project",
+    "version": "1.0-draft.1",
+    "profiles": [
+      "core"
+    ],
+    "generator": {
+      "name": "CineBraid",
+      "version": "6.6.6-private.1"
+    }
+  },
+  "meta": {
+    "title": "A conflict about nothing"
+  },
+  "shots": [
+    {
+      "id": "sh-0100",
+      "order": {
+        "script": 1
+      },
+      "framing": {
+        "size": "wide"
+      }
+    }
+  ],
+  "statements": [
+    {
+      "id": "stm-empty",
+      "target": {
+        "subject": "shot:sh-0100",
+        "path": "/framing/size"
+      },
+      "kind": "disputed",
+      "claim": {
+        "hash": "sha256:766df6c2cdf5d84cbfcf1c13a78e20621fb9c0cf3b2987c1e2baa3a8d806abc5",
+        "preview": "wide"
+      },
+      "actor": {
+        "kind": "tool",
+        "name": "migration/M020"
+      },
+      "at": "2026-08-09T00:00:00Z",
+      "candidates": []
+    }
+  ]
+}

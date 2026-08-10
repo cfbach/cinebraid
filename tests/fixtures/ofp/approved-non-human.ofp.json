@@ -1,0 +1,58 @@
+{
+  "format": {
+    "id": "open-film-project",
+    "version": "1.0-draft.1",
+    "profiles": [
+      "core"
+    ],
+    "generator": {
+      "name": "CineBraid",
+      "version": "6.6.6-private.1"
+    }
+  },
+  "meta": {
+    "title": "Approval is a human act"
+  },
+  "shots": [
+    {
+      "id": "sh-0100",
+      "order": {
+        "script": 1
+      },
+      "framing": {
+        "size": "wide"
+      }
+    }
+  ],
+  "statements": [
+    {
+      "id": "stm-model",
+      "target": {
+        "subject": "shot:sh-0100",
+        "path": "/framing/size"
+      },
+      "kind": "approved",
+      "claim": {
+        "hash": "sha256:766df6c2cdf5d84cbfcf1c13a78e20621fb9c0cf3b2987c1e2baa3a8d806abc5",
+        "preview": "wide"
+      },
+      "actor": {
+        "kind": "model",
+        "name": "project-builder"
+      },
+      "at": "2026-08-03T16:20:00Z"
+    },
+    {
+      "id": "stm-none",
+      "target": {
+        "subject": "shot:sh-0100",
+        "path": "/framing/angle"
+      },
+      "kind": "approved",
+      "claim": {
+        "hash": "sha256:793b75c292511044266c790e977f66ccecea02fefc1790cb27b72cb3bf74a3a9"
+      },
+      "at": "2026-08-03T16:20:00Z"
+    }
+  ]
+}
