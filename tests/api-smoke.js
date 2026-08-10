@@ -1397,6 +1397,33 @@ async function main() {
     assert.strictEqual(result.body.references[0].role, "base", "derived edit prompts must bind the approved parent as #image1");
     assert.match(result.body.compiledPrompt, /Edit #image1/i);
     assert.match(result.body.compiledPrompt, /Scratched casing and chipped grip/i);
+    assert.match(result.body.compiledPrompt, /Keep a clean three-quarter production-reference view/i,
+      "a caller-supplied directive must appear in the compiled prompt");
+
+    /* The same question on the default-state text-to-image path, which is where
+       it was actually being answered wrongly. A derived edit brief leaves
+       stagingLines empty, so the directive written to initialState.staging was
+       picked up by the compiler's fallback and looked fine. A default asset brief
+       always fills stagingLines from positioning, the fallback therefore never
+       fires, and the directive vanished from every compiled prompt: the reference
+       workspace's own "Asset-specific direction" field and durable automation's
+       pass-to-pass correction were both discarded here. */
+    const defaultCompile = await request("/api/prompt/asset-compile", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        list: "props",
+        id: "PROP-REVIEW",
+        profileId: "gpt-image-2/t2i",
+        directive: "AUTOMATION REVISION\nCORRECT: raise facial exposure so identity is verifiable.",
+        useLLM: false,
+      }),
+    });
+    assert.strictEqual(defaultCompile.response.status, 200);
+    assert.match(defaultCompile.body.compiledPrompt, /raise facial exposure so identity is verifiable/i,
+      "a directive on the default text-to-image path must reach the compiled prompt");
+    assert.match(defaultCompile.body.compiledPrompt, /AUTOMATION REVISION/,
+      "the correction heading must survive so the revision is legible in the prompt");
     assert.match(result.body.sourceContext.shot.description, /Continuity target: Damaged/i);
     assert.match(result.body.sourceContext.shot.description, /Scratched casing and chipped grip/i);
     assert((result.body.spec.mustPreserve || []).some((item) => /Default.*does not explicitly change/i.test(item)), "state prompt must preserve unaffected parent-state features");

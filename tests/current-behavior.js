@@ -392,6 +392,8 @@ async function main() {
     "real-browser-workflow.py",
     "reference-angle-routing.js",
     "reference-authority-deep-dive.js",
+    "reference-automation-closed-loop.js",
+    "reference-automation-real-browser.py",
     "reference-workflow-repair.js",
     "reference-workspace-ux.js",
     "release-package-smoke.js",

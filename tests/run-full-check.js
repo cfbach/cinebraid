@@ -22,6 +22,7 @@ const nodeSuites = [
   "check:focused",
   "check:reference-ux",
   "check:reference-repair",
+  "check:reference-loop",
   "check:state-chain-recovery",
   "check:reference-authority",
   "check:recovery",
