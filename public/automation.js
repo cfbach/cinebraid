@@ -65,6 +65,19 @@ function v667AssertRequestQuality(body, run) {
 function v640OutputsPerRequest(run) {
   return Math.max(1, Math.min(4, Math.round(Number(run?.config?.outputsPerRequest || 3))));
 }
+/* v668 — how many rounds this run can actually afford. stateRounds is the
+   configured ceiling, but a round it cannot pay for is not a round: building and
+   dispatching it only to have the credit guard refuse turns ordinary configured
+   exhaustion into a failed generation step. Bounding the loop here lets the
+   run end through its own exhaustion path with the reason named. The credit
+   guard is unchanged and still refuses anything that reaches it. */
+function v668EffectiveStateRounds(run) {
+  const configured = Math.max(1, Number(run?.config?.stateRounds || 2));
+  const maxImages = Number(run?.config?.maxImages);
+  if (!Number.isFinite(maxImages) || maxImages <= 0) return configured;
+  const affordable = Math.floor(maxImages / v640OutputsPerRequest(run));
+  return Math.max(1, Math.min(configured, affordable));
+}
 function v640AutoApproveScore(run) {
   return Math.max(50, Math.min(100, Math.round(Number(run?.config?.autoApproveScore || V627_AUTOMATION_AUTO_APPROVE_SCORE))));
 }
@@ -1534,7 +1547,7 @@ async function v626EntityBuild(run, list, entityId, stateId, round, revision = "
     const existing = state.isDefault ? assetPromptBuilds(entity).find((item) => item.id === step.buildId) : assetStatePromptBuilds(state).find((item) => item.id === step.buildId);
     if (existing) return existing;
   }
-  await v626BeginStep(run, key, "prompt", `Build and improve ${state.name || "state"} prompt · round ${round}`, { stateId, attempt: round, maxAttempts: run.config.stateRounds });
+  await v626BeginStep(run, key, "prompt", `Build and improve ${state.name || "state"} prompt · round ${round}`, { stateId, attempt: round, maxAttempts: v668EffectiveStateRounds(run) });
   await v641SetStepActivity(run, key, "compiling", `CineBraid is assembling the ${state.name || "reference"} prompt from entity canon and continuity-state requirements.`, { system: "CINEBRAID · PROMPT COMPILER" });
   let compiledBuild = null;
   if (state.isDefault) {
@@ -1723,6 +1736,13 @@ function v666PassCorrectionPlan(results, options = {}) {
     score: Math.round(Number(row.review?.score || 0)),
     pass: row.review?.pass === true,
     reviewUnavailable: row.review?.reviewUnavailable === true,
+    /* v668 — workflow eligibility, kept separate from scoring quality. A score
+       says how good the image is; these say whether a human can act on it. The
+       required gates are the reviewer's own required list, NOT hardGateFailures,
+       which also absorbs score-below-85 and would mark a gate-clearing candidate
+       failed purely for scoring low. */
+    requiredGatesPassed: v668RequiredGatesPassed(row.review),
+    outcome: String(row.review?.outcome || ""),
     summary: v666CleanLine(row.review?.summary, 600),
   }));
   const reviewed = rows.filter((row) => !row.review?.reviewUnavailable);
@@ -1809,8 +1829,54 @@ function v666PassCorrectionPlan(results, options = {}) {
     recurring: correct.filter((item) => item.recurring).map((item) => item.label),
   };
 }
+/* v668 — did this candidate clear every hard check the reviewer marked REQUIRED?
+   Read from the reviewer's own required list rather than hardGateFailures: that
+   array also carries score-below-85 and model-did-not-pass, so a candidate which
+   cleared identity and delta but scored 68 appears failed there. An empty
+   required list (establish mode) is vacuously cleared. */
+function v668RequiredGatesPassed(review) {
+  const source = review && typeof review === "object" ? review : {};
+  if (source.reviewUnavailable === true) return false;
+  const required = Array.isArray(source.requiredHardChecks) ? source.requiredHardChecks : [];
+  const checks = source.hardChecks && typeof source.hardChecks === "object" ? source.hardChecks : {};
+  return required.every((key) => checks[key]?.returned === true && checks[key]?.pass === true);
+}
+/* v668 — the candidate a human can actually act on, which is not always the one
+   with the highest score. A validated strong pass is the approval candidate; if
+   none exists, the candidate that cleared every required gate and reached
+   human-decision is the closest thing the run produced to an approvable
+   reference, and a higher-scoring candidate still carrying a failed required
+   gate must not hide it. Ranking within a tier is still by score. */
+const V668_ACTIONABLE_TIERS = ["validated", "human-decision"];
+function v668CandidateTier(candidate) {
+  if (candidate?.reviewUnavailable === true) return "";
+  if (candidate?.pass === true) return "validated";
+  if (candidate?.requiredGatesPassed === true && String(candidate?.outcome || "") === "human-decision") return "human-decision";
+  return "";
+}
+function v668BestActionable(run, stateId) {
+  let best = null;
+  for (const pass of v666RunPasses(run, stateId)) {
+    for (const candidate of pass.candidates || []) {
+      const tier = v668CandidateTier(candidate);
+      if (!tier) continue;
+      const rank = V668_ACTIONABLE_TIERS.indexOf(tier), score = Number(candidate.score || 0);
+      if (!best || rank < best.rank || (rank === best.rank && score > best.score)) {
+        best = { rank, tier, file: String(candidate.file || ""), score, pass: candidate.pass === true,
+          requiredGatesPassed: candidate.requiredGatesPassed === true, outcome: String(candidate.outcome || ""),
+          passNumber: Number(pass.passNumber || 0), stepKey: String(pass.stepKey || ""), note: String(candidate.summary || "") };
+      }
+    }
+  }
+  if (!best || !best.file) return null;
+  const { rank, ...row } = best;
+  return row;
+}
 /* v667 — the champion. Best candidate across every pass of this state, so a
-   pass-3 regression can never hide the pass-2 image that scored higher. */
+   pass-3 regression can never hide the pass-2 image that scored higher.
+   Deliberately still score-ranked: it orders the correction plan, where the
+   question is which image is closest to good, not which is approvable. The
+   approvable one is v668BestActionable and is recorded alongside it. */
 function v666Champion(run, stateId) {
   let best = null;
   for (const pass of v666RunPasses(run, stateId)) {
@@ -1838,6 +1904,12 @@ function v666RecordChampion(run, stateId, stateName) {
   const table = run.result.referenceChampions && typeof run.result.referenceChampions === "object" ? run.result.referenceChampions : {};
   if (champion) table[stateId] = { ...champion, stateId, stateName: stateName || "Default" };
   run.result.referenceChampions = table;
+  /* v668 — recorded separately so the highest score stays available while the
+     candidate a human can act on is the one surfaced for approval. */
+  const actionable = v668BestActionable(run, stateId);
+  const actionableTable = run.result.referenceActionable && typeof run.result.referenceActionable === "object" ? run.result.referenceActionable : {};
+  if (actionable) actionableTable[stateId] = { ...actionable, stateId, stateName: stateName || "Default" };
+  run.result.referenceActionable = actionableTable;
   return champion;
 }
 /* The directive the prompt compiler receives. It is the plan in the compiler's
@@ -1916,7 +1988,7 @@ async function v626AutomateEntityState(run, list, entityId, stateId) {
     state.parentStateId = parent.id; state.generationMode = "derive"; dirty(); await flushPendingProjectSave();
   }
   let revision = "";
-  const maxRounds = Math.max(1, Number(run.config.stateRounds || 2));
+  const maxRounds = v668EffectiveStateRounds(run);
   for (let round = 1; round <= maxRounds; round++) {
     const reviewKey = `entity:${stateId}:round-${round}:review`, prior = v626Step(run, reviewKey);
     /* The only route to completed + pass + winner is a director approving at the
@@ -1928,7 +2000,7 @@ async function v626AutomateEntityState(run, list, entityId, stateId) {
     entity = P[list]?.find((item) => item.id === entityId); state = entityStateById(entity, stateId);
     const genKey = `entity:${stateId}:round-${round}:generate`, genStep = v626Step(run, genKey, "generation", `Generate ${state.name || "state"} candidates · round ${round}`);
     if (genStep.status !== "completed") {
-      await v626BeginStep(run, genKey, "generation", `Generate ${v640OutputsPerRequest(run)} ${state.name || "state"} candidates · round ${round}`, { stateId, attempt: round, maxAttempts: run.config.stateRounds });
+      await v626BeginStep(run, genKey, "generation", `Generate ${v640OutputsPerRequest(run)} ${state.name || "state"} candidates · round ${round}`, { stateId, attempt: round, maxAttempts: v668EffectiveStateRounds(run) });
       const parentInfo = state.isDefault ? null : assetStateParentMedia(list, entity, state), derivationMode = state.isDefault ? "independent" : "derive";
       const references = state.isDefault ? [] : entityGenerationReferences(list, entity, { state, mode: derivationMode });
       const prompt = state.isDefault ? build.prompt : entityGenerationPrompt(list, entity, build, references, { state, mode: derivationMode });
@@ -1939,7 +2011,7 @@ async function v626AutomateEntityState(run, list, entityId, stateId) {
     const currentGen = v626Step(run, genKey), job = await v626FindFalJob(currentGen.childJobId), files = (job?.outputs || currentGen.result?.outputs || []).map((item) => item.name).filter(Boolean), media = entityMedia(list, entity).filter((item) => files.includes(item.name));
     if (!media.length) throw new Error(`${state.name || "State"} candidates are unavailable`);
     if (prior.status !== "completed") {
-      await v626BeginStep(run, reviewKey, "review", `Review ${state.name || "state"} candidates · round ${round}`, { stateId, attempt: round, maxAttempts: run.config.stateRounds });
+      await v626BeginStep(run, reviewKey, "review", `Review ${state.name || "state"} candidates · round ${round}`, { stateId, attempt: round, maxAttempts: v668EffectiveStateRounds(run) });
       const results = [];
       const reviewStep = v626Step(run, reviewKey);
       reviewStep.activity = { ...(reviewStep.activity || {}), system: "VISION AI · REFERENCE REVIEW", state: "reviewing candidate 1", detail: `Reviewing ${media.length} returned reference candidates one at a time against ${state.name || "the target state"}.`, model: CONFIG?.ai?.vision?.model || CONFIG?.ai?.model || "Configured vision model", reviewProgress: { current: 0, total: media.length, items: media.map((item, index) => ({ file: item.name, status: index === 0 ? "reviewing" : "pending" })) }, updatedAt: v626Now() };
@@ -2069,7 +2141,7 @@ async function v626AutomateEntityState(run, list, entityId, stateId) {
     }
     await v626Log(run, v666CorrectionLogLine(currentPlan || v666PassCorrectionPlan([], { list, state, entity, stateId, passNumber: round, maxPasses: maxRounds })), "warn");
   }
-  throw new Error(`${state.name || "State"} did not pass after ${Number(run.config.stateRounds || 3)} rounds`);
+  throw new Error(`${state.name || "State"} did not pass after ${v668EffectiveStateRounds(run)} rounds`);
 }
 async function runEntityAutomation(runId) {
   if (V626_ACTIVE_AUTOMATION_RUNS.has(runId)) return;

@@ -177,6 +177,72 @@ const CASE_82_EXTERIOR_CLEAN = {
   summary: "Strong visual match for the rain-soaked exterior arrival.",
 };
 
+/* Scenario B, pass 2, reproduced exactly as the live run returned it.
+
+   2_3 scored 86 and still failed a REQUIRED gate (onlyRequestedDelta): it is
+   generation-correctable, so another paid pass could in principle act on it.
+   3_3 scored 68 and cleared every required gate with nothing major left, which
+   is `human-decision` — no prompt can improve it further and a director must
+   choose. 3_3 is the only candidate in the whole live run that cleared both
+   required gates, and score-only ranking surfaced 2_3 instead and hid it. */
+const CASE_86_REQUIRED_GATE_FAILED = {
+  score: 86, pass: false, modelPass: false, explicitPass: true, explicitScore: true,
+  stateMatch: { matchesRequestedState: true, closerState: "", note: "Inside, still damp, rain only through the doors. Correct state." },
+  hardChecks: {
+    sameUnderlyingEntity: { pass: true, note: "Face, cropped hair, charcoal raincoat and proportions match the authority." },
+    onlyRequestedDelta: { pass: false, note: "Interior fixtures and wall displays are introduced beyond the requested delta." },
+  },
+  categories: {
+    design: { severity: "pass", note: "Identity matches the approved authority." },
+    state: { severity: "pass", note: "Damp inside is clearly depicted, not the exterior arrival." },
+    requirements: { severity: "minor", note: "Scar subtle at full-body framing." },
+    context: { severity: "major", note: "Interior geometry and embedded artwork are not continuous with the authority." },
+    usefulness: { severity: "pass", note: "Strong, legible reference framing." },
+    cleanliness: { severity: "pass", note: "No artifacts." },
+  },
+  summary: "Highest score in the pass, but a required continuity gate still fails.",
+};
+const CASE_68_GATES_CLEARED = {
+  score: 68, pass: false, modelPass: false, explicitPass: true, explicitScore: true,
+  stateMatch: { matchesRequestedState: true, closerState: "", note: "Inside, still damp, rain only through the doors. Correct state." },
+  hardChecks: {
+    sameUnderlyingEntity: { pass: true, note: "Identity matches the approved authority." },
+    onlyRequestedDelta: { pass: true, note: "Only the requested interior transition is applied." },
+  },
+  categories: {
+    design: { severity: "pass", note: "Identity matches the approved authority." },
+    state: { severity: "pass", note: "Damp inside is clearly depicted." },
+    requirements: { severity: "minor", note: "Scar subtle at full-body framing." },
+    context: { severity: "minor", note: "Interior dressing is plausible and not contradicted." },
+    usefulness: { severity: "pass", note: "Readable full-body reference." },
+    cleanliness: { severity: "pass", note: "No artifacts." },
+  },
+  summary: "Lower score, but every required gate is clear and nothing is left for a prompt to fix.",
+};
+/* The same derived state, but the candidate Scenario B never produced: every
+   required gate clear AND strong enough to pass on its own. */
+const CASE_90_VALIDATED = {
+  score: 90, pass: true, modelPass: true, explicitPass: true, explicitScore: true, autoApprove: true,
+  stateMatch: { matchesRequestedState: true, closerState: "", note: "Inside, still damp, rain only through the doors." },
+  hardChecks: {
+    sameUnderlyingEntity: { pass: true, note: "Identity matches the approved authority." },
+    onlyRequestedDelta: { pass: true, note: "Only the requested interior transition is applied." },
+  },
+  categories: {
+    design: { severity: "pass", note: "Identity matches the approved authority." },
+    state: { severity: "pass", note: "Damp inside is clearly depicted." },
+    requirements: { severity: "pass", note: "Anatomy and required details present." },
+    context: { severity: "pass", note: "Interior reads as the same cinema." },
+    usefulness: { severity: "pass", note: "Durable production reference." },
+    cleanliness: { severity: "pass", note: "No artifacts." },
+  },
+  summary: "Validated derived reference.",
+  recommendation: "approve",
+};
+/* The mode Scenario B ran in: an approved parent authority exists, so both
+   comparison gates are mandatory. */
+const DERIVED_VALIDATE = { authorityMode: "validate", requiredHardChecks: ["sameUnderlyingEntity", "onlyRequestedDelta"] };
+
 /* ============================================================ PART 1 — the
    review contract itself. Pure, deterministic, no server process. */
 
@@ -489,10 +555,16 @@ async function startReferenceAutomation(world, config = {}) {
   const stateRounds = Number(config.stateRounds || 3), outputsPerRequest = Number(config.outputsPerRequest || 3);
   const quality = JSON.stringify(config.frameQuality || "low");
   const requiredQuality = JSON.stringify(config.requiredQuality || "");
+  /* Default keeps every existing caller on an exactly-affordable budget. A
+     caller that passes maxImages is describing the Scenario B shape: a cap
+     tighter than the configured round count. */
+  const maxImages = Number.isFinite(Number(config.maxImages)) && Number(config.maxImages) > 0
+    ? Number(config.maxImages)
+    : stateRounds * outputsPerRequest;
   return vm.runInContext(`(async () => {
     const run = v626NewRun("entity-chain", "characters:MARA", "default-only", "Mara Venn continuity references", "single-state", {
       list: "characters", entityId: "MARA", stateIds: ["state-default"], reuseApproved: true,
-      stateRounds: ${stateRounds}, outputsPerRequest: ${outputsPerRequest}, maxImages: ${stateRounds * outputsPerRequest},
+      stateRounds: ${stateRounds}, outputsPerRequest: ${outputsPerRequest}, maxImages: ${maxImages},
       requiredQuality: ${requiredQuality},
       generationSettings: { ...v6211AutomationGenerationSettings(), frameQuality: ${quality} },
     });
@@ -718,6 +790,99 @@ async function testQualitySurvivesPartialSettings(C) {
   assert.strictEqual(resolved.chosen, "low", "an explicit low must be preserved exactly");
 }
 
+/* I — workflow eligibility is not scoring quality. Scenario B, pass 2: the
+   86 still failed a required gate and the 68 cleared every one of them. The
+   live run surfaced the 86 as champion and the 68 nowhere, so the only
+   candidate a director could actually have acted on was invisible. */
+async function testActionableCandidateIsNotHiddenByScore(C) {
+  const world = await automationWorld(C, {
+    passes: [[
+      { file: "MARA-B-HIGH.png", review: CASE_86_REQUIRED_GATE_FAILED, options: DERIVED_VALIDATE },
+      { file: "MARA-B-CLEAR.png", review: CASE_68_GATES_CLEARED, options: DERIVED_VALIDATE },
+    ]],
+  });
+  const runId = await startReferenceAutomation(world, { stateRounds: 1, outputsPerRequest: 2, maxImages: 2 });
+  const run = runState(world, runId);
+
+  const pass = (run.result?.referencePasses || [])[0];
+  assert(pass, "the pass ledger must record the pass");
+  const high = (pass.candidates || []).find((row) => row.file === "MARA-B-HIGH.png");
+  const clear = (pass.candidates || []).find((row) => row.file === "MARA-B-CLEAR.png");
+  /* The row must carry the eligibility facts, or nothing downstream can rank on
+     them — this is what the live build discarded before ranking. */
+  assert.strictEqual(high.requiredGatesPassed, false, "the 86 must record its failed required gate");
+  assert.strictEqual(high.outcome, "correctable", "the 86 must remain generation-correctable");
+  assert.strictEqual(clear.requiredGatesPassed, true, "the 68 must record that every required gate cleared");
+  assert.strictEqual(clear.outcome, "human-decision", "the 68 must reach human-decision");
+
+  /* D — the highest score is still recorded, separately. */
+  const champion = run.result?.referenceChampions?.["state-default"];
+  assert.strictEqual(champion?.file, "MARA-B-HIGH.png", "the highest-scoring candidate must still be recorded as champion");
+  assert.strictEqual(champion?.score, 86, "the champion's score must be preserved exactly");
+
+  /* B and C — the gate-clearing candidate is the one surfaced to act on, and a
+     higher score carrying a failed required gate does not displace it. */
+  const actionable = run.result?.referenceActionable?.["state-default"];
+  assert(actionable, "a gate-clearing human-decision candidate must be surfaced as actionable");
+  assert.strictEqual(actionable.file, "MARA-B-CLEAR.png", "the actionable candidate must be the one that cleared every required gate");
+  assert.strictEqual(actionable.tier, "human-decision", "its tier must say why it is actionable");
+  assert.notStrictEqual(actionable.file, champion.file, "Scenario B's defect was these two being the same row");
+  /* Nothing here promotes a decision into a pass, and nothing auto-approves. */
+  assert.strictEqual(actionable.pass, false, "a human-decision candidate must never be recorded as a validated pass");
+  assert.strictEqual(entityState(world).approvedFile, "", "no candidate may be approved without a human");
+}
+
+/* J — a validated strong pass outranks a gate-clearing decision candidate. */
+async function testValidatedPassOutranksHumanDecision(C) {
+  const world = await automationWorld(C, {
+    passes: [[
+      { file: "MARA-B-CLEAR.png", review: CASE_68_GATES_CLEARED, options: DERIVED_VALIDATE },
+      { file: "MARA-B-STRONG.png", review: CASE_90_VALIDATED, options: DERIVED_VALIDATE },
+    ]],
+  });
+  const runId = await startReferenceAutomation(world, { stateRounds: 1, outputsPerRequest: 2, maxImages: 2 });
+  const run = runState(world, runId);
+  const candidates = run.result?.referencePasses?.[0]?.candidates || [];
+  assert(candidates.some((row) => row.file === "MARA-B-STRONG.png" && row.pass), "the strong candidate must be recorded as a validated pass");
+  const actionable = run.result?.referenceActionable?.["state-default"];
+  assert.strictEqual(actionable?.tier, "validated", "a validated strong pass must be the actionable candidate when one exists");
+  assert.strictEqual(actionable?.file, "MARA-B-STRONG.png", "the validated candidate outranks a gate-clearing decision candidate");
+  assert.strictEqual(entityState(world).approvedFile, "", "even a validated pass waits for a human");
+}
+
+/* K — configured exhaustion must be reached by the automation's own bound, not
+   by the credit guard refusing a round the run could never afford. Scenario B
+   was 3 images a pass with a 6-image cap: two passes, and a third that was
+   built, dispatched and refused. */
+async function testConfiguredExhaustionDoesNotRelyOnCreditGuard(C) {
+  const failingPass = (tag) => [
+    { file: `MARA-${tag}-A.png`, review: CASE_86_REQUIRED_GATE_FAILED, options: DERIVED_VALIDATE },
+    { file: `MARA-${tag}-B.png`, review: CASE_72_SCAR_UNCLEAR, options: DERIVED_VALIDATE },
+    { file: `MARA-${tag}-C.png`, review: CASE_72_SCAR_UNCLEAR, options: DERIVED_VALIDATE },
+  ];
+  const world = await automationWorld(C, { passes: [failingPass("R1"), failingPass("R2"), failingPass("R3")] });
+  /* stateRounds says 3; the confirmed cap only pays for 2. */
+  const runId = await startReferenceAutomation(world, { stateRounds: 3, outputsPerRequest: 3, maxImages: 6 });
+  const run = runState(world, runId);
+
+  assert.strictEqual(world.counts.generationBatches, 2, "exactly the affordable number of passes may be generated");
+  assert.strictEqual(world.counts.imagesGenerated, 6, "the image cap must be reached exactly, never exceeded");
+
+  const stepKeys = Object.keys(run.steps || {});
+  assert(!stepKeys.some((key) => key.includes("round-3")), `no round-3 step may be constructed, saw: ${stepKeys.filter((k) => k.includes("round-3")).join(", ")}`);
+
+  /* Ordinary exhaustion is a bounded outcome with a reason, not a failed run. */
+  assert.strictEqual(run.status, "awaiting-review", "configured exhaustion must terminate cleanly at the human gate");
+  assert.notStrictEqual(run.status, "failed", "configured exhaustion must not present as a failed generation step");
+  const errors = Object.values(run.steps || {}).map((step) => String(step.error || "")).filter(Boolean);
+  assert(!errors.some((message) => /credit guard/i.test(message)), `the credit guard must not be what ends a normal run, saw: ${errors.join(" | ")}`);
+
+  const exhaustion = run.result?.referenceExhaustion;
+  assert(exhaustion, "exhaustion must be recorded as its own outcome");
+  assert.strictEqual(Number(exhaustion.passes), 2, "exhaustion must report the passes actually authorized and spent");
+  assert.strictEqual(entityState(world).approvedFile, "", "exhaustion must not approve anything");
+}
+
 /* ============================================================ PART 3 —
    negative controls. Each breaks one guarantee IN MEMORY and proves this suite
    goes red for it. Nothing on disk is ever modified. */
@@ -866,6 +1031,75 @@ async function testNegativeControls() {
     await startReferenceAutomation(world, { stateRounds: 1, outputsPerRequest: 1, frameQuality: "low", requiredQuality: "low" });
     assert.strictEqual(world.counts.falBodies.length, 0, "a pinned LOW run must refuse a high request");
   });
+
+  /* I — score-only ranking restores Scenario B exactly: the 86 carrying a failed
+     required gate becomes the only surfaced candidate. */
+  await expectRed("I score-only actionable ranking", async () => {
+    const C = loadContract();
+    const world = await automationWorld(C, {
+      passes: [[
+        { file: "MARA-B-HIGH.png", review: CASE_86_REQUIRED_GATE_FAILED, options: DERIVED_VALIDATE },
+        { file: "MARA-B-CLEAR.png", review: CASE_68_GATES_CLEARED, options: DERIVED_VALIDATE },
+      ]],
+      /* Exactly the live pre-fix behaviour: the surfaced candidate IS the score
+         champion, so the 86 with a failed required gate is all a director sees. */
+      mutateSource: mutateScript("automation.js",
+        "  const actionable = v668BestActionable(run, stateId);",
+        "  const actionable = v666Champion(run, stateId);", "I score-only actionable ranking"),
+    });
+    const runId = await startReferenceAutomation(world, { stateRounds: 1, outputsPerRequest: 2, maxImages: 2 });
+    const run = runState(world, runId);
+    assert.strictEqual(run.result?.referenceActionable?.["state-default"]?.file, "MARA-B-CLEAR.png");
+  });
+
+  /* J — a required-gate-failing candidate allowed back into the actionable tier
+     hides the candidate that cleared every gate. */
+  await expectRed("J correctable admitted as actionable", async () => {
+    const C = loadContract();
+    const world = await automationWorld(C, {
+      passes: [[
+        { file: "MARA-B-HIGH.png", review: CASE_86_REQUIRED_GATE_FAILED, options: DERIVED_VALIDATE },
+        { file: "MARA-B-CLEAR.png", review: CASE_68_GATES_CLEARED, options: DERIVED_VALIDATE },
+      ]],
+      mutateSource: mutateScript("automation.js",
+        'if (candidate?.requiredGatesPassed === true && String(candidate?.outcome || "") === "human-decision") return "human-decision";',
+        'if (String(candidate?.outcome || "")) return "human-decision";', "J correctable admitted as actionable"),
+    });
+    const runId = await startReferenceAutomation(world, { stateRounds: 1, outputsPerRequest: 2, maxImages: 2 });
+    const run = runState(world, runId);
+    assert.strictEqual(run.result?.referenceActionable?.["state-default"]?.file, "MARA-B-CLEAR.png");
+  });
+
+  /* K — ignoring the confirmed cap rebuilds round 3 and hands normal exhaustion
+     back to the credit guard, which is the live Scenario B failure. */
+  const exhaustionWorld = async (C, mutateSource) => automationWorld(C, {
+    passes: [1, 2, 3].map((n) => [
+      { file: `MARA-N${n}-A.png`, review: CASE_86_REQUIRED_GATE_FAILED, options: DERIVED_VALIDATE },
+      { file: `MARA-N${n}-B.png`, review: CASE_72_SCAR_UNCLEAR, options: DERIVED_VALIDATE },
+      { file: `MARA-N${n}-C.png`, review: CASE_72_SCAR_UNCLEAR, options: DERIVED_VALIDATE },
+    ]),
+    mutateSource,
+  });
+  await expectRed("K round bound ignores the confirmed cap", async () => {
+    const C = loadContract();
+    const world = await exhaustionWorld(C, mutateScript("automation.js",
+      "  const affordable = Math.floor(maxImages / v640OutputsPerRequest(run));\n  return Math.max(1, Math.min(configured, affordable));",
+      "  return configured;", "K round bound ignores the confirmed cap"));
+    const runId = await startReferenceAutomation(world, { stateRounds: 3, outputsPerRequest: 3, maxImages: 6 });
+    const run = runState(world, runId);
+    assert(!Object.keys(run.steps || {}).some((key) => key.includes("round-3")), "no round-3 step may be constructed");
+  });
+  /* L — exhaustion that no longer terminates at the human gate falls through to
+     the generic did-not-pass throw. */
+  await expectRed("L exhaustion no longer pauses", async () => {
+    const C = loadContract();
+    const world = await exhaustionWorld(C, mutateScript("automation.js",
+      'await v627PauseForHumanReview(run, v626Step(run, reviewKey), `Approve ${state.name || "state"}`);\n    }\n    await v626Log(run, v666CorrectionLogLine(',
+      'await v626Log(run, "exhausted", "warn");\n    }\n    await v626Log(run, v666CorrectionLogLine(', "L exhaustion no longer pauses"));
+    const runId = await startReferenceAutomation(world, { stateRounds: 3, outputsPerRequest: 3, maxImages: 6 });
+    const run = runState(world, runId);
+    assert.strictEqual(run.status, "awaiting-review", "configured exhaustion must terminate cleanly at the human gate");
+  });
 }
 
 /* -------------------------------------------------------------------- run */
@@ -888,6 +1122,9 @@ async function main() {
   await testQualityFailsClosed(C);
   await testPinnedQualityRefusesEscalation(C);
   await testQualitySurvivesPartialSettings(C);
+  await testActionableCandidateIsNotHiddenByScore(C);
+  await testValidatedPassOutranksHumanDecision(C);
+  await testConfiguredExhaustionDoesNotRelyOnCreditGuard(C);
 
   await testNegativeControls();
   /* Every control must have actually bitten. A control whose anchor silently
@@ -901,12 +1138,14 @@ async function main() {
     "E champion takes newest not best", "F stop rule removed",
     "G boundary assertion removed", "G quality dropped from the request",
     "H pin check removed", "H tier escalated",
+    "I score-only actionable ranking", "J correctable admitted as actionable",
+    "K round bound ignores the confirmed cap", "L exhaustion no longer pauses",
   ];
   for (const label of expected) {
     assert(MUTATIONS_APPLIED.includes(label), `NEGATIVE CONTROL NEVER RAN — ${label}`);
   }
 
-  console.log("Reference review contract passed: derived authority modes, no first-authority penalty, state semantics reaching review and generation, related-state mismatch blocking, criterion ownership, finding actionability, champion survival, the paid-pass stop rule, LOW quality propagation with fail-closed refusal, and eight negative controls.");
+  console.log("Reference review contract passed: derived authority modes, no first-authority penalty, state semantics reaching review and generation, related-state mismatch blocking, criterion ownership, finding actionability, champion survival, actionable-vs-scored candidate separation, configured exhaustion independent of the credit guard, the paid-pass stop rule, LOW quality propagation with fail-closed refusal, and twelve negative controls.");
 }
 
 main().catch((error) => {
