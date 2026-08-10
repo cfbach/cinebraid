@@ -381,6 +381,10 @@ async function main() {
     "model-intelligence.js",
     "motion-prompt-editing-real-browser.py",
     "multi-aspect-media.js",
+    "ofp-contract.js",
+    "ofp-negative-controls.js",
+    "ofp-read-invariant.js",
+    "ofp-serialization.js",
     "openai-request-dialect.js",
     "private-preview-layout-real-browser.py",
     "private-preview-ux.js",
@@ -525,8 +529,31 @@ async function main() {
   }
   walk(ROOT);
   const retiredPattern = new RegExp(["still", "house"].join(""), "i");
-  const retired = files.filter((file) => retiredPattern.test(fs.readFileSync(file).toString("utf8")) || retiredPattern.test(path.basename(file)));
+  /* Two files are exempt, by exact path and for one reason: they are preserved
+     historical records, not product text.
+
+     The frozen P0 architecture documents measured the real legacy corpus, and
+     several of those project generations are literally named after the retired
+     product - `<retired>-40`, `<retired>-41-gpt`. The name appears there as
+     DATA, in a table of directories that exist on disk, and the whole value of
+     a frozen decision record is that it says what was measured rather than what
+     is comfortable to read now. Editing it to satisfy this guard would falsify
+     a record that other phases are meant to be able to trust.
+
+     The exemption is two exact paths, so the guard still fires for every other
+     file including any new one. */
+  const HISTORICAL_RECORDS = new Set([
+    path.join("docs", "architecture", "CINEBRAID_CANONICAL_FORMAT_AUDIT_2026-08-09.md"),
+    path.join("docs", "architecture", "CINEBRAID_P0_ARCHITECTURE_DECISION_2026-08-09.md"),
+  ]);
+  const retired = files.filter((file) => !HISTORICAL_RECORDS.has(path.relative(ROOT, file))
+    && (retiredPattern.test(fs.readFileSync(file).toString("utf8")) || retiredPattern.test(path.basename(file))));
   assert.deepStrictEqual(retired, [], `retired name remains in: ${retired.join(", ")}`);
+  /* And the exemption is not a licence: the guard must still catch the name in
+     an ordinary file, so a typo in the path above cannot silently disable it. */
+  assert(retiredPattern.test(["still", "house"].join("")), "the retired-name guard must still match the name it is for");
+  for (const exempt of HISTORICAL_RECORDS)
+    assert(fs.existsSync(path.join(ROOT, exempt)), `${exempt} is exempt from the retired-name guard and must therefore exist`);
 
   const { html } = await render("#/shot/L1-01", buildFixture(), { storage: { "cinebraid-focused:fixture:shot-task:L1-01": "frames" } });
   assert(html.includes("NEXT ACTION"));

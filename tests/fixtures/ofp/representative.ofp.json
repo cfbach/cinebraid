@@ -1,0 +1,339 @@
+{
+  "format": {
+    "id": "open-film-project",
+    "version": "1.0-draft.1",
+    "profiles": [
+      "core",
+      "bible",
+      "shot-planning"
+    ],
+    "extensions": {
+      "com.cinebraid.workflow": "1"
+    },
+    "generator": {
+      "name": "CineBraid",
+      "version": "6.6.6-private.1"
+    }
+  },
+  "meta": {
+    "title": "The Last Ferry",
+    "draft": "v2.1",
+    "aspectRatio": "2.39:1"
+  },
+  "sources": [
+    {
+      "id": "src-script",
+      "kind": "screenplay",
+      "title": "The Last Ferry — draft 3",
+      "anchors": [
+        {
+          "id": "sc-012-action-004",
+          "elementKind": "action",
+          "text": "Mara waits on the bench, the case across her knees."
+        }
+      ]
+    }
+  ],
+  "story": {
+    "scenes": [
+      {
+        "id": "sc-terminal",
+        "title": "Ferry terminal",
+        "summary": "Mara waits for a boat that is late.",
+        "setting": {
+          "locationId": "loc-terminal",
+          "timeOfDay": "dusk"
+        },
+        "order": {
+          "script": 1
+        }
+      }
+    ]
+  },
+  "shots": [
+    {
+      "id": "sh-0100",
+      "sceneId": "sc-terminal",
+      "title": "Mara waits",
+      "order": {
+        "script": 1
+      },
+      "framing": {
+        "size": "wide",
+        "angle": "eye",
+        "lens": "unspecified",
+        "movement": "static"
+      },
+      "duration": {
+        "seconds": 6,
+        "basis": "authored"
+      },
+      "setting": {
+        "locationId": "loc-terminal",
+        "coverageId": "cov-terminal-a"
+      },
+      "subjects": [
+        {
+          "entityId": "char-mara",
+          "role": "principal"
+        },
+        {
+          "entityId": "prop-case"
+        }
+      ],
+      "frames": [
+        {
+          "id": "fr-a",
+          "role": "first",
+          "description": "Mara settled, case sealed across her knees."
+        }
+      ],
+      "relations": [
+        {
+          "id": "rel-bookend",
+          "kind": "bookend-of",
+          "targetShotId": "sh-0100",
+          "note": "Mirrored at the end."
+        }
+      ],
+      "risks": [
+        "Dusk light changes fast.",
+        "The bench is a practical."
+      ]
+    }
+  ],
+  "entities": {
+    "characters": [
+      {
+        "id": "char-mara",
+        "name": "Mara",
+        "description": "Late thirties. Weather-worn canvas coat, hair tied back.",
+        "role": "principal",
+        "aliases": [
+          "The courier"
+        ],
+        "voices": [
+          {
+            "voiceId": "voice-mara-primary",
+            "role": "primary"
+          },
+          {
+            "voiceId": "voice-mara-fr",
+            "role": "alternate-language",
+            "language": "fr-FR"
+          },
+          {
+            "voiceId": "voice-mara-adr",
+            "role": "adr"
+          }
+        ],
+        "states": [
+          {
+            "id": "st-mara-default",
+            "name": "Coat on",
+            "isDefault": true
+          }
+        ]
+      }
+    ],
+    "locations": [
+      {
+        "id": "loc-terminal",
+        "name": "Ferry terminal",
+        "description": "Concrete apron, one bench, a shuttered kiosk.",
+        "coverage": [
+          {
+            "id": "cov-terminal-a",
+            "name": "View A",
+            "description": "From the kiosk, looking at the bench."
+          }
+        ]
+      }
+    ],
+    "props": [
+      {
+        "id": "prop-case",
+        "name": "Courier case",
+        "states": [
+          {
+            "id": "st-case-open",
+            "name": "Open",
+            "derivesFrom": "st-case-sealed",
+            "delta": "Seal cut; lid raised."
+          },
+          {
+            "id": "st-case-sealed",
+            "name": "Sealed",
+            "isDefault": true,
+            "delta": "Seal intact and legible."
+          }
+        ]
+      }
+    ],
+    "voices": [
+      {
+        "id": "voice-mara-adr",
+        "name": "Mara (ADR)",
+        "kind": "character",
+        "language": "en-GB"
+      },
+      {
+        "id": "voice-mara-fr",
+        "name": "Mara (French)",
+        "kind": "character",
+        "language": "fr-FR"
+      },
+      {
+        "id": "voice-mara-primary",
+        "name": "Mara",
+        "kind": "character",
+        "language": "en-GB"
+      },
+      {
+        "id": "voice-narrator",
+        "name": "Narrator",
+        "kind": "narrator",
+        "language": "en-GB"
+      },
+      {
+        "id": "voice-terminal-pa",
+        "name": "Terminal announcer",
+        "kind": "announcer",
+        "language": "en-GB"
+      }
+    ]
+  },
+  "assets": [
+    {
+      "id": "asset-9f2c41ab77e0d3c5",
+      "kind": "image",
+      "mediaType": "image/png",
+      "digest": "sha256:9f2c41ab77e0d3c58b16aa04ee9d1c2f9f2c41ab77e0d3c58b16aa04ee9d1c2f"
+    }
+  ],
+  "references": [
+    {
+      "id": "ref-mara-front",
+      "purpose": "identity-front",
+      "subject": "character:char-mara",
+      "assetId": "asset-9f2c41ab77e0d3c5",
+      "note": "Identity plate for the coat."
+    }
+  ],
+  "statements": [
+    {
+      "id": "stm-0001",
+      "target": {
+        "subject": "character:char-mara",
+        "path": "/name"
+      },
+      "kind": "cited",
+      "claim": {
+        "hash": "sha256:9467ab3ac57693c1805edd7a87d6083981c82d428b09910b4dd1c602af2df16a",
+        "preview": "Mara"
+      },
+      "actor": {
+        "kind": "source",
+        "name": "src-script"
+      },
+      "at": "2026-08-01T09:14:00Z",
+      "evidence": {
+        "sourceId": "src-script",
+        "anchors": [
+          "sc-012-action-004"
+        ]
+      }
+    },
+    {
+      "id": "stm-0002",
+      "target": {
+        "subject": "character:char-mara",
+        "path": "/description"
+      },
+      "kind": "suggested",
+      "claim": {
+        "hash": "sha256:a01ce62d2f2e00d1f46bbcbbfe1b625ba93249b365ba68ecd25f855d7cf15711",
+        "preview": "Late thirties. Weather-worn canvas coat, hair tied back."
+      },
+      "actor": {
+        "kind": "model",
+        "name": "project-builder"
+      },
+      "at": "2026-08-01T09:14:00Z",
+      "note": "Wardrobe and hair are not described in the screenplay."
+    },
+    {
+      "id": "stm-0003",
+      "target": {
+        "subject": "shot:sh-0100",
+        "path": "/framing/size"
+      },
+      "kind": "approved",
+      "claim": {
+        "hash": "sha256:766df6c2cdf5d84cbfcf1c13a78e20621fb9c0cf3b2987c1e2baa3a8d806abc5",
+        "preview": "wide"
+      },
+      "actor": {
+        "kind": "human",
+        "name": "Director"
+      },
+      "at": "2026-08-03T16:20:00Z",
+      "note": "Locked for the bookend."
+    },
+    {
+      "id": "stm-0004",
+      "target": {
+        "subject": "shot:sh-0100/frame:fr-a",
+        "path": "/description"
+      },
+      "kind": "observed",
+      "claim": {
+        "hash": "sha256:e00029aee9d531d45af5b0ecab608750a1747d882c903e2c4ee76e42777ad553",
+        "preview": "Mara settled, case sealed across her knees."
+      },
+      "actor": {
+        "kind": "model",
+        "name": "nemotron"
+      },
+      "at": "2026-08-08T19:40:00Z",
+      "evidence": {
+        "assetId": "asset-9f2c41ab77e0d3c5",
+        "observationId": "obs-31c8"
+      },
+      "note": "Promoted from the observation cache: the seal is not legible at this size."
+    },
+    {
+      "id": "stm-0005",
+      "target": {
+        "subject": "shot:sh-0100",
+        "path": "/setting"
+      },
+      "kind": "disputed",
+      "claim": {
+        "hash": "sha256:3e1306904da08d2caef6dfe021c83cb92922c074aa0831b1f17820adb1a014c5",
+        "preview": "{\"coverageId\":\"cov-terminal-a\",\"locationId\":\"loc-terminal\"}"
+      },
+      "actor": {
+        "kind": "tool",
+        "name": "migration/M020"
+      },
+      "at": "2026-08-09T00:00:00Z",
+      "candidates": [
+        {
+          "value": {
+            "coverageId": "cov-terminal-a",
+            "locationId": "loc-terminal"
+          },
+          "note": "'-A' read as coverage view A."
+        },
+        {
+          "value": {
+            "locationId": "loc-terminal-a"
+          },
+          "note": "'-A' read as a distinct location."
+        }
+      ],
+      "note": "Legacy codes[] token 'LOC-TERMINAL-A'. Suffix meaning is not recoverable."
+    }
+  ]
+}

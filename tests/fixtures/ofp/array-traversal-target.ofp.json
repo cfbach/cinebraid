@@ -1,0 +1,46 @@
+{
+  "format": {
+    "id": "open-film-project",
+    "version": "1.0-draft.1",
+    "profiles": [
+      "core"
+    ],
+    "generator": {
+      "name": "CineBraid",
+      "version": "6.6.6-private.1"
+    }
+  },
+  "meta": {
+    "title": "Array traversal"
+  },
+  "shots": [
+    {
+      "id": "sh-0100",
+      "order": {
+        "script": 1
+      },
+      "risks": [
+        "Dusk light changes fast."
+      ]
+    }
+  ],
+  "statements": [
+    {
+      "id": "stm-index",
+      "target": {
+        "subject": "shot:sh-0100",
+        "path": "/risks/0"
+      },
+      "kind": "approved",
+      "claim": {
+        "hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        "preview": "Dusk light changes fast."
+      },
+      "actor": {
+        "kind": "human",
+        "name": "Director"
+      },
+      "at": "2026-08-03T16:20:00Z"
+    }
+  ]
+}

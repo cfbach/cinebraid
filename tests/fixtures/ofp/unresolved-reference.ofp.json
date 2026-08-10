@@ -1,0 +1,32 @@
+{
+  "format": {
+    "id": "open-film-project",
+    "version": "1.0-draft.1",
+    "profiles": [
+      "core"
+    ],
+    "generator": {
+      "name": "CineBraid",
+      "version": "6.6.6-private.1"
+    }
+  },
+  "meta": {
+    "title": "A shot in no scene"
+  },
+  "shots": [
+    {
+      "id": "sh-0100",
+      "sceneId": "sc-does-not-exist",
+      "order": {
+        "script": 1
+      }
+    }
+  ],
+  "references": [
+    {
+      "id": "ref-orphan",
+      "purpose": "identity-front",
+      "subject": "character:char-nobody"
+    }
+  ]
+}

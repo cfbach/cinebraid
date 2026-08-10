@@ -1,0 +1,61 @@
+{
+  "format": {
+    "id": "open-film-project",
+    "version": "1.0-draft.1",
+    "profiles": [
+      "core"
+    ],
+    "generator": {
+      "name": "CineBraid",
+      "version": "6.6.6-private.1"
+    }
+  },
+  "meta": {
+    "title": "Malformed targets"
+  },
+  "shots": [
+    {
+      "id": "sh-0100",
+      "order": {
+        "script": 1
+      },
+      "framing": {
+        "size": "wide"
+      }
+    }
+  ],
+  "statements": [
+    {
+      "id": "stm-badpath",
+      "target": {
+        "subject": "shot:sh-0100",
+        "path": "framing/size"
+      },
+      "kind": "cited",
+      "claim": {
+        "hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "actor": {
+        "kind": "source",
+        "name": "src"
+      },
+      "at": "2026-08-03T16:20:00Z"
+    },
+    {
+      "id": "stm-badsubject",
+      "target": {
+        "subject": "shot sh-0100",
+        "path": "/framing/size"
+      },
+      "kind": "cited",
+      "claim": {
+        "hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "actor": {
+        "kind": "source",
+        "name": "src"
+      },
+      "at": "2026-08-03T16:20:00Z"
+    }
+  ]
+}

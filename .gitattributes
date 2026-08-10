@@ -8,6 +8,15 @@
 *.command   text eol=lf
 *.bat       text eol=crlf
 
+# Canonical Open Film Project documents. `* text=auto` plus core.autocrlf=true
+# rewrites every LF to CRLF on checkout, which was measured at 372 CR bytes on
+# the shipped sample - so without this line the canonical byte form is false on
+# every Windows clone, and a document that has only been checked out already
+# fails round-trip conformance. The pattern covers both the project file
+# (project.ofp.json) and the conformance fixtures, which are the same format
+# and need the same guarantee.
+*.ofp.json  text eol=lf
+
 # Never ship in a release archive. `git archive` honours export-ignore, so the
 # packaged runtime is the tracked source minus continuous-integration wiring,
 # local agent state and historical QA evidence. Everything else a fresh install

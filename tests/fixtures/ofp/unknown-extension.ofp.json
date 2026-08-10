@@ -1,0 +1,58 @@
+{
+  "format": {
+    "id": "open-film-project",
+    "version": "1.0-draft.1",
+    "profiles": [
+      "core"
+    ],
+    "extensions": {
+      "com.example.futuretool": "3"
+    },
+    "generator": {
+      "name": "CineBraid",
+      "version": "6.6.6-private.1"
+    }
+  },
+  "meta": {
+    "title": "Unknown extension"
+  },
+  "shots": [
+    {
+      "id": "sh-0100",
+      "order": {
+        "script": 1
+      },
+      "framing": {
+        "size": "wide"
+      },
+      "futureFieldNobodyDeclared": {
+        "nested": [
+          1,
+          2,
+          {
+            "deep": true
+          }
+        ]
+      }
+    }
+  ],
+  "extensions": {
+    "com.cinebraid.legacy": {
+      "unmappedCodes": [
+        "STAGE-3"
+      ]
+    },
+    "com.example.futuretool": {
+      "opaque": {
+        "a": 2,
+        "z": 1
+      },
+      "schedule": {
+        "day": 4,
+        "notes": [
+          "keep me"
+        ]
+      }
+    }
+  }
+}

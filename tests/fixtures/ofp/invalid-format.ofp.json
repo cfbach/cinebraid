@@ -1,0 +1,9 @@
+{
+  "format": {
+    "id": "some-other-format",
+    "version": "1.0-draft.1"
+  },
+  "meta": {
+    "title": "Not ours"
+  }
+}

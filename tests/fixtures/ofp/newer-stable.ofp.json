@@ -1,0 +1,16 @@
+{
+  "format": {
+    "id": "open-film-project",
+    "version": "1.0",
+    "profiles": [
+      "core"
+    ],
+    "generator": {
+      "name": "CineBraid",
+      "version": "6.6.6-private.1"
+    }
+  },
+  "meta": {
+    "title": "Released, one day"
+  }
+}
