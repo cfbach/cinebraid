@@ -947,7 +947,11 @@ function boundedEntityTaskStatus(list, entity, taskId, activeCandidates, states)
      the two taskbars look identical, so they must not speak different languages.
      Counts live in `note`, which the taskbar prints in the description line. */
   const primary = !!(entity.approvedFile || states.find((state)=>state.isDefault)?.approvedFile);
-  if (taskId === "reference") return primary ? {tone:"complete",label:STAGE_STATUS.approved} : {tone:"attention",label:STAGE_STATUS.incomplete,note:"no approved image yet"};
+  /* An audio entity has no image. It inherited this taskbar because it is an
+     entity, and inherited the word "image" with it — so a voice reference used
+     to report that it had "no approved image yet". The material a voice is
+     missing is a recording. */
+  if (taskId === "reference") return primary ? {tone:"complete",label:STAGE_STATUS.approved} : {tone:"attention",label:STAGE_STATUS.incomplete,note:list === "audio" ? "no approved recording yet" : "no approved image yet"};
   if (taskId === "review") return activeCandidates.length ? {tone:"attention",label:STAGE_STATUS.needsReview,note:`${plural(activeCandidates.length, "file")} to choose from`} : {tone:"optional",label:STAGE_STATUS.nothingWaiting};
   if (taskId === "coverage") {
     const coverage = coverageStats(ensureCoverageSlots(list,entity));

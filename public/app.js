@@ -81,13 +81,11 @@ const helpAttr = (text, requirement = "") =>
     ? ""
     : ` data-tip="${attr(text + (requirement ? " Requires: " + requirement : ""))}" tabindex="0"`;
 const STATUSES = ["UNBUILT", "BUILT", "NEEDS POST", "LOCKED"]; // legacy storage values
-const ENT_STATUSES = [
-  "NOT STARTED",
-  "IN PROGRESS",
-  "CANDIDATE",
-  "REVIEW",
-  "APPROVED",
-]; // legacy storage values
+/* The legacy per-entity status vocabulary ("NOT STARTED" … "APPROVED") no longer
+   has a list here. Its only remaining reader was the chip row on the character
+   voice panel, which wrote a second voice lifecycle onto the character; the
+   stored values are still interpreted, by entityWorkflowState() and by
+   public/shared-voice.js, but nothing offers them as a set of things to write. */
 const WORKFLOW_STATES = [
   "DRAFT",
   "IN PROGRESS",
@@ -2584,16 +2582,62 @@ const inpN = (obj, objKey, key, list, id, ph = "") =>
   `<input placeholder="${attr(ph)}" value="${attr((obj[objKey] || {})[key] || "")}" onchange="setValNested('${list}','${id}','${objKey}','${key}',this.value)">`;
 
 /* ---------- audio panels ---------- */
-// character voice: ElevenLabs Voice Design (primary) + Suno alt, side by side
+/* The character's voice, DERIVED.
+
+   The voice entity in P.audio[] owns the voice record; the character points at
+   it through `voiceId`, and this panel renders what the entity says. There is
+   deliberately NO status writer here any more. The chip row that used to live
+   on this panel wrote `character.audio.status` — a second, independently
+   editable lifecycle that let a character claim APPROVED while the voice it
+   described had never been started, and that migration rule M070 already
+   preserves as a value open-film-project does not model.
+
+   The state word below comes from entityWorkflowState() applied to the VOICE
+   ENTITY — the same call, on the same record, that the audio entity's own page
+   header makes. The two surfaces cannot print different words because they are
+   not two computations. See public/shared-voice.js. */
+function voiceLinkOptionsMarkup(c) {
+  const rows = Array.isArray(P.audio) ? P.audio : [];
+  if (!rows.length) return `<div class="hint">This project has no voice references yet. Add one under References → Audio, then link it here.</div>`;
+  const current = String(c.voiceId || "");
+  return `<select class="status-select" onchange="setVal('characters','${c.id}','voiceId',this.value)"><option value="">— no voice linked —</option>${rows.map((voice) => `<option value="${attr(voice.id)}" ${current === String(voice.id) ? "selected" : ""}>${esc(voice.name || voice.id)}${voice.cleanMaster ? " · clean master" : ""}</option>`).join("")}</select>`;
+}
+function voiceAuthorityMarkup(c) {
+  const resolved = resolveCharacterVoice(P, c);
+  const { outcome, voice, legacy, conflict } = resolved;
+  /* The audio entity page route is "sound" — see ENTITY_ROUTE in entities.js. */
+  const href = voice ? `#/sound/${encodeURIComponent(voice.id)}` : "";
+  let word, detail;
+  if (outcome === VOICE_OUTCOME.UNLINKED) {
+    word = "No voice linked";
+    detail = "Link a voice reference to give this character a voice.";
+  } else if (outcome === VOICE_OUTCOME.UNRESOLVED) {
+    word = "Voice reference not found";
+    detail = `This character points at ${esc(resolved.voiceId)}, which this project does not contain. The reference is kept as written — relink it or clear it.`;
+  } else {
+    word = entityWorkflowState(voice).label;
+    detail = resolved.hasApprovedRecording
+      ? `Approved recording: ${esc(voice.approvedFile)}`
+      : "No approved recording yet.";
+  }
+  /* Disclosure, not resolution. When a project carries the old character-side
+     status AND a voice entity that disagrees, the voice entity is the answer —
+     but the disagreement is shown rather than quietly discarded. Converting the
+     old value is a migration's job, never a page load's. */
+  const conflictMarkup = conflict
+    ? `<div class="voice-authority-conflict"><b>This character carries an older voice status of its own</b><span>The character record says <code>${esc(conflict.characterStatus)}</code>; the linked voice reference says <code>${esc(entityWorkflowState(voice).label)}</code>. The voice reference is authoritative. The older value is still stored and has not been changed.</span></div>`
+    : legacy.present && !voice
+      ? `<div class="voice-authority-conflict"><b>This character carries an older voice status of its own</b><span>The character record says <code>${esc(legacy.status)}</code>, but no voice reference is linked, so there is nothing for it to describe. The value is still stored and has not been changed.</span></div>`
+      : "";
+  return `<div class="voice-authority state-${attr(outcome)}"><div class="voice-authority-head"><span class="voice-authority-label">VOICE STATE</span><b>${esc(word)}</b>${voice ? `<a class="chip" href="${href}">OPEN VOICE REFERENCE</a>` : ""}</div><small>${detail}</small></div>${conflictMarkup}`;
+}
 function voicePanel(c) {
-  const a = c.audio || {};
-  const st = a.status || "NOT STARTED";
   return `
   <div class="audio-panel">
     <div class="section-label">🎙 Voice — record the CLEAN master (degradation is post)</div>
-    <div class="audio-status-row">
-      ${ENT_STATUSES.map((s) => `<button class="chip ${st === s ? "on" : ""}" onclick="setValNested('characters','${c.id}','audio','status','${s}');route()">${s}</button>`).join("")}
-    </div>
+    ${field("Voice reference (the voice this character speaks with)", voiceLinkOptionsMarkup(c))}
+    ${voiceAuthorityMarkup(c)}
+    <div class="section-label">Synthesis settings — how a voice might be generated, not who the voice is</div>
     ${field("ElevenLabs Voice Design prompt", taN(c, "audio", "voiceDesignPrompt", "characters", c.id, "natural-language voice description — age, register, cadence, texture, emotional register, audio quality"))}
     <div style="display:flex;gap:8px;margin:-4px 0 8px"><button class="copy-btn" onclick="copyText(((P.characters.find(x=>x.id==='${c.id}')||{}).audio||{}).voiceDesignPrompt||'')">COPY VOICE PROMPT</button></div>
     <div class="two-col">
