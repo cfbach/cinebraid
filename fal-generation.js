@@ -10,6 +10,7 @@ const { serializeH3PlanForFal, H3BackendError, FAL_H3_BACKEND } = require("./fal
 const { compileImageExecutionPlan, imagePlanProvenance, ImageExecutionError, IMAGE_MODEL_ID } = require("./image-execution");
 const { serializeImagePlanForFal, FalImageBackendError, FAL_IMAGE_BACKEND } = require("./fal-image-backend");
 const { generationOptionsFor, generationConnections } = require("./generation-options");
+const { submissionAccounting } = require("./generation-cost");
 const Lifecycle = require("./generation-lifecycle");
 
 function registerFalGeneration(app, context) {
@@ -1517,6 +1518,23 @@ function registerFalGeneration(app, context) {
     }
     if (purpose === "correction" && !job.sourceCandidate)
       return res.status(400).json({ error: "Correction generation requires sourceCandidate provenance and no safe editable-base filename could be recovered.", code: "SOURCE_CANDIDATE_REQUIRED" });
+    /* WHAT THIS WAS ESTIMATED TO COST, decided HERE and never again.
+     *
+     * Last thing before the row becomes durable, so it is computed against the
+     * quantity that is actually about to be dispatched — the compiled image path
+     * settles `outputCount` on the plan, and recording the number the caller asked
+     * for would describe a job nobody submitted.
+     *
+     * The rate comes from the configuration in effect at THIS moment. Editing that
+     * rate in Settings tomorrow changes what tomorrow's job is estimated at and
+     * changes nothing about this one, which is the entire point: a row carries what
+     * it was estimated to cost, not what today's policy would re-quote it at. */
+    job.accounting = submissionAccounting({
+      purpose: job.purpose,
+      outputCount: job.outputCount,
+      ratePerImage: cfg.estimatedCostPerImage,
+      at: now(),
+    });
     /* The row is committed against CURRENT durable state, not against the
        snapshot this request read minutes ago — a job created by an overlapping
        request in between must survive. */

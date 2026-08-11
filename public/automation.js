@@ -447,7 +447,14 @@ function v626RunUsageMarkup(run) {
   const usage = run?.usage || {};
   const max = Number(run?.config?.maxImages || 0);
   const rate = v628EstimatedCostPerImage();
-  const estimate = rate ? `<span><b>${v628Usd(Number(usage.imagesGenerated || 0) * rate)}</b>${max ? ` / ${v628Usd(max * rate)}` : ""} estimated</span>` : "";
+  /* A LIVE PROJECTION AT TODAY'S RATE, and worded so it cannot be mistaken for the
+     historical record. This multiplies the CURRENT Settings rate by the run's image
+     count, so it moves when that setting moves. For a run in progress that is the
+     useful question — "what is this about to cost me" — and for history it is exactly
+     the defect that was fixed elsewhere: the recorded figure is the estimate each job
+     stored at submission, it lives in Reports, and it does not move. Two different
+     numbers answering two different questions, so they must not share a word. */
+  const estimate = rate ? `<span title="Projected from the current Settings rate — not the estimate recorded when each job was submitted. Reports shows the recorded figure."><b>${v628Usd(Number(usage.imagesGenerated || 0) * rate)}</b>${max ? ` / ${v628Usd(max * rate)}` : ""} projected at today's rate</span>` : "";
   return `<div class="automation-usage"><span><b>${Number(usage.imagesGenerated || 0)}</b>${max ? ` / ${max}` : ""} images</span><span><b>${Number(usage.imageRequests || 0)}</b> paid request${Number(usage.imageRequests || 0) === 1 ? "" : "s"}</span><span><b>${Number(usage.reviewCalls || 0)}</b> review call${Number(usage.reviewCalls || 0) === 1 ? "" : "s"}</span>${estimate}</div>`;
 }
 function v626RunWinners(run) {
