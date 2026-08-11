@@ -158,6 +158,9 @@ async function main() {
   assert(index.includes(`shared-camera.js?v=${RELEASE_VERSION}`), "shared camera vocabulary must load before the app");
   assert(index.includes(`shared-aspect.js?v=${RELEASE_VERSION}`), "shared aspect-ratio model must load before the app");
   assert(index.includes(`shared-reference-views.js?v=${RELEASE_VERSION}`), "shared reference-view vocabulary must load before media and composer modules");
+  assert(index.includes(`shared-coverage.js?v=${RELEASE_VERSION}`), "shared coverage-requirement contract must load before every surface that counts views");
+  assert(index.indexOf(`shared-coverage.js?v=${RELEASE_VERSION}`) < index.indexOf(`app.js?v=${RELEASE_VERSION}`),
+    "and it must load before app.js, whose coverage templates seed through it");
   assert(index.includes(`shared-build-history.js?v=${RELEASE_VERSION}`), "shared prompt-history compatibility must load before the app");
   assert(index.includes(`shared-generation-capability.js?v=${RELEASE_VERSION}`), "shared generation capability must load before the app");
   assert(index.includes(`v607-composer.js?v=${RELEASE_VERSION}`), "composer module must be cache-busted after patch updates");
@@ -336,6 +339,8 @@ async function main() {
     "continuity-validation-status.js",
     "continuity-workflow-real-browser.py",
     "continuity-workspace.js",
+    "coverage-requirement-semantics-negative-controls.js",
+    "coverage-requirement-semantics.js",
     "coverage-workflow.js",
     "current-behavior.js",
     "custom-provider-routing.js",

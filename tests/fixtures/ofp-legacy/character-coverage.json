@@ -1,0 +1,73 @@
+{
+  "meta": {
+    "title": "Character Coverage And Requirement States",
+    "schemaVersion": "6.7"
+  },
+  "scenes": [],
+  "shots": [],
+  "characters": [
+    {
+      "id": "CHAR-MARA",
+      "name": "Mara",
+      "role": "lead",
+      "creationDescription": "Courier, canvas jacket, cropped hair.",
+      "approvedFile": "CHAR-MARA-PRIMARY.png",
+      "continuityStates": [
+        { "id": "state-default", "name": "On the road", "isDefault": true, "notes": "Jacket on, satchel across the body." }
+      ],
+      "coverageSlots": [
+        { "id": "front", "label": "Front", "requirement": "required", "notes": "The identity view." },
+        { "id": "profile", "label": "Profile", "requirement": "required", "notes": "Left side, jacket collar visible." },
+        { "id": "rear", "label": "Rear", "requirement": "planned", "notes": "Wanted later for the walk-away shot." },
+        { "id": "detail-face", "label": "Face / detail", "requirement": "not-required", "notes": "Deliberately not wanted on this production." }
+      ],
+      "expressionSlots": [
+        { "id": "neutral", "label": "Neutral", "requirement": "required", "approvedFile": "", "notes": "", "status": "missing" }
+      ]
+    },
+    {
+      "id": "CHAR-LEGACY",
+      "name": "The dispatcher",
+      "creationDescription": "Authored before the requirement enum existed.",
+      "continuityStates": [],
+      "coverageSlots": [
+        { "id": "front", "label": "Front", "required": true, "notes": "Only the boolean is present, and it is true." },
+        { "id": "rear", "label": "Rear", "required": false, "notes": "Only the boolean is present, and it is false. It cannot say whether the view is planned or unwanted." },
+        { "id": "profile", "label": "Profile", "notes": "Neither encoding is present." }
+      ]
+    },
+    {
+      "id": "CHAR-CONFLICT",
+      "name": "The clerk",
+      "creationDescription": "Carries both encodings, one pair agreeing and one pair contradicting.",
+      "continuityStates": [],
+      "coverageSlots": [
+        { "id": "front", "label": "Front", "required": true, "requirement": "required", "notes": "The pair agrees exactly." },
+        { "id": "rear", "label": "Rear", "required": false, "requirement": "not-required", "notes": "The boolean cannot distinguish planned from not-required, so false agrees with either. Not a conflict." },
+        { "id": "profile", "label": "Profile", "required": true, "requirement": "planned", "notes": "The boolean asserts required and the enum denies it. This one is a genuine contradiction." }
+      ]
+    },
+    {
+      "id": "CHAR-UNKNOWN",
+      "name": "The signaller",
+      "creationDescription": "Carries a requirement value outside the declared vocabulary.",
+      "continuityStates": [],
+      "coverageSlots": [
+        { "id": "front", "label": "Front", "requirement": "optional", "notes": "Not one of the three declared members. It must be preserved and reported, never coerced into a neighbour." }
+      ]
+    }
+  ],
+  "locations": [
+    {
+      "id": "LOC-YARD",
+      "name": "The sorting yard",
+      "description": "Concrete, a weighbridge, one shuttered dock.",
+      "continuityStates": [],
+      "coverageSlots": [
+        { "id": "establishing", "label": "Master establishing", "requirement": "required", "notes": "The dock and the weighbridge together." }
+      ]
+    }
+  ],
+  "props": [],
+  "vehicles": []
+}

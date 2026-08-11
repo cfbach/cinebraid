@@ -469,13 +469,15 @@ window.addEntity = (list) => {
         assetPromptProfile: "",
         assetPromptBuilds: [],
         coverageSlots: list === "audio" ? [] : (typeof coverageTemplateForList === "function" ? coverageTemplateForList(list) : []),
+        /* Seeded in the one encoding this build authors. `requirement:"planned"`
+           is what `required:false` has always meant to every reader. */
         expressionSlots: list === "characters" ? [
-          { id: "neutral", label: "Neutral", required: true, approvedFile: "", notes: "", status: "missing", replacementHistory: [] },
-          { id: "focused", label: "Focused", required: true, approvedFile: "", notes: "", status: "missing", replacementHistory: [] },
-          { id: "worried", label: "Worried", required: true, approvedFile: "", notes: "", status: "missing", replacementHistory: [] },
-          { id: "determined", label: "Determined", required: true, approvedFile: "", notes: "", status: "missing", replacementHistory: [] },
-          { id: "relieved", label: "Relieved", required: false, approvedFile: "", notes: "", status: "missing", replacementHistory: [] },
-          { id: "custom", label: "Custom", required: false, approvedFile: "", notes: "", status: "missing", replacementHistory: [] },
+          { id: "neutral", label: "Neutral", requirement: templateRequirement(true), approvedFile: "", notes: "", status: "missing", replacementHistory: [] },
+          { id: "focused", label: "Focused", requirement: templateRequirement(true), approvedFile: "", notes: "", status: "missing", replacementHistory: [] },
+          { id: "worried", label: "Worried", requirement: templateRequirement(true), approvedFile: "", notes: "", status: "missing", replacementHistory: [] },
+          { id: "determined", label: "Determined", requirement: templateRequirement(true), approvedFile: "", notes: "", status: "missing", replacementHistory: [] },
+          { id: "relieved", label: "Relieved", requirement: templateRequirement(false), approvedFile: "", notes: "", status: "missing", replacementHistory: [] },
+          { id: "custom", label: "Custom", requirement: templateRequirement(false), approvedFile: "", notes: "", status: "missing", replacementHistory: [] },
         ] : [],
         continuityStates: [{
           id: "state-default",

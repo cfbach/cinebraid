@@ -26,6 +26,7 @@ const PromptEngine = require("./prompt-engine");
 const { httpStatusForError } = require("./http-errors");
 const { resolveShotEntities, shotEntityTokenMatches, unresolvedShotDependencies, entityVisualDescription, resolveShotDuration, lossyShotCodeTokens } = require("./public/shared-entities");
 const { referenceAspectLabel, aspectRatioMentions } = require("./public/shared-aspect");
+const Coverage = require("./public/shared-coverage");
 const Continuity = require("./public/shared-continuity");
 const { createContinuityCache } = require("./continuity-cache");
 const ContinuityJson = require("./continuity-json");
@@ -1977,6 +1978,18 @@ function builderCoverageAlias(kind, slot) {
   return "";
 }
 
+/* An imported slot, with its requirement collapsed to the one canonical field.
+   Import is a legacy input path, so every encoding a kit might carry is READ —
+   the enum, the continuity-state spelling, the boolean — and exactly one is
+   WRITTEN. The boolean is dropped rather than mirrored: keeping it would hand
+   the imported project the same two-encodings problem the import was fixing. */
+function builderCoverageRequirement(slot) {
+  const record = builderObject(slot);
+  const declared = Coverage.requirementTrace(record).requirement;
+  const { required, referenceRequirement, ...rest } = record;
+  return { ...rest, requirement: declared };
+}
+
 function normalizeBuilderCoverage(source, kind) {
   const defaultSlots = {
     character: [["front","Front",true],["front-three-quarter","3/4 front",true],["profile","Profile",true],["rear","Rear",true],["detail-face","Face / detail",false],["expression","Expression / optional detail",false]],
@@ -1984,11 +1997,16 @@ function normalizeBuilderCoverage(source, kind) {
     prop: [["hero","Front / hero",true],["three-quarter","3/4 view",true],["side","Side",true],["rear","Rear",false],["top","Top",false],["detail","Detail / function close-up",true]],
     vehicle: [["front","Front",true],["rear","Rear",true],["left-side","Left side",true],["right-side","Right side",true],["front-three-quarter","Front 3/4",true],["rear-three-quarter","Rear 3/4",false],["interior","Interior / cockpit",false],["detail","Detail",false]],
   }[kind] || [];
+  /* THE IMPORTER USED TO MANUFACTURE THE DISAGREEMENT. `required: slot?.required
+     !== false` was applied unconditionally, so a kit that supplied
+     `requirement: "not-required"` and no boolean came out of import carrying
+     `required: true` beside it — a contradiction the kit never wrote, created by
+     the reader of the kit. The supplied encodings are now interpreted once,
+     through the shared contract, and re-expressed as the single enum. */
   const supplied = builderArray(source.coverageSlots).map((slot) => ({
-    ...builderObject(slot),
+    ...builderCoverageRequirement(slot),
     id: String(slot?.id || "").trim(),
     label: String(slot?.label || slot?.name || "").trim(),
-    required: slot?.required !== false,
     approvedFile: String(slot?.approvedFile || ""),
     notes: String(slot?.notes || slot?.characteristics || ""),
     status: String(slot?.status || (slot?.approvedFile ? "approved" : "missing")),
@@ -2018,8 +2036,11 @@ function normalizeBuilderCoverage(source, kind) {
     const existing = slots.find((slot) => slot.id === id);
     if (existing) {
       existing.label = existing.label || label;
-      if (typeof existing.required !== "boolean") existing.required = required;
-    } else slots.push({ id, label, required, approvedFile: "", notes: "", status: "missing" });
+      /* builderCoverageRequirement() already gave every supplied slot exactly one
+         requirement, so there is nothing left to fill in here. The line that used
+         to sit here filled in the template's boolean and could contradict the
+         enum the kit supplied. */
+    } else slots.push({ id, label, requirement: Coverage.templateRequirement(required), approvedFile: "", notes: "", status: "missing" });
   }
   return slots;
 }
@@ -2044,10 +2065,9 @@ function normalizeBuilderEntity(entity, kind, index, warnings) {
       coverageGenerationNotes: String(source.coverageGenerationNotes || source.coverageNotes || ""),
       coverageSlots: normalizeBuilderCoverage(source, kind),
       expressionSlots: kind === "character" ? builderArray(source.expressionSlots).map((slot, index) => ({
-        ...builderObject(slot),
+        ...builderCoverageRequirement(slot),
         id: String(slot?.id || `expression-${index + 1}`),
         label: String(slot?.label || slot?.name || `Expression ${index + 1}`),
-        required: slot?.required !== false,
         approvedFile: String(slot?.approvedFile || ""),
         notes: String(slot?.notes || slot?.performance || ""),
         status: String(slot?.status || (slot?.approvedFile ? "approved" : "missing")),

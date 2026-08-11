@@ -216,6 +216,23 @@ const COVERAGE = {
     id: ID,
     name: { type: "string" },
     description: { type: "string" },
+    /* P4-SEM-A. Authored production intent, and the reason it fails the semantic
+       test hard: a project reloaded without it cannot tell a gap from a
+       deliberate non-requirement, and no derivation can recover the difference.
+
+       Optional, because absence is a legal reading — a slot nobody has declared
+       anything about is not the same fact as a slot declared `required`, and
+       defaulting one into the other at load would break P0 §8 rule 1. Readers
+       apply their default AT USE; public/shared-coverage.js is the one that does.
+
+       Three members and no `unspecified`: absence already carries that meaning
+       here, and P0 §5 admits an explicit member only where production genuinely
+       distinguishes a deliberate non-decision from silence. It does not here.
+
+       The counts a UI prints over these values - "2 of 4 required views" - stay
+       derived. Nothing in this contract stores a coverage total, a completion
+       fraction or a readiness percentage, and P0 §5 is why. */
+    requirement: { type: "string", enum: ["required", "planned", "not-required"] },
   },
   required: ["id"],
 };
@@ -259,6 +276,22 @@ const CHARACTER = {
     aliases: { type: "array", collection: "ordered", items: { type: "string" } },
     voices: { type: "array", collection: "ordered", items: VOICE_LINK },
     states: { type: "array", record: "state", collection: "set", items: ENTITY_STATE },
+    /* P4-SEM-A. Characters own coverage for the same reason locations, props and
+       vehicles do: CineBraid has always given them view slots — front, 3/4,
+       profile, rear — through the same ensureCoverageSlots() mechanism, and this
+       contract had nowhere to put them, so M008 preserved the whole collection
+       into the legacy extension and another client saw an opaque blob.
+
+       This is the generic COVERAGE record, not a second character-shaped one.
+       `state` already had four owners and `coverage` three; coverage now has the
+       same four, which is why the containment table gains a scope and no new
+       addressable record type.
+
+       Expressions (`expressionSlots[]`) are deliberately NOT folded in here.
+       Whether they become coverage records with a discriminator is reconciliation
+       §18 Q3, and it is unsettled; collapsing them on the way past would decide
+       it by accident. They stay preserved by M014's cluster until Q3 is answered. */
+    coverage: { type: "array", record: "coverage", collection: "set", items: COVERAGE },
   },
   required: ["id"],
 };

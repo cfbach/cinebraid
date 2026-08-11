@@ -560,9 +560,8 @@ function countSource(source) {
   for (const collection of ["characters", "locations", "props", "vehicles"])
     for (const entity of list(source[collection])) {
       counts.states += list(entity.continuityStates).length;
-      /* Character coverage slots are counted here and are NOT expected to become
-         coverage records - M008 declares that adjustment, so the reconciliation
-         sees an explained difference rather than a silent one. */
+      /* Every entity's coverage slots are counted here and every one of them is
+         now expected to become a coverage record, characters included. */
       counts.coverage += list(entity.coverageSlots).length;
     }
   for (const shot of list(source.shots)) {
@@ -787,13 +786,13 @@ function migrateLegacyProject(source, options = {}) {
 
   const sourceCounts = countSource(source);
   const targetCounts = countTarget(context.candidate);
-  /* M008 declares the one structural count difference in this registry: a
-     character's coverage slots are identity views, not coverage of a place, so
-     they become references rather than coverage records. */
-  const characterCoverage = (Array.isArray(source.characters) ? source.characters.filter(isObject) : [])
-    .reduce((total, entity) => total + (Array.isArray(entity.coverageSlots) ? entity.coverageSlots.filter(isObject).length : 0), 0);
-  if (characterCoverage)
-    context.countAdjustments.push({ category: "coverage", delta: -characterCoverage, rule: "M008", note: "characters have no coverage container in the containment table; their identity views become references[] with a purpose" });
+  /* This registry used to declare one structural count difference here: a
+     character's coverage slots were not expected to become coverage records, so
+     M008 subtracted them and the reconciliation saw an explained loss rather
+     than a silent one. P4-SEM-A gave `coverage` a character scope in the
+     containment table, so the slots now survive as records and there is nothing
+     left to subtract. The adjustment is removed rather than zeroed: an
+     adjustment that always computes to nothing is a claim nobody checks. */
 
   const adjustmentTotals = {};
   for (const entry of context.countAdjustments) adjustmentTotals[entry.category] = (adjustmentTotals[entry.category] || 0) + entry.delta;
