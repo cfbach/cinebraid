@@ -28,7 +28,7 @@ const { OFP_CONTRACT_VERSION, OFP_FORMAT_ID } = require("../ofp/ofp-format");
 const { withNoWritesUnder } = require("../ofp/ofp-fs-guard");
 const { snapshotTree, diffSnapshots, CANONICAL_FILENAME } = require("../ofp/ofp-read");
 const Detect = require("../ofp/ofp-migrate-detect");
-const { MIGRATION_RULES, RULE_IDS, DETERMINISM, ruleById } = require("../ofp/ofp-migrate-rules");
+const { MIGRATION_RULES, RULE_IDS, DETERMINISM, ruleById, keyLooksSecret } = require("../ofp/ofp-migrate-rules");
 const { DISPOSITIONS, SourceLedger, enumerateLeaves } = require("../ofp/ofp-migrate-accounting");
 const { MIGRATION_DIAGNOSTICS } = require("../ofp/ofp-migrate-diagnostics");
 const { scanMigrationOutput } = require("../ofp/ofp-migrate-scan");
@@ -587,7 +587,8 @@ const traps = preview("secret-traps.json");
 assert.strictEqual(traps.ok, true, "a project full of traps still migrates - it just migrates without them");
 assert.strictEqual(traps.validation.ok, true);
 const serializedTraps = traps.serialized;
-for (const value of ["hunter2", "letmein", "sk-should-never-be-serialised", "0123456789abcdef0123456789abcdef", "C:\\Users", "/Users/somebody", "localhost:11434"])
+for (const value of ["hunter2", "letmein", "sk-should-never-be-serialised", "0123456789abcdef0123456789abcdef", "C:\\Users", "/Users/somebody", "localhost:11434",
+  "tok-should-never-be-serialised", "at-should-never-be-serialised", "rt-should-never-be-serialised"])
   assert(!serializedTraps.includes(value), `${value} reached the migrated document`);
 assert(!serializedTraps.includes("fal-0000"), "a provider key reached the migrated document");
 const quarantined = traps.report.diagnostics.filter((entry) => entry.code.startsWith("migration.secret") || entry.code.startsWith("migration.path"));
@@ -611,6 +612,62 @@ assert.strictEqual(traps.candidate.shots[0].description, "The description itself
   assert(scanMigrationOutput(plantedKey).some((entry) => entry.code === "migration.output.secret-leak"));
 }
 for (const name of MIGRATABLE) assert.deepStrictEqual(scanMigrationOutput(preview(name).candidate), [], `${name}: the output scan found something`);
+
+/* ---------------------------------------------------------------------------
+   11a. M080 decides by KEY SHAPE, and it is the QUALIFIED word that names a
+   credential. P3 recorded the opposite and the cost of it: `token` as a bare
+   secret word quarantined `#image1` - a prompt reference placeholder, which is
+   film semantics rather than a secret - at
+   /shots/0/promptBuilder/spec/references/0/token in overfit-14-hub-v4-3.
+
+   The asymmetry below IS the fix, and both halves are asserted in one document
+   so the two sides cannot drift apart: the qualified names still go, the bare
+   one now stays. Note what is never consulted - the value. */
+{
+  for (const key of ["apiToken", "authToken", "accessToken", "refreshToken", "bearerToken", "idToken", "oauthToken",
+    "sessionToken", "access_token", "refresh_token", "API-TOKEN", "apiKey", "falApiKey", "authSecret",
+    "editorPass", "viewerPass", "clientSecret", "privateKey", "password", "passcode"])
+    assert.strictEqual(keyLooksSecret(key), true, `${key} names a credential and must still be refused`);
+  for (const key of ["token", "tokenSource", "keyFrames", "description", "promptTokens"])
+    assert.strictEqual(keyLooksSecret(key), false, `${key} is project data; a key-name rule must not read it as a credential`);
+
+  /* The legitimate value survives, and it survives WITH its key. A preserved
+     value whose path was dropped would be the same loss wearing a different
+     disposition, so the source path is asserted rather than the value alone. */
+  const preserved = traps.candidate.extensions["com.cinebraid.legacy"].preserved;
+  for (const [pointer, value] of [
+    ["/shots/0/promptBuilder/spec/references/0/token", "#image1"],
+    ["/shots/0/promptBuilder/providerPayload/references/0/token", "@image1"],
+  ]) {
+    const entry = preserved.find((item) => item.sourcePath === pointer);
+    assert(entry, `${pointer}: the prompt reference placeholder was dropped as a credential`);
+    assert.strictEqual(entry.value, value, `${pointer}: preserved, but not verbatim`);
+    assert.strictEqual(entry.rule, "M070", `${pointer}: preserved by the wrong rule`);
+    assert(serializedTraps.includes(value), `${value} must reach the migrated document`);
+  }
+  for (const entry of quarantined)
+    assert(!entry.where.endsWith("/references/0/token"), `${entry.where}: a prompt placeholder was quarantined as a credential`);
+
+  /* A genuinely credential-named token is still refused, by the same rule. */
+  for (const pointer of ["/meta/apiToken", "/meta/accessToken", "/meta/refreshToken"])
+    assert(quarantined.some((entry) => entry.where === pointer && entry.code === "migration.secret.quarantined" && entry.rule === "M080"),
+      `${pointer}: a credential-named token was carried into the document`);
+
+  /* The neighbours of the suspicious field are untouched. A quarantine that took
+     the surrounding record with it would satisfy every assertion above. */
+  for (const value of ["Hold the established framing.", "The provider note is clean.", "first-frame", "TRAP-01-A.png"])
+    assert(serializedTraps.includes(value), `${value}: normal content beside the quarantine was lost`);
+
+  /* Determinism and source-safety, stated for this fixture rather than inferred
+     from the corpus-wide loops, because the warning SET is what changed here. */
+  const again = preview("secret-traps.json");
+  assert.strictEqual(again.serialized, serializedTraps, "the M080 fixture is not byte-deterministic");
+  assert.deepStrictEqual(again.report.diagnostics, traps.report.diagnostics, "the M080 warning set is not deterministic");
+  const untouched = loadFixture("secret-traps.json");
+  const before = JSON.stringify(untouched);
+  previewLegacyMigration(untouched, { at: AT });
+  assert.strictEqual(JSON.stringify(untouched), before, "migrating the M080 fixture mutated the source document");
+}
 
 /* ===========================================================================
    12. The migrated document is validated, not merely serialized. */
