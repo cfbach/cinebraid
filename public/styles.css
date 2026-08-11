@@ -370,7 +370,22 @@ button:focus-visible{outline:2px solid var(--acc);outline-offset:1px}
 .audio-panel{background:var(--bg-2);border:1px solid var(--line);border-left:2px solid var(--acc);border-radius:var(--r-card);padding:4px 18px 16px;margin:20px 0}
 .audio-panel .section-label{margin-top:20px;font-size:16px}
 .audio-panel .section-label::after{background:var(--line-soft)}
-.audio-status-row{display:flex;gap:6px;flex-wrap:wrap;margin:2px 0 12px}
+/* The character's voice state is DERIVED from the linked voice reference, so it
+   is a readout and not a control. The status chip row that used to sit here was
+   the writer for a second, contradicting lifecycle; it has no replacement by
+   design. See public/shared-voice.js. */
+.voice-authority{border:1px solid var(--line);border-radius:var(--r-card);background:var(--panel);padding:10px 14px;margin:2px 0 14px}
+.voice-authority-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.voice-authority-label{font-size:10px;letter-spacing:.09em;color:var(--muted)}
+.voice-authority-head b{font-size:15px}
+.voice-authority small{display:block;margin-top:4px;color:var(--muted)}
+.voice-authority.state-unlinked,.voice-authority.state-not-started{border-left:2px solid var(--line-soft)}
+.voice-authority.state-in-progress,.voice-authority.state-needs-review{border-left:2px solid var(--acc)}
+.voice-authority.state-ready{border-left:2px solid var(--ok,var(--acc))}
+.voice-authority.state-unresolved,.voice-authority.state-changes-requested{border-left:2px solid var(--warn,var(--acc))}
+.voice-authority-conflict{border:1px solid var(--warn,var(--line));border-radius:var(--r-card);padding:10px 14px;margin:0 0 14px}
+.voice-authority-conflict b{display:block;font-size:13px}
+.voice-authority-conflict span{display:block;margin-top:4px;color:var(--muted);font-size:12px}
 
 /* ===== v3.0 — hierarchy + folding ===== */
 .fold{border:1px solid var(--line);border-radius:var(--r-card,10px);background:var(--panel);padding:0 16px 0;margin:14px 0}

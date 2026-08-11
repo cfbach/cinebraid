@@ -85,6 +85,8 @@ const nodeSuites = [
   "check:state-interleaving",
   "check:generation-job-durability",
   "check:approval-references",
+  "check:voice-ownership",
+  "check:voice-ownership-negative",
   "check:continuity-manifest",
   "check:continuity-observation",
   "check:continuity-comparison",

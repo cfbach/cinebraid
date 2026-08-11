@@ -10,6 +10,7 @@ const PUBLIC = path.join(ROOT, "public");
 const SCRIPT_ORDER = [
   "shared-entities.js",
   "shared-continuity.js",
+  "shared-voice.js",
   "shared-camera.js",
   "shared-aspect.js",
   "shared-reference-views.js",
