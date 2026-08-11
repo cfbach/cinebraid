@@ -1,10 +1,12 @@
 # Running the real-browser suites
 
-CineBraid has eleven test suites that drive the shipped client in a real Chromium.
+CineBraid has thirteen test suites that drive the shipped client in a real Chromium.
 They exist because a whole class of defect is invisible to Node: the frontend is a
 set of plain `<script>` tags sharing one global scope, and a mistake there — a
-duplicate top-level `const`, a stylesheet that never sizes an image — produces a
-blank or broken application while every Node suite passes.
+duplicate top-level `const`, a module reading shared state off `window` when the
+declaration that made it is a top-level `let` and therefore not on `window` at all,
+a stylesheet that never sizes an image — produces a blank, broken or silently inert
+application while every Node suite passes.
 
 ## Setup
 
@@ -59,6 +61,7 @@ npm run check:browser-real         # the long workflow audit
 npm run check:h3-browser           # MiniMax H3
 npm run check:preview-layout       # layout containment across routes and themes
 npm run check:ui-state             # same-route state stability
+npm run check:focused-browser      # Focused Workspaces against the real project state
 ```
 
 ## The tiers
@@ -67,8 +70,8 @@ npm run check:ui-state             # same-route state stability
 |---|---|---|
 | `npm run check:quick` | board density only | skips |
 | `npm run check:ci` | none | n/a |
-| `npm run check` | six, best effort | skips |
-| `npm run check:browser-gate` | all eleven | **fails** |
+| `npm run check` | nine, best effort | skips |
+| `npm run check:browser-gate` | all thirteen | **fails** |
 | `npm run check:release` | `check` then the gate | **fails** |
 
 `check`, `check:ci` and `check:quick` stay tolerant on purpose: a fresh clone must

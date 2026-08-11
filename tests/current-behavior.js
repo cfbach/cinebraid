@@ -350,6 +350,7 @@ async function main() {
     "external-test-readiness.js",
     "fal-generation.js",
     "fixtures",
+    "focused-workspaces-real-browser.py",
     "focused-workspaces.js",
     "generation-capability.js",
     "generation-compiler-fixture.js",

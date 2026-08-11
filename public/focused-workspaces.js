@@ -10,6 +10,47 @@
   let activeTaskContext = null;
 
   function safeText(value) { return String(value == null ? "" : value); }
+
+  /* ===========================================================================
+     THE PAGE'S SHARED RUNTIME — and the reason none of the code below ever ran.
+
+     public/app.js declares project state as `let P` at the top level of a classic
+     script, and ACTIVE_PROJECT_SLUG, AUTOMATION_RUNS, esc, shotById and sceneById
+     the same way. A top-level `let`/`const` lives in the page's global LEXICAL
+     scope, which is NOT the global object — so `window.P` was `undefined` in
+     Chromium on every route, `enhance()` returned at its own `!window.P` guard
+     before touching the DOM, and this module loaded, exported its API, and did
+     nothing. Only the render harness ever appeared to exercise it, and only
+     because a suite passed the entity in by hand.
+
+     Every public/*.js shares that one global scope, so the bare name resolves the
+     live binding app.js writes. These accessors READ it; they do not copy it.
+     There is one project object, no snapshot, and nothing to keep in sync — a
+     mutation made anywhere in the app is visible here on the next read.
+
+     `window.<name>` is deliberately not consulted as a fallback. A second place to
+     look is a second place to write, and the point of reading the authoritative
+     binding is that there is only one truth to read.
+
+     The `typeof` guard is the idiom public/bounded-rendering.js already uses for
+     ACTIVE_PROJECT_SLUG. It is required rather than decorative: this file is also
+     evaluated standalone by tests/focused-workspaces.js, where no app.js has run
+     and a bare reference would throw. */
+  function activeProject() { return typeof P === "undefined" ? null : P; }
+  function activeProjectSlug() { return typeof ACTIVE_PROJECT_SLUG === "undefined" ? "" : safeText(ACTIVE_PROJECT_SLUG); }
+  function activeAutomationRuns() { return typeof AUTOMATION_RUNS !== "undefined" && Array.isArray(AUTOMATION_RUNS) ? AUTOMATION_RUNS : []; }
+  function findShot(id) { return typeof shotById === "function" ? shotById(id) : null; }
+  function findScene(id) { return typeof sceneById === "function" ? sceneById(id) : null; }
+  /* app.js's own `esc`, or a byte-identical local one. Every call site used to read
+     `window.esc ? window.esc(x) : x`, and `window.esc` is undefined for the same
+     reason `window.P` was — so the fallback branch was the only branch, and it
+     interpolated raw text into innerHTML. Nobody saw it because nothing here
+     rendered. Escaping is not optional now that it does. */
+  const ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" };
+  function escapeText(value) {
+    return typeof esc === "function" ? esc(value) : safeText(value).replace(/[&<>"]/g, (character) => ESCAPES[character]);
+  }
+
   function routeParts() {
     const parts = String(location.hash || "#/production").split("/");
     return { view: parts[1] || "production", id: decodeURIComponent(parts[2] || "") };
@@ -25,7 +66,7 @@
     else delete document.body.dataset.focusedWorkspace;
   }
   function storageKey(kind, id) {
-    const project = window.ACTIVE_PROJECT_SLUG || window.P?.meta?.id || "project";
+    const project = activeProjectSlug() || activeProject()?.meta?.id || "project";
     return `cinebraid-focused:${project}:${kind}:${id || "root"}`;
   }
   function readState(kind, id, fallback = "") {
@@ -137,7 +178,7 @@
       button.type = "button";
       button.dataset.taskId = taskId;
       button.className = `focused-task-button tone-${status.tone}${taskId === activeTaskId ? " selected" : ""}`;
-      button.innerHTML = `<i></i><span><b>${window.esc ? window.esc(label) : label}</b>${detail ? `<small>${window.esc ? window.esc(detail) : detail}</small>` : ""}</span><em>${status.label}</em>`;
+      button.innerHTML = `<i></i><span><b>${escapeText(label)}</b>${detail ? `<small>${escapeText(detail)}</small>` : ""}</span><em>${status.label}</em>`;
       button.addEventListener("click", () => {
         writeState(kind, id, taskId);
         onSelect(taskId);
@@ -165,8 +206,8 @@
     const readyRefs = refs.filter((row) => row.url).length;
     const frames = Array.isArray(shot?.keyframes) ? shot.keyframes : [];
     const approvedFrames = frames.filter((frame) => frame.winner).length;
-    const run = (window.AUTOMATION_RUNS || []).find((row) => row.targetId === shot?.id && ["running", "awaiting-review", "failed"].includes(row.status));
-    aside.innerHTML = `<header><span>SHOT INSPECTOR</span><b>${window.esc ? window.esc(shot?.id || "Shot") : shot?.id || "Shot"}</b><p>${window.esc ? window.esc(shot?.title || "") : shot?.title || ""}</p></header><div class="focused-inspector-facts"><article><span>References</span><b>${readyRefs}/${refs.length}</b></article><article><span>Frames</span><b>${approvedFrames}/${frames.length || 1}</b></article><article><span>Duration</span><b>${Number(shot?.sec || shot?.duration || 0) || "—"}s</b></article><article><span>Workflow</span><b>${window.esc ? window.esc(window.workflowState?.(shot)?.key || shot?.workflowStatus || "Draft") : "Draft"}</b></article></div><section><b>Current production note</b><p>${window.esc ? window.esc(shot?.desc || shot?.positioning || "No additional shot note.") : "No additional shot note."}</p></section>${run ? `<section class="focused-inspector-alert"><b>${window.esc ? window.esc(run.label || "Automation") : "Automation"}</b><p>${window.esc ? window.esc(run.stage || run.summary || run.status) : run.status}</p><button type="button" data-open-activity="${run.id}">Open activity</button></section>` : `<section><b>Activity</b><p>No active operation for this shot.</p></section>`}`;
+    const run = activeAutomationRuns().find((row) => row.targetId === shot?.id && ["running", "awaiting-review", "failed"].includes(row.status));
+    aside.innerHTML = `<header><span>SHOT INSPECTOR</span><b>${escapeText(shot?.id || "Shot")}</b><p>${escapeText(shot?.title || "")}</p></header><div class="focused-inspector-facts"><article><span>References</span><b>${readyRefs}/${refs.length}</b></article><article><span>Frames</span><b>${approvedFrames}/${frames.length || 1}</b></article><article><span>Duration</span><b>${Number(shot?.sec || shot?.duration || 0) || "—"}s</b></article><article><span>Workflow</span><b>${escapeText(window.workflowState?.(shot)?.key || shot?.workflowStatus || "Draft")}</b></article></div><section><b>Current production note</b><p>${escapeText(shot?.desc || shot?.positioning || "No additional shot note.")}</p></section>${run ? `<section class="focused-inspector-alert"><b>${escapeText(run.label || "Automation")}</b><p>${escapeText(run.stage || run.summary || run.status)}</p><button type="button" data-open-activity="${run.id}">Open activity</button></section>` : `<section><b>Activity</b><p>No active operation for this shot.</p></section>`}`;
     aside.querySelector("[data-open-activity]")?.addEventListener("click", (event) => window.openGlobalAutomationActivity?.(event.currentTarget.dataset.openActivity));
     return aside;
   }
@@ -191,7 +232,7 @@
       if (readable) return;
       const [label, detail] = disclosureFallbackLabel(element);
       summary.classList.add("generated-disclosure-summary");
-      summary.innerHTML = `<span><b>${window.esc ? window.esc(label) : label}</b><small>${window.esc ? window.esc(detail) : detail}</small></span><em>Ready</em>`;
+      summary.innerHTML = `<span><b>${escapeText(label)}</b><small>${escapeText(detail)}</small></span><em>Ready</em>`;
     });
   }
   function enhanceShot(root, id) {
@@ -203,7 +244,7 @@
     if (shell.dataset.bounded === "1") {
       shell.dataset.focused = "1";
       root.dataset.focusedShot = "1";
-      const shot = window.shotById?.(id);
+      const shot = findShot(id);
       if (shot && !shell.querySelector(":scope > .focused-inspector")) shell.appendChild(shotInspector(shot));
       activeTaskContext = { bounded: true, kind: "shot-task", id, taskId: shell.dataset.selectedTask || "" };
       return;
@@ -211,7 +252,7 @@
     shell.dataset.focused = "1";
     root.dataset.focusedShot = "1";
     shell.classList.add("focused-workspace-shell");
-    const shot = window.shotById?.(id);
+    const shot = findShot(id);
     const tasks = [...stack.children].filter((element) => element.matches("details,section,.creation-card,.automation-card"));
     if (!tasks.length) return;
     const fallback = nextTaskIndex(tasks);
@@ -231,7 +272,7 @@
     const aside = document.createElement("aside");
     aside.className = "focused-subnav";
     const singular = ({ characters: "Characters", locations: "Locations", props: "Props", vehicles: "Vehicles", audio: "Audio" })[list] || "References";
-    const rows = Array.isArray(window.P?.[list]) ? window.P[list] : [];
+    const rows = Array.isArray(activeProject()?.[list]) ? activeProject()[list] : [];
     const pageSize = window.BOUNDED_PAGE_SIZES?.references || 40;
     let pageInfo = window.boundedPage ? window.boundedPage(rows, "references", `navigator:${list}`, pageSize) : { rows, page: 0, pages: 1, total: rows.length, start: 0, end: rows.length };
     if (id && !pageInfo.rows.some((row) => row.id === id)) {
@@ -241,7 +282,7 @@
         pageInfo = window.boundedPage(rows, "references", `navigator:${list}`, pageSize);
       }
     }
-    aside.innerHTML = `<header><span>REFERENCE LIBRARY</span><b>${singular}</b><input type="search" placeholder="Filter visible ${singular.toLowerCase()}" aria-label="Filter reference list"></header><div class="focused-subnav-list">${pageInfo.rows.map((row) => `<a href="#/${({characters:"character",locations:"location",props:"prop",vehicles:"vehicle",audio:"sound"})[list]}/${encodeURIComponent(row.id)}" class="${row.id === id ? "selected" : ""}" data-filter="${safeText(`${row.id} ${row.name || ""}`).toLowerCase().replace(/"/g, "&quot;")}"><i class="wf-${safeText(row.workflowStatus || row.status || "draft").toLowerCase().replace(/[^a-z0-9]+/g, "-")}"></i><span><b>${window.esc ? window.esc(row.name || row.id) : row.name || row.id}</b><small>${window.esc ? window.esc(row.id) : row.id}</small></span></a>`).join("")}</div>${window.boundedPagerMarkup ? window.boundedPagerMarkup("references",`navigator:${list}`,pageInfo,"reference navigator") : ""}`;
+    aside.innerHTML = `<header><span>REFERENCE LIBRARY</span><b>${singular}</b><input type="search" placeholder="Filter visible ${singular.toLowerCase()}" aria-label="Filter reference list"></header><div class="focused-subnav-list">${pageInfo.rows.map((row) => `<a href="#/${({characters:"character",locations:"location",props:"prop",vehicles:"vehicle",audio:"sound"})[list]}/${encodeURIComponent(row.id)}" class="${row.id === id ? "selected" : ""}" data-filter="${safeText(`${row.id} ${row.name || ""}`).toLowerCase().replace(/"/g, "&quot;")}"><i class="wf-${safeText(row.workflowStatus || row.status || "draft").toLowerCase().replace(/[^a-z0-9]+/g, "-")}"></i><span><b>${escapeText(row.name || row.id)}</b><small>${escapeText(row.id)}</small></span></a>`).join("")}</div>${window.boundedPagerMarkup ? window.boundedPagerMarkup("references",`navigator:${list}`,pageInfo,"reference navigator") : ""}`;
     const input = aside.querySelector("input");
     input?.addEventListener("input", () => {
       const query = input.value.trim().toLowerCase();
@@ -268,7 +309,7 @@
     aside.className = "focused-inspector";
     const { required, approved } = inspectorCoverage(entity);
     const candidates = Array.isArray(entity?.candidateFiles) ? entity.candidateFiles.filter((row) => !["rejected", "approved-coverage", "approved-expression"].includes(row.decision)).length : 0;
-    aside.innerHTML = `<header><span>REFERENCE INSPECTOR</span><b>${window.esc ? window.esc(entity?.id || "Reference") : entity?.id || "Reference"}</b><p>${window.esc ? window.esc(entity?.name || "") : entity?.name || ""}</p></header><div class="focused-inspector-facts"><article><span>Status</span><b>${window.esc ? window.esc(entity?.workflowStatus || entity?.status || "Draft") : "Draft"}</b></article><article><span>Coverage</span><b>${approved}/${required}</b></article><article><span>Candidates</span><b>${candidates}</b></article><article><span>States</span><b>${Array.isArray(entity?.continuityStates) ? entity.continuityStates.length : 0}</b></article></div><section><b>Identity / design authority</b><p>${window.esc ? window.esc(entity?.driftNotes || entity?.block || entity?.notes || "No authority note recorded.") : "No authority note recorded."}</p></section><section><b>Focused-workspace rule</b><p>Only the selected task is expanded. Use the task rail to move between approval, candidates, coverage, automation, and notes.</p></section>`;
+    aside.innerHTML = `<header><span>REFERENCE INSPECTOR</span><b>${escapeText(entity?.id || "Reference")}</b><p>${escapeText(entity?.name || "")}</p></header><div class="focused-inspector-facts"><article><span>Status</span><b>${escapeText(entity?.workflowStatus || entity?.status || "Draft")}</b></article><article><span>Coverage</span><b>${approved}/${required}</b></article><article><span>Candidates</span><b>${candidates}</b></article><article><span>States</span><b>${Array.isArray(entity?.continuityStates) ? entity.continuityStates.length : 0}</b></article></div><section><b>Identity / design authority</b><p>${escapeText(entity?.driftNotes || entity?.block || entity?.notes || "No authority note recorded.")}</p></section><section><b>Focused-workspace rule</b><p>Only the selected task is expanded. Use the task rail to move between approval, candidates, coverage, automation, and notes.</p></section>`;
     return aside;
   }
   function enhanceEntity(root, view, id) {
@@ -276,7 +317,7 @@
     if (root.dataset.focusedEntity === "1") return;
     ensureDisclosureLabels(root);
     const list = entityListName(view);
-    const entity = window.P?.[list]?.find((row) => row.id === id);
+    const entity = activeProject()?.[list]?.find((row) => row.id === id);
     if (!list || !entity) return;
     root.dataset.focusedEntity = "1";
     const original = [...root.childNodes];
@@ -346,7 +387,7 @@
         const name = card.querySelector("header b")?.textContent || `Slot ${index + 1}`;
         const state = statusForElement(card);
         button.className = `tone-${state.tone}`;
-        button.innerHTML = `<i></i><span>${window.esc ? window.esc(name) : name}</span><small>${state.label}</small>`;
+        button.innerHTML = `<i></i><span>${escapeText(name)}</span><small>${state.label}</small>`;
         button.onclick = () => { selected = index; writeState("slot", `${routeId}:${boardIndex}`, selected); render(); };
         rail.appendChild(button);
       });
@@ -357,7 +398,7 @@
     if (root.dataset.focusedScene === "1" && !root.querySelector(".focused-scene-page")) delete root.dataset.focusedScene;
     if (root.dataset.focusedScene === "1") return;
     ensureDisclosureLabels(root);
-    const scene = window.sceneById?.(id);
+    const scene = findScene(id);
     if (!scene) return;
     root.dataset.focusedScene = "1";
     root.classList.add("focused-scene-page");
@@ -390,7 +431,7 @@
       button.dataset.blockerExplained = "1";
       const note = document.createElement("small");
       note.className = "disabled-action-reason";
-      note.innerHTML = `<b>Not ready:</b> ${window.esc ? window.esc(reason) : reason}${/settings/i.test(reason) ? ' <a href="#/settings">Open Settings →</a>' : ''}`;
+      note.innerHTML = `<b>Not ready:</b> ${escapeText(reason)}${/settings/i.test(reason) ? ' <a href="#/settings">Open Settings →</a>' : ''}`;
       button.insertAdjacentElement("afterend", note);
     });
   }
@@ -400,7 +441,7 @@
     const { view, id } = routeParts();
     syncFocusedRouteMode(view);
     const root = document.getElementById("main");
-    if (!root || !window.P) return;
+    if (!root || !activeProject()) return;
     if (view === "shot") enhanceShot(root, id);
     else if (["character", "location", "prop", "vehicle", "sound"].includes(view)) enhanceEntity(root, view, id);
     else if (view === "scene") enhanceScene(root, id);
@@ -428,7 +469,11 @@
   /* inspectorCoverage is exported so a suite can drive the inspector's OWN
      arithmetic rather than a copy of it. Proving two surfaces agree is worth
      nothing if the test reimplements one of them. */
-  window.__CINEBRAID_FOCUSED = { statusForElement, nextTaskIndex, routeParts, isFocusedDetailView, syncFocusedRouteMode, ensureDisclosureLabels, taskIdForElement, resolveTaskSelection, inspectorCoverage };
+  /* activeProject is exported for the same reason: a suite must be able to ask the
+     module which object it is reading and compare it by IDENTITY to the app's own
+     `P`. "Same numbers" is not the same claim as "same object", and only the second
+     one rules out a snapshot that has not drifted yet. */
+  window.__CINEBRAID_FOCUSED = { statusForElement, nextTaskIndex, routeParts, isFocusedDetailView, syncFocusedRouteMode, ensureDisclosureLabels, taskIdForElement, resolveTaskSelection, inspectorCoverage, activeProject };
   window.enhanceFocusedWorkspace = enhance;
   window.addEventListener("hashchange", () => { syncFocusedRouteMode(routeParts().view); schedule(); });
   window.addEventListener("load", () => { syncFocusedRouteMode(routeParts().view); schedule(); });
