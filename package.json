@@ -28,6 +28,7 @@
     "check:coverage-requirement-negative": "node tests/coverage-requirement-semantics-negative-controls.js",
     "check:safety": "node tests/safety-integrity.js",
     "check:focused": "node tests/focused-workspaces.js",
+    "check:focused-browser": "node tests/run-python-check.js tests/focused-workspaces-real-browser.py",
     "check:reference-ux": "node tests/reference-workspace-ux.js",
     "check:recovery": "node tests/data-recovery-focused-state.js",
     "check:bounded": "node tests/bounded-rendering.js",

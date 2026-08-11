@@ -39,6 +39,7 @@ const SUITES = [
   "check:lan-passcode-browser",
   "check:generation-defaults-browser",
   "check:candidate-review-browser",
+  "check:focused-browser",
 ];
 
 /* Suites that launch a browser and are known to fail, pinned to the reason.

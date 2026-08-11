@@ -17,6 +17,34 @@ assert(source.includes('focused-task-hidden'), 'only one selected task should re
 assert(source.includes('localStorage'), 'task state should persist outside project data');
 assert(!/\bdirty\s*\(/.test(source) && !/\broute\s*\(/.test(source), 'focused workspace must not save or rerender project data');
 
+/* ---------------------------------------------------------------------------
+   The runtime wiring, guarded here so a Node-only run still catches its return.
+
+   public/app.js declares project state as `let P` at the top level of a classic
+   script, so it lives in the page's global LEXICAL scope and is NEVER a property
+   of window. This module used to read `window.P` — permanently undefined in a
+   browser — so `enhance()` returned at its own guard and none of the behaviour
+   asserted above ran anywhere except a test that called its pure functions
+   directly. ACTIVE_PROJECT_SLUG, AUTOMATION_RUNS, `esc`, `shotById` and
+   `sceneById` are declared the same way and were read the same wrong way.
+
+   The real proof is tests/focused-workspaces-real-browser.py, which asserts DOM
+   only this module's runtime can build. This is the cheap portable guard that
+   the access pattern has not come back. */
+const RETIRED_WINDOW_READS = ['window.P', 'window.ACTIVE_PROJECT_SLUG', 'window.AUTOMATION_RUNS',
+  'window.esc', 'window.shotById', 'window.sceneById'];
+const executable = source.replace(/\/\*[\s\S]*?\*\//g, '');
+for (const read of RETIRED_WINDOW_READS)
+  assert(!executable.includes(read),
+    `focused-workspaces.js reads ${read}, which is undefined in a browser: app.js declares it with let/const, so it is in the global lexical scope and not on window`);
+for (const accessor of ['function activeProject()', 'function activeProjectSlug()', 'function activeAutomationRuns()',
+  'function findShot(', 'function findScene(', 'function escapeText('])
+  assert(source.includes(accessor), `focused-workspaces.js must resolve shared runtime state through ${accessor}`);
+assert(/typeof P === "undefined" \? null : P/.test(source),
+  'the project accessor must return the live lexical binding, not a copy of it');
+assert(!/JSON\.parse\(JSON\.stringify|structuredClone/.test(executable),
+  'the workspace must never snapshot project state — there is one authoritative project object');
+
 assert(source.includes('FOCUSED_DETAIL_VIEWS'), 'focused route eligibility must be explicit');
 assert(source.includes('delete document.body.dataset.focusedWorkspace'), 'overview routes must clear focused detail mode');
 assert(css.includes('body[data-focused-route="shots"]{overflow-x:clip}'), 'shot overview must prevent viewport-level horizontal overflow');
@@ -48,4 +76,14 @@ assert.strictEqual(sandbox.document.body.dataset.focusedWorkspace, '1');
 sandbox.window.__CINEBRAID_FOCUSED.syncFocusedRouteMode('shots');
 assert.strictEqual(sandbox.document.body.dataset.focusedWorkspace, undefined, 'overview route must remove focused workspace mode');
 assert.strictEqual(sandbox.document.body.dataset.focusedRoute, 'shots');
-console.log('Focused Workspaces suite passed module order, task isolation, inspectors, list pagination, slot focus, mobile rules, and non-persistent UI state.');
+
+/* The accessors have to survive a scope with no app.js in it, which is exactly
+   what this sandbox is: a bare `P` here would throw ReferenceError and take the
+   module's own load with it. That is why the guards are `typeof` guards. */
+assert.strictEqual(sandbox.window.__CINEBRAID_FOCUSED.activeProject(), null,
+  'with no project in scope the workspace must resolve nothing rather than throw');
+sandbox.window.enhanceFocusedWorkspace();
+assert.strictEqual(sandbox.document.body.dataset.focusedRoute, 'shots',
+  'enhancing with no project in scope must be a no-op, not an error');
+
+console.log('Focused Workspaces suite passed module order, task isolation, inspectors, list pagination, slot focus, mobile rules, non-persistent UI state, and lexical-scope runtime resolution.');
