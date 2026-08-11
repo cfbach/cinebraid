@@ -53,6 +53,7 @@ import base64, hashlib, json, os, pathlib, re, shutil, socket, subprocess, tempf
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 from browser_runtime import require_browser, launch_chromium
+from playwright.sync_api import Error as PlaywrightError
 
 LABEL = "P4-SEM-B declared state binding real-browser audit"
 sync_playwright = require_browser(LABEL)
@@ -217,6 +218,52 @@ try:
 
         page.route("**/*", guard)
 
+        def settle():
+            """Wait for the app's OWN save chain to come to rest.
+
+            CineBraid saves itself 500ms after any change. Calling
+            flushPendingProjectSave() while one of those debounced saves is
+            already in flight queues a SECOND capture carrying the same
+            documentRevision, the server refuses it with 409, and the app then
+            sets PROJECT_CONFLICT and stops writing entirely — so the next
+            assertion fails for a reason that has nothing to do with what it
+            tests. Waiting for the app's own counters is both correct and
+            faster, and PROJECT_CONFLICT is asserted rather than assumed so a
+            conflict fails here, loudly, instead of freezing later."""
+            page.wait_for_function(
+                "() => typeof SAVE_REVISION === 'number' && typeof SAVED_REVISION === 'number'"
+                " && SAVE_REVISION === SAVED_REVISION",
+                timeout=45000)
+            assert not page.evaluate("() => !!PROJECT_CONFLICT"),                 "the app entered a save-conflict state; nothing after this point would be written"
+
+        def await_state(frame_word, value=None, inherit=None, timeout=20000):
+            """Wait for the rendered control to reach a state, and say whether it
+            did. Deliberately returns a bool rather than raising: the negative
+            controls need the CHECK to produce the AssertionError receipt, not
+            this wait to produce a timeout that is not one."""
+            try:
+                page.wait_for_function("""(args) => {
+                    const [word, entityName, value, inherit] = args;
+                    for (const row of document.querySelectorAll('.continuity-state-row')) {
+                        if ((row.querySelector('header b')?.textContent || '').trim() !== entityName) continue;
+                        for (const label of row.querySelectorAll('.continuity-state-cells label')) {
+                            if ((label.querySelector('span')?.textContent || '').trim() !== word) continue;
+                            const select = label.querySelector('select');
+                            if (!select) return false;
+                            if (value !== null && select.value !== value) return false;
+                            if (inherit !== null) {
+                                const option = select.querySelector('option[value=""]');
+                                if (((option && option.textContent) || '').trim() !== inherit) return false;
+                            }
+                            return true;
+                        }
+                    }
+                    return false;
+                }""", arg=[frame_word, "Rhea", value, inherit], timeout=timeout)
+                return True
+            except PlaywrightError:
+                return False
+
         def reveal():
             """Open every disclosure on the route. The per-frame state control lives
             inside a collapsed <details> — the same one that keeps
@@ -232,13 +279,23 @@ try:
             open the disclosures."""
             page.goto(f"{base}/#/shot/{SHOT}", wait_until="domcontentloaded")
             page.reload(wait_until="domcontentloaded")
-            page.wait_for_selector("#main", timeout=20000)
-            page.wait_for_timeout(1500)
+            page.wait_for_selector("#main", timeout=30000)
+            page.wait_for_function("() => typeof P === 'object' && P && Array.isArray(P.shots) && P.shots.length > 0",
+                                   timeout=30000)
             # The shot workspace shows one task at a time and the continuity
             # surface lives in FRAMES. Selected through the shipped task API
-            # rather than by reaching past it into storage.
-            page.evaluate("() => window.selectFocusedTask && window.selectFocusedTask('frames')")
-            page.wait_for_timeout(900)
+            # rather than by reaching past it into storage — and RETRIED, because
+            # that API only answers once focused-workspaces.js has bound the
+            # route's task bar on its own two-frame rAF, which is later than the
+            # project being in memory and is not a fixed number of milliseconds.
+            deadline = time.time() + 30
+            while time.time() < deadline:
+                page.evaluate("() => window.selectFocusedTask && window.selectFocusedTask('frames')")
+                if page.query_selector(".continuity-state-row") is not None:
+                    break
+                page.wait_for_timeout(250)
+            else:
+                raise AssertionError("the FRAMES task never selected, so the continuity surface never rendered")
             reveal()
             assert page.evaluate("() => !!document.querySelector('.shot-continuity')"), \
                 "the continuity surface did not render on the FRAMES task"
@@ -249,8 +306,8 @@ try:
             chooser, which is what a director uses."""
             chooser = page.query_selector(".continuity-pair-choice select")
             assert chooser is not None, "the shot has three approved frames and must offer a pair chooser"
-            chooser.select_option(pair_id)
-            page.wait_for_timeout(700)
+            chooser.select_option(pair_id, timeout=30000)
+            page.wait_for_selector(".continuity-state-row", state="attached", timeout=30000)
             reveal()
 
         def frame_state_control(frame_word):
@@ -382,13 +439,14 @@ try:
             """CASE 7 — P4-SEM-A is untouched. Both numbers off the shared derivation
             and the rendered board, on the same mixed requirement case."""
             page.goto(f"{base}/#/location/LOC-DOOR", wait_until="domcontentloaded")
-            page.wait_for_selector("#main", timeout=20000)
-            page.wait_for_timeout(1200)
+            page.wait_for_selector("#main", timeout=30000)
+            page.wait_for_function("() => typeof P === 'object' && P && Array.isArray(P.locations) && P.locations.length > 0",
+                                   timeout=30000)
             # The board only exists in the DOM while its own task is selected, so
             # it is selected through the module's OWN task API rather than by
             # reaching past it.
             page.evaluate("() => window.selectFocusedTask && window.selectFocusedTask('coverage')")
-            page.wait_for_timeout(900)
+            page.wait_for_selector(".entity-coverage-section", state="attached", timeout=30000)
             reveal()
             seen = page.evaluate("""() => {
                 const board = document.querySelector('.entity-coverage-section > summary');
@@ -441,8 +499,7 @@ try:
         #
         #   1. the first load left every declared state binding exactly as seeded;
         #   2. re-opening an already-current project writes nothing at all.
-        page.evaluate("() => (typeof flushPendingProjectSave === 'function' ? flushPendingProjectSave() : null)")
-        page.wait_for_timeout(1500)
+        settle()
         settled = json.loads(project_file.read_text(encoding="utf-8"))
         seeded = project_document()
         assert settled["shots"][0]["continuityStateSelections"] == seeded["shots"][0]["continuityStateSelections"],             "case 9: opening the project invented a shot-level state selection"
@@ -461,14 +518,14 @@ try:
         # The shot-level selection has no <select> in the frames stage, so it is
         # written through the shipped writer and then READ off the rendered page.
         page.evaluate("() => setShotContinuityState('SH-01', 'CHAR-RHEA', 'st-rhea-wet')")
-        page.wait_for_timeout(700)
+        await_state("Frame A", value="", inherit="Follow the shot — Rain-soaked")
         reveal()
         check_shot_binding("Rain-soaked")
         findings.append("case 2: the shot's declared state is what an inheriting frame shows")
 
         # ---- 2. the override, through the shipped control --------------------
-        frame_state_control("Frame B").select_option(WET)
-        page.wait_for_timeout(700)
+        frame_state_control("Frame B").select_option(WET, timeout=30000)
+        await_state("Frame B", value=WET)
         reveal()
         check_frame_override(WET, "Rain-soaked")
         check_third_frame_untouched("Rain-soaked")
@@ -476,8 +533,7 @@ try:
         findings.append("case 3/6: a real select_option on the shipped control set the override and left A and C inheriting")
 
         # ---- 3. save and reload ----------------------------------------------
-        page.evaluate("() => (typeof flushPendingProjectSave === 'function' ? flushPendingProjectSave() : null)")
-        page.wait_for_timeout(1200)
+        settle()
         open_shot()
         check_shot_binding("Rain-soaked")
         check_frame_override(WET, "Rain-soaked")
@@ -495,15 +551,14 @@ try:
             "case 4: no unrelated state data changed"
 
         # ---- 4. removing the override ----------------------------------------
-        frame_state_control("Frame B").select_option("")
-        page.wait_for_timeout(700)
+        frame_state_control("Frame B").select_option("", timeout=30000)
+        await_state("Frame B", value="", inherit="Follow the shot — Rain-soaked")
         reveal()
         seen_b = read_state("Frame B")
         assert seen_b["selectedValue"] == "" and seen_b["inheritLabel"] == "Follow the shot — Rain-soaked", \
             f"case 5: clearing the override must restore shot inheritance on screen ({seen_b})"
         check_stored_shape(False)
-        page.evaluate("() => (typeof flushPendingProjectSave === 'function' ? flushPendingProjectSave() : null)")
-        page.wait_for_timeout(1200)
+        settle()
         cleared = json.loads(project_file.read_text(encoding="utf-8"))
         assert not (cleared["shots"][0]["creationBrief"]["frameWorkflows"].get("fr-b", {}) or {}).get("characterStateSelections"), \
             "case 5: and the cleared override must be gone from disk rather than written back as an inherited copy"
@@ -525,6 +580,7 @@ try:
             "  const wantedFrame = text(frameId);", "  const wantedFrame = \"\";", 1)
         assert served["mutation"] != original, "NC-BROWSER-A anchor no longer exists in the shipped module"
         open_shot()
+        await_state("Frame B", value=WET, timeout=6000)
         expect_red("NC-BROWSER-A", "the page must notice a resolver that ignores frame overrides",
                    check_frame_override, WET, "Rain-soaked")
 
@@ -533,6 +589,7 @@ try:
             "  return \"\";", 1)
         assert served["mutation"] != original, "NC-BROWSER-B anchor no longer exists in the shipped module"
         open_shot()
+        await_state("Frame A", inherit="Follow the shot — Rain-soaked", timeout=6000)
         expect_red("NC-BROWSER-B", "the page must notice a resolver that skips the shot binding",
                    check_shot_binding, "Rain-soaked")
 
