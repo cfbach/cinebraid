@@ -1599,6 +1599,9 @@ function v663StoreEntityAutomationReview(entity, state, fileName, data) {
     stateName: state.name || "Default",
     reviewedAt: new Date().toISOString(),
     inputLabels: Array.isArray(data?.inputLabels) ? data.inputLabels : [],
+    /* Same rule as the manual path: whoever actually served this review, from
+       this response. Never the currently configured provider or model. */
+    reviewer: { provider: String(data?.reviewer?.provider || ""), model: String(data?.reviewer?.model || "") },
     source: "state-automation",
   };
   row.structuredReviews[state.id] = review;

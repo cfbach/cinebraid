@@ -227,6 +227,15 @@ function refreshEntityBatchReviewUi(list, entity) {
     badge.textContent = entityBatchStatusText(status);
   }
 }
+/* The reviewer that served THIS response, taken from the response itself.
+
+   Deliberately not falling back to the configured provider or model: a review
+   stored before attribution existed, or one whose response carried none, must
+   read as "not recorded". Filling the gap from current Settings would attach
+   today's model to yesterday's verdict, which is the defect, not the fix. */
+function entityReviewReviewerRecord(data) {
+  return { provider: String(data?.reviewer?.provider || ""), model: String(data?.reviewer?.model || "") };
+}
 async function reviewEntityCandidateOnce(list, entity, fileName) {
   const target = entityBatchTarget(entity, fileName);
   const response = await fetch("/api/llm/review-entity-candidate", {
@@ -238,7 +247,7 @@ async function reviewEntityCandidateOnce(list, entity, fileName) {
   if (!response.ok) throw new Error(data.error || `Review failed (${response.status})`);
   const row = entityCandidateRow(entity, fileName, true);
   row.structuredReviews = row.structuredReviews && typeof row.structuredReviews === "object" ? row.structuredReviews : {};
-  row.structuredReviews[target.stateId] = { ...data.review, contractVersion: data.review?.contractVersion || data.contractVersion || ENTITY_REFERENCE_REVIEW_CONTRACT_VERSION, authoritySignature: data.review?.authoritySignature || data.authoritySignature || "", stateId: target.stateId, stateName: entityStateById(entity, target.stateId)?.name || "Default", reviewedAt: new Date().toISOString(), inputLabels: data.inputLabels || [] };
+  row.structuredReviews[target.stateId] = { ...data.review, contractVersion: data.review?.contractVersion || data.contractVersion || ENTITY_REFERENCE_REVIEW_CONTRACT_VERSION, authoritySignature: data.review?.authoritySignature || data.authoritySignature || "", stateId: target.stateId, stateName: entityStateById(entity, target.stateId)?.name || "Default", reviewedAt: new Date().toISOString(), inputLabels: data.inputLabels || [], reviewer: entityReviewReviewerRecord(data) };
   row.decision = row.decision === "rejected" ? "unreviewed" : row.decision || "unreviewed";
   return { target, review: row.structuredReviews[target.stateId] };
 }
@@ -389,6 +398,82 @@ function entityReviewSeverity(value) {
   const normalized = String(value || "pass").toLowerCase();
   return ["pass", "minor", "major", "blocking"].includes(normalized) ? normalized : "pass";
 }
+/* ---------- declared state: expected beside observed ----------------------
+
+   The panel that exists because a reviewer once decided, on its own, that an
+   ABSENT wax seal satisfied a state whose requirement was a BROKEN one, and
+   returned 96/100 with every gate green.
+
+   Every word rendered here was decided by the server review contract, which in
+   turn decided it from closed enums. This function only puts those decisions in
+   a director's language — exactly the rule the continuity workspace runs on. It
+   reads no score and it re-derives no outcome. */
+const ENTITY_REVIEW_EXPECTATION_WORDS = {
+  "must-remain": "must still be there, changed",
+  "must-appear": "must appear",
+  "must-disappear": "must be gone",
+  "not-a-feature-requirement": "not a requirement about one feature",
+};
+const ENTITY_REVIEW_OBSERVED_FEATURE_WORDS = {
+  present: "present",
+  absent: "absent",
+  uncertain: "could not tell",
+  "not-applicable": "no feature applies",
+};
+const ENTITY_REVIEW_OBSERVED_CONDITION_WORDS = {
+  "as-required": "in the declared condition",
+  different: "in a different condition",
+  uncertain: "condition could not be read",
+  "not-applicable": "condition does not apply",
+};
+function entityReviewOutcomeWord(outcome) {
+  return (typeof CONTINUITY_OUTCOME_LABELS === "object" && CONTINUITY_OUTCOME_LABELS[outcome])
+    || String(outcome || "").toUpperCase();
+}
+function entityReviewDeclaredStateMarkup(review) {
+  const evidence = review?.stateEvidence;
+  if (!evidence || !evidence.applies) return "";
+  const line = (label, value) => value ? `<span class="declared-state-line"><em>${esc(label)}</em>${esc(value)}</span>` : "";
+  const finding = (row) => `<article class="declared-state-finding outcome-${attr(row.outcome)}">
+      <header><b>${esc(row.headline)}</b><span class="declared-state-outcome">${esc(entityReviewOutcomeWord(row.outcome))}</span></header>
+      ${line("DECLARED", row.requirement)}
+      ${line("EXPECTED", `${row.feature || "this feature"} — ${ENTITY_REVIEW_EXPECTATION_WORDS[row.expectedFeature] || "not answered"}`)}
+      ${line("OBSERVED", `${ENTITY_REVIEW_OBSERVED_FEATURE_WORDS[row.observedFeature] || "not answered"} · ${ENTITY_REVIEW_OBSERVED_CONDITION_WORDS[row.observedCondition] || "not answered"}`)}
+      ${line("EVIDENCE", row.evidence)}
+      ${row.detail ? `<p>${esc(row.detail)}</p>` : ""}
+      ${row.recommendation ? `<small>${esc(row.recommendation)}</small>` : ""}
+    </article>`;
+  const drift = (row) => `<article class="declared-state-finding outcome-${attr(row.outcome)}">
+      <header><b>${esc(row.headline)}</b><span class="declared-state-outcome">${esc(entityReviewOutcomeWord(row.outcome))}</span></header>
+      ${line("PARENT AUTHORITY", row.parentValue)}
+      ${line("CANDIDATE", row.candidateValue)}
+      ${line("EVIDENCE", row.evidence)}
+      ${row.detail ? `<p>${esc(row.detail)}</p>` : ""}
+      ${row.recommendation ? `<small>${esc(row.recommendation)}</small>` : ""}
+    </article>`;
+  const omitted = Number(evidence.omittedRequirements || 0);
+  return `<section class="entity-review-declared-state state-${attr(evidence.outcome)}">
+    <header><div><span>DECLARED STATE · EXPECTED vs OBSERVED</span><b>${esc(entityReviewOutcomeWord(evidence.outcome))}</b><small>${esc(evidence.satisfied
+      ? "Every declared requirement was observed in the candidate."
+      : "A declared requirement was not observed in the candidate. This is a semantic result, not a score.")}</small></div></header>
+    ${(evidence.findings || []).map(finding).join("")}
+    ${(evidence.drift || []).length ? `<div class="declared-state-drift-head"><span>UNDECLARED DRIFT FROM THE PARENT AUTHORITY</span><small>The parent stays authoritative for everything this state did not ask to change.</small></div>${evidence.drift.map(drift).join("")}` : ""}
+    ${omitted ? `<div class="declared-state-omitted">${omitted} further clause${omitted === 1 ? "" : "s"} of this delta were not put on the checklist and were not checked.</div>` : ""}
+    ${(evidence.undeclaredAnswers || []).length ? `<div class="declared-state-omitted">${evidence.undeclaredAnswers.length} answer${evidence.undeclaredAnswers.length === 1 ? "" : "s"} about requirements this state never declared were discarded.</div>` : ""}
+  </section>`;
+}
+/* Which model actually served this review, as recorded when it ran. Never the
+   current Settings: a reviewer that ran last week under a different model must
+   keep saying so. */
+function entityReviewProvenanceMarkup(review) {
+  if (!review) return "";
+  const provider = String(review.reviewer?.provider || "");
+  const model = String(review.reviewer?.model || "");
+  const known = provider || model;
+  return `<section class="entity-review-provenance"><div><span>REVIEWED BY</span><b>${esc(known ? [provider, model].filter(Boolean).join(" · ") : "Not recorded for this review")}</b><small>${esc(known
+    ? "The provider and model that served this review, recorded when it ran."
+    : "This review predates reviewer attribution. CineBraid will not guess it from the current settings.")}</small></div>${review.reviewedAt ? `<em>${esc(new Date(review.reviewedAt).toLocaleString())}</em>` : ""}</section>`;
+}
 /* Contract vocabulary, rendered. The words are decided by the server review
    contract; these tables only put them in a director's language. */
 const ENTITY_REVIEW_OUTCOME_LABELS = {
@@ -426,6 +511,11 @@ function entityReviewModalMarkup(list, entity, media, state, review, busy = fals
   const pass = !!review?.pass;
   const statusLabel = review ? (pass ? "PASS" : "FLAG") : busy ? "REVIEWING" : "NOT REVIEWED";
   const statusTone = review ? (pass ? "pass" : "flag") : busy ? "busy" : "pending";
+  /* The semantic answer leads. The score is context underneath it, and says so
+     in words, because "96/100" printed first is what made a failed requirement
+     look like a technicality. */
+  const semanticApplies = !!review?.stateEvidence?.applies;
+  const semanticLabel = semanticApplies ? entityReviewOutcomeWord(review.stateEvidence.outcome) : "";
   const categories = review?.categories || {};
   const row = entityCandidateRow(entity, media.name, false) || {};
   const isSheet = typeof entityCandidateIsCoverageSheet === "function" && entityCandidateIsCoverageSheet(entity, media.name);
@@ -450,7 +540,12 @@ function entityReviewModalMarkup(list, entity, media, state, review, busy = fals
       }).join("")}</section>`
     : "";
   const hardCheckLabels = { sameUnderlyingEntity: "Same underlying asset", onlyRequestedDelta: "Only requested delta changed", sameEmbeddedContent: "Embedded content preserved", sameSpatialGeometry: "Same physical location", requestedViewCorrect: "Requested view is correct" };
-  const hardChecksMarkup = review?.requiredHardChecks?.length ? `<section class="entity-review-hard-checks"><header><div><span>AUTHORITY GATES</span><b>${review.hardGateFailures?.length ? `${review.hardGateFailures.length} blocking issue${review.hardGateFailures.length === 1 ? "" : "s"}` : "All required gates passed"}</b></div></header>${review.requiredHardChecks.map((key) => { const row = review.hardChecks?.[key] || {}; return `<article class="${row.pass ? "pass" : "fail"}"><b>${esc(hardCheckLabels[key] || key)}</b><span>${esc(row.note || (row.returned === false ? "The reviewer did not return this mandatory check." : row.pass ? "Passed." : "Failed."))}</span></article>`; }).join("")}</section>` : "";
+  /* Scoped to the authority gates themselves. Counting every hard-gate failure
+     here is what let this header announce an all-clear over a state the
+     candidate did not satisfy — and, the other way round, report a below-85
+     score as an authority-comparison fault. */
+  const authorityGateFailures = (review?.hardGateFailures || []).filter((key) => (review?.requiredHardChecks || []).includes(key));
+  const hardChecksMarkup = review?.requiredHardChecks?.length ? `<section class="entity-review-hard-checks"><header><div><span>AUTHORITY GATES</span><b>${authorityGateFailures.length ? `${authorityGateFailures.length} blocking issue${authorityGateFailures.length === 1 ? "" : "s"}` : "All authority-comparison gates passed"}</b><small>These compare the candidate against the approved authority images. They are not the whole verdict.</small></div></header>${review.requiredHardChecks.map((key) => { const row = review.hardChecks?.[key] || {}; return `<article class="${row.pass ? "pass" : "fail"}"><b>${esc(hardCheckLabels[key] || key)}</b><span>${esc(row.note || (row.returned === false ? "The reviewer did not return this mandatory check." : row.pass ? "Passed." : "Failed."))}</span></article>`; }).join("")}</section>` : "";
   const states = entityStateList(entity, true);
   const isCoverageCrop = !!row.targetCoverageSlotId;
   const primaryAction = isSheet
@@ -458,7 +553,7 @@ function entityReviewModalMarkup(list, entity, media, state, review, busy = fals
     : isCoverageCrop
       ? `<button class="approve-btn large" onclick="closeModal();approveCoverageCandidate('${list}','${entity.id}','${attr(media.name)}','${attr(row.targetCoverageSlotId)}',${review?.pass ? "false" : "true"})">ASSIGN TO ${esc(String(row.targetCoverageSlotName || "VIEW").toUpperCase())}</button>`
       : `<button class="approve-btn large" onclick="closeModal();approveEntityFile('${list}','${entity.id}','${attr(media.name)}','${attr(state.id)}')">APPROVE FOR ${esc((state.name || "DEFAULT").toUpperCase())}</button>`;
-  return `<div class="entity-candidate-review-modal"><header class="entity-candidate-review-title"><div><span>${esc(list.slice(0, -1).toUpperCase())} · ${isSheet ? "SHEET REVIEW" : "CANDIDATE REVIEW"}</span><h3>${esc(media.name)}</h3><p>${isSheet ? "Judge identity consistency and panel usefulness, then extract each angle into its own approved slot." : isCoverageCrop ? `Judge angle accuracy, identity, crop quality, and usefulness for ${esc(row.targetCoverageSlotName || "the selected coverage slot")}.` : "Judge this image for one explicit continuity state before approving it."}</p></div><div class="entity-candidate-review-title-actions"><span class="entity-review-score state-${statusTone}">${review ? `${score}/100 · ${statusLabel}` : statusLabel}</span><button class="cancel" onclick="closeModal()">Close</button></div></header><div class="entity-candidate-review-layout"><section class="entity-candidate-review-visual">${isVideo(media.name) ? `<video controls muted src="${attr(media.url)}"></video>` : `<img src="${attr(media.url)}" alt="Entity candidate">`}<div class="entity-review-target"><span>${isSheet ? "SHEET AUTHORITY" : "REVIEW TARGET"}</span>${isSheet ? `<b>${esc(row.coverageSheetType === "expressions" ? "Expression sheet" : "Angle / viewpoint sheet")}</b><small>The sheet remains a source artifact. Individual panels become the approved coverage references.</small>` : `<select id="entity-review-state" onchange="changeEntityCandidateReviewState(this.value)">${states.map((item) => `<option value="${attr(item.id)}" ${item.id === state.id ? "selected" : ""}>${esc(item.name || "Default")}${item.appliesTo ? ` · ${esc(item.appliesTo)}` : ""}</option>`).join("")}</select><small>${esc(state.notes || (state.isDefault ? "Primary project-wide appearance and design." : "No state-specific notes have been entered."))}</small>`}</div></section><section class="entity-candidate-review-results">${busy ? (typeof assistantWorkingCard === "function" ? assistantWorkingCard("Qwen is reviewing this candidate…", isSheet ? "Checking cross-panel identity, angle clarity, crop usefulness, and artifacts. Automatic recovery is enabled." : `Checking all six factors against ${state.name || "Default"}. Automatic recovery is enabled if the vision response fails or is incomplete.`, { mode: "vision" }) : `<div class="guided-assistant-progress"><span class="spin">◌</span><div><b>Qwen is reviewing this candidate…</b></div></div>`) : error ? `<div class="guided-prompt-error"><b>Review failed</b><span>${esc(error)}</span></div>` : ""}${review ? `<section class="entity-review-summary state-${statusTone}"><div><span>OVERALL RESULT</span><b>${score}/100 · ${statusLabel}</b><small>${esc(review.summary || "No summary returned.")}</small></div><span>${esc(String(review.recommendation || "review").toUpperCase())}</span></section>` : `<section class="entity-review-summary state-pending"><div><span>OVERALL RESULT</span><b>${isSheet ? "Sheet not reviewed" : `Not reviewed for ${esc(state.name || "Default")}`}</b><small>The assistant result is advisory. Approval and extraction remain human decisions.</small></div></section>`}${authorityMarkup}${stateMatchMarkup}${entityReviewHumanDecisionMarkup(row, review)}${blockersMarkup}${hardChecksMarkup}<div class="entity-review-factor-grid">${categoriesMarkup}</div>${review?.referenceNotes?.length ? `<details class="entity-review-reference-notes"><summary>Reference comparisons <span>${review.referenceNotes.length}</span></summary>${review.referenceNotes.map((item) => `<div><b>${esc(item.label || "Reference")}</b><span>${esc(item.note || "")}</span></div>`).join("")}</details>` : ""}</section></div><footer class="entity-candidate-review-actions"><div><button class="ghost-btn" ${busy ? "disabled" : ""} onclick="runEntityCandidateVisionReview()"${aiDisabledAttrs("vision")}>${busy ? `<span class="spin">◌</span> REVIEWING…` : review ? "RUN REVIEW AGAIN" : "RUN AI REVIEW"}</button>${row.decision === "rejected" ? `<button class="chip" onclick="setEntityCandidateDecision('${list}','${entity.id}','${attr(media.name)}','unreviewed');closeModal()">RESTORE CANDIDATE</button>` : `<button class="chip danger" onclick="setEntityCandidateDecision('${list}','${entity.id}','${attr(media.name)}','rejected');closeModal()">REJECT CANDIDATE</button>`}</div>${primaryAction}</footer></div>`;
+  return `<div class="entity-candidate-review-modal"><header class="entity-candidate-review-title"><div><span>${esc(list.slice(0, -1).toUpperCase())} · ${isSheet ? "SHEET REVIEW" : "CANDIDATE REVIEW"}</span><h3>${esc(media.name)}</h3><p>${isSheet ? "Judge identity consistency and panel usefulness, then extract each angle into its own approved slot." : isCoverageCrop ? `Judge angle accuracy, identity, crop quality, and usefulness for ${esc(row.targetCoverageSlotName || "the selected coverage slot")}.` : "Judge this image for one explicit continuity state before approving it."}</p></div><div class="entity-candidate-review-title-actions"><span class="entity-review-score state-${statusTone}">${review ? `${statusLabel}${semanticApplies ? ` · ${semanticLabel}` : ""}` : statusLabel}</span>${review ? `<span class="entity-review-score-support" title="Advisory context only. A score cannot clear a declared requirement the candidate did not satisfy.">SCORE ${score}/100</span>` : ""}<button class="cancel" onclick="closeModal()">Close</button></div></header><div class="entity-candidate-review-layout"><section class="entity-candidate-review-visual">${isVideo(media.name) ? `<video controls muted src="${attr(media.url)}"></video>` : `<img src="${attr(media.url)}" alt="Entity candidate">`}<div class="entity-review-target"><span>${isSheet ? "SHEET AUTHORITY" : "REVIEW TARGET"}</span>${isSheet ? `<b>${esc(row.coverageSheetType === "expressions" ? "Expression sheet" : "Angle / viewpoint sheet")}</b><small>The sheet remains a source artifact. Individual panels become the approved coverage references.</small>` : `<select id="entity-review-state" onchange="changeEntityCandidateReviewState(this.value)">${states.map((item) => `<option value="${attr(item.id)}" ${item.id === state.id ? "selected" : ""}>${esc(item.name || "Default")}${item.appliesTo ? ` · ${esc(item.appliesTo)}` : ""}</option>`).join("")}</select><small>${esc(state.notes || (state.isDefault ? "Primary project-wide appearance and design." : "No state-specific notes have been entered."))}</small>`}</div></section><section class="entity-candidate-review-results">${busy ? (typeof assistantWorkingCard === "function" ? assistantWorkingCard("The configured vision reviewer is checking this candidate…", isSheet ? "Checking cross-panel identity, angle clarity, crop usefulness, and artifacts. Automatic recovery is enabled." : `Observing every declared requirement of ${state.name || "Default"} and all six factors. Automatic recovery is enabled if the vision response fails or is incomplete.`, { mode: "vision" }) : `<div class="guided-assistant-progress"><span class="spin">◌</span><div><b>The configured vision reviewer is checking this candidate…</b></div></div>`) : error ? `<div class="guided-prompt-error"><b>Review failed</b><span>${esc(error)}</span></div>` : ""}${review ? `<section class="entity-review-summary state-${statusTone}"><div><span>OVERALL RESULT</span><b>${statusLabel}${semanticApplies ? ` · DECLARED STATE ${semanticLabel}` : ""}</b><small>${esc(review.summary || "No summary returned.")}</small><em class="entity-review-score-support">Supporting score ${score}/100. Advisory context only — it cannot clear a declared requirement the candidate did not satisfy.</em></div><span>${esc(String(review.recommendation || "review").toUpperCase())}</span></section>` : `<section class="entity-review-summary state-pending"><div><span>OVERALL RESULT</span><b>${isSheet ? "Sheet not reviewed" : `Not reviewed for ${esc(state.name || "Default")}`}</b><small>The assistant result is advisory. Approval and extraction remain human decisions.</small></div></section>`}${entityReviewDeclaredStateMarkup(review)}${authorityMarkup}${stateMatchMarkup}${entityReviewHumanDecisionMarkup(row, review)}${blockersMarkup}${hardChecksMarkup}${entityReviewProvenanceMarkup(review)}<div class="entity-review-factor-grid">${categoriesMarkup}</div>${review?.referenceNotes?.length ? `<details class="entity-review-reference-notes"><summary>Reference comparisons <span>${review.referenceNotes.length}</span></summary>${review.referenceNotes.map((item) => `<div><b>${esc(item.label || "Reference")}</b><span>${esc(item.note || "")}</span></div>`).join("")}</details>` : ""}</section></div><footer class="entity-candidate-review-actions"><div><button class="ghost-btn" ${busy ? "disabled" : ""} onclick="runEntityCandidateVisionReview()"${aiDisabledAttrs("vision")}>${busy ? `<span class="spin">◌</span> REVIEWING…` : review ? "RUN REVIEW AGAIN" : "RUN AI REVIEW"}</button>${row.decision === "rejected" ? `<button class="chip" onclick="setEntityCandidateDecision('${list}','${entity.id}','${attr(media.name)}','unreviewed');closeModal()">RESTORE CANDIDATE</button>` : `<button class="chip danger" onclick="setEntityCandidateDecision('${list}','${entity.id}','${attr(media.name)}','rejected');closeModal()">REJECT CANDIDATE</button>`}</div>${primaryAction}</footer></div>`;
 }
 
 window.openEntityCandidateReview = (list, id, fileName, stateId = "", continueAction = "") => {
@@ -496,7 +591,7 @@ window.runEntityCandidateVisionReview = async () => {
     if (!response.ok) throw new Error(data.error || `Review failed (${response.status})`);
     const row = entityCandidateRow(entity, current.fileName, true);
     row.structuredReviews = row.structuredReviews && typeof row.structuredReviews === "object" ? row.structuredReviews : {};
-    row.structuredReviews[state.id] = { ...data.review, contractVersion: data.review?.contractVersion || data.contractVersion || ENTITY_REFERENCE_REVIEW_CONTRACT_VERSION, authoritySignature: data.review?.authoritySignature || data.authoritySignature || "", stateId: state.id, stateName: state.name || "Default", reviewedAt: new Date().toISOString(), inputLabels: data.inputLabels || [] };
+    row.structuredReviews[state.id] = { ...data.review, contractVersion: data.review?.contractVersion || data.contractVersion || ENTITY_REFERENCE_REVIEW_CONTRACT_VERSION, authoritySignature: data.review?.authoritySignature || data.authoritySignature || "", stateId: state.id, stateName: state.name || "Default", reviewedAt: new Date().toISOString(), inputLabels: data.inputLabels || [], reviewer: entityReviewReviewerRecord(data) };
     /* A new AI opinion never overturns a human one. Rejection stays rejected
        until a person restores it; the fresh review is simply readable there. */
     row.decision = row.decision || "unreviewed";
