@@ -1,0 +1,202 @@
+{
+  "meta": {
+    "title": "Declared Entity State Bindings",
+    "schemaVersion": "6.7"
+  },
+  "scenes": [
+    { "id": "SC-RAIN", "title": "The doorway" }
+  ],
+  "shots": [
+    {
+      "id": "BIND-A",
+      "scene": "SC-RAIN",
+      "title": "Fixture A - shot binding only",
+      "desc": "Rhea waits. The shot declares her rain-soaked and no frame disagrees.",
+      "dur": 5,
+      "characters": ["CHAR-RHEA"],
+      "continuityStateSelections": { "CHAR-RHEA": "st-rhea-wet" },
+      "keyframes": [
+        { "id": "kf-a", "label": "A", "description": "Rhea in the doorway." }
+      ],
+      "creationBrief": { "locationId": "LOC-DOOR", "propIds": [] }
+    },
+    {
+      "id": "BIND-B",
+      "scene": "SC-RAIN",
+      "title": "Fixture B - a frame overrides the shot",
+      "desc": "Rhea steps out of the rain between the two frames.",
+      "dur": 6,
+      "characters": ["CHAR-RHEA"],
+      "continuityStateSelections": { "CHAR-RHEA": "st-rhea-clean" },
+      "keyframes": [
+        { "id": "kf-a", "label": "A", "description": "Dry, under the awning." },
+        { "id": "kf-b", "label": "B", "description": "Out in it." }
+      ],
+      "creationBrief": {
+        "locationId": "LOC-DOOR",
+        "propIds": [],
+        "frameWorkflows": {
+          "kf-b": {
+            "mode": "auto",
+            "characterStateSelections": { "CHAR-RHEA": "st-rhea-wet" }
+          }
+        }
+      }
+    },
+    {
+      "id": "BIND-C",
+      "scene": "SC-RAIN",
+      "title": "Fixture C - three frames, three entities",
+      "desc": "The case opens, the coat soaks through, the doorway goes to night.",
+      "dur": 9,
+      "characters": ["CHAR-RHEA"],
+      "continuityStateSelections": {
+        "CHAR-RHEA": "st-rhea-clean",
+        "PROP-CASE": "st-case-closed",
+        "LOC-DOOR": "st-door-day"
+      },
+      "keyframes": [
+        { "id": "kf-a", "label": "A", "description": "Clean, closed, daylight." },
+        { "id": "kf-b", "label": "B", "description": "Soaked, open, daylight." },
+        { "id": "kf-c", "label": "C", "description": "Soaked, closed again, night." }
+      ],
+      "creationBrief": {
+        "locationId": "LOC-DOOR",
+        "propIds": ["PROP-CASE"],
+        "frameWorkflows": {
+          "kf-b": {
+            "mode": "auto",
+            "characterStateSelections": { "CHAR-RHEA": "st-rhea-wet" },
+            "propStateSelections": { "PROP-CASE": "st-case-open" }
+          },
+          "kf-c": {
+            "mode": "auto",
+            "characterStateSelections": { "CHAR-RHEA": "st-rhea-wet" },
+            "locationStateId": "st-door-night"
+          }
+        }
+      }
+    },
+    {
+      "id": "BIND-D",
+      "scene": "SC-RAIN",
+      "title": "Fixture D - three entities, one state id",
+      "desc": "A character, a prop and a location that all call their state state-default, and one that does not.",
+      "dur": 4,
+      "characters": ["CHAR-DUPE"],
+      "continuityStateSelections": {
+        "CHAR-DUPE": "state-default",
+        "PROP-DUPE": "state-default",
+        "LOC-DUPE": "state-default"
+      },
+      "keyframes": [
+        { "id": "kf-a", "label": "A", "description": "All three at their defaults." },
+        { "id": "kf-b", "label": "B", "description": "Each moves to its own second state." }
+      ],
+      "creationBrief": {
+        "locationId": "LOC-DUPE",
+        "propIds": ["PROP-DUPE"],
+        "frameWorkflows": {
+          "kf-b": {
+            "mode": "auto",
+            "characterStateSelections": { "CHAR-DUPE": "state-alt" },
+            "propStateSelections": { "PROP-DUPE": "state-alt" },
+            "locationStateId": "state-alt"
+          }
+        }
+      }
+    },
+    {
+      "id": "BIND-E",
+      "scene": "SC-RAIN",
+      "title": "Fixture E - four selections migration must refuse",
+      "desc": "Every way a legacy selection can fail to name a binding, in one shot.",
+      "dur": 3,
+      "characters": ["CHAR-RHEA"],
+      "continuityStateSelections": {
+        "CHAR-RHEA": "st-rhea-nonexistent",
+        "CHAR-GHOST": "st-rhea-wet",
+        "PROP-CASE": "st-case-open"
+      },
+      "keyframes": [
+        { "id": "kf-a", "label": "A", "description": "The only frame this shot has." }
+      ],
+      "creationBrief": {
+        "locationId": "",
+        "propIds": [],
+        "frameWorkflows": {
+          "kf-a": {
+            "mode": "auto",
+            "locationStateId": "st-door-night"
+          },
+          "kf-missing": {
+            "mode": "auto",
+            "characterStateSelections": { "CHAR-RHEA": "st-rhea-wet" }
+          }
+        }
+      }
+    }
+  ],
+  "characters": [
+    {
+      "id": "CHAR-RHEA",
+      "name": "Rhea",
+      "description": "Courier. Long coat, short hair, one canvas strap.",
+      "approvedFile": "CHAR-RHEA-CLEAN.png",
+      "continuityStates": [
+        { "id": "st-rhea-clean", "name": "Clean", "isDefault": true, "notes": "Dry coat, hair down.", "approvedFile": "CHAR-RHEA-CLEAN.png" },
+        { "id": "st-rhea-wet", "name": "Rain-soaked", "parentStateId": "st-rhea-clean", "changeOnly": "Coat darkened through, hair flat, water on the strap.", "approvedFile": "CHAR-RHEA-WET.png" }
+      ]
+    },
+    {
+      "id": "CHAR-DUPE",
+      "name": "The clerk",
+      "description": "Behind the counter, never leaves it.",
+      "continuityStates": [
+        { "id": "state-default", "name": "Default", "isDefault": true, "notes": "Apron on." },
+        { "id": "state-alt", "name": "Apron off", "changeOnly": "Apron over the stool." }
+      ]
+    }
+  ],
+  "locations": [
+    {
+      "id": "LOC-DOOR",
+      "name": "The doorway",
+      "description": "Brick, one step, a dead bulb.",
+      "continuityStates": [
+        { "id": "st-door-day", "name": "Day", "isDefault": true, "notes": "Flat overcast." },
+        { "id": "st-door-night", "name": "Night", "changeOnly": "Bulb lit, brick wet." }
+      ]
+    },
+    {
+      "id": "LOC-DUPE",
+      "name": "The counter",
+      "description": "Formica, one till.",
+      "continuityStates": [
+        { "id": "state-default", "name": "Default", "isDefault": true, "notes": "Shutter up." },
+        { "id": "state-alt", "name": "Shuttered", "changeOnly": "Shutter down over the window." }
+      ]
+    }
+  ],
+  "props": [
+    {
+      "id": "PROP-CASE",
+      "name": "The case",
+      "description": "Aluminium, two catches.",
+      "continuityStates": [
+        { "id": "st-case-closed", "name": "Closed", "isDefault": true, "notes": "Both catches down." },
+        { "id": "st-case-open", "name": "Open", "changeOnly": "Lid back, foam visible." }
+      ]
+    },
+    {
+      "id": "PROP-DUPE",
+      "name": "The till",
+      "description": "Mechanical, one drawer.",
+      "continuityStates": [
+        { "id": "state-default", "name": "Default", "isDefault": true, "notes": "Drawer shut." },
+        { "id": "state-alt", "name": "Drawer out", "changeOnly": "Drawer open, tray visible." }
+      ]
+    }
+  ],
+  "vehicles": []
+}

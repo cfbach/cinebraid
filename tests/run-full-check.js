@@ -20,6 +20,8 @@ const nodeSuites = [
   "check:coverage",
   "check:coverage-requirement",
   "check:coverage-requirement-negative",
+  "check:state-binding",
+  "check:state-binding-negative",
   "check:safety",
   "check:focused",
   "check:reference-ux",

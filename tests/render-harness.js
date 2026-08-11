@@ -9,6 +9,7 @@ const ROOT = path.join(__dirname, "..");
 const PUBLIC = path.join(ROOT, "public");
 const SCRIPT_ORDER = [
   "shared-entities.js",
+  "shared-continuity-binding.js",
   "shared-continuity.js",
   "shared-voice.js",
   "shared-camera.js",

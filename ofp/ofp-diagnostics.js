@@ -68,6 +68,27 @@ const DIAGNOSTICS = {
   "statement.actor.missing": { severity: SEVERITY.ERROR, mode: MODES.SEMANTIC, summary: "an approved statement names no actor" },
   "statement.actor.not-human": { severity: SEVERITY.ERROR, mode: MODES.SEMANTIC, summary: "an approved statement names a non-human actor" },
 
+  /* ---- semantic: the continuity profile (P4-SEM-B) ----
+
+     Four codes, and they exist because the generic machinery genuinely cannot
+     express what they check. `ref.unresolved` already covers a binding naming
+     no entity at all, and `schema.required.missing` / `schema.type` already
+     cover a malformed binding, so neither is restated here.
+
+     What is left is RELATIVE resolution: a state resolved within one entity, a
+     frame resolved within one shot, and a binding weighed against the shot it
+     is about. A global index cannot answer any of the three, which is the whole
+     reason the binding lives in a profile that owns its own resolution rule
+     rather than in core, which does not have one. */
+  "continuity.binding.state-unresolved": { severity: SEVERITY.ERROR, mode: MODES.SEMANTIC, summary: "a continuity binding names a state its own entity does not declare" },
+  "continuity.binding.entity-unlisted": { severity: SEVERITY.ERROR, mode: MODES.SEMANTIC, summary: "a continuity binding names an entity the shot does not contain" },
+  "continuity.binding.duplicate": { severity: SEVERITY.ERROR, mode: MODES.SEMANTIC, summary: "one scope binds the same entity, frame or shot twice" },
+  "continuity.binding.frame-unknown": { severity: SEVERITY.ERROR, mode: MODES.SEMANTIC, summary: "a frame-level continuity binding names no frame on that shot" },
+  /* Participation is declared, not inferred. A document carrying profile data
+     while `format.profiles` omits the profile is claiming to be readable by a
+     tool that would ignore exactly the data it carries. */
+  "continuity.profile.undeclared": { severity: SEVERITY.ERROR, mode: MODES.SEMANTIC, summary: "continuity profile data is present and format.profiles does not declare the profile" },
+
   /* ---- portability ---- */
   "id.not-portable": { severity: SEVERITY.WARNING, mode: MODES.PORTABILITY, summary: "an identifier is legal but outside the id-portable profile" },
 

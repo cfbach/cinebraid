@@ -447,6 +447,89 @@ const STATEMENT = {
   required: ["id", "target", "kind", "claim", "at"],
 };
 
+/* ---- the continuity profile ----------------------------------------------
+
+   P4-SEM-B, and the FIRST modelled interior of a profile in this contract.
+
+   WHY IT IS A PROFILE AND NOT CORE. A shot's declared entity state does not add
+   a fact about the film - the approved asset already shows the sealed case. It
+   restates the fact in a machine-checkable form so continuity tooling can verify
+   a candidate against a declared intent instead of parsing English. A scheduler,
+   a breakdown tool or an export viewer reads every shot, frame, cast member and
+   approved image correctly without it. That is what a profile is for, and it is
+   why `shots[].subjects[]` and `FRAME` gain nothing here.
+
+   WHY IT IS MODELLED RATHER THAN PASSTHROUGH. `checkRefs` stops at a passthrough
+   object, so a binding left inside one would get no reference validation at all
+   and a `stateId` naming nothing would be undetected. A feature that looks
+   canonical while nothing checks it is worse than an honest blob.
+
+   WHY `stateId` CARRIES NO `ref:`. State ids are OWNER-SCOPED. In the real
+   corpus all twelve state records across every entity of overfit-18 carry the
+   id `state-default`, which is legal - `id.duplicate` is defined per collection
+   - and permanent. `recordExists` is a global flat index by type, so a `ref:`
+   here would resolve `state-default` against somebody else's wardrobe change.
+   `SHOT.setting.coverageId` already carries no `ref:` for exactly this reason.
+   The difference is that the profile OWNS its resolution rule and states it:
+   the state is resolved within the entity named in the same binding, and
+   nowhere else. ofp-validate.js implements that as continuity.binding.*.
+
+   WHY `frameId` CARRIES NO `ref:` EITHER. Frames are scoped to their shot, so a
+   global frame index would accept a frame id belonging to a different shot. The
+   frame is resolved within the shot that contains the binding.
+
+   NOTHING HERE DECLARES `record:`. These are not addressable subjects and must
+   not become any: the containment table is the frozen P0 §3 list of record
+   types, a test asserts it exactly, and this profile adds nothing to it.
+
+   ABSENCE MEANS INHERIT. There is no `inherit` member, no "same as shot" marker
+   and no stored copy of an inherited value. The resolution rule - frame, then
+   shot, then the entity's own default - lives in
+   public/shared-continuity-binding.js and is shared with the running app. */
+
+const CONTINUITY_ENTITY_STATE = {
+  type: "object",
+  properties: {
+    /* Bare and globally resolvable, exactly like shot.subjects[].entityId, and
+       legal for the same reason: entity IDs share one namespace. */
+    entityId: { type: "string", ref: "entity" },
+    stateId: { type: "string" },
+  },
+  required: ["entityId", "stateId"],
+};
+
+const CONTINUITY_FRAME = {
+  type: "object",
+  properties: {
+    frameId: { type: "string" },
+    /* Ordered data inside a record and never sorted by the writer (rule 6). It
+       has no `id`, so `set` could not key it; a migration that CREATES the
+       collection sorts by entityId itself, so two projects declaring the same
+       bindings still produce the same document. */
+    entityStates: { type: "array", collection: "ordered", items: CONTINUITY_ENTITY_STATE },
+  },
+  required: ["frameId"],
+};
+
+const CONTINUITY_SHOT = {
+  type: "object",
+  properties: {
+    shotId: { type: "string", ref: "shot" },
+    entityStates: { type: "array", collection: "ordered", items: CONTINUITY_ENTITY_STATE },
+    frames: { type: "array", collection: "ordered", items: CONTINUITY_FRAME },
+  },
+  required: ["shotId"],
+};
+
+const CONTINUITY = {
+  type: "object",
+  profile: "continuity",
+  properties: {
+    shots: { type: "array", collection: "ordered", items: CONTINUITY_SHOT },
+  },
+  required: [],
+};
+
 /* ---- the document -------------------------------------------------------- */
 
 const DOCUMENT = {
@@ -505,11 +588,14 @@ const DOCUMENT = {
     },
     assets: { type: "array", record: "asset", collection: "set", items: ASSET },
     references: { type: "array", record: "reference", collection: "set", items: REFERENCE },
-    /* Declared present, interior deferred to the `continuity` profile, which
-       this contract revision does not model. Preserved verbatim and NOT
-       reported key by key: reporting every field of a profile we have not
-       written yet would be noise, not a finding. */
-    continuity: { type: "object", passthrough: true, profile: "continuity" },
+    /* P4-SEM-B modelled the shot and frame entity-state bindings. Everything
+       else the continuity profile will eventually hold is still unwritten, and
+       an unrecognised key inside this block is reported as
+       schema.unknown-property and PRESERVED, exactly like an unrecognised key
+       on a core record - the profile is not a closed shape, it is a declared
+       one. A client that does not implement continuity still preserves the
+       whole block deep-equal under serialization rules 9 and 11. */
+    continuity: CONTINUITY,
     statements: { type: "array", record: "statement", collection: "set", items: STATEMENT },
     /* Foreign content by definition. Preserved as parsed, re-serialized with
        keys in JCS order (rule 11), never inspected, never coerced. */
@@ -569,4 +655,7 @@ module.exports = {
   SUBJECT_TYPES,
   /* Exported for the serializer, the validator and the key-order experiment. */
   records: { SOURCE, ANCHOR, SCENE, SHOT, FRAME, MOTION, RELATION, CHARACTER, LOCATION, PROP, VEHICLE, VOICE, ENTITY_STATE, COVERAGE, ASSET, REFERENCE, STATEMENT, VOICE_LINK },
+  /* The continuity profile's declared interior. Not records - none of these is
+     an addressable subject and none may become one. */
+  profiles: { CONTINUITY, CONTINUITY_SHOT, CONTINUITY_FRAME, CONTINUITY_ENTITY_STATE },
 };

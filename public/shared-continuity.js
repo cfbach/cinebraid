@@ -256,28 +256,34 @@ function resolveStateRecord(entity, stateId) {
 }
 /* frame-level selection, then shot-level, then the entity default.
 
-   The frame-level maps have readers (server.js derivedFrameContext) and rename
-   remapping (creation-studio.js) but no writer yet — Phase 4 adds the writers.
-   Honouring them here means intra-shot declared state changes work the moment
-   they become writable, with no change to this builder. */
+   P4-SEM-B: the precedence itself is no longer stated here. It is one canonical
+   contract in public/shared-continuity-binding.js, which the OFP `continuity`
+   profile, the migration rule and the frame's design-authority selection all
+   resolve through as well - so a project cannot declare one state and generate
+   against another. This function keeps its signature and its exact meaning; it
+   is now the runtime ENTRY POINT to the rule rather than a second copy of it.
+
+   `kind` survives because a bare `locationStateId` on a frame record carries no
+   entity of its own, and the caller asking about a location entity is what says
+   which entity it belongs to. */
+function continuityBindingContract() {
+  if (typeof readShotStateBindings === "function" && typeof resolveBoundStateId === "function")
+    return { readShotStateBindings, resolveBoundStateId };
+  const global = typeof globalThis !== "undefined" ? globalThis : {};
+  if (typeof global.readShotStateBindings === "function" && typeof global.resolveBoundStateId === "function")
+    return { readShotStateBindings: global.readShotStateBindings, resolveBoundStateId: global.resolveBoundStateId };
+  return null;
+}
 function resolveDeclaredStateId(shot, frameId, kind, entityId) {
-  const workflows = shot && shot.creationBrief && shot.creationBrief.frameWorkflows;
-  const workflow = workflows && typeof workflows === "object" && frameId ? workflows[frameId] : null;
-  if (workflow && typeof workflow === "object") {
-    const maps = {
-      character: workflow.characterStateSelections,
-      prop: workflow.propStateSelections,
-      vehicle: workflow.vehicleStateSelections,
-      location: workflow.locationStateSelections,
-    };
-    const map = maps[kind];
-    if (map && typeof map === "object" && map[entityId]) return String(map[entityId]);
-    if (kind === "location" && workflow.locationStateId) return String(workflow.locationStateId);
-  }
-  const shotSelection = shot && shot.continuityStateSelections && typeof shot.continuityStateSelections === "object"
-    ? shot.continuityStateSelections[entityId]
-    : "";
-  return shotSelection ? String(shotSelection) : "";
+  const contract = continuityBindingContract();
+  /* Loud rather than silently unresolved. A missing contract means the shared
+     module did not load, and returning "" would look exactly like "this shot
+     declares nothing" while quietly generating against the wrong state. */
+  if (!contract) throw new Error("shared-continuity-binding.js must load before shared-continuity.js: the declared-state precedence lives there");
+  const bindings = contract.readShotStateBindings(shot, {
+    locationEntityId: kind === "location" ? String(entityId || "") : "",
+  });
+  return contract.resolveBoundStateId(bindings, frameId, entityId);
 }
 /* One short sentence naming the object, not the full canon block: the
    qualified checklist gives the model an identity cue, not a design brief. */
@@ -1148,8 +1154,17 @@ const CONTINUITY_EXPORTS = {
 
 if (typeof window !== "undefined") for (const [key, value] of Object.entries(CONTINUITY_EXPORTS)) window[key] = value;
 if (typeof module !== "undefined" && module.exports) {
-  /* Node has no script-tag load order, so the dependency is taken directly. */
+  /* Node has no script-tag load order, so the dependencies are taken directly. */
   const shared = require("./shared-entities");
   globalThis.shotDependencyRecords = globalThis.shotDependencyRecords || shared.shotDependencyRecords;
+  /* Assigned, not defaulted. `shotDependencyRecords` above uses `x = x || y`
+     because a browser-shaped harness may have installed it first and the two
+     are the same function either way. The binding contract is different: the
+     module this line just required IS the authority, and deferring to whatever
+     a previous load left on globalThis is how a reloaded or patched copy gets
+     silently ignored while the stale one keeps answering. */
+  const binding = require("./shared-continuity-binding");
+  globalThis.readShotStateBindings = binding.readShotStateBindings;
+  globalThis.resolveBoundStateId = binding.resolveBoundStateId;
   module.exports = CONTINUITY_EXPORTS;
 }

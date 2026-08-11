@@ -1,0 +1,217 @@
+{
+  "format": {
+    "id": "open-film-project",
+    "version": "1.0-draft.1",
+    "profiles": [
+      "core",
+      "bible",
+      "shot-planning",
+      "continuity"
+    ],
+    "generator": {
+      "name": "CineBraid",
+      "version": "6.7.0-private.1"
+    }
+  },
+  "meta": {
+    "title": "Continuity State Bindings",
+    "aspectRatio": "16:9"
+  },
+  "story": {
+    "scenes": [
+      {
+        "id": "sc-0100",
+        "title": "The doorway",
+        "order": {
+          "script": 1
+        }
+      }
+    ]
+  },
+  "shots": [
+    {
+      "id": "sh-0100",
+      "sceneId": "sc-0100",
+      "title": "Shot binding only",
+      "description": "The shot declares Rhea rain-soaked and no frame disagrees.",
+      "order": {
+        "script": 1
+      },
+      "setting": {
+        "locationId": "loc-door"
+      },
+      "subjects": [
+        {
+          "entityId": "char-rhea"
+        }
+      ],
+      "frames": [
+        {
+          "id": "fr-a",
+          "role": "first",
+          "description": "Rhea in the doorway."
+        }
+      ]
+    },
+    {
+      "id": "sh-0200",
+      "sceneId": "sc-0100",
+      "title": "Three frames, three entities, one state id",
+      "description": "The case opens, the coat soaks through, the doorway goes to night.",
+      "order": {
+        "script": 2
+      },
+      "setting": {
+        "locationId": "loc-door"
+      },
+      "subjects": [
+        {
+          "entityId": "char-rhea"
+        },
+        {
+          "entityId": "prop-case"
+        }
+      ],
+      "frames": [
+        {
+          "id": "fr-a",
+          "role": "first",
+          "description": "Clean, closed, daylight."
+        },
+        {
+          "id": "fr-b",
+          "role": "intermediate",
+          "description": "Soaked, open, daylight."
+        },
+        {
+          "id": "fr-c",
+          "role": "last",
+          "description": "Soaked, closed again, night."
+        }
+      ]
+    }
+  ],
+  "entities": {
+    "characters": [
+      {
+        "id": "char-rhea",
+        "name": "Rhea",
+        "description": "Courier. Long coat, short hair, one canvas strap.",
+        "states": [
+          {
+            "id": "state-alt",
+            "name": "Rain-soaked",
+            "derivesFrom": "state-default",
+            "delta": "Coat darkened through, hair flat."
+          },
+          {
+            "id": "state-default",
+            "name": "Clean",
+            "isDefault": true,
+            "delta": "Dry coat, hair down."
+          }
+        ]
+      }
+    ],
+    "locations": [
+      {
+        "id": "loc-door",
+        "name": "The doorway",
+        "description": "Brick, one step, a dead bulb.",
+        "states": [
+          {
+            "id": "state-alt",
+            "name": "Night",
+            "derivesFrom": "state-default",
+            "delta": "Bulb lit, brick wet."
+          },
+          {
+            "id": "state-default",
+            "name": "Day",
+            "isDefault": true,
+            "delta": "Flat overcast."
+          }
+        ]
+      }
+    ],
+    "props": [
+      {
+        "id": "prop-case",
+        "name": "The case",
+        "description": "Aluminium, two catches.",
+        "states": [
+          {
+            "id": "state-alt",
+            "name": "Open",
+            "derivesFrom": "state-default",
+            "delta": "Lid back, foam visible."
+          },
+          {
+            "id": "state-default",
+            "name": "Closed",
+            "isDefault": true,
+            "delta": "Both catches down."
+          }
+        ]
+      }
+    ]
+  },
+  "continuity": {
+    "shots": [
+      {
+        "shotId": "sh-0100",
+        "entityStates": [
+          {
+            "entityId": "char-rhea",
+            "stateId": "state-alt"
+          }
+        ]
+      },
+      {
+        "shotId": "sh-0200",
+        "entityStates": [
+          {
+            "entityId": "char-rhea",
+            "stateId": "state-default"
+          },
+          {
+            "entityId": "loc-door",
+            "stateId": "state-default"
+          },
+          {
+            "entityId": "prop-case",
+            "stateId": "state-default"
+          }
+        ],
+        "frames": [
+          {
+            "frameId": "fr-b",
+            "entityStates": [
+              {
+                "entityId": "char-rhea",
+                "stateId": "state-alt"
+              },
+              {
+                "entityId": "prop-case",
+                "stateId": "state-alt"
+              }
+            ]
+          },
+          {
+            "frameId": "fr-c",
+            "entityStates": [
+              {
+                "entityId": "char-rhea",
+                "stateId": "state-alt"
+              },
+              {
+                "entityId": "loc-door",
+                "stateId": "state-alt"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}
