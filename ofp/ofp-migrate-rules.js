@@ -1234,11 +1234,16 @@ const RULES = [
         if (!ordered.length) continue;
         const evidence = [];
         for (const entry of ordered) {
+          /* The sentence this relation was read out of IS the source path, and
+             this rule has always had it - the accounting claim on the next line
+             names it. It is passed here so the mint names it too; `claimSource`
+             is off because the claim below is `stated`, not `mapped`. A reading
+             is a guess, and the disposition has to keep saying so. */
           context.addRelation(shot, {
             kind: entry.kind,
             targetShotId: entry.targetShotId,
             note: `Read from ${entry.evidence.label}: ${JSON.stringify(entry.evidence.text)}`,
-          }, null, null);
+          }, entry.evidence.pointer, null, { claimSource: false });
           context.claim(entry.evidence.pointer, DISPOSITION.STATED, [`${shot.subject}#/relations`], "a production relationship read out of prose; the prose itself is retained");
           evidence.push(`${entry.kind} -> ${entry.targetShotId}, from ${entry.evidence.label}: ${JSON.stringify(entry.evidence.text)}`);
         }

@@ -47,6 +47,7 @@ const fixtureNames = fs.readdirSync(FIXTURES).filter((name) => name.endsWith(".j
 const MIGRATABLE = fixtureNames.filter((name) => name !== "foreign-application.json");
 const codesOf = (result) => result.report.diagnostics.map((entry) => entry.code);
 const statementsOf = (result) => (result.candidate && result.candidate.statements) || [];
+const nonEmptyString = (value) => typeof value === "string" && value.trim() !== "";
 
 /* ===========================================================================
    1. The rule registry is explicit, inspectable and stable. */
@@ -378,6 +379,107 @@ assert(codesOf(ambiguous).includes("migration.code.unresolved"), "a token that r
   assert.strictEqual(plain.relations, undefined, "an ordinary note must not manufacture a relationship");
 }
 
+/* ===========================================================================
+   5b. M022 provenance. A mint says where it came from, or it does not claim to.
+
+   M022 used to mint its relations with `sourcePath: null` while the accounting
+   claim for the very same relation named the sentence it was read out of. The
+   rule knew; the report said it did not. Both halves are asserted here: the
+   known path is recorded, and nothing anywhere manufactures a null one. */
+{
+  const prose = preview("prose-dependency.json");
+  const relationMints = prose.report.minted.filter((mint) => mint.type === "relation");
+  assert.strictEqual(relationMints.length, 2, "two readings of two different sentences");
+  for (const mint of relationMints) assert.strictEqual(mint.rule, "M022");
+
+  /* CASE 2 - a real source path is present and is preserved as itself. Each
+     relation names the sentence IT was read from, so the two differ; a shared
+     shot-level pointer would pass a mere "not null" test and still lose which
+     reading came from where. */
+  const byId = new Map(relationMints.map((mint) => [mint.mintedId, mint.sourcePath]));
+  const bookend = prose.candidate.shots[0].relations.find((relation) => relation.kind === "bookend-of");
+  const other = prose.candidate.shots[0].relations.find((relation) => relation.kind === "other");
+  assert.strictEqual(byId.get(bookend.id), "/shots/0/desc", "the bookend reading came from the description");
+  assert.strictEqual(byId.get(other.id), "/shots/0/notes", "and the dependency reading from the note");
+  assert.strictEqual(new Set(byId.values()).size, 2, "two readings, two distinct source paths");
+  /* And it is a pointer into the SOURCE document, not a filesystem path and not
+     where anything now lives. */
+  for (const pointer of byId.values()) {
+    assert(pointer.startsWith("/shots/"), "a mint source path is a JSON pointer into the legacy document");
+    assert(!/^[A-Za-z]:/.test(pointer) && !pointer.includes("\\"), "and never a filesystem path");
+  }
+
+  /* CASE 3 - fixing the mint did not cost the neighbouring provenance. The
+     relation, its note, the one suggested statement, the retained prose and the
+     accounting claim on the same pointer all still stand. */
+  assert.strictEqual(bookend.targetShotId, "L7-03");
+  assert(bookend.note.includes("Read from shot.desc"), "the relation still records its own reading");
+  assert.strictEqual(statementsOf(prose).filter((statement) => statement.kind === "suggested").length, 1,
+    "still one statement for the array, not one per relation");
+  /* The disposition is the part that was paid for the old null. Naming the
+     pointer in the mint must NOT also claim it `mapped`: reading a dependency
+     out of a sentence is a guess, and `stated` is what says so. */
+  const m022Claims = prose.report.accounting.entries.filter((entry) => entry.rule === "M022");
+  assert.strictEqual(m022Claims.length, 2, "one claim per sentence read");
+  assert.deepStrictEqual(m022Claims.map((entry) => entry.pointer).sort(), ["/shots/0/desc", "/shots/0/notes"],
+    "the claims name the same two sentences the mints now name");
+  for (const entry of m022Claims)
+    assert.strictEqual(entry.disposition, "stated",
+      "a reading stays `stated`; recording the source path in the mint must not have turned it into a mapping");
+
+  /* CASE 1 / CASE 4 - when the legacy document holds no prose to cite, nothing
+     is minted at all. Absent, null and whitespace-only prose are all simply not
+     readable, so migration proposes no relation and therefore has no provenance
+     to invent. That is the honest "unknown": not a null field, and not a
+     relation whose origin is blank. */
+  const plainShot = prose.candidate.shots.find((entry) => entry.id === "L4-01");
+  assert.strictEqual(plainShot.relations, undefined);
+  assert.strictEqual(prose.report.minted.filter((mint) => mint.parentSubject === "shot:L4-01").length, 0,
+    "no prose to read means no relation and no mint, rather than a mint with an empty origin");
+  const nulls = preview("absent-null-empty.json");
+  assert.strictEqual(nulls.report.minted.filter((mint) => mint.type === "relation").length, 0,
+    "a null description and an absent note are not a source path; they are nothing to read");
+
+  /* CASE 5 - deterministic. Same input twice, same mints and same warnings. */
+  const again = preview("prose-dependency.json");
+  assert.deepStrictEqual(again.report.minted, prose.report.minted, "the mint set is not deterministic");
+  assert.deepStrictEqual(codesOf(again), codesOf(prose), "the diagnostic set is not deterministic");
+  assert.strictEqual(again.serialized, prose.serialized, "migration is not byte-deterministic");
+
+  /* CASE 6 - reading prose does not rewrite it. */
+  const source = loadFixture("prose-dependency.json");
+  const before = JSON.stringify(source);
+  previewLegacyMigration(source, { at: AT });
+  assert.strictEqual(JSON.stringify(source), before, "migrating a legacy document must not mutate it");
+
+  /* CASE 7 - the corrected result validates, and survives a round trip. A null
+     that reappeared after serialization would be the same defect wearing a
+     different hat. */
+  assert.strictEqual(prose.validation.ok, true);
+  const roundTripped = parseJsonStrict(prose.serialized);
+  assert(!/"sourcePath"\s*:\s*null/.test(prose.serialized), "no null source path survives serialization");
+  /* Keyed by id rather than compared positionally: canonical serialization sorts
+     relations, which is pre-existing and is not what this case is about. */
+  const byRelationId = (relations) => Object.fromEntries(relations.map((relation) => [relation.id, relation]));
+  assert.deepStrictEqual(byRelationId(roundTripped.shots[0].relations), byRelationId(prose.candidate.shots[0].relations),
+    "the relations round-trip unchanged");
+}
+
+/* The property, stated once over every migratable fixture rather than per case:
+   a mint either names a real JSON pointer or does not carry the key. A present
+   `sourcePath` whose value is null, empty or blank is the defect, and it is the
+   shape that would satisfy a `!== undefined` check while carrying nothing. */
+for (const name of MIGRATABLE) {
+  const result = preview(name);
+  for (const mint of (result.report && result.report.minted) || []) {
+    if (!Object.prototype.hasOwnProperty.call(mint, "sourcePath")) continue;
+    assert(nonEmptyString(mint.sourcePath),
+      `${name}: ${mint.rule} minted ${mint.mintedId} with sourcePath ${JSON.stringify(mint.sourcePath)}; unknown provenance is spelled by omitting the field, never by a blank value`);
+    assert(mint.sourcePath.startsWith("/"),
+      `${name}: ${mint.rule} minted ${mint.mintedId} from ${JSON.stringify(mint.sourcePath)}, which is not a JSON pointer into the source document`);
+  }
+}
+
 /* M021's authored structure recovers real data and emits nothing, because
    nobody suggested it and no source cited it. */
 {
@@ -456,7 +558,10 @@ const mintedFrames = missing.candidate.shots[0].frames.map((frame) => frame.id);
 assert.deepStrictEqual(mintedFrames, ["frame-INT-1->2-0001", "frame-INT-1->2-0002"]);
 assert(missing.report.minted.length >= 5, "every mint is recorded in the report");
 for (const mint of missing.report.minted) {
-  assert(mint.sourcePath !== undefined && mint.type && mint.mintedId, "a mint must say what it minted and from where");
+  /* Deliberately not `!== undefined`: that test passed while M022 was minting
+     with `sourcePath: null`, which is a field carrying no provenance rather
+     than provenance that happens to be empty. */
+  assert(nonEmptyString(mint.sourcePath) && mint.type && mint.mintedId, "a mint must say what it minted and from where");
   assert(!/^[0-9a-f]{8}-[0-9a-f]{4}/.test(mint.mintedId), "no random UUIDs; migration must be re-runnable");
 }
 /* The same legacy input mints the same IDs, and it does not matter when. */
