@@ -143,9 +143,24 @@ const FRAME_APPROVED_PURPOSE = "other";
 
    Single words are the ones that mean a credential on their own. Pairs exist
    because `key` alone does not - `keyFrames` is a frame collection, and flagging
-   it would train somebody to route around the scanner. */
-const SECRET_WORDS = new Set(["secret", "token", "password", "passcode", "credential", "credentials", "apikey", "authsecret", "bearer", "authorization", "privatekey", "clientsecret"]);
-const SECRET_WORD_PAIRS = new Set(["api key", "api keys", "auth secret", "client secret", "private key", "secret key", "access token", "refresh token", "editor pass", "viewer pass"]);
+   it would train somebody to route around the scanner.
+
+   `token` is a PAIR for exactly that reason, and the reason is load-bearing
+   rather than theoretical. A compiled prompt names its input images with a
+   reference placeholder stored under `token` and holding `#image1`
+   (`prompt-engine.js:596`), so the bare word quarantined real film semantics as
+   a credential - the M080 false positive P3 recorded. Every credential CineBraid
+   actually stores qualifies the word: `accessToken`, `refreshToken`,
+   `access_token`, `refresh_token`, `apiToken`. Naming the qualifier therefore
+   costs the quarantine nothing and stops it eating project data.
+
+   What this deliberately does NOT do is consult the value. A boundary that
+   decides by inspecting the thing it is guarding is weaker than one that decides
+   by structure, and guessing whether ordinary screenplay prose "looks secret"
+   would be the scanner's opinion rather than a rule. Key shape decides; the
+   value is never asked. */
+const SECRET_WORDS = new Set(["secret", "password", "passcode", "credential", "credentials", "apikey", "authsecret", "bearer", "authorization", "privatekey", "clientsecret"]);
+const SECRET_WORD_PAIRS = new Set(["api key", "api keys", "auth secret", "client secret", "private key", "secret key", "access token", "refresh token", "api token", "auth token", "bearer token", "id token", "oauth token", "session token", "editor pass", "viewer pass"]);
 
 function keyWords(key) {
   return String(key)

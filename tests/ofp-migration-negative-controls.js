@@ -688,6 +688,148 @@ control({
 });
 
 /* ===========================================================================
+   21-25. M080 has two failure directions, and a control for each.
+
+   P3 recorded the quarantine eating `#image1` - a prompt reference placeholder
+   filed under a bare `token` key. The fix moved `token` from the single secret
+   words to the qualified pairs. That creates a NEW way to be wrong (a real
+   credential walking through), so both directions are held here, plus the three
+   wrong fixes that would each look like a repair. */
+
+/* The property the M080 fix exists for, restated so five controls can share it
+   rather than five copies drifting apart. */
+const m080Preserved = () => {
+  const result = preview("secret-traps.json");
+  const preserved = result.candidate.extensions["com.cinebraid.legacy"].preserved || [];
+  for (const [pointer, value] of [
+    ["/shots/0/promptBuilder/spec/references/0/token", "#image1"],
+    ["/shots/0/promptBuilder/providerPayload/references/0/token", "@image1"],
+  ]) {
+    const entry = preserved.find((item) => item.sourcePath === pointer);
+    assert(entry, `${pointer}: the prompt reference placeholder was dropped as a credential`);
+    assert.strictEqual(entry.value, value, `${pointer}: preserved, but not verbatim`);
+    assert(result.serialized.includes(value), `${value} must reach the migrated document`);
+  }
+};
+const m080NoLeak = () => {
+  const result = preview("secret-traps.json");
+  for (const value of ["tok-should-never-be-serialised", "at-should-never-be-serialised", "rt-should-never-be-serialised",
+    "sk-should-never-be-serialised", "letmein", "fal-0000"])
+    assert(!result.serialized.includes(value), `${value} reached the migrated document`);
+};
+
+control({
+  id: "NC-P2-21",
+  label: "reading a bare `token` key as a credential on the key name alone",
+  guards: "legitimate project data is not quarantined because its field name looks secret",
+  module: "ofp/ofp-migrate-rules.js",
+  edits: [[
+    `const SECRET_WORDS = new Set(["secret", "password",`,
+    `const SECRET_WORDS = new Set(["secret", "token", "password",`,
+  ]],
+  defect: () => {
+    const result = preview("secret-traps.json");
+    assert(!result.serialized.includes("#image1"), "receipt: the prompt reference placeholder is gone from the document again");
+    assert(!result.serialized.includes("@image1"), "receipt: and so is its provider-payload twin");
+    const where = result.report.diagnostics.filter((entry) => entry.code === "migration.secret.quarantined").map((entry) => entry.where);
+    assert(where.includes("/shots/0/promptBuilder/spec/references/0/token"), "receipt: dropped by the KEY-NAME branch, which is the P3 defect exactly");
+    assert.strictEqual(result.ok, true, "receipt: and the migration still reports success, which is what made it quiet");
+  },
+  guarded: m080Preserved,
+});
+
+control({
+  id: "NC-P2-22",
+  label: "dropping the qualified token pairs, so a real credential walks through",
+  guards: "a credential-named token is still refused entry to the OFP document",
+  module: "ofp/ofp-migrate-rules.js",
+  edits: [[
+    `"secret key", "access token", "refresh token", "api token", "auth token", "bearer token", "id token", "oauth token", "session token", "editor pass"`,
+    `"secret key", "editor pass"`,
+  ]],
+  defect: () => {
+    const result = preview("secret-traps.json");
+    for (const value of ["tok-should-never-be-serialised", "at-should-never-be-serialised", "rt-should-never-be-serialised"])
+      assert(result.serialized.includes(value), `receipt: ${value} is now in the portable document`);
+    assert.strictEqual(result.ok, true, "receipt: reported as a successful migration while carrying credentials");
+  },
+  guarded: m080NoLeak,
+});
+
+control({
+  id: "NC-P2-23",
+  label: "inspecting ordinary values and quarantining whatever looks token-shaped",
+  guards: "the quarantine decides by key shape and never by guessing about a value",
+  module: "ofp/ofp-migrate-rules.js",
+  edits: [[
+    `function valueLooksSensitive(value) {
+  if (typeof value !== "string" || value === "") return null;
+  if (CREDENTIAL_URL_PATTERN.test(value)) return "a URL carrying credentials";`,
+    `function valueLooksSensitive(value) {
+  if (typeof value !== "string" || value === "") return null;
+  if (/[#@][A-Za-z]+\\d+/.test(value)) return "a token-shaped value";
+  if (CREDENTIAL_URL_PATTERN.test(value)) return "a URL carrying credentials";`,
+  ]],
+  defect: () => {
+    const result = preview("secret-traps.json");
+    assert(!result.serialized.includes("#image1"), "receipt: innocent project text removed because a scanner thought it looked like a secret");
+    const paths = result.report.diagnostics.filter((entry) => entry.code === "migration.path.quarantined").map((entry) => entry.where);
+    assert(paths.includes("/shots/0/promptBuilder/spec/references/0/token"),
+      "receipt: removed by the VALUE branch this time, which is the wrong fix rather than the old bug");
+  },
+  guarded: m080Preserved,
+});
+
+control({
+  id: "NC-P2-24",
+  label: "preserving the value while dropping the key it was preserved from",
+  guards: "a preserved value keeps its source path, not only its contents",
+  module: "ofp/ofp-migrate.js",
+  edits: [[
+    `    this.legacyPreserved.push({ sourcePath: pointer, rule: this.rule, note, value });`,
+    `    this.legacyPreserved.push({ rule: this.rule, note, value });`,
+  ]],
+  defect: () => {
+    const result = preview("secret-traps.json");
+    assert(result.serialized.includes("#image1"), "receipt: the value itself is still there, so a value-only test would pass");
+    const preserved = result.candidate.extensions["com.cinebraid.legacy"].preserved || [];
+    assert(preserved.length > 0, "receipt: and there are preserved entries");
+    assert(preserved.every((entry) => entry.sourcePath === undefined),
+      "receipt: but nothing records where any of them came from - the structure went silently");
+  },
+  guarded: m080Preserved,
+});
+
+control({
+  id: "NC-P2-25",
+  label: "quarantining on the first migration and not on the ones after it",
+  guards: "identical input produces an identical document and an identical warning set",
+  module: "ofp/ofp-migrate-rules.js",
+  edits: [[
+    `    apply(context) {
+      const quarantine = (value, pointer, keyName) => {`,
+    `    apply(context) {
+      globalThis.__ncM080Pass = (globalThis.__ncM080Pass || 0) + 1;
+      if (globalThis.__ncM080Pass % 2 === 0) return;
+      const quarantine = (value, pointer, keyName) => {`,
+  ]],
+  defect: () => {
+    const first = preview("secret-traps.json");
+    const second = preview("secret-traps.json");
+    assert.notStrictEqual(first.serialized, second.serialized, "receipt: the same input produced two different documents");
+    assert.notStrictEqual(first.report.diagnostics.length, second.report.diagnostics.length, "receipt: and two different warning sets");
+    assert(second.serialized.includes("sk-should-never-be-serialised"), "receipt: with a credential in the second one");
+  },
+  guarded: () => {
+    const first = preview("secret-traps.json");
+    const second = preview("secret-traps.json");
+    assert.strictEqual(first.serialized, second.serialized, "migration is not byte-deterministic");
+    assert.deepStrictEqual(first.report.diagnostics, second.report.diagnostics, "the warning set is not deterministic");
+  },
+});
+delete globalThis.__ncM080Pass;
+
+/* ===========================================================================
    The process must end on the real modules, not the patched ones. */
 for (const key of Object.keys(require.cache)) if (key.startsWith(OFP_DIR)) delete require.cache[key];
 {
@@ -698,6 +840,6 @@ for (const key of Object.keys(require.cache)) if (key.startsWith(OFP_DIR)) delet
   assert.strictEqual(require("../ofp/ofp-migrate").MIGRATION_STATEMENT_KINDS.includes("approved"), false);
 }
 
-assert.strictEqual(results.length, 20, "every control must have run");
+assert.strictEqual(results.length, 25, "every control must have run");
 console.log(`OFP P2 migration negative controls passed: ${results.length} defects reintroduced, each observed live by a probe and then caught by the property it guards.`);
 for (const entry of results) console.log(`  ${entry.id.padEnd(10)} ${entry.label}\n             caught by: ${entry.guards}\n             failure:   ${entry.outcome}`);

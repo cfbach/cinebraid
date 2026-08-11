@@ -34,7 +34,7 @@ determinism tests compare.
 | `absent-null-empty.json` | absent versus `null` versus an explicitly empty collection |
 | `state-coverage-aliases.json` | the nine state-delta spellings, and `required` disagreeing with `requirement` |
 | `frame-stores.json` | `keyframes[]`, `creationBrief.frames[]` and `frameWorkflows{}` holding one frame between them, agreeing and then disagreeing |
-| `secret-traps.json` | API keys, an auth secret, a passcode, absolute host paths, a localhost endpoint and a credential URL — none of which may reach the document |
+| `secret-traps.json` | API keys, an auth secret, a passcode, credential-named tokens, absolute host paths, a localhost endpoint and a credential URL — none of which may reach the document; plus the M080 counterpart, a prompt reference placeholder stored under a bare `token` key, which must survive |
 | `foreign-application.json` | another application's scene document, which the audit names and says do not migrate |
 
 ## Read by
