@@ -60,6 +60,8 @@ const nodeSuites = [
   "check:image-execution",
   "check:generation-options",
   "check:generation-options-negative",
+  "check:generation-defaults",
+  "check:generation-defaults-negative",
   "check:media-hash",
   "check:media-asset-identity",
   "check:media-asset-store",

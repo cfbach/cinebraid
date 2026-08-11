@@ -37,6 +37,7 @@ const SUITES = [
   "check:c2b-browser",
   "check:brand-logo-browser",
   "check:lan-passcode-browser",
+  "check:generation-defaults-browser",
 ];
 
 /* Suites that launch a browser and are known to fail, pinned to the reason.
