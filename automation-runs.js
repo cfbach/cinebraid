@@ -1,6 +1,7 @@
 const fs = require("fs");
 const path = require("path");
 const { SimpleZipWriter } = require("./zip-stream");
+const { summarizeRecordedCost } = require("./generation-cost");
 const APP_VERSION = require("./package.json").version;
 
 const MAX_TERMINAL_RUNS = 100;
@@ -388,7 +389,11 @@ function registerAutomationRuns(app, deps) {
     }
     const reviews = Object.values(run.steps || {}).filter((step) => step.review).map((step) => ({ key: step.key, label: step.label, attempt: step.attempt, files: step.files || [], winner: step.winner || "", score: step.score, pass: step.pass, review: step.review, revision: step.revision || "" }));
     const references = [...(run.config?.initialCorrectionPackages || []), ...(run.result?.correctionPackages || [])].map((pkg) => ({ packageId: pkg.id, targetShotId: pkg.targetShotId, sourceCandidate: pkg.sourceCandidate || "", referenceManifest: pkg.referenceManifest || [] }));
-    return redactDiagnostic({ appVersion: APP_VERSION, exportedAt: now(), run, supportSummary: supportSummary(run, jobs), analysis, providerJobs: jobs, targetShots: shots, prompts, reviews, referenceManifest: references });
+    /* Read from the jobs' own recorded estimates, never recomputed from current
+       Settings, so reopening an old run reports what it was estimated to cost rather
+       than what today's rate would re-quote it at. */
+    const recordedCost = summarizeRecordedCost(jobs);
+    return redactDiagnostic({ appVersion: APP_VERSION, exportedAt: now(), run, supportSummary: supportSummary(run, jobs), analysis, recordedCost, providerJobs: jobs, targetShots: shots, prompts, reviews, referenceManifest: references });
   }
 
   function runShotIds(run, project) {
@@ -408,6 +413,17 @@ function registerAutomationRuns(app, deps) {
     const shotMap = new Map();
     const feedback = [];
     let totalImages = 0, totalRequests = 0, totalAssistantCalls = 0, totalReviewCalls = 0, acceptedRequests = 0;
+    /* Historical spend is SUMMED FROM WHAT THE JOBS RECORDED, never re-derived from
+       the current per-image rate. Editing that rate in Settings changes what the next
+       job is estimated at; it must not move a figure already on this screen. Jobs
+       submitted before cost recording existed have no estimate and are counted as
+       unrecorded rather than folded in at $0 or re-priced at today's number.
+
+       Deduplicated by job id: a run claims a job either by `automationRunId` or by a
+       step's `childJobId`, and one row reachable both ways from two runs would be
+       added to the total twice. Counting a request's cost once is the whole job of a
+       ledger total, so it does not rest on those two paths never overlapping. */
+    const costJobs = [], costJobIds = new Set();
     let failedBeforeAcceptance = 0, failedAfterAcceptance = 0, humanApprovals = 0, reusedResults = 0, completedRuns = 0, firstPassCompletions = 0;
     const rows = [], timestamps = [];
     for (const run of runs) {
@@ -420,6 +436,7 @@ function registerAutomationRuns(app, deps) {
       const ids = new Set(Object.values(run.steps || {}).map((step) => step.childJobId).filter(Boolean));
       const jobs = allJobs.filter((job) => job.automationRunId === run.id || ids.has(job.id));
       const analysis = diagnosticAnalysis(run, jobs);
+      for (const job of jobs) if (!costJobIds.has(job.id)) { costJobIds.add(job.id); costJobs.push(job); }
       acceptedRequests += Number(analysis.providerRequestsAccepted || 0);
       if (analysis.classification === "failed_before_provider_acceptance") failedBeforeAcceptance++;
       if (analysis.classification === "failed_after_provider_acceptance") failedAfterAcceptance++;
@@ -442,7 +459,7 @@ function registerAutomationRuns(app, deps) {
       if (run.status === "failed") target.failures++;
       if (run.status === "completed") target.completed++;
       targetMap.set(run.targetId, target);
-      rows.push({ runId: run.id, targetId: run.targetId, label: run.label || run.targetId, type: run.type, status: run.status, images: Number(run.usage?.imagesGenerated || 0), requests: Number(run.usage?.imageRequests || 0), assistantCalls: Number(run.usage?.assistantCalls || 0), reviewCalls: Number(run.usage?.reviewCalls || 0), highestPassUsed: Number(analysis.highestPassUsed || 0), classification: analysis.classification, warnings: analysis.warnings || [] });
+      rows.push({ runId: run.id, targetId: run.targetId, label: run.label || run.targetId, type: run.type, status: run.status, images: Number(run.usage?.imagesGenerated || 0), requests: Number(run.usage?.imageRequests || 0), assistantCalls: Number(run.usage?.assistantCalls || 0), reviewCalls: Number(run.usage?.reviewCalls || 0), highestPassUsed: Number(analysis.highestPassUsed || 0), classification: analysis.classification, recordedCost: summarizeRecordedCost(jobs), warnings: analysis.warnings || [] });
 
       const shotIds = runShotIds(run, project), singleShotId = shotIds.length === 1 ? shotIds[0] : "";
       for (const shotId of shotIds) {
@@ -477,7 +494,7 @@ function registerAutomationRuns(app, deps) {
       dateRange: { start: sortedTimes[0] || "", end: sortedTimes.at(-1) || "" },
       runCount: runs.length,
       statusCounts,
-      totals: { runs: runs.length, imagesGenerated: totalImages, recordedImageRequests: totalRequests, providerRequestsAccepted: acceptedRequests, assistantCalls: totalAssistantCalls, reviewCalls: totalReviewCalls },
+      totals: { runs: runs.length, imagesGenerated: totalImages, recordedImageRequests: totalRequests, providerRequestsAccepted: acceptedRequests, assistantCalls: totalAssistantCalls, reviewCalls: totalReviewCalls, recordedCost: summarizeRecordedCost(costJobs) },
       quality: { completedRuns, firstPassCompletions, firstPassSuccessRate: completedRuns ? Math.round((firstPassCompletions / completedRuns) * 100) : 0, failedBeforeAcceptance, failedAfterAcceptance, humanApprovals, reusedResults },
       perShot: [...shotMap.values()].sort((a, b) => String(a.sceneId).localeCompare(String(b.sceneId)) || String(a.shotId).localeCompare(String(b.shotId))),
       highestEffortTargets: [...targetMap.values()].sort((a, b) => b.highestPassUsed - a.highestPassUsed || b.images - a.images).slice(0, 12),

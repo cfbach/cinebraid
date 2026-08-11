@@ -350,6 +350,8 @@ async function main() {
     "generation-compiler-fixture.js",
     "generation-compiler-negative-controls.js",
     "generation-compiler.js",
+    "generation-cost-history-negative-controls.js",
+    "generation-cost-history.js",
     "generation-default-inheritance-negative-controls.js",
     "generation-default-inheritance.js",
     "generation-defaults-real-browser.py",

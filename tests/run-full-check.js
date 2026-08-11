@@ -64,6 +64,8 @@ const nodeSuites = [
   "check:generation-options-negative",
   "check:generation-defaults",
   "check:generation-defaults-negative",
+  "check:generation-cost",
+  "check:generation-cost-negative",
   "check:media-hash",
   "check:media-asset-identity",
   "check:media-asset-store",
