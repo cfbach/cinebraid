@@ -585,14 +585,14 @@ function projectCoverageTemplate(list) {
     vehicles: [["front","Front",true],["rear","Rear",true],["left-side","Left side",true],["right-side","Right side",true],["front-three-quarter","Front 3/4",true],["rear-three-quarter","Rear 3/4",false],["interior","Interior / cockpit",false],["detail","Detail",false]],
     locations: [["establishing","Master establishing",true],["reverse","Reverse angle",true],["left-coverage","Left-facing coverage",false],["right-coverage","Right-facing coverage",false],["action-zone","Key action zone",true],["entrance-exit","Entrance / exit",false],["detail-zone","Detail zone",false],["overhead","Overhead / layout",false]],
   };
-  return (templates[list] || []).map(([id,label,required]) => ({ id,label,required,approvedFile:"",notes:"",status:"missing",replacementHistory:[] }));
+  return (templates[list] || []).map(([id,label,required]) => ({ id,label,requirement:templateRequirement(required),approvedFile:"",notes:"",status:"missing",replacementHistory:[] }));
 }
 function projectExpressionTemplate(entity) {
   const raw = String(entity?.expressions || "neutral; focused; worried; determined; relieved; custom").split(/[;,\n]+/).map((item) => item.trim()).filter(Boolean).slice(0, 8);
   return (raw.length ? raw : ["Neutral","Focused","Worried","Determined","Relieved","Custom"]).map((label,index) => ({
     id: String(label || `Expression ${index + 1}`).toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"") || `expression-${index + 1}`,
     label,
-    required: index < 4,
+    requirement: templateRequirement(index < 4),
     approvedFile: "",
     notes: "",
     status: "missing",
@@ -644,6 +644,30 @@ function normalizedCoverageAlias(list, slot) {
   }
   return "";
 }
+/* Merge a stored slot onto its template default WITHOUT canonicalising it.
+
+   The old line here was `next.required = typeof next.required === "boolean" ?
+   next.required : slot.required`, and it was a live defect in both directions:
+   a stored slot authored as `requirement: "not-required"` but carrying no
+   boolean had the template's `required: true` MINTED onto it while the project
+   was merely being opened, and the Reference Inspector then read the minted
+   boolean and called the slot required.
+
+   The rule now is the one P0 §8 rule 1 states for the format and this function
+   had drifted from: DEFAULTS ARE APPLIED AT USE, NEVER AT LOAD. A stored slot
+   that already carries either encoding keeps exactly what it stored and gains
+   nothing; only a slot the template is introducing for the first time — where
+   there is no stored fact to overwrite — is seeded. */
+/* The local is `merged`, not `next`. tests/reference-workspace-ux.js pins the
+   legacy silent-angle branch by slicing app.js from `const wasSilentCharacterSeed`
+   to the first `return next;`, so a second, earlier `return next;` would invert
+   that slice and silently disable the guard rather than fail it. */
+function seedCoverageRequirement(template, prior) {
+  const { requirement: seeded, ...base } = template;
+  const merged = { ...base, ...(prior || {}) };
+  if (!("requirement" in merged) && !("referenceRequirement" in merged) && !("required" in merged)) merged.requirement = seeded;
+  return merged;
+}
 function mergeCoverageSlotNotes(base, imported) {
   const detail = String(imported?.notes || imported?.label || "").trim();
   if (!detail || detail.toLowerCase() === String(base?.label || "").toLowerCase()) return String(base?.notes || "");
@@ -674,12 +698,11 @@ function normalizeReferenceCoverageData() {
       const merged = defaults.map((slot) => {
         const candidates = aliasGroups.get(slot.id) || [];
         const prior = candidates.find((item) => String(item?.id) === slot.id) || candidates.find((item) => item?.approvedFile) || candidates[0];
-        const next = { ...slot, ...(prior || {}) };
+        const next = seedCoverageRequirement(slot, prior);
         for (const imported of candidates.filter((item) => item !== prior)) {
           if (!next.approvedFile && imported?.approvedFile) next.approvedFile = imported.approvedFile;
           next.notes = mergeCoverageSlotNotes(next, imported);
         }
-        next.required = typeof next.required === "boolean" ? next.required : slot.required;
         next.approvedFile = String(next.approvedFile || "");
         next.notes = String(next.notes || "");
         next.status = next.approvedFile ? "approved" : "missing";
@@ -707,8 +730,12 @@ function normalizeReferenceCoverageData() {
         }
         return next;
       });
+      /* A custom slot has no template to fall back on, so it is seeded only when
+         it declares nothing at all. `required: !!custom.required` used to coerce
+         an undeclared slot to `false` here, which read as "planned" — the seed
+         below says "planned" outright and stops writing the boolean to say it. */
       for (const custom of existing.filter((item) => item && !defaults.some((slot) => slot.id === item.id) && !normalizedCoverageAlias(list, item))) {
-        merged.push({ ...custom, required: !!custom.required, approvedFile: String(custom.approvedFile || ""), notes: String(custom.notes || ""), status: custom.approvedFile ? "approved" : "missing", replacementHistory: Array.isArray(custom.replacementHistory) ? custom.replacementHistory : [] });
+        merged.push({ ...seedCoverageRequirement({ requirement: templateRequirement(false) }, custom), approvedFile: String(custom.approvedFile || ""), notes: String(custom.notes || ""), status: custom.approvedFile ? "approved" : "missing", replacementHistory: Array.isArray(custom.replacementHistory) ? custom.replacementHistory : [] });
       }
       if (JSON.stringify(existing) !== JSON.stringify(merged)) { entity.coverageSlots = merged; changed = true; }
       if (list === "characters") {
@@ -717,15 +744,18 @@ function normalizeReferenceCoverageData() {
         const desiredIds = new Set(desired.map((slot) => slot.id));
         const reconciled = desired.map((slot) => {
           const prior = priorSlots.find((item) => String(item?.id) === slot.id);
-          const next = { ...slot, ...(prior || {}), retired: false };
-          next.required = typeof next.required === "boolean" ? next.required : slot.required;
+          const next = { ...seedCoverageRequirement(slot, prior), retired: false };
           next.approvedFile = String(next.approvedFile || "");
           next.status = next.approvedFile ? "approved" : "missing";
           next.replacementHistory = Array.isArray(next.replacementHistory) ? next.replacementHistory : [];
           return next;
         });
         for (const stale of priorSlots.filter((slot) => slot && !desiredIds.has(String(slot.id)))) {
-          if (stale.approvedFile) reconciled.push({ ...stale, required: false, retired: true, status: "retired", label: String(stale.label || stale.id) + (String(stale.label || "").includes("retired") ? "" : " (retired)") });
+          /* `required: false` used to be written here purely to keep a retired
+             slot out of the required set. `retired: true` already says that, and
+             public/shared-coverage.js now reads it directly, so retirement no
+             longer has to overwrite a requirement the filmmaker authored. */
+          if (stale.approvedFile) reconciled.push({ ...stale, retired: true, status: "retired", label: String(stale.label || stale.id) + (String(stale.label || "").includes("retired") ? "" : " (retired)") });
         }
         if (JSON.stringify(priorSlots) !== JSON.stringify(reconciled)) { entity.expressionSlots = reconciled; changed = true; }
       }

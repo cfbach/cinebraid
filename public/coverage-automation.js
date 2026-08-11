@@ -8,7 +8,7 @@
   function coverageLocked(key) { return COVERAGE_SUBMISSION_LOCKS.has(key); }
   function updateCoverageTerminalState(list, entity) {
     const slots = list === "characters" && entity.coverageAutomation?.sheetType === "expressions" ? ensureExpressionSlots(entity) : ensureCoverageSlots(list, entity);
-    const required = slots.filter((slot) => slot.required !== false && !slot.retired);
+    const required = slots.filter((slot) => isRequiredCoverage(slot) && !slot.retired);
     const missing = required.filter((slot) => !slot.approvedFile).length;
     if (!entity.coverageAutomation) return;
     if (!missing) { entity.coverageAutomation.status = "completed"; entity.coverageAutomation.completedAt = new Date().toISOString(); }
@@ -56,7 +56,7 @@
   }
   function missingCoverageSlots(list, entity, includeOptional = false) {
     const slots = typeof ensureCoverageSlots === "function" ? ensureCoverageSlots(list, entity) : (entity.coverageSlots || []);
-    return slots.filter((slot) => !slot.approvedFile && (includeOptional || slot.required !== false));
+    return slots.filter((slot) => !slot.approvedFile && (includeOptional || isRequiredCoverage(slot)));
   }
   function coverageSlotViewTag(list, slot) {
     const map = {
@@ -93,7 +93,7 @@
     if (list === "characters") return slots.filter((slot) => ["front", "front-three-quarter", "profile", "rear"].includes(slot.id));
     if (list === "vehicles") return slots.filter((slot) => ["front", "rear", "left-side", "right-side", "front-three-quarter", "rear-three-quarter"].includes(slot.id));
     if (list === "props") return slots.filter((slot) => ["hero", "three-quarter", "side", "rear", "top", "detail"].includes(slot.id));
-    return slots.filter((slot) => slot.required !== false).slice(0, 4);
+    return slots.filter((slot) => isRequiredCoverage(slot)).slice(0, 4);
   }
   function coverageSheetPrompt(list, entity, sheetType, slots, userDirection = "") {
     const identity = entityIdentityText(list, entity);
@@ -207,7 +207,7 @@
     const mode = document.getElementById("coverage-mode")?.value || "hybrid";
     const sheetType = document.getElementById("coverage-sheet-type")?.value || "angles";
     const outputs = Number(document.getElementById("coverage-output-count")?.value || 1);
-    const missing = entity ? (sheetType === "expressions" ? ensureExpressionSlots(entity) : missingCoverageSlots(req.list, entity, false)).filter((slot) => slot.required !== false && !slot.approvedFile && !slot.retired).length : 0;
+    const missing = entity ? (sheetType === "expressions" ? ensureExpressionSlots(entity) : missingCoverageSlots(req.list, entity, false)).filter((slot) => isRequiredCoverage(slot) && !slot.approvedFile && !slot.retired).length : 0;
     const requests = mode === "individual" ? missing : 1;
     const images = mode === "individual" ? requests * 3 : outputs;
     const potential = mode === "hybrid" ? ` · up to ${missing} later individual fallback request${missing === 1 ? "" : "s"}` : "";
@@ -594,4 +594,9 @@
     route();
     toast(`${slot.label} assigned from the primary reference`);
   };
+  /* Exported the way focused-workspaces.js exports its inspector derivation, and
+     for the same reason: this module is the third surface that answers "which
+     views does this entity still owe?", and a suite proving three surfaces agree
+     is worth nothing if it reimplements one of them. */
+  window.__CINEBRAID_COVERAGE_AUTOMATION = { missingCoverageSlots, coverageSheetSlots, updateCoverageTerminalState };
 })();

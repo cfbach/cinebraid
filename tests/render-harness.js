@@ -14,6 +14,7 @@ const SCRIPT_ORDER = [
   "shared-camera.js",
   "shared-aspect.js",
   "shared-reference-views.js",
+  "shared-coverage.js",
   "shared-build-history.js",
   "shared-generation-capability.js",
   "bounded-rendering.js",

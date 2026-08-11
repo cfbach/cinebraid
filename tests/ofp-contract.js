@@ -238,7 +238,12 @@ assert.deepStrictEqual(
     motion: "shot:motion",
     relation: "shot:relations",
     state: "character/location/prop/vehicle:states",
-    coverage: "location/prop/vehicle:coverage",
+    /* P4-SEM-A widened this one row. `coverage` gained `character` as a fourth
+       scope, so it now matches `state` exactly: the same four entity types own
+       both collections. No new record type was added and no container path
+       moved, which is why this is the only line of the frozen P0 §3 table that
+       changes. */
+    coverage: "character/location/prop/vehicle:coverage",
     anchor: "source:anchors",
   },
 );

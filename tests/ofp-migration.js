@@ -226,7 +226,9 @@ const PINNED_ACCOUNTING = [
   ["/characters/0/continuityStates/0/isDefault", "M007", "mapped"],
   ["/characters/0/continuityStates/0/name", "M007", "mapped"],
   ["/characters/0/continuityStates/0/notes", "M016", "mapped"],
-  ["/characters/0/coverageSlots", "M008", "preserved"],
+  /* P4-SEM-A: preserved -> mapped. Characters gained a `coverage` container, so
+     M008 no longer has to park their view slots in the legacy extension. */
+  ["/characters/0/coverageSlots", "M008", "mapped"],
   ["/characters/0/creationDescription", "M011", "mapped"],
   ["/characters/0/id", "M006", "mapped"],
   ["/characters/0/name", "M006", "mapped"],
@@ -239,7 +241,9 @@ const PINNED_ACCOUNTING = [
   ["/locations/0/coverageSlots/0/id", "M008", "mapped"],
   ["/locations/0/coverageSlots/0/label", "M008", "mapped"],
   ["/locations/0/coverageSlots/0/notes", "M008", "mapped"],
-  ["/locations/0/coverageSlots/0/requirement", "M015", "preserved"],
+  /* P4-SEM-A: preserved -> mapped. The requirement enum now has a core home
+     (COVERAGE.requirement) instead of a corner of the workflow extension. */
+  ["/locations/0/coverageSlots/0/requirement", "M015", "mapped"],
   ["/locations/0/description", "M011", "mapped"],
   ["/locations/0/id", "M006", "mapped"],
   ["/locations/0/name", "M006", "mapped"],
@@ -670,19 +674,31 @@ for (const name of MIGRATABLE) {
   assert(!codesOf(result).includes("migration.count.unexplained"));
   assert(!codesOf(result).includes("migration.identity.lost"));
 }
-/* The one declared structural difference, stated rather than hidden. */
+/* Character coverage used to be the one declared structural count difference in
+   the registry: the slots went in and no coverage record came out, so M008 had
+   to subtract them for the reconciliation to balance. P4-SEM-A gave characters a
+   coverage container, so the count now balances with NO adjustment at all —
+   which is a stronger statement than an explained loss, and the assertion says
+   so directly rather than being deleted. */
 {
   const sample = preview("clean.json");
-  const adjustment = sample.report.counts.adjustments.find((entry) => entry.category === "coverage");
-  assert.strictEqual(adjustment, undefined, "the clean fixture has no character coverage slots to adjust for");
+  assert.strictEqual(sample.report.counts.adjustments.find((entry) => entry.category === "coverage"), undefined,
+    "the clean fixture declares no coverage adjustment");
   const withSlots = previewLegacyMigration({
     meta: { title: "t", schemaVersion: "6.7" },
     shots: [], scenes: [], locations: [], props: [], vehicles: [],
     characters: [{ id: "C", name: "C", coverageSlots: [{ id: "front", label: "Front" }] }],
   }, { at: AT });
-  const declared = withSlots.report.counts.adjustments.find((entry) => entry.category === "coverage");
-  assert(declared && declared.rule === "M008" && declared.delta === -1, "the difference must be declared by the rule that causes it");
+  assert.strictEqual(withSlots.report.counts.adjustments.find((entry) => entry.category === "coverage"), undefined,
+    "a character's coverage slot is a coverage record now, so nothing has to be subtracted for it");
+  const row = withSlots.report.counts.rows.find((entry) => entry.category === "coverage");
+  assert.deepStrictEqual([row.before, row.after, row.adjustment], [1, 1, 0], "one slot in, one coverage record out, nothing explained away");
   assert.strictEqual(withSlots.report.counts.reconciled, true);
+  assert.deepStrictEqual(
+    withSlots.candidate.entities.characters[0].coverage,
+    [{ id: "front", name: "Front" }],
+    "the character's view slot lands in the generic coverage container, not a character-shaped copy of it",
+  );
 }
 
 /* ===========================================================================

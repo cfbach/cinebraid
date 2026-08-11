@@ -669,7 +669,10 @@ function coverageTemplateForList(list) {
       ["overhead", "Overhead / layout", false],
     ],
   }
-  return (presets[list] || []).map(([id, label, required]) => ({ id, label, required, approvedFile: '', notes: '', status: 'missing' }));
+  /* The preset table still reads as booleans because that is how a template
+     naturally reads — "front: yes, detail: no" — but what it SEEDS is the enum,
+     through the one function that decides what a template boolean means. */
+  return (presets[list] || []).map(([id, label, required]) => ({ id, label, requirement: templateRequirement(required), approvedFile: '', notes: '', status: 'missing' }));
 }
 function ensureCoverageSlots(list, entity) {
   // v6.5.3.3: explicit project migration owns schema repair. Rendering is read-only.
@@ -695,15 +698,16 @@ window.setExpressionSlotField = (id, index, key, value) => {
   if (previous && next && previous !== next) return confirmModal(`Replace ${slot.label}? ${previous} will remain in replacement history.`, apply, { title: "Replace approved expression", confirmLabel: "REPLACE EXPRESSION" });
   apply();
 };
+/* The precedence chain that used to live here now lives in
+   public/shared-coverage.js, because it was never only this file's answer: three
+   other surfaces were deciding the same question from the boolean alone and
+   printing a different fraction. These two are thin delegations so every existing
+   call site keeps working while there is exactly one implementation. */
 function referenceRequirement(item, isDefault = false) {
-  if (isDefault) return "required";
-  const explicit = String(item?.referenceRequirement || item?.requirement || "").toLowerCase();
-  if (["required", "planned", "not-required"].includes(explicit)) return explicit;
-  return item?.required === false ? "planned" : "required";
+  return coverageRequirement(item, isDefault);
 }
 function referenceRequirementLabel(item, isDefault = false) {
-  const value = referenceRequirement(item, isDefault);
-  return value === "not-required" ? "Not required" : value === "planned" ? "Planned" : "Required";
+  return requirementLabel(item, isDefault);
 }
 function referenceSlotStatus(slot) {
   if (slot?.approvedFile) return { tone: "complete", label: "Approved" };
@@ -712,12 +716,17 @@ function referenceSlotStatus(slot) {
   if (requirement === "planned") return { tone: "pending", label: "Planned" };
   return { tone: "attention", label: "Missing" };
 }
+/* Both writers used to set `requirement` AND mirror it into `required`, keeping
+   the retired boolean alive as a second authored copy of one fact — which is
+   what let an importer, a hand edit or an older build reintroduce the
+   disagreement one field at a time. They now write through the single
+   authoritative writer, which sets the enum and removes the retired encodings
+   from the record the filmmaker is editing. */
 window.setCoverageSlotRequirement = (list, id, index, value) => {
   const entity = P[list]?.find((item) => item.id === id);
   const slot = entity ? ensureCoverageSlots(list, entity)[index] : null;
   if (!slot) return;
-  slot.requirement = ["required", "planned", "not-required"].includes(value) ? value : "required";
-  slot.required = slot.requirement === "required";
+  writeCoverageRequirement(slot, value);
   dirty();
   route();
 };
@@ -725,8 +734,7 @@ window.setExpressionSlotRequirement = (id, index, value) => {
   const entity = P.characters?.find((item) => item.id === id);
   const slot = entity ? ensureExpressionSlots(entity)[index] : null;
   if (!slot) return;
-  slot.requirement = ["required", "planned", "not-required"].includes(value) ? value : "required";
-  slot.required = slot.requirement === "required";
+  writeCoverageRequirement(slot, value);
   dirty();
   route();
 };
@@ -761,15 +769,12 @@ function expressionBoardMarkup(entity, mediaByName, media) {
   return `<details class="fold compact-entity-section entity-expression-section bounded-source-section" ${open ? "open" : ""} ontoggle="rememberWorkspaceSection('${attr(key)}',this.open)"><summary>Expression board <span>${stats.approvedRequired}/${stats.required} required approved${stats.planned ? ` · ${stats.planned} planned` : ""}${active ? " · generating" : ""}</span></summary>${entityCoverageActivityMarkup("characters", entity, "expressions")}<div class="entity-coverage-intro"><div><b>${stats.approvedTotal} of ${stats.total} expressions assigned</b><small>Mark each expression Required, Planned, or Not required. Only required gaps affect project attention.</small></div></div>${referenceSlotRailMarkup("expression-slot", entity.id, slots.map((row) => row.slot), selectedId)}<div class="coverage-slot-grid bounded-single-slot">${editor}</div>${manual}${assisted}</details>`;
 }
 
+/* Every coverage fraction CineBraid prints comes from here, and here is now one
+   line long: the derivation is shared so the Reference Inspector cannot compute
+   a second answer. Nothing on this object is ever written back to the project —
+   the slots are the facts and these are the numbers read off them. */
 function coverageStats(slots) {
-  const active = slots.filter((slot) => !slot.retired);
-  const required = active.filter((slot) => referenceRequirement(slot) === "required");
-  const planned = active.filter((slot) => referenceRequirement(slot) === "planned");
-  const notRequired = active.filter((slot) => referenceRequirement(slot) === "not-required");
-  const approvedRequired = required.filter((slot) => slot.approvedFile).length;
-  const approvedTotal = active.filter((slot) => slot.approvedFile).length;
-  const missingRequired = required.filter((slot) => !slot.approvedFile).length;
-  return { required: required.length, planned: planned.length, notRequired: notRequired.length, approvedRequired, approvedTotal, total: active.length, missingRequired };
+  return summariseCoverage(slots);
 }
 function coverageSlotOptions(media, selected = '', entity = null) {
   const eligible = (media || []).filter((item) => !entity || !entityCandidateIsCoverageSheet(entity, item.name));
@@ -844,7 +849,10 @@ window.addCoverageSlot = (list, id) => {
   const entity = P[list]?.find((item) => item.id === id);
   if (!entity) return;
   const slots = ensureCoverageSlots(list, entity);
-  slots.push({ id: 'custom-' + Date.now().toString(36), label: 'Custom slot', required: false, approvedFile: '', notes: '', status: 'missing' });
+  /* `requirement: "planned"`, not `required: false`. Same meaning — a new custom
+     slot is a view somebody may want, not one the project demands — written in
+     the one encoding this build authors. */
+  slots.push({ id: 'custom-' + Date.now().toString(36), label: 'Custom slot', requirement: templateRequirement(false), approvedFile: '', notes: '', status: 'missing' });
   dirty();
   route();
 };

@@ -1382,7 +1382,7 @@ function coverageSlotReferences(list, entity, s) {
       referenceKind,
       desiredRegion,
       detailRegion: /face/.test(slot.id) ? "face" : /detail|action-zone|detail-zone/.test(slot.id) ? slot.label : "",
-      priority: slot.required !== false ? "primary" : "supporting",
+      priority: isRequiredCoverage(slot) ? "primary" : "supporting",
     }) : 0;
     return {
       key: `coverage:${list}:${entity.id}:${slot.id}`,
@@ -1401,7 +1401,7 @@ function coverageSlotReferences(list, entity, s) {
       referenceKind,
       detailRegion: /face/.test(slot.id) ? "face" : /detail|action-zone|detail-zone/.test(slot.id) ? slot.label : "",
       availableAngles: slot.label,
-      priority: slot.required !== false ? "primary" : "supporting",
+      priority: isRequiredCoverage(slot) ? "primary" : "supporting",
       coverageScore: score,
       instruction: slot.notes || `Use this approved ${slot.label} coverage only when its angle or visible-side details match the requested shot. Preserve final pose and composition from the shot brief.`
     };

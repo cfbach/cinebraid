@@ -250,14 +250,25 @@
     return aside;
   }
 
+  /* THE FRACTION THE INSPECTOR PRINTS, and the line P4-SEM-A exists for.
+
+     This used to be `coverage.filter((slot) => slot.required !== false)` — the
+     legacy boolean alone, with the requirement enum never consulted. A slot
+     declared "not required" without a `required: false` twin was counted here and
+     excluded by the coverage board, so the same project showed "1 of 3" on one
+     screen and "1 of 2" on the other. The derivation is now the shared one, which
+     is the same function the board calls, so the two cannot differ. */
+  function inspectorCoverage(entity) {
+    const slots = Array.isArray(entity?.coverageSlots) ? entity.coverageSlots : [];
+    const summary = window.summariseCoverage ? window.summariseCoverage(slots) : { required: 0, approvedRequired: 0 };
+    return { required: summary.required, approved: summary.approvedRequired };
+  }
   function entityInspector(entity, list) {
     const aside = document.createElement("aside");
     aside.className = "focused-inspector";
-    const coverage = Array.isArray(entity?.coverageSlots) ? entity.coverageSlots : [];
-    const required = coverage.filter((slot) => slot.required !== false);
-    const approved = required.filter((slot) => slot.approvedFile).length;
+    const { required, approved } = inspectorCoverage(entity);
     const candidates = Array.isArray(entity?.candidateFiles) ? entity.candidateFiles.filter((row) => !["rejected", "approved-coverage", "approved-expression"].includes(row.decision)).length : 0;
-    aside.innerHTML = `<header><span>REFERENCE INSPECTOR</span><b>${window.esc ? window.esc(entity?.id || "Reference") : entity?.id || "Reference"}</b><p>${window.esc ? window.esc(entity?.name || "") : entity?.name || ""}</p></header><div class="focused-inspector-facts"><article><span>Status</span><b>${window.esc ? window.esc(entity?.workflowStatus || entity?.status || "Draft") : "Draft"}</b></article><article><span>Coverage</span><b>${approved}/${required.length || 0}</b></article><article><span>Candidates</span><b>${candidates}</b></article><article><span>States</span><b>${Array.isArray(entity?.continuityStates) ? entity.continuityStates.length : 0}</b></article></div><section><b>Identity / design authority</b><p>${window.esc ? window.esc(entity?.driftNotes || entity?.block || entity?.notes || "No authority note recorded.") : "No authority note recorded."}</p></section><section><b>Focused-workspace rule</b><p>Only the selected task is expanded. Use the task rail to move between approval, candidates, coverage, automation, and notes.</p></section>`;
+    aside.innerHTML = `<header><span>REFERENCE INSPECTOR</span><b>${window.esc ? window.esc(entity?.id || "Reference") : entity?.id || "Reference"}</b><p>${window.esc ? window.esc(entity?.name || "") : entity?.name || ""}</p></header><div class="focused-inspector-facts"><article><span>Status</span><b>${window.esc ? window.esc(entity?.workflowStatus || entity?.status || "Draft") : "Draft"}</b></article><article><span>Coverage</span><b>${approved}/${required}</b></article><article><span>Candidates</span><b>${candidates}</b></article><article><span>States</span><b>${Array.isArray(entity?.continuityStates) ? entity.continuityStates.length : 0}</b></article></div><section><b>Identity / design authority</b><p>${window.esc ? window.esc(entity?.driftNotes || entity?.block || entity?.notes || "No authority note recorded.") : "No authority note recorded."}</p></section><section><b>Focused-workspace rule</b><p>Only the selected task is expanded. Use the task rail to move between approval, candidates, coverage, automation, and notes.</p></section>`;
     return aside;
   }
   function enhanceEntity(root, view, id) {
@@ -414,7 +425,10 @@
     match.element.scrollIntoView?.({ behavior: "smooth", block: "start" });
     return true;
   };
-  window.__CINEBRAID_FOCUSED = { statusForElement, nextTaskIndex, routeParts, isFocusedDetailView, syncFocusedRouteMode, ensureDisclosureLabels, taskIdForElement, resolveTaskSelection };
+  /* inspectorCoverage is exported so a suite can drive the inspector's OWN
+     arithmetic rather than a copy of it. Proving two surfaces agree is worth
+     nothing if the test reimplements one of them. */
+  window.__CINEBRAID_FOCUSED = { statusForElement, nextTaskIndex, routeParts, isFocusedDetailView, syncFocusedRouteMode, ensureDisclosureLabels, taskIdForElement, resolveTaskSelection, inspectorCoverage };
   window.enhanceFocusedWorkspace = enhance;
   window.addEventListener("hashchange", () => { syncFocusedRouteMode(routeParts().view); schedule(); });
   window.addEventListener("load", () => { syncFocusedRouteMode(routeParts().view); schedule(); });

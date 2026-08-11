@@ -38,6 +38,11 @@ const path = require("path");
 
 const { DISPOSITION } = require("./ofp-migrate-accounting");
 const { SOURCE_GENERATION, META_VERSION_CLASS } = require("./ofp-migrate-detect");
+/* The one place coverage-requirement semantics are decided, shared with the
+   running application. Migration reading a legacy boolean differently from the
+   app that wrote it is exactly the defect P4-SEM-A removes, so M015 borrows the
+   reading rather than restating it. */
+const Coverage = require("../public/shared-coverage");
 
 const ALL_GENERATIONS = [SOURCE_GENERATION.PRE_6_6, SOURCE_GENERATION.V6_6, SOURCE_GENERATION.V6_7, SOURCE_GENERATION.UNKNOWN];
 
@@ -583,7 +588,7 @@ const RULES = [
   {
     id: "M008",
     name: "coverage slots",
-    summary: "Maps coverageSlots[] into coverage[] on locations, props and vehicles.",
+    summary: "Maps coverageSlots[] into coverage[] on characters, locations, props and vehicles.",
     origin: "P2",
     appliesTo: ALL_GENERATIONS,
     determinism: DETERMINISM.DETERMINISTIC,
@@ -592,15 +597,17 @@ const RULES = [
         const listPointer = entity.from + ptr("coverageSlots");
         const list = context.read(listPointer);
         if (!Array.isArray(list)) continue;
-        /* The contract declares `coverage` on locations, props and vehicles - a
-           character's identity views are references with a purpose, not coverage
-           of a place. A character's slots are preserved rather than forced into
-           a container the containment table does not give them. */
-        if (entity.type === "character") {
-          context.claimSubtree(listPointer, DISPOSITION.PRESERVED, ["#/extensions/com.cinebraid.legacy/preserved"], "characters have no coverage container in the containment table; identity views become references[] with a purpose under M030");
-          context.preserveValue(listPointer, "character coverage slots; the identity views themselves become references under M030", { alreadyClaimed: true });
-          continue;
-        }
+        /* Characters used to be sent down the preservation branch here, on the
+           reading that a character's identity views are references with a purpose
+           rather than coverage of a place. P4-SEM-A settled that differently and
+           for a concrete reason: CineBraid has always given characters the same
+           ensureCoverageSlots() view slots as every other entity, so preserving
+           them meant a migrated character carried its front/profile/rear
+           requirements as an opaque legacy blob no other client could read. The
+           containment table now gives `coverage` a character scope, so they map
+           like anything else and M030 still writes the approval edges.
+           `expressionSlots[]` is untouched by this rule and stays preserved -
+           whether an expression is a coverage record is reconciliation Q3. */
         if (list.length === 0) { context.claim(listPointer, DISPOSITION.MAPPED, [`${entity.subject}#/coverage`], "explicitly empty collection, preserved as empty"); entity.record.coverage = []; continue; }
         const coverage = [];
         list.forEach((slot, index) => {
@@ -627,7 +634,7 @@ const RULES = [
   {
     id: "M015",
     name: "coverage requirement encodings",
-    summary: "Reconciles the boolean `required` with the `requirement` enum. They are two encodings of one fact; the enum wins, and a disagreement between them is reported rather than resolved quietly.",
+    summary: "Reconciles the boolean `required` with the `requirement` enum into the single core field COVERAGE.requirement. They are two encodings of one fact; the enum wins, and a genuine disagreement between them is reported rather than resolved quietly.",
     origin: "audit Part 27",
     appliesTo: ALL_GENERATIONS,
     determinism: DETERMINISM.DETERMINISTIC,
@@ -638,17 +645,40 @@ const RULES = [
         const hasRequired = context.exists(requiredPointer);
         const hasRequirement = context.exists(requirementPointer);
         if (!hasRequired && !hasRequirement) continue;
-        const requirement = hasRequirement ? context.read(requirementPointer) : (context.read(requiredPointer) ? "required" : "not-required");
-        context.workflowPut(["coverage", slot.subject, "requirement"], requirement, hasRequirement ? requirementPointer : requiredPointer,
-          "coverage requirement has no OFP core field at this contract revision; kept in the CineBraid extension so it is not lost");
-        if (hasRequired && hasRequirement) {
-          const implied = context.read(requiredPointer) ? "required" : "not-required";
-          const agrees = implied === requirement || (implied === "not-required" && requirement === "planned");
-          context.claim(requiredPointer, DISPOSITION.PRESERVED, [`#/extensions/com.cinebraid.workflow/coverage`], agrees ? "the boolean agrees with the enum" : "the boolean disagrees with the enum; the enum wins and the disagreement is reported");
-          if (!agrees)
-            context.diagnostic("migration.review.required", `${slot.subject}: coverage.required=${JSON.stringify(context.read(requiredPointer))} implies ${implied} but coverage.requirement says ${JSON.stringify(requirement)}; the enum was used`, { where: requiredPointer, target: slot.subject });
+        const rawRequirement = hasRequirement ? context.read(requirementPointer) : undefined;
+        const declared = Coverage.normalizeRequirement(rawRequirement);
+
+        /* A value outside the vocabulary is never coerced into a neighbour. It is
+           preserved and reported, which is what schema.enum.unknown does for a
+           document already in the format. */
+        if (hasRequirement && !declared) {
+          context.preserve(requirementPointer, `coverage.requirement is ${JSON.stringify(rawRequirement)}, which is outside the declared enum; the value is kept rather than coerced into one`);
+          context.diagnostic("migration.review.required", `${slot.subject}: coverage.requirement=${JSON.stringify(rawRequirement)} is not one of ${Coverage.COVERAGE_REQUIREMENTS.join(", ")}; it was preserved and the enum was taken from the boolean if one is present`, { where: requirementPointer, target: slot.subject });
+        }
+
+        if (declared) {
+          context.set(slot.record, "/requirement", declared, requirementPointer, slot.subject);
+          if (hasRequired) {
+            /* The boolean is a LOSSY PROJECTION of the enum: `true` can only mean
+               "required", but `false` is equally consistent with "planned" and
+               "not-required". So only an assertion the enum denies is a conflict,
+               and `required:false` beside either non-required member is ordinary,
+               coherent data the application itself writes. */
+            const conflict = Coverage.requirementConflict({ required: context.read(requiredPointer), requirement: declared });
+            context.claim(requiredPointer, DISPOSITION.PRESERVED, [`${slot.subject}#/requirement`], conflict ? "the boolean contradicts the enum; the enum wins and the contradiction is reported" : "the boolean is a lossy projection of the enum and agrees with it");
+            if (conflict)
+              context.diagnostic("migration.review.required", `${slot.subject}: coverage.required=${JSON.stringify(conflict.legacy)} can only mean ${conflict.legacyAdmits.join(" or ")} but coverage.requirement says ${JSON.stringify(conflict.declared)}; the enum was used`, { where: requiredPointer, target: slot.subject });
+          }
         } else if (hasRequired) {
-          context.claim(requiredPointer, DISPOSITION.MAPPED, [`#/extensions/com.cinebraid.workflow/coverage`], "the only encoding present");
+          /* THE READING OF THE LEGACY BOOLEAN, and the line in this rule that had
+             to change. It used to say `read(required) ? "required" : "not-required"`,
+             manufacturing the more specific of two states the boolean cannot tell
+             apart — and disagreeing with the running application, which has always
+             read `required === false` as "planned". The mapping now comes from
+             public/shared-coverage.js, so migration and runtime cannot give one
+             slot two different requirements. */
+            const fromBoolean = Coverage.coverageRequirement({ required: context.read(requiredPointer) });
+            context.set(slot.record, "/requirement", fromBoolean, requiredPointer, slot.subject);
         }
       }
     },

@@ -260,14 +260,19 @@ const PINNED_KEY_ORDER = {
   DOCUMENT: ["format", "meta", "sources", "story", "shots", "entities", "assets", "references", "continuity", "statements", "extensions"],
   SHOT: ["id", "sceneId", "title", "description", "order", "framing", "duration", "setting", "subjects", "frames", "motion", "relations", "risks"],
   SCENE: ["id", "title", "summary", "setting", "order"],
-  CHARACTER: ["id", "name", "description", "role", "aliases", "voices", "states"],
+  /* P4-SEM-A appended `coverage`, in the same position it holds on location,
+     prop and vehicle: after `states`. Appending leaves every existing key at the
+     offset it already had, so no document that lacks the field changes a byte. */
+  CHARACTER: ["id", "name", "description", "role", "aliases", "voices", "states", "coverage"],
   VOICE: ["id", "name", "description", "kind", "language"],
   VOICE_LINK: ["voiceId", "role", "language"],
   LOCATION: ["id", "name", "description", "states", "coverage"],
   PROP: ["id", "name", "description", "states", "coverage"],
   VEHICLE: ["id", "name", "description", "states", "coverage"],
   ENTITY_STATE: ["id", "name", "isDefault", "derivesFrom", "delta"],
-  COVERAGE: ["id", "name", "description"],
+  /* P4-SEM-A appended `requirement`, for the same reason: an appended key cannot
+     move an existing one. */
+  COVERAGE: ["id", "name", "description", "requirement"],
   SOURCE: ["id", "kind", "title", "uri", "anchors"],
   ANCHOR: ["id", "elementKind", "text"],
   FRAME: ["id", "role", "description"],
