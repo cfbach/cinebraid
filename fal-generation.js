@@ -75,6 +75,29 @@ function registerFalGeneration(app, context) {
       h3Resolution: ["768P", "2K"].includes(String(fal.h3Resolution || "2K").toUpperCase()) ? String(fal.h3Resolution || "2K").toUpperCase() : "2K",
     };
   }
+  /* THE SAVED GENERATION DEFAULTS, resolved for one compiled image request.
+     The one place the compiled still-image path turns Settings into the values a paid
+     dialog opens at. A request that names a size or a quality keeps it — an explicit
+     choice in the dialog always outranks the saved default — and a request that names
+     neither gets what the filmmaker saved rather than whatever the model pack falls back
+     to on its own.
+
+     WHY IT LIVES HERE. The pre-C2b job route has always applied this rule (see the
+     `quality`/`resolution` fields on the job record below); the compiled path shipped
+     without it, so "Create frame" opened at the pack's own auto/smallest-at-this-ratio
+     no matter what Settings said. This is that same rule, at the compiled path's two
+     entry points, rather than a second settings system.
+
+     The resolution stays a TIER. Turning "2k" into a pixel pair needs this shot's aspect
+     ratio and this model's documented size list, and the model pack owns both. */
+  function savedImageSettings(purpose, body) {
+    const cfg = config();
+    const blocking = String(purpose) === "blocking";
+    return {
+      resolution: String(body?.resolution || (blocking ? cfg.blockingResolution : cfg.frameResolution) || ""),
+      quality: String(body?.quality || (blocking ? cfg.blockingQuality : cfg.frameQuality) || ""),
+    };
+  }
   function clamp(value, fallback, min, max) {
     const n = Number(value);
     return Number.isFinite(n) ? Math.max(min, Math.min(max, Math.round(n))) : fallback;
@@ -997,7 +1020,11 @@ function registerFalGeneration(app, context) {
         buildId: String(req.body?.sourceBuildId || ""),
         mode: String(req.body?.profileMode || ""),
         durationSeconds: req.body?.durationSeconds,
-        resolution: String(req.body?.resolution || ""),
+        /* Same rule as the still-image preview: an explicit choice wins, and silence
+           means the resolution the filmmaker saved rather than the pack's own. The paid
+           submit has always read cfg.h3Resolution this way; the preview had not, so the
+           dialog opened on a value Settings could not change. */
+        resolution: String(req.body?.resolution || config().h3Resolution || ""),
         aspectRatio: String(req.body?.aspectRatio || ""),
         submittedPrompt: req.body?.prompt,
       });
@@ -1073,14 +1100,16 @@ function registerFalGeneration(app, context) {
     }
     let compiled;
     try {
+      const purpose = String(req.body?.purpose || "frame");
       compiled = compileImageExecutionPlan({
         project: ownerProject(owner),
-        purpose: String(req.body?.purpose || "frame"),
+        purpose,
         shotId: String(req.body?.shotId || ""),
         buildId: String(req.body?.sourceBuildId || ""),
         aspectRatio: String(req.body?.aspectRatio || ""),
-        resolution: String(req.body?.resolution || ""),
-        quality: String(req.body?.quality || ""),
+        /* The preview IS the dialog's initial state, so the saved defaults have to
+           reach the compiler here or the dialog opens on values nobody chose. */
+        ...savedImageSettings(purpose, req.body),
         candidateCount: req.body?.outputCount,
         submittedPrompt: req.body?.prompt,
       });
@@ -1432,8 +1461,9 @@ function registerFalGeneration(app, context) {
           shotId: job.shotId,
           buildId: job.sourceBuildId,
           aspectRatio: job.aspectRatio,
-          resolution: String(req.body?.resolution || ""),
-          quality: String(req.body?.quality || ""),
+          /* The same resolution the preview used, so what was confirmed is what is
+             charged for. A dialog that sent an explicit size still wins here. */
+          ...savedImageSettings(purpose, req.body),
           candidateCount: requestedOutputCount,
           submittedPrompt: req.body?.prompt,
         });

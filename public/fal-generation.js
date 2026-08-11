@@ -7,6 +7,13 @@ function falResolutionValue(kind = "frame") {
   const cfg = falGenerationConfig();
   return kind === "blocking" ? (cfg.blockingResolution || "1k") : (cfg.frameResolution || "1k");
 }
+/* The saved MiniMax H3 resolution. Read here rather than written into each dialog so
+   the "H3 default resolution" field in Settings is the only thing that decides what the
+   paid motion dialog opens at. */
+function falH3ResolutionValue() {
+  const saved = String(falGenerationConfig().h3Resolution || "").toUpperCase();
+  return ["768P", "2K"].includes(saved) ? saved : "2K";
+}
 function falResolutionOptions(selected = "1k") {
   return [["1k", "1K"], ["2k", "2K"], ["4k", "4K"]].map(([value, label]) => `<option value="${value}" ${value === selected ? "selected" : ""}>${label}</option>`).join("");
 }
@@ -600,7 +607,7 @@ function falH3CostEstimate(duration, imageCount, videoCount, resolution = "2K") 
 window.updateFalH3CostEstimate = () => {
   const request = window._falH3MotionRequest || {};
   const duration = Number(document.getElementById("fal-h3-duration")?.value || request.durationSeconds || 5);
-  const resolution = document.getElementById("fal-h3-resolution")?.value || request.resolution || "2K";
+  const resolution = document.getElementById("fal-h3-resolution")?.value || request.resolution || falH3ResolutionValue();
   const refs = request.references || [];
   const images = refs.filter((ref) => ref.mediaType === "image").length;
   const videos = refs.filter((ref) => ref.mediaType === "video").length;
@@ -822,7 +829,7 @@ window.openFalH3MotionModal = async (shotId, buildId = "") => {
   const aspectGate = h3AspectSupport(profile.mode, ratio);
   const preview = await fetchFalH3Plan(shotId, build.id, {
     durationSeconds: requestedDuration,
-    resolution: "2K",
+    resolution: falH3ResolutionValue(),
     aspectRatio: aspectGate.carriesAspectRatio && aspectGate.ok ? aspectGate.value : ratio,
     profileMode: profile.mode,
   });
@@ -933,7 +940,7 @@ window.startFalH3MotionGeneration = async () => {
     prompt: request.prompt,
     outputCount: 1,
     durationSeconds: Number(document.getElementById("fal-h3-duration")?.value || request.durationSeconds || 5),
-    resolution: document.getElementById("fal-h3-resolution")?.value || request.resolution || "2K",
+    resolution: document.getElementById("fal-h3-resolution")?.value || request.resolution || falH3ResolutionValue(),
     aspectRatio: gate.carriesAspectRatio ? gate.value : request.aspectRatio || "",
   };
   try {

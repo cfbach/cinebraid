@@ -94,6 +94,27 @@ const SIZES_BY_RATIO = {
    the refusal can name them rather than saying "unsupported" and stopping. */
 const RATIO_ALIASES = { "4:3": "3:2", "3:4": "2:3", "21:9": "16:9", "2.39:1": "16:9", "1.85:1": "16:9" };
 
+/* The size TIERS a filmmaker saves in Settings, and which documented size each one
+   means at a given ratio.
+
+   Settings stores a tier — "1k", "2k", "4k" — because a filmmaker chooses how much to
+   spend, not a pixel pair; the pixel pair is this model's business and depends on the
+   shot's format. The tier of a named size is read off its long edge rather than kept in
+   a second table, so adding a size to GPT_IMAGE_2_FACTS.sizes cannot leave a table
+   behind disagreeing with it.
+
+   The boundaries are the documented long edges themselves: 1024 and 1536 are the 1K
+   sizes, 2048 the 2K sizes, 3840 the 4K sizes. */
+const SIZE_TIERS = ["1k", "2k", "4k"];
+function sizeTier(size) {
+  const [width, height] = String(size).split("x").map((value) => Number(value) || 0);
+  const longEdge = Math.max(width, height);
+  if (!longEdge) return "";
+  if (longEdge <= 1536) return "1k";
+  if (longEdge <= 2048) return "2k";
+  return "4k";
+}
+
 function checkpointForMode(mode) {
   return GPT_IMAGE_2_FACTS.modes.includes(String(mode)) ? { name: "standard", modes: GPT_IMAGE_2_FACTS.modes } : null;
 }
@@ -300,7 +321,8 @@ function pickSize(requestedSize, requestedRatio, capability, coverage) {
 
   /* An explicit size wins where the configuration allows it. */
   const size = text(requestedSize);
-  if (size) {
+  const tier = SIZE_TIERS.includes(size.toLowerCase()) ? size.toLowerCase() : "";
+  if (size && !tier) {
     if (allowed.includes(size)) return { size, via: "explicit" };
     coverage.warn({
       code: "resolution-unsupported",
@@ -311,7 +333,13 @@ function pickSize(requestedSize, requestedRatio, capability, coverage) {
   }
 
   const ratio = text(requestedRatio);
-  if (!ratio) return { size: allowed.includes("auto") ? "auto" : allowed[0], via: "default" };
+  if (!ratio) {
+    /* Without a ratio a tier still narrows the field, and taking the tier's own
+       smallest is the same spending rule the ladder below applies. */
+    const tierOnly = tier ? allowed.filter((value) => sizeTier(value) === tier) : [];
+    if (tierOnly.length) return { size: tierOnly[0], via: "tier" };
+    return { size: allowed.includes("auto") ? "auto" : allowed[0], via: "default" };
+  }
 
   const resolved = SIZES_BY_RATIO[ratio] ? ratio : RATIO_ALIASES[ratio];
   const candidates = (SIZES_BY_RATIO[resolved] || []).filter((value) => allowed.includes(value));
@@ -338,6 +366,26 @@ function pickSize(requestedSize, requestedRatio, capability, coverage) {
       action: `Accept ${resolved}, or generate this frame with a model that offers ${ratio}.`,
     });
   else coverage.represent("output.aspectRatio", "parameter");
+
+  /* A SAVED TIER, resolved against this ratio's own sizes.
+     "1k" is not a pixel pair until a format is known: at 3:2 it is 1536x1024, at 1:1 it
+     is 1024x1024, and at 16:9 this model documents no 1K size at all. Resolving here
+     rather than in the dialog is what lets the saved setting mean the same thing in
+     every format without the browser holding a copy of this model's size list. */
+  if (tier) {
+    const atTier = candidates.filter((value) => sizeTier(value) === tier);
+    if (atTier.length) return { size: atTier[0], via: "tier" };
+    /* The tier is real and this ratio has nothing at it. Named rather than silently
+       swapped: the filmmaker asked to spend at one tier and is about to spend at
+       another, and that is a sentence they are owed BEFORE the paid button. */
+    coverage.warn({
+      code: "resolution-tier-unavailable",
+      field: "settings.resolution",
+      message: `Your saved ${tier.toUpperCase()} frame size is not one GPT Image 2 offers at ${resolved}; ${candidates[0]} is the closest it documents at this format.`,
+      action: `Generate at ${candidates[0]}, save a different frame size in Settings, or generate this frame with a model that offers ${tier.toUpperCase()} at ${resolved}.`,
+    });
+  }
+
   /* THE SMALLEST at this ratio, not the largest.
      SIZES_BY_RATIO is a size ladder and is read as one only here — it is not a
      capability list and nothing sorts one. Taking the last entry would have been the
