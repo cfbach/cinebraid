@@ -9,6 +9,12 @@ content.
 **Sanitised real-world fixtures are P3.** P2 migrates none of the archived
 generations, and the migration framework has never opened one.
 
+**The real corpus does not exercise the P4-SEM-B path at all.** Measured across
+all 18 sanitized Overfit generations: zero occurrences of
+`continuityStateSelections`, `frameWorkflows`, or any `*StateSelections` map.
+`continuity-state-bindings.json` is therefore the ONLY coverage of the declared
+entity-state migration, and nothing may describe that path as corpus-proved.
+
 These are legacy `project.json` documents, not OFP documents, so the
 `*.ofp.json` LF pin in `.gitattributes` does not apply to them. Nothing compares
 their bytes; they are parsed, and the *output* of migrating them is what the
@@ -33,6 +39,7 @@ determinism tests compare.
 | `unknown-fields.json` | fields no contract revision models, at the root, in `meta` and on a shot |
 | `absent-null-empty.json` | absent versus `null` versus an explicitly empty collection |
 | `state-coverage-aliases.json` | the nine state-delta spellings, and `required` disagreeing with `requirement` |
+| `continuity-state-bindings.json` | P4-SEM-B: a shot-only binding, a frame that overrides it, a three-frame shot with three entities, three entities whose states are all called `state-default`, and a shot whose every selection migration must refuse — an unknown entity, an unknown state, an entity the shot does not contain, a workflow naming no frame, and a bare `locationStateId` with no location to own it |
 | `frame-stores.json` | `keyframes[]`, `creationBrief.frames[]` and `frameWorkflows{}` holding one frame between them, agreeing and then disagreeing |
 | `secret-traps.json` | API keys, an auth secret, a passcode, credential-named tokens, absolute host paths, a localhost endpoint and a credential URL — none of which may reach the document; plus the M080 counterpart, a prompt reference placeholder stored under a bare `token` key, which must survive |
 | `foreign-application.json` | another application's scene document, which the audit names and says do not migrate |

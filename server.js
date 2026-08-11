@@ -5175,10 +5175,18 @@ function derivedFrameContext(P, shot, frame) {
   if (blocking) add(projectAssetPath(blocking.storagePath || blocking.file), blocking.title || blocking.file, "frame-specific composition guide");
   const resolved = resolveShotEntities(P, shot);
   const location = resolved.locations.find((item) => item.id === creation.locationId) || resolved.locations[0];
-  add(entityApprovedDiskPath("locations", location, state.locationStateId || ""), location?.name || "Approved location", "location design authority");
-  for (const character of resolved.characters || []) add(entityApprovedDiskPath("characters", character, (state.characterStateSelections || {})[character.id] || ""), character.name || character.id, "character identity authority");
-  for (const prop of resolved.props || []) add(entityApprovedDiskPath("props", prop, (state.propStateSelections || {})[prop.id] || ""), prop.name || prop.id, "prop design authority");
-  for (const vehicle of resolved.vehicles || []) add(entityApprovedDiskPath("vehicles", vehicle, (state.vehicleStateSelections || {})[vehicle.id] || ""), vehicle.name || vehicle.id, "vehicle design authority");
+  /* P4-SEM-B. This used to read the frame's own workflow maps directly, which
+     meant it honoured a frame override and then fell straight past the SHOT's
+     declared state to the entity's default - so a shot that declared "Rhea is
+     rain-soaked" generated every unoverridden frame against the clean
+     authority. The declared state and the image it selects were two truths.
+     One resolver answers now, the same one the continuity manifest and the
+     `continuity` profile use: frame, then shot, then the entity's default. */
+  const declared = (kind, entity) => (entity ? Continuity.resolveDeclaredStateId(shot, frame.id, kind, entity.id) : "");
+  add(entityApprovedDiskPath("locations", location, declared("location", location)), location?.name || "Approved location", "location design authority");
+  for (const character of resolved.characters || []) add(entityApprovedDiskPath("characters", character, declared("character", character)), character.name || character.id, "character identity authority");
+  for (const prop of resolved.props || []) add(entityApprovedDiskPath("props", prop, declared("prop", prop)), prop.name || prop.id, "prop design authority");
+  for (const vehicle of resolved.vehicles || []) add(entityApprovedDiskPath("vehicles", vehicle, declared("vehicle", vehicle)), vehicle.name || vehicle.id, "vehicle design authority");
   return context;
 }
 

@@ -158,6 +158,9 @@ async function main() {
   assert(index.includes(`shared-camera.js?v=${RELEASE_VERSION}`), "shared camera vocabulary must load before the app");
   assert(index.includes(`shared-aspect.js?v=${RELEASE_VERSION}`), "shared aspect-ratio model must load before the app");
   assert(index.includes(`shared-reference-views.js?v=${RELEASE_VERSION}`), "shared reference-view vocabulary must load before media and composer modules");
+  assert(index.includes(`shared-continuity-binding.js?v=${RELEASE_VERSION}`), "shared declared-state binding contract must load as a cache-busted frontend module");
+  assert(index.indexOf(`shared-continuity-binding.js?v=${RELEASE_VERSION}`) < index.indexOf(`shared-continuity.js?v=${RELEASE_VERSION}`),
+    "and it must load before shared-continuity.js, whose resolveDeclaredStateId is now the entry point to the rule rather than a second copy of it");
   assert(index.includes(`shared-coverage.js?v=${RELEASE_VERSION}`), "shared coverage-requirement contract must load before every surface that counts views");
   assert(index.indexOf(`shared-coverage.js?v=${RELEASE_VERSION}`) < index.indexOf(`app.js?v=${RELEASE_VERSION}`),
     "and it must load before app.js, whose coverage templates seed through it");
@@ -336,6 +339,9 @@ async function main() {
     "continuity-observation.js",
     "continuity-observe-route.js",
     "continuity-prompt-contract.js",
+    "continuity-state-binding-negative-controls.js",
+    "continuity-state-binding-real-browser.py",
+    "continuity-state-binding.js",
     "continuity-validation-status.js",
     "continuity-workflow-real-browser.py",
     "continuity-workspace.js",

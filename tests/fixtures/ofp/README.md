@@ -33,6 +33,8 @@ Two files are written as raw text because no serializer can emit them:
 |---|---|
 | `minimal.ofp.json` | the smallest valid document |
 | `representative.ofp.json` | scene, shot, character, prop, states, coverage, voice links, source + anchor, asset, reference, and all five statement kinds — the golden document |
+| `continuity-bindings.ofp.json` | P4-SEM-B: the `continuity` profile's first modelled interior — a shot-only binding, an A/B/C shot with two frame overrides, a location bound through `setting.locationId` rather than `subjects[]`, and a character, a prop and a location whose states are all called `state-default` and `state-alt` |
+| `continuity-bindings-broken.ofp.json` | every continuity error at once: a state the entity does not declare, a binding for an entity the shot does not contain, two bindings for one entity, two entries for one shot, a frame-level binding naming another shot's frame, and profile data with no `continuity` in `format.profiles` |
 | `stale-approval.ofp.json` | a value changed after it was approved; `statement.stale` + `statement.stale.approval` |
 | `unresolvable-target.ofp.json` | a statement pointing at a shot that no longer exists |
 | `array-traversal-target.ofp.json` | a path that would enter an array — the restriction that makes array indexes structurally incapable of being identity |

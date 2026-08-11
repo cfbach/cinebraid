@@ -72,10 +72,15 @@ for (const id of AUDIT_RULE_IDS) {
   assert(rule, `${id} is named by the frozen audit matrix and must exist`);
   assert.strictEqual(rule.origin, id === "M040" ? "audit Part 27, amended by P0 §10.6" : "audit Part 27", `${id} must be attributed to the record that named it`);
 }
-/* And the P2 assignments are declared as such rather than passing themselves off
-   as audit IDs. */
+/* And an ID the matrix does not name must say which phase assigned it rather
+   than passing itself off as an audit ID. The list is explicit, not a
+   "starts with P" pattern: a rule whose origin is a phase nobody has declared
+   here is exactly the anonymous provenance this assertion exists to catch. */
+const ASSIGNING_PHASES = ["P2", "P4-SEM-B"];
 for (const rule of MIGRATION_RULES)
-  if (!AUDIT_RULE_IDS.includes(rule.id)) assert(rule.origin.startsWith("P2"), `${rule.id} is a P2 assignment and must say so`);
+  if (!AUDIT_RULE_IDS.includes(rule.id))
+    assert(ASSIGNING_PHASES.some((phase) => rule.origin.startsWith(phase)),
+      `${rule.id} is not named by the audit matrix, so its origin must name the phase that assigned it (one of ${ASSIGNING_PHASES.join(", ")}); it says ${JSON.stringify(rule.origin)}`);
 
 /* Registry order is the execution order, and it is stable. */
 assert.deepStrictEqual(RULE_IDS.slice(0, 3), ["M080", "M001", "M002"], "the quarantine runs before any rule can carry a value");

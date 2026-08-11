@@ -17,10 +17,13 @@
 
      M003 project metadata            M009 keyframes/clips -> frames/motion
      M004 scenes                      M017 audio entities -> voices
-     M005 shots                       M060 deterministic ID minting
-     M006 entities                    M070 unknown legacy preservation
-     M007 entity states               M080 runtime/secret quarantine
-     M008 coverage slots
+     M005 shots                       M043 declared entity-state bindings
+     M006 entities                    M060 deterministic ID minting
+     M007 entity states               M070 unknown legacy preservation
+     M008 coverage slots              M080 runtime/secret quarantine
+
+   M043 is a P4-SEM-B assignment and sits in the M040-M042 continuity band the
+   matrix already opened, beside the two rules whose data it takes over.
 
    DETERMINISM IS PER-APPLICATION, NOT PER-RULE. A rule is declared
    `deterministic`, `inferential` or `mixed`; a `mixed` rule maps deterministically
@@ -43,6 +46,10 @@ const { SOURCE_GENERATION, META_VERSION_CLASS } = require("./ofp-migrate-detect"
    app that wrote it is exactly the defect P4-SEM-A removes, so M015 borrows the
    reading rather than restating it. */
 const Coverage = require("../public/shared-coverage");
+/* P4-SEM-B, same reasoning: the declared entity-state binding is one contract,
+   shared with the running application, so what M043 writes into the continuity
+   profile and what the app resolves at generation time cannot disagree. */
+const Binding = require("../public/shared-continuity-binding");
 
 const ALL_GENERATIONS = [SOURCE_GENERATION.PRE_6_6, SOURCE_GENERATION.V6_6, SOURCE_GENERATION.V6_7, SOURCE_GENERATION.UNKNOWN];
 
@@ -962,7 +969,14 @@ const RULES = [
             }
           });
         }
-        for (const key of ["frameWorkflows", "motionPlan", "blockingBuilds", "deliveryIntent"])
+        /* `frameWorkflows` used to be preserved here with the rest of the
+           cluster. P4-SEM-B moved it to M043, which runs after M009 and M020
+           and therefore knows this shot's frames, subjects and location - the
+           three things needed to decide which selections inside it are
+           canonical continuity data and which are ambiguous. Preserving it here
+           as well would put a declared state in two places at once; deciding it
+           here would mean deciding it without the information. */
+        for (const key of ["motionPlan", "blockingBuilds", "deliveryIntent"])
           if (context.exists(briefPointer + ptr(key)))
             context.preserve(briefPointer + ptr(key), `creationBrief.${key} is CineBraid workflow state with no OFP core home`);
       }
@@ -1360,12 +1374,159 @@ const RULES = [
         context.preserve(pointer, "declared continuity intent stored as newline-delimited prose; the continuity profile's interior is not modelled at this contract revision");
         context.diagnostic("migration.review.required", `/scenes/${index}: continuity intent is stored as prose and needs a human to structure it`, { where: pointer });
       });
+      /* `continuityStateSelections` left this list in P4-SEM-B: the declared
+         entity-state binding IS modelled now, and M043 maps it. What remains
+         here is genuinely unmodelled - `continuityIntent` is the allow/deny
+         tracking policy and `continuitySelections` is a legacy sibling nothing
+         reads - and both stay preserved until the profile grows a home. */
       for (const shot of context.shots()) {
-        for (const key of ["continuityIntent", "continuitySelections", "continuityStateSelections"]) {
+        for (const key of ["continuityIntent", "continuitySelections"]) {
           const pointer = shot.from + ptr(key);
-          if (context.exists(pointer)) context.preserve(pointer, `shot.${key} belongs to the continuity profile, whose interior this contract revision does not model`);
+          if (context.exists(pointer)) context.preserve(pointer, `shot.${key} belongs to the continuity profile, whose ${key === "continuityIntent" ? "declared-intent" : "legacy selection"} interior this contract revision does not model`);
         }
       }
+    },
+  },
+
+  /* =====================================================================
+     M043 - P4-SEM-B: the declared entity-state binding becomes canonical.
+
+     CineBraid has resolved frame -> shot -> entity-default in the runtime since
+     6.7, and OFP had nowhere to put the answer, so M042 preserved the whole
+     thing into the legacy extension and another client saw an opaque blob. This
+     rule re-homes it into the `continuity` profile, which owns the binding and
+     its own relative resolution rule.
+
+     IT RUNS HERE, after M009 (frames), M014 (frame stores) and M020 (subjects
+     and setting), because deciding whether a selection is expressible needs all
+     three: the frame it names, the entity it names, and whether the shot
+     actually contains that entity.
+
+     DETERMINISTIC, NOT MIXED, AND NO STATEMENTS. Every selection either maps or
+     it does not, on facts already in the document - the entity exists or it
+     does not, the state is in that entity's catalogue or it is not, the shot
+     contains the entity or it does not. Nothing here is a reading, so P0 §10.3
+     forbids a statement: migrations emit statements only where they GUESS.
+     A refused selection is preserved verbatim and reported for a human, which
+     is the same treatment M042 gives continuity prose.
+
+     NOTHING IS INVENTED. A binding is never written for an entity the shot does
+     not list, because that would mean fabricating a `subjects[]` entry; and a
+     bare `locationStateId` with no location on the shot has no owner, so it
+     stays preserved rather than being attached to whichever location sorted
+     first. State ids are owner-scoped - twelve entities in the real corpus all
+     declare `state-default` - so every check below resolves the state inside
+     the entity named in the same selection and nowhere else. */
+  {
+    id: "M043",
+    name: "declared entity-state bindings",
+    summary: "Re-homes shot and frame entity-state selections from the legacy extension into the continuity profile, resolving each state within the entity that owns it, and declares the profile in format.profiles when it writes one. A selection naming an unknown entity, an unknown state, an entity the shot does not contain or a frame the shot does not have is preserved verbatim and reported, never guessed into a binding.",
+    origin: "P4-SEM-B (implements the Q1 decision record)",
+    appliesTo: ALL_GENERATIONS,
+    determinism: DETERMINISM.DETERMINISTIC,
+    apply(context) {
+      const bindingSets = [];
+      for (const shot of context.shots()) {
+        const setting = isObject(shot.record.setting) ? shot.record.setting : {};
+        const locationEntityId = nonEmptyString(setting.locationId) ? setting.locationId : "";
+        const frameIds = context.framesOf(shot).map((frame) => String(frame.record.id));
+        const frameIdSet = new Set(frameIds);
+        /* The SHARED reader, not a second one. What migration writes and what
+           the running application resolves come out of the same function, so a
+           project cannot declare one state and generate against another. */
+        const read = Binding.readShotStateBindings(shot.legacy, {
+          shotId: shot.record.id,
+          locationEntityId,
+          frameIds,
+        });
+
+        const contained = new Set((Array.isArray(shot.record.subjects) ? shot.record.subjects : []).map((entry) => entry && entry.entityId).filter(nonEmptyString));
+        /* M020 puts the shot's location in `setting.locationId` and not in
+           `subjects[]`, which every migrated golden shows, so containment has
+           to read both or every location state would be refused. */
+        if (locationEntityId) contained.add(locationEntityId);
+
+        const mapped = { entityStates: [], frames: [] };
+        const omit = new Set();
+
+        const refuse = (from, reason) => {
+          context.diagnostic("migration.review.required", `${from}: ${reason}; the selection is preserved verbatim and no continuity binding was written for it`, { where: from, target: shot.subject });
+        };
+        /* One place decides whether a selection can become a binding, so the
+           shot scope and the frame scope cannot drift into different rules. */
+        const admit = (binding, scopeWords, from) => {
+          const entity = context.entityByAnyId(binding.entityId);
+          if (!entity) { refuse(from, `${scopeWords} selects a state for ${JSON.stringify(binding.entityId)}, which names no entity in this project`); return false; }
+          const states = Array.isArray(entity.record.states) ? entity.record.states : [];
+          if (!Binding.stateIdBelongsToEntity(states, binding.stateId)) {
+            refuse(from, `${JSON.stringify(binding.stateId)} names no state on ${JSON.stringify(binding.entityId)} (it declares ${states.length ? states.map((state) => JSON.stringify(state.id)).join(", ") : "no states"}); a state id is resolved within its own entity and is not unique across the project`);
+            return false;
+          }
+          if (!contained.has(binding.entityId)) {
+            refuse(from, `${scopeWords} selects a state for ${JSON.stringify(binding.entityId)}, which this shot neither lists as a subject nor uses as its location; writing the binding would mean inventing a subjects[] entry`);
+            return false;
+          }
+          return true;
+        };
+
+        for (const binding of read.entityStates) {
+          const from = shot.from + binding.from;
+          if (!admit(binding, "the shot", from)) continue;
+          mapped.entityStates.push({ entityId: binding.entityId, stateId: binding.stateId });
+          omit.add(from);
+          context.claim(from, DISPOSITION.MAPPED, [`#/continuity/shots/${shot.record.id}/entityStates/${binding.entityId}`], "a shot-level declared entity state, re-homed from the legacy extension into the continuity profile");
+        }
+
+        for (const frame of read.frames) {
+          const frameFrom = shot.from + ptr("creationBrief", "frameWorkflows", frame.frameId);
+          if (!frameIdSet.has(frame.frameId)) {
+            refuse(frameFrom, `the frame workflow ${JSON.stringify(frame.frameId)} names no frame on this shot, so its ${frame.entityStates.length} state selection${frame.entityStates.length === 1 ? "" : "s"} cannot be resolved against one`);
+            continue;
+          }
+          const entityStates = [];
+          for (const binding of frame.entityStates) {
+            const from = shot.from + binding.from;
+            if (!admit(binding, `frame ${JSON.stringify(frame.frameId)}`, from)) continue;
+            entityStates.push({ entityId: binding.entityId, stateId: binding.stateId });
+            omit.add(from);
+            context.claim(from, DISPOSITION.MAPPED, [`#/continuity/shots/${shot.record.id}/frames/${frame.frameId}/entityStates/${binding.entityId}`], "a frame-level declared entity state, re-homed from the legacy extension into the continuity profile");
+          }
+          if (entityStates.length) mapped.frames.push({ frameId: frame.frameId, entityStates });
+        }
+
+        /* A bare locationStateId this reading could not attribute to an entity.
+           Named out loud rather than left to the sweep, because "the shot has no
+           location" is a production fact a human can act on and an unaccounted
+           value is not. */
+        for (const orphan of Binding.unattributedFrameLocationStates(shot.legacy, { locationEntityId }))
+          refuse(shot.from + ptr("creationBrief", "frameWorkflows", orphan.frameId, Binding.RUNTIME_FRAME_LOCATION_KEY),
+            `a frame location state ${JSON.stringify(orphan.stateId)} has no owner: ${orphan.reason}`);
+
+        /* Everything under the two legacy blocks that did NOT become a binding
+           is preserved exactly where M042 and M014 used to put it, minus the
+           leaves that are canonical now. One fact never lands in two places. */
+        const selectionsPointer = shot.from + ptr(Binding.RUNTIME_SHOT_SELECTION_KEY);
+        if (context.exists(selectionsPointer))
+          context.preserveExcept(selectionsPointer, "shot.continuityStateSelections entries that could not be expressed as a continuity-profile binding; the ones that could are in #/continuity and are not repeated here", omit);
+        const workflowsPointer = shot.from + ptr("creationBrief", "frameWorkflows");
+        if (context.exists(workflowsPointer))
+          context.preserveExcept(workflowsPointer, "creationBrief.frameWorkflows is CineBraid workflow state with no OFP core home; the declared entity-state selections inside it are canonical continuity-profile data and are in #/continuity instead", omit);
+
+        if (mapped.entityStates.length || mapped.frames.length)
+          bindingSets.push({ shotId: shot.record.id, entityStates: mapped.entityStates, frames: mapped.frames });
+      }
+
+      /* THE ONE WRITER of the canonical block, shared with the application. */
+      const profile = Binding.buildContinuityProfile(bindingSets);
+      if (!profile) return;
+      context.candidate[Binding.CONTINUITY_PROFILE_ID] = profile;
+
+      /* Participation is declared, never inferred. M001 wrote the profile list;
+         this appends to it, and only because data now exists to declare. The
+         order is the order the profiles layer, so continuity goes last. */
+      const format = isObject(context.candidate.format) ? context.candidate.format : null;
+      if (format && Array.isArray(format.profiles) && !format.profiles.includes(Binding.CONTINUITY_PROFILE_ID))
+        format.profiles.push(Binding.CONTINUITY_PROFILE_ID);
     },
   },
 

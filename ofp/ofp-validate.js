@@ -33,6 +33,10 @@ const { checkIdentifierFloor, isIdentifierPortable } = require("./ofp-identifier
 const { parseSubjectRef, resolveSubject, resolveTarget, formatTargetString } = require("./ofp-target");
 const { deriveStatementState, STATEMENT_STATES, STATEMENT_KINDS } = require("./ofp-statements");
 const { MODES, SEVERITY, makeDiagnostic } = require("./ofp-diagnostics");
+/* P4-SEM-B. The continuity profile's own resolution rule is one contract shared
+   with the running application, so the thing that REPORTS a duplicate binding
+   and the thing that RESOLVES one cannot disagree about which is live. */
+const { CONTINUITY_PROFILE_ID, duplicateBindingEntityIds, stateIdBelongsToEntity } = require("../public/shared-continuity-binding");
 
 const ALL_MODES = [MODES.COMPATIBILITY, MODES.STRUCTURAL, MODES.SEMANTIC, MODES.PORTABILITY];
 
@@ -282,6 +286,138 @@ function validateOfpDocument(input, options = {}) {
     }
   }
   if (modes.has(MODES.SEMANTIC)) checkRefs(DOCUMENT, document, "", "");
+
+  /* ---- semantic: the continuity profile (P4-SEM-B) -----------------------
+
+     RELATIVE RESOLUTION, made explicit. `checkRefs` has already resolved
+     `entityId` and `shotId` globally, which is legal because both namespaces
+     are project-wide. Neither `stateId` nor `frameId` is, and the difference is
+     not a nicety: twelve entities in the real corpus all declare a state whose
+     id is `state-default`, so a global lookup would resolve a prop's binding
+     against a character's wardrobe and report nothing.
+
+     So each binding is resolved against exactly one owner:
+
+         stateId  within the entity named in the SAME binding
+         frameId  within the shot that CONTAINS the binding
+
+     and a binding is weighed against the shot it is about - an entity a shot
+     neither lists as a subject nor uses as its location has no state to
+     declare there. The reading of "contains" includes `setting.locationId`
+     because M020 puts the location there and not in `subjects[]`, which is
+     visible in every migrated golden. */
+  if (modes.has(MODES.SEMANTIC)) checkContinuityProfile();
+
+  /* The entity's OWN state catalogue, or null when no entity of that id exists.
+     The two answers are different findings and must not collapse: "this entity
+     declares no such state" is a continuity error, "there is no such entity" is
+     already ref.unresolved. */
+  function entityStatesOf(entityId) {
+    const collections = entities && typeof entities === "object" && !Array.isArray(entities) ? entities : {};
+    for (const collection of ENTITY_COLLECTIONS) {
+      const list = collections[collection];
+      if (!Array.isArray(list)) continue;
+      const record = list.find((item) => item && typeof item === "object" && item.id === entityId);
+      if (!record) continue;
+      const states = Array.isArray(record.states) ? record.states : [];
+      return states.filter((state) => state && typeof state === "object" && typeof state.id === "string");
+    }
+    return null;
+  }
+
+  function checkContinuityProfile() {
+    const profile = document.continuity;
+    if (!profile || typeof profile !== "object" || Array.isArray(profile)) return;
+
+    /* Presence of the BLOCK is not participation; presence of DATA is. An empty
+       `continuity: {}` round-tripped by a tool that never wrote a binding must
+       not be told it failed to declare a profile it does not use. */
+    const shotBindings = Array.isArray(profile.shots) ? profile.shots.filter((entry) => entry && typeof entry === "object" && !Array.isArray(entry)) : [];
+    const carriesData = Object.keys(profile).some((key) => key !== "shots") || shotBindings.length > 0;
+    const declared = document.format && typeof document.format === "object" && Array.isArray(document.format.profiles)
+      ? document.format.profiles
+      : [];
+    if (carriesData && !declared.includes(CONTINUITY_PROFILE_ID))
+      report("continuity.profile.undeclared", `the document carries ${JSON.stringify(`/${CONTINUITY_PROFILE_ID}`)} data and format.profiles is ${JSON.stringify(declared)}; participation in a profile is declared, never inferred from the data being there`, { where: "/format/profiles" });
+
+    const shotsById = new Map();
+    for (const shot of recordIndex.byType.get("shot") || [])
+      if (typeof shot.id === "string" && shot.id && !shotsById.has(shot.id)) shotsById.set(shot.id, shot.item);
+
+    const seenShotIds = new Set();
+    for (let index = 0; index < shotBindings.length; index++) {
+      const entry = shotBindings[index];
+      const where = `/${CONTINUITY_PROFILE_ID}/shots/${index}`;
+      const shotId = typeof entry.shotId === "string" ? entry.shotId : "";
+      if (!shotId) continue; /* schema.required.missing already said so */
+      const subject = `shot:${shotId}`;
+      if (seenShotIds.has(shotId))
+        report("continuity.binding.duplicate", `two continuity entries bind ${JSON.stringify(shotId)}; one shot has one set of declared states, and a second entry makes the resolved value depend on array order`, { target: subject, where });
+      else seenShotIds.add(shotId);
+
+      const shot = shotsById.get(shotId) || null;
+      /* An unresolved shotId is already `ref.unresolved`. Without the shot there
+         is nothing to resolve a frame or a subject list against, so the
+         remaining checks would be guesses about a shot that is not there. */
+      if (!shot) continue;
+
+      const contained = new Set();
+      for (const item of Array.isArray(shot.subjects) ? shot.subjects : [])
+        if (item && typeof item === "object" && typeof item.entityId === "string" && item.entityId) contained.add(item.entityId);
+      const setting = shot.setting && typeof shot.setting === "object" && !Array.isArray(shot.setting) ? shot.setting : {};
+      if (typeof setting.locationId === "string" && setting.locationId) contained.add(setting.locationId);
+
+      const frameIds = new Set();
+      for (const frame of Array.isArray(shot.frames) ? shot.frames : [])
+        if (frame && typeof frame === "object" && typeof frame.id === "string" && frame.id) frameIds.add(frame.id);
+
+      checkBindingList(entry.entityStates, subject, `${where}/entityStates`, `shot ${JSON.stringify(shotId)}`, contained);
+
+      const seenFrameIds = new Set();
+      const frames = Array.isArray(entry.frames) ? entry.frames : [];
+      for (let frameIndex = 0; frameIndex < frames.length; frameIndex++) {
+        const frame = frames[frameIndex];
+        if (!frame || typeof frame !== "object" || Array.isArray(frame)) continue;
+        const frameWhere = `${where}/frames/${frameIndex}`;
+        const frameId = typeof frame.frameId === "string" ? frame.frameId : "";
+        if (!frameId) continue;
+        if (seenFrameIds.has(frameId))
+          report("continuity.binding.duplicate", `shot ${JSON.stringify(shotId)} binds frame ${JSON.stringify(frameId)} twice; one frame has one set of overrides`, { target: subject, where: frameWhere });
+        else seenFrameIds.add(frameId);
+        if (!frameIds.has(frameId)) {
+          report("continuity.binding.frame-unknown", `${JSON.stringify(frameId)} names no frame on shot ${JSON.stringify(shotId)}; a frame-level binding is resolved within its own shot and never against a project-wide frame index`, { target: subject, where: frameWhere });
+          continue;
+        }
+        checkBindingList(frame.entityStates, `${subject}/frame:${frameId}`, `${frameWhere}/entityStates`, `frame ${JSON.stringify(frameId)} of shot ${JSON.stringify(shotId)}`, contained);
+      }
+    }
+  }
+
+  function checkBindingList(list, subject, where, scopeWords, contained) {
+    if (!Array.isArray(list)) return;
+    for (const entityId of duplicateBindingEntityIds(list))
+      report("continuity.binding.duplicate", `${scopeWords} binds ${JSON.stringify(entityId)} more than once; absence means inherit and a second binding for one entity at one scope makes the resolved state depend on array order`, { target: subject, where });
+    for (let index = 0; index < list.length; index++) {
+      const binding = list[index];
+      if (!binding || typeof binding !== "object" || Array.isArray(binding)) continue;
+      const entityId = typeof binding.entityId === "string" ? binding.entityId : "";
+      const stateId = typeof binding.stateId === "string" ? binding.stateId : "";
+      if (!entityId || !stateId) continue; /* schema.required.missing / schema.type own these */
+      const itemWhere = `${where}/${index}`;
+      const states = entityStatesOf(entityId);
+      /* `null` means the entity itself does not exist, which checkRefs has
+         already reported as ref.unresolved. Saying it again in this vocabulary
+         would be one problem with two names. */
+      /* An entity that does not exist is ONE finding, not three. checkRefs has
+         already said `ref.unresolved`; a record that is not there is neither
+         missing a state nor absent from a subject list. */
+      if (states === null) continue;
+      if (!stateIdBelongsToEntity(states, stateId))
+        report("continuity.binding.state-unresolved", `${JSON.stringify(stateId)} names no state on ${JSON.stringify(entityId)} (it declares ${states.length ? states.map((state) => JSON.stringify(state.id)).join(", ") : "no states"}); a state id is resolved within the entity named in the same binding, because state ids are owner-scoped and are not unique across the document`, { target: `${subject}#${itemWhere}`, where: itemWhere });
+      if (contained && !contained.has(entityId))
+        report("continuity.binding.entity-unlisted", `${scopeWords} declares a state for ${JSON.stringify(entityId)}, which the shot neither lists in subjects[] nor uses as setting.locationId; a state can only be selected for an entity the shot contains`, { target: `${subject}#${itemWhere}`, where: itemWhere });
+    }
+  }
 
   /* ---- semantic: statements ---------------------------------------------- */
   if (modes.has(MODES.SEMANTIC) && Array.isArray(document.statements)) {

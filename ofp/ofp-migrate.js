@@ -269,6 +269,65 @@ class MigrationContext {
     this.legacyPreserved.push({ sourcePath: pointer, rule: this.rule, note, value });
   }
 
+  /* Preserve a block EXCEPT the leaves another rule is going to map into core
+     or into a profile.
+
+     Added by P4-SEM-B, and the alternative it replaces is the reason it exists.
+     `creationBrief.frameWorkflows` is CineBraid workflow state with no OFP home
+     and M014 preserves it whole - but the declared entity-state selections
+     inside it are now canonical continuity-profile data. Preserving the block
+     unchanged AND mapping those selections would put one fact in two places,
+     which is precisely the defect this body of work exists to end; preserving
+     the block unchanged and NOT mapping them would leave a director's declared
+     state change buried in an opaque blob, which is the defect P4-SEM-B exists
+     to end. So the excluded leaves are neither claimed nor copied here, and the
+     rule that maps them claims them itself. A leaf nobody claims still fails
+     the unaccounted-value invariant, so this cannot be used to lose one.
+
+     A container left with nothing inside becomes ABSENT rather than empty: an
+     explicitly empty collection is a production fact of its own, and inventing
+     one where every member was mapped away would assert something the source
+     never said. */
+  preserveExcept(pointer, note, omitted) {
+    if (this.isQuarantined(pointer)) return;
+    const omit = omitted instanceof Set ? omitted : new Set(omitted || []);
+    const covered = this.ledger.leafSet.has(pointer)
+      ? [pointer]
+      : this.ledger.leaves.filter((leaf) => leaf.startsWith(`${pointer}/`));
+    for (const leaf of covered) {
+      if (omit.has(leaf)) continue;
+      this.claim(leaf, DISPOSITION.PRESERVED, [`#/extensions/${LEGACY_EXTENSION}/preserved`], note);
+    }
+    const kept = this.copyWithoutOmitted(pointer, omit);
+    /* Nothing left once the canonical leaves are gone means there is nothing to
+       preserve - not an empty blob asserting a collection the source never had. */
+    if (kept === undefined) return;
+    this.legacyPreserved.push({ sourcePath: pointer, rule: this.rule, note, value: kept });
+  }
+
+  copyWithoutOmitted(pointer, omit) {
+    const walk = (value, here) => {
+      if (omit.has(here) || this.quarantined.has(here)) return undefined;
+      if (Array.isArray(value)) {
+        if (value.length === 0) return [];
+        const kept = value.map((entry, index) => walk(entry, `${here}/${index}`)).filter((entry) => entry !== undefined);
+        return kept.length ? kept : undefined;
+      }
+      if (isObject(value)) {
+        const keys = Object.keys(value);
+        if (keys.length === 0) return {};
+        const copy = {};
+        for (const key of keys) {
+          const child = walk(value[key], `${here}/${encodeToken(key)}`);
+          if (child !== undefined) copy[key] = child;
+        }
+        return Object.keys(copy).length ? copy : undefined;
+      }
+      return value;
+    };
+    return walk(readPointer(this.source, pointer), pointer);
+  }
+
   workflowPut(keyPath, value, pointer, note) {
     if (pointer && this.isQuarantined(pointer)) return;
     setPointer(this.workflow, keyPath.map((token) => `/${encodeToken(token)}`).join(""), value);
