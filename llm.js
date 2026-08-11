@@ -464,6 +464,25 @@ function resolveProviderConnection(requestOptions, providerBaseUrl, providerKey)
   if (!endpoint) return { baseUrl: providerBaseUrl, apiKey: providerKey };
   return { baseUrl: endpoint.baseUrl || providerBaseUrl, apiKey: endpoint.apiKey || "" };
 }
+/* Which provider and model a vision request will actually be served by.
+
+   Extracted so a caller that needs to RECORD what served it — candidate review
+   records the reviewer alongside its verdict — resolves through the same code
+   that dispatches, rather than re-reading Settings later and reporting whatever
+   they say by then. vision() below is its only other caller, so the two cannot
+   answer differently. Pure: reads configuration, sends nothing. */
+function resolveVisionTarget(providerOverride, modelOverride, cfg = readConfig()) {
+  let provider = providerOverride || cfg.assistant?.visionProvider || "same";
+  if (provider === "same") provider = cfg.assistant?.provider || "ollama";
+  const model = provider === "anthropic"
+    ? modelOverride || cfg.anthropicVisionModel
+    : provider === "openai"
+      ? modelOverride || cfg.openaiVisionModel || cfg.openaiModel
+      : provider === "custom"
+        ? modelOverride || cfg.customVisionModel || cfg.customModel
+        : modelOverride || cfg.ollamaVisionModel || cfg.ollamaModel;
+  return { provider: String(provider || ""), model: String(model || "") };
+}
 async function vision(
   system,
   user,
@@ -474,8 +493,7 @@ async function vision(
   requestOptions = {},
 ) {
   const cfg = readConfig();
-  let provider = providerOverride || cfg.assistant?.visionProvider || "same";
-  if (provider === "same") provider = cfg.assistant?.provider || "ollama";
+  const { provider } = resolveVisionTarget(providerOverride, modelOverride, cfg);
   if (provider === "none") throw new Error("Vision assistance is disabled.");
   /* Strict structured output is an OpenAI-compatible feature. Failing here is
      better than silently sending an unconstrained request and trying to parse
@@ -554,6 +572,7 @@ module.exports = {
   customRequestBody,
   structuredVisionBody,
   isLocalProviderEndpoint,
+  resolveVisionTarget,
   resolveProviderConnection,
   openAiProviderDialect,
   tokenLimitBody,

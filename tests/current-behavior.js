@@ -187,6 +187,12 @@ async function main() {
   assert(media.includes("defaultReferencePriority"), "new reference priority must use a working role-based default");
   assert(read("server.js").includes('app.post("/api/llm/review-candidate"'), "structured multimodal candidate review endpoint must remain available");
   assert(read("server.js").includes('app.post("/api/llm/review-entity-candidate"'), "state-specific structured entity candidate review endpoint must remain available");
+  /* B2a: the declared delta reaches the reviewer as a checklist CineBraid owns,
+     what comes back is compared rather than believed, and the review records
+     which provider and model actually served it. */
+  assert(read("server.js").includes("declaredRequirements: declaredState.requirements"), "the declared state delta must reach the review contract as data, not only as prompt prose");
+  assert(read("reference-review-contract.js").includes('hardGateFailures.push("declared-state-unsatisfied")'), "an unsatisfied declared requirement must remain a hard gate");
+  assert(read("server.js").includes("reviewer: { provider: assistant.provider || \"\", model: assistant.model || \"\" }"), "candidate review must report the provider and model that served it");
   assert(read("public/review.js").includes("openEntityCandidateReview"), "entity candidates must expose the structured vision review popup");
   const creationStudio = read("public/creation-studio.js");
   const automation = read("public/automation.js");
@@ -309,6 +315,9 @@ async function main() {
     "browser_runtime.py",
     "build-history.js",
     "c2b-generation-real-browser.py",
+    "candidate-review-semantics-negative-controls.js",
+    "candidate-review-semantics-real-browser.py",
+    "candidate-review-semantics.js",
     "clarity-consolidation.js",
     "composer-motion.js",
     "config-durability.js",

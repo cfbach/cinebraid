@@ -211,6 +211,19 @@ function startMockOllama() {
               summary: "Strong continuity candidate.",
               recommendation: "approve",
             };
+            /* B2a: the reviewer answers CineBraid's declared-requirement
+               checklist rather than judging it. A compliant stub observes every
+               id the request listed; the semantics of those observations are
+               exercised in tests/candidate-review-semantics.js. */
+            authorityReview.stateEvidence = [...user.matchAll(/^- (delta-\d+): (.+)$/gm)].map((match) => ({
+              requirementId: match[1],
+              feature: match[2],
+              expectedFeature: "must-remain",
+              observedFeature: "present",
+              observedCondition: "as-required",
+              evidence: "Observed directly in the candidate.",
+            }));
+            authorityReview.parentDrift = [];
             if (user.includes("FORCE_MAJOR_PASS")) {
               authorityReview.score = 96;
               authorityReview.categories.design = { severity: "major", note: "The model changed a major design feature." };
@@ -1463,6 +1476,19 @@ async function main() {
     assert.strictEqual(result.body.authorityMode, "validate", "an approved parent reference means the route is validating, not establishing");
     assert(result.body.requiredHardChecks.includes("sameUnderlyingEntity"), "identity stays gated when authority exists");
     assert(result.body.requiredHardChecks.includes("onlyRequestedDelta"), "a derived state's delta stays gated when authority exists");
+    /* B2a. The delta reaches the reviewer as a checklist CineBraid owns, the
+       answers come back compared rather than judged, and the review records who
+       served it. */
+    assert.deepStrictEqual(
+      result.body.declaredRequirements.map((row) => row.text),
+      ["Scratched casing and chipped grip"],
+      "the derived state's delta must reach the reviewer as a declared requirement checklist",
+    );
+    assert.strictEqual(result.body.review.stateEvidence.applies, true, "a derived state with a delta must be compared semantically");
+    assert.strictEqual(result.body.review.stateEvidence.outcome, "expected");
+    assert.strictEqual(result.body.review.semanticSatisfied, true);
+    assert.strictEqual(result.body.reviewer.provider, "ollama", "the route must report the provider that actually served the review");
+    assert.strictEqual(result.body.reviewer.model, "qwen3-vl:30b-a3b-instruct", "and the model it was dispatched to");
 
     /* v667 — the same route, with no approved authority anywhere. The workflow
        that creates the first reference must not be blocked for not already

@@ -11,7 +11,7 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const { spawnSync } = require("child_process");
-const { llm, embed, vision, isLocalProviderEndpoint } = require("./llm");
+const { llm, embed, vision, isLocalProviderEndpoint, resolveVisionTarget } = require("./llm");
 const {
   configHealth,
   maskSecretValue,
@@ -4127,8 +4127,12 @@ async function requestStrictAssistantJson(system, payload, options = {}) {
 async function requestVisionResult(system, user, images, options = {}) {
   const label = options.label || "Vision assistant";
   const maxTokens = Number(options.maxTokens || 3000);
-  const provider = options.provider || aiVisionProviderOverride();
-  const model = options.model;
+  /* Resolved once, here, and then dispatched explicitly. A caller that records
+     provenance therefore records what was actually asked, not what Settings say
+     by the time anyone looks — and every retry goes to the same target. */
+  const target = resolveVisionTarget(options.provider || aiVisionProviderOverride(), options.model);
+  const provider = target.provider;
+  const model = target.model;
   const parse = typeof options.parse === "function" ? options.parse : (raw) => raw;
   let lastError = null;
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -4141,7 +4145,7 @@ The previous vision response failed, was empty, was truncated, or could not be p
         : user;
       const raw = await vision(system, retryUser, images, maxTokens, provider, model);
       if (!String(raw || "").trim()) throw new Error(`${label} returned an empty response`);
-      return { value: parse(raw), attempts: attempt + 1, recovered: attempt > 0 };
+      return { value: parse(raw), attempts: attempt + 1, recovered: attempt > 0, provider, model };
     } catch (error) {
       lastError = error;
       if (assistantErrorIsPermanent(error)) break;
@@ -5645,6 +5649,8 @@ const {
   entityReviewAuthorityMode,
   entityReviewRelatedStates,
   entityReviewAuthoritySignature,
+  entityReviewDeclaredRequirements,
+  entityReviewDeclaredStateContract,
   normalizeEntityCandidateReview,
 } = ReferenceReview;
 
@@ -5754,11 +5760,21 @@ DERIVED-STATE CONTRACT
 Only this requested delta may change: ${state.notes || "No concrete visual delta was supplied."}
 Everything else—including camera/crop, identity, dimensions, embedded imagery or artwork, architecture, materials, wear not named in the delta, and fixed layout—must remain unchanged.`
       : "";
+    /* B2a. The delta, cut into a checklist CineBraid owns, so the reviewer
+       answers requirements rather than authoring them — and so an observation
+       ("the seal is absent") can be compared against the declared expectation
+       ("the seal is broken") instead of being folded into a verdict. */
+    const declaredState = entityReviewDeclaredRequirements(state);
+    const declaredStateContract = entityReviewDeclaredStateContract(declaredState, {
+      hasAuthority,
+      authorityCount: Math.max(0, inputLabels.length - 1),
+      parentStateName: parentState?.name || defaultState?.name || "",
+    });
     const user = `INPUT IMAGE ORDER
 ${inputLabels.map((item) => `Image ${item.image} = ${item.label} · ${item.role}`).join("\n")}${authorityContract}
 
 REVIEW CONTRACT
-${entityReviewCanon(P, list, entity, state)}${stateContract}${relatedStateContract}${coverageContract}${hardCheckContract}
+${entityReviewCanon(P, list, entity, state)}${stateContract}${declaredStateContract}${relatedStateContract}${coverageContract}${hardCheckContract}
 
 Return a score, explicit model pass/fail, all hard checks, the stateMatch decision, all six factor findings, a concise summary, and a recommendation.${hasAuthority ? " A required hard check must be false when evidence is insufficient; never guess continuity." : " No hard check may be failed for the absence of approved authority images."}`;
     const assistant = await requestVisionResult(ENTITY_CANDIDATE_REVIEW_SYSTEM, user, images, {
@@ -5774,6 +5790,9 @@ Return a score, explicit model pass/fail, all hard checks, the stateMatch decisi
           authorityMode,
           derivedState: !state.isDefault,
           parentStateName: entityReviewParentState(entity, state)?.name || "",
+          declaredRequirements: declaredState.requirements,
+          omittedRequirements: declaredState.omitted,
+          driftComparisonAvailable: hasAuthority,
         });
       },
     });
@@ -5783,8 +5802,13 @@ Return a score, explicit model pass/fail, all hard checks, the stateMatch decisi
       relatedStates,
       inputLabels,
       requiredHardChecks,
+      declaredRequirements: declaredState.requirements,
       authorityMode,
       authoritySignature,
+      /* Who actually served this review, resolved at dispatch and reported with
+         the result. A later Settings change must not be able to rewrite the
+         attribution of a review that has already run. */
+      reviewer: { provider: assistant.provider || "", model: assistant.model || "" },
       contractVersion: ENTITY_REFERENCE_REVIEW_CONTRACT_VERSION,
       assistantAttempts: assistant.attempts,
     });

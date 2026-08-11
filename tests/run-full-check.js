@@ -26,6 +26,8 @@ const nodeSuites = [
   "check:state-chain-recovery",
   "check:reference-authority",
   "check:reference-contract",
+  "check:candidate-review",
+  "check:candidate-review-negative",
   "check:reference-aspect",
   "check:recovery",
   "check:bounded",

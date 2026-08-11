@@ -35,6 +35,7 @@ const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
+const Module = require("module");
 const { render, buildFixture } = require("./render-harness");
 
 const ROOT = path.join(__dirname, "..");
@@ -57,7 +58,11 @@ function loadContract(mutate = null) {
   if (!mutate) return require(CONTRACT_PATH);
   const mutated = String(mutate(CONTRACT_SOURCE) ?? CONTRACT_SOURCE);
   assert.notStrictEqual(mutated, CONTRACT_SOURCE, "the negative control did not actually change the contract");
-  const sandbox = { require, module: { exports: {} }, console };
+  /* Rooted at the contract, not at this test. The contract's own relative
+     requires must resolve exactly as they do in production — with this test's
+     bare `require` they would resolve against tests/, throw MODULE_NOT_FOUND,
+     and expectRed would count the crash as the control biting. */
+  const sandbox = { require: Module.createRequire(CONTRACT_PATH), module: { exports: {} }, console };
   sandbox.exports = sandbox.module.exports;
   vm.createContext(sandbox);
   vm.runInContext(mutated, sandbox, { filename: "reference-review-contract.mutated.js" });
@@ -922,16 +927,19 @@ async function testNegativeControls() {
   });
   await expectRed("A: the establish outcome removed", async () => {
     const broken = contractWithout((source) => mutateOnce(source,
-      ': establishing\n          ? "ready-to-establish-authority"',
-      ': establishing\n          ? "correctable"', "A2 establish outcome removed"));
+      ': establishing && !evidenceUnresolved\n          ? "ready-to-establish-authority"',
+      ': establishing && !evidenceUnresolved\n          ? "correctable"', "A2 establish outcome removed"));
     testFirstAuthorityIsNotPenalised(broken);
   });
 
   /* B — a missing authority feeding a prompt correction. */
   await expectRed("B: a prerequisite reclassified as correctable", async () => {
+    /* Anchored on the missing-parent blocker's own two arguments rather than on
+       what follows it, so a later edit between this block and the establish
+       branch cannot silently unhook the control again. */
     const broken = contractWithout((source) => mutateOnce(source,
-      '"workflow-prerequisite",\n    );\n  }\n  if (establishing && !pass',
-      '"generation-correctable",\n    );\n  }\n  if (establishing && !pass', "B1 prerequisite reclassified"));
+      '      "blocking",\n      "workflow-prerequisite",\n    );',
+      '      "blocking",\n      "generation-correctable",\n    );', "B1 prerequisite reclassified"));
     testFindingClassification(broken);
   });
   await expectRed("B: a prerequisite reaching the compiler", async () => {
