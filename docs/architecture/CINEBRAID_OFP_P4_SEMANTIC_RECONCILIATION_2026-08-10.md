@@ -903,6 +903,13 @@ These are genuine forks that this pass declined to settle on its own authority. 
 **Q1 — Where does the state binding live: OFP core, or the `continuity` profile's interior?**
 Blocks batch 6 (P4-SEM-B). The audit argued core (`:523`, declared intent is production truth). The counter-argument is that `continuity` was declared passthrough precisely so its interior could be designed deliberately. This document recommends **core**, because `server.js:5159` already uses the binding to choose the reference authority image — so a tool that strips profiles would silently change what the film looks like. Must be settled by name before implementation.
 
+> **SETTLED 2026-08-10 — the answer is the `continuity` profile, not core.**
+> See `CINEBRAID_OFP_P4_SEM_Q1_DECISION_2026-08-10.md`, which **supersedes the recommendation in this section and the matching one in §11**.
+>
+> The core recommendation above does not survive examination. The authority image is a *generation input*, not the work; the film artefact is the approved asset, which is core and reachable without continuity semantics. Two further facts settle it: every `ref:` in the contract resolves through a **global flat index**, and state IDs are **not globally unique** — all 12 state records in `overfit-18` share the id `state-default` — so core could not express the reference without inventing a relative-reference mechanism; and `references[].subject` can already address a state (`prop:prop-case/state:st-case-open`), so putting bindings in the profile orphans nothing.
+>
+> Consequences recorded in the decision: **P4-SEM-B drops from VERY HIGH to MEDIUM–HIGH**, `SHOT` and `FRAME` are not touched at all, P4-SEM-C becomes the highest-risk P4-SEM batch, and synthetic continuity fixtures become a new prerequisite — the real Overfit corpus is entirely 6.6-era and exercises this path zero times.
+
 **Q2 — Is `ASSET.storage` required for P4-SEM, or deferred to export (P6)?**
 Blocks nothing immediately; P3 §10.1 judged it not blocking G4. It becomes load-bearing at export. Deferring it is defensible; deciding it late is not, because migration rules written without it would need revisiting.
 
