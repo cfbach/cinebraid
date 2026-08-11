@@ -325,13 +325,38 @@ class MigrationContext {
     return entry;
   }
 
-  /* ---- identity ---- */
+  /* ---- identity ----
+
+     The ONE writer for the mints report, so "where this came from was never
+     known" is expressed in exactly one place, and expressed by the field being
+     ABSENT. A `sourcePath` that is present and null reads as a recorded
+     provenance fact whose value happens to be nothing - which is the one thing
+     it must never mean, because it makes a mint whose origin nobody knows
+     indistinguishable from a mint whose origin was recorded as empty. Absence
+     is the honest shape and the one every consumer already tests for.
+
+     Note this is a JSON pointer into the SOURCE document, not a filesystem
+     path and not where the migrated asset now lives. Nothing here may be filled
+     in from the destination to avoid an empty field: that would turn missing
+     provenance into false provenance, which is strictly worse than missing. */
+  recordMint({ sourcePath, type, parentSubject, mintedId }) {
+    const mint = { rule: this.rule };
+    /* Built in the original key order so a report diff shows the one missing
+       field rather than a reshuffle. */
+    if (nonEmptyString(sourcePath)) mint.sourcePath = sourcePath;
+    mint.type = type;
+    mint.parentSubject = parentSubject;
+    mint.mintedId = mintedId;
+    this.mints.push(mint);
+    return mint;
+  }
+
   mintCollection(listPointer, list, { type, parentSubject }) {
     if (!Array.isArray(list)) return;
     for (const { index, mintedId } of mintNestedIdentifiers(list, { type, parentSubject })) {
       const pointer = `${listPointer}/${index}`;
       this.mintByPointer.set(pointer, mintedId);
-      this.mints.push({ rule: this.rule, sourcePath: pointer, type, parentSubject, mintedId });
+      this.recordMint({ sourcePath: pointer, type, parentSubject, mintedId });
       this.diagnostic("migration.id.minted", `${pointer}: a ${type} with no identifier was minted ${JSON.stringify(mintedId)} from its type, its parent and its position`, { where: pointer, target: parentSubject ? `${parentSubject}/${type}:${mintedId}` : `${type}:${mintedId}` });
     }
   }
@@ -443,13 +468,20 @@ class MigrationContext {
     this.claim(pointer, DISPOSITION.MAPPED, targets, note);
   }
 
-  addRelation(shot, relation, pointer, note) {
+  /* `claimSource: false` lets a rule NAME the pointer a relation was read from
+     without this method also claiming that pointer `mapped`. M022 needs exactly
+     that: it reads a relationship out of English prose and claims the same
+     pointer `stated` itself, because a reading is a guess and not a mapping.
+     Before the option existed its only way to get the disposition right was to
+     pass no pointer at all - so it bought the correct accounting with a mint
+     that could not say where it came from, even though it knew. */
+  addRelation(shot, relation, pointer, note, { claimSource = true } = {}) {
     const relations = shot.record.relations || (shot.record.relations = []);
     const id = `rel-${digest("relation/1", shot.record.id, relation.kind, relation.targetShotId).slice(0, 12)}`;
     if (relations.some((entry) => entry.id === id)) return;
     relations.push({ id, kind: relation.kind, targetShotId: relation.targetShotId, note: relation.note });
-    this.mints.push({ rule: this.rule, sourcePath: pointer, type: "relation", parentSubject: shot.subject, mintedId: id });
-    if (pointer) this.claim(pointer, DISPOSITION.MAPPED, [`${shot.subject}#/relations`], note);
+    this.recordMint({ sourcePath: pointer, type: "relation", parentSubject: shot.subject, mintedId: id });
+    if (pointer && claimSource) this.claim(pointer, DISPOSITION.MAPPED, [`${shot.subject}#/relations`], note);
   }
 
   recordUnmappedCode(shot, token, pointer) {
@@ -487,12 +519,12 @@ class MigrationContext {
         if (mediaType) asset.mediaType = mediaType;
         assets.set(assetId, asset);
         this.legacyAssetFiles[assetId] = approval.filename;
-        this.mints.push({ rule: this.rule, sourcePath: approval.pointer, type: "asset", parentSubject: "", mintedId: assetId });
+        this.recordMint({ sourcePath: approval.pointer, type: "asset", parentSubject: "", mintedId: assetId });
       }
       const referenceId = `ref-${digest("reference/1", approval.subject, approval.purpose, assetId).slice(0, 16)}`;
       if (!references.has(referenceId)) {
         references.set(referenceId, { id: referenceId, purpose: approval.purpose, subject: approval.subject, assetId });
-        this.mints.push({ rule: this.rule, sourcePath: approval.pointer, type: "reference", parentSubject: "", mintedId: referenceId });
+        this.recordMint({ sourcePath: approval.pointer, type: "reference", parentSubject: "", mintedId: referenceId });
       }
       this.claim(approval.pointer, DISPOSITION.MAPPED, [`asset:${assetId}`, `reference:${referenceId}`, `#/extensions/${LEGACY_EXTENSION}/assetFiles/${assetId}`],
         `a bare legacy filename became stable asset identity plus a reference edge; the filename itself is preserved because the ${this.contractVersion} asset record declares no storage path`);

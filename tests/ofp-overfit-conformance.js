@@ -331,13 +331,20 @@ for (const generation of GENERATIONS) {
        nested under anything, so there is no parent to name. */
     assert(mint.mintedId && mint.type, `${generation.id}: a mint with no identity or type`);
     assert(/^M\d{3}$/.test(mint.rule), `${generation.id}: ${mint.mintedId} was minted by ${mint.rule}, which is not a rule ID`);
-    /* P2 §7 says every mint records its source path, and M022's do not: a
-       relation read out of prose is minted with `sourcePath: null` even though
-       the accounting claim for the same relation names the sentence it came
-       from. Pinned rather than fixed - P3 measures merged behaviour, it does not
-       amend it - and scoped to M022 so a second rule cannot join it quietly. */
-    if (!mint.sourcePath)
-      assert.strictEqual(mint.rule, "M022", `${generation.id}: ${mint.rule} minted ${mint.mintedId} with no source path`);
+    /* P2 §7 says every mint records its source path. M022 used to be the single
+       exception - a relation read out of prose was minted with
+       `sourcePath: null`, even though the accounting claim for the same relation
+       already named the sentence it came from - and this assertion was scoped to
+       that one rule so a second could not join it quietly. The rule now passes
+       the pointer it always had, so the exception is gone and the property reads
+       as the flat rule P2 §7 states.
+       Absence, not null, is how "never known" would be spelled if it ever
+       occurred: a present-but-null field would satisfy a `!== undefined` test
+       while carrying no provenance at all. */
+    assert(typeof mint.sourcePath === "string" && mint.sourcePath.trim() !== "",
+      `${generation.id}: ${mint.rule} minted ${mint.mintedId} with no source path (${JSON.stringify(mint.sourcePath)})`);
+    assert(mint.sourcePath.startsWith("/"),
+      `${generation.id}: ${mint.rule} minted ${mint.mintedId} from ${JSON.stringify(mint.sourcePath)}, which is not a JSON pointer into the source document`);
   }
 }
 assert(results.get("overfit-18-cinebraid-581").result.report.minted.length > 0,

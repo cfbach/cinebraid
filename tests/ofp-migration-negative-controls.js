@@ -830,6 +830,164 @@ control({
 delete globalThis.__ncM080Pass;
 
 /* ===========================================================================
+   26-30. M022 provenance: a mint says where it came from, or does not claim to.
+
+   M022 reads a shot dependency out of English prose. It has always known which
+   sentence it read - the accounting claim names it - but it minted the relation
+   with `sourcePath: null`, a field present and carrying nothing. The five
+   controls below cover the five ways that can come back: the null itself, the
+   over-correction that drops known paths, the false provenance that fills the
+   gap from the destination, the blank string standing in for "unknown", and the
+   neighbouring provenance lost while fixing the one field. */
+
+const m022Provenance = () => {
+  const prose = preview("prose-dependency.json");
+  const mints = prose.report.minted.filter((mint) => mint.type === "relation");
+  assert.strictEqual(mints.length, 2, "two readings of two different sentences");
+  for (const mint of mints) {
+    assert(Object.prototype.hasOwnProperty.call(mint, "sourcePath"),
+      `${mint.mintedId}: a source path this rule knew was dropped rather than recorded`);
+    assert(typeof mint.sourcePath === "string" && mint.sourcePath.trim() !== "",
+      `${mint.mintedId}: sourcePath is ${JSON.stringify(mint.sourcePath)}; unknown provenance is spelled by omitting the field, never by a blank value`);
+    assert(mint.sourcePath.startsWith("/"),
+      `${mint.mintedId}: ${JSON.stringify(mint.sourcePath)} is not a JSON pointer into the source document`);
+    assert(mint.parentSubject, `${mint.mintedId}: the mint no longer says what it was minted under`);
+  }
+  assert.deepStrictEqual(mints.map((mint) => mint.sourcePath).sort(), ["/shots/0/desc", "/shots/0/notes"],
+    "each relation must name the sentence it was actually read from");
+  const claims = prose.report.accounting.entries.filter((entry) => entry.rule === "M022");
+  assert.strictEqual(claims.length, 2, "the accounting claim for each sentence survives");
+  for (const claim of claims)
+    assert.strictEqual(claim.disposition, "stated", "a reading is a guess, not a mapping");
+};
+
+/* NC-A. The original defect, reassembled from both halves: the mint writer stops
+   omitting an unknown path, and the inferential branch stops passing the one it
+   has. Both live in ofp-migrate.js, so one patched module reproduces exactly what
+   P3 pinned. */
+control({
+  id: "NC-P2-26",
+  label: "minting a prose-read relation with sourcePath: null",
+  guards: "no mint carries a present-but-empty source path",
+  module: "ofp/ofp-migrate.js",
+  edits: [
+    [`    if (nonEmptyString(sourcePath)) mint.sourcePath = sourcePath;`,
+     `    mint.sourcePath = sourcePath;`],
+    [`    this.recordMint({ sourcePath: pointer, type: "relation", parentSubject: shot.subject, mintedId: id });`,
+     `    this.recordMint({ sourcePath: claimSource ? pointer : null, type: "relation", parentSubject: shot.subject, mintedId: id });`],
+  ],
+  defect: () => {
+    const mints = preview("prose-dependency.json").report.minted.filter((mint) => mint.rule === "M022");
+    assert.strictEqual(mints.length, 2, "receipt: the relations are still minted");
+    for (const mint of mints) {
+      assert(Object.prototype.hasOwnProperty.call(mint, "sourcePath"), "receipt: the field is present");
+      assert.strictEqual(mint.sourcePath, null, "receipt: and its value is null - the defect itself, observed in migrated output");
+    }
+    assert(mints.every((mint) => mint.sourcePath !== undefined),
+      "receipt: so a `!== undefined` test would pass while no provenance is recorded at all");
+  },
+  guarded: m022Provenance,
+});
+
+/* NC-B. The lazy fix: stop emitting the field entirely. The null is gone and so
+   is every real source path, including M021's and M060's, which were never
+   wrong. */
+control({
+  id: "NC-P2-27",
+  label: "solving the null by dropping every source path, known ones included",
+  guards: "a mint that knows where it came from still records it",
+  module: "ofp/ofp-migrate.js",
+  edits: [[
+    `    if (nonEmptyString(sourcePath)) mint.sourcePath = sourcePath;`,
+    `    void sourcePath;`,
+  ]],
+  defect: () => {
+    const prose = preview("prose-dependency.json");
+    assert(prose.report.minted.length > 0, "receipt: mints are still produced");
+    assert(prose.report.minted.every((mint) => !Object.prototype.hasOwnProperty.call(mint, "sourcePath")),
+      "receipt: and not one of them says where it came from");
+    const missing = preview("missing-ids.json");
+    assert(missing.report.minted.length >= 5, "receipt: including the deterministic identity mints");
+    assert(missing.report.minted.every((mint) => mint.sourcePath === undefined),
+      "receipt: whose source paths were never in doubt and are now gone too");
+  },
+  guarded: m022Provenance,
+});
+
+/* NC-C. The dangerous fix: fill the gap from where the record now lives. It
+   removes the null and replaces missing provenance with false provenance, which
+   is strictly worse - nothing downstream can tell it from a real reading. */
+control({
+  id: "NC-P2-28",
+  label: "filling an unknown source path from the destination the record now lives at",
+  guards: "a source path is a pointer into the source document, never the address it migrated to",
+  module: "ofp/ofp-migrate.js",
+  edits: [[
+    `    this.recordMint({ sourcePath: pointer, type: "relation", parentSubject: shot.subject, mintedId: id });`,
+    `    this.recordMint({ sourcePath: claimSource ? pointer : \`\${shot.subject}#/relations\`, type: "relation", parentSubject: shot.subject, mintedId: id });`,
+  ]],
+  defect: () => {
+    const mints = preview("prose-dependency.json").report.minted.filter((mint) => mint.rule === "M022");
+    assert.strictEqual(mints.length, 2, "receipt: the relations are still minted");
+    for (const mint of mints)
+      assert.strictEqual(mint.sourcePath, "shot:L0-01#/relations",
+        "receipt: every reading now claims to come from the place it was written to");
+    assert.strictEqual(new Set(mints.map((mint) => mint.sourcePath)).size, 1,
+      "receipt: and two different sentences have become one indistinguishable origin");
+  },
+  guarded: m022Provenance,
+});
+
+/* NC-D. The other wrong spelling of "unknown": a blank string. It satisfies a
+   presence check and a `!== null` check while carrying no more information than
+   the null did. */
+control({
+  id: "NC-P2-29",
+  label: "spelling an unknown source path as an empty string instead of omitting it",
+  guards: "unknown provenance is an absent field, not a blank value",
+  module: "ofp/ofp-migrate.js",
+  edits: [
+    [`    if (nonEmptyString(sourcePath)) mint.sourcePath = sourcePath;`,
+     `    mint.sourcePath = nonEmptyString(sourcePath) ? sourcePath : "";`],
+    [`    this.recordMint({ sourcePath: pointer, type: "relation", parentSubject: shot.subject, mintedId: id });`,
+     `    this.recordMint({ sourcePath: claimSource ? pointer : null, type: "relation", parentSubject: shot.subject, mintedId: id });`],
+  ],
+  defect: () => {
+    const mints = preview("prose-dependency.json").report.minted.filter((mint) => mint.rule === "M022");
+    assert.strictEqual(mints.length, 2, "receipt: the relations are still minted");
+    for (const mint of mints) {
+      assert.strictEqual(mint.sourcePath, "", "receipt: the field is present and blank - the defect, observed in migrated output");
+      assert.notStrictEqual(mint.sourcePath, null, "receipt: so a null-only test would pass");
+      assert.notStrictEqual(mint.sourcePath, undefined, "receipt: and so would a presence test");
+    }
+  },
+  guarded: m022Provenance,
+});
+
+/* NC-E. Fixing the one field and quietly taking a neighbour with it. The source
+   path is correct and the mint no longer says what it was minted under, so a
+   test that only looked at `sourcePath` would call this a success. */
+control({
+  id: "NC-P2-30",
+  label: "recording the source path while dropping the subject the record was minted under",
+  guards: "fixing one provenance field does not cost a neighbouring one",
+  module: "ofp/ofp-migrate.js",
+  edits: [[
+    `    mint.parentSubject = parentSubject;`,
+    `    void parentSubject;`,
+  ]],
+  defect: () => {
+    const mints = preview("prose-dependency.json").report.minted.filter((mint) => mint.rule === "M022");
+    assert.strictEqual(mints.length, 2, "receipt: the relations are still minted");
+    assert.deepStrictEqual(mints.map((mint) => mint.sourcePath).sort(), ["/shots/0/desc", "/shots/0/notes"],
+      "receipt: with correct source paths, so the field this batch fixed looks right");
+    assert(mints.every((mint) => mint.parentSubject === undefined),
+      "receipt: while the subject each was minted under went silently");
+  },
+  guarded: m022Provenance,
+});
+
+/* ===========================================================================
    The process must end on the real modules, not the patched ones. */
 for (const key of Object.keys(require.cache)) if (key.startsWith(OFP_DIR)) delete require.cache[key];
 {
@@ -840,6 +998,6 @@ for (const key of Object.keys(require.cache)) if (key.startsWith(OFP_DIR)) delet
   assert.strictEqual(require("../ofp/ofp-migrate").MIGRATION_STATEMENT_KINDS.includes("approved"), false);
 }
 
-assert.strictEqual(results.length, 25, "every control must have run");
+assert.strictEqual(results.length, 30, "every control must have run");
 console.log(`OFP P2 migration negative controls passed: ${results.length} defects reintroduced, each observed live by a probe and then caught by the property it guards.`);
 for (const entry of results) console.log(`  ${entry.id.padEnd(10)} ${entry.label}\n             caught by: ${entry.guards}\n             failure:   ${entry.outcome}`);
