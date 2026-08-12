@@ -192,7 +192,15 @@ async function main() {
   });
   await I.indexProject({
     projectDir: dialects, slug: "d",
-    project: project({ mediaAssets: [{ id: "blocking-media-1", file: "G.png", links: [{ blockingState: "active" }] }] }),
+    /* `storagePath` is what fal-generation.js writes on every blocking row, and it
+       is what the product's own resolvers read (public/media.js:51, server.js:4964).
+       A row carrying only a bare `file` resolves to `media/<file>` everywhere in
+       CineBraid, so a fixture that put one in shots/S-01/blocking/ was describing a
+       row the product itself would render broken. */
+    project: project({ mediaAssets: [{
+      id: "blocking-media-1", file: "G.png", storagePath: "shots/S-01/blocking/G.png",
+      links: [{ targetType: "shot", targetId: "S-01", role: "blocking-frame", blockingState: "active" }],
+    }] }),
   });
   const orphan = rowFor(dialects, "shots/S-01/takes/ORPHAN.png");
   assert.strictEqual(orphan.legacy.candidateKey, null, "media with no project record is an honest orphan");
@@ -302,31 +310,45 @@ async function main() {
       if (Date.now() > deadline) throw new Error(`server did not start:\n${output}`);
       await new Promise((resolve) => setTimeout(resolve, 75));
     }
-    /* Open the project the way the app does, then index it. */
+    /* Open the project the way the app does. Since P4-SEM-C1 that IS the indexing:
+       media-asset-service.js schedules a pass on /api/project and /api/scan, so the
+       ledger arrives from the SERVER. Wait for it rather than also indexing from
+       this process — CineBraid has one local server, so two processes writing one
+       ledger is not a shape it has in production, and on Windows the loser of that
+       race gets EPERM on the rename. */
     await (await fetch(`http://127.0.0.1:${port}/api/project`)).json();
     await (await fetch(`http://127.0.0.1:${port}/api/scan`)).json();
-    const indexed = await I.indexProject({ projectDir: guarded, slug, project: project() });
-    assert.strictEqual(indexed.minted, 2, "the ledger is created/updated correctly");
+    const indexDeadline = Date.now() + 10000;
+    for (;;) {
+      try { if (S.readLedger(guarded).ledger.assets.length === 2) break; } catch {}
+      if (Date.now() > indexDeadline) throw new Error(`the server never indexed the project:\n${output}`);
+      await new Promise((resolve) => setTimeout(resolve, 75));
+    }
+    assert.strictEqual(S.readLedger(guarded).exists, true,
+      "opening a project through the real server writes the ledger");
 
     assert(before.equals(fs.readFileSync(path.join(guarded, "project.json"))),
       "project.json must be BYTE-IDENTICAL after opening and indexing");
     const backups = path.join(guarded, "backups");
     assert(!fs.existsSync(backups) || fs.readdirSync(backups).length === 0,
       "no project backup may exist — a backup is what a project write produces");
-    assert.strictEqual(S.readLedger(guarded).exists, true, "but the ledger IS written");
-
-    /* A second identical pass: no project write, no new ids, no ledger rewrite. */
-    const idsBefore = idsOf(guarded);
-    const ledgerBytes = fs.readFileSync(S.ledgerPath(guarded), "utf8");
-    const again = await I.indexProject({ projectDir: guarded, slug, project: project() });
-    assert.strictEqual(again.wrote, false, "an unchanged second pass performs no unnecessary ledger rewrite");
-    assert.strictEqual(fs.readFileSync(S.ledgerPath(guarded), "utf8"), ledgerBytes);
-    assert.deepStrictEqual(idsOf(guarded), idsBefore, "and preserves every assetId");
-    assert(before.equals(fs.readFileSync(path.join(guarded, "project.json"))),
-      "still byte-identical after the second pass");
   } finally {
+    const exited = new Promise((resolve) => child.once("exit", resolve));
     child.kill();
+    await exited;
   }
+
+  /* The server is gone, so there is one writer again. A pass in this process must
+     be a complete no-op against what the server's own activation established. */
+  const idsBefore = idsOf(guarded);
+  const ledgerBytes = fs.readFileSync(S.ledgerPath(guarded), "utf8");
+  const again = await I.indexProject({ projectDir: guarded, slug, project: project() });
+  assert.strictEqual(again.minted, 0, "the server's activation had already minted every identity");
+  assert.strictEqual(again.wrote, false, "an unchanged second pass performs no unnecessary ledger rewrite");
+  assert.strictEqual(fs.readFileSync(S.ledgerPath(guarded), "utf8"), ledgerBytes);
+  assert.deepStrictEqual(idsOf(guarded), idsBefore, "and preserves every assetId");
+  assert(before.equals(fs.readFileSync(path.join(guarded, "project.json"))),
+    "still byte-identical after the second pass");
 
   /* ================= 13. a larger synthetic project stays chunked ================= */
   const large = path.join(TEMP, "large");

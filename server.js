@@ -38,6 +38,10 @@ const { registerFalGeneration } = require("./fal-generation");
 const { registerAutomationRuns } = require("./automation-runs");
 const { isAccountCallbackPath, registerAccountConnections } = require("./accounts-api");
 const { createRequestBoundary, createRequestPosture } = require("./request-origin");
+/* The MediaAsset ledger's single production entry point. server.js talks to this
+   module and never to media-assets/-store/-indexer/-verify directly, so there is
+   one answer to when the identity ledger changes and who changed it. */
+const MediaAssetService = require("./media-asset-service");
 
 const app = express();
 const PORT = process.env.PORT || 4477;
@@ -912,6 +916,9 @@ app.get("/api/project", (req, res) => {
     }
     const project = inspected.project;
     normalizePromptBuildHistory(project, { applyRetention: false });
+    /* The document this response was built from is handed straight to the ledger,
+       so activation costs no second read and indexes exactly what was served. */
+    noteProjectActivity("open", inspected.slug, project);
     res.json(project);
   } catch (e) {
     res.status(500).json({ error: "Could not open the active project — " + e.message });
@@ -1136,6 +1143,35 @@ function listMedia(rel) {
       url: "/assets/" + rel.split(path.sep).join("/") + "/" + f,
     }));
 }
+/* ---- MediaAsset identity activation (P4-SEM-C1) ----
+
+   Every media file a project holds acquires a durable assetId that survives the
+   rename its own approval performs. The pass runs OFF the request path: this
+   function schedules and returns immediately, so no route ever waits on readdir,
+   stat or a digest, and a failure inside the pass cannot reach the response.
+
+   Three callers, and they are the only ones. Two of them are what "the project
+   became active" means in this product — GET /api/project is the document read
+   every load and every switch performs, and POST /api/projects/switch is the
+   explicit move. The third, GET /api/scan, is how new media acquires identity
+   without restarting CineBraid: it is the product's own media re-enumeration, so
+   anything that causes CineBraid to look at the media folders again also causes
+   the ledger to catch up. The service throttles and coalesces the burst.
+
+   `project` is passed when the caller already parsed the document, so a normal
+   open costs one project.json read rather than two. */
+function noteProjectActivity(reason, slug = activeSlug(), project = null) {
+  if (!slug) return;
+  MediaAssetService.activateProject({
+    projectsRoot: projectsRoot(),
+    slug,
+    reason,
+    project,
+    /* Chunks stop writing if the user moves to another project mid-pass. */
+    activeSlug,
+  });
+}
+
 function scanProject() {
   const sync = syncConfiguredMediaRoot();
   const shotsDir = path.join(PROJECT_DIR(), "shots");
@@ -1158,7 +1194,13 @@ function scanProject() {
     workspaceSync: sync,
   };
 }
-app.get("/api/scan", (req, res) => res.json(scanProject()));
+app.get("/api/scan", (req, res) => {
+  const scan = scanProject();
+  /* After the sync copy, so media just brought in from a configured mediaRoot is
+     visible to the pass. Scheduled, never awaited — the scan answers now. */
+  noteProjectActivity("scan");
+  res.json(scan);
+});
 app.post(
   "/api/shots/:id/take",
   express.raw({ type: "*/*", limit: "400mb" }),
@@ -7596,6 +7638,9 @@ app.post("/api/projects/switch", (req, res) => {
   const c = readConfig();
   c.activeProject = inspected.slug;
   writeConfig(c);
+  /* After the switch is committed, so the pass indexes the project that is now
+     active and its own activeSlug guard agrees with it. */
+  noteProjectActivity("switch", inspected.slug, inspected.project);
   res.json({ ok: true, slug: inspected.slug, title: inspected.title });
 });
 app.post("/api/projects/:slug/archive", (req, res) => {

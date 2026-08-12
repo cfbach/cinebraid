@@ -236,9 +236,14 @@ async function verifyAssets(options) {
         stats.missing += 1;
         results.push({ path: asset.storage.path, outcome: "missing", assetId: asset.assetId });
       } else {
-        Object.assign(asset, markUnavailable(asset), { indexedAt: now() });
+        /* Only stamp when the state actually moves. A file that is locked every
+           pass would otherwise rewrite the ledger every pass, which is churn on a
+           synced root and makes an unchanged verification non-idempotent. */
+        if (asset.hashState !== "unavailable") {
+          Object.assign(asset, markUnavailable(asset), { indexedAt: now() });
+          changed = true;
+        }
         stats.unavailable += 1;
-        changed = true;
         results.push({ path: asset.storage.path, outcome: "unavailable", assetId: asset.assetId, code: error?.code || "" });
       }
       continue;
@@ -258,14 +263,19 @@ async function verifyAssets(options) {
          cannot be opened, because a sync client is fetching it, a Windows process
          holds a share lock, or the network dropped. It is not a mismatch. */
       if (classifyError(error) === "absent") {
-        asset.storage = { ...asset.storage, missing: true };
-        asset.indexedAt = now();
+        if (!asset.storage.missing) {
+          asset.storage = { ...asset.storage, missing: true };
+          asset.indexedAt = now();
+          changed = true;
+        }
         stats.missing += 1;
       } else {
-        Object.assign(asset, markUnavailable(asset), { indexedAt: now() });
+        if (asset.hashState !== "unavailable") {
+          Object.assign(asset, markUnavailable(asset), { indexedAt: now() });
+          changed = true;
+        }
         stats.unavailable += 1;
       }
-      changed = true;
       results.push({
         path: asset.storage.path,
         outcome: classifyError(error) === "absent" ? "missing" : "unavailable",
