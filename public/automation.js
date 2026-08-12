@@ -833,10 +833,16 @@ window.startPlannedBlockingAutomation = async () => {
 
    This is not a new rule. v627EntityPreflight below has read parent states this
    way since state chains existed; naming it once makes the two preflights share
-   the reading instead of each keeping a copy of it. */
+   the reading instead of each keeping a copy of it.
+
+   The rule itself now lives in public/shared-continuity.js as
+   stateApprovedFile(), which server.js's authority selection and the browser's
+   reference package read too — so the preflight's verdict and the image a
+   generation is actually handed cannot disagree. This wrapper survives for its
+   null guard and its name, which the preflight suites assert on. */
 function v626StateApprovedFile(entity, state) {
   if (!entity || !state) return "";
-  return state.approvedFile || (state.isDefault ? entity.approvedFile || "" : "");
+  return stateApprovedFile(entity, state);
 }
 /* The state a given frame of this shot declares for one entity, as a record on
    THAT entity.

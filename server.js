@@ -5146,12 +5146,32 @@ app.post("/api/llm/review", async (req, res) => {
 const DERIVED_FRAME_REVIEW_SYSTEM = `You are reviewing dependent still frames for an AI filmmaking workflow. The first images are candidate outputs and have explicit candidate IDs. Later images are labelled CONTEXT and are not candidates. Compare each candidate to the target frame brief and to the approved parent frame, blocking guide, and appearance references. Preserve identity, location, camera logic, lighting continuity, and every unchanged feature from the parent. Require the requested action/state change to be clearly visible. For start/end-frame workflows, judge whether the image is a clean, plausible endpoint for motion interpolation. Return ONLY valid JSON, no markdown fences:
 {"reviews":[{"n":1,"pass":true,"score":85,"notes":"specific continuity and endpoint findings"}],"ranking":[1],"suggested":1,"rationale":"one sentence"}`;
 
+/* The approved image that IS a given entity state's authority, or "" for none.
+   Read-only: it looks at disk and at the project record and writes to neither.
+
+   `state?.approvedFile || entity.approvedFile` used to end this function, and
+   that `||` was a silent substitution. A frame that declares "Rhea is
+   rain-soaked" resolves the rain-soaked state correctly, finds it has no
+   approved reference of its own, and then received the CLEAN image as its
+   character identity authority — the exact wrong-authority generation P4-SEM-B
+   set out to make impossible, one layer below where PR #58 fixed the preflight.
+
+   Continuity.stateApprovedFile() owns the rule now, shared with the browser
+   preflight and the browser reference package so the three cannot drift. What
+   remains here is resolving WHICH state record answers, and it deliberately
+   matches resolveStateRecord(): an id naming no state on this entity falls to
+   the entity's default rather than to nothing, because a binding that names a
+   state the entity does not declare is the format layer's `disputed` statement
+   to report, not this function's to enforce — and the automation preflight
+   reads it the same way. A declared non-default state that simply has no
+   approved file is a different thing entirely, and that one answers "". */
 function entityApprovedDiskPath(list, entity, stateId = "") {
   const folder = { characters: "anchors", locations: "plates", props: "props", vehicles: "vehicles" }[list];
   if (!folder || !entity) return "";
   const states = Array.isArray(entity.continuityStates) ? entity.continuityStates : [];
-  const state = stateId ? states.find((item) => String(item?.id) === String(stateId)) : states.find((item) => item?.isDefault);
-  const file = state?.approvedFile || entity.approvedFile || "";
+  const requested = stateId ? states.find((item) => String(item?.id) === String(stateId)) : null;
+  const state = requested || states.find((item) => item?.isDefault) || null;
+  const file = Continuity.stateApprovedFile(entity, state);
   const full = path.join(PROJECT_DIR(), folder, path.basename(file));
   return file && fs.existsSync(full) && IMG_ONLY(full) ? full : "";
 }

@@ -24,6 +24,8 @@ const nodeSuites = [
   "check:state-binding-negative",
   "check:frame-preflight",
   "check:frame-preflight-negative",
+  "check:state-authority",
+  "check:state-authority-negative",
   "check:safety",
   "check:focused",
   "check:reference-ux",
