@@ -78,8 +78,10 @@ const DEFAULT_THROTTLE_MS = 15000;
 const VERIFY_FILE_LIMIT = 25;
 const VERIFY_BYTE_LIMIT = 64 * 1024 * 1024;
 
-/* Reasons that mean "the user just moved", and so bypass the throttle. */
-const URGENT_REASONS = new Set(["switch", "explicit"]);
+/* Reasons that bypass the throttle: the user just moved, or the filesystem
+   provably just changed. Collapsing a rename into the scan throttle would leave a
+   reconciled move waiting on the next unthrottled request for no reason. */
+const URGENT_REASONS = new Set(["switch", "explicit", "rename"]);
 
 const RUNTIME = new Map();   /* resolved project dir -> pass state */
 
@@ -136,30 +138,59 @@ function readProjectDocument(projectDir) {
   return parsed;
 }
 
-/* Which files this pass earned the right to open.
+/* Which files this pass earned the right to open, in priority order.
 
-   `needsVerify` is the indexer saying "size or mtime moved under a path I already
-   knew", which is the only evidence that could mean the bytes were replaced. A
-   path that appeared since the last pass is a new arrival, and hashing it now is
-   what lets a LATER rename be recognised as the same media — a digest can only be
-   compared against one that was captured while the file still existed.
+   THREE TIERS, and the order between them is the policy:
 
-   On a first pass `ledgerExisted` is false and `known` is empty, so the second
-   arm is skipped entirely and a backfill reads nothing. That asymmetry is the
-   cloud-sync guarantee, and it is the reason this function takes both. */
+     drifted   `needsVerify` — the indexer saying "size or mtime moved under a path
+               I already knew". The only evidence that could mean the bytes were
+               replaced, so it is a correctness question and goes first.
+     arrived   a path that appeared since the last pass. Hashing it now is what
+               lets a LATER rename be recognised as the same media, because a
+               digest can only be compared against one captured while the file
+               still existed.
+     backlog   a present row that has never been hashed. This is the tier that
+               makes the identity of media which pre-dates activation converge.
+
+   The backlog tier is not optional, and leaving it out was a real defect. Without
+   it, every file that existed when CineBraid first indexed a project stayed
+   `contentHash: null` for ever unless something called verifyNow — and nothing
+   did. "A same-byte rename preserves assetId" was then true only for media that
+   arrived AFTER activation, which is not a guarantee worth making.
+
+   What is preserved is the reason the indexer refuses to hash: on a FIRST pass
+   `ledgerExisted` is false, so both later tiers are skipped entirely and opening a
+   project CineBraid has never indexed still reads zero media bytes. Convergence
+   starts on the pass after that, bounded by count and bytes, off the request
+   path. A large production therefore opens instantly and becomes byte-anchored
+   over the following minutes of ordinary use rather than in one stall. */
 function chooseVerificationTargets(assets, known, ledgerExisted) {
   const drifted = [];
   const arrived = [];
+  const backlog = [];
   for (const asset of assets) {
     const relativePath = asset && asset.storage && asset.storage.path;
     if (!relativePath || asset.storage.missing === true) continue;
     if (asset.needsVerify === true) { drifted.push(relativePath); continue; }
     if (!ledgerExisted) continue;
-    if (!known.has(relativePath) && asset.hashState === "unhashed") arrived.push(relativePath);
+    if (asset.hashState !== "unhashed" || asset.contentHash) continue;
+    if (known.has(relativePath)) backlog.push(relativePath);
+    else arrived.push(relativePath);
   }
-  /* Drift first: a replaced file is a correctness question, a new file is only an
-     opportunity to record identity earlier. */
-  return [...drifted, ...arrived];
+  return [...drifted, ...arrived, ...backlog];
+}
+
+/* Rows that are present and still carry no proven digest. Reported on every pass
+   so convergence is observable rather than assumed. */
+function countUnverified(assets) {
+  let count = 0;
+  for (const asset of assets) {
+    if (!asset || !asset.storage || !asset.storage.path) continue;
+    if (asset.storage.missing === true) continue;
+    if (asset.hashState !== "unhashed" || asset.contentHash) continue;
+    count += 1;
+  }
+  return count;
 }
 
 async function runPass(state, options) {
@@ -263,6 +294,9 @@ async function runPass(state, options) {
             now,
           });
         }
+        /* Read back rather than inferred: verification can also retire a row or
+           mint a successor, so the only honest count is the one on disk. */
+        record.unverifiedRemaining = countUnverified(readLedger(projectDir).ledger.assets);
       }
     } catch (error) {
       /* Verification is an optimisation over identity, never a precondition for
@@ -344,10 +378,67 @@ function activateProject(options = {}) {
   return run;
 }
 
-/* Deliberate, bounded, caller-named byte reads. Not wired to any route in C1;
-   this is the escalation path for a caller that wants a digest badly enough to
-   pay for it, and it is what the rename proofs use to establish byte identity
-   before renaming. */
+/* THE RENAME ANCHOR. Called immediately BEFORE CineBraid itself moves a media
+   file, which today is exactly one place: POST /api/media/rename, the route both
+   approval paths go through (public/library-tools.js:333, :531).
+ *
+ * Why it has to be before, and why it has to be here. A rename is only provably
+ * the same media if a digest was captured while the file still existed at the old
+ * path. The backlog tier gets there eventually, but an approval can land on a file
+ * the background pass has not reached yet — and the approval rename is precisely
+ * the operation whose identity must survive. Anchoring one named file at the
+ * moment of the rename closes that window without asking every caller to know
+ * about the ledger: the route hands over a path, and this decides whether a digest
+ * is owed.
+ *
+ * Cost is one file, on a deliberate human action, and nothing at all when the row
+ * is already hashed. It reads no other file and it is not a whole-project pass.
+ *
+ * It never throws. A ledger that cannot be read, a path with no row, a file that
+ * cannot be opened — all of them mean the rename proceeds unanchored, which is the
+ * behaviour that existed before C1 rather than a new failure. Blocking a
+ * director's approval because a sidecar was busy would be the wrong trade. */
+async function anchorBeforeRename(options = {}) {
+  const slug = String(options.slug || "").trim();
+  const projectDir = resolveProjectDir(options.projectsRoot, slug);
+  if (!projectDir) return { anchored: false, reason: "no-contained-project" };
+  const relativePath = String(options.path || "").replace(/\\/g, "/").replace(/^\/+/, "");
+  if (!relativePath) return { anchored: false, reason: "no-path" };
+
+  const state = stateFor(projectDir, slug);
+  try {
+    /* A pass in flight is already writing this ledger. */
+    while (state.running) await state.running;
+
+    const loaded = readLedger(projectDir);
+    if (!loaded.exists || loaded.readOnly) return { anchored: false, reason: "no-ledger" };
+    const row = loaded.ledger.assets.find(
+      (asset) => asset && asset.storage && asset.storage.path === relativePath && asset.storage.missing !== true,
+    );
+    if (!row) return { anchored: false, reason: "no-row" };
+    if (row.contentHash) return { anchored: true, reason: "already-verified", assetId: row.assetId, contentHash: row.contentHash };
+
+    const run = verifyAssets({ projectDir, paths: [relativePath], limit: 1, maxBytes: VERIFY_BYTE_LIMIT, now: options.now });
+    state.running = run.then(() => null, () => null);
+    try {
+      await run;
+    } finally {
+      state.running = null;
+    }
+    const after = readLedger(projectDir).ledger.assets.find(
+      (asset) => asset && asset.storage && asset.storage.path === relativePath && asset.storage.missing !== true,
+    );
+    return after && after.contentHash
+      ? { anchored: true, reason: "verified", assetId: after.assetId, contentHash: after.contentHash }
+      : { anchored: false, reason: "unreadable" };
+  } catch (error) {
+    return { anchored: false, reason: "failed", error: String(error?.message || error) };
+  }
+}
+
+/* Deliberate, bounded, caller-named byte reads. The escalation path for a caller
+   that wants a digest badly enough to pay for it, and what the rename proofs use
+   to establish byte identity before renaming. */
 async function verifyNow(options = {}) {
   const slug = String(options.slug || "").trim();
   const projectDir = resolveProjectDir(options.projectsRoot, slug);
@@ -434,7 +525,9 @@ module.exports = {
   VERIFY_FILE_LIMIT,
   activateProject,
   activationStatus,
+  anchorBeforeRename,
   chooseVerificationTargets,
+  countUnverified,
   readAssets,
   resetActivationState,
   resolveProjectDir,

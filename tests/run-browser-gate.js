@@ -153,12 +153,20 @@ const WATCHED = ["data", "projects"];
    ledger IS the application bootstrapping, in exactly the sense data/config.json
    already was. CI proved this one too, by failing on exactly it while a developer
    machine that had run the gate before passed: the file was already there, so the
-   census saw it unchanged rather than created. The .bak beside it is deliberately NOT
-   exempt - the store only writes one when it replaces an existing ledger, so a .bak
-   appearing means something under the sample actually changed. */
+   census saw it unchanged rather than created.
+
+   Its .bak is exempt for the same reason, and the reasoning is worth recording
+   because it changed. The ledger is written twice across a gate run by design: the
+   first server start indexes the sample stat-only, and a later one anchors those
+   identities to their bytes. The store copies the previous primary aside before
+   replacing it, so the second write is what produces the .bak. Both writes are the
+   application converging on its own state, neither is a suite writing where it
+   should not, and refusing the .bak would only mean the gate failed on the ledger
+   working correctly. */
 const FIRST_RUN_ARTIFACTS = new Set([
   "data/config.json",
   "projects/cinebraid-sample/media-assets.json",
+  "projects/cinebraid-sample/media-assets.json.bak",
 ]);
 
 function census() {

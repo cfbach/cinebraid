@@ -45,6 +45,9 @@ const PROJECTS_ROOT = path.join(TEMP, "projects");
 const PROJECT_DIR = path.join(PROJECTS_ROOT, "boundary-project");
 const TAKES = path.join(PROJECT_DIR, "shots", "S-01", "takes");
 const LEDGER = path.join(PROJECT_DIR, "media-assets.json");
+const SECOND_SLUG = "boundary-second";
+const SECOND_DIR = path.join(PROJECTS_ROOT, SECOND_SLUG);
+const SECOND_LEDGER = path.join(SECOND_DIR, "media-assets.json");
 
 const PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
@@ -133,8 +136,15 @@ for (const moduleName of LEDGER_MODULES)
 assert.strictEqual((serverNoComments.match(/MediaAssetService\.activateProject\(/g) || []).length, 1,
   "server.js schedules activation from exactly one place — noteProjectActivity");
 const activationCallers = [...serverNoComments.matchAll(/noteProjectActivity\("([a-z]+)"/g)].map((m) => m[1]).sort();
-assert.deepStrictEqual(activationCallers, ["open", "scan", "switch"],
-  "activation is entered on project open, media re-enumeration and project switch — and nowhere else");
+assert.deepStrictEqual(activationCallers, ["open", "rename", "scan", "switch"],
+  "activation is entered on project open, media re-enumeration, project switch and the one route that renames media — and nowhere else");
+/* The whole surface server.js is allowed to use, listed rather than counted, so a
+   fifth entry point has to be argued for in a diff. */
+const serviceCalls = [...new Set([...serverNoComments.matchAll(/MediaAssetService\.(\w+)\(/g)].map((m) => m[1]))].sort();
+assert.deepStrictEqual(serviceCalls, ["activateProject", "anchorBeforeRename"],
+  "server.js uses exactly two service entry points: schedule a pass, and anchor one file before renaming it");
+assert.strictEqual((serverNoComments.match(/MediaAssetService\.anchorBeforeRename\(/g) || []).length, 1,
+  "and the anchor is called from exactly one place — the media rename route");
 
 /* ---- 2. the schema and store layers stay free of discovery and hashing ---- */
 const foundationSource = ["media-assets", "media-asset-store"]
@@ -214,15 +224,40 @@ async function stopServer() {
   await dead;
   child = null;
 }
-async function waitForLedger(deadlineMs = 10000) {
+/* Activation runs off the request path, so a client observes it by waiting. The
+   predicate is what is being waited FOR, so a timeout names the condition that
+   never held rather than just "no file". */
+async function waitForLedger(deadlineMs = 10000, predicate = null, target = LEDGER) {
   const deadline = Date.now() + deadlineMs;
+  let last = null;
   for (;;) {
-    if (fs.existsSync(LEDGER)) {
-      try { return JSON.parse(fs.readFileSync(LEDGER, "utf8")); } catch {}
+    if (fs.existsSync(target)) {
+      try {
+        last = JSON.parse(fs.readFileSync(target, "utf8"));
+        if (!predicate || predicate(last)) return last;
+      } catch {}
     }
-    if (Date.now() > deadline) throw new Error(`media-assets.json never appeared:\n${output}`);
-    await new Promise((resolve) => setTimeout(resolve, 60));
+    if (Date.now() > deadline)
+      throw new Error(`ledger condition never held for ${path.basename(path.dirname(target))}: ${JSON.stringify(last)}\n${output}`);
+    /* Passes are activity-driven, so keep the product doing what it normally does
+       rather than waiting for a timer that does not exist. */
+    await fetch(base + "/api/scan").catch(() => {});
+    await new Promise((resolve) => setTimeout(resolve, 120));
   }
+}
+
+function writeSecondProject() {
+  fs.mkdirSync(path.join(SECOND_DIR, "anchors"), { recursive: true });
+  for (const dir of ["plates", "props", "vehicles", "audio", "media"])
+    fs.mkdirSync(path.join(SECOND_DIR, dir), { recursive: true });
+  fs.writeFileSync(path.join(SECOND_DIR, "anchors", "CHAR-ZED.png"), Buffer.concat([PNG, Buffer.from("zed")]));
+  fs.writeFileSync(path.join(SECOND_DIR, "project.json"), JSON.stringify({
+    meta: { title: "Second", format: "Test", version: "v1", hubVersion: "v6.0.0", schemaVersion: "6.6", aiPolicy: "project-default" },
+    qcChecklist: [],
+    characters: [{ id: "CHAR-ZED", name: "Zed", approvedFile: "CHAR-ZED.png", continuityStates: [{ id: "state-default", name: "Default", isDefault: true }] }],
+    locations: [], props: [], vehicles: [], audio: [], mediaAssets: [],
+    scenes: [], shots: [], agentRuns: [], decisions: [], sessions: [], finishJobs: [],
+  }, null, 2));
 }
 
 async function main() {
@@ -284,19 +319,76 @@ async function main() {
   });
   assert.deepStrictEqual(mediaStatsAfter, mediaStatsBefore, "activation must not modify media");
 
-  /* ---- 4. identity survives a restart, and an unchanged reopen changes nothing ---- */
-  const ledgerBytes = fs.readFileSync(LEDGER);
+  /* ---- 4. identity survives a restart, and the backlog converges by itself ----
+     The fast first open leaves every row unhashed. That is a starting state, not a
+     resting one: ordinary reopening is what anchors them, with no manual verify
+     call, no UI and no future phase. */
+  const idsAfterBackfill = Object.fromEntries(ledger.assets.map((a) => [a.storage.path, a.assetId]));
+  await stopServer();
+  await startServer();
+  await fetch(base + "/api/project").then((r) => r.json());
+  const converged = await waitForLedger(15000, (doc) =>
+    doc.assets.length === 4 && doc.assets.every((a) => a.hashState === "hashed"));
+  assert.deepStrictEqual(
+    Object.fromEntries(converged.assets.map((a) => [a.storage.path, a.assetId])), idsAfterBackfill,
+    "verification anchors bytes to the identities that already existed — it never re-mints one",
+  );
+  for (const asset of converged.assets)
+    assert(/^sha256:[0-9a-f]{64}$/.test(asset.contentHash), `${asset.storage.path} carries a real digest`);
+
+  /* Drained. A further restart-and-open now changes nothing at all. */
+  const settledBytes = fs.readFileSync(LEDGER);
   await stopServer();
   await startServer();
   await fetch(base + "/api/project").then((r) => r.json());
   await fetch(base + "/api/scan").then((r) => r.json());
-  await new Promise((resolve) => setTimeout(resolve, 600));
-  assert(ledgerBytes.equals(fs.readFileSync(LEDGER)),
-    "reopening an unchanged project must not rewrite the ledger — identity does not churn");
+  await new Promise((resolve) => setTimeout(resolve, 800));
+  assert(settledBytes.equals(fs.readFileSync(LEDGER)),
+    "reopening a converged project must not rewrite the ledger — identity does not churn");
   assert(projectBytesBefore.equals(fs.readFileSync(path.join(PROJECT_DIR, "project.json"))),
     "and must still leave project.json byte-identical");
+  assert.deepStrictEqual(fs.readdirSync(TAKES).map((name) => {
+    const stat = fs.statSync(path.join(TAKES, name));
+    return `${name}|${stat.mtimeMs}|${stat.size}`;
+  }), mediaStatsBefore, "and verification reads media without modifying any of it");
 
-  /* ---- 5. FAL and the browser are untouched by this phase ---- */
+  /* ---- 5. the rename CineBraid ITSELF performs, on media it has not yet read ----
+     POST /api/media/rename is the one place the product moves a media file, and
+     both approval paths go through it (public/library-tools.js:333, :531). A second
+     project is used because the condition being tested — a real row with no digest
+     yet — exists only between a project's first index and its next pass, and the
+     first project has long since converged. */
+  writeSecondProject();
+  const switched = await (await fetch(base + "/api/projects/switch", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ slug: SECOND_SLUG }),
+  })).json();
+  assert.strictEqual(switched.ok, true, "the switch is accepted");
+
+  const backfilled = await waitForLedger(15000, (doc) => doc.assets.length === 1, SECOND_LEDGER);
+  const beforeRename = backfilled.assets[0];
+  assert.strictEqual(beforeRename.hashState, "unhashed",
+    "the file has a durable id and no digest yet — the exact window an approval rename can land in");
+  assert.strictEqual(beforeRename.storage.path, "anchors/CHAR-ZED.png");
+
+  const renamed = await (await fetch(base + "/api/media/rename", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ dir: "anchors", from: "CHAR-ZED.png", to: "CHAR-ZED_APPROVED" }),
+  })).json();
+  assert.strictEqual(renamed.name, "CHAR-ZED_APPROVED.png", "the route renames the file as usual");
+
+  const afterRename = await waitForLedger(15000, (doc) =>
+    doc.assets.some((a) => a.storage.path === "anchors/CHAR-ZED_APPROVED.png" && a.storage.missing !== true),
+    SECOND_LEDGER);
+  const movedRow = afterRename.assets.find(
+    (a) => a.storage.path === "anchors/CHAR-ZED_APPROVED.png" && a.storage.missing !== true);
+  assert.strictEqual(movedRow.assetId, beforeRename.assetId,
+    "a rename the PRODUCT performed preserves assetId even though nothing had read the bytes when it started");
+  assert(/^sha256:[0-9a-f]{64}$/.test(movedRow.contentHash),
+    "because the route anchored the file to its bytes before moving it");
+  assert.strictEqual(afterRename.assets.length, 1, "and one row survives, not two");
+
+  /* ---- 6. FAL and the browser are untouched by this phase ---- */
   for (const rel of ["fal-generation.js", "public/fal-generation.js", "public/app.js", "public/index.html"]) {
     const source = fs.readFileSync(path.join(ROOT, rel), "utf8");
     for (const moduleName of [...LEDGER_MODULES, LEDGER_OWNER, "media-hash"])
@@ -306,12 +398,14 @@ async function main() {
 
   console.log(
     "MediaAsset boundary suite passed: the ledger is ACTIVE through exactly one owner — media-asset-service.js is the "
-    + "only production importer and the only caller of readLedger/writeLedger/indexProject/verifyAssets, server.js "
-    + "schedules activation from one function entered on open, scan and switch alone, and the ofp/ blind spot is now "
-    + "scanned with its one pure-predicate borrower pinned by name; the indexer still imports no hasher; and opening a "
-    + "real project mints a durable assetId for every supported media file with ZERO media bytes read, leaves "
-    + "project.json byte-identical with no backup, modifies no media, indexes nothing unsupported, and survives a "
-    + "restart without rewriting a byte of the ledger.",
+    + "only production importer and the only caller of readLedger/writeLedger/indexProject/verifyAssets; server.js uses "
+    + "exactly two service entry points, schedules activation from one function entered on open, scan, switch and the "
+    + "media rename route alone, and the ofp/ blind spot is now scanned with its one pure-predicate borrower pinned by "
+    + "name; the indexer still imports no hasher; opening a real project mints a durable assetId for every supported "
+    + "media file with ZERO media bytes read, leaves project.json byte-identical with no backup, modifies no media and "
+    + "indexes nothing unsupported; ordinary reopening then anchors every one of those identities to its bytes with no "
+    + "manual call, after which a further reopen rewrites nothing; and a rename performed by the product itself, on a "
+    + "file whose bytes had never been read, keeps its assetId through POST /api/media/rename.",
   );
 }
 

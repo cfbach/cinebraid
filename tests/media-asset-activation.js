@@ -117,20 +117,37 @@ async function main() {
     note("16 · an unsupported extension, a non-media folder, the project root and a deeper path are all ignored");
 
     /* ==================================================================
-       5-6. an unchanged repeat preserves identity and changes no byte
+       BACKLOG CONVERGENCE — media that pre-dates activation gets anchored
        ================================================================== */
     const idsBefore = idMap(dir);
-    const ledgerBytes = fs.readFileSync(path.join(dir, "media-assets.json"));
+    /* The pass AFTER the backfill verifies what the backfill deliberately did not.
+       Nothing calls this; it is the ordinary activation lifecycle. Without it every
+       file that existed before C1 would stay contentHash:null for ever, and
+       "a same-byte rename preserves assetId" would hold only for media that
+       arrived afterwards — which is not a guarantee worth making. */
     const second = await activate(root, "buckets");
+    assert.strictEqual(second.indexed.minted, 0, "no identity is re-minted");
+    assert.strictEqual(second.verified.verified, 10,
+      "the backfilled corpus is verified automatically, with no manual caller and no restart");
+    assert.strictEqual(second.unverifiedRemaining, 0, "and converges");
+    assert.deepStrictEqual(idMap(dir), idsBefore, "while every assetId is preserved");
+    for (const asset of ledgerOf(dir)) {
+      assert.strictEqual(asset.hashState, "hashed", `${asset.storage.path} is byte-anchored`);
+      assert(/^sha256:[0-9a-f]{64}$/.test(asset.contentHash), "with a real digest");
+    }
+    note("backlog · the pass after the backfill verifies all 10 pre-existing files automatically — no verifyNow caller, no restart, no UI");
+
+    /* 5-6. Drained, an unchanged project neither reads nor writes. */
+    const ledgerBytes = fs.readFileSync(path.join(dir, "media-assets.json"));
     const third = await activate(root, "buckets");
+    const fourth = await activate(root, "buckets");
+    assert.strictEqual(third.verified, null, "a fully verified project re-reads no bytes");
+    assert.strictEqual(third.indexed.wrote, false, "an unchanged pass writes nothing");
+    assert.strictEqual(fourth.indexed.wrote, false);
     assert.deepStrictEqual(idMap(dir), idsBefore, "repeated activation must preserve every assetId");
-    assert.strictEqual(second.indexed.minted, 0);
-    assert.strictEqual(second.indexed.wrote, false, "an unchanged pass writes nothing");
-    assert.strictEqual(third.indexed.wrote, false);
     assert(ledgerBytes.equals(fs.readFileSync(path.join(dir, "media-assets.json"))),
       "and the persisted ledger is byte-identical across unchanged passes");
-    assert.strictEqual(second.verified, null, "an unchanged pass reads no bytes either");
-    note("5-6 · three passes over an unchanged project: same ids, no write, byte-identical sidecar, zero byte reads");
+    note("5-6 · once converged, further passes over an unchanged project: same ids, no write, byte-identical sidecar, ZERO re-reads of verified assets");
   }
 
   /* ======================================================================
@@ -150,13 +167,13 @@ async function main() {
       project: { shots: [{ id: "SH010", keyframes: [], clips: [], candidateFiles: [] }] },
       files: { "media/SEED.png": bytesOf("seed") },
     });
-    /* The backfill. It reads nothing, so SEED.png carries identity and no digest —
-       the honest consequence of the byte-read policy, asserted here rather than
-       described: media that was already present when CineBraid first indexed the
-       project is byte-anchored only by a deliberate verifyNow. */
+    /* The backfill reads nothing, so SEED.png starts with identity and no digest.
+       That is the fast-open behaviour, not a resting state — the next pass anchors
+       it. */
     const backfill = await activate(root, "rename");
     assert.strictEqual(backfill.verified, null);
     assert.strictEqual(rowFor(dir, "media/SEED.png").hashState, "unhashed");
+    assert.strictEqual(backfill.unverifiedRemaining, 1, "and the pass says so, rather than leaving it implicit");
 
     /* 21. media appears while CineBraid is already running. */
     fs.mkdirSync(path.join(dir, "shots", "SH010", "takes"), { recursive: true });
@@ -165,8 +182,12 @@ async function main() {
     const original = rowFor(dir, "shots/SH010/takes/FRAME_A_FAL_1.png");
     assert(original, "21 · media added after the project was opened acquires identity without a restart");
     /* A ledger already existed, so this is an INCREMENTAL pass: the new arrival is
-       verified, which is what makes a later rename provable. */
-    assert.strictEqual(arrival.verified.verified, 1, "and a new arrival is hashed while it still exists");
+       verified, which is what makes a later rename provable — and the backlogged
+       SEED.png is anchored in the same bounded pass. */
+    assert.strictEqual(arrival.verified.verified, 2, "the new arrival AND the backlogged file are hashed");
+    assert.strictEqual(arrival.unverifiedRemaining, 0, "leaving nothing unanchored");
+    assert.strictEqual(rowFor(dir, "media/SEED.png").hashState, "hashed",
+      "the file that pre-dated activation is now byte-anchored too");
     assert.strictEqual(original.hashState, "hashed");
     assert.strictEqual(original.contentHash, `sha256:${sha256Hex(bytesOf("frame-a"))}`);
     const keptId = original.assetId;
@@ -187,7 +208,60 @@ async function main() {
     assert.strictEqual(ledgerOf(dir).length, 2, "the placeholder identity is absorbed, not left as a third row");
     assert(moved.absorbedAssetIds.length === 1 && moved.absorbedAssetIds[0] !== keptId,
       "the absorbed id is recorded so an assetId observed before the association still resolves");
-    note("7 · CENTRAL RENAME PROOF — same bytes, new filename, same assetId and same contentHash at the new path");
+    note("7 · CENTRAL RENAME PROOF (case A) — a VERIFIED asset renamed to a new path keeps its assetId and contentHash");
+  }
+
+  /* ======================================================================
+     THE THREE RENAME CASES, KEPT APART
+
+     Collapsing them into one claim is what made the first version of this phase
+     dishonest: "a same-byte rename preserves assetId" was true only for media that
+     arrived after activation. A is above. B and C are the two that decide whether
+     that sentence is worth saying at all.
+     ====================================================================== */
+  {
+    const root = makeRoot();
+
+    /* B — a rename CineBraid ITSELF performs, on an asset the background pass has
+       not reached yet. anchorBeforeRename is what POST /api/media/rename calls
+       before it moves the file, and it is the reason an approval rename cannot
+       fork identity even on a project opened seconds ago. */
+    const b = makeProject(root, "in-app", { files: { "anchors/CHAR-RHEA.png": bytesOf("rhea") } });
+    await activate(root, "in-app");
+    const unverified = rowFor(b, "anchors/CHAR-RHEA.png");
+    assert.strictEqual(unverified.contentHash, null, "the asset is genuinely unverified when the rename begins");
+    const anchor = await Service.anchorBeforeRename({ projectsRoot: root, slug: "in-app", path: "anchors/CHAR-RHEA.png" });
+    assert.strictEqual(anchor.anchored, true);
+    assert.strictEqual(anchor.reason, "verified", "exactly one file is hashed, at the moment of the rename");
+    fs.renameSync(path.join(b, "anchors", "CHAR-RHEA.png"), path.join(b, "anchors", "CHAR-RHEA_APPROVED.png"));
+    const reconciled = await activate(root, "in-app");
+    const moved = liveRow(b, "anchors/CHAR-RHEA_APPROVED.png");
+    assert.strictEqual(moved.assetId, unverified.assetId,
+      "B · an in-app rename of an initially-unverified asset preserves assetId");
+    assert.strictEqual(reconciled.verified.renames.length, 1);
+    assert.strictEqual(ledgerOf(b).length, 1, "and leaves one row, not two");
+    const again = await Service.anchorBeforeRename({ projectsRoot: root, slug: "in-app", path: "anchors/CHAR-RHEA_APPROVED.png" });
+    assert.strictEqual(again.reason, "already-verified", "and anchoring a verified asset re-reads nothing");
+    const absent = await Service.anchorBeforeRename({ projectsRoot: root, slug: "in-app", path: "anchors/NO-SUCH.png" });
+    assert.strictEqual(absent.anchored, false, "a path with no row is not an error — the rename simply proceeds unanchored");
+    note("B · anchorBeforeRename hashes the one named file before CineBraid moves it, so an approval rename of media that pre-dates activation keeps its assetId; a verified asset costs nothing and an unknown path never blocks the rename");
+
+    /* C — an OUT-OF-BAND rename that happened before CineBraid ever read the
+       bytes. There is no evidence, so there is no answer, and the honest outcome
+       is a new identity rather than a guessed link. */
+    const c = makeProject(root, "external", { files: { "media/BEFORE.png": bytesOf("external") } });
+    await activate(root, "external");
+    const orphan = rowFor(c, "media/BEFORE.png");
+    assert.strictEqual(orphan.contentHash, null);
+    fs.renameSync(path.join(c, "media", "BEFORE.png"), path.join(c, "media", "AFTER.png"));
+    const guessless = await activate(root, "external");
+    const arrived = liveRow(c, "media/AFTER.png");
+    assert.strictEqual((guessless.verified.renames || []).length, 0, "C · nothing is reconciled, because nothing can be");
+    assert.notStrictEqual(arrived.assetId, orphan.assetId, "the new path gets a NEW identity rather than an invented link");
+    const retained = ledgerOf(c).find((a) => a.assetId === orphan.assetId);
+    assert.strictEqual(retained.storage.missing, true, "and the old identity is retained and marked, never deleted");
+    assert.strictEqual(retained.contentHash, null, "with no digest fabricated for bytes CineBraid never read");
+    note("C · an external rename that happened before any byte was read is NOT guessed: a new identity at the new path, the old identity retained and marked missing, and no digest invented");
   }
 
   /* ======================================================================
@@ -587,17 +661,38 @@ async function main() {
       const dir = makeProject(root, `perf${count}`, {
         files: Object.fromEntries(Array.from({ length: count }, (_, i) => [`media/P${i}.png`, PNG])),
       });
+      /* First open: the number that matters, because it is the one a filmmaker
+         waits for. It must not scale with bytes. */
       const started = Date.now();
       const first = await activate(root, `perf${count}`);
       const backfillMs = Date.now() - started;
-      const repeatStarted = Date.now();
-      const second = await activate(root, `perf${count}`);
-      const repeatMs = Date.now() - repeatStarted;
       assert.strictEqual(ledgerOf(dir).length, count);
-      assert.strictEqual(first.verified, null, `a ${count}-file backfill reads no media bytes`);
-      assert.strictEqual(second.indexed.wrote, false, `and a repeat over ${count} unchanged files writes nothing`);
-      assert.strictEqual(second.verified, null, "and reads nothing");
-      timings.push(`${count} files: backfill ${backfillMs}ms, unchanged repeat ${repeatMs}ms, 0 bytes read`);
+      assert.strictEqual(first.verified, null, `a ${count}-file first open reads no media bytes`);
+      assert.strictEqual(first.unverifiedRemaining, count);
+
+      /* Convergence: bounded per pass, monotonic, and it finishes. */
+      const drainStarted = Date.now();
+      let passes = 0;
+      let remaining = first.unverifiedRemaining;
+      while (remaining > 0) {
+        passes += 1;
+        assert(passes <= count, "convergence must terminate");
+        const pass = await activate(root, `perf${count}`);
+        assert(pass.verified.verified <= Service.VERIFY_FILE_LIMIT, "no pass exceeds the file budget");
+        assert(pass.unverifiedRemaining < remaining, "every pass makes progress");
+        remaining = pass.unverifiedRemaining;
+      }
+      const drainMs = Date.now() - drainStarted;
+
+      /* Drained: nothing is re-read and nothing is rewritten. */
+      const repeatStarted = Date.now();
+      const settled = await activate(root, `perf${count}`);
+      const repeatMs = Date.now() - repeatStarted;
+      assert.strictEqual(settled.indexed.wrote, false, `a repeat over ${count} unchanged files writes nothing`);
+      assert.strictEqual(settled.verified, null, "and re-reads nothing");
+      assert.strictEqual(ledgerOf(dir).filter((a) => a.hashState === "hashed").length, count,
+        "every eligible asset ended verified");
+      timings.push(`${count} files: first open ${backfillMs}ms / 0 bytes, converged in ${passes} bounded passes over ${drainMs}ms, settled repeat ${repeatMs}ms / 0 reads`);
     }
     note(`performance · ${timings.join(" · ")}`);
 
@@ -733,7 +828,7 @@ async function main() {
       assert.strictEqual(offline.status, "complete", "activation completes with the network unusable");
       fs.writeFileSync(path.join(dir, "media", "B.png"), bytesOf("offline-b"));
       const incremental = await activate(root, "offline");
-      assert.strictEqual(incremental.verified.verified, 1, "including the hashing pass");
+      assert.strictEqual(incremental.verified.verified, 2, "including the hashing pass, backlog and arrival alike");
       await Service.verifyNow({ projectsRoot: root, slug: "offline" });
     } finally {
       global.fetch = realFetch;

@@ -20,6 +20,16 @@
  *   NC-K  a paid provider route is reached from activation
  *   NC-L  the FLF motion-readiness gate is moved
  *
+ * Six more guard the lifecycle that makes those semantics true for media which
+ * PRE-DATES activation, rather than only for media that arrived after it:
+ *
+ *   NC-1  first-index assets are left unverified for ever
+ *   NC-2  a rename CineBraid itself performs forks an unverified asset's identity
+ *   NC-3  scheduling a pass hashes the whole project before it returns
+ *   NC-4  an out-of-band rename with no byte evidence is guessed from path similarity
+ *   NC-5  the backlog tier merges two simultaneously-live same-byte files
+ *   NC-6  verification writes project.json
+ *
  * The sabotage is applied to COPIES of the real modules in a temp directory, so
  * each control exercises the genuine code path with one behaviour changed, and the
  * checkout is never modified.
@@ -500,11 +510,232 @@ async function main() {
     record("L", "motion gate altered", "RED — moving the readiness check after the navigation it protects is caught, and the unmodified source still passes");
   }
 
-  console.log(`MediaAsset activation negative controls passed (${results.length}/12):`);
+  /* ==========================================================================
+     C1 COMPLETION CONTROLS — the six ways the identity of media that PRE-DATES
+     activation could still be lost. The twelve above guard the semantics; these
+     guard the lifecycle that makes those semantics true for an existing project.
+     ========================================================================== */
+
+  /* ================= NC-1 — first-index assets stay unverified for ever ============ */
+  {
+    const S = sabotage("1", {
+      "media-asset-service.js": [[
+        "    if (known.has(relativePath)) backlog.push(relativePath);\n    else arrived.push(relativePath);",
+        `    ${HIT("backlog-dropped")}\n    if (!known.has(relativePath)) arrived.push(relativePath);`,
+      ]],
+    });
+    const { root, dir } = makeProject("1", "p", {
+      files: { "media/A.png": bytesOf("a"), "media/B.png": bytesOf("b"), "media/C.png": bytesOf("c") },
+    });
+    await go(S, root, "p");
+    for (let i = 0; i < 8; i += 1) await go(S, root, "p");
+    assert(global.__NC__.includes("backlog-dropped"), "NC-1: the dropped backlog tier must have executed");
+    const unverified = rows(dir).filter((a) => !a.contentHash).length;
+    assert.strictEqual(unverified, 3, "NC-1 must actually leave every pre-existing asset unverified");
+    assert.throws(
+      () => assert.strictEqual(unverified, 0,
+        "ordinary activity must anchor every pre-existing asset to its bytes"),
+      /must anchor every pre-existing asset/,
+      "NC-1: the convergence invariant must go RED against this build",
+    );
+    record("1", "first-index assets never verified", "RED — 3 assets stayed contentHash:null across 9 passes, so their identity could never survive a rename");
+  }
+
+  /* ================= NC-2 — in-app rename of an unverified asset forks identity ==== */
+  {
+    const S = sabotage("2", {
+      "media-asset-service.js": [[
+        "    const run = verifyAssets({ projectDir, paths: [relativePath], limit: 1, maxBytes: VERIFY_BYTE_LIMIT, now: options.now });",
+        `    ${HIT("anchor-skipped")}\n    return { anchored: false, reason: "sabotaged" };\n`
+        + "    const run = verifyAssets({ projectDir, paths: [relativePath], limit: 1, maxBytes: VERIFY_BYTE_LIMIT, now: options.now });",
+      ]],
+    });
+    const { root, dir } = makeProject("2", "p", { files: { "anchors/CHAR-RHEA.png": bytesOf("rhea") } });
+    await go(S, root, "p");
+    const before = rows(dir)[0];
+    assert.strictEqual(before.contentHash, null, "the control needs a genuinely unverified asset");
+    const anchor = await S.anchorBeforeRename({ projectsRoot: root, slug: "p", path: "anchors/CHAR-RHEA.png" });
+    assert(global.__NC__.includes("anchor-skipped"), "NC-2: the skipped anchor must have executed");
+    assert.strictEqual(anchor.anchored, false, "NC-2 must actually decline to anchor");
+    fs.renameSync(path.join(dir, "anchors", "CHAR-RHEA.png"), path.join(dir, "anchors", "CHAR-RHEA_APPROVED.png"));
+    await go(S, root, "p");
+    const after = rowAt(dir, "anchors/CHAR-RHEA_APPROVED.png");
+    assert.notStrictEqual(after.assetId, before.assetId, "NC-2 must actually fork the identity");
+    assert.throws(
+      () => assert.strictEqual(after.assetId, before.assetId,
+        "a rename CineBraid itself performs must preserve assetId"),
+      /must preserve assetId/,
+      "NC-2: the in-app rename invariant must go RED against this build",
+    );
+    record("2", "in-app rename of an unverified asset", `RED — the approval rename forked ${before.assetId.slice(0, 14)}… into a new identity, which is the exact case an approval must survive`);
+  }
+
+  /* ================= NC-3 — project open blocks on hashing the whole project ======= */
+  {
+    const S = sabotage("3", {
+      "media-asset-service.js": [[
+        "  const passOptions = { ...options, projectDir, slug, reason };",
+        `  ${HIT("blocking-hash")}\n`
+        + "  for (const ncName of fs.readdirSync(path.join(projectDir, \"media\")))\n"
+        + "    require(\"crypto\").createHash(\"sha256\").update(fs.readFileSync(path.join(projectDir, \"media\", ncName))).digest(\"hex\");\n"
+        + "  const passOptions = { ...options, projectDir, slug, reason };",
+      ]],
+    });
+    const clean = require(path.join(ROOT, "media-asset-service.js"));
+    const files = Object.fromEntries(Array.from({ length: 150 }, (_, i) => [`media/P${i}.png`, bytesOf(`p${i}`)]));
+    const sab = makeProject("3", "p", { files });
+    const ok = makeProject("3", "q", { files });
+
+    /* Reads counted, not milliseconds: a timing threshold is a flake waiting to
+       happen, and "how many media files were opened before the call returned" is
+       the actual question. */
+    function mediaReadsBeforeReturn(service, root, slug) {
+      const real = fs.readFileSync;
+      let returned = false;
+      let reads = 0;
+      fs.readFileSync = (target, ...rest) => {
+        if (!returned && String(target).replace(/\\/g, "/").includes("/media/")) reads += 1;
+        return real(target, ...rest);
+      };
+      let pending;
+      try {
+        pending = service.activateProject({ projectsRoot: root, slug, reason: "explicit", throttleMs: 0 });
+      } finally {
+        returned = true;
+        fs.readFileSync = real;
+      }
+      return { reads, pending };
+    }
+    const sabotaged = mediaReadsBeforeReturn(S, sab.root, "p");
+    await sabotaged.pending;
+    const honest = mediaReadsBeforeReturn(clean, ok.root, "q");
+    await honest.pending;
+
+    assert(global.__NC__.includes("blocking-hash"), "NC-3: the synchronous hashing must have executed");
+    assert.strictEqual(sabotaged.reads, 150, "NC-3 must actually read every media file before returning");
+    assert.strictEqual(honest.reads, 0, "while the real build returns having read none");
+    assert.throws(
+      () => assert.strictEqual(sabotaged.reads, 0,
+        "scheduling a pass must not read a media byte before it returns to the route"),
+      /must not read a media byte/,
+      "NC-3: the non-blocking invariant must go RED against this build",
+    );
+    record("3", "project open blocks on hashing", `RED — 150 media files were read before activateProject returned; the real build reads ${honest.reads}, so GET /api/project never waits on bytes`);
+  }
+
+  /* ================= NC-4 — an unprovable rename guessed from path similarity ====== */
+  {
+    const S = sabotage("4", {
+      "media-asset-verify.js": [[
+        "  const renames = [];\n  const ambiguous = [];",
+        "  const renames = [];\n  const ambiguous = [];\n  {\n"
+        + `    ${HIT("similarity-guessed")}\n`
+        + "    const goneNC = ledger.assets.filter((a) => a && a.storage && a.storage.missing === true && !a.contentHash);\n"
+        /* The present row is NOT required to be unhashed: by the time reconciliation
+           runs, a new arrival has already been verified. The realistic bad heuristic
+           is exactly this — "the old file vanished and a new one appeared in the
+           same folder, so it must be the same thing" — and it needs no evidence
+           about the vanished file at all. */
+        + "    const hereNC = ledger.assets.filter((a) => a && a.storage && a.storage.missing !== true);\n"
+        + "    const dirOf = (p) => p.split(\"/\").slice(0, -1).join(\"/\");\n"
+        + "    for (const origin of goneNC) {\n"
+        + "      const arrival = hereNC.find((a) => dirOf(a.storage.path) === dirOf(origin.storage.path));\n"
+        + "      if (!arrival) continue;\n"
+        + "      const from = origin.storage.path;\n"
+        + "      origin.storage = { ...arrival.storage };\n"
+        + "      delete origin.storage.missing;\n"
+        + "      origin.renamedFrom = from;\n"
+        + "      renames.push({ assetId: origin.assetId, from, to: origin.storage.path, absorbed: arrival.assetId });\n"
+        + "      ledger.assets = ledger.assets.filter((a) => a !== arrival);\n"
+        + "      hereNC.splice(hereNC.indexOf(arrival), 1);\n"
+        + "    }\n  }",
+      ]],
+    });
+    const { root, dir } = makeProject("4", "p", { files: { "media/BEFORE.png": bytesOf("external") } });
+    await go(S, root, "p");
+    const before = rows(dir)[0];
+    assert.strictEqual(before.contentHash, null, "the control needs an asset with no byte evidence");
+    fs.renameSync(path.join(dir, "media", "BEFORE.png"), path.join(dir, "media", "AFTER.png"));
+    const guessed = await go(S, root, "p");
+    assert(global.__NC__.includes("similarity-guessed"), "NC-4: the similarity matcher must have executed");
+    assert.strictEqual(guessed.verified.renames.length, 1, "NC-4 must actually invent a rename");
+    const claimed = rowAt(dir, "media/AFTER.png");
+    assert.strictEqual(claimed.assetId, before.assetId, "and transplant the old identity onto the new path");
+    assert.strictEqual(claimed.contentHash, null,
+      "on the evidence of a shared DIRECTORY alone — no byte of either file was ever read");
+    assert.throws(
+      () => assert.notStrictEqual(claimed.assetId, before.assetId,
+        "an out-of-band rename with no byte evidence must not be reconciled"),
+      /must not be reconciled/,
+      "NC-4: the no-guessing invariant must go RED against this build",
+    );
+    record("4", "unprovable rename guessed", "RED — an external rename CineBraid never had byte evidence for was linked from path similarity alone, asserting a history nothing proves");
+  }
+
+  /* ================= NC-5 — backlog verification merges two live twins ============= */
+  {
+    const S = sabotage("5", {
+      "media-asset-verify.js": [[
+        "    if (!gone.length || !here.length) continue;",
+        `    if (here.length > 1) {\n      ${HIT("backlog-merged")}\n`
+        + "      const [, ...drop] = here;\n"
+        + "      ledger.assets = ledger.assets.filter((row) => !drop.includes(row));\n"
+        + "      continue;\n    }\n    if (!gone.length || !here.length) continue;",
+      ]],
+    });
+    const { root, dir } = makeProject("5", "p", {
+      files: { "media/twin-left.png": bytesOf("twin"), "media/twin-right.png": bytesOf("twin") },
+    });
+    await go(S, root, "p");                    /* backfill: two rows, no digests */
+    assert.strictEqual(rows(dir).length, 2, "both files start as two identities");
+    await go(S, root, "p");                    /* the BACKLOG tier hashes them */
+    assert(global.__NC__.includes("backlog-merged"), "NC-5: the merge must have executed during backlog verification");
+    assert.strictEqual(rows(dir).length, 1, "NC-5 must actually merge the two live files");
+    assert.throws(
+      () => assert.strictEqual(rows(dir).length, 2,
+        "two independent current files stay two MediaAssets however their digests were obtained"),
+      /stay two MediaAssets/,
+      "NC-5: the duplicate-content invariant must go RED on the backlog path too",
+    );
+    record("5", "backlog verification merges live twins", "RED — the tier that anchors pre-existing media collapsed two live same-byte files into one identity");
+  }
+
+  /* ================= NC-6 — verification writes project.json ======================= */
+  {
+    const S = sabotage("6", {
+      "media-asset-service.js": [[
+        "        record.unverifiedRemaining = countUnverified(readLedger(projectDir).ledger.assets);",
+        `        ${HIT("project-written-by-verification")}\n`
+        + "        fs.writeFileSync(path.join(projectDir, \"project.json\"), JSON.stringify(project));\n"
+        + "        record.unverifiedRemaining = countUnverified(readLedger(projectDir).ledger.assets);",
+      ]],
+    });
+    const { root, dir } = makeProject("6", "p", {
+      files: { "media/A.png": bytesOf("a") },
+      project: { shots: [{ id: "S-01", winner: "A.png", keyframes: [], clips: [], candidateFiles: [] }] },
+    });
+    /* Captured before ANY pass: the sabotaged write sits on the verification arm,
+       which every pass reaches — so a baseline taken after the first pass would
+       already be the rewritten file and the control would prove nothing. */
+    const before = fs.readFileSync(path.join(dir, "project.json"));
+    await go(S, root, "p");
+    await go(S, root, "p");                    /* the pass that verifies the backlog */
+    assert(global.__NC__.includes("project-written-by-verification"), "NC-6: the project write must have executed");
+    const after = fs.readFileSync(path.join(dir, "project.json"));
+    assert.strictEqual(before.equals(after), false, "NC-6 must actually rewrite project.json");
+    assert.throws(
+      () => assert(before.equals(after), "verification must leave project.json byte-identical"),
+      /byte-identical/,
+      "NC-6: the no-legacy-mutation invariant must go RED on the verification path too",
+    );
+    record("6", "verification writes project.json", `RED — anchoring bytes renormalised legacy project semantics, ${before.length} bytes to ${after.length}`);
+  }
+
+  console.log(`MediaAsset activation negative controls passed (${results.length}/18):`);
   for (const line of results) console.log(`  · ${line}`);
   console.log(
     "  Every control ran the sabotaged branch — proved by an in-branch marker — before the invariant was asserted, "
-    + "so none of the twelve is a module that merely failed to load.",
+    + "so none of the eighteen is a module that merely failed to load.",
   );
 }
 
