@@ -332,6 +332,21 @@ window.openEntityBatchApproval = (list, id, batchId) => {
   window._entityBatchApproval = { list, id, batchId };
   openModal(`<div class="entity-batch-approval-modal"><header><span>BATCH APPROVAL</span><h3>Approve selected passing candidates</h3><p>This is the human confirmation step. Current filenames are kept; each selected image becomes the authority for only its listed target.</p></header><div class="entity-batch-approval-list">${shortlist.map((item, index) => { const current = item.type === "coverage" || item.type === "expressions" ? [...(entity.coverageSlots || []), ...(entity.expressionSlots || [])].find((slot) => slot.id === item.best.slotId)?.approvedFile : entityStateById(entity, item.best.stateId)?.approvedFile || (item.best.stateId === "state-default" ? entity.approvedFile : ""); return `<label><input type="checkbox" data-batch-approval-index="${index}" checked><span><b>${esc(item.label)}</b><small>${esc(item.best.fileName)} · ${Math.round(Number(item.best.score || 0))}/100${current && current !== item.best.fileName ? ` · replaces ${esc(current)}` : ""}</small></span></label>`; }).join("")}</div><div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button class="approve-btn large" onclick="confirmEntityBatchApproval()">CONFIRM SELECTED APPROVALS</button></div></div>`);
 };
+/* `humanApproved` is the canonical mark of a decision a person took, written by every
+   other approval path (public/entities.js, public/library-tools.js) and read by the
+   human-decision panel. Batch approval wrote only its own `decision` vocabulary, so a
+   director who confirmed a shortlist in the modal was still shown "NO HUMAN DECISION
+   YET" on every image they had just approved.
+   `humanApprovedWithoutAI` stays false and is not a matter of opinion: the batch
+   shortlist offers only candidates that already carry a passing review of the current
+   contract version, so this approval was made with an AI result in front of it. An AI
+   pass on its own still writes neither field — nothing here approves anything until
+   this function runs, and this function runs only from the confirmation modal. */
+function markBatchApprovalAsHumanDecision(row) {
+  if (!row) return;
+  row.humanApproved = true;
+  row.humanApprovedWithoutAI = false;
+}
 window.confirmEntityBatchApproval = async () => {
   const current = window._entityBatchApproval || {};
   const entity = P[current.list]?.find((item) => item.id === current.id);
@@ -359,6 +374,7 @@ window.confirmEntityBatchApproval = async () => {
       row.approvedCoverageSlotId = slot.id;
       row.reviewRequired = false;
       row.decidedAt = approvedAt;
+      markBatchApprovalAsHumanDecision(row);
     } else {
       const state = entityStateById(entity, best.stateId) || entityStateList(entity, true)[0];
       if (!state) continue;
@@ -370,6 +386,7 @@ window.confirmEntityBatchApproval = async () => {
       }
       row.decision = "approved-reference";
       row.decidedAt = approvedAt;
+      markBatchApprovalAsHumanDecision(row);
       entity.workflowStatus = "APPROVED";
       entity.status = "APPROVED";
     }

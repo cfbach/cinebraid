@@ -2,6 +2,7 @@ const fs = require("fs");
 const path = require("path");
 const { SimpleZipWriter } = require("./zip-stream");
 const { summarizeRecordedCost } = require("./generation-cost");
+const Lifecycle = require("./generation-lifecycle");
 const APP_VERSION = require("./package.json").version;
 
 const MAX_TERMINAL_RUNS = 100;
@@ -340,7 +341,10 @@ function registerAutomationRuns(app, deps) {
   }
   function diagnosticAnalysis(run, jobs) {
     const steps = Object.values(run.steps || {}), generation = steps.filter((step) => step.kind === "generation"), reviews = steps.filter((step) => String(step.kind || "").includes("review"));
-    const accepted = jobs.filter((job) => job.providerRequestId || job.requestId || !["SUBMITTING", "FAILED"].includes(job.status)).length;
+    /* Through the lifecycle module rather than field names guessed here: the ledger
+       persists the provider's handle as `externalId`, and reading anything else made
+       "was a paid request accepted" answerable only from status. */
+    const accepted = jobs.filter((job) => Lifecycle.providerAcceptedRequest(job)).length;
     const repeated = new Map();
     for (const step of reviews) {
       const rows = Array.isArray(step.review?.reviews) ? step.review.reviews : [];

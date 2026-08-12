@@ -29,6 +29,14 @@ function falGenerationJob(shotId, purpose, frameId = "") {
 function falJobActive(job) {
   return !!job && ["SUBMITTING", "SUBMITTED", "IN_QUEUE", "IN_PROGRESS"].includes(job.status);
 }
+/* THE PROVIDER'S HANDLE, from the field the durable ledger persists. Mirrors
+   generation-lifecycle.js providerRequestId() on the server, and exists because
+   several screens read `job.providerRequestId` and `job.requestId` — names no writer
+   in CineBraid has ever produced. Every one of them silently rendered nothing, and
+   the activity record they fed carried an empty id onwards. */
+function falJobProviderRequestId(job) {
+  return String(job?.externalId || "");
+}
 function falJobStatusLabel(job) {
   const map = {
     SUBMITTING: "Submitting",

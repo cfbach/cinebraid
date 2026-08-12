@@ -1161,7 +1161,9 @@ async function load() {
   P.meta.defaults = P.meta.defaults || { stillModel: "", videoModel: "" };
   P.meta.promptDefaults = P.meta.promptDefaults || {
     imageProfile: "gpt-image-2/t2i",
-    videoProfile: "seedance-2/i2v",
+    /* Kept in step with the new-project default in server.js: a video default this
+       build cannot dispatch is a dead end handed to every shot in the project. */
+    videoProfile: "minimax-h3/i2v",
   };
   (P.shots || []).forEach((s) => {
     s.promptBuilds = s.promptBuilds || [];

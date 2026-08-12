@@ -55,9 +55,16 @@
     return ids.includes(stored) ? stored : (ids.includes(String(fallback || "")) ? String(fallback) : ids[0]);
   }
   window.boundedFocusedTask = focusedTask;
-  window.selectBoundedTask = (scope, id, value) => {
-    // Match v6.6 focused-workspace storage so old and new layouts share one task preference.
+  // Match v6.6 focused-workspace storage so old and new layouts share one task preference.
+  // The write is separated from the re-render because a cross-panel action selects the task
+  // and then routes once itself; two writers of this key would be two task states.
+  function writeFocusedTask(scope, id, value) {
     try { localStorage.setItem(`cinebraid-focused:${projectKey()}:${scope}:${String(id || "root")}`, String(value)); } catch {}
+    return String(value);
+  }
+  window.boundedWriteFocusedTask = writeFocusedTask;
+  window.selectBoundedTask = (scope, id, value) => {
+    writeFocusedTask(scope, id, value);
     window.route?.();
   };
 })();
