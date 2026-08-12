@@ -115,19 +115,53 @@ function describeLocation(relativePath) {
   return null;
 }
 
+/* The entity list each flat media directory belongs to. `audio/` is deliberately
+   absent: describeLocation gives it no entityList, so it never reaches the entity
+   arm at all. */
+const ENTITY_LIST_FOR_DIR = { anchors: "characters", plates: "locations", props: "props", vehicles: "vehicles" };
+
+/* Two project records claiming one file. Recorded rather than resolved: a legacy
+   owner CineBraid cannot prove is left unresolved, because a wrong owner written
+   once propagates into everything downstream and looks exactly like a right one. */
+const AMBIGUOUS = Symbol("ambiguous-legacy-link");
+
+/* Where a `P.mediaAssets[]` row's bytes actually live, project-relative.
+   `storagePath` is what fal-generation.js writes for every blocking asset
+   (fal-generation.js:865); the `media/<file>` fallback is server.js's own
+   convention for a row that predates it (server.js:4964, :5656, :5762). A `file`
+   that is not a bare name matches no convention, so it resolves to nothing and
+   links to nothing. */
+function libraryStoragePath(asset) {
+  const stored = String(asset.storagePath || "").replace(/\\/g, "/").replace(/^\/+/, "");
+  if (stored) return stored;
+  const file = String(asset.file || "").replace(/\\/g, "/");
+  if (!file || file.includes("/")) return "";
+  return `media/${file}`;
+}
+
 /* An index of what project.json already says, built once per pass. Read-only:
    nothing in this module writes a project record, and the ledger is allowed to
-   know about legacy rows without those rows knowing about the ledger. */
+   know about legacy rows without those rows knowing about the ledger.
+
+   EVERY KEY HERE IS A PATH, NEVER A BARE FILENAME. A basename is not identity —
+   `anchors/take.png` and `props/take.png` are two files, and CHAR-RHEA's candidate
+   row is not evidence about a prop that happens to share its name. Keying any of
+   these maps by basename is how an asset acquires an owner nothing proved. */
 function buildProjectEvidence(project) {
-  const shotRows = new Map();       /* "<shotId>/<file>" -> candidate row */
-  const shotWinners = new Map();    /* shotId -> [live pointer filenames] */
-  const entityRows = new Map();     /* "<list>/<file>" -> candidate row */
-  const entityPointers = new Map(); /* list -> [live pointer filenames] */
-  const libraryByFile = new Map();  /* filename -> P.mediaAssets[] entry */
-  const activeBlocking = new Set();
+  const shotRows = new Map();        /* "<shotId>/<file>" -> candidate row */
+  const shotWinners = new Map();     /* shotId -> [live pointer filenames] */
+  const entityRows = new Map();      /* "<list>/<file>" -> {row, entityId, list} | AMBIGUOUS */
+  const entityPointers = new Map();  /* list -> [live pointer filenames] */
+  const entityOwnPointers = new Map(); /* "<list>/<entityId>" -> [that entity's pointers] */
+  const libraryByPath = new Map();   /* project-relative path -> P.mediaAssets[] entry | AMBIGUOUS */
+  const libraryByShotFile = new Map(); /* "<shotId>/<file>" -> pathless entry | AMBIGUOUS */
+  const activeLibraryIds = new Set();  /* library asset ids currently acting as a blocking guide */
 
   if (!project || typeof project !== "object") {
-    return { shotRows, shotWinners, entityRows, entityPointers, libraryByFile, activeBlocking };
+    return {
+      shotRows, shotWinners, entityRows, entityPointers, entityOwnPointers,
+      libraryByPath, libraryByShotFile, activeLibraryIds,
+    };
   }
 
   for (const shot of Array.isArray(project.shots) ? project.shots : []) {
@@ -157,36 +191,86 @@ function buildProjectEvidence(project) {
     const pointers = [];
     for (const entity of Array.isArray(project[list]) ? project[list] : []) {
       if (!entity) continue;
-      if (entity.approvedFile) pointers.push(entity.approvedFile);
+      const own = [];
+      if (entity.approvedFile) own.push(entity.approvedFile);
       for (const state of Array.isArray(entity.continuityStates) ? entity.continuityStates : [])
-        if (state && state.approvedFile) pointers.push(state.approvedFile);
+        if (state && state.approvedFile) own.push(state.approvedFile);
       for (const group of ["coverageSlots", "expressionSlots"])
         for (const slot of Array.isArray(entity[group]) ? entity[group] : [])
-          if (slot && slot.approvedFile) pointers.push(slot.approvedFile);
+          if (slot && slot.approvedFile) own.push(slot.approvedFile);
+      pointers.push(...own);
+      if (entity.id) entityOwnPointers.set(`${list}/${entity.id}`, own.filter(Boolean));
       /* Entity rows keep their own decision vocabulary. They are never routed
          through candidateRecord(), which would coerce it to "unreviewed". */
       for (const row of Array.isArray(entity.candidateFiles) ? entity.candidateFiles : []) {
         const key = row && (row.stored || row.name || row.original);
-        if (key) entityRows.set(key, { row, entityId: entity.id, list });
+        if (!key) continue;
+        const scoped = `${list}/${key}`;
+        const held = entityRows.get(scoped);
+        /* Two entities in one list naming the same file. A Map would silently keep
+           whichever was parsed last, handing one entity's history to another's
+           bytes; instead the key is poisoned and neither is linked. A second row on
+           the SAME entity is not a conflict — it is one owner listing a file twice. */
+        if (held) {
+          if (held !== AMBIGUOUS && held.entityId !== entity.id) entityRows.set(scoped, AMBIGUOUS);
+          continue;
+        }
+        entityRows.set(scoped, { row, entityId: entity.id, list });
       }
     }
     entityPointers.set(list, pointers.filter(Boolean));
   }
 
-  for (const asset of Array.isArray(project.mediaAssets) ? project.mediaAssets : []) {
-    if (!asset || !asset.file) continue;
-    libraryByFile.set(asset.file, asset);
-    for (const link of Array.isArray(asset.links) ? asset.links : [])
-      if (link && link.blockingState === "active") activeBlocking.add(asset.file);
-  }
   for (const shot of Array.isArray(project.shots) ? project.shots : []) {
     const activeId = shot?.creationBrief?.activeBlockingAssetId;
-    if (!activeId) continue;
-    for (const asset of Array.isArray(project.mediaAssets) ? project.mediaAssets : [])
-      if (asset && asset.id === activeId && asset.file) activeBlocking.add(asset.file);
+    if (activeId) activeLibraryIds.add(activeId);
+  }
+  for (const asset of Array.isArray(project.mediaAssets) ? project.mediaAssets : []) {
+    if (!asset) continue;
+    const links = Array.isArray(asset.links) ? asset.links : [];
+    if (asset.id && links.some((link) => link && link.blockingState === "active")) activeLibraryIds.add(asset.id);
+
+    const storagePath = libraryStoragePath(asset);
+    if (storagePath) {
+      /* Two library rows resolving to one path cannot both own it, and picking is
+         what puts SH010's generation record on SH020's blocking frame. */
+      if (libraryByPath.has(storagePath) && libraryByPath.get(storagePath) !== asset) libraryByPath.set(storagePath, AMBIGUOUS);
+      else libraryByPath.set(storagePath, asset);
+    }
+
+    /* A row written before `storagePath` existed still proves which shot it belongs
+       to, through its own link. Shot id plus filename is the same evidence shape
+       shotRows already uses, and unlike a bare basename it cannot reach across
+       shots. Rows that DO carry a storagePath are excluded — their path is the
+       better evidence, and admitting both would let a mismatched pair collide. */
+    const file = String(asset.file || "");
+    if (!asset.storagePath && file && !file.includes("/") && !file.includes("\\")) {
+      for (const link of links) {
+        if (!link || link.targetType !== "shot" || !link.targetId) continue;
+        const key = `${link.targetId}/${file}`;
+        if (libraryByShotFile.has(key) && libraryByShotFile.get(key) !== asset) libraryByShotFile.set(key, AMBIGUOUS);
+        else libraryByShotFile.set(key, asset);
+      }
+    }
   }
 
-  return { shotRows, shotWinners, entityRows, entityPointers, libraryByFile, activeBlocking };
+  return {
+    shotRows, shotWinners, entityRows, entityPointers, entityOwnPointers,
+    libraryByPath, libraryByShotFile, activeLibraryIds,
+  };
+}
+
+/* The library row that provably describes THIS file, or nothing. Path first,
+   because it is the stronger evidence; the shot-scoped fallback exists only for
+   rows that carry no path at all. */
+function libraryEntryFor(evidence, relativePath, shotId, file) {
+  const byPath = evidence.libraryByPath.get(relativePath);
+  if (byPath && byPath !== AMBIGUOUS) return { entry: byPath, ambiguous: false };
+  if (byPath === AMBIGUOUS) return { entry: null, ambiguous: true };
+  if (!shotId) return { entry: null, ambiguous: false };
+  const byShot = evidence.libraryByShotFile.get(`${shotId}/${file}`);
+  if (byShot && byShot !== AMBIGUOUS) return { entry: byShot, ambiguous: false };
+  return { entry: null, ambiguous: byShot === AMBIGUOUS };
 }
 
 /* What a discovered file is, according only to evidence that exists. */
@@ -198,16 +282,25 @@ function describeAsset(relativePath, location, evidence) {
   let source = "unknown";
   let lifecycle = "candidate";
   const legacy = { candidateArray: null, candidateKey: null, libraryAssetId: null };
+  /* Named rather than silently dropped: an ambiguous link is a fact about this
+     asset, and a reader that cannot tell "no record" from "more than one record"
+     will eventually resolve it by guessing. */
+  const unresolved = [];
 
   if (location.scope.shotId) {
     const row = evidence.shotRows.get(`${location.scope.shotId}/${file}`);
     const winners = evidence.shotWinners.get(location.scope.shotId) || [];
     if (location.dir === "blocking") {
       role = "blocking-guide";
-      const library = evidence.libraryByFile.get(file);
-      if (library) legacy.libraryAssetId = library.id || null;
+      const library = libraryEntryFor(evidence, relativePath, location.scope.shotId, file);
+      if (library.entry) legacy.libraryAssetId = library.entry.id || null;
+      if (library.ambiguous) unresolved.push("project.mediaAssets");
+      /* Active is read off the row we PROVED owns this file, never off a name.
+         An active guide in one shot must not mark a same-named file in another. */
       lifecycle = deriveLifecycle(row || { stored: file }, {
-        dialect: "library-entry", key: file, active: evidence.activeBlocking.has(file),
+        dialect: "library-entry",
+        key: file,
+        active: Boolean(library.entry && library.entry.id && evidence.activeLibraryIds.has(library.entry.id)),
       });
     } else {
       role = mediaType === "video" ? "motion-candidate" : "frame-candidate";
@@ -223,10 +316,20 @@ function describeAsset(relativePath, location, evidence) {
       else if (row.addedAt) source = "uploaded";
     }
   } else if (location.scope.entityList) {
-    const match = evidence.entityRows.get(file);
-    const pointers = evidence.entityPointers.get(
-      { anchors: "characters", plates: "locations", props: "props", vehicles: "vehicles" }[location.dir] || location.dir,
-    ) || [];
+    /* Scoped to the list this DIRECTORY implies. An unscoped basename lookup let a
+       characters row own `props/RHEA.png`, because the two files share a name — the
+       exact false ownership the ledger exists to make impossible. */
+    const list = ENTITY_LIST_FOR_DIR[location.dir] || location.dir;
+    const held = evidence.entityRows.get(`${list}/${file}`);
+    const match = held && held !== AMBIGUOUS ? held : null;
+    if (held === AMBIGUOUS) unresolved.push("entity.candidateFiles");
+    /* An owner we can prove narrows the question to that entity's own pointers.
+       Falling back to every pointer in the list is only correct when no row claims
+       the file, and using it anyway is how one character's approval marks another's
+       same-named reference approved. */
+    const pointers = (match && match.entityId
+      ? evidence.entityOwnPointers.get(`${list}/${match.entityId}`)
+      : evidence.entityPointers.get(list)) || [];
     role = "entity-reference";
     lifecycle = deriveLifecycle(match ? match.row : { stored: file }, {
       dialect: "entity-candidate", key: file, approvedPointers: pointers,
@@ -241,13 +344,15 @@ function describeAsset(relativePath, location, evidence) {
     /* media/ and audio/ are the project library and the sound folder. Nothing
        here proves a production role, so it stays unknown. */
     role = location.dir === "audio" ? "temp-reference" : "unknown";
-    const library = evidence.libraryByFile.get(file);
-    if (library) {
-      legacy.libraryAssetId = library.id || null;
-      source = library.generationRecord ? "generated" : "uploaded";
+    const library = libraryEntryFor(evidence, relativePath, "", file);
+    if (library.entry) {
+      legacy.libraryAssetId = library.entry.id || null;
+      source = library.entry.generationRecord ? "generated" : "uploaded";
     }
+    if (library.ambiguous) unresolved.push("project.mediaAssets");
   }
 
+  if (unresolved.length) legacy.unresolved = unresolved;
   return { mediaType, scope, role, source, lifecycle, legacy };
 }
 
@@ -390,10 +495,16 @@ async function indexProject(options) {
       if (!stat.ok) {
         /* Discovered by readdir but unstatable a moment later. Transient. */
         if (existing) {
-          const marked = markUnavailable(existing);
-          Object.assign(existing, marked, { indexedAt: now() });
           stats.unavailable += 1;
-          changed = true;
+          /* Re-stamping a row that already says `unavailable` rewrites the whole
+             ledger on every pass for as long as the file stays locked. While the
+             ledger was inert that cost nothing; now that a pass runs whenever a
+             project is opened it is unbounded churn on a synced root, and it makes
+             "an unchanged scan changes nothing" false. */
+          if (existing.hashState !== "unavailable") {
+            Object.assign(existing, markUnavailable(existing), { indexedAt: now() });
+            changed = true;
+          }
         }
         continue;
       }
@@ -492,15 +603,20 @@ async function indexProject(options) {
 }
 
 module.exports = {
+  AMBIGUOUS,
   DEFAULT_CHUNK_SIZE,
+  ENTITY_LIST_FOR_DIR,
+  FLAT_MEDIA_DIRS,
   IndexRootUnreadableError,
   LedgerUnreadableError,
   MEDIA_EXT,
+  SHOT_MEDIA_DIRS,
   buildProjectEvidence,
   classifyError,
   describeAsset,
   describeLocation,
   discoverPaths,
   indexProject,
+  libraryStoragePath,
   mediaTypeFor,
 };

@@ -129,14 +129,33 @@ application bootstrapping its own defaults — and the gate reports it as such:
 
 ```
 isolation  26 files under data/ and projects/ byte-identical after the run
-           first run created data/config.json — six suites still start the server
-           against the repository's own roots
+           first run created data/config.json, projects/cinebraid-sample/media-assets.json
+           — six suites still start the server against the repository's own roots
 ```
 
-Creation of that one file is tolerated. *Modifying* it is not, and nothing under
-`projects/` is exempt at all: a stray test project appearing there is exactly what
-the census exists to catch. Moving those six suites onto sandbox roots is the
-follow-up this line is here to keep visible.
+Three files may be created, all named exactly, and all because starting the
+application is what creates them:
+
+- `data/config.json` — CineBraid bootstrapping its own defaults.
+- `projects/cinebraid-sample/media-assets.json` — since P4-SEM-C1, opening a project
+  mints a durable `assetId` per media file, and six of these suites open the shipped
+  sample through the real server.
+- `projects/cinebraid-sample/media-assets.json.bak` — the ledger is written twice
+  across a gate run **by design**: the first server start indexes the sample
+  stat-only, and a later one anchors those identities to their bytes. The store
+  copies the previous primary aside before replacing it, so the second write produces
+  the `.bak`. Both writes are the application converging on its own state.
+
+*Modifying* any of them is still damage, and nothing else under `projects/` is
+exempt: a stray test project appearing there is exactly what the census exists to
+catch, and a new directory or any other new file still fails the gate.
+
+Every exemption here was established the same way — by CI failing on exactly it while
+a developer machine passed, because the file was already there from an earlier run
+and the census saw it unchanged rather than created. If you are debugging an
+isolation failure that CI sees and you do not, delete these three files and re-run
+the gate.
+Moving those six suites onto sandbox roots is the follow-up this line keeps visible.
 
 ## Troubleshooting
 

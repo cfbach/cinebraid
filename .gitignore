@@ -157,6 +157,11 @@ dist
 /projects/cinebraid-sample/backups/
 /projects/cinebraid-sample/*.bak
 /projects/cinebraid-sample/generation-jobs.json
+# media-assets.json joins this list with P4-SEM-C1: opening the sample now mints a
+# durable assetId per media file, and those ids are minted per install. Committing
+# one would ship identities from whichever machine opened the sample last, and every
+# clone would then diverge from it on first run.
+/projects/cinebraid-sample/media-assets.json
 /projects/cinebraid-sample/agent-index.json
 /projects/cinebraid-sample/test-feedback.json
 /projects/cinebraid-sample/embeddings.json
