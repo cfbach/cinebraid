@@ -796,9 +796,12 @@ function guidedPreviousFrame(s, index) {
   return index > 0 ? guidedFrames(s)[index - 1] : null;
 }
 function guidedFramePromptRefs(s, frame, index, state) {
+  /* The frame's id, not the shot's silence: this is the one caller that knows
+     which frame is being generated, and a frame may declare its own entity
+     states. Everything downstream resolves them through the canonical rule. */
   const refs = index === 0
-    ? shotCreationPromptReferences(s)
-    : shotCreationReferences(s).filter((ref) => shotInputEnabled(s, ref.key));
+    ? shotCreationPromptReferences(s, frame?.id || "")
+    : shotCreationReferences(s, frame?.id || "").filter((ref) => shotInputEnabled(s, ref.key));
   const out = [...refs];
   if (index > 0 && state.usePreviousFrame) {
     const prev = guidedPreviousFrame(s, index);
@@ -1310,9 +1313,37 @@ window.toggleGuidedShotInput = (id, key) => {
   dirty();
   route();
 };
-function creationEntityReference(list, entity, s, role) {
+/* The kind name the canonical binding contract uses for each entity list. */
+const CREATION_REFERENCE_KIND = { characters: "character", locations: "location", props: "prop", vehicles: "vehicle" };
+/* The state this shot — or one named FRAME of it — declares for an entity, as a
+   record on THAT entity. Resolved through resolveDeclaredStateId(), the P4-SEM-B
+   canonical rule (frame, then shot, then the entity's default) and the same
+   entry point the continuity manifest, the automation preflight and server.js's
+   authority selection use. State ids are owner-scoped, so the record is looked
+   up on this entity and nowhere else. With frameId "" the question is the
+   shot's, which is exactly what every non-frame caller has always asked. */
+function creationDeclaredState(s, entity, list, frameId = "") {
   if (!entity) return null;
-  const state = selectedEntityStateForShot(s, entity);
+  const stateId = resolveDeclaredStateId(s, frameId, CREATION_REFERENCE_KIND[list] || "", entity.id);
+  return entityStateById(entity, stateId) || entityStateById(entity, "");
+}
+/* `frameId` is the narrow half of this repair. selectedEntityStateForShot()
+   reads the SHOT map and has no frame parameter, so a frame that explicitly
+   declared its own state still had its design-authority image chosen from the
+   shot's — an explicitly frame-bound generation running against the wrong
+   state. Frames pass their id; every other caller passes nothing and resolves
+   exactly what it always did.
+
+   `key` stays SHOT-scoped on purpose. It is this reference's stored identity —
+   composition.referenceSets[].primaryKey, element.referenceKey and
+   disabledInputKeys are all persisted against it — so making it vary per frame
+   would quietly drop a director's composer selections on any frame that
+   declares its own state. The key says WHICH reference slot; the file says
+   which approved image currently answers for it. */
+function creationEntityReference(list, entity, s, role, frameId = "") {
+  if (!entity) return null;
+  const state = creationDeclaredState(s, entity, list, frameId);
+  const keyState = frameId ? creationDeclaredState(s, entity, list, "") : state;
   const file = entityApprovedFileForState(entity, state?.id || "");
   const pool = entityMedia(list, entity);
   let media = file ? pool.find((m) => m.name === file) : null;
@@ -1321,7 +1352,7 @@ function creationEntityReference(list, entity, s, role) {
     media = (SCAN[bucket] || []).find((m) => m.name === file) || null;
   }
   return {
-    key: `${list}:${entity.id}:${state?.id || "default"}`,
+    key: `${list}:${entity.id}:${keyState?.id || "default"}`,
     entityId: entity.id,
     entityName: entity.name || entity.id,
     label: `${entity.name || entity.id}${state && !state.isDefault ? ` · ${state.name}` : ""}`,
@@ -1415,19 +1446,23 @@ function coverageSlotReferences(list, entity, s) {
   return chosen;
 }
 
-function shotCreationReferences(s) {
+/* `frameId` is optional and defaults to the shot's own declared states, so every
+   display, picker and count surface reads exactly what it always did. Only the
+   frame prompt package passes a frame, and only so an entity whose state that
+   frame overrides is answered with THAT state's authority image. */
+function shotCreationReferences(s, frameId = "") {
   const c = ensureShotCreation(s);
   const refs = [];
   const location = P.locations.find((x) => x.id === c.locationId);
   if (location) {
-    refs.push(creationEntityReference("locations", location, s, "base"));
+    refs.push(creationEntityReference("locations", location, s, "base", frameId));
     refs.push(...coverageSlotReferences("locations", location, s));
     refs.push(...assetSupplementalReferences("locations", location, s));
   }
   for (const id of s.characters || []) {
     const x = P.characters.find((e) => e.id === id);
     if (x) {
-      refs.push(creationEntityReference("characters", x, s, "identity"));
+      refs.push(creationEntityReference("characters", x, s, "identity", frameId));
       refs.push(...coverageSlotReferences("characters", x, s));
       refs.push(...assetSupplementalReferences("characters", x, s));
     }
@@ -1436,11 +1471,11 @@ function shotCreationReferences(s) {
     const prop = (P.props || []).find((e) => e.id === id);
     const vehicle = (P.vehicles || []).find((e) => e.id === id);
     if (prop) {
-      refs.push(creationEntityReference("props", prop, s, "prop"));
+      refs.push(creationEntityReference("props", prop, s, "prop", frameId));
       refs.push(...coverageSlotReferences("props", prop, s));
       refs.push(...assetSupplementalReferences("props", prop, s));
     } else if (vehicle) {
-      refs.push(creationEntityReference("vehicles", vehicle, s, "prop"));
+      refs.push(creationEntityReference("vehicles", vehicle, s, "prop", frameId));
       refs.push(...coverageSlotReferences("vehicles", vehicle, s));
       refs.push(...assetSupplementalReferences("vehicles", vehicle, s));
     }
@@ -1475,8 +1510,8 @@ function guidedCurrentShotStill(s, takes = takesFor(s.id)) {
 function guidedBaseReference(s) {
   return shotCreationReferences(s).find((ref) => ref.role === "base" && ref.url) || null;
 }
-function shotCreationPromptReferences(s) {
-  const refs = shotCreationReferences(s).filter((ref) => shotInputEnabled(s, ref.key));
+function shotCreationPromptReferences(s, frameId = "") {
+  const refs = shotCreationReferences(s, frameId).filter((ref) => shotInputEnabled(s, ref.key));
   const current = guidedCurrentShotStill(s);
   if (!current) return refs;
   const currentRef = {

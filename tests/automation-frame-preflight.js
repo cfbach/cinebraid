@@ -356,8 +356,17 @@ async function unchangedSection() {
   vm.runInContext(`CONFIG = { ...(typeof CONFIG === "object" ? CONFIG : {}), generation: { fal: { enabled: true, apiKey: "k" } } };`, view.context);
   const live = vm.runInContext("P", view.context);
   const rhea = live.characters[0];
-  ok(view.context.entityApprovedFileForState(rhea, WET) === "CHAR-RHEA-CLEAN.png",
-    "case 11: entityApprovedFileForState still falls back to the entity file — this suite is not asserting it was changed");
+  /* This assertion used to read the other way round. PR #58 left
+     entityApprovedFileForState() falling back to the entity file for ANY state
+     and worked around it, and this line pinned that as a KNOWN remaining
+     defect one layer below the preflight — the lower-level half of the same
+     wrong-authority substitution. It is fixed now: the fallback is gone from
+     the shared rule, so the preflight's reading and the generation path's
+     reading are the same reading. tests/state-authority-substitution.js owns
+     that property in full; what this line still guards is that the two never
+     diverge again. */
+  eq(view.context.entityApprovedFileForState(rhea, WET), "",
+    "case 11: entityApprovedFileForState no longer substitutes the entity's default file for an unapproved declared state");
   eq(view.context.v626StateApprovedFile(rhea, rhea.continuityStates.find((state) => state.id === WET)), "",
     "case 11: but the state-scoped reading the preflight uses returns nothing for an unapproved rain-soaked");
   eq(view.context.v626StateApprovedFile(rhea, rhea.continuityStates.find((state) => state.id === CLEAN)), "CHAR-RHEA-CLEAN.png",

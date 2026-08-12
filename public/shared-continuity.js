@@ -254,6 +254,36 @@ function resolveStateRecord(entity, stateId) {
   if (wanted) return wanted;
   return states.find((state) => state && state.isDefault) || states[0] || { id: "state-default", name: "Default", notes: "" };
 }
+/* THE APPROVED REFERENCE ONE STATE ACTUALLY HAS. Read-only, like everything
+   else here, and the ONLY owner of the rule.
+
+   A state's approval is its OWN approvedFile. `entity.approvedFile` answers for
+   the DEFAULT state and for an entity that declares no states at all, because
+   that is the file the default is seeded from and kept synced to; it is the
+   default's image and it cannot answer for "rain-soaked". Without that
+   distinction a declared non-default state with no reference of its own
+   silently reports the default's, so a request for rain-soaked Rhea is served
+   clean Rhea — the substitution this function exists to make impossible.
+
+   MISSING IS AN ANSWER. "" means no authority, and every caller must be able to
+   act on that rather than receive a plausible wrong image. Manufacturing one,
+   here or in a caller, is the defect.
+
+   `state` is a RECORD from this entity's own catalogue, never a bare id: state
+   ids are owner-scoped and twelve entities in the real corpus all declare
+   `state-default`. Resolving the id is the caller's job (resolveStateRecord()
+   here, entityStateById() in the browser); this answers only the file question.
+
+   The rule is not new — public/automation.js has read parent states this way
+   since state chains existed, and PR #58 named it there. It lives here now so
+   the browser preflight, the browser reference package and server.js's
+   authority selection cannot hold three copies that drift. */
+function stateApprovedFile(entity, state) {
+  if (!entity) return "";
+  if (!state) return String(entity.approvedFile || "");
+  if (state.isDefault) return String(state.approvedFile || entity.approvedFile || "");
+  return String(state.approvedFile || "");
+}
 /* frame-level selection, then shot-level, then the entity default.
 
    P4-SEM-B: the precedence itself is no longer stated here. It is one canonical
@@ -1140,7 +1170,7 @@ const CONTINUITY_EXPORTS = {
   sha256Hex, canonicalJson,
   colourFamily, sameColourFamily,
   mergeTracking, resolveEntityTracking, resolveEntityIntent,
-  resolveStateRecord, resolveDeclaredStateId,
+  resolveStateRecord, resolveDeclaredStateId, stateApprovedFile,
   buildContinuityManifest, buildObservationSchema, entityRecordSchema,
   OBSERVATION_PROMPT_VERSION, OBSERVATION_USER_MESSAGE, OBSERVATION_SCHEMA_NAME,
   OBSERVATION_REQUEST_CONTRACT, observationChecklist, buildObservationPrompt,

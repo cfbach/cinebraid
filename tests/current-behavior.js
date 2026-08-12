@@ -443,6 +443,8 @@ async function main() {
     "safety-integrity.js",
     "settings-consistency.js",
     "shot-workspace-responsive-layout.js",
+    "state-authority-substitution-negative-controls.js",
+    "state-authority-substitution.js",
     "state-chain-recovery.js",
     "state-interleaving.js",
     "studio-repair.js",

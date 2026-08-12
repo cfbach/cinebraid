@@ -2333,9 +2333,15 @@ function entityStateById(entity, stateId) {
 function selectedEntityStateForShot(s, entity) {
   return entityStateById(entity, s?.continuityStateSelections?.[entity.id] || "") || entityStateList(entity, true)[0] || null;
 }
+/* `st?.approvedFile || entity.approvedFile` used to end this function. Because
+   entityStateList() keeps `entity.approvedFile` synced to the DEFAULT state's
+   file, that `||` served the clean image for a request naming a declared
+   non-default state with no approved reference of its own. The rule is one
+   thing in one place now — Continuity.stateApprovedFile() — shared with the
+   automation preflight and with server.js's authority selection. "" means no
+   authority, and callers must show that rather than a plausible wrong image. */
 function entityApprovedFileForState(entity, stateId = "") {
-  const st = entityStateById(entity, stateId);
-  return st?.approvedFile || entity.approvedFile || "";
+  return stateApprovedFile(entity, entityStateById(entity, stateId));
 }
 function entityApprovalBadges(entity, file) {
   return entityStateList(entity, true)

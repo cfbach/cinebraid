@@ -301,9 +301,14 @@
     for (const element of c.composition.elements || []) if (element.referenceKey) keys.add(element.referenceKey);
     return keys;
   }
-  function selectedShotReferences(s) {
+  /* `frameId` reaches shotCreationReferences() so a frame that declares its own
+     entity state is answered with THAT state's approved image. The selected-key
+     set stays SHOT-scoped, and so does the reference key it matches against:
+     composer selections are stored per shot, and a per-frame key would drop a
+     director's chosen primary from every frame that overrides a state. */
+  function selectedShotReferences(s, frameId = "") {
     const keys = selectedReferenceKeys(s);
-    return shotCreationReferences(s).filter((ref) => ref.url && shotInputEnabled(s, ref.key) && keys.has(ref.key));
+    return shotCreationReferences(s, frameId).filter((ref) => ref.url && shotInputEnabled(s, ref.key) && keys.has(ref.key));
   }
 
   function baseFrameChoices(s) {
@@ -341,8 +346,8 @@
     return transforms.length ? `Use this as the visual base, then ${transforms.join(", ")}. Preserve its perspective unless the shot controls explicitly reinterpret it.` : "Use this as the visual base and preserve its perspective, geometry, and lighting unless the shot controls explicitly change them.";
   }
 
-  shotCreationPromptReferences = window.shotCreationPromptReferences = function shotCreationPromptReferences607(s) {
-    const refs = selectedShotReferences(s);
+  shotCreationPromptReferences = window.shotCreationPromptReferences = function shotCreationPromptReferences607(s, frameId = "") {
+    const refs = selectedShotReferences(s, frameId);
     const base = selectedBaseFrame(s);
     const groups = composerReferenceGroups(s);
     const out = [];
@@ -372,7 +377,8 @@
   };
 
   guidedFramePromptRefs = window.guidedFramePromptRefs = function guidedFramePromptRefs607(s, frame, index, state) {
-    let out = shotCreationPromptReferences(s);
+    /* The frame's own declared states, resolved canonically downstream. */
+    let out = shotCreationPromptReferences(s, frame?.id || "");
     if (index > 0 && state.usePreviousFrame) {
       const prev = guidedPreviousFrame(s, index);
       const take = prev ? guidedFrameApproved(s, prev, takesFor(s.id), index - 1) : null;
