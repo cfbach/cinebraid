@@ -821,6 +821,39 @@ window.startPlannedBlockingAutomation = async () => {
   runShotAutomation(saved.id);
 };
 
+/* The approved reference ONE continuity state actually has.
+
+   A state's approval is its OWN approvedFile. `entity.approvedFile` stands in
+   only for the DEFAULT state, because that is the file the default is seeded
+   from and synced to in entityStateList() - it is the default's image, and it
+   cannot answer for "rain-soaked". Without that distinction a declared state
+   with no reference of its own silently reports the default's, which is the
+   second half of the false READY: resolving the frame's state correctly is not
+   enough if the authority lookup then hands back the clean image anyway.
+
+   This is not a new rule. v627EntityPreflight below has read parent states this
+   way since state chains existed; naming it once makes the two preflights share
+   the reading instead of each keeping a copy of it. */
+function v626StateApprovedFile(entity, state) {
+  if (!entity || !state) return "";
+  return state.approvedFile || (state.isDefault ? entity.approvedFile || "" : "");
+}
+/* The state a given frame of this shot declares for one entity, as a record on
+   THAT entity.
+
+   The id comes from resolveDeclaredStateId() - the P4-SEM-B canonical rule,
+   frame then shot then entity default - and never from a second reading of the
+   runtime maps. State ids are owner-scoped, so the record is looked up on this
+   entity and nowhere else. An id naming no state on this entity resolves to the
+   entity's default, which is what resolveStateRecord() already does for the
+   continuity manifest; a binding that names a state the entity does not declare
+   is the format layer's `disputed` statement to report, not the preflight's. */
+function v626DeclaredState(shot, frameId, kind, entity) {
+  if (!entity) return null;
+  const stateId = resolveDeclaredStateId(shot, frameId, kind, entity.id);
+  return entityStateById(entity, stateId) || entityStateById(entity, "");
+}
+
 function v626ShotPreflight(shot, frameIds) {
   const errors = [], warnings = [];
   if (!falGenerationReady()) errors.push("FAL GPT Image 2 generation is not enabled.");
@@ -834,10 +867,32 @@ function v626ShotPreflight(shot, frameIds) {
     if (index > 0 && !frameIds.includes(frames[index - 1].id) && !guidedFrameApproved(shot, frames[index - 1], takesFor(shot.id), index - 1)) errors.push(`Frame ${frame.label} needs approved Frame ${frames[index - 1].label} or that parent frame included in this run.`);
   }
   const resolved = typeof resolveShotEntities === "function" ? resolveShotEntities(P, shot) : null;
-  const groups = [["location", resolved?.locations || [], "locations"], ["character", resolved?.characters || [], "characters"], ["prop", resolved?.props || [], "props"], ["vehicle", resolved?.vehicles || [], "vehicles"]];
-  for (const [label, items, list] of groups) for (const item of items) {
-    const stateId = shot.continuityStateSelections?.[item.id] || "";
-    if (!entityApprovedFileForState(item, stateId)) errors.push(`${item.name || item.id} needs an approved ${label} reference.`);
+  const groups = [["location", resolved?.locations || []], ["character", resolved?.characters || []], ["prop", resolved?.props || []], ["vehicle", resolved?.vehicles || []]];
+  /* Per FRAME, not once per shot. This used to read `shot.continuityStateSelections`
+     directly - the SHOT-level runtime map and nothing else - so a frame that
+     declared its own state was checked against the shot's. A run whose Frame B
+     needs the rain-soaked authority reported READY because the clean one exists,
+     and only the generator found out. The declared state and the reference the
+     preflight cleared were two truths.
+
+     `v626DeclaredState` asks the canonical resolver instead, so this reads the
+     same answer as the continuity manifest, the frame workspace and server.js's
+     authority selection. With no frame selected the question is still the shot's,
+     which is exactly what frame id "" asks - so an empty picker keeps reporting
+     the references it always did rather than falling silent. */
+  const scope = selected.length ? selected : [{ id: "", label: "" }];
+  for (const [label, items] of groups) for (const item of items) {
+    const shotState = v626DeclaredState(shot, "", label, item);
+    for (const frame of scope) {
+      const state = v626DeclaredState(shot, frame.id, label, item);
+      if (v626StateApprovedFile(item, state)) continue;
+      /* The default's wording is unchanged on purpose: a project that declares no
+         state is the whole existing corpus, and it must read exactly as before. */
+      if (!state || state.isDefault) { errors.push(`${item.name || item.id} needs an approved ${label} reference.`); continue; }
+      errors.push(state.id === shotState?.id
+        ? `${item.name || item.id} needs an approved ${label} reference for its declared state ${state.name || state.id}.`
+        : `Frame ${frame.label} declares ${item.name || item.id} as ${state.name || state.id}, which has no approved ${label} reference.`);
+    }
   }
   if (!resolved?.locations?.length) warnings.push("No location is attached; the automation will rely on the written shot description.");
   return { errors: [...new Set(errors)], warnings: [...new Set(warnings)] };
@@ -919,7 +974,7 @@ function v627EntityPreflight(list, entity, stateIds) {
       if (!parent) { errors.push(`${current.name || "State"} has no valid parent state.`); break; }
       if (seen.has(parent.id)) { errors.push(`${state.name || "State"} has a circular parent chain.`); break; }
       seen.add(parent.id);
-      const parentFile = parent.approvedFile || (parent.isDefault ? entity.approvedFile : "");
+      const parentFile = v626StateApprovedFile(entity, parent);
       if (!selected.has(parent.id) && !parentFile) errors.push(`${state.name || "State"} needs ${parent.name || "its parent"} approved or included in this run.`);
       if (parentFile && !media.has(parentFile)) errors.push(`${parent.name || "Parent"} approval file is missing from project media: ${parentFile}.`);
       current = parent;

@@ -309,6 +309,8 @@ async function main() {
     "approval-reference-consistency.js",
     "asset-lifecycle.js",
     "automation-diagnostics.js",
+    "automation-frame-preflight-negative-controls.js",
+    "automation-frame-preflight.js",
     "automation-restoration.js",
     "backup-ownership.js",
     "blocking-automation-discoverability.js",

@@ -22,6 +22,8 @@ const nodeSuites = [
   "check:coverage-requirement-negative",
   "check:state-binding",
   "check:state-binding-negative",
+  "check:frame-preflight",
+  "check:frame-preflight-negative",
   "check:safety",
   "check:focused",
   "check:reference-ux",
