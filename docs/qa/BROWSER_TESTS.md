@@ -129,14 +129,29 @@ application bootstrapping its own defaults — and the gate reports it as such:
 
 ```
 isolation  26 files under data/ and projects/ byte-identical after the run
-           first run created data/config.json — six suites still start the server
-           against the repository's own roots
+           first run created data/config.json, projects/cinebraid-sample/media-assets.json
+           — six suites still start the server against the repository's own roots
 ```
 
-Creation of that one file is tolerated. *Modifying* it is not, and nothing under
-`projects/` is exempt at all: a stray test project appearing there is exactly what
-the census exists to catch. Moving those six suites onto sandbox roots is the
-follow-up this line is here to keep visible.
+Two files may be created, both named exactly, and both because starting the
+application is what creates them:
+
+- `data/config.json` — CineBraid bootstrapping its own defaults.
+- `projects/cinebraid-sample/media-assets.json` — since P4-SEM-C1, opening a project
+  mints a durable `assetId` per media file, and six of these suites open the shipped
+  sample through the real server. Its `.bak` is **not** exempt: the store only writes
+  one when it replaces an existing ledger, so a `.bak` appearing means something under
+  the sample genuinely changed.
+
+*Modifying* either is still damage, and nothing else under `projects/` is exempt: a
+stray test project appearing there is exactly what the census exists to catch, and a
+new directory or any other new file still fails the gate.
+
+Both exemptions were established the same way — by CI failing on exactly them while a
+developer machine passed, because the file was already there from an earlier run and
+the census saw it unchanged rather than created. If you are debugging an isolation
+failure that CI sees and you do not, delete these two files and re-run the gate.
+Moving those six suites onto sandbox roots is the follow-up this line keeps visible.
 
 ## Troubleshooting
 

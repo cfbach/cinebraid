@@ -140,9 +140,26 @@ const WATCHED = ["data", "projects"];
    test writing where it should not - CI proved this by failing on exactly it. Their
    MODIFICATION is still damage and still fails: on a real machine data/config.json
    holds the founder's settings, and a suite overwriting it is the thing being
-   guarded against. Nothing under projects/ is exempt at all, because a stray test
-   project appearing there is precisely the failure this census exists to catch. */
-const FIRST_RUN_ARTIFACTS = new Set(["data/config.json"]);
+   guarded against.
+
+   EXACT PATHS ONLY, never a pattern or a directory. A stray test project appearing
+   under projects/ is precisely the failure this census exists to catch, and it still
+   is: every new directory, every other new file, and every modification to a file the
+   sample ships all remain damage. Only these two named files may appear.
+
+   projects/cinebraid-sample/media-assets.json joined the list with P4-SEM-C1. Opening
+   a project now mints a durable assetId per media file, and six of these suites open
+   the shipped sample through the real server - so the sample acquiring its identity
+   ledger IS the application bootstrapping, in exactly the sense data/config.json
+   already was. CI proved this one too, by failing on exactly it while a developer
+   machine that had run the gate before passed: the file was already there, so the
+   census saw it unchanged rather than created. The .bak beside it is deliberately NOT
+   exempt - the store only writes one when it replaces an existing ledger, so a .bak
+   appearing means something under the sample actually changed. */
+const FIRST_RUN_ARTIFACTS = new Set([
+  "data/config.json",
+  "projects/cinebraid-sample/media-assets.json",
+]);
 
 function census() {
   const seen = new Map();
