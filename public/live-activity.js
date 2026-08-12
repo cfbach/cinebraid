@@ -87,7 +87,8 @@ function v641ProviderMarkup(step) {
   const queue = job?.queuePosition != null ? ` · queue ${job.queuePosition}` : "";
   const model = job?.model || activity.model || "GPT Image 2";
   const settings = [activity.resolution, activity.quality, activity.outputCount ? `${activity.outputCount} candidates` : ""].filter(Boolean).join(" · ");
-  const requestId = job?.providerRequestId || job?.requestId || activity.providerRequestId || "";
+  /* The job's own persisted handle first, then the id the step recorded at submission. */
+  const requestId = falJobProviderRequestId(job) || activity.providerRequestId || "";
   return `<div class="automation-live-provider"><span>${activity.providerAccepted || job ? "PAID REQUEST ACCEPTED" : "PREPARING · NO CREDITS SUBMITTED"}</span><b>${esc(model)} · ${esc(String(status).replace(/_/g, " "))}${esc(queue)}</b>${settings ? `<small>${esc(settings)}</small>` : ""}${requestId ? `<code>${esc(requestId)}</code>` : ""}</div>`;
 }
 function v641ReviewProgressMarkup(step) {
@@ -267,7 +268,10 @@ window.dismissAutomationActivityRun = async (runId) => {
   if (index >= 0) AUTOMATION_RUNS[index] = data.run;
   v641UpdateActivityButton();
   v641RenderActivityDrawer();
-  toast("Alert dismissed. The run remains available in Reports.");
+  /* Not "remains available in Reports": archiving moves a run out of the active set and
+     into the finished ones, which the server keeps only up to its run-history limit. The
+     old sentence promised a permanence CineBraid does not offer. */
+  toast("Alert dismissed. The run is archived and stays in Reports until it ages out of the run history.");
 };
 window.archivePreviousAutomationFailures = async () => {
   const ids = (AUTOMATION_RUNS || []).filter((run) => ["failed", "interrupted", "cancelled"].includes(run.status)).map((run) => run.id);
@@ -284,9 +288,9 @@ window.archivePreviousAutomationFailures = async () => {
     }
     v641UpdateActivityButton();
     v641RenderActivityDrawer();
-    toast(`${archived} previous alert${archived === 1 ? "" : "s"} archived. Reports are unchanged.`);
+    toast(`${archived} previous alert${archived === 1 ? "" : "s"} archived. Nothing was deleted here.`);
   };
-  if (typeof confirmModal === "function") return confirmModal(`Dismiss ${ids.length} previous automation alert${ids.length === 1 ? "" : "s"}?`, apply, { title: "Clear previous alerts", confirmLabel: "DISMISS ALERTS", body: "This removes them from Global Activity but keeps every run and diagnostic in Reports." });
+  if (typeof confirmModal === "function") return confirmModal(`Dismiss ${ids.length} previous automation alert${ids.length === 1 ? "" : "s"}?`, apply, { title: "Clear previous alerts", confirmLabel: "DISMISS ALERTS", body: "This removes them from Global Activity. Each run and its diagnostics stay in Reports until they age out of the run history CineBraid keeps." });
   await apply();
 };
 function v641RenderActivityDrawer(focusRunId = "") {

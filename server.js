@@ -23,6 +23,7 @@ const {
   writeConfig,
 } = require("./config");
 const PromptEngine = require("./prompt-engine");
+const { annotateProfileLibraryExecution } = require("./generation-options");
 const { httpStatusForError } = require("./http-errors");
 const { resolveShotEntities, shotEntityTokenMatches, unresolvedShotDependencies, entityVisualDescription, resolveShotDuration, lossyShotCodeTokens } = require("./public/shared-entities");
 const { referenceAspectLabel, aspectRatioMentions } = require("./public/shared-aspect");
@@ -680,7 +681,10 @@ const BLANK = () => ({
     promptDefaults: {
       imageProfile: "gpt-image-2/t2i",
       compositeProfile: "gpt-image-2/multi-reference",
-      videoProfile: "seedance-2/i2v",
+      /* The default has to be a target this build can actually dispatch. MiniMax H3 is
+         the video family CineBraid owns a pack and an adapter for; image-to-video is
+         what a first motion pass from an approved frame needs. */
+      videoProfile: "minimax-h3/i2v",
     },
     aspectRatio: "",
     globalStylePrompt: "",
@@ -3418,9 +3422,16 @@ registerAccountConnections(app, {
 });
 
 /* ---- model-aware Prompt Compiler ---- */
+/* The prompt catalogue leaves here carrying ONE fact it does not hold itself: whether
+   this build can actually dispatch each profile. The catalogue describes how to write
+   for a model; whether CineBraid owns a pack that compiles it and an adapter that can
+   send it is a fact about CineBraid's code, and generation-options.js is where that
+   is declared beside the serializers. Without it a screen reading this list has no way
+   to tell a wired model from a written-up one, which is how a motion target could be
+   chosen and then fail to have a Generate button at all. */
 app.get("/api/prompt/profiles", (req, res) => {
   try {
-    res.json(PromptEngine.profileLibrary());
+    res.json(annotateProfileLibraryExecution(PromptEngine.profileLibrary()));
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

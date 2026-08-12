@@ -1141,7 +1141,7 @@ async function v626WaitFalJob(run, step, body) {
     job = data.job;
     FAL_GENERATION_JOBS = [...(FAL_GENERATION_JOBS || []).filter((item) => item.id !== job.id), job];
     step.childJobId = job.id;
-    step.activity = { ...(step.activity || {}), state: "provider accepted", detail: data.reused ? "Reattached to the previously accepted paid request; no duplicate request was submitted." : "FAL accepted the paid request. Waiting in the provider queue.", system: "FAL · GPT IMAGE 2", providerAccepted: true, providerStatus: job.status || "SUBMITTED", providerRequestId: job.providerRequestId || job.requestId || "", model: job.model || "GPT Image 2", outputCount: count, quality: String(body.quality || ""), resolution: String(body.resolution || ""), acceptedAt: v626Now(), updatedAt: v626Now() };
+    step.activity = { ...(step.activity || {}), state: "provider accepted", detail: data.reused ? "Reattached to the previously accepted paid request; no duplicate request was submitted." : "FAL accepted the paid request. Waiting in the provider queue.", system: "FAL · GPT IMAGE 2", providerAccepted: true, providerStatus: job.status || "SUBMITTED", providerRequestId: falJobProviderRequestId(job), model: job.model || "GPT Image 2", outputCount: count, quality: String(body.quality || ""), resolution: String(body.resolution || ""), acceptedAt: v626Now(), updatedAt: v626Now() };
     if (!data.reused) run.usage.imageRequests = Number(run.usage.imageRequests || 0) + 1;
     await v626SaveRun(run, false);
   }
@@ -1157,7 +1157,7 @@ async function v626WaitFalJob(run, step, body) {
     }
     await new Promise((resolve) => setTimeout(resolve, 3500));
     job = await v626RefreshFalJob(job.id);
-    step.activity = { ...(step.activity || {}), state: String(job.status || "in progress").toLowerCase().replace(/_/g, " "), detail: job.status === "IN_QUEUE" ? `FAL is holding the request in queue${job.queuePosition != null ? ` at position ${job.queuePosition}` : ""}.` : job.status === "IN_PROGRESS" ? "FAL is generating the requested candidates." : "Checking the provider job status.", system: "FAL · GPT IMAGE 2", providerAccepted: true, providerStatus: job.status || "", queuePosition: job.queuePosition, providerRequestId: job.providerRequestId || job.requestId || step.activity?.providerRequestId || "", model: job.model || step.activity?.model || "GPT Image 2", updatedAt: v626Now() };
+    step.activity = { ...(step.activity || {}), state: String(job.status || "in progress").toLowerCase().replace(/_/g, " "), detail: job.status === "IN_QUEUE" ? `FAL is holding the request in queue${job.queuePosition != null ? ` at position ${job.queuePosition}` : ""}.` : job.status === "IN_PROGRESS" ? "FAL is generating the requested candidates." : "Checking the provider job status.", system: "FAL · GPT IMAGE 2", providerAccepted: true, providerStatus: job.status || "", queuePosition: job.queuePosition, providerRequestId: falJobProviderRequestId(job) || step.activity?.providerRequestId || "", model: job.model || step.activity?.model || "GPT Image 2", updatedAt: v626Now() };
     await v626SaveRun(run, false, false);
     if (typeof v641NotifyAutomationActivity === "function") v641NotifyAutomationActivity(run);
   }
@@ -2375,6 +2375,8 @@ window.saveAutomationEfficiencyFeedback = async (runId) => {
   v626ReplaceRun(data.run); closeModal(); route(); toast("Run feedback saved and included in future diagnostic bundles.");
 };
 window.openAutomationMotionHandoff = (shotId) => {
-  const shot = shotById(shotId); keepGuidedPanelOpen(shot, "motion"); route();
+  /* Same cross-panel rule as every other one: the bounded workspace renders one task,
+     so the handoff selects it rather than only marking the legacy panel open. */
+  const shot = shotById(shotId); keepGuidedPanelOpen(shot, "motion"); selectGuidedPanelTask(shot, "motion"); route();
   setTimeout(() => document.querySelector('[data-guided-panel="motion"]')?.scrollIntoView?.({ behavior: "smooth", block: "start" }), 80);
 };

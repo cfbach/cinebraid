@@ -4,6 +4,7 @@ const path = require("path");
 const vm = require("vm");
 const { readConfig } = require("../config");
 const PromptEngine = require("../prompt-engine");
+const { annotateProfileLibraryExecution } = require("../generation-options");
 
 const ROOT = path.join(__dirname, "..");
 const PUBLIC = path.join(ROOT, "public");
@@ -534,7 +535,9 @@ async function render(hash, project, options = {}) {
       return response(project, 200, { "x-cinebraid-project-slug": "fixture" });
     if (url === "/api/scan") return response(scan);
     if (url === "/api/prompt/profiles")
-      return response(PromptEngine.profileLibrary());
+      /* Annotated exactly as the route annotates it, so a rendered page sees the same
+         dispatchability the running server serves rather than a bare catalogue. */
+      return response(annotateProfileLibraryExecution(PromptEngine.profileLibrary()));
     if (url === "/api/config") return response(config);
     if (url === "/api/accounts") return response(accounts);
     if (url === "/api/agents/status") return response(agentStatus);

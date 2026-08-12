@@ -58,6 +58,23 @@ const UNRESOLVED = "UNRESOLVED";
 function isUnresolved(job) {
   return String(job?.status || "") === UNRESOLVED;
 }
+
+/* THE PROVIDER'S HANDLE ON A SUBMITTED REQUEST, read from the one field the durable
+   ledger actually persists. `externalId` is what fal-generation.js writes from
+   `request_id` and what blocksResubmission() above already trusts, so readers that
+   invented `providerRequestId` or `requestId` were testing fields no writer has ever
+   produced: their id check never fired, and a run that HAD been accepted by the
+   provider was reported as one that never reached it. Historical rows need no rewrite
+   — this is the shape they are already in. */
+function providerRequestId(job) {
+  return String(job?.externalId || "");
+}
+/* Whether the provider is known to have taken this request. An id is the evidence;
+   status alone is not, because SUBMITTING and FAILED both describe requests that may
+   never have been accepted. */
+function providerAcceptedRequest(job) {
+  return Boolean(providerRequestId(job)) || !["SUBMITTING", "FAILED"].includes(String(job?.status || ""));
+}
 function isTerminalStatus(status) {
   return TERMINAL_LEDGER_STATUSES.includes(String(status || ""));
 }
@@ -296,6 +313,8 @@ module.exports = {
   isTerminalStatus,
   isUnresolved,
   nextStatus,
+  providerAcceptedRequest,
+  providerRequestId,
   reconcileUnresolved,
   resubmissionBlockReason,
 };

@@ -41,6 +41,7 @@ const SUITES = [
   "check:candidate-review-browser",
   "check:focused-browser",
   "check:state-binding-browser",
+  "check:alpha-loop-browser",
 ];
 
 /* Suites that launch a browser and are known to fail, pinned to the reason.

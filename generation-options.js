@@ -27,6 +27,7 @@ const { serializeH3PlanForFal } = require("./fal-h3-backend");
 const { serializeImagePlanForFal } = require("./fal-image-backend");
 const { H3_MODEL_IDS } = require("./h3-execution");
 const { IMAGE_MODEL_ID } = require("./image-execution");
+const { getModelPack } = require("./generation-compiler");
 const { loadModelIntelligence } = require("./model-intelligence");
 const { checkRequestAgainstCapability } = require("./public/shared-generation-capability");
 const { resolveGenerationOptions, resolveTaskModes } = require("./public/shared-generation-options");
@@ -71,6 +72,93 @@ function publicAdapters() {
     surfaceId: row.surfaceId,
     modes: [...row.modes],
   }));
+}
+
+/* ---------------------------------------------------------------------------
+   WHICH PROMPT PROFILES THIS BUILD CAN ACTUALLY EXECUTE.
+
+   data/model-profiles.json is the PROMPT catalogue: how to write for a model. It is
+   deliberately larger than what CineBraid can run, because a profile is worth having
+   before an adapter exists. The motion picker read that catalogue directly, so every
+   profile in it looked equally usable — and the ones with no wiring behind them
+   became a dead end discovered only after a prompt had been built.
+
+   Dispatching a profile needs TWO pieces of CineBraid's own code, and they are
+   separate facts:
+
+     a model pack   can COMPILE for this family (model-packs/*.js, registered).
+     an adapter     can SERIALISE and SEND that model in this mode (the list above).
+
+   Both are code, neither is inferred from a data file, and nothing here branches on a
+   model name: the pack is looked up by the profile's own family and the adapter by the
+   model ids that pack declares. A new family becomes selectable when its pack and its
+   adapter ship, which is exactly when it can really run. */
+function profileModelIds(profile) {
+  const pack = getModelPack(String(profile?.family || ""));
+  return pack && pack.models && typeof pack.models === "object" ? Object.keys(pack.models) : [];
+}
+
+function profileExecutionSupport(profile, adapters = publicAdapters()) {
+  const family = String(profile?.family || "");
+  const mode = String(profile?.mode || "");
+  const name = String(profile?.name || profile?.id || "This model");
+  const rows = Array.isArray(adapters) ? adapters : [];
+  const modelIds = profileModelIds(profile);
+  const adapter = rows.find((row) => modelIds.includes(String(row.modelId)) && (row.modes || []).map(String).includes(mode));
+  if (adapter) return { dispatchable: true, adapterId: String(adapter.adapterId), modelId: String(adapter.modelId), reason: "", action: "" };
+  /* The two refusals are different facts and a filmmaker can act on the difference:
+     one family has no code at all here, the other has code that does not cover this
+     workflow. Neither sentence claims the provider is missing the model. */
+  return modelIds.length
+    ? {
+      dispatchable: false,
+      adapterId: "",
+      modelId: "",
+      reason: `CineBraid can write for ${name}, but it cannot send this kind of request to it yet.`,
+      action: "",
+    }
+    : {
+      dispatchable: false,
+      adapterId: "",
+      modelId: "",
+      reason: `CineBraid can write prompts for ${name}, but this build has no way to generate with it — no adapter for ${family || "this model"} ships yet.`,
+      action: "",
+    };
+}
+
+/* The same answer for a whole profile library, with the alternatives filled in from
+   the library itself so a refusal can name a model that really is wired for the same
+   job. Returns a copy: the catalogue on disk is never annotated. */
+function annotateProfileLibraryExecution(library, adapters = publicAdapters()) {
+  const source = library && typeof library === "object" ? library : {};
+  const profiles = Array.isArray(source.profiles) ? source.profiles : [];
+  const support = profiles.map((profile) => profileExecutionSupport(profile, adapters));
+  return {
+    ...source,
+    profiles: profiles.map((profile, index) => {
+      const row = support[index];
+      const alternatives = row.dispatchable
+        ? []
+        : profiles
+          .map((other, otherIndex) => ({ other, ok: support[otherIndex].dispatchable }))
+          .filter((entry) => entry.ok
+            && String(entry.other.mediaType || "") === String(profile.mediaType || "")
+            && String(entry.other.mode || "") === String(profile.mode || ""))
+          .map((entry) => ({ id: String(entry.other.id || ""), name: String(entry.other.name || entry.other.id || "") }));
+      return {
+        ...profile,
+        execution: {
+          ...row,
+          alternatives,
+          action: row.dispatchable
+            ? ""
+            : alternatives.length
+              ? `Use ${alternatives[0].name} for this step — it is wired and can generate today.`
+              : "Nothing in this build can generate this kind of result yet.",
+        },
+      };
+    }),
+  };
 }
 
 /* What this installation is actually set up for, per surface.
@@ -130,8 +218,10 @@ function generationOptionsFor(input = {}) {
 
 module.exports = {
   CINEBRAID_GENERATION_ADAPTERS,
+  annotateProfileLibraryExecution,
   generationConnections,
   generationOptionsFor,
+  profileExecutionSupport,
   publicAdapters,
   resolveTaskModes,
 };

@@ -1767,8 +1767,47 @@ async function focusGuidedWorkspaceTarget(selector, attempts = 12) {
   }
   return false;
 }
+/* WHICH SHOT TASK A PANEL LIVES IN.
+ *
+ * The bounded shot workspace renders exactly ONE task, chosen by
+ * boundedShotSelectedTask(). A cross-panel action therefore has to change that
+ * selection: writing the legacy `openPanels` map alone left the target panel out of
+ * the DOM entirely, and the scroll poll below then reported "Could not find the
+ * motion workspace" for a panel nothing had asked the workspace to build. This map
+ * is the one place the panel keys those actions already use are translated into the
+ * five task ids the taskbar and the workspace share. */
+const GUIDED_PANEL_TASKS = {
+  inputs: "inputs",
+  blocking: "look",
+  composer: "look",
+  still: "frames",
+  review: "frames",
+  frames: "frames",
+  motion: "motion",
+  motionCreate: "motion",
+  motionAudio: "motion",
+  finish: "deliver",
+};
+/* The two look sub-views are one task with a tab, so a composer or blocking target
+   has to say which tab as well as which task. */
+const GUIDED_PANEL_LOOK_VIEWS = { blocking: "blocking", composer: "authority" };
+function guidedPanelTaskId(key) {
+  return GUIDED_PANEL_TASKS[String(key || "")] || "";
+}
+/* Selects the bounded focused task a panel lives in, through the canonical
+   task-selection state rather than a second copy of it. Returns the task id it
+   selected so a caller can check the outcome from state instead of from the DOM. */
+function selectGuidedPanelTask(s, key) {
+  const taskId = guidedPanelTaskId(key);
+  if (!s || !taskId || typeof boundedWriteFocusedTask !== "function") return "";
+  boundedWriteFocusedTask("shot-task", s.id, taskId);
+  const view = GUIDED_PANEL_LOOK_VIEWS[String(key || "")];
+  if (view) boundedWriteState("selected:shot-look-view", s.id, view);
+  return taskId;
+}
 window.openGuidedPanel = async (id, key) => {
   const s = shotById(id), c = ensureShotCreation(s);
+  const task = selectGuidedPanelTask(s, key);
   if (["still", "review", "frames"].includes(key)) {
     const first = guidedFrames(s)[0];
     await Promise.resolve(route());
@@ -1778,8 +1817,13 @@ window.openGuidedPanel = async (id, key) => {
   c.openPanels[key] = true;
   dirty();
   await Promise.resolve(route());
-  const found = await focusGuidedWorkspaceTarget(`[data-guided-panel="${key}"]`);
-  if (!found) toast(`Could not find the ${key} workspace.`);
+  /* The semantic answer is "is the workspace showing the task this panel lives in",
+     read from the task state. The poll below only scrolls to it; a slow paint is not
+     evidence that a workspace is missing, and treating it as such is what produced a
+     refusal for a panel that had simply never been selected. */
+  if (task && boundedShotSelectedTask(s, takesFor(s.id)) !== task)
+    return toast(`Could not open the ${key} workspace.`);
+  await focusGuidedWorkspaceTarget(`[data-guided-panel="${key}"]`);
 };
 window.scrollGuidedFrame = (id, frameId = "") => {
   const s = shotById(id), frame = guidedFrames(s).find((item) => item.id === frameId) || guidedFrames(s)[0];
@@ -1788,6 +1832,9 @@ window.scrollGuidedFrame = (id, frameId = "") => {
 window.clickGuidedUpload = (id, kind) => {
   const s = shotById(id), c = ensureShotCreation(s);
   if (kind === "video") {
+    /* The video file input only exists inside the motion task, so importing an
+       existing video from anywhere else has to select that task first. */
+    selectGuidedPanelTask(s, "motion");
     c.openPanels.motion = true;
     dirty();
     route();
@@ -2115,11 +2162,46 @@ function guidedClampedMotionDuration(value, profile) {
   const [min, max] = guidedMotionDurationBounds(profile);
   return Math.max(min, Math.min(max, Number(value) || Math.min(5, max)));
 }
+/* CAN CINEBRAID ACTUALLY RUN THIS TARGET TODAY.
+ *
+ * The answer is not derived here and is not guessed from a family name: the server
+ * annotates every profile in /api/prompt/profiles from the adapter inventory declared
+ * beside the serializers (generation-options.js). A profile with no annotation is
+ * treated as not dispatchable, which is the safe direction — it produces a stated
+ * refusal instead of a Generate button with nothing behind it. */
+function guidedVideoProfileDispatchable(profile) {
+  return profile?.execution?.dispatchable === true;
+}
+function guidedDispatchableVideoProfiles() {
+  return guidedVideoProfiles().filter(guidedVideoProfileDispatchable);
+}
 function preferredGuidedVideoProfile(selected = "") {
   const profiles = guidedVideoProfiles();
+  /* An explicit, valid selection is never replaced — not even one this build cannot
+     dispatch. Quietly swapping it is the silent fall-through that lets someone
+     believe an unsupported choice worked; the refusal says so instead. */
   if (profiles.some((profile) => profile.id === selected)) return selected;
-  const preferred = [P.meta?.promptDefaults?.videoProfile, "seedance-2/i2v", "kling-3/i2v", "wan-2.7/i2v"].filter(Boolean);
-  return preferred.find((id) => profiles.some((profile) => profile.id === id)) || profiles[0]?.id || "";
+  /* The DEFAULT is a different question, and it has to be something CineBraid can
+     really execute: a default nobody chose that cannot generate is a dead end handed
+     to every new shot. The project default is honoured when it is dispatchable, then
+     the wired image-to-video target, which is what a first motion pass needs. */
+  const dispatchable = profiles.filter(guidedVideoProfileDispatchable);
+  const projectDefault = P.meta?.promptDefaults?.videoProfile || "";
+  return (projectDefault && dispatchable.some((profile) => profile.id === projectDefault) ? projectDefault : "")
+    || dispatchable.find((profile) => profile.mode === "i2v")?.id
+    || dispatchable[0]?.id
+    /* Nothing is wired at all: keep the old behaviour rather than returning nothing,
+       so the picker still shows a target and the refusal explains it. */
+    || (projectDefault && profiles.some((profile) => profile.id === projectDefault) ? projectDefault : "")
+    || profiles[0]?.id
+    || "";
+}
+/* The one-line description of a target's availability, in the picker's own words. */
+function guidedVideoProfileOptionSuffix(profile) {
+  if (!guidedVideoProfileDispatchable(profile)) return " · not available in this build";
+  if (profile.mode === "flf") return " · first + last frame";
+  if (profile.mode === "r2v") return profile.family === "minimax-h3" ? " · multi-frame + references" : " · reference performance";
+  return profileSupportsGuidedAudio(profile) ? " · native audio" : "";
 }
 function guidedVideoProfileOptions(selected = "") {
   const profiles = guidedVideoProfiles();
@@ -2130,18 +2212,34 @@ function guidedVideoProfileOptions(selected = "") {
     ["ltx-2.3", "LTX 2.3"],
     ["happy-horse-1.1", "Happy Horse 1.1"],
   ];
+  /* An unwired target stays VISIBLE and stops being SELECTABLE. Hiding it would lose
+     the catalogue a filmmaker is entitled to see; leaving it pressable is what made a
+     dead end reachable. A stored selection keeps rendering either way, so a project
+     that already names one is never silently moved onto another model. */
+  const option = (profile) => `<option value="${attr(profile.id)}" ${profile.id === selected ? "selected" : ""} ${guidedVideoProfileDispatchable(profile) || profile.id === selected ? "" : "disabled"}>${esc(profile.name.replace(/^.*?—\s*/, ""))}${esc(guidedVideoProfileOptionSuffix(profile))}</option>`;
   const rendered = [];
   for (const [family, label] of families) {
     const rows = profiles.filter((profile) => profile.family === family);
     if (!rows.length) continue;
-    rendered.push(`<optgroup label="${attr(label)}">${rows.map((profile) => `<option value="${attr(profile.id)}" ${profile.id === selected ? "selected" : ""}>${esc(profile.name.replace(/^.*?—\s*/, ""))}${profile.mode === "flf" ? " · first + last frame" : profile.family === "minimax-h3" && profile.mode === "r2v" ? " · multi-frame + references" : profile.mode === "r2v" ? " · reference performance" : profileSupportsGuidedAudio(profile) ? " · native audio" : ""}</option>`).join("")}</optgroup>`);
+    rendered.push(`<optgroup label="${attr(label)}">${rows.map(option).join("")}</optgroup>`);
   }
   const other = profiles.filter((profile) => !families.some(([family]) => family === profile.family));
-  if (other.length) rendered.push(`<optgroup label="Other compatible targets">${other.map((profile) => `<option value="${attr(profile.id)}" ${profile.id === selected ? "selected" : ""}>${esc(profile.name)}</option>`).join("")}</optgroup>`);
+  if (other.length) rendered.push(`<optgroup label="Other compatible targets">${other.map((profile) => `<option value="${attr(profile.id)}" ${profile.id === selected ? "selected" : ""} ${guidedVideoProfileDispatchable(profile) || profile.id === selected ? "" : "disabled"}>${esc(profile.name)}${esc(guidedVideoProfileOptionSuffix(profile))}</option>`).join("")}</optgroup>`);
   return rendered.join("");
 }
+/* The refusal, in the standard CineBraid uses everywhere it declines to spend: plain
+   language, before the paid action, a specific reason and a specific next step naming
+   a target that really is wired. Never a substitution — the choice stays the
+   filmmaker's. */
+function guidedVideoProfileRefusalMarkup(profile) {
+  if (!profile || guidedVideoProfileDispatchable(profile)) return "";
+  const execution = profile.execution || {};
+  const alternative = (execution.alternatives || [])[0];
+  const action = execution.action || (alternative ? `Use ${alternative.name} for this step.` : "");
+  return `<div class="guided-prompt-error guided-video-unsupported" data-video-profile-unsupported="${attr(profile.id)}"><div><b>CineBraid cannot generate with ${esc(profile.name)} yet</b><small>${esc(execution.reason || `No adapter for ${profile.family || "this model"} ships in this build.`)} ${esc(action)}</small>${alternative ? `<em>Working alternative: ${esc(alternative.name)}</em>` : ""}</div></div>`;
+}
 function guidedVideoProfileCount() {
-  return guidedVideoProfiles().length;
+  return guidedDispatchableVideoProfiles().length;
 }
 function ensureGuidedMotionUnit(s, currentName = "", profile = null) {
   normalizeShotV5(s);
@@ -2479,7 +2577,12 @@ function guidedMotionPromptResult(s, build) {
       : "";
   const h3Action = typeof falH3MotionPromptAction === "function" ? falH3MotionPromptAction(s.id, build.id, profile) : "";
   const h3Job = typeof falH3MotionInline === "function" && profile?.family === "minimax-h3" ? falH3MotionInline(s.id) : "";
-  return `<article class="guided-prompt-result motion ${profile?.family === "minimax-h3" ? "h3" : ""}"><header><div><span>READY-TO-USE MOTION PROMPT</span><b>${esc(build.profileName || build.profileId)}</b><small>${esc(inputSummary)}${build.durationSeconds ? ` · ${build.durationSeconds}s` : ""}${build.packageId ? ` · ${esc(build.packageId)}` : ""}${build.manualEdited ? " · MANUAL REVISION" : ""}</small></div><div>${h3Action}<button class="ghost-btn motion-prompt-edit-btn" onclick="openGuidedMotionPromptEditor('${s.id}','${build.id}')">EDIT PROMPT</button><button class="copy-btn" onclick="copyText(${JSON.stringify(build.prompt || "").replace(/"/g, "&quot;")})">COPY</button><button class="chip" onclick="downloadGuidedMotionPrompt('${s.id}','${build.id}')">Download</button></div></header>${h3Job}<pre class="guided-ready-motion-prompt">${esc(build.prompt || "")}</pre>${revision}${guidedPromptWarningsMarkup(build.warnings)}${guidedProductionRisksMarkup(build.productionRisks)}</article>`;
+  /* A built prompt for a target CineBraid cannot send used to arrive with no Generate
+     button and no sentence — the dead end the audit found. The prompt is still
+     genuinely useful somewhere else, so it is kept and the refusal is stated beside
+     it, naming a target that is wired. */
+  const unsupported = guidedVideoProfileRefusalMarkup(profile);
+  return `<article class="guided-prompt-result motion ${profile?.family === "minimax-h3" ? "h3" : ""}"><header><div><span>READY-TO-USE MOTION PROMPT</span><b>${esc(build.profileName || build.profileId)}</b><small>${esc(inputSummary)}${build.durationSeconds ? ` · ${build.durationSeconds}s` : ""}${build.packageId ? ` · ${esc(build.packageId)}` : ""}${build.manualEdited ? " · MANUAL REVISION" : ""}</small></div><div>${h3Action}<button class="ghost-btn motion-prompt-edit-btn" onclick="openGuidedMotionPromptEditor('${s.id}','${build.id}')">EDIT PROMPT</button><button class="copy-btn" onclick="copyText(${JSON.stringify(build.prompt || "").replace(/"/g, "&quot;")})">COPY</button><button class="chip" onclick="downloadGuidedMotionPrompt('${s.id}','${build.id}')">Download</button></div></header>${unsupported}${h3Job}<pre class="guided-ready-motion-prompt">${esc(build.prompt || "")}</pre>${revision}${guidedPromptWarningsMarkup(build.warnings)}${guidedProductionRisksMarkup(build.productionRisks)}</article>`;
 }
 function guidedMotionCandidatePanel(s, takes, approved) {
   const videos = takes.filter((take) => isVideo(take.name));
@@ -2557,7 +2660,7 @@ function guidedMotionPanel(s, current, takes, open = false) {
     : operation?.status === "error"
       ? guidedPromptErrorMarkup(operation.error, `buildGuidedMotionPrompt('${s.id}',${busyLabel === "improve" ? "true" : "false"})`)
       : `<div class="guided-motion-result-slot">${latest ? guidedMotionPromptResult(s, latest) : `<div class="guided-next-note"><b>Optional:</b> build a motion prompt when you need help creating another video.</div>`}</div>`;
-  return `<details id="guided-motion-workspace-${attr(s.id)}" class="guided-work-panel guided-motion-card" data-guided-panel="motion" ${guidedPanelOpen(s, "motion", open) ? "open" : ""} ontoggle="rememberGuidedPanel('${s.id}','motion',this.open)"><summary><div><span>MOTION · OPTIONAL</span><b>${esc(label)}</b><small>Attach an existing video or audio first; assisted motion tools remain optional.</small></div><span class="guided-mode-pill ${approved ? "ready" : ""}">${approved ? "APPROVED" : approvedFrames.length > 1 ? `${approvedFrames.length} FRAMES READY` : "START FRAME READY"}</span><i>⌄</i></summary><div class="guided-work-panel-body">${c.automationReadyForMotion ? `<div class="automation-motion-ready"><span>STILL AUTOMATION COMPLETE</span><b>${approvedFrames.length > 1 ? `${approvedFrames.length} approved frames are ready for a first/last-frame or multi-frame video.` : "The approved start frame is ready for image-to-video."}</b><small>Choose the video target, direct motion, build or improve the motion prompt, then generate the video manually. Motion is never submitted by the still-automation runner.</small></div>` : ""}<nav class="motion-workflow-map" aria-label="Motion workflow sections"><button type="button" onclick="scrollGuidedMotionSection('${attr(s.id)}','frames')"><span>1</span><b>Approved frames</b><small>${approvedFrames.length} ready</small></button><button type="button" onclick="scrollGuidedMotionSection('${attr(s.id)}','results')"><span>2</span><b>Returned video</b><small>${videos.length} result${videos.length === 1 ? "" : "s"}</small></button><button type="button" onclick="scrollGuidedMotionSection('${attr(s.id)}','create')"><span>3</span><b>Create motion</b><small>${esc(profile?.name || profileId)}</small></button></nav><section class="motion-workflow-section approved-motion-frames" id="motion-frames-${attr(s.id)}"><div class="motion-section-heading"><span>1 · APPROVED FRAMES</span><div><b>Choose the visual anchors for motion</b><small>Click any frame to inspect it at a useful size. H3 keyframes and first/last-frame packages use these approved images.</small></div><i>${approvedFrames.length} READY</i></div><div class="guided-motion-frame-strip">${approvedFrames.map(({frame,take}, index) => { const title = `Frame ${frame.label} · ${take.name}`; return `<article><button type="button" class="guided-motion-frame-preview" onclick="openMediaTheatre('${attr(encodeURIComponent(take.url))}','${attr(encodeURIComponent(title))}','image')" aria-label="View approved Frame ${esc(frame.label)} larger"><img src="${attr(take.url)}" alt="Approved Frame ${esc(frame.label)}"><span>${index === 0 ? "START" : index === approvedFrames.length - 1 ? "END" : `FRAME ${esc(frame.label)}`}</span><em>View larger</em></button><b>Frame ${esc(frame.label)}</b></article>`; }).join("")}</div>${guidedH3KeyframePanel(s, profile)}</section>${guidedMotionCandidatePanel(s, takes, approved)}<section class="motion-workflow-section motion-create-section" id="motion-create-${attr(s.id)}"><div class="motion-section-heading"><span>3 · ASSISTED MOTION</span><div><b>Direct movement and build the provider prompt</b><small>Open only the part you need. Existing finished video can skip this entire section.</small></div><i>OPTIONAL</i></div><details class="guided-assisted-tools motion-assisted-tools" ${guidedPanelOpen(s, "motionCreate", !manualFirstWorkflow()) ? "open" : ""} ontoggle="rememberGuidedPanel('${s.id}','motionCreate',this.open)"><summary><div><span>OPTIONAL ASSISTED CREATION</span><b>Direct motion or build a video prompt</b><small>Imported video and audio can be approved without using these tools.</small></div></summary><div class="guided-motion-main"><details class="motion-director" ${guidedPanelOpen(s, "motionDirector", false) ? "open" : ""} ontoggle="rememberGuidedPanel('${s.id}','motionDirector',this.open)"><summary>Direct motion <span>structured controls</span></summary>${motionDirectorMap(s,c)}<div class="motion-director-camera"><label><span>Camera move</span><select onchange="setMotionPlanField('${s.id}','camera','move',this.value)">${composerOptions([["locked","Locked off"],["static-handheld","Static handheld"],["pan","Pan"],["tilt","Tilt"],["push-in","Push in"],["pull-back","Pull back"],["dolly","Dolly / truck"],["arc","Arc"],["follow-subject","Follow subject"],["subtle-drift","Subtle drift"]], c.motionPlan.camera.move)}</select></label><label><span>Direction</span><select onchange="setMotionPlanField('${s.id}','camera','direction',this.value)">${composerOptions([["","Not specified"],["left","Left"],["right","Right"],["up","Up"],["down","Down"],["clockwise","Clockwise"],["counterclockwise","Counterclockwise"]], c.motionPlan.camera.direction)}</select></label><label><span>Strength</span><select onchange="setMotionPlanField('${s.id}','camera','intensity',this.value)">${composerOptions([["subtle","Subtle"],["moderate","Moderate"],["strong","Strong"]], c.motionPlan.camera.intensity)}</select></label><label><span>Style</span><select onchange="setMotionPlanField('${s.id}','camera','style',this.value)">${composerOptions([["smooth","Smooth"],["handheld","Handheld"],["documentary","Documentary"],["mechanical","Mechanical"],["floating","Floating"],["abrupt","Abrupt"]], c.motionPlan.camera.style)}</select></label><label><span>Framing</span><select onchange="setMotionPlanField('${s.id}','camera','framing',this.value)">${composerOptions([["preserve","Preserve composition"],["preserve-loosely","Preserve loosely"],["allow-reframe","Allow reframing"]], c.motionPlan.camera.framing)}</select></label></div><div class="motion-director-subjects">${motionSubjectControls(s,c)}${motionPropControls(s,c)}</div><div class="motion-director-environment"><label><span>Environment</span><select onchange="setMotionPlanField('${s.id}','environment','action',this.value)">${composerOptions([["static","Static"],["wind","Wind / fabric"],["rain","Rain"],["smoke","Smoke / steam"],["traffic","Traffic"],["crowd","Crowd background"],["light-flicker","Light flicker"],["water","Water / ripple"],["dust","Dust / atmosphere"]], c.motionPlan.environment.action)}</select></label><label><span>Intensity</span><select onchange="setMotionPlanField('${s.id}','environment','intensity',this.value)">${composerOptions([["subtle","Subtle"],["moderate","Moderate"],["strong","Strong"]], c.motionPlan.environment.intensity)}</select></label><label class="wide"><span>Environment note</span><input value="${attr(c.motionPlan.environment.notes || "")}" onchange="setMotionPlanField('${s.id}','environment','notes',this.value)" placeholder="Only distant traffic moves; foreground remains still…"></label></div><div class="motion-director-timing"><label><span>Onset</span><select onchange="setMotionPlanField('${s.id}','timing','onset',this.value)">${composerOptions([["immediate","Immediate"],["delayed","Delayed"],["gradual","Gradual"]], c.motionPlan.timing.onset)}</select></label><label><span>Pacing</span><select onchange="setMotionPlanField('${s.id}','timing','pacing',this.value)">${composerOptions([["slow","Slow"],["natural","Natural"],["brisk","Brisk"]], c.motionPlan.timing.pacing)}</select></label><label class="checkline"><input type="checkbox" ${c.motionPlan.timing.holdEnd ? "checked" : ""} onchange="setMotionPlanField('${s.id}','timing','holdEnd',this.checked)"> Hold final state</label><label class="wide"><span>Optional secondary action</span><input value="${attr(c.motionPlan.timing.secondary || "")}" onchange="setMotionPlanField('${s.id}','timing','secondary',this.value)" placeholder="A light flickers once after the character stops…"></label></div></details>${field("Additional motion direction", `<textarea class="guided-motion-editor" placeholder="Only add details not covered by the controls above." onchange="setGuidedMotionField('${s.id}','motionDirection',this.value)">${esc(direction)}</textarea>`)}<details class="guided-inline-defaults motion-defaults"><summary>Motion defaults: ${esc(String(c.motionIntensity || "subtle").replace(/-/g," "))}${c.preserveComposition ? " · preserve composition" : ""}</summary><div class="guided-motion-detail-grid"><label><span>Overall intensity</span><select onchange="setGuidedMotionField('${s.id}','motionIntensity',this.value)">${["nearly-still","subtle","moderate","active","highly-dynamic"].map((x) => `<option value="${x}" ${c.motionIntensity === x ? "selected" : ""}>${x.replace(/-/g," ")}</option>`).join("")}</select></label><label class="checkline"><input type="checkbox" ${c.preserveComposition ? "checked" : ""} onchange="setGuidedMotionField('${s.id}','preserveComposition',this.checked)"> Preserve composition and identity</label></div></details>${guidedAudioPanel(s,c,profile,audioRefs)}<div class="guided-motion-controls"><label><span>Duration</span><input type="number" min="${durationMin}" max="${durationMax}" value="${duration}" onchange="setGuidedMotionField('${s.id}','motionDuration',+this.value)"><small>${durationMin}–${durationMax}s for this target${profile?.mode === "r2v" ? "; use chained clips for longer shots" : ""}</small></label><label class="guided-video-target-control"><span>Video model and workflow</span><select ${busy ? "disabled" : ""} onchange="setGuidedMotionField('${s.id}','motionProfileId',this.value)">${guidedVideoProfileOptions(profileId)}</select><small>${guidedVideoProfileCount()} compatible targets · MiniMax H3, Seedance 2, Kling 3, LTX 2.3, and Happy Horse 1.1</small></label><div><button class="assemble-btn" ${busy ? "disabled" : ""} onclick="buildGuidedMotionPrompt('${s.id}',false)">${busy ? `<span class="spin">◌</span> WORKING…` : "Build prompt"}</button><button class="ghost-btn" ${busy ? "disabled" : ""} onclick="buildGuidedMotionPrompt('${s.id}',true)"${aiDisabledAttrs("text")}>${busy ? `<span class="spin">◌</span> Improving…` : "Improve"}</button></div></div>${operationBody}</div></details></section></div></details>`;
+  return `<details id="guided-motion-workspace-${attr(s.id)}" class="guided-work-panel guided-motion-card" data-guided-panel="motion" ${guidedPanelOpen(s, "motion", open) ? "open" : ""} ontoggle="rememberGuidedPanel('${s.id}','motion',this.open)"><summary><div><span>MOTION · OPTIONAL</span><b>${esc(label)}</b><small>Attach an existing video or audio first; assisted motion tools remain optional.</small></div><span class="guided-mode-pill ${approved ? "ready" : ""}">${approved ? "APPROVED" : approvedFrames.length > 1 ? `${approvedFrames.length} FRAMES READY` : "START FRAME READY"}</span><i>⌄</i></summary><div class="guided-work-panel-body">${c.automationReadyForMotion ? `<div class="automation-motion-ready"><span>STILL AUTOMATION COMPLETE</span><b>${approvedFrames.length > 1 ? `${approvedFrames.length} approved frames are ready for a first/last-frame or multi-frame video.` : "The approved start frame is ready for image-to-video."}</b><small>Choose the video target, direct motion, build or improve the motion prompt, then generate the video manually. Motion is never submitted by the still-automation runner.</small></div>` : ""}<nav class="motion-workflow-map" aria-label="Motion workflow sections"><button type="button" onclick="scrollGuidedMotionSection('${attr(s.id)}','frames')"><span>1</span><b>Approved frames</b><small>${approvedFrames.length} ready</small></button><button type="button" onclick="scrollGuidedMotionSection('${attr(s.id)}','results')"><span>2</span><b>Returned video</b><small>${videos.length} result${videos.length === 1 ? "" : "s"}</small></button><button type="button" onclick="scrollGuidedMotionSection('${attr(s.id)}','create')"><span>3</span><b>Create motion</b><small>${esc(profile?.name || profileId)}</small></button></nav><section class="motion-workflow-section approved-motion-frames" id="motion-frames-${attr(s.id)}"><div class="motion-section-heading"><span>1 · APPROVED FRAMES</span><div><b>Choose the visual anchors for motion</b><small>Click any frame to inspect it at a useful size. H3 keyframes and first/last-frame packages use these approved images.</small></div><i>${approvedFrames.length} READY</i></div><div class="guided-motion-frame-strip">${approvedFrames.map(({frame,take}, index) => { const title = `Frame ${frame.label} · ${take.name}`; return `<article><button type="button" class="guided-motion-frame-preview" onclick="openMediaTheatre('${attr(encodeURIComponent(take.url))}','${attr(encodeURIComponent(title))}','image')" aria-label="View approved Frame ${esc(frame.label)} larger"><img src="${attr(take.url)}" alt="Approved Frame ${esc(frame.label)}"><span>${index === 0 ? "START" : index === approvedFrames.length - 1 ? "END" : `FRAME ${esc(frame.label)}`}</span><em>View larger</em></button><b>Frame ${esc(frame.label)}</b></article>`; }).join("")}</div>${guidedH3KeyframePanel(s, profile)}</section>${guidedMotionCandidatePanel(s, takes, approved)}<section class="motion-workflow-section motion-create-section" id="motion-create-${attr(s.id)}"><div class="motion-section-heading"><span>3 · ASSISTED MOTION</span><div><b>Direct movement and build the provider prompt</b><small>Open only the part you need. Existing finished video can skip this entire section.</small></div><i>OPTIONAL</i></div><details class="guided-assisted-tools motion-assisted-tools" ${guidedPanelOpen(s, "motionCreate", !manualFirstWorkflow()) ? "open" : ""} ontoggle="rememberGuidedPanel('${s.id}','motionCreate',this.open)"><summary><div><span>OPTIONAL ASSISTED CREATION</span><b>Direct motion or build a video prompt</b><small>Imported video and audio can be approved without using these tools.</small></div></summary><div class="guided-motion-main"><details class="motion-director" ${guidedPanelOpen(s, "motionDirector", false) ? "open" : ""} ontoggle="rememberGuidedPanel('${s.id}','motionDirector',this.open)"><summary>Direct motion <span>structured controls</span></summary>${motionDirectorMap(s,c)}<div class="motion-director-camera"><label><span>Camera move</span><select onchange="setMotionPlanField('${s.id}','camera','move',this.value)">${composerOptions([["locked","Locked off"],["static-handheld","Static handheld"],["pan","Pan"],["tilt","Tilt"],["push-in","Push in"],["pull-back","Pull back"],["dolly","Dolly / truck"],["arc","Arc"],["follow-subject","Follow subject"],["subtle-drift","Subtle drift"]], c.motionPlan.camera.move)}</select></label><label><span>Direction</span><select onchange="setMotionPlanField('${s.id}','camera','direction',this.value)">${composerOptions([["","Not specified"],["left","Left"],["right","Right"],["up","Up"],["down","Down"],["clockwise","Clockwise"],["counterclockwise","Counterclockwise"]], c.motionPlan.camera.direction)}</select></label><label><span>Strength</span><select onchange="setMotionPlanField('${s.id}','camera','intensity',this.value)">${composerOptions([["subtle","Subtle"],["moderate","Moderate"],["strong","Strong"]], c.motionPlan.camera.intensity)}</select></label><label><span>Style</span><select onchange="setMotionPlanField('${s.id}','camera','style',this.value)">${composerOptions([["smooth","Smooth"],["handheld","Handheld"],["documentary","Documentary"],["mechanical","Mechanical"],["floating","Floating"],["abrupt","Abrupt"]], c.motionPlan.camera.style)}</select></label><label><span>Framing</span><select onchange="setMotionPlanField('${s.id}','camera','framing',this.value)">${composerOptions([["preserve","Preserve composition"],["preserve-loosely","Preserve loosely"],["allow-reframe","Allow reframing"]], c.motionPlan.camera.framing)}</select></label></div><div class="motion-director-subjects">${motionSubjectControls(s,c)}${motionPropControls(s,c)}</div><div class="motion-director-environment"><label><span>Environment</span><select onchange="setMotionPlanField('${s.id}','environment','action',this.value)">${composerOptions([["static","Static"],["wind","Wind / fabric"],["rain","Rain"],["smoke","Smoke / steam"],["traffic","Traffic"],["crowd","Crowd background"],["light-flicker","Light flicker"],["water","Water / ripple"],["dust","Dust / atmosphere"]], c.motionPlan.environment.action)}</select></label><label><span>Intensity</span><select onchange="setMotionPlanField('${s.id}','environment','intensity',this.value)">${composerOptions([["subtle","Subtle"],["moderate","Moderate"],["strong","Strong"]], c.motionPlan.environment.intensity)}</select></label><label class="wide"><span>Environment note</span><input value="${attr(c.motionPlan.environment.notes || "")}" onchange="setMotionPlanField('${s.id}','environment','notes',this.value)" placeholder="Only distant traffic moves; foreground remains still…"></label></div><div class="motion-director-timing"><label><span>Onset</span><select onchange="setMotionPlanField('${s.id}','timing','onset',this.value)">${composerOptions([["immediate","Immediate"],["delayed","Delayed"],["gradual","Gradual"]], c.motionPlan.timing.onset)}</select></label><label><span>Pacing</span><select onchange="setMotionPlanField('${s.id}','timing','pacing',this.value)">${composerOptions([["slow","Slow"],["natural","Natural"],["brisk","Brisk"]], c.motionPlan.timing.pacing)}</select></label><label class="checkline"><input type="checkbox" ${c.motionPlan.timing.holdEnd ? "checked" : ""} onchange="setMotionPlanField('${s.id}','timing','holdEnd',this.checked)"> Hold final state</label><label class="wide"><span>Optional secondary action</span><input value="${attr(c.motionPlan.timing.secondary || "")}" onchange="setMotionPlanField('${s.id}','timing','secondary',this.value)" placeholder="A light flickers once after the character stops…"></label></div></details>${field("Additional motion direction", `<textarea class="guided-motion-editor" placeholder="Only add details not covered by the controls above." onchange="setGuidedMotionField('${s.id}','motionDirection',this.value)">${esc(direction)}</textarea>`)}<details class="guided-inline-defaults motion-defaults"><summary>Motion defaults: ${esc(String(c.motionIntensity || "subtle").replace(/-/g," "))}${c.preserveComposition ? " · preserve composition" : ""}</summary><div class="guided-motion-detail-grid"><label><span>Overall intensity</span><select onchange="setGuidedMotionField('${s.id}','motionIntensity',this.value)">${["nearly-still","subtle","moderate","active","highly-dynamic"].map((x) => `<option value="${x}" ${c.motionIntensity === x ? "selected" : ""}>${x.replace(/-/g," ")}</option>`).join("")}</select></label><label class="checkline"><input type="checkbox" ${c.preserveComposition ? "checked" : ""} onchange="setGuidedMotionField('${s.id}','preserveComposition',this.checked)"> Preserve composition and identity</label></div></details>${guidedAudioPanel(s,c,profile,audioRefs)}<div class="guided-motion-controls"><label><span>Duration</span><input type="number" min="${durationMin}" max="${durationMax}" value="${duration}" onchange="setGuidedMotionField('${s.id}','motionDuration',+this.value)"><small>${durationMin}–${durationMax}s for this target${profile?.mode === "r2v" ? "; use chained clips for longer shots" : ""}</small></label><label class="guided-video-target-control"><span>Video model and workflow</span><select ${busy ? "disabled" : ""} onchange="setGuidedMotionField('${s.id}','motionProfileId',this.value)">${guidedVideoProfileOptions(profileId)}</select><small>${guidedVideoProfileCount()} of ${guidedVideoProfiles().length} written-up targets can be generated from CineBraid today. The rest stay listed, and say why they cannot run.</small></label>${guidedVideoProfileRefusalMarkup(profile)}<div><button class="assemble-btn" ${busy ? "disabled" : ""} onclick="buildGuidedMotionPrompt('${s.id}',false)">${busy ? `<span class="spin">◌</span> WORKING…` : "Build prompt"}</button><button class="ghost-btn" ${busy ? "disabled" : ""} onclick="buildGuidedMotionPrompt('${s.id}',true)"${aiDisabledAttrs("text")}>${busy ? `<span class="spin">◌</span> Improving…` : "Improve"}</button></div></div>${operationBody}</div></details></section></div></details>`;
 }
 function guidedFinishPanel(s, approved, current, open = false) {
   const c = ensureShotCreation(s), source = approved || current;
@@ -2795,9 +2898,13 @@ function suggestedMotionProfileForApprovedFrames(s, approvedCount) {
   const current = profiles.find((profile) => profile.id === c.motionProfileId);
   const hasUserMotionWork = !!String(c.motionDirection || s.motionPrompt || "").trim() || !!(c.motionPromptBuilds || []).length;
   if (current && hasUserMotionWork) return current.id;
-  if (approvedCount >= 3) return profiles.find((profile) => profile.id === "minimax-h3/multi-frame")?.id || profiles.find((profile) => profile.mode === "r2v")?.id || current?.id || preferredGuidedVideoProfile("");
-  if (approvedCount === 2) return profiles.find((profile) => profile.id === "minimax-h3/flf")?.id || profiles.find((profile) => profile.mode === "flf")?.id || current?.id || preferredGuidedVideoProfile("");
-  return profiles.find((profile) => profile.id === P.meta?.promptDefaults?.videoProfile && profile.mode === "i2v")?.id || profiles.find((profile) => profile.id === "seedance-2/i2v")?.id || profiles.find((profile) => profile.mode === "i2v")?.id || current?.id || preferredGuidedVideoProfile("");
+  /* Suggested, so it must be runnable: a suggestion CineBraid cannot dispatch is the
+     same dead end as an undispatchable default. A shot the filmmaker has already
+     directed keeps its own target above. */
+  const dispatchable = guidedDispatchableVideoProfiles();
+  if (approvedCount >= 3) return dispatchable.find((profile) => profile.mode === "r2v")?.id || profiles.find((profile) => profile.mode === "r2v")?.id || current?.id || preferredGuidedVideoProfile("");
+  if (approvedCount === 2) return dispatchable.find((profile) => profile.mode === "flf")?.id || profiles.find((profile) => profile.mode === "flf")?.id || current?.id || preferredGuidedVideoProfile("");
+  return dispatchable.find((profile) => profile.id === P.meta?.promptDefaults?.videoProfile && profile.mode === "i2v")?.id || dispatchable.find((profile) => profile.mode === "i2v")?.id || profiles.find((profile) => profile.mode === "i2v")?.id || current?.id || preferredGuidedVideoProfile("");
 }
 window.scrollGuidedMotionSection = (id, section = "create") => {
   const panel = document.getElementById(`guided-motion-workspace-${id}`);
@@ -2829,7 +2936,7 @@ window.openGuidedMotionFromFrames = (id, section = "create") => {
   if (suggested) c.motionProfileId = suggested;
   c.deliveryIntent = "motion";
   keepGuidedPanelOpen(s, "motion", section === "create" ? "motionCreate" : "");
-  try { localStorage.setItem(`cinebraid-focused:${((typeof ACTIVE_PROJECT_SLUG !== "undefined" && ACTIVE_PROJECT_SLUG) || window.ACTIVE_PROJECT_SLUG || P.meta?.id || "project")}:shot-task:${id}`, "motion"); } catch {}
+  selectGuidedPanelTask(s, "motion");
   dirty();
   route();
   setTimeout(() => window.scrollGuidedMotionSection(id, section), 40);
