@@ -164,6 +164,14 @@ async function main() {
   assert(index.includes(`shared-coverage.js?v=${RELEASE_VERSION}`), "shared coverage-requirement contract must load before every surface that counts views");
   assert(index.indexOf(`shared-coverage.js?v=${RELEASE_VERSION}`) < index.indexOf(`app.js?v=${RELEASE_VERSION}`),
     "and it must load before app.js, whose coverage templates seed through it");
+  assert(index.includes(`shared-media-disposition.js?v=${RELEASE_VERSION}`),
+    "shared media-disposition contract must load before every surface that lists approved and unapproved media together");
+  assert(index.indexOf(`shared-continuity.js?v=${RELEASE_VERSION}`) < index.indexOf(`shared-media-disposition.js?v=${RELEASE_VERSION}`),
+    "and it must load after shared-continuity.js, whose stateApprovedFile() it resolves through rather than restating");
+  /* `src="` anchored: a bare `entities.js` substring matches shared-entities.js,
+     which loads first and would make this assertion measure the wrong tag. */
+  assert(index.indexOf(`shared-media-disposition.js?v=${RELEASE_VERSION}`) < index.indexOf(`src="entities.js?v=${RELEASE_VERSION}`),
+    "and before entities.js, whose candidate partition is now that contract's caller rather than a second answer");
   assert(index.includes(`shared-build-history.js?v=${RELEASE_VERSION}`), "shared prompt-history compatibility must load before the app");
   assert(index.includes(`shared-generation-capability.js?v=${RELEASE_VERSION}`), "shared generation capability must load before the app");
   assert(index.includes(`v607-composer.js?v=${RELEASE_VERSION}`), "composer module must be cache-busted after patch updates");
@@ -406,6 +414,8 @@ async function main() {
     "media-asset-store.js",
     "media-asset-sync-safety.js",
     "media-asset-verify.js",
+    "media-disposition-semantics-negative-controls.js",
+    "media-disposition-semantics.js",
     "media-hash-extraction.js",
     "minimax-h3-real-browser.py",
     "minimax-h3.js",

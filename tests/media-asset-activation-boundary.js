@@ -141,8 +141,17 @@ assert.deepStrictEqual(activationCallers, ["open", "rename", "scan", "switch"],
 /* The whole surface server.js is allowed to use, listed rather than counted, so a
    fifth entry point has to be argued for in a diff. */
 const serviceCalls = [...new Set([...serverNoComments.matchAll(/MediaAssetService\.(\w+)\(/g)].map((m) => m[1]))].sort();
-assert.deepStrictEqual(serviceCalls, ["activateProject", "anchorBeforeRename"],
-  "server.js uses exactly two service entry points: schedule a pass, and anchor one file before renaming it");
+assert.deepStrictEqual(serviceCalls, ["activateProject", "anchorBeforeRename", "identityIndex"],
+  "server.js uses exactly three service entry points: schedule a pass, anchor one file before renaming it, and read the identity projection");
+/* identityIndex joined the list in P4-SEM-C2, deliberately and with the argument
+   the boundary exists to force. It is the only way a durable assetId reaches the
+   browser, which C2 needs because an approval cannot record the identity of what
+   it approved unless something tells it. It READS, it cannot write, and it grants
+   no authority: the ledger still decides nothing about approval. Widening the list
+   rather than exempting the call is the point — a fourth entry point still has to
+   be argued for in a diff. */
+assert.strictEqual((serverNoComments.match(/MediaAssetService\.identityIndex\(/g) || []).length, 1,
+  "and the identity projection is read from exactly one place — the media listing helper");
 assert.strictEqual((serverNoComments.match(/MediaAssetService\.anchorBeforeRename\(/g) || []).length, 1,
   "and the anchor is called from exactly one place — the media rename route");
 

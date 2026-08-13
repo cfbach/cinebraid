@@ -87,6 +87,8 @@ const nodeSuites = [
   "check:media-asset-verify",
   "check:media-asset-activation",
   "check:media-asset-activation-negative",
+  "check:media-disposition",
+  "check:media-disposition-negative",
   "check:account-contract",
   "check:account-secrets",
   "check:account-provider",

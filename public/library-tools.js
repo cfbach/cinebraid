@@ -526,7 +526,7 @@ window.confirmEntityApproval = async (continueToNext = false) => {
   const originalApprovalRow = entityCandidateRow(x, name, false);
   const approvedIsCoverageSheet = typeof entityCandidateIsCoverageSheet === "function" && entityCandidateIsCoverageSheet(x, name);
   if (continueToNext && !nextState && !approvedIsCoverageSheet) return toast("Choose the continuity state to edit next");
-  let finalName = name;
+  let finalName = name, renamedAssetId = "";
   if (to && name && to !== name) {
     const r = await fetch("/api/media/rename", {
       method: "POST",
@@ -536,21 +536,39 @@ window.confirmEntityApproval = async (continueToNext = false) => {
     const d = await r.json();
     if (r.ok) {
       finalName = d.name;
-      for (const state of entityStateList(x, true)) if (state.approvedFile === name) state.approvedFile = finalName;
-      if (x.approvedFile === name) x.approvedFile = finalName;
-      const candidateRow = entityCandidateRow(x, name, false);
-      if (candidateRow) candidateRow.stored = finalName;
-      for (const generated of x.generatedCandidates || []) if ((generated.stored || generated.name) === name) generated.stored = finalName;
+      renamedAssetId = d.assetId || "";
+      /* P4-SEM-C2. This used to be four hand-written patches — states,
+         entity.approvedFile, the candidate row, generatedCandidates[] — and the
+         list was incomplete: coverageSlots[] and expressionSlots[] were never
+         repaired, so approving a rename of a file a coverage slot already
+         approved left that slot pointing at a filename that no longer existed.
+         Enumerating the edges is what makes that class of miss impossible, and
+         it is why the repair moved into the shared resolver rather than growing
+         two more lines here. The assetId the route just anchored is recorded on
+         each repaired edge, so the NEXT rename can be resolved by identity
+         instead of by a string that has already changed. */
+      repairApprovalIdentity(x, { from: name, to: finalName, assetId: renamedAssetId, states: entityStateList(x, true) });
       SCAN = await (await fetch("/api/scan")).json();
     } else toast("Rename failed; approved with original filename");
   }
+  /* The durable identity of what is about to become canon. Read from the refreshed
+     scan when the ledger knows this file, and from the rename anchor otherwise.
+     Empty is legal and common — a project whose first pass has not run yet has no
+     identity to record, and the approval proceeds on the filename exactly as it
+     did before C2. */
+  const approvedAssetId = (entityMedia(list, x).find((item) => item.name === finalName) || {}).assetId || renamedAssetId || "";
   if (targetState) {
     targetState.approvedFile = finalName;
     targetState.approvedAt = new Date().toISOString();
     targetState.parentValidation = null;
+    /* P4-SEM-C2: the approval records WHICH BYTES it approved, not only what they
+       were called at the time. Refused rather than stored when there is no id, so
+       a record never carries a malformed identity that would resolve to nothing. */
+    stampApprovalIdentity(targetState, approvedAssetId);
   }
   if (targetState?.isDefault || targetStateId === "state-default") {
     x.approvedFile = finalName;
+    stampApprovalIdentity(x, approvedAssetId);
     for (const childState of entityStateList(x, true)) if (!childState.isDefault) childState.parentValidation = null;
     if (!approvedIsCoverageSheet && typeof ensureCoverageSlots === "function" && list !== "characters") {
       const slots = ensureCoverageSlots(list, x);
@@ -559,6 +577,7 @@ window.confirmEntityApproval = async (continueToNext = false) => {
         const coverageSlot = slots.find((slot) => slot.id === preferredId) || slots[0];
         if (coverageSlot) {
           coverageSlot.approvedFile = finalName;
+          stampApprovalIdentity(coverageSlot, approvedAssetId);
           coverageSlot.status = "approved";
           coverageSlot.notes = coverageSlot.notes || "Automatically seeded from the first approved primary reference.";
           coverageSlot.provenance = { source: "primary-approved-reference", seededAt: new Date().toISOString() };

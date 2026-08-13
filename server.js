@@ -1131,17 +1131,53 @@ function syncConfiguredMediaRoot() {
   }
   return { copied, skipped, source: scoped };
 }
-function listMedia(rel) {
+/* P4-SEM-C2 — a READ-ONLY projection of the MediaAsset ledger: project-relative
+   path -> durable assetId.
+
+   C1 gave every file an identity and kept it entirely server-side, so nothing the
+   browser writes could carry it. This is the one place that identity crosses to
+   the client, and it crosses as a fact about a file rather than as an authority
+   over anything: the ledger still decides nothing about approval, and a project
+   whose ledger has never run simply reports no ids at all.
+
+   Three properties are deliberate. It READS and never writes, so INV-R1 holds and
+   listing media cannot mint anything. It CANNOT THROW into a response — an
+   unreadable ledger yields an empty index and the scan answers exactly as it did
+   before C2, because losing an optional id is not a reason to fail a scan that
+   the whole application depends on. And it SKIPS rows marked missing, so an
+   identity retained for a file that no longer exists can never shadow a live one.
+
+   Built once per scan and passed down, rather than read per directory: a project
+   with fifty shots calls listMedia over 150 times.
+
+   Routed through MediaAssetService rather than reading the ledger here. C1 made
+   that module the single production importer of the ledger and pinned the count
+   at one (tests/media-asset-activation-boundary.js); a second reader in server.js
+   would be a second answer to "who reads the ledger, and when", which is the
+   property activation was granted in exchange for. */
+function mediaIdentityIndex() {
+  return MediaAssetService.identityIndex({ projectsRoot: projectsRoot(), slug: activeSlug() });
+}
+function listMedia(rel, identity = null) {
   const dir = path.join(PROJECT_DIR(), rel);
   if (!fs.existsSync(dir)) return [];
+  const relPosix = rel.split(path.sep).join("/");
   return fs
     .readdirSync(dir)
     .filter((f) => MEDIA_EXT.has(path.extname(f).toLowerCase()))
     .sort()
-    .map((f) => ({
-      name: f,
-      url: "/assets/" + rel.split(path.sep).join("/") + "/" + f,
-    }));
+    .map((f) => {
+      const assetId = identity ? identity.get(`${relPosix}/${f}`) : "";
+      return {
+        name: f,
+        url: "/assets/" + relPosix + "/" + f,
+        /* Absent, not empty, when the ledger does not know this file. An empty
+           string would read as "identity was looked up and is blank"; omitting
+           the key says "this project has no identity for it", which is the
+           legal and expected state for media indexed before its first pass. */
+        ...(assetId ? { assetId } : {}),
+      };
+    });
 }
 /* ---- MediaAsset identity activation (P4-SEM-C1) ----
 
@@ -1178,20 +1214,21 @@ function scanProject() {
   const sync = syncConfiguredMediaRoot();
   const shotsDir = path.join(PROJECT_DIR(), "shots");
   const shots = {};
+  const identity = mediaIdentityIndex();
   if (fs.existsSync(shotsDir))
     for (const id of fs.readdirSync(shotsDir))
       shots[id] = {
-        takes: listMedia(path.join("shots", id, "takes")),
-        locked: listMedia(path.join("shots", id, "locked")),
-        blocking: listMedia(path.join("shots", id, "blocking")),
+        takes: listMedia(path.join("shots", id, "takes"), identity),
+        locked: listMedia(path.join("shots", id, "locked"), identity),
+        blocking: listMedia(path.join("shots", id, "blocking"), identity),
       };
   return {
-    anchors: listMedia("anchors"),
-    plates: listMedia("plates"),
-    props: listMedia("props"),
-    vehicles: listMedia("vehicles"),
-    audio: listMedia("audio"),
-    media: listMedia("media"),
+    anchors: listMedia("anchors", identity),
+    plates: listMedia("plates", identity),
+    props: listMedia("props", identity),
+    vehicles: listMedia("vehicles", identity),
+    audio: listMedia("audio", identity),
+    media: listMedia("media", identity),
     shots,
     workspaceSync: sync,
   };
@@ -1315,7 +1352,7 @@ app.post("/api/media/rename", async (req, res) => {
      an unanchored rename is the pre-C1 behaviour, not a reason to block an
      approval. */
   const renamedSlug = path.basename(owned);
-  await MediaAssetService.anchorBeforeRename({
+  const anchor = await MediaAssetService.anchorBeforeRename({
     projectsRoot: projectsRoot(),
     slug: renamedSlug,
     path: `${safeDir}/${path.basename(src)}`,
@@ -1326,7 +1363,19 @@ app.post("/api/media/rename", async (req, res) => {
      "scan" because the filesystem provably just changed, so this pass must not be
      collapsed into the scan throttle. */
   noteProjectActivity("rename", renamedSlug);
-  res.json({ ok: true, name: toName });
+  /* P4-SEM-C2 — the anchored identity, handed back to the caller that is about to
+     repair its own pointers.
+
+     This route already proved the two filenames name the same media: it hashed the
+     file before moving it, which is the only moment at which that can be proven.
+     C1 kept the result to itself, so the approval flow could only repair edges by
+     matching the old string. Returning the id lets the edge record WHAT it points
+     at, so the next rename is repaired by identity instead.
+
+     Omitted, never empty, when the rename could not be anchored — no ledger yet, no
+     row, or an unreadable sidecar. That is the pre-C1 state and is not an error;
+     the caller falls back to filename repair exactly as before. */
+  res.json({ ok: true, name: toName, ...(anchor?.assetId ? { assetId: anchor.assetId } : {}) });
 });
 
 app.post("/api/shots/:id/use-reference", (req, res) => {
