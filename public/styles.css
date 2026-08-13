@@ -4218,3 +4218,134 @@ body[data-focused-workspace="1"] .guided-frame-body,
   .continuity-state-cells{grid-template-columns:1fr}
   .continuity-secondary-actions .ghost-btn{width:100%}
 }
+/* ============================================================================
+   O2 — the creator workspace shell.
+
+   THE ONE THING THIS BLOCK OWNS: where the three persistent regions live, how big
+   they are allowed to get, and which of them scrolls. It owns no content, and it
+   contains no rule that mentions a filmmaking stage — `inputs`, `look`, `frames`,
+   `motion` and `deliver` change inside `#main` and this block cannot tell.
+
+   SCROLL OWNERSHIP, unchanged from before O2 and stated so it stays that way:
+
+     the document   owns the page's vertical scroll. `#rail` and `#topbar` are
+                    position:sticky and only work because of it. O2 does not move
+                    it — a shell that seized the scroll would have relocated the
+                    sticky navigation, silently killed the window-scroll restore in
+                    public/app.js's restoreRouteViewState, and rewritten the app.
+     #cb-shell-rail owns its own vertical scroll, bounded to the viewport below the
+                    topbar. An Assistant conversation is unbounded; the page is not.
+     #cb-shell-dock owns its own vertical scroll, bounded by max-height, and is
+                    position:fixed — out of document flow — so no volume of future
+                    Terminal output can lengthen the page. Because a fixed region
+                    cannot push anything, the space it covers is given back
+                    explicitly through --cb-dock-reserve.
+
+   Nothing else in the shell scrolls, and neither slot may introduce horizontal
+   page scrolling: the center's `minmax(0,1fr)` track and the rail's `min-width:0`
+   are what stop a wide child from forcing the grid wider than the viewport.
+
+   EMPTY MEANS ABSENT. Both slots are display:none until a consumer mounts content
+   AND the surface is a creator workspace. The nodes stay in the document — that is
+   the identity guarantee the Assistant and Terminal will be built on — but an
+   empty rail is not a visible empty rail, because a permanent labelled rectangle
+   promising a feature that does not exist is a claim this build cannot support.
+   Consequence worth stating: with nothing mounted, every rule below collapses and
+   the shipped layout is byte-for-byte the layout that shipped before O2.
+   ============================================================================ */
+
+/* THE NAVIGATION WIDTH, declared once and consumed twice.
+
+   The dock is fixed to the viewport, so it has to be told where the navigation rail
+   ends. That number is now stated here and read by BOTH the #app grid and the dock,
+   so the two cannot disagree.
+
+   Why this replaced a runtime measurement, recorded because the reasoning is not
+   obvious from the result: #app carries `zoom:var(--ui-scale)`. getBoundingClientRect
+   reports post-zoom device pixels, and feeding those back into a `left` on an element
+   INSIDE the zoomed subtree scales them a second time — the dock would have sat 24px
+   wrong at 110% UI scale and nowhere near the navigation at 90%. A CSS length is
+   scaled by the same zoom as the rail it is aligning to, so it is right by
+   construction at every scale.
+
+   Why one value and not the five in this file: 240px, 256px, 230px, 258px and 274px
+   are all dead cascade layers. The last top-level #app rule in this stylesheet wins
+   at every width where the grid is live, so the shipped navigation is 220px from
+   900px upward — verified in Chromium at 1920, 1280 and 950. Below 900px #app is
+   display:block and #rail becomes a position:fixed off-canvas drawer, so the
+   workspace starts at the viewport edge and the inset is genuinely zero. Those are
+   the only two states, which is why this is two declarations rather than six.
+
+   Note this rule does not change any shipped width: above 900px it resolves to the
+   same `220px minmax(0,1fr)` that was already effective, and below 900px
+   grid-template-columns is inert because the box is not a grid. */
+#app{--cb-nav-width:220px;grid-template-columns:var(--cb-nav-width) minmax(0,1fr)}
+@media(max-width:900px){
+  /* The navigation is an overlay drawer here, not a column. It reserves nothing. */
+  #app{--cb-nav-width:0px}
+}
+
+/* The dock is fixed, so it reserves its space here instead of by existing. The
+   default is 0px, which is also the value on every surface where the dock is not
+   painted — reserving space for an invisible dock would leave a dead band at the
+   bottom of Settings. The height cannot be a constant: it depends on what a future
+   consumer mounts, bounded by the dock's own max-height. public/workspace-shell.js
+   measures that one number and publishes it. */
+#workspace{padding-bottom:var(--cb-dock-reserve,0px)}
+
+/* The Main region: the shipped center workspace, plus the rail slot beside it.
+   minmax(0,1fr) is the center's min-width:0 guard — a plain `1fr` would let a wide
+   table or filmstrip inside #main widen the track and put a horizontal scrollbar on
+   the page, which is the failure mode this whole block exists to prevent. */
+.cb-shell-main{display:grid;grid-template-columns:minmax(0,1fr)}
+.cb-shell-main>#main{min-width:0}
+.cb-shell-main:has(>#cb-shell-rail[data-occupied]){grid-template-columns:minmax(0,1fr) var(--cb-shell-rail-width,340px)}
+
+/* Slot defaults: present in the document, occupying nothing, painting nothing. */
+.cb-shell-slot{display:none;min-width:0;min-height:0}
+.cb-shell-slot-body{min-width:0;min-height:0}
+
+/* A slot is shown only where the shell is present AND content is mounted. Both
+   conditions are required: retained Assistant content must not paint itself onto
+   Settings just because it survived the trip there. */
+#workspace[data-creator-shell="1"] #cb-shell-rail[data-occupied]{display:block}
+#workspace[data-creator-shell="1"] #cb-shell-dock[data-occupied]{display:flex}
+
+/* The rail. align-self:start is load-bearing: a stretched grid item is exactly as
+   tall as its area, which leaves position:sticky nothing to move within, and the
+   rail would scroll away with the page. Sticky keeps it beside the work at the same
+   place on screen while the document — still the scroll owner — scrolls beneath. */
+#cb-shell-rail{position:sticky;top:64px;align-self:start;max-height:calc(100vh - 64px - var(--cb-dock-reserve,0px));overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;border-left:1px solid var(--line);background:var(--panel)}
+
+/* The dock. Fixed to the viewport bottom, starting where the navigation rail ends —
+   the same --cb-nav-width the #app grid uses, so "the dock never overlaps navigation"
+   is a consequence of the two reading one declaration rather than a coincidence two
+   numbers have to keep. z-index sits above the topbar (40) and below the navigation
+   rail (50), the Activity drawer (190) and the live strip (1200), so the drawer still
+   covers the dock and the dock can never cover navigation. */
+#cb-shell-dock{position:fixed;z-index:45;left:var(--cb-nav-width,0px);right:0;bottom:0;flex-direction:column;max-height:min(38vh,360px);border-top:1px solid var(--line);background:var(--panel);box-shadow:0 -14px 34px rgba(0,0,0,.34)}
+#cb-shell-dock>.cb-shell-slot-body{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain}
+
+/* Below this width the navigation rail, a usable center and a 340px Assistant rail
+   no longer fit together, so the rail yields and the center keeps the room. The
+   dock survives, narrower — a persistent technical surface is still readable at a
+   laptop width where a second column is not. No control is added for the collapsed
+   rail: there is nothing in it yet, and a button that opens an empty region is the
+   dead mobile chrome this batch is meant not to ship. */
+@media(max-width:1180px){
+  .cb-shell-main:has(>#cb-shell-rail[data-occupied]){grid-template-columns:minmax(0,1fr)}
+  #workspace[data-creator-shell="1"] #cb-shell-rail[data-occupied]{display:none}
+}
+@media(max-width:900px){
+  #cb-shell-dock{max-height:min(42vh,260px)}
+}
+@media print{
+  .cb-shell-slot{display:none!important}
+  #workspace{padding-bottom:0}
+  /* Print hides #rail outright, and the rule above is late enough in the cascade to
+     override the print rule that collapsed the grid to a single column — which would
+     have left a 220px empty gutter down the side of every printed page where the
+     navigation used to be. Zeroing the variable restores the single-column intent
+     through the same declaration rather than by fighting it. */
+  #app{--cb-nav-width:0px}
+}

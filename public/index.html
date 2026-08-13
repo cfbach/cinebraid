@@ -42,6 +42,12 @@
     </div>
   </aside>
 
+  <!-- The creator workspace shell. Its three regions are static markup for the same
+       reason #rail, #topbar and #main always have been: a region that JavaScript
+       creates is a region JavaScript can create twice, and everything the Assistant
+       and Activity Terminal will later rely on starts with these nodes being the
+       same nodes after a stage change. public/workspace-shell.js owns their STATE
+       and never their existence. Both slots are empty and collapsed in this build. -->
   <section id="workspace">
     <header id="topbar">
       <div class="topbar-context">
@@ -57,7 +63,11 @@
         
       </div>
     </header>
-    <main id="main"></main>
+    <div id="cb-shell-main" class="cb-shell-main">
+      <main id="main"></main>
+      <aside id="cb-shell-rail" class="cb-shell-slot" data-shell-slot="rail" aria-label="Assistant"><div class="cb-shell-slot-body"></div></aside>
+    </div>
+    <div id="cb-shell-dock" class="cb-shell-slot" data-shell-slot="dock" aria-label="Activity terminal"><div class="cb-shell-slot-body"></div></div>
   </section>
 
   <aside id="automation-activity-drawer" class="automation-activity-drawer" aria-hidden="true"></aside>
@@ -78,6 +88,7 @@
 <script src="shared-model-intelligence.js?v=6.7.0-private.1"></script>
 <script src="shared-generation-options.js?v=6.7.0-private.1"></script>
 <script src="shared-stage-model.js?v=6.7.0-private.1"></script>
+<script src="shared-workspace-shell.js?v=6.7.0-private.1"></script>
 <script src="bounded-rendering.js?v=6.7.0-private.1"></script>
 <script src="app.js?v=6.7.0-private.1"></script>
 <script src="media.js?v=6.7.0-private.1"></script>
@@ -103,6 +114,7 @@
 <script src="v607-composer.js?v=6.7.0-private.1"></script>
 <script src="motion-sound-composer.js?v=6.7.0-private.1"></script>
 <script src="focused-workspaces.js?v=6.7.0-private.1"></script>
+<script src="workspace-shell.js?v=6.7.0-private.1"></script>
 <script src="bootstrap.js?v=6.7.0-private.1"></script>
 </body>
 </html>
