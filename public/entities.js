@@ -308,8 +308,20 @@ window.openStateReferenceUpload = (list, id, stateId) => {
   window._pendingEntityStateUpload = { list, id, stateId };
   document.getElementById("entity-file")?.click?.();
 };
-function entityCandidateCard(list, entity, media, index, mediaJson, rejected = false) {
+/* `disposition` is the row public/shared-media-disposition.js resolved for this
+   media. It is optional so the existing rejected/active callers are unchanged,
+   and it is what lets an APPROVED authority appear on a selector at all — before
+   P4-SEM-C2 this function was never called with one, because approved media was
+   filtered out before it got here. */
+function entityCandidateCard(list, entity, media, index, mediaJson, rejected = false, disposition = null) {
   const row = entityCandidateRow(entity, media.name, false) || {};
+  const approved = disposition?.role === "approved";
+  /* WHAT it is authority for, not merely THAT it is approved. One image can be
+     the authority for a state and a coverage view at once, and a creator
+     choosing between images needs to know which. */
+  const authorityFor = approved
+    ? (disposition.targets || []).map((target) => target.label || target.kind).filter(Boolean).join(" · ")
+    : "";
   const targetState = row.targetStateId ? entityStateById(entity, row.targetStateId) : null;
   const targetName = row.targetStateName || targetState?.name || "";
   const coverageName = row.targetCoverageSlotName || "";
@@ -344,7 +356,7 @@ function entityCandidateCard(list, entity, media, index, mediaJson, rejected = f
   const reviewDescription = targetReview
     ? `${targetReview.pass ? "AI check passed" : "AI check flagged issues"} · human approval remains explicit`
     : "Choose, assign, or approve by human judgment; AI checking is optional";
-  return `<article class="entity-candidate-card ${rejected ? "is-rejected" : ""} ${isSheet ? "is-coverage-sheet" : ""}" data-candidate-file="${attr(media.name)}" data-candidate-type="${attr(workflowType)}"><a class="entity-candidate-preview" href="javascript:void 0" onclick="openLBMedia('${mediaJson}',${index},'${attr(entity.id)}')" title="${attr(media.name)}">${isVideo(media.name) ? `<video muted src="${attr(media.url)}"></video>` : `<img src="${attr(media.url)}" alt="">`}${entityCandidateReviewOverlay(entity, media.name)}${targetName ? `<span class="entity-candidate-target">CONTINUITY · ${esc(targetName.toUpperCase())}</span>${parentName ? `<span class="entity-candidate-parent">FROM · ${esc(parentName.toUpperCase())}</span>` : ""}` : coverageName ? `<span class="entity-candidate-target">COVERAGE · ${esc(coverageName.toUpperCase())}</span>` : isSheet ? `<span class="entity-candidate-target">COVERAGE SHEET</span>` : ""}<span class="entity-tile-name">${esc(media.name)}</span></a><div class="entity-candidate-meta"><span class="entity-candidate-workflow-type">${esc(entityCandidateWorkflowLabel(entity, media.name))}</span>${entityCandidateReviewBadge(entity, media.name)}${batchStatus}<small>${rejected ? `Rejected by you · kept on disk${storedReview ? ` · AI ${Math.round(Number(storedReview.score || 0))} ${storedReview.pass ? "PASS" : "FLAG"} recorded before the rejection` : " · no AI review was recorded"}` : `${sourceDescription} · ${reviewDescription}`}</small></div><div class="entity-candidate-actions">${rejected ? `${rejectedReviewAction}<button class="chip" onclick="setEntityCandidateDecision('${list}','${entity.id}','${attr(media.name)}','unreviewed')">RESTORE</button>` : `<button class="approve-tile-btn human-approval-action" onclick="requestHumanEntityCandidateApproval('${list}','${entity.id}','${attr(media.name)}','${attr(targetStateId)}','${continuation}')">${humanLabel}</button>${aiAction}<button class="chip danger" onclick="setEntityCandidateDecision('${list}','${entity.id}','${attr(media.name)}','rejected')">REJECT</button>`}</div></article>`;
+  return `<article class="entity-candidate-card ${rejected ? "is-rejected" : ""} ${approved ? "is-approved-authority" : ""} ${isSheet ? "is-coverage-sheet" : ""}" data-candidate-file="${attr(media.name)}" data-candidate-type="${attr(workflowType)}" data-media-role="${attr(disposition?.role || (rejected ? "rejected" : "candidate"))}"${authorityFor ? ` data-approved-for="${attr(authorityFor)}"` : ""}${disposition?.assetId ? ` data-asset-id="${attr(disposition.assetId)}"` : ""}><a class="entity-candidate-preview" href="javascript:void 0" onclick="openLBMedia('${mediaJson}',${index},'${attr(entity.id)}')" title="${attr(media.name)}">${isVideo(media.name) ? `<video muted src="${attr(media.url)}"></video>` : `<img src="${attr(media.url)}" alt="">`}${entityCandidateReviewOverlay(entity, media.name)}${targetName ? `<span class="entity-candidate-target">CONTINUITY · ${esc(targetName.toUpperCase())}</span>${parentName ? `<span class="entity-candidate-parent">FROM · ${esc(parentName.toUpperCase())}</span>` : ""}` : coverageName ? `<span class="entity-candidate-target">COVERAGE · ${esc(coverageName.toUpperCase())}</span>` : isSheet ? `<span class="entity-candidate-target">COVERAGE SHEET</span>` : ""}<span class="entity-tile-name">${esc(media.name)}</span></a><div class="entity-candidate-meta"><span class="entity-candidate-workflow-type">${esc(entityCandidateWorkflowLabel(entity, media.name))}</span>${entityCandidateReviewBadge(entity, media.name)}${batchStatus}<small>${approved ? `Approved by you${authorityFor ? ` · authority for ${esc(authorityFor)}` : ""}${storedReview ? ` · AI ${Math.round(Number(storedReview.score || 0))} ${storedReview.pass ? "PASS" : "FLAG"} recorded` : " · approved without an AI review on record"}` : rejected ? `Rejected by you · kept on disk${storedReview ? ` · AI ${Math.round(Number(storedReview.score || 0))} ${storedReview.pass ? "PASS" : "FLAG"} recorded before the rejection` : " · no AI review was recorded"}` : `${sourceDescription} · ${reviewDescription}`}</small></div><div class="entity-candidate-actions">${approved ? `${aiAction}` : rejected ? `${rejectedReviewAction}<button class="chip" onclick="setEntityCandidateDecision('${list}','${entity.id}','${attr(media.name)}','unreviewed')">RESTORE</button>` : `<button class="approve-tile-btn human-approval-action" onclick="requestHumanEntityCandidateApproval('${list}','${entity.id}','${attr(media.name)}','${attr(targetStateId)}','${continuation}')">${humanLabel}</button>${aiAction}<button class="chip danger" onclick="setEntityCandidateDecision('${list}','${entity.id}','${attr(media.name)}','rejected')">REJECT</button>`}</div></article>`;
 }
 
 function entityView(title, list, mediaList, extra) {
@@ -776,9 +788,21 @@ function expressionBoardMarkup(entity, mediaByName, media) {
 function coverageStats(slots) {
   return summariseCoverage(slots);
 }
+/* P4-SEM-C2. A bare filename list is what Dogfood Pass #1 §7.1 reported: a
+   coverage selector showing several candidates with nothing saying which one was
+   already approved, so a creator can pick an unapproved image believing they are
+   working from canon. The option now carries its role, and an approved one says
+   what it is already authority for — which is the fact that makes the difference
+   between "pick a file" and "replace a canon decision". */
 function coverageSlotOptions(media, selected = '', entity = null) {
   const eligible = (media || []).filter((item) => !entity || !entityCandidateIsCoverageSheet(entity, item.name));
-  return [`<option value="">— no approved view assigned —</option>`].concat(eligible.map((item) => `<option value="${attr(item.name)}" ${item.name === selected ? 'selected' : ''}>${esc(item.name)}</option>`)).join('');
+  const roles = entity ? partitionEntityMedia(entity, eligible).byName : new Map();
+  return [`<option value="">— no approved view assigned —</option>`].concat(eligible.map((item) => {
+    const row = roles.get(item.name);
+    const authorityFor = row?.role === "approved" ? row.targets.map((target) => target.label || target.kind).filter(Boolean).join(" · ") : "";
+    const marker = row?.role === "approved" ? ` — approved${authorityFor ? ` · ${authorityFor}` : ""}` : row?.role === "rejected" ? " — rejected" : "";
+    return `<option value="${attr(item.name)}" data-media-role="${attr(row?.role || "candidate")}" ${item.name === selected ? 'selected' : ''}>${esc(item.name)}${esc(marker)}</option>`;
+  })).join('');
 }
 function recordCoverageReplacement(slot, previousFile, nextFile, source = "manual") {
   slot.replacementHistory = Array.isArray(slot.replacementHistory) ? slot.replacementHistory : [];
@@ -792,6 +816,15 @@ function applyCoverageAssignment(list, entity, slot, fileName, source = "manual"
   slot.approvedFile = String(fileName || "");
   slot.status = slot.approvedFile ? "approved" : "missing";
   slot.approvedAt = slot.approvedFile ? new Date().toISOString() : "";
+  /* P4-SEM-C2. The coverage funnel records WHICH BYTES the view approved, so a
+     later rename cannot leave this slot pointing at a filename that no longer
+     exists — the exact miss the approval rename made before C2, because it
+     patched states and the candidate row and never reached the coverage slots.
+     Cleared when the view is unassigned, so a stale identity cannot outlive the
+     approval that justified it. */
+  if (slot.approvedFile)
+    stampApprovalIdentity(slot, (entityMedia(list, entity).find((item) => item.name === slot.approvedFile) || {}).assetId || "");
+  else delete slot[APPROVED_ASSET_ID_FIELD];
   if (slot.approvedFile) slot.provenance = { ...(slot.provenance || {}), source, approvedAt: slot.approvedAt };
   dirty();
   route();
@@ -1027,11 +1060,32 @@ function entityPage(list, id, extra) {
     return sharedNotFoundView(typeLabel,id,`#/library/${list}`,`${typeLabel}s`,rows.map((row)=>row.id),`#/${list === "characters" ? "character" : list === "locations" ? "location" : list === "props" ? "prop" : list === "vehicles" ? "vehicle" : "audio"}`);
   }
   const media=entityMedia(list,it), wf=entityWorkflowState(it), states=list === "audio" ? [] : entityStateList(it,true), mediaByName=new Map(media.map((item)=>[item.name,item]));
-  const approvedNames=new Set([...states.map((state)=>state.approvedFile || (state.isDefault ? it.approvedFile || "" : "")),...(it.coverageSlots||[]).map((slot)=>slot.approvedFile),...(it.expressionSlots||[]).map((slot)=>slot.approvedFile)].filter(Boolean));
-  const activeCandidates=media.filter((item)=>!approvedNames.has(item.name) && entityCandidateRow(it,item.name,false)?.decision !== "rejected"), rejectedCandidates=media.filter((item)=>!approvedNames.has(item.name) && entityCandidateRow(it,item.name,false)?.decision === "rejected");
+  /* P4-SEM-C2. This surface no longer decides for itself what its media IS.
+
+     It used to build an `approvedNames` Set inline and subtract it from BOTH the
+     active and the rejected list, so an approved image left the screen entirely
+     — while public/coverage-automation.js read the same approvedFile and treated
+     it as the ranking authority. Dogfood Pass #1 hit exactly that split: the
+     approved London Rooftops source was resolvable to automation and
+     unreachable here. One resolver owns the question now, and `approvedMedia` is
+     the authority this screen used to throw away. */
+  const disposition=partitionEntityMedia(it,media,{states}), approvedMedia=disposition.approved;
+  const activeCandidates=disposition.candidates.map((row)=>row.item), rejectedCandidates=disposition.rejected.map((row)=>row.item);
   const candidateFilter=entityCandidateFilter(list,id), filteredCandidates=activeCandidates.filter((item)=>entityCandidateMatchesFilter(it,item.name,candidateFilter));
   const candidatePage=boundedPage(filteredCandidates,"candidates",`${list}:${id}:active:${candidateFilter}`,BOUNDED_PAGE_SIZES.candidates), rejectedPage=boundedPage(rejectedCandidates,"candidates",`${list}:${id}:rejected`,BOUNDED_PAGE_SIZES.candidates), audioPage=boundedPage(media,"candidates",`${list}:${id}:audio`,BOUNDED_PAGE_SIZES.candidates);
   const candidateJson=encodeURIComponent(JSON.stringify(candidatePage.rows)), rejectedJson=encodeURIComponent(JSON.stringify(rejectedPage.rows));
+  /* The approved authority, ON the selector rather than subtracted from it.
+
+     Bounded the same way every other media grid on this page is bounded, and
+     placed above the undecided work because that is the order the question is
+     asked in: what is already canon, then what am I choosing between. How this
+     eventually LOOKS — pinned, chipped, sectioned — belongs to the shot-workspace
+     UX batch. What C2 owes it is that the information is here at all. */
+  const approvedPage=boundedPage(approvedMedia,"candidates",`${list}:${id}:approved`,BOUNDED_PAGE_SIZES.candidates);
+  const approvedJson=encodeURIComponent(JSON.stringify(approvedPage.rows.map((row)=>row.item)));
+  const approvedAuthorityMarkup=approvedMedia.length
+    ? `<section class="entity-approved-authority" data-approved-count="${approvedMedia.length}"><header><span>APPROVED AUTHORITY</span><b>${plural(approvedMedia.length,"approved reference")}</b><small>Already canon for this reference. Kept in view so approval makes an image easier to reach, not harder.</small></header><div class="entity-media entity-candidate-grid">${approvedPage.rows.map((row,i)=>entityCandidateCard(list,it,row.item,i,approvedJson,false,row)).join("")}</div>${boundedPagerMarkup("candidates",`${list}:${id}:approved`,approvedPage,"approved references")}</section>`
+    : "";
   const approvedTask = `<details class="fold compact-entity-section bounded-source-section" open><summary>${list === "audio" ? "Audio candidates" : "Approved references"} <span>${media.length}</span></summary><div class="entity-media">${audioPage.rows.map((m)=>`<div class="entity-tile-wrap"><div class="entity-tile ${list === "audio" ? "audio-tile" : ""}">${list === "audio" ? `<span class="audio-icon">🔈</span><audio controls src="${m.url}"></audio>` : (isVideo(m.name)?`<video muted src="${m.url}"></video>`:`<img src="${m.url}" alt="">`)}<span class="entity-tile-name">${esc(m.name)}</span></div><button class="approve-tile-btn" onclick="approveEntityFile('${list}','${id}','${attr(m.name)}')">APPROVE</button></div>`).join("") || `<div class="hint">No candidates yet.</div>`}</div>${boundedPagerMarkup("candidates",`${list}:${id}:audio`,audioPage,"candidates")}</details>`;
   const filterCounts=Object.fromEntries(ENTITY_CANDIDATE_FILTERS.map((filter)=>[filter.id,filter.id === "all" ? activeCandidates.length : activeCandidates.filter((item)=>entityCandidateMatchesFilter(it,item.name,filter.id)).length]));
   const filterMarkup=`<nav class="entity-candidate-filters" aria-label="Candidate workflow filters">${ENTITY_CANDIDATE_FILTERS.map((filter)=>`<button type="button" class="${candidateFilter===filter.id?"selected":""}" onclick="setEntityCandidateFilter('${list}','${id}','${filter.id}')"><span>${esc(filter.label)}</span><b>${filterCounts[filter.id] || 0}</b></button>`).join("")}</nav>`;
@@ -1042,7 +1096,7 @@ function entityPage(list, id, extra) {
       ? `<details class="manual-optional-batch-review"><summary>Optional batch AI check</summary><p>Review several visible files as supporting evidence. Human approval remains available without it.</p>${batchPanelRaw}</details>`
       : batchPanelRaw)
     : "";
-  const candidatesTask = `<details class="fold compact-entity-section entity-candidate-section bounded-source-section" open><summary>Candidate files <span>${activeCandidates.length} to organize</span></summary><header><div><span>CHOOSE & APPROVE</span><b>${filteredCandidates.length} shown in ${esc(ENTITY_CANDIDATE_FILTERS.find((item)=>item.id===candidateFilter)?.label || "All")}</b><small>Choose the approved image directly by human judgment. Optional AI checks remain separate and never approve on their own.</small></div></header>${filterMarkup}${batchPanel}<div class="entity-media entity-candidate-grid">${candidatePage.rows.length ? candidatePage.rows.map((m,i)=>entityCandidateCard(list,it,m,i,candidateJson,false)).join("") : `<div class="entity-candidate-empty"><b>${activeCandidates.length ? "No candidates in this filter" : media.length ? "No undecided candidates" : "No candidates yet"}</b><span>${activeCandidates.length ? "Choose another workflow filter." : "Upload or map another file."}</span></div>`}</div>${boundedPagerMarkup("candidates",`${list}:${id}:active:${candidateFilter}`,candidatePage,"reference candidates")}${rejectedCandidates.length ? `<details class="entity-rejected-candidates"><summary>Rejected candidates <span>${rejectedCandidates.length}</span></summary><div class="entity-media entity-candidate-grid">${rejectedPage.rows.map((m,i)=>entityCandidateCard(list,it,m,i,rejectedJson,true)).join("")}</div>${boundedPagerMarkup("candidates",`${list}:${id}:rejected`,rejectedPage,"rejected candidates")}</details>` : ""}</details>`;
+  const candidatesTask = `<details class="fold compact-entity-section entity-candidate-section bounded-source-section" open><summary>Candidate files <span>${activeCandidates.length} to organize</span></summary><header><div><span>CHOOSE & APPROVE</span><b>${filteredCandidates.length} shown in ${esc(ENTITY_CANDIDATE_FILTERS.find((item)=>item.id===candidateFilter)?.label || "All")}</b><small>Choose the approved image directly by human judgment. Optional AI checks remain separate and never approve on their own.</small></div></header>${approvedAuthorityMarkup}${filterMarkup}${batchPanel}<div class="entity-media entity-candidate-grid">${candidatePage.rows.length ? candidatePage.rows.map((m,i)=>entityCandidateCard(list,it,m,i,candidateJson,false)).join("") : `<div class="entity-candidate-empty"><b>${activeCandidates.length ? "No candidates in this filter" : media.length ? "No undecided candidates" : "No candidates yet"}</b><span>${activeCandidates.length ? "Choose another workflow filter." : "Upload or map another file."}</span></div>`}</div>${boundedPagerMarkup("candidates",`${list}:${id}:active:${candidateFilter}`,candidatePage,"reference candidates")}${rejectedCandidates.length ? `<details class="entity-rejected-candidates"><summary>Rejected candidates <span>${rejectedCandidates.length}</span></summary><div class="entity-media entity-candidate-grid">${rejectedPage.rows.map((m,i)=>entityCandidateCard(list,it,m,i,rejectedJson,true)).join("")}</div>${boundedPagerMarkup("candidates",`${list}:${id}:rejected`,rejectedPage,"rejected candidates")}</details>` : ""}</details>`;
   const specs = list === "audio" ? [
     {id:"reference",label:"Audio",detail:"Candidates and the approved file",render:()=>approvedTask},
     {id:"details",label:"Details & history",detail:"Mix intent, media and records",render:()=>entityDetailsHistoryMarkup(list,it,extra)},

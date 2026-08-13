@@ -24,10 +24,18 @@
   function entityIdentityText(list, entity) {
     return String(entity.coverageDescription || "").trim() || entityVisualDescription(entity, list);
   }
+  /* The file expression is preserved exactly as it was; what changed in P4-SEM-C2
+     is how it is RESOLVED. When the approval recorded a durable assetId, the
+     lookup goes through identity first, so an image renamed since approval still
+     resolves instead of silently becoming "no primary reference". A project with
+     no ledger yet carries no id and falls back to the filename, which is the
+     pre-C2 behaviour exactly. */
   function primaryReference(list, entity) {
+    if (!entity) return null;
     const file = entity.approvedFile || (entity.continuityStates || []).find((state) => state.isDefault)?.approvedFile || "";
     if (!file) return null;
-    return entityMedia(list, entity).find((item) => item.name === file) || null;
+    const identified = approvalEdges(entity).find((edge) => edge.file === file && edge.assetId);
+    return resolveApprovalMedia({ file, assetId: identified?.assetId || "" }, entityMedia(list, entity));
   }
   function coverageAuthorityReferences(list, entity, targetSlot = null) {
     const primary = primaryReference(list, entity);
@@ -41,7 +49,10 @@
     add(primary, null, 1000, "primary");
     for (const slot of ensureCoverageSlots(list, entity)) {
       if (!slot.approvedFile || entityCandidateIsCoverageSheet(entity, slot.approvedFile)) continue;
-      const item = media.find((row) => row.name === slot.approvedFile);
+      /* Identity first, filename second — the same rule primaryReference() uses,
+         so a coverage view and the primary cannot disagree about whether the
+         image they both point at still exists. */
+      const item = resolveApprovalMedia({ file: slot.approvedFile, assetId: slot.approvedAssetId || "" }, media);
       if (!item) continue;
       const candidateView = coverageSlotViewTag(list, slot);
       const score = targetSlot && typeof referenceViewScore === "function"
@@ -598,5 +609,9 @@
      for the same reason: this module is the third surface that answers "which
      views does this entity still owe?", and a suite proving three surfaces agree
      is worth nothing if it reimplements one of them. */
-  window.__CINEBRAID_COVERAGE_AUTOMATION = { missingCoverageSlots, coverageSheetSlots, updateCoverageTerminalState };
+  /* primaryReference and coverageAuthorityReferences joined the bag for P4-SEM-C2
+     and for the same stated reason. They are the automation-side answer to "which
+     approved media does this entity have", and the manual selector is the other
+     answer; a suite asserting the two agree has to call both for real. */
+  window.__CINEBRAID_COVERAGE_AUTOMATION = { missingCoverageSlots, coverageSheetSlots, updateCoverageTerminalState, primaryReference, coverageAuthorityReferences };
 })();

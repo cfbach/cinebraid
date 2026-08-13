@@ -436,6 +436,51 @@ async function anchorBeforeRename(options = {}) {
   }
 }
 
+/* P4-SEM-C2 — the one way durable identity leaves this module.
+ *
+ * A read-only projection: project-relative path -> assetId, for every row that
+ * currently names a file on disk. C1 kept identity entirely inside the ledger,
+ * which meant nothing the browser wrote could carry it; C2 needs approvals to
+ * record the id of what they approved, and an approval cannot record an id it
+ * was never told.
+ *
+ * What this deliberately is NOT: it is not an authority, and it grants none. The
+ * ledger still decides nothing about approval — the caller learns which id names
+ * which file, and every semantic conclusion is drawn elsewhere. That keeps
+ * media-assets.js's founding rule intact: a projection cannot corrupt what it
+ * projects.
+ *
+ * Synchronous, because it is read on the scan path and a scan answers now. It
+ * reads one small JSON file and no media bytes, so it cannot hydrate a
+ * cloud-synced corpus — the constraint that shapes every other read here.
+ *
+ * It never throws. An unreadable or absent ledger yields an empty map, and every
+ * caller must treat a missing id as the normal state rather than as an error:
+ * that is exactly the state of every project that has not yet had a pass, and of
+ * every file backfilled before its first verification.
+ *
+ * Rows marked `storage.missing` are skipped. Identity is retained for a file that
+ * has disappeared — deliberately, so a later reappearance can be reconciled — but
+ * a retained row must never answer for a path a live file now occupies. */
+function identityIndex(options = {}) {
+  const index = new Map();
+  const projectDir = resolveProjectDir(options.projectsRoot, options.slug);
+  if (!projectDir) return index;
+  try {
+    const loaded = readLedger(projectDir);
+    if (!loaded.exists) return index;
+    for (const asset of loaded.ledger.assets || []) {
+      const storagePath = asset && asset.storage ? String(asset.storage.path || "") : "";
+      if (!storagePath || asset.storage.missing === true) continue;
+      if (!index.has(storagePath)) index.set(storagePath, asset.assetId);
+    }
+  } catch {
+    /* LedgerUnreadableError and anything else. Identity is optional by contract,
+       and a media listing must not fail because a sidecar is unreadable. */
+  }
+  return index;
+}
+
 /* Deliberate, bounded, caller-named byte reads. The escalation path for a caller
    that wants a digest badly enough to pay for it, and what the rename proofs use
    to establish byte identity before renaming. */
@@ -528,6 +573,7 @@ module.exports = {
   anchorBeforeRename,
   chooseVerificationTargets,
   countUnverified,
+  identityIndex,
   readAssets,
   resetActivationState,
   resolveProjectDir,
