@@ -5,6 +5,7 @@ const fs = require("fs");
 const path = require("path");
 const { parseAspectRatio, h3AspectSupport } = require("./public/shared-aspect");
 const { readJobLedger, writeJobLedgerSync, JobLedgerUnreadableError } = require("./generation-job-store");
+const { jobOutputsForRename, repairJobOutputIdentity } = require("./public/shared-media-disposition");
 const { compileH3ExecutionPlan, planProvenance, H3ExecutionError } = require("./h3-execution");
 const { serializeH3PlanForFal, H3BackendError, FAL_H3_BACKEND } = require("./fal-h3-backend");
 const { compileImageExecutionPlan, imagePlanProvenance, ImageExecutionError, IMAGE_MODEL_ID } = require("./image-execution");
@@ -32,11 +33,14 @@ function registerFalGeneration(app, context) {
      later read, write and path is addressed through that captured record. The
      project switcher stays fully available; what changes is that switching can
      no longer redirect work that is already in flight. */
+  function ownerForSlug(slug) {
+    const { dir, file } = projectDirForSlug(slug);
+    return { slug, dir, file };
+  }
   function captureOwner() {
     const slug = activeSlug();
     if (!slug) throw new Error("No active project.");
-    const { dir, file } = projectDirForSlug(slug);
-    return { slug, dir, file };
+    return ownerForSlug(slug);
   }
   /* The owner a job record already belongs to. A job is only ever handled
      through the project whose ledger it was found in, so this is the captured
@@ -152,6 +156,64 @@ function registerFalGeneration(app, context) {
     });
     commitChains.set(key, next.catch(() => {}));
     return next;
+  }
+
+  /* P4-SEM-C4 — the job record follows the bytes it delivered.
+   *
+   * THE ONE WRITER of durable identity onto a job output, called by
+   * POST /api/media/rename after the ledger anchored the move and after the file
+   * was actually moved. That route is the only place CineBraid renames media and
+   * the only moment it can prove two filenames name the same bytes, which is the
+   * same argument C2 and C3 make for their own repairs.
+   *
+   * WHY IT LIVES HERE rather than in the route. The generation ledger has exactly
+   * one writer and one per-project commit chain, and that is load-bearing: an
+   * overlapping write from a second owner is the snapshot-clobbering defect
+   * `commit` was written to end. Repairing from inside the same turn keeps the
+   * count at one.
+   *
+   * READ BEFORE WRITE, deliberately. A project that has never generated has no
+   * generation-jobs.json, and `commit` would create one holding `[]`. Renaming a
+   * file must not be the thing that mints a generation history, so the ledger is
+   * examined first and a turn is opened only when a job actually names this file.
+   *
+   * IT NEVER THROWS. The rename has already happened and the filesystem is
+   * correct; an unreadable ledger or a busy sidecar must not turn a completed
+   * approval into an error the director sees. Reporting what it did or did not do
+   * is enough — the same trade anchorBeforeRename makes for the same reason. */
+  async function repairJobMediaIdentity(change = {}) {
+    const slug = String(change.slug || "").trim();
+    const dir = String(change.dir || "").trim();
+    const from = String(change.from || "").trim();
+    const to = String(change.to || "").trim();
+    if (!slug || !dir || !from || !to || from === to) return { repaired: 0, jobs: 0, reason: "no-change" };
+    let owner;
+    try {
+      owner = ownerForSlug(slug);
+    } catch (error) {
+      return { repaired: 0, jobs: 0, reason: "no-project" };
+    }
+    const request = { dir, from, to, assetId: String(change.assetId || "") };
+    try {
+      const ledger = readJobLedger(owner.dir);
+      if (!ledger.exists) return { repaired: 0, jobs: 0, reason: "no-ledger" };
+      if (!ledger.jobs.some((job) => jobOutputsForRename(job, request).length))
+        return { repaired: 0, jobs: 0, reason: "no-match" };
+      return await commit(owner, (jobs) => {
+        let repaired = 0;
+        let touched = 0;
+        for (const job of jobs) {
+          const rows = repairJobOutputIdentity(job, request);
+          if (!rows.length) continue;
+          touched += 1;
+          repaired += rows.length;
+          job.updatedAt = now();
+        }
+        return { repaired, jobs: touched, reason: "repaired" };
+      });
+    } catch (error) {
+      return { repaired: 0, jobs: 0, reason: "failed", error: String(error?.message || error) };
+    }
   }
 
   /* Whole-operation serialisation for one job. Two refreshes of the same job
@@ -1763,6 +1825,11 @@ function registerFalGeneration(app, context) {
       res.json({ ok: true, job: publicJob(job) });
     }));
   });
+
+  /* The one thing this module exposes to a caller that is not a route: the
+     P4-SEM-C4 repair, so POST /api/media/rename can keep the generation ledger
+     truthful without becoming a second writer of it. */
+  return { repairJobMediaIdentity };
 }
 
 module.exports = { registerFalGeneration };

@@ -1363,6 +1363,27 @@ app.post("/api/media/rename", async (req, res) => {
      "scan" because the filesystem provably just changed, so this pass must not be
      collapsed into the scan throttle. */
   noteProjectActivity("rename", renamedSlug);
+  /* P4-SEM-C4 — the generation ledger follows the bytes too.
+   *
+   * C2 repairs every entity approval edge and C3 repairs every shot winner edge,
+   * both from the browser, because both records live in project.json. A job
+   * record does not: `outputs[]` is server-owned, the browser has no write path
+   * to it, and nothing repaired it. So approving a generated take under its
+   * canonical name left the job that produced it naming a file no longer on
+   * disk — the forward provenance edge breaking at exactly the moment the media
+   * became canon.
+   *
+   * Awaited rather than fired and forgotten: the repair is durable before this
+   * route reports success, so a client that reloads the job list immediately
+   * cannot read the pre-rename names back. It costs one small JSON read when no
+   * job names the file, which is the common case. It never throws. */
+  await FalGeneration.repairJobMediaIdentity({
+    slug: renamedSlug,
+    dir: safeDir,
+    from: path.basename(src),
+    to: toName,
+    assetId: anchor?.assetId || "",
+  });
   /* P4-SEM-C2 — the anchored identity, handed back to the caller that is about to
      repair its own pointers.
 
@@ -3508,7 +3529,11 @@ function buildMarkdown(P) {
    active project is what let a switch mid-generation write one project's
    document over another's. It receives the means to resolve an EXPLICIT slug
    instead, and captures one before its first await. */
-registerFalGeneration(app, {
+/* The returned handle is the P4-SEM-C4 job-record repair, and it is the only
+   thing this module hands back. POST /api/media/rename calls it so the
+   generation ledger follows the bytes without acquiring a second writer — see
+   fal-generation.js repairJobMediaIdentity for why the commit chain matters. */
+const FalGeneration = registerFalGeneration(app, {
   readConfig,
   readProject,
   writeProject,

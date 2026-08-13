@@ -1220,9 +1220,15 @@ function v626BlockingRowsFromJob(shotId, job) {
   const ids = new Set((job.outputs || []).map((item) => item.assetId).filter(Boolean));
   return blockingMediaRows(shotById(shotId)).filter((row) => ids.has(row.asset.id));
 }
+/* P4-SEM-C4: which takes this job delivered, resolved IDENTITY FIRST. This used
+   to build a Set of output filenames, so a take the approval rename had moved
+   stopped matching the job that produced it — and a resumed run then reported
+   its own candidates unavailable. jobOutputMatcher() prefers the ledger identity
+   the rename recorded and falls back to the filename, which is what every
+   pre-C4 project still resolves by. */
 function v626FrameRowsFromJob(shotId, frameId, job) {
-  const shot = shotById(shotId), frames = guidedFrames(shot), index = frames.findIndex((frame) => frame.id === frameId), names = new Set((job.outputs || []).map((item) => item.name || item.file).filter(Boolean));
-  return guidedFrameCandidateRows(shot, frames[index], takesFor(shotId), index).filter((take) => names.has(take.name));
+  const shot = shotById(shotId), frames = guidedFrames(shot), index = frames.findIndex((frame) => frame.id === frameId), delivered = jobOutputMatcher(job);
+  return guidedFrameCandidateRows(shot, frames[index], takesFor(shotId), index).filter(delivered);
 }
 function v626GetBlockingBuild(shot, id) { return ensureShotCreation(shot).blockingBuilds.find((item) => item.id === id) || null; }
 async function v626OpeningBlockingBuild(run, shotId, round, revision = "", sourceAssetId = "") {
@@ -2090,7 +2096,10 @@ async function v626AutomateEntityState(run, list, entityId, stateId) {
       await v626CompleteStep(run, genKey, { childJobId: job.id, stateId, files: (job.outputs || []).map((item) => item.name), result: { ...(genStep.result || {}), outputs: job.outputs || [], usageCounted: true } });
     }
     entity = P[list]?.find((item) => item.id === entityId); state = entityStateById(entity, stateId);
-    const currentGen = v626Step(run, genKey), job = await v626FindFalJob(currentGen.childJobId), files = (job?.outputs || currentGen.result?.outputs || []).map((item) => item.name).filter(Boolean), media = entityMedia(list, entity).filter((item) => files.includes(item.name));
+    /* P4-SEM-C4: identity first, filename second — the same resolution the frame
+       reader uses, so an approved reference the rename moved still reads as the
+       output of the job that generated it. */
+    const currentGen = v626Step(run, genKey), job = await v626FindFalJob(currentGen.childJobId), delivered = jobOutputMatcher(job || { outputs: currentGen.result?.outputs || [] }), media = entityMedia(list, entity).filter(delivered);
     if (!media.length) throw new Error(`${state.name || "State"} candidates are unavailable`);
     if (prior.status !== "completed") {
       await v626BeginStep(run, reviewKey, "review", `Review ${state.name || "state"} candidates · round ${round}`, { stateId, attempt: round, maxAttempts: v668EffectiveStateRounds(run) });

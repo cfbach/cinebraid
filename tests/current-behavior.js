@@ -397,6 +397,8 @@ async function main() {
     "import-benchmark.js",
     "integrity-mobile-usability.js",
     "intent-loss-safety.js",
+    "job-media-identity-negative-controls.js",
+    "job-media-identity.js",
     "lan-passcode-real-browser.py",
     "lan-passcode-settings.js",
     "launch-blockers.js",

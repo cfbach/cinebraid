@@ -628,6 +628,179 @@
       .map((edge) => ({ kind: edge.kind, id: edge.id, label: edge.label, field: edge.field, file: edge.file, assetId: edge.assetId }));
   }
 
+  /* =========================================================================
+     P4-SEM-C4 — the same answer, extended to generation job records.
+
+     THE LAST OF C1'S THREE TARGETS. media-asset-service.js:59-62 named
+     "approval pointers, candidate rows or job records"; C2 took the entity
+     approval pointers and candidate rows, C3 took the shot-side ones, and the
+     job record is what remains.
+
+     THE DEFECT THIS ENDS, proven against a running server before it was
+     written. fal-generation.js's ingest() records what a paid job delivered as
+     `outputs[] = [{ type, name, url, ... }]` — a filename and a URL, and
+     nothing else. The approval rename then rewrites that filename. C2 repairs
+     every entity edge and C3 repairs every shot edge, and neither touches the
+     job. So after approving a generated take under its canonical name, the job
+     that produced it names a file that is no longer on disk, while the ledger
+     has tracked those same bytes across the move perfectly. The forward
+     provenance edge — "which media did this paid job deliver" — breaks at
+     exactly the moment the media becomes canon.
+
+     THE NAME, and why it is not `assetId`. `outputs[].assetId` is ALREADY
+     TAKEN: every blocking output carries the P.mediaAssets[] LIBRARY row id
+     there (fal-generation.js:891). That is precisely the collision the identity
+     note above exists to prevent, and writing the ledger's id into the same key
+     would overwrite a live library link with a different kind of id. The
+     ledger's identity therefore lands on `mediaAssetId`, which cannot be
+     mistaken for either. A blocking output legitimately carries both.
+
+     MATCHED BY PATH, NEVER BY BARE FILENAME. A rename is scoped to one
+     directory, and two shots can hold same-named takes. Matching an output on
+     its basename alone is the false-linkage class C1 fixed in the indexer —
+     `shots/SH010/blocking/BLOCK.png` inheriting SH020's record — so an output
+     is repaired only when its own URL proves it is that file, or when it
+     already carries the identity being repaired.
+
+     WHAT IS NOT CLAIMED. That a job's outputs were good. `outputs[]` means
+     "this job delivered that media", the same way `winner` means "this edge
+     points at that media" and no more. */
+
+  /* Deliberately NOT `assetId` — see above. */
+  const JOB_OUTPUT_ASSET_ID_FIELD = "mediaAssetId";
+
+  /* Where an output's bytes live, project-relative, read from the URL the
+     ingest wrote. Returns "" when there is no usable path, and a caller must
+     treat that as "cannot prove which file this is" rather than as a reason to
+     fall back to the basename. */
+  function jobOutputPath(output) {
+    const raw = dispositionText(dispositionRecord(output).url);
+    if (!raw.startsWith("/assets/")) return "";
+    let rest = raw.slice("/assets/".length);
+    try { rest = decodeURIComponent(rest); } catch { /* a raw name that is not valid escaping stays as written */ }
+    return rest.replace(/\\/g, "/").replace(/^\/+/, "");
+  }
+
+  /* The directory portion of that path, for matching one rename's scope. */
+  function jobOutputDir(output) {
+    const full = jobOutputPath(output);
+    const cut = full.lastIndexOf("/");
+    return cut < 0 ? "" : full.slice(0, cut);
+  }
+
+  /* Every piece of media a job says it delivered, in one list — the job-side
+     twin of approvalEdges() and shotApprovalEdges(). Enumerated rather than
+     remembered, for the reason C2 and C3 both give: a repair that walks this
+     list cannot miss an output kind somebody forgot to name. */
+  function jobOutputEdges(job) {
+    const outputs = dispositionList(dispositionRecord(job).outputs);
+    const edges = [];
+    outputs.forEach((output, index) => {
+      const record = dispositionRecord(output);
+      const file = dispositionText(record.name || record.file);
+      const stored = record[JOB_OUTPUT_ASSET_ID_FIELD];
+      edges.push({
+        kind: dispositionText(record.type) || "output",
+        id: String(index),
+        index,
+        record,
+        field: "name",
+        idField: JOB_OUTPUT_ASSET_ID_FIELD,
+        path: jobOutputPath(record),
+        dir: jobOutputDir(record),
+        file,
+        assetId: isLedgerAssetId(stored) ? stored : "",
+      });
+    });
+    return edges.filter((edge) => edge.file || edge.assetId);
+  }
+
+  /* THE SINGLE AUTHORITATIVE WRITER of identity onto a job output. Refuses a
+     non-identity for the C2 reason, and refuses to disturb `assetId` because
+     that key belongs to the project media library. */
+  function stampJobOutputIdentity(record, assetId) {
+    if (!record || typeof record !== "object") return "";
+    if (!isLedgerAssetId(assetId)) return "";
+    record[JOB_OUTPUT_ASSET_ID_FIELD] = assetId;
+    return assetId;
+  }
+
+  /* Which outputs a given rename would touch, WITHOUT touching them.
+     The rename route needs this before it decides to open a write turn: a
+     project that has never generated has no generation ledger, and a file move
+     must not be the thing that creates one. */
+  function jobOutputsForRename(job, change = {}) {
+    const from = dispositionText(change.from);
+    const to = dispositionText(change.to);
+    const dir = dispositionText(change.dir).replace(/^\/+/, "").replace(/\/+$/, "");
+    const assetId = isLedgerAssetId(change.assetId) ? change.assetId : "";
+    if (!from || !to || from === to || !dir) return [];
+    const target = `${dir}/${from}`;
+    /* Identity first, path second — the same precedence resolveApprovalMedia()
+       uses, so a SECOND rename finds the output even when the filename the
+       first one wrote has since moved on. */
+    return jobOutputEdges(job).filter((edge) => (assetId && edge.assetId === assetId) || edge.path === target);
+  }
+
+  /* Repair every job output naming a file CineBraid just renamed.
+
+     `url` moves with `name` because it is a derived copy of it, exactly as
+     canonicalName is a derived copy of a shot winner: leaving it behind would
+     trade a stale name for a broken preview. Only the trailing segment is
+     rewritten, so a URL that has been re-rooted elsewhere is left alone.
+
+     Returns what it changed so a caller can assert on it rather than infer. */
+  function repairJobOutputIdentity(job, change = {}) {
+    const to = dispositionText(change.to);
+    const assetId = isLedgerAssetId(change.assetId) ? change.assetId : "";
+    const repaired = [];
+    for (const edge of jobOutputsForRename(job, change)) {
+      edge.record.name = to;
+      const url = dispositionText(edge.record.url);
+      const cut = url.lastIndexOf("/");
+      if (cut >= 0) edge.record.url = `${url.slice(0, cut + 1)}${to}`;
+      if (assetId) stampJobOutputIdentity(edge.record, assetId);
+      repaired.push({ kind: edge.kind, index: edge.index, name: to, assetId });
+    }
+    return repaired;
+  }
+
+  /* Resolve one job output to the media it delivered, IDENTITY FIRST.
+     resolveApprovalMedia() reused verbatim, for C3's reason: a job output and
+     an approval edge resolve by the same rule, and a second copy would become a
+     second rule the day one of them changed. */
+  function resolveJobOutputMedia(output, media) {
+    const record = dispositionRecord(output);
+    const stored = record[JOB_OUTPUT_ASSET_ID_FIELD];
+    return resolveApprovalMedia(
+      { assetId: isLedgerAssetId(stored) ? stored : "", file: dispositionText(record.name || record.file) },
+      media,
+    );
+  }
+
+  /* A predicate over a live media listing: "did this job deliver this item?"
+
+     Shaped as a matcher rather than as a list because both live readers filter
+     a collection they have already built and ordered
+     (public/automation.js v626FrameRowsFromJob, and the entity-state reader),
+     and returning media here would make this module responsible for their
+     order. Identity is checked first so a repaired output still matches after
+     the bytes have moved again. */
+  function jobOutputMatcher(job) {
+    const names = new Set();
+    const ids = new Set();
+    for (const edge of jobOutputEdges(job)) {
+      if (edge.file) names.add(edge.file);
+      if (edge.assetId) ids.add(edge.assetId);
+    }
+    return function matchesJobOutput(item) {
+      const row = dispositionRecord(item);
+      const id = dispositionText(row.assetId);
+      if (id && ids.has(id)) return true;
+      return names.has(dispositionText(row.name));
+    };
+  }
+
   return {
     MEDIA_DISPOSITIONS,
     APPROVAL_TARGET_KINDS,
@@ -655,5 +828,15 @@
     clearShotApprovalIdentity,
     repairShotApprovalIdentity,
     staleShotApprovalEdges,
+    /* P4-SEM-C4 */
+    JOB_OUTPUT_ASSET_ID_FIELD,
+    jobOutputPath,
+    jobOutputDir,
+    jobOutputEdges,
+    jobOutputsForRename,
+    stampJobOutputIdentity,
+    repairJobOutputIdentity,
+    resolveJobOutputMedia,
+    jobOutputMatcher,
   };
 });
