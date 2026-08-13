@@ -39,6 +39,7 @@ const SUITES = [
   "check:lan-passcode-browser",
   "check:generation-defaults-browser",
   "check:generation-truth-browser",
+  "check:state-honesty-browser",
   "check:candidate-review-browser",
   "check:focused-browser",
   "check:state-binding-browser",

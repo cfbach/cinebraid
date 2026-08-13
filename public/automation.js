@@ -610,13 +610,44 @@ function v664BlockingReviewStore(shot) {
   creation.blockingAttemptReviews = creation.blockingAttemptReviews && typeof creation.blockingAttemptReviews === "object" ? creation.blockingAttemptReviews : {};
   return creation.blockingAttemptReviews;
 }
+/* THE PARTITION IS REAL, AND IT IS NOT A BUG - but it is not "everything with an empty
+   string" either. An unassigned attempt is a candidate for the SHOT-WIDE opening guide,
+   which is what useBlockingGuide() sets and what v664ReviewExistingBlockingForRun()
+   promotes. An attempt bound to a frame is a candidate for that frame's endpoint guide
+   only, set by useFrameBlockingGuide(). Reviewing the two pools together would let a
+   Frame B endpoint image be recommended as the shot's opening composition, so they
+   stay apart.
+
+   What was wrong was never this function - it was that the shot-level console DISPLAYED
+   every attempt, GATED itself on that full list, and then asked this reader for the
+   unassigned pool alone. With every attempt bound to a frame the console rendered a
+   REVIEW ALL WITH AI button over an empty set, and answered a click with "Add at least
+   one blocking attempt first" while the attempts sat visible underneath it. The console
+   is fixed where it is wrong, in guidedBlockingPanel. */
 function v664BlockingRowsForReview(shot, frameId = "") {
   const target = String(frameId || "");
   return blockingMediaRows(shot).filter(({ link }) => target ? String(link.blockingFrameId || "") === target : !String(link.blockingFrameId || ""));
 }
+/* Every attempt on the shot, labelled with the pool it can be reviewed in. The console
+   uses this to say what it is not reviewing rather than silently dropping it. */
+window.blockingAttemptPools = (shot) => {
+  const rows = blockingMediaRows(shot);
+  const opening = rows.filter(({ link }) => !String(link.blockingFrameId || ""));
+  const framed = new Map();
+  for (const row of rows) {
+    const frameId = String(row.link.blockingFrameId || "");
+    if (!frameId) continue;
+    if (!framed.has(frameId)) framed.set(frameId, []);
+    framed.get(frameId).push(row);
+  }
+  return { rows, opening, framed };
+};
 window.blockingAttemptReviewFor = (shot, assetId, frameId = "") => {
-  const record = v664BlockingReviewStore(shot)[v664BlockingReviewKey(frameId)] || {};
-  return (record.items || {})[assetId] || null;
+  const store = v664BlockingReviewStore(shot);
+  const scoped = frameId ? (store[v664BlockingReviewKey(frameId)] || {}).items?.[assetId] : null;
+  /* A frame's own review first; otherwise the shot-level record, which is where an
+     attempt reviewed before it was bound to a frame still lives. */
+  return scoped || (store[v664BlockingReviewKey("")] || {}).items?.[assetId] || null;
 };
 window.blockingAttemptReviewSummary = (shot, frameId = "") => {
   const rows = v664BlockingRowsForReview(shot, frameId), record = v664BlockingReviewStore(shot)[v664BlockingReviewKey(frameId)] || {};
@@ -733,9 +764,23 @@ function v664SceneApprovedCount(shot) {
 window.shotAutomationHub = (shot, placement = "look") => {
   const frames = guidedFrames(shot), required = frames.filter((frame) => frame.required !== false), approved = required.filter((frame) => guidedFrameApproved(shot, frame, takesFor(shot.id), frames.indexOf(frame))).length;
   const blocking = blockingAttemptReviewSummary(shot), active = activeBlockingRow(shot), scene = sceneById(shot.scene), sceneApproved = v664SceneApprovedCount(shot), sceneReview = scene?.continuityReview || null;
+  /* Counted over every attempt on the shot, scored over the opening pool. Reporting
+     the opening pool alone said "No attempts yet" on a shot whose attempts were all
+     bound to frames and plainly visible in the panel below. */
+  const blockingPools = blockingAttemptPools(shot), blockingFramed = blockingPools.rows.length - blocking.rows.length;
+  const blockingCount = blockingPools.rows.length
+    ? `${plural(blockingPools.rows.length, "attempt")}`
+    : "No attempts yet";
+  const blockingDetail = blocking.reviewed
+    ? `${blocking.reviewed}/${blocking.rows.length} opening AI reviewed${blockingFramed ? ` · ${blockingFramed} frame-bound` : ""}`
+    : blocking.rows.length
+      ? `Ready for AI review${blockingFramed ? ` · ${blockingFramed} frame-bound` : ""}`
+      : blockingFramed
+        ? `${plural(blockingFramed, "attempt")} reviewed with their frame`
+        : "No attempts yet";
   const currentRun = v626LatestRun("shot-chain", shot.id, "stills"), blockingRun = v626LatestRun("shot-chain", shot.id, "blocking-only");
   const open = !manualFirstWorkflow() || [currentRun?.status, blockingRun?.status].some((status) => ["running","awaiting-review","failed","interrupted"].includes(status));
-  return `<details class="shot-automation-hub" ${open ? "open" : ""}><summary><div><span>OPTIONAL ASSISTED PRODUCTION</span><b>Review blocking, automate this shot, or check the scene</b><small>Manual work remains first-class. These tools reuse approved references and existing results before spending credits.</small></div><span>${currentRun ? esc(String(currentRun.status || "run").replace(/-/g," ").toUpperCase()) : "OPTIONAL"}</span></summary><div class="shot-automation-hub-body"><div class="shot-automation-status-grid"><article><span>BLOCKING</span><b>${active ? "Guide active" : `${blocking.rows.length} attempt${blocking.rows.length === 1 ? "" : "s"}`}</b><small>${blocking.reviewed ? `${blocking.reviewed}/${blocking.rows.length} AI reviewed` : blocking.rows.length ? "Ready for AI review" : "No attempts yet"}</small></article><article><span>REQUIRED FRAMES</span><b>${approved}/${required.length} approved</b><small>${approved === required.length ? "Still package ready" : "Full-shot automation can continue the chain"}</small></article><article><span>SCENE CONTINUITY</span><b>${sceneReview ? esc(String(sceneReview.verdict || "reviewed").replace(/_/g," ")) : `${sceneApproved} approved still${sceneApproved === 1 ? "" : "s"}`}</b><small>${sceneApproved >= 2 ? "Ready for sequence review" : "Available after two scene stills are approved"}</small></article></div><div class="shot-automation-primary-actions">${blocking.recommended && blocking.recommendation?.pass ? `<button class="approve-btn" onclick="useRecommendedBlockingAttempt('${attr(shot.id)}')">USE RECOMMENDED GUIDE · ${Number(blocking.recommendation.score || 0)}</button>` : ""}<button class="approve-btn large" onclick="openShotAutomationModal('${attr(shot.id)}')">AUTOMATE FULL SHOT</button></div><div class="shot-automation-scene-actions"><a class="text-link-btn" href="#/scene/${attr(shot.scene)}">Scene continuity & automation · ${esc(scene?.title || shot.scene)} →</a></div></div></details>`;
+  return `<details class="shot-automation-hub" ${open ? "open" : ""}><summary><div><span>OPTIONAL ASSISTED PRODUCTION</span><b>Review blocking, automate this shot, or check the scene</b><small>Manual work remains first-class. These tools reuse approved references and existing results before spending credits.</small></div><span>${currentRun ? esc(String(currentRun.status || "run").replace(/-/g," ").toUpperCase()) : "OPTIONAL"}</span></summary><div class="shot-automation-hub-body"><div class="shot-automation-status-grid"><article><span>BLOCKING</span><b>${active ? "Guide active" : esc(blockingCount)}</b><small>${esc(blockingDetail)}</small></article><article><span>REQUIRED FRAMES</span><b>${approved}/${required.length} approved</b><small>${approved === required.length ? "Still package ready" : "Full-shot automation can continue the chain"}</small></article><article><span>SCENE CONTINUITY</span><b>${sceneReview ? esc(String(sceneReview.verdict || "reviewed").replace(/_/g," ")) : `${sceneApproved} approved still${sceneApproved === 1 ? "" : "s"}`}</b><small>${sceneApproved >= 2 ? "Ready for sequence review" : "Available after two scene stills are approved"}</small></article></div><div class="shot-automation-primary-actions">${blocking.recommended && blocking.recommendation?.pass ? `<button class="approve-btn" onclick="useRecommendedBlockingAttempt('${attr(shot.id)}')">USE RECOMMENDED GUIDE · ${Number(blocking.recommendation.score || 0)}</button>` : ""}<button class="approve-btn large" onclick="openShotAutomationModal('${attr(shot.id)}')">AUTOMATE FULL SHOT</button></div><div class="shot-automation-scene-actions"><a class="text-link-btn" href="#/scene/${attr(shot.scene)}">Scene continuity & automation · ${esc(scene?.title || shot.scene)} →</a></div></div></details>`;
 };
 
 window.shotAutomationPanel = (shot) => {
@@ -1184,6 +1229,12 @@ function v626Pick(reviewData, run = null) {
 }
 async function v627PauseForHumanReview(run, step, label) {
   step.status = "needs-review";
+  /* THE MACHINE STOPS HERE, so the record says so. Without this the step carried no
+     completedAt, the activity clock fell back to Date.now(), and a run parked at an
+     approval gate counted upward for as long as the director took to look at it.
+     Kept if one is already stamped: v626CompleteStep may have recorded the boundary a
+     moment earlier, and that one is the more accurate of the two. */
+  step.completedAt = step.completedAt || v626Now();
   step.updatedAt = v626Now();
   run.status = "awaiting-review";
   run.stage = label || "Human approval required";

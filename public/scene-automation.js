@@ -290,7 +290,10 @@ async function v640RunSceneShot(run, shotId, approvedShotIds) {
   }
   await v626SaveRun(run, false);
   if (child.status === "awaiting-review") {
-    step.status = "needs-review"; step.updatedAt = v626Now();
+    /* Same gate, same reason as v627PauseForHumanReview: the child run stopped and is
+       waiting for a director, so the parent step records when its machine work ended
+       instead of leaving the activity clock to run against Date.now(). */
+    step.status = "needs-review"; step.completedAt = step.completedAt || v626Now(); step.updatedAt = v626Now();
     run.status = "interrupted"; run.stage = `${shotId} needs director approval`; run.phase = "child-review";
     run.summary = `${shotId} generated candidates but needs a director choice. Open the shot, approve the child run candidate, then Resume Scene Automation.`;
     await v626SaveRun(run, false);
