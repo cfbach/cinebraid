@@ -1283,8 +1283,31 @@ function queueProjectSave(job) {
       setSaveState("saving", "Saving…");
     const headers = { "Content-Type": "application/json" };
     /* "*" only for a document that has never been stored; otherwise the exact
-       revision this view loaded or last wrote. */
-    headers["If-Match"] = job.documentRevision || "*";
+       revision this view loaded or last wrote.
+
+       RESOLVED HERE, AT SEND TIME, NOT WHEN THE JOB WAS QUEUED. captureProjectSave()
+       snapshots PROJECT_REVISION when a save is ENQUEUED, and SAVE_CHAIN serialises
+       only the sending. So two saves queued inside one server round-trip — a
+       debounced dirty() followed by an explicit flush, which is ordinary during
+       automation — both carried the same pre-save revision. The first succeeded and
+       moved the stored document; the second was then refused 409
+       PROJECT_REVISION_CONFLICT, the later edit was discarded, and PROJECT_CONFLICT
+       latched so the view stopped saving entirely. Reading the live value here means
+       a queued save inherits the revision produced by the save immediately ahead of
+       it in its own chain.
+
+       THIS DOES NOT WEAKEN OPTIMISTIC CONCURRENCY. PROJECT_REVISION only ever moves
+       forward from load(), which reads what is actually stored, or from THIS view's
+       own successful save. Nothing another window writes advances it, so a genuinely
+       stale view still sends its last-known revision and is still refused — which is
+       what tests/state-interleaving.js F-03 pins.
+
+       A job whose project is no longer the active one keeps its captured revision:
+       PROJECT_REVISION now describes a different document, and sending one project's
+       revision for another's save is the ownership defect this file already refuses
+       to make elsewhere. */
+    headers["If-Match"] =
+      (ACTIVE_PROJECT_SLUG === job.slug ? PROJECT_REVISION : job.documentRevision) || "*";
     const r = await fetch(
       `/api/projects/${encodeURIComponent(job.slug)}/project`,
       {

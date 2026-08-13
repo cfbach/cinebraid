@@ -439,6 +439,8 @@ async function main() {
     "private-preview-ux.js",
     "project-builder-kit.js",
     "project-path-containment.js",
+    "project-save-revision-race-negative-controls.js",
+    "project-save-revision-race.js",
     "project-switch-safety.js",
     "provider-health.js",
     "readiness-feedback.js",
