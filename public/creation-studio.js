@@ -1789,32 +1789,20 @@ async function focusGuidedWorkspaceTarget(selector, attempts = 12) {
   }
   return false;
 }
-/* WHICH SHOT TASK A PANEL LIVES IN.
+/* WHICH SHOT STAGE A PANEL LIVES IN.
  *
- * The bounded shot workspace renders exactly ONE task, chosen by
+ * The bounded shot workspace renders exactly ONE stage, chosen by
  * boundedShotSelectedTask(). A cross-panel action therefore has to change that
  * selection: writing the legacy `openPanels` map alone left the target panel out of
  * the DOM entirely, and the scroll poll below then reported "Could not find the
- * motion workspace" for a panel nothing had asked the workspace to build. This map
- * is the one place the panel keys those actions already use are translated into the
- * five task ids the taskbar and the workspace share. */
-const GUIDED_PANEL_TASKS = {
-  inputs: "inputs",
-  blocking: "look",
-  composer: "look",
-  still: "frames",
-  review: "frames",
-  frames: "frames",
-  motion: "motion",
-  motionCreate: "motion",
-  motionAudio: "motion",
-  finish: "deliver",
-};
-/* The two look sub-views are one task with a tab, so a composer or blocking target
-   has to say which tab as well as which task. */
-const GUIDED_PANEL_LOOK_VIEWS = { blocking: "blocking", composer: "authority" };
+ * motion workspace" for a panel nothing had asked the workspace to build.
+ *
+ * The translation used to be a local literal here, one of five separate statements
+ * of the same five stages inside this file. It is now a question asked of the
+ * declared stage model, which owns the panel list per stage — so a panel moved to a
+ * different stage moves in exactly one place. */
 function guidedPanelTaskId(key) {
-  return GUIDED_PANEL_TASKS[String(key || "")] || "";
+  return shotStageForPanel(key)?.id || "";
 }
 /* Selects the bounded focused task a panel lives in, through the canonical
    task-selection state rather than a second copy of it. Returns the task id it
@@ -1822,8 +1810,8 @@ function guidedPanelTaskId(key) {
 function selectGuidedPanelTask(s, key) {
   const taskId = guidedPanelTaskId(key);
   if (!s || !taskId || typeof boundedWriteFocusedTask !== "function") return "";
-  boundedWriteFocusedTask("shot-task", s.id, taskId);
-  const view = GUIDED_PANEL_LOOK_VIEWS[String(key || "")];
+  boundedWriteFocusedTask(SHOT_STAGE_SCOPE, s.id, taskId);
+  const view = shotStagePanelView(key);
   if (view) boundedWriteState("selected:shot-look-view", s.id, view);
   return taskId;
 }
@@ -2730,56 +2718,68 @@ function guidedFinishPanel(s, approved, current, open = false) {
   return `<details class="guided-work-panel guided-finish-card" data-guided-panel="finish" ${guidedPanelOpen(s, "finish", open) ? "open" : ""} ontoggle="rememberGuidedPanel('${s.id}','finish',this.open)"><summary><div><span>FINISH & DELIVERY</span><b>${isFinal ? "Final delivery locked" : approved ? "Approved video ready to finish" : current ? "Approved still ready" : "No approved result yet"}</b><small>Upscale, repair, or mark the approved still or video final.</small></div><span class="guided-mode-pill ${isFinal ? "ready" : ""}">${isFinal ? "FINAL" : jobs.length ? `${jobs.length} JOB${jobs.length === 1 ? "" : "S"}` : "OPTIONAL"}</span><i>⌄</i></summary><div class="guided-work-panel-body">${media ? `<div class="guided-finish-current"><div class="guided-finish-preview">${isVideo(media.name) ? `<video controls preload="metadata" src="${attr(media.url)}#t=0.1"></video>` : `<button class="guided-thumb-preview" onclick="openMediaTheatre('${attr(encodeURIComponent(media.url))}','${attr(encodeURIComponent(media.name))}','image')"><img src="${attr(media.url)}" alt=""><span>View larger</span></button>`}<button class="media-enlarge-btn" onclick="openMediaTheatre('${attr(encodeURIComponent(media.url))}','${attr(encodeURIComponent(media.name))}','${isVideo(media.name) ? "video" : "image"}')">Larger preview</button></div><div><b>${esc(media.name)}</b><small>${approved ? "Approved motion take" : "Approved shot still"}</small><div><button class="ghost-btn" onclick="${approved ? `queueGuidedVideoFinish('${s.id}','${attr(media.name)}')` : `markCandidateForFinish('${s.id}','${attr(media.name)}')`}">Finish</button>${isFinal ? `<span class="prompt-check ok">Marked final</span>` : approved ? `<button class="approve-btn" onclick="markGuidedVideoFinal('${s.id}','${attr(media.name)}')">Finalize</button>` : `<button class="approve-btn" onclick="markGuidedStillFinal('${s.id}','${attr(media.name)}')">Finalize</button>`}</div></div></div>` : `<div class="guided-empty-inline"><b>No approved result yet.</b><span>Upload and approve a still or video first.</span></div>`}${jobs.length ? `<div class="guided-finish-jobs">${jobs.map((job) => `<button onclick="editFinishJob('${job.id}')"><b>${esc(job.type || "finish")}</b><span>${esc(job.status || "ready")} · ${esc(job.targetResolution || "no target set")}</span></button>`).join("")}</div>` : ""}</div></details>`;
 }
 
-function boundedShotTaskStatus(s, takes, taskId) {
+/* THE AUTHORITATIVE PROJECT TRUTHS A STAGE IS DERIVED FROM, and the only thing this
+   file hands the declared stage model. Every field is read fresh from the shot,
+   its takes and the live automation runs; nothing is cached and nothing is stored.
+   Keeping the assembly here and the judgement in public/shared-stage-model.js is
+   what lets Node exercise representative shot states without a project on disk. */
+function shotStageModelFacts(s, takes) {
   const progress = guidedFrameProgress(s, takes), life = guidedShotLifecycle(s, takes);
-  const references = shotCreationReferences(s), missingRefs = references.filter((row) => !row.url).length;
+  const references = shotCreationReferences(s);
   const automationRows = (typeof AUTOMATION_RUNS !== "undefined" ? AUTOMATION_RUNS : window.AUTOMATION_RUNS) || [];
   const activeRun = automationRows.find((row) => row.targetId === s.id && ["running","awaiting-review","failed","interrupted"].includes(row.status));
-  /* Every label below comes from STAGE_STATUS, so the status slot only ever holds a
-     state the stage is genuinely in. Counts that used to sit here ("2/3", "5 missing")
-     move to `note`, which the taskbar prints in the stage's description line. */
-  if (taskId === "inputs") return missingRefs ? { tone:"attention", label:STAGE_STATUS.incomplete, note:`${plural(missingRefs, "reference")} missing` } : references.length ? { tone:"complete", label:STAGE_STATUS.complete, note:plural(references.length, "reference") } : { tone:"pending", label:STAGE_STATUS.notStarted };
-  if (taskId === "look") return activeBlockingRow(s) ? { tone:"complete", label:STAGE_STATUS.complete } : blockingMediaRows(s).length ? { tone:"attention", label:STAGE_STATUS.needsReview, note:`${plural(blockingMediaRows(s).length, "guide")} to choose from` } : { tone:"pending", label:STAGE_STATUS.notStarted };
-  if (taskId === "frames") {
-    if (activeRun) return { tone: ["failed","interrupted"].includes(activeRun.status) ? "attention" : "active", label: activeRun.status === "failed" ? STAGE_STATUS.failed : activeRun.status === "awaiting-review" ? STAGE_STATUS.needsReview : STAGE_STATUS.running };
-    const states = progress.frames.map((frame,index) => guidedFrameStepState(s,frame,index,takes));
-    const approved = states.filter((row)=>row.key === "approved").length;
-    const note = `${approved} of ${plural(states.length, "frame")} approved`;
-    if (states.some((row) => row.key === "review")) return { tone:"attention", label:STAGE_STATUS.needsReview, note };
-    if (progress.requiredApproved) return { tone:"complete", label:STAGE_STATUS.approved, note };
-    return { tone:"pending", label: approved ? STAGE_STATUS.inProgress : STAGE_STATUS.notStarted, note };
-  }
-  if (taskId === "motion") {
-    if (["final","motion-approved"].includes(life.key)) return { tone:"complete", label:STAGE_STATUS.approved };
-    if (life.key === "review-motion") return { tone:"attention", label:STAGE_STATUS.needsReview };
-    return progress.requiredApproved ? { tone:"pending", label:STAGE_STATUS.notStarted } : { tone:"optional", label:STAGE_STATUS.blocked, note:"Approve the required frames first" };
-  }
-  if (taskId === "deliver") return life.key === "final" ? { tone:"complete", label:STAGE_STATUS.complete } : ["motion-approved","still-ready"].includes(life.key) ? { tone:"pending", label:STAGE_STATUS.notStarted } : { tone:"optional", label:STAGE_STATUS.blocked, note:"Approve a still or a video first" };
-  return { tone:"pending", label:STAGE_STATUS.notStarted };
+  const frameStates = progress.frames.map((frame,index) => guidedFrameStepState(s,frame,index,takes));
+  return {
+    referenceCount: references.length,
+    missingReferenceCount: references.filter((row) => !row.url).length,
+    blockingGuideActive: !!activeBlockingRow(s),
+    blockingGuideCandidateCount: blockingMediaRows(s).length,
+    frameTotal: frameStates.length,
+    frameApprovedCount: frameStates.filter((row) => row.key === "approved").length,
+    frameNeedsReview: frameStates.some((row) => row.key === "review"),
+    requiredFramesApproved: !!progress.requiredApproved,
+    motionCandidateCount: takes.filter((take) => isVideo(take.name)).length,
+    activityStatus: activeRun ? activeRun.status : "",
+    lifecycleKey: life.key,
+    deliveryIntent: life.intent,
+  };
+}
+/* The taskbar's view of a stage. The judgement is the declared model's; this
+   function's whole job is turning the model's status key into the shipped STAGE_STATUS
+   wording and its note TOKEN into count-aware English. Wording stays here on purpose —
+   the stage model declares what is true, not how CineBraid says it. */
+function boundedShotTaskStatus(s, takes, taskId, facts = shotStageModelFacts(s, takes)) {
+  const state = shotStageState(taskId, facts);
+  if (!state) return { tone:"pending", label:STAGE_STATUS.notStarted };
+  const note = state.note;
+  const text = !note ? "" :
+    note.key === "references-missing" ? `${plural(note.count, "reference")} missing` :
+    note.key === "references-linked" ? plural(note.count, "reference") :
+    note.key === "blocking-guides-to-choose" ? `${plural(note.count, "guide")} to choose from` :
+    note.key === "frames-approved" ? `${note.count} of ${plural(note.total, "frame")} approved` :
+    note.key === "blocked-reason" ? note.reason : "";
+  return { tone:state.tone, label:STAGE_STATUS[state.statusKey] || STAGE_STATUS.notStarted, ...(text ? { note:text } : {}) };
 }
 function boundedShotTaskbarMarkup(s, takes, selectedId) {
-  const defs = [
-    ["inputs","Inputs","Cast, assets and source media"],
-    ["look","Look & blocking","Camera, staging and approved references"],
-    ["frames","Frames","Import, choose and approve stills"],
-    ["motion","Motion & sound","Attach video, dialogue and audio"],
-    ["deliver","Deliver","Finish, repair, upscale and finalize"],
-  ];
-  return `<nav class="focused-taskbar bounded-shot-taskbar clarity-taskbar" aria-label="Shot production stages">${defs.map(([id,label,detail]) => { const status=boundedShotTaskStatus(s,takes,id); return `<button type="button" class="focused-task-button tone-${status.tone} ${id===selectedId?"selected":""}" onclick="selectBoundedTask('shot-task','${attr(s.id)}','${id}')" title="${attr(label + " — " + status.label)}"><i></i><span><b>${esc(label)}</b><small>${esc(status.note ? `${detail} · ${status.note}` : detail)}</small></span><em>${esc(status.label)}</em></button>`; }).join("")}</nav>`;
+  const facts = shotStageModelFacts(s, takes);
+  return `<nav class="focused-taskbar bounded-shot-taskbar clarity-taskbar" aria-label="Shot production stages">${SHOT_STAGES.map((stage) => { const status=boundedShotTaskStatus(s,takes,stage.id,facts); return `<button type="button" class="focused-task-button tone-${status.tone} ${stage.id===selectedId?"selected":""}" onclick="selectBoundedTask('${SHOT_STAGE_SCOPE}','${attr(s.id)}','${attr(stage.id)}')" title="${attr(stage.label + " — " + status.label)}"><i></i><span><b>${esc(stage.label)}</b><small>${esc(status.note ? `${stage.detail} · ${status.note}` : stage.detail)}</small></span><em>${esc(status.label)}</em></button>`; }).join("")}</nav>`;
 }
 function boundedShotSelectedTask(s, takes) {
-  const ids=["inputs","look","frames","motion","deliver"];
-  const legacyMap={automation:"frames",blocking:"look",composer:"look",finish:"deliver"};
-  const fallback = ids.find((id) => boundedShotTaskStatus(s,takes,id).tone === "active") || ids.find((id) => boundedShotTaskStatus(s,takes,id).tone === "attention") || ids.find((id) => boundedShotTaskStatus(s,takes,id).tone === "pending") || "deliver";
-  let selected=boundedFocusedTask("shot-task",s.id,ids,fallback);
+  const facts = shotStageModelFacts(s, takes);
+  /* The stored value is read once and resolved once, by the declared model: a
+     current stage id is honoured, a stage an older build called something else is
+     translated, a bare number is resolved against the DECLARED order, and anything
+     else falls through to the model's recommendation. The previous version asked
+     boundedFocusedTask first and then overrode it from a local legacy map, which
+     meant two answers existed and the second one silently won. */
+  let stored = "";
   try {
-    const stored=localStorage.getItem(`cinebraid-focused:${((typeof ACTIVE_PROJECT_SLUG !== "undefined" && ACTIVE_PROJECT_SLUG) || window.ACTIVE_PROJECT_SLUG || P.meta?.id || "project")}:shot-task:${s.id}`);
-    if (legacyMap[stored]) {
-      selected=legacyMap[stored];
-      if (stored === "composer") boundedWriteState("selected:shot-look-view",s.id,"authority");
-      if (stored === "blocking") boundedWriteState("selected:shot-look-view",s.id,"blocking");
-    }
+    stored = localStorage.getItem(`cinebraid-focused:${((typeof ACTIVE_PROJECT_SLUG !== "undefined" && ACTIVE_PROJECT_SLUG) || window.ACTIVE_PROJECT_SLUG || P.meta?.id || "project")}:${SHOT_STAGE_SCOPE}:${s.id}`) || "";
   } catch {}
+  const selected = resolveShotStageId(stored, facts);
+  /* A legacy look target still has to say which of the stage's two tabs it meant. */
+  const view = shotStagePanelView(stored);
+  if (view) { try { boundedWriteState("selected:shot-look-view",s.id,view); } catch {} }
   return selected;
 }
 /* The production format a shot is delivered in. The field already existed in the record
@@ -2850,6 +2850,11 @@ function guidedShotWorkspaceView(s, takes, sc, state, refs, planningMedia, neigh
   const progress = guidedFrameProgress(s, takes), selectedTask = boundedShotSelectedTask(s, takes);
   const openInputs = !progress.firstApproved && (shotMediaLinks(s).length || shotCreationReferences(s).length);
   const motionOpen = progress.requiredApproved && (life.panel === "motion" || ensureShotCreation(s).deliveryIntent === "motion");
+  /* One renderer per DECLARED stage. The keys are not a fourth statement of the
+     stage list — tests/stage-model.js requires this map's keys to equal
+     SHOT_STAGE_IDS exactly, so a declared stage with no workspace, or a workspace
+     with no declaration, is a failing test rather than a silent fall-through to
+     Frames. */
   const renderers = {
     inputs: () => guidedSourceInputsPanel(s,current,openInputs),
     look: () => shotLookWorkspace(s),

@@ -95,6 +95,8 @@ const nodeSuites = [
   "check:generation-truth-negative",
   "check:state-honesty",
   "check:state-honesty-negative",
+  "check:stage-model",
+  "check:stage-model-negative",
   "check:job-media-identity",
   "check:job-media-identity-negative",
   "check:account-contract",

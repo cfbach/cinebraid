@@ -40,6 +40,7 @@ const SUITES = [
   "check:generation-defaults-browser",
   "check:generation-truth-browser",
   "check:state-honesty-browser",
+  "check:stage-model-browser",
   "check:candidate-review-browser",
   "check:focused-browser",
   "check:state-binding-browser",

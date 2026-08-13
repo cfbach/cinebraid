@@ -20,6 +20,7 @@ const SCRIPT_ORDER = [
   "shared-media-disposition.js",
   "shared-build-history.js",
   "shared-generation-capability.js",
+  "shared-stage-model.js",
   "bounded-rendering.js",
   "app.js",
   "media.js",
