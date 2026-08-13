@@ -577,9 +577,15 @@ function v642EnsureGlobalActivityStrip() {
     strip.onclick = () => openGlobalAutomationActivity();
     strip.setAttribute("aria-label", "Open live activity");
     strip.setAttribute("aria-live", "polite");
-    const workspace = document.getElementById("workspace");
+    /* Inserted before the workspace content, wherever that content currently sits.
+       This used to name #workspace as the parent directly, which threw NotFoundError
+       the moment #main stopped being its immediate child — as it did when the creator
+       shell put #main inside the Main region. The strip is position:fixed, so its
+       parent is presentationally irrelevant; asking #main for its own parent keeps the
+       intent and survives the nesting. */
     const main = document.getElementById("main");
-    if (workspace && main && typeof workspace.insertBefore === "function") workspace.insertBefore(strip, main);
+    const parent = main?.parentNode || document.getElementById("workspace");
+    if (main && parent && typeof parent.insertBefore === "function") parent.insertBefore(strip, main);
     else document.body.appendChild(strip);
   }
   return strip;

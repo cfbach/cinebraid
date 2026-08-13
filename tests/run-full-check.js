@@ -97,6 +97,8 @@ const nodeSuites = [
   "check:state-honesty-negative",
   "check:stage-model",
   "check:stage-model-negative",
+  "check:workspace-shell",
+  "check:workspace-shell-negative",
   "check:job-media-identity",
   "check:job-media-identity-negative",
   "check:account-contract",

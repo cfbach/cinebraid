@@ -41,7 +41,13 @@ assert(sceneReview.includes("v641StartManualActivity"), "manual scene review mus
 assert(activity.includes("v642InstallUniversalActivityFetch"), "unwrapped AI and FAL calls must be captured by universal activity visibility");
 assert(activity.includes("automation-global-live-strip"), "active work must remain visible through the global live strip");
 assert(activity.includes("strip.hidden = !visible"), "the global live strip must disappear while idle");
-assert(activity.includes("workspace.insertBefore(strip, main)"), "the live strip must reserve workspace layout space rather than cover controls");
+/* The strip is inserted into the workspace ahead of the content rather than appended to
+   the end of <body>. It used to name #workspace as the parent directly; the creator
+   workspace shell put #main inside the Main region, and insertBefore throws NotFoundError
+   when the reference node is not a child of the parent it is given. Asking #main for its
+   own parent keeps the placement and survives the nesting, so that is what is pinned. */
+assert(activity.includes("main?.parentNode"), "the live strip must anchor to the workspace content's own parent rather than assuming its depth");
+assert(activity.includes("parent.insertBefore(strip, main)"), "the live strip must be placed ahead of the workspace content, not appended to the document");
 assert(scene.includes("Continue from current scene"), "scene planning must support resume-aware continuation");
 assert(scene.includes("reviewOnly"), "scene planning must support review-only continuation");
 assert(audioBuilder.includes("buildSceneAudioPrompts"), "scene audio prompts must have a visible AI build workflow");
