@@ -453,6 +453,74 @@ function checkOverflowOwnership(sources = SOURCES) {
 }
 
 /* ===========================================================================
+   6b. THE RAIL NARROWS BEFORE IT DISAPPEARS
+
+   O2 shipped one rail width and one breakpoint, chosen with an empty rail. O3 put
+   content in it and the arithmetic became load-bearing: the centre is
+   `viewport - navWidth - railWidth`, and below 900px it enters a band no component in
+   this stylesheet was laid out for, because 900px is the width the app's own rules
+   stack at.
+
+   That makes the breakpoint a function of the RAIL'S WIDTH rather than a constant, so
+   the rail has three states and each threshold must satisfy the same relation. This
+   check reads all of it out of the stylesheet and does the arithmetic, so a future edit
+   to any one of the four numbers that breaks the relation fails here rather than
+   silently squeezing the workspace on a laptop.
+   =========================================================================== */
+
+const CENTRE_FLOOR = 900;
+
+function checkRailWidthBands(sources = SOURCES) {
+  const flat = flattenCss(sources.styles);
+
+  const navMatch = flat.match(/#app\{--cb-nav-width:(\d+)px/);
+  assert.ok(navMatch, "the navigation width must be declared on #app");
+  const nav = Number(navMatch[1]);
+
+  const fullMatch = flat.match(/#app\{--cb-shell-rail-width:(\d+)px\}/);
+  assert.ok(fullMatch, "the rail's full width must be declared rather than left to the var() fallback");
+  const fullRail = Number(fullMatch[1]);
+
+  const compactMatch = flat.match(/@media\(max-width:(\d+)px\)\{#app\{--cb-shell-rail-width:(\d+)px\}\}/);
+  assert.ok(compactMatch, "there must be a compact rail band — a surface that vanishes on a 1440px laptop is not a persistent surface");
+  const compactAt = Number(compactMatch[1]);
+  const compactRail = Number(compactMatch[2]);
+
+  const hideMatch = flat.match(/@media\(max-width:(\d+)px\)\{[^@]*#workspace\[data-creator-shell="1"\]#cb-shell-rail\[data-occupied\]\{display:none\}/);
+  assert.ok(hideMatch, "there must be a width below which the rail yields entirely");
+  const hideAt = Number(hideMatch[1]);
+
+  assert.ok(compactRail < fullRail,
+    `the compact rail (${compactRail}px) must be narrower than the full one (${fullRail}px)`);
+
+  /* THE RELATION, twice. Each band's threshold is the smallest viewport at which that
+     band's rail can be present and the centre still clear the floor. */
+  assert.ok(compactAt + 1 >= CENTRE_FLOOR + nav + fullRail,
+    `the full rail needs viewport >= ${CENTRE_FLOOR + nav + fullRail}px to leave a ${CENTRE_FLOOR}px centre, `
+    + `but it is kept down to ${compactAt + 1}px`);
+  assert.ok(hideAt + 1 >= CENTRE_FLOOR + nav + compactRail,
+    `the compact rail needs viewport >= ${CENTRE_FLOOR + nav + compactRail}px to leave a ${CENTRE_FLOOR}px centre, `
+    + `but it is kept down to ${hideAt + 1}px`);
+
+  /* The bands must meet exactly: a gap leaves a width with no declared rail state, and
+     an overlap leaves two rules disagreeing about the same viewport. */
+  assert.ok(hideAt < compactAt,
+    `the hide threshold (${hideAt}) must sit below the compact threshold (${compactAt})`);
+
+  /* And the compact band must actually be reachable, or it is decoration: 1366 and 1440
+     are the widths it exists for. */
+  for (const width of [1366, 1440]) {
+    assert.ok(width > hideAt && width <= compactAt,
+      `${width}px — an ordinary laptop — must fall in the compact rail band (${hideAt + 1}-${compactAt})`);
+    assert.strictEqual(width - nav - compactRail >= CENTRE_FLOOR, true,
+      `at ${width}px the compact rail would leave a ${width - nav - compactRail}px centre, below the ${CENTRE_FLOOR}px floor`);
+  }
+
+  note(`Rail bands: ${fullRail}px above ${compactAt}, ${compactRail}px down to ${hideAt + 1}, then hidden — `
+    + `every threshold is ${CENTRE_FLOOR} + ${nav} + its own rail width, and 1366/1440 keep an Assistant`);
+}
+
+/* ===========================================================================
    7. THE NAVIGATION WIDTH HAS ONE SOURCE
 
    The dock is fixed to the viewport and has to start where the navigation rail ends.
@@ -595,14 +663,31 @@ function checkRuntimeOwnership(sources = SOURCES) {
     "public/app.js must not know the shell exists. The shell reacts to the render; the renderer does not drive the shell, which is what keeps the centre replaceable without the shell noticing.");
 
   /* The one production file O2 had to adjust, and the reason, pinned so a later
-     refactor cannot silently restore the crash. */
+     refactor cannot silently restore the crash.
+
+     THIS PIN WAS CORRECTED IN O3, and the correction is the interesting part. O2
+     re-anchored the live strip on #main's parent, on the stated reasoning that the
+     strip is position:fixed and its parent is therefore presentationally irrelevant.
+     It is not: the v6.6.2.2 integrity pass overrode it to `position:relative!important`,
+     so it is an in-flow banner. #main's parent is now `#cb-shell-main`, a grid with
+     exactly two tracks — one for the centre, one for the rail — and an in-flow third
+     child takes the centre's. The workspace rendered 340px wide at 1920px, invisibly,
+     because the strip hides itself when nothing is happening and O2 shipped both slots
+     empty.
+
+     So the requirement is stronger than "survives the nesting": the strip must land
+     OUTSIDE the Main region. tests/creator-state.js
+     checkActivityStripStaysOutOfTheGrid holds the full reasoning and its negative
+     control; this keeps O2's own file honest about the line it changed. */
   const activity = sources.activity;
   assert.ok(!/workspace\.insertBefore\(strip,\s*main\)/.test(activity),
     "live-activity.js must not assume #main is a direct child of #workspace — it is now inside the Main region, and insertBefore would throw NotFoundError on a node that is not the parent's child");
-  assert.ok(/main\?\.parentNode/.test(activity),
-    "the live strip must anchor to #main's actual parent so it survives the shell's nesting");
+  assert.ok(/getElementById\(["']cb-shell-main["']\)/.test(activity),
+    "the live strip is in flow, so it must anchor on the Main REGION and land beside it in #workspace — anchoring on #main puts it inside the region's two-track grid, where it takes the centre's track");
+  assert.ok(/anchor\?\.parentNode/.test(activity),
+    "the strip must still be inserted into its anchor's real parent so it survives any future nesting");
 
-  note("Ownership: the runtime creates no region and public/app.js never names the shell; the one dependent call in live-activity.js now anchors to #main's real parent");
+  note("Ownership: the runtime creates no region and public/app.js never names the shell; the one dependent call in live-activity.js anchors OUTSIDE the Main region, because the strip is in flow and the region is a two-track grid");
 }
 
 /* ===========================================================================
@@ -633,6 +718,7 @@ function runAll(sources = SOURCES) {
   checkDerivation(sources);
   checkMarkup(sources);
   checkOverflowOwnership(sources);
+  checkRailWidthBands(sources);
   checkNavigationWidthSource(sources);
   checkEmptyAndPresence(sources);
   checkNoShadowState(sources);
@@ -662,6 +748,7 @@ module.exports = {
   checkDerivation,
   checkMarkup,
   checkOverflowOwnership,
+  checkRailWidthBands,
   checkNavigationWidthSource,
   checkEmptyAndPresence,
   checkNoShadowState,

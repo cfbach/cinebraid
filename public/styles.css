@@ -4301,6 +4301,11 @@ body[data-focused-workspace="1"] .guided-frame-body,
 .cb-shell-main>#main{min-width:0}
 .cb-shell-main:has(>#cb-shell-rail[data-occupied]){grid-template-columns:minmax(0,1fr) var(--cb-shell-rail-width,340px)}
 
+/* THE RAIL'S WIDTH, declared rather than left to the fallback, because it is now two
+   numbers rather than one. See the responsive block at the foot of this section for why
+   240px exists and where each applies. */
+#app{--cb-shell-rail-width:340px}
+
 /* Slot defaults: present in the document, occupying nothing, painting nothing. */
 .cb-shell-slot{display:none;min-width:0;min-height:0}
 .cb-shell-slot-body{min-width:0;min-height:0}
@@ -4331,8 +4336,45 @@ body[data-focused-workspace="1"] .guided-frame-body,
    dock survives, narrower — a persistent technical surface is still readable at a
    laptop width where a second column is not. No control is added for the collapsed
    rail: there is nothing in it yet, and a button that opens an empty region is the
-   dead mobile chrome this batch is meant not to ship. */
-@media(max-width:1180px){
+   dead mobile chrome this batch is meant not to ship.
+
+   THE NUMBER WAS 1180 AND IS NOW 1460, corrected in O3 by the first content the rail
+   ever held. Every responsive rule in this stylesheet is written against the VIEWPORT,
+   which was exact while the centre WAS the viewport minus the navigation. The centre
+   is `viewport - 220 - 340` with the rail occupied, so at 1180–1459 it sat between
+   620px and 899px while every component rule that stacks "below 900px" stayed
+   dormant — a width band no part of the app had ever been laid out for.
+
+   Two shipped components proved it rather than one, which is what makes this a class
+   and not a pair of bugs: `.guided-next-action` squeezed its sentence to one word per
+   line at a 1440px laptop, and `.manual-coverage-actions` overlapped its three
+   buttons far enough that a click landed on the wrong one. Fixing them individually
+   would have left every component nobody happened to open.
+
+   The floor is `centre >= 900`, because 900px is the viewport width the app's own
+   component rules stack at, and below it the centre enters a band nothing was laid out
+   for. That gives `viewport >= 900 + 220 + railWidth`, which is a statement about the
+   RAIL'S WIDTH and not only about the viewport — so the rail narrows before it
+   disappears:
+
+     >= 1460   full rail, 340px.  centre >= 900.
+     1360-1459 compact rail, 240px. centre >= 900, and 1366 and 1440 — the two most
+               common laptop widths — keep their Assistant.
+     < 1360    no rail. 240px is the narrowest the Assistant reads at (verified in
+               Chromium: its sentences wrap cleanly, its actions stay reachable and
+               nothing overflows), so below this there is no width left to take from it
+               and the centre keeps the room.
+
+   Both thresholds are `900 + 220 + railWidth` with the rail width of the band above
+   them, which is why they are 1460 and 1360 rather than round numbers. An overlay or
+   toggled rail for the sub-1360 band is O4 work, not a number to fudge here. */
+@media(max-width:1459px){
+  /* Narrower, not gone. The Assistant is O3's whole visible point and 1366/1440 are
+     ordinary laptops; a surface that vanishes on the most common screen in use is not a
+     persistent surface. 240px is the measured floor, not a guess — see above. */
+  #app{--cb-shell-rail-width:240px}
+}
+@media(max-width:1359px){
   .cb-shell-main:has(>#cb-shell-rail[data-occupied]){grid-template-columns:minmax(0,1fr)}
   #workspace[data-creator-shell="1"] #cb-shell-rail[data-occupied]{display:none}
 }
@@ -4348,4 +4390,154 @@ body[data-focused-workspace="1"] .guided-frame-body,
      navigation used to be. Zeroing the variable restores the single-column intent
      through the same declaration rather than by fighting it. */
   #app{--cb-nav-width:0px}
+}
+
+/* ============================================================================
+   O3 — the Assistant rail and the Activity Terminal.
+
+   WHAT THIS BLOCK OWNS: how the two surfaces read. It owns no geometry — the rail's
+   width, the dock's height bound, both slots' internal scrolling and the dock's
+   reservation are all O2's above, and nothing here overrides them. Every rule below
+   is inside `.cb-assistant` or `.cb-terminal`, so a surface cannot reach out and
+   change the shell it is sitting in.
+
+   THE HIERARCHY, and why it is not five equal cards. The rail answers four questions
+   of different weight, and rendering them at the same weight is how a status panel
+   becomes wallpaper:
+
+     Needs attention   a left rule in --red and a tinted ground. Discoverable, and
+                       deliberately not a filled red panel — a persistent surface that
+                       shouts gets ignored, and the thing it is shouting about is
+                       often a run the filmmaker already knows failed.
+     Waiting for you   the strongest treatment on the rail: --amber rule, filled
+                       header, ink-weight title. It is the only section that describes
+                       work that stops until the filmmaker acts.
+     Working           quiet. Muted rule, no fill. It is information, not a request.
+     Current step      structural rather than tonal — it is context, always present on
+                       a shot, and it should never compete with a live gate.
+
+   THE TERMINAL is a production log, not a console emulator: no monospace body text,
+   no green-on-black, no prompt glyphs. Mono is used for exactly what is a code — the
+   clock and the status token — because those are the two columns the eye scans down.
+
+   NO SLOT MAY WIDEN THE PAGE. Every grid track below is minmax(0,…) or has an
+   explicit min-width:0, and long provider ids wrap rather than push, so neither
+   surface can put a horizontal scrollbar on the document.
+   ============================================================================ */
+
+.cb-assistant-mount,.cb-terminal-mount{min-width:0}
+.cb-terminal-mount{display:flex;flex-direction:column;min-height:0}
+
+/* ---- the Assistant rail ---------------------------------------------------- */
+.cb-assistant{display:flex;flex-direction:column;gap:14px;padding:16px 15px 18px;min-width:0}
+.cb-assistant-head{display:grid;gap:5px;padding-bottom:13px;border-bottom:1px solid var(--line)}
+.cb-assistant-head span{font:700 9.5px var(--mono);letter-spacing:.14em;color:var(--faint)}
+.cb-assistant-head b{font-family:var(--display);font-size:16.5px;line-height:1.22;letter-spacing:-.005em;color:var(--ink)}
+.cb-assistant-head small{font-size:11px;color:var(--muted)}
+.cb-assistant[data-headline="needs-attention"] .cb-assistant-head span{color:var(--red)}
+.cb-assistant[data-headline="waiting-human"] .cb-assistant-head span{color:var(--amber)}
+.cb-assistant[data-headline="machine-active"] .cb-assistant-head span{color:var(--acc)}
+.cb-assistant[data-headline="stage-blocked"] .cb-assistant-head span{color:var(--amber)}
+
+.cb-assistant-body{display:grid;gap:12px;min-width:0}
+.cb-assistant-section{display:grid;gap:7px;min-width:0;border-left:2px solid var(--line-2);padding-left:11px}
+.cb-assistant-section>header{display:flex;align-items:baseline;gap:8px}
+.cb-assistant-section>header b{font:700 10px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.cb-assistant-section>header span{margin-left:auto;font:600 10px var(--mono);color:var(--faint)}
+
+/* Waiting outranks everything else on this rail, and says so with the only filled
+   header and the only ink-weight section title. */
+.cb-assistant-section.tone-waiting{border-left-color:var(--amber);background:color-mix(in srgb,var(--amber) 9%,transparent);border-radius:0 var(--r-sm) var(--r-sm) 0;padding:9px 11px 10px}
+.cb-assistant-section.tone-waiting>header b{color:var(--amber)}
+.cb-assistant-section.tone-attention{border-left-color:var(--red);background:color-mix(in srgb,var(--red) 6%,transparent);border-radius:0 var(--r-sm) var(--r-sm) 0;padding:9px 11px 10px}
+.cb-assistant-section.tone-attention>header b{color:var(--red)}
+.cb-assistant-section.tone-working{border-left-color:var(--line-2)}
+.cb-assistant-section.tone-stage,.cb-assistant-section.tone-next{border-left-color:var(--line-soft)}
+
+.cb-assistant-row{display:grid;gap:4px;min-width:0}
+.cb-assistant-row+.cb-assistant-row{margin-top:9px;padding-top:9px;border-top:1px solid var(--line-soft)}
+.cb-assistant-row>b{font-size:12.5px;font-weight:600;color:var(--ink);overflow-wrap:anywhere}
+.cb-assistant-row>p{font-size:12px;line-height:1.5;color:var(--muted)}
+.cb-assistant-row>small{font-size:10.5px;color:var(--faint);overflow-wrap:anywhere}
+.cb-assistant-quiet>p{color:var(--faint)}
+.cb-assistant-row-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:3px}
+.cb-assistant-row-actions:empty{display:none}
+.cb-assistant-action{padding:5px 9px;border:1px solid var(--line-2);border-radius:var(--r-pill);background:var(--panel-2);font-size:10.5px;font-weight:600;color:var(--muted);white-space:nowrap}
+.cb-assistant-action:hover{border-color:var(--acc);color:var(--ink)}
+.cb-assistant-foot{display:grid;gap:8px;justify-items:start;padding-top:12px;border-top:1px solid var(--line)}
+.cb-assistant-omitted{font-size:10.5px;color:var(--faint)}
+
+/* ---- the Activity Terminal ------------------------------------------------- */
+.cb-terminal{display:flex;flex-direction:column;min-width:0;min-height:0}
+/* Sticky inside the dock's own scroller, so the counts and the two controls stay
+   readable while the log scrolls under them. */
+.cb-terminal-head{position:sticky;top:0;z-index:1;display:flex;align-items:center;gap:12px;padding:9px 15px;border-bottom:1px solid var(--line);background:var(--panel)}
+.cb-terminal-head>span{font:700 9.5px var(--mono);letter-spacing:.14em;color:var(--faint);white-space:nowrap}
+.cb-terminal-head>b{font-size:11.5px;font-weight:600;color:var(--muted);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cb-terminal-head-actions{display:flex;gap:6px;margin-left:auto}
+.cb-terminal-action{padding:4px 9px;border:1px solid var(--line-2);border-radius:var(--r-pill);font:600 9.5px var(--mono);letter-spacing:.08em;color:var(--muted);white-space:nowrap}
+.cb-terminal-action:hover{border-color:var(--acc);color:var(--ink)}
+
+.cb-terminal-rows{display:flex;flex-direction:column;min-width:0}
+/* Four columns: when it happened, what it is, what it was, what it cost. The body
+   track is the only flexible one and it carries min-width:0, which is what stops a
+   long provider request id widening the dock and the page with it. */
+.cb-terminal-row{display:grid;grid-template-columns:56px 96px minmax(0,1fr) minmax(0,auto);align-items:baseline;gap:10px;padding:7px 15px;border-bottom:1px solid var(--line-soft);min-width:0}
+.cb-terminal-row>time{font:500 10.5px var(--mono);color:var(--faint)}
+.cb-terminal-row>em{font:700 9.5px var(--mono);letter-spacing:.07em;font-style:normal;color:var(--muted)}
+.cb-terminal-row.tone-working>em{color:var(--acc)}
+.cb-terminal-row.tone-waiting>em{color:var(--amber)}
+.cb-terminal-row.tone-attention>em{color:var(--red)}
+.cb-terminal-row.tone-done>em{color:var(--green)}
+.cb-terminal-body{display:grid;gap:2px;min-width:0}
+.cb-terminal-body>b,.cb-terminal-open{font-size:12px;font-weight:600;color:var(--ink);text-align:left;overflow-wrap:anywhere}
+.cb-terminal-open:hover{color:var(--acc)}
+.cb-terminal-body>small{font-size:10.5px;color:var(--muted);overflow-wrap:anywhere}
+.cb-terminal-error{color:var(--red)}
+.cb-terminal-meta{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:4px 8px;min-width:0}
+.cb-terminal-meta>span{font:500 10px var(--mono);color:var(--faint);overflow-wrap:anywhere}
+.cb-terminal-empty{padding:18px 15px;font-size:11.5px;color:var(--faint)}
+.cb-terminal-foot{display:flex;flex-wrap:wrap;gap:6px 14px;padding:8px 15px 10px;font-size:10.5px;color:var(--faint)}
+.cb-terminal-foot a{font-size:10.5px}
+
+/* THE SHOT WORKSPACE NEEDS MORE THAN THE GENERAL FLOOR, because it spends part of the
+   centre on a column of its own.
+
+   Raising the rail's threshold to 1460 guarantees the centre is at least 900px — the
+   width the app's component rules are written for. The shot workspace then takes a
+   ~230px inspector column and a ~34px task rail out of that before its cards see any
+   of it, so at the threshold `.guided-next-action` has about 640px for a preview
+   declared as `fit-content(438px)` plus a sentence beside it. It rendered correctly at
+   696px (a 1180px viewport with no rail) and badly at 590px, so the boundary sits
+   inside the band this rule covers.
+
+   THIS INVENTS NO LAYOUT. It applies the card's OWN narrow declaration
+   (`grid-template-columns:1fr`, already declared at max-width:900px) at the width where
+   the card actually becomes narrow, and only while an Assistant rail is taking room.
+
+   THE LOWER BOUND IS NOT DECORATION. `[data-occupied]` says a consumer has mounted
+   content, NOT that the slot is visible — retention across Settings depends on exactly
+   that distinction — so `:has()` alone still matches at widths where the rail is
+   display:none and the centre has all the room. Without the min-width the card stacked
+   at 1180–1359 too, measured, where it had been rendering its three-column layout
+   correctly. The bound is the width at which the rail actually appears. */
+@media(min-width:1360px) and (max-width:1700px){
+  .cb-shell-main:has(>#cb-shell-rail[data-occupied]) .guided-next-action{grid-template-columns:1fr}
+}
+
+/* Narrow: the log becomes two lines per event rather than four squeezed columns.
+   The clock and the status token stay on the first line because they are what the
+   eye scans; the metadata drops beneath the label and left-aligns. */
+@media(max-width:900px){
+  .cb-assistant{padding:14px 13px 16px}
+  .cb-terminal-row{grid-template-columns:52px minmax(0,1fr);row-gap:3px}
+  .cb-terminal-row>em{grid-column:2}
+  .cb-terminal-body,.cb-terminal-meta{grid-column:1 / -1}
+  .cb-terminal-meta{justify-content:flex-start}
+}
+/* At phone width the header cannot hold the eyebrow, the counts and two controls, and
+   what it was truncating was the counts — "1 runnin…". The eyebrow is decoration and
+   the counts are the information, so the eyebrow goes and the counts stay whole. */
+@media(max-width:520px){
+  .cb-terminal-head>span{display:none}
 }
