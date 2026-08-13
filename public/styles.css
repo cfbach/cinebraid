@@ -2308,6 +2308,12 @@ body.automation-activity-open{overflow:hidden}
 #automation-global-live-strip[hidden]{display:none!important}
 #automation-global-live-strip.state-attention{border-color:rgba(255,142,91,.55)}
 #automation-global-live-strip.state-active{border-color:color-mix(in srgb,var(--accent) 55%,var(--line))}
+/* Waiting on the director is not a failure and not live work; it reads as an
+   approval prompt so a glance separates "the machine is busy" from "you are". */
+#automation-global-live-strip.state-waiting{border-color:color-mix(in srgb,var(--amber,#f5a524) 60%,var(--line))}
+#automation-activity-toggle.waiting{border-color:color-mix(in srgb,var(--amber,#f5a524) 55%,var(--line))}
+.blocking-review-console.frame-scoped{border-style:dashed}
+.blocking-review-framed-note{display:block;margin-top:4px;opacity:.8}
 
 .guided-unresolved-dependencies{display:grid;gap:9px;margin:0 0 12px;padding:12px;border:1px solid color-mix(in srgb,var(--red) 55%,var(--line));border-radius:12px;background:color-mix(in srgb,var(--red) 5%,var(--panel))}
 .guided-unresolved-dependencies>header>div{display:grid;gap:3px}

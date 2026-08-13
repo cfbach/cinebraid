@@ -73,6 +73,77 @@ function v641ElapsedLabel(startedAt, completedAt = "") {
   const minutes = Math.floor(total / 60), seconds = total % 60;
   return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 }
+
+/* ------------------------------------------------------------------------------
+   IS MACHINE WORK ACTUALLY HAPPENING?
+
+   One predicate, asked by every activity surface, because six copies of the list
+   `["running", "awaiting-review"]` is what made CineBraid claim two operations were
+   active while both had stopped. `awaiting-review` is not machine work: the runner
+   has parked and is waiting for the director. A run left at `running` by a closed
+   tab is not machine work either - nobody is driving it, and its lease says so.
+
+   The lease is the honest cross-window signal and it is already the authority
+   v626StatusLabel uses to say ACTIVE IN ANOTHER WINDOW / READY TO RESUME. This
+   reuses it rather than inventing a second opinion:
+
+     driven in this window   V626_ACTIVE_AUTOMATION_RUNS holds the id
+     driven somewhere else   the server lease is still in the future
+     nobody is driving it    a runner was recorded and its lease has lapsed
+
+   A run that has never recorded a runnerId is brand new and mid-claim, so it counts
+   as active: v627AcquireAutomationLease adds to the set and stores the lease in the
+   same step, and treating the gap as idle would flash "waiting for you" at run start.
+
+   Read lexically, not off window - these are script-scope bindings from
+   public/automation.js, which index.html loads before this file. The window.*
+   aliases below exist so tests and other surfaces can ask the same question. */
+function v670RunLeaseLapsed(run) {
+  if (!run?.runnerId) return false;
+  const expires = Date.parse(run.leaseExpiresAt || "");
+  return !Number.isFinite(expires) || expires <= Date.now();
+}
+function v670MachineActiveRun(run) {
+  if (run?.status !== "running") return false;
+  if (typeof V626_ACTIVE_AUTOMATION_RUNS !== "undefined" && V626_ACTIVE_AUTOMATION_RUNS.has(run.id)) return true;
+  return !v670RunLeaseLapsed(run);
+}
+function v670WaitingForHumanRun(run) {
+  if (run?.status === "awaiting-review") return true;
+  /* Orchestration stopped and only a person can restart it. The run record still
+     says "running"; the truthful sentence is "waiting for you". */
+  return run?.status === "running" && v670RunLeaseLapsed(run);
+}
+/* Unfinished, so the poller keeps asking - deliberately NOT the active predicate.
+   A run parked at a human gate still needs refreshing, because the approval may
+   arrive in another window. */
+function v670RunUnsettled(run) {
+  return v670MachineActiveRun(run) || v670WaitingForHumanRun(run) || run?.status === "awaiting-review";
+}
+function v670MachineActiveStep(step) {
+  return step?.status === "running";
+}
+/* WHEN DID THE MACHINE STOP? Not "now" for anything that has stopped.
+
+   v627PauseForHumanReview and the scene child-review gate now stamp completedAt, so
+   a fresh run carries the real boundary. Runs already on disk from before this batch
+   do not, and they must not tick either - updatedAt is the last moment the runner
+   touched the step, which is the boundary for those. */
+function v670StepEndTimestamp(step) {
+  if (v670MachineActiveStep(step)) return "";
+  return step?.completedAt || step?.updatedAt || step?.startedAt || "";
+}
+function v670StepElapsedLabel(step) {
+  return v641ElapsedLabel(step?.startedAt, v670StepEndTimestamp(step));
+}
+function v670ManualElapsedLabel(row) {
+  const end = row?.status === "running" ? "" : row?.completedAt || row?.updatedAt || "";
+  return v641ElapsedLabel(row?.startedAt, end);
+}
+window.v670MachineActiveRun = v670MachineActiveRun;
+window.v670WaitingForHumanRun = v670WaitingForHumanRun;
+window.v670RunLeaseLapsed = v670RunLeaseLapsed;
+window.v670StepElapsedLabel = v670StepElapsedLabel;
 function v641StatusTone(status) {
   return status === "completed" || status === "skipped" ? "done"
     : status === "failed" ? "failed"
@@ -117,12 +188,12 @@ function v641CurrentOperationMarkup(run) {
   const tone = v641StatusTone(step.status);
   const activity = step.activity || step.result?.activity || {};
   const attempt = Number(step.attempt || 0), max = Number(step.maxAttempts || 0);
-  const elapsed = v641ElapsedLabel(step.startedAt, step.completedAt);
+  const elapsed = v670StepElapsedLabel(step);
   const phase = [attempt ? `attempt ${attempt}${max ? ` of ${max}` : ""}` : "", elapsed ? `${elapsed} elapsed` : ""].filter(Boolean).join(" · ");
   return `<section class="automation-live-current state-${attr(tone)}"><header><div><span>${esc(v641StepSystem(step))}</span><b>${esc(step.label || displayRun.stage || step.key)}</b>${parentStep && child ? `<small>${esc(run.label || run.targetId)} → ${esc(child.label || child.targetId)}</small>` : ""}</div><i>${tone === "active" ? '<span class="spin">◌</span>' : tone === "done" ? "✓" : tone === "failed" ? "!" : tone === "review" ? "!" : "○"}</i></header><p>${esc(v641StepDetail(step, displayRun))}</p><div class="automation-live-meta"><span>${esc(String(v641StepState(step)).replace(/-/g, " "))}</span>${phase ? `<span>${esc(phase)}</span>` : ""}${activity.model && step.kind !== "generation" ? `<span>${esc(activity.model)}</span>` : ""}</div>${v641ProviderMarkup(step)}${v641ReviewProgressMarkup(step)}${v641ReturnedThumbnails(step)}</section>`;
 }
 function v641StepTimelineRow(step, run, nested = false) {
-  const tone = v641StatusTone(step.status), elapsed = v641ElapsedLabel(step.startedAt, step.completedAt);
+  const tone = v641StatusTone(step.status), elapsed = v670StepElapsedLabel(step);
   const activity = step.activity || step.result?.activity || {};
   const detail = activity.detail || (step.error ? step.error : "");
   const provider = step.kind === "generation" ? v641FalJobForStep(step) : null;
@@ -184,14 +255,14 @@ window.v641FinishManualActivity = (id, status = "completed", detail = "") => {
   v641ScheduleManualRetention(id);
 };
 function v641ManualActivityMarkup(row) {
-  return `<article class="automation-drawer-run manual state-${attr(v641StatusTone(row.status))}"><header><div><span>${esc(row.system || "CINEBRAID ACTIVITY")}</span><b>${esc(row.title || "Manual operation")}</b></div><i>${row.status === "running" ? '<span class="spin">◌</span>' : row.status === "completed" ? "✓" : "!"}</i></header><p>${esc(row.detail || "Working…")}</p><small>${esc(v641ElapsedLabel(row.startedAt, row.completedAt || ""))} elapsed</small></article>`;
+  return `<article class="automation-drawer-run manual state-${attr(v641StatusTone(row.status))}" data-activity-key="manual:${attr(row.id)}"><header><div><span>${esc(row.system || "CINEBRAID ACTIVITY")}</span><b>${esc(row.title || "Manual operation")}</b></div><i>${row.status === "running" ? '<span class="spin">◌</span>' : row.status === "completed" ? "✓" : "!"}</i></header><p>${esc(row.detail || "Working…")}</p><small>${esc(v670ManualElapsedLabel(row))} elapsed</small></article>`;
 }
 function v641StandaloneFalJobs() {
   const runJobIds = new Set((AUTOMATION_RUNS || []).flatMap((run) => Object.values(run.steps || {}).map((step) => step.childJobId).filter(Boolean)));
   return (FAL_GENERATION_JOBS || []).filter((job) => falJobActive(job) && !runJobIds.has(job.id));
 }
 function v641StandaloneFalMarkup(job) {
-  return `<article class="automation-drawer-run state-active"><header><div><span>FAL · GPT IMAGE 2</span><b>${esc(job.purpose || "Manual image generation")}</b></div><i><span class="spin">◌</span></i></header><p>${esc(String(job.status || "working").replace(/_/g, " "))}${job.queuePosition != null ? ` · queue ${job.queuePosition}` : ""}</p><small>${esc(job.model || "GPT Image 2")} · ${Number(job.outputCount || 0)} candidate${Number(job.outputCount || 0) === 1 ? "" : "s"}</small></article>`;
+  return `<article class="automation-drawer-run state-active" data-activity-key="fal:${attr(job.id)}"><header><div><span>FAL · GPT IMAGE 2</span><b>${esc(job.purpose || "Manual image generation")}</b></div><i><span class="spin">◌</span></i></header><p>${esc(String(job.status || "working").replace(/_/g, " "))}${job.queuePosition != null ? ` · queue ${job.queuePosition}` : ""}</p><small>${esc(job.model || "GPT Image 2")} · ${Number(job.outputCount || 0)} candidate${Number(job.outputCount || 0) === 1 ? "" : "s"}</small></article>`;
 }
 function v641RunRoute(run) {
   if (run?.type === "scene-chain") return `#/scene/${run.targetId}`;
@@ -205,7 +276,8 @@ function v641RunRoute(run) {
 }
 function v641DrawerRunMarkup(run, duplicateCount = 1) {
   const { displayRun, step, child } = v641DisplayedRunAndStep(run);
-  const active = run.status === "running" || run.status === "awaiting-review";
+  const active = v670MachineActiveRun(run);
+  const waiting = v670WaitingForHumanRun(run);
   const failed = Object.values(run.steps || {}).find((item) => item.status === "failed") || null;
   const repairable = run.status === "failed" && run.type === "scene-chain" && (failed?.kind === "generation" || String(failed?.key || "").includes("scene-correction"));
   const primary = repairable
@@ -213,14 +285,30 @@ function v641DrawerRunMarkup(run, duplicateCount = 1) {
     : run.status === "failed" && failed
       ? `<button onclick="retryFailedAutomationStep('${attr(run.id)}','${attr(failed.key)}')">RETRY</button>`
       : `<button onclick="closeGlobalAutomationActivity();location.hash='${attr(v641RunRoute(run))}'">OPEN WORKSPACE</button>`;
-  return `<article class="automation-drawer-run state-${attr(v641StatusTone(run.status))}" data-run-id="${attr(run.id)}"><header><div><span>${esc(run.type.replace(/-/g, " ").toUpperCase())}</span><b>${esc(run.label || run.targetId)}${duplicateCount > 1 ? ` <em class="automation-duplicate-count">×${duplicateCount}</em>` : ""}</b></div><i>${active ? '<span class="spin">◌</span>' : run.status === "completed" ? "✓" : run.status === "failed" ? "!" : "○"}</i></header><p>${esc(step ? `${v641StepSystem(step)} · ${step.label || displayRun.stage}` : run.stage || run.summary || v626StatusLabel(run))}</p>${failed?.error ? `<small class="automation-drawer-error">${esc(failed.error)}</small>` : child ? `<small>Child run: ${esc(child.label || child.targetId)}</small>` : ""}<footer>${primary}<button onclick="closeGlobalAutomationActivity();openAutomationReport('${attr(run.id)}')">VIEW REPORT</button>${["failed","interrupted","cancelled"].includes(run.status) ? `<button class="ghost-btn" onclick="dismissAutomationActivityRun('${attr(run.id)}')">DISMISS</button>` : ""}</footer></article>`;
+  return `<article class="automation-drawer-run state-${attr(v670RunTone(run))}" data-run-id="${attr(run.id)}" data-activity-key="run:${attr(run.id)}"><header><div><span>${esc(run.type.replace(/-/g, " ").toUpperCase())}</span><b>${esc(run.label || run.targetId)}${duplicateCount > 1 ? ` <em class="automation-duplicate-count">×${duplicateCount}</em>` : ""}</b></div><i>${active ? '<span class="spin">◌</span>' : waiting ? "!" : run.status === "completed" ? "✓" : run.status === "failed" ? "!" : "○"}</i></header><p>${esc(waiting ? v670WaitingDetail(run, step) : step ? `${v641StepSystem(step)} · ${step.label || displayRun.stage}` : run.stage || run.summary || v626StatusLabel(run))}</p>${failed?.error ? `<small class="automation-drawer-error">${esc(failed.error)}</small>` : child ? `<small>Child run: ${esc(child.label || child.targetId)}</small>` : ""}<footer>${primary}<button onclick="closeGlobalAutomationActivity();openAutomationReport('${attr(run.id)}')">VIEW REPORT</button>${["failed","interrupted","cancelled"].includes(run.status) ? `<button class="ghost-btn" onclick="dismissAutomationActivityRun('${attr(run.id)}')">DISMISS</button>` : ""}</footer></article>`;
+}
+/* WAITING FOR YOU, said in the run's own terms. A run parked at an approval gate and
+   a run whose runner went away need different things from the director, and the
+   drawer used to describe both as whatever step was last touched. */
+function v670WaitingDetail(run, step) {
+  if (run?.status === "awaiting-review") return `Waiting for you · ${run.stage || step?.label || "approve a result to continue"}`;
+  return `Waiting for you · orchestration stopped, choose Resume Run to continue${step?.label ? ` from ${step.label}` : ""}`;
+}
+/* The drawer row's own tone. Identical to v641StatusTone except that a `running` run
+   nobody is driving reads as an approval-style pause rather than as live work, which
+   is what its row now says in words. */
+function v670RunTone(run) {
+  return v670WaitingForHumanRun(run) ? "review" : v641StatusTone(run?.status);
 }
 function v641ActiveAndRecentRuns() {
   const runs = [...(AUTOMATION_RUNS || [])].filter((run) => run.status !== "archived");
+  /* Unsettled work sorts first - both the machine's and the director's, because a run
+     waiting on a person is just as much "still open" as one mid-request. Which of the
+     two it is gets said in the section it lands in, not by hiding it down the list. */
   return runs.sort((a, b) => {
-    const activeA = ["running", "awaiting-review"].includes(a.status) ? 1 : 0;
-    const activeB = ["running", "awaiting-review"].includes(b.status) ? 1 : 0;
-    return activeB - activeA || String(b.updatedAt || b.createdAt || "").localeCompare(String(a.updatedAt || a.createdAt || ""));
+    const openA = v670RunUnsettled(a) ? 1 : 0;
+    const openB = v670RunUnsettled(b) ? 1 : 0;
+    return openB - openA || String(b.updatedAt || b.createdAt || "").localeCompare(String(a.updatedAt || a.createdAt || ""));
   }).slice(0, 12);
 }
 function v641GroupAttentionRuns(runs) {
@@ -251,12 +339,16 @@ function v6602EnsureActivityBackdrop() {
 }
 function v6602ActivityStatus() {
   const runs = Array.isArray(AUTOMATION_RUNS) ? AUTOMATION_RUNS : [];
-  const activeRuns = runs.filter((run) => ["running", "awaiting-review"].includes(run.status));
+  const activeRuns = runs.filter(v670MachineActiveRun);
+  const waitingRuns = runs.filter(v670WaitingForHumanRun);
   const activeManual = [...V641_MANUAL_ACTIVITIES.values()].filter((row) => row.status === "running");
   const activeFal = v641StandaloneFalJobs();
   const attention = runs.filter((run) => ["failed", "interrupted", "cancelled"].includes(run.status));
   const count = activeRuns.length + activeManual.length + activeFal.length;
   if (count) return { tone: "active", label: `Activity · ${count} active`, detail: activeManual[0]?.title || activeFal[0]?.purpose || activeRuns[0]?.stage || "Working" };
+  /* Nothing is running. A pending approval outranks an old failure here, because it
+     is the one thing the director can finish right now. */
+  if (waitingRuns.length) return { tone: "waiting", label: `Activity · ${waitingRuns.length} waiting for you`, detail: waitingRuns[0].stage || "Your approval is needed" };
   if (attention.length) return { tone: "attention", label: `Activity · ${attention.length} need attention`, detail: "Open activity" };
   return { tone: "idle", label: "Activity · Idle", detail: "No active operation" };
 }
@@ -293,13 +385,104 @@ window.archivePreviousAutomationFailures = async () => {
   if (typeof confirmModal === "function") return confirmModal(`Dismiss ${ids.length} previous automation alert${ids.length === 1 ? "" : "s"}?`, apply, { title: "Clear previous alerts", confirmLabel: "DISMISS ALERTS", body: "This removes them from Global Activity. Each run and its diagnostics stay in Reports until they age out of the run history CineBraid keeps." });
   await apply();
 };
+/* ------------------------------------------------------------------------------
+   PAINT THE DRAWER WITHOUT DESTROYING WHAT THE USER IS TOUCHING.
+
+   The drawer re-renders every V641_ACTIVITY_REFRESH_MS whether or not anything
+   changed, and it did so by replacing its whole innerHTML. Every control in it was
+   therefore a new element every 3.5 seconds, and a click that began before a tick
+   landed on a node that no longer existed - reproduced in Phase 2 as a DISMISS button
+   detaching under the pointer, and the cause of the intermittent check:browser-real
+   timeout.
+
+   So: build the same markup, then reconcile instead of replacing. Rows carry
+   data-activity-key, and a row whose markup is byte-identical to the one already on
+   screen is left alone - same node, same pending click, same focus.
+
+   This is a rendering repair, not a redesign: the markup produced is unchanged.
+
+   The wholesale path is kept for two cases that genuinely need it - the first paint,
+   and a DOM that does not parse innerHTML (the Node render harness's FakeElement,
+   where reconciliation would silently no-op and leave the drawer stale). The probe
+   asks the document itself rather than sniffing for a test environment. */
+function v670DomCanReconcile(document_) {
+  try {
+    const probe = document_.createElement("div");
+    probe.innerHTML = '<i data-activity-key="probe"></i>';
+    return typeof probe.querySelectorAll === "function"
+      && probe.querySelectorAll("[data-activity-key]").length === 1
+      && typeof probe.replaceChild === "function";
+  } catch { return false; }
+}
+function v670KeyedChildren(node) {
+  const rows = [...(node?.children || [])];
+  return rows.length && rows.every((row) => row.getAttribute?.("data-activity-key")) ? rows : null;
+}
+function v670PatchSection(current, next) {
+  /* Header counts change on their own; they hold no controls, so a direct write is
+     both safe and cheaper than reconciling them. */
+  const currentHeader = current.querySelector(":scope > header"), nextHeader = next.querySelector(":scope > header");
+  if (currentHeader && nextHeader && currentHeader.innerHTML !== nextHeader.innerHTML) currentHeader.innerHTML = nextHeader.innerHTML;
+  const currentRows = v670KeyedChildren(current), nextRows = v670KeyedChildren(next);
+  /* An empty-state placeholder carries no key and no control. Sections holding one on
+     either side are swapped whole rather than half-reconciled. */
+  if (!currentRows || !nextRows) {
+    const currentBody = current.innerHTML, nextBody = next.innerHTML;
+    if (currentBody !== nextBody) current.innerHTML = nextBody;
+    return;
+  }
+  const existing = new Map(currentRows.map((row) => [row.getAttribute("data-activity-key"), row]));
+  const keep = new Set();
+  let anchor = currentHeader || null;
+  for (const nextRow of nextRows) {
+    const key = nextRow.getAttribute("data-activity-key");
+    const found = existing.get(key);
+    let live = found;
+    if (found) {
+      /* Unchanged rows keep their identity. This is the line that stops a DISMISS
+         button vanishing while another row's timer ticks. */
+      if (found.outerHTML !== nextRow.outerHTML) {
+        current.replaceChild(nextRow, found);
+        live = nextRow;
+      }
+    } else {
+      current.insertBefore(nextRow, anchor ? anchor.nextSibling : current.firstChild);
+      live = nextRow;
+    }
+    if (anchor && live.previousSibling !== anchor) current.insertBefore(live, anchor.nextSibling);
+    anchor = live;
+    keep.add(key);
+  }
+  for (const [key, row] of existing) if (!keep.has(key)) row.remove();
+}
+function v670PaintDrawer(drawer, shell) {
+  const currentShell = typeof drawer.querySelector === "function" ? drawer.querySelector(".automation-drawer-shell") : null;
+  if (!currentShell || !v670DomCanReconcile(document)) {
+    drawer.innerHTML = shell;
+    return;
+  }
+  const staging = document.createElement("div");
+  staging.innerHTML = shell;
+  const nextShell = staging.querySelector(".automation-drawer-shell");
+  if (!nextShell) { drawer.innerHTML = shell; return; }
+  const currentHeader = currentShell.querySelector(":scope > header"), nextHeader = nextShell.querySelector(":scope > header");
+  if (currentHeader && nextHeader && currentHeader.innerHTML !== nextHeader.innerHTML) currentHeader.innerHTML = nextHeader.innerHTML;
+  const currentList = currentShell.querySelector(".automation-drawer-list"), nextList = nextShell.querySelector(".automation-drawer-list");
+  if (!currentList || !nextList) { drawer.innerHTML = shell; return; }
+  const currentSections = [...currentList.children], nextSections = [...nextList.children];
+  /* The section list is fixed and ordered, so a length change means the markup itself
+     changed shape rather than its contents - repaint rather than guess. */
+  if (currentSections.length !== nextSections.length) { currentList.innerHTML = nextList.innerHTML; return; }
+  nextSections.forEach((nextSection, index) => v670PatchSection(currentSections[index], nextSection));
+}
 function v641RenderActivityDrawer(focusRunId = "") {
   const drawer = document.getElementById("automation-activity-drawer");
   if (!drawer) return;
   const runs = v641ActiveAndRecentRuns();
   const manual = [...V641_MANUAL_ACTIVITIES.values()].sort((a, b) => String(b.startedAt).localeCompare(String(a.startedAt)));
   const standaloneFal = v641StandaloneFalJobs();
-  const activeRuns = runs.filter((run) => ["running", "awaiting-review"].includes(run.status));
+  const activeRuns = runs.filter(v670MachineActiveRun);
+  const waitingRuns = runs.filter(v670WaitingForHumanRun);
   const attentionRuns = runs.filter((run) => ["failed", "interrupted", "cancelled"].includes(run.status));
   const attentionGroups = v641GroupAttentionRuns(attentionRuns);
   const completedRuns = runs.filter((run) => run.status === "completed");
@@ -307,12 +490,24 @@ function v641RenderActivityDrawer(focusRunId = "") {
   const recentManual = manual.filter((row) => row.status !== "running");
   const activeCount = activeRuns.length + activeManual.length + standaloneFal.length;
   const section = (title, rows, empty = "") => `<section class="automation-drawer-section"><header><b>${esc(title)}</b><span>${rows.length}</span></header>${rows.join("") || (empty ? `<div class="automation-console-empty"><span>${esc(empty)}</span></div>` : "")}</section>`;
+  /* WAITING FOR YOU is its own section rather than a tone inside ACTIVE NOW. The
+     question a director asks the drawer is "is anything happening, or is it me?", and
+     a list that answers both at once is the thing that read as a stalled machine. */
   const content = [
     section("ACTIVE NOW", [...activeManual.map(v641ManualActivityMarkup), ...standaloneFal.map(v641StandaloneFalMarkup), ...activeRuns.map(v641DrawerRunMarkup)], "No operation is currently running."),
+    section("WAITING FOR YOU", waitingRuns.map((run) => v641DrawerRunMarkup(run)), "Nothing is waiting on you."),
     section("PREVIOUS FAILURES / NEEDS ATTENTION", [...recentManual.filter((row) => row.status === "failed").map(v641ManualActivityMarkup), ...attentionGroups.map((group) => v641DrawerRunMarkup(group.run, group.count))], "No blocked or failed work."),
     section("RECENT COMPLETED", [...recentManual.filter((row) => row.status === "completed").map(v641ManualActivityMarkup), ...completedRuns.map(v641DrawerRunMarkup)].slice(0, 12), "No completed activity yet."),
   ].join("");
-  drawer.innerHTML = `<div class="automation-drawer-shell"><header><div><span>GLOBAL ACTIVITY</span><h2>${activeCount ? `${activeCount} operation${activeCount === 1 ? "" : "s"} active` : attentionRuns.length ? `${attentionRuns.length} previous attempt${attentionRuns.length === 1 ? "" : "s"} need attention` : "No active operation"}</h2><p>Every live local-AI call, paid request, review, retry, approval, and recovery action remains visible from any workspace. Detailed diagnostics live in Reports.</p></div><div class="automation-drawer-header-actions">${attentionRuns.length ? `<button class="ghost-btn" onclick="archivePreviousAutomationFailures()">DISMISS PREVIOUS ALERTS</button>` : ""}<button class="cancel" onclick="closeGlobalAutomationActivity()">Close</button></div></header><div class="automation-drawer-list">${content}</div></div>`;
+  const heading = activeCount
+    ? `${activeCount} operation${activeCount === 1 ? "" : "s"} active`
+    : waitingRuns.length
+      ? `${waitingRuns.length} run${waitingRuns.length === 1 ? "" : "s"} waiting for you`
+      : attentionRuns.length
+        ? `${attentionRuns.length} previous attempt${attentionRuns.length === 1 ? "" : "s"} need attention`
+        : "No active operation";
+  const shell = `<div class="automation-drawer-shell"><header><div><span>GLOBAL ACTIVITY</span><h2>${heading}</h2><p>Every live local-AI call, paid request, review, retry, approval, and recovery action remains visible from any workspace. Detailed diagnostics live in Reports.</p></div><div class="automation-drawer-header-actions">${attentionRuns.length ? `<button class="ghost-btn" onclick="archivePreviousAutomationFailures()">DISMISS PREVIOUS ALERTS</button>` : ""}<button class="cancel" onclick="closeGlobalAutomationActivity()">Close</button></div></header><div class="automation-drawer-list">${content}</div></div>`;
+  v670PaintDrawer(drawer, shell);
   drawer.classList.toggle("open", V641_ACTIVITY_DRAWER_OPEN);
   drawer.setAttribute("aria-hidden", V641_ACTIVITY_DRAWER_OPEN ? "false" : "true");
   drawer.setAttribute("role", "dialog");
@@ -349,7 +544,7 @@ function v642UpdateGlobalActivityStrip() {
 function v641UpdateActivityButton() {
   const button = document.getElementById("automation-activity-toggle");
   if (!button) return;
-  const activeRuns = (AUTOMATION_RUNS || []).filter((run) => ["running", "awaiting-review"].includes(run.status));
+  const activeRuns = (AUTOMATION_RUNS || []).filter(v670MachineActiveRun);
   const activeManual = [...V641_MANUAL_ACTIVITIES.values()].filter((row) => row.status === "running");
   const activeFal = v641StandaloneFalJobs();
   const count = activeRuns.length + activeManual.length + activeFal.length;
@@ -357,14 +552,20 @@ function v641UpdateActivityButton() {
   const detail = activeManual[0]?.system || (activeFal[0] ? "FAL Image Generation" : activeStep ? v641StepSystem(activeStep).replace(/^.*·\s*/, "") : "");
   button.classList.toggle("active", count > 0);
   const status = v6602ActivityStatus();
-  button.innerHTML = `<span>${count ? '<i class="spin">◌</i>' : "◉"}</span><b>${esc(status.label.replace("Activity · ", ""))}</b>${detail ? `<small>${esc(detail)}</small>` : ""}`;
+  /* The spinner is reserved for work that is running. A pending approval gets a
+     standing mark, because a spinning icon over a stopped runner is the whole
+     defect this batch exists to remove. */
+  button.classList.toggle("waiting", status.tone === "waiting");
+  button.innerHTML = `<span>${count ? '<i class="spin">◌</i>' : status.tone === "waiting" ? "<i>!</i>" : "◉"}</span><b>${esc(status.label.replace("Activity · ", ""))}</b>${detail ? `<small>${esc(detail)}</small>` : ""}`;
   button.title = status.label;
   v642UpdateGlobalActivityStrip();
 }
 window.refreshGlobalAutomationActivity = async (force = false) => {
   if (V641_ACTIVITY_REFRESHING) return;
-  const activeExists = (AUTOMATION_RUNS || []).some((run) => ["running", "awaiting-review"].includes(run.status));
-  if (!force && !V641_ACTIVITY_DRAWER_OPEN && !activeExists) return;
+  /* Unsettled, not active: a run parked at an approval gate must keep being polled so
+     an approval made in another window lands here. */
+  const openExists = (AUTOMATION_RUNS || []).some(v670RunUnsettled);
+  if (!force && !V641_ACTIVITY_DRAWER_OPEN && !openExists) return;
   V641_ACTIVITY_REFRESHING = true;
   try {
     const [runData, falData] = await Promise.all([
