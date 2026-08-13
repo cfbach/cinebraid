@@ -48,8 +48,12 @@ const readLF = (file) => fs.readFileSync(path.join(ROOT, file), "utf8").replace(
 const notes = [];
 function note(line) { notes.push(line); }
 
-const SHOT_TASKS = ["inputs", "look", "frames", "motion", "deliver"];
-const focusKey = (shotId) => `cinebraid-focused:fixture:shot-task:${shotId}`;
+/* Read from the declaration rather than restated here. This used to be a local literal
+   copy of the five stage ids, which meant a stage added to the product and not to this
+   file would have gone on passing while never being driven at all. */
+const { SHOT_STAGE_IDS, SHOT_STAGE_SCOPE } = require("../public/shared-stage-model.js");
+const SHOT_TASKS = [...SHOT_STAGE_IDS];
+const focusKey = (shotId) => `cinebraid-focused:fixture:${SHOT_STAGE_SCOPE}:${shotId}`;
 const taskOf = (html) => (String(html).match(/data-bounded-task="([^"]+)"/) || [])[1] || "";
 const hasPanel = (html, key) => String(html).includes(`data-guided-panel="${key}"`);
 
@@ -165,7 +169,11 @@ function testOneTaskStateWriter() {
     `the focused-task key may only be written in one place; also written by: ${writers.join(", ")}`);
   const studio = readLF("public/creation-studio.js");
   assert(/function selectGuidedPanelTask\(/.test(studio), "the shared cross-panel selector must exist");
-  assert(/boundedWriteFocusedTask\("shot-task"/.test(studio), "and must write through the canonical task-selection state");
+  /* The scope is now named by the declaration (SHOT_STAGE_SCOPE) rather than spelled
+     out here, so this asserts the call goes through the canonical writer with the
+     declared scope — tests/stage-model.js owns the value of that scope. */
+  assert(/boundedWriteFocusedTask\(SHOT_STAGE_SCOPE, s\.id, taskId\)/.test(studio), "and must write through the canonical task-selection state");
+  assert.strictEqual(SHOT_STAGE_SCOPE, "shot-task", "the declared scope must still be the key real installs carry");
   note("A: one writer for the focused-task key, and cross-panel navigation goes through it");
 }
 

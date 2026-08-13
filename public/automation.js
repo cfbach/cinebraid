@@ -1626,7 +1626,12 @@ async function runShotAutomation(runId) {
       const guide = await v626OpeningBlocking(run, run.targetId);
       const currentShot = shotById(run.targetId);
       keepGuidedPanelOpen(currentShot, "blocking");
-      try { boundedWriteState("selected:shot-task", currentShot.id, "look"); boundedWriteState("selected:shot-look-view", currentShot.id, "blocking"); } catch {}
+      /* Through the declared stage model, which is the only writer of shot stage
+         selection the workspace actually reads. This used to call boundedWriteState,
+         which writes `cinebraid-bounded:…` — while boundedShotSelectedTask reads
+         `cinebraid-focused:…`. The two keys never met, so a completed blocking run
+         left the shot on whatever stage it was already showing. */
+      try { selectGuidedPanelTask(currentShot, "blocking"); } catch {}
       dirty(); await flushPendingProjectSave();
       await v626FinishRun(run, "completed", `Blocking guide approved: ${guide?.asset?.title || guide?.asset?.file || "active guide"}. The shot is ready for manual frame work or optional still automation.`);
       toast("Blocking automation completed — active guide selected");

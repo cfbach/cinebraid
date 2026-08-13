@@ -108,7 +108,12 @@ async function main() {
   assert(css.includes("min-height:40px"), "mobile controls must receive a minimum hit-area floor");
 
   const app = read("public/app.js");
-  assert(app.includes('issue.kind === "unresolved-reference"') && app.includes("boundedWriteState('shot-task'"), "readiness links for unresolved relationships must open Shot Inputs");
+  /* This used to require boundedWriteState('shot-task', …), which writes
+     `cinebraid-bounded:…` while the shot workspace reads `cinebraid-focused:…` — so the
+     assertion pinned a writer whose value nothing ever read, and the readiness link had
+     never once opened Shot Inputs. The link now writes the declared scope through the
+     canonical writer; tests/stage-model.js owns the key-agreement guarantee. */
+  assert(app.includes('issue.kind === "unresolved-reference"') && app.includes("boundedWriteFocusedTask('${SHOT_STAGE_SCOPE}'"), "readiness links for unresolved relationships must open Shot Inputs");
   assert(app.includes('storedValue("cinebraid-library-tab", "all")'), "Reference Library category must restore from local storage");
   assert(app.includes('localStorage.setItem("cinebraid-library-tab", tab)'), "Reference Library category must persist after selection");
 

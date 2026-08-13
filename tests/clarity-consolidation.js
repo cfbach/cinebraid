@@ -25,9 +25,19 @@ assert(entities.includes("bounded-single-state"), "continuity states must render
 assert(entities.includes("selected:continuity-state"), "continuity state selection must persist");
 assert(!entities.includes('label:"Approved",detail:'), "Approved must be a status, not a workspace");
 
+/* The five shot stages, asked of the DECLARATION rather than of creation-studio.js's
+   source text. This used to read
+     assert(creation.includes('const ids=["inputs","look","frames","motion","deliver"]'))
+   which is a constant compared against itself: it could not fail for any reason a
+   filmmaker would care about, and it would have stayed green while the taskbar, the
+   workspace renderers and the panel map all disagreed. The stage set now has one
+   declared source, and tests/stage-model.js proves the shipped surfaces resolve through
+   it; clarity-consolidation only needs to know the five stages are still the five. */
+const { SHOT_STAGES, SHOT_STAGE_IDS } = require("../public/shared-stage-model.js");
+assert.deepStrictEqual([...SHOT_STAGE_IDS], ["inputs", "look", "frames", "motion", "deliver"], "the clarity consolidation shot stages must remain declared");
 for (const label of ["Inputs", "Look & blocking", "Frames", "Motion & sound", "Deliver"])
-  assert(creation.includes(label), `missing ${label} shot stage`);
-assert(creation.includes('const ids=["inputs","look","frames","motion","deliver"]'));
+  assert(SHOT_STAGES.some((stage) => stage.label === label), `missing ${label} shot stage`);
+assert(!creation.includes('const ids=["inputs","look","frames","motion","deliver"]'), "the shot stage list must not be restated inside creation-studio.js");
 assert(creation.includes("shot-stage-automation"), "automation belongs inside Frames");
 assert(creation.includes("OPEN SHOTS"), "Create must hand the complete shot list to Production");
 assert(!creation.includes('class="creation-scene-list"'), "Create must not render every scene description");

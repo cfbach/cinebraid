@@ -253,16 +253,28 @@
     root.dataset.focusedShot = "1";
     shell.classList.add("focused-workspace-shell");
     const shot = findShot(id);
-    const tasks = [...stack.children].filter((element) => element.matches("details,section,.creation-card,.automation-card"));
-    if (!tasks.length) return;
-    const fallback = nextTaskIndex(tasks);
-    const active = resolveTaskSelection(tasks, readState("shot-task", id, ""), fallback);
-    writeState("shot-task", id, active);
-    const bar = buildTaskbar(tasks, "shot-task", id, active, (taskId) => applyTaskSelection(tasks, taskId, bar));
-    bar.classList.add("shot-focused-taskbar");
-    stack.parentNode.insertBefore(bar, stack);
-    activeTaskContext = { kind: "shot-task", id, tasks, bar, taskId: active };
-    applyTaskSelection(tasks, active, bar);
+    /* NO SHOT TASKBAR IS BUILT HERE, and that is the point of O1.
+
+       This branch used to spread the work stack's rendered children, filter them by tag
+       and CSS class, and turn whatever survived into the shot's stages — their identity
+       from a class name, their order from the order they happened to render in, and
+       their status from a regular expression run over the panel's visible text. That
+       made the DOM the workflow model: inserting a presentational <section> into the
+       stack added a stage, and reordering two panels renumbered the workflow.
+
+       CineBraid's shot stages are declared in public/shared-stage-model.js and
+       rendered by the bounded workspace above, which states its selection in
+       data-selected-task. A shot shell without data-bounded means that workspace did
+       not render; the honest response is to leave the panels alone rather than invent
+       five stages that agree with nothing. The inspector is still attached — it reads
+       the shot record, not the DOM, so it was never part of the problem.
+
+       The helpers this branch used are still live for the scene and legacy entity
+       routes, which answer a different question and are deliberately not migrated. */
+    /* Cleared rather than left alone: selectFocusedTask() acts on whatever context was
+       set last, and a shot route that establishes none must not inherit the previous
+       route's. */
+    activeTaskContext = null;
     if (shot) shell.appendChild(shotInspector(shot));
   }
   function entityListName(view) {
