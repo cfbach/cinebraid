@@ -1159,18 +1159,33 @@ function referenceAwarePromptSpec(profile, spec, refs) {
   const entities = Array.isArray(spec?.promptEntities) ? spec.promptEntities.filter((item) => item?.type === "character") : [];
   if (!entities.length) return out;
   const base = (refs || []).find((ref) => referenceMediaType(ref) === "image" && ["base", "first-frame", "composition"].includes(ref.role));
+  /* CAN THIS TARGET ACCEPT ANOTHER IMAGE AT ALL?
+   *
+   * Read from the profile's own declared limits, never from a mode or family name.
+   * It decides whether "attach an approved character image" is advice or an
+   * impossibility: MiniMax H3's fl2va checkpoint carries first-frame and last-frame
+   * and nothing else, so at i2v its single image slot and at flf both of them are
+   * already spent on the approved endpoints, and t2v declares no reference slots at
+   * all. Telling a filmmaker to attach a reference the selected route cannot hold is
+   * the same failure as offering a model that cannot run. */
+  const imageCount = (refs || []).filter((ref) => referenceMediaType(ref) === "image").length;
+  const imageCeiling = Number(profile?.limits?.maxImages ?? profile?.limits?.maxReferences);
+  const canAttachAnotherImage = !Number.isFinite(imageCeiling) || imageCount < imageCeiling;
   const replacements = [];
   for (const entity of entities) {
     const index = (refs || []).findIndex((ref) => promptReferenceMatchesEntity(ref, entity));
     const visual = index >= 0 ? refs[index] : null;
     const token = visual ? tokenForReference(profile, refs, index) : "";
     const descriptor = cleanText(entity.descriptor) || "the character assigned to this shot";
+    /* An approved endpoint image grounds every character standing in it, not only a
+       lone one. Restricting that to a single-character shot made a two-hander read as
+       ungrounded while its own opening frame was carrying both identities. */
     const replacement = visual
       ? `${cleanText(entity.name || entity.id)} shown in ${token}`
-      : base && entities.length === 1
+      : base
         ? `${descriptor} shown in the supplied starting image`
         : descriptor;
-    replacements.push({ entity, replacement, visual: !!visual });
+    replacements.push({ entity, replacement, visual: !!visual, anchored: !visual && !!base });
   }
   const apply = (value) => replacements.reduce((text, row) => replaceCharacterMention(text, row.entity, row.replacement), String(value || ""));
   const applyArray = (items) => (Array.isArray(items) ? items.map(apply) : []);
@@ -1204,8 +1219,29 @@ function referenceAwarePromptSpec(profile, spec, refs) {
     } else if (out.audio.speakerName) out.audio.speakerName = apply(out.audio.speakerName);
     for (const key of ["note", "delivery", "voiceDesign", "sfx", "ambience", "music", "silence", "priorities"]) if (out.audio[key] != null) out.audio[key] = apply(out.audio[key]);
   }
-  const ungrounded = replacements.filter((row) => !row.visual).map((row) => row.entity.name || row.entity.id).filter(Boolean);
-  if (ungrounded.length) out.promptWarnings = unique([...(out.promptWarnings || []), `Reference-aware identity language replaced ungrounded character name${ungrounded.length === 1 ? "" : "s"}: ${ungrounded.join(", ")}. Attach an approved character image to use the story name in the model prompt.`]);
+  /* TWO DIFFERENT THINGS, AND THEY WERE ONE SENTENCE.
+   *
+   * The DISCLOSURE — "your character's story name was replaced in the prompt" — is
+   * owed in every case: the filmmaker wrote a name and the model will not see it.
+   * That is stated whether or not anything can be done about it.
+   *
+   * The INSTRUCTION was where this misled. "Attach an approved character image" was
+   * appended unconditionally, including in the endpoint-only workflows where the
+   * selected target has no slot left to attach one to — the dogfood read it during a
+   * first/last-frame shot and took it for advice to change reference strategy. So the
+   * action is chosen from what the target can actually accept, and where the approved
+   * starting image is already carrying the identity, that is what it says. */
+  const ungrounded = replacements.filter((row) => !row.visual);
+  if (ungrounded.length) {
+    const names = ungrounded.map((row) => row.entity.name || row.entity.id).filter(Boolean);
+    const lead = `Reference-aware identity language replaced ungrounded character name${names.length === 1 ? "" : "s"}: ${names.join(", ")}.`;
+    const action = ungrounded.every((row) => row.anchored)
+      ? "Identity is carried by the approved starting image in this workflow; attach a character reference only on a target that accepts one."
+      : canAttachAnotherImage
+        ? "Attach an approved character image to use the story name in the model prompt."
+        : `${profile?.name || "This target"} has no image reference slot left in this workflow, so the story name cannot be grounded here. Choose a reference-capable target if identity must come from an approved image.`;
+    out.promptWarnings = unique([...(out.promptWarnings || []), `${lead} ${action}`]);
+  }
   return out;
 }
 
@@ -2597,14 +2633,26 @@ function compile(profile, spec, refs) {
       ? compileImage(profile, promptSpec, effectiveRefs)
       : compileVideo(profile, promptSpec, effectiveRefs);
   const result = checks(profile, promptSpec, effectiveRefs);
+  /* NAME THE STAGE THIS NUMBER BELONGS TO.
+   *
+   * `limits.maxPromptCharacters` is CineBraid's budget for the WRITTEN PACKAGE — this
+   * file says so twenty lines up, in `recommendedSettings.promptLimit`. It is not a
+   * provider ceiling, and calling it "the provider schema limit" here contradicted
+   * that in the same output: a filmmaker read "close to the provider schema limit:
+   * 1,991 / 2,000" at this stage and "4,894 / 7,000" in the paid dialog, and had no
+   * way to tell which number the request would actually be held to.
+   *
+   * The dispatch ceiling is resolved from model ∩ backend capability when a
+   * generation plan is compiled, and it is stated there. The number here keeps its
+   * value and loses the claim it was never entitled to make. */
   const promptLimit = Number(profile.limits?.maxPromptCharacters || 0);
   if (promptLimit) {
     const usage = `${prompt.length.toLocaleString()} / ${promptLimit.toLocaleString()} characters`;
     if (prompt.length > promptLimit)
-      result.warnings.unshift(`${profile.name} prompt exceeds the provider schema limit: ${usage}.`);
+      result.warnings.unshift(`${profile.name} prompt exceeds CineBraid's written-package budget: ${usage}. The dispatch limit is resolved separately from model and backend capability.`);
     else if (prompt.length >= promptLimit * 0.9)
-      result.warnings.unshift(`${profile.name} prompt is close to the provider schema limit: ${usage}.`);
-    else result.confirmations.unshift(`${profile.name} prompt length validated: ${usage}.`);
+      result.warnings.unshift(`${profile.name} prompt is close to CineBraid's written-package budget: ${usage}. The dispatch limit is resolved separately from model and backend capability.`);
+    else result.confirmations.unshift(`${profile.name} prompt length validated against CineBraid's written-package budget: ${usage}.`);
   }
   return {
     prompt,

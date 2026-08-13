@@ -91,6 +91,8 @@ const nodeSuites = [
   "check:media-disposition-negative",
   "check:shot-media-identity",
   "check:shot-media-identity-negative",
+  "check:generation-truth",
+  "check:generation-truth-negative",
   "check:job-media-identity",
   "check:job-media-identity-negative",
   "check:account-contract",

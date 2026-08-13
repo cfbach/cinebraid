@@ -732,6 +732,32 @@
   }
   const guidedMotionReferencesRaw607 = guidedMotionReferences;
   function gatherMotionReferences607(s, current, profile) {
+    /* MULTI-FRAME IS A DIFFERENT PACKAGE, and creation-studio.js already builds it.
+     *
+     * This collector knows two visual anchors: the opening frame and an optional
+     * endpoint. MiniMax H3's multi-frame workflow is not two anchors — it is an
+     * ORDERED SEQUENCE of approved beats, which is what the H3 keyframe panel exists
+     * to author: it stores an enable flag, an order and a beat note per frame, and
+     * tells the filmmaker those images are "sent to FAL in this exact order as
+     * Image 1, Image 2, and onward".
+     *
+     * The implementation that honours that contract has always been the one in
+     * creation-studio.js — it is the only producer of role `sequential-keyframe`
+     * anywhere in the browser, and the compiler, the H3 pack and the fal serializer
+     * have all understood that role since the panel shipped. This file captured it
+     * on the line above and then never called it, so every multi-frame shot compiled
+     * with one approved frame and the panel's ordering, its enable flags and its beat
+     * notes reached nothing.
+     *
+     * Delegating is the whole repair: the sequence is built by its own author, and
+     * the budgeting below still applies on top. */
+    if (profile?.family === "minimax-h3" && profile.mode === "r2v")
+      return guidedMotionReferencesRaw607(s, current, profile);
+    /* TEXT TO VIDEO CARRIES NOTHING. fal's H3 t2v schema declares no reference media
+       at all (`fal-h3-backend.js` modeSupport.t2v), so an image gathered here could
+       only be dropped later — and a package preview listing references the request
+       cannot hold is the same lie as a model picker offering a model that cannot run. */
+    if (profile?.mode === "t2v") return [];
     const unit = activeMotionUnit(s), frames = guidedFrames(s), refs = [];
     const startFrame = frames.find((frame) => frame.id === unit?.fromFrame) || frames[0], startIndex = frames.indexOf(startFrame), startTake = startFrame ? guidedFrameApproved(s, startFrame, takesFor(s.id), startIndex) : current;
     if (startTake) refs.push({ key: `shot-start:${startFrame?.id || s.id}:${startTake.name}`, label: `Approved Frame ${startFrame?.label || "A"}`, url: startTake.url, role: "first-frame", mediaType: "image", priority: "primary", approved: true, instruction: "Use as the approved opening composition. Preserve geometry, identity, lighting, and continuity unless motion direction explicitly changes them." });
