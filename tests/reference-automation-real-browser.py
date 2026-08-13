@@ -276,15 +276,69 @@ try:
         page.route("**/*", guard)
 
         def open_reference_workspace(entity_id):
+            """Open the entity workspace and STATE its preconditions instead of assuming
+            them.
+
+            AUTOMATE DEFAULT went missing on a CI runner with no console error and no
+            page error, because nothing was wrong with the page: the button was in the
+            DOM and simply not in the accessibility tree, so get_by_role matched nothing.
+            Two things can hide it, and this helper now asserts both rather than sleeping
+            through them.
+
+              * TASK SELECTION. public/focused-workspaces.js is a post-render enhancer
+                and it sets `hidden` on every task it did not select, which drops that
+                subtree from the accessibility tree. On this machine Reference is already
+                the default selection, so this is defence in depth rather than the
+                observed cause - but the old helper did `if task.count(): task.click()`,
+                which silently skipped the click when the enhancer had not run yet, and
+                a silent skip is exactly how a precondition stops being one.
+
+              * COLLAPSE. This is the mechanism actually reproduced: the panel sits
+                inside <details> that render closed, and a closed <details> is hidden
+                from the accessibility tree. Opening them once is not enough, because any
+                re-render restores their default state - which on a slow runner can land
+                between the open and the query.
+
+            Same timeouts as the rest of this suite, and the AUTOMATE DEFAULT assertion
+            in start_automation is untouched. What changes is that a slow render now
+            fails where it happens, naming the precondition."""
             page.goto(f"{base}/#/character/{entity_id}", wait_until="domcontentloaded")
             page.wait_for_selector("#main", timeout=20000)
-            page.wait_for_timeout(900)
+            page.wait_for_selector(".focused-task-button", timeout=20000)
             task = page.locator(".focused-task-button", has_text="Reference").first
-            if task.count():
-                task.click()
-                page.wait_for_timeout(400)
-            page.evaluate("() => document.querySelectorAll('#main details').forEach(node => { node.open = true; })")
-            page.wait_for_timeout(300)
+            assert task.count() >= 1, \
+                f"the Reference task control is missing for {entity_id}; the workspace offers: " \
+                f"{page.locator('.focused-task-button').all_inner_texts()}"
+            task.click()
+            selected = ("() => { const button = [...document.querySelectorAll('.focused-task-button')]"
+                        ".find(row => (row.querySelector('b')?.textContent || '').trim() === 'Reference');"
+                        " return !!button && button.classList.contains('selected'); }")
+            try:
+                page.wait_for_function(selected, timeout=20000)
+            except Exception as error:  # noqa: BLE001 - name the precondition, not the timeout
+                raise AssertionError(
+                    f"the Reference task never became the selected task for {entity_id}; tasks: "
+                    f"{page.locator('.focused-task-button').all_inner_texts()}") from error
+            # Now the reachability precondition, which is the one that actually failed.
+            # The panel sits inside collapsed <details>, and a closed <details> is hidden
+            # from the accessibility tree - so get_by_role finds nothing even though the
+            # markup is present and correct, with no console error and no page error to
+            # explain it. Opening them once is not enough: any re-render restores their
+            # default state, which on a slow runner can land between the open and the
+            # query. So the open is re-applied until the control is genuinely reachable,
+            # and a failure names THIS step instead of surfacing later as a missing
+            # button. The AUTOMATE DEFAULT assertion in start_automation is unchanged.
+            reachable = ("() => { document.querySelectorAll('#main details').forEach(node => { node.open = true; });"
+                         " return [...document.querySelectorAll('button')]"
+                         ".some(row => row.textContent.trim() === 'AUTOMATE DEFAULT' && row.offsetParent !== null); }")
+            try:
+                page.wait_for_function(reachable, timeout=20000)
+            except Exception as error:  # noqa: BLE001
+                in_dom = page.evaluate("() => document.body.innerHTML.includes('AUTOMATE DEFAULT')")
+                where = "present in the DOM but unreachable" if in_dom else "absent from the DOM entirely"
+                raise AssertionError(
+                    f"the reference workspace never exposed AUTOMATE DEFAULT for {entity_id}: it is {where}, "
+                    "so the panel is either hidden by task selection or still collapsed") from error
 
         def start_automation(entity_id):
             button = page.get_by_role("button", name="AUTOMATE DEFAULT", exact=True)

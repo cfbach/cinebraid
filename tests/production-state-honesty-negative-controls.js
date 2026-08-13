@@ -214,6 +214,67 @@ async function main() {
       }
     });
 
+  /* ---- 6b. go back to replacing a keyed row whose content changed ----
+     The defect the CI browser gate exposed: keeping the node only when the markup was
+     byte-identical, which protects exactly the case that never needed protecting. */
+  await mustFail(
+    "replacing a keyed row instead of patching it",
+    "AN UNCHANGED CONTROL MUST KEEP ITS NODE IDENTITY",
+    async () => {
+      const view = await render("#/shot/L1-01", buildFixture(), {
+        mutateSource: replacing("live-activity.js", "control 6b",
+          "    if (liveKid.nodeType === 1) { v670PatchElement(liveKid, nextKid); continue; }",
+          "    if (liveKid.nodeType === 1) { live.replaceChild(nextKid, liveKid); continue; }"),
+      });
+      const probe = vm.runInContext(`(() => {
+        const make = (tag, attrs, kids) => { const node = { nodeType: 1, nodeName: tag.toUpperCase(),
+          attributes: new Map(Object.entries(attrs || {})), childNodes: kids || [],
+          getAttributeNames() { return [...this.attributes.keys()]; },
+          getAttribute(n) { return this.attributes.has(n) ? this.attributes.get(n) : null; },
+          hasAttribute(n) { return this.attributes.has(n); },
+          setAttribute(n, v) { this.attributes.set(n, String(v)); },
+          removeAttribute(n) { this.attributes.delete(n); },
+          appendChild(c) { this.childNodes.push(c); return c; },
+          removeChild(c) { this.childNodes = this.childNodes.filter((r) => r !== c); return c; },
+          replaceChild(next, prev) { this.childNodes = this.childNodes.map((r) => (r === prev ? next : r)); return prev; } };
+          return node; };
+        const button = make("button", { class: "ghost-btn" }, []);
+        const live = make("article", { "data-activity-key": "run:a" }, [button]);
+        const next = make("article", { "data-activity-key": "run:a" }, [make("button", { class: "ghost-btn" }, [])]);
+        v670PatchElement(live, next);
+        return live.childNodes[0] === button;
+      })()`, view.context);
+      assert(probe, "AN UNCHANGED CONTROL MUST KEEP ITS NODE IDENTITY across a patch");
+    });
+
+  /* ---- 6c. stop removing attributes the new markup dropped ---- */
+  await mustFail(
+    "leaving a dropped attribute behind",
+    "an attribute absent from the new markup must be removed",
+    async () => {
+      const view = await render("#/shot/L1-01", buildFixture(), {
+        mutateSource: replacing("live-activity.js", "control 6c",
+          "  for (const name of live.getAttributeNames()) if (!next.hasAttribute(name)) live.removeAttribute(name);",
+          "  /* control 6c: attribute removal disabled */"),
+      });
+      const stale = vm.runInContext(`(() => {
+        const make = (attrs) => ({ nodeType: 1, nodeName: "ARTICLE",
+          attributes: new Map(Object.entries(attrs || {})), childNodes: [],
+          getAttributeNames() { return [...this.attributes.keys()]; },
+          getAttribute(n) { return this.attributes.has(n) ? this.attributes.get(n) : null; },
+          hasAttribute(n) { return this.attributes.has(n); },
+          setAttribute(n, v) { this.attributes.set(n, String(v)); },
+          removeAttribute(n) { this.attributes.delete(n); },
+          appendChild(c) { this.childNodes.push(c); return c; },
+          removeChild(c) { this.childNodes = this.childNodes.filter((r) => r !== c); return c; },
+          replaceChild(next, prev) { this.childNodes = this.childNodes.map((r) => (r === prev ? next : r)); return prev; } });
+        const live = make({ "data-activity-key": "run:a", "data-stale": "1" });
+        v670PatchElement(live, make({ "data-activity-key": "run:a" }));
+        return live.getAttribute("data-stale");
+      })()`, view.context);
+      assert.strictEqual(stale, null, "an attribute absent from the new markup must be removed");
+    });
+
   /* ---- 7. gate the blocking console on rows it does not review ---- */
   await mustFail(
     "gating REVIEW ALL on attempts it cannot read",

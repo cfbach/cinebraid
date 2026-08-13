@@ -293,6 +293,97 @@ async function main() {
     "the painter must probe the DOM rather than assume it can reconcile");
   note(`drawer rows carry ${rowKeys.length} unique reconciliation keys`);
 
+  /* ---------------------------------------------------------------------------
+     5b  THE PATCH ITSELF: does it change what changed, and keep what did not?
+
+     v670PatchElement is the whole guarantee - "the row survives its own content
+     changing" - so it is exercised directly here against a minimal node model rather
+     than inferred from markup. The model implements exactly the DOM surface the
+     function uses, which is also a statement of how small that surface is.
+
+     The behavioural proof in a real browser lives in the real-browser suite; this is
+     the algorithm's own checklist, including the ways a patcher silently goes wrong:
+     stale text, stale attributes, attributes that should have been REMOVED, and
+     structure that changed shape.
+     --------------------------------------------------------------------------- */
+  const patch = view.context.v670PatchElement;
+  assert.strictEqual(typeof patch, "function", "the drawer painter must expose its element patcher");
+
+  let nodeSeq = 0;
+  const text = (value) => ({ id: ++nodeSeq, nodeType: 3, nodeName: "#text", nodeValue: value, childNodes: [] });
+  function el(tagName, attributes = {}, children = []) {
+    const node = {
+      id: ++nodeSeq, nodeType: 1, nodeName: tagName.toUpperCase(), tagName: tagName.toUpperCase(),
+      attributes: new Map(Object.entries(attributes)), childNodes: [...children],
+      getAttributeNames() { return [...this.attributes.keys()]; },
+      getAttribute(name) { return this.attributes.has(name) ? this.attributes.get(name) : null; },
+      hasAttribute(name) { return this.attributes.has(name); },
+      setAttribute(name, value) { this.attributes.set(name, String(value)); },
+      removeAttribute(name) { this.attributes.delete(name); },
+      appendChild(child) { this.childNodes.push(child); return child; },
+      removeChild(child) { this.childNodes = this.childNodes.filter((row) => row !== child); return child; },
+      replaceChild(next, previous) {
+        this.childNodes = this.childNodes.map((row) => (row === previous ? next : row));
+        return previous;
+      },
+    };
+    return node;
+  }
+  const flatten = (node) => node.nodeType === 3 ? String(node.nodeValue)
+    : node.childNodes.map(flatten).join("");
+
+  /* A run row: a header with a label, a paragraph, and a footer holding the control. */
+  const button = el("button", { class: "ghost-btn", onclick: "dismiss('a')" }, [text("DISMISS")]);
+  const label = el("b", {}, [text("Dismissable failure")]);
+  const paragraph = el("p", { class: "note" }, [text("Generate correction")]);
+  const live = el("article", { class: "automation-drawer-run state-failed", "data-activity-key": "run:a", "data-stale": "1" },
+    [el("header", {}, [label]), paragraph, el("footer", {}, [button])]);
+
+  const nextButton = el("button", { class: "ghost-btn", onclick: "dismiss('a')" }, [text("DISMISS")]);
+  const nextLabel = el("b", {}, [text("Dismissable failure (retry 2)")]);
+  /* Same tag, different attribute AND a removed one; plus a changed text child. */
+  const nextParagraph = el("p", { class: "note warn" }, [text("Generate correction - retry scheduled")]);
+  const next = el("article", { class: "automation-drawer-run state-review", "data-activity-key": "run:a" },
+    [el("header", {}, [nextLabel]), nextParagraph, el("footer", {}, [nextButton])]);
+
+  patch(live, next);
+
+  assert.strictEqual(live.getAttribute("class"), "automation-drawer-run state-review",
+    "a changed class must actually change");
+  assert.strictEqual(live.getAttribute("data-stale"), null,
+    "an attribute absent from the new markup must be REMOVED, not left behind");
+  assert.strictEqual(live.getAttribute("data-activity-key"), "run:a", "the key must survive the patch");
+  assert.strictEqual(flatten(live.childNodes[0]), "Dismissable failure (retry 2)",
+    "changed text must update rather than go stale");
+  assert.strictEqual(live.childNodes[1].getAttribute("class"), "note warn",
+    "a changed descendant attribute must update");
+  assert.strictEqual(flatten(live.childNodes[1]), "Generate correction - retry scheduled",
+    "changed descendant text must update");
+  assert.strictEqual(live.childNodes[0].childNodes[0], label,
+    "an element whose tag is unchanged must be patched, not replaced");
+  assert.strictEqual(live.childNodes[2].childNodes[0], button,
+    "AN UNCHANGED CONTROL MUST KEEP ITS NODE IDENTITY - this is the whole guarantee");
+  note("v670PatchElement updates changed text/attributes, removes dropped attributes, and keeps the control node");
+
+  /* Structure that genuinely changed shape: a different tag cannot be patched into
+     place, so it must be replaced - and an added child must arrive. */
+  const staleSpan = el("span", {}, [text("old")]);
+  const structural = el("div", {}, [staleSpan]);
+  const structuralNext = el("div", {}, [el("em", {}, [text("new")]), el("i", {}, [text("added")])]);
+  patch(structural, structuralNext);
+  assert.strictEqual(structural.childNodes.length, 2, "an added child must be appended");
+  assert.notStrictEqual(structural.childNodes[0], staleSpan, "a child whose tag changed must be replaced");
+  assert.strictEqual(structural.childNodes[0].nodeName, "EM", "the replacement must be the new element");
+  assert.strictEqual(flatten(structural.childNodes[1]), "added", "the appended child must carry its content");
+
+  /* And a removed child must be removed, not orphaned on screen. */
+  const shrinking = el("div", {}, [el("b", {}, [text("keep")]), el("b", {}, [text("drop")])]);
+  const keeper = shrinking.childNodes[0];
+  patch(shrinking, el("div", {}, [el("b", {}, [text("keep")])]));
+  assert.strictEqual(shrinking.childNodes.length, 1, "a removed child must be removed");
+  assert.strictEqual(shrinking.childNodes[0], keeper, "the surviving child must keep its identity");
+  note("v670PatchElement replaces only what changed shape, appends additions, and removes departures");
+
   /* The manual-activity row is the one that ticks, so it must be keyed too or a
      ticking timer would still take an unrelated row's controls with it. */
   const manualKeyed = vm.runInContext(`(() => {

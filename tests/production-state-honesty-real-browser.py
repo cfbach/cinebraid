@@ -261,7 +261,76 @@ try:
         assert all(survived), f"C the control must survive the polling refresh, got {survived}"
         findings.append(f"C: a hovered DISMISS survived {len(survived)} consecutive {REFRESH_MS} ms refreshes")
 
-        # ...and a control that survived three refreshes must still act.
+        # ---- C2. THE ROW SURVIVES ITS OWN CONTENT CHANGING -------------------------
+        # An unchanged row surviving is the easy half and never needed protecting. A run
+        # rewrites its label, its step text or its error EXACTLY when the director is
+        # reaching for DISMISS, and the first version of this repair replaced the whole
+        # row whenever its markup differed by a byte - taking the button with it. Driven
+        # here rather than waited for, so the result is deterministic.
+        row = page.query_selector('[data-activity-key="run:state-failed"]')
+        assert row, "C2 setup: the failed run must render a keyed row"
+        before = page.evaluate("""() => {
+            const node = document.querySelector('[data-activity-key="run:state-failed"]');
+            return { key: node.getAttribute('data-activity-key'), text: node.innerText };
+        }""")
+        page.evaluate("""() => {
+            const run = (AUTOMATION_RUNS || []).find(r => r.id === 'state-failed');
+            run.label = 'Dismissable failure (retry 2)';
+            run.steps.generate.error = 'Missing source provenance. Retry scheduled.';
+            v641RenderActivityDrawer();
+        }""")
+        after = page.evaluate("""() => {
+            const node = document.querySelector('[data-activity-key="run:state-failed"]');
+            return { key: node.getAttribute('data-activity-key'), text: node.innerText,
+                     buttons: [...node.querySelectorAll('button')].map(b => b.textContent.trim()) };
+        }""")
+        assert after["key"] == before["key"] == "run:state-failed", \
+            f"C2 the key must not move: {before['key']!r} -> {after['key']!r}"
+        assert row.evaluate("el => el.isConnected"), "C2 the keyed row node must survive its content changing"
+        assert dismiss.evaluate("el => el.isConnected"), \
+            "C2 an unchanged control inside a changed row must keep its node identity"
+        assert dismiss.evaluate("el => el.textContent.trim()") == "DISMISS", \
+            "C2 the surviving handle must still be the DISMISS control"
+        assert dismiss.evaluate(
+            "el => el === document.querySelector('[data-activity-key=\\\"run:state-failed\\\"] button.ghost-btn')"), \
+            "C2 the surviving handle must still be the node the drawer renders"
+        # ...and the change must genuinely have landed, not been swallowed by the patch.
+        assert "retry 2" in after["text"].lower(), f"C2 the changed label must display: {after['text']!r}"
+        assert "Retry scheduled" in after["text"], f"C2 the changed error must display: {after['text']!r}"
+        assert after["text"] != before["text"], "C2 the row must actually have updated"
+        assert "DISMISS" in after["buttons"], "C2 the row must still offer its actions"
+        findings.append("C2: a keyed row whose label and error changed kept its node and its DISMISS control, "
+                        "and both changes are on screen")
+
+        # ---- C2, NEGATIVE CONTROL --------------------------------------------------
+        # Count the section's own <header> as a row again. That is the bug this repair
+        # had first time: no header carries data-activity-key, so the keyed path became
+        # unreachable and every section fell back to a whole-body rewrite. It hid
+        # because an UNCHANGED row still survived - the rewrite was skipped when the
+        # markup matched - so only a changed row exposes it. Restored in memory.
+        page.evaluate("""() => {
+            window.__cbSectionRows = v670SectionRows;
+            window.v670SectionRows = (node) => [...(node?.children || [])];
+        }""")
+        broken_row = page.query_selector('[data-activity-key="run:state-failed"]')
+        assert broken_row, "C2 control setup: the keyed row must be present before the probe"
+        page.evaluate("""() => {
+            const run = (AUTOMATION_RUNS || []).find(r => r.id === 'state-failed');
+            run.label = 'Dismissable failure (retry 3)';
+            v641RenderActivityDrawer();
+        }""")
+        broken_attached = broken_row.evaluate("el => el.isConnected")
+        page.evaluate("() => { window.v670SectionRows = window.__cbSectionRows; }")
+        assert not broken_attached, \
+            "C2 NEGATIVE CONTROL DID NOT FIRE: with the section header counted as a row the changed row " \
+            "survived anyway, so C2 is not testing the keyed path."
+        findings.append("C2: negative control - counting the section header as a row makes the changed row "
+                        "detach again, proving the keyed path is what saves it")
+        # Re-acquire: the control above legitimately destroyed the live nodes.
+        dismiss = page.query_selector('[data-run-id="state-failed"] button.ghost-btn')
+        assert dismiss, "C2 control teardown: the DISMISS control must render again"
+
+        # ...and a control that survived three refreshes AND a content change must act.
         dismiss.click()
         page.wait_for_timeout(1000)
         dismissed = page.evaluate("() => document.querySelectorAll('[data-run-id=\"state-failed\"]').length === 0")
@@ -287,8 +356,14 @@ try:
         assert control == 1, "C control setup: the control row must render before the probe"
         controlled = page.query_selector('[data-run-id="control-failed"] button.ghost-btn')
         assert controlled, "C control setup: the control row must render a DISMISS control"
-        controlled.hover()
-        page.wait_for_timeout(REFRESH_MS + 700)
+        # No hover here, deliberately. The control has just made this row destructible,
+        # so hovering it races the very behaviour it exists to demonstrate: on the CI
+        # runner a 3500 ms refresh landed inside the hover's stability wait and
+        # Playwright raised "Element is not attached to the DOM" before the assertion
+        # below could observe the detachment. Detachment is a property of the node, not
+        # of pointing at it - so drive one repaint and ask the handle directly. The
+        # positive path above is where hovering carries meaning, and it still hovers.
+        page.evaluate("() => v641RenderActivityDrawer()")
         control_attached = controlled.evaluate("el => el.isConnected")
         assert not control_attached, \
             "C NEGATIVE CONTROL DID NOT FIRE: with the whole-innerHTML painter restored the control " \

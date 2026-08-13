@@ -396,8 +396,15 @@ window.archivePreviousAutomationFailures = async () => {
    timeout.
 
    So: build the same markup, then reconcile instead of replacing. Rows carry
-   data-activity-key, and a row whose markup is byte-identical to the one already on
-   screen is left alone - same node, same pending click, same focus.
+   data-activity-key, and a row that is already on screen keeps its node - same node,
+   same pending click, same focus - whether or not its contents changed.
+
+   THAT LAST CLAUSE IS THE POINT, and the first version of this repair got it wrong: it
+   kept the node only when the new markup was byte-identical and replaced the whole row
+   otherwise. A run row changes its label, its step text or its error EXACTLY when the
+   director is reaching for its DISMISS button, so "identical rows survive" is the one
+   case that never needed protecting. v670PatchElement patches the row in place instead,
+   and replaces only a descendant that cannot become its counterpart.
 
    This is a rendering repair, not a redesign: the markup produced is unchanged.
 
@@ -414,21 +421,68 @@ function v670DomCanReconcile(document_) {
       && typeof probe.replaceChild === "function";
   } catch { return false; }
 }
-function v670KeyedChildren(node) {
-  const rows = [...(node?.children || [])];
+/* A section's rows are its children MINUS its own header.
+
+   Counting the header as a row is how the first version of this repair quietly did
+   nothing: every section child had to carry data-activity-key for the keyed path to be
+   taken, the header never does, so the keyed path was unreachable and every section
+   fell through to a whole-body rewrite. Unchanged rows still survived - but only
+   because the rewrite was skipped when the markup matched - and a row whose content
+   changed was destroyed along with its controls. */
+function v670SectionRows(node) {
+  return [...(node?.children || [])].filter((row) => row.nodeName !== "HEADER");
+}
+function v670KeyedRows(rows) {
   return rows.length && rows.every((row) => row.getAttribute?.("data-activity-key")) ? rows : null;
 }
+/* Make `live` look like `next` WITHOUT replacing `live`.
+
+   Attributes are synced in both directions - one that disappeared from the new markup
+   is removed, not left behind - and children are walked pairwise. A child is replaced
+   only when it cannot become its counterpart: a different node type, or a different
+   tag. Everything else is patched in place, so a control the user is pointing at
+   survives any change to the text beside it.
+
+   Deliberately small and deliberately not general. This is not a virtual DOM: it has no
+   keying of its own below the row, no component model and no lifecycle. It reconciles
+   the fixed, shallow markup this file emits, and nothing else. Form state (value,
+   checked) is not synced because the drawer renders none - if that ever changes, this
+   function has to grow with it. */
+function v670PatchElement(live, next) {
+  for (const name of live.getAttributeNames()) if (!next.hasAttribute(name)) live.removeAttribute(name);
+  for (const name of next.getAttributeNames()) {
+    const value = next.getAttribute(name);
+    if (live.getAttribute(name) !== value) live.setAttribute(name, value);
+  }
+  /* Snapshot both sides: appending a node from `next` moves it out of `next`, which
+     would shift a live NodeList underneath the walk. */
+  const liveKids = [...live.childNodes], nextKids = [...next.childNodes];
+  for (let index = 0; index < nextKids.length; index += 1) {
+    const liveKid = liveKids[index], nextKid = nextKids[index];
+    if (!liveKid) { live.appendChild(nextKid); continue; }
+    if (liveKid.nodeType !== nextKid.nodeType || liveKid.nodeName !== nextKid.nodeName) {
+      live.replaceChild(nextKid, liveKid);
+      continue;
+    }
+    if (liveKid.nodeType === 1) { v670PatchElement(liveKid, nextKid); continue; }
+    if (liveKid.nodeValue !== nextKid.nodeValue) liveKid.nodeValue = nextKid.nodeValue;
+  }
+  for (let index = nextKids.length; index < liveKids.length; index += 1) live.removeChild(liveKids[index]);
+}
 function v670PatchSection(current, next) {
-  /* Header counts change on their own; they hold no controls, so a direct write is
-     both safe and cheaper than reconciling them. */
   const currentHeader = current.querySelector(":scope > header"), nextHeader = next.querySelector(":scope > header");
-  if (currentHeader && nextHeader && currentHeader.innerHTML !== nextHeader.innerHTML) currentHeader.innerHTML = nextHeader.innerHTML;
-  const currentRows = v670KeyedChildren(current), nextRows = v670KeyedChildren(next);
+  if (currentHeader && nextHeader && currentHeader.outerHTML !== nextHeader.outerHTML) v670PatchElement(currentHeader, nextHeader);
+  const currentRowNodes = v670SectionRows(current), nextRowNodes = v670SectionRows(next);
+  const currentRows = v670KeyedRows(currentRowNodes), nextRows = v670KeyedRows(nextRowNodes);
   /* An empty-state placeholder carries no key and no control. Sections holding one on
-     either side are swapped whole rather than half-reconciled. */
+     either side swap their body wholesale - never their header, which carries the
+     section's own count and, in the shell, its controls. */
   if (!currentRows || !nextRows) {
-    const currentBody = current.innerHTML, nextBody = next.innerHTML;
-    if (currentBody !== nextBody) current.innerHTML = nextBody;
+    const currentBody = currentRowNodes.map((row) => row.outerHTML).join("");
+    const nextBody = nextRowNodes.map((row) => row.outerHTML).join("");
+    if (currentBody === nextBody) return;
+    for (const row of currentRowNodes) current.removeChild(row);
+    for (const row of nextRowNodes) current.appendChild(row);
     return;
   }
   const existing = new Map(currentRows.map((row) => [row.getAttribute("data-activity-key"), row]));
@@ -439,12 +493,9 @@ function v670PatchSection(current, next) {
     const found = existing.get(key);
     let live = found;
     if (found) {
-      /* Unchanged rows keep their identity. This is the line that stops a DISMISS
-         button vanishing while another row's timer ticks. */
-      if (found.outerHTML !== nextRow.outerHTML) {
-        current.replaceChild(nextRow, found);
-        live = nextRow;
-      }
+      /* The row keeps its node whatever changed inside it. This is the line that stops
+         a DISMISS button vanishing while the run's own label or error is rewritten. */
+      if (found.outerHTML !== nextRow.outerHTML) v670PatchElement(found, nextRow);
     } else {
       current.insertBefore(nextRow, anchor ? anchor.nextSibling : current.firstChild);
       live = nextRow;
@@ -465,8 +516,10 @@ function v670PaintDrawer(drawer, shell) {
   staging.innerHTML = shell;
   const nextShell = staging.querySelector(".automation-drawer-shell");
   if (!nextShell) { drawer.innerHTML = shell; return; }
+  /* The shell header is not inert either: it holds Close and DISMISS PREVIOUS ALERTS
+     beside a heading that changes whenever a count does. Patched, not rewritten. */
   const currentHeader = currentShell.querySelector(":scope > header"), nextHeader = nextShell.querySelector(":scope > header");
-  if (currentHeader && nextHeader && currentHeader.innerHTML !== nextHeader.innerHTML) currentHeader.innerHTML = nextHeader.innerHTML;
+  if (currentHeader && nextHeader && currentHeader.outerHTML !== nextHeader.outerHTML) v670PatchElement(currentHeader, nextHeader);
   const currentList = currentShell.querySelector(".automation-drawer-list"), nextList = nextShell.querySelector(".automation-drawer-list");
   if (!currentList || !nextList) { drawer.innerHTML = shell; return; }
   const currentSections = [...currentList.children], nextSections = [...nextList.children];
