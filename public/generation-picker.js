@@ -21,10 +21,18 @@
 /* ---------------------------------------------------------------------------
    The option list. */
 
+/* The four states, named for what they actually are.
+ *
+ * `not-implemented` read "Not available yet", which sounds like a statement about the
+ * PROVIDER and invites a filmmaker to go looking for a connection to make. The state
+ * means something narrower and entirely CineBraid's own: the provider serves this
+ * model, and CineBraid owns no adapter that can build the request. The resolver has
+ * always said so in the sentence beneath the chip; the chip now agrees with it, so
+ * "you need to connect this" and "we cannot send this" stop sharing a label. */
 const GENERATION_STATE_LABELS = {
   ready: "Available",
   "setup-required": "Needs setup",
-  "not-implemented": "Not available yet",
+  "not-implemented": "No CineBraid adapter",
   incompatible: "Does not fit this shot",
 };
 

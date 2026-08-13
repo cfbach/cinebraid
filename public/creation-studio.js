@@ -2150,8 +2150,23 @@ function guidedFrameWorkflowPanel(s, takes) {
 function profileSupportsGuidedAudio(profile) {
   return !!(profile && (profile.mode === "audio-video" || profile.mode === "r2v" && (profile.limits?.maxAudio || profile.family === "happy-horse-1.1")));
 }
+/* Every written-up video workflow, INCLUDING the ones that need no approved still.
+ *
+ * `t2v` was missing from this list, and it was the only executable route CineBraid
+ * hid from its own picker: `minimax-h3/t2v` resolves to the wired `fal-h3-fl2va`
+ * adapter exactly as i2v and flf do — same checkpoint, same serializer — so the
+ * filmmaker had a working text-to-video path and no way to select it. Reaching it
+ * meant a route that exists, refuses nothing, and simply never appeared.
+ *
+ * Listing a mode here is not a claim that it can run: `guidedVideoProfileOptions`
+ * still disables anything without an adapter and says why. */
 function guidedVideoProfiles() {
-  return (PROMPT_LIBRARY?.profiles || []).filter((profile) => profile.mediaType === "video" && ["i2v", "flf", "r2v", "audio-video"].includes(profile.mode));
+  return (PROMPT_LIBRARY?.profiles || []).filter((profile) => profile.mediaType === "video" && ["t2v", "i2v", "flf", "r2v", "audio-video"].includes(profile.mode));
+}
+/* The modes that have no visual anchor by construction, so the gates that exist to
+   guarantee one must not be applied to them. Read from the mode, never from a family. */
+function guidedVideoModeNeedsApprovedStill(mode) {
+  return String(mode || "") !== "t2v";
 }
 function guidedMotionDurationBounds(profile) {
   const range = profile?.limits?.durationSeconds;
@@ -2199,6 +2214,7 @@ function preferredGuidedVideoProfile(selected = "") {
 /* The one-line description of a target's availability, in the picker's own words. */
 function guidedVideoProfileOptionSuffix(profile) {
   if (!guidedVideoProfileDispatchable(profile)) return " · not available in this build";
+  if (profile.mode === "t2v") return " · prompt only, no reference images";
   if (profile.mode === "flf") return " · first + last frame";
   if (profile.mode === "r2v") return profile.family === "minimax-h3" ? " · multi-frame + references" : " · reference performance";
   return profileSupportsGuidedAudio(profile) ? " · native audio" : "";
@@ -2448,6 +2464,9 @@ function guidedMotionReferences(s, current, profile) {
     }
     return selected;
   }
+  /* Text-to-video carries no reference media on any H3 endpoint, so there is nothing
+     to gather and no opening frame to require. */
+  if (profile?.mode === "t2v" || !current) return [];
   const first = { key: `shot-start:${s.id}:${current.name}`, label: "Approved first frame", url: current.url, role: "first-frame", mediaType: "image", approved: true, instruction: "Use as the approved opening composition. Preserve its geometry, identity, lighting, and continuity unless the motion direction explicitly changes them." };
   const refs = [first];
   const lastFrameIndex = [...frames.keys()].reverse().find((index) => index > 0 && guidedFrameApproved(s, frames[index], takes, index));
@@ -2476,9 +2495,29 @@ function guidedMotionReferences(s, current, profile) {
     return images++ < maxImages;
   }).slice(0, max);
 }
+/* THE CEILING THIS EDITOR MAY REFUSE AT.
+ *
+ * This modal edits the text that will be DISPATCHED, so the number it enforces has to
+ * be the one the request is really held to — not CineBraid's own budget for the
+ * written package, and never a number keyed on a family name.
+ *
+ * It used to return a hard-coded 2,000 for `minimax-h3` and label it "current MiniMax
+ * H3 FAL limit". That number is retired: `fal-h3-backend.js` records that fal's queue
+ * schema documents no prompt maxLength on any of the three H3 endpoints and that both
+ * fal and MiniMax state 7,000 characters. So the same prompt read 1,991/2,000 here and
+ * 4,894/7,000 in the paid dialog, and this editor THREW on direction the provider
+ * would have accepted — a stale refusal costing the filmmaker the words they wrote.
+ *
+ * The model's published ceiling is declared per profile in data/model-profiles.json
+ * and agrees with the model ∩ backend capability the paid dialog resolves. Read it
+ * from there; fall back to the written-package budget only where no ceiling is
+ * recorded. */
 function motionPromptCharacterLimit(build) {
-  const profile = guidedVideoProfiles().find((item) => item.id === build?.profileId);
-  return profile?.family === "minimax-h3" ? 2000 : 12000;
+  const limits = guidedVideoProfiles().find((item) => item.id === build?.profileId)?.limits || {};
+  const published = Number(limits.publishedGuidePromptCharacters);
+  if (Number.isFinite(published) && published > 0) return published;
+  const budget = Number(limits.maxPromptCharacters);
+  return Number.isFinite(budget) && budget > 0 ? budget : 12000;
 }
 function createManualMotionPromptRevision(shotId, buildId, prompt, reason = "") {
   const s = shotById(shotId), c = s && ensureShotCreation(s);
@@ -2546,7 +2585,7 @@ window.openGuidedMotionPromptEditor = (shotId, buildId) => {
   if (!build?.prompt) return toast("Motion prompt is unavailable");
   const limit = motionPromptCharacterLimit(build);
   window._guidedMotionPromptEditDraft = { shotId, buildId, originalPrompt: build.prompt, limit };
-  openModal(`<div class="motion-prompt-editor-modal"><header><div><span>MANUAL PROMPT REVISION</span><h3>Edit motion prompt</h3><p>The compiled prompt remains preserved. Saving creates a new revision linked to ${esc(build.packageId || build.id)}.</p></div><button class="cancel" onclick="closeModal()">Close</button></header><label class="motion-prompt-editor-field"><span>Prompt sent to the video model</span><textarea id="guided-motion-prompt-editor" oninput="updateGuidedMotionPromptEditor()">${esc(build.prompt)}</textarea><small><b id="guided-motion-prompt-editor-count">${build.prompt.length.toLocaleString()}/${limit.toLocaleString()}</b> characters${limit === 2000 ? " · current MiniMax H3 FAL limit" : ""}</small></label><label class="motion-prompt-edit-reason"><span>Revision note · optional</span><input id="guided-motion-prompt-edit-reason" placeholder="Adjusted timing, removed duplicate action, clarified camera move…"></label><p class="hint">This does not change the shot brief, approved frames, or original compiled package. It creates a traceable prompt revision that can be copied, downloaded, or generated.</p><footer class="modal-actions"><button class="ghost-btn" onclick="resetGuidedMotionPromptEditor()">Reset compiled prompt</button><button class="cancel" onclick="closeModal()">Cancel</button><button id="guided-motion-prompt-editor-save" class="approve-btn large" onclick="saveGuidedMotionPromptRevision()" disabled>SAVE AS NEW REVISION</button></footer></div>`);
+  openModal(`<div class="motion-prompt-editor-modal"><header><div><span>MANUAL PROMPT REVISION</span><h3>Edit motion prompt</h3><p>The compiled prompt remains preserved. Saving creates a new revision linked to ${esc(build.packageId || build.id)}.</p></div><button class="cancel" onclick="closeModal()">Close</button></header><label class="motion-prompt-editor-field"><span>Prompt sent to the video model</span><textarea id="guided-motion-prompt-editor" oninput="updateGuidedMotionPromptEditor()">${esc(build.prompt)}</textarea><small><b id="guided-motion-prompt-editor-count">${build.prompt.length.toLocaleString()}/${limit.toLocaleString()}</b> characters${build.profileName ? ` · ${esc(String(build.profileName).replace(/^.*?—\s*/, ""))} accepts ${limit.toLocaleString()}` : ""}</small></label><label class="motion-prompt-edit-reason"><span>Revision note · optional</span><input id="guided-motion-prompt-edit-reason" placeholder="Adjusted timing, removed duplicate action, clarified camera move…"></label><p class="hint">This does not change the shot brief, approved frames, or original compiled package. It creates a traceable prompt revision that can be copied, downloaded, or generated.</p><footer class="modal-actions"><button class="ghost-btn" onclick="resetGuidedMotionPromptEditor()">Reset compiled prompt</button><button class="cancel" onclick="closeModal()">Cancel</button><button id="guided-motion-prompt-editor-save" class="approve-btn large" onclick="saveGuidedMotionPromptRevision()" disabled>SAVE AS NEW REVISION</button></footer></div>`);
   setTimeout(updateGuidedMotionPromptEditor, 0);
 };
 window.saveGuidedMotionPromptRevision = () => {
@@ -2902,8 +2941,21 @@ window.setSimpleMotionAudio = (id, key, value) => {
 };
 function suggestedMotionProfileForApprovedFrames(s, approvedCount) {
   const c = ensureShotCreation(s), profiles = guidedVideoProfiles();
-  const current = profiles.find((profile) => profile.id === c.motionProfileId);
-  const hasUserMotionWork = !!String(c.motionDirection || s.motionPrompt || "").trim() || !!(c.motionPromptBuilds || []).length;
+  /* READ WHERE THE LIVE WRITER WRITES.
+   *
+   * This guard exists so a shot the filmmaker has already directed keeps its own
+   * target instead of being moved by a frame count. It was reading `c.motionProfileId`
+   * and `c.motionDirection`, which is where the pre-composer `setGuidedMotionField`
+   * put them — but the live composer replaced that writer, and the replacement stores
+   * both on the ACTIVE MOTION UNIT and returns before the shot-level fields are ever
+   * touched. So both of the guard's inputs were permanently empty and the guard could
+   * never fire: a reader that survived while its writer moved.
+   *
+   * The unit is consulted first because that is what the build path resolves from;
+   * the shot-level fields remain the fallback for a project written before units. */
+  const unit = (s.clips || []).find((item) => item.id === c.activeMotionUnitId) || (s.clips || [])[0] || null;
+  const current = profiles.find((profile) => profile.id === (unit?.motionProfileId || c.motionProfileId));
+  const hasUserMotionWork = !!String(unit?.motionPrompt || c.motionDirection || s.motionPrompt || "").trim() || !!(c.motionPromptBuilds || []).length;
   if (current && hasUserMotionWork) return current.id;
   /* Suggested, so it must be runnable: a suggestion CineBraid cannot dispatch is the
      same dead end as an undispatchable default. A shot the filmmaker has already
@@ -3011,7 +3063,13 @@ window.acceptGuidedMotionRevision = (id, buildId) => {
 };
 window.buildGuidedMotionPrompt = async (id, useLLM = false) => {
   const s = shotById(id), c = ensureShotCreation(s), current = guidedCurrentShotStill(s);
-  if (!current) return toast("Approve a shot image first");
+  /* The two approval gates in this function exist to guarantee a VISUAL ANCHOR, so
+     they are asked of the target rather than of every shot. Text-to-video has no
+     anchor by construction, and refusing it for a missing approved still would leave
+     the one wired prompt-only route unreachable for exactly the shots it suits. */
+  const intendedProfile = guidedVideoProfiles().find((item) => item.id === preferredGuidedVideoProfile(c.motionProfileId || ""));
+  const needsApprovedStill = guidedVideoModeNeedsApprovedStill(intendedProfile?.mode);
+  if (!current && needsApprovedStill) return toast("Approve a shot image first");
   const writtenDirection = String(c.motionDirection || s.motionPrompt || "").trim();
   const structuredDirection = structuredMotionSummary(s);
   const direction = writtenDirection;
@@ -3022,7 +3080,7 @@ window.buildGuidedMotionPrompt = async (id, useLLM = false) => {
   if (!structuredDirection && !writtenDirection) return toast("Choose at least one motion direction");
   if (useLLM && !capabilityState("text").ready) return toast(capabilityState("text").message);
   const progress = guidedFrameProgress(s, takesFor(id));
-  if (!progress.requiredApproved) return toast("Approve all required frames before building motion");
+  if (!progress.requiredApproved && needsApprovedStill) return toast("Approve all required frames before building motion");
   let profileId = preferredGuidedVideoProfile(c.motionProfileId || "");
   if (!c.motionProfileId && progress.frames.length > 1) {
     const frameAware = guidedVideoProfiles().find((item) => item.mode === "flf") || guidedVideoProfiles().find((item) => ["r2v", "audio-video"].includes(item.mode));
@@ -3030,7 +3088,7 @@ window.buildGuidedMotionPrompt = async (id, useLLM = false) => {
   }
   const profile = guidedVideoProfiles().find((item) => item.id === profileId);
   if (!profileId || !profile) return toast("No compatible video profile is configured");
-  const unit = ensureGuidedMotionUnit(s, current.name, profile);
+  const unit = ensureGuidedMotionUnit(s, current?.name || "", profile);
   const duration = guidedClampedMotionDuration(c.motionDuration || unit.dur || 5, profile);
   c.motionDuration = duration;
   unit.motionPrompt = writtenDirection;

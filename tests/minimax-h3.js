@@ -119,10 +119,18 @@ function testPromptLimitAndLegacyTokenNormalization() {
   spec.mustPreserve = ['Preserve identity, wardrobe, location geometry, props, lighting logic, and screen direction. '.repeat(50)];
   spec.mustAvoid = ['Avoid drift, warping, morphing, invented props, unwanted cuts, text corruption, and camera discontinuity. '.repeat(50)];
   const compiled = PromptEngine.compile(profile, spec, refs);
-  assert(compiled.prompt.length <= 2000, `H3 provider prompt must fit the current 2,000-character schema, got ${compiled.prompt.length}`);
+  assert(compiled.prompt.length <= 2000, `H3 written package must fit CineBraid's 2,000-character budget, got ${compiled.prompt.length}`);
   assert(compiled.prompt.includes('Image 9'), 'compaction must preserve all numbered keyframe references');
   assert(!compiled.prompt.includes('#image'), 'legacy adapter tokens must be normalized to H3 modality/order syntax');
-  assert(compiled.warnings.some((row) => /close to the provider schema limit/i.test(row)));
+  /* The near-limit warning still fires; what changed is what it CLAIMS the limit is.
+     2,000 is CineBraid's budget for the written package - fal-h3-backend.js records
+     that fal's queue schema documents no prompt maxLength on any H3 endpoint and
+     retired the 2,000 refusal - so a warning calling it "the provider schema limit"
+     asserted a provider rule that does not exist. The number stays; the claim goes. */
+  assert(compiled.warnings.some((row) => /close to CineBraid's written-package budget/i.test(row)),
+    'the compiler must still warn near its written-package budget');
+  assert(!compiled.warnings.some((row) => /provider schema limit/i.test(row)),
+    "and must not describe CineBraid's own budget as a provider schema limit");
 }
 
 function testFirstLastCompile() {
