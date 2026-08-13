@@ -178,11 +178,13 @@
     "check:backup-ownership": "node tests/backup-ownership.js",
     "check:foundation-core": "npm run check:config-durability && npm run check:request-boundary && npm run check:backup-ownership",
     "check:state-interleaving": "node tests/state-interleaving.js",
+    "check:save-revision-race": "node tests/project-save-revision-race.js",
+    "check:save-revision-race-negative": "node tests/project-save-revision-race-negative-controls.js",
     "check:generation-job-durability": "node tests/generation-job-durability.js",
     "check:approval-references": "node tests/approval-reference-consistency.js",
     "check:voice-ownership": "node tests/voice-runtime-ownership.js",
     "check:voice-ownership-negative": "node tests/voice-runtime-ownership-negative-controls.js",
-    "check:data-ownership-core": "npm run check:state-interleaving && npm run check:generation-job-durability && npm run check:approval-references && npm run check:voice-ownership && npm run check:voice-ownership-negative"
+    "check:data-ownership-core": "npm run check:state-interleaving && npm run check:save-revision-race && npm run check:save-revision-race-negative && npm run check:generation-job-durability && npm run check:approval-references && npm run check:voice-ownership && npm run check:voice-ownership-negative"
   },
   "dependencies": {
     "express": "^4.19.0"

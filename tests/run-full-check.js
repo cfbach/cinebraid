@@ -99,6 +99,8 @@ const nodeSuites = [
   "check:request-boundary",
   "check:backup-ownership",
   "check:state-interleaving",
+  "check:save-revision-race",
+  "check:save-revision-race-negative",
   "check:generation-job-durability",
   "check:approval-references",
   "check:voice-ownership",
