@@ -2846,6 +2846,13 @@ window.useApprovedBaseAsShot = async (id) => {
     const opening = (s.keyframes || [])[0] || newKeyframe(0, "Opening frame");
     if (!(s.keyframes || []).length) s.keyframes = [opening];
     opening.winner = d.name;
+    /* P4-SEM-C3: a plate copied in as the shot image is an authoritative edge
+       like any other, so it records identity from the scan just refreshed. */
+    {
+      const copiedAssetId = (takesFor(s.id).find((item) => item.name === d.name) || {}).assetId || "";
+      stampShotApprovalIdentity(s, "winner", copiedAssetId);
+      stampShotApprovalIdentity(opening, "winner", copiedAssetId);
+    }
     const c = ensureShotCreation(s);
     c.baseUsedUnchangedAt = new Date().toISOString();
     if (typeof markCandidateApproved === "function")
@@ -3144,6 +3151,8 @@ window.markGuidedStillFinal = (id, name) => {
   c.deliveryIntent = "still";
   s.finalStillFile = name;
   s.winner = name;
+  /* P4-SEM-C3: the still-delivery approval names which bytes it approved. */
+  stampShotApprovalIdentity(s, "winner", (takesFor(s.id).find((item) => item.name === name) || {}).assetId || "");
   s.workflowStatus = "APPROVED";
   s.status = "APPROVED";
   const row = candidateRecord(s, name, true);
@@ -3160,6 +3169,7 @@ window.approveGuidedMotion = (id, name) => {
   const profile = guidedVideoProfiles().find((item) => item.id === c.motionProfileId);
   const unit = ensureGuidedMotionUnit(s, current?.name || "", profile);
   unit.videoWinner = name;
+  stampShotApprovalIdentity(unit, "videoWinner", (takesFor(s.id).find((item) => item.name === name) || {}).assetId || "");
   c.approvedMotionFile = name;
   const row = candidateRecord(s, name, true);
   row.approvedAt = new Date().toISOString();
@@ -3175,6 +3185,7 @@ window.queueGuidedVideoFinish = (id, name) => {
   if (c.approvedMotionFile !== name) {
     const current = guidedCurrentShotStill(s), profile = guidedVideoProfiles().find((item) => item.id === c.motionProfileId), unit = ensureGuidedMotionUnit(s, current?.name || "", profile);
     unit.videoWinner = name;
+    stampShotApprovalIdentity(unit, "videoWinner", (takesFor(s.id).find((item) => item.name === name) || {}).assetId || "");
     c.approvedMotionFile = name;
     markCandidateApproved(s, name, `segment:${unitKey(unit)}`);
     dirty();
@@ -3285,6 +3296,10 @@ function guidedInvalidateMotionAfterFrameChange(s, previousName = "", nextName =
     const target = `segment:${unitKey(clip)}`;
     if (clip.videoWinner) guidedClearApprovalTarget(s, target);
     clip.videoWinner = "";
+    /* P4-SEM-C3: identity is cleared with the edge it identified. A retained id
+       beside an emptied winner would silently re-resolve to media this approval
+       has just been reopened away from. */
+    clearShotApprovalIdentity(clip, "videoWinner");
   }
   if (activeMotion) toast("Frame changed; the previous motion approval was reopened because it used the old frame.");
 }
@@ -3321,7 +3336,11 @@ window.resetGuidedFrameApproval = (id, frameId) => {
       const target = index === 0 ? "shot" : `frame:${frameId}`;
       guidedClearApprovalTarget(s, target);
       frame.winner = "";
-      if (index === 0) s.winner = "";
+      clearShotApprovalIdentity(frame, "winner");
+      if (index === 0) {
+        s.winner = "";
+        clearShotApprovalIdentity(s, "winner");
+      }
       const state = guidedFrameState(s, frame, index);
       state.selectedCandidate = previous.name;
       const c = ensureShotCreation(s);

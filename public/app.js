@@ -162,33 +162,47 @@ const shotApprovalComplete = (s) => {
     (frames.length || motions.length || !!s.winner)
   );
 };
-const anyWinnerTake = (s, takes) => {
-  for (const f of s.keyframes || []) {
-    const t = takes.find((t) => t.name === f.winner);
-    if (t) return t;
-  }
-  for (const c of s.clips || []) {
-    const t = takes.find(
-      (t) =>
-        t.name === c.winner ||
-        t.name === c.winnerEnd ||
-        t.name === c.videoWinner,
-    );
-    if (t) return t;
-  }
-  return s.winner ? takes.find((t) => t.name === s.winner) : null;
+/* P4-SEM-C3. Both readers below resolve a winner edge IDENTITY FIRST, through the
+   one shared rule, and fall back to the filename when either side carries no id —
+   which is every pre-C3 project and every file the ledger has not verified. The
+   search ORDER and the badge wording are preserved exactly; only the comparison
+   changed, so a project with no identity behaves as it always did. */
+const winnerEdgeName = (s, record, field, takes) => {
+  const file = String(record?.[field] || "");
+  if (!file) return "";
+  const assetId = typeof shotAssetIdField === "function" ? record?.[shotAssetIdField(field)] : "";
+  const resolved = typeof resolveApprovalMedia === "function"
+    ? resolveApprovalMedia({ file, assetId: assetId || "" }, takes || [])
+    : null;
+  return resolved ? resolved.name : file;
 };
-const takeBadges = (s, name) => {
-  const out = [];
-  if (s.winner === name) out.push("SHOT WINNER");
-  for (const f of s.keyframes || [])
-    if (f.winner === name) out.push(`FRAME ${f.label || "?"}`);
+const anyWinnerTake = (s, takes) => {
+  const hit = (record, field) => {
+    const name = winnerEdgeName(s, record, field, takes);
+    return name ? takes.find((t) => t.name === name) : null;
+  };
+  for (const f of s.keyframes || []) {
+    const t = hit(f, "winner");
+    if (t) return t;
+  }
   for (const c of s.clips || []) {
-    if (c.videoWinner === name)
+    const t = hit(c, "winner") || hit(c, "winnerEnd") || hit(c, "videoWinner");
+    if (t) return t;
+  }
+  return s.winner ? hit(s, "winner") : null;
+};
+const takeBadges = (s, name, takes = takesFor(s.id)) => {
+  const out = [];
+  const is = (record, field) => !!name && winnerEdgeName(s, record, field, takes) === name;
+  if (is(s, "winner")) out.push("SHOT WINNER");
+  for (const f of s.keyframes || [])
+    if (is(f, "winner")) out.push(`FRAME ${f.label || "?"}`);
+  for (const c of s.clips || []) {
+    if (is(c, "videoWinner"))
       out.push(`MOTION ${(c.label || c.suffix || "?").toUpperCase()}`);
-    if (!(s.keyframes || []).length && c.winner === name)
+    if (!(s.keyframes || []).length && is(c, "winner"))
       out.push(c.kind === "flf" ? c.suffix + " FIRST" : "WINNER · " + c.suffix);
-    if (!(s.keyframes || []).length && c.winnerEnd === name)
+    if (!(s.keyframes || []).length && is(c, "winnerEnd"))
       out.push(c.suffix + " LAST");
   }
   return out;

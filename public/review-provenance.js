@@ -428,13 +428,24 @@ window.promoteFinishJob = (jobId) => {
   if (!job || !job.resultFile) return toast("Choose the imported result file first");
   const s = shotById(job.shotId),
     target = String(job.approvedTarget || "shot");
-  if (target === "shot") s.winner = job.resultFile;
-  else if (target.startsWith("frame:")) {
+  /* P4-SEM-C3: a promoted finish job produces the same kind of authoritative edge
+     as a manual approval, so it records identity the same way. */
+  const approvedAssetId = (takesFor(job.shotId).find((item) => item.name === job.resultFile) || {}).assetId || "";
+  if (target === "shot") {
+    s.winner = job.resultFile;
+    stampShotApprovalIdentity(s, "winner", approvedAssetId);
+  } else if (target.startsWith("frame:")) {
     const f = frameById(s, target.slice(6));
-    if (f) f.winner = job.resultFile;
+    if (f) {
+      f.winner = job.resultFile;
+      stampShotApprovalIdentity(f, "winner", approvedAssetId);
+    }
   } else if (target.startsWith("segment:")) {
     const seg = (s.clips || []).find((x) => unitKey(x) === target.slice(8));
-    if (seg) seg.videoWinner = job.resultFile;
+    if (seg) {
+      seg.videoWinner = job.resultFile;
+      stampShotApprovalIdentity(seg, "videoWinner", approvedAssetId);
+    }
   }
   const row = candidateRecord(s, job.resultFile, true);
   row.approvedAt = new Date().toISOString();
