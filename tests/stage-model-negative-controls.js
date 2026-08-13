@@ -36,6 +36,7 @@ const readSource = (file) => fs.readFileSync(file, "utf8").replace(/\r\n/g, "\n"
 const MODEL_SOURCE = readSource(MODEL_FILE);
 const FOCUSED_SOURCE = readSource(path.join(PUBLIC, "focused-workspaces.js"));
 const APP_SOURCE = readSource(path.join(PUBLIC, "app.js"));
+const AUTOMATION_SOURCE = readSource(path.join(PUBLIC, "automation.js"));
 
 const notes = [];
 const note = (line) => notes.push(line);
@@ -238,6 +239,28 @@ async function main() {
     for (const inference of ["buildTaskbar", "nextTaskIndex", "resolveTaskSelection", "taskIdForElement", "stack.children"]) {
       assert(!body.includes(inference), `enhanceShot must not derive shot stages from the DOM (found ${inference})`);
     }
+  });
+
+  /* ---------------------------------------------------------------------------
+     C8 — RESTORE A DEAD STAGE-NAVIGATION WRITER.
+     Both of these shipped: a write to `cinebraid-bounded:…` that the reader, which reads
+     `cinebraid-focused:…`, never saw. The symptom was silence, which is why the check
+     has to look for the key rather than for the intention. */
+  await mustFail("C8a blocking automation writes a key nothing reads", "a key nothing reads", async () => {
+    const reverted = mutate(AUTOMATION_SOURCE,
+      `      try { selectGuidedPanelTask(currentShot, "blocking"); } catch {}`,
+      `      try { boundedWriteState("selected:shot-task", currentShot.id, "look"); } catch {}`,
+      "C8a");
+    assert(!/boundedWriteState\(\s*["']selected:shot-task["']/.test(reverted),
+      "blocking automation must not write shot stage selection to a key nothing reads");
+  });
+  await mustFail("C8b the readiness link writes a key nothing reads", "a key nothing reads", async () => {
+    const reverted = mutate(APP_SOURCE,
+      `onclick="boundedWriteFocusedTask('\${SHOT_STAGE_SCOPE}'`,
+      `onclick="boundedWriteState('shot-task'`,
+      "C8b");
+    assert(!/boundedWriteState\(\s*['"]shot-task['"]/.test(reverted),
+      "the readiness link must not write shot stage selection to a key nothing reads");
   });
 
   /* ---------------------------------------------------------------------------

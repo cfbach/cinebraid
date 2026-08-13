@@ -41,6 +41,7 @@ const Stage = require(path.join(PUBLIC, "shared-stage-model.js"));
 const MODEL_SOURCE = fs.readFileSync(path.join(PUBLIC, "shared-stage-model.js"), "utf8");
 const FOCUSED_SOURCE = fs.readFileSync(path.join(PUBLIC, "focused-workspaces.js"), "utf8");
 const APP_SOURCE = fs.readFileSync(path.join(PUBLIC, "app.js"), "utf8");
+const AUTOMATION_SOURCE = fs.readFileSync(path.join(PUBLIC, "automation.js"), "utf8");
 
 const notes = [];
 const note = (line) => notes.push(line);
@@ -461,6 +462,27 @@ function checkSingleTruth() {
   note("Truth: the legacy seven-stage model stays inert; the declared model stores nothing");
 }
 
+/* Every writer of shot stage selection must write the key the reader reads.
+   public/bounded-rendering.js exposes two storage families that look interchangeable
+   and are not: boundedWriteState writes `cinebraid-bounded:…`, while the focused-task
+   family - the one boundedShotSelectedTask reads - writes `cinebraid-focused:…`. Two
+   callers used the wrong one and were therefore dead for their whole life: blocking-only
+   automation never opened Look & blocking, and the project-readiness link never opened
+   Shot Inputs. Both failed in silence, which is why this looks for the KEY rather than
+   for the intention - and why the assertion these replace, which required the dead call
+   as a source string, pinned the defect in place instead of catching it. */
+function checkStageWriters() {
+  assert(!/boundedWriteState\(\s*["']selected:shot-task["']/.test(AUTOMATION_SOURCE),
+    "blocking automation must not write shot stage selection to a key nothing reads");
+  assert(AUTOMATION_SOURCE.includes('selectGuidedPanelTask(currentShot, "blocking")'),
+    "blocking automation must select its stage through the declared model");
+  assert(!/boundedWriteState\(\s*['"]shot-task['"]/.test(APP_SOURCE),
+    "the readiness link must not write shot stage selection to a key nothing reads");
+  assert(APP_SOURCE.includes("boundedWriteFocusedTask('${SHOT_STAGE_SCOPE}'"),
+    "the readiness link must write the declared scope through the canonical writer");
+  note("Writers: both previously dead stage handoffs now write the key the reader reads");
+}
+
 /* ===========================================================================
    5 — BRANCH COVERAGE, RECORDED RATHER THAN ASSUMED
    =========================================================================== */
@@ -498,6 +520,7 @@ async function main() {
   await checkRepresentativeStates();
   await checkNavigation();
   checkSingleTruth();
+  checkStageWriters();
   checkCoverage();
   console.log(notes.join("\n"));
   console.log("declared stage model assertions passed");
