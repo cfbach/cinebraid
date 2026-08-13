@@ -419,6 +419,215 @@
       .map((edge) => ({ kind: edge.kind, id: edge.id, label: edge.label, file: edge.file, assetId: edge.assetId }));
   }
 
+  /* =========================================================================
+     P4-SEM-C3 — the same answer, extended to shot-side media edges.
+
+     C2 answered "what is this media, and what is it authority for" for entity
+     references. A shot asks the identical question about its own media and had
+     no owner for it, so every reader matched strings and the approval rename
+     repaired the candidate row while leaving every winner edge behind.
+
+     EXTENDED, NOT MERGED. The shot dialect keeps its own vocabulary — this is
+     the constraint media-assets.js:244 states and C2's closeout repeated: an
+     entity row's decision vocabulary (approved-reference, approved-sheet-source,
+     …) must never be coerced through a shot normaliser, and vice versa. What is
+     shared is the ROLE vocabulary (approved / candidate / rejected), the
+     identity rules, and resolveApprovalMedia(). What is not shared is which
+     fields carry an approval, which is exactly what differs.
+
+     WHAT AN APPROVED SHOT EDGE IS, and what it is not. `winner` means "this is
+     the media this edge points at". It does NOT mean the media was creatively
+     correct — Dogfood Pass #1 produced a good video from a Frame A that
+     violated its own shot requirement, and nothing here would have caught that.
+     Frame-intent validation is a different layer and is deliberately absent.
+
+     P.mediaAssets[] IS NOT HERE, deliberately. Blocking guides and other library
+     links are already keyed by the library row's own `asset.id` with a filename
+     fallback, and no writer renames a library row's file, so they do not have
+     the staleness this section exists to end. C2's closeout named them as a C3
+     candidate; the source says otherwise, and linking that library to the
+     MediaAsset ledger is a larger question that belongs with the Generated Media
+     work rather than here. */
+
+  /* Which kind of shot edge an approval is. Distinct members rather than one
+     "winner" bucket, because a creator replacing a frame endpoint and a creator
+     replacing the finished motion are making different decisions, and a reader
+     that cannot tell them apart cannot say what it is about to overwrite. */
+  const SHOT_APPROVAL_TARGET_KINDS = ["shot", "frame", "motion", "clip-first", "clip-last"];
+
+  /* The identity field sits beside the field it identifies, mechanically:
+     winner -> winnerAssetId, videoWinner -> videoWinnerAssetId. Per-field rather
+     than one id per record, because one clip can carry three separate approvals
+     (first, last, motion) and a single id could only describe one of them. */
+  function shotAssetIdField(field) {
+    return `${field}AssetId`;
+  }
+
+  function shotEdge(kind, id, label, record, field) {
+    const owner = dispositionRecord(record);
+    const file = dispositionText(owner[field]);
+    const idField = shotAssetIdField(field);
+    return {
+      kind,
+      id: dispositionText(id),
+      label: dispositionText(label) || dispositionText(id) || kind,
+      record: owner,
+      field,
+      idField,
+      file,
+      assetId: isLedgerAssetId(owner[idField]) ? owner[idField] : "",
+    };
+  }
+
+  /* Every approval pointer a shot carries, in one list — the shot-side twin of
+     approvalEdges().
+
+     The collection is enumerated rather than remembered, which is the whole
+     lesson of C2: the pre-C2 entity rename patched the four edges its author
+     had in mind and silently missed the two they did not, and the shot rename
+     is currently missing ALL of them. A reader that walks this list cannot have
+     that bug. */
+  function shotApprovalEdges(shot) {
+    const s = dispositionRecord(shot);
+    const edges = [
+      shotEdge("shot", dispositionText(s.id), "Approved shot image", s, "winner"),
+    ];
+    for (const frame of dispositionList(s.keyframes)) {
+      const record = dispositionRecord(frame);
+      edges.push(shotEdge("frame", record.id, record.label ? `Frame ${record.label}` : "Frame", record, "winner"));
+    }
+    for (const clip of dispositionList(s.clips)) {
+      const record = dispositionRecord(clip);
+      const name = dispositionText(record.label) || dispositionText(record.suffix) || dispositionText(record.id);
+      edges.push(shotEdge("motion", record.id || name, name ? `Motion ${name}` : "Motion", record, "videoWinner"));
+      edges.push(shotEdge("clip-first", record.id || name, name ? `${name} first` : "Clip first", record, "winner"));
+      edges.push(shotEdge("clip-last", record.id || name, name ? `${name} last` : "Clip last", record, "winnerEnd"));
+    }
+    return edges.filter((edge) => edge.file || edge.assetId);
+  }
+
+  /* The shot candidate row, READ-ONLY. public/review-provenance.js's
+     candidateRecord() creates and normalises as a side effect; this one cannot,
+     because it runs inside a render. The lookup key matches it exactly. */
+  function shotCandidateRowFor(shot, fileName) {
+    const name = dispositionText(fileName);
+    if (!name) return null;
+    return dispositionList(dispositionRecord(shot).candidateFiles)
+      .find((row) => dispositionText(dispositionRecord(row).stored || dispositionRecord(row).name) === name) || null;
+  }
+
+  /* THE reader for shot media. Same three roles, same precedence — a live
+     approval outranks a stale rejection, because the pointer is the newer fact. */
+  function shotMediaDisposition(shot, fileName, options = {}) {
+    const s = dispositionRecord(shot);
+    const name = dispositionText(fileName);
+    const edges = Array.isArray(options.edges) ? options.edges : shotApprovalEdges(s);
+    const targets = edges.filter((edge) => edge.file && edge.file === name);
+    if (targets.length) {
+      const identified = targets.find((edge) => edge.assetId);
+      return { role: "approved", targets, assetId: identified ? identified.assetId : "", rejected: false };
+    }
+    const row = shotCandidateRowFor(s, name);
+    const rejected = dispositionText(dispositionRecord(row).decision) === REJECTED_DECISION;
+    return {
+      role: rejected ? "rejected" : "candidate",
+      targets: [],
+      assetId: isLedgerAssetId(dispositionRecord(row)[CANDIDATE_ASSET_ID_FIELD]) ? row[CANDIDATE_ASSET_ID_FIELD] : "",
+      rejected,
+    };
+  }
+
+  function partitionShotMedia(shot, media, options = {}) {
+    const s = dispositionRecord(shot);
+    const edges = Array.isArray(options.edges) ? options.edges : shotApprovalEdges(s);
+    const approved = [], candidates = [], rejected = [], byName = new Map();
+    for (const item of dispositionList(media)) {
+      const name = dispositionText(dispositionRecord(item).name);
+      const disposition = shotMediaDisposition(s, name, { edges });
+      const row = { item, name, ...disposition };
+      byName.set(name, row);
+      if (disposition.role === "approved") approved.push(row);
+      else if (disposition.role === "rejected") rejected.push(row);
+      else candidates.push(row);
+    }
+    return { approved, candidates, rejected, byName, edges };
+  }
+
+  /* Resolve one shot edge to the media it points at, IDENTITY FIRST. Thin on
+     purpose — it is resolveApprovalMedia(), reused verbatim, because a shot
+     approval and an entity approval resolve by the same rule and a second copy
+     would be a second rule the day one of them changed. */
+  function resolveShotApprovalMedia(edge, media) {
+    return resolveApprovalMedia(edge, media);
+  }
+
+  /* THE SINGLE AUTHORITATIVE WRITER of identity onto a shot edge.
+     Refuses anything that is not a ledger id, for the C2 reason: a record
+     carrying a malformed identity resolves to nothing while looking
+     authoritative, which is worse than one carrying none. */
+  function stampShotApprovalIdentity(record, field, assetId) {
+    if (!record || typeof record !== "object" || !field) return "";
+    if (!isLedgerAssetId(assetId)) return "";
+    record[shotAssetIdField(field)] = assetId;
+    return assetId;
+  }
+
+  /* Clear identity when an edge is cleared, so a stale id cannot outlive the
+     approval that justified it and silently re-resolve later. */
+  function clearShotApprovalIdentity(record, field) {
+    if (!record || typeof record !== "object" || !field) return;
+    delete record[shotAssetIdField(field)];
+  }
+
+  /* Repair every shot approval pointer after CineBraid renamed a file.
+
+     Before C3 this did not exist. public/library-tools.js called
+     renameCandidateRecord(), which moves the candidate row's `stored` and
+     retargets selectedCandidate — and nothing else. Every winner edge pointing
+     at the renamed file kept the old name, so approving a take under a new
+     filename could leave s.winner naming a file that was no longer on disk.
+
+     Two derived pointers travel with the edges because they are copies of a
+     winner rather than independent decisions: canonicalName (the shot's locked
+     filename) and creationBrief.approvedMotionFile.
+
+     Returns what it changed so a caller can assert on it rather than infer. */
+  function repairShotApprovalIdentity(shot, change = {}) {
+    const s = dispositionRecord(shot);
+    const from = dispositionText(change.from);
+    const to = dispositionText(change.to);
+    const assetId = isLedgerAssetId(change.assetId) ? change.assetId : "";
+    const repaired = [];
+    if (!from || !to || from === to) return repaired;
+
+    for (const edge of shotApprovalEdges(s)) {
+      if (edge.file !== from) continue;
+      edge.record[edge.field] = to;
+      if (assetId) stampShotApprovalIdentity(edge.record, edge.field, assetId);
+      repaired.push({ kind: edge.kind, id: edge.id, field: edge.field, assetId });
+    }
+
+    /* Derived copies of a winner, not decisions of their own. */
+    if (dispositionText(s.canonicalName) === from) {
+      s.canonicalName = to;
+      repaired.push({ kind: "canonical-name", id: dispositionText(s.id), field: "canonicalName", assetId });
+    }
+    const creation = dispositionRecord(s.creationBrief);
+    if (dispositionText(creation.approvedMotionFile) === from) {
+      creation.approvedMotionFile = to;
+      repaired.push({ kind: "approved-motion-file", id: dispositionText(s.id), field: "approvedMotionFile", assetId });
+    }
+    return repaired;
+  }
+
+  /* DERIVED, never stored — the shot twin of staleApprovalEdges(). */
+  function staleShotApprovalEdges(shot, media) {
+    const items = dispositionList(media);
+    return shotApprovalEdges(dispositionRecord(shot))
+      .filter((edge) => edge.file && !resolveApprovalMedia(edge, items))
+      .map((edge) => ({ kind: edge.kind, id: edge.id, label: edge.label, field: edge.field, file: edge.file, assetId: edge.assetId }));
+  }
+
   return {
     MEDIA_DISPOSITIONS,
     APPROVAL_TARGET_KINDS,
@@ -434,5 +643,17 @@
     stampCandidateIdentity,
     repairApprovalIdentity,
     staleApprovalEdges,
+    /* P4-SEM-C3 */
+    SHOT_APPROVAL_TARGET_KINDS,
+    shotAssetIdField,
+    shotApprovalEdges,
+    shotCandidateRowFor,
+    shotMediaDisposition,
+    partitionShotMedia,
+    resolveShotApprovalMedia,
+    stampShotApprovalIdentity,
+    clearShotApprovalIdentity,
+    repairShotApprovalIdentity,
+    staleShotApprovalEdges,
   };
 });

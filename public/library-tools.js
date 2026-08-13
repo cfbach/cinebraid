@@ -328,7 +328,7 @@ window.confirmApproveTake = async () => {
       : target.startsWith("segment:")
         ? (s.clips || []).find((x) => unitKey(x) === target.slice(8))?.videoWinner || ""
         : "";
-  let finalName = name;
+  let finalName = name, renamedAssetId = "";
   if (requested && requested !== name) {
     const r = await fetch("/api/media/rename", {
       method: "POST",
@@ -343,36 +343,72 @@ window.confirmApproveTake = async () => {
     const d = await r.json();
     if (r.ok) {
       finalName = d.name;
+      renamedAssetId = d.assetId || "";
       if (typeof renameCandidateRecord === "function")
         renameCandidateRecord(s, name, finalName);
+      /* P4-SEM-C3. renameCandidateRecord() moves the candidate row's `stored`
+         and retargets selectedCandidate — and nothing else. Every WINNER edge
+         pointing at the renamed file kept the old name, so approving a take
+         under a new filename could leave s.winner, another frame's winner, a
+         clip's videoWinner or canonicalName naming a file no longer on disk.
+         This is the shot-side twin of the coverage-slot miss C2 fixed, and it
+         is repaired the same way: by enumerating the edges rather than
+         remembering them. The assetId the route just anchored is recorded on
+         each repaired edge, so a LATER rename resolves by identity instead of
+         by a string that has already changed. */
+      repairShotApprovalIdentity(s, { from: name, to: finalName, assetId: renamedAssetId });
       SCAN = await (await fetch("/api/scan")).json();
     } else toast("Could not rename; approval kept the original filename");
   }
+  /* The durable identity of what is about to become an authoritative shot edge.
+     Read from the refreshed scan when the ledger knows this file, and from the
+     rename anchor otherwise. Empty is legal and common — a project whose first
+     pass has not run has no identity to record, and the approval proceeds on the
+     filename exactly as it did before C3. */
+  const approvedAssetId = (takesFor(id).find((item) => item.name === finalName) || {}).assetId || renamedAssetId || "";
   const video = isVideo(finalName);
   let complete = false,
     label = "VERSION APPROVED";
+  /* P4-SEM-C3: each approval records WHICH BYTES it approved, beside the filename
+     it also keeps. Refused rather than stored when there is no id, so a record
+     never carries a malformed identity that would resolve to nothing. */
   if (target === "shot") {
     s.winner = finalName;
+    stampShotApprovalIdentity(s, "winner", approvedAssetId);
     if (!video) {
       const opening = (s.keyframes || [])[0];
-      if (opening) opening.winner = finalName;
+      if (opening) {
+        opening.winner = finalName;
+        stampShotApprovalIdentity(opening, "winner", approvedAssetId);
+      }
     }
   } else if (target.startsWith("frame:")) {
     const f = frameById(s, target.slice(6));
-    if (f) f.winner = finalName;
+    if (f) {
+      f.winner = finalName;
+      stampShotApprovalIdentity(f, "winner", approvedAssetId);
+    }
     complete = shotApprovalComplete(s);
     label = "FRAME APPROVED";
   } else if (target.startsWith("segment:")) {
     const c = (s.clips || []).find((x) => unitKey(x) === target.slice(8));
-    if (c) c.videoWinner = finalName;
+    if (c) {
+      c.videoWinner = finalName;
+      stampShotApprovalIdentity(c, "videoWinner", approvedAssetId);
+    }
     const creation = typeof ensureShotCreation === "function" ? ensureShotCreation(s) : (s.creationBrief = s.creationBrief || {});
     creation.approvedMotionFile = finalName;
     complete = shotApprovalComplete(s);
     label = "MOTION APPROVED";
   } else {
     const [ci, edge] = target.split(":");
-    if (edge === "last") s.clips[+ci].winnerEnd = finalName;
-    else s.clips[+ci].winner = finalName;
+    if (edge === "last") {
+      s.clips[+ci].winnerEnd = finalName;
+      stampShotApprovalIdentity(s.clips[+ci], "winnerEnd", approvedAssetId);
+    } else {
+      s.clips[+ci].winner = finalName;
+      stampShotApprovalIdentity(s.clips[+ci], "winner", approvedAssetId);
+    }
     complete = (s.clips || []).filter(clipNeedsWinner).every(clipDone);
   }
   if (typeof guidedClearApprovalTarget === "function")

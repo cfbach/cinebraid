@@ -1457,8 +1457,19 @@ function v628AttachEntityAutomationProvenance(run, list, entityId, stateId, file
 function v626ApproveFrame(shotId, frameId, fileName) {
   const shot = shotById(shotId), frame = frameById(shot, frameId), previous = frame?.winner || "";
   if (!shot || !frame || !fileName) throw new Error("Frame approval target is unavailable");
+  /* P4-SEM-C3. The automation writer records identity on the same terms as the
+     manual one — an edge written by a run and an edge written by a human must be
+     resolvable the same way, or downstream readers would have to know which
+     produced it. This does NOT make automation an approving actor: the run still
+     reaches a human gate, and the score still never becomes canon. It only means
+     the edge names WHICH bytes it points at. */
+  const approvedAssetId = (takesFor(shotId).find((item) => item.name === fileName) || {}).assetId || "";
   frame.winner = fileName;
-  if ((shot.keyframes || [])[0]?.id === frame.id) shot.winner = fileName;
+  stampShotApprovalIdentity(frame, "winner", approvedAssetId);
+  if ((shot.keyframes || [])[0]?.id === frame.id) {
+    shot.winner = fileName;
+    stampShotApprovalIdentity(shot, "winner", approvedAssetId);
+  }
   if (typeof markCandidateApproved === "function") markCandidateApproved(shot, fileName, `frame:${frame.id}`);
   if (previous && previous !== fileName && typeof guidedFrameApprovalChanged === "function") guidedFrameApprovalChanged(shotId, `frame:${frame.id}`, previous, fileName);
   shot.workflowStatus = "IN PROGRESS"; shot.status = "BUILT";
