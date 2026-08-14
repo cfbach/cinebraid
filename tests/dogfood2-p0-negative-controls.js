@@ -37,9 +37,20 @@ const notes = [];
 
 function mutate(text, needle, replacement, label, expected = 1) {
   const hits = text.split(needle).length - 1;
-  assert.strictEqual(hits, expected,
-    `probe receipt: ${label} expected ${expected} occurrence(s) of its anchor, found ${hits}. `
-    + "The control is no longer mutating the live path and must be rewritten.");
+  /* A PLAIN ERROR, DELIBERATELY, AND THIS MATTERS.
+
+     The probe receipt used to be an `assert.strictEqual`. `control()` catches
+     AssertionErrors and reads them as "the invariant broke, so the control
+     fired" — so a control whose anchor had disappeared reported SUCCESS while
+     mutating nothing at all. The receipt that exists to stop a silent no-op was
+     itself producing one. A non-assertion error is re-thrown by `control()` and
+     fails the suite loudly, which is the only outcome that means anything. */
+  if (hits !== expected) {
+    throw new Error(
+      `probe receipt: ${label} expected ${expected} occurrence(s) of its anchor, found ${hits}. `
+      + "The control is no longer mutating the live path and must be rewritten.",
+    );
+  }
   return text.split(needle).join(replacement);
 }
 
@@ -66,6 +77,25 @@ function control(label, run, expectation) {
   }
   assert.ok(failed, `${label}: the invariant survived the break. ${expectation}`);
   notes.push(`  ${label} — failed as required`);
+}
+
+/* The async twin, for a control whose boundary is an HTTP route rather than a
+   pure function. Same contract: a non-assertion escape means the control proved
+   nothing and fails the suite loudly. Collected and awaited at the end so the
+   file keeps reading top to bottom. */
+const pendingControls = [];
+function controlAsync(label, run, expectation) {
+  controls += 1;
+  pendingControls.push((async () => {
+    let failed = false;
+    try { await run(); }
+    catch (error) {
+      if (error instanceof assert.AssertionError) failed = true;
+      else throw new Error(`${label}: the control threw something other than an assertion, so it proves nothing: ${error.stack || error.message}`);
+    }
+    assert.ok(failed, `${label}: the invariant survived the break. ${expectation}`);
+    notes.push(`  ${label} — failed as required`);
+  })());
 }
 
 /* ===========================================================================
@@ -111,11 +141,18 @@ control("C2 the recommendation record carries a winner", () => {
   assert.ok(!("winner" in row), "a recommendation must not carry the authority field's name");
 }, "A nomination that stores a `winner` is indistinguishable from an approval to every reader that looks for one.");
 
+/* C3 RETARGETED IN BATCH 1B: the state-authority substitution moved into
+   `liveAuthorityValue`, which is where the edge is now read. The fixture carries
+   a REAL receipt for the soot state naming the entity's primary file — so the
+   only thing standing between it and a satisfied gate is the rule that a
+   non-default state is not answered by the entity's own image. */
 control("C3 a gate is satisfied by the entity's primary file", () => {
   const broken = build("public/shared-production-authority.js", mutate(
     source("public/shared-production-authority.js"),
-    "      return authorityObject(state).isDefault === true && !!authorityText(authorityObject(entity).approvedFile);",
-    "      return !!authorityText(authorityObject(entity).approvedFile);",
+    "      return authorityObject(state).isDefault === true\n"
+    + "        ? { value: authorityText(authorityObject(entity).approvedFile), assetId: authorityText(authorityObject(entity).approvedAssetId) }\n"
+    + "        : { value: \"\", assetId: \"\" };",
+    "      return { value: authorityText(authorityObject(entity).approvedFile), assetId: authorityText(authorityObject(entity).approvedAssetId) };",
     "C3",
   ));
   const project = {
@@ -124,16 +161,156 @@ control("C3 a gate is satisfied by the entity's primary file", () => {
       id: "CHAR-A", approvedFile: "PRIMARY.png",
       continuityStates: [{ id: "state-default", isDefault: true, approvedFile: "PRIMARY.png" }, { id: "st-soot", approvedFile: "" }],
     }],
+    productionAuthority: {
+      version: 1, sequence: 1,
+      receipts: [{
+        id: "authority-000001", sequence: 1, actor: "human", act: "explicit-approval", command: "approve-entity-state",
+        targetType: "entity-state", targetId: "characters:CHAR-A#st-soot", shotId: "", frameId: "",
+        list: "characters", entityId: "CHAR-A", stateId: "st-soot", value: "PRIMARY.png", assetId: "",
+        via: "control", at: "T", status: "current",
+      }],
+    },
   };
   assert.ok(!broken.gateSatisfied({ kind: "entity-state-approval", list: "characters", entityId: "CHAR-A", stateId: "st-soot" }, project),
     "a declared non-default state with no file of its own is NOT satisfied by the entity's primary");
 }, "This is the state-authority substitution defect wearing a new hat: it would close a real gate against the wrong image.");
 
+/* ===========================================================================
+   BATCH 1B — CONTROLS AIMED AT THE CENTRAL BOUNDARIES.
+
+   The acceptance audit's objection to the first batch's controls was that they
+   mutated helpers rather than the boundaries a bypass would go around. These
+   break the command itself: if the command can be defeated, everything that
+   routes through it is defeated, and each of these proves the corresponding
+   guarantee has exactly one place it lives. */
+
+control("C1b the gate reads the edge instead of the receipt", () => {
+  const broken = build("public/shared-production-authority.js", mutate(
+    source("public/shared-production-authority.js"),
+    "  const target = gateAuthorityTarget(requirement);\n  if (!target) return false;\n  return hasCurrentHumanAuthority(project, target);",
+    "  const target = gateAuthorityTarget(requirement);\n  if (!target) return false;\n  return !!liveAuthorityValue(project, target).value;",
+    "C1b",
+  ));
+  /* A preserved pre-repair winner: a real file, automatic provenance, no human
+     anywhere in its history. This is the audit's headline counterexample. */
+  const project = { shots: [{ id: "SH-01", winner: "AUTO.png", keyframes: [{ id: "fr-a", winner: "AUTO.png" }] }] };
+  assert.ok(!broken.gateSatisfied({ kind: "shot-frame-approval", shotId: "SH-01", frameId: "fr-a" }, project),
+    "a winner with no human receipt behind it must not satisfy a human gate");
+}, "This is the exact reasoning the shipped module used — 'only a human may write a winner, so a winner is a decision' — and it is false for every edge that predates the guard.");
+
+control("C1c the command mints a receipt without checking the actor", () => {
+  const broken = build("public/shared-production-authority.js", mutate(
+    source("public/shared-production-authority.js"),
+    "  assertHumanAuthority(it.grant, what);",
+    "",
+    "C1c",
+  ));
+  const project = { shots: [{ id: "SH-01", keyframes: [{ id: "fr-a" }] }] };
+  assert.throws(() => broken.writeFrameProductionAuthority(project, {
+    shotId: "SH-01", frameId: "fr-a", value: "X.png", grant: { actor: "automation", act: "explicit-approval" }, at: "T", applyEdge: () => {},
+  }), assert.AssertionError, "the command must refuse a machine actor");
+}, "One command writes every authority edge in CineBraid; an actor check it can skip is an actor check nothing has.");
+
+control("C1d the edge is written before the actor is verified", () => {
+  const broken = build("public/shared-production-authority.js", mutate(
+    source("public/shared-production-authority.js"),
+    "  const what = target.targetType === \"shot-frame\" ? `Frame ${target.frameId} of ${target.shotId}` : `${target.list} ${target.entityId} state ${target.stateId}`;\n"
+    + "  /* THE ACTOR CHECK, first, before anything is touched. */\n"
+    + "  assertHumanAuthority(it.grant, what);",
+    "  const what = target.targetType === \"shot-frame\" ? `Frame ${target.frameId} of ${target.shotId}` : `${target.list} ${target.entityId} state ${target.stateId}`;\n"
+    + "  if (typeof it.applyEdge === \"function\") it.applyEdge(target);\n"
+    + "  assertHumanAuthority(it.grant, what);",
+    "C1d",
+  ));
+  const project = { shots: [{ id: "SH-01", keyframes: [{ id: "fr-a" }] }] };
+  let wrote = false;
+  try {
+    broken.writeFrameProductionAuthority(project, {
+      shotId: "SH-01", frameId: "fr-a", value: "X.png", grant: undefined, at: "T", applyEdge: () => { wrote = true; },
+    });
+  } catch { /* the refusal is expected; WHETHER IT WROTE FIRST is the question */ }
+  assert.ok(!wrote, "a refused command must leave the project untouched");
+}, "Ordering is the whole guarantee: a refusal that has already written the winner has refused nothing.");
+
+control("C2b reconciliation closes a gate with no receipt to cite", () => {
+  const broken = build("public/shared-production-authority.js", mutate(
+    source("public/shared-production-authority.js"),
+    "    if (!authorityText(requirement.receiptId)) continue;",
+    "",
+    "C2b",
+  ));
+  const run = { id: "r", type: "shot-chain", targetId: "SH-01", status: "awaiting-review", steps: { k: { key: "k", status: "needs-review", frameId: "fr-a", result: {} } } };
+  broken.applyGateReconciliation(run, { changed: true, satisfied: [{ kind: "shot-frame-approval", stepKey: "k", shotId: "SH-01", frameId: "fr-a", receiptId: "" }], invalidated: [], nextStatus: "interrupted" }, { at: "T" });
+  assert.strictEqual(run.steps.k.status, "needs-review",
+    "a gate may close only against a receipt the plan verified — the citation and the completion are one statement");
+}, "Manufacturing humanApproved from anything other than a verified receipt is the defect the audit named by name.");
+
+control("C2c reconciliation is one-way again", () => {
+  const broken = build("public/shared-production-authority.js", mutate(
+    source("public/shared-production-authority.js"),
+    "    if (gateSatisfied(requirement, project)) continue;\n    invalidated.push(requirement);",
+    "    continue;",
+    "C2c",
+  ));
+  /* A completed step claiming a human approval whose authority is gone. */
+  const project = { shots: [{ id: "SH-01", keyframes: [{ id: "fr-a" }] }] };
+  const run = { id: "r", type: "shot-chain", targetId: "SH-01", status: "interrupted", steps: { k: { key: "k", kind: "frame-approval", status: "completed", frameId: "fr-a", pass: true, result: { humanApproved: true } } } };
+  const plan = broken.reconcileRunGates(run, project, { at: "T" });
+  assert.strictEqual((plan.invalidated || []).length, 1,
+    "a completed gate whose authority has been revoked must reopen — truth has to be able to travel back");
+}, "A reconciliation that can only ever REMOVE work from 'waiting for you' is how a revoked approval survived as a completed step.");
+
+control("C2d resume trusts the cached step result", () => {
+  const broken = build("public/shared-production-authority.js", mutate(
+    source("public/shared-production-authority.js"),
+    "  return currentHumanAuthority(project, target);\n}\n\nconst PRODUCTION_AUTHORITY_EXPORTS",
+    "  return currentAuthorityReceipt(project, target);\n}\n\nconst PRODUCTION_AUTHORITY_EXPORTS",
+    "C2d",
+  ));
+  /* The receipt exists but the edge is gone — a winner cleared by a writer that
+     did not call the revocation command. Resume must still find nothing. */
+  const project = {
+    shots: [{ id: "SH-01", keyframes: [{ id: "fr-a", winner: "" }] }],
+    productionAuthority: { version: 1, sequence: 1, receipts: [{ id: "authority-000001", sequence: 1, actor: "human", act: "explicit-approval", targetType: "shot-frame", targetId: "SH-01#fr-a", shotId: "SH-01", frameId: "fr-a", value: "X.png", status: "current" }] },
+  };
+  assert.strictEqual(broken.resumeAuthority(project, { kind: "shot-frame-approval", shotId: "SH-01", frameId: "fr-a" }), null,
+    "authority requires the receipt AND the edge — fail closed when a writer clears one without withdrawing the other");
+}, "The invariant must not depend on every writer being polite enough to call the revocation command.");
+
+control("C10b ownership eligibility accepts an inferred owner", () => {
+  const broken = build("public/shared-entity-ownership.js", mutate(
+    source("public/shared-entity-ownership.js"),
+    "  return resolution.authoritative === true && resolution.ownerId === wanted;",
+    "  return resolution.ownerId === wanted;",
+    "C10b",
+  ));
+  const index = broken.buildEntityOwnerIndex({ characters: [{ id: "CHAR-A", prefix: "CHAR-A" }] }, "characters");
+  assert.ok(!broken.entityOwnsMedia(index, "CHAR-A", "CHAR-A_DROPPED_BY_HAND.png"),
+    "a filename match is discovery, never eligibility");
+}, "The audit approved an unclaimed file into a canon pool because one reader answered both questions with one list.");
+
+control("C10c a contested file is attributed to a claimant", () => {
+  const broken = build("public/shared-entity-ownership.js", mutate(
+    source("public/shared-entity-ownership.js"),
+    "  if (contested.has(name)) {",
+    "  if (false && contested.has(name)) {",
+    "C10c",
+  ));
+  const index = broken.buildEntityOwnerIndex({
+    characters: [
+      { id: "CHAR-A", prefix: "CHAR-A", candidateFiles: [{ stored: "SHARED.png" }] },
+      { id: "CHAR-A-YOUNG", prefix: "CHAR-A-YOUNG", candidateFiles: [{ stored: "SHARED.png" }] },
+    ],
+  }, "characters");
+  assert.strictEqual(broken.resolveMediaOwnership(index, "SHARED.png").ownerId, "",
+    "a conflict has no owner until a person resolves it");
+}, "Breaking a durable-claim tie by filename specificity is the reasoning that created the contamination in the first place.");
+
 control("C4 an unidentifiable gate is treated as satisfied", () => {
   const broken = build("public/shared-production-authority.js", mutate(
     source("public/shared-production-authority.js"),
-    "  const requirements = runGateRequirements(run);\n  if (!requirements.length) return true;\n  return requirements.some((requirement) => !gateSatisfied(requirement, project));",
-    "  return runGateRequirements(run).some((requirement) => !gateSatisfied(requirement, project));",
+    "  return !requirements.length;\n}",
+    "  return false;\n}",
     "C4",
   ));
   assert.ok(broken.runHasActionableGate({ status: "awaiting-review", steps: {} }, { shots: [] }),
@@ -194,10 +371,20 @@ control("C6 declared absence stops forbidding presence", () => {
     "an entity declared absent must be reported as forbidden");
 }, "If nothing forbids presence, the declaration is decoration and the compiler is unchanged.");
 
+/* C7/C8 RETARGETED IN BATCH 1B. Both used to mutate `clauseDeniesPresence`,
+   which is no longer the production path — the detector is mention-scoped now
+   and `framePresenceContradictions` asks `clauseAssertsPresence`. A control
+   pointed at the old function would have gone on passing while proving nothing,
+   which is the precise failure the acceptance audit called out. They attack
+   `mentionIsDenied`, the central decision both directions turn on. */
+const MENTION_DECISION_ANCHOR = "  if (PRESENCE_NEGATION_WORDS.test(span)) return true;\n"
+  + "  if (PRESENCE_DENYING_PREDICATE.test(after)) return true;\n"
+  + "  return false;";
+
 control("C7 every mention counts as a denial", () => {
   const broken = build("public/shared-frame-presence.js", mutate(
     source("public/shared-frame-presence.js"),
-    "  return FRAME_ABSENCE_MARKERS.some((marker) => lower.includes(marker));",
+    MENTION_DECISION_ANCHOR,
     "  return true;",
     "C7",
   ));
@@ -206,12 +393,12 @@ control("C7 every mention counts as a denial", () => {
     spec: { narrativePurpose: "A tiny figure of the Chimbley Sweep stands at the stack." },
   });
   assert.strictEqual(findings.length, 1, "a positive clause naming an absent entity is a contradiction");
-}, "A detector that treats every clause as a denial is a detector that never fires — which is the shipped behaviour.");
+}, "A detector that treats every mention as denied is a detector that never fires — which is the shipped behaviour.");
 
 control("C8 no mention counts as a denial", () => {
   const broken = build("public/shared-frame-presence.js", mutate(
     source("public/shared-frame-presence.js"),
-    "  return FRAME_ABSENCE_MARKERS.some((marker) => lower.includes(marker));",
+    MENTION_DECISION_ANCHOR,
     "  return false;",
     "C8",
   ));
@@ -220,6 +407,75 @@ control("C8 no mention counts as a denial", () => {
     spec: { narrativePurpose: "No Chimbley Sweep visible." },
   }), [], "a clause that denies presence must not be a contradiction");
 }, "The opposite failure is as bad: blocking the correctly-authored case teaches people to stop declaring absence at all.");
+
+/* THE CONTROL THAT MATTERS MOST: the universal pre-provider gate.
+
+   Every other presence control breaks a detector. This one breaks the BOUNDARY,
+   and a boundary that can be removed without a test noticing is the exact
+   failure the acceptance audit found — the shipped check lived on a path callers
+   could decline to take, and every test passed anyway.
+
+   It loads a mutated `fal-generation.js` through Node's real module system, so
+   the route it registers is the real route. The mutated copy is written to a
+   scratch directory outside the repository and removed immediately; nothing in
+   the working tree is touched. */
+controlAsync("CG the universal pre-provider presence gate is removed", async () => {
+  const os = require("os");
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "cinebraid-control-"));
+  const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "cinebraid-control-project-"));
+  const realFetch = globalThis.fetch;
+  let providerAttempts = 0;
+  try {
+    const broken = mutate(source("fal-generation.js"), "    if (!presenceGate.ok)", "    if (false && !presenceGate.ok)", "CG");
+    /* Relative requires have to keep resolving against the repository. */
+    const rewritten = broken.replace(/require\("\.\/([^"]+)"\)/g, (match, rel) => `require(${JSON.stringify(path.join(ROOT, rel).replace(/\\/g, "/"))})`);
+    const copy = path.join(scratch, "fal-generation.mutated.js");
+    fs.writeFileSync(copy, rewritten);
+    fs.writeFileSync(path.join(projectDir, "generation-jobs.json"), "[]");
+    fs.writeFileSync(path.join(projectDir, "project.json"), JSON.stringify({
+      meta: {}, scenes: [], locations: [], props: [], vehicles: [], audio: [],
+      characters: [{ id: "CHAR-X", name: "Chimbley Sweep", prefix: "CHAR-X" }],
+      shots: [{ id: "SH-01", scene: "SC-01", keyframes: [{ id: "fr-a", label: "A" }], clips: [], candidateFiles: [], creationBrief: { frameWorkflows: { "fr-a": { entityPresence: { "CHAR-X": "absent" } } } } }],
+    }));
+    const routes = new Map();
+    const app = { post: (route, handler) => routes.set(route, handler), get: () => {} };
+    require(copy).registerFalGeneration(app, {
+      readConfig: () => ({ generation: { fal: { enabled: true, apiKey: "not-a-real-credential" } } }),
+      readProject: () => JSON.parse(fs.readFileSync(path.join(projectDir, "project.json"), "utf8")),
+      writeProject: () => {},
+      activeSlug: () => "control",
+      projectDirForSlug: () => ({ dir: projectDir, file: path.join(projectDir, "project.json") }),
+    });
+    globalThis.fetch = () => { providerAttempts += 1; throw new Error("provider contacted"); };
+    const handler = routes.get("/api/generation/fal/jobs");
+    const res = { status() { return this; }, json() { return this; } };
+    await handler({ body: { purpose: "frame", shotId: "SH-01", frameId: "fr-a", prompt: "The Chimbley Sweep stands before the chimney.", outputCount: 1 }, query: {}, headers: {} }, res);
+    assert.strictEqual(providerAttempts, 0,
+      "a frame-specific paid request contradicting its own presence declaration must never reach a provider");
+  } finally {
+    globalThis.fetch = realFetch;
+    fs.rmSync(scratch, { recursive: true, force: true });
+    fs.rmSync(projectDir, { recursive: true, force: true });
+  }
+}, "Remove the gate and the request goes straight to fal. This is the one control that proves the boundary is mandatory rather than conventional.");
+
+/* C7b IS THE COUNTEREXAMPLE THE AUDIT EXECUTED, as a control rather than only as
+   a positive assertion: unscope the negation back to "does the clause contain a
+   marker anywhere" and the spatial `before` must stop being caught. */
+control("C7b negation is unscoped back to a whole-clause substring test", () => {
+  const broken = build("public/shared-frame-presence.js", mutate(
+    source("public/shared-frame-presence.js"),
+    MENTION_DECISION_ANCHOR,
+    "  return FRAME_ABSENCE_MARKERS.some((marker) => presenceText(clause).toLowerCase().includes(marker));",
+    "C7b",
+  ));
+  const findings = broken.framePresenceContradictions({
+    absentEntities: [{ id: "CHAR-X", name: "Chimbley Sweep" }],
+    spec: { narrativePurpose: "The Chimbley Sweep stands before the chimney." },
+  });
+  assert.strictEqual(findings.length, 1,
+    "a spatial `before` is not a temporal absence — this sentence puts the Sweep in a frame that excludes him");
+}, "This is the exact sentence the acceptance audit fed the shipped detector, and the exact answer it got wrong.");
 
 control("C9 whole-shot narrative is carried into a frame that excludes it", () => {
   const broken = build("public/shared-frame-presence.js", mutate(
@@ -292,7 +548,7 @@ control("C11 ownership falls back to the first matching prefix", () => {
 control("C12 a durable claim stops deciding ownership", () => {
   const broken = build("public/shared-entity-ownership.js", mutate(
     source("public/shared-entity-ownership.js"),
-    "  if (!contested.has(name) && claims.has(name)) return claims.get(name);",
+    '    return { ownerId: claims.get(name), basis: "durable-claim", status: "owned", contested: false, claimants: [claims.get(name)], authoritative: true, fileName: name };',
     "",
     "C12",
   ));
@@ -354,43 +610,93 @@ notes.push("P0-5 state lineage:");
   notes.push("  R4 the cyclic rotation offers the root after the grandchild, and accepting it closes a real cycle");
 }
 
+/* C14 RETARGETED IN BATCH 1B, and the mutation is the exact regression the
+   acceptance audit found still shipping: reinstate the narrowed exemption that
+   let navigation establish a first parent, and an orphan offered as a
+   continuation acquires ancestry from a movement button. */
+const LINEAGE_INTENT_ANCHOR = "  if (intent !== \"explicit-lineage-edit\") {\n"
+  + "    return { write: false, intent, parentStateId: child.parentStateId, reason: \"navigation-may-not-reparent\" };\n"
+  + "  }";
 control("C14 navigation is allowed to reparent", () => {
   const broken = build("public/shared-state-lineage.js", mutate(
     source("public/shared-state-lineage.js"),
-    "  if (child.parentStateId && child.parentStateId !== parentId && opts.allowReparent !== true) {\n    return { write: false, parentStateId: child.parentStateId, reason: \"navigation-may-not-reparent\" };\n  }",
-    "",
+    LINEAGE_INTENT_ANCHOR,
+    "  if (intent !== \"explicit-lineage-edit\" && child.parentStateId) {\n"
+    + "    return { write: false, intent, parentStateId: child.parentStateId, reason: \"navigation-may-not-reparent\" };\n"
+    + "  }",
     "C14",
   ));
   const states = [
     { id: "state-default", isDefault: true, parentStateId: "" },
-    { id: "child", parentStateId: "state-default" },
-    { id: "grandchild", parentStateId: "child" },
+    { id: "orphan", parentStateId: "" },
   ];
-  assert.strictEqual(broken.safeParentAssignment(states, "grandchild", "state-default").write, false,
-    "moving to a state must not re-declare where it came from");
-}, "Existing ancestry is production truth; a movement is not a statement about it.");
+  assert.strictEqual(broken.safeParentAssignment(states, "orphan", "state-default").write, false,
+    "navigation may not declare ancestry, and a state with no parent is not an exception to that");
+}, "A narrowed exception to a categorical rule is a different rule wearing the invariant's name — which is what the acceptance audit caught.");
 
-control("C15 the cycle guard is removed", () => {
+control("C14b the mutation API accepts a navigation intent", () => {
   const broken = build("public/shared-state-lineage.js", mutate(
     source("public/shared-state-lineage.js"),
-    "  if (stateAncestorIds(states, parentId).includes(childId)) return { write: false, parentStateId: \"\", reason: \"would-create-cycle\" };",
+    LINEAGE_INTENT_ANCHOR,
     "",
-    "C15",
+    "C14b",
   ));
   const states = [
     { id: "state-default", isDefault: true, parentStateId: "" },
     { id: "child", parentStateId: "state-default" },
     { id: "grandchild", parentStateId: "child" },
   ];
-  assert.strictEqual(broken.safeParentAssignment(states, "child", "grandchild", { allowReparent: true }).write, false,
+  assert.strictEqual(broken.applyStateParentMutation(states, "grandchild", "state-default", { intent: "navigation" }).applied, false,
+    "the one mutation API refuses every write whose intent is navigation");
+}, "Centralising the writer only helps if the central writer still knows which intents may write.");
+
+/* THE CYCLE GUARD IS TWO LAYERS, AND EACH ONE IS BROKEN SEPARATELY.
+
+   C15 removes both and proves the pair is load-bearing. C15b removes only the
+   atomic whole-graph check and proves that layer earns its place on its own —
+   because the pairwise checks are sufficient on a healthy graph and NOT
+   sufficient on one that already carries damage. Removing the pairwise checks
+   alone does not corrupt anything, which is defence in depth working as
+   intended; a control that asserted otherwise would be asserting a falsehood. */
+const LINEAGE_PAIRWISE_GUARDS = "  if (stateAncestorIds(states, parentId).includes(childId)) return { write: false, intent, parentStateId: \"\", reason: \"would-create-cycle\" };\n"
+  + "  if (stateDescendantIds(states, childId).includes(parentId)) return { write: false, intent, parentStateId: \"\", reason: \"would-create-cycle\" };";
+const LINEAGE_ATOMIC_GUARD = "  if (!lineageIsAcyclic(simulated)) return { write: false, intent, parentStateId: child.parentStateId, reason: \"graph-would-be-cyclic\" };";
+
+control("C15 the cycle guard is removed", () => {
+  const withoutPairwise = mutate(source("public/shared-state-lineage.js"), LINEAGE_PAIRWISE_GUARDS, "", "C15");
+  const broken = build("public/shared-state-lineage.js", mutate(withoutPairwise, LINEAGE_ATOMIC_GUARD, "", "C15-atomic"));
+  const states = [
+    { id: "state-default", isDefault: true, parentStateId: "" },
+    { id: "child", parentStateId: "state-default" },
+    { id: "grandchild", parentStateId: "child" },
+  ];
+  assert.strictEqual(broken.applyStateParentMutation(states, "child", "grandchild", { intent: "explicit-lineage-edit" }).applied, false,
     "no write may put an ancestor beneath its own descendant");
-}, "Without the guard an explicit reparent can still corrupt the graph, which is the data-integrity half of A6.");
+}, "Without the guards an explicit reparent can still corrupt the graph, which is the data-integrity half of A6.");
+
+/* C15b attacks the ATOMIC half. Even with the pairwise guards intact, a write
+   validated only against the graph that exists — rather than the one that would
+   result — can absorb damage a project already carries. */
+control("C15b the resulting graph is not re-checked", () => {
+  const broken = build("public/shared-state-lineage.js", mutate(source("public/shared-state-lineage.js"), LINEAGE_ATOMIC_GUARD, "", "C15b"));
+  /* `a` and `b` already point at each other — damage written by the shipped
+     defect. Reparenting `c` under `a` joins it to that loop. */
+  const damaged = [
+    { id: "state-default", isDefault: true, parentStateId: "" },
+    { id: "a", parentStateId: "b" },
+    { id: "b", parentStateId: "a" },
+    { id: "c", parentStateId: "state-default" },
+  ];
+  broken.applyStateParentMutation(damaged, "c", "a", { intent: "explicit-lineage-edit" });
+  assert.strictEqual(broken.lineageCycles(damaged).length, 0,
+    "a mutation must be validated against the graph it would produce, not only the pair it touches");
+}, "Pairwise checks are necessary and not sufficient on a project that already carries a cycle.");
 
 control("C16 ancestors are offered as continuations", () => {
   const broken = build("public/shared-state-lineage.js", mutate(
     source("public/shared-state-lineage.js"),
-    "  const forbidden = new Set([currentId, ...stateAncestorIds(states, currentId)]);",
-    "  const forbidden = new Set([currentId]);",
+    "  const descendants = stateDescendantIds(states, currentId);",
+    "  const descendants = nodes.map((state) => state.id).filter((id) => id !== currentId);",
     "C16",
   ));
   const states = [
@@ -409,10 +715,13 @@ control("C17 a finished chain wraps instead of completing", () => {
     "  const unfinished = candidates;\n  if (!unfinished.length) {",
     "C17",
   ));
+  /* The chain must have a DESCENDANT that is already approved, or `complete`
+     would be reached by having no candidates at all and the mutated filter
+     would never be consulted. */
   const states = [
     { id: "state-default", isDefault: true, parentStateId: "", approvedFile: "R.png" },
     { id: "child", parentStateId: "state-default", approvedFile: "C.png" },
-    { id: "sibling", parentStateId: "state-default", approvedFile: "S.png" },
+    { id: "grandchild", parentStateId: "child", approvedFile: "G.png" },
   ];
   assert.strictEqual(broken.continuationOutcome(states, "child").kind, "complete",
     "when everything remaining is approved the outcome is complete");
@@ -474,14 +783,26 @@ control("C18 a deterministic package fault consumes a retry", () => {
   const runs = source("automation-runs.js");
   assert.strictEqual(retryAttemptsAfter(runs, "provider", "C18 baseline"), 3,
     "probe receipt: a provider fault must still advance the attempt counter, or this control is measuring a dead branch");
-  const broken = mutate(runs, "String(steps[stepKey]?.failureClass || \"\") === \"local-package\"", "false", "C18");
+  const broken = mutate(runs, "[\"local-package\", \"local-preflight\"].includes(String(steps[stepKey]?.failureClass || \"\"))", "false", "C18");
   assert.strictEqual(retryAttemptsAfter(broken, "local-package", "C18"), 2,
     "a deterministic local fault must NOT advance the attempt counter — nothing was attempted against a provider");
 }, "With the class ignored, every retry of a boundary correction burns an authorized pass to reproduce the same exception.");
 
-/* The failure classifier, run for real. */
+/* C18b is the BATCH 1B half of the same rule: the universal pre-provider gate
+   refuses before a job row exists, so its class is deterministic on exactly the
+   same terms and must not spend an attempt either. */
+control("C18b a refused pre-provider dispatch consumes a retry", () => {
+  const runs = source("automation-runs.js");
+  const broken = mutate(runs, "[\"local-package\", \"local-preflight\"]", "[\"local-package\"]", "C18b");
+  assert.strictEqual(retryAttemptsAfter(broken, "local-preflight", "C18b"), 2,
+    "a refusal that never reached a provider must not advance the attempt counter");
+}, "The presence gate stops the request before the job row exists; charging an attempt for it spends budget on nothing.");
+
+/* The failure classifier, run for real. The slice starts at the code the
+   classifier depends on rather than at the function, so a constant declared
+   above it travels with it. */
 function classifyWith(automationSource, error, label) {
-  const body = slice(automationSource, "function v626FailureClass(error) {", "\nasync function v626FailStep", label);
+  const body = slice(automationSource, "const V6_LOCAL_PREFLIGHT_CODES", "\nasync function v626FailStep", label);
   const scope = { __error: error };
   vm.runInNewContext(`${body}\n__result = v626FailureClass(__error);`, scope, { filename: "public/automation.js#classify" });
   return scope.__result;
@@ -498,7 +819,7 @@ control("C19 an authority violation is classified as a provider fault", () => {
     "an authority refusal is deterministic — retrying it reproduces the same refusal");
 }, "A refusal that reads as transient is a refusal a runner will keep paying to re-earn.");
 
-console.log([
+Promise.all(pendingControls).then(() => console.log([
   `Dogfood #2 P0 negative controls: ${controls} controls exercised, all fired.`,
   ...notes,
   "",
@@ -508,4 +829,4 @@ console.log([
   "  the deleted prefix lookup leaks three child candidates and leaves the control clean;",
   "  the cyclic rotation offers the root after the grandchild and closes a real cycle;",
   "  the boundary reference builder produces the exact reported undefined.id exception.",
-].join("\n"));
+].join("\n"))).catch((error) => { console.error(error.stack || error.message || error); process.exitCode = 1; });

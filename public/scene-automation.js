@@ -369,9 +369,27 @@ function v643CorrectionSourceRecord(shot, fileName) {
   return (shot?.candidateFiles || []).find((item) => String(item.stored || item.name || "") === String(fileName || "")) || null;
 }
 function v643HydrateSceneCorrectionPackage(pkg, run = null) {
-  if (!pkg?.targetShotId) throw new Error("Scene correction package has no target shot.");
-  const shot = shotById(pkg.targetShotId), frame = v640SceneOpeningFrame(shot), source = v643ApprovedCorrectionSource(shot);
-  if (!shot || !frame || !source?.name) throw new Error(`${pkg.targetShotId} has no approved base still for correction.`);
+  /* BATCH 1B: HYDRATION VALIDATES BEFORE IT DEREFERENCES.
+
+     `const shot = shotById(...), frame = v640SceneOpeningFrame(shot), source =
+     v643ApprovedCorrectionSource(shot)` ran on one line, and the guard that
+     checked `!shot` was on the NEXT one. A stale target id therefore reached
+     `guidedFrames(undefined)` and threw a bare `TypeError: Cannot read
+     properties of undefined (reading 'clips')` — the exact error the acceptance
+     audit produced from the real runner. Bare, it defaulted to the `provider`
+     class and entered provider retry handling for a fault no provider could
+     have caused and no retry could repair.
+
+     Each dereference is now behind the check that makes it safe, and every
+     refusal is the typed local-package error. */
+  const targetShotId = String(pkg?.targetShotId || "");
+  if (!targetShotId) throw v640CorrectionPackageError("This correction package names no target shot.", { packageId: pkg?.id, remediation: "Rebuild the correction from the scene continuity review." });
+  const shot = shotById(targetShotId);
+  if (!shot) throw v640CorrectionPackageError(`${targetShotId} no longer exists in this project.`, { packageId: pkg.id, remediation: "Remove the stale correction package and re-run the scene continuity review." });
+  const frame = v640SceneOpeningFrame(shot);
+  if (!frame) throw v640CorrectionPackageError(`${targetShotId} has no opening frame to correct.`, { packageId: pkg.id, remediation: `Add an opening frame to ${targetShotId} before correcting it.` });
+  const source = v643ApprovedCorrectionSource(shot);
+  if (!source?.name) throw v640CorrectionPackageError(`${targetShotId} has no approved base still for correction.`, { packageId: pkg.id, remediation: `Approve a still for ${targetShotId} first — a correction edits an approved image.` });
   const record = v643CorrectionSourceRecord(shot, source.name);
   pkg.sourceCandidate = String(pkg.sourceCandidate || source.name);
   pkg.approvedTargetFilename = String(pkg.approvedTargetFilename || source.name);
@@ -402,7 +420,13 @@ window.v643RepairSceneCorrectionRun = async (run, failedStep = null) => {
   let repaired = 0;
   for (const pkg of targets) {
     const before = pkg.sourceCandidate;
-    v643HydrateSceneCorrectionPackage(pkg, run);
+    /* BATCH 1B: a provenance repair pass runs over EVERY package in the run, and
+       one unrepairable package must not abort the repair of the others. The
+       typed refusal is skipped here rather than thrown: this function's job is
+       to fix what can be fixed, and the runner will name the rest when it
+       reaches them. */
+    try { v643HydrateSceneCorrectionPackage(pkg, run); }
+    catch (error) { if (!error?.localPackageError) throw error; continue; }
     if (!before && pkg.sourceCandidate) repaired += 1;
   }
   if (repaired) {
@@ -435,7 +459,15 @@ function v640SceneCorrectionPackages(run, review, cycle) {
       summary, recommendation, severity: row.finding.severity || "medium", status: "planned", sourceReviewAt: review.updatedAt || v626Now(),
       prompt: `SCENE CONTINUITY CORRECTION\nScene: ${sceneById(run.targetId)?.title || run.targetId}\nTarget shot: ${targetShotId} · ${target.title || ""}\nVisible continuity problem: ${summary}\nRequired repair: ${recommendation}\nEdit the current approved target still rather than redesigning the shot. Preserve character identity, wardrobe, location architecture, prop construction, art style, camera intent, and every detail not required by this correction. The result must connect logically to the approved previous and next shots.`,
     };
-    packages.push(v643HydrateSceneCorrectionPackage(pkg, run));
+    /* BATCH 1B: a target that cannot be hydrated is not a package. Building one
+       anyway is how an unusable row reached the runner, and the runner is where
+       the crash was. Skipped and recorded here instead. */
+    try { packages.push(v643HydrateSceneCorrectionPackage(pkg, run)); }
+    catch (error) {
+      if (!error?.localPackageError) throw error;
+      targets.delete(targetShotId);
+      run.logs = [...(run.logs || []), { at: v626Now(), tone: "warn", message: `${targetShotId} was skipped for correction: ${error.message}` }];
+    }
   }
   run.result = run.result || {}; run.result.correctionPackages = [...(run.result.correctionPackages || []), ...packages];
   const scene = sceneById(run.targetId); scene.continuityCorrectionPackages = [...(scene.continuityCorrectionPackages || []), ...packages]; dirty();
@@ -533,16 +565,79 @@ function v640SceneCorrectionPreflight(pkg) {
   if (shot && !v640SceneApprovedStill(shot)) errors.push({ message: `${targetShotId} has no approved base still for correction.`, remediation: `Approve a still for ${targetShotId} first — a correction edits an approved image.` });
   return { errors, shot, frame };
 }
+/* WHAT A CORRECTION IS AIMED AT, resolved WITHOUT touching the project.
+
+   BATCH 1B step 1. Pure string reading: no `shotById`, no `guidedFrames`, no
+   `takesFor`. Its whole purpose is to exist before anything can be dereferenced,
+   so a malformed package is named rather than crashed on. */
+function v640CorrectionTargetIdentity(pkg) {
+  const it = pkg && typeof pkg === "object" ? pkg : {};
+  return {
+    packageId: String(it.id || ""),
+    targetShotId: String(it.targetShotId || ""),
+    previousShotId: String(it.previousShotId || ""),
+    nextShotId: String(it.nextShotId || ""),
+    hasPrompt: !!String(it.prompt || "").trim(),
+  };
+}
+/* WHICH NEIGHBOURS ARE USABLE, and why each unusable one is not. Runs after the
+   target is known to be valid and never dereferences the target itself. */
+function v640ClassifyCorrectionNeighbours(identity) {
+  const omissions = [];
+  for (const [position, shotId] of [["previous", identity.previousShotId], ["next", identity.nextShotId]]) {
+    const anchor = v640SceneCorrectionOptionalAnchor(shotId);
+    if (!anchor.present) omissions.push({ position, shotId: anchor.id, reason: anchor.reason });
+  }
+  return omissions;
+}
 async function v640AutomateSceneCorrection(run, pkg) {
-  pkg = v643HydrateSceneCorrectionPackage(pkg, run);
+  /* THE ORDER, and it is the whole repair.
+
+     The acceptance audit executed this function with a stale target and got an
+     unclassified `TypeError` out of hydration, because hydration ran FIRST and
+     the typed preflight ran second. Validation cannot come after the thing it
+     is meant to protect.
+
+       1  resolve identity              — pure, cannot throw on bad state
+       2  validate target shot/frame    — typed refusal, no dereference before it
+       3  validate package shape        — typed refusal
+       4  resolve optional neighbours   — never required
+       5  classify omissions            — recorded, never fatal
+       6  hydrate                       — now provably safe
+       7  final local preflight         — the last check before spend
+       8  submit
+
+     Steps 1-7 contact nothing, create no job row and consume no retry budget. */
+  const identity = v640CorrectionTargetIdentity(pkg);
   const preflight = v640SceneCorrectionPreflight(pkg);
   if (preflight.errors.length) {
     throw v640CorrectionPackageError(
       preflight.errors.map((item) => item.message).join(" "),
-      { packageId: pkg.id, remediation: preflight.errors.map((item) => item.remediation).filter(Boolean).join(" ") },
+      { packageId: identity.packageId, remediation: preflight.errors.map((item) => item.remediation).filter(Boolean).join(" ") },
     );
   }
-  const shot = preflight.shot, frame = preflight.frame;
+  if (!identity.hasPrompt) {
+    throw v640CorrectionPackageError(
+      `The ${identity.targetShotId} correction package carries no correction instruction.`,
+      { packageId: identity.packageId, remediation: "Re-run the scene continuity review so the correction is rebuilt with its finding and recommendation." },
+    );
+  }
+  /* Steps 4-5. Recorded on the package so the run report can say which anchors
+     were dropped and why, instead of the creator inferring it from a short list. */
+  pkg.omittedAnchors = v640ClassifyCorrectionNeighbours(identity);
+  /* Step 6. Safe now: the target has been proved to exist, to have an opening
+     frame, and to have an approved still. */
+  pkg = v643HydrateSceneCorrectionPackage(pkg, run);
+  /* Step 7. Re-asked against the hydrated package, because hydration is the
+     step that resolves the source candidate the submission depends on. */
+  const hydratedPreflight = v640SceneCorrectionPreflight(pkg);
+  if (hydratedPreflight.errors.length) {
+    throw v640CorrectionPackageError(
+      hydratedPreflight.errors.map((item) => item.message).join(" "),
+      { packageId: pkg.id, remediation: hydratedPreflight.errors.map((item) => item.remediation).filter(Boolean).join(" ") },
+    );
+  }
+  const shot = hydratedPreflight.shot, frame = hydratedPreflight.frame;
   let revision = "";
   for (let round = 1; round <= Number(run.config.correctionPasses || 3); round++) {
     const baseKey = `scene-correction:${pkg.id}:round-${round}`, genKey = `${baseKey}:generate`, reviewKey = `${baseKey}:review`;

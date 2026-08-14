@@ -13,6 +13,7 @@ const { serializeImagePlanForFal, FalImageBackendError, FAL_IMAGE_BACKEND } = re
 const { generationOptionsFor, generationConnections } = require("./generation-options");
 const { submissionAccounting } = require("./generation-cost");
 const Lifecycle = require("./generation-lifecycle");
+const FramePresence = require("./public/shared-frame-presence");
 
 function registerFalGeneration(app, context) {
   const { readConfig, readProject, writeProject, activeSlug, projectDirForSlug } = context;
@@ -1580,6 +1581,50 @@ function registerFalGeneration(app, context) {
     }
     if (purpose === "correction" && !job.sourceCandidate)
       return res.status(400).json({ error: "Correction generation requires sourceCandidate provenance and no safe editable-base filename could be recovered.", code: "SOURCE_CANDIDATE_REQUIRED" });
+    /* ======================================================================
+       THE UNIVERSAL FINAL PRE-PROVIDER FRAME-PRESENCE GATE.
+       Dogfood #2 A3 / forensic F6, and the boundary the acceptance audit said
+       was missing.
+
+       EVERY frame-specific paid image request in CineBraid reaches this line —
+       the generation picker, manual frame and blocking generation, full-shot
+       automation, scene automation, candidate correction, scene continuity
+       correction, retries and any future caller — because they all POST here.
+       The compiled-plan branch above is optional and `imagePlan`-gated; THIS IS
+       NOT. There is no request body, no purpose and no caller convention that
+       skips it.
+
+       It runs LAST, on `job.prompt` as it now stands: after the image plan may
+       have replaced it, after a filmmaker's edit, after a correction's revision
+       text was appended. The audit's objection to checking at compile time was
+       precisely that the text can change afterwards; this reads what is about
+       to be sent.
+
+       And it runs BEFORE `submissionAccounting`, before `commit()` and before
+       `submit()`. A refusal therefore creates no durable job row, contacts no
+       provider, spends no money and consumes no retry budget — the caller sees
+       a typed local refusal, and the screen it came from still holds everything
+       it was about to send. */
+    const presenceGate = FramePresence.finalDispatchPresenceGate({
+      project: ownerProject(owner),
+      purpose,
+      shotId: job.shotId,
+      frameId: job.frameId,
+      prompt: job.prompt,
+      references: job.references,
+    });
+    if (!presenceGate.ok)
+      return res.status(409).json({
+        error: presenceGate.message,
+        code: presenceGate.code,
+        classification: presenceGate.classification,
+        contradictions: presenceGate.contradictions,
+        absentEntityIds: presenceGate.absentEntityIds || [],
+        shotId: job.shotId,
+        frameId: job.frameId,
+        providerContacted: false,
+        paidRequestSubmitted: false,
+      });
     /* WHAT THIS WAS ESTIMATED TO COST, decided HERE and never again.
      *
      * Last thing before the row becomes durable, so it is computed against the

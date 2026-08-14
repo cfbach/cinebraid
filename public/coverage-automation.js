@@ -486,7 +486,18 @@
   window.openImportedReferenceMapper = (list, entityId) => {
     const entity = entityFor(list, entityId);
     if (!entity) return toast("Reference asset is unavailable");
-    const media = entityMedia(list, entity).filter((item) => !isVideo(item.name));
+    /* BATCH 1B: "Use an existing image" IS THE CLAIM SURFACE.
+
+       Ownership authority now requires a durable claim, so a reference a creator
+       dropped into the folder by hand is discoverable rather than
+       approval-eligible — and this modal is exactly the human act that resolves
+       that. It offers both groups, labelled honestly, and confirming the mapping
+       writes the candidate row that constitutes the claim. Listing only the
+       already-claimed pool here would have made the hand-import route
+       unreachable, which is a worse answer than the defect. */
+    const owned = entityMedia(list, entity).filter((item) => !isVideo(item.name));
+    const unassigned = (typeof entityUnassignedMedia === "function" ? entityUnassignedMedia(list, entity) : []).filter((item) => !isVideo(item.name));
+    const media = [...owned, ...unassigned];
     if (!media.length) return toast("Upload or generate reference images first");
     const coverage = ensureCoverageSlots(list, entity).filter((slot) => !slot.retired);
     const expressions = list === "characters" && typeof ensureExpressionSlots === "function" ? ensureExpressionSlots(entity).filter((slot) => !slot.retired) : [];
@@ -505,7 +516,7 @@
     const actions = manualMode
       ? `${visionReady ? `<button class="ghost-btn" onclick="confirmImportedReferenceMapping(false)">MAP FOR OPTIONAL AI CHECK</button>` : ""}<button class="approve-btn large" onclick="confirmImportedReferenceMapping(true)">MAP & ASSIGN</button>`
       : `<button class="ghost-btn" onclick="confirmImportedReferenceMapping(true)">ASSIGN MANUALLY</button><button class="approve-btn large" onclick="confirmImportedReferenceMapping(false)">MAP & AI CHECK</button>`;
-    openModal(`<div class="imported-reference-mapper"><header><div><span>REFERENCE INTAKE</span><h3>Use an existing image</h3><p>Choose the faster path: assign one complete image to a single authority slot, or split a reference sheet into separate views.</p></div><button class="cancel" onclick="closeModal()">Close</button></header><div class="imported-reference-route-cards"><article><span>SINGLE IMAGE</span><b>Assign it directly</b><small>Best for one clean angle, expression, or continuity state.</small><button class="ghost-btn" onclick="document.getElementById('import-reference-target')?.focus()">Choose authority slot</button></article><article class="recommended"><span>REFERENCE SHEET</span><b>Crop individual views</b><small>Best for turnarounds, contact sheets, and multi-angle boards.</small><button class="approve-btn" onclick="cropCurrentImportedReference()">Open crop workspace</button></article></div><div class="two-col imported-reference-fields"><label><span>Existing image</span><select id="import-reference-file" onchange="updateImportedReferencePreview()">${media.map((item) => `<option value="${attr(item.name)}">${esc(item.name)}</option>`).join("")}</select></label><label><span>Authority slot for single image</span><select id="import-reference-target">${targetOptions}</select></label></div><div class="imported-reference-preview" id="imported-reference-preview"></div>${guidance}<div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button>${actions}</div></div>`);
+    openModal(`<div class="imported-reference-mapper"><header><div><span>REFERENCE INTAKE</span><h3>Use an existing image</h3><p>Choose the faster path: assign one complete image to a single authority slot, or split a reference sheet into separate views.</p></div><button class="cancel" onclick="closeModal()">Close</button></header><div class="imported-reference-route-cards"><article><span>SINGLE IMAGE</span><b>Assign it directly</b><small>Best for one clean angle, expression, or continuity state.</small><button class="ghost-btn" onclick="document.getElementById('import-reference-target')?.focus()">Choose authority slot</button></article><article class="recommended"><span>REFERENCE SHEET</span><b>Crop individual views</b><small>Best for turnarounds, contact sheets, and multi-angle boards.</small><button class="approve-btn" onclick="cropCurrentImportedReference()">Open crop workspace</button></article></div><div class="two-col imported-reference-fields"><label><span>Existing image</span><select id="import-reference-file" onchange="updateImportedReferencePreview()">${owned.length ? `<optgroup label="Belongs to this reference">${owned.map((item) => `<option value="${attr(item.name)}">${esc(item.name)}</option>`).join("")}</optgroup>` : ""}${unassigned.length ? `<optgroup label="Possible match — assigning it claims it for this reference">${unassigned.map((item) => `<option value="${attr(item.name)}">${esc(item.name)}</option>`).join("")}</optgroup>` : ""}</select></label><label><span>Authority slot for single image</span><select id="import-reference-target">${targetOptions}</select></label></div><div class="imported-reference-preview" id="imported-reference-preview"></div>${guidance}<div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button>${actions}</div></div>`);
     setTimeout(() => updateImportedReferencePreview(), 20);
   };
   window.cropCurrentImportedReference = () => {

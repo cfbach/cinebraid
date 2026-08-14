@@ -47,6 +47,11 @@ const nodeSuites = [
   "check:state-lineage",
   "check:correction-boundary",
   "check:dogfood2-p0-negative",
+  /* Batch 1B. The end-to-end boundary suite the acceptance audit required: it
+     drives the real paid dispatch route, the real UI setters and the real
+     correction runner, and fails on durable false state or on a provider being
+     contacted — never on a helper's return value. */
+  "check:dogfood2-architecture",
   "check:reference-aspect",
   "check:recovery",
   "check:bounded",

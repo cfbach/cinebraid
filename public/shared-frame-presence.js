@@ -188,13 +188,42 @@ function textNamesEntity(value, entity) {
   return presenceTokensFor(entity).some((token) => new RegExp(`(^|[^A-Za-z0-9_-])${escapeForPresenceRegExp(token)}(?:['’]s)?($|[^A-Za-z0-9_-])`, "i").test(haystack));
 }
 
-/* Words that turn a mention into a statement of ABSENCE. A creator writing
-   "the rooftops are empty; the Sweep is not yet visible" is describing the
-   absence correctly and must not be blocked for naming what is missing.
+/* ==========================================================================
+   BATCH 1B — NEGATION IS SCOPED TO THE MENTION, NOT TO THE CLAUSE.
 
-   This list only ever WEAKENS the check, and only inside free prose. The
-   machine-generated positive lists below are checked without it, because
-   CineBraid never writes a negation into an identity-canon entry. */
+   The shipped detector asked whether a clause CONTAINED any of a list of
+   markers, anywhere. `before ` was on that list, so:
+
+       "The Chimbley Sweep stands before the chimney."
+
+   was read as a statement of absence, the sentence was allowed through into a
+   frame that excludes him, and the preflight reported no contradiction. The
+   acceptance audit executed exactly that string. `without` did the same to "he
+   moves without hesitation", and `not ` to "not only is the Sweep visible".
+
+   The mistake is that a marker's presence says nothing about WHAT it negates.
+   "before" is a temporal absence marker in "before the Sweep appears" and a
+   spatial preposition in "stands before the chimney" — same word, opposite
+   meaning, and the difference is entirely in what follows it.
+
+   So the question is asked per mention:
+
+       DOES SOMETHING IN THIS CLAUSE NEGATE *THIS* MENTION OF *THIS* ENTITY?
+
+   Only the text governing the mention is consulted — the span immediately
+   before it, back to the nearest clause break, and the predicate immediately
+   after it. A clause contradicts the declared absence when at least one mention
+   survives that test, which is also what makes "the rooftops are empty and the
+   Sweep is nowhere to be seen" correctly safe while "the Sweep is absent, but
+   the Sweep's shadow falls across the tiles" is correctly caught.
+
+   THE STRUCTURED DECLARATION IS STILL THE TRUTH. This is the last safety check
+   on prose CineBraid did not write, not the mechanism by which absence is
+   honoured — the compiler already removes an absent entity from every positive
+   list before this runs. */
+
+/* Kept exported under its shipped name: the vocabulary is still useful to a
+   surface explaining itself, and the negative controls name it. */
 const FRAME_ABSENCE_MARKERS = [
   "no ", "not ", "n't", "never", "without", "absent", "absence", "unseen", "invisible",
   "hidden", "off-screen", "offscreen", "off screen", "out of frame", "out-of-frame",
@@ -202,7 +231,115 @@ const FRAME_ABSENCE_MARKERS = [
   "before ", "yet to", "has yet", "prior to", "must not", "do not", "cannot",
 ];
 
-function clauseDeniesPresence(clause) {
+/* Words that negate what FOLLOWS them. Matched as whole words inside the span
+   that governs the mention, never as substrings of a longer word. */
+const PRESENCE_NEGATION_WORDS = /\b(?:no|not|never|nor|neither|without|sans|minus|excluding|except|omit|omitting|exclude|avoid|avoiding|hide|hiding|remove|removing|lacking|absent|devoid)\b|\w+n['’]t\b/i;
+
+/* `not only` and `no less` are intensifiers, not denials: "not only is the
+   Sweep visible, he is central" ASSERTS presence twice. Stripped before the
+   negation scan so the word `not` in them cannot excuse the mention. */
+const PRESENCE_NEGATION_IDIOMS = /\bnot\s+(?:only|just|merely|simply)\b|\bno\s+less\b|\bnone\s+other\s+than\b|\bnothing\s+(?:if\s+not|short\s+of)\b/gi;
+
+/* A temporal qualifier is only an absence when the thing it governs is the
+   entity's ARRIVAL. "before the Sweep appears" is absence; "before the chimney"
+   is a place. So the marker has to be immediately followed by the mention, AND
+   the mention has to be followed by a verb of appearing. */
+const PRESENCE_TEMPORAL_LEAD = /\b(?:before|prior\s+to|ahead\s+of|until|up\s+to|leading\s+up\s+to|earlier\s+than)\s+(?:the|a|an|any|this|that|his|her|their|its|our)?\s*$/i;
+const PRESENCE_ARRIVAL_VERB = /^\s*(?:['’]s\s+)?(?:\w+\s+){0,3}?(?:appears?|appearing|arrives?|arriving|enters?|entering|emerges?|emerging|is\s+revealed|becomes?\s+visible|comes?\s+into\s+(?:view|frame|shot)|shows?\s+up|steps?\s+in(?:to)?)\b/i;
+
+/* Predicates that deny presence when they follow the mention. */
+const PRESENCE_DENYING_PREDICATE = new RegExp(
+  "^\\s*(?:['’]s)?\\s*(?:" +
+  /* "X is not visible", "X does not appear", "X must not appear", "X isn't seen" */
+  "(?:is|are|was|were|has|have|had|does|do|did|will|would|shall|should|must|can|could|may|might|remains?|stays?)\\s*(?:not|n['’]t|never|no\\s+longer)\\b" +
+  "|(?:isn|aren|wasn|weren|doesn|don|didn|won|wouldn|shouldn|mustn|can|couldn|hasn|haven|hadn)['’]t\\b" +
+  /* "X is absent", "X remains unseen", "X is off-screen", "X is nowhere" */
+  "|(?:is|are|was|were|remains?|stays?|becomes?)\\s+(?:still\\s+|entirely\\s+|completely\\s+|wholly\\s+)?(?:absent|unseen|invisible|hidden|obscured|concealed|off[-\\s]?screen|out\\s+of\\s+(?:frame|shot|view|sight)|nowhere|gone|missing)\\b" +
+  /* "X has yet to appear", "X is yet to be seen" */
+  "|(?:has|have|had|is|are|was|were)\\s+yet\\s+to\\b" +
+  /* bare copular absence: "X: absent", "X — absent" */
+  "|[:\\u2014-]\\s*(?:absent|unseen|not\\s+visible|off[-\\s]?screen)\\b" +
+  ")",
+  "i",
+);
+
+/* Clause breaks that end a negation's reach. "The Sweep is absent, and the
+   chimney smokes" negates the Sweep; "the chimney is absent, and the Sweep
+   stands on the ridge" does not. */
+const PRESENCE_SCOPE_BREAK = /[,;:—–]|\b(?:and|but|while|whilst|although|though|however|yet|then|as|when|whereas|because|since)\b/gi;
+
+/* The span that governs a mention: everything from the nearest clause break
+   back-to-front, so an earlier independent statement cannot lend its negation. */
+function presenceGoverningSpan(before) {
+  const text = presenceText(before);
+  let start = 0;
+  PRESENCE_SCOPE_BREAK.lastIndex = 0;
+  for (let match = PRESENCE_SCOPE_BREAK.exec(text); match; match = PRESENCE_SCOPE_BREAK.exec(text)) start = match.index + match[0].length;
+  return text.slice(start);
+}
+
+/* Is THIS occurrence of the entity denied by the text around it. */
+function mentionIsDenied(clause, matchStart, matchEnd) {
+  const text = presenceText(clause);
+  const rawBefore = text.slice(0, matchStart);
+  const after = text.slice(matchEnd);
+  const span = presenceGoverningSpan(rawBefore).replace(PRESENCE_NEGATION_IDIOMS, " ");
+  /* "before the Sweep appears" — the lead word must govern the mention directly
+     AND the mention must be arriving. Checked before the plain negation scan so
+     "before" never counts on its own. */
+  if (PRESENCE_TEMPORAL_LEAD.test(span) && PRESENCE_ARRIVAL_VERB.test(after)) return true;
+  if (PRESENCE_TEMPORAL_LEAD.test(span)) return false;
+  if (PRESENCE_NEGATION_WORDS.test(span)) return true;
+  if (PRESENCE_DENYING_PREDICATE.test(after)) return true;
+  return false;
+}
+
+/* Every position at which this entity is named in the clause.
+
+   OVERLAPPING TOKENS ARE MERGED, and that is load-bearing rather than tidiness.
+   An entity named "Chimbley Sweep" is matched by three tokens — the full name,
+   "Chimbley" and "Sweep" — so "The Chimbley Sweep is absent" produced a mention
+   ending after "Chimbley", whose following text is " Sweep is absent" and which
+   therefore looked un-negated. Merging to the maximal span puts " is absent"
+   immediately after the mention, which is where the predicate test can see it. */
+function presenceMentions(clause, entity) {
+  const haystack = presenceText(clause);
+  const found = [];
+  if (!haystack) return found;
+  for (const token of presenceTokensFor(entity)) {
+    const pattern = new RegExp(`(^|[^A-Za-z0-9_-])(${escapeForPresenceRegExp(token)})(?:['’]s)?($|[^A-Za-z0-9_-])`, "gi");
+    for (let match = pattern.exec(haystack); match; match = pattern.exec(haystack)) {
+      const start = match.index + match[1].length;
+      found.push({ start, end: start + match[2].length });
+      pattern.lastIndex = start + match[2].length;
+    }
+  }
+  found.sort((a, b) => a.start - b.start || b.end - a.end);
+  const merged = [];
+  for (const mention of found) {
+    const last = merged[merged.length - 1];
+    /* Adjacent as well as overlapping: "Chimbley" and "Sweep" are separated by
+       one space and are one mention of one person. */
+    if (last && mention.start <= last.end + 1) { last.end = Math.max(last.end, mention.end); continue; }
+    merged.push({ ...mention });
+  }
+  return merged;
+}
+
+/* DOES THIS CLAUSE ASSERT THAT THIS ENTITY IS PRESENT. True when at least one
+   mention survives its own negation test — a single positive mention is a
+   contradiction however many negated ones surround it. */
+function clauseAssertsPresence(clause, entity) {
+  const mentions = presenceMentions(clause, entity);
+  if (!mentions.length) return false;
+  return mentions.some((mention) => !mentionIsDenied(clause, mention.start, mention.end));
+}
+
+/* Retained under its shipped name and now entity-aware. Called without an
+   entity it answers the old, entity-blind question — kept only so an existing
+   caller cannot crash, and no production path uses that form. */
+function clauseDeniesPresence(clause, entity) {
+  if (entity) return !clauseAssertsPresence(clause, entity);
   const lower = presenceText(clause).toLowerCase();
   return FRAME_ABSENCE_MARKERS.some((marker) => lower.includes(marker));
 }
@@ -287,7 +424,7 @@ function framePresenceContradictions(options = {}) {
     }
     for (const value of freeTextValues(spec, it.prompt)) {
       for (const clause of presenceClauses(value)) {
-        if (!textNamesEntity(clause, entity) || clauseDeniesPresence(clause)) continue;
+        if (!clauseAssertsPresence(clause, entity)) continue;
         findings.push({
           entityId: presenceText(entity.id),
           entityName: label,
@@ -325,7 +462,7 @@ function narrativeForFrame(value, absentEntities) {
   const withheldFor = [];
   for (const entity of absent) {
     for (const clause of presenceClauses(source)) {
-      if (textNamesEntity(clause, entity) && !clauseDeniesPresence(clause)) { withheldFor.push(presenceText(entity.id)); break; }
+      if (clauseAssertsPresence(clause, entity)) { withheldFor.push(presenceText(entity.id)); break; }
     }
   }
   return withheldFor.length ? { text: "", withheldFor } : { text: source, withheldFor: [] };
@@ -339,6 +476,134 @@ function absenceRequirements(absentEntities) {
     .map(presenceObject)
     .filter((entity) => presenceTokensFor(entity).length)
     .map((entity) => `${presenceText(entity.name) || presenceText(entity.id)} must not appear anywhere in this frame, in any form, at any size, including reflections, shadows, silhouettes and background figures`);
+}
+
+/* ==========================================================================
+   THE UNIVERSAL FINAL PRE-PROVIDER GATE.
+
+   The first repair enforced presence inside `/api/prompt/compile`. The audit's
+   answer was that compilation is not the boundary anybody has to cross: the
+   paid FAL route re-compiles only requests carrying `imagePlan: true` and only
+   for `blocking` and `frame`, the automation dispatcher never sets that flag,
+   and `correction` is excluded from the branch entirely. Every one of those
+   requests fell through to `submit()`, which sends `job.prompt` verbatim.
+
+   A check on a path a caller may decline to take is a suggestion.
+
+   THIS runs at the one place every paid image request must pass — immediately
+   before the durable job row is created and before anything leaves the machine.
+   It reads:
+
+     the CURRENT project              (not the one compilation saw)
+     the resolved shot and frame      (identity, or a refusal)
+     the EXACT FINAL PROMPT           (after every edit, improvement,
+                                       correction and adapter addition)
+
+   and it returns a refusal, never a repair. A contradicted request costs
+   nothing: no job row, no provider call, no retry budget.
+
+   FAIL CLOSED ON IDENTITY. A frame-specific paid request that cannot say which
+   frame it is for, on a shot that declares presence for any frame, is refused —
+   because the alternative is to apply no policy and call it success. That is
+   the case `v626DerivativeBlockingBuild()` was in. */
+
+/* The purposes that produce an image OF A FRAME. `entity-reference` has no
+   frame and `motion-h3` is video built from already-approved stills, so neither
+   carries a frame presence contract. */
+const FRAME_SPECIFIC_PAID_PURPOSES = ["frame", "blocking", "correction"];
+
+const FRAME_PRESENCE_REFUSAL_CODE = "FRAME_PRESENCE_CONTRADICTION";
+const FRAME_IDENTITY_REFUSAL_CODE = "FRAME_PRESENCE_TARGET_UNRESOLVED";
+
+/* Does this shot declare presence for ANY frame. When it does not, the contract
+   is opt-in and absent, and a request without a frame id is the ordinary
+   pre-contract case rather than a policy hole. */
+function shotDeclaresFramePresence(shot) {
+  const creation = presenceObject(presenceObject(shot).creationBrief);
+  const workflows = presenceObject(creation.frameWorkflows);
+  for (const frameId of Object.keys(workflows)) if (framePresenceDeclarations(shot, frameId).length) return true;
+  return false;
+}
+
+/* The entity records for the ids a frame declares absent, resolved against the
+   project so the gate knows every name each one answers to. */
+function absentEntitiesForFrame(project, shot, frameId, lists = ["characters", "locations", "props", "vehicles"]) {
+  const P = presenceObject(project);
+  const wanted = absentEntityIdsForFrame(shot, frameId);
+  if (!wanted.length) return [];
+  const out = [];
+  for (const id of wanted) {
+    let found = null;
+    for (const listName of presenceList(lists)) {
+      found = presenceList(P[listName]).map(presenceObject).find((item) => presenceText(item.id) === id) || found;
+      if (found) break;
+    }
+    out.push(found ? { id: presenceText(found.id), name: presenceText(found.name), aliases: presenceList(found.aliases) } : { id, name: "", aliases: [] });
+  }
+  return out;
+}
+
+/* THE GATE. Returns `{ok:true}` or a typed refusal. Pure: no I/O, no clock, no
+   mutation, so the same call answers identically on the server, in a test and
+   in a negative control. */
+function finalDispatchPresenceGate(options = {}) {
+  const it = presenceObject(options);
+  const purpose = presenceText(it.purpose);
+  if (!FRAME_SPECIFIC_PAID_PURPOSES.includes(purpose)) return { ok: true, applied: false, reason: "purpose-carries-no-frame-contract", contradictions: [] };
+  const project = presenceObject(it.project);
+  const shotId = presenceText(it.shotId);
+  const frameId = presenceText(it.frameId);
+  const shot = presenceList(project.shots).map(presenceObject).find((item) => presenceText(item.id) === shotId) || null;
+  if (!shot) {
+    /* No shot means no declaration can be read. Refused rather than waved
+       through: a frame-specific paid request naming a shot that is not in the
+       project is not a request this gate can clear. */
+    return {
+      ok: false,
+      code: FRAME_IDENTITY_REFUSAL_CODE,
+      classification: "local-preflight",
+      contradictions: [],
+      message: shotId
+        ? `${shotId} is not in this project, so CineBraid cannot check which characters this frame excludes. No paid request was submitted.`
+        : "This frame-specific generation did not name a shot, so CineBraid cannot check which characters the frame excludes. No paid request was submitted.",
+    };
+  }
+  if (!shotDeclaresFramePresence(shot)) return { ok: true, applied: false, reason: "shot-declares-no-presence", contradictions: [] };
+  if (!frameId) {
+    /* FAIL CLOSED. The shot has a presence contract and this request cannot say
+       which frame it is for. Answering "no contradictions" here is the audit's
+       `v626DerivativeBlockingBuild` hole exactly. */
+    return {
+      ok: false,
+      code: FRAME_IDENTITY_REFUSAL_CODE,
+      classification: "local-preflight",
+      contradictions: [],
+      message: `${shotId} declares which characters are present in which frames, and this generation did not name a frame — so CineBraid cannot tell which contract applies. Generate from the frame you are working on. No paid request was submitted.`,
+    };
+  }
+  const absent = absentEntitiesForFrame(project, shot, frameId, presenceList(it.entityLists).length ? it.entityLists : undefined);
+  if (!absent.length) return { ok: true, applied: true, reason: "no-declared-absence", contradictions: [] };
+  /* THE EXACT SUBMITTED TEXT, plus any structured spec the caller has. Reference
+     labels and per-reference instructions travel with the request and are read
+     by the model, so they are inspected too. */
+  const referenceText = presenceList(it.references)
+    .map(presenceObject)
+    .flatMap((ref) => [presenceText(ref.label), presenceText(ref.instruction)])
+    .filter(Boolean);
+  const contradictions = framePresenceContradictions({
+    absentEntities: absent,
+    spec: presenceObject(it.spec),
+    prompt: [presenceText(it.prompt), ...referenceText].filter(Boolean).join("\n"),
+  });
+  if (!contradictions.length) return { ok: true, applied: true, reason: "checked", contradictions: [] };
+  return {
+    ok: false,
+    code: FRAME_PRESENCE_REFUSAL_CODE,
+    classification: "local-preflight",
+    contradictions,
+    absentEntityIds: absent.map((entity) => entity.id),
+    message: `This frame declares ${absent.map((entity) => entity.name || entity.id).join(", ")} absent, but the text about to be sent still puts ${contradictions.length === 1 ? "it" : "them"} in the picture. Nothing was sent to the provider and nothing was charged.`,
+  };
 }
 
 const FRAME_PRESENCE_EXPORTS = {
@@ -355,10 +620,19 @@ const FRAME_PRESENCE_EXPORTS = {
   presenceTokensFor,
   textNamesEntity,
   clauseDeniesPresence,
+  clauseAssertsPresence,
+  presenceMentions,
+  presenceGoverningSpan,
   presenceClauses,
   framePresenceContradictions,
   narrativeForFrame,
   absenceRequirements,
+  FRAME_SPECIFIC_PAID_PURPOSES,
+  FRAME_PRESENCE_REFUSAL_CODE,
+  FRAME_IDENTITY_REFUSAL_CODE,
+  shotDeclaresFramePresence,
+  absentEntitiesForFrame,
+  finalDispatchPresenceGate,
 };
 
 if (typeof window !== "undefined") for (const [key, value] of Object.entries(FRAME_PRESENCE_EXPORTS)) window[key] = value;

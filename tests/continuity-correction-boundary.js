@@ -200,11 +200,14 @@ async function preflightFor(context, pkg) {
     "and an authority violation is deterministic too: retrying it would reproduce the same refusal");
 
   const runs = read("automation-runs.js");
-  ok(/const deterministic = String\(steps\[stepKey\]\?\.failureClass \|\| ""\) === "local-package"/.test(runs),
-    "the retry route reads the class");
+  /* BATCH 1B widened the deterministic set: the universal pre-provider presence
+     gate refuses before a job row exists, so `local-preflight` is deterministic
+     on exactly the same terms and must not consume an attempt either. */
+  ok(/const deterministic = \["local-package", "local-preflight"\]\.includes\(String\(steps\[stepKey\]\?\.failureClass \|\| ""\)\)/.test(runs),
+    "the retry route reads the class, and both deterministic classes count");
   ok(/if \(!deterministic && \["generation", "scene-shot", "scene-correction", "scene-correction-review"\]\.includes\(next\.kind\)\)/.test(runs),
     "and does not advance the attempt counter for a deterministic fault — the step is still reset, because the creator may have repaired the project state, but nothing was attempted against a provider");
-  ok(/failureClass: \["local-package", "provider"\]\.includes/.test(runs), "and the class is persisted");
+  ok(/failureClass: \["local-package", "local-preflight", "provider"\]\.includes/.test(runs), "and the class is persisted");
 
   /* =========================================================================
      6. THE SOURCE OF THE CRASH. */

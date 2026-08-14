@@ -483,6 +483,14 @@ function normalizeShotV5(s) {
       s.keyframes.push(f);
     }
   }
+  /* BATCH 1B: THIS PROPAGATES AN EXISTING EDGE; IT ESTABLISHES NOTHING.
+
+     Normalisation mirrors a shot's winner onto the opening frame record so both
+     shapes agree. It mints no authority receipt, and it cannot: the opening
+     frame already resolves through `shot.winner` in `liveAuthorityValue`, so
+     copying the string changes what the record LOOKS like and not one thing
+     about who decided it. A shot carrying a winner nobody approved is still a
+     historic selection after this runs, on both records. */
   if (
     s.winner &&
     !isVideo(s.winner) &&
@@ -907,8 +915,16 @@ function normalizeProjectV5() {
         if (st.notes == null) st.notes = "";
         if (st.appliesTo == null) st.appliesTo = "";
         if (st.isDefault == null) st.isDefault = st.id === "state-default";
-        if (st.parentStateId == null)
-          st.parentStateId = st.isDefault ? "" : (x.continuityStates.find((item) => item && item.isDefault)?.id || "state-default");
+        /* BATCH 1B: normalisation fills a MISSING KEY, and any ancestry it
+           implies goes through the one lineage mutation API. Setting "" first
+           keeps the field a string for every downstream reader even when the
+           validator refuses, so a damaged graph is left reported rather than
+           silently given an invented parent. */
+        if (st.parentStateId == null) {
+          st.parentStateId = "";
+          const inferredParentId = st.isDefault ? "" : (x.continuityStates.find((item) => item && item.isDefault)?.id || "state-default");
+          if (inferredParentId) applyStateParentMutation(x.continuityStates, st.id, inferredParentId, { intent: "explicit-lineage-edit", via: "project-normalisation" });
+        }
         if (!["derive", "independent"].includes(st.generationMode))
           st.generationMode = st.isDefault ? "independent" : "derive";
         if (st.assetPromptProfile == null) st.assetPromptProfile = "";
@@ -2414,7 +2430,12 @@ function entityStateList(entity, includeDefault = true) {
     if (!st) return;
     const migratedDelta = continuityStateDeltaText(st);
     if (!String(st.notes || "").trim() && migratedDelta) st.notes = migratedDelta;
-    if (st.parentStateId == null) st.parentStateId = st.isDefault ? "" : defaultState?.id || "state-default";
+    /* BATCH 1B: routed, for the reason at the normaliser above. */
+    if (st.parentStateId == null) {
+      st.parentStateId = "";
+      const inferredParentId = st.isDefault ? "" : defaultState?.id || "state-default";
+      if (inferredParentId) applyStateParentMutation(entity.continuityStates, st.id, inferredParentId, { intent: "explicit-lineage-edit", via: "entity-state-normalisation" });
+    }
     if (!["derive", "independent"].includes(st.generationMode)) st.generationMode = st.isDefault ? "independent" : "derive";
     if (st.assetPromptProfile == null) st.assetPromptProfile = "";
     if (st.assetPromptNotes == null) st.assetPromptNotes = "";

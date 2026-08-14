@@ -155,10 +155,58 @@ const ENTITY_MEDIA = {
 function entityOwnerIndex(list) {
   return buildEntityOwnerIndex(P, list);
 }
-function entityMedia(list, it) {
-  const rows = Array.isArray(SCAN[ENTITY_MEDIA[list]]) ? SCAN[ENTITY_MEDIA[list]] : [];
-  return filterEntityMedia(entityOwnerIndex(list), it?.id, rows);
+function entityMediaPool(list) {
+  return Array.isArray(SCAN[ENTITY_MEDIA[list]]) ? SCAN[ENTITY_MEDIA[list]] : [];
 }
+/* BATCH 1B: THIS READER IS THE APPROVAL-CAPABLE POOL, and nothing else.
+
+   The acceptance audit approved an unclaimed `SWEEP_CHILD_UNCLAIMED.png` into an
+   entity's canon pool because the most-specific prefix guessed an owner and the
+   guess was returned through this function — the same function review, approval,
+   coverage automation and the server batch reviewer all consume. A guess became
+   canon eligibility because one reader answered two different questions.
+
+   It answers one now: WHICH FILES MAY BECOME CANON FOR THIS ENTITY. A file
+   qualifies only through a unique durable claim. */
+function entityMedia(list, it) {
+  return filterEntityMedia(entityOwnerIndex(list), it?.id, entityMediaPool(list));
+}
+/* The other question, kept separate on purpose. Files whose NAME matches this
+   entity's declared prefix but which nothing durable claims: a reference dropped
+   into the folder by hand, or a row left behind by the pre-repair prefix leak.
+   Visible so a creator can find them, quarantined so they cannot be approved,
+   and claimable in one act. */
+function entityUnassignedMedia(list, it) {
+  return unassignedEntityMedia(entityOwnerIndex(list), it?.id, entityMediaPool(list));
+}
+/* Files two references both durably claim. No owner, no eligibility, and a
+   blocking conflict the entity page states rather than settles. */
+function entityContestedMedia(list, it) {
+  return contestedEntityMedia(entityOwnerIndex(list), it?.id, entityMediaPool(list));
+}
+/* THE CLAIM ACT. A person says these bytes belong to this reference, and the
+   candidate row that records it is the same durable claim generation and upload
+   already write — so a claimed file needs no special case anywhere downstream. */
+window.claimEntityMedia = (list, id, fileName) => {
+  const entity = P[list]?.find((item) => item.id === id);
+  if (!entity) return toast("Reference is unavailable");
+  const decision = planEntityMediaClaim(entityOwnerIndex(list), id, fileName);
+  if (!decision.claim) {
+    return toast(decision.reason === "contested"
+      ? `${fileName} is claimed by more than one reference. Resolve that conflict before claiming it here.`
+      : decision.reason === "claimed-by-another"
+        ? `${fileName} already belongs to ${decision.resolution.ownerId}.`
+        : decision.reason === "already-claimed"
+          ? `${fileName} already belongs to this reference.`
+          : "That file cannot be claimed.");
+  }
+  const row = entityCandidateRow(entity, fileName, true);
+  row.ownershipClaim = { actor: "human", via: "entity-unassigned-media", at: new Date().toISOString() };
+  if (entityWorkflowState(entity).key === "DRAFT") { entity.workflowStatus = "IN PROGRESS"; entity.status = "IN PROGRESS"; }
+  dirty();
+  route();
+  toast(`${fileName} is now a candidate for ${entity.name || id}`);
+};
 function entityCandidateRow(entity, fileName, create = false) {
   entity.candidateFiles = Array.isArray(entity.candidateFiles) ? entity.candidateFiles : [];
   let row = entity.candidateFiles.find((item) => (item.stored || item.name) === fileName);
@@ -291,7 +339,12 @@ window.openContinuityStateVariant = async (list, id, stateId) => {
   if (!entity || !state || state.isDefault) return toast("Choose a non-default continuity state");
   const parentInfo = entityStateParentSummary(entity, state);
   let changed = false;
-  if (!state.parentStateId && parentInfo.parent?.id) { state.parentStateId = parentInfo.parent.id; changed = true; }
+  /* BATCH 1B: routed through the one lineage mutation API. Opening the variant
+     editor is an explicit act on this state's derivation, so it may establish
+     parentage — but only what the validator permits, and never by assignment. */
+  if (!state.parentStateId && parentInfo.parent?.id) {
+    changed = applyStateParentMutation(entityStateList(entity, true), state.id, parentInfo.parent.id, { intent: "explicit-lineage-edit", via: "continuity-state-variant" }).applied || changed;
+  }
   if (state.generationMode !== "derive") { state.generationMode = "derive"; changed = true; }
   if (changed) dirty();
   closeModal();
@@ -482,7 +535,10 @@ window.correctContinuityStateFromParent = async (list, id, stateId) => {
   const parentInfo = entityStateParentSummary(entity, state);
   if (!entity || !state || state.isDefault || !parentInfo.fileName) return toast("Approve the parent state first");
   state.generationMode = "derive";
-  if (parentInfo.parent?.id) state.parentStateId = parentInfo.parent.id;
+  /* BATCH 1B: through the one mutation API, for the reason at
+     openContinuityStateVariant. A refusal leaves the graph as it is and the
+     correction still runs against whatever parent the state really declares. */
+  if (parentInfo.parent?.id) applyStateParentMutation(entityStateList(entity, true), state.id, parentInfo.parent.id, { intent: "explicit-lineage-edit", via: "correct-state-from-parent" });
   const validation = continuityStateValidationCurrent(entity, state);
   const findings = [validation?.review?.summary, ...(validation?.review?.hardGateFailures || []), ...Object.values(validation?.review?.categories || {}).map((row) => row?.note)].filter(Boolean).join("\n");
   if (findings && !String(state.assetPromptNotes || "").includes("PARENT VALIDATION CORRECTION")) state.assetPromptNotes = [state.assetPromptNotes, `PARENT VALIDATION CORRECTION\n${findings}`].filter(Boolean).join("\n\n");
@@ -629,8 +685,24 @@ window.setContinuityState = (list, id, i, k, v) => {
   const x = P[list].find((e) => e.id === id);
   const state = x?.continuityStates?.[i];
   if (!state) return;
+  /* BATCH 1B: THE GENERIC SETTER IS NOT AN EXCEPTION.
+
+     `state[k] = v` accepted `parentStateId` from anywhere, which made this a
+     second, unvalidated ancestry writer sitting beside the validated one. A
+     generic setter is exactly where a bypass hides, so the one field that can
+     damage the graph is routed and the rest are untouched. */
+  if (k === "parentStateId") {
+    const outcome = applyStateParentMutation(entityStateList(x, true), state.id, v, { intent: "explicit-lineage-edit", via: "continuity-state-setter" });
+    if (!outcome.applied && outcome.reason !== "already-declared") {
+      return toast(outcome.reason === "would-create-cycle" || outcome.reason === "graph-would-be-cyclic"
+        ? `${state.name || "This state"} cannot derive from a state that already derives from it.`
+        : "That parent cannot be set.");
+    }
+    dirty();
+    return;
+  }
   state[k] = v;
-  if (["notes", "parentStateId", "name"].includes(k)) state.parentValidation = null;
+  if (["notes", "name"].includes(k)) state.parentValidation = null;
   dirty();
 };
 window.removeContinuityState = (list, id, i) => {
@@ -868,6 +940,19 @@ window.approveCoverageCandidate = (list, id, fileName, slotId, directOverride = 
   if (!slot) return toast("Coverage slot is unavailable");
   const review = entityCandidateTargetReview(entity, fileName);
   if (!directOverride && !review?.pass) return toast("Run and pass AI review before approving this coverage view.");
+  /* BATCH 1B: A COVERAGE SLOT IS AN APPROVAL EDGE TOO.
+
+     It is not a human GATE object — the gate model covers shot frames and
+     continuity states — so it carries no authority receipt. It is a durable
+     ownership CLAIM, though, which means approving a contested or unowned file
+     into a slot would quietly change who owns those bytes. The same veto the
+     authority command applies is asked here, so the ownership rule has no
+     side door. */
+  {
+    const resolution = resolveMediaOwnership(entityOwnerIndex(list), fileName);
+    if (resolution.contested) return toast(`${fileName} is claimed by more than one reference (${resolution.claimants.join(", ")}). Resolve that conflict before making it a coverage authority.`);
+    if (!resolution.authoritative || resolution.ownerId !== entity.id) return toast(`${fileName} is not durably owned by ${entity.name || entity.id}. Claim it for this reference first.`);
+  }
   const commit = () => {
     if (row.coverageGroup === "expressions") {
       const previous = String(slot.approvedFile || "");
@@ -1118,7 +1203,15 @@ function entityPage(list, id, extra) {
       ? `<details class="manual-optional-batch-review"><summary>Optional batch AI check</summary><p>Review several visible files as supporting evidence. Human approval remains available without it.</p>${batchPanelRaw}</details>`
       : batchPanelRaw)
     : "";
-  const candidatesTask = `<details class="fold compact-entity-section entity-candidate-section bounded-source-section" open><summary>Candidate files <span>${activeCandidates.length} to organize</span></summary><header><div><span>CHOOSE & APPROVE</span><b>${filteredCandidates.length} shown in ${esc(ENTITY_CANDIDATE_FILTERS.find((item)=>item.id===candidateFilter)?.label || "All")}</b><small>Choose the approved image directly by human judgment. Optional AI checks remain separate and never approve on their own.</small></div></header>${approvedAuthorityMarkup}${filterMarkup}${batchPanel}<div class="entity-media entity-candidate-grid">${candidatePage.rows.length ? candidatePage.rows.map((m,i)=>entityCandidateCard(list,it,m,i,candidateJson,false)).join("") : `<div class="entity-candidate-empty"><b>${activeCandidates.length ? "No candidates in this filter" : media.length ? "No undecided candidates" : "No candidates yet"}</b><span>${activeCandidates.length ? "Choose another workflow filter." : "Upload or map another file."}</span></div>`}</div>${boundedPagerMarkup("candidates",`${list}:${id}:active:${candidateFilter}`,candidatePage,"reference candidates")}${rejectedCandidates.length ? `<details class="entity-rejected-candidates"><summary>Rejected candidates <span>${rejectedCandidates.length}</span></summary><div class="entity-media entity-candidate-grid">${rejectedPage.rows.map((m,i)=>entityCandidateCard(list,it,m,i,rejectedJson,true)).join("")}</div>${boundedPagerMarkup("candidates",`${list}:${id}:rejected`,rejectedPage,"rejected candidates")}</details>` : ""}</details>`;
+  /* OWNERSHIP THAT CINEBRAID CANNOT PROVE, STATED RATHER THAN GUESSED.
+     Two conditions the approval pool above deliberately excludes, surfaced here
+     so nothing disappears and neither one can be approved by accident: a
+     filename that merely LOOKS like this reference's, and a file two references
+     both durably claim. The first is one click from becoming real ownership;
+     the second is a conflict only a person can settle. */
+  const unassignedMedia=entityUnassignedMedia(list,it), contestedMedia=entityContestedMedia(list,it);
+  const ownershipMarkup=`${contestedMedia.length ? `<section class="entity-media-contested" data-contested-count="${contestedMedia.length}"><header><span>OWNERSHIP CONFLICT</span><b>${plural(contestedMedia.length,"file")} claimed by more than one reference</b><small>No reference owns these while the conflict stands, and none of them can be approved. Remove the incorrect claim from whichever reference should not hold it.</small></header><ul>${contestedMedia.map((m)=>`<li><b>${esc(m.name)}</b><span>claimed by ${esc(resolveMediaOwnership(entityOwnerIndex(list),m.name).claimants.join(", "))}</span></li>`).join("")}</ul></section>` : ""}${unassignedMedia.length ? `<details class="entity-media-unassigned" data-unassigned-count="${unassignedMedia.length}"><summary>Possible matches, not yet claimed <span>${unassignedMedia.length}</span></summary><p class="hint">These filenames start with this reference's prefix, but nothing in the project records them as belonging to it. A name is a possible match, not ownership — claim one to make it a candidate you can review and approve.</p><div class="entity-media entity-candidate-grid">${unassignedMedia.map((m)=>`<div class="entity-tile-wrap"><div class="entity-tile">${isVideo(m.name)?`<video muted src="${attr(m.url)}"></video>`:`<img src="${attr(m.url)}" alt="">`}<span class="entity-tile-name">${esc(m.name)}</span></div><button class="ghost-btn" onclick="claimEntityMedia('${list}','${id}','${attr(m.name)}')">CLAIM FOR THIS REFERENCE</button></div>`).join("")}</div></details>` : ""}`;
+  const candidatesTask = `<details class="fold compact-entity-section entity-candidate-section bounded-source-section" open><summary>Candidate files <span>${activeCandidates.length} to organize</span></summary><header><div><span>CHOOSE & APPROVE</span><b>${filteredCandidates.length} shown in ${esc(ENTITY_CANDIDATE_FILTERS.find((item)=>item.id===candidateFilter)?.label || "All")}</b><small>Choose the approved image directly by human judgment. Optional AI checks remain separate and never approve on their own.</small></div></header>${approvedAuthorityMarkup}${ownershipMarkup}${filterMarkup}${batchPanel}<div class="entity-media entity-candidate-grid">${candidatePage.rows.length ? candidatePage.rows.map((m,i)=>entityCandidateCard(list,it,m,i,candidateJson,false)).join("") : `<div class="entity-candidate-empty"><b>${activeCandidates.length ? "No candidates in this filter" : media.length ? "No undecided candidates" : "No candidates yet"}</b><span>${activeCandidates.length ? "Choose another workflow filter." : "Upload or map another file."}</span></div>`}</div>${boundedPagerMarkup("candidates",`${list}:${id}:active:${candidateFilter}`,candidatePage,"reference candidates")}${rejectedCandidates.length ? `<details class="entity-rejected-candidates"><summary>Rejected candidates <span>${rejectedCandidates.length}</span></summary><div class="entity-media entity-candidate-grid">${rejectedPage.rows.map((m,i)=>entityCandidateCard(list,it,m,i,rejectedJson,true)).join("")}</div>${boundedPagerMarkup("candidates",`${list}:${id}:rejected`,rejectedPage,"rejected candidates")}</details>` : ""}</details>`;
   const specs = list === "audio" ? [
     {id:"reference",label:"Audio",detail:"Candidates and the approved file",render:()=>approvedTask},
     {id:"details",label:"Details & history",detail:"Mix intent, media and records",render:()=>entityDetailsHistoryMarkup(list,it,extra)},

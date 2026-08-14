@@ -176,11 +176,16 @@ function registerAutomationRuns(app, deps) {
       result: source.result && typeof source.result === "object" ? source.result : null,
       activity: source.activity && typeof source.activity === "object" ? source.activity : null,
       error: cleanText(source.error, 4000),
-      /* WHY it failed, in the two categories that need opposite handling. A
+      /* WHY it failed, in the categories that need opposite handling. A
          `local-package` fault is deterministic: the same package rebuilds to the
          same exception, so the retry route below refuses to spend an attempt on
-         it and reports what to repair instead. */
-      failureClass: ["local-package", "provider"].includes(source.failureClass) ? source.failureClass : "",
+         it and reports what to repair instead.
+
+         BATCH 1B adds `local-preflight`: the universal frame-presence gate and
+         the frame-identity gate both refuse before a paid job row exists and
+         before the provider is contacted, so they are deterministic in exactly
+         the same way and must be treated the same way. */
+      failureClass: ["local-package", "local-preflight", "provider"].includes(source.failureClass) ? source.failureClass : "",
       remediation: cleanText(source.remediation, 2000),
       startedAt: cleanText(source.startedAt, 80),
       completedAt: cleanText(source.completedAt, 80),
@@ -285,27 +290,43 @@ function registerAutomationRuns(app, deps) {
      read the ledger. public/shared-production-authority.js owns the decision;
      this owns only the durable write.
 
-     ONLY `awaiting-review` RUNS. A parked run has no runner writing to it, so a
-     revision bump here cannot race an active orchestrator. Everything else is
-     left exactly as it is.
+     BATCH 1B — BOTH DIRECTIONS, AND ONE MORE STATUS.
+
+     The first repair reconciled one way only: unsatisfied becomes satisfied. The
+     acceptance audit showed that half a reconciliation is worse than none,
+     because it can only ever REMOVE work from "waiting for you". Revoke an
+     approval and the completed step kept claiming a person had made it; resume
+     believed the step. Truth has to be able to travel back.
+
+     So a satisfied gate closes AND an invalidated one reopens, and `interrupted`
+     joins `awaiting-review` as reconcilable — an interrupted run is stopped, no
+     runner owns it, and it is exactly the state a reconciled or director-approved
+     run is left in. `running` is still left alone: a live orchestrator owns that
+     record and a revision bump here would race it.
 
      THE WRITE IS BEST-EFFORT. If the ledger cannot be written the reconciled
      runs are still what this returns, so a read-only or contended filesystem
      degrades to "correct answer, not yet persisted" rather than to a stale one. */
+  const RECONCILABLE_RUN_STATUSES = ["awaiting-review", "interrupted"];
   function reconcileParkedGates(runs, project) {
     let changed = false;
     for (let index = 0; index < runs.length; index++) {
       const run = runs[index];
-      if (!run || run.status !== "awaiting-review") continue;
+      if (!run || !RECONCILABLE_RUN_STATUSES.includes(String(run.status || ""))) continue;
       const at = now();
       const plan = ProductionAuthority.reconcileRunGates(run, project, { at });
       if (!plan.changed) continue;
       const next = clone(run);
       ProductionAuthority.applyGateReconciliation(next, plan, { at });
+      const satisfiedCount = (plan.satisfied || []).length;
+      const invalidatedCount = (plan.invalidated || []).length;
+      const notes = [];
+      if (satisfiedCount) notes.push(`${satisfiedCount} approval gate${satisfiedCount === 1 ? "" : "s"} ${satisfiedCount === 1 ? "was" : "were"} satisfied elsewhere in CineBraid and ${satisfiedCount === 1 ? "is" : "are"} no longer waiting for you.`);
+      if (invalidatedCount) notes.push(`${invalidatedCount} approval${invalidatedCount === 1 ? "" : "s"} this run relied on ${invalidatedCount === 1 ? "is" : "are"} no longer in force. The gate${invalidatedCount === 1 ? " is" : "s are"} open again.`);
       next.logs = [...(Array.isArray(next.logs) ? next.logs : []), {
         at,
-        tone: "success",
-        message: `${plan.satisfied.length} approval gate${plan.satisfied.length === 1 ? "" : "s"} ${plan.satisfied.length === 1 ? "was" : "were"} satisfied elsewhere in CineBraid and ${plan.satisfied.length === 1 ? "is" : "are"} no longer waiting for you.`,
+        tone: invalidatedCount ? "warn" : "success",
+        message: notes.join(" "),
       }];
       runs[index] = bump({}, run, { status: next.status, summary: next.summary, steps: next.steps, logs: next.logs });
       changed = true;
@@ -939,7 +960,7 @@ function registerAutomationRuns(app, deps) {
        reproduce it. The step is still reset — the creator may have repaired the
        project state that caused it — but the attempt counter is not advanced,
        because nothing was attempted against a provider. */
-    const deterministic = String(steps[stepKey]?.failureClass || "") === "local-package";
+    const deterministic = ["local-package", "local-preflight"].includes(String(steps[stepKey]?.failureClass || ""));
     if (!deterministic && ["generation", "scene-shot", "scene-correction", "scene-correction-review"].includes(next.kind)) {
       next.retryCount = Number(next.retryCount || 0) + 1;
     }

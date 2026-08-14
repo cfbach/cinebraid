@@ -31,6 +31,12 @@ const Coverage = require("./public/shared-coverage");
 const Continuity = require("./public/shared-continuity");
 const EntityOwnership = require("./public/shared-entity-ownership");
 const FramePresence = require("./public/shared-frame-presence");
+const ProductionAuthority = require("./public/shared-production-authority");
+/* Node has no shared browser scope, so the ownership resolver the authority
+   command uses for its eligibility veto is handed over once, here. Without this
+   the command fails closed on every server-side entity approval — which is the
+   correct default, and not the behaviour anybody wants in the running product. */
+ProductionAuthority.useEntityOwnershipResolver(EntityOwnership);
 const { createContinuityCache } = require("./continuity-cache");
 const ContinuityJson = require("./continuity-json");
 const { resolvePromptBuild, resolvePromptBuildList, normalizePromptBuildHistory, registerPromptBuild, promptBuildRef, applyPromptBuildRetention } = require("./public/shared-build-history");
@@ -2789,6 +2795,22 @@ function validateImportedProject(raw) {
 }
 
 function clearUnsupportedBuilderClaims(project, warnings) {
+  /* BATCH 1B — AN IMPORTED AUTHORITY LEDGER IS NOT THIS PROJECT'S HISTORY.
+
+     This function already strips every approved edge an import claims, because
+     CineBraid cannot verify media it did not produce. The durable authority
+     receipts are records ABOUT those edges, so they go the same way: keeping
+     them would let an imported document assert that a person here approved
+     something, which is the one claim the whole batch exists to make
+     unforgeable-by-accident.
+
+     Dropping them is also safe in the other direction — a receipt with no edge
+     behind it satisfies nothing, so this is belt as well as braces. */
+  if (project[ProductionAuthority.PRODUCTION_AUTHORITY_LEDGER_KEY]) {
+    const imported = ProductionAuthority.authorityReceipts(project).length;
+    delete project[ProductionAuthority.PRODUCTION_AUTHORITY_LEDGER_KEY];
+    if (imported) warnings.push(`The import carried ${imported} production-approval record${imported === 1 ? "" : "s"}. CineBraid cannot verify approvals made elsewhere, so they were not adopted; approve here to establish authority.`);
+  }
   for (const list of ["characters", "locations", "props", "vehicles"])
     for (const entity of project[list] || []) {
       entity.approvedFile = "";

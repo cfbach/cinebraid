@@ -142,13 +142,17 @@
    public/shared-continuity.js and public/shared-media-disposition.js both require. */
 
 (function (root, factory) {
-  const disposition = typeof module !== "undefined" && module.exports
-    ? require("./shared-media-disposition.js")
-    : root;
-  const api = factory(disposition);
-  if (typeof module !== "undefined" && module.exports) module.exports = api;
+  const nodeModule = typeof module !== "undefined" && module.exports;
+  const disposition = nodeModule ? require("./shared-media-disposition.js") : root;
+  /* BATCH 1B: the ownership resolver is a hard dependency of this projection now,
+     not an optional convenience. Loaded the same way the P4 sibling is, so a
+     Node caller gets the authoritative answer instead of the closed-fail path
+     that exists for compositions where neither is reachable. */
+  const ownership = nodeModule ? require("./shared-entity-ownership.js") : root;
+  const api = factory(disposition, ownership);
+  if (nodeModule) module.exports = api;
   if (root) Object.assign(root, api);
-})(typeof window !== "undefined" ? window : globalThis, function (P4) {
+})(typeof window !== "undefined" ? window : globalThis, function (P4, OWNERSHIP) {
   function deepFreeze(value) {
     if (value && typeof value === "object" && !Object.isFrozen(value)) {
       Object.freeze(value);
@@ -1049,15 +1053,50 @@
   });
   const ENTITY_LISTS = deepFreeze(Object.keys(ENTITY_SCAN_DIR));
 
+  /* BATCH 1B: THE PREFIX FALLBACK IS GONE, AND ABSENCE FAILS CLOSED.
+
+     A `startsWith` test survived here for the case where neither an injected
+     reader nor the loaded browser reader was available. The audit is right that
+     it contradicts the claimed repository-wide removal: in a server or test
+     composition without the shared reader, this projection would have gone on
+     leaking `CHAR-SWEEP-YOUNG` bytes into `CHAR-SWEEP`.
+
+     The replacement is the authoritative resolver, and when even that is
+     unavailable the answer is NO ROWS — a projection that cannot prove ownership
+     reports nothing rather than guessing. An empty media list is visibly wrong
+     and gets fixed; a wrongly attributed one looks correct and becomes canon. */
+  /* The authoritative resolver, or null. Null means FAIL CLOSED — a projection
+     that cannot prove ownership reports no rows rather than guessing, because an
+     empty media list is visibly wrong and gets fixed while a wrongly attributed
+     one looks correct and becomes canon. */
+  function entityOwnershipResolver() {
+    const candidates = [
+      OWNERSHIP,
+      typeof buildEntityOwnerIndex === "function" && typeof filterEntityMedia === "function"
+        ? { buildEntityOwnerIndex, filterEntityMedia }
+        : null,
+      typeof globalThis !== "undefined" ? globalThis : null,
+    ];
+    for (const source of candidates) {
+      const it = record(source);
+      if (typeof it.buildEntityOwnerIndex === "function" && typeof it.filterEntityMedia === "function") {
+        return { build: it.buildEntityOwnerIndex, filter: it.filterEntityMedia };
+      }
+    }
+    return null;
+  }
+
   function entityMediaFor(scan, listName, entity, injected) {
     if (typeof injected === "function") return list(injected(listName, entity));
     const shared = typeof entityMedia === "function"
       ? entityMedia
       : (typeof globalThis !== "undefined" && typeof globalThis.entityMedia === "function" ? globalThis.entityMedia : null);
     if (shared) return list(shared(listName, entity));
-    const prefix = text(record(entity).prefix || record(entity).anchorPrefix || record(entity).id).toUpperCase();
-    return list(record(scan)[ENTITY_SCAN_DIR[listName]])
-      .filter((item) => text(record(item).name).toUpperCase().startsWith(prefix));
+    const ownership = entityOwnershipResolver();
+    if (!ownership) return [];
+    const rows = list(record(scan)[ENTITY_SCAN_DIR[listName]]);
+    const project = { [listName]: [record(entity)] };
+    return list(ownership.filter(ownership.build(project, listName), text(record(entity).id), rows));
   }
 
   function entityRecords(options) {

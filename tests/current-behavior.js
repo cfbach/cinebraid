@@ -388,6 +388,7 @@ async function main() {
     "data-recovery-focused-state.js",
     "data-safety-repair.js",
     "deep-bot-safety.js",
+    "dogfood2-p0-architecture.js",
     "dogfood2-p0-negative-controls.js",
     "entity-media-ownership.js",
     "external-test-readiness.js",

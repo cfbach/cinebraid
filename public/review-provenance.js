@@ -431,14 +431,26 @@ window.promoteFinishJob = (jobId) => {
   /* P4-SEM-C3: a promoted finish job produces the same kind of authoritative edge
      as a manual approval, so it records identity the same way. */
   const approvedAssetId = (takesFor(job.shotId).find((item) => item.name === job.resultFile) || {}).assetId || "";
+  /* BATCH 1B: promoting a finish job is a human approval command and routes
+     through the one authority boundary, so the receipt it leaves is
+     indistinguishable from any other approval of the same frame. */
+  const promoteGrant = humanAuthorityGrant({ via: "finish-job-promotion", at: new Date().toISOString() });
   if (target === "shot") {
-    s.winner = job.resultFile;
-    stampShotApprovalIdentity(s, "winner", approvedAssetId);
+    const opening = (s.keyframes || [])[0];
+    const writeShotEdge = () => { s.winner = job.resultFile; stampShotApprovalIdentity(s, "winner", approvedAssetId); };
+    if (opening) writeFrameProductionAuthority(P, { shotId: job.shotId, frameId: opening.id, value: job.resultFile, assetId: approvedAssetId, grant: promoteGrant, at: new Date().toISOString(), applyEdge: writeShotEdge });
+    else writeShotEdge();
   } else if (target.startsWith("frame:")) {
     const f = frameById(s, target.slice(6));
     if (f) {
-      f.winner = job.resultFile;
-      stampShotApprovalIdentity(f, "winner", approvedAssetId);
+      writeFrameProductionAuthority(P, {
+        shotId: job.shotId, frameId: f.id, value: job.resultFile, assetId: approvedAssetId, grant: promoteGrant, at: new Date().toISOString(),
+        applyEdge: () => {
+          f.winner = job.resultFile;
+          stampShotApprovalIdentity(f, "winner", approvedAssetId);
+          if ((s.keyframes || [])[0]?.id === f.id) { s.winner = job.resultFile; stampShotApprovalIdentity(s, "winner", approvedAssetId); }
+        },
+      });
     }
   } else if (target.startsWith("segment:")) {
     const seg = (s.clips || []).find((x) => unitKey(x) === target.slice(8));

@@ -141,35 +141,132 @@ function buildEntityOwnerIndex(project, list) {
   return { list: ownershipText(list), claims, contested, prefixes };
 }
 
-/* WHO OWNS THESE BYTES. "" means CineBraid cannot say, which is a legal answer
-   and always better than a guess. */
-function mediaOwnerId(index, fileName) {
+/* ==========================================================================
+   BATCH 1B — DISCOVERY IS NOT OWNERSHIP.
+
+   The acceptance audit accepted rule 1 and rejected the shape of the answer. A
+   bare `ownerId` string collapses three different facts into one:
+
+     "CHAR-SWEEP-YOUNG durably claims this file"          -> authority
+     "this filename starts with CHAR-SWEEP-YOUNG"         -> a guess
+     "two references both claim it"                       -> a conflict
+
+   All three used to return the same thing, so a guess entered the approval pool
+   and a conflict was quietly settled by whichever prefix was longer. The audit
+   approved an unclaimed `SWEEP_CHILD_UNCLAIMED.png` into the child's canon pool
+   with nothing durable behind it.
+
+   The resolution is STRUCTURED now, and authority reads `authoritative` — which
+   is true for exactly one basis. Prefix inference survives, because a creator
+   who drops a file into `anchors/` still deserves to find it, but it produces a
+   DISCOVERABLE row, never an approvable one. Claiming is a human act.
+
+   Contested is not a tie to break. It is a blocking conflict with no owner. */
+
+/* How CineBraid arrived at an owner. `durable-claim` is the only one that
+   carries authority; the others exist so a surface can explain itself. */
+const OWNERSHIP_BASES = ["durable-claim", "prefix-inference", "contested", "none"];
+
+/* The vocabulary a surface prints. */
+const OWNERSHIP_STATUSES = ["owned", "unassigned", "contested", "unowned"];
+
+/* THE RESOLUTION. One object, five facts, no caller re-deriving any of them.
+
+     ownerId       who owns it, or "" when CineBraid cannot say
+     basis         how that was decided
+     status        the word a surface prints
+     contested     two or more durable claimants exist
+     claimants     who they are, always populated for a contest
+     authoritative MAY THIS FILE BECOME CANON FOR ownerId. The only field an
+                   approval path is allowed to read. */
+function resolveMediaOwnership(index, fileName) {
   const idx = ownershipObject(index);
   const name = ownershipText(fileName);
-  if (!name) return "";
+  const none = { ownerId: "", basis: "none", status: "unowned", contested: false, claimants: [], authoritative: false, fileName: name };
+  if (!name) return none;
   const claims = idx.claims instanceof Map ? idx.claims : new Map();
   const contested = idx.contested instanceof Map ? idx.contested : new Map();
-  if (!contested.has(name) && claims.has(name)) return claims.get(name);
+  /* A CONTEST HAS NO OWNER. Not the most specific prefix, not the first
+     claimant, not the longest id — nobody, until a person resolves it. Filename
+     specificity is exactly the reasoning that created the contaminated rows in
+     the first place, so it may not be the reasoning that settles them. */
+  if (contested.has(name)) {
+    return {
+      ownerId: "",
+      basis: "contested",
+      status: "contested",
+      contested: true,
+      claimants: [...contested.get(name)].map(ownershipText).sort(),
+      authoritative: false,
+      fileName: name,
+    };
+  }
+  if (claims.has(name)) {
+    return { ownerId: claims.get(name), basis: "durable-claim", status: "owned", contested: false, claimants: [claims.get(name)], authoritative: true, fileName: name };
+  }
   const upper = name.toUpperCase();
   const rows = ownershipList(idx.prefixes).filter((row) => upper.startsWith(ownershipText(row.prefix)));
-  if (!rows.length) return "";
+  if (!rows.length) return none;
   const best = rows[0];
-  /* A second entity declaring the identical prefix means the project has not
-     said who owns this file. Neither gets it. */
-  if (rows.some((row) => row.entityId !== best.entityId && ownershipText(row.prefix).length === ownershipText(best.prefix).length)) return "";
-  return best.entityId;
+  /* Two entities declaring the identical prefix: the project has not said who
+     owns this file, and neither gets it. */
+  if (rows.some((row) => row.entityId !== best.entityId && ownershipText(row.prefix).length === ownershipText(best.prefix).length)) return none;
+  /* A POSSIBLE MATCH. Discoverable under the most specific declaration, and
+     NEVER authoritative — no candidate row, no approval pointer, nothing
+     durable says these bytes belong to anyone. */
+  return { ownerId: best.entityId, basis: "prefix-inference", status: "unassigned", contested: false, claimants: [], authoritative: false, fileName: name };
 }
 
-/* Whether one file is eligible for one entity. THE predicate every surface asks
-   — display, review pool, approval, coverage automation, server batch review. */
+/* WHO OWNS THESE BYTES, for a caller that only wants the id. Retained because
+   display and provenance readers legitimately want the discoverable answer;
+   AUTHORITY MUST NOT USE THIS — it cannot tell a claim from a guess. Every
+   approval path goes through `entityOwnsMedia`. */
+function mediaOwnerId(index, fileName) {
+  return ownershipText(resolveMediaOwnership(index, fileName).ownerId);
+}
+
+/* Whether one file may become canon for one entity. THE predicate every
+   authority surface asks — review pool, approval, coverage automation, server
+   batch review, export association. Requires a unique durable claim. */
 function entityOwnsMedia(index, entityId, fileName) {
   const wanted = ownershipText(entityId);
-  return !!wanted && mediaOwnerId(index, fileName) === wanted;
+  if (!wanted) return false;
+  const resolution = resolveMediaOwnership(index, fileName);
+  return resolution.authoritative === true && resolution.ownerId === wanted;
+}
+
+/* Whether one file is worth SHOWING to one entity as a possible match. Discovery
+   only: this is what puts a hand-dropped reference on the entity's page so a
+   creator can claim it, and it is deliberately a different question from the one
+   above. */
+function entityMayDiscoverMedia(index, entityId, fileName) {
+  const wanted = ownershipText(entityId);
+  if (!wanted) return false;
+  const resolution = resolveMediaOwnership(index, fileName);
+  return resolution.basis === "prefix-inference" && resolution.ownerId === wanted;
 }
 
 /* The media rows one entity may act on, from a list of `{name}` rows. */
 function filterEntityMedia(index, entityId, mediaRows) {
   return ownershipList(mediaRows).filter((row) => entityOwnsMedia(index, entityId, ownershipText(ownershipObject(row).name)));
+}
+
+/* The rows one entity can SEE but not act on. The quarantine the audit required:
+   visible, explained, and outside every approval and canon workflow until a
+   person claims them. */
+function unassignedEntityMedia(index, entityId, mediaRows) {
+  return ownershipList(mediaRows).filter((row) => entityMayDiscoverMedia(index, entityId, ownershipText(ownershipObject(row).name)));
+}
+
+/* The rows one entity claims that somebody else claims too. Surfaced as a
+   blocking conflict rather than attributed. */
+function contestedEntityMedia(index, entityId, mediaRows) {
+  const wanted = ownershipText(entityId);
+  if (!wanted) return [];
+  return ownershipList(mediaRows).filter((row) => {
+    const resolution = resolveMediaOwnership(index, ownershipText(ownershipObject(row).name));
+    return resolution.contested === true && resolution.claimants.includes(wanted);
+  });
 }
 
 /* The same answer for a bare list of filenames, which is the shape the server's
@@ -185,8 +282,37 @@ function contestedOwnership(index) {
   const contested = ownershipObject(index).contested;
   if (!(contested instanceof Map)) return [];
   return [...contested.entries()]
-    .map(([file, entityIds]) => ({ file, entityIds: [...entityIds].sort(), attributedTo: mediaOwnerId(index, file) }))
+    .map(([file, entityIds]) => ({
+      file,
+      entityIds: [...entityIds].sort(),
+      /* NOBODY, and stated as such. This field used to carry the most-specific
+         prefix winner, which is how the audit found a contested file quietly
+         attributed to one claimant and made eligible for its approval pool. */
+      attributedTo: "",
+      resolution: resolveMediaOwnership(index, file),
+    }))
     .sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : 0));
+}
+
+/* THE CLAIM. What turns a discoverable possible match into ownership, and the
+   only way an inferred file enters an approval workflow.
+
+   A candidate row IS the durable claim — the same record generation and upload
+   already write — so claiming costs one row and nothing else has to learn a new
+   concept. Returns a decision rather than performing the write, because the row
+   shape belongs to the entity module and this one may not mutate. */
+function planEntityMediaClaim(index, entityId, fileName) {
+  const wanted = ownershipText(entityId);
+  const name = ownershipText(fileName);
+  if (!wanted || !name) return { claim: false, reason: "incomplete-request", resolution: resolveMediaOwnership(index, name) };
+  const resolution = resolveMediaOwnership(index, name);
+  if (resolution.contested === true) return { claim: false, reason: "contested", resolution };
+  if (resolution.basis === "durable-claim") {
+    return resolution.ownerId === wanted
+      ? { claim: false, reason: "already-claimed", resolution }
+      : { claim: false, reason: "claimed-by-another", resolution };
+  }
+  return { claim: true, reason: resolution.basis === "prefix-inference" ? "possible-match" : "unowned", resolution };
 }
 
 /* Every list at once, for a caller that wants one object rather than five. */
@@ -200,15 +326,22 @@ const ENTITY_OWNERSHIP_EXPORTS = {
   OWNED_ENTITY_LISTS,
   OWNERSHIP_POINTER_FIELDS,
   OWNERSHIP_SLOT_GROUPS,
+  OWNERSHIP_BASES,
+  OWNERSHIP_STATUSES,
   entityMediaPrefix,
   entityClaimedFileNames,
   buildEntityOwnerIndex,
   buildProjectOwnerIndexes,
+  resolveMediaOwnership,
   mediaOwnerId,
   entityOwnsMedia,
+  entityMayDiscoverMedia,
   filterEntityMedia,
+  unassignedEntityMedia,
+  contestedEntityMedia,
   filterEntityFileNames,
   contestedOwnership,
+  planEntityMediaClaim,
 };
 
 if (typeof window !== "undefined") for (const [key, value] of Object.entries(ENTITY_OWNERSHIP_EXPORTS)) window[key] = value;

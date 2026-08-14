@@ -378,12 +378,25 @@ window.confirmEntityBatchApproval = async () => {
     } else {
       const state = entityStateById(entity, best.stateId) || entityStateList(entity, true)[0];
       if (!state) continue;
-      state.approvedFile = best.fileName;
-      state.approvedAt = approvedAt;
-      if (state.isDefault || state.id === "state-default") {
-        entity.approvedFile = best.fileName;
-        if (current.list === "characters") entity.primaryAngleAssignment = { status: "unassigned", sourceFile: best.fileName, updatedAt: approvedAt, note: "Primary identity references are not silently assigned to an angle slot." };
-      }
+      /* BATCH 1B: batch approval is still one human command per target, and each
+         one goes through the authority boundary — so a shortlist approval leaves
+         the same receipt as a single approval and is subject to the same
+         ownership veto. A refused target is skipped and reported; the rest of
+         the batch still lands. */
+      try {
+        writeEntityStateProductionAuthority(P, {
+          list: current.list, entityId: entity.id, stateId: state.id, value: best.fileName,
+          grant: humanAuthorityGrant({ via: "entity-batch-approval", at: approvedAt }), at: approvedAt,
+          applyEdge: () => {
+            state.approvedFile = best.fileName;
+            state.approvedAt = approvedAt;
+            if (state.isDefault || state.id === "state-default") {
+              entity.approvedFile = best.fileName;
+              if (current.list === "characters") entity.primaryAngleAssignment = { status: "unassigned", sourceFile: best.fileName, updatedAt: approvedAt, note: "Primary identity references are not silently assigned to an angle slot." };
+            }
+          },
+        });
+      } catch (error) { toast(error.message || `${best.fileName} could not be approved`); continue; }
       row.decision = "approved-reference";
       row.decidedAt = approvedAt;
       markBatchApprovalAsHumanDecision(row);

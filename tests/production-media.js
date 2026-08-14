@@ -743,8 +743,16 @@ function checkProvenance({ PM }) {
 function checkDeduplication({ PM }) {
   const f = fixture();
   /* The same bytes reachable under a SECOND path with the SAME ledger identity -- what a
-     rename leaves behind if a stale listing survives. */
+     rename leaves behind if a stale listing survives.
+
+     BATCH 1B: the stale CANDIDATE ROW travels with the stale listing, because
+     that is what an unrepaired rename really leaves and because the entity pool
+     is keyed by durable claim now. Without the row the old path is an unclaimed
+     file, correctly quarantined out of the pool — which would make this check
+     pass against a projection that never saw the duplicate at all, rather than
+     against the collapse it exists to prove. */
   f.scan.anchors.push({ name: "KAI_RENAMED_OLD.png", url: "/assets/anchors/KAI_RENAMED_OLD.png", assetId: LEDGER("a") });
+  f.project.characters[0].candidateFiles.push({ stored: "KAI_RENAMED_OLD.png", addedAt: ISO(1), decision: "unreviewed" });
   const built = PM.productionMediaRecords({ project: f.project, scan: f.scan, jobs: f.jobs });
   const kai = built.records.filter((row) => row.identity.ledger.value === LEDGER("a"));
   assert.strictEqual(kai.length, 1, "one durable identity must produce one logical asset, not two");

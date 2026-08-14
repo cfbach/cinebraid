@@ -38,7 +38,26 @@ async function guidedPromptRequest(url, options, timeoutMs, label) {
       try { data = JSON.parse(text); }
       catch { throw new Error(`${label} returned an unreadable response.`); }
     }
-    if (!response.ok) throw new Error(data.error || `${label} failed (${response.status})`);
+    if (!response.ok) {
+      /* BATCH 1B: THE STRUCTURED CODE SURVIVES THE THROW.
+
+         This used to construct a bare `new Error(data.error)`, which discarded
+         the HTTP status and the server's typed code. A deterministic local
+         refusal — a frame-presence contradiction, an unresolvable frame target
+         — then arrived at `v626FailureClass()` as an anonymous error and was
+         classified `provider`, so a fault no retry can repair was recorded as a
+         provider fault and could consume the run's retry budget. */
+      const failure = new Error(data.error || `${label} failed (${response.status})`);
+      failure.httpStatus = response.status;
+      if (data.code) failure.code = data.code;
+      if (data.classification) failure.classification = data.classification;
+      if (data.contradictions) failure.contradictions = data.contradictions;
+      if (data.classification === "local-preflight" || data.code === "FRAME_PRESENCE_CONTRADICTION" || data.code === "FRAME_PRESENCE_TARGET_UNRESOLVED") {
+        failure.localPreflightError = true;
+        failure.providerContacted = false;
+      }
+      throw failure;
+    }
     if (activityId && typeof v641FinishManualActivity === "function") v641FinishManualActivity(activityId, "completed", data.llmUsed === false ? "The assistant was unavailable after recovery attempts; CineBraid returned the deterministic fallback." : "The local AI response was received, validated, and applied.");
     return data;
   } catch (error) {
@@ -315,6 +334,20 @@ function assetStatePromptProfile(list, entity, state) {
   const selected = state.assetPromptProfile || entity.assetPromptProfile || P.meta?.promptDefaults?.imageProfile || "";
   return preferredCreationProfile(mode, selected);
 }
+/* THE PARENT CHOICES A CREATOR MAY BE OFFERED.
+
+   BATCH 1B: this used to be `filter((item) => item.id !== state.id)` — self
+   excluded, descendants offered. Choosing one produced a cycle. The eligible
+   set comes from the lineage module now, so the control cannot present a move
+   the validator will refuse, and the two answers cannot drift. */
+function entityStateParentOptions(entity, state, selectedId) {
+  const states = entityStateList(entity, true);
+  const eligible = new Set(eligibleParentIds(states, state.id));
+  return states
+    .filter((item) => eligible.has(item.id))
+    .map((item) => `<option value="${attr(item.id)}" ${item.id === selectedId ? "selected" : ""}>${esc(item.name || "State")}${item.approvedFile || (item.isDefault && entity.approvedFile) ? " · approved" : " · no reference"}</option>`)
+    .join("");
+}
 function assetStatePromptStudio(list, entity, state) {
   if (!state || list === "audio") return "";
   const builds = assetStatePromptBuilds(state);
@@ -345,7 +378,7 @@ function assetStatePromptStudio(list, entity, state) {
   const explicitlyOpened = workspaceSectionOpen(sectionKey, false);
   const assistedOpen = busy || operation?.status === "error" || explicitlyOpened || (!manualFirstWorkflow() && !!(latest || !state.approvedFile));
   const heading = manualFirstWorkflow() ? `Optional assisted creation for ${state.name || "this state"}` : `Build, improve and generate ${state.name || "this state"}`;
-  return `<details class="entity-state-generation" data-entity-state-generation="${attr(state.id)}" ${assistedOpen ? "open" : ""} ontoggle="rememberWorkspaceSection('${attr(sectionKey)}',this.open)"><summary><div><span>STATE REFERENCE GENERATION</span><b>${esc(heading)}</b></div><span>${effectiveMode === "derive" ? "PARENT EDIT" : "INDEPENDENT"}</span></summary><div class="entity-state-generation-body">${derivationNote}${modeNote}<div class="two-col">${state.isDefault ? "" : `<label><span>Generation mode</span><select onchange="setContinuityStateGeneration('${list}','${entity.id}','${state.id}','generationMode',this.value)"><option value="derive" ${mode === "derive" ? "selected" : ""}>Derive from approved state</option><option value="independent" ${mode === "independent" ? "selected" : ""}>Create independently</option></select></label><label><span>Parent state</span><select onchange="setContinuityStateGeneration('${list}','${entity.id}','${state.id}','parentStateId',this.value)">${entityStateList(entity, true).filter((item) => item.id !== state.id).map((item) => `<option value="${attr(item.id)}" ${item.id === parentInfo.parent?.id ? "selected" : ""}>${esc(item.name || "State")}${item.approvedFile || (item.isDefault && entity.approvedFile) ? " · approved" : " · no reference"}</option>`).join("")}</select></label>`}${field("Prompt target", `<select onchange="setContinuityStateGeneration('${list}','${entity.id}','${state.id}','assetPromptProfile',this.value)">${creationProfileOptions(promptMode, selected)}</select>`)}${field("Additional state direction", `<textarea placeholder="Optional framing or state-specific instructions beyond the delta above" onchange="setContinuityStateGeneration('${list}','${entity.id}','${state.id}','assetPromptNotes',this.value)">${esc(state.assetPromptNotes || "")}</textarea>`)}</div><div class="creation-actions"><button class="assemble-btn" ${busy ? "disabled" : ""} onclick="buildEntityStatePrompt('${list}','${entity.id}','${state.id}',false)">${busy && action === "compile" ? `<span class="spin">◌</span> Compiling…` : "Build state prompt"}</button><button class="ghost-btn" ${busy ? "disabled" : ""} onclick="buildEntityStatePrompt('${list}','${entity.id}','${state.id}',true)"${aiDisabledAttrs("text")}>${busy && action === "improve" ? `<span class="spin">◌</span> Improving…` : "Improve"}</button></div>${typeof entityStateAutomationPanel === "function" ? entityStateAutomationPanel(list, entity, state) : ""}${progress}${latest ? assetStatePromptResult(list, entity, state, latest) : `<div class="creation-empty-result">No ${esc(state.name || "state")} prompt compiled yet. The state changes above are combined with the reference’s canon description.</div>`}</div></details>`;
+  return `<details class="entity-state-generation" data-entity-state-generation="${attr(state.id)}" ${assistedOpen ? "open" : ""} ontoggle="rememberWorkspaceSection('${attr(sectionKey)}',this.open)"><summary><div><span>STATE REFERENCE GENERATION</span><b>${esc(heading)}</b></div><span>${effectiveMode === "derive" ? "PARENT EDIT" : "INDEPENDENT"}</span></summary><div class="entity-state-generation-body">${derivationNote}${modeNote}<div class="two-col">${state.isDefault ? "" : `<label><span>Generation mode</span><select onchange="setContinuityStateGeneration('${list}','${entity.id}','${state.id}','generationMode',this.value)"><option value="derive" ${mode === "derive" ? "selected" : ""}>Derive from approved state</option><option value="independent" ${mode === "independent" ? "selected" : ""}>Create independently</option></select></label><label><span>Parent state</span><select onchange="setContinuityStateGeneration('${list}','${entity.id}','${state.id}','parentStateId',this.value)">${entityStateParentOptions(entity, state, parentInfo.parent?.id || "")}</select></label>`}${field("Prompt target", `<select onchange="setContinuityStateGeneration('${list}','${entity.id}','${state.id}','assetPromptProfile',this.value)">${creationProfileOptions(promptMode, selected)}</select>`)}${field("Additional state direction", `<textarea placeholder="Optional framing or state-specific instructions beyond the delta above" onchange="setContinuityStateGeneration('${list}','${entity.id}','${state.id}','assetPromptNotes',this.value)">${esc(state.assetPromptNotes || "")}</textarea>`)}</div><div class="creation-actions"><button class="assemble-btn" ${busy ? "disabled" : ""} onclick="buildEntityStatePrompt('${list}','${entity.id}','${state.id}',false)">${busy && action === "compile" ? `<span class="spin">◌</span> Compiling…` : "Build state prompt"}</button><button class="ghost-btn" ${busy ? "disabled" : ""} onclick="buildEntityStatePrompt('${list}','${entity.id}','${state.id}',true)"${aiDisabledAttrs("text")}>${busy && action === "improve" ? `<span class="spin">◌</span> Improving…` : "Improve"}</button></div>${typeof entityStateAutomationPanel === "function" ? entityStateAutomationPanel(list, entity, state) : ""}${progress}${latest ? assetStatePromptResult(list, entity, state, latest) : `<div class="creation-empty-result">No ${esc(state.name || "state")} prompt compiled yet. The state changes above are combined with the reference’s canon description.</div>`}</div></details>`;
 }
 function assetStatePromptResult(list, entity, state, build) {
   const manual = `<button class="chip" onclick="downloadAssetStatePrompt('${list}','${entity.id}','${state.id}','${build.id}')">Download</button>`;
@@ -361,6 +394,36 @@ window.setContinuityStateGeneration = (list, id, stateId, key, value) => {
   const entity = P[list]?.find((item) => item.id === id);
   const state = entityStateById(entity, stateId);
   if (!state || !["generationMode", "parentStateId", "assetPromptProfile", "assetPromptNotes"].includes(key)) return;
+  /* BATCH 1B: THIS IS THE EXPOSED CYCLE WRITER THE AUDIT FOUND.
+
+     `state[key] = value` for `parentStateId`, from a dropdown that listed every
+     state except the current one — descendants included. Editing the root's
+     parent to point at its own grandchild closed a real cycle from the UI, with
+     no validator anywhere in the path. It is an explicit lineage edit, so it is
+     allowed to reparent — through the one mutation API, which refuses the moves
+     that damage the graph and leaves the project untouched when it does. */
+  if (key === "parentStateId") {
+    const outcome = applyStateParentMutation(entityStateList(entity, true), state.id, value, {
+      intent: "explicit-lineage-edit",
+      via: "entity-state-generation-parent-selector",
+    });
+    if (!outcome.applied) {
+      return toast(outcome.reason === "would-create-cycle" || outcome.reason === "graph-would-be-cyclic"
+        ? `${state.name || "This state"} cannot derive from a state that already derives from it.`
+        : outcome.reason === "default-state-is-the-root"
+          ? "The base state is the root of the chain and has no parent."
+          : outcome.reason === "already-declared"
+            ? ""
+            : "That parent cannot be set.");
+    }
+    const desiredMode = assetStatePromptMode(list, entity, state);
+    if (!creationImageProfiles(desiredMode).some((profile) => profile.id === state.assetPromptProfile)) {
+      state.assetPromptProfile = preferredCreationProfile(desiredMode, "");
+    }
+    dirty();
+    route();
+    return;
+  }
   state[key] = value;
   if (["generationMode", "parentStateId"].includes(key)) {
     const desiredMode = assetStatePromptMode(list, entity, state);
@@ -2354,7 +2417,9 @@ function ensureGuidedMotionUnit(s, currentName = "", profile = null) {
   normalizeShotV5(s);
   const frames = guidedFrames(s);
   let frame = frames[0];
-  if (currentName) frame.winner = currentName;
+  /* BATCH 1B: the shadowed twin of the same defect removed in v607-composer.js —
+     motion-unit setup wrote the opening frame's winner. Authority is established
+     by an approval command, never by opening a composer. */
   let unit = (s.clips || [])[0];
   if (!unit) {
     unit = { id: "seg-guided-" + Date.now().toString(36), suffix: "a", label: "A", title: "Primary motion", dur: 5, kind: "i2v", note: "", motionPrompt: "", fromFrame: frame.id, toFrame: "", generationPackages: [] };
@@ -3007,17 +3072,25 @@ window.useApprovedBaseAsShot = async (id) => {
     const d = await r.json();
     if (!r.ok) throw new Error(d.error || "Could not copy the plate");
     SCAN = await (await fetch("/api/scan")).json();
-    s.winner = d.name;
     const opening = (s.keyframes || [])[0] || newKeyframe(0, "Opening frame");
     if (!(s.keyframes || []).length) s.keyframes = [opening];
-    opening.winner = d.name;
     /* P4-SEM-C3: a plate copied in as the shot image is an authoritative edge
-       like any other, so it records identity from the scan just refreshed. */
-    {
-      const copiedAssetId = (takesFor(s.id).find((item) => item.name === d.name) || {}).assetId || "";
-      stampShotApprovalIdentity(s, "winner", copiedAssetId);
-      stampShotApprovalIdentity(opening, "winner", copiedAssetId);
-    }
+       like any other, so it records identity from the scan just refreshed.
+       BATCH 1B: and it is a human command, so it leaves a receipt like any
+       other — this is the creator saying "use this plate as the shot image". */
+    writeFrameProductionAuthority(P, {
+      shotId: s.id, frameId: opening.id, value: d.name,
+      assetId: (takesFor(s.id).find((item) => item.name === d.name) || {}).assetId || "",
+      grant: humanAuthorityGrant({ via: "guided-use-approved-base", at: new Date().toISOString() }),
+      at: new Date().toISOString(),
+      applyEdge: () => {
+        const copiedAssetId = (takesFor(s.id).find((item) => item.name === d.name) || {}).assetId || "";
+        s.winner = d.name;
+        opening.winner = d.name;
+        stampShotApprovalIdentity(s, "winner", copiedAssetId);
+        stampShotApprovalIdentity(opening, "winner", copiedAssetId);
+      },
+    });
     const c = ensureShotCreation(s);
     c.baseUsedUnchangedAt = new Date().toISOString();
     if (typeof markCandidateApproved === "function")
@@ -3331,14 +3404,28 @@ window.downloadGuidedMotionPrompt = (id, buildId) => {
 window.markGuidedStillFinal = (id, name) => {
   const s = shotById(id), c = ensureShotCreation(s);
   if (!name) return toast("Approve a still first");
-  c.finalStillFile = name;
-  c.deliveryIntent = "still";
-  s.finalStillFile = name;
-  s.winner = name;
-  /* P4-SEM-C3: the still-delivery approval names which bytes it approved. */
-  stampShotApprovalIdentity(s, "winner", (takesFor(s.id).find((item) => item.name === name) || {}).assetId || "");
-  s.workflowStatus = "APPROVED";
-  s.status = "APPROVED";
+  const stillOpening = (s.keyframes || [])[0];
+  const writeStillEdge = () => {
+    c.finalStillFile = name;
+    c.deliveryIntent = "still";
+    s.finalStillFile = name;
+    s.winner = name;
+    /* P4-SEM-C3: the still-delivery approval names which bytes it approved. */
+    stampShotApprovalIdentity(s, "winner", (takesFor(s.id).find((item) => item.name === name) || {}).assetId || "");
+    s.workflowStatus = "APPROVED";
+    s.status = "APPROVED";
+  };
+  /* BATCH 1B: marking a still final IS a shot-winner write, so it goes through
+     the authority command. The receipt is what makes a later gate read agree
+     with what this screen just did. */
+  if (stillOpening) {
+    writeFrameProductionAuthority(P, {
+      shotId: s.id, frameId: stillOpening.id, value: name,
+      assetId: (takesFor(s.id).find((item) => item.name === name) || {}).assetId || "",
+      grant: humanAuthorityGrant({ via: "guided-final-still", at: new Date().toISOString() }),
+      at: new Date().toISOString(), applyEdge: () => { stillOpening.winner = name; writeStillEdge(); },
+    });
+  } else writeStillEdge();
   const row = candidateRecord(s, name, true);
   row.approvedAt = row.approvedAt || new Date().toISOString();
   row.finalAt = new Date().toISOString();
@@ -3519,12 +3606,24 @@ window.resetGuidedFrameApproval = (id, frameId) => {
     () => {
       const target = index === 0 ? "shot" : `frame:${frameId}`;
       guidedClearApprovalTarget(s, target);
-      frame.winner = "";
-      clearShotApprovalIdentity(frame, "winner");
-      if (index === 0) {
-        s.winner = "";
-        clearShotApprovalIdentity(s, "winner");
-      }
+      /* BATCH 1B: RESETTING AN APPROVAL IS A REVOCATION, not a field clear.
+
+         The audit's counterexample lived here: clearing the winner left the
+         reconciled automation step still claiming a person had approved it, and
+         resume rebuilt authority from that step. Withdrawing the receipt is what
+         reopens every dependent gate on the next read, and it records that the
+         decision was withdrawn rather than never made. */
+      revokeFrameProductionAuthority(P, {
+        shotId: s.id, frameId, at: new Date().toISOString(), via: "guided-frame-approval-reset", reason: "withdrawn",
+        applyEdge: () => {
+          frame.winner = "";
+          clearShotApprovalIdentity(frame, "winner");
+          if (index === 0) {
+            s.winner = "";
+            clearShotApprovalIdentity(s, "winner");
+          }
+        },
+      });
       const state = guidedFrameState(s, frame, index);
       state.selectedCandidate = previous.name;
       const c = ensureShotCreation(s);

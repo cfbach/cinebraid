@@ -128,10 +128,23 @@ for (const [file, source] of [["public/automation.js", automationCode], ["public
   }
 }
 
-/* The resumed-completed path. A completed passing review that nobody decided is
-   evidence, and the runner used to re-approve it on resume. */
-ok(/prior\.status === "completed" && prior\.pass && prior\.winner && prior\.result\?\.humanApproved/.test(automation),
-  "resuming may only re-state an approval a human actually made");
+/* The resumed-completed path.
+
+   BATCH 1B CHANGED WHAT THIS ASSERTS, and the change is the repair. It used to
+   check that resume read `prior.result?.humanApproved` — a boolean on a cached
+   step. The acceptance audit turned that into a resurrection: revoke the
+   approval, resume the run, and the stale boolean handed authority back, because
+   the runner both trusted it and minted itself a fresh grant to act on it.
+
+   Resume asks the durable receipt now, and re-states nothing. The behavioural
+   proof is in tests/dogfood2-p0-architecture.js §1; what is asserted here is
+   that the two reads a resurrection needs are both gone from the source. */
+ok(/resumeAuthority\(P, \{ kind: "shot-frame-approval", shotId, frameId \}\)/.test(automation),
+  "resuming asks whether a human decision exists RIGHT NOW");
+ok(!/prior\.result\?\.humanApproved/.test(automation),
+  "and never reads the cached boolean a revoked approval leaves behind");
+ok(!/v626ApproveFrame\(shotId, frameId, prior\.winner/.test(automation),
+  "and issues itself no grant to re-write an edge with — a live receipt means the edge is already there");
 
 /* ===========================================================================
    4. THE PROJECTION. Automatic provenance may not read as a human decision.
@@ -226,8 +239,30 @@ eq(Authority.gateRequirement({ type: "shot-chain", targetId: "" }, { status: "ne
 /* ===========================================================================
    6. SATISFACTION. Reconciliation against current project truth. */
 
+/* BATCH 1B CHANGED WHAT MAKES A FIXTURE APPROVED, and every expectation below
+   moved with it. These fixtures used to hand-write a `winner` field and assert
+   the gate was satisfied — which is exactly the reasoning the acceptance audit
+   refuted: a written edge is not a decision, and a preserved project is full of
+   edges no person ever made. A fixture that wants an approved frame now has to
+   APPROVE ONE, through the command a human surface calls.
+
+   Legacy hand-written edges are still fixtures here, and they now prove the
+   opposite property: they are visible historic selections that satisfy nothing. */
+
 function projectWithFrameWinner(winner) {
   return { shots: [{ id: "SH-01", keyframes: [{ id: "fr-a", label: "A", ...(winner ? { winner } : {}) }] }], characters: [] };
+}
+/* The same project, with the winner established the way a person establishes
+   one. `approveFrameAsHuman` is the shipped command, not a test helper's
+   reimplementation of it. */
+function approvedFrameProject(winner, via = "test-approval-surface") {
+  const P = projectWithFrameWinner("");
+  Authority.writeFrameProductionAuthority(P, {
+    shotId: "SH-01", frameId: "fr-a", value: winner, at: "2026-08-14T00:30:00.000Z",
+    grant: Authority.humanAuthorityGrant({ via, at: "2026-08-14T00:30:00.000Z" }),
+    applyEdge: () => { P.shots[0].keyframes[0].winner = winner; P.shots[0].winner = winner; },
+  });
+  return P;
 }
 function projectWithState(approvedFile, isDefault = false) {
   return {
@@ -241,23 +276,46 @@ function projectWithState(approvedFile, isDefault = false) {
     }],
   };
 }
+function approvedStateProject(approvedFile) {
+  const P = projectWithState("");
+  Authority.commandProductionAuthority(P, {
+    targetType: "entity-state", list: "characters", entityId: "CHAR-A", stateId: "st-soot",
+    value: approvedFile, at: "2026-08-14T00:30:00.000Z",
+    grant: Authority.humanAuthorityGrant({ via: "test-approval-surface", at: "2026-08-14T00:30:00.000Z" }),
+    /* Ownership is P0-4's question and has its own suite; the veto is exercised
+       there and at the architecture boundary. */
+    eligibility: () => ({ ok: true }),
+    applyEdge: () => { P.characters[0].continuityStates[1].approvedFile = approvedFile; },
+  });
+  return P;
+}
 
 const frameRequirement = Authority.gateRequirement(shotRun, shotRun.steps["frame:fr-a:round-1:review"]);
 ok(!Authority.gateSatisfied(frameRequirement, projectWithFrameWinner("")), "an unapproved frame leaves its gate outstanding");
-ok(Authority.gateSatisfied(frameRequirement, projectWithFrameWinner("SH01_A_001.png")), "an approved frame satisfies it");
-ok(Authority.gateSatisfied(frameRequirement, { shots: [{ id: "SH-01", winner: "SH01_A_001.png", keyframes: [{ id: "fr-a" }] }] }),
-  "the opening frame's authority may live on the shot, which is where the manual path writes it");
+ok(Authority.gateSatisfied(frameRequirement, approvedFrameProject("SH01_A_001.png")), "a frame a human approved satisfies it");
+ok(!Authority.gateSatisfied(frameRequirement, projectWithFrameWinner("SH01_A_001.png")),
+  "a bare winner with no receipt behind it does NOT — that is the audit's headline counterexample, and the whole reason the receipt exists");
+eq(Authority.gateHistoricSelection(frameRequirement, projectWithFrameWinner("SH01_A_001.png")).basis, "no-human-receipt",
+  "it is reported as a historic selection instead: visible, explained, and one act away from being real");
+{
+  const openingOnShot = approvedFrameProject("SH01_A_001.png");
+  delete openingOnShot.shots[0].keyframes[0].winner;
+  ok(Authority.gateSatisfied(frameRequirement, openingOnShot),
+    "the opening frame's authority may live on the shot, which is where the manual path writes it");
+}
 
 const stateRequirement = Authority.gateRequirement(entityRun, entityRun.steps["entity:st-soot:round-1:review"]);
 ok(!Authority.gateSatisfied(stateRequirement, projectWithState("")), "a state with no approved file leaves its gate outstanding");
-ok(Authority.gateSatisfied(stateRequirement, projectWithState("CHAR-A_SOOT.png")), "its own approved file satisfies it");
+ok(Authority.gateSatisfied(stateRequirement, approvedStateProject("CHAR-A_SOOT.png")), "a state a human approved satisfies it");
+ok(!Authority.gateSatisfied(stateRequirement, projectWithState("CHAR-A_SOOT.png")),
+  "an approvedFile with no receipt does not — the entity chain gets the same rule as the shot chain");
 ok(!Authority.gateSatisfied(stateRequirement, projectWithState("")),
   "and the ENTITY's primary file does not satisfy a declared non-default state — that is the state-authority substitution defect, and it must stay fixed");
 
 /* ===========================================================================
    7. THE PLAN AND ITS APPLICATION. */
 
-const satisfiedProject = projectWithFrameWinner("SH01_A_001.png");
+const satisfiedProject = approvedFrameProject("SH01_A_001.png");
 const plan = Authority.reconcileRunGates(shotRun, satisfiedProject, { at: "2026-08-14T01:00:00.000Z" });
 ok(plan.changed, "a satisfied gate is detected");
 eq(plan.satisfied.length, 1, "exactly the one gate");
@@ -273,9 +331,18 @@ const applied = Authority.applyGateReconciliation(JSON.parse(JSON.stringify(shot
 eq(applied.status, "interrupted", "applying the plan moves the run");
 eq(applied.steps["frame:fr-a:round-1:review"].status, "completed", "and closes the gate");
 ok(applied.steps["frame:fr-a:round-1:review"].result.humanApproved === true,
-  "marked as a human approval, because only a human could have written the authority it observed");
+  "marked as a human approval — a CITATION of the receipt this plan verified, never a synthesis from a winner field");
+ok(/^authority-\d{6}$/.test(String(applied.steps["frame:fr-a:round-1:review"].result.authorityReceiptId || "")),
+  "and it names WHICH decision it is citing, so a run report can print the receipt instead of asserting a boolean nobody can trace");
 ok(applied.steps["frame:fr-a:round-1:review"].result.satisfiedByReconciliation === true,
   "and marked as reconciled, so a reader can tell it from one approved inside the run modal");
+/* A hand-built plan cannot close a gate this module never verified. */
+{
+  const forged = JSON.parse(JSON.stringify(shotRun));
+  Authority.applyGateReconciliation(forged, { changed: true, satisfied: [{ ...frameRequirement, receiptId: "" }], invalidated: [], nextStatus: "interrupted" }, { at: "T" });
+  eq(forged.steps["frame:fr-a:round-1:review"].status, "needs-review",
+    "a satisfied entry with no receipt id closes nothing — the citation and the completion are written in the same statement or neither is");
+}
 
 const unsatisfiedPlan = Authority.reconcileRunGates(shotRun, projectWithFrameWinner(""), { at: "" });
 ok(!unsatisfiedPlan.changed, "an outstanding gate is left alone");
@@ -295,8 +362,9 @@ ok(Authority.runHasActionableGate({ status: "awaiting-review", steps: {} }, sati
 
 ok(/readReconciled\(\)/.test(runs), "the server reconciles on read");
 ok(/reconcileParkedGates/.test(runs), "through the shared boundary");
-ok(/run\.status !== "awaiting-review"\) continue/.test(runs),
-  "and only for parked runs, so a revision bump cannot race an active runner");
+ok(/RECONCILABLE_RUN_STATUSES = \["awaiting-review", "interrupted"\]/.test(runs)
+  && /!RECONCILABLE_RUN_STATUSES\.includes\(String\(run\.status \|\| ""\)\)\) continue/.test(runs),
+  "for parked and interrupted runs — never a `running` one, so a revision bump cannot race an active runner");
 ok(/api\/automation\/runs\/recheck/.test(runs), "a manual Recheck status route exists");
 
 const activity = read("public/live-activity.js");

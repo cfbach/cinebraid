@@ -658,7 +658,15 @@
     }
     c.activeMotionUnitId = unit.id;
     if (!unit.fromFrame) unit.fromFrame = frames[0]?.id || "";
-    if (currentName && frames[0] && unit.fromFrame === frames[0].id) frames[0].winner = currentName;
+    /* BATCH 1B: MOTION SETUP DOES NOT ESTABLISH FRAME AUTHORITY.
+
+       This used to write `frames[0].winner = currentName` — a production
+       authority edge, written as a side effect of opening the motion composer,
+       by a function no human command ever reaches directly. It is exactly the
+       "private re-answer" the architecture forbids. A motion unit points AT the
+       opening frame; it does not decide what that frame is. Where the shot
+       already carries an approved image the opening frame resolves through it
+       anyway, so nothing that was true before this line stops being true. */
     if (profile?.mode === "flf" && !unit.toFrame) {
       const last = [...frames].reverse().find((frame, reverseIndex) => guidedFrameApproved(s, frame, takesFor(s.id), frames.length - 1 - reverseIndex));
       if (last && last.id !== unit.fromFrame) unit.toFrame = last.id;

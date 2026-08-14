@@ -357,6 +357,10 @@ window.confirmApproveTake = async () => {
          each repaired edge, so a LATER rename resolves by identity instead of
          by a string that has already changed. */
       repairShotApprovalIdentity(s, { from: name, to: finalName, assetId: renamedAssetId });
+      /* BATCH 1B: the durable authority receipt follows the bytes too. Without
+         this the receipt names a file the edge no longer carries, and the next
+         read revokes a decision a person really made. */
+      repairAuthorityReceiptIdentity(P, { from: name, to: finalName, assetId: renamedAssetId });
       SCAN = await (await fetch("/api/scan")).json();
     } else toast("Could not rename; approval kept the original filename");
   }
@@ -372,21 +376,39 @@ window.confirmApproveTake = async () => {
   /* P4-SEM-C3: each approval records WHICH BYTES it approved, beside the filename
      it also keeps. Refused rather than stored when there is no id, so a record
      never carries a malformed identity that would resolve to nothing. */
+  /* BATCH 1B: THIS IS A HUMAN APPROVAL COMMAND, and it now says so durably.
+     `approveTake` is reached only from an approval control a person pressed, so
+     it mints the grant here and writes the edge INSIDE the authority command —
+     the same boundary automation uses. A frame approved from this screen and a
+     frame approved from the run modal leave identical evidence, which is what
+     lets one gate predicate serve both. */
+  const approvalGrant = humanAuthorityGrant({ via: "shot-take-approval", at: new Date().toISOString() });
   if (target === "shot") {
-    s.winner = finalName;
-    stampShotApprovalIdentity(s, "winner", approvedAssetId);
-    if (!video) {
-      const opening = (s.keyframes || [])[0];
+    const opening = video ? null : (s.keyframes || [])[0];
+    const writeShotEdge = () => {
+      s.winner = finalName;
+      stampShotApprovalIdentity(s, "winner", approvedAssetId);
       if (opening) {
         opening.winner = finalName;
         stampShotApprovalIdentity(opening, "winner", approvedAssetId);
       }
-    }
+    };
+    /* The opening frame and the shot are ONE authority edge — the shot's winner
+       IS the opening frame's. One receipt, addressed to the frame, so the gate
+       predicate finds it whichever way the run named the target. */
+    if (opening) writeFrameProductionAuthority(P, { shotId: id, frameId: opening.id, value: finalName, assetId: approvedAssetId, grant: approvalGrant, at: new Date().toISOString(), applyEdge: writeShotEdge });
+    else writeShotEdge();
   } else if (target.startsWith("frame:")) {
     const f = frameById(s, target.slice(6));
     if (f) {
-      f.winner = finalName;
-      stampShotApprovalIdentity(f, "winner", approvedAssetId);
+      writeFrameProductionAuthority(P, {
+        shotId: id, frameId: f.id, value: finalName, assetId: approvedAssetId, grant: approvalGrant, at: new Date().toISOString(),
+        applyEdge: () => {
+          f.winner = finalName;
+          stampShotApprovalIdentity(f, "winner", approvedAssetId);
+          if ((s.keyframes || [])[0]?.id === f.id) { s.winner = finalName; stampShotApprovalIdentity(s, "winner", approvedAssetId); }
+        },
+      });
     }
     complete = shotApprovalComplete(s);
     label = "FRAME APPROVED";
@@ -644,6 +666,8 @@ window.confirmEntityApproval = async (continueToNext = false) => {
          each repaired edge, so the NEXT rename can be resolved by identity
          instead of by a string that has already changed. */
       repairApprovalIdentity(x, { from: name, to: finalName, assetId: renamedAssetId, states: entityStateList(x, true) });
+      /* BATCH 1B: and the receipt, for the reason given at the shot-side twin. */
+      repairAuthorityReceiptIdentity(P, { from: name, to: finalName, assetId: renamedAssetId });
       SCAN = await (await fetch("/api/scan")).json();
     } else toast("Rename failed; approved with original filename");
   }
@@ -653,18 +677,35 @@ window.confirmEntityApproval = async (continueToNext = false) => {
      identity to record, and the approval proceeds on the filename exactly as it
      did before C2. */
   const approvedAssetId = (entityMedia(list, x).find((item) => item.name === finalName) || {}).assetId || renamedAssetId || "";
-  if (targetState) {
-    targetState.approvedFile = finalName;
-    targetState.approvedAt = new Date().toISOString();
-    targetState.parentValidation = null;
-    /* P4-SEM-C2: the approval records WHICH BYTES it approved, not only what they
-       were called at the time. Refused rather than stored when there is no id, so
-       a record never carries a malformed identity that would resolve to nothing. */
-    stampApprovalIdentity(targetState, approvedAssetId);
+  /* BATCH 1B: the reference approval modal writes through the same command as
+     everything else, and the same command applies the ownership veto — so a file
+     whose owner is unresolved or contested cannot be made canon from this screen
+     either. A refusal writes nothing and says why. */
+  const entityGrant = humanAuthorityGrant({ via: "entity-approval-modal", at: new Date().toISOString() });
+  const entityAuthorityStateId = targetState?.id || targetStateId || "state-default";
+  try {
+    writeEntityStateProductionAuthority(P, {
+      list, entityId: id, stateId: entityAuthorityStateId, value: finalName, assetId: approvedAssetId, grant: entityGrant, at: new Date().toISOString(),
+      applyEdge: () => {
+        if (targetState) {
+          targetState.approvedFile = finalName;
+          targetState.approvedAt = new Date().toISOString();
+          targetState.parentValidation = null;
+          /* P4-SEM-C2: the approval records WHICH BYTES it approved, not only what
+             they were called at the time. Refused rather than stored when there is
+             no id, so a record never carries a malformed identity. */
+          stampApprovalIdentity(targetState, approvedAssetId);
+        }
+        if (targetState?.isDefault || targetStateId === "state-default") {
+          x.approvedFile = finalName;
+          stampApprovalIdentity(x, approvedAssetId);
+        }
+      },
+    });
+  } catch (error) {
+    return toast(error.message || "That file cannot be approved for this reference");
   }
   if (targetState?.isDefault || targetStateId === "state-default") {
-    x.approvedFile = finalName;
-    stampApprovalIdentity(x, approvedAssetId);
     for (const childState of entityStateList(x, true)) if (!childState.isDefault) childState.parentValidation = null;
     if (!approvedIsCoverageSheet && typeof ensureCoverageSlots === "function" && list !== "characters") {
       const slots = ensureCoverageSlots(list, x);
@@ -701,15 +742,16 @@ window.confirmEntityApproval = async (continueToNext = false) => {
     row.approvalProvenance = { source: "human", aiReviewed: !!currentReview, aiPassed: !!currentReview?.pass, approvedAt: row.decidedAt };
   }
   if (nextState) {
-    /* NAVIGATION MAY NOT REPARENT. This was `nextState.parentStateId = targetStateId`
-       unconditionally, which is the write that closed the dogfood cycle: choosing
-       an ancestor from the ring made it the child of its own descendant. Choosing
-       what to edit next is a movement, not a statement about where that state
-       came from, so an existing parent edge is left exactly as it is. The only
-       write still permitted is establishing a FIRST parent on a state that
-       declares none, and only when the result stays acyclic. */
-    const assignment = safeParentAssignment(entityStateList(x, true), nextState.id, targetStateId);
-    if (assignment.write) nextState.parentStateId = assignment.parentStateId;
+    /* NAVIGATION MUTATES NO LINEAGE. NONE.
+
+       This was `nextState.parentStateId = targetStateId` unconditionally — the
+       write that closed the dogfood cycle. The first repair narrowed it to
+       "establish a first parent only", and the acceptance audit correctly called
+       that a different rule wearing the invariant's name: it offered an orphan
+       state as a continuation and watched a navigation button declare its
+       ancestry. There is no write here now, of any kind. Continuation candidates
+       are descendants, so the state being opened already has its parentage, and
+       establishing parentage is a separate, explicit act. */
     if (!nextState.generationMode || nextState.generationMode === "derive") nextState.generationMode = "derive";
   }
   x.workflowStatus = "APPROVED";

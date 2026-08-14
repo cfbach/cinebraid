@@ -378,7 +378,7 @@ async function v626CompleteStep(run, key, result = {}) {
   run.current = { ...(run.current || {}), stepKey: "", label: "" };
   return v626SaveRun(run, false);
 }
-/* WHY a step failed, in the only two categories that need different handling.
+/* WHOSE FAULT WAS THIS, and therefore whether retrying can possibly help.
 
    `local-package` is a deterministic fault in what CineBraid assembled, or in
    the project state it assembled from: the same inputs produce the same
@@ -386,11 +386,28 @@ async function v626CompleteStep(run, key, result = {}) {
    A5 is the case — a boundary correction package dereferenced a neighbour that
    does not exist, and automatic retry could never have repaired the input.
 
-   Everything else stays `provider`, which is what the retry path was built for. */
+   Everything else stays `provider`, which is what the retry path was built for.
+
+   BATCH 1B: a deterministic LOCAL PREFLIGHT refusal is added to the local class.
+   The frame-presence gate and the frame-identity gate both refuse before any
+   provider is contacted and before a paid job row exists, so nothing was spent
+   and nothing about the provider changed — reconstructing the same request will
+   reproduce the same refusal exactly. Classifying it `provider` (which is what
+   an unrecognised error defaulted to) both misnames the fault and spends an
+   attempt from a budget the director authorised for real generation. */
+const V6_LOCAL_PREFLIGHT_CODES = ["FRAME_PRESENCE_CONTRADICTION", "FRAME_PRESENCE_TARGET_UNRESOLVED"];
 function v626FailureClass(error) {
   if (error?.localPackageError === true || error?.failureClass === "local-package") return "local-package";
   if (error?.authorityViolation === true || error?.code === "HUMAN_AUTHORITY_REQUIRED") return "local-package";
+  if (error?.localPreflightError === true || error?.classification === "local-preflight") return "local-preflight";
+  if (V6_LOCAL_PREFLIGHT_CODES.includes(String(error?.code || ""))) return "local-preflight";
   return "provider";
+}
+/* The two local classes share one property that matters operationally: a retry
+   reconstructs the same input and reaches the same refusal, so the attempt
+   counter must not advance and no provider budget may be charged. */
+function v626IsDeterministicLocalFailure(error) {
+  return ["local-package", "local-preflight"].includes(v626FailureClass(error));
 }
 async function v626FailStep(run, key, error) {
   const step = v626Step(run, key);
@@ -398,7 +415,10 @@ async function v626FailStep(run, key, error) {
   step.error = String(error?.message || error || "Automation step failed");
   step.failureClass = v626FailureClass(error);
   step.remediation = String(error?.remediation || "");
-  step.activity = { ...(step.activity || {}), state: "failed", failureClass: step.failureClass, detail: [step.error, step.remediation].filter(Boolean).join(" "), updatedAt: v626Now() };
+  /* Recorded once, here, so no surface has to re-derive the union of the two
+     local classes to answer "can retrying this possibly help". */
+  const deterministic = v626IsDeterministicLocalFailure(error);
+  step.activity = { ...(step.activity || {}), state: "failed", failureClass: step.failureClass, deterministic, providerContacted: !deterministic, detail: [step.error, step.remediation].filter(Boolean).join(" "), updatedAt: v626Now() };
   step.updatedAt = v626Now();
   run.current = { ...(run.current || {}), stepKey: key, label: step.label || key };
   return v626SaveRun(run, false);
@@ -1245,7 +1265,23 @@ async function v626WaitFalJob(run, step, body) {
       step.error = data.error || `FAL submission returned HTTP ${response.status}`;
       await v626SaveRun(run, false, false);
       if (typeof v641NotifyAutomationActivity === "function") v641NotifyAutomationActivity(run);
-      throw new Error(data.error || "Could not start FAL generation");
+      /* BATCH 1B: the typed refusal from the universal pre-provider gate travels
+         with the error. Thrown bare, it reached v626FailureClass() anonymous and
+         was classified `provider` — so a deterministic local contradiction was
+         recorded as a provider fault and could spend an authorised retry. The
+         gate runs before any job row exists, so `providerContacted: false` is a
+         fact this dispatcher can assert rather than infer. */
+      const submissionError = new Error(data.error || "Could not start FAL generation");
+      submissionError.httpStatus = response.status;
+      if (data.code) submissionError.code = data.code;
+      if (data.classification) submissionError.classification = data.classification;
+      if (data.contradictions) submissionError.contradictions = data.contradictions;
+      if (data.classification === "local-preflight" || V6_LOCAL_PREFLIGHT_CODES.includes(String(data.code || ""))) {
+        submissionError.localPreflightError = true;
+        submissionError.providerContacted = false;
+        submissionError.remediation = "Correct the frame's presence declaration or the prompt text that contradicts it, then run this step again. No paid request was submitted and no attempt was spent.";
+      }
+      throw submissionError;
     }
     job = data.job;
     FAL_GENERATION_JOBS = [...(FAL_GENERATION_JOBS || []).filter((item) => item.id !== job.id), job];
@@ -1589,23 +1625,33 @@ function v626ApproveFrame(shotId, frameId, fileName, grant) {
      It is a guard now, not a claim. `grant` must be an explicit human approval
      command; assertHumanAuthority throws for everything else, including an
      omitted argument, which is what every machine call site looked like. */
-  assertHumanAuthority(grant, `Frame ${frameId} of ${shotId}`);
   const shot = shotById(shotId), frame = frameById(shot, frameId), previous = frame?.winner || "";
-  if (!shot || !frame || !fileName) throw new Error("Frame approval target is unavailable");
+  if (!shot || !frame || !fileName) { assertHumanAuthority(grant, `Frame ${frameId} of ${shotId}`); throw new Error("Frame approval target is unavailable"); }
   /* P4-SEM-C3. The edge records identity as well as the filename, so an approval
      survives the rename it performs. */
   const approvedAssetId = (takesFor(shotId).find((item) => item.name === fileName) || {}).assetId || "";
-  frame.winner = fileName;
-  stampShotApprovalIdentity(frame, "winner", approvedAssetId);
-  if ((shot.keyframes || [])[0]?.id === frame.id) {
-    shot.winner = fileName;
-    stampShotApprovalIdentity(shot, "winner", approvedAssetId);
-  }
-  if (typeof markCandidateApproved === "function") markCandidateApproved(shot, fileName, `frame:${frame.id}`);
-  if (previous && previous !== fileName && typeof guidedFrameApprovalChanged === "function") guidedFrameApprovalChanged(shotId, `frame:${frame.id}`, previous, fileName);
-  shot.workflowStatus = "IN PROGRESS"; shot.status = "BUILT";
-  ensureShotCreation(shot).activeGuidedFrameId = frame.id;
+  /* BATCH 1B: THE EDGE AND THE RECEIPT ARE ONE STATEMENT. The grant check, the
+     winner write and the durable receipt now happen inside a single command, so
+     there is no ordering of calls that produces a winner with nobody's name on
+     it. `applyEdge` runs after the actor is verified and before the receipt is
+     minted, which is why a refusal leaves the frame untouched. */
+  const receipt = writeFrameProductionAuthority(P, {
+    shotId, frameId, value: fileName, assetId: approvedAssetId, grant, at: v626Now(),
+    applyEdge: () => {
+      frame.winner = fileName;
+      stampShotApprovalIdentity(frame, "winner", approvedAssetId);
+      if ((shot.keyframes || [])[0]?.id === frame.id) {
+        shot.winner = fileName;
+        stampShotApprovalIdentity(shot, "winner", approvedAssetId);
+      }
+      if (typeof markCandidateApproved === "function") markCandidateApproved(shot, fileName, `frame:${frame.id}`);
+      if (previous && previous !== fileName && typeof guidedFrameApprovalChanged === "function") guidedFrameApprovalChanged(shotId, `frame:${frame.id}`, previous, fileName);
+      shot.workflowStatus = "IN PROGRESS"; shot.status = "BUILT";
+      ensureShotCreation(shot).activeGuidedFrameId = frame.id;
+    },
+  });
   dirty();
+  return receipt;
 }
 /* WHAT AUTOMATION IS ALLOWED TO WRITE INSTEAD OF AN APPROVAL.
 
@@ -1640,12 +1686,26 @@ function v627RecordFrameRecommendation(run, shotId, frameId, reviewed) {
 async function v626AutomateFrame(run, shotId, frameId) {
   let shot = shotById(shotId), frames = guidedFrames(shot), index = frames.findIndex((frame) => frame.id === frameId), frame = frames[index];
   const approved = guidedFrameApproved(shot, frame, takesFor(shotId), index);
-  if (run.config.reuseApproved && approved) {
+  /* BATCH 1B: REUSE IS A CONSUMER OF AUTHORITY, so it asks the same question the
+     gate asks. Reusing an existing image skips a paid pass AND advances the shot
+     chain past a human checkpoint — so a pre-repair automatic winner reaching
+     this branch is the audit's "downstream work unblocked by machine authority"
+     in its purest form. A frame whose selection nobody ever confirmed goes to
+     the gate instead, carrying that selection as the recommendation. */
+  const reuseReceipt = approved ? resumeAuthority(P, { kind: "shot-frame-approval", shotId, frameId }) : null;
+  if (run.config.reuseApproved && approved && reuseReceipt) {
     const key = `frame:${frameId}:reuse`;
-    if (v626Step(run, key).status !== "completed") await v626CompleteStep(run, key, { kind: "frame-approval", label: `Frame ${frame.label} approved`, frameId, winner: approved.name, result: { reused: true } });
+    if (v626Step(run, key).status !== "completed") await v626CompleteStep(run, key, { kind: "frame-approval", label: `Frame ${frame.label} approved`, frameId, winner: approved.name, result: { reused: true, authorityReceiptId: reuseReceipt.id } });
     v628AttachShotAutomationProvenance(run, frameId, approved.name, key, { reused: true });
     await flushPendingProjectSave();
     return approved.name;
+  }
+  if (run.config.reuseApproved && approved && !reuseReceipt) {
+    const historic = historicSelection(P, { targetType: "shot-frame", shotId, frameId });
+    await v626Log(run, `Frame ${frame.label} already shows ${approved.name}, but no human approval of it is on record${historic?.basis === "authority-revoked" ? " — the earlier approval was withdrawn" : ""}. It is offered for your decision rather than reused as canon.`, "warn");
+    const gateStep = v626Step(run, `frame:${frameId}:existing-selection`, "review", `Approve Frame ${frame.label}`);
+    Object.assign(gateStep, { frameId, pass: true, winner: approved.name, files: [approved.name], result: { ...(gateStep.result || {}), targetShotId: shotId, historicSelection: true, rationale: "This image was already selected for the frame, but no human approval of it is recorded." } });
+    await v627PauseForHumanReview(run, gateStep, `Approve Frame ${frame.label}`);
   }
   if (index === 0) await v626OpeningBlocking(run, shotId);
   else if (run.config.derivativeBlocking) await v626DerivativeBlocking(run, shotId, frameId);
@@ -1659,15 +1719,25 @@ async function v626AutomateFrame(run, shotId, frameId) {
        nobody in the loop. `humanApproved` is the only completion that carries a
        decision, and it is the same reading v626AutomateEntityState has always
        used. */
-    if (prior.status === "completed" && prior.pass && prior.winner && prior.result?.humanApproved) {
-      await v628RequireAutomationLease(run);
-      v626ApproveFrame(shotId, frameId, prior.winner, humanAuthorityGrant({ via: "automation-run-approval-gate", at: v626Now() }));
-      v628AttachShotAutomationProvenance(run, frameId, prior.winner, prior.key, { score: prior.score, humanApproved: true });
+    /* BATCH 1B: RESUME READS THE RECEIPT, NOT THE STEP.
+
+       `prior.result.humanApproved` describes what was true when the step closed.
+       The audit turned that into a resurrection: revoke the approval, resume the
+       run, and the stale boolean handed authority straight back — because resume
+       both trusted it AND issued itself a fresh grant to act on it. Resume now
+       asks whether a human decision EXISTS RIGHT NOW, and re-states nothing: a
+       live receipt means the edge is already in place, so there is nothing to
+       write. No receipt means the gate is open, whatever the step remembers. */
+    const priorReceipt = prior.status === "completed" && prior.pass && prior.winner
+      ? resumeAuthority(P, { kind: "shot-frame-approval", shotId, frameId })
+      : null;
+    if (priorReceipt) {
+      v628AttachShotAutomationProvenance(run, frameId, priorReceipt.value, prior.key, { score: prior.score, humanApproved: true });
       await flushPendingProjectSave();
-      return prior.winner;
+      return priorReceipt.value;
     }
-    /* A completed review that a person never decided is EVIDENCE, not canon. The
-       run re-parks on it rather than walking past it. */
+    /* A completed review that no live human decision stands behind is EVIDENCE,
+       not canon. The run re-parks on it rather than walking past it. */
     if (prior.status === "completed" && prior.pass && prior.winner) {
       await v627PauseForHumanReview(run, prior, `Approve Frame ${frame.label}`);
     }
@@ -1792,6 +1862,39 @@ async function runShotAutomation(runId) {
   } finally { await v627ReleaseAutomationLease(run); route(); }
 }
 
+/* THE DURABLE CLAIM A GENERATION LEAVES BEHIND.
+
+   Dogfood #2 A4 / Batch 1B. Ownership is decided by what the project RECORDS,
+   never by what a filename resembles — so the moment CineBraid receives media it
+   generated FOR a named entity, that fact has to become a record. The request
+   carried the owner; the outputs carry the filenames; this joins them.
+
+   Deliberately not an approval, not a decision, and not a review: a candidate
+   row with `decision: "unreviewed"` says only "these bytes belong to this
+   reference", which is precisely the question ownership asks. */
+function v627ClaimGeneratedEntityCandidates(list, entityId, job, details = {}) {
+  const entity = P[list]?.find((item) => item.id === entityId);
+  if (!entity || typeof entityCandidateRow !== "function") return 0;
+  let claimed = 0;
+  for (const output of (job?.outputs || [])) {
+    const fileName = String(output?.name || "");
+    if (!fileName) continue;
+    const existing = entityCandidateRow(entity, fileName, false);
+    const row = entityCandidateRow(entity, fileName, true);
+    if (!existing) {
+      row.decision = row.decision || "unreviewed";
+      row.generationJobId = job?.id || "";
+      row.generationModel = job?.model || "";
+      row.targetStateId = String(details.stateId || "");
+      row.automationRunId = String(details.runId || "");
+      row.automationStepKey = String(details.stepKey || "");
+      row.ownershipClaim = { actor: "automation", basis: "generated-for-this-reference", via: "entity-reference-generation", at: v626Now() };
+      claimed += 1;
+    }
+  }
+  if (claimed) dirty();
+  return claimed;
+}
 function v626EntityTarget(run) { const list = run.config?.list || run.entityList, id = run.config?.entityId || run.entityId; return { list, id, entity: P[list]?.find((item) => item.id === id) }; }
 /* The entity-side twin of v626ApproveFrame, guarded on the same terms. The
    entity chain never had the auto-approve defect — it has always required
@@ -1799,13 +1902,18 @@ function v626EntityTarget(run) { const list = run.config?.list || run.entityList
    to be correct today" is not an invariant, and one writer that can be called by
    a machine is enough to lose the property again. */
 function v626ApproveEntity(list, entityId, stateId, fileName, grant) {
-  assertHumanAuthority(grant, `${list} ${entityId} state ${stateId}`);
   const entity = P[list]?.find((item) => item.id === entityId), state = entityStateById(entity, stateId);
-  if (!entity || !state || !fileName) throw new Error("Entity approval target is unavailable");
-  state.approvedFile = fileName; state.approvedAt = v626Now();
-  if (state.isDefault) entity.approvedFile = fileName;
-  const row = entityCandidateRow(entity, fileName, false); if (row?.decision === "rejected") row.decision = "unreviewed";
-  entity.workflowStatus = "APPROVED"; entity.status = "APPROVED"; entity.approvedAt = v626Now(); dirty();
+  if (!entity || !state || !fileName) { assertHumanAuthority(grant, `${list} ${entityId} state ${stateId}`); throw new Error("Entity approval target is unavailable"); }
+  writeEntityStateProductionAuthority(P, {
+    list, entityId, stateId: state.id, value: fileName, grant, at: v626Now(),
+    applyEdge: () => {
+      state.approvedFile = fileName; state.approvedAt = v626Now();
+      if (state.isDefault) entity.approvedFile = fileName;
+      const row = entityCandidateRow(entity, fileName, false); if (row?.decision === "rejected") row.decision = "unreviewed";
+      entity.workflowStatus = "APPROVED"; entity.status = "APPROVED"; entity.approvedAt = v626Now();
+    },
+  });
+  dirty();
 }
 async function v626EntityBuild(run, list, entityId, stateId, round, revision = "") {
   const key = `entity:${stateId}:round-${round}:prompt`, step = v626Step(run, key, "prompt", `State prompt · round ${round}`);
@@ -2247,17 +2355,30 @@ function v666PromptDelta(previous, current) {
 
 async function v626AutomateEntityState(run, list, entityId, stateId) {
   let entity = P[list]?.find((item) => item.id === entityId), state = entityStateById(entity, stateId);
-  if (run.config.reuseApproved && state.approvedFile) {
+  /* BATCH 1B: the entity-side twin of the frame reuse rule. An approved file
+     with no live human receipt behind it is a historic selection, and reusing it
+     would advance the reference chain on machine authority. */
+  const entityReuseReceipt = state.approvedFile ? resumeAuthority(P, { kind: "entity-state-approval", list, entityId, stateId }) : null;
+  if (run.config.reuseApproved && state.approvedFile && entityReuseReceipt) {
     const key = `entity:${stateId}:reuse`;
-    if (v626Step(run, key).status !== "completed") await v626CompleteStep(run, key, { kind: "entity-approval", label: `${state.name || "State"} approved`, stateId, winner: state.approvedFile, result: { reused: true } });
+    if (v626Step(run, key).status !== "completed") await v626CompleteStep(run, key, { kind: "entity-approval", label: `${state.name || "State"} approved`, stateId, winner: state.approvedFile, result: { reused: true, authorityReceiptId: entityReuseReceipt.id } });
     v628AttachEntityAutomationProvenance(run, list, entityId, stateId, state.approvedFile, key, { reused: true });
     await flushPendingProjectSave();
     return state.approvedFile;
   }
+  if (run.config.reuseApproved && state.approvedFile && !entityReuseReceipt) {
+    await v626Log(run, `${state.name || "State"} already shows ${state.approvedFile}, but no human approval of it is on record. It is offered for your decision rather than reused as canon.`, "warn");
+    const gateStep = v626Step(run, `entity:${stateId}:existing-selection`, "review", `Approve ${state.name || "State"}`);
+    Object.assign(gateStep, { stateId, pass: true, winner: state.approvedFile, files: [state.approvedFile], result: { ...(gateStep.result || {}), historicSelection: true, rationale: "This reference was already selected for the state, but no human approval of it is recorded." } });
+    await v627PauseForHumanReview(run, gateStep, `Approve ${state.name || "State"}`);
+  }
   if (!state.isDefault) {
     const parent = assetStateParent(entity, state), parentFile = parent?.approvedFile || (parent?.isDefault ? entity.approvedFile : "");
     if (!parentFile) throw new Error(`${state.name || "State"} needs approved parent state ${parent?.name || "Default"}`);
-    state.parentStateId = parent.id; state.generationMode = "derive"; dirty(); await flushPendingProjectSave();
+    /* BATCH 1B: parentage is a lineage mutation, so automation asks the one
+       validator rather than assigning. A refusal leaves the graph untouched. */
+    applyStateParentMutation(entityStateList(entity, true), state.id, parent.id, { intent: "explicit-lineage-edit", via: "entity-state-automation" });
+    state.generationMode = "derive"; dirty(); await flushPendingProjectSave();
   }
   let revision = "";
   const maxRounds = v668EffectiveStateRounds(run);
@@ -2266,7 +2387,12 @@ async function v626AutomateEntityState(run, list, entityId, stateId) {
     /* The only route to completed + pass + winner is a director approving at the
        human gate, which stamps humanApproved. Resuming after that re-states the
        approval it already made; it never invents one. */
-    if (prior.status === "completed" && prior.pass && prior.winner && prior.result?.humanApproved) { v626ApproveEntity(list, entityId, stateId, prior.winner, humanAuthorityGrant({ via: "automation-run-approval-gate", at: v626Now() })); await flushPendingProjectSave(); return prior.winner; }
+    /* BATCH 1B: the entity-side twin of the frame resume rule — the receipt is
+       asked, the stale step result is not, and nothing is re-written. */
+    if (prior.status === "completed" && prior.pass && prior.winner) {
+      const priorEntityReceipt = resumeAuthority(P, { kind: "entity-state-approval", list, entityId, stateId });
+      if (priorEntityReceipt) { await flushPendingProjectSave(); return priorEntityReceipt.value; }
+    }
     if (round > 1) revision = v626Step(run, `entity:${stateId}:round-${round - 1}:review`).revision || "";
     const build = await v626EntityBuild(run, list, entityId, stateId, round, revision);
     entity = P[list]?.find((item) => item.id === entityId); state = entityStateById(entity, stateId);
@@ -2277,6 +2403,17 @@ async function v626AutomateEntityState(run, list, entityId, stateId) {
       const references = state.isDefault ? [] : entityGenerationReferences(list, entity, { state, mode: derivationMode });
       const prompt = state.isDefault ? build.prompt : entityGenerationPrompt(list, entity, build, references, { state, mode: derivationMode });
       const job = await v626WaitFalJob(run, genStep, { purpose: "entity-reference", entityList: list, entityId, entityType: { characters: "character", locations: "location", props: "prop", vehicles: "vehicle" }[list] || "entity", continuityStateId: state.id, continuityStateName: state.name || "", parentStateId: parentInfo?.parent?.id || "", parentStateName: parentInfo?.parent?.name || "", parentApprovedFile: derivationMode === "derive" ? parentInfo?.file || "" : "", derivationMode, sourceBuildId: build.id, prompt, references, outputCount: v640OutputsPerRequest(run), quality: v6211RunGenerationSettings(run).frameQuality, resolution: v6211RunGenerationSettings(run).frameResolution, aspectRatio: referenceAspectLabel(list) });
+      /* BATCH 1B: THE RUN RECORDS WHAT IT ASKED FOR, ON BEHALF OF WHOM.
+
+         Ownership authority requires a durable claim, and a file CineBraid
+         generated for this entity, in a run the director authorised for this
+         entity, is claimed by definition — the job named the owner in its own
+         request. The server writes the same row at ingest, so in production
+         this is idempotent; what it removes is the runtime's dependence on
+         that write having landed before the next read. Without it a generated
+         candidate is momentarily indistinguishable from a file somebody dropped
+         in the folder, which is a distinction that must never rest on timing. */
+      v627ClaimGeneratedEntityCandidates(list, entityId, job, { stateId, runId: run.id, stepKey: genKey });
       await v626CompleteStep(run, genKey, { childJobId: job.id, stateId, files: (job.outputs || []).map((item) => item.name), result: { ...(genStep.result || {}), outputs: job.outputs || [], usageCounted: true } });
     }
     entity = P[list]?.find((item) => item.id === entityId); state = entityStateById(entity, stateId);

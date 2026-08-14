@@ -126,6 +126,14 @@ function v670MachineActiveRun(run) {
    failure mode of guessing wrong in that direction is one extra item in "waiting
    for you"; the other direction hides real work. */
 function v670RunGateOutstanding(run) {
+  /* BATCH 1B: the SAME function the server's reconciliation asks, rather than a
+     re-implementation of half of it. `runHasActionableGate` answers both
+     directions — a parked gate whose authority has arrived, and a CLOSED gate
+     whose authority has since been revoked — so a render agrees with a poll
+     before the ledger has caught up. The local re-derivation below stays only as
+     the answer for a composition where the shared module is absent, and it errs
+     toward actionable for the reason stated above. */
+  if (typeof runHasActionableGate === "function" && typeof P !== "undefined" && P) return runHasActionableGate(run, P);
   if (typeof runGateRequirements !== "function" || typeof gateSatisfied !== "function") return true;
   const project = typeof P !== "undefined" ? P : null;
   if (!project) return true;
@@ -135,6 +143,13 @@ function v670RunGateOutstanding(run) {
 }
 function v670WaitingForHumanRun(run) {
   if (run?.status === "awaiting-review") return v670RunGateOutstanding(run);
+  /* BATCH 1B: an INTERRUPTED run one of whose recorded approvals has since been
+     WITHDRAWN is waiting again. Narrow on purpose — `runHasRevokedAuthority`
+     answers only that second direction, so an ordinary interrupted run is not
+     swept into "waiting for you" by this. Reconciliation moves the run back to
+     `awaiting-review` on the next ledger read; this makes the current render
+     agree without waiting for it. */
+  if (run?.status === "interrupted" && typeof runHasRevokedAuthority === "function" && typeof P !== "undefined" && P && runHasRevokedAuthority(run, P)) return true;
   /* Orchestration stopped and only a person can restart it. The run record still
      says "running"; the truthful sentence is "waiting for you". */
   return run?.status === "running" && v670RunLeaseLapsed(run);
