@@ -328,11 +328,24 @@ async function checkRepresentativeStates() {
    3 — NAVIGATION
    =========================================================================== */
 
-function taskbarStages(html) {
-  const start = html.indexOf('class="focused-taskbar bounded-shot-taskbar');
-  assert(start >= 0, "the shot workspace must render its declared taskbar");
-  const nav = html.slice(start, html.indexOf("</nav>", start));
-  return [...nav.matchAll(/selectBoundedTask\('shot-task','L1-01','([a-z-]+)'\)/g)].map((match) => match[1]);
+/* THE NAVIGATOR LEFT `#main` IN O4 and its coverage went with it.
+ *
+ * Until O4 the shot workspace rendered the five-stage taskbar itself, so this suite
+ * could read the declared order, the declared labels and the selection off the `#main`
+ * render. The navigator is now built by public/stage-surfaces.js into the shell's
+ * persistent bar, because `#main` is replaced wholesale on every render and a workflow
+ * navigator that is destroyed by moving through the workflow is not one.
+ *
+ * What this suite still owns, and still asserts below, is everything about `#main`: that
+ * the stored selection resolves through the declaration, that each declared stage renders
+ * a workspace of its own, and — new here — that the workspace builds NO navigator, which
+ * is the O1-relevant half of "there must not be two".
+ *
+ * The navigator's own order, labels and status rendering are asserted against the shipped
+ * renderer in tests/stage-surfaces.js, and in a live document in
+ * tests/stage-surfaces-real-browser.py. */
+function stageNavigatorsIn(html) {
+  return [...html.matchAll(/class="[^"]*\bfocused-taskbar\b[^"]*"/g)].length;
 }
 
 async function checkNavigation() {
@@ -349,7 +362,8 @@ async function checkNavigation() {
     });
     assert(rendered.html.includes(`data-selected-task="${stage.id}"`), `${stage.id} did not become the selected workspace`);
     assert(rendered.html.includes(`data-bounded-task="${stage.id}"`), `${stage.id} did not render its own workspace body`);
-    assert(rendered.html.includes(`<b>${stage.label.replace(/&/g, "&amp;")}</b>`), `${stage.id} did not render its declared label`);
+    assert.strictEqual(stageNavigatorsIn(rendered.html), 0,
+      `${stage.id}: the shot workspace built a stage navigator. Since O4 there is exactly one, it lives in the shell's persistent bar, and a second one built here could disagree with it.`);
     const marker = `data-bounded-task="${stage.id}">`;
     bodies.set(stage.id, rendered.html.slice(rendered.html.indexOf(marker) + marker.length));
   }
@@ -365,10 +379,12 @@ async function checkNavigation() {
   }
   note(`Navigation: all ${ids.length} declared stages resolve to a distinct rendered workspace`);
 
-  /* The taskbar's order is the DECLARED order, and every declared stage appears once. */
+  /* The workspace states ONE selection and builds no navigator. Order and labels are the
+     navigator's, and the navigator is O4's — see the note on stageNavigatorsIn above. */
   const full = await render("#/shot/L1-01", probe, { scan });
-  const order = taskbarStages(full.html);
-  assert.deepStrictEqual(order, [...ids], "the shot taskbar must render the declared stages in the declared order");
+  assert.strictEqual(stageNavigatorsIn(full.html), 0, "the shot workspace must render no stage navigator of its own");
+  assert.strictEqual((full.html.match(/data-selected-task="/g) || []).length, 1,
+    "the shot workspace must state its selected stage exactly once");
 
   /* Legacy stored values are translated by the DECLARATION. These are the values older
      builds wrote into browser workspace state and that real installs still carry. */
@@ -425,17 +441,23 @@ async function checkNavigation() {
   assert(FOCUSED_SOURCE.includes("function nextTaskIndex"), "the scene and legacy entity routes still need these helpers");
   note("Navigation: enhanceShot no longer derives shot stage identity, order or status from rendered children");
 
-  /* Removing presentation nodes must not change stage identity or order. Proven against
-     the shipped renderer with a shot whose panel CONTENT differs sharply — no clips,
-     one frame, no linked media — which must still declare the same five stages. */
+  /* Removing presentation nodes must not change stage identity. Proven against the
+     shipped renderer with a shot whose panel CONTENT differs sharply — no clips, one
+     frame, no linked media — which must still resolve to a declared stage and still
+     build no navigator of its own. The SEQUENCE this used to read off the taskbar is
+     asserted against the shipped navigator in tests/stage-surfaces.js, which drives it
+     with fixtures this render cannot reach. */
   const sparse = buildFixture();
   sparse.shots[0].clips = [];
   sparse.shots[0].keyframes = [{ ...sparse.shots[0].keyframes[0], winner: null }];
   sparse.mediaAssets = [];
   const sparseRender = await render("#/shot/L1-01", sparse, { scan: scanFor(sparse, []) });
-  assert.deepStrictEqual(taskbarStages(sparseRender.html), order,
-    "a shot with different rendered content must still declare the same stages in the same order");
-  note("Navigation: a structurally different shot renders an identical stage sequence");
+  const sparseSelection = sparseRender.html.match(/data-selected-task="([a-z-]+)"/);
+  assert(sparseSelection && ids.includes(sparseSelection[1]),
+    `a structurally different shot must still resolve to a declared stage, got ${sparseSelection && sparseSelection[1]}`);
+  assert.strictEqual(stageNavigatorsIn(sparseRender.html), 0,
+    "and must still build no navigator, whatever its rendered children are");
+  note("Navigation: a structurally different shot resolves to a declared stage and builds no navigator");
 }
 
 /* ===========================================================================

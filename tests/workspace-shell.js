@@ -168,8 +168,11 @@ function ruleBody(styles, selector) {
 function checkDeclaration(sources = SOURCES) {
   const Shell = loadDeclaration(sources.declaration);
   const names = [...Shell.SHELL_SLOT_NAMES];
-  assert.deepStrictEqual(names, ["center", "rail", "dock"],
-    `the shell must declare exactly the three regions O3 will mount into, found ${names.join(", ")}`);
+  /* Four since O4 added the bar. The list is pinned rather than counted so that adding a
+     region stays a decision somebody made here, in the declaration, rather than
+     something a consumer could arrange by mounting into a name nobody declared. */
+  assert.deepStrictEqual(names, ["center", "bar", "rail", "dock"],
+    `the shell must declare exactly the four regions its consumers mount into, found ${names.join(", ")}`);
 
   const center = Shell.shellSlot("center");
   assert.strictEqual(center.element, "main",
@@ -189,9 +192,22 @@ function checkDeclaration(sources = SOURCES) {
       `${name} must own its own scrolling, or its future content volume becomes page length`);
   }
 
+  /* The bar collapses and scrolls too, on the OTHER axis, and the distinction is
+     load-bearing: the rail and the dock bound content VOLUME, so they scroll vertically;
+     the bar holds a fixed small number of items whose combined WIDTH can exceed a narrow
+     viewport. A bar that owned vertical scrolling would be a bar that could grow, and it
+     sits above the workspace it would grow into. */
+  const bar = Shell.shellSlot("bar");
+  assert.strictEqual(bar.mountable, true, "the bar must be mountable by its consumer");
+  assert.strictEqual(bar.collapsesWhenEmpty, true,
+    "the bar must collapse when empty — it is honest on one route and must occupy nothing on the other fifteen");
+  assert.strictEqual(bar.scroll, "self-horizontal",
+    "the bar bounds width, not volume, and must say which axis it owns");
+
   const mountable = [...Shell.MOUNTABLE_SLOT_NAMES];
-  assert.deepStrictEqual(mountable, ["rail", "dock"],
-    "exactly the rail and the dock may be mounted into");
+  assert.deepStrictEqual(mountable, ["bar", "rail", "dock"],
+    "exactly the bar, the rail and the dock may be mounted into");
+  assert.strictEqual(Shell.shellSlotElementId("bar"), "cb-shell-bar");
   assert.strictEqual(Shell.shellSlotElementId("rail"), "cb-shell-rail");
   assert.strictEqual(Shell.shellSlotElementId("dock"), "cb-shell-dock");
   assert.strictEqual(Shell.shellSlot("nonsense"), null, "an undeclared region must resolve to nothing");

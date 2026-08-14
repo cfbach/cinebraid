@@ -35,6 +35,14 @@
      for Settings, for the first-run screen, for the project-failure screen — is how
      a shell acquires four disagreeing opinions about whether it is present.
 
+     Eligibility is the SHELL's question and it is coarse on purpose: it answers
+     "does this surface have somewhere to put persistent tools", not "does this
+     particular tool have anything to say here". A consumer whose content is
+     narrower than the shell — O4's stage strip exists only on a shot — answers its
+     own narrower question by declining to mount, which collapses its slot. Pushing
+     that distinction down here would give the shell an opinion about what its
+     consumers are for, and the slot list would then have to grow a route list each.
+
    * THE SLOTS ARE DECLARED, THE CONTENT IS NOT. This module names three regions
      and says nothing whatever about what goes in them. It contains no reference to
      `inputs`, `look`, `frames`, `motion` or `deliver`, and no reference to the
@@ -47,6 +55,19 @@
      center   The filmmaker's current production task. This is the SHIPPED `#main`
               element, adopted rather than replaced — every existing view renders
               into it exactly as before.
+
+     bar      Persistent horizontal slot directly beneath the topbar and above the
+              centre. Full workspace width, its own HORIZONTAL scroll, and sticky —
+              it is the one region a filmmaker is meant to be able to read without
+              scrolling back up. Added in O4 for the stage strip and its actions.
+
+              Note the axis, which is why `scroll` distinguishes them. The rail and
+              the dock bound CONTENT VOLUME, so they own their vertical scroll
+              ("self"). The bar's content is a fixed small number of items whose
+              combined WIDTH can exceed a narrow viewport, so it owns its horizontal
+              scroll and nothing else ("self-horizontal") — a bar that scrolled
+              vertically would be a bar that could grow, and a persistent surface
+              that can grow eventually eats the workspace it sits above.
 
      rail     Persistent right-hand slot. Bounded width, its own vertical scroll.
               Reserved for the future Assistant. Empty in this batch.
@@ -106,6 +127,16 @@
       mountable: false,
       collapsesWhenEmpty: false,
       scroll: "document",
+    },
+    {
+      name: "bar",
+      element: "cb-shell-bar",
+      owner: "the persistent workflow navigator and its stage actions",
+      purpose: "Persistent horizontal slot between the topbar and the current production task.",
+      mountable: true,
+      collapsesWhenEmpty: true,
+      /* Horizontal only. See THE VOCABULARY: this slot bounds width, not volume. */
+      scroll: "self-horizontal",
     },
     {
       name: "rail",

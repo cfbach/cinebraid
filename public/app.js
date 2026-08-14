@@ -112,7 +112,15 @@ const STAGE_STATUS = {
   failed: "Failed",
   approved: "Approved",
   complete: "Complete",
-  blocked: "Not needed yet",
+  /* O4: was "Not needed yet". This key is produced by exactly one derivation —
+     public/shared-stage-model.js's `blocked` status, for motion and deliver — and
+     that model is explicit that it CANNOT tell a stage that will never be needed
+     from one the shot has not reached: there is no not-applicable member, and
+     inventing the distinction is named as a declared limitation. "Not needed yet"
+     was that invented distinction wearing the strip's clothes. The stage has a real
+     unmet prerequisite and the model states it, so the strip says so and shows the
+     reason beside it. */
+  blocked: "Blocked",
 };
 
 /* One name per production concept, used everywhere that concept is counted. "Delivered"
