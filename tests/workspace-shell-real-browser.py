@@ -93,14 +93,43 @@ server = subprocess.Popen(
 # prove the page was left exactly as the shipped build renders it.
 FIXTURE_ID = "cb-o2-test-fixture"
 
+# The fixture is APPENDED BESIDE the shipped consumer's mounted node, not mounted over
+# it with CineBraidShell.mountSlot.
+#
+# mountSlot replaces the slot body's children, which would evict the O3 Assistant or
+# Terminal; those consumers notice their node has left the document and remount
+# themselves on the next activity tick, 3.5s later, silently deleting the fixture
+# mid-suite. Racing a shipped consumer for a slot is not a property worth testing and it
+# is a flake worth not having.
+#
+# Appending into the slot body keeps the slot genuinely occupied by the real consumer
+# while still giving these sections the CONTENT VOLUME they need to measure containment,
+# and the consumer's reconciler only ever patches inside its own node, so the fixture is
+# left alone. measure() is called for the same reason O3 calls it: a content change the
+# ResizeObserver has not been given a frame to notice yet.
 MOUNT_FIXTURE = """
 ({slot, lines}) => {
+  const body = window.__CINEBRAID_SHELL.slotBody(slot);
+  if (!body) return false;
+  body.querySelectorAll(':scope > [data-o2-fixture]').forEach((node) => node.remove());
   const node = document.createElement('div');
   node.dataset.o2Fixture = slot;
   node.className = 'cb-o2-test-fixture';
   node.innerHTML = Array.from({length: lines}, (_, i) =>
     `<p style="margin:0;padding:9px">${slot} fixture line ${i}</p>`).join('');
-  return window.CineBraidShell.mountSlot(slot, node);
+  body.appendChild(node);
+  window.__CINEBRAID_SHELL.measure();
+  return true;
+}
+"""
+
+CLEAR_FIXTURE = """
+(slot) => {
+  const body = window.__CINEBRAID_SHELL.slotBody(slot);
+  if (!body) return false;
+  body.querySelectorAll(':scope > [data-o2-fixture]').forEach((node) => node.remove());
+  window.__CINEBRAID_SHELL.measure();
+  return true;
 }
 """
 
@@ -192,7 +221,7 @@ try:
     base = f"http://127.0.0.1:{port}"
     with sync_playwright() as pw:
         browser = launch_chromium(pw, label=LABEL)
-        page = browser.new_page(viewport={"width": 1440, "height": 900})
+        page = browser.new_page(viewport={"width": 1600, "height": 1000})
         page.on("pageerror", lambda e: page_errors.append(str(e)))
 
         def guard(route):
@@ -242,22 +271,67 @@ try:
         for key, label in [("roots", "shell root"), ("regions", "Main region"), ("rails", "rail slot"),
                            ("docks", "dock slot"), ("centres", "centre")]:
             assert initial[key] == 1, f"1. found {initial[key]} of the {label}; exactly one must exist"
-        assert initial["railDisplay"] == "none" and initial["dockDisplay"] == "none", \
-            f"1. an unmounted slot must paint nothing, got rail={initial['railDisplay']} dock={initial['dockDisplay']}"
-        assert not initial["railOccupied"] and not initial["dockOccupied"], \
-            "1. O2 must ship both slots empty — no placeholder Assistant or Terminal content"
         assert initial["centreInsideRegion"] == "cb-shell-main", "1. the centre must sit inside the Main region"
         assert initial["railInsideRegion"] == "cb-shell-main", "1. the rail must sit inside the Main region"
         assert initial["dockOutsideRegion"] == "workspace", \
             f"1. the dock must be a sibling of the Main region, found inside #{initial['dockOutsideRegion']}"
-        findings.append("1. one shell root, one Main region, one centre, one rail, one dock — both slots ship collapsed and empty")
+
+        # BOTH SLOTS ARE NOW OCCUPIED, and that is the point of O3 rather than a
+        # regression here. This suite asserted "O2 ships both slots empty" because O2
+        # deliberately shipped no content; O3 mounts the Assistant and the Activity
+        # Terminal, so the claim is superseded. What survives — and is O2's real property
+        # — is that EMPTY MEANS ABSENT, so it is proven directly instead of by accident:
+        # clear a slot, read the computed display back, then let the consumer repaint.
+        assert initial["railOccupied"] and initial["dockOccupied"], \
+            "1. the shipped build must mount a consumer in each slot; if both are empty the O3 surfaces did not load"
+        assert initial["railDisplay"] != "none" and initial["dockDisplay"] != "none", \
+            f"1. an occupied slot on a creator surface must paint, got rail={initial['railDisplay']} dock={initial['dockDisplay']}"
+        emptied = page.evaluate("""() => {
+            window.CineBraidShell.clearSlot('rail');
+            window.CineBraidShell.clearSlot('dock');
+            const rail = document.getElementById('cb-shell-rail');
+            const dock = document.getElementById('cb-shell-dock');
+            return {
+              railDisplay: getComputedStyle(rail).display, dockDisplay: getComputedStyle(dock).display,
+              railAttr: rail.hasAttribute('data-occupied'), dockAttr: dock.hasAttribute('data-occupied'),
+              reserve: getComputedStyle(document.getElementById('app')).getPropertyValue('--cb-dock-reserve').trim(),
+            };
+        }""")
+        assert emptied["railDisplay"] == "none" and emptied["dockDisplay"] == "none", \
+            f"1. an emptied slot must paint nothing, got rail={emptied['railDisplay']} dock={emptied['dockDisplay']}"
+        assert not emptied["railAttr"] and not emptied["dockAttr"], "1. occupancy state survived clearSlot"
+        assert emptied["reserve"] in ("", "0px"), f"1. an empty dock must reserve nothing, got '{emptied['reserve']}'"
+        page.evaluate("() => window.CineBraidCreatorSurfaces.paint()")
+        page.wait_for_timeout(300)
+        assert page.evaluate("() => window.CineBraidShell.slotHasContent('rail') && window.CineBraidShell.slotHasContent('dock')"), \
+            "1. the consumer must remount after its slots were cleared"
+        findings.append("1. one shell root, one Main region, one centre, one rail, one dock; both slots occupied by the "
+                        "shipped consumers, and clearing either collapses it to nothing and releases its reservation")
 
         # ---- 2. the five declared stages still render ---------------------------------
         stages = page.evaluate("() => (window.SHOT_STAGE_IDS || []).slice()")
         assert len(stages) == 5, f"2. expected the five declared stages, got {stages}"
-        for stage_id in stages:
+
+        def select_stage(stage_id):
+            """Request a stage, then wait for THAT STAGE to be the one on screen.
+
+            selectBoundedTask writes the focused task synchronously and then calls
+            route(), which is ASYNCHRONOUS — page.evaluate returns while the previous
+            stage's body is still in #main. The fixed 220ms sleep this replaces was
+            waiting for time rather than for the stage; the identical contract was proven
+            defective on a slower CI runner in
+            tests/creator-surfaces-real-browser.py, whose 8b control shows the focused
+            task already changed while the rendered body had not.
+
+            `.guided-work-stack[data-bounded-task]` is the marker the assertion below
+            reads, so waiting on it is waiting for exactly the fact under test."""
             page.evaluate("id => selectBoundedTask('shot-task', %s, id)" % json.dumps(SHOT), stage_id)
-            page.wait_for_timeout(220)
+            page.wait_for_function(
+                """(want) => document.querySelector('.guided-work-stack')?.dataset.boundedTask === want""",
+                arg=stage_id, timeout=30000)
+
+        for stage_id in stages:
+            select_stage(stage_id)
             body = page.evaluate("() => document.querySelector('.guided-work-stack')?.dataset.boundedTask || ''")
             assert body == stage_id, f"2. selecting {stage_id} rendered the {body} body"
         findings.append(f"2. all five declared stages still render in the centre ({' -> '.join(stages)})")
@@ -270,8 +344,7 @@ try:
         assert "MISSING" not in before.values(), f"3. a shell node was missing before the stage sweep: {before}"
 
         for stage_id in stages:
-            page.evaluate("id => selectBoundedTask('shot-task', %s, id)" % json.dumps(SHOT), stage_id)
-            page.wait_for_timeout(220)
+            select_stage(stage_id)
             after = page.evaluate(READ_STAMP)
             for name, stamp in before.items():
                 assert after[name] == stamp, \
@@ -311,7 +384,7 @@ try:
         # containment. So both measurements below are taken with both slots mounted and
         # the same geometry, and only the AMOUNT of content differs. Both fixtures are
         # already taller than the dock's bound, so the reservation is identical in both.
-        page.set_viewport_size({"width": 1440, "height": 900})
+        page.set_viewport_size({"width": 1600, "height": 1000})
         page.wait_for_timeout(300)
 
         page.evaluate(MOUNT_FIXTURE, {"slot": "rail", "lines": 60})
@@ -319,7 +392,7 @@ try:
         page.wait_for_timeout(350)
         modest = page.evaluate(GEOMETRY)
         assert modest["railShown"] and modest["dockShown"], \
-            "6. both slots must be visible at 1440px once content is mounted"
+            "6. both slots must be visible at 1600px once content is mounted"
         assert modest["railScrollsInternally"], "6. the rail must scroll internally, not lengthen the page"
         assert modest["dockScrollsInternally"], "6. the dock must scroll internally, not lengthen the page"
         assert modest["dockHeight"] <= round(modest["innerHeight"] * 0.38) + 2, \
@@ -344,22 +417,26 @@ try:
         findings.append(f"6. multiplying both slots' content 10x (60 -> 600 paragraphs) changed page height by "
                         f"{growth}px and dock height by 0px; both scroll internally")
 
-        # The reservation is real: removing the dock's content must give the space back.
-        reserved_height = flooded["scrollHeight"]
-        page.evaluate("() => window.CineBraidShell.clearSlot('dock')")
-        page.wait_for_timeout(300)
+        # THE RESERVATION TRACKS THE DOCK, at both content volumes. A fixed dock cannot
+        # push anything, so the only thing standing between the filmmaker and a hidden
+        # row of controls is this number agreeing with the rendered height — under-reserve
+        # and the bottom of the workspace is covered, over-reserve and there is a dead
+        # band. That an EMPTY slot collapses and releases the reservation entirely is
+        # section 1's check; this is the same invariant while the dock is in use.
+        page.evaluate(CLEAR_FIXTURE, "dock")
+        page.wait_for_timeout(350)
         released = page.evaluate(GEOMETRY)
-        assert not released["dockShown"], "6. clearing the dock must return it to its collapsed empty state"
-        assert released["reserve"] in ("", "0px"), \
-            f"6. an empty dock must reserve nothing, got '{released['reserve']}'"
-        given_back = reserved_height - released["scrollHeight"]
-        assert abs(given_back - flooded["dockHeight"]) <= 4, \
-            f"6. clearing the dock returned {given_back}px but it occupied {flooded['dockHeight']}px — " \
-            f"the reservation and the dock disagree, so the dock is either hiding the centre or padding it"
-        page.evaluate(MOUNT_FIXTURE, {"slot": "dock", "lines": 600})
-        page.wait_for_timeout(300)
-        findings.append(f"6. unmounting returns the dock to its empty state and gives back exactly its "
-                        f"{flooded['dockHeight']}px reservation")
+        assert released["dockShown"], \
+            "6. the dock still holds the shipped Terminal, so removing the fixture must not collapse it"
+        assert released["dockHeight"] < flooded["dockHeight"], \
+            f"6. removing 600 paragraphs did not shrink the dock ({flooded['dockHeight']}px -> {released['dockHeight']}px)"
+        for label, geo in [("under load", flooded), ("after the fixture was removed", released)]:
+            reserve = int((geo["reserve"] or "0px").replace("px", "") or 0)
+            assert abs(reserve - geo["dockHeight"]) <= 2, \
+                f"6. {label} the dock renders {geo['dockHeight']}px and reserves {reserve}px — " \
+                f"the dock is either hiding the bottom of the centre or padding it with dead space"
+        findings.append(f"6. the reservation tracked the dock at both volumes "
+                        f"({flooded['dockHeight']}px under load, {released['dockHeight']}px after)")
 
         # ---- 7 & 10. no horizontal overflow, and the dock never covers navigation -----
         width_notes = []
@@ -388,7 +465,7 @@ try:
         # N1: rebuild the slots the way a stage-owned rail would, and require the identity
         # assertion above to notice. Without this, section 3 could be passing because the
         # page never changes rather than because the shell is stable.
-        page.set_viewport_size({"width": 1440, "height": 900})
+        page.set_viewport_size({"width": 1600, "height": 1000})
         page.wait_for_timeout(250)
         control_before = page.evaluate(STAMP)
         page.evaluate("""() => {
@@ -539,40 +616,30 @@ try:
         assert retained["dockShown"], "11. returning to a creator surface must paint the retained content again"
         findings.append("11. content mounted before a route change is retained through Settings and repainted on return")
 
-        # Unmounting returns the slot to its legitimate empty state, from the same API a
-        # future consumer would use — no DOM surgery, no reload.
-        emptied = page.evaluate("""() => {
-            window.CineBraidShell.clearSlot('rail');
-            window.CineBraidShell.clearSlot('dock');
-            const rail = document.getElementById('cb-shell-rail');
-            const dock = document.getElementById('cb-shell-dock');
-            return {
-              railOccupied: window.CineBraidShell.slotHasContent('rail'),
-              dockOccupied: window.CineBraidShell.slotHasContent('dock'),
-              railDisplay: getComputedStyle(rail).display,
-              dockDisplay: getComputedStyle(dock).display,
-              railAttr: rail.hasAttribute('data-occupied'),
-              dockAttr: dock.hasAttribute('data-occupied'),
-            };
-        }""")
-        assert not emptied["railOccupied"] and not emptied["dockOccupied"], "11. clearSlot left content behind"
-        assert emptied["railDisplay"] == "none" and emptied["dockDisplay"] == "none", \
-            f"11. a cleared slot must collapse again, got rail={emptied['railDisplay']} dock={emptied['dockDisplay']}"
-        assert not emptied["railAttr"] and not emptied["dockAttr"], "11. occupancy state survived clearSlot"
-        findings.append("11. clearSlot returns both slots to their collapsed, unoccupied empty state")
-
         # ---- teardown: the page is left exactly as the shipped build renders it -------
+        # The fixture is removed with the same helper that added it, and the shipped
+        # consumers are then required to be the only occupants — which is what the page
+        # looked like before this suite touched it.
+        page.evaluate(CLEAR_FIXTURE, "rail")
+        page.evaluate(CLEAR_FIXTURE, "dock")
+        page.evaluate("() => window.CineBraidCreatorSurfaces.paint()")
+        page.wait_for_timeout(350)
         final = page.evaluate("""() => ({
             fixtures: document.querySelectorAll('[data-o2-fixture]').length,
             controls: document.querySelectorAll('#cb-o2-control-unbound,#cb-o2-control-nofloor,#cb-o2-control-wide').length,
             railOccupied: window.CineBraidShell.slotHasContent('rail'),
             dockOccupied: window.CineBraidShell.slotHasContent('dock'),
+            railChildren: [...document.querySelectorAll('#cb-shell-rail > .cb-shell-slot-body > *')].map((n) => n.id),
+            dockChildren: [...document.querySelectorAll('#cb-shell-dock > .cb-shell-slot-body > *')].map((n) => n.id),
         })""")
         assert final["fixtures"] == 0 and final["controls"] == 0, \
-            f"teardown: test-only nodes survived the reload: {final}"
-        assert not final["railOccupied"] and not final["dockOccupied"], \
-            "teardown: the shipped build must render both slots empty"
-        findings.append("teardown. no test-only content or control styles remain; both slots are empty again")
+            f"teardown: test-only nodes survived: {final}"
+        assert final["railOccupied"] and final["dockOccupied"], \
+            "teardown: the shipped build mounts a consumer in each slot"
+        assert final["railChildren"] == ["cb-assistant-mount"] and final["dockChildren"] == ["cb-terminal-mount"], \
+            f"teardown: each slot must hold exactly its one shipped consumer, got {final['railChildren']} / {final['dockChildren']}"
+        findings.append("teardown. no test-only content or control styles remain; each slot holds exactly its one "
+                        "shipped consumer")
 
         assert not page_errors, f"the page raised uncaught errors: {page_errors}"
         browser.close()

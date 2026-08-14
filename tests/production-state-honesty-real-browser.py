@@ -262,15 +262,21 @@ try:
         findings.append(f"C: a hovered DISMISS survived {len(survived)} consecutive {REFRESH_MS} ms refreshes")
 
         # ---- C2. THE ROW SURVIVES ITS OWN CONTENT CHANGING -------------------------
+        # EVERY SELECTOR BELOW IS SCOPED TO THE DRAWER, and has to be from O3 onwards.
+        # The Activity Terminal in the bottom dock keys its rows with the SAME
+        # data-activity-key namespace — deliberately, so the two surfaces can be compared
+        # run for run — and the dock precedes the drawer in document order, so an
+        # unscoped querySelector returns the Terminal's row and these assertions would be
+        # made about the wrong surface entirely.
         # An unchanged row surviving is the easy half and never needed protecting. A run
         # rewrites its label, its step text or its error EXACTLY when the director is
         # reaching for DISMISS, and the first version of this repair replaced the whole
         # row whenever its markup differed by a byte - taking the button with it. Driven
         # here rather than waited for, so the result is deterministic.
-        row = page.query_selector('[data-activity-key="run:state-failed"]')
+        row = page.query_selector('#automation-activity-drawer [data-activity-key="run:state-failed"]')
         assert row, "C2 setup: the failed run must render a keyed row"
         before = page.evaluate("""() => {
-            const node = document.querySelector('[data-activity-key="run:state-failed"]');
+            const node = document.querySelector('#automation-activity-drawer [data-activity-key="run:state-failed"]');
             return { key: node.getAttribute('data-activity-key'), text: node.innerText };
         }""")
         page.evaluate("""() => {
@@ -280,7 +286,7 @@ try:
             v641RenderActivityDrawer();
         }""")
         after = page.evaluate("""() => {
-            const node = document.querySelector('[data-activity-key="run:state-failed"]');
+            const node = document.querySelector('#automation-activity-drawer [data-activity-key="run:state-failed"]');
             return { key: node.getAttribute('data-activity-key'), text: node.innerText,
                      buttons: [...node.querySelectorAll('button')].map(b => b.textContent.trim()) };
         }""")
@@ -292,7 +298,7 @@ try:
         assert dismiss.evaluate("el => el.textContent.trim()") == "DISMISS", \
             "C2 the surviving handle must still be the DISMISS control"
         assert dismiss.evaluate(
-            "el => el === document.querySelector('[data-activity-key=\\\"run:state-failed\\\"] button.ghost-btn')"), \
+            "el => el === document.querySelector('#automation-activity-drawer [data-activity-key=\\\"run:state-failed\\\"] button.ghost-btn')"), \
             "C2 the surviving handle must still be the node the drawer renders"
         # ...and the change must genuinely have landed, not been swallowed by the patch.
         assert "retry 2" in after["text"].lower(), f"C2 the changed label must display: {after['text']!r}"
@@ -312,7 +318,7 @@ try:
             window.__cbSectionRows = v670SectionRows;
             window.v670SectionRows = (node) => [...(node?.children || [])];
         }""")
-        broken_row = page.query_selector('[data-activity-key="run:state-failed"]')
+        broken_row = page.query_selector('#automation-activity-drawer [data-activity-key="run:state-failed"]')
         assert broken_row, "C2 control setup: the keyed row must be present before the probe"
         page.evaluate("""() => {
             const run = (AUTOMATION_RUNS || []).find(r => r.id === 'state-failed');

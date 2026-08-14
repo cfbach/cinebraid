@@ -44,10 +44,18 @@ assert(activity.includes("strip.hidden = !visible"), "the global live strip must
 /* The strip is inserted into the workspace ahead of the content rather than appended to
    the end of <body>. It used to name #workspace as the parent directly; the creator
    workspace shell put #main inside the Main region, and insertBefore throws NotFoundError
-   when the reference node is not a child of the parent it is given. Asking #main for its
-   own parent keeps the placement and survives the nesting, so that is what is pinned. */
-assert(activity.includes("main?.parentNode"), "the live strip must anchor to the workspace content's own parent rather than assuming its depth");
-assert(activity.includes("parent.insertBefore(strip, main)"), "the live strip must be placed ahead of the workspace content, not appended to the document");
+   when the reference node is not a child of the parent it is given.
+
+   O2 fixed that crash by anchoring on #main's own parent. O3 found the fix incomplete:
+   the strip is NOT position:fixed — the v6.6.2.2 pass overrode it to
+   `position:relative!important` — so it is an in-flow banner, and #main's parent is a
+   two-track grid holding the centre and the Assistant rail. An in-flow third child took
+   the centre's track and rendered the workspace at the rail's 340px. So the anchor is the
+   REGION, which puts the strip back in #workspace exactly where it sat before O2, and
+   #main remains the fallback for a document with no shell region. */
+assert(activity.includes('getElementById("cb-shell-main")'), "the live strip must anchor on the Main region so an in-flow banner lands beside it in #workspace, not inside its two-track grid");
+assert(activity.includes("anchor?.parentNode"), "the live strip must be inserted into its anchor's own parent rather than assuming its depth");
+assert(activity.includes("parent.insertBefore(strip, anchor)"), "the live strip must be placed ahead of the workspace content, not appended to the document");
 assert(scene.includes("Continue from current scene"), "scene planning must support resume-aware continuation");
 assert(scene.includes("reviewOnly"), "scene planning must support review-only continuation");
 assert(audioBuilder.includes("buildSceneAudioPrompts"), "scene audio prompts must have a visible AI build workflow");

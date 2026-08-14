@@ -110,17 +110,43 @@ try:
             assert inner.evaluate("e=>e.open") is True, f"{label}: reference builder collapsed"
             after_top = inner.evaluate("e=>e.getBoundingClientRect().top")
             assert abs(after_top - before_top) <= 18, f"{label}: reference builder shifted {after_top-before_top:.1f}px"
+
+        # MEASURE FROM WHERE THE CLICK ACTUALLY HAPPENS.
+        #
+        # Playwright scrolls a control into view before clicking it, and that scroll is
+        # legitimate — a person has to reach the button too. What this suite is testing is
+        # that the RE-RENDER does not move the workspace, so the baseline has to be taken
+        # after the page has settled where the click will occur, not before.
+        #
+        # It mattered from O3 onwards: with the Assistant rail occupied the centre column
+        # is ~340px narrower, so the reference builder is taller and its Build Prompt
+        # button sits further below the card's top. Playwright then scrolled 442px to
+        # reach it, app.js captured and faithfully restored that scroll position, and the
+        # suite scored the pre-click viewport against the post-click one and called a
+        # correct render a 442px jump.
+        # The button is CENTRED rather than merely "in view": the dock is fixed to the
+        # bottom of the viewport, so a control resting in the last 128px is technically
+        # visible and still gets scrolled again by the click's own actionability check.
+        # Centring leaves enough margin that the click needs no scroll of its own, which
+        # is what makes the before/after comparison a comparison of one thing.
+        def stable_click(target, label):
+            target.evaluate("e => e.scrollIntoView({block: 'center'})")
+            page.wait_for_timeout(150)
+            before = page.locator("details.asset-creation-card").evaluate("e=>e.getBoundingClientRect().top")
+            target.click()
+            return before
+
         open_hash("#/prop/PROP-PARCEL")
         outer, inner = open_reference_builder()
         inner.evaluate("e=>e.scrollIntoView({block:'start'})"); page.wait_for_timeout(80)
-        top = inner.evaluate("e=>e.getBoundingClientRect().top")
-        inner.get_by_role("button", name=re.compile("Build Prompt", re.I)).click(); page.wait_for_timeout(450)
+        top = stable_click(inner.get_by_role("button", name=re.compile("Build Prompt", re.I)), "Build prompt")
+        page.wait_for_timeout(450)
         assert_reference_stable("Build prompt", top)
-        top = page.locator("details.asset-creation-card").evaluate("e=>e.getBoundingClientRect().top")
-        page.locator("details.asset-creation-card").get_by_role("button", name="Improve").click(); page.wait_for_timeout(450)
+        top = stable_click(page.locator("details.asset-creation-card").get_by_role("button", name="Improve"), "Improve")
+        page.wait_for_timeout(450)
         assert_reference_stable("Improve", top)
-        top = page.locator("details.asset-creation-card").evaluate("e=>e.getBoundingClientRect().top")
-        page.locator("details.asset-creation-card").get_by_role("button", name="GENERATE").click(); page.wait_for_selector("text=START GENERATION")
+        top = stable_click(page.locator("details.asset-creation-card").get_by_role("button", name="GENERATE"), "Generate")
+        page.wait_for_selector("text=START GENERATION")
         page.get_by_role("button", name="START GENERATION").click(); page.wait_for_timeout(500)
         outer = page.locator("details.reference-assisted-tools"); inner = page.locator("details.asset-creation-card")
         assert outer.evaluate("e=>e.open") is True, "Generate: optional assisted tools collapsed"

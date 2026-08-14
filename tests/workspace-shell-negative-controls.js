@@ -116,6 +116,27 @@ function overflowControls() {
   control("C6 the rail becomes unbounded", "checkOverflowOwnership",
     { styles: mutate(SOURCES.styles, "max-height:calc(100vh - 64px - var(--cb-dock-reserve,0px));overflow-y:auto", "overflow-y:auto", "C6") },
     "An unbounded rail lets an Assistant conversation set the page height.");
+
+  /* The rail's width and its two thresholds are one piece of arithmetic, added in O3
+     when the rail acquired content. Each control breaks the relation a different way. */
+  control("C6a the compact band is removed, so the rail vanishes on ordinary laptops", "checkRailWidthBands",
+    { styles: mutate(SOURCES.styles,
+        "  #app{--cb-shell-rail-width:240px}\n}",
+        "}",
+        "C6a") },
+    "Without a compact band the rail is 340px or nothing, and nothing is what 1366px and 1440px get — the two most common laptop widths, and the ones O3's primary surface most needs to survive.");
+
+  control("C6b the rail stays 340px into the compact band", "checkRailWidthBands",
+    { styles: mutate(SOURCES.styles, "#app{--cb-shell-rail-width:240px}", "#app{--cb-shell-rail-width:340px}", "C6b") },
+    "A 340px rail below 1460px leaves the centre under 900px, which is the band no component rule in this stylesheet was written for.");
+
+  control("C6c the hide threshold drops below what the compact rail can afford", "checkRailWidthBands",
+    { styles: mutate(SOURCES.styles, "@media(max-width:1359px){", "@media(max-width:1179px){", "C6c") },
+    "Keeping a 240px rail down to 1180px leaves an 760px centre; the threshold has to move with the rail's width, not stay where an empty rail left it.");
+
+  control("C6d the full-width declaration is dropped back to a var() fallback", "checkRailWidthBands",
+    { styles: mutate(SOURCES.styles, "#app{--cb-shell-rail-width:340px}\n\n/* Slot defaults", "\n/* Slot defaults", "C6d") },
+    "With the width living only in a var() fallback there is no declaration for the compact band to override or for this arithmetic to read, and the two numbers drift apart unnoticed.");
 }
 
 /* ===========================================================================
@@ -253,12 +274,21 @@ function structuralControls() {
         "C23") },
     "The shell must react to the render, not be driven by it; a renderer that knows the shell is a renderer the next shell change has to edit.");
 
-  control("C24 the live strip goes back to assuming #main's parent", "checkRuntimeOwnership",
+  control("C24 the live strip goes back to naming #workspace as the parent", "checkRuntimeOwnership",
     { activity: mutate(SOURCES.activity,
-        "    const parent = main?.parentNode || document.getElementById(\"workspace\");\n    if (main && parent && typeof parent.insertBefore === \"function\") parent.insertBefore(strip, main);",
-        "    const workspace = document.getElementById(\"workspace\");\n    if (workspace && main && typeof workspace.insertBefore === \"function\") workspace.insertBefore(strip, main);",
+        "    const parent = anchor?.parentNode || document.getElementById(\"workspace\");\n    if (anchor && parent && typeof parent.insertBefore === \"function\") parent.insertBefore(strip, anchor);",
+        "    const workspace = document.getElementById(\"workspace\");\n    if (workspace && typeof workspace.insertBefore === \"function\") workspace.insertBefore(strip, document.getElementById(\"main\"));",
         "C24") },
     "insertBefore throws NotFoundError when the reference node is not a child of the parent, and #main is now inside the Main region — this would break the global activity strip on every route.");
+
+  /* Added in O3, when the strip turned out to be in flow rather than fixed. C24 guards
+     the crash; this guards the layout the crash-fix accidentally created. */
+  control("C24b the live strip is anchored inside the Main region", "checkRuntimeOwnership",
+    { activity: mutate(SOURCES.activity,
+        "    const region = document.getElementById(\"cb-shell-main\");\n    const anchor = region || document.getElementById(\"main\");",
+        "    const anchor = document.getElementById(\"main\");",
+        "C24b") },
+    "The strip is position:relative, so an anchor inside the Main region makes it a third item in a two-track grid: it takes the centre's track and the workspace renders at the rail's 340px.");
 
   note("The region declaration and the mount contract:");
 

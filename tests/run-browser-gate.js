@@ -42,6 +42,7 @@ const SUITES = [
   "check:state-honesty-browser",
   "check:stage-model-browser",
   "check:workspace-shell-browser",
+  "check:creator-surfaces-browser",
   "check:candidate-review-browser",
   "check:focused-browser",
   "check:state-binding-browser",

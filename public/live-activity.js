@@ -114,6 +114,23 @@ function v670WaitingForHumanRun(run) {
      says "running"; the truthful sentence is "waiting for you". */
   return run?.status === "running" && v670RunLeaseLapsed(run);
 }
+/* DOES THIS RUN NEED A PERSON TO LOOK AT IT BECAUSE SOMETHING WENT WRONG?
+
+   The third member of the pair above, extracted for the same reason the first two
+   were: the list `["failed","interrupted","cancelled"]` was stated four times in this
+   file - the drawer row's DISMISS gate, the toolbar aggregate, the bulk-archive list
+   and the drawer's own section - and the creator workspace surfaces would have made a
+   fifth. Four copies of one idea is how the idea drifts from its meaning, which is the
+   whole lesson of the machine-active predicate.
+
+   THE SEMANTICS ARE UNCHANGED. This returns exactly what those four expressions
+   returned, for exactly the same runs. `interrupted` is known to be overloaded
+   upstream - it means both "the director approved, resuming now" and "a child run
+   needs a director" - and it is passed through here unchanged rather than split,
+   because splitting it touches the dispatch path and is a different piece of work. */
+function v670AttentionRun(run) {
+  return ["failed", "interrupted", "cancelled"].includes(run?.status);
+}
 /* Unfinished, so the poller keeps asking - deliberately NOT the active predicate.
    A run parked at a human gate still needs refreshing, because the approval may
    arrive in another window. */
@@ -142,6 +159,7 @@ function v670ManualElapsedLabel(row) {
 }
 window.v670MachineActiveRun = v670MachineActiveRun;
 window.v670WaitingForHumanRun = v670WaitingForHumanRun;
+window.v670AttentionRun = v670AttentionRun;
 window.v670RunLeaseLapsed = v670RunLeaseLapsed;
 window.v670StepElapsedLabel = v670StepElapsedLabel;
 function v641StatusTone(status) {
@@ -285,7 +303,7 @@ function v641DrawerRunMarkup(run, duplicateCount = 1) {
     : run.status === "failed" && failed
       ? `<button onclick="retryFailedAutomationStep('${attr(run.id)}','${attr(failed.key)}')">RETRY</button>`
       : `<button onclick="closeGlobalAutomationActivity();location.hash='${attr(v641RunRoute(run))}'">OPEN WORKSPACE</button>`;
-  return `<article class="automation-drawer-run state-${attr(v670RunTone(run))}" data-run-id="${attr(run.id)}" data-activity-key="run:${attr(run.id)}"><header><div><span>${esc(run.type.replace(/-/g, " ").toUpperCase())}</span><b>${esc(run.label || run.targetId)}${duplicateCount > 1 ? ` <em class="automation-duplicate-count">×${duplicateCount}</em>` : ""}</b></div><i>${active ? '<span class="spin">◌</span>' : waiting ? "!" : run.status === "completed" ? "✓" : run.status === "failed" ? "!" : "○"}</i></header><p>${esc(waiting ? v670WaitingDetail(run, step) : step ? `${v641StepSystem(step)} · ${step.label || displayRun.stage}` : run.stage || run.summary || v626StatusLabel(run))}</p>${failed?.error ? `<small class="automation-drawer-error">${esc(failed.error)}</small>` : child ? `<small>Child run: ${esc(child.label || child.targetId)}</small>` : ""}<footer>${primary}<button onclick="closeGlobalAutomationActivity();openAutomationReport('${attr(run.id)}')">VIEW REPORT</button>${["failed","interrupted","cancelled"].includes(run.status) ? `<button class="ghost-btn" onclick="dismissAutomationActivityRun('${attr(run.id)}')">DISMISS</button>` : ""}</footer></article>`;
+  return `<article class="automation-drawer-run state-${attr(v670RunTone(run))}" data-run-id="${attr(run.id)}" data-activity-key="run:${attr(run.id)}"><header><div><span>${esc(run.type.replace(/-/g, " ").toUpperCase())}</span><b>${esc(run.label || run.targetId)}${duplicateCount > 1 ? ` <em class="automation-duplicate-count">×${duplicateCount}</em>` : ""}</b></div><i>${active ? '<span class="spin">◌</span>' : waiting ? "!" : run.status === "completed" ? "✓" : run.status === "failed" ? "!" : "○"}</i></header><p>${esc(waiting ? v670WaitingDetail(run, step) : step ? `${v641StepSystem(step)} · ${step.label || displayRun.stage}` : run.stage || run.summary || v626StatusLabel(run))}</p>${failed?.error ? `<small class="automation-drawer-error">${esc(failed.error)}</small>` : child ? `<small>Child run: ${esc(child.label || child.targetId)}</small>` : ""}<footer>${primary}<button onclick="closeGlobalAutomationActivity();openAutomationReport('${attr(run.id)}')">VIEW REPORT</button>${v670AttentionRun(run) ? `<button class="ghost-btn" onclick="dismissAutomationActivityRun('${attr(run.id)}')">DISMISS</button>` : ""}</footer></article>`;
 }
 /* WAITING FOR YOU, said in the run's own terms. A run parked at an approval gate and
    a run whose runner went away need different things from the director, and the
@@ -343,7 +361,7 @@ function v6602ActivityStatus() {
   const waitingRuns = runs.filter(v670WaitingForHumanRun);
   const activeManual = [...V641_MANUAL_ACTIVITIES.values()].filter((row) => row.status === "running");
   const activeFal = v641StandaloneFalJobs();
-  const attention = runs.filter((run) => ["failed", "interrupted", "cancelled"].includes(run.status));
+  const attention = runs.filter(v670AttentionRun);
   const count = activeRuns.length + activeManual.length + activeFal.length;
   if (count) return { tone: "active", label: `Activity · ${count} active`, detail: activeManual[0]?.title || activeFal[0]?.purpose || activeRuns[0]?.stage || "Working" };
   /* Nothing is running. A pending approval outranks an old failure here, because it
@@ -366,7 +384,7 @@ window.dismissAutomationActivityRun = async (runId) => {
   toast("Alert dismissed. The run is archived and stays in Reports until it ages out of the run history.");
 };
 window.archivePreviousAutomationFailures = async () => {
-  const ids = (AUTOMATION_RUNS || []).filter((run) => ["failed", "interrupted", "cancelled"].includes(run.status)).map((run) => run.id);
+  const ids = (AUTOMATION_RUNS || []).filter(v670AttentionRun).map((run) => run.id);
   if (!ids.length) return toast("No previous automation alerts to dismiss");
   const apply = async () => {
     let archived = 0;
@@ -536,7 +554,7 @@ function v641RenderActivityDrawer(focusRunId = "") {
   const standaloneFal = v641StandaloneFalJobs();
   const activeRuns = runs.filter(v670MachineActiveRun);
   const waitingRuns = runs.filter(v670WaitingForHumanRun);
-  const attentionRuns = runs.filter((run) => ["failed", "interrupted", "cancelled"].includes(run.status));
+  const attentionRuns = runs.filter(v670AttentionRun);
   const attentionGroups = v641GroupAttentionRuns(attentionRuns);
   const completedRuns = runs.filter((run) => run.status === "completed");
   const activeManual = manual.filter((row) => row.status === "running");
@@ -577,15 +595,29 @@ function v642EnsureGlobalActivityStrip() {
     strip.onclick = () => openGlobalAutomationActivity();
     strip.setAttribute("aria-label", "Open live activity");
     strip.setAttribute("aria-live", "polite");
-    /* Inserted before the workspace content, wherever that content currently sits.
-       This used to name #workspace as the parent directly, which threw NotFoundError
-       the moment #main stopped being its immediate child — as it did when the creator
-       shell put #main inside the Main region. The strip is position:fixed, so its
-       parent is presentationally irrelevant; asking #main for its own parent keeps the
-       intent and survives the nesting. */
-    const main = document.getElementById("main");
-    const parent = main?.parentNode || document.getElementById("workspace");
-    if (main && parent && typeof parent.insertBefore === "function") parent.insertBefore(strip, main);
+    /* ABOVE the workspace content, and OUTSIDE the Main region.
+
+       The strip is NOT position:fixed. It was, until the v6.6.2.2 integrity pass
+       overrode it to `position:relative!important` (public/styles.css) and made it an
+       in-flow banner between the topbar and the work. That makes its parent
+       presentationally load-bearing, which the previous version of this function
+       assumed it was not.
+
+       Anchoring on #main was therefore wrong once O2 put #main inside `#cb-shell-main`:
+       that region is a GRID with two declared tracks, one for the centre and one for
+       the rail. An in-flow strip inserted there becomes a third grid item, takes the
+       centre's `1fr` track, and pushes the workspace into the rail's 340px column — so
+       at 1920px the filmmaker's work rendered 340px wide. It was invisible until now
+       only because the strip hides itself when nothing is happening, and O2 shipped
+       both slots empty.
+
+       Anchoring on the REGION restores exactly where the strip sat before O2: a flow
+       child of #workspace, spanning it, above the content. #main is kept as the
+       fallback for a document that has no region (the render harness). */
+    const region = document.getElementById("cb-shell-main");
+    const anchor = region || document.getElementById("main");
+    const parent = anchor?.parentNode || document.getElementById("workspace");
+    if (anchor && parent && typeof parent.insertBefore === "function") parent.insertBefore(strip, anchor);
     else document.body.appendChild(strip);
   }
   return strip;
@@ -618,6 +650,22 @@ function v641UpdateActivityButton() {
   button.innerHTML = `<span>${count ? '<i class="spin">◌</i>' : status.tone === "waiting" ? "<i>!</i>" : "◉"}</span><b>${esc(status.label.replace("Activity · ", ""))}</b>${detail ? `<small>${esc(detail)}</small>` : ""}`;
   button.title = status.label;
   v642UpdateGlobalActivityStrip();
+  v670AnnounceActivityUpdate();
+}
+/* THE ONE SIGNAL O3 REPAINTS FROM.
+
+   Every path that changes activity already ends here - the 3.5s refresh, a manual
+   activity starting, updating or finishing, a run notification, and init. Announcing
+   it means the persistent creator surfaces react to work this file already did
+   instead of running a second timer over the same data, which is the difference
+   between one poll and two.
+
+   Deliberately an event rather than a direct call: this file must not learn what the
+   Assistant or the Terminal are, for the same reason public/app.js's route() must not
+   learn what the shell is. */
+function v670AnnounceActivityUpdate() {
+  if (typeof window === "undefined" || typeof CustomEvent !== "function") return;
+  try { window.dispatchEvent(new CustomEvent("cinebraid:activity-updated")); } catch {}
 }
 window.refreshGlobalAutomationActivity = async (force = false) => {
   if (V641_ACTIVITY_REFRESHING) return;

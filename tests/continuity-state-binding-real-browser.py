@@ -300,6 +300,18 @@ try:
             assert page.evaluate("() => !!document.querySelector('.shot-continuity')"), \
                 "the continuity surface did not render on the FRAMES task"
 
+        # Is one frame's per-frame control on screen? textContent for the same reason
+        # frame_state_control uses it: the labels are uppercased by CSS, and reading
+        # rendered casing would assert about a stylesheet.
+        FRAME_WORD_PRESENT = """(word) => [...document.querySelectorAll('.continuity-state-row .continuity-state-cells label')]
+            .some((label) => (label.querySelector('span')?.textContent || '').trim() === word)"""
+
+        def pair_frame_word(pair_id):
+            """The endpoint this pair adds beside Frame A. A->B renders Frame B's control
+            and A->C renders Frame C's, so waiting for the wrong one would be the same
+            stale-satisfiable mistake wearing a new costume."""
+            return "Frame C" if "fr-c" in pair_id else "Frame B"
+
         def select_pair(pair_id):
             """The panel compares one ORDERED PAIR at a time, so a third frame is
             reachable by choosing a pair that contains it — through the shipped
@@ -307,7 +319,19 @@ try:
             chooser = page.query_selector(".continuity-pair-choice select")
             assert chooser is not None, "the shot has three approved frames and must offer a pair chooser"
             chooser.select_option(pair_id, timeout=30000)
-            page.wait_for_selector(".continuity-state-row", state="attached", timeout=30000)
+            # WAIT FOR THE PAIR THIS CALL ASKED FOR, not for "some state row exists".
+            #
+            # The previous pair's rows are still in the document when select_option
+            # returns, so `.continuity-state-row` attached is satisfied by STALE DOM and
+            # contributes nothing; the only thing that separated the two renders was
+            # reveal()'s fixed 400ms. That held here, where the re-render takes ~40ms,
+            # and broke on a slower CI runner, where it crossed 400ms and Frame C's
+            # control was read off the previous pair — reported as "the continuity
+            # surface did not build" when the surface had built, for the pair before.
+            #
+            # check_stale_precondition_would_advance() proves the old condition
+            # insufficient without depending on any clock at all.
+            page.wait_for_function(FRAME_WORD_PRESENT, arg=pair_frame_word(pair_id), timeout=30000)
             reveal()
 
         def frame_state_control(frame_word):
@@ -393,6 +417,51 @@ try:
                 f"case 3: Frame B shows {seen['selectedValue']!r}, expected the override {expected_state!r}"
             assert seen["selectedLabel"] == expected_name, \
                 f"case 3: and it must name the state, not an id ({seen})"
+
+        def check_stale_precondition_would_advance():
+            """REGRESSION CONTROL for select_pair's own precondition — and there is no
+            clock in it.
+
+            The chooser is set and its change event dispatched INSIDE ONE synchronous
+            page.evaluate. The app's re-render goes through route(), which is
+            asynchronous, so no re-render can possibly have run by the time the same task
+            reads the DOM back. That snapshot IS the state the old
+            `.continuity-state-row` attached condition accepted as "ready": rows present,
+            requested pair absent.
+
+            Deliberately not reproduced with a CPU slowdown. The real CI failure needed
+            roughly a 20x throttle to cross reveal()'s 400ms, and a gate that depends on
+            an arbitrary slowdown proves a threshold rather than a contract. This proves
+            the contract: the old wait could return while the requested pair was not on
+            screen, and the pair-specific wait cannot."""
+            snapshot = page.evaluate("""(pairId) => {
+                const chooser = document.querySelector('.continuity-pair-choice select');
+                chooser.value = pairId;
+                chooser.dispatchEvent(new Event('change', { bubbles: true }));
+                return {
+                    rowsAttached: document.querySelectorAll('.continuity-state-row').length,
+                    words: [...document.querySelectorAll('.continuity-state-row .continuity-state-cells label')]
+                        .map((label) => (label.querySelector('span')?.textContent || '').trim()),
+                };
+            }""", "fr-a|fr-c")
+            assert snapshot["rowsAttached"] > 0, \
+                ("the old precondition cannot be shown insufficient if no state row is attached at all; "
+                 "this control has stopped controlling anything")
+            assert "Frame C" not in snapshot["words"], \
+                ("the requested pair rendered synchronously, so the old precondition was never premature and "
+                 f"this control proves nothing; words were {snapshot['words']}")
+            # ...and the replacement waits for the thing the caller is about to read.
+            # The change is already in flight from the snapshot above, so this waits on
+            # that same render rather than dispatching a second one — which would replace
+            # #main under the chooser handle select_pair is holding.
+            page.wait_for_function(FRAME_WORD_PRESENT, arg="Frame C", timeout=30000)
+            reveal()
+            assert page.evaluate(FRAME_WORD_PRESENT, "Frame C"), \
+                "the pair-specific precondition returned before the requested pair had rendered"
+            select_pair("fr-a|fr-b")
+            assert page.evaluate(FRAME_WORD_PRESENT, "Frame B"), \
+                "the pair-specific precondition returned before the restored pair had rendered"
+            return snapshot
 
         def check_third_frame_untouched(expected_name):
             """CASE 6 — A/B/C. The model attaches to frames generally, so a third
@@ -528,6 +597,11 @@ try:
         await_state("Frame B", value=WET)
         reveal()
         check_frame_override(WET, "Rain-soaked")
+        stale = check_stale_precondition_would_advance()
+        findings.append(
+            f"case 6 precondition: dispatching the pair change leaves {stale['rowsAttached']} stale state row(s) "
+            f"attached showing {sorted(set(stale['words']))}, so the old `.continuity-state-row attached` wait would "
+            f"have advanced into the previous pair; the pair-specific wait does not")
         check_third_frame_untouched("Rain-soaked")
         check_stored_shape(True)
         findings.append("case 3/6: a real select_option on the shipped control set the override and left A and C inheriting")
