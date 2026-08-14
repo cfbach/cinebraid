@@ -2045,7 +2045,7 @@ function guidedFrameCard(s, frame, index, takes) {
   const sequenceInputsForCard = guidedFrameSequenceInputs(s, takes);
   const sequenceReviewForCard = guidedFrameSequenceReviewState(s, sequenceInputsForCard);
   const motionAllowedForCard = sequenceInputsForCard.length < 2 || !!sequenceReviewForCard?.pass;
-  const approvedPreview = approved ? `<button type="button" class="guided-frame-approved-preview guided-thumb-preview" onclick="openMediaTheatre('${attr(encodeURIComponent(approved.url))}','${attr(encodeURIComponent(`Approved Frame ${frame.label} · ${approved.name}`))}','image')" aria-label="View approved Frame ${esc(frame.label)} larger"><img src="${attr(approved.url)}" alt="Approved Frame ${esc(frame.label)}"><span>View larger</span></button><b>Approved Frame ${esc(frame.label)}</b><div class="guided-frame-context-actions"><a href="${attr(approved.url)}" download>Download image ↓</a>${motionAllowedForCard ? `<button type="button" class="approve-btn" onclick="openGuidedMotionFromFrames('${attr(s.id)}','create')">Create motion →</button>` : `<button type="button" class="chip" onclick="reviewGuidedFrameSequence('${attr(s.id)}')">Review sequence first</button>`}</div>` : "";
+  const approvedPreview = approved ? `<button type="button" class="guided-frame-approved-preview guided-thumb-preview" onclick="openMediaTheatre('${attr(encodeURIComponent(approved.url))}','${attr(encodeURIComponent(`Approved Frame ${frame.label} · ${approved.name}`))}','image')" aria-label="View approved Frame ${esc(frame.label)} larger"><img src="${attr(approved.url)}" alt="Approved Frame ${esc(frame.label)}"><span>View larger</span></button><b>Approved Frame ${esc(frame.label)}</b><div class="guided-frame-context-actions"><a href="${attr(approved.url)}" download>Download image ↓</a>${motionAllowedForCard ? `<button type="button" class="approve-btn" onclick="openGuidedMotionFromFrames('${attr(s.id)}','create')">Create motion →</button>` : `<button type="button" class="chip" onclick="reviewGuidedFrameSequence('${attr(s.id)}')"${aiDisabledAttrs("vision")}>Review sequence first</button>`}</div>` : "";
   return `<details class="guided-frame-card state-${statusClass} compact-work-section" data-frame-id="${attr(frame.id)}" ${workspaceSectionOpen(`${s.id}:${openKey}`, openDefault) ? "open" : ""} ontoggle="rememberWorkspaceSection('${attr(s.id)}:${attr(openKey)}',this.open)"><summary class="guided-frame-head"><div class="guided-frame-number">${esc(frame.label)}</div><div><span>${index === 0 ? "START FRAME" : index === 1 ? "OPTIONAL END FRAME" : "ADDITIONAL FRAME"}</span><h3>${esc(frame.title || title)}</h3><small>${approved ? `Approved · ${esc(approved.name)}` : step.label}</small></div>${approved ? `<img class="guided-frame-summary-thumb" src="${attr(approved.url)}" alt="">` : ""}${workspaceStatusPill(statusLabel, statusTone)}<i class="compact-chevron">⌄</i></summary><div class="guided-frame-collapse-body">${index > 0 ? `<div class="compact-section-actions"><button class="chip danger" onclick="removeGuidedFrame('${s.id}','${frame.id}')">Remove frame</button></div>` : ""}<div class="guided-frame-body"><aside class="guided-frame-context">${approved ? approvedPreview : previousApproved && index > 0 ? `<button type="button" class="guided-frame-approved-preview guided-thumb-preview" onclick="openMediaTheatre('${attr(encodeURIComponent(previousApproved.url))}','${attr(encodeURIComponent(`Frame ${previous.label} input · ${previousApproved.name}`))}','image')"><img src="${attr(previousApproved.url)}" alt="Previous approved frame"><span>View larger</span></button><b>Frame ${esc(previous.label)} input</b><small>${state.usePreviousFrame ? "Included as a starting reference" : "Available for optional assisted creation"}</small>` : `<div class="guided-frame-placeholder"><span>FRAME ${esc(frame.label)}</span><p>${index === 0 ? "Import or choose the shot's first approved image." : "Add another composition only when the shot needs it."}</p></div>`}</aside><div class="guided-frame-work">${field(index === 0 ? "Frame description / production note" : `Frame ${frame.label} description / production note`, `<textarea class="guided-primary-brief" placeholder="Describe what the approved image should show. This remains useful even when the image was made elsewhere." onchange="setGuidedFrameField('${s.id}','${frame.id}','action',this.value,true)">${esc(state.action)}</textarea>`)}${guidedFrameCandidatesPanel(s, frame, index, takes, step)}${manualPromptHistory}${assistedTools}</div></div></div></details>`;
 }
 
@@ -2137,19 +2137,48 @@ function guidedFrameWorkflowPanel(s, takes) {
   const approvedAnchors = sequenceInputs.map((row) => row.approved);
   const sequenceReview = guidedFrameSequenceReviewState(s, sequenceInputs);
   const motionMode = approvedAnchors.length >= 3 ? "Multi-frame motion" : approvedAnchors.length === 2 ? "First / last-frame motion" : "Image-to-video";
+  /* P1-2. THE READINESS CHECK IS A VISION CALL, so the control that starts it answers to
+     the vision capability BEFORE it is clicked, the way the pending pair-review button in
+     guidedFrameSequenceReviewMarkup already did. A primary, enabled, visually-dominant
+     button that refuses in a toast afterwards is the same refusal stated later, in the
+     one place a filmmaker cannot act on it — and it reads as "CineBraid tried and
+     something went wrong" rather than "this is switched off in Settings".
+
+     aiDisabledAttrs is the shipped helper for exactly this and it carries the reason as a
+     title; the visible paragraph is what makes the reason readable without hovering,
+     which is the part a disabled control cannot do on its own.
+
+     The per-frame "Review sequence first" chip in guidedFrameCard runs the SAME handler
+     and was fixed with it, in this same patch — leaving the identical defect one panel
+     away is how a corrected surface gets re-raised by the next audit. */
+  const motionReadinessCapability = typeof capabilityState === "function" ? capabilityState("vision") : { ready: false, message: "Vision assistance is unavailable." };
+  const motionReadinessReason = [motionReadinessCapability.message, motionReadinessCapability.action].filter(Boolean).join(" ") || "Vision assistance is unavailable.";
+  const motionReadinessReasonId = `motion-readiness-unavailable-${s.id}`;
+  const motionReadinessNote = motionReadinessCapability.ready ? "" : `<p class="prompt-check warn" id="${attr(motionReadinessReasonId)}">${esc(motionReadinessReason)}</p>`;
+  const motionReadinessDescribedBy = motionReadinessCapability.ready ? "" : ` aria-describedby="${attr(motionReadinessReasonId)}"`;
   let motionCta = "";
   if (progress.requiredApproved && approvedAnchors.length === 1) {
     motionCta = `<section class="frames-to-motion-cta"><div><span>NEXT STEP</span><b>${motionMode} is ready</b><small>1 approved visual anchor. Open Motion & sound without leaving this shot.</small></div><button type="button" class="approve-btn large" onclick="openGuidedMotionFromFrames('${attr(s.id)}','create')">CREATE MOTION →</button></section>`;
   } else if (progress.requiredApproved && approvedAnchors.length >= 2 && sequenceReview?.pass) {
     motionCta = `<section class="frames-to-motion-cta state-pass"><div><span>NEXT STEP · MOTION READINESS ${Math.round(Number(sequenceReview.score||0))}/100</span><b>${motionMode} is ready</b><small>${approvedAnchors.length} approved anchors passed the motion readiness check.</small></div><button type="button" class="approve-btn large" onclick="openGuidedMotionFromFrames('${attr(s.id)}','create')">CREATE MOTION →</button></section>`;
   } else if (progress.requiredApproved && approvedAnchors.length >= 2 && sequenceReview?.status === "working") {
-    motionCta = `<section class="frames-to-motion-cta state-blocked"><div><span>MOTION READINESS CHECK IN PROGRESS</span><b>Checking whether these anchors are motion-ready</b><small>Motion remains locked until the readiness check finishes.</small></div><button type="button" class="approve-btn large" disabled><span class="spin">◌</span> REVIEWING</button></section>`;
+    motionCta = `<section class="frames-to-motion-cta state-blocked"><div><span>MOTION READINESS CHECK IN PROGRESS</span><b>Checking whether these anchors are motion-ready</b><small>This hand-off waits for the check to finish. Motion & sound itself stays open in the stage bar.</small></div><button type="button" class="approve-btn large" disabled><span class="spin">◌</span> REVIEWING</button></section>`;
   } else if (progress.requiredApproved && approvedAnchors.length >= 2) {
     /* Motion readiness, not continuity. The declared-entity continuity check
        below is the continuity instrument; this gate only decides whether these
        anchors can drive a first/last or multi-frame generation, and naming it
-       "continuity" put two competing continuity buttons on one screen. */
-    motionCta = `<section class="frames-to-motion-cta state-blocked"><div><span>${sequenceReview ? "MOTION BLOCKED" : "MOTION READINESS CHECK REQUIRED"}</span><b>${sequenceReview ? "These anchors are not motion-ready" : "Check the approved anchors together"}</b><small>${sequenceReview?.summary ? esc(sequenceReview.summary) : "First/last and multi-frame motion stay locked until camera, environment, lighting, character, and prop continuity pass."}</small></div><button type="button" class="approve-btn large" onclick="reviewGuidedFrameSequence('${attr(s.id)}')">${sequenceReview ? "CHECK AGAIN" : "CHECK MOTION READINESS"}</button></section>`;
+       "continuity" put two competing continuity buttons on one screen.
+
+       AND IT GATES THIS HAND-OFF, NOT THE MOTION STAGE. The copy here used to say
+       first/last and multi-frame motion "stay locked until … continuity pass", which
+       the shipped runtime does not do: public/shared-stage-model.js declares exactly
+       one motion prerequisite — required-frames-approved — and motionState() opens the
+       stage on it, so the stage bar reaches Motion, FLF is selectable and Generate is
+       present with this check never run. What is really true is the narrower thing:
+       openGuidedMotionFromFrames refuses THIS route until the anchors it verified pass.
+       Say that instead. A gate that overstates itself teaches a filmmaker to distrust
+       the gates that are real. */
+    motionCta = `<section class="frames-to-motion-cta state-blocked"><div><span>${sequenceReview ? "MOTION HAND-OFF BLOCKED" : "MOTION READINESS CHECK REQUIRED"}</span><b>${sequenceReview ? "These anchors are not motion-ready" : "Check the approved anchors together"}</b><small>${sequenceReview?.summary ? esc(sequenceReview.summary) : "This check compares the approved anchors before they drive a first/last or multi-frame generation. It does not lock Motion & sound: that stage opens once the required frames are approved."}</small>${motionReadinessNote}</div><button type="button" class="approve-btn large" onclick="reviewGuidedFrameSequence('${attr(s.id)}')"${motionReadinessDescribedBy}${aiDisabledAttrs("vision")}>${sequenceReview ? "CHECK AGAIN" : "CHECK MOTION READINESS"}</button></section>`;
   }
   const sequenceReviewMarkup = progress.requiredApproved && sequenceInputs.length >= 2 ? guidedFrameSequenceReviewMarkup(s, sequenceInputs, sequenceReview) : "";
   /* The v6.6 pair review is a model scoring two images together. The declared-

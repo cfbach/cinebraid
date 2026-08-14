@@ -329,7 +329,20 @@ async function renderCheck(payload, options = {}) {
     agentStatus: { capabilities: { text: readyCapability("Text"), vision: { ready: false, message: "Ollama is not reachable.", action: "Start Ollama." }, continuity: readyCapability("Continuity observation"), embedding: readyCapability("Embedding"), verifier: readyCapability("Verifier"), technical: readyCapability("Technical") } },
   });
   assert(/onclick="runShotContinuityCheck\('L1-01'\)"/.test(visionDown.html), "continuity must stay usable when only generic vision is unavailable");
-  assert(!visionDown.html.includes("Start Ollama"), "continuity must never blame the generic vision provider");
+  /* SCOPED TO THE CONTINUITY SURFACE, using this file's own idiom (see the credential
+     sweep below). The property has not changed and neither has its strength: the
+     continuity instrument must not blame the vision provider. What changed is that the
+     page-wide form stopped expressing it -- P1-2 gave the motion-readiness CTA, which
+     really IS a generic-vision call, the inline reason its two siblings already had, so
+     the vision provider's message now legitimately appears elsewhere in Frames. A
+     whole-page string search would have failed for a fix, which is the shape of
+     assertion that gets deleted rather than repaired. */
+  const continuityStart = visionDown.html.indexOf('class="shot-continuity"');
+  assert(continuityStart > 0, "precondition: the continuity section must be present to be scoped to");
+  const visionDownContinuity = visionDown.html.slice(continuityStart, visionDown.html.indexOf("</section>", continuityStart));
+  assert(visionDownContinuity.includes("CONTINUITY") && visionDownContinuity.includes("runShotContinuityCheck"),
+    "precondition: the scope must actually be the continuity card");
+  assert(!visionDownContinuity.includes("Start Ollama"), "continuity must never blame the generic vision provider");
 
   const continuityDown = await render("#/shot/L1-01", workspaceFixture(), {
     storage: FRAMES_STORAGE,

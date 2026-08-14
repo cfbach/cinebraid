@@ -50,10 +50,94 @@ async function main() {
   assert(look.html.includes('openBlockingAttemptViewer'), 'blocking thumbnails must remain inspectable');
 
   const scan = previewScan(project);
-  const framesPending = await render('#/shot/L1-01', project, { scan, storage: { 'cinebraid-focused:fixture:shot-task:L1-01': 'frames' } });
+  const framesStorage = { 'cinebraid-focused:fixture:shot-task:L1-01': 'frames' };
+  const framesPending = await render('#/shot/L1-01', project, { scan, storage: framesStorage });
   assert(framesPending.html.includes('PAIR CONTINUITY CHECK REQUIRED'), 'two approved anchors must require a sequence continuity review');
   assert(framesPending.html.includes('REVIEW FRAME SEQUENCE'), 'frame sequence review must be directly available in Frames');
   assert(framesPending.html.includes('Review sequence first'), 'per-frame motion handoff must stay locked until the sequence passes');
+
+  /* P1-2 -- MOTION READINESS TRUTH.
+     Two separate lies lived in this one CTA and each gets its own assertion.
+
+     1. THE COPY. It claimed first/last and multi-frame motion "stay locked until camera,
+        environment, lighting, character and prop continuity pass". The shipped runtime
+        declares exactly ONE motion prerequisite -- required-frames-approved, in
+        public/shared-stage-model.js -- so the stage bar reaches Motion, FLF is selectable
+        and Generate is present with this check never run. The claim is cross-read against
+        the model that owns it rather than pinned to a sentence, so rewording the copy
+        cannot quietly restore the falsehood.
+     2. THE CONTROL. `CHECK MOTION READINESS` is a vision call. It was primary, enabled
+        and refused in a toast AFTER the click, while its two siblings on the same screen
+        read the same capability and disable themselves with the reason showing. */
+  const motionStages = require(path.join(ROOT, 'public', 'shared-stage-model.js'));
+  const motionPrereqs = motionStages.SHOT_STAGES.find((stage) => stage.id === 'motion').prerequisites.map((item) => item.id);
+  assert.deepStrictEqual(motionPrereqs, ['required-frames-approved'],
+    'precondition: the shipped runtime gates Motion on approved required frames and nothing else -- if that changed, this copy has to be rewritten, not this assertion');
+  assert(!/motion stay locked until|stay locked until camera/i.test(framesPending.html),
+    'the motion readiness CTA must not claim motion is locked by a check the runtime does not gate motion on');
+  assert(framesPending.html.includes('It does not lock Motion & sound: that stage opens once the required frames are approved.'),
+    'the CTA must state what the executable runtime actually requires');
+
+  const visionOff = {
+    capabilities: {
+      text: { ready: true, label: 'Text assistance', message: '', action: '' },
+      verifier: { ready: true, label: 'Prompt verification', message: '', action: '' },
+      vision: { ready: false, label: 'Vision assistance', message: 'Vision assistance is disabled in AI Assistant settings.', action: 'Open Settings to enable it.' },
+      continuity: { ready: true, label: 'Continuity observation', message: '', action: '' },
+      embedding: { ready: true, label: 'Local semantic search', message: '', action: '' },
+      technical: { ready: true, label: 'Technical analysis', message: '', action: '' },
+    },
+  };
+  const framesNoVision = await render('#/shot/L1-01', project, { scan, storage: framesStorage, agentStatus: visionOff });
+  const readinessButton = /<button[^>]*reviewGuidedFrameSequence\('L1-01'\)[^>]*>\s*CHECK MOTION READINESS/.exec(framesNoVision.html);
+  assert(readinessButton, 'the motion readiness control must still render when vision is off');
+  assert(readinessButton[0].includes(' disabled'),
+    'CHECK MOTION READINESS must be disabled when the capability it invokes is unavailable, not enabled and refused in a toast');
+  assert(framesNoVision.html.includes('id="motion-readiness-unavailable-L1-01"')
+    && framesNoVision.html.includes('Vision assistance is disabled in AI Assistant settings. Open Settings to enable it.'),
+    'the reason must be readable inline, from the capability record, not only in a toast after the click');
+  assert(readinessButton[0].includes('aria-describedby="motion-readiness-unavailable-L1-01"'),
+    'the disabled control must point at its own reason');
+  /* The per-frame chip runs the SAME handler. A fix that left it enabled would leave the
+     identical defect one panel away. */
+  assert(/<button[^>]*reviewGuidedFrameSequence\('L1-01'\)[^>]*disabled[^>]*>Review sequence first/.test(framesNoVision.html),
+    'the per-frame sequence-review chip invokes the same capability and must answer to it too');
+  /* And the control is untouched when the capability IS ready -- a gate that is always
+     shut is not a gate. */
+  assert(!/<button[^>]*reviewGuidedFrameSequence\('L1-01'\)[^>]*disabled/.test(framesPending.html),
+    'a ready vision capability must leave the readiness check enabled');
+
+  /* NEGATIVE CONTROLS, IN MEMORY. The two assertions above have to be watched failing or
+     they are claims, not evidence. Both reintroduce the shipped defect by patching the
+     source the harness evaluates -- nothing is written to disk, so no checkout can be
+     what restores the product code, and no unstaged work can be discarded doing it. */
+  const mutateOnce = (file, needle, replacement, label) => (name, source) => {
+    if (name !== file) return source;
+    const hits = source.split(needle).length - 1;
+    assert.strictEqual(hits, 1, `negative control ${label}: anchor matched ${hits} times, expected 1 -- the control is stale and must be rewritten`);
+    return source.split(needle).join(replacement);
+  };
+
+  /* NC-1: the readiness control goes back to enabled-and-toast-afterwards. */
+  const enabledAgain = await render('#/shot/L1-01', project, {
+    scan, storage: framesStorage, agentStatus: visionOff,
+    mutateSource: mutateOnce('creation-studio.js',
+      '${motionReadinessDescribedBy}${aiDisabledAttrs("vision")}>${sequenceReview ? "CHECK AGAIN"',
+      '>${sequenceReview ? "CHECK AGAIN"', 'NC-1'),
+  });
+  const enabledButton = /<button[^>]*reviewGuidedFrameSequence\('L1-01'\)[^>]*>\s*CHECK MOTION READINESS/.exec(enabledAgain.html);
+  assert(enabledButton && !enabledButton[0].includes(' disabled'),
+    'NC-1 did not reintroduce the defect: the readiness control must be observed ENABLED with vision off before its guard proves anything');
+
+  /* NC-2: the false locking sentence comes back. */
+  const lockedAgain = await render('#/shot/L1-01', project, {
+    scan, storage: framesStorage,
+    mutateSource: mutateOnce('creation-studio.js',
+      'This check compares the approved anchors before they drive a first/last or multi-frame generation. It does not lock Motion & sound: that stage opens once the required frames are approved.',
+      'First/last and multi-frame motion stay locked until camera, environment, lighting, character, and prop continuity pass.', 'NC-2'),
+  });
+  assert(/stay locked until camera/i.test(lockedAgain.html),
+    'NC-2 did not reintroduce the defect: the false locking copy must be observed on screen before its guard proves anything');
   project.shots[0].creationBrief = project.shots[0].creationBrief || {};
   project.shots[0].creationBrief.frameSequenceReview = {
     pass: true, score: 92, files: ['FRAME_A.png','FRAME_B.png'], reviewedAt: '2026-08-03T10:00:00Z',
@@ -118,7 +202,7 @@ async function main() {
   assert(server.includes('WORKSPACE_SETTINGS_ENDPOINT_REQUIRED'), 'unsafe storage-path changes must be rejected by the general config endpoint');
   assert(server.includes('/api/projects/trash/:trashName/restore'), 'trashed project restore endpoint must exist');
 
-  console.log('Private-preview UX suite passed blocking AI review, gated frame-sequence continuity, bounded approved previews, media theatre, motion hierarchy, approved-state authority previews, automation controls, H3 modal containment, storage-route protection, and trash restoration hooks.');
+  console.log('Private-preview UX suite passed blocking AI review, gated frame-sequence continuity, motion-readiness capability truth (2 negative controls), bounded approved previews, media theatre, motion hierarchy, approved-state authority previews, automation controls, H3 modal containment, storage-route protection, and trash restoration hooks.');
 }
 
 main().catch((error) => { console.error(error.stack || error); process.exit(1); });
