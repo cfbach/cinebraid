@@ -254,6 +254,32 @@ control("C22 the stage strip learns about the project-level route", "checkDestin
   "The O4 strip describes ONE shot's workflow. Mounting it on a project-level destination would make Generated Media look like a sixth stage, which is precisely what the brief forbids.");
 
 /* ===========================================================================
+   REVIEW ASSESSMENT (P1-3) -- the three ways the form's defaults get back in.
+   =========================================================================== */
+notes.push("Review assessment:");
+
+control("C25 the untouched form structure is admitted as a review", "checkReviewAssessment",
+  { projection: mutate(SOURCES.projection,
+      "    if (!performed) return [];",
+      "    if (!performed && !keys.length && !text(raw.summary)) return [];",
+      "C25") },
+  "This is the defect itself: candidateRecord() normalises every candidate it touches, so admitting a review whenever categories EXIST puts '1 review on record' and five PASS marks on an image nobody opened -- and on one a person rejected.");
+
+control("C26 a default pass is reported as an assessed outcome", "checkReviewAssessment",
+  { projection: mutate(SOURCES.projection,
+      "          outcome: shotReviewCategoryAssessed(item) ? known(item.severity) : known(\"\"),",
+      "          outcome: known(item.severity),",
+      "C26") },
+  "A category left at the form's default carries no observation. Reporting its severity hands a surface the word 'pass' to print, which is precisely the unearned PASS mark -- the projection must give it nothing to print instead.");
+
+control("C27 the Inspector omits an unrecorded outcome instead of stating it", "checkReviewAssessment",
+  { inspector: mutate(SOURCES.inspector,
+      '${entry.outcome.state === "known" ? `<em>${esc(entry.outcome.value)}</em>` : `<em class="mi-unknown">No recorded observation</em>`}',
+      '${entry.outcome.state === "known" ? `<em>${esc(entry.outcome.value)}</em>` : ""}',
+      "C27") },
+  "Silence is not a third answer. A category row showing its name and nothing else, beside rows that carry findings, reads as 'checked, fine' -- the distinction the projection preserved has to survive the renderer.");
+
+/* ===========================================================================
    STYLE.
    =========================================================================== */
 notes.push("Style:");

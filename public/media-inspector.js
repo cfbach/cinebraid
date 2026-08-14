@@ -302,7 +302,13 @@
     const rows = row.reviews.map((review) => {
       const verdict = review.verdict.pass === true ? "Passed" : review.verdict.pass === false ? "Raised issues" : "No verdict recorded";
       const evidence = review.evidence.length
-        ? `<ul class="mi-evidence">${review.evidence.map((entry) => `<li><b>${esc(entry.label.value || "Requirement")}</b>${entry.expected.state === "known" ? `<span>Expected: ${esc(entry.expected.value)}</span>` : ""}${entry.observed.state === "known" ? `<span>Observed: ${esc(entry.observed.value)}</span>` : ""}${entry.outcome.state === "known" ? `<em>${esc(entry.outcome.value)}</em>` : ""}</li>`).join("")}</ul>`
+        /* AN OUTCOME THE RECORD DOES NOT CARRY IS PRINTED, NOT SKIPPED. Omitting it left
+           a row showing a category name and nothing else, which reads as "checked, fine"
+           beside its neighbours that do carry a finding. The projection distinguishes an
+           assessed result from a category no one recorded an observation about
+           (public/shared-production-media.js, shotStructuredReview); this is the surface
+           that has to keep them visibly apart. */
+        ? `<ul class="mi-evidence">${review.evidence.map((entry) => `<li data-mi-evidence-outcome="${attr(entry.outcome.state)}"><b>${esc(entry.label.value || "Requirement")}</b>${entry.expected.state === "known" ? `<span>Expected: ${esc(entry.expected.value)}</span>` : ""}${entry.observed.state === "known" ? `<span>Observed: ${esc(entry.observed.value)}</span>` : ""}${entry.outcome.state === "known" ? `<em>${esc(entry.outcome.value)}</em>` : `<em class="mi-unknown">No recorded observation</em>`}</li>`).join("")}</ul>`
         : "";
       const blockers = review.blockers.length
         ? `<ul class="mi-blockers">${review.blockers.map((entry) => `<li><b>${esc(entry.label.value || "Issue")}</b><span>${esc(entry.note.value || "")}</span><em>${esc(entry.severity.value || "")}</em></li>`).join("")}</ul>`
@@ -311,6 +317,7 @@
         <header>
           <b>${esc(REVIEW_KIND_WORDS[review.kind] || review.kind)}</b>
           <span data-mi-review-verdict>${esc(verdict)}${review.verdict.score != null ? ` · ${Math.round(review.verdict.score)}/100` : ""}</span>
+          ${review.assessment ? `<span class="mi-review-assessed${review.assessment.assessed ? "" : " mi-unknown"}" data-mi-review-assessed="${attr(review.assessment.assessed)}" data-mi-review-categories="${attr(review.assessment.categories)}">${esc(review.assessment.assessed ? `${review.assessment.assessed} of ${review.assessment.categories} categories assessed` : "No category was assessed")}</span>` : ""}
         </header>
         <div class="mi-facts">
           ${factRow("Reviewer", review.reviewer.provider, { unknown: "Reviewer not recorded" })}

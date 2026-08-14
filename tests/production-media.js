@@ -535,6 +535,124 @@ function checkReviews({ PM }) {
 }
 
 /* =========================================================================
+   6b. P1-3 -- A FORM DEFAULT IS NOT AN OBSERVATION.
+
+   public/review-provenance.js normalizeCandidateStructuredReview() writes all five rubric
+   categories at severity "pass" onto the candidate row, and candidateRecord() calls it on
+   every candidate it touches. Those defaults exist so the review form has something to
+   render a <select> against. Read as observations, they told a filmmaker that an image
+   nobody opened -- and an image a person REJECTED -- carried "1 review on record" and five
+   PASS marks, above a reviewer, model and timestamp all stating that nothing was recorded.
+
+   That is the most expensive false confidence this product can produce, because it is
+   exactly the claim someone would rely on to skip looking.
+
+   THE FIXTURE IS LOCAL rather than added to fixture(): the shared one carries a counted
+   population (checkSemanticSafety pins counts.rejected), and a check that had to edit the
+   population to make its point would be paying for it in its neighbours' assertions.
+
+   WHAT THIS DOES NOT DO. It does not migrate, rewrite or canonicalise anything: the stored
+   bytes of a default "pass" and a deliberate "pass" are identical and stay identical. The
+   distinction is drawn in what the projection is willing to REPORT. */
+function checkReviewAssessment({ PM, Inspector }) {
+  /* Exactly what normalizeCandidateStructuredReview() leaves behind, and nothing else. */
+  const neutral = () => ({
+    categories: {
+      composition: { severity: "pass", note: "" },
+      references: { severity: "pass", note: "" },
+      requirements: { severity: "pass", note: "" },
+      style: { severity: "pass", note: "" },
+      cleanliness: { severity: "pass", note: "" },
+    },
+    references: [], summary: "", ai: null,
+  });
+  /* A REAL historical review: one issue, one deliberate pass carrying a note, three the
+     reviewer left alone, and a timestamp of its own. */
+  const reviewed = () => {
+    const review = neutral();
+    review.reviewedAt = ISO(6);
+    review.summary = "Correct the camera height.";
+    review.categories.composition = { severity: "major", note: "Camera height drifts from the guide." };
+    review.categories.style = { severity: "pass", note: "Period treatment holds." };
+    return review;
+  };
+
+  const f = fixture();
+  f.project.shots[0].candidateFiles.push(
+    { stored: "SH010_NEVER_OPENED.png", addedAt: ISO(6), decision: "unreviewed", structuredReview: neutral() },
+    { stored: "SH010_HUMAN_REJECTED.png", addedAt: ISO(6), decision: "rejected", decidedAt: ISO(7), structuredReview: neutral() },
+    { stored: "SH010_REALLY_REVIEWED.png", addedAt: ISO(6), decision: "shortlist", structuredReview: reviewed() },
+  );
+  for (const name of ["SH010_NEVER_OPENED.png", "SH010_HUMAN_REJECTED.png", "SH010_REALLY_REVIEWED.png"])
+    f.scan.shots.SH010.takes.push({ name, url: `/assets/shots/SH010/takes/${name}` });
+  const built = PM.productionMediaRecords({ project: f.project, scan: f.scan, jobs: f.jobs });
+
+  /* 1. THE NEUTRAL STRUCTURE IS NOT A REVIEW. Asserted on the rejected row as well as the
+        unreviewed one, because the rejected one is the case that made the defect
+        indefensible: a person looked at that image and said no. */
+  for (const name of ["SH010_NEVER_OPENED.png", "SH010_HUMAN_REJECTED.png"]) {
+    const row = byName(built, name);
+    assert(row, `precondition: ${name} must reach the projection`);
+    assert.strictEqual(row.reviews.length, 0,
+      `${name} carries only the untouched form structure and must report NO review on record`);
+    assert.strictEqual(row.aiRecommendation.state, "not-recorded",
+      `${name} must not acquire a recommendation from a structure nobody filled in`);
+  }
+  assert.strictEqual(byName(built, "SH010_HUMAN_REJECTED.png").humanDecision.state, "rejected",
+    "...and the human decision on it is untouched by any of this");
+
+  /* 2. A REAL REVIEW STILL RENDERS ITS REAL FINDINGS, with all three category states
+        distinguishable and none of them invented. */
+  const real = byName(built, "SH010_REALLY_REVIEWED.png").reviews;
+  assert.strictEqual(real.length, 1, "a review that actually happened is still on record");
+  assert.strictEqual(real[0].kind, "shot-structured-review");
+  assert.strictEqual(real[0].reviewedAt.value, ISO(6), "its own timestamp, not today's");
+  const outcomes = Object.fromEntries(real[0].evidence.map((entry) => [entry.label.value, `${entry.outcome.state}:${entry.outcome.value}`]));
+  assert.deepStrictEqual(outcomes, {
+    composition: "known:major",      // assessed, and an issue
+    style: "known:pass",             // assessed, and a pass -- it carries a note
+    references: "not-recorded:",     // untouched form default
+    requirements: "not-recorded:",
+    cleanliness: "not-recorded:",
+  }, "assessed ISSUE, assessed PASS and no-recorded-observation must be three distinguishable answers");
+  assert.deepStrictEqual({ ...real[0].assessment }, { categories: 5, assessed: 2 },
+    "the projection must state how much of the rubric was actually filled in");
+  assert.strictEqual(real[0].evidence.find((entry) => entry.label.value === "composition").observed.value,
+    "Camera height drifts from the guide.", "the reviewer's own words survive");
+
+  /* 3. REVIEWER IDENTITY REMAINS HISTORICAL TRUTH. The record carries none, and none is
+        borrowed from the entity contract or from current Settings. */
+  assert.strictEqual(real[0].reviewer.provider.state, "not-recorded");
+  assert.strictEqual(real[0].reviewer.model.state, "not-recorded");
+
+  /* 4. AND THE SURFACE KEEPS THEM APART. The Inspector is the reporting boundary the
+        finding was raised against, so the words are checked in the shipped renderer and
+        not only in the projection that feeds it. */
+  const unreviewedHtml = Inspector.inspectorMarkup(byName(built, "SH010_HUMAN_REJECTED.png"));
+  assert(unreviewedHtml.includes('data-mi-reviewed="no"') && unreviewedHtml.includes("Never reviewed"),
+    "an unreviewed candidate must read as never reviewed");
+  assert(!/[0-9]+ reviews? on record/.test(unreviewedHtml),
+    "...and must never claim a review is on record because a neutral structure exists");
+  assert(unreviewedHtml.includes('data-mi-review-count="0"'), "...with no review section rows");
+
+  const reviewedHtml = Inspector.inspectorMarkup(byName(built, "SH010_REALLY_REVIEWED.png"));
+  assert(reviewedHtml.includes("1 review on record"), "a real review is still reported as one");
+  assert.strictEqual((reviewedHtml.match(/data-mi-evidence-outcome="not-recorded"/g) || []).length, 3,
+    "the three unassessed categories must each say so rather than rendering as a bare row");
+  assert(reviewedHtml.includes("No recorded observation"), "...in words, not by omission");
+  assert(reviewedHtml.includes("2 of 5 categories assessed"), "...and the surface states the proportion");
+  assert(reviewedHtml.includes("Reviewer not recorded") && reviewedHtml.includes("Model not recorded"),
+    "reviewer and model stay historical truth even on a review that happened");
+
+  /* 5. AI PASS STILL CAUSES NOTHING. The whole point of reporting a review honestly is
+        that it remains advisory; an assessed PASS must not have moved anything. */
+  const assessed = byName(built, "SH010_REALLY_REVIEWED.png");
+  assert.strictEqual(assessed.disposition.role, "candidate", "an assessed review approves nothing");
+  assert.strictEqual(assessed.humanDecision.state, "undecided");
+  return "review assessment: form defaults are not observations, real findings survive, reviewer identity stays historical";
+}
+
+/* =========================================================================
    7. PROVENANCE AND MONEY -- the four job cases, and never a zero. */
 function checkProvenance({ PM }) {
   const built = project(PM);
@@ -914,7 +1032,7 @@ function checkStyle({ sources }) {
 
 const CHECKS = {
   checkPopulation, checkIdentity, checkDisposition, checkAuthority, checkSemanticSafety,
-  checkReviews, checkProvenance, checkDeduplication, checkPurity, checkActions,
+  checkReviews, checkReviewAssessment, checkProvenance, checkDeduplication, checkPurity, checkActions,
   checkDestination, checkRendering, checkScale, checkStyle,
 };
 

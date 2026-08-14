@@ -114,6 +114,14 @@
    it has no writer at all. The normalised envelope exists for the duration of a
    render and is thrown away.
 
+   AND A FORM DEFAULT IS NOT AN OBSERVATION. The shot's review form normalises before it
+   renders, so every candidate the app has touched carries five rubric categories already
+   set to "pass". Reporting those as findings is how an image nobody opened came to show
+   five PASS marks. A review is on record here only when a review ACT is evidenced, and a
+   category is reported only where something was actually recorded about it — see
+   shotStructuredReview. Nothing is migrated to achieve that: the stored bytes are
+   unchanged and the distinction lives entirely in what this module will report.
+
    ---------------------------------------------------------------------------
    AI RECOMMENDATION, AI REVIEW AND HUMAN DECISION ARE THREE FIELDS.
 
@@ -556,6 +564,40 @@
     })];
   }
 
+  /* P1-3. A FORM DEFAULT IS NOT AN OBSERVATION, and this is the boundary that has to
+     say so.
+
+     public/review-provenance.js normalizeCandidateStructuredReview() writes all five
+     rubric categories at severity "pass" onto the row, and candidateRecord() calls it on
+     every candidate it touches — so a candidate nobody has opened, and a candidate a
+     person REJECTED, both carry a full set of "pass" severities. Those exist so the
+     review form has something to render a <select> against. They are not findings.
+
+     A reporting surface that reads them as findings tells a filmmaker that an image
+     nobody reviewed passed five checks, which is the most expensive kind of false
+     confidence this product can produce: it is the exact claim a director would rely on
+     to skip looking.
+
+     The distinction cannot be recovered from storage — a default "pass" and a
+     deliberate "pass" are the same bytes, and giving them different bytes is a schema
+     migration this projection has no writer for and no business doing. So the
+     distinction is drawn HERE, in what this module is willing to REPORT:
+
+       assessed        a severity the untouched form cannot produce, or a note. Somebody
+                       recorded something about this category.
+       not assessed    "pass" with no note. Indistinguishable from the untouched form, so
+                       it is reported as no recorded observation — never as a PASS.
+
+     And the review is only ON RECORD at all when a review ACT is evidenced: a stored
+     timestamp, an `ai` block, a summary, or a category/reference carrying a real finding
+     on a record written before the timestamp existed. That is the same test
+     candidateReviewBadge() already applies before it will paint a badge, so the Inspector
+     and the candidate tray agree about whether a review happened. */
+  function shotReviewCategoryAssessed(item) {
+    const severity = text(record(item).severity);
+    return (severity !== "" && severity !== "pass") || text(record(item).note) !== "";
+  }
+
   /* The shot's structured review. This one is primarily the HUMAN's own category
      severities, with an optional `ai` block, so it is reported with its authorship
      stated rather than filed under AI. */
@@ -563,17 +605,32 @@
     const raw = record(record(row).structuredReview);
     const categories = record(raw.categories);
     const keys = Object.keys(categories);
-    if (!keys.length && !text(raw.summary)) return [];
+    const assessedKeys = keys.filter((key) => shotReviewCategoryAssessed(categories[key]));
+    const performed = !!(text(raw.reviewedAt)
+      || Object.keys(record(raw.ai)).length
+      || text(raw.summary)
+      || assessedKeys.length
+      || list(raw.references).some(shotReviewCategoryAssessed));
+    if (!performed) return [];
     return [reviewEnvelope("shot-structured-review", "candidateFiles[].structuredReview", raw, {
       verdict: deepFreeze({ pass: null, modelPass: null, score: null, outcome: known(""), worstSeverity: known("") }),
       semantic: deepFreeze({ outcome: known(""), label: known(""), satisfied: null }),
-      evidence: deepFreeze(keys.map((key) => deepFreeze({
-        label: known(key),
-        expected: known(""),
-        observed: known(record(categories[key]).note),
-        outcome: known(record(categories[key]).severity),
-        detail: known(""),
-      }))),
+      /* HOW MUCH OF THE RUBRIC WAS ACTUALLY FILLED IN, so a surface can say "two of five
+         categories carry a recorded observation" instead of implying all five do. */
+      assessment: deepFreeze({ categories: keys.length, assessed: assessedKeys.length }),
+      evidence: deepFreeze(keys.map((key) => {
+        const item = record(categories[key]);
+        return deepFreeze({
+          label: known(key),
+          expected: known(""),
+          observed: known(item.note),
+          /* The severity is reported ONLY where it is an observation. An unassessed
+             category leaves this not-recorded, which is the one answer no surface can
+             render as a PASS — there is no "pass" value in it to print. */
+          outcome: shotReviewCategoryAssessed(item) ? known(item.severity) : known(""),
+          detail: known(""),
+        });
+      })),
       blockers: deepFreeze([]),
       summary: known(raw.summary),
       recommendation: known(""),
