@@ -108,8 +108,33 @@ function v670MachineActiveRun(run) {
   if (typeof V626_ACTIVE_AUTOMATION_RUNS !== "undefined" && V626_ACTIVE_AUTOMATION_RUNS.has(run.id)) return true;
   return !v670RunLeaseLapsed(run);
 }
+/* IS THE THING THIS RUN IS PARKED ON STILL UNSATISFIED?
+
+   Dogfood #2 A2. The run ledger records that it stopped and what it stopped for;
+   it does not record whether that requirement has since been met somewhere else.
+   Approving the same frame or state through an entity or media workspace writes
+   PROJECT truth and never touches the ledger, so the drawer, the Assistant and
+   the Terminal all kept asserting a decision the creator had already made.
+
+   The server reconciles the durable record on every read — see
+   reconcileParkedGates in automation-runs.js — and this asks the SAME shared
+   question of the live project so the surfaces converge on the current render
+   rather than on the next poll. One boundary, two entry points; neither holds an
+   opinion of its own.
+
+   A gate whose requirement cannot be identified is treated as OUTSTANDING. The
+   failure mode of guessing wrong in that direction is one extra item in "waiting
+   for you"; the other direction hides real work. */
+function v670RunGateOutstanding(run) {
+  if (typeof runGateRequirements !== "function" || typeof gateSatisfied !== "function") return true;
+  const project = typeof P !== "undefined" ? P : null;
+  if (!project) return true;
+  const requirements = runGateRequirements(run);
+  if (!requirements.length) return true;
+  return requirements.some((requirement) => !gateSatisfied(requirement, project));
+}
 function v670WaitingForHumanRun(run) {
-  if (run?.status === "awaiting-review") return true;
+  if (run?.status === "awaiting-review") return v670RunGateOutstanding(run);
   /* Orchestration stopped and only a person can restart it. The run record still
      says "running"; the truthful sentence is "waiting for you". */
   return run?.status === "running" && v670RunLeaseLapsed(run);
@@ -383,6 +408,32 @@ window.dismissAutomationActivityRun = async (runId) => {
      old sentence promised a permanence CineBraid does not offer. */
   toast("Alert dismissed. The run is archived and stays in Reports until it ages out of the run history.");
 };
+/* RECHECK STATUS. The manual entry into the same reconciliation the server
+   performs on every read — offered because a creator who suspects a stale gate
+   should be able to settle it rather than wait for the next poll, and because a
+   surface whose only recovery is "reload and hope" trains people to distrust it.
+
+   It is NOT a dismissal. Nothing here hides an item; the route re-derives every
+   parked gate against current project truth and returns the reconciled ledger.
+   An item that leaves did so because the work it named is genuinely done. */
+window.recheckAutomationGateStatus = async () => {
+  let data;
+  try {
+    const response = await fetch("/api/automation/runs/recheck", { method: "POST" });
+    data = await response.json();
+    if (!response.ok) throw new Error(data?.error || "Could not recheck automation status");
+  } catch (error) {
+    return toast(error.message || "Could not recheck automation status");
+  }
+  AUTOMATION_RUNS = Array.isArray(data.runs) ? data.runs : AUTOMATION_RUNS;
+  v641UpdateActivityButton();
+  v641RenderActivityDrawer();
+  v670AnnounceActivityUpdate();
+  const resolved = (data.resolvedRunIds || []).length;
+  toast(resolved
+    ? `${resolved} gate${resolved === 1 ? "" : "s"} ${resolved === 1 ? "was" : "were"} already satisfied and ${resolved === 1 ? "has" : "have"} been cleared.`
+    : `Rechecked ${Number(data.checked || 0)} parked gate${Number(data.checked || 0) === 1 ? "" : "s"}. Everything still waiting genuinely needs you.`);
+};
 window.archivePreviousAutomationFailures = async () => {
   const ids = (AUTOMATION_RUNS || []).filter(v670AttentionRun).map((run) => run.id);
   if (!ids.length) return toast("No previous automation alerts to dismiss");
@@ -577,7 +628,7 @@ function v641RenderActivityDrawer(focusRunId = "") {
       : attentionRuns.length
         ? `${attentionRuns.length} previous attempt${attentionRuns.length === 1 ? "" : "s"} need attention`
         : "No active operation";
-  const shell = `<div class="automation-drawer-shell"><header><div><span>GLOBAL ACTIVITY</span><h2>${heading}</h2><p>Every live local-AI call, paid request, review, retry, approval, and recovery action remains visible from any workspace. Detailed diagnostics live in Reports.</p></div><div class="automation-drawer-header-actions">${attentionRuns.length ? `<button class="ghost-btn" onclick="archivePreviousAutomationFailures()">DISMISS PREVIOUS ALERTS</button>` : ""}<button class="cancel" onclick="closeGlobalAutomationActivity()">Close</button></div></header><div class="automation-drawer-list">${content}</div></div>`;
+  const shell = `<div class="automation-drawer-shell"><header><div><span>GLOBAL ACTIVITY</span><h2>${heading}</h2><p>Every live local-AI call, paid request, review, retry, approval, and recovery action remains visible from any workspace. Detailed diagnostics live in Reports.</p></div><div class="automation-drawer-header-actions">${waitingRuns.length ? `<button class="ghost-btn" onclick="recheckAutomationGateStatus()" title="Re-derive every parked approval gate against current project truth">RECHECK STATUS</button>` : ""}${attentionRuns.length ? `<button class="ghost-btn" onclick="archivePreviousAutomationFailures()">DISMISS PREVIOUS ALERTS</button>` : ""}<button class="cancel" onclick="closeGlobalAutomationActivity()">Close</button></div></header><div class="automation-drawer-list">${content}</div></div>`;
   v670PaintDrawer(drawer, shell);
   drawer.classList.toggle("open", V641_ACTIVITY_DRAWER_OPEN);
   drawer.setAttribute("aria-hidden", V641_ACTIVITY_DRAWER_OPEN ? "false" : "true");
@@ -691,6 +742,21 @@ window.refreshGlobalAutomationActivity = async (force = false) => {
       if (run) node.outerHTML = v641LiveActivityMarkup(run);
     });
   }
+};
+/* EVENT-DRIVEN RECONCILIATION. Called by every human approval or rejection that
+   writes project authority outside a run's own modal — the entity approval, the
+   shot/frame approval — so a gate that has just become satisfied leaves the
+   surfaces immediately rather than at the next poll.
+
+   The project is flushed FIRST. The server reconciles against project.json, and
+   asking it to re-derive before the approval has reached disk would return the
+   stale answer and cache it in the run ledger. */
+window.v670ReconcileAfterApproval = async () => {
+  try {
+    if (typeof flushPendingProjectSave === "function") await flushPendingProjectSave();
+    if (typeof refreshGlobalAutomationActivity === "function") await refreshGlobalAutomationActivity(true);
+    v670AnnounceActivityUpdate();
+  } catch { /* reconciliation is convergent: the next read performs it anyway */ }
 };
 window.v641NotifyAutomationActivity = (run) => {
   if (run) {

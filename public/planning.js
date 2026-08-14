@@ -22,16 +22,16 @@ function promptReferenceMediaType(value = "") {
   return "image";
 }
 
+/* The prompt-provenance reader, routed through the SAME exact-ownership rule as
+   entityMedia(). A second prefix reader here would have let a child's asset
+   resolve as a parent's package input long after the review pool stopped
+   offering it. */
+const REFERENCE_ENTITY_LISTS = { Character: "characters", Location: "locations", Prop: "props", Vehicle: "vehicles", Audio: "audio" };
 function entityMediaForReference(entity) {
-  if (entity.type === "Character")
-    return mediaByPrefix(SCAN.anchors, entity.prefix || entity.anchorPrefix || entity.id);
-  if (entity.type === "Location")
-    return mediaByPrefix(SCAN.plates, entity.prefix || entity.id);
-  if (entity.type === "Prop")
-    return mediaByPrefix(SCAN.props, entity.prefix || entity.id);
-  if (entity.type === "Audio")
-    return mediaByPrefix(SCAN.audio, entity.prefix || entity.id);
-  return [];
+  const list = REFERENCE_ENTITY_LISTS[entity?.type] || "";
+  if (!list) return [];
+  const rows = Array.isArray(SCAN[ENTITY_MEDIA[list]]) ? SCAN[ENTITY_MEDIA[list]] : [];
+  return filterEntityMedia(buildEntityOwnerIndex(P, list), entity.id, rows);
 }
 
 /* Resolve current files for an immutable saved package. The guided frame flow

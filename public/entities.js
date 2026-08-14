@@ -135,11 +135,29 @@ const ENTITY_MEDIA = {
   vehicles: "vehicles",
   audio: "audio",
 };
+/* EXACT OWNERSHIP, NOT PREFIX OVERLAP.
+
+   Dogfood #2 A4 / forensic F4. This was `mediaByPrefix(SCAN[dir], entity.prefix
+   || entity.anchorPrefix || entity.id)`, a `startsWith` test — so every
+   `CHAR-SWEEP-YOUNG…` file matched `CHAR-SWEEP` and all three of Young Sweep's
+   candidates appeared in the adult Chimbley Sweep's review pool. The Widow stayed
+   clean because nothing overlaps her id, which is what proved it was string
+   collision rather than parent/child expansion.
+
+   public/shared-entity-ownership.js owns the rule: an uncontested durable claim
+   decides it, and only an UNCLAIMED file falls back to the most specific declared
+   prefix. This is the single reader every entity surface goes through — display,
+   review pool, approval, coverage automation — so none of them can disagree.
+
+   The index is rebuilt per call rather than cached: entityMedia() runs inside
+   renders that follow a mutation, and a stale ownership index would be a worse
+   defect than the one it replaces. */
+function entityOwnerIndex(list) {
+  return buildEntityOwnerIndex(P, list);
+}
 function entityMedia(list, it) {
-  return mediaByPrefix(
-    SCAN[ENTITY_MEDIA[list]],
-    it.prefix || it.anchorPrefix || it.id,
-  );
+  const rows = Array.isArray(SCAN[ENTITY_MEDIA[list]]) ? SCAN[ENTITY_MEDIA[list]] : [];
+  return filterEntityMedia(entityOwnerIndex(list), it?.id, rows);
 }
 function entityCandidateRow(entity, fileName, create = false) {
   entity.candidateFiles = Array.isArray(entity.candidateFiles) ? entity.candidateFiles : [];

@@ -2,6 +2,7 @@ const fs = require("fs");
 const path = require("path");
 const { SimpleZipWriter } = require("./zip-stream");
 const { summarizeRecordedCost } = require("./generation-cost");
+const ProductionAuthority = require("./public/shared-production-authority");
 const Lifecycle = require("./generation-lifecycle");
 const APP_VERSION = require("./package.json").version;
 
@@ -158,6 +159,12 @@ function registerAutomationRuns(app, deps) {
       buildId: cleanText(source.buildId, 240),
       packageId: cleanText(source.packageId, 240),
       childJobId: cleanText(source.childJobId, 240),
+      /* Written by the scene-correction path since it existed and read by the
+         director-approval handler, but never persisted — so a resumed run had to
+         re-derive the shot from `result.targetShotId`. Gate reconciliation needs
+         to know WHICH production object a parked step is waiting for, and
+         inferring it from a nested result is one inference too many. */
+      shotId: cleanText(source.shotId, 240),
       frameId: cleanText(source.frameId, 240),
       stateId: cleanText(source.stateId, 240),
       files: Array.isArray(source.files) ? source.files.slice(0, 40).map((item) => cleanText(item, 500)) : [],
@@ -169,6 +176,12 @@ function registerAutomationRuns(app, deps) {
       result: source.result && typeof source.result === "object" ? source.result : null,
       activity: source.activity && typeof source.activity === "object" ? source.activity : null,
       error: cleanText(source.error, 4000),
+      /* WHY it failed, in the two categories that need opposite handling. A
+         `local-package` fault is deterministic: the same package rebuilds to the
+         same exception, so the retry route below refuses to spend an attempt on
+         it and reports what to repair instead. */
+      failureClass: ["local-package", "provider"].includes(source.failureClass) ? source.failureClass : "",
+      remediation: cleanText(source.remediation, 2000),
       startedAt: cleanText(source.startedAt, 80),
       completedAt: cleanText(source.completedAt, 80),
       updatedAt: cleanText(source.updatedAt || now(), 80),
@@ -254,6 +267,59 @@ function registerAutomationRuns(app, deps) {
   function readProjectSafe() {
     try { return JSON.parse(fs.readFileSync(projectFile(), "utf8")); }
     catch { return { meta: {}, scenes: [], shots: [], characters: [], locations: [], props: [], vehicles: [] }; }
+  }
+
+  /* ==========================================================================
+     GATE RECONCILIATION — the one boundary, on the server side of it.
+
+     Dogfood #2 A2 / forensic F2. A run parks on "approve this frame" or "approve
+     this state", the creator approves the same thing somewhere else in
+     CineBraid — an entity workspace, a reference workspace, the generated-media
+     surface — and the run ledger never hears about it. Assistant, Global
+     Activity and the Terminal then faithfully reproject a gate that no longer
+     exists, and the poller makes that claim FRESHER rather than TRUER.
+
+     Reconciling on READ is what makes every entry point converge without each
+     one needing its own hook: a poll, a reload, entering a workspace, opening
+     the run and pressing Recheck status all end up here, because all of them
+     read the ledger. public/shared-production-authority.js owns the decision;
+     this owns only the durable write.
+
+     ONLY `awaiting-review` RUNS. A parked run has no runner writing to it, so a
+     revision bump here cannot race an active orchestrator. Everything else is
+     left exactly as it is.
+
+     THE WRITE IS BEST-EFFORT. If the ledger cannot be written the reconciled
+     runs are still what this returns, so a read-only or contended filesystem
+     degrades to "correct answer, not yet persisted" rather than to a stale one. */
+  function reconcileParkedGates(runs, project) {
+    let changed = false;
+    for (let index = 0; index < runs.length; index++) {
+      const run = runs[index];
+      if (!run || run.status !== "awaiting-review") continue;
+      const at = now();
+      const plan = ProductionAuthority.reconcileRunGates(run, project, { at });
+      if (!plan.changed) continue;
+      const next = clone(run);
+      ProductionAuthority.applyGateReconciliation(next, plan, { at });
+      next.logs = [...(Array.isArray(next.logs) ? next.logs : []), {
+        at,
+        tone: "success",
+        message: `${plan.satisfied.length} approval gate${plan.satisfied.length === 1 ? "" : "s"} ${plan.satisfied.length === 1 ? "was" : "were"} satisfied elsewhere in CineBraid and ${plan.satisfied.length === 1 ? "is" : "are"} no longer waiting for you.`,
+      }];
+      runs[index] = bump({}, run, { status: next.status, summary: next.summary, steps: next.steps, logs: next.logs });
+      changed = true;
+    }
+    return changed;
+  }
+  function readReconciled() {
+    const runs = read();
+    let project;
+    try { project = readProjectSafe(); } catch { return runs; }
+    if (reconcileParkedGates(runs, project)) {
+      try { write(runs); } catch { /* the answer is still reconciled; the ledger catches up on the next writable read */ }
+    }
+    return runs;
   }
   function generationJobsFile() { return path.join(projectDir(), "generation-jobs.json"); }
   function readGenerationJobs() {
@@ -480,9 +546,13 @@ function registerAutomationRuns(app, deps) {
             const files = Array.isArray(step.files) ? step.files : Array.isArray(step.result?.files) ? step.result.files : Array.isArray(step.result?.candidates) ? step.result.candidates : [];
             candidatesInSteps += files.length;
           }
-          const approved = step.result?.humanApproved === true || (String(step.kind || "").includes("approval") && step.status === "completed");
-          if (approved) row.approvals++;
-          if (step.result?.humanApproved === true) row.humanOverrides++;
+          /* AN APPROVAL STEP IS NOT AN APPROVAL. Forensic audit §10: this counted
+             any completed step whose kind contained "approval" as an approval,
+             so a run that established authority without a person reported the
+             same number as one where a director decided every frame — and the
+             operational summary concealed exactly the thing A1 is about.
+             `humanApproved` is the only mark a human act writes. */
+          if (step.result?.humanApproved === true) { row.approvals++; row.humanOverrides++; }
           if (step.status === "failed") failedSteps++;
         }
         row.candidatesGenerated += candidatesInSteps || (singleShotId === shotId ? Number(run.usage?.imagesGenerated || 0) : 0);
@@ -620,7 +690,7 @@ function registerAutomationRuns(app, deps) {
   });
   app.get("/api/automation/runs", (req, res) => {
     const type = cleanText(req.query?.type, 80), targetId = cleanText(req.query?.targetId, 240);
-    const runs = read().filter((run) => (!type || run.type === type) && (!targetId || run.targetId === targetId));
+    const runs = readReconciled().filter((run) => (!type || run.type === type) && (!targetId || run.targetId === targetId));
     if (String(req.query?.view || "") === "history") {
       const status = cleanText(req.query?.status, 80), target = cleanText(req.query?.target, 240);
       const targetOptions = [...new Map(runs.map((run) => [run.targetId, run.label || run.targetId])).entries()].filter(([id]) => id).map(([id, label]) => ({ id, label })).sort((a, b) => String(a.label).localeCompare(String(b.label)));
@@ -642,9 +712,24 @@ function registerAutomationRuns(app, deps) {
     res.json({ runs: runs.map(publicRun), warning: lastReadWarning });
   });
   app.get("/api/automation/runs/:id", (req, res) => {
-    const run = read().find((item) => item.id === req.params.id);
+    const run = readReconciled().find((item) => item.id === req.params.id);
     if (!run) return res.status(404).json({ error: "automation run not found" });
     res.json({ run: publicRun(run), warning: lastReadWarning });
+  });
+  /* MANUAL RECHECK STATUS. Same boundary, entered on purpose rather than as a
+     side effect of reading, and it reports WHAT it found so the creator sees the
+     reconciliation happen instead of watching a list silently shorten. */
+  app.post("/api/automation/runs/recheck", (req, res) => {
+    const before = read().filter((run) => run && run.status === "awaiting-review").map((run) => run.id);
+    const runs = readReconciled();
+    const stillWaiting = new Set(runs.filter((run) => run && run.status === "awaiting-review").map((run) => run.id));
+    const resolved = before.filter((id) => !stillWaiting.has(id));
+    res.json({
+      runs: runs.map(publicRun),
+      resolvedRunIds: resolved,
+      checked: before.length,
+      warning: lastReadWarning,
+    });
   });
 
   app.get("/api/automation/runs/:id/support-summary", (req, res) => {
@@ -848,9 +933,18 @@ function registerAutomationRuns(app, deps) {
       return res.status(409).json({ error: error.message, code: "CORRECTION_PROVENANCE_UNRECOVERABLE", run: publicRun(current) });
     }
     const steps = clone(current.steps || {}), next = { ...steps[stepKey], status: "pending", error: "", completedAt: "", updatedAt: now() };
-    if (["generation", "scene-shot", "scene-correction", "scene-correction-review"].includes(next.kind)) {
+    /* A DETERMINISTIC LOCAL FAULT DOES NOT CONSUME AN ATTEMPT. Dogfood #2 A5: a
+       boundary correction package threw the same exception every time it was
+       rebuilt, and each retry burned one of the run's authorized passes to
+       reproduce it. The step is still reset — the creator may have repaired the
+       project state that caused it — but the attempt counter is not advanced,
+       because nothing was attempted against a provider. */
+    const deterministic = String(steps[stepKey]?.failureClass || "") === "local-package";
+    if (!deterministic && ["generation", "scene-shot", "scene-correction", "scene-correction-review"].includes(next.kind)) {
       next.retryCount = Number(next.retryCount || 0) + 1;
     }
+    next.failureClass = "";
+    next.remediation = "";
     if (next.kind === "generation") {
       next.childJobId = "";
       next.files = [];

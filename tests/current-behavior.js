@@ -266,7 +266,21 @@ async function main() {
   assert(automation.includes("v6211RunGenerationSettings(run).blockingQuality"), "blocking automation must use the run's saved quality setting");
   assert(automation.includes("v6211RunGenerationSettings(run).frameResolution"), "frame and reference automation must use the run's saved resolution setting");
   assert(read("automation-runs.js").includes("lastPaidStepRevalidatedAt"), "run reports must preserve historical lease diagnostics after release");
-  assert(automation.includes("V627_AUTOMATION_AUTO_APPROVE_SCORE = 85"), "automatic approval must use the explicit strong-pass threshold");
+  /* THIS EXPECTATION CHANGED, and the reason is the finding rather than the
+     rename. Dogfood Pass #2 A1 / forensic F1 established that a review passing
+     at or above this number CALLED THE APPROVAL WRITER and returned before the
+     human gate — so the constant was not merely named for automatic approval, it
+     performed one. The number and the setting survive, because "which score is
+     strong enough to stop spending money and ask a person" is a real decision;
+     what changed is that it may now only RECOMMEND.
+
+     Asserting the old name here would be asserting that CineBraid still calls
+     that decision an approval. The threshold's continued existence is still
+     checked, under the name that describes what it does, and the invariant it
+     used to violate is held by tests/production-authority.js with negative
+     controls in tests/dogfood2-p0-negative-controls.js. */
+  assert(automation.includes("V627_AUTOMATION_RECOMMENDATION_SCORE = 85"), "the strong-pass threshold must remain explicit at 85");
+  assert(!automation.includes("const V627_AUTOMATION_AUTO_APPROVE_SCORE"), "and must no longer be named for approving, because it may no longer approve");
   assert(read("automation-runs.js").includes('code: "STALE_RUN"'), "stale run writes must be rejected instead of overwriting current state");
   assert(read("automation-runs.js").includes("cancelRequested: current.cancelRequested === true || body.cancelRequested === true"), "stop requests must remain sticky across stale browser saves");
   assert(read("automation-runs.js").includes("5 * 60_000"), "automation leases must tolerate ordinary background-tab throttling");
@@ -348,6 +362,7 @@ async function main() {
     "continuity-cache.js",
     "continuity-compare-route.js",
     "continuity-comparison.js",
+    "continuity-correction-boundary.js",
     "continuity-correction-modal.js",
     "continuity-correction-real-browser.py",
     "continuity-correction-workflow.js",
@@ -373,11 +388,14 @@ async function main() {
     "data-recovery-focused-state.js",
     "data-safety-repair.js",
     "deep-bot-safety.js",
+    "dogfood2-p0-negative-controls.js",
+    "entity-media-ownership.js",
     "external-test-readiness.js",
     "fal-generation.js",
     "fixtures",
     "focused-workspaces-real-browser.py",
     "focused-workspaces.js",
+    "frame-presence-authority.js",
     "generation-capability.js",
     "generation-compiler-fixture.js",
     "generation-compiler-negative-controls.js",
@@ -447,6 +465,7 @@ async function main() {
     "openai-request-dialect.js",
     "private-preview-layout-real-browser.py",
     "private-preview-ux.js",
+    "production-authority.js",
     "production-media-negative-controls.js",
     "production-media-real-browser.py",
     "production-media.js",
@@ -490,6 +509,7 @@ async function main() {
     "state-authority-substitution.js",
     "state-chain-recovery.js",
     "state-interleaving.js",
+    "state-lineage-safety.js",
     "studio-repair.js",
     "ui-state-stability-real-browser.py",
     "v6641-usability.js",

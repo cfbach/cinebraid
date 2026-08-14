@@ -219,7 +219,14 @@
   /* What a human decided, in tokens. `undecided` is a real answer and the common one.
      The two dialects are kept apart — an entity row says `approved-reference`, a shot
      row says `shortlist` — and the raw stored word travels in `decision`. */
-  const PRODUCTION_MEDIA_DECISION_STATES = deepFreeze(["approved", "rejected", "undecided"]);
+  /* `machine-selected` is the fourth, added by the Dogfood #2 P0 batch. Before it,
+     an edge written by scene automation and an edge written by a director were
+     the same word here, and the Inspector printed "A person approved this. It is
+     production canon." over both. Automation may no longer write such an edge,
+     but projects created before that repair still carry ones it did, and the
+     honest report of those is that a MACHINE selected it — not that a person
+     approved it, and not that nobody decided. */
+  const PRODUCTION_MEDIA_DECISION_STATES = deepFreeze(["approved", "machine-selected", "rejected", "undecided"]);
 
   /* The reviewer's SUGGESTION vocabulary, which is not an approval vocabulary. The
      entity contract emits the first four; a shot triage emits pass/fail, mapped to
@@ -428,7 +435,46 @@
     "approved-expression",
   ]);
 
-  function humanDecisionOf(row, approvedByEdge) {
+  /* The automation provenance word for one file, out of a shot's
+     `generationRecords[]` or an entity's `made[]`. Both dialects store the
+     filename under `files`, and the shot dialect also stores `file`.
+
+     A file may carry several records — one per step that touched it — and a
+     later director approval of a candidate a run had already selected produces
+     both. The strongest human evidence wins, because "a person approved this"
+     stops being true only if no record says so. */
+  const AUTOMATION_APPROVAL_RANK = { director: 3, reused: 2, automatic: 1 };
+  function automationApprovalFor(records, fileName) {
+    const wanted = text(fileName);
+    if (!wanted) return "";
+    let best = "";
+    for (const entry of list(records)) {
+      const it = record(entry);
+      if (text(it.file) !== wanted && text(it.files) !== wanted) continue;
+      const approval = text(it.approval);
+      if (!AUTOMATION_APPROVAL_RANK[approval]) continue;
+      if (!best || AUTOMATION_APPROVAL_RANK[approval] > AUTOMATION_APPROVAL_RANK[best]) best = approval;
+    }
+    return best;
+  }
+
+  /* WHO ESTABLISHED THIS EDGE. `automationApproval` is the word the run's own
+     provenance record stored — "director", "reused" or "automatic" — supplied by
+     the caller because this function has no shot and no entity. It is the only
+     evidence that distinguishes a machine write from a human one on the shot
+     path, where the candidate row records no actor. */
+  function decisionActor(row, automationApproval) {
+    const it = record(row);
+    const provenance = record(it.approvalProvenance);
+    if (text(provenance.source) === "human" || it.humanApproved === true) return "human";
+    const stored = text(automationApproval);
+    if (stored === "director") return "human";
+    if (stored === "reused") return "prior-human";
+    if (stored === "automatic") return "automation";
+    return "";
+  }
+
+  function humanDecisionOf(row, approvedByEdge, automationApproval) {
     const it = record(row);
     const decision = text(it.decision);
     const approved = approvedByEdge
@@ -437,8 +483,16 @@
       || !!text(it.approvedAt);
     const rejected = !approved && decision === "rejected";
     const provenance = record(it.approvalProvenance);
+    const actor = decisionActor(it, automationApproval);
+    /* THE COLLAPSE THIS ENDS. An approved edge whose only recorded actor is
+       automation is reported as machine-selected, never as a human decision. */
+    const machineEstablished = approved && actor === "automation";
     return deepFreeze({
-      state: approved ? "approved" : rejected ? "rejected" : "undecided",
+      state: machineEstablished ? "machine-selected" : approved ? "approved" : rejected ? "rejected" : "undecided",
+      /* The actor, reported rather than assumed. "" means no record names one,
+         which is the ordinary state of a shot edge approved through the modal
+         before this batch and must not be read as either answer. */
+      actor: known(actor),
       /* The stored word, unchanged. A surface that wants to say "shortlisted" rather
          than "candidate" has what it needs; nothing here decides that it should. */
       decision: known(decision),
@@ -967,7 +1021,7 @@
         source: input.dispositionSource,
         targets: deepFreeze(targets),
       }),
-      humanDecision: humanDecisionOf(row, text(disposition.role) === "approved"),
+      humanDecision: humanDecisionOf(row, text(disposition.role) === "approved", input.automationApproval),
       aiRecommendation: recommendationOf(reviews),
       reviews,
       provenance: input.provenance,
@@ -1043,6 +1097,7 @@
               },
               reviews: entityReviews(row),
               provenance: provenanceOf(row, libraryRow, jobs, jobsAvailable),
+              automationApproval: automationApprovalFor(it.made, entry.name),
             }));
           }
       }
@@ -1073,6 +1128,9 @@
             scope: "shot",
             disposition: entry,
             dispositionSource: "partitionShotMedia",
+            /* The run's own word for who approved this file. Read here rather
+               than inside buildRecord because only this arm has the shot. */
+            automationApproval: automationApprovalFor(it.generationRecords, entry.name),
             context: {
               entityList: known(""),
               entityId: known(""),

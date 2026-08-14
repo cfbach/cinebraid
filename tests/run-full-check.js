@@ -38,6 +38,15 @@ const nodeSuites = [
   "check:reference-contract",
   "check:candidate-review",
   "check:candidate-review-negative",
+  /* Dogfood Pass #2 P0 trust batch. Listed individually rather than through the
+     check:dogfood2-p0 aggregate so a failure names the invariant that broke
+     rather than the group that contains it. */
+  "check:production-authority",
+  "check:frame-presence",
+  "check:entity-ownership",
+  "check:state-lineage",
+  "check:correction-boundary",
+  "check:dogfood2-p0-negative",
   "check:reference-aspect",
   "check:recovery",
   "check:bounded",

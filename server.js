@@ -29,6 +29,8 @@ const { resolveShotEntities, shotEntityTokenMatches, unresolvedShotDependencies,
 const { referenceAspectLabel, aspectRatioMentions } = require("./public/shared-aspect");
 const Coverage = require("./public/shared-coverage");
 const Continuity = require("./public/shared-continuity");
+const EntityOwnership = require("./public/shared-entity-ownership");
+const FramePresence = require("./public/shared-frame-presence");
 const { createContinuityCache } = require("./continuity-cache");
 const ContinuityJson = require("./continuity-json");
 const { resolvePromptBuild, resolvePromptBuildList, normalizePromptBuildHistory, registerPromptBuild, promptBuildRef, applyPromptBuildRetention } = require("./public/shared-build-history");
@@ -4484,10 +4486,15 @@ app.post("/api/prompt/compile", async (req, res) => {
     const purpose = req.body.purpose || (profile.mediaType === "video" ? "motion" : "first-frame");
     if (!PromptEngine.SUPPORTED_PROMPT_PURPOSES.includes(purpose))
       return res.status(400).json({ error: `Unknown prompt purpose. Accepted values: ${PromptEngine.SUPPORTED_PROMPT_PURPOSES.join(", ")}` });
+    /* WHICH FRAME. Without it the compiler has only the shot, and a frame's
+       declared absence cannot override shot membership because the compiler
+       never learns which frame is being built (Dogfood #2 A3). Optional: a
+       request that names no frame compiles exactly as it always did. */
     const context = PromptEngine.buildContext(
       P,
       req.body.shotId,
       req.body.segmentId || "",
+      { frameId: String(req.body.frameId || "") },
     );
     const allBuilds = (P.shots || []).flatMap((s) =>
       resolvePromptBuildList(P, s.promptBuilds || []).map((b) => ({ ...b, shotId: s.id })),
@@ -4743,6 +4750,29 @@ app.post("/api/prompt/compile", async (req, res) => {
     if (suppliedMotionBrief) spec = PromptEngine.applyMotionAudioBrief(spec, suppliedMotionBrief);
     if (purpose === "blocking") spec = PromptEngine.applyBlockingPlan(spec, context, req.body.composition || context.shot.composition, { emphasis: req.body.blockingEmphasis, direction: req.body.blockingDirection, frameBrief: req.body.blockingFrameBrief, plan: blockingPlan });
     const compiled = PromptEngine.compile(profile, spec, references);
+    /* THE CONTRADICTION CHECK, at the last point where the compiled text exists
+       and no provider has been asked for anything.
+
+       CineBraid's own positive lists have already had the absent entity removed,
+       so a finding here means the CREATOR's frame direction still states the
+       entity positively — which is a real disagreement between two things the
+       creator wrote, and the only honest resolution is to say so rather than to
+       silently pick one. The compiled result is returned so they can see exactly
+       what would have been sent. */
+    const presenceContradictions = FramePresence.framePresenceContradictions({
+      absentEntities: spec.framePresence?.absent || [],
+      spec,
+      prompt: compiled.prompt,
+    });
+    if (presenceContradictions.length) {
+      return res.status(409).json({
+        error: `This frame declares ${presenceContradictions.map((item) => item.entityName).filter((name, index, all) => all.indexOf(name) === index).join(", ")} absent, but the compiled prompt still describes ${presenceContradictions.length === 1 ? "it" : "them"} as present. Nothing was sent to a provider.`,
+        code: "FRAME_PRESENCE_CONTRADICTION",
+        contradictions: presenceContradictions,
+        framePresence: spec.framePresence,
+        compiledPrompt: compiled.prompt,
+      });
+    }
     if (referenceSelection.warnings.length)
       compiled.warnings.unshift(...referenceSelection.warnings);
     if (referenceSelection.dropped.length)
@@ -4755,10 +4785,18 @@ app.post("/api/prompt/compile", async (req, res) => {
       );
     if (req.body.improveMotion === true && improvedDirective)
       compiled.confirmations.unshift(`Motion direction was rewritten for ${profile.name} before compilation.`);
+    /* Say what was withheld. A creator whose shot description disappeared from a
+       frame prompt deserves the reason rather than a shorter prompt. */
+    for (const withheld of spec.framePresence?.withheldNarrative || []) {
+      compiled.confirmations.unshift(
+        `${withheld.field} was withheld from this frame because it describes ${withheld.entityIds.join(", ")}, which this frame declares absent. The frame's own description is the authority here.`,
+      );
+    }
     if (llmWarning) compiled.warnings.unshift(llmWarning);
     res.json({
       profile,
       spec,
+      framePresence: spec.framePresence || null,
       compiledPrompt: compiled.prompt,
       warnings: compiled.warnings,
       confirmations: compiled.confirmations,
@@ -5067,9 +5105,18 @@ function reviewCriteria(P, kind, list, id, frameId = "") {
       list
     ];
     const dir = path.join(ownedProjectDir(req), type);
-    const prefix = (e.prefix || e.anchorPrefix || e.id).toUpperCase();
-    files = (fs.existsSync(dir) ? fs.readdirSync(dir) : [])
-      .filter((f) => f.toUpperCase().startsWith(prefix) && IMG_ONLY(f))
+    /* THE SERVER SIDE OF DOGFOOD #2 A4. This filtered the directory by
+       `f.toUpperCase().startsWith(prefix)`, so the batch reviewer admitted every
+       `CHAR-SWEEP-YOUNG…` file into `CHAR-SWEEP`'s review exactly as the browser
+       pool did. Repairing only the client would have left the server able to
+       write the same wrong-owner review, which is the fifth thing the forensic
+       audit says Dogfood #2 missed. One rule, both sides. */
+    const ownerIndex = EntityOwnership.buildEntityOwnerIndex(P, list);
+    files = EntityOwnership.filterEntityFileNames(
+      ownerIndex,
+      e.id,
+      (fs.existsSync(dir) ? fs.readdirSync(dir) : []).filter((f) => IMG_ONLY(f)),
+    )
       .sort()
       .map((f) => path.join(dir, f));
     criteria = [
@@ -7552,15 +7599,13 @@ app.get("/api/bible", (req, res) => {
     };
     const modelName = (id) =>
       (P.meta.models || []).find((m) => m.id === id)?.name || "";
-    const withMedia = (list, pool) =>
-      list.map((e) => {
-        const matched = pool.filter((m) =>
-          m.name
-            .toUpperCase()
-            .startsWith(
-              ((e.prefix || e.anchorPrefix || e.id) + "").toUpperCase(),
-            ),
-        );
+    /* Same exact-ownership rule as the review pool and the entity workspace. A
+       Bible export that still matched by prefix would publish a child entity's
+       reference under its parent's name. */
+    const withMedia = (listName, list, pool) => {
+      const ownerIndex = EntityOwnership.buildEntityOwnerIndex(P, listName);
+      return list.map((e) => {
+        const matched = EntityOwnership.filterEntityMedia(ownerIndex, e.id, pool);
         const selected = e.approvedFile
           ? matched.filter((m) => m.name === e.approvedFile)
           : matched;
@@ -7573,6 +7618,7 @@ app.get("/api/bible", (req, res) => {
           media: selected,
         };
       });
+    };
     const shots = P.shots
       .filter((s) => s.status === "LOCKED" || s.workflowStatus === "APPROVED")
       .map((s) => {
@@ -7697,11 +7743,11 @@ app.get("/api/bible", (req, res) => {
       world: P.meta.world || null,
       styleBlocks: P.meta.styleBlocks || [],
       qcChecklist: P.qcChecklist || [],
-      characters: withMedia(P.characters.filter(approved), media.anchors),
-      locations: withMedia(P.locations.filter(approved), media.plates),
-      props: withMedia(P.props.filter(approved), media.props),
-      vehicles: withMedia((P.vehicles || []).filter(approved), media.vehicles || []),
-      audio: withMedia((P.audio || []).filter(approved), media.audio),
+      characters: withMedia("characters", P.characters.filter(approved), media.anchors),
+      locations: withMedia("locations", P.locations.filter(approved), media.plates),
+      props: withMedia("props", P.props.filter(approved), media.props),
+      vehicles: withMedia("vehicles", (P.vehicles || []).filter(approved), media.vehicles || []),
+      audio: withMedia("audio", (P.audio || []).filter(approved), media.audio),
       shots,
       pending: {
         characters: P.characters.filter((x) => !approved(x)).length,

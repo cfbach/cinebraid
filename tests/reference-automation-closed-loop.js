@@ -532,7 +532,17 @@ function testNoProviderRegression() {
   assert.deepStrictEqual(llm.tokenLimitBody(llm.openAiProviderDialect({ endpoint: { url: "http://127.0.0.1:8000/v1" } }), 4000), { max_tokens: 4000 }, "an OpenAI-compatible endpoint must still receive max_tokens");
 
   const automation = read("public/automation.js");
-  assert(automation.includes("V627_AUTOMATION_AUTO_APPROVE_SCORE = 85"), "the strong-pass threshold must remain explicit");
+  /* RENAMED, NOT REMOVED. This suite's own headline property —
+     testStrongPassStopsWithoutApproving — is the one the entity chain has always
+     held: a strong pass stops the loop and does NOT approve. Dogfood Pass #2 A1
+     found that the SHOT chain did the opposite at the same threshold, calling the
+     approval writer and returning before the human gate.
+     The constant is now V627_AUTOMATION_RECOMMENDATION_SCORE, which is what it
+     has always done here and what it is now restricted to doing everywhere.
+     Number and behaviour unchanged for this suite; see
+     tests/production-authority.js for the invariant and
+     tests/dogfood2-p0-negative-controls.js for its controls. */
+  assert(automation.includes("V627_AUTOMATION_RECOMMENDATION_SCORE = 85"), "the strong-pass threshold must remain explicit");
   assert(automation.includes('purpose: "entity-reference"'), "reference generation must still submit as entity-reference work");
   /* The three per-list literals moved into public/shared-aspect.js so the reference
      COMPILER could read the same value the request carries. What this anchor protects

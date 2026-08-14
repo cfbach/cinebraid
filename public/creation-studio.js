@@ -2013,6 +2013,54 @@ function guidedFrameCandidatesPanel(s, frame, index, takes, step) {
   const kicker = complete ? "✓ FRAME COMPLETE" : "RETURN RESULTS";
   return `<section class="guided-frame-return ${step.candidates.length ? "has-candidates" : "needs-candidates"} ${complete ? "is-approved" : ""}"><header><div><span>${kicker}</span><b>${esc(message)}</b></div>${actions.length ? `<div class="guided-frame-return-actions">${actions.join("")}</div>` : ""}</header>${candidateGallery}<div class="dropzone dropzone-lg guided-frame-dropzone" data-frame-dropzone="${attr(frame.id)}">DROP OR CHOOSE FRAME ${esc(frame.label)} CANDIDATES<input type="file" id="frame-file-${attr(frame.id)}" multiple accept="image/*" style="display:none"></div></section>`;
 }
+/* WHO IS IN THIS FRAME — the smallest control that makes the contract reachable.
+
+   Dogfood #2 A3. The shot's cast said the Chimbley Sweep belonged to S01-01, and
+   nothing in the product could say he is not in FRAME A. This is the writer for
+   that fact; public/shared-frame-presence.js is the rule and prompt-engine.js is
+   the enforcement.
+
+   Deliberately small. Shot Setup as a whole is a design brief, not this batch:
+   what is needed here is the authoritative declaration, in the place a creator
+   is already describing the frame. */
+function guidedFramePresencePanel(s, frame) {
+  const resolved = typeof resolveShotEntities === "function" ? resolveShotEntities(P, s) : null;
+  if (!resolved) return "";
+  const members = [
+    ...(resolved.characters || []).map((entity) => ({ entity, kind: "Character" })),
+    ...(resolved.props || []).map((entity) => ({ entity, kind: "Prop" })),
+    ...(resolved.vehicles || []).map((entity) => ({ entity, kind: "Vehicle" })),
+  ].filter((row) => row.entity && row.entity.id);
+  if (!members.length) return "";
+  const declared = members.filter((row) => resolveFramePresence(s, frame.id, row.entity.id)).length;
+  const rows = members.map((row) => {
+    const current = resolveFramePresence(s, frame.id, row.entity.id);
+    const options = [["", "Follows the shot"], ...FRAME_PRESENCE_VALUES.map((value) => [value, {
+      absent: "Not in this frame",
+      present: "Visible in this frame",
+      enters: "Enters during this frame",
+      exits: "Leaves during this frame",
+    }[value] || value])];
+    return `<label class="frame-presence-row"><span><b>${esc(row.entity.name || row.entity.id)}</b><small>${esc(row.kind)}</small></span><select onchange="setFramePresence('${attr(s.id)}','${attr(frame.id)}','${attr(row.entity.id)}',this.value)">${options.map(([value, label]) => `<option value="${attr(value)}" ${value === current ? "selected" : ""}>${esc(label)}</option>`).join("")}</select></label>`;
+  }).join("");
+  return `<details class="fold frame-presence-panel" ${declared ? "open" : ""}><summary>Who is in this frame <span>${declared ? `${declared} declared` : "follows the shot"}</span></summary><p class="hint">The shot's references say what the shot is about. This says what is visible in <b>this frame</b>. A reference stays attached for identity even when its subject is not in the frame — a frame marked <b>Not in this frame</b> compiles a prompt that requires the absence.</p><div class="frame-presence-rows">${rows}</div></details>`;
+}
+window.setFramePresence = (shotId, frameId, entityId, value) => {
+  const s = shotById(shotId);
+  if (!s) return;
+  const creation = ensureShotCreation(s);
+  creation.frameWorkflows = creation.frameWorkflows && typeof creation.frameWorkflows === "object" ? creation.frameWorkflows : {};
+  const workflow = creation.frameWorkflows[frameId] = creation.frameWorkflows[frameId] || {};
+  const map = workflow[RUNTIME_FRAME_PRESENCE_KEY] = workflow[RUNTIME_FRAME_PRESENCE_KEY] || {};
+  const presence = normalizeFramePresence(value);
+  /* ABSENCE MEANS INHERIT. Clearing a declaration deletes the key rather than
+     storing "follows the shot", so a frame that declares nothing is
+     indistinguishable from one that never did. */
+  if (presence) map[entityId] = presence; else delete map[entityId];
+  if (!Object.keys(map).length) delete workflow[RUNTIME_FRAME_PRESENCE_KEY];
+  dirty();
+  route();
+};
 function guidedFrameCard(s, frame, index, takes) {
   const state = guidedFrameState(s, frame, index), step = guidedFrameStepState(s, frame, index, takes);
   const refs = guidedFramePromptRefs(s, frame, index, state), mode = guidedFrameMode(state, refs);
@@ -2046,7 +2094,7 @@ function guidedFrameCard(s, frame, index, takes) {
   const sequenceReviewForCard = guidedFrameSequenceReviewState(s, sequenceInputsForCard);
   const motionAllowedForCard = sequenceInputsForCard.length < 2 || !!sequenceReviewForCard?.pass;
   const approvedPreview = approved ? `<button type="button" class="guided-frame-approved-preview guided-thumb-preview" onclick="openMediaTheatre('${attr(encodeURIComponent(approved.url))}','${attr(encodeURIComponent(`Approved Frame ${frame.label} · ${approved.name}`))}','image')" aria-label="View approved Frame ${esc(frame.label)} larger"><img src="${attr(approved.url)}" alt="Approved Frame ${esc(frame.label)}"><span>View larger</span></button><b>Approved Frame ${esc(frame.label)}</b><div class="guided-frame-context-actions"><a href="${attr(approved.url)}" download>Download image ↓</a>${motionAllowedForCard ? `<button type="button" class="approve-btn" onclick="openGuidedMotionFromFrames('${attr(s.id)}','create')">Create motion →</button>` : `<button type="button" class="chip" onclick="reviewGuidedFrameSequence('${attr(s.id)}')"${aiDisabledAttrs("vision")}>Review sequence first</button>`}</div>` : "";
-  return `<details class="guided-frame-card state-${statusClass} compact-work-section" data-frame-id="${attr(frame.id)}" ${workspaceSectionOpen(`${s.id}:${openKey}`, openDefault) ? "open" : ""} ontoggle="rememberWorkspaceSection('${attr(s.id)}:${attr(openKey)}',this.open)"><summary class="guided-frame-head"><div class="guided-frame-number">${esc(frame.label)}</div><div><span>${index === 0 ? "START FRAME" : index === 1 ? "OPTIONAL END FRAME" : "ADDITIONAL FRAME"}</span><h3>${esc(frame.title || title)}</h3><small>${approved ? `Approved · ${esc(approved.name)}` : step.label}</small></div>${approved ? `<img class="guided-frame-summary-thumb" src="${attr(approved.url)}" alt="">` : ""}${workspaceStatusPill(statusLabel, statusTone)}<i class="compact-chevron">⌄</i></summary><div class="guided-frame-collapse-body">${index > 0 ? `<div class="compact-section-actions"><button class="chip danger" onclick="removeGuidedFrame('${s.id}','${frame.id}')">Remove frame</button></div>` : ""}<div class="guided-frame-body"><aside class="guided-frame-context">${approved ? approvedPreview : previousApproved && index > 0 ? `<button type="button" class="guided-frame-approved-preview guided-thumb-preview" onclick="openMediaTheatre('${attr(encodeURIComponent(previousApproved.url))}','${attr(encodeURIComponent(`Frame ${previous.label} input · ${previousApproved.name}`))}','image')"><img src="${attr(previousApproved.url)}" alt="Previous approved frame"><span>View larger</span></button><b>Frame ${esc(previous.label)} input</b><small>${state.usePreviousFrame ? "Included as a starting reference" : "Available for optional assisted creation"}</small>` : `<div class="guided-frame-placeholder"><span>FRAME ${esc(frame.label)}</span><p>${index === 0 ? "Import or choose the shot's first approved image." : "Add another composition only when the shot needs it."}</p></div>`}</aside><div class="guided-frame-work">${field(index === 0 ? "Frame description / production note" : `Frame ${frame.label} description / production note`, `<textarea class="guided-primary-brief" placeholder="Describe what the approved image should show. This remains useful even when the image was made elsewhere." onchange="setGuidedFrameField('${s.id}','${frame.id}','action',this.value,true)">${esc(state.action)}</textarea>`)}${guidedFrameCandidatesPanel(s, frame, index, takes, step)}${manualPromptHistory}${assistedTools}</div></div></div></details>`;
+  return `<details class="guided-frame-card state-${statusClass} compact-work-section" data-frame-id="${attr(frame.id)}" ${workspaceSectionOpen(`${s.id}:${openKey}`, openDefault) ? "open" : ""} ontoggle="rememberWorkspaceSection('${attr(s.id)}:${attr(openKey)}',this.open)"><summary class="guided-frame-head"><div class="guided-frame-number">${esc(frame.label)}</div><div><span>${index === 0 ? "START FRAME" : index === 1 ? "OPTIONAL END FRAME" : "ADDITIONAL FRAME"}</span><h3>${esc(frame.title || title)}</h3><small>${approved ? `Approved · ${esc(approved.name)}` : step.label}</small></div>${approved ? `<img class="guided-frame-summary-thumb" src="${attr(approved.url)}" alt="">` : ""}${workspaceStatusPill(statusLabel, statusTone)}<i class="compact-chevron">⌄</i></summary><div class="guided-frame-collapse-body">${index > 0 ? `<div class="compact-section-actions"><button class="chip danger" onclick="removeGuidedFrame('${s.id}','${frame.id}')">Remove frame</button></div>` : ""}<div class="guided-frame-body"><aside class="guided-frame-context">${approved ? approvedPreview : previousApproved && index > 0 ? `<button type="button" class="guided-frame-approved-preview guided-thumb-preview" onclick="openMediaTheatre('${attr(encodeURIComponent(previousApproved.url))}','${attr(encodeURIComponent(`Frame ${previous.label} input · ${previousApproved.name}`))}','image')"><img src="${attr(previousApproved.url)}" alt="Previous approved frame"><span>View larger</span></button><b>Frame ${esc(previous.label)} input</b><small>${state.usePreviousFrame ? "Included as a starting reference" : "Available for optional assisted creation"}</small>` : `<div class="guided-frame-placeholder"><span>FRAME ${esc(frame.label)}</span><p>${index === 0 ? "Import or choose the shot's first approved image." : "Add another composition only when the shot needs it."}</p></div>`}</aside><div class="guided-frame-work">${field(index === 0 ? "Frame description / production note" : `Frame ${frame.label} description / production note`, `<textarea class="guided-primary-brief" placeholder="Describe what the approved image should show. This remains useful even when the image was made elsewhere." onchange="setGuidedFrameField('${s.id}','${frame.id}','action',this.value,true)">${esc(state.action)}</textarea>`)}${guidedFramePresencePanel(s, frame)}${guidedFrameCandidatesPanel(s, frame, index, takes, step)}${manualPromptHistory}${assistedTools}</div></div></div></details>`;
 }
 
 function guidedFrameRailMarkup(s, frames, takes, selectedId) {
@@ -3569,6 +3617,11 @@ window.buildGuidedFramePrompt = async (id, frameId, useLLM = false) => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         shotId: id,
+        /* WHICH FRAME IS BEING BUILT. Without it the server compiles the whole
+           shot's cast and description and then appends this frame's directive —
+           the Dogfood #2 A3 path that put an explicitly absent character into
+           Frame A of S01-01. */
+        frameId,
         profileId,
         purpose: mode === "edit" ? "edit" : "shot-still",
         references: payloadRefs,

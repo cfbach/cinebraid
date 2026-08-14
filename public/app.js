@@ -2074,10 +2074,37 @@ async function route(recoveryAttempt = false) {
 function takesFor(id) {
   return SCAN.shots[id]?.takes || [];
 }
-function mediaByPrefix(list, prefix) {
-  return (Array.isArray(list) ? list : []).filter((m) =>
-    m.name.toUpperCase().startsWith((prefix || "").toUpperCase()),
-  );
+/* mediaByPrefix() was here. It is DELETED rather than deprecated: Dogfood #2 A4
+   was caused by it, and a prefix-matching media selector left in the file is a
+   prefix-matching media selector a future caller will reach for. Ownership is
+   answered by public/shared-entity-ownership.js and nowhere else. */
+/* THE BADGE READS PROVENANCE NOW. Dogfood #2 A1: `APPROVED PICK` rendered from
+   the presence of a winner alone, and scene automation could write that winner
+   without anyone approving anything — so the board asserted a decision nobody had
+   taken. Automation can no longer write the edge, but projects made before that
+   repair still carry ones it did, and the board must not keep speaking for them.
+
+   The run's own provenance record is the evidence: `approval: "director"` is a
+   person, `"reused"` is a person's earlier decision, and `"automatic"` is not a
+   decision at all. No record — the ordinary case for a manual approval — reads as
+   approved, because the manual path is the one a person clicked through. */
+function shotWinnerApprovalWord(s, name) {
+  const wanted = String(name || "");
+  if (!wanted) return "";
+  let best = "";
+  const rank = { director: 3, reused: 2, automatic: 1 };
+  for (const entry of s?.generationRecords || []) {
+    if (String(entry?.file || "") !== wanted && String(entry?.files || "") !== wanted) continue;
+    const approval = String(entry?.approval || "");
+    if (!rank[approval]) continue;
+    if (!best || rank[approval] > rank[best]) best = approval;
+  }
+  return best;
+}
+function shotWinnerBadgeMarkup(s, winner) {
+  return shotWinnerApprovalWord(s, winner?.name) === "automatic"
+    ? '<span class="win-badge machine-pick" title="An automated run selected this. It is not an approval.">AUTOMATION PICK</span>'
+    : '<span class="win-badge">APPROVED PICK</span>';
 }
 function workflowState(s, takes = takesFor(s.id)) {
   const explicit = WORKFLOW_STATES.includes(s.workflowStatus)
@@ -2522,7 +2549,7 @@ function slate(s, sceneId) {
   return `<article class="slate wf-card-${state.cls}">
     <div class="slate-top"><span class="slate-id">${esc(s.id)}</span><span class="dur-chip">${shotDur(s) ? shotDur(s) + "s" : ""}</span><span class="slate-route">${esc(outputPlanLabel(s))}</span>
       ${sceneId ? `<span class="move-btns"><button onclick="moveShot('${s.id}',-1)" title="Move up">↑</button><button onclick="moveShot('${s.id}',1)" title="Move down">↓</button></span>` : ""}</div>
-    <div class="slate-thumb-shell"><a class="slate-thumb take-tile" href="#/shot/${s.id}" style="display:block;${attr(shotWellStyle(s))}">${thumb}${winner ? '<span class="win-badge">APPROVED PICK</span>' : ""}</a>${enlarge}</div>
+    <div class="slate-thumb-shell"><a class="slate-thumb take-tile" href="#/shot/${s.id}" style="display:block;${attr(shotWellStyle(s))}">${thumb}${winner ? shotWinnerBadgeMarkup(s, winner) : ""}</a>${enlarge}</div>
     <a class="slate-body" href="#/shot/${s.id}">
       <div class="slate-title">${esc(s.title)}</div>
       <div class="state-pair"><span class="shot-next-chip next-${next.key}" title="Next action for this shot">${esc(next.label)}</span><small>${esc(next.detail)}</small></div>

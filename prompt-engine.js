@@ -5,6 +5,9 @@ const { buildCameraPhrases } = require("./public/shared-camera");
 /* One parser for the whole product. It lives in the shared module so the browser can use
    the same rule the prompt compiler does; this re-export keeps the Node API unchanged. */
 const { parseAspectRatio } = require("./public/shared-aspect");
+/* Frame-specific presence. The compiler is where whole-shot membership stopped
+   overriding a frame's declared absence — see resolveFramePresenceContext. */
+const FramePresence = require("./public/shared-frame-presence");
 
 const PROFILE_FILE = path.join(__dirname, "data", "model-profiles.json");
 
@@ -423,7 +426,44 @@ function promptCharactersForContext(P, shot, scene, segment, resolvedCharacters 
   }));
 }
 
-function buildContext(P, shotId, segmentId = "") {
+/* FRAME PRESENCE, resolved into the shape defaultSpec needs.
+
+   Dogfood #2 A3 / forensic F6. buildContext() had no frame at all: it assembled
+   the WHOLE shot's cast, description, beat and references, and server.js then
+   APPENDED the frame directive to the result. So a frame authored as "no
+   Chimbley Sweep visible" still compiled the Sweep's identity canon, the Sweep's
+   subject descriptor and a shot description that put him in the composition —
+   and GPT Image 2 obeyed, on a paid render.
+
+   `frameId` is optional and absent means exactly what it always meant: no frame
+   declares anything, so nothing changes. Only an explicit per-frame declaration
+   overrides shot membership. */
+function resolveFramePresenceContext(P, shot, frameId) {
+  const id = cleanText(frameId);
+  if (!id) return { frameId: "", declarations: [], absent: [] };
+  const declarations = FramePresence.framePresenceDeclarations(shot, id);
+  if (!declarations.length) return { frameId: id, declarations: [], absent: [] };
+  const byId = new Map();
+  for (const list of ["characters", "locations", "props", "vehicles"]) {
+    for (const entity of Array.isArray(P[list]) ? P[list] : []) {
+      if (entity && entity.id && !byId.has(entity.id)) byId.set(entity.id, { entity, list });
+    }
+  }
+  const absent = declarations
+    .filter((entry) => FramePresence.FRAME_PRESENCE_FORBIDDING_VALUES.includes(entry.presence))
+    .map((entry) => {
+      const found = byId.get(entry.entityId);
+      return {
+        id: entry.entityId,
+        name: cleanText(found?.entity?.name) || entry.entityId,
+        aliases: [cleanText(found?.entity?.prefix), cleanText(found?.entity?.anchorPrefix)].filter(Boolean),
+        type: found ? { characters: "character", locations: "location", props: "prop", vehicles: "prop" }[found.list] || "reference" : "reference",
+      };
+    });
+  return { frameId: id, declarations, absent };
+}
+
+function buildContext(P, shotId, segmentId = "", options = {}) {
   const shot = (P.shots || []).find((s) => s.id === shotId);
   if (!shot) {
     const error = new Error("Shot not found");
@@ -439,8 +479,32 @@ function buildContext(P, shotId, segmentId = "") {
     : null;
   const resolvedForPrompt = resolveShotEntities(P, shot);
   const duration = resolveShotDuration(shot, segment);
+  const framePresence = resolveFramePresenceContext(P, shot, (options && options.frameId) || "");
+  const absentIds = new Set(framePresence.absent.map((entry) => entry.id));
+  /* WHOLE-SHOT NARRATIVE THAT NAMES AN ABSENT ENTITY IS NOT FRAME TRUTH. It is
+     withheld in full rather than edited, because a partial redaction of authored
+     prose produces a sentence nobody wrote — and the frame's own description,
+     which server.js overlays as the directive, is the authority for this frame.
+     `withheldNarrative` records that it happened so the build can say so. */
+  const shotNarrative = FramePresence.narrativeForFrame(shot.desc || "", framePresence.absent);
+  const sceneBeat = FramePresence.narrativeForFrame(scene.whatHappens || "", framePresence.absent);
+  const shotPositioning = FramePresence.narrativeForFrame(shot.positioning || "", framePresence.absent);
   return {
-    promptEntities: promptCharactersForContext(P, shot, scene, segment, resolvedForPrompt.characters),
+    /* An entity declared absent contributes no positive subject descriptor. The
+       reference itself is untouched — attachment and presence are different
+       facts, and the identity anchor may legitimately stay attached. */
+    promptEntities: promptCharactersForContext(P, shot, scene, segment, resolvedForPrompt.characters)
+      .filter((entry) => !absentIds.has(entry.id)),
+    framePresence: {
+      frameId: framePresence.frameId,
+      declarations: framePresence.declarations,
+      absent: framePresence.absent,
+      withheldNarrative: [
+        ...(shotNarrative.withheldFor.length ? [{ field: "shot.desc", entityIds: shotNarrative.withheldFor }] : []),
+        ...(sceneBeat.withheldFor.length ? [{ field: "scene.whatHappens", entityIds: sceneBeat.withheldFor }] : []),
+        ...(shotPositioning.withheldFor.length ? [{ field: "shot.positioning", entityIds: shotPositioning.withheldFor }] : []),
+      ],
+    },
     project: {
       title: P.meta?.title || "",
       format: P.meta?.format || "",
@@ -455,7 +519,7 @@ function buildContext(P, shotId, segmentId = "") {
     scene: {
       id: scene.id || shot.scene,
       title: scene.title || "",
-      beat: scene.whatHappens || "",
+      beat: sceneBeat.text,
       feeling: scene.howItFeels || "",
       stage: scene.stage ?? "",
     },
@@ -470,12 +534,12 @@ function buildContext(P, shotId, segmentId = "") {
         ? segment.motionPrompt ||
           segment.note ||
           segment.title ||
-          shot.desc ||
+          shotNarrative.text ||
           ""
-        : shot.desc || "",
+        : shotNarrative.text,
       positioning: segment
-        ? segment.positioning || shot.positioning || ""
-        : shot.positioning || "",
+        ? segment.positioning || shotPositioning.text || ""
+        : shotPositioning.text,
       /* One resolver, so a duration stored under any supported alias is the
          duration generation compiles against. Reading only `shot.dur` turned
          the sample's declared 4-second shot into a defaulted 5-second one. */
@@ -556,8 +620,20 @@ function defaultSpec(context, purpose, mode, references, mediaAnalysis) {
   const visualGrounding = [];
   const promptWarnings = [];
   const mustPreserve = [];
+  /* THE FRAME'S OWN TRUTH, applied where the positive facts are assembled.
+
+     An entity this frame declares absent still keeps its reference — attachment
+     and presence are different facts, and an identity anchor may legitimately
+     stay attached so the model knows who NOT to draw and so the rest of the
+     frame stays consistent. What it loses is every POSITIVE assertion: no
+     identity canon, no drift restatement, no visual grounding, no
+     must-preserve, no blocking descriptor, no subject descriptor. */
+  const framePresence = context.framePresence || { absent: [], declarations: [], withheldNarrative: [] };
+  const absentEntities = Array.isArray(framePresence.absent) ? framePresence.absent : [];
+  const absentIds = new Set(absentEntities.map((entry) => cleanText(entry.id)).filter(Boolean));
   for (const ref of context.references || []) {
     if (blockingPurpose) continue;
+    if (absentIds.has(cleanText(ref.id))) continue;
     const canon = cleanText(ref.canon);
     const drift = cleanText(ref.drift);
     const selectedVisual = visualReferenceForEntity(ref.id);
@@ -585,8 +661,13 @@ function defaultSpec(context, purpose, mode, references, mediaAnalysis) {
     if (drift) driftRestatements.push(`${ref.name}: ${drift}`);
   }
   if (!blockingPurpose) mustPreserve.push("screen direction and continuity with adjacent shots");
+  /* The model is TOLD about the absence rather than merely not told about the
+     presence. Generic "avoid unrequested characters" was already here and did
+     not save S01-01, because the Sweep was not unrequested — the compiled prompt
+     had asked for him. */
   const mustAvoid = unique([
     context.project.world?.reject ? `world violations: ${context.project.world.reject}` : "",
+    ...FramePresence.absenceRequirements(absentEntities),
     "unrequested characters, props, text or camera moves",
     "identity drift, anatomy deformation and geometry warping",
   ]);
@@ -600,7 +681,7 @@ function defaultSpec(context, purpose, mode, references, mediaAnalysis) {
     instruction: r.instruction || "",
   }));
   const blockingEntities = (context.references || [])
-    .filter((ref) => ref.type !== "audio")
+    .filter((ref) => ref.type !== "audio" && !absentIds.has(cleanText(ref.id)))
     .map((ref) => ({ id: ref.id, name: ref.name, type: ref.type, blockingNote: ref.blockingNote || "", descriptor: blockingPlaceholder(ref) }));
   const blockingNarrative = sanitizeBlockingText(context.shot.description || context.scene.beat || context.shot.title, context.references || []);
   const blockingEnvironment = blockingEntities.find((item) => item.type === "location")?.descriptor || cleanText(context.project.world?.setting);
@@ -647,12 +728,25 @@ function defaultSpec(context, purpose, mode, references, mediaAnalysis) {
     identityCanon: unique(identityCanon),
     driftRestatements: unique(driftRestatements),
     visualGrounding,
-    promptEntities: ((context.promptEntities || []).length ? context.promptEntities : (context.references || []).filter((ref) => ref.type === "character")).map((ref) => ({
-      id: ref.id,
-      name: ref.name,
-      type: "character",
-      descriptor: characterPromptDescriptor(ref),
-    })),
+    /* The fallback arm matters as much as the primary one: with no promptEntities
+       the compiler used every character reference on the shot, which is the exact
+       path that put the Sweep's descriptor into a frame that excluded him. */
+    promptEntities: ((context.promptEntities || []).length ? context.promptEntities : (context.references || []).filter((ref) => ref.type === "character"))
+      .filter((ref) => !absentIds.has(cleanText(ref.id)))
+      .map((ref) => ({
+        id: ref.id,
+        name: ref.name,
+        type: "character",
+        descriptor: characterPromptDescriptor(ref),
+      })),
+    /* The declaration, carried on the spec so the preflight can check the
+       compiled result against it without re-reading the project. */
+    framePresence: {
+      frameId: cleanText(framePresence.frameId),
+      declarations: Array.isArray(framePresence.declarations) ? framePresence.declarations : [],
+      absent: absentEntities,
+      withheldNarrative: Array.isArray(framePresence.withheldNarrative) ? framePresence.withheldNarrative : [],
+    },
     productionRisks: unique(context.shot.risks || []),
     promptWarnings: unique(promptWarnings),
     audio: {
@@ -984,6 +1078,11 @@ function validateSpec(raw, fallback) {
   out.blockingEmphasis = normalizeBlockingEmphasis(s.blockingEmphasis || fallback.blockingEmphasis || "auto");
   out.blockingDirection = cleanText(s.blockingDirection || fallback.blockingDirection || "");
   out.blockingPlan = normalizeBlockingPlan(s.blockingPlan || {}, fallback.blockingPlan || {});
+  /* THE DECLARATION IS NOT NEGOTIABLE. A supplied spec — including one an
+     assistant rewrote — may not soften, drop or invent a frame presence
+     declaration; it is production truth read from the project, and the fallback
+     is the only source of it. */
+  out.framePresence = fallback.framePresence || { frameId: "", declarations: [], absent: [], withheldNarrative: [] };
   out.schemaVersion = 1;
   out.shotId = fallback.shotId;
   out.durationWasDefaulted = !!fallback.durationWasDefaulted;

@@ -6,8 +6,33 @@ function v640SceneShots(sceneId) {
 function v640SceneOpeningFrame(shot) {
   return typeof guidedFrames === "function" ? guidedFrames(shot)[0] || null : (shot?.keyframes || [])[0] || null;
 }
+/* A MISSING NEIGHBOUR IS NOT A SHOT. Dogfood #2 A5 / forensic F7: the reference
+   builder always asked for a previous AND a next shot, and boundary packages
+   carry "" for one of them. `shotById("")` returns undefined, and this function
+   read `shot.id` off it — so `Generate 3 S04-03 continuity corrections · round 1`
+   threw `Cannot read properties of undefined (reading 'id')` before any provider
+   request was ever built. Every first shot, every last shot, every single-shot
+   scene and every deleted neighbour hit the same line.
+
+   Answering "" with null is the whole repair at this level: a neighbour that does
+   not exist has no approved still, which is a fact, not an error. */
 function v640SceneApprovedStill(shot) {
-  return typeof guidedCurrentShotStill === "function" ? guidedCurrentShotStill(shot, takesFor(shot.id)) : null;
+  const id = shot && typeof shot === "object" ? String(shot.id || "") : "";
+  if (!id) return null;
+  return typeof guidedCurrentShotStill === "function" ? guidedCurrentShotStill(shot, takesFor(id)) : null;
+}
+/* A package CineBraid itself built wrong, or a project that cannot supply the
+   structural context a correction needs. Distinguished from a provider fault
+   because the two need opposite handling: a provider fault may clear on its own,
+   and this one is identical every time it is reconstructed. Retrying it spends
+   an attempt to reproduce the same exception. */
+function v640CorrectionPackageError(message, details = {}) {
+  const error = new Error(message);
+  error.localPackageError = true;
+  error.failureClass = "local-package";
+  error.remediation = String(details.remediation || "");
+  error.packageId = String(details.packageId || "");
+  return error;
 }
 function v640SceneShotPreflight(shot) {
   const frame = v640SceneOpeningFrame(shot);
@@ -133,7 +158,7 @@ window.openSceneAutomationModal = (sceneId) => {
   if (!scene) return;
   const generationSettings = v6211AutomationGenerationSettings();
   window._v640SceneDraft = { sceneId, shotIds: shots.filter((shot) => !v640SceneApprovedStill(shot)).map((shot) => shot.id), generationSettings };
-  openModal(`<div class="automation-plan-modal scene-automation-plan"><header><div><span>SCENE AUTOMATION</span><h3>${esc(scene.title || scene.id)}</h3><p>Continue from the work already approved, review the assembled scene, and repair only the shots that need attention.</p></div><button class="cancel" onclick="closeModal()">Close</button></header>${v6211GenerationProfileMarkup(generationSettings)}<section class="scene-auto-scope"><label><span>Automation scope</span><select id="v640-scene-scope" onchange="v642ApplySceneScope()"><option value="continue" selected>Continue from current scene — generate only unfinished shots</option><option value="review-only">Review current approved scene only</option><option value="rebuild">Rebuild selected shots</option></select></label><div><button class="chip" onclick="v642SelectIncompleteSceneShots()">SELECT UNFINISHED</button><button class="chip" onclick="v642SelectAllSceneShots()">SELECT ALL ELIGIBLE</button></div><p>Approved shots remain available as continuity context even when they are not selected for regeneration.</p></section><div id="v640-scene-shot-picker" class="scene-auto-shot-picker">${shots.map((shot, index) => v642ScenePlannerShotCard(shot, index, "continue")).join("")}</div><div class="scene-auto-settings-grid" data-scene-generation-setting><label><span>Execution mode</span><select id="v640-scene-mode" onchange="updateSceneAutomationEstimate()"><option value="hybrid" selected>Hybrid — anchors first</option><option value="sequential">Sequential — edit order</option></select></label><label><span>Candidates per pass</span><select id="v640-scene-outputs" onchange="updateSceneAutomationEstimate()">${[1,2,3,4].map((n) => `<option value="${n}" ${n === 3 ? "selected" : ""}>${n}</option>`).join("")}</select></label><label><span>Max frame passes per shot</span><select id="v640-scene-shot-passes" onchange="updateSceneAutomationEstimate()">${[1,2,3,4,5,6,7,8].map((n) => `<option value="${n}" ${n === 5 ? "selected" : ""}>${n}</option>`).join("")}</select></label><label><span>Opening blocking passes</span><select id="v640-scene-blocking-passes" onchange="updateSceneAutomationEstimate()">${[1,2,3,4,5,6].map((n) => `<option value="${n}" ${n === 3 ? "selected" : ""}>${n}</option>`).join("")}</select></label></div><div class="scene-auto-settings-grid"><label><span>Correction passes per target</span><select id="v640-scene-correction-passes" onchange="updateSceneAutomationEstimate()">${[1,2,3,4,5,6,7,8].map((n) => `<option value="${n}" ${n === 3 ? "selected" : ""}>${n}</option>`).join("")}</select></label><label><span>Scene correction cycles</span><select id="v640-scene-correction-rounds" onchange="updateSceneAutomationEstimate()">${[0,1,2,3,4,5].map((n) => `<option value="${n}" ${n === 2 ? "selected" : ""}>${n}</option>`).join("")}</select></label><label><span>Continuity strictness</span><select id="v640-scene-strictness"><option value="lenient">Lenient</option><option value="normal" selected>Normal</option><option value="strict">Strict</option></select></label><label><span>Auto-approval threshold</span><select id="v640-scene-auto-score">${[75,80,85,90,95].map((n) => `<option value="${n}" ${n === 85 ? "selected" : ""}>${n}/100</option>`).join("")}</select></label><label><span>Maximum total images</span><input id="v640-scene-max-images" type="number" min="0" max="1000" step="1" value="60"></label></div><div class="scene-auto-toggle-grid"><label><input id="v640-scene-reuse" type="checkbox" checked onchange="updateSceneAutomationEstimate()"><span><b>Reuse approved stills and guides</b><small>Completed shots are context, not regenerated work.</small></span></label><label><input id="v640-scene-review" type="checkbox" checked onchange="updateSceneAutomationEstimate()"><span><b>Review scene continuity</b><small>Check the entire approved sequence after generation.</small></span></label><label><input id="v640-scene-corrections" type="checkbox" checked onchange="updateSceneAutomationEstimate()"><span><b>Automate high-priority corrections</b><small>Build bounded correction packages and review the results.</small></span></label><label><input id="v640-scene-auto-target" type="checkbox" checked><span><b>Auto-select repair target</b><small>Choose the most likely shot when a finding names several.</small></span></label></div><div id="v640-scene-preflight" class="scene-auto-preflight"></div><div id="v640-scene-estimate" class="automation-cost-guard"></div><div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button id="v640-start-scene" class="approve-btn large" onclick="startPlannedSceneAutomation()">CONTINUE SCENE AUTOMATION</button></div></div>`);
+  openModal(`<div class="automation-plan-modal scene-automation-plan"><header><div><span>SCENE AUTOMATION</span><h3>${esc(scene.title || scene.id)}</h3><p>Continue from the work already approved, review the assembled scene, and repair only the shots that need attention.</p></div><button class="cancel" onclick="closeModal()">Close</button></header>${v6211GenerationProfileMarkup(generationSettings)}<section class="scene-auto-scope"><label><span>Automation scope</span><select id="v640-scene-scope" onchange="v642ApplySceneScope()"><option value="continue" selected>Continue from current scene — generate only unfinished shots</option><option value="review-only">Review current approved scene only</option><option value="rebuild">Rebuild selected shots</option></select></label><div><button class="chip" onclick="v642SelectIncompleteSceneShots()">SELECT UNFINISHED</button><button class="chip" onclick="v642SelectAllSceneShots()">SELECT ALL ELIGIBLE</button></div><p>Approved shots remain available as continuity context even when they are not selected for regeneration.</p></section><div id="v640-scene-shot-picker" class="scene-auto-shot-picker">${shots.map((shot, index) => v642ScenePlannerShotCard(shot, index, "continue")).join("")}</div><div class="scene-auto-settings-grid" data-scene-generation-setting><label><span>Execution mode</span><select id="v640-scene-mode" onchange="updateSceneAutomationEstimate()"><option value="hybrid" selected>Hybrid — anchors first</option><option value="sequential">Sequential — edit order</option></select></label><label><span>Candidates per pass</span><select id="v640-scene-outputs" onchange="updateSceneAutomationEstimate()">${[1,2,3,4].map((n) => `<option value="${n}" ${n === 3 ? "selected" : ""}>${n}</option>`).join("")}</select></label><label><span>Max frame passes per shot</span><select id="v640-scene-shot-passes" onchange="updateSceneAutomationEstimate()">${[1,2,3,4,5,6,7,8].map((n) => `<option value="${n}" ${n === 5 ? "selected" : ""}>${n}</option>`).join("")}</select></label><label><span>Opening blocking passes</span><select id="v640-scene-blocking-passes" onchange="updateSceneAutomationEstimate()">${[1,2,3,4,5,6].map((n) => `<option value="${n}" ${n === 3 ? "selected" : ""}>${n}</option>`).join("")}</select></label></div><div class="scene-auto-settings-grid"><label><span>Correction passes per target</span><select id="v640-scene-correction-passes" onchange="updateSceneAutomationEstimate()">${[1,2,3,4,5,6,7,8].map((n) => `<option value="${n}" ${n === 3 ? "selected" : ""}>${n}</option>`).join("")}</select></label><label><span>Scene correction cycles</span><select id="v640-scene-correction-rounds" onchange="updateSceneAutomationEstimate()">${[0,1,2,3,4,5].map((n) => `<option value="${n}" ${n === 2 ? "selected" : ""}>${n}</option>`).join("")}</select></label><label><span>Continuity strictness</span><select id="v640-scene-strictness"><option value="lenient">Lenient</option><option value="normal" selected>Normal</option><option value="strict">Strict</option></select></label><label><span>Recommendation threshold</span><select id="v640-scene-auto-score">${[75,80,85,90,95].map((n) => `<option value="${n}" ${n === 85 ? "selected" : ""}>${n}/100</option>`).join("")}</select><small>A review at or above this score stops further paid passes and recommends its best candidate. Approval stays yours.</small></label><label><span>Maximum total images</span><input id="v640-scene-max-images" type="number" min="0" max="1000" step="1" value="60"></label></div><div class="scene-auto-toggle-grid"><label><input id="v640-scene-reuse" type="checkbox" checked onchange="updateSceneAutomationEstimate()"><span><b>Reuse approved stills and guides</b><small>Completed shots are context, not regenerated work.</small></span></label><label><input id="v640-scene-review" type="checkbox" checked onchange="updateSceneAutomationEstimate()"><span><b>Review scene continuity</b><small>Check the entire approved sequence after generation.</small></span></label><label><input id="v640-scene-corrections" type="checkbox" checked onchange="updateSceneAutomationEstimate()"><span><b>Automate high-priority corrections</b><small>Build bounded correction packages and review the results.</small></span></label><label><input id="v640-scene-auto-target" type="checkbox" checked><span><b>Auto-select repair target</b><small>Choose the most likely shot when a finding names several.</small></span></label></div><div id="v640-scene-preflight" class="scene-auto-preflight"></div><div id="v640-scene-estimate" class="automation-cost-guard"></div><div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button id="v640-start-scene" class="approve-btn large" onclick="startPlannedSceneAutomation()">CONTINUE SCENE AUTOMATION</button></div></div>`);
   updateSceneAutomationEstimate();
 };
 window.updateSceneAutomationEstimate = () => {
@@ -416,15 +441,39 @@ function v640SceneCorrectionPackages(run, review, cycle) {
   const scene = sceneById(run.targetId); scene.continuityCorrectionPackages = [...(scene.continuityCorrectionPackages || []), ...packages]; dirty();
   return packages;
 }
+/* PREVIOUS AND NEXT ARE OPTIONAL. The target is not.
+
+   Every reason a neighbour can be absent — first shot, last shot, single-shot
+   scene, deleted neighbour, a neighbour that exists but has no approved still —
+   produces the same safe outcome here: the anchor is omitted, every valid anchor
+   is preserved, and WHY it was omitted is recorded on the package so the run
+   report can say so instead of the creator inferring it from a shorter list. */
+function v640SceneCorrectionOptionalAnchor(shotId) {
+  const id = String(shotId || "");
+  if (!id) return { id: "", present: false, reason: "scene-boundary" };
+  const shot = shotById(id);
+  if (!shot) return { id, present: false, reason: "shot-no-longer-exists" };
+  const media = v640SceneApprovedStill(shot);
+  if (!media?.url) return { id, present: false, reason: "no-approved-still" };
+  return { id, present: true, reason: "", shot, media };
+}
 function v640SceneCorrectionReferences(pkg) {
-  const target = shotById(pkg.targetShotId), refs = [];
+  const target = shotById(pkg.targetShotId), refs = [], omitted = [];
   const addStill = (shotId, role, label) => {
-    const shot = shotById(shotId), media = v640SceneApprovedStill(shot);
-    if (media?.url) refs.push({ key: `${role}:${shotId}:${media.name}`, label, role, instruction: role === "base" ? "Editable target still. Preserve everything except the requested continuity correction." : "Scene continuity authority only. Do not copy its camera angle into the target shot.", url: media.url });
+    const anchor = v640SceneCorrectionOptionalAnchor(shotId);
+    if (!anchor.present) {
+      if (role !== "base") omitted.push({ role, shotId: anchor.id, reason: anchor.reason });
+      return;
+    }
+    const media = anchor.media;
+    refs.push({ key: `${role}:${anchor.id}:${media.name}`, label, role, instruction: role === "base" ? "Editable target still. Preserve everything except the requested continuity correction." : "Scene continuity authority only. Do not copy its camera angle into the target shot.", url: media.url });
   };
   addStill(pkg.targetShotId, "base", `Current approved ${pkg.targetShotId}`);
-  addStill(pkg.previousShotId, "continuity", `Previous shot ${pkg.previousShotId}`);
-  addStill(pkg.nextShotId, "continuity", `Next shot ${pkg.nextShotId}`);
+  if (pkg.previousShotId) addStill(pkg.previousShotId, "continuity", `Previous shot ${pkg.previousShotId}`);
+  else omitted.push({ role: "continuity", shotId: "", reason: "scene-boundary", position: "previous" });
+  if (pkg.nextShotId) addStill(pkg.nextShotId, "continuity", `Next shot ${pkg.nextShotId}`);
+  else omitted.push({ role: "continuity", shotId: "", reason: "scene-boundary", position: "next" });
+  pkg.omittedAnchors = omitted;
   if (target && typeof shotCreationReferences === "function") {
     for (const ref of shotCreationReferences(target).filter((item) => item.url)) refs.push({ ...ref, role: ref.role === "base" ? "location" : ref.role });
   }
@@ -467,10 +516,33 @@ async function v641ReviewSceneCorrectionIncremental(run, step, payload) {
   await v626SaveRun(run, false, false);
   return { files, review: { reviews, ranking, suggested: ranking[0] || 1, rationale: reviews.find((row) => row.n === ranking[0])?.notes || "Scene correction candidates reviewed in context." } };
 }
+/* THE LOCAL GATE, before any provider code is reached.
+
+   Only the target is structurally required: a correction edits ONE approved
+   still, and the neighbours are context. This states that explicitly so the
+   run fails with the missing thing named rather than with a dereference, and so
+   the failure is classified as a package error that a retry cannot repair. */
+function v640SceneCorrectionPreflight(pkg) {
+  const errors = [];
+  const targetShotId = String(pkg?.targetShotId || "");
+  if (!targetShotId) errors.push({ message: "This correction package names no target shot.", remediation: "Rebuild the correction from the scene continuity review." });
+  const shot = targetShotId ? shotById(targetShotId) : null;
+  if (targetShotId && !shot) errors.push({ message: `${targetShotId} no longer exists in this project.`, remediation: "Remove the stale correction package and re-run the scene continuity review." });
+  const frame = shot ? v640SceneOpeningFrame(shot) : null;
+  if (shot && !frame) errors.push({ message: `${targetShotId} has no opening frame to correct.`, remediation: `Add an opening frame to ${targetShotId} before correcting it.` });
+  if (shot && !v640SceneApprovedStill(shot)) errors.push({ message: `${targetShotId} has no approved base still for correction.`, remediation: `Approve a still for ${targetShotId} first — a correction edits an approved image.` });
+  return { errors, shot, frame };
+}
 async function v640AutomateSceneCorrection(run, pkg) {
   pkg = v643HydrateSceneCorrectionPackage(pkg, run);
-  const shot = shotById(pkg.targetShotId), frame = v640SceneOpeningFrame(shot);
-  if (!shot || !frame || !v640SceneApprovedStill(shot)) throw new Error(`${pkg.targetShotId} has no approved base still for correction.`);
+  const preflight = v640SceneCorrectionPreflight(pkg);
+  if (preflight.errors.length) {
+    throw v640CorrectionPackageError(
+      preflight.errors.map((item) => item.message).join(" "),
+      { packageId: pkg.id, remediation: preflight.errors.map((item) => item.remediation).filter(Boolean).join(" ") },
+    );
+  }
+  const shot = preflight.shot, frame = preflight.frame;
   let revision = "";
   for (let round = 1; round <= Number(run.config.correctionPasses || 3); round++) {
     const baseKey = `scene-correction:${pkg.id}:round-${round}`, genKey = `${baseKey}:generate`, reviewKey = `${baseKey}:review`;
@@ -489,19 +561,33 @@ async function v640AutomateSceneCorrection(run, pkg) {
       await v626BeginStep(run, reviewKey, "scene-correction-review", `Review ${pkg.targetShotId} correction in scene context · round ${round}`, { shotId: pkg.targetShotId, frameId: frame.id, attempt: round, maxAttempts: run.config.correctionPasses });
       const data = await v641ReviewSceneCorrectionIncremental(run, reviewStep, { sceneId: run.targetId, targetShotId: pkg.targetShotId, fileNames: files, package: pkg });
       const picked = v626Pick(data, run);
-      await v626CompleteStep(run, reviewKey, { kind: "scene-correction-review", shotId: pkg.targetShotId, frameId: frame.id, pass: picked.pass, score: picked.score, winner: picked.file, files, review: data.review, revision: picked.pass ? "" : picked.note || picked.rationale, result: { targetShotId: pkg.targetShotId, rationale: picked.rationale, autoApprove: picked.autoApprove, explicitPass: picked.explicitPass, explicitScore: picked.explicitScore, threshold: v640AutoApproveScore(run) } });
+      await v626CompleteStep(run, reviewKey, { kind: "scene-correction-review", shotId: pkg.targetShotId, frameId: frame.id, pass: picked.pass, score: picked.score, winner: picked.file, files, review: data.review, revision: picked.pass ? "" : picked.note || picked.rationale, result: { targetShotId: pkg.targetShotId, rationale: picked.rationale, recommend: picked.recommend, explicitPass: picked.explicitPass, explicitScore: picked.explicitScore, threshold: v640RecommendationScore(run) } });
     }
     const reviewed = v626Step(run, reviewKey);
-    if (reviewed.pass && reviewed.winner && (reviewed.result?.autoApprove || reviewed.result?.humanApproved)) {
+    /* CORRECTION AUTOMATION IS SUBJECT TO THE SAME INVARIANT. This branch used to
+       fire on `autoApprove` OR `humanApproved` and stamped `approval: "automatic"`
+       on the package — a correction becoming canon with nobody in the loop, on
+       exactly the same terms as the frame path. Only a human decision reaches it
+       now, and the package records `director` because that is the only actor that
+       can get here. */
+    if (reviewed.pass && reviewed.winner && reviewed.result?.humanApproved) {
       await v628RequireAutomationLease(run);
-      v626ApproveFrame(pkg.targetShotId, frame.id, reviewed.winner);
-      v628AttachShotAutomationProvenance(run, frame.id, reviewed.winner, reviewKey, { shotId: pkg.targetShotId, score: reviewed.score });
-      pkg.status = "approved"; pkg.approvedFile = reviewed.winner; pkg.score = reviewed.score; pkg.completedAt = v626Now(); pkg.approval = reviewed.result?.humanApproved ? "director" : "automatic";
+      v626ApproveFrame(pkg.targetShotId, frame.id, reviewed.winner, humanAuthorityGrant({ via: "scene-correction-approval-gate", at: v626Now() }));
+      v628AttachShotAutomationProvenance(run, frame.id, reviewed.winner, reviewKey, { shotId: pkg.targetShotId, score: reviewed.score, humanApproved: true });
+      pkg.status = "approved"; pkg.approvedFile = reviewed.winner; pkg.score = reviewed.score; pkg.completedAt = v626Now(); pkg.approval = "director";
       const scenePkg = (sceneById(run.targetId).continuityCorrectionPackages || []).find((item) => item.id === pkg.id); if (scenePkg) Object.assign(scenePkg, pkg);
       const runPkg = (run.result?.correctionPackages || []).find((item) => item.id === pkg.id); if (runPkg) Object.assign(runPkg, pkg);
       dirty(); await flushPendingProjectSave();
       await v626Log(run, `${pkg.targetShotId} continuity correction approved: ${reviewed.winner} (${Math.round(Number(reviewed.score || 0))}/100).`, "success");
       return reviewed.winner;
+    }
+    if (reviewed.pass && reviewed.winner && reviewed.result?.recommend) {
+      pkg.recommendation = automationRecommendation({
+        file: reviewed.winner, score: reviewed.score, threshold: v640RecommendationScore(run),
+        rationale: reviewed.result?.rationale || "", runId: run.id, stepKey: reviewKey, at: v626Now(),
+      });
+      dirty();
+      await v626Log(run, `${pkg.targetShotId} correction has a strong candidate: ${reviewed.winner} (${Math.round(Number(reviewed.score || 0))}/100). Your approval is what makes it canon.`, "success");
     }
     if ((reviewed.pass && reviewed.winner) || round >= Number(run.config.correctionPasses || 3)) {
       pkg.status = "needs-review"; pkg.candidateFiles = reviewed.files || files;

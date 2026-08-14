@@ -1,6 +1,20 @@
 /* CineBraid v6.6.4-studio.4 — manual, stage, full-shot, and scene still automation with blocking review, budgets, continuity review, and bounded correction loops. Motion generation remains manual. */
 const V626_ACTIVE_AUTOMATION_RUNS = new Set();
-const V627_AUTOMATION_AUTO_APPROVE_SCORE = 85;
+/* THE STRONG-PASS THRESHOLD, and what it is now allowed to do.
+
+   Dogfood #2 A1 / forensic F1. This constant used to be spelled
+   V627_AUTOMATION_AUTO_APPROVE_SCORE, and a review that explicitly passed at or
+   above it called v626ApproveFrame() and RETURNED — writing frame.winner,
+   shot.winner, the approval identity and the approved candidate disposition, and
+   skipping the human gate entirely. The record kept `approval: "automatic"`, but
+   the authority edge it wrote was the same one a director writes.
+
+   The number is unchanged and the setting still exists, because "which score is
+   strong enough to stop spending money and ask a person" is a real and useful
+   decision. What it may DO is what changed: it now decides whether the run
+   RECOMMENDS a candidate and parks, never whether it approves one. The name says
+   so, so the next reader cannot mistake the threshold for a permission. */
+const V627_AUTOMATION_RECOMMENDATION_SCORE = 85;
 const V627_AUTOMATION_HEARTBEATS = new Map();
 const V628_AUTOMATION_LEASE_LOST_RUNS = new Set();
 const V628_AUTOMATION_HEARTBEAT_MS = 60_000;
@@ -78,8 +92,13 @@ function v668EffectiveStateRounds(run) {
   const affordable = Math.floor(maxImages / v640OutputsPerRequest(run));
   return Math.max(1, Math.min(configured, affordable));
 }
-function v640AutoApproveScore(run) {
-  return Math.max(50, Math.min(100, Math.round(Number(run?.config?.autoApproveScore || V627_AUTOMATION_AUTO_APPROVE_SCORE))));
+/* The stored config key keeps its old spelling on purpose: renaming it would
+   orphan the setting on every run already on disk and in every saved scene
+   plan. The newer spelling is accepted first so a future writer can migrate
+   without a second reader appearing. */
+function v640RecommendationScore(run) {
+  const configured = Number(run?.config?.recommendationScore ?? run?.config?.autoApproveScore ?? V627_AUTOMATION_RECOMMENDATION_SCORE);
+  return Math.max(50, Math.min(100, Math.round(configured || V627_AUTOMATION_RECOMMENDATION_SCORE)));
 }
 function v640RunDispatch(run) {
   if (!run) return;
@@ -359,11 +378,27 @@ async function v626CompleteStep(run, key, result = {}) {
   run.current = { ...(run.current || {}), stepKey: "", label: "" };
   return v626SaveRun(run, false);
 }
+/* WHY a step failed, in the only two categories that need different handling.
+
+   `local-package` is a deterministic fault in what CineBraid assembled, or in
+   the project state it assembled from: the same inputs produce the same
+   exception every time, so a retry spends an attempt to reproduce it. Dogfood #2
+   A5 is the case — a boundary correction package dereferenced a neighbour that
+   does not exist, and automatic retry could never have repaired the input.
+
+   Everything else stays `provider`, which is what the retry path was built for. */
+function v626FailureClass(error) {
+  if (error?.localPackageError === true || error?.failureClass === "local-package") return "local-package";
+  if (error?.authorityViolation === true || error?.code === "HUMAN_AUTHORITY_REQUIRED") return "local-package";
+  return "provider";
+}
 async function v626FailStep(run, key, error) {
   const step = v626Step(run, key);
   step.status = "failed";
   step.error = String(error?.message || error || "Automation step failed");
-  step.activity = { ...(step.activity || {}), state: "failed", detail: step.error, updatedAt: v626Now() };
+  step.failureClass = v626FailureClass(error);
+  step.remediation = String(error?.remediation || "");
+  step.activity = { ...(step.activity || {}), state: "failed", failureClass: step.failureClass, detail: [step.error, step.remediation].filter(Boolean).join(" "), updatedAt: v626Now() };
   step.updatedAt = v626Now();
   run.current = { ...(run.current || {}), stepKey: key, label: step.label || key };
   return v626SaveRun(run, false);
@@ -905,6 +940,27 @@ function v626DeclaredState(shot, frameId, kind, entity) {
   return entityStateById(entity, stateId) || entityStateById(entity, "");
 }
 
+/* The absent entities one frame declares, resolved to the names they are known
+   by so the contradiction check can look for them in prose. */
+function v670FrameAbsentEntities(shot, frame, resolved) {
+  const ids = absentEntityIdsForFrame(shot, frame?.id || "");
+  if (!ids.length) return [];
+  const pool = [
+    ...(resolved?.characters || []),
+    ...(resolved?.locations || []),
+    ...(resolved?.props || []),
+    ...(resolved?.vehicles || []),
+  ];
+  return ids.map((id) => {
+    const entity = pool.find((item) => item && item.id === id) || null;
+    return { id, name: entity?.name || id, aliases: [entity?.prefix, entity?.anchorPrefix].filter(Boolean) };
+  });
+}
+function v670FramePresenceContradictions(shot, frame, resolved, description) {
+  const absentEntities = v670FrameAbsentEntities(shot, frame, resolved);
+  if (!absentEntities.length) return [];
+  return framePresenceContradictions({ absentEntities, spec: { narrativePurpose: description }, prompt: "" });
+}
 function v626ShotPreflight(shot, frameIds) {
   const errors = [], warnings = [];
   if (!falGenerationReady()) errors.push("FAL GPT Image 2 generation is not enabled.");
@@ -912,12 +968,20 @@ function v626ShotPreflight(shot, frameIds) {
   if (!capabilityState("vision").ready) errors.push(capabilityState("vision").message || "The vision assistant is unavailable.");
   const frames = guidedFrames(shot), selected = frameIds.map((id) => frames.find((frame) => frame.id === id)).filter(Boolean);
   if (!selected.length) errors.push("Choose at least one frame.");
+  const resolved = typeof resolveShotEntities === "function" ? resolveShotEntities(P, shot) : null;
   for (const frame of selected) {
     const index = frames.indexOf(frame), state = guidedFrameState(shot, frame, index);
-    if (!String(state.action || frame.description || "").trim()) errors.push(`Frame ${frame.label} needs a description.`);
+    const description = String(state.action || frame.description || "").trim();
+    if (!description) errors.push(`Frame ${frame.label} needs a description.`);
     if (index > 0 && !frameIds.includes(frames[index - 1].id) && !guidedFrameApproved(shot, frames[index - 1], takesFor(shot.id), index - 1)) errors.push(`Frame ${frame.label} needs approved Frame ${frames[index - 1].label} or that parent frame included in this run.`);
+    /* FRAME PRESENCE CONTRADICTION, caught before the run is authorized rather
+       than at compile time when a paid pass has already been paid for. The
+       server refuses the compile too — that is the hard gate — but a run that
+       cannot possibly compile should never be startable. */
+    for (const finding of v670FramePresenceContradictions(shot, frame, resolved, description)) {
+      errors.push(`Frame ${frame.label} declares ${finding.entityName} absent, but its description states ${finding.entityName} positively: "${finding.fragment}".`);
+    }
   }
-  const resolved = typeof resolveShotEntities === "function" ? resolveShotEntities(P, shot) : null;
   const groups = [["location", resolved?.locations || []], ["character", resolved?.characters || []], ["prop", resolved?.props || []], ["vehicle", resolved?.vehicles || []]];
   /* Per FRAME, not once per shot. This used to read `shot.continuityStateSelections`
      directly - the SHOT-level runtime map and nothing else - so a frame that
@@ -1225,7 +1289,11 @@ function v626Pick(reviewData, run = null) {
   const score = Math.round(+picked?.score || 0);
   const explicitPass = picked?.explicitPass === true;
   const explicitScore = picked?.explicitScore === true;
-  return { file: picked ? files[Number(picked.n) - 1] || "" : "", pass, explicitPass, explicitScore, autoApprove: pass && explicitPass && explicitScore && score >= v640AutoApproveScore(run), score, note: String(picked?.notes || review.rationale || ""), rationale: String(review.rationale || ""), review };
+  /* `recommend` REPLACES `autoApprove`. Same arithmetic, different authority: it
+     names the run's own strongest candidate so the run can stop generating and
+     show that candidate first. It has never been, and may never be, a decision. */
+  const recommend = pass && explicitPass && explicitScore && score >= v640RecommendationScore(run);
+  return { file: picked ? files[Number(picked.n) - 1] || "" : "", pass, explicitPass, explicitScore, recommend, score, note: String(picked?.notes || review.rationale || ""), rationale: String(review.rationale || ""), review };
 }
 async function v627PauseForHumanReview(run, step, label) {
   step.status = "needs-review";
@@ -1511,15 +1579,21 @@ function v628AttachEntityAutomationProvenance(run, list, entityId, stateId, file
   if (index >= 0) entity.made[index] = record; else entity.made.push(record);
   dirty();
 }
-function v626ApproveFrame(shotId, frameId, fileName) {
+function v626ApproveFrame(shotId, frameId, fileName, grant) {
+  /* THE GATE. Dogfood #2 A1 / forensic F1: this function is the shot-side writer
+     of production authority, and until this batch anything inside automation
+     could call it. The comment below used to claim "the run still reaches a
+     human gate" — on the auto-approve branch it did not, and the claim was the
+     only thing standing between a score and canon.
+
+     It is a guard now, not a claim. `grant` must be an explicit human approval
+     command; assertHumanAuthority throws for everything else, including an
+     omitted argument, which is what every machine call site looked like. */
+  assertHumanAuthority(grant, `Frame ${frameId} of ${shotId}`);
   const shot = shotById(shotId), frame = frameById(shot, frameId), previous = frame?.winner || "";
   if (!shot || !frame || !fileName) throw new Error("Frame approval target is unavailable");
-  /* P4-SEM-C3. The automation writer records identity on the same terms as the
-     manual one — an edge written by a run and an edge written by a human must be
-     resolvable the same way, or downstream readers would have to know which
-     produced it. This does NOT make automation an approving actor: the run still
-     reaches a human gate, and the score still never becomes canon. It only means
-     the edge names WHICH bytes it points at. */
+  /* P4-SEM-C3. The edge records identity as well as the filename, so an approval
+     survives the rename it performs. */
   const approvedAssetId = (takesFor(shotId).find((item) => item.name === fileName) || {}).assetId || "";
   frame.winner = fileName;
   stampShotApprovalIdentity(frame, "winner", approvedAssetId);
@@ -1532,6 +1606,36 @@ function v626ApproveFrame(shotId, frameId, fileName) {
   shot.workflowStatus = "IN PROGRESS"; shot.status = "BUILT";
   ensureShotCreation(shot).activeGuidedFrameId = frame.id;
   dirty();
+}
+/* WHAT AUTOMATION IS ALLOWED TO WRITE INSTEAD OF AN APPROVAL.
+
+   A nomination, and the run's own internal selection. Everything a strong pass
+   knows is preserved — file, score, threshold, reasoning, which run and step
+   produced it — under a field whose every reader can see it is not a decision.
+   `selectedCandidate` is the existing, non-authoritative "show this one first"
+   pointer the frame card already honours, so the creator lands on the candidate
+   the reviewer liked and approves it in one act if they agree.
+
+   Deliberately NOT written here: frame.winner, shot.winner, any approval
+   identity stamp, markCandidateApproved, shot.workflowStatus. */
+function v627RecordFrameRecommendation(run, shotId, frameId, reviewed) {
+  const shot = shotById(shotId), frames = guidedFrames(shot), index = frames.findIndex((item) => item.id === frameId), frame = frames[index];
+  if (!shot || !frame || !reviewed?.winner) return null;
+  const recommendation = automationRecommendation({
+    file: reviewed.winner,
+    assetId: (takesFor(shotId).find((item) => item.name === reviewed.winner) || {}).assetId || "",
+    score: reviewed.score,
+    threshold: v640RecommendationScore(run),
+    rationale: reviewed.result?.rationale || "",
+    runId: run.id,
+    stepKey: reviewed.key || "",
+    at: v626Now(),
+  });
+  frame[AUTOMATION_RECOMMENDATION_FIELD] = recommendation;
+  guidedFrameState(shot, frame, index).selectedCandidate = reviewed.winner;
+  ensureShotCreation(shot).activeGuidedFrameId = frame.id;
+  dirty();
+  return recommendation;
 }
 async function v626AutomateFrame(run, shotId, frameId) {
   let shot = shotById(shotId), frames = guidedFrames(shot), index = frames.findIndex((frame) => frame.id === frameId), frame = frames[index];
@@ -1548,7 +1652,25 @@ async function v626AutomateFrame(run, shotId, frameId) {
   let revision = "";
   for (let round = 1; round <= Number(run.config.frameRounds || 2); round++) {
     const reviewKey = `frame:${frameId}:round-${round}:review`, prior = v626Step(run, reviewKey);
-    if (prior.status === "completed" && prior.pass && prior.winner) { await v628RequireAutomationLease(run); v626ApproveFrame(shotId, frameId, prior.winner); v628AttachShotAutomationProvenance(run, frameId, prior.winner, prior.key, { score: prior.score }); await flushPendingProjectSave(); return prior.winner; }
+    /* RESUMING A COMPLETED REVIEW IS NOT AN APPROVAL. This branch used to
+       re-approve any completed passing review step, which is how a run resumed
+       after the auto-approve branch wrote authority a second time — and how a
+       run resumed after a plain strong pass wrote it for the first time with
+       nobody in the loop. `humanApproved` is the only completion that carries a
+       decision, and it is the same reading v626AutomateEntityState has always
+       used. */
+    if (prior.status === "completed" && prior.pass && prior.winner && prior.result?.humanApproved) {
+      await v628RequireAutomationLease(run);
+      v626ApproveFrame(shotId, frameId, prior.winner, humanAuthorityGrant({ via: "automation-run-approval-gate", at: v626Now() }));
+      v628AttachShotAutomationProvenance(run, frameId, prior.winner, prior.key, { score: prior.score, humanApproved: true });
+      await flushPendingProjectSave();
+      return prior.winner;
+    }
+    /* A completed review that a person never decided is EVIDENCE, not canon. The
+       run re-parks on it rather than walking past it. */
+    if (prior.status === "completed" && prior.pass && prior.winner) {
+      await v627PauseForHumanReview(run, prior, `Approve Frame ${frame.label}`);
+    }
     if (round > 1) revision = v626Step(run, `frame:${frameId}:round-${round - 1}:review`).revision || "";
     const build = await v626FrameBuild(run, shotId, frameId, round, revision);
     const genKey = `frame:${frameId}:round-${round}:generate`, genStep = v626Step(run, genKey, "generation", `Generate Frame ${frame.label} candidates · round ${round}`);
@@ -1568,18 +1690,18 @@ async function v626AutomateFrame(run, shotId, frameId) {
       const data = await v626ReviewBatch(run, endpoint, body);
       if (typeof storeCandidateAIReview === "function") storeCandidateAIReview(shotId, data);
       const picked = v626Pick(data, run);
-      await v626CompleteStep(run, reviewKey, { kind: "frame-review", label: `Frame ${frame.label} review`, frameId, pass: picked.pass, score: picked.score, winner: picked.file, files: rows.map((row) => row.name), review: data.review, revision: picked.pass ? "" : picked.note || picked.rationale, result: { rationale: picked.rationale, context: data.context || [], autoApprove: picked.autoApprove, explicitPass: picked.explicitPass, explicitScore: picked.explicitScore, threshold: V627_AUTOMATION_AUTO_APPROVE_SCORE } });
+      await v626CompleteStep(run, reviewKey, { kind: "frame-review", label: `Frame ${frame.label} review`, frameId, pass: picked.pass, score: picked.score, winner: picked.file, files: rows.map((row) => row.name), review: data.review, revision: picked.pass ? "" : picked.note || picked.rationale, result: { rationale: picked.rationale, context: data.context || [], recommend: picked.recommend, explicitPass: picked.explicitPass, explicitScore: picked.explicitScore, threshold: v640RecommendationScore(run) } });
     }
     const reviewed = v626Step(run, reviewKey);
-    if (reviewed.pass && reviewed.winner && reviewed.result?.autoApprove) {
-      await v628RequireAutomationLease(run);
-      v626ApproveFrame(shotId, frameId, reviewed.winner);
-      const approvalKey = `frame:${frameId}:approval`;
-      v628AttachShotAutomationProvenance(run, frameId, reviewed.winner, approvalKey, { score: reviewed.score });
+    /* WHAT A STRONG PASS DOES NOW. It stops the loop, so no further paid pass is
+       bought, records a NON-AUTHORITATIVE nomination the workspace can show
+       first, and parks at the human gate. It writes no winner, marks no
+       candidate approved and completes no approval step. */
+    if (reviewed.pass && reviewed.winner && reviewed.result?.recommend) {
+      v627RecordFrameRecommendation(run, shotId, frameId, reviewed);
       await flushPendingProjectSave();
-      await v626CompleteStep(run, approvalKey, { kind: "frame-approval", label: `Frame ${frame.label} approved`, frameId, winner: reviewed.winner, score: reviewed.score, pass: true, result: { rationale: reviewed.result?.rationale || "Best passing candidate" } });
-      await v626Log(run, `Frame ${frame.label} approved: ${reviewed.winner} (${Math.round(Number(reviewed.score || 0))}/100).`, "success");
-      return reviewed.winner;
+      await v626Log(run, `Frame ${frame.label} has a strong candidate: ${reviewed.winner} (${Math.round(Number(reviewed.score || 0))}/100). No further pass will be generated. Your approval is what makes it canon.`, "success");
+      await v627PauseForHumanReview(run, v626Step(run, reviewKey), `Approve Frame ${frame.label}`);
     }
     if ((reviewed.pass && reviewed.winner) || round >= Number(run.config.frameRounds || 2)) await v627PauseForHumanReview(run, reviewed, `Approve Frame ${frame.label}`);
     await v626Log(run, `Frame ${frame.label} round ${round} did not pass. ${reviewed.revision || "Revising the prompt from review findings."}`, "warn");
@@ -1671,7 +1793,13 @@ async function runShotAutomation(runId) {
 }
 
 function v626EntityTarget(run) { const list = run.config?.list || run.entityList, id = run.config?.entityId || run.entityId; return { list, id, entity: P[list]?.find((item) => item.id === id) }; }
-function v626ApproveEntity(list, entityId, stateId, fileName) {
+/* The entity-side twin of v626ApproveFrame, guarded on the same terms. The
+   entity chain never had the auto-approve defect — it has always required
+   `result.humanApproved` before re-stating an approval — but "this path happens
+   to be correct today" is not an invariant, and one writer that can be called by
+   a machine is enough to lose the property again. */
+function v626ApproveEntity(list, entityId, stateId, fileName, grant) {
+  assertHumanAuthority(grant, `${list} ${entityId} state ${stateId}`);
   const entity = P[list]?.find((item) => item.id === entityId), state = entityStateById(entity, stateId);
   if (!entity || !state || !fileName) throw new Error("Entity approval target is unavailable");
   state.approvedFile = fileName; state.approvedAt = v626Now();
@@ -2138,7 +2266,7 @@ async function v626AutomateEntityState(run, list, entityId, stateId) {
     /* The only route to completed + pass + winner is a director approving at the
        human gate, which stamps humanApproved. Resuming after that re-states the
        approval it already made; it never invents one. */
-    if (prior.status === "completed" && prior.pass && prior.winner && prior.result?.humanApproved) { v626ApproveEntity(list, entityId, stateId, prior.winner); await flushPendingProjectSave(); return prior.winner; }
+    if (prior.status === "completed" && prior.pass && prior.winner && prior.result?.humanApproved) { v626ApproveEntity(list, entityId, stateId, prior.winner, humanAuthorityGrant({ via: "automation-run-approval-gate", at: v626Now() })); await flushPendingProjectSave(); return prior.winner; }
     if (round > 1) revision = v626Step(run, `entity:${stateId}:round-${round - 1}:review`).revision || "";
     const build = await v626EntityBuild(run, list, entityId, stateId, round, revision);
     entity = P[list]?.find((item) => item.id === entityId); state = entityStateById(entity, stateId);
@@ -2215,7 +2343,7 @@ async function v626AutomateEntityState(run, list, entityId, stateId) {
         championFaultKeys: v666ChampionFaultKeys(run, stateId, priorChampion),
       });
       const correction = picked?.review?.pass || reviewUnavailable ? "" : v666CorrectionPlanText(plan, { list });
-      await v626CompleteStep(run, reviewKey, { kind: "entity-review", label: `${state.name || "State"} review`, stateId, pass: !!picked?.review?.pass, score: Math.round(+picked?.review?.score || 0), winner: picked?.file || "", files: media.map((item) => item.name), review: { contractVersion: ENTITY_REFERENCE_REVIEW_CONTRACT_VERSION, candidates: results }, revision: correction || (reviewUnavailable ? "" : "Preserve the parent identity more strictly and apply only the requested state delta."), result: { rationale: picked?.review?.summary || "", hardGateFailures: picked?.review?.hardGateFailures || [], autoApprove: picked?.review?.autoApprove === true, explicitPass: picked?.review?.explicitPass === true, explicitScore: picked?.review?.explicitScore === true, reviewUnavailable, threshold: V627_AUTOMATION_AUTO_APPROVE_SCORE, correctionPlan: plan } });
+      await v626CompleteStep(run, reviewKey, { kind: "entity-review", label: `${state.name || "State"} review`, stateId, pass: !!picked?.review?.pass, score: Math.round(+picked?.review?.score || 0), winner: picked?.file || "", files: media.map((item) => item.name), review: { contractVersion: ENTITY_REFERENCE_REVIEW_CONTRACT_VERSION, candidates: results }, revision: correction || (reviewUnavailable ? "" : "Preserve the parent identity more strictly and apply only the requested state delta."), result: { rationale: picked?.review?.summary || "", hardGateFailures: picked?.review?.hardGateFailures || [], recommend: picked?.review?.autoApprove === true, explicitPass: picked?.review?.explicitPass === true, explicitScore: picked?.review?.explicitScore === true, reviewUnavailable, threshold: v640RecommendationScore(run), correctionPlan: plan } });
       /* The pass ledger: what this pass was asked for, what came back, why it
          failed, and what the next pass was told to change. */
       const previousPass = v666RunPasses(run, stateId).find((row) => Number(row.passNumber) === round - 1) || null;
@@ -2395,17 +2523,21 @@ window.approveAutomationCandidate = async (runId, stepKey, fileName) => {
   if (!step || step.status !== "needs-review") return toast("This review gate is no longer active");
   const candidates = v627ReviewCandidates(run, step), candidate = candidates.find((item) => item.file === fileName);
   if (!candidate) return toast("Candidate is unavailable");
+  /* THE HUMAN COMMAND. This handler is reached only from the run's approval
+     control, which a person clicked; it is where the grant is minted and the
+     only place in automation that may mint one. */
+  const grant = humanAuthorityGrant({ via: "automation-run-approval-modal", at: v626Now() });
   if (run.type === "shot-chain" || run.type === "scene-chain") {
     const shotId = run.type === "scene-chain" ? (step.shotId || step.result?.targetShotId || "") : run.targetId;
     if (!shotId) return toast("Correction shot is unavailable");
-    v626ApproveFrame(shotId, step.frameId, fileName);
+    v626ApproveFrame(shotId, step.frameId, fileName, grant);
     const frame = frameById(shotById(shotId), step.frameId);
     const approvalKey = run.type === "scene-chain" ? `scene-correction:${shotId}:${step.frameId}:approval` : `frame:${step.frameId}:approval`;
     run.steps[approvalKey] = { key: approvalKey, kind: "frame-approval", label: `Frame ${frame?.label || step.frameId} approved by director`, status: "completed", shotId, frameId: step.frameId, winner: fileName, score: candidate.score, pass: true, result: { humanApproved: true, targetShotId: shotId, rationale: candidate.note || "Director-selected candidate" }, completedAt: v626Now(), updatedAt: v626Now() };
     v628AttachShotAutomationProvenance(run, step.frameId, fileName, approvalKey, { shotId, score: candidate.score, humanApproved: true });
   } else {
     const list = run.config?.list || run.entityList, entityId = run.config?.entityId || run.entityId;
-    v626ApproveEntity(list, entityId, step.stateId, fileName);
+    v626ApproveEntity(list, entityId, step.stateId, fileName, grant);
     const entity = P[list]?.find((item) => item.id === entityId), state = entityStateById(entity, step.stateId);
     const approvalKey = `entity:${step.stateId}:approval`;
     run.steps[approvalKey] = { key: approvalKey, kind: "entity-approval", label: `${state?.name || "State"} approved by director`, status: "completed", stateId: step.stateId, winner: fileName, score: candidate.score, pass: true, result: { humanApproved: true, rationale: candidate.note || "Director-selected candidate" }, completedAt: v626Now(), updatedAt: v626Now() };

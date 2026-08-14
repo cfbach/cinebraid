@@ -430,6 +430,12 @@ window.confirmApproveTake = async () => {
   dirty();
   closeModal();
   route();
+  /* A run parked on "approve this frame" is satisfied by THIS act even though the
+     act happened outside the run's own modal. Reconciling here is what stops
+     Assistant, Global Activity and the Terminal asserting a decision the creator
+     has just taken. Fire-and-forget: the same reconciliation runs on every read,
+     so a failure here delays convergence rather than losing it. */
+  if (typeof v670ReconcileAfterApproval === "function") v670ReconcileAfterApproval();
   stampCeremony(complete ? "APPROVED" : label);
   toast(
     complete
@@ -456,23 +462,45 @@ function entityCanonicalSuggestion(list, id, name, stateId = "") {
   ).length;
   return `${stem}_V${String(used + 1).padStart(3, "0")}${ext}`;
 }
+/* CONTINUATION IS A LINEAGE QUESTION, NOT A LIST POSITION.
+
+   Dogfood #2 A6 / forensic F5. This used to rotate cyclically through the whole
+   state list — `[...slice(index+1), ...slice(0,index)]` — so after the final
+   descendant it wrapped round and offered an ancestor, and the copy beside it
+   said the ancestor would derive from the state just approved. Accepting that
+   offer then reparented the ancestor beneath its own descendant.
+
+   public/shared-state-lineage.js owns the rule; these two functions are its call
+   sites and hold no opinion of their own. */
 function entityApprovalContinuationStates(entity, currentStateId) {
-  const states = entityStateList(entity, true),
-    index = Math.max(0, states.findIndex((state) => state.id === currentStateId));
-  return [...states.slice(index + 1), ...states.slice(0, index)]
-    .filter((state) => state.id !== currentStateId);
+  const states = entityStateList(entity, true);
+  const byId = new Map(states.map((state) => [state.id, state]));
+  return continuationCandidates(states, currentStateId)
+    .map((candidate) => byId.get(candidate.id))
+    .filter(Boolean);
+}
+function entityApprovalContinuationOutcome(entity, currentStateId) {
+  return continuationOutcome(entityStateList(entity, true), currentStateId);
 }
 function entitySuggestedContinuationState(entity, currentStateId) {
-  const states = entityApprovalContinuationStates(entity, currentStateId);
-  return states.find((state) => !state.approvedFile)?.id || states[0]?.id || "";
+  return entityApprovalContinuationOutcome(entity, currentStateId).suggestedStateId;
 }
+/* OPEN THE EXACT EDITOR, IN THE WORKSPACE THAT CONTAINS IT.
+
+   The coverage subview and the selected state were being written, but the entity
+   workspace's TASK was not — so a continuation launched from Review re-rendered
+   Review, where no continuity-state editor exists, and the creator saw nothing
+   happen. Coverage is where continuity states live, so the task is selected
+   explicitly rather than left to whatever the workspace last remembered. */
 function revealEntityContinuityState(stateId) {
   const routeParts = String(location.hash || "").split("/");
   const view = routeParts[1] || "", id = decodeURIComponent(routeParts[2] || "");
   const list = ({character:"characters",location:"locations",prop:"props",vehicle:"vehicles"})[view] || "";
   if (list && id) {
+    window.boundedWriteFocusedTask?.("entity-task", `${list}:${id}`, "coverage");
     window.boundedWriteState?.("selected:entity-coverage-view", `${list}:${id}`, "states");
     window.boundedWriteState?.("selected:continuity-state", `${list}:${id}`, stateId);
+    window.route?.();
   }
   setTimeout(() => {
     const outer = document.querySelector?.(".continuity-states");
@@ -525,6 +553,8 @@ window.syncEntityApprovalModal = () => {
   const nextSelect = document.getElementById("entity-approve-next");
   if (nextSelect) {
     const previous = targetChanged ? "" : nextSelect.value;
+    /* Ancestors are absent from this list by construction, so the ring that
+       offered an already-approved parent after the final descendant cannot form. */
     const nextStates = entityApprovalContinuationStates(x, stateId);
     nextSelect.innerHTML = `<option value="">Approve only — stay on this asset</option>${nextStates.map((item) => `<option value="${attr(item.id)}">Edit ${esc(item.name || "next state")}${item.approvedFile ? " · currently approved" : " · needs reference"}</option>`).join("")}`;
     const validPrevious = nextStates.some((item) => item.id === previous);
@@ -538,15 +568,37 @@ window.syncEntityApprovalContinuation = () => {
   if (!x) return;
   const stateId = document.getElementById("entity-approve-target")?.value || current.stateId || "state-default";
   const state = entityStateById(x, stateId);
-  const nextState = entityStateById(x, document.getElementById("entity-approve-next")?.value || "");
+  const nextStateId = document.getElementById("entity-approve-next")?.value || "";
+  const states = entityStateList(x, true);
+  /* A stale form value cannot move the creator onto an ancestor: the id is
+     re-checked against the lineage rule rather than trusted because it is in the
+     select. */
+  const nextState = nextStateId && isValidContinuation(states, stateId, nextStateId) ? entityStateById(x, nextStateId) : null;
+  const outcome = entityApprovalContinuationOutcome(x, stateId);
   const continueButton = document.getElementById("entity-approve-continue");
   if (continueButton) {
     continueButton.disabled = !nextState;
     continueButton.textContent = nextState ? `APPROVE & EDIT ${String(nextState.name || "NEXT STATE").toUpperCase()}` : "APPROVE & EDIT NEXT STATE";
   }
   const nextNote = document.getElementById("entity-approve-next-note");
-  if (nextNote) nextNote.textContent = nextState
-    ? `${nextState.name || "The selected state"} will derive from the newly approved ${state?.name || "current"} reference. Its state-delta editor opens immediately.`
+  if (!nextNote) return;
+  if (nextState) {
+    /* THE DERIVATION DIRECTION IS READ FROM THE GRAPH. The old copy asserted that
+       whatever was selected derived from what was just approved, which was
+       exactly backwards when the ring offered an ancestor. */
+    const derivation = continuationDerivation(states, stateId, nextState.id);
+    nextNote.textContent = derivation.derivesFromCurrent
+      ? `${nextState.name || "The selected state"} derives from the newly approved ${state?.name || "current"} reference. Its state-delta editor opens immediately.`
+      : derivation.parentName
+        ? `${nextState.name || "The selected state"} derives from ${derivation.parentName}, not from ${state?.name || "this state"}. Its state-delta editor opens immediately and its lineage is unchanged.`
+        : `${nextState.name || "The selected state"} has no declared parent. Its state-delta editor opens immediately.`;
+    return;
+  }
+  /* A FINISHED CHAIN SAYS SO. It used to wrap back to the root instead. */
+  nextNote.textContent = outcome.kind === "complete"
+    ? outcome.reason === "no-further-states"
+      ? "This is the only continuity state on this reference. Approving completes it."
+      : "Every remaining continuity state on this reference is already approved. Approving completes the chain."
     : "Approve this reference and remain on the asset page.";
 };
 window.confirmEntityApproval = async (continueToNext = false) => {
@@ -556,12 +608,20 @@ window.confirmEntityApproval = async (continueToNext = false) => {
     name = document.getElementById("entity-approve-file")?.value || window._entityApproval.name || "",
     targetStateId = document.getElementById("entity-approve-target")?.value || "state-default",
     targetState = entityStateById(x, targetStateId),
-    nextStateId = continueToNext ? document.getElementById("entity-approve-next")?.value || "" : "",
+    requestedNextStateId = continueToNext ? document.getElementById("entity-approve-next")?.value || "" : "",
+    /* Re-validated at the writer. `isValidContinuation` excludes the current
+       state and every ancestor of it, so an id that survived a stale render
+       cannot open an editor the lineage rule forbids. */
+    nextStateId = requestedNextStateId && isValidContinuation(entityStateList(x, true), targetStateId, requestedNextStateId) ? requestedNextStateId : "",
     nextState = nextStateId ? entityStateById(x, nextStateId) : null,
     to = document.getElementById("entity-approve-name")?.value.trim();
   const originalApprovalRow = entityCandidateRow(x, name, false);
   const approvedIsCoverageSheet = typeof entityCandidateIsCoverageSheet === "function" && entityCandidateIsCoverageSheet(x, name);
-  if (continueToNext && !nextState && !approvedIsCoverageSheet) return toast("Choose the continuity state to edit next");
+  if (continueToNext && !nextState && !approvedIsCoverageSheet) {
+    return toast(requestedNextStateId
+      ? "That state cannot follow this one — it is what this state derives from. Choose a state further down the chain."
+      : "Choose the continuity state to edit next");
+  }
   let finalName = name, renamedAssetId = "";
   if (to && name && to !== name) {
     const r = await fetch("/api/media/rename", {
@@ -641,8 +701,16 @@ window.confirmEntityApproval = async (continueToNext = false) => {
     row.approvalProvenance = { source: "human", aiReviewed: !!currentReview, aiPassed: !!currentReview?.pass, approvedAt: row.decidedAt };
   }
   if (nextState) {
-    nextState.parentStateId = targetStateId;
-    nextState.generationMode = "derive";
+    /* NAVIGATION MAY NOT REPARENT. This was `nextState.parentStateId = targetStateId`
+       unconditionally, which is the write that closed the dogfood cycle: choosing
+       an ancestor from the ring made it the child of its own descendant. Choosing
+       what to edit next is a movement, not a statement about where that state
+       came from, so an existing parent edge is left exactly as it is. The only
+       write still permitted is establishing a FIRST parent on a state that
+       declares none, and only when the result stays acyclic. */
+    const assignment = safeParentAssignment(entityStateList(x, true), nextState.id, targetStateId);
+    if (assignment.write) nextState.parentStateId = assignment.parentStateId;
+    if (!nextState.generationMode || nextState.generationMode === "derive") nextState.generationMode = "derive";
   }
   x.workflowStatus = "APPROVED";
   x.status = "APPROVED";
@@ -651,6 +719,10 @@ window.confirmEntityApproval = async (continueToNext = false) => {
   dirty();
   closeModal();
   await route();
+  /* This approval may be exactly what an automation run is parked on. See
+     v670ReconcileAfterApproval — the gate leaves every activity surface now,
+     not at the next poll. */
+  if (typeof v670ReconcileAfterApproval === "function") v670ReconcileAfterApproval();
   if (targetState && !targetState.isDefault && targetState.approvedFile && String(targetState.notes || "").trim()) {
     const capability = typeof capabilityState === "function" ? capabilityState("vision") : { ready: false };
     if (capability.ready) setTimeout(() => validateContinuityStateAgainstParent(list, id, targetState.id), 220);

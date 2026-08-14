@@ -147,6 +147,11 @@
   function decisionWords(row) {
     const decision = row.humanDecision;
     if (decision.state === "approved") return { tone: "approved", label: "Approved by you", detail: "A person approved this. It is production canon." };
+    /* Dogfood #2 A1. A pre-repair project can carry a winner edge scene
+       automation wrote without anyone deciding. It is neither "approved by you"
+       nor "no decision yet", and printing either would be a false statement
+       about production canon in the surface built to be exact about it. */
+    if (decision.state === "machine-selected") return { tone: "candidate", label: "Selected by automation", detail: "An automated run selected this. It is not an approval — approve or reject it to make a production decision.", note: "No human decision recorded" };
     /* REASON NOT RECORDED, said plainly. Neither candidate dialect has a reason field —
        public/shared-production-media.js declares that gap — so the Inspector states the
        absence rather than leaving a blank a reader would fill in for themselves, and
