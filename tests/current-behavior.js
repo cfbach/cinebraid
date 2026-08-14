@@ -149,7 +149,11 @@ async function main() {
   const destinations = [...index.matchAll(/(?:data-view="([^"]+)"|href="\/bible\.html")/g)]
     .map((m) => m[1] || "bible")
     .filter((x, i, a) => a.indexOf(x) === i);
-  assert.deepStrictEqual(destinations, ["production", "shots", "library", "bible", "reports", "settings"]);
+  /* O5 added "results" -- Generated Media -- between References and the Project Bible.
+     The list is exact rather than a subset check, so a destination cannot appear without
+     somebody deciding it should: this navigation is the product's whole table of
+     contents, and it has six entries plus one external link. */
+  assert.deepStrictEqual(destinations, ["production", "shots", "library", "results", "bible", "reports", "settings"]);
   assert(!index.includes("mode-toggle"));
   assert(!index.includes("experimental-execution.js"));
   assert(!index.includes(">A<"), "retired amber A favicon must be gone");
@@ -443,6 +447,9 @@ async function main() {
     "openai-request-dialect.js",
     "private-preview-layout-real-browser.py",
     "private-preview-ux.js",
+    "production-media-negative-controls.js",
+    "production-media-real-browser.py",
+    "production-media.js",
     "production-state-honesty-negative-controls.js",
     "production-state-honesty-real-browser.py",
     "production-state-honesty.js",

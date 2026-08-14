@@ -75,7 +75,17 @@ async function main() {
 
   const entity = await render('#/character/KAI', project, { scan });
   assert(entity.html.includes('entity-authority-thumb-button'), 'approved authority thumbnails must be separate preview controls');
-  assert(entity.html.includes('openMediaTheatre'), 'authority thumbnails must open the in-app theatre');
+  /* O5 CHANGED WHAT THIS THUMBNAIL OPENS, and the assertion changed with it rather than
+     being dropped. The image behind an approved authority thumbnail is the one that
+     DEFINES a continuity state, so "what is this the authority for, and who approved it"
+     is the question a filmmaker has there -- it now opens the Universal Media Inspector,
+     which offers the larger view as one of its own actions.
+     The property this line exists for is unchanged: the control must go through the ONE
+     bounded hand-off rather than opening a viewer of its own, and that hand-off resolves
+     to the single shipped theatre (proven in tests/image-review-scale.js against
+     public/media-inspector.js). */
+  assert(entity.html.includes('inspectMediaFile('), 'authority thumbnails must open the Universal Media Inspector through the one bounded hand-off');
+  assert(!/entity-authority-thumb-button[^>]*openMediaTheatre/.test(entity.html), 'the authority thumbnail must not bypass the Inspector by opening the theatre directly');
   entity.context.boundedWriteState('selected:entity-coverage-view','characters:KAI','states');
   entity.context.boundedWriteState('selected:continuity-state','characters:KAI','state-active');
   entity.context.selectBoundedTask('entity-task','characters:KAI','coverage');

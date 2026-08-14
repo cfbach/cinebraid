@@ -462,7 +462,10 @@ body{font-size:14px;background:var(--canvas)}
 .topbar-project{font:500 10px var(--mono);letter-spacing:.13em;text-transform:uppercase;color:var(--faint)}
 .topbar-view{font:700 17px var(--display);letter-spacing:.015em;color:var(--ink);line-height:1.15}
 .topbar-icon{display:none;width:36px;height:36px;border:1px solid var(--line);border-radius:7px}
-.save-state{display:flex;align-items:center;gap:7px;min-width:78px;font:500 10px var(--mono);color:var(--faint)}
+/* --muted rather than --faint: this label is 10px and sits beside the activity chip's
+   own 10px label, so at --faint it read a step dimmer than its pair for no reason and
+   measured below AA on the light surface. */
+.save-state{display:flex;align-items:center;gap:7px;min-width:78px;font:500 10px var(--mono);color:var(--muted)}
 .save-dot{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 0 3px rgba(125,201,138,.08)}
 .save-state[data-state="dirty"] .save-dot{background:var(--amber);box-shadow:0 0 0 3px rgba(231,173,74,.08)}
 .save-state[data-state="saving"] .save-dot{background:var(--blue);animation:pulse-save 1s infinite alternate}
@@ -1140,6 +1143,16 @@ body:not([data-help="minimal"]) [data-tip]:focus-visible::before{content:"";posi
 .creation-reference-list{display:grid;gap:6px;margin:12px 0}.creation-reference{display:grid;grid-template-columns:100px 1fr auto;gap:10px;align-items:center;border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:var(--surface)}.creation-reference.ready{border-color:color-mix(in srgb,var(--accent) 28%,var(--line))}.creation-reference.missing{border-color:color-mix(in srgb,var(--amber) 38%,var(--line))}.creation-reference b,.creation-reference small{display:block}.creation-reference small{margin-top:2px;color:var(--muted);font-size:10px}.creation-reference a{font-size:10px;color:var(--accent);text-decoration:none}.reference-token{font:700 9px var(--mono);letter-spacing:.08em;color:var(--muted)}
 .shot-brief-grid{grid-template-columns:1fr 1fr}.shot-brief-grid textarea{min-height:96px}.creation-compile-row{display:grid;grid-template-columns:minmax(180px,.45fr) minmax(240px,.7fr) 1fr;gap:10px;align-items:end;margin-top:12px}.creation-compile-row label>span{display:block;margin-bottom:5px;font:700 9px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}.creation-compile-row select{width:100%}.creation-compile-row .creation-actions{justify-content:flex-end;margin:0}
 .asset-creation-card{margin-top:12px}.asset-prompt-grid .form-field{margin:0}.creation-description{min-height:150px!important}
+/* STACK THE TWO-COLUMN FORM INSIDE THE ENTITY COLUMN.
+   `.creation-grid` is `minmax(0,1.35fr) minmax(280px,.65fr)`, which is right in the shot
+   workspace where it has room. The entity page's middle column is about 369px, and the
+   second track's 280px floor is HARD: it takes 280 of them, the gap takes 14, and the
+   first track -- whose floor is 0 -- is left with 8px. The "Visual description" label and
+   its textarea were rendered into that 8px and sliced.
+   Scoped to this column rather than fixing `.creation-grid` globally: every other user of
+   it has the width the ratio was designed for, and changing the ratio there would be a
+   layout change nobody asked for. */
+.focused-entity-main .creation-grid{grid-template-columns:minmax(0,1fr)}
 @media(max-width:1050px){.creation-quick-grid{grid-template-columns:1fr 1fr}.creation-metrics{grid-template-columns:repeat(3,1fr)}.creation-ref-picker{grid-template-columns:1fr 1fr}.creation-ref-picker>div:last-child{grid-column:1/-1}.creation-compile-row{grid-template-columns:1fr 1fr}.creation-compile-row .creation-actions{grid-column:1/-1;justify-content:flex-start}}
 @media(max-width:720px){.creation-card-head,.creation-progress>header{display:block}.creation-state,.reference-download{display:inline-block;margin-top:10px}.creation-grid,.shot-brief-grid,.creation-ref-picker,.creation-compile-row{grid-template-columns:1fr}.creation-quick-grid{grid-template-columns:1fr}.creation-metrics{grid-template-columns:1fr 1fr}.creation-reference{grid-template-columns:72px 1fr}.creation-reference a{grid-column:2}.creation-compile-row .creation-actions{grid-column:auto}}
 
@@ -1319,7 +1332,11 @@ body:not([data-help="minimal"]) [data-tip]:focus-visible::before{content:"";posi
 .decision-inbox-row{grid-template-columns:92px minmax(0,1fr) auto;padding:10px}.decision-inbox-preview{height:64px}.decision-inbox-row section>span{font:700 8px var(--mono);letter-spacing:.1em;color:var(--muted)}
 .settings-map{position:sticky;top:54px;z-index:5;display:flex;gap:6px;padding:8px;margin:0 0 14px;background:color-mix(in srgb,var(--bg) 92%,transparent);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}.settings-map a{padding:7px 10px;border-radius:7px;color:var(--muted);text-decoration:none;font-size:11px}.settings-map a:hover{background:var(--surface);color:var(--text)}.settings-block{scroll-margin-top:110px}.settings-basic-section,.settings-ai-section,.settings-advanced-section{position:relative}
 .board-filter-fold{margin:8px 0 14px;border:0}.board-filter-fold>summary{display:inline-flex;width:auto;padding:7px 10px;border:1px solid var(--line);border-radius:8px;color:var(--muted);font-size:11px;cursor:pointer}.board-filter-fold[open]>summary{color:var(--text);border-color:var(--accent)}.board-filter-fold .toolbar{margin-top:8px;padding:9px;background:var(--surface);border-radius:9px}
-.library-card{position:relative}.library-status{position:absolute;left:8px;top:8px;padding:4px 6px;border-radius:999px;background:rgba(8,10,12,.86);font:700 8px var(--mono);letter-spacing:.08em}.library-status.approved{color:var(--green)}.library-status.candidate{color:var(--amber)}.library-status.missing{color:var(--muted)}.library-card .workflow-chip{display:none}
+.library-card{position:relative}.library-status{position:absolute;left:8px;top:8px;padding:4px 6px;border-radius:999px;background:rgba(8,10,12,.86);font:700 8px var(--mono);letter-spacing:.08em}/* Scrim ink, for the reason given at --preview-ink: this badge sits on a fixed dark
+   pill in every theme, while --green/--amber are darkened under the light surface to
+   read on white. APPROVED measured 3.41:1 here before. --muted is left alone: it is a
+   neutral that stays legible on the pill in both themes. */
+.library-status.approved{color:var(--preview-ink-ok)}.library-status.candidate{color:var(--preview-ink-warn)}.library-status.missing{color:var(--muted)}.library-card .workflow-chip{display:none}
 .slate .state-pair{display:flex;align-items:center;gap:7px}.slate .state-pair small{color:var(--muted);font-size:10px}.slate-route,.slate .workflow-chip{display:none}.slate-body{gap:7px}.slate-footer{opacity:.72}
 @media(max-width:800px){.production-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.production-next{align-items:flex-start;flex-direction:column}.production-inbox-item,.decision-inbox-row{grid-template-columns:56px minmax(0,1fr)}.production-inbox-item i,.decision-inbox-row i{display:none}.production-active-list>a{grid-template-columns:1fr}.global-add-grid{grid-template-columns:1fr}.topbar-add{display:none}}
 
@@ -1833,7 +1850,28 @@ body:not([data-help="minimal"]) [data-tip]:focus-visible::before{content:"";posi
 @media(max-width:620px){.scene-correction-context-grid{grid-template-columns:1fr}.scene-correction-context-grid article:not(.target){display:none}}
 
 /* v6.4.1 live automation activity */
-.automation-activity-toggle{display:grid;grid-template-columns:auto auto;grid-template-areas:"icon title" "icon detail";align-items:center;column-gap:7px;min-height:36px;padding:6px 10px;border:1px solid var(--line);border-radius:8px;background:var(--surface-1);color:var(--muted);cursor:pointer}.automation-activity-toggle>span{grid-area:icon}.automation-activity-toggle>b{grid-area:title;font:700 10px var(--mono);color:var(--text)}.automation-activity-toggle>small{grid-area:detail;font:500 8px var(--mono);color:var(--muted)}.automation-activity-toggle.active{border-color:color-mix(in srgb,var(--blue) 55%,var(--line));background:color-mix(in srgb,var(--blue) 8%,var(--surface-1))}.automation-activity-toggle.active>span{color:var(--blue)}
+/* THE TWO TOPBAR STATUS CHIPS ARE A PAIR AND NOW LOOK LIKE ONE.
+   They sit side by side and say the same KIND of thing -- what the machine is doing, and
+   whether the document is saved -- but they were built at different times and disagreed
+   on every geometric property: 36px tall against 26px, an 8px rounded rectangle against a
+   999px pill, and an LED that was a 12x21px TEXT GLYPH against a 7px CSS dot. Their
+   vertical centres already matched, which is why the mismatch reads as "wrong size"
+   rather than "misaligned".
+   The pill geometry is the save chip's, adopted here rather than the other way round,
+   because the pill is the newer treatment and the one the topbar's ＋ Add control already
+   sits beside. min-height drops to 26px so the two match AT REST; the toggle still grows
+   when it has a detail line to show, which is a real difference in content rather than a
+   difference in styling. */
+.automation-activity-toggle{display:grid;grid-template-columns:auto auto;grid-template-areas:"icon title" "icon detail";align-items:center;column-gap:7px;min-height:26px;padding:6px 10px;border:1px solid rgba(196,214,235,.10);border-radius:999px;background:rgba(255,255,255,.025);color:var(--muted);cursor:pointer}
+/* THE LED, sized to the save dot rather than to the font.
+   The icon slot carries three different things depending on state -- a spinner, an
+   attention mark, or the idle glyph -- so it cannot simply be replaced by a CSS dot
+   without losing two of them. Instead the SLOT is fixed at the save dot's footprint and
+   the glyph is scaled into it, so every state occupies the same 9px square and the chip
+   never changes width as activity changes. */
+.automation-activity-toggle>span{grid-area:icon;display:grid;place-items:center;width:9px;height:9px;font-size:9px;line-height:1}
+.automation-activity-toggle>span>i{font-size:9px;line-height:1;font-style:normal}
+.automation-activity-toggle>b{grid-area:title;font:700 10px var(--mono);color:var(--text)}.automation-activity-toggle>small{grid-area:detail;font:500 8px var(--mono);color:var(--muted)}.automation-activity-toggle.active{border-color:color-mix(in srgb,var(--blue) 55%,var(--line));background:color-mix(in srgb,var(--blue) 8%,var(--surface-1))}.automation-activity-toggle.active>span{color:var(--blue)}
 .automation-live-activity{display:grid;gap:10px;margin:12px 0;padding:12px;border:1px solid color-mix(in srgb,var(--blue) 38%,var(--line));border-radius:12px;background:color-mix(in srgb,var(--blue) 4%,var(--panel))}.automation-live-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}.automation-live-heading>div{display:grid;gap:3px}.automation-live-heading span{font:800 8px var(--mono);letter-spacing:.13em;color:var(--blue)}.automation-live-heading b{font:700 12px var(--display)}
 .automation-live-current{display:grid;gap:9px;padding:13px;border:1px solid var(--line);border-radius:11px;background:var(--panel-2)}.automation-live-current>header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.automation-live-current>header>div{display:grid;gap:3px}.automation-live-current>header span{font:800 8px var(--mono);letter-spacing:.12em;color:var(--blue)}.automation-live-current>header b{font:700 14px var(--display)}.automation-live-current>header small{font-size:9px;color:var(--muted)}.automation-live-current>header>i{font-style:normal;color:var(--blue)}.automation-live-current>p{margin:0;color:var(--text);font-size:11px;line-height:1.5}.automation-live-current.state-failed{border-color:color-mix(in srgb,var(--red) 55%,var(--line))}.automation-live-current.state-review{border-color:color-mix(in srgb,var(--amber) 55%,var(--line))}.automation-live-current.state-done{border-color:color-mix(in srgb,var(--green) 55%,var(--line))}.automation-live-meta{display:flex;gap:7px;flex-wrap:wrap}.automation-live-meta span{padding:4px 7px;border:1px solid var(--line);border-radius:999px;font:700 8px var(--mono);color:var(--muted);text-transform:uppercase}
 .automation-live-provider{display:grid;gap:3px;padding:10px;border:1px solid color-mix(in srgb,var(--blue) 42%,var(--line));border-radius:9px;background:color-mix(in srgb,var(--blue) 5%,var(--panel))}.automation-live-provider span{font:800 8px var(--mono);letter-spacing:.1em;color:var(--blue)}.automation-live-provider b{font-size:10px}.automation-live-provider small{color:var(--muted);font-size:9px}.automation-live-provider code{overflow:hidden;text-overflow:ellipsis;font-size:8px;color:var(--faint)}
@@ -2059,7 +2097,12 @@ body[data-focused-workspace="1"] #main{max-width:none;padding:18px 22px 80px;ove
 .focused-workspace-shell{display:grid!important;grid-template-columns:minmax(190px,240px) minmax(0,1fr) minmax(230px,290px);align-items:start;gap:16px;max-width:none!important}
 .focused-workspace-shell>.project-navigator{position:sticky;top:72px;width:auto;min-width:0;max-height:calc(100vh - 92px);overflow:auto;border:1px solid var(--line);border-radius:16px}
 .focused-workspace-shell>.shot-main{min-width:0;width:auto!important;overflow:hidden}
-.focused-inspector{position:sticky;top:72px;display:grid;gap:14px;padding:16px;border:1px solid var(--line);border-radius:16px;background:rgba(20,24,27,.96);max-height:calc(100vh - 92px);overflow:auto;box-shadow:0 12px 36px rgba(0,0,0,.22)}
+/* O5: the surface was painted from a dark literal, so it stayed near-black under the
+   light theme while its ink went dark — the same class of defect the light-theme
+   correction block at the end of this sheet documents. --surface is the token the
+   rest of the sheet already uses for a raised panel and it resolves to the same value
+   under every dark theme, so this changes nothing outside light. */
+.focused-inspector{position:sticky;top:72px;display:grid;gap:14px;padding:16px;border:1px solid var(--line);border-radius:16px;background:var(--surface);max-height:calc(100vh - 92px);overflow:auto;box-shadow:0 12px 36px rgba(0,0,0,.22)}
 .focused-inspector header{display:grid;gap:4px;padding-bottom:12px;border-bottom:1px solid var(--line)}
 .focused-inspector header>span,.focused-subnav header>span{font:600 10px/1.2 var(--mono);letter-spacing:.12em;color:var(--cyan);text-transform:uppercase}
 .focused-inspector header>b{font-size:18px}.focused-inspector header p{margin:0;color:var(--muted)}
@@ -2080,7 +2123,13 @@ body[data-focused-workspace="1"] #main{max-width:none;padding:18px 22px 80px;ove
 .focused-task-button.tone-complete>i{background:var(--green)}.focused-task-button.tone-attention>i{background:var(--orange)}.focused-task-button.tone-active>i{background:var(--cyan);box-shadow:0 0 0 4px rgba(27,196,198,.12)}.focused-task-button.tone-optional>i{background:#59636b}
 .focused-task-hidden{display:none!important}
 .focused-entity-shell{display:grid;grid-template-columns:minmax(180px,230px) minmax(0,1fr) minmax(230px,290px);align-items:start;gap:16px}
-.focused-entity-main{min-width:0}.focused-subnav{position:sticky;top:72px;max-height:calc(100vh - 92px);overflow:hidden;display:grid;grid-template-rows:auto minmax(0,1fr);border:1px solid var(--line);border-radius:16px;background:rgba(20,24,27,.97)}
+/* Same frozen-literal defect as .focused-inspector had, and the same correction. This
+   panel painted rgba(20,24,27,.97) in every theme while its ink follows --text, so under
+   the light surface it was dark ink on near-black: REFERENCE LIBRARY, the entity list and
+   the selected entity's name all measured 1.15:1, which is not "hard to read", it is
+   invisible. --surface is the token the sheet already uses for a raised panel and
+   resolves to the same value under every dark theme, so nothing outside light changes. */
+.focused-entity-main{min-width:0}.focused-subnav{position:sticky;top:72px;max-height:calc(100vh - 92px);overflow:hidden;display:grid;grid-template-rows:auto minmax(0,1fr);border:1px solid var(--line);border-radius:16px;background:var(--surface)}
 .focused-subnav header{display:grid;gap:6px;padding:14px;border-bottom:1px solid var(--line)}.focused-subnav header input{width:100%;min-width:0}
 .focused-subnav-list{overflow:auto;padding:6px}.focused-subnav-list a{display:grid;grid-template-columns:8px minmax(0,1fr);align-items:center;gap:8px;padding:9px;border-radius:9px;color:var(--text);text-decoration:none}
 .focused-subnav-list a:hover,.focused-subnav-list a.selected{background:rgba(255,255,255,.05)}.focused-subnav-list a.selected{outline:1px solid rgba(27,196,198,.4)}
@@ -2410,7 +2459,15 @@ body.automation-activity-open{overflow:hidden}
 .reference-manual-hub>header{display:flex;justify-content:space-between;gap:18px;align-items:start}
 .reference-manual-hub>header>div{display:grid;gap:4px}.reference-manual-hub h2,.reference-manual-hub p{margin:0}.reference-manual-hub p{color:var(--muted);line-height:1.45;max-width:760px}
 .reference-manual-hub>header span,.reference-manual-status{font:800 8px var(--mono);letter-spacing:.12em;color:var(--green)}
-.reference-manual-actions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.reference-manual-actions button{display:grid;gap:4px;justify-items:start;text-align:left;min-height:64px;padding:12px}.reference-manual-actions button span{font-weight:800}.reference-manual-actions button small{color:var(--muted);line-height:1.35}
+/* AUTO-FIT, NOT A FIXED COUNT. The count used to be set by VIEWPORT media queries while
+   this panel lives inside a narrow entity column, so at a 1440px viewport the rule still
+   asked for four tracks in about 300px and produced 73px columns. A track floor lets the
+   column count follow the space that actually exists.
+   AND THE CARDS WRAP. `.approve-btn` carries white-space:nowrap, which is right for a
+   normal action button and wrong here: these buttons are a stacked title plus a
+   description, so the first card -- the only .approve-btn of the four -- was the only one
+   that could not wrap and clipped its label at both edges. */
+.reference-manual-actions{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}.reference-manual-actions button{display:grid;gap:4px;justify-items:start;text-align:left;white-space:normal;overflow-wrap:anywhere;min-height:64px;padding:12px}.reference-manual-actions button span{font-weight:800}.reference-manual-actions button small{color:var(--muted);line-height:1.35}
 .reference-manual-principle{display:flex;gap:8px 14px;align-items:baseline;padding-top:10px;border-top:1px solid var(--line)}.reference-manual-principle span{color:var(--muted)}
 .reference-assisted-tools,.guided-assisted-tools,.coverage-assisted-actions{border:1px solid var(--line);border-radius:12px;background:var(--surface);margin-top:12px}
 .reference-assisted-tools>summary,.guided-assisted-tools>summary,.coverage-assisted-actions>summary{cursor:pointer;display:flex;justify-content:space-between;gap:16px;align-items:center;padding:12px 14px;list-style:none}
@@ -2503,7 +2560,10 @@ body.automation-activity-open{overflow:hidden}
 .coverage-crop-fine{border:1px solid var(--line);border-radius:10px;padding:9px}
 .coverage-crop-fine>summary{cursor:pointer;font-weight:700;font-size:11px}
 .coverage-crop-fine .coverage-crop-fields{margin-top:9px}
-.reference-manual-actions{grid-template-columns:repeat(4,minmax(0,1fr))}
+/* Same track floor as the base rule: four cards WHEN THERE IS ROOM for four, fewer when
+   there is not. A hard `repeat(4, ...)` here is what overrode the base rule and produced
+   the 73px columns at every viewport above 900px. */
+.reference-manual-actions{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
 .manual-coverage-actions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));align-items:stretch}
 .manual-coverage-actions button{width:100%}
 .guided-frame-rail{display:flex;gap:8px;overflow-x:auto;padding:0 0 4px;scrollbar-width:thin}
@@ -3133,7 +3193,16 @@ button:disabled,
 @media(max-width:640px){.gen-option{grid-template-columns:1fr}}
 
 /* ===== v6.6.4-studio.repair.8 private-preview UX stabilization ===== */
-:root{--media-well:#080c11;--media-well-border:rgba(145,190,232,.17);--preview-overlay:rgba(3,10,17,.78)}
+:root{--media-well:#080c11;--media-well-border:rgba(145,190,232,.17);--preview-overlay:rgba(3,10,17,.78);
+  /* INK THAT SITS ON THE PREVIEW SCRIM, and the reason it is its own token set.
+     --preview-overlay is a DARK scrim in every theme, because it sits on top of media
+     rather than on a page surface. The status hues, by contrast, are DARKENED under the
+     light theme so they read on white -- so painting a chip on the scrim with --blue or
+     --red gives dark ink on a dark scrim: measured 2.77:1 for both AI SUGGESTED and
+     REJECTED before these existed. These three are declared once and never themed,
+     exactly like the scrim they sit on. */
+  --preview-ink:#ffffff; --preview-ink-attention:#9ecbf0; --preview-ink-danger:#fac6b6;
+  --preview-ink-ok:#a6dcb4; --preview-ink-warn:#f2cd8c}
 #app[data-surf="night"],#app[data-surf="cool"]{--media-well:#070d14;--media-well-border:rgba(145,190,232,.17);--preview-overlay:rgba(3,10,17,.82)}
 #app[data-surf="warm"]{--media-well:#0e0b09;--media-well-border:rgba(229,193,143,.16);--preview-overlay:rgba(12,8,5,.82)}
 #app[data-surf="light"]{--media-well:#dfe8f1;--media-well-border:rgba(19,34,52,.14);--preview-overlay:rgba(19,34,52,.78)}
@@ -4733,4 +4802,184 @@ body[data-focused-workspace="1"] .guided-frame-body,
   .cb-stage-strip .focused-task-button{min-width:138px;padding:8px!important}
   .cb-stage-bar{padding:6px 10px 7px;gap:10px}
   .cb-stage-action{padding:8px 11px;font-size:11px}
+}
+
+/* =========================================================================
+   O5 — GENERATED MEDIA + THE UNIVERSAL MEDIA INSPECTOR.
+
+   A PRODUCTION REVIEW SURFACE, not a photo gallery. Three rules carry that:
+
+   1. THE MEDIA IS PRIMARY. A card is mostly picture. Status is a small chip ON the
+      media rather than a coloured frame around it, so a grid of thirty stills reads
+      as thirty stills and not as thirty status tiles.
+
+   2. APPROVED IS OBVIOUS AND THE OTHER TWO ARE MERELY DISTINGUISHABLE. Approved
+      carries the accent; candidate is neutral; rejected is de-emphasised WITHOUT
+      being hidden — reduced opacity on the media only, never display:none, because
+      the rejected take is evidence of a decision.
+
+   3. EVERY COLOUR IS A TOKEN. No literal surface anywhere below, so the light theme
+      is correct by construction rather than by a later correction block.
+
+   SCROLL OWNERSHIP: the Inspector has exactly ONE scroll region, `.media-inspector-
+   body`. The preview sticks inside it on wide viewports rather than owning a second
+   scroller, which is what keeps a long provenance block from producing two nested
+   scrollbars a filmmaker has to guess between. */
+
+/* ---- the destination ---- */
+.results-controls{display:flex;flex-wrap:wrap;gap:7px;margin:12px 0 4px}
+.results-kind-chip{display:inline-flex;align-items:center;gap:6px;padding:7px 11px;border:1px solid var(--line);border-radius:var(--r-pill);background:var(--surface);color:var(--muted);font:600 11px var(--body);min-height:34px}
+.results-kind-chip span{font:700 10px var(--mono);color:var(--muted)}
+.results-kind-chip:hover{border-color:var(--line-2);color:var(--ink)}
+.results-kind-chip.on{border-color:color-mix(in srgb,var(--acc) 46%,var(--line));background:var(--acc-soft);color:var(--ink)}
+.results-kind-chip.on span{color:var(--acc)}
+.results-notice{margin:10px 0 0;padding:10px 12px;border:1px solid var(--line);border-left:3px solid var(--amber);border-radius:var(--r-sm);background:var(--surface);color:var(--muted);font-size:12px;line-height:1.5}
+.results-notice[data-results-collapsed]{border-left-color:var(--blue)}
+
+.results-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(184px,1fr));gap:12px;margin:14px 0}
+.results-grid .empty-state{grid-column:1/-1}
+.results-card{display:grid;grid-template-rows:auto auto;gap:0;padding:0;overflow:hidden;text-align:left;border:1px solid var(--line);border-radius:var(--r-tile);background:var(--surface);transition:border-color .16s,transform .16s,box-shadow .16s}
+.results-card:hover{border-color:var(--line-2);transform:translateY(-2px);box-shadow:var(--shadow-panel)}
+.results-card:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+.results-card-media{position:relative;display:block;aspect-ratio:16/10;overflow:hidden;background:var(--media-well);border-bottom:1px solid var(--line)}
+.results-card-media img,.results-card-media video{display:block;width:100%;height:100%;object-fit:cover}
+.results-card-audio,.results-card-empty{display:grid;place-items:center;width:100%;height:100%;font:700 10px var(--mono);letter-spacing:.12em;color:var(--muted)}
+/* The status chip. Small, on the media, and readable on any still because it carries
+   its own scrim rather than relying on what is behind it. */
+.results-card-status{position:absolute;left:7px;top:7px;padding:4px 7px;border-radius:var(--r-sm);font:800 9px var(--mono);letter-spacing:.09em;background:var(--preview-overlay);color:var(--preview-ink);border:1px solid transparent}
+.results-card-status.status-approved{background:var(--acc);color:var(--panel-strong);border-color:color-mix(in srgb,var(--acc) 70%,#000)}
+.results-card-status.status-rejected{background:var(--preview-overlay);color:var(--preview-ink-danger);border-color:color-mix(in srgb,var(--preview-ink-danger) 44%,transparent)}
+/* AI SUGGESTED is deliberately NOT the approved treatment and never sits in the
+   status chip's slot. Different corner, different weight, advisory wording. Scrim ink
+   rather than --blue: see the token note, the themed hue measured 2.77:1 here. */
+.results-card-ai{position:absolute;right:7px;bottom:7px;padding:3px 6px;border-radius:var(--r-sm);font:700 8px var(--mono);letter-spacing:.08em;background:var(--preview-overlay);color:var(--preview-ink-attention);border:1px solid color-mix(in srgb,var(--preview-ink-attention) 36%,transparent)}
+.results-card-body{display:grid;gap:2px;padding:9px 10px 11px;min-width:0}
+.results-card-kind{font:700 9px var(--mono);letter-spacing:.11em;color:var(--acc)}
+.results-card-body b{font-size:13px;overflow-wrap:anywhere}
+.results-card-body small{color:var(--muted);font-size:11px;overflow-wrap:anywhere}
+.results-card-authority{color:var(--muted)!important;font-size:10px!important}
+.results-card.role-approved{border-color:color-mix(in srgb,var(--acc) 34%,var(--line))}
+/* Rejected is dimmed on the MEDIA only. The words stay at full contrast, because the
+   filename and the shot it belonged to are the reason somebody opened this tab. */
+.results-card.role-rejected .results-card-media{opacity:.55}
+.results-card.role-rejected:hover .results-card-media{opacity:.85}
+
+/* ---- the Inspector ---- */
+.modal-box:has(.media-inspector-modal){width:min(1180px,calc(100vw - 32px));max-width:none;max-height:calc(100dvh - 32px);padding:0;overflow:hidden}
+.media-inspector-modal{display:grid;grid-template-rows:auto minmax(0,1fr) auto;max-height:calc(100dvh - 34px)}
+.media-inspector-modal>header{padding:16px 20px;border-bottom:1px solid var(--line);background:var(--surface)}
+.media-inspector-modal>header span{font:800 9px var(--mono);letter-spacing:.14em;color:var(--acc)}
+.media-inspector-modal>header h3{margin:4px 0 2px;font-size:19px;overflow-wrap:anywhere}
+.media-inspector-modal>header p{margin:0;color:var(--muted);font-size:11px}
+/* THE ONE SCROLL REGION. */
+.media-inspector-body{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,1fr);gap:0;min-height:0;overflow:auto;overscroll-behavior:contain}
+.media-inspector-stage{padding:16px;background:var(--media-well);border-right:1px solid var(--line)}
+.media-inspector-stage .mi-preview{position:sticky;top:0;display:grid;place-items:center}
+.mi-preview img,.mi-preview video{display:block;max-width:100%;max-height:min(58vh,540px);width:auto;height:auto;object-fit:contain;border-radius:10px;box-shadow:0 14px 44px rgba(0,0,0,.32)}
+.mi-preview audio{width:100%}
+.mi-preview-empty{display:grid;place-items:center;min-height:180px;color:var(--muted);font:700 10px var(--mono);letter-spacing:.1em}
+.media-inspector-detail{display:grid;gap:14px;align-content:start;padding:16px 18px 20px;min-width:0}
+.mi-section{display:grid;gap:9px;min-width:0}
+.mi-section h4{margin:0;font:700 10px var(--mono);letter-spacing:.13em;text-transform:uppercase;color:var(--acc)}
+.mi-note{margin:0;color:var(--muted);font-size:11px;line-height:1.5}
+.mi-note-warn{padding:8px 10px;border:1px solid color-mix(in srgb,var(--amber) 34%,var(--line));border-radius:var(--r-sm);background:color-mix(in srgb,var(--amber) 8%,var(--surface));color:var(--ink)}
+.mi-empty{margin:0;color:var(--muted);font-size:12px;line-height:1.5}
+.mi-facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}
+.mi-facts article{min-width:0;padding:9px 10px;border:1px solid var(--line);border-radius:10px;background:var(--surface-2)}
+.mi-facts span{display:block;font:600 9px var(--mono);letter-spacing:.09em;text-transform:uppercase;color:var(--muted)}
+.mi-facts b{display:block;margin-top:4px;font-size:13px;overflow-wrap:anywhere}
+.mi-facts small{display:block;margin-top:4px;color:var(--muted);font-size:10px;line-height:1.45}
+/* THE ONE RENDERING OF AN UNKNOWN. Muted, italic, and always visible text — never an
+   empty cell, because an empty cell reads as a value of zero or of "none". */
+.mi-unknown{color:var(--muted)!important;font-style:italic;font-weight:600!important}
+.mi-identity-domains{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px}
+.mi-identity-domains article{min-width:0;padding:8px 10px;border:1px dashed var(--line-2);border-radius:10px}
+.mi-identity-domains span{display:block;font:600 9px var(--mono);letter-spacing:.09em;text-transform:uppercase;color:var(--muted)}
+.mi-identity-domains b{display:block;margin-top:3px;font:600 11px var(--mono);overflow-wrap:anywhere}
+
+/* PRODUCTION STATUS. Four blocks, and the human decision is the only one that reads
+   as authority — it is the widest, it carries the accent border when approved, and
+   nothing else in the grid can take that treatment. */
+.mi-status-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(168px,1fr));gap:8px}
+.mi-status-grid article{min-width:0;padding:10px 11px;border:1px solid var(--line);border-radius:11px;background:var(--surface-2)}
+.mi-status-grid span{display:block;font:600 9px var(--mono);letter-spacing:.09em;text-transform:uppercase;color:var(--muted)}
+.mi-status-grid b{display:block;margin-top:4px;font-size:14px}
+.mi-status-grid small{display:block;margin-top:5px;color:var(--muted);font-size:11px;line-height:1.45}
+.mi-status-grid em,.mi-status-grid i{display:block;margin-top:5px;font:600 10px var(--mono);color:var(--muted);font-style:normal}
+.mi-status-grid i{color:var(--amber)}
+.mi-decision{grid-column:span 2}
+.mi-decision.tone-approved{border-color:color-mix(in srgb,var(--acc) 52%,var(--line));background:color-mix(in srgb,var(--acc-soft) 70%,var(--surface-2))}
+.mi-decision.tone-approved b{color:var(--acc)}
+.mi-decision.tone-rejected{border-color:color-mix(in srgb,var(--red) 40%,var(--line))}
+.mi-decision.tone-rejected b{color:var(--red)}
+.mi-disposition.tone-approved b{color:var(--acc)}
+.mi-disposition.tone-rejected b{color:var(--red)}
+/* The recommendation NEVER gets the accent, at any tone. A positive suggestion is
+   blue-tinted advice, which is a different visual claim from approval. */
+.mi-recommendation.tone-positive b,.mi-recommendation.tone-attention b{color:var(--blue)}
+.mi-recommendation.tone-attention{border-color:color-mix(in srgb,var(--blue) 26%,var(--line))}
+
+.mi-targets{display:grid;gap:6px;margin:0;padding:0;list-style:none}
+.mi-targets li{display:grid;gap:2px;padding:9px 10px;border:1px solid var(--line);border-left:3px solid var(--acc);border-radius:10px;background:var(--surface-2)}
+.mi-targets b{font-size:12px}
+.mi-targets span{color:var(--muted);font-size:12px;overflow-wrap:anywhere}
+.mi-targets small{color:var(--muted);font:600 10px var(--mono)}
+
+.mi-review-row{display:grid;gap:8px;padding:11px;border:1px solid var(--line);border-radius:11px;background:var(--surface-2)}
+.mi-review-row>header{display:flex;justify-content:space-between;gap:10px;align-items:baseline;flex-wrap:wrap}
+.mi-review-row>header b{font-size:13px}
+.mi-review-row>header span{font:700 10px var(--mono);letter-spacing:.06em;color:var(--muted)}
+.mi-review-summary{margin:0;color:var(--ink);font-size:12px;line-height:1.55}
+.mi-evidence,.mi-blockers{display:grid;gap:6px;margin:0;padding:0;list-style:none}
+.mi-evidence li,.mi-blockers li{display:grid;gap:2px;padding:8px 9px;border:1px solid var(--line-soft);border-radius:9px}
+.mi-evidence b,.mi-blockers b{font-size:12px}
+.mi-evidence span,.mi-blockers span{color:var(--muted);font-size:11px;line-height:1.45}
+.mi-evidence em,.mi-blockers em{font:700 9px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--amber);font-style:normal}
+.mi-blockers li{border-left:3px solid var(--red)}
+
+.mi-prompt{display:grid;gap:5px}
+.mi-prompt>span{font:600 9px var(--mono);letter-spacing:.09em;text-transform:uppercase;color:var(--muted)}
+.mi-prompt pre{margin:0;max-height:190px;overflow:auto;padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--ink);font:400 11px/1.55 var(--mono);white-space:pre-wrap;overflow-wrap:anywhere}
+.mi-lineage-block{display:grid;gap:5px}
+.mi-lineage-block>span{font:600 9px var(--mono);letter-spacing:.09em;text-transform:uppercase;color:var(--muted)}
+.mi-lineage{display:grid;gap:5px;margin:0;padding:0;list-style:none}
+.mi-lineage li{display:flex;justify-content:space-between;gap:10px;padding:7px 9px;border:1px solid var(--line-soft);border-radius:9px;flex-wrap:wrap}
+.mi-lineage span{font:600 9px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.mi-lineage b{font-size:12px;overflow-wrap:anywhere}
+/* `.ghost-btn` is width:100% by default — correct inside a form column, wrong in a
+   footer, which is why the media theatre already overrides it the same way. Without
+   this the five Inspector actions stack full-width and eat half the dialog. */
+.mi-actions{padding:12px 18px;margin-top:0;border-top:1px solid var(--line);background:var(--surface);flex-wrap:wrap;align-items:center}
+.mi-actions .ghost-btn,.mi-actions .approve-btn{width:auto;padding:9px 14px}
+/* Close sits opposite the decisions, so the destructive-adjacent controls are never
+   under the thumb that was reaching for "get me out of here". */
+.mi-actions .cancel{margin-right:auto}
+.media-theatre-footer-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+
+/* Narrow: one column, and the preview stops sticking because there is nothing beside
+   it to stick against. Everything stays reachable through the same single scroller. */
+@media(max-width:900px){
+  .media-inspector-body{grid-template-columns:minmax(0,1fr)}
+  .media-inspector-stage{border-right:none;border-bottom:1px solid var(--line);padding:12px}
+  .media-inspector-stage .mi-preview{position:static}
+  .mi-preview img,.mi-preview video{max-height:38vh}
+  .mi-decision{grid-column:span 1}
+}
+@media(max-width:760px){
+  .results-grid{grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+  .media-inspector-detail{padding:14px}
+  .mi-facts,.mi-status-grid,.mi-identity-domains{grid-template-columns:minmax(0,1fr)}
+}
+@media(max-width:430px){
+  /* One column of cards rather than two 130px thumbnails: below this width a
+     two-column grid stops showing enough of the still to recognise it, which is the
+     only thing the card is for. Touch targets stay above 44px by construction — the
+     whole card is the control. */
+  .results-grid{grid-template-columns:minmax(0,1fr)}
+  .results-kind-chip{min-height:44px}
+  /* 44px on a phone. The Inspector's actions include Approve and Reject, and a
+     mis-tap between two 38px targets there costs a production decision rather than a
+     scroll position. */
+  .mi-actions button{min-height:44px}
+  .mi-actions{gap:8px}
 }

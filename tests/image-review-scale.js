@@ -291,9 +291,27 @@ async function main() {
     );
     const at = html.indexOf(marker);
     const control = html.slice(html.lastIndexOf('<button', at), html.indexOf('</button>', at));
+    /* O5 CHANGED WHAT THESE THREE CONTROLS OPEN, and this assertion changed with it
+     * rather than being dropped.
+     *
+     * All three sit on PRODUCTION MEDIA — the shot board's approved pick, a candidate
+     * waiting for a decision, an entity's approved reference. The question a filmmaker
+     * has there is "what is this and is it approved", not "make it bigger", so they
+     * now open the Universal Media Inspector, which offers the larger view as one of
+     * its own actions.
+     *
+     * The property this check exists for is UNCHANGED and is still proven: there is
+     * ONE inspection path and ONE viewer. `inspectMediaFile` is the single bounded
+     * hand-off (asserted here), and it resolves to the single shipped theatre
+     * (asserted below, against public/media-inspector.js). What is forbidden is a
+     * surface opening a viewer of its own, and that is still forbidden. */
     assert(
-      control.includes('openMediaTheatre('),
-      `${name}: enlargement must reuse the existing media theatre, not a competing viewer`,
+      control.includes('inspectMediaFile('),
+      `${name}: inspection must go through the one bounded hand-off, not a viewer of its own`,
+    );
+    assert(
+      !control.includes('openMediaTheatre('),
+      `${name}: a production-media surface must not bypass the Inspector by opening the theatre directly`,
     );
     assert(
       /aria-label="[^"]+"/.test(control),
@@ -309,8 +327,24 @@ async function main() {
         `${name}: enlarging must not approve, select or modify project data (found "${forbidden}")`,
       );
     }
-    results.push(`${name}: enlarge control -> openMediaTheatre, labelled, non-navigating`);
+    results.push(`${name}: inspect control -> inspectMediaFile, labelled, non-navigating`);
   }
+
+  /* THE HAND-OFF STILL RESOLVES TO THE ONE VIEWER. This is the half of "one viewer"
+   * that moved when O5 put the Inspector in front of it: inspectMediaFile must fall
+   * back to the shipped theatre for media the projection does not hold, and the
+   * Inspector's own full-preview action must call the same entry point. A second
+   * viewer introduced anywhere in that path fails here. */
+  const inspectorJs = fs.readFileSync(path.join(ROOT, 'public', 'media-inspector.js'), 'utf8');
+  assert(
+    /function inspectFile\([^]{0,1600}window\.openMediaTheatre\(/.test(inspectorJs),
+    'inspectMediaFile must fall back to the one shipped media theatre for media with no production record',
+  );
+  assert(
+    /open-full-preview[^]{0,600}window\.openMediaTheatre\(/.test(inspectorJs),
+    "the Inspector's full-preview action must reuse the one shipped media theatre",
+  );
+  results.push('inspector: inspectMediaFile + full preview both resolve to openMediaTheatre');
 
   /* The candidate and scene-still controls are built by the creation studio and the
    * scene review module; assert their markup rather than a live render so the check
