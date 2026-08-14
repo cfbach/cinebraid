@@ -103,6 +103,8 @@ const nodeSuites = [
   "check:creator-state-negative",
   "check:stage-surfaces",
   "check:stage-surfaces-negative",
+  "check:production-media",
+  "check:production-media-negative",
   "check:job-media-identity",
   "check:job-media-identity-negative",
   "check:account-contract",

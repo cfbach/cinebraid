@@ -5,6 +5,14 @@ let P = null,
   PROMPT_LIBRARY = { schemaVersion: 1, profiles: [] },
   AGENT_STATUS = { enabled: false, runs: [], agents: [], index: {} },
   FAL_GENERATION_JOBS = [],
+  /* O5. Whether the generation ledger was actually FETCHED AND ANSWERED, which is a
+     different fact from `FAL_GENERATION_JOBS.length === 0`. The ledger is requested
+     only when fal is enabled and keyed, so on a project with generation off the array
+     is empty because nothing asked — not because nothing was generated.
+     public/shared-production-media.js needs that distinction to report a job as
+     "unavailable" rather than as "not recorded", which is the difference between
+     "CineBraid does not have the record here" and "no such record exists". */
+  FAL_GENERATION_LEDGER_LOADED = false,
   AUTOMATION_RUNS = [],
   saveTimer = null,
   ACTIVE_PROJECT_SLUG = "",
@@ -1159,11 +1167,18 @@ async function load() {
   };
   AUTOMATION_RUNS = loaded[5]?.runs || [];
   FAL_GENERATION_JOBS = [];
+  FAL_GENERATION_LEDGER_LOADED = false;
   const falConfig = CONFIG.generation?.fal || {};
   if (falConfig.enabled && falConfig.keySource !== "none") {
+    /* Loaded means the request was made AND answered. A refused or failed fetch
+       leaves the flag false, so a surface reading provenance says the record is
+       unavailable instead of claiming the project has no generation history. */
     FAL_GENERATION_JOBS = await fetch("/api/generation/fal/jobs")
       .then((r) => r.ok ? r.json() : { jobs: [] })
-      .then((data) => data.jobs || [])
+      .then((data) => {
+        FAL_GENERATION_LEDGER_LOADED = Array.isArray(data.jobs);
+        return data.jobs || [];
+      })
       .catch(() => []);
   }
   applyTheme();
@@ -1646,7 +1661,13 @@ function openModal(inner) {
     target?.focus?.();
   }, 0);
 }
-window.openMediaTheatre = (encodedUrl, encodedTitle = "Preview", kind = "") => {
+/* O5 added the fourth argument and nothing else. `returnTo` is a production-media
+   projection key: when the theatre was opened FROM the Universal Media Inspector, the
+   way back is rendered so that looking at the picture larger does not cost the
+   filmmaker the identity they were inspecting. Every one of the shipped call sites
+   passes three arguments and is unaffected — absent means there is nowhere to go
+   back to, which is the honest default for a thumbnail's own enlarge button. */
+window.openMediaTheatre = (encodedUrl, encodedTitle = "Preview", kind = "", returnTo = "") => {
   let url = "", title = "Preview";
   try { url = decodeURIComponent(String(encodedUrl || "")); } catch { url = String(encodedUrl || ""); }
   try { title = decodeURIComponent(String(encodedTitle || "Preview")); } catch { title = String(encodedTitle || "Preview"); }
@@ -1654,8 +1675,13 @@ window.openMediaTheatre = (encodedUrl, encodedTitle = "Preview", kind = "") => {
   const mediaKind = kind || (isVideo(title) || /\.(mp4|webm|mov)(?:$|[?#])/i.test(url) ? "video" : "image");
   const media = mediaKind === "video"
     ? `<video controls autoplay playsinline preload="metadata" src="${attr(url)}"></video>`
-    : `<img src="${attr(url)}" alt="Enlarged view of ${attr(title)}">`;
-  openModal(`<div class="media-theatre-modal" aria-label="Enlarged view of ${attr(title)}"><header><div><span>MEDIA PREVIEW</span><h3>${esc(title)}</h3><p>Large in-app inspection without leaving the shot workspace. Press Escape or Close to return.</p></div><button class="cancel" onclick="closeModal()" aria-label="Close the enlarged view of ${attr(title)}">Close</button></header><div class="media-theatre-stage">${media}</div><footer><span>${mediaKind === "video" ? "Use the player controls to review motion and audio." : "The complete source image, fitted to the workspace without cropping."}</span><a class="ghost-btn" href="${attr(url)}" target="_blank" rel="noopener">Open original</a></footer></div>`);
+    : mediaKind === "audio"
+      ? `<audio controls autoplay preload="metadata" src="${attr(url)}"></audio>`
+      : `<img src="${attr(url)}" alt="Enlarged view of ${attr(title)}">`;
+  const back = String(returnTo || "")
+    ? `<button class="ghost-btn" data-theatre-return="1" onclick="window.inspectMedia('${attr(returnTo)}')">Back to inspector</button>`
+    : "";
+  openModal(`<div class="media-theatre-modal" aria-label="Enlarged view of ${attr(title)}"><header><div><span>MEDIA PREVIEW</span><h3>${esc(title)}</h3><p>Large in-app inspection without leaving the shot workspace. Press Escape or Close to return.</p></div><button class="cancel" onclick="closeModal()" aria-label="Close the enlarged view of ${attr(title)}">Close</button></header><div class="media-theatre-stage">${media}</div><footer><span>${mediaKind === "video" ? "Use the player controls to review motion and audio." : mediaKind === "audio" ? "Use the player controls to review the audio." : "The complete source image, fitted to the workspace without cropping."}</span><div class="media-theatre-footer-actions">${back}<a class="ghost-btn" href="${attr(url)}" target="_blank" rel="noopener">Open original</a></div></footer></div>`);
 };
 
 window.closeModal = () => {
@@ -1794,6 +1820,7 @@ function updateChrome(view, navName) {
     production: "Production",
     shots: "Shots",
     library: "References",
+    results: "Generated Media",
     create: "New Project",
     reports: "Reports",
     settings: "Settings",
@@ -2483,8 +2510,14 @@ function slate(s, sceneId) {
   const next = shotProductionNextAction(s, takes);
   /* The card itself is a link to the shot, so inspection needs its own control:
      enlarging must never navigate away from the board. */
+  /* O5: INSPECT, NOT MERELY ENLARGE. The board's thumbnail is the shot's approved
+     pick or its newest take — production media with a disposition, an authority and a
+     provenance — so the control that was "make it bigger" now opens the Inspector,
+     which offers the larger view as one of its own actions. inspectMediaFile falls
+     back to the theatre for media the projection does not hold, so nothing that
+     previewed before stops previewing. */
   const enlarge = show && !isVideo(show.name)
-    ? `<button type="button" class="media-enlarge-btn slate-enlarge" onclick="event.preventDefault();event.stopPropagation();openMediaTheatre('${attr(encodeURIComponent(show.url))}','${attr(encodeURIComponent(`${s.id} · ${show.name}`))}','image')" aria-label="View the ${attr(s.id)} image larger">View larger</button>`
+    ? `<button type="button" class="media-enlarge-btn slate-enlarge" onclick="event.preventDefault();event.stopPropagation();inspectMediaFile('${attr(encodeURIComponent(show.url))}','${attr(show.assetId || "")}','${attr(encodeURIComponent(`${s.id} · ${show.name}`))}','image')" aria-label="Inspect the ${attr(s.id)} image">Inspect</button>`
     : "";
   return `<article class="slate wf-card-${state.cls}">
     <div class="slate-top"><span class="slate-id">${esc(s.id)}</span><span class="dur-chip">${shotDur(s) ? shotDur(s) + "s" : ""}</span><span class="slate-route">${esc(outputPlanLabel(s))}</span>
@@ -2858,7 +2891,7 @@ function productionResultInbox(limit = 6) {
       const preview = media ? (isVideo(media.name) ? `<video muted preload="metadata" src="${attr(media.url)}#t=0.1"></video>` : `<img src="${attr(media.url)}" alt="">`) : `<span>${item.type === "video" ? "VIDEO" : "FRAME"}</span>`;
       /* The row navigates to the shot; inspecting the candidate must not. */
       const enlarge = media && !isVideo(media.name)
-        ? `<button type="button" class="media-enlarge-btn production-enlarge" onclick="event.preventDefault();event.stopPropagation();openMediaTheatre('${attr(encodeURIComponent(media.url))}','${attr(encodeURIComponent(`${item.shot.id} · ${media.name}`))}','image')" aria-label="View the ${attr(item.shot.id)} candidate larger">View larger</button>`
+        ? `<button type="button" class="media-enlarge-btn production-enlarge" onclick="event.preventDefault();event.stopPropagation();inspectMediaFile('${attr(encodeURIComponent(media.url))}','${attr(media.assetId || "")}','${attr(encodeURIComponent(`${item.shot.id} · ${media.name}`))}','image')" aria-label="Inspect the ${attr(item.shot.id)} candidate">Inspect</button>`
         : "";
       return `<div class="production-inbox-shell"><a href="#/shot/${item.shot.id}" class="production-inbox-item"><div style="${attr(shotWellStyle(item.shot))}">${preview}</div><section><b>${esc(item.shot.id)} · ${esc(item.shot.title)}</b><small>${esc(item.label)}</small></section><i>Review →</i></a>${enlarge}</div>`;
     }
@@ -3025,7 +3058,7 @@ function libraryCard(list, x, approvedOnly = false) {
   /* Same reasoning as the shot board: the card navigates, so the reference image
      gets its own inspection control that does not open the reference page. */
   const enlarge = previewMedia && !isAudio(previewMedia.name) && !isVideo(previewMedia.name)
-    ? `<button type="button" class="media-enlarge-btn library-enlarge" onclick="event.preventDefault();event.stopPropagation();openMediaTheatre('${attr(encodeURIComponent(previewMedia.url))}','${attr(encodeURIComponent(`${x.name || x.id} · ${previewMedia.name}`))}','image')" aria-label="View the ${attr(x.name || x.id)} reference image larger">View larger</button>`
+    ? `<button type="button" class="media-enlarge-btn library-enlarge" onclick="event.preventDefault();event.stopPropagation();inspectMediaFile('${attr(encodeURIComponent(previewMedia.url))}','${attr(previewMedia.assetId || "")}','${attr(encodeURIComponent(`${x.name || x.id} · ${previewMedia.name}`))}','image')" aria-label="Inspect the ${attr(x.name || x.id)} reference image">Inspect</button>`
     : "";
   return `<div class="library-card-shell"><a class="library-card ${status}" href="#/${route}/${x.id}"><div class="library-preview">${preview}<span class="library-status ${status}">${statusLabel}</span></div><div class="library-body"><span class="review-kind">${type}</span><b>${esc(x.name || x.id)}</b><small>${description}</small></div></a>${enlarge}</div>`;
 }

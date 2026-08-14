@@ -186,6 +186,12 @@
     "shot",
     "scene",
     "library",
+    /* O5's Generated Media destination. It is a creator workspace — a filmmaker
+       reviews production results there — so it receives the shell, the Assistant and
+       the Terminal. It is NOT a shot, so the O4 stage strip declines to mount and its
+       slot collapses; that asymmetry is the eligibility model working rather than an
+       exception, and public/stage-surfaces.js needs no entry for it. */
+    "results",
     "characters",
     "locations",
     "props",

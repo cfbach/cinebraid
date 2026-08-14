@@ -18,6 +18,7 @@ const SCRIPT_ORDER = [
   "shared-reference-views.js",
   "shared-coverage.js",
   "shared-media-disposition.js",
+  "shared-production-media.js",
   "shared-build-history.js",
   "shared-generation-capability.js",
   "shared-stage-model.js",
@@ -44,6 +45,11 @@ const SCRIPT_ORDER = [
   "audio-prompt-builder.js",
   "v607-composer.js",
   "motion-sound-composer.js",
+  /* O5. The Inspector and the Generated Media destination both render into `#main`
+     (the destination) or into the shipped modal (the Inspector), so this harness has
+     to load them to exercise either. */
+  "media-inspector.js",
+  "media-results.js",
   "bootstrap.js",
 ];
 

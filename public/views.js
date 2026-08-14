@@ -28,6 +28,10 @@ const ROUTES = {
   create() { return creationStudioView(); },
   shots(tab) { return productionView(tab || "board"); },
   library(tab) { return libraryView(tab || LIBRARY_TAB); },
+  /* O5. The project-level production-media destination. Its tab lives in the hash
+     rather than in localStorage, unlike LIBRARY_TAB, so a link to
+     #/results/rejected opens on rejected for the person who received it. */
+  results(tab) { return resultsView(tab || "current"); },
   reports(id) { return reportsView(id || ""); },
   scene(id) {
     const sc = sceneById(id);
