@@ -392,11 +392,71 @@ try:
 
         # ---- 8. rail and dock survive every stage change -------------------------------
         stages = page.evaluate("() => (window.SHOT_STAGE_IDS || []).slice()")
+
+        def select_stage(stage_id):
+            """Request a stage, then wait for THAT STAGE to be the one on screen.
+
+            selectBoundedTask writes the focused task synchronously and then calls
+            route(), which is ASYNCHRONOUS — so page.evaluate returns while the previous
+            stage's body is still in #main. Waiting a fixed 240/260/300ms afterwards was
+            waiting for time rather than for the stage, and on a slower CI runner the
+            frames -> motion render crossed that budget: the assertion read the Frames
+            body and reported it as Motion failing to render.
+
+            `.guided-work-stack[data-bounded-task]` is the marker the assertions already
+            read, so waiting on it is waiting for exactly the fact under test.
+
+            This is also sufficient for the RAIL's current-step text. route() sets
+            #main.innerHTML and dispatches cinebraid:route-rendered in one synchronous
+            tail, and the Assistant paints synchronously inside that dispatch; a poll can
+            only observe the DOM between tasks, so a visible body marker means the paint
+            has already run. No second sleep is needed and none is kept.
+
+            check_stage_selection_leads_render() proves the old time-based contract was
+            invalid, with no clock and no injected delay."""
+            page.evaluate("id => selectBoundedTask('shot-task', %s, id)" % json.dumps(SHOT), stage_id)
+            page.wait_for_function(
+                """(want) => document.querySelector('.guided-work-stack')?.dataset.boundedTask === want""",
+                arg=stage_id, timeout=30000)
+
+        def check_stage_selection_leads_render():
+            """REGRESSION CONTROL for select_stage's own precondition — no clock in it.
+
+            selectBoundedTask is invoked and the DOM read back INSIDE ONE synchronous
+            page.evaluate. route() is asynchronous, so no re-render can have run by the
+            time the same task reads: the focused task is already the newly requested
+            stage while the rendered body is still the previous one. That snapshot IS the
+            state the old fixed-sleep contract could return in, and it establishes the
+            point directly — selection state and rendered-stage readiness are two facts,
+            not one."""
+            select_stage("frames")
+            snapshot = page.evaluate("""(args) => {
+                const [shot, wanted] = args;
+                const stack = () => document.querySelector('.guided-work-stack');
+                const before = stack() ? (stack().dataset.boundedTask || '') : '';
+                selectBoundedTask('shot-task', shot, wanted);
+                const slug = (typeof ACTIVE_PROJECT_SLUG !== 'undefined' && ACTIVE_PROJECT_SLUG)
+                    || (P && P.meta && P.meta.id) || 'project';
+                let focused = '';
+                try { focused = localStorage.getItem(`cinebraid-focused:${slug}:shot-task:${shot}`) || ''; } catch {}
+                return { before, focused, bodyNow: stack() ? (stack().dataset.boundedTask || '') : '' };
+            }""", [SHOT, "motion"])
+            assert snapshot["before"] == "frames", \
+                f"8b setup: the control must start from a known stage, got {snapshot['before']!r}"
+            assert snapshot["focused"] == "motion", \
+                f"8b: the focused task must be written synchronously, got {snapshot['focused']!r}"
+            assert snapshot["bodyNow"] == "frames", \
+                ("8b: the render completed synchronously, so the old fixed-sleep contract was never premature "
+                 f"and this control proves nothing; body was {snapshot['bodyNow']!r}")
+            page.wait_for_function(
+                """(want) => document.querySelector('.guided-work-stack')?.dataset.boundedTask === want""",
+                arg="motion", timeout=30000)
+            return snapshot
+
         before = page.evaluate(STAMP)
         assert "MISSING" not in before.values(), f"8. a surface was missing before the stage sweep: {before}"
         for stage_id in stages:
-            page.evaluate("id => selectBoundedTask('shot-task', %s, id)" % json.dumps(SHOT), stage_id)
-            page.wait_for_timeout(240)
+            select_stage(stage_id)
             after = page.evaluate(READ_STAMP)
             for name, mark in before.items():
                 assert after[name] == mark, \
@@ -413,12 +473,17 @@ try:
         findings.append(f"8. rail, dock, Assistant and Terminal kept node identity across all {len(stages)} stage "
                         f"changes and a full re-render; Terminal history was never reset")
 
+        # ---- 8b. selection state and rendered stage are separate facts -----------------
+        lead = check_stage_selection_leads_render()
+        findings.append(
+            f"8b. inside one synchronous task selectBoundedTask left the focused task at "
+            f"{lead['focused']!r} while the rendered body was still {lead['bodyNow']!r}, so a fixed sleep could "
+            f"return on the previous stage; select_stage waits for the requested body instead")
+
         # The rail's CONTENT still tracks context even though its node never changed.
-        page.evaluate("id => selectBoundedTask('shot-task', %s, id)" % json.dumps(SHOT), "motion")
-        page.wait_for_timeout(300)
+        select_stage("motion")
         motion_stage = page.evaluate("() => document.querySelector('[data-cb-section=\"stage\"]').innerText")
-        page.evaluate("id => selectBoundedTask('shot-task', %s, id)" % json.dumps(SHOT), "inputs")
-        page.wait_for_timeout(300)
+        select_stage("inputs")
         inputs_stage = page.evaluate("() => document.querySelector('[data-cb-section=\"stage\"]').innerText")
         assert motion_stage != inputs_stage, \
             "8. the rail's current step did not change with the stage; a persistent surface that never updates is a screenshot"
@@ -659,8 +724,7 @@ try:
         compact_before = page.evaluate(STAMP)
         compact_notes = []
         for stage_id in stages:
-            page.evaluate("id => selectBoundedTask('shot-task', %s, id)" % json.dumps(SHOT), stage_id)
-            page.wait_for_timeout(260)
+            select_stage(stage_id)
             state = page.evaluate("""() => {
                 const stack = document.querySelector('.guided-work-stack');
                 const rail = document.getElementById('cb-shell-rail');

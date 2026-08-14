@@ -311,9 +311,27 @@ try:
         # ---- 2. the five declared stages still render ---------------------------------
         stages = page.evaluate("() => (window.SHOT_STAGE_IDS || []).slice()")
         assert len(stages) == 5, f"2. expected the five declared stages, got {stages}"
-        for stage_id in stages:
+
+        def select_stage(stage_id):
+            """Request a stage, then wait for THAT STAGE to be the one on screen.
+
+            selectBoundedTask writes the focused task synchronously and then calls
+            route(), which is ASYNCHRONOUS — page.evaluate returns while the previous
+            stage's body is still in #main. The fixed 220ms sleep this replaces was
+            waiting for time rather than for the stage; the identical contract was proven
+            defective on a slower CI runner in
+            tests/creator-surfaces-real-browser.py, whose 8b control shows the focused
+            task already changed while the rendered body had not.
+
+            `.guided-work-stack[data-bounded-task]` is the marker the assertion below
+            reads, so waiting on it is waiting for exactly the fact under test."""
             page.evaluate("id => selectBoundedTask('shot-task', %s, id)" % json.dumps(SHOT), stage_id)
-            page.wait_for_timeout(220)
+            page.wait_for_function(
+                """(want) => document.querySelector('.guided-work-stack')?.dataset.boundedTask === want""",
+                arg=stage_id, timeout=30000)
+
+        for stage_id in stages:
+            select_stage(stage_id)
             body = page.evaluate("() => document.querySelector('.guided-work-stack')?.dataset.boundedTask || ''")
             assert body == stage_id, f"2. selecting {stage_id} rendered the {body} body"
         findings.append(f"2. all five declared stages still render in the centre ({' -> '.join(stages)})")
@@ -326,8 +344,7 @@ try:
         assert "MISSING" not in before.values(), f"3. a shell node was missing before the stage sweep: {before}"
 
         for stage_id in stages:
-            page.evaluate("id => selectBoundedTask('shot-task', %s, id)" % json.dumps(SHOT), stage_id)
-            page.wait_for_timeout(220)
+            select_stage(stage_id)
             after = page.evaluate(READ_STAMP)
             for name, stamp in before.items():
                 assert after[name] == stamp, \
