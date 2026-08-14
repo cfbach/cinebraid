@@ -476,6 +476,9 @@ async function main() {
     "stage-model-negative-controls.js",
     "stage-model-real-browser.py",
     "stage-model.js",
+    "stage-surfaces-negative-controls.js",
+    "stage-surfaces-real-browser.py",
+    "stage-surfaces.js",
     "state-authority-substitution-negative-controls.js",
     "state-authority-substitution.js",
     "state-chain-recovery.js",
@@ -743,11 +746,19 @@ async function main() {
   const consoleControls = shotControlCounts(activityRender.context.v641LiveActivityMarkup(budgetRun));
   assert(consoleControls.visible <= 1, `default automation console controls: ${consoleControls.visible}`);
   assert(consoleControls.total <= 1, `default automation console controls total: ${consoleControls.total}`);
-  const taskRailHtml = shotRender.html.toLowerCase();
-  for (const label of ["inputs", "look &amp; blocking", "frames", "motion &amp; sound", "deliver"]) {
-    assert(taskRailHtml.includes(label), `shot task rail is missing ${label}`);
-  }
-  assert.strictEqual((shotRender.html.match(/class="focused-task-button/g) || []).length, 5, "shot task rail must expose exactly five production stages");
+  /* THE STAGE NAVIGATOR LEFT `#main` IN O4. It is built by public/stage-surfaces.js into
+     the shell's persistent bar, because `#main` is replaced wholesale on every render and
+     a workflow navigator destroyed by moving through the workflow is not one. This harness
+     renders `#main`, so what it can still assert is that the workspace states its selected
+     stage exactly once and builds no navigator of its own — the half of "there must not be
+     two" that lives here. The navigator's own five stages, their order and their labels are
+     asserted in tests/stage-surfaces.js and tests/stage-surfaces-real-browser.py. */
+  assert.strictEqual((shotRender.html.match(/class="[^"]*\bfocused-taskbar\b/g) || []).length, 0,
+    "the shot workspace must render no stage navigator inside #main");
+  assert.strictEqual((shotRender.html.match(/class="focused-task-button/g) || []).length, 0,
+    "and therefore no stage buttons either");
+  assert.strictEqual((shotRender.html.match(/data-selected-task="/g) || []).length, 1,
+    "the shot workspace must state its selected stage exactly once");
   assert(/class="navigator-toggle"[^>]*aria-label="(?:Open|Close) project navigator"[^>]*aria-expanded="(?:true|false)"/.test(shotRender.html), "project navigator toggle must expose its accessible name and expanded state");
   assert.strictEqual((shotRender.html.match(/\bshot-primary-action\b/g) || []).length, 1, "shot route must render exactly one primary action");
   const shotActions = extractBalanced(shotRender.html, '<details class="guided-inline-actions', "details");

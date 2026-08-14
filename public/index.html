@@ -42,12 +42,14 @@
     </div>
   </aside>
 
-  <!-- The creator workspace shell. Its three regions are static markup for the same
+  <!-- The creator workspace shell. Its four regions are static markup for the same
        reason #rail, #topbar and #main always have been: a region that JavaScript
-       creates is a region JavaScript can create twice, and everything the Assistant
-       and Activity Terminal will later rely on starts with these nodes being the
-       same nodes after a stage change. public/workspace-shell.js owns their STATE
-       and never their existence. Both slots are empty and collapsed in this build. -->
+       creates is a region JavaScript can create twice, and everything the Assistant,
+       the Activity Terminal and the stage strip rely on starts with these nodes
+       being the same nodes after a stage change. public/workspace-shell.js owns
+       their STATE and never their existence. Every slot ships empty and collapsed;
+       public/creator-surfaces.js fills the rail and the dock, and
+       public/stage-surfaces.js fills the bar. -->
   <section id="workspace">
     <header id="topbar">
       <div class="topbar-context">
@@ -63,6 +65,7 @@
         
       </div>
     </header>
+    <div id="cb-shell-bar" class="cb-shell-slot" data-shell-slot="bar" aria-label="Shot workflow"><div class="cb-shell-slot-body"></div></div>
     <div id="cb-shell-main" class="cb-shell-main">
       <main id="main"></main>
       <aside id="cb-shell-rail" class="cb-shell-slot" data-shell-slot="rail" aria-label="Assistant"><div class="cb-shell-slot-body"></div></aside>
@@ -90,6 +93,7 @@
 <script src="shared-stage-model.js?v=6.7.0-private.1"></script>
 <script src="shared-workspace-shell.js?v=6.7.0-private.1"></script>
 <script src="shared-creator-state.js?v=6.7.0-private.1"></script>
+<script src="shared-stage-actions.js?v=6.7.0-private.1"></script>
 <script src="bounded-rendering.js?v=6.7.0-private.1"></script>
 <script src="app.js?v=6.7.0-private.1"></script>
 <script src="media.js?v=6.7.0-private.1"></script>
@@ -117,6 +121,7 @@
 <script src="focused-workspaces.js?v=6.7.0-private.1"></script>
 <script src="workspace-shell.js?v=6.7.0-private.1"></script>
 <script src="creator-surfaces.js?v=6.7.0-private.1"></script>
+<script src="stage-surfaces.js?v=6.7.0-private.1"></script>
 <script src="bootstrap.js?v=6.7.0-private.1"></script>
 </body>
 </html>

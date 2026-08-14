@@ -4285,6 +4285,35 @@ body[data-focused-workspace="1"] .guided-frame-body,
   #app{--cb-nav-width:0px}
 }
 
+/* THE TOPBAR'S HEIGHT, declared once and consumed by everything that pins beneath it.
+   Added in O4 for exactly the reason --cb-nav-width was added in O2: two elements were
+   about to need one number, and a CSS length is scaled by the same `zoom` as the element
+   it aligns to, where a measured device-pixel offset written back into the zoomed
+   subtree is scaled twice.
+
+   TWO NUMBERS, NOT FOUR, AND NO MARGIN TERM. Both were measured in Chromium rather than
+   read off the stylesheet, because reading gives the wrong answer twice:
+
+     * `#topbar{height:58px}` at max-width:620 is a DEAD cascade layer. A later rule in
+       this sheet sets 64px at max-width:980, and at any width where both match the later
+       one wins — so the shipped topbar is 72px above 980 and 64px below it, full stop.
+       Verified at 1920, 980, 900, 620, 500 and 390. This is the same class of dead layer
+       the --cb-nav-width note above records for the four unused rail widths.
+     * The topbar's `margin:10px 12px 0` is not part of the stop. It positions the topbar
+       in flow, but a sticky box pinned at `top:0` puts its BORDER edge at 0 — measured:
+       pinned, the topbar occupies 0..72 in both themes. A stop that added the margin left
+       a 10px band of workspace showing between the topbar and the bar in the light theme,
+       which is exactly the kind of thing that looks like a rendering fault.
+
+   THIS ALSO CORRECTS A NUMBER O2 GOT WRONG. The rail was pinned at a flat 64px against a
+   topbar that is 72px at every width above 980, so its top 8px sat behind the topbar and
+   its max-height was 8px too generous. That was invisible while the rail was the only
+   thing pinning beneath the topbar; it stops being invisible the moment a second surface
+   pins there too, because the two would disagree by 8px. */
+#app{--cb-topbar-height:72px}
+@media(max-width:980px){#app{--cb-topbar-height:64px}}
+#app{--cb-topbar-stop:var(--cb-topbar-height)}
+
 /* The dock is fixed, so it reserves its space here instead of by existing. The
    default is 0px, which is also the value on every surface where the dock is not
    painted — reserving space for an invisible dock would leave a dead band at the
@@ -4315,12 +4344,27 @@ body[data-focused-workspace="1"] .guided-frame-body,
    Settings just because it survived the trip there. */
 #workspace[data-creator-shell="1"] #cb-shell-rail[data-occupied]{display:block}
 #workspace[data-creator-shell="1"] #cb-shell-dock[data-occupied]{display:flex}
+#workspace[data-creator-shell="1"] #cb-shell-bar[data-occupied]{display:block}
+
+/* The bar (O4). Sticky directly beneath the 64px topbar, in flow — so unlike the dock
+   it reserves its own space by existing and hands nothing back. z-index sits below the
+   topbar (40) and above every sticky surface inside `#main` (24 at the highest), so the
+   bar pins over the shot header rather than under it. Horizontal scrolling only: this
+   slot bounds WIDTH, and a bar that could scroll vertically could grow. */
+#cb-shell-bar{position:sticky;top:var(--cb-topbar-stop,64px);z-index:38;overflow-x:auto;overflow-y:hidden;overscroll-behavior-x:contain;border-bottom:1px solid var(--line);background:var(--panel)}
+#cb-shell-bar>.cb-shell-slot-body{min-width:0}
 
 /* The rail. align-self:start is load-bearing: a stretched grid item is exactly as
    tall as its area, which leaves position:sticky nothing to move within, and the
    rail would scroll away with the page. Sticky keeps it beside the work at the same
-   place on screen while the document — still the scroll owner — scrolls beneath. */
-#cb-shell-rail{position:sticky;top:64px;align-self:start;max-height:calc(100vh - 64px - var(--cb-dock-reserve,0px));overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;border-left:1px solid var(--line);background:var(--panel)}
+   place on screen while the document — still the scroll owner — scrolls beneath.
+
+   The two lengths in `top` and `max-height` were the literal 64px until O4: the rail is
+   no longer the only surface pinning beneath the topbar, so both now read the same
+   --cb-topbar-stop the bar does, plus the bar's own published height. --cb-bar-height is
+   0px wherever the bar is not painted, so off a shot this resolves to exactly what it
+   used to mean and 8px closer to what it meant to mean. */
+#cb-shell-rail{position:sticky;top:calc(var(--cb-topbar-stop) + var(--cb-bar-height,0px));align-self:start;max-height:calc(100vh - var(--cb-topbar-stop) - var(--cb-bar-height,0px) - var(--cb-dock-reserve,0px));overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;border-left:1px solid var(--line);background:var(--panel)}
 
 /* The dock. Fixed to the viewport bottom, starting where the navigation rail ends —
    the same --cb-nav-width the #app grid uses, so "the dock never overlaps navigation"
@@ -4540,4 +4584,153 @@ body[data-focused-workspace="1"] .guided-frame-body,
    the counts are the information, so the eyebrow goes and the counts stay whole. */
 @media(max-width:520px){
   .cb-terminal-head>span{display:none}
+}
+
+/* ============================================================================
+   O4 — THE PERSISTENT STAGE STRIP AND THE PERSISTENT STAGE ACTIONS.
+
+   WHAT THIS BLOCK OWNS: how the bar reads, and where the surfaces beneath it stop.
+   It owns no eligibility — that is the shell's, above — and it introduces no second
+   stage list: every word in the bar comes out of public/shared-stage-model.js at
+   render time and nothing here selects on a stage id.
+
+   THE STRIP IS THE SHIPPED TASKBAR, RELOCATED. `.focused-taskbar` and
+   `.focused-task-button` are the classes the retired in-`#main` navigator used and
+   that nine browser suites drive the shot workspace by clicking. What changes here is
+   the chrome: inside the bar the strip is not a floating rounded card with its own
+   sticky position and its own shadow, because the bar it now lives in already is one.
+
+   THE HIERARCHY, and why the five states are not five equal dots. A strip where
+   everything is equally loud is a strip nobody reads:
+
+     current      an accent underline plus the accent border. It is the one thing
+                  that must be findable without reading, and it is the only state
+                  that changes the button's own frame.
+     needs work   amber dot AND amber status word. Two channels, because this is the
+                  state that is asking the filmmaker for something.
+     running      accent dot with a halo. Loud enough to notice, quiet enough that a
+                  machine working does not outrank a person being asked.
+     blocked      a HOLLOW ring rather than a filled dot, an amber status word and a
+                  slight de-emphasis. Deliberately not the same grey fill as
+                  not-started: "you cannot do this yet, and here is why" and "nobody
+                  has begun" are different answers and used to look identical.
+     complete     green dot, muted word. Finished work should recede.
+     not started  a faint filled dot and nothing else.
+
+   THREE OF THOSE COLOURS WERE INVISIBLE BEFORE THIS BLOCK. The shipped rules paint
+   `.tone-attention` and `.tone-active` with `var(--orange)` and `var(--cyan)`, and
+   `.selected` with `var(--cyan)` — three custom properties this stylesheet has never
+   declared. An undefined custom property makes its declaration compute to `unset`, so
+   the attention dot and the running dot were transparent and the selected border fell
+   back to currentColor. Every colour below is a token with a light-theme value.
+
+   NOTHING HERE IS SCOPED WIDER THAN THE BAR. The entity and scene taskbars use the
+   same two classes on other routes and are deliberately untouched: correcting them is
+   a different surface's decision, and O4 is not a general theme pass.
+   ============================================================================ */
+
+/* THE TWO STICKY SURFACES INSIDE `#main` THAT PIN BENEATH THE BAR. The shell's own
+   regions are handled in the O2 section above, where the shell's geometry lives; these
+   two are `#main` components and belong here. --cb-bar-height is published by
+   public/workspace-shell.js and is 0px wherever the bar is not painted, which is what
+   makes both of these inert on every route that is not a shot. */
+.focused-workspace-shell>.project-navigator,.focused-inspector{
+  top:calc(72px + var(--cb-bar-height,0px));
+  max-height:calc(100vh - 92px - var(--cb-bar-height,0px))}
+
+/* --- the bar --- */
+.cb-stage-bar{display:flex;align-items:center;gap:18px;min-width:0;padding:7px 28px 8px}
+.cb-stage-bar>.cb-stage-strip{flex:1 1 auto;min-width:0}
+.cb-stage-bar>.cb-stage-actions{flex:0 0 auto}
+
+/* --- the strip --- */
+.cb-stage-bar .cb-stage-strip{position:static;z-index:auto;display:flex;gap:6px;
+  margin:0;padding:0;border:0;border-radius:0;background:transparent;box-shadow:none;
+  overflow-x:auto;overflow-y:hidden;overscroll-behavior-x:contain;scrollbar-width:thin}
+.cb-stage-strip .focused-task-button{flex:1 1 0;min-width:142px}
+.cb-stage-strip .focused-task-button>i{background:var(--line-2)}
+.cb-stage-strip .focused-task-button>em{color:var(--faint)}
+.cb-stage-strip .focused-task-button:hover{background:var(--panel-2)!important}
+
+.cb-stage-strip .focused-task-button.tone-complete>i{background:var(--green)}
+.cb-stage-strip .focused-task-button.tone-attention>i{background:var(--amber)}
+.cb-stage-strip .focused-task-button.tone-attention>em{color:var(--amber)}
+.cb-stage-strip .focused-task-button.tone-active>i{background:var(--acc);
+  box-shadow:0 0 0 4px color-mix(in srgb,var(--acc) 20%,transparent)}
+.cb-stage-strip .focused-task-button.tone-active>em{color:var(--acc)}
+
+/* BLOCKED IS NOT OPTIONAL AND IS NOT NOT-STARTED. Keyed off the availability the
+   declaration returned rather than off the tone, because the shipped tone for a
+   blocked stage is `optional` — the one word public/shared-stage-model.js is explicit
+   it cannot honestly say. After the tone rules on purpose: same specificity, and this
+   one must win. */
+.cb-stage-strip .focused-task-button[data-availability="blocked"]{opacity:.76}
+.cb-stage-strip .focused-task-button[data-availability="blocked"]>i{background:transparent;
+  box-shadow:inset 0 0 0 2px var(--amber)}
+.cb-stage-strip .focused-task-button[data-availability="blocked"]>em{color:var(--amber)}
+
+/* THE CURRENT STAGE, last so it wins over every state above — a blocked stage that is
+   open is still the stage you are looking at, and must not be the faintest thing in
+   the strip. The underline is the app's own selected-tab idiom
+   (`.entity-subworkspace-tabs button.selected`), not a new one. */
+.cb-stage-strip .focused-task-button[aria-current="step"]{opacity:1;
+  border-color:var(--acc)!important;background:var(--acc-soft)!important;
+  box-shadow:inset 0 -2px 0 var(--acc)}
+.cb-stage-strip .focused-task-button[aria-current="step"]>b{color:var(--ink)}
+
+/* --- the actions --- */
+.cb-stage-actions{display:flex;align-items:center;justify-content:flex-end;
+  flex-wrap:wrap;gap:8px;min-width:0}
+.cb-stage-action{padding:9px 14px;border:1px solid var(--line-2);border-radius:var(--r-sm);
+  background:var(--panel-2);color:var(--ink);font:600 11.5px var(--body);white-space:nowrap}
+.cb-stage-action.emphasis-primary{border-color:var(--acc);background:var(--acc-soft)}
+.cb-stage-action:hover:not(:disabled){border-color:var(--acc)}
+.cb-stage-action:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+/* A disabled action stays legible. It is being shown ON PURPOSE — its absence is what
+   would confuse the filmmaker — so it is dimmed enough to read as unavailable and not
+   so far that its label becomes unreadable. */
+.cb-stage-action:disabled{opacity:.55;cursor:not-allowed;border-color:var(--line);background:transparent}
+/* The reason takes its own line under the buttons, so it is visible without hovering
+   and without focus. A reason only a pointer can reveal is a reason a keyboard user
+   does not have. */
+.cb-stage-action-reason{flex:0 0 100%;margin:0;text-align:right;
+  font:600 10.5px var(--mono);letter-spacing:.02em;color:var(--amber)}
+.cb-stage-action-reason.cb-stage-action-none{color:var(--faint);font-weight:500}
+
+/* --- responsive ---------------------------------------------------------------
+   The rule is that all five stages stay reachable at every width. Nothing is hidden
+   from the strip: it narrows, then it drops its detail lines, then it scrolls
+   horizontally inside itself, and the runtime keeps the current stage scrolled into
+   view. The thresholds below are the widths at which the bar's own content stops
+   fitting, measured in Chromium, not round numbers. */
+/* THE ACTIONS TAKE THEIR OWN ROW BEFORE THE STRIP HAS TO SCROLL, because the strip is
+   the surface that must not shrink — it is the one holding five things.
+
+   1360 is not a round number and is not a coincidence: it is O3's rail threshold, the
+   width at which this app already decides a second column no longer fits. Measured in
+   Chromium, five 142px stages need 734px and the actions take about 290px, so a single
+   row stops fitting between 1360 and 1370 — the app's existing boundary is inside the
+   band, so O4 uses it rather than inventing a second one eight pixels away. */
+@media(max-width:1360px){
+  .cb-stage-bar{flex-wrap:wrap;row-gap:9px;align-items:stretch}
+  .cb-stage-bar>.cb-stage-strip,.cb-stage-bar>.cb-stage-actions{flex:1 1 100%}
+  .cb-stage-actions{justify-content:flex-start}
+  .cb-stage-action-reason{text-align:left}
+}
+@media(max-width:900px){
+  .cb-stage-bar{padding-left:16px;padding-right:16px}
+  .cb-stage-strip .focused-task-button{min-width:130px}
+}
+@media(max-width:640px){
+  /* The detail line goes and the stage name and its status stay. Losing "Cast, assets
+     and source media" costs a phone reader nothing; losing a stage would cost them the
+     workflow. */
+  .cb-stage-strip .focused-task-button small{display:none}
+  /* 138px, not less: measured in Chromium, that is what "Look & blocking" and "Motion
+     & sound" need before the ellipsis starts eating the stage's NAME. The strip is
+     already scrolling at this width, so a wider button costs scrolling — which is
+     recoverable — rather than legibility, which is not. */
+  .cb-stage-strip .focused-task-button{min-width:138px;padding:8px!important}
+  .cb-stage-bar{padding:6px 10px 7px;gap:10px}
+  .cb-stage-action{padding:8px 11px;font-size:11px}
 }

@@ -2744,10 +2744,17 @@ function shotStageModelFacts(s, takes) {
     deliveryIntent: life.intent,
   };
 }
-/* The taskbar's view of a stage. The judgement is the declared model's; this
+/* The strip's view of a stage. The judgement is the declared model's; this
    function's whole job is turning the model's status key into the shipped STAGE_STATUS
    wording and its note TOKEN into count-aware English. Wording stays here on purpose —
-   the stage model declares what is true, not how CineBraid says it. */
+   the stage model declares what is true, not how CineBraid says it.
+
+   ITS CALLER MOVED IN O4 and its behaviour did not. The five-stage navigator is now
+   built by public/stage-surfaces.js into the shell's persistent bar rather than by
+   guidedShotWorkspaceView() into `#main`, because `#main` is replaced wholesale on
+   every render and a workflow navigator that is destroyed by moving through the
+   workflow is not one. The strip calls THIS function, so the words on it are the same
+   words the taskbar showed. */
 function boundedShotTaskStatus(s, takes, taskId, facts = shotStageModelFacts(s, takes)) {
   const state = shotStageState(taskId, facts);
   if (!state) return { tone:"pending", label:STAGE_STATUS.notStarted };
@@ -2759,10 +2766,6 @@ function boundedShotTaskStatus(s, takes, taskId, facts = shotStageModelFacts(s, 
     note.key === "frames-approved" ? `${note.count} of ${plural(note.total, "frame")} approved` :
     note.key === "blocked-reason" ? note.reason : "";
   return { tone:state.tone, label:STAGE_STATUS[state.statusKey] || STAGE_STATUS.notStarted, ...(text ? { note:text } : {}) };
-}
-function boundedShotTaskbarMarkup(s, takes, selectedId) {
-  const facts = shotStageModelFacts(s, takes);
-  return `<nav class="focused-taskbar bounded-shot-taskbar clarity-taskbar" aria-label="Shot production stages">${SHOT_STAGES.map((stage) => { const status=boundedShotTaskStatus(s,takes,stage.id,facts); return `<button type="button" class="focused-task-button tone-${status.tone} ${stage.id===selectedId?"selected":""}" onclick="selectBoundedTask('${SHOT_STAGE_SCOPE}','${attr(s.id)}','${attr(stage.id)}')" title="${attr(stage.label + " — " + status.label)}"><i></i><span><b>${esc(stage.label)}</b><small>${esc(status.note ? `${stage.detail} · ${status.note}` : stage.detail)}</small></span><em>${esc(status.label)}</em></button>`; }).join("")}</nav>`;
 }
 function boundedShotSelectedTask(s, takes) {
   const facts = shotStageModelFacts(s, takes);
@@ -2862,13 +2865,26 @@ function guidedShotWorkspaceView(s, takes, sc, state, refs, planningMedia, neigh
     motion: () => guidedMotionPanel(s,current,takes,motionOpen),
     deliver: () => guidedFinishPanel(s,approvedMotion,current,life.panel === "finish"),
   };
+  /* NO STAGE NAVIGATOR IS BUILT HERE, and that is O4.
+
+     This workspace used to render the five-stage taskbar itself, between the status
+     card and the work stack. `#main` is replaced wholesale on every render, so every
+     stage change destroyed and rebuilt the surface whose entire job was telling the
+     filmmaker where they were. The navigator now lives in the shell's persistent bar
+     and is built by public/stage-surfaces.js from the same declared model this
+     function reads for `selectedTask`.
+
+     What remains here is `data-selected-task`, which is still the workspace's own
+     statement of which stage it rendered — public/focused-workspaces.js reads it, and
+     so does every suite that checks the two agree. A second navigator built here
+     would fail tests/stage-surfaces.js rather than merely look redundant. */
   const selectedMarkup = (renderers[selectedTask] || renderers.frames)();
   const requiredFrames = progress.frames.filter((frame) => frame.required !== false);
   const approvedFrames = requiredFrames.filter((frame, index) => guidedFrameApproved(s, frame, takes, progress.frames.indexOf(frame))).length;
   const referenceCount = shotCreationReferences(s).filter((row) => row.url).length;
   const videos = takes.filter((take) => isVideo(take.name)).length;
   const commandSummary = `<section class="shot-command-summary"><article><span>References</span><b>${referenceCount}</b><small>${referenceCount ? "linked and available" : "none linked yet"}</small></article><article><span>Required frames</span><b>${approvedFrames}/${requiredFrames.length || 1}</b><small>${approvedFrames === requiredFrames.length && requiredFrames.length ? "approved" : "still to approve"}</small></article><article><span>Motion</span><b>${videos || "—"}</b><small>${videos ? plural(videos, "video file") : progress.requiredApproved ? "ready when needed" : "waiting for frames"}</small></article><article><span>Open stage</span><b>${esc(String(selectedTask).replace(/^./, (c) => c.toUpperCase()))}</b><small>Shot status: ${esc(state?.label || life.label || "In progress")}</small></article></section>`;
-  return `<div class="shot-shell guided-shot-shell focused-workspace-shell bounded-shot-workspace clarity-shot-workspace" data-bounded="1" data-selected-task="${attr(selectedTask)}">${projectNavigator(s)}<div class="shot-main"><div class="crumb"><a href="#/shots/board">Shots</a> / <a href="#/scene/${s.scene}">${esc(sc ? sc.title : s.scene)}</a> / ${esc(s.id)}</div><header class="shot-workspace-head guided-shot-head"><div class="shot-head-nav">${neighbors.prev ? `<a href="#/shot/${neighbors.prev.id}" title="Previous shot" aria-label="Previous shot: ${attr(neighbors.prev.title || neighbors.prev.id)}">‹</a>` : '<span aria-hidden="true">‹</span>'}${neighbors.next ? `<a href="#/shot/${neighbors.next.id}" title="Next shot" aria-label="Next shot: ${attr(neighbors.next.title || neighbors.next.id)}">›</a>` : '<span aria-hidden="true">›</span>'}</div><div class="shot-head-main"><h1 class="shot-title-display">${esc(s.title || "Untitled shot")}</h1><div class="record-meta">${esc(s.id)} · ${takes.length} returned file${takes.length === 1 ? "" : "s"}</div></div><div class="shot-head-controls"><details class="guided-inline-actions"><summary>Shot actions</summary><button class="ghost-btn" onclick="openRenameShotModal('${s.id}')">Rename shot</button><button class="ghost-btn" onclick="duplicateShot('${s.id}')">Duplicate shot</button><button class="ghost-btn" onclick="clickGuidedUpload('${s.id}','${life.key.includes("motion") || life.key === "final" ? "video" : "still"}')">Import existing ${life.key.includes("motion") || life.key === "final" ? "video" : "still"}</button><button class="danger-btn" onclick="delShot('${s.id}')">Delete shot</button></details></div></header>${commandSummary}${guidedShotStatusCard(s,takes,neighbors)}${typeof v642RelatedShotActivityMarkup === "function" ? v642RelatedShotActivityMarkup(s.id) : ""}${boundedShotTaskbarMarkup(s,takes,selectedTask)}<div class="guided-work-stack bounded-selected-task" data-bounded-task="${attr(selectedTask)}">${selectedMarkup}</div></div></div>`;
+  return `<div class="shot-shell guided-shot-shell focused-workspace-shell bounded-shot-workspace clarity-shot-workspace" data-bounded="1" data-selected-task="${attr(selectedTask)}">${projectNavigator(s)}<div class="shot-main"><div class="crumb"><a href="#/shots/board">Shots</a> / <a href="#/scene/${s.scene}">${esc(sc ? sc.title : s.scene)}</a> / ${esc(s.id)}</div><header class="shot-workspace-head guided-shot-head"><div class="shot-head-nav">${neighbors.prev ? `<a href="#/shot/${neighbors.prev.id}" title="Previous shot" aria-label="Previous shot: ${attr(neighbors.prev.title || neighbors.prev.id)}">‹</a>` : '<span aria-hidden="true">‹</span>'}${neighbors.next ? `<a href="#/shot/${neighbors.next.id}" title="Next shot" aria-label="Next shot: ${attr(neighbors.next.title || neighbors.next.id)}">›</a>` : '<span aria-hidden="true">›</span>'}</div><div class="shot-head-main"><h1 class="shot-title-display">${esc(s.title || "Untitled shot")}</h1><div class="record-meta">${esc(s.id)} · ${takes.length} returned file${takes.length === 1 ? "" : "s"}</div></div><div class="shot-head-controls"><details class="guided-inline-actions"><summary>Shot actions</summary><button class="ghost-btn" onclick="openRenameShotModal('${s.id}')">Rename shot</button><button class="ghost-btn" onclick="duplicateShot('${s.id}')">Duplicate shot</button><button class="ghost-btn" onclick="clickGuidedUpload('${s.id}','${life.key.includes("motion") || life.key === "final" ? "video" : "still"}')">Import existing ${life.key.includes("motion") || life.key === "final" ? "video" : "still"}</button><button class="danger-btn" onclick="delShot('${s.id}')">Delete shot</button></details></div></header>${commandSummary}${guidedShotStatusCard(s,takes,neighbors)}${typeof v642RelatedShotActivityMarkup === "function" ? v642RelatedShotActivityMarkup(s.id) : ""}<div class="guided-work-stack bounded-selected-task" data-bounded-task="${attr(selectedTask)}">${selectedMarkup}</div></div></div>`;
 }
 
 window.setComposerConstraint = (id, key, value) => {

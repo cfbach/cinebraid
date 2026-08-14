@@ -13,7 +13,7 @@
    identity true by construction, and leaves this file responsible only for state.
 
    ---------------------------------------------------------------------------
-   WHY ANY JAVASCRIPT AT ALL. Exactly two things static CSS cannot answer:
+   WHY ANY JAVASCRIPT AT ALL. Exactly three things static CSS cannot answer:
 
    1. ELIGIBILITY. Whether a surface is a creator workspace depends on the route
       AND on whether a project is open — the first-run and project-failure screens
@@ -24,6 +24,17 @@
       center up by existing. Its height depends on what a consumer mounted, bounded
       by the dock's own max-height, so no stylesheet can state it. It is measured
       here and given back through --cb-dock-reserve.
+
+   3. THE BAR'S HEIGHT. Added in O4, and it is NOT a reservation — the bar is in
+      flow, so it reserves its own space by existing, and nothing has to give that
+      back. The number is published because the bar is STICKY: every other sticky
+      surface below it (the rail, the shot header, the project navigator) has to
+      offset by however tall it currently is, or it pins underneath and the top of
+      it is never readable. That height depends on what a consumer mounted and on
+      whether the bar's row has wrapped at this viewport width, so no stylesheet
+      can state it either. It is given back through --cb-bar-height, and it is 0px
+      on every surface where the bar is not painted, which is what makes the offset
+      rules that consume it inert everywhere else.
 
    A THIRD CANDIDATE WAS REJECTED ON EVIDENCE, recorded so it is not reintroduced:
    the dock's LEFT EDGE. Deriving it by measuring #workspace is not merely redundant,
@@ -51,6 +62,10 @@
      the dock slot     owns its own vertical scrolling, bounded by max-height, and
                        is position:fixed so its content is out of document flow.
 
+     the bar slot      owns its own HORIZONTAL scrolling and no vertical scrolling
+                       at all. It is position:sticky and in flow, so it scrolls with
+                       the page until it pins beneath the topbar.
+
    Nothing else in the shell scrolls. */
 
 (function () {
@@ -74,6 +89,11 @@
      only the height, which depends on mounted content and therefore cannot be
      declared anywhere. */
   const RESERVE_VARIABLE = "--cb-dock-reserve";
+  /* The bar's rendered height. Published for the same reason and by the same
+     mechanism as the dock's, and for a different consumer: the dock's number gives
+     back space a fixed element covers, this one tells the sticky surfaces below the
+     bar where the bar stops. Both are heights only the running document knows. */
+  const BAR_VARIABLE = "--cb-bar-height";
 
   function declaration() {
     /* The shared module assigns onto the same global scope this script shares. It is
@@ -186,19 +206,25 @@
     return document.getElementById("app") || document.documentElement;
   }
 
+  /* The rendered height of a slot, or 0 when that slot is not being painted —
+     because it holds nothing, or because the surface is not a creator workspace and
+     may still be holding content retained from one that was. Both numbers below are
+     wrong in the same expensive way if this returns a height for something nobody
+     can see: the dock would leave a dead band under Settings, the bar would push
+     every sticky surface down past a strip that is not there. */
+  function paintedSlotHeight(name) {
+    const slot = slotElement(name);
+    if (!slot || !isShellPresent() || !slotHasContent(name)) return 0;
+    return typeof slot.getBoundingClientRect === "function"
+      ? Math.round(slot.getBoundingClientRect().height)
+      : 0;
+  }
+
   function measure() {
     const host = variableHost();
     if (!host || !host.style) return;
-    /* The reservation is the dock's real rendered height, and it is zero whenever
-       the dock is not showing — including on an ineligible surface, where the dock
-       may still hold retained content. Reserving space for something that is not
-       painted would leave a permanent empty band at the bottom of Settings. */
-    const dock = slotElement("dock");
-    const shown = isShellPresent() && slotHasContent("dock");
-    const height = shown && dock && typeof dock.getBoundingClientRect === "function"
-      ? Math.round(dock.getBoundingClientRect().height)
-      : 0;
-    host.style.setProperty(RESERVE_VARIABLE, `${height}px`);
+    host.style.setProperty(RESERVE_VARIABLE, `${paintedSlotHeight("dock")}px`);
+    host.style.setProperty(BAR_VARIABLE, `${paintedSlotHeight("bar")}px`);
   }
 
   /* ==========================================================================
@@ -242,12 +268,16 @@
   let observer = null;
   function watch() {
     if (observer || typeof ResizeObserver !== "function") return;
-    /* The dock only. Its height is the one shell number CSS cannot state, because it
-       depends on what a consumer mounted. Everything else about the shell's geometry
-       is declared in public/styles.css and is not watched from here. */
+    /* The dock and the bar. Their heights are the shell numbers CSS cannot state,
+       because both depend on what a consumer mounted — and the bar's also depends on
+       whether its row has wrapped, which no consumer knows either. Everything else
+       about the shell's geometry is declared in public/styles.css and is not watched
+       from here. */
     observer = new ResizeObserver(() => measure());
-    const dock = slotElement("dock");
-    if (dock) observer.observe(dock);
+    for (const name of ["dock", "bar"]) {
+      const slot = slotElement(name);
+      if (slot) observer.observe(slot);
+    }
   }
 
   function start() {
@@ -278,6 +308,8 @@
     MAIN_REGION_ID,
     mainRegion,
     RESERVE_VARIABLE,
+    BAR_VARIABLE,
+    paintedSlotHeight,
     currentView,
     activeProject,
     slotBody,

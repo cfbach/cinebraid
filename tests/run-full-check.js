@@ -101,6 +101,8 @@ const nodeSuites = [
   "check:workspace-shell-negative",
   "check:creator-state",
   "check:creator-state-negative",
+  "check:stage-surfaces",
+  "check:stage-surfaces-negative",
   "check:job-media-identity",
   "check:job-media-identity-negative",
   "check:account-contract",

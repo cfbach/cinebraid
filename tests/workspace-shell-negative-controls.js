@@ -90,8 +90,11 @@ function overflowControls() {
 
   control("C2 the rail stretches instead of starting", "checkOverflowOwnership",
     { styles: mutate(SOURCES.styles,
-        "#cb-shell-rail{position:sticky;top:64px;align-self:start;",
-        "#cb-shell-rail{position:sticky;top:64px;",
+        /* The offsets became variables in O4, when the rail stopped being the only
+           surface pinning beneath the topbar. The control is unchanged in meaning: it
+           removes align-self:start and nothing else. */
+        "align-self:start;max-height:calc(100vh - var(--cb-topbar-stop)",
+        "max-height:calc(100vh - var(--cb-topbar-stop)",
         "C2") },
     "A stretched grid item is exactly as tall as its area, so position:sticky has nothing to move within and the rail scrolls away with the page.");
 
@@ -114,7 +117,9 @@ function overflowControls() {
     "A fixed dock cannot push anything, so without the reservation it permanently hides the bottom of the centre workspace.");
 
   control("C6 the rail becomes unbounded", "checkOverflowOwnership",
-    { styles: mutate(SOURCES.styles, "max-height:calc(100vh - 64px - var(--cb-dock-reserve,0px));overflow-y:auto", "overflow-y:auto", "C6") },
+    { styles: mutate(SOURCES.styles,
+        "max-height:calc(100vh - var(--cb-topbar-stop) - var(--cb-bar-height,0px) - var(--cb-dock-reserve,0px));overflow-y:auto",
+        "overflow-y:auto", "C6") },
     "An unbounded rail lets an Assistant conversation set the page height.");
 
   /* The rail's width and its two thresholds are one piece of arithmetic, added in O3
