@@ -615,6 +615,48 @@ const BYPASS_CALLERS = [
   ok(!Kernel.AUTHORITY_TARGET_KINDS.includes("entity-expression"), "nor is an expression slot");
   eq(Kernel.AUTHORITY_TARGET_KINDS.length, 4, "the authority model has exactly four kinds, and shrinking it was the point");
 
+  /* --- K1C: NO SECOND SLOT SETTER. The demotion is only true while
+     shared-entity-slots.js is the only thing that writes a slot's status, and
+     the post-green sweep found three writers that had never been routed:
+     setExpressionSlotField, seedCoverageFromPrimary and
+     confirmPrimaryCoverageAssignment all set `status = "approved"` on a
+     supporting reference. A prose rule does not survive the next feature, so
+     the rule is a test: the only file allowed to author that string is the one
+     that owns the concept. */
+  {
+    const PUBLIC = path.join(ROOT, "public");
+    const slotWriterFiles = fs.readdirSync(PUBLIC).filter((name) => name.endsWith(".js") && name !== "shared-entity-slots.js");
+    const offenders = [];
+    for (const name of slotWriterFiles) {
+      /* Comments stripped first, or this guard's own documentation trips it. */
+      const source = fs.readFileSync(path.join(PUBLIC, name), "utf8")
+        .replace(/\/\*[\s\S]*?\*\//g, "").replace(/^[ \t]*\/\/.*$/gm, "");
+      /* TWO SHAPES, because the first version of this guard caught only the
+         first and the normaliser walked through the gap. A slot's status is
+         either ASSIGNED the word or DERIVED from `approvedFile` presence, and
+         the derivation is the more dangerous one: it runs on every project load
+         and needs no writer to be at fault. app.js had three, so a slot
+         correctly saved as a selection came back as an approval the next time
+         the project was opened.
+
+         Both patterns require the `.status` property or a `status:` key — a
+         local `const status` computed for a card label is a different noun and
+         is not in scope. */
+      for (const match of source.matchAll(/\.status\s*=\s*[^;\n]*["']approved["']/g)) offenders.push(`${name}:${match[0].trim()}`);
+      for (const match of source.matchAll(/\bstatus:\s*[^,}\n]*["']approved["']/g)) offenders.push(`${name}: ${match[0].trim()}`);
+    }
+    eq(offenders.join(" | "), "", "only shared-entity-slots.js may write a slot's status, and it never writes \"approved\"");
+    checks++;
+    /* And the row half of the same claim: a slot selection must not leave a
+       candidate row asserting `humanApproved`, because that is the field
+       shared-production-media.js reads to call a file human-approved. */
+    const entitiesSource = fs.readFileSync(path.join(PUBLIC, "entities.js"), "utf8");
+    const commitBlock = entitiesSource.slice(entitiesSource.indexOf("row.decision = row.coverageGroup"), entitiesSource.indexOf("row.approvedCoverageSlotId"));
+    ok(/row\.humanApproved = false/.test(commitBlock), "a coverage selection records humanApproved:false on its candidate row");
+    ok(!/approvalProvenance/.test(commitBlock), "and does not write an approval provenance for a supporting reference");
+    checks++;
+  }
+
   await architectureBrowserChecks();
 
   console.log(`Dogfood #2 trust-kernel architecture suite passed ${checks} end-to-end boundary checks: `

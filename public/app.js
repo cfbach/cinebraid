@@ -743,7 +743,15 @@ function normalizeReferenceCoverageData() {
         }
         next.approvedFile = String(next.approvedFile || "");
         next.notes = String(next.notes || "");
-        next.status = next.approvedFile ? "approved" : "missing";
+        /* K-alpha — NORMALISATION MUST NOT REINSTATE THE WORD THE WRITERS GAVE
+           UP. This line, and its two twins below, recompute a slot's status
+           from file presence on EVERY project load. While it derived
+           "approved", it silently undid the demotion: a slot correctly written
+           as a selection came back as an approval the next time the project was
+           opened, and no writer was at fault. Deriving "selected" is not a
+           migration — `status` is already recomputed here unconditionally, and
+           `approvedFile`, the actual data, is untouched. */
+        next.status = next.approvedFile ? "selected" : "missing";
         next.replacementHistory = Array.isArray(next.replacementHistory) ? next.replacementHistory : [];
         /* Two legacy conditions used to be corrected here, by clearing the
            slot's approvedFile while the project was merely being opened. Both
@@ -773,7 +781,7 @@ function normalizeReferenceCoverageData() {
          an undeclared slot to `false` here, which read as "planned" — the seed
          below says "planned" outright and stops writing the boolean to say it. */
       for (const custom of existing.filter((item) => item && !defaults.some((slot) => slot.id === item.id) && !normalizedCoverageAlias(list, item))) {
-        merged.push({ ...seedCoverageRequirement({ requirement: templateRequirement(false) }, custom), approvedFile: String(custom.approvedFile || ""), notes: String(custom.notes || ""), status: custom.approvedFile ? "approved" : "missing", replacementHistory: Array.isArray(custom.replacementHistory) ? custom.replacementHistory : [] });
+        merged.push({ ...seedCoverageRequirement({ requirement: templateRequirement(false) }, custom), approvedFile: String(custom.approvedFile || ""), notes: String(custom.notes || ""), status: custom.approvedFile ? "selected" : "missing", replacementHistory: Array.isArray(custom.replacementHistory) ? custom.replacementHistory : [] });
       }
       if (JSON.stringify(existing) !== JSON.stringify(merged)) { entity.coverageSlots = merged; changed = true; }
       if (list === "characters") {
@@ -784,7 +792,8 @@ function normalizeReferenceCoverageData() {
           const prior = priorSlots.find((item) => String(item?.id) === slot.id);
           const next = { ...seedCoverageRequirement(slot, prior), retired: false };
           next.approvedFile = String(next.approvedFile || "");
-          next.status = next.approvedFile ? "approved" : "missing";
+          /* K-alpha: the expression twin of the coverage derivation above. */
+          next.status = next.approvedFile ? "selected" : "missing";
           next.replacementHistory = Array.isArray(next.replacementHistory) ? next.replacementHistory : [];
           return next;
         });

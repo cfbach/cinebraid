@@ -2432,7 +2432,6 @@
         "M020",
         "M021",
         "M022",
-        "M030",
         "M050",
         "M051",
         "M052",
@@ -2447,8 +2446,8 @@
         "leaves": 1157,
         "unaccounted": 0,
         "byDisposition": {
-          "mapped": 351,
-          "preserved": 721,
+          "mapped": 345,
+          "preserved": 727,
           "dropped": 85,
           "stated": 31,
           "unmapped": 0
@@ -2465,11 +2464,10 @@
           "M022": 2,
           "M010": 22,
           "M009": 33,
-          "M013": 28,
+          "M013": 34,
           "M012": 55,
           "M020": 90,
           "M021": 1,
-          "M030": 6,
           "M050": 102,
           "M051": 31,
           "M052": 53,
@@ -2509,14 +2507,6 @@
           "before": 0,
           "after": 2
         },
-        "references": {
-          "before": 0,
-          "after": 6
-        },
-        "assets": {
-          "before": 0,
-          "after": 6
-        },
         "statements": {
           "before": 0,
           "after": 31
@@ -2526,7 +2516,7 @@
         "source": 48,
         "preserved": 48,
         "lost": 0,
-        "minted": 47
+        "minted": 35
       },
       "statements": {
         "total": 31,
@@ -2603,6 +2593,12 @@
         "info:migration.id.minted",
         "info:migration.id.minted",
         "info:migration.source.sniffed",
+        "warning:migration.authority.historic",
+        "warning:migration.authority.historic",
+        "warning:migration.authority.historic",
+        "warning:migration.authority.historic",
+        "warning:migration.authority.historic",
+        "warning:migration.authority.historic",
         "warning:migration.code.unresolved",
         "warning:migration.code.unresolved",
         "warning:migration.code.unresolved",
@@ -2622,17 +2618,17 @@
         }
       },
       "summary": {
-        "deterministicMappings": 351,
+        "deterministicMappings": 345,
         "inferredMappings": 3,
         "disputes": 28,
-        "preservedValues": 721,
+        "preservedValues": 727,
         "droppedValues": 85,
         "unmappedValues": 0,
-        "warnings": 9,
+        "warnings": 15,
         "errors": 0
       },
-      "candidateSha256": "23a0901bd2827918b71a580229087c80bb299a685a803656157fc66a123c9eba",
-      "candidateBytes": 234884
+      "candidateSha256": "ec8157aa406d7c3b5025beca36caab1ec95575b9491e5d8f6c98bdcb8e956268",
+      "candidateBytes": 233448
     },
     {
       "id": "overfit-14-hub-v4-3",
@@ -2670,7 +2666,6 @@
         "M020",
         "M021",
         "M022",
-        "M030",
         "M050",
         "M051",
         "M052",
@@ -2685,8 +2680,8 @@
         "leaves": 1254,
         "unaccounted": 0,
         "byDisposition": {
-          "mapped": 347,
-          "preserved": 806,
+          "mapped": 345,
+          "preserved": 808,
           "dropped": 101,
           "stated": 31,
           "unmapped": 0
@@ -2703,11 +2698,10 @@
           "M022": 2,
           "M010": 22,
           "M009": 33,
-          "M013": 22,
+          "M013": 24,
           "M012": 40,
           "M020": 90,
           "M021": 1,
-          "M030": 2,
           "M050": 105,
           "M051": 47,
           "M052": 53,
@@ -2747,14 +2741,6 @@
           "before": 0,
           "after": 2
         },
-        "references": {
-          "before": 0,
-          "after": 2
-        },
-        "assets": {
-          "before": 0,
-          "after": 2
-        },
         "statements": {
           "before": 0,
           "after": 31
@@ -2764,7 +2750,7 @@
         "source": 48,
         "preserved": 48,
         "lost": 0,
-        "minted": 39
+        "minted": 35
       },
       "statements": {
         "total": 31,
@@ -2841,6 +2827,8 @@
         "info:migration.id.minted",
         "info:migration.id.minted",
         "info:migration.source.sniffed",
+        "warning:migration.authority.historic",
+        "warning:migration.authority.historic",
         "warning:migration.code.unresolved",
         "warning:migration.code.unresolved",
         "warning:migration.code.unresolved",
@@ -2860,17 +2848,17 @@
         }
       },
       "summary": {
-        "deterministicMappings": 347,
+        "deterministicMappings": 345,
         "inferredMappings": 3,
         "disputes": 28,
-        "preservedValues": 806,
+        "preservedValues": 808,
         "droppedValues": 101,
         "unmappedValues": 0,
-        "warnings": 9,
+        "warnings": 11,
         "errors": 0
       },
-      "candidateSha256": "a413aee941daa9eceb05464e8339b61144d2f288ebf24704d6b09c8e8b4d3324",
-      "candidateBytes": 269965
+      "candidateSha256": "00cd7d887f9c5d7496ab3d018bdbe2e382415415dbc58851e2e5b160159c13ec",
+      "candidateBytes": 269465
     },
     {
       "id": "overfit-15-hub-v4-5",
@@ -2908,7 +2896,6 @@
         "M020",
         "M021",
         "M022",
-        "M030",
         "M050",
         "M051",
         "M052",
@@ -2923,8 +2910,8 @@
         "leaves": 1127,
         "unaccounted": 0,
         "byDisposition": {
-          "mapped": 345,
-          "preserved": 680,
+          "mapped": 344,
+          "preserved": 681,
           "dropped": 102,
           "stated": 31,
           "unmapped": 0
@@ -2941,11 +2928,10 @@
           "M022": 2,
           "M010": 22,
           "M009": 32,
-          "M013": 22,
+          "M013": 23,
           "M012": 36,
           "M020": 90,
           "M021": 1,
-          "M030": 1,
           "M050": 105,
           "M051": 47,
           "M052": 54,
@@ -2985,14 +2971,6 @@
           "before": 0,
           "after": 2
         },
-        "references": {
-          "before": 0,
-          "after": 1
-        },
-        "assets": {
-          "before": 0,
-          "after": 1
-        },
         "statements": {
           "before": 0,
           "after": 31
@@ -3002,7 +2980,7 @@
         "source": 48,
         "preserved": 48,
         "lost": 0,
-        "minted": 36
+        "minted": 34
       },
       "statements": {
         "total": 31,
@@ -3078,6 +3056,7 @@
         "info:migration.id.minted",
         "info:migration.id.minted",
         "info:migration.source.sniffed",
+        "warning:migration.authority.historic",
         "warning:migration.code.unresolved",
         "warning:migration.code.unresolved",
         "warning:migration.code.unresolved",
@@ -3097,17 +3076,17 @@
         }
       },
       "summary": {
-        "deterministicMappings": 345,
+        "deterministicMappings": 344,
         "inferredMappings": 3,
         "disputes": 28,
-        "preservedValues": 680,
+        "preservedValues": 681,
         "droppedValues": 102,
         "unmappedValues": 0,
-        "warnings": 9,
+        "warnings": 10,
         "errors": 0
       },
-      "candidateSha256": "961cbb9e2364d80a80c39695b3f066fa9f39d625bedf64c7aeb421a40dafd291",
-      "candidateBytes": 225061
+      "candidateSha256": "b54a108fc83de9e565869021a6c4b7d80981d1706f7cf5ef49ab3f888d5df61e",
+      "candidateBytes": 224795
     },
     {
       "id": "overfit-16-hub-v4-6",
@@ -3370,7 +3349,6 @@
         "M020",
         "M021",
         "M022",
-        "M030",
         "M050",
         "M051",
         "M052",
@@ -3385,8 +3363,8 @@
         "leaves": 1143,
         "unaccounted": 0,
         "byDisposition": {
-          "mapped": 345,
-          "preserved": 684,
+          "mapped": 344,
+          "preserved": 685,
           "dropped": 114,
           "stated": 31,
           "unmapped": 0
@@ -3403,11 +3381,10 @@
           "M022": 2,
           "M010": 22,
           "M009": 32,
-          "M013": 31,
+          "M013": 32,
           "M012": 38,
           "M020": 90,
           "M021": 1,
-          "M030": 1,
           "M050": 105,
           "M051": 59,
           "M052": 54,
@@ -3447,14 +3424,6 @@
           "before": 0,
           "after": 2
         },
-        "references": {
-          "before": 0,
-          "after": 1
-        },
-        "assets": {
-          "before": 0,
-          "after": 1
-        },
         "statements": {
           "before": 0,
           "after": 31
@@ -3464,7 +3433,7 @@
         "source": 48,
         "preserved": 48,
         "lost": 0,
-        "minted": 36
+        "minted": 34
       },
       "statements": {
         "total": 31,
@@ -3540,6 +3509,7 @@
         "info:migration.id.minted",
         "info:migration.id.minted",
         "info:migration.source.sniffed",
+        "warning:migration.authority.historic",
         "warning:migration.code.unresolved",
         "warning:migration.code.unresolved",
         "warning:migration.code.unresolved",
@@ -3559,17 +3529,17 @@
         }
       },
       "summary": {
-        "deterministicMappings": 345,
+        "deterministicMappings": 344,
         "inferredMappings": 3,
         "disputes": 28,
-        "preservedValues": 684,
+        "preservedValues": 685,
         "droppedValues": 114,
         "unmappedValues": 0,
-        "warnings": 9,
+        "warnings": 10,
         "errors": 0
       },
-      "candidateSha256": "0b066d6109387d995fe84172916560447cd75de6f0847c1408f0fe96b073efad",
-      "candidateBytes": 223835
+      "candidateSha256": "e8d7ea1101a54c694b5d790898756055da31cbe0c44c953924e470c14a55d964",
+      "candidateBytes": 223569
     },
     {
       "id": "overfit-18-cinebraid-581",

@@ -82,10 +82,32 @@ async function testManualReferencePath() {
   vm.runInContext(`confirmModal=(message,commit)=>commit();`, review.context);
   review.context.requestHumanEntityCandidateApproval("characters", "KAI", "KAI-FRONT-IMPORTED.png", "state-default", "coverage");
   const character = vm.runInContext(`P.characters.find((row) => row.id === "KAI")`, review.context);
-  assert.strictEqual(character.coverageSlots[0].approvedFile, "KAI-FRONT-IMPORTED.png");
-  assert.strictEqual(character.candidateFiles[0].humanApproved, true);
-  assert.strictEqual(character.candidateFiles[0].humanApprovedWithoutAI, true);
-  assert.strictEqual(character.candidateFiles[0].approvalProvenance.source, "human");
+  /* CHANGED IN BATCH 1C — the act is unchanged, the claim about it is not.
+
+     OLD EXPECTATION: assigning an imported image to a coverage slot with AI
+     disabled wrote `humanApproved: true`, `humanApprovedWithoutAI: true` and
+     `approvalProvenance.source === "human"` on the candidate row.
+
+     WHY IT IS NO LONGER VALID: a coverage slot is a supporting reference, not
+     production authority, so nothing about assigning one is an approval. Those
+     two booleans are what shared-production-media.js reads to call a file
+     human-approved production media, so leaving them true was the demoted
+     authority escaping through the candidate row instead of the slot.
+
+     WHAT THIS SUITE IS ACTUALLY FOR IS UNTOUCHED. Manual-first means a person
+     can act with no AI in the loop, and every part of that still holds: the
+     assignment lands, the provenance records that a HUMAN made it, and
+     `aiReviewed: false` says no AI was consulted. The only thing withdrawn is
+     the word "approved" on something that establishes no canon. */
+  assert.strictEqual(character.coverageSlots[0].approvedFile, "KAI-FRONT-IMPORTED.png", "the manual assignment lands with no AI in the loop");
+  assert.strictEqual(character.coverageSlots[0].status, "selected", "and is recorded as a selection, because a view is a supporting reference");
+  assert.strictEqual(character.candidateFiles[0].humanApproved, false, "a slot selection claims no approval on the candidate row");
+  assert.strictEqual(character.candidateFiles[0].humanApprovedWithoutAI, false, "nor an unreviewed one");
+  assert.strictEqual(character.candidateFiles[0].approvalProvenance, undefined, "and writes no approval provenance at all");
+  assert.strictEqual(character.candidateFiles[0].selectionProvenance.source, "human", "the person who chose it is still recorded");
+  assert.strictEqual(character.candidateFiles[0].selectionProvenance.aiReviewed, false, "manual-first: no AI was consulted, and the record says so");
+  assert.strictEqual(character.candidateFiles[0].selectionProvenance.authoritative, false, "and the record says out loud that choosing is not approving");
+  assert.strictEqual(character.candidateFiles[0].decision, "selected-coverage");
 
   const stats = vm.runInContext(`coverageStats(P.characters.find((row) => row.id === "KAI").coverageSlots)`, review.context);
   assert.strictEqual(stats.required, 1, "only explicit required views affect readiness");

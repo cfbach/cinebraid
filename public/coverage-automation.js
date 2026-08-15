@@ -599,9 +599,20 @@
     const preferred = ({ props: "hero", vehicles: "front-three-quarter", locations: "establishing" })[list];
     const slot = slots.find((item) => item.id === preferred) || slots[0];
     if (!slot) return;
-    slot.approvedFile = primary.name; slot.status = "approved"; slot.notes = slot.notes || "Assigned from the primary approved reference.";
-    slot.provenance = { source: "primary-approved-reference", seededAt: new Date().toISOString(), explicit: true };
-    dirty(); route(); toast(`${slot.label} assigned from the primary reference`);
+    /* K1C/K-alpha — SEEDING GOES THROUGH THE ONE SLOT WRITER TOO. This wrote
+       `status: "approved"` directly: the primary reference IS canon, but
+       pointing a view slot at it does not make the view an approval. The
+       selection is real and is recorded; the claim is not. */
+    const outcome = assignSlotReference(slot, {
+      fileName: primary.name,
+      at: new Date().toISOString(),
+      via: "seeded-from-primary-reference",
+      eligibility: () => entityOwnershipEligibility(P, { list, entityId: entity.id }, primary.name),
+    });
+    if (!outcome.assigned) return toast(outcome.message || `${primary.name} could not be assigned to ${slot.label || slot.id}`);
+    slot.notes = slot.notes || "Selected from the primary approved reference as a supporting view.";
+    slot.provenance = { source: "primary-approved-reference", authoritative: false, seededAt: new Date().toISOString(), explicit: true };
+    dirty(); route(); toast(`${slot.label} selected from the primary reference`);
   };
   window.confirmPrimaryCoverageAssignment = (list, entityId) => {
     const entity = entityFor(list, entityId);
@@ -611,15 +622,24 @@
     const slots = typeof ensureCoverageSlots === "function" ? ensureCoverageSlots(list, entity) : entity.coverageSlots || [];
     const slot = slots.find((item) => item.id === slotId);
     if (!slot) return toast("Coverage slot is unavailable");
-    slot.approvedFile = primary.name;
-    slot.status = "approved";
-    slot.notes = slot.notes || "Explicitly assigned from the primary identity reference.";
-    slot.provenance = { source: "primary-approved-reference", assignedAt: new Date().toISOString(), explicit: true };
-    entity.primaryAngleAssignment = { status: "assigned", sourceFile: primary.name, slotId, assignedAt: new Date().toISOString() };
+    /* K1C/K-alpha — the character arm of the same seeding act, routed for the
+       same reason. The creator naming which angle this image represents is a
+       deliberate human act; it is a SELECTION of a supporting view. */
+    const assignedAt = new Date().toISOString();
+    const outcome = assignSlotReference(slot, {
+      fileName: primary.name,
+      at: assignedAt,
+      via: "primary-angle-assignment",
+      eligibility: () => entityOwnershipEligibility(P, { list, entityId: entity.id }, primary.name),
+    });
+    if (!outcome.assigned) return toast(outcome.message || `${primary.name} could not be assigned to ${slot.label || slot.id}`);
+    slot.notes = slot.notes || "Explicitly selected from the primary identity reference.";
+    slot.provenance = { source: "primary-approved-reference", authoritative: false, assignedAt, explicit: true };
+    entity.primaryAngleAssignment = { status: "assigned", sourceFile: primary.name, slotId, assignedAt };
     dirty();
     closeModal();
     route();
-    toast(`${slot.label} assigned from the primary reference`);
+    toast(`${slot.label} selected from the primary reference`);
   };
   /* Exported the way focused-workspaces.js exports its inspector derivation, and
      for the same reason: this module is the third surface that answers "which

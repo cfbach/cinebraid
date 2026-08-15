@@ -821,12 +821,26 @@ window.setExpressionSlotField = (id, index, key, value) => {
   if (key !== "approvedFile") { slot[key] = value; dirty(); return; }
   const next = String(value || ""), previous = String(slot.approvedFile || "");
   if (next && entityCandidateIsCoverageSheet(entity, next)) return toast("A full sheet cannot be assigned to a single expression. Extract the panel first.");
+  /* K1C/K-alpha — THE EXPRESSION SETTER, ROUTED. This is the coverage setter's
+     twin and it was missed by both earlier passes: it wrote `approvedFile`,
+     `status: "approved"` and `approvedAt` straight onto the slot, with no
+     commit-time ownership question and an approval claim on a supporting
+     reference. An expression slot is the same kind of thing a coverage slot is,
+     so it goes through the same one writer. */
   const apply = () => {
+    const at = new Date().toISOString();
     if (previous !== next) recordCoverageReplacement(slot, previous, next, previous ? "expression-replacement" : "expression-assignment");
-    slot.approvedFile = next; slot.status = next ? "approved" : "missing"; slot.approvedAt = next ? new Date().toISOString() : "";
+    if (!next) { clearSlotReference(slot, { at, via: "expression-clear" }); dirty(); route(); return; }
+    const outcome = assignSlotReference(slot, {
+      fileName: next,
+      at,
+      via: previous ? "expression-replacement" : "expression-assignment",
+      eligibility: () => entityOwnershipEligibility(P, { list: "characters", entityId: entity.id }, next),
+    });
+    if (!outcome.assigned) return toast(outcome.message || `${next} could not be assigned to ${slot.label || slot.id}`);
     dirty(); route();
   };
-  if (previous && next && previous !== next) return confirmModal(`Replace ${slot.label}? ${previous} will remain in replacement history.`, apply, { title: "Replace approved expression", confirmLabel: "REPLACE EXPRESSION" });
+  if (previous && next && previous !== next) return confirmModal(`Replace ${slot.label}? ${previous} will remain in replacement history.`, apply, { title: "Replace the selected expression", confirmLabel: "REPLACE EXPRESSION" });
   apply();
 };
 /* The precedence chain that used to live here now lives in
@@ -989,13 +1003,23 @@ window.approveCoverageCandidate = (list, id, fileName, slotId, directOverride = 
       eligibility: () => entityOwnershipEligibility(P, { list, entityId: entity.id }, fileName),
     });
     if (!outcome.assigned) return toast(outcome.message || `${fileName} could not be assigned to ${slot.label || slot.id}`);
+    /* K-alpha, THE ROW HALF. The slot itself was demoted above, but the
+       CANDIDATE ROW went on claiming `humanApproved` and a human approval
+       provenance — and shared-production-media.js reads exactly those two
+       fields to decide that a file is human-approved production media. So the
+       authority the slot stopped asserting was still leaving through the row.
+       A selection is recorded as a selection on both sides of the boundary.
+
+       `decidedAt` reads from `selectedAt`, because `approvedAt` is one of the
+       three claims assignSlotReference withdraws — a person did decide, and the
+       timestamp of that decision is not an approval timestamp. */
     row.decision = row.coverageGroup === "expressions" ? "selected-expression" : "selected-coverage";
     row.reviewRequired = false;
     row.directApprovalOverride = !!directOverride;
-    row.humanApproved = true;
-    row.humanApprovedWithoutAI = !!directOverride;
-    row.approvalProvenance = { source: "human", aiReviewed: !directOverride, approvedAt: slot.approvedAt };
-    row.decidedAt = slot.approvedAt;
+    row.humanApproved = false;
+    row.humanApprovedWithoutAI = false;
+    row.selectionProvenance = { source: "human", aiReviewed: !directOverride, authoritative: false, selectedAt: slot.selectedAt };
+    row.decidedAt = slot.selectedAt;
     row.approvedCoverageSlotId = slot.id;
     dirty(); route(); toast(`${slot.label} ${row.coverageGroup === "expressions" ? "expression" : "coverage"} approved`);
   };
