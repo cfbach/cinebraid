@@ -48,6 +48,7 @@ const assert = require("assert");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
+const vm = require("vm");
 
 const ROOT = path.join(__dirname, "..");
 const Authority = require("../public/shared-production-authority");
@@ -324,8 +325,53 @@ for (const forged of [undefined, {}, true, "human", { actor: "human" }, { act: "
 assert.throws(() => Authority.beginManualApproval({ via: "automation", targets: [{ kind: "shot-frame", shotId: "SH-01", frameId: "fr-a" }] }),
   (error) => error.code === "MANUAL_ACTION_REQUIRED", "outside a trusted gesture nothing can be minted");
 checks++;
-eq(Kernel.manualActionSourceInstalled(), "harness",
-  "and the source in force is reported honestly — a test gesture never claims to be a person");
+/* CHANGED IN BATCH 1D — the honesty is structural now, not a label.
+
+   OLD EXPECTATION: `manualActionSourceInstalled() === "harness"`, proving a
+   test gesture never claimed to be a person. It was a true statement about a
+   source that should not have existed: the 1C audit called that same installer
+   from ordinary BROWSER code and minted `actor: "human"`.
+
+   THE NEW INVARIANT: there is no synthetic source to label. The source in force
+   is the product's own trusted-event listener — "browser-trusted-event" is the
+   accurate answer — and what differs in a test is only who delivers the event,
+   which is the test composition, from outside page scope. So the assertion
+   moves from "the label is honest" to "the door is not there". */
+eq(Kernel.manualActionSourceInstalled(), "browser-trusted-event",
+  "the source in force is the product's own trusted-event listener, not a test-only one");
+eq(Kernel.installHarnessManualActionSource, undefined,
+  "and the kernel exports no synthetic gesture source at all — the 1C escape, deleted rather than renamed");
+checks++;
+{
+  /* THE BROWSER COMPOSITION, WHICH IS WHERE THE 1C AUDIT STOOD. Everything the
+     page can see, checked for a way to open a gesture window without an event. */
+  const sandbox = { console };
+  sandbox.window = sandbox;
+  sandbox.globalThis = sandbox;
+  vm.createContext(sandbox);
+  for (const file of ["shared-entity-ownership.js", "shared-authority-kernel.js", "shared-production-authority.js"]) {
+    vm.runInContext(fs.readFileSync(path.join(ROOT, "public", file), "utf8"), sandbox, { filename: file });
+  }
+  eq(typeof sandbox.installHarnessManualActionSource, "undefined", "no synthetic installer as a browser global");
+  eq(typeof (sandbox.CineBraidAuthorityKernel || {}).installHarnessManualActionSource, "undefined", "nor on the kernel namespace");
+  const exported = Object.keys(sandbox.CineBraidAuthorityKernel || {}).filter((key) => /harness|synthetic|test/i.test(key));
+  eq(exported, [], "and nothing else test-shaped is exported into the page either");
+  checks++;
+
+  /* INSTALL-ONCE. The composition root installs on the real document; every
+     later caller is refused, so page script cannot install a source on an
+     event target it controls and fire its own "trusted" events at it. */
+  const first = sandbox.installBrowserManualActionSource({ addEventListener() {} }, () => {});
+  const second = sandbox.installBrowserManualActionSource({ addEventListener() {} }, () => {});
+  eq([first, second], [true, false], "the manual-action source installs exactly once per page");
+  checks++;
+
+  /* AND WITH NO EVENT DELIVERED, NOTHING MINTS. */
+  assert.throws(() => sandbox.beginManualAuthorityAction({ via: "page-script", targets: [{ kind: "shot-frame", shotId: "S", frameId: "f" }] }),
+    (error) => error.code === "MANUAL_ACTION_REQUIRED",
+    "browser code that never received a trusted event cannot mint a capability");
+  checks++;
+}
 
 /* =========================================================================
    §2  PRESENCE — the language counterexamples, at the detector.
@@ -723,32 +769,30 @@ async function architectureBrowserChecks() {
       return null;
     },
   });
-  const vm = require("vm");
   const run = (expression) => vm.runInContext(expression, rendered.context);
-  /* THE GESTURE SOURCE, INSIDE THE PAGE'S REALM. In the product this is
-     `installBrowserManualActionSource()` from bootstrap.js, listening for a
-     trusted user event. The vm has no user agent, so the harness source stands
-     in — and `manualActionSourceInstalled()` reports "harness", so nothing here
-     can be mistaken for evidence that a person was present. */
-  /* The render harness installs the source and holds the window open for the
-     session — it IS the user. A gesture is therefore already in force; what
-     this suite adds is the ability to CLOSE it and prove the real handler
-     refuses without one. */
+  /* 1D-01 — THE GESTURE SOURCE INSIDE THE PAGE'S REALM IS THE PRODUCT'S OWN.
+     bootstrap.js installs `installBrowserManualActionSource()`, which listens
+     for a trusted user event; the harness owns the document's listener registry
+     and delivers events from Node, where page script cannot follow.
+     `rendered.gesture` is that control, and it is on the HARNESS side — the
+     page has no handle to it, which is the whole boundary. */
   const inGesture = (expression) => {
-    run(`__manualHarness.open("harness-click")`);
+    rendered.gesture.open();
     return run(expression);
   };
-  eq(run(`manualActionSourceInstalled()`), "harness",
-    "the page reports which gesture source is in force rather than assuming one");
+  eq(run(`manualActionSourceInstalled()`), "browser-trusted-event",
+    "the page's source is the product's trusted-event listener, not a test-only one");
+  eq(run(`typeof installHarnessManualActionSource`), "undefined",
+    "and the page cannot reach a synthetic one, because the product no longer ships it");
   /* AND WITHOUT A GESTURE, THE REAL APPROVAL PATH REFUSES. Driven through the
      shipped handler, not the kernel. */
   {
-    run(`__manualHarness.close()`);
+    rendered.gesture.close();
     run(`window._entityApproval = { list: "characters", id: "CHAR-SWEEP", name: "CHAR-SWEEP_SOOT.png", stateId: "st-soot" }`);
     let refused = false;
     try { await run(`confirmEntityApproval(false)`); } catch (error) { refused = /explicit human approval action/.test(String(error && error.message)); }
     ok(refused, "with the gesture window closed, the REAL approval handler refuses — automation lives permanently in this state");
-    run(`__manualHarness.open("render-harness")`);
+    rendered.gesture.open();
   }
 
   /* ---------------------------------------------------------------- §4 */

@@ -149,10 +149,18 @@
      Node caller gets the authoritative answer instead of the closed-fail path
      that exists for compositions where neither is reachable. */
   const ownership = nodeModule ? require("./shared-entity-ownership.js") : root;
-  const api = factory(disposition, ownership);
+  /* 1D-04: THE AUTHORITY READER IS A HARD DEPENDENCY OF THIS PROJECTION.
+     Results and the Inspector are where a filmmaker reads "did I approve this",
+     and until now they answered from the raw pointer. They answer from the
+     receipt now, so the kernel has to be reachable here the same way the P4
+     sibling and the ownership resolver already are. */
+  const authority = nodeModule
+    ? require("./shared-production-authority.js")
+    : (root && root.CineBraidAuthorityKernel ? root : null);
+  const api = factory(disposition, ownership, authority);
   if (nodeModule) module.exports = api;
   if (root) Object.assign(root, api);
-})(typeof window !== "undefined" ? window : globalThis, function (P4, OWNERSHIP) {
+})(typeof window !== "undefined" ? window : globalThis, function (P4, OWNERSHIP, AUTHORITY) {
   function deepFreeze(value) {
     if (value && typeof value === "object" && !Object.isFrozen(value)) {
       Object.freeze(value);
@@ -195,7 +203,17 @@
 
   /* P4's roles, restated as a re-export rather than re-declared, so a surface reading
      this module does not have to import two vocabularies to render one badge. */
-  const PRODUCTION_MEDIA_DISPOSITIONS = deepFreeze(["approved", "candidate", "rejected"]);
+  /* 1D-04 — A FOURTH ROLE, AND IT IS NOT A SECOND KIND OF APPROVAL.
+   *
+   * `historic` is what a legacy pointer is: a real selection, made by something,
+   * that no human has approved as Canon. Batch 1C projected exactly this case as
+   * `approved`, and the 1C audit read it back out of Results and the Inspector
+   * as "Approved by you · It is production canon" with a null ledger.
+   *
+   * Naming the absence rather than rounding it up is the whole fix. There is
+   * still ONE approval concept — a valid current receipt — and everything that
+   * lacks one now says so instead of borrowing the word. */
+  const PRODUCTION_MEDIA_DISPOSITIONS = deepFreeze(["approved", "historic", "candidate", "rejected"]);
 
   /* THE TWO IDENTITY DOMAINS. See the header. Never merged, never cross-tried. */
   const PRODUCTION_MEDIA_IDENTITY_DOMAINS = deepFreeze(["ledger", "library"]);
@@ -450,6 +468,42 @@
     "selected-expression",
   ]);
 
+  /* 1D-04 — DOES A VALID CURRENT RECEIPT STAND BEHIND THIS EDGE.
+   *
+   * One question, asked of the one reader, for every approval edge a
+   * disposition claims. The edge descriptors come from
+   * shared-media-disposition.js and name a shot, a frame, a motion unit or an
+   * entity state; each maps to exactly one authority target.
+   *
+   * FAILS CLOSED. No kernel reachable, no project, an unmappable edge kind, or
+   * a thrown reader all answer NO — an unproven approval is reported as
+   * historic, never asserted. */
+  function edgeAuthorityTarget(edge, context) {
+    const it = record(edge);
+    const kind = text(it.kind);
+    const ctx = record(context);
+    if (kind === "frame") return { kind: "shot-frame", shotId: text(ctx.shotId), frameId: text(it.id) };
+    if (kind === "shot") return { kind: "shot-frame", shotId: text(it.id), frameId: text(ctx.openingFrameId) };
+    if (kind === "segment" || kind === "clip" || kind === "motion") return { kind: "shot-motion", shotId: text(ctx.shotId), unitKey: text(it.id) };
+    if (kind === "delivery" || kind === "final") return { kind: "shot-delivery", shotId: text(ctx.shotId) || text(it.id) };
+    if (kind === "state") return { kind: "entity-state", list: text(ctx.list), entityId: text(ctx.entityId), stateId: text(it.id) };
+    if (kind === "entity" || kind === "reference") return { kind: "entity-state", list: text(ctx.list), entityId: text(it.id), stateId: "state-default" };
+    return null;
+  }
+  function receiptBackedEdges(project, edges, context) {
+    const reader = AUTHORITY && typeof AUTHORITY.hasCurrentHumanAuthority === "function" ? AUTHORITY : null;
+    if (!reader || !project) return [];
+    const backed = [];
+    for (const edge of list(edges)) {
+      const target = edgeAuthorityTarget(edge, context);
+      if (!target) continue;
+      let held = false;
+      try { held = reader.hasCurrentHumanAuthority(project, target) === true; } catch { held = false; }
+      if (held) backed.push(edge);
+    }
+    return backed;
+  }
+
   /* The automation provenance word for one file, out of a shot's
      `generationRecords[]` or an entity's `made[]`. Both dialects store the
      filename under `files`, and the shot dialect also stores `file`.
@@ -489,13 +543,23 @@
     return "";
   }
 
-  function humanDecisionOf(row, approvedByEdge, automationApproval) {
+  function humanDecisionOf(row, receiptBacked, automationApproval) {
     const it = record(row);
     const decision = text(it.decision);
-    const approved = approvedByEdge
-      || ENTITY_APPROVED_DECISIONS.includes(decision)
-      || it.humanApproved === true
-      || !!text(it.approvedAt);
+    /* 1D-04 — ONE SOURCE OF APPROVAL, AND IT IS THE RECEIPT.
+     *
+     * This used to be a disjunction of four: the edge, the row's decision word,
+     * `humanApproved`, and the mere presence of `approvedAt`. Any one of them
+     * made the projection say a person approved the file, and none of them is
+     * evidence — they are all things a machine write can leave behind. The 1C
+     * audit read `humanDecision: "approved"` off a project with a null ledger.
+     *
+     * `receiptBacked` is the answer from the authority reader and it is the
+     * whole test. The row's own fields still travel, because they are useful
+     * history and the Inspector shows them, but they no longer DECIDE. */
+    const approved = receiptBacked === true;
+    /* A rejection is a decision the row records for itself and needs no receipt
+       — nothing is being asserted as canon by rejecting something. */
     const rejected = !approved && decision === "rejected";
     const provenance = record(it.approvalProvenance);
     const actor = decisionActor(it, automationApproval);
@@ -1000,7 +1064,25 @@
     const libraryRow = input.libraryRow || null;
     const identity = resolveIdentity(item, libraryRow);
     const name = text(item.name);
-    const disposition = record(input.disposition);
+    const claimed = record(input.disposition);
+    /* 1D-04 — THE ONE PLACE AN "APPROVED" CLAIM IS CHECKED.
+     *
+     * P4 partitions media by which edges point at it, which is the right
+     * question for "what is this file used as" and the wrong one for "did a
+     * person approve it". Every approved edge is now put to the authority
+     * reader; the ones with a valid current receipt behind them stay approved,
+     * and a claim with none becomes `historic` — a real selection nobody has
+     * approved as Canon.
+     *
+     * The edges themselves are NOT dropped. A filmmaker still sees what the
+     * file is being used as; what changes is that CineBraid stops saying they
+     * chose it. */
+    const backedTargets = receiptBackedEdges(input.project, claimed.targets, input.authorityContext);
+    const claimedApproved = text(claimed.role) === "approved";
+    const receiptBacked = claimedApproved && backedTargets.length > 0;
+    const disposition = claimedApproved && !receiptBacked
+      ? { ...claimed, role: "historic" }
+      : claimed;
     const targets = list(disposition.targets).map((edge) => deepFreeze({
       kind: text(edge.kind),
       id: text(edge.id),
@@ -1035,8 +1117,15 @@
         role: text(disposition.role) || "candidate",
         source: input.dispositionSource,
         targets: deepFreeze(targets),
+        /* Stated, so a surface can explain the difference rather than just
+           showing a different word: the edges exist, the receipt does not. */
+        authority: deepFreeze({
+          claimed: claimedApproved,
+          receiptBacked,
+          backedTargets: deepFreeze(backedTargets.map((edge) => text(edge.kind) + ":" + text(edge.id))),
+        }),
       }),
-      humanDecision: humanDecisionOf(row, text(disposition.role) === "approved", input.automationApproval),
+      humanDecision: humanDecisionOf(row, receiptBacked, input.automationApproval),
       aiRecommendation: recommendationOf(reviews),
       reviews,
       provenance: input.provenance,
@@ -1132,6 +1221,9 @@
               scope: "entity",
               disposition: entry,
               dispositionSource: "partitionEntityMedia",
+              /* 1D-04: what the receipt question needs to name this edge. */
+              project,
+              authorityContext: { list: listName, entityId: it.id },
               context: {
                 entityList: known(listName),
                 entityId: known(it.id),
@@ -1178,6 +1270,10 @@
             scope: "shot",
             disposition: entry,
             dispositionSource: "partitionShotMedia",
+            /* 1D-04: the shot and its opening frame, so a `shot` edge resolves
+               to the shot-frame target the kernel keeps its receipt under. */
+            project,
+            authorityContext: { shotId: it.id, openingFrameId: text(record(list(it.keyframes)[0]).id) },
             /* The run's own word for who approved this file. Read here rather
                than inside buildRecord because only this arm has the shot. */
             automationApproval: automationApprovalFor(it.generationRecords, entry.name),

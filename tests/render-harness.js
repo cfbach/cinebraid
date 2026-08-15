@@ -614,6 +614,7 @@ async function render(hash, project, options = {}) {
      prove the suite goes red for it. Nothing on disk is touched, so a control
      can never be "restored" by a checkout that also discards real work. */
   const mutate = typeof options.mutateSource === "function" ? options.mutateSource : null;
+  let closeHarnessGesture = () => {};
   for (const file of SCRIPT_ORDER) {
     const original = fs.readFileSync(path.join(PUBLIC, file), "utf8");
     const source = mutate ? String(mutate(file, original) ?? original) : original;
@@ -630,7 +631,10 @@ async function render(hash, project, options = {}) {
      * guard regressed, bootstrap would win and the window would close on a real
      * timer, and the approval suites would start failing. */
     if (file === "shared-authority-kernel.js" && context.CineBraidAuthorityKernel) {
-      context.CineBraidAuthorityKernel.installBrowserManualActionSource(document, () => {});
+      /* The `schedule` the kernel would use to close the window is captured
+         rather than run, so one delivered event holds the gesture open for the
+         session and the suite decides when it ends. */
+      context.CineBraidAuthorityKernel.installBrowserManualActionSource(document, (fn) => { closeHarnessGesture = fn; });
     }
     /* THE MANUAL-ACTION SOURCE, INSTALLED THE MOMENT THE KERNEL EXISTS.
      *
@@ -661,7 +665,15 @@ async function render(hash, project, options = {}) {
    * running inside this vm to be separated from. `manualActionSourceInstalled()`
    * answers "browser-trusted-event", which is now the accurate answer: the
    * source in force IS the product's listener. What differs is who fires. */
-  for (const handler of documentListeners.get("click") || []) handler({ type: "click", isTrusted: true });
+  /* The gesture control the SUITE holds — on the Node side of the boundary,
+     returned from render(), never reachable from inside the page. A suite that
+     wants to prove the real approval handler refuses without a gesture calls
+     `gesture.close()`; page script has no equivalent. */
+  const gesture = {
+    open: () => { for (const handler of documentListeners.get("click") || []) handler({ type: "click", isTrusted: true }); },
+    close: () => closeHarnessGesture(),
+  };
+  gesture.open();
 
   const deadline = Date.now() + 4000;
   while (
@@ -675,7 +687,7 @@ async function render(hash, project, options = {}) {
     throw new Error(`${hash}: ${document.body.dataset.renderError}`);
   }
 
-  return { html: map.get("main").innerHTML, context, document, map };
+  return { html: map.get("main").innerHTML, context, document, map, gesture };
 }
 
 async function main() {
