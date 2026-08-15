@@ -5957,7 +5957,12 @@ app.post("/api/llm/review-entity-candidate", async (req, res) => {
       .filter((slot) => slot?.approvedFile)
       .sort((a, b) => String(a.id || "").localeCompare(String(b.id || "")));
     for (const slot of allCoverage) {
-      addEntityFile(slot.approvedFile, `${slot.label || slot.id} approved coverage`, list === "locations" ? "same-location geometry authority" : "approved alternate-view design authority");
+      /* K-alpha: a coverage view is a SUPPORTING reference. It used to be sent
+         to the reviewer as "approved alternate-view design authority", which is
+         one of the places the slot's undeclared authority became visible. The
+         image still travels — it is useful context — under a label that does
+         not make it canon. */
+      addEntityFile(slot.approvedFile, `${slot.label || slot.id} selected view`, list === "locations" ? "same-location supporting view (context only)" : "supporting alternate view (context only)");
     }
     const targetType = entityReviewType(list);
     for (const asset of P.mediaAssets || []) {

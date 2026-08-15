@@ -37,6 +37,11 @@
     const identified = approvalEdges(entity).find((edge) => edge.file === file && edge.assetId);
     return resolveApprovalMedia({ file, assetId: identified?.assetId || "" }, entityMedia(list, entity));
   }
+  /* K-alpha — SLOTS ARE SUPPORTING REFERENCES, NOT AUTHORITY.
+     This function is named for what it used to claim. The primary reference IS
+     entity Canon and keeps its role; every coverage slot it adds is context the
+     model may look at, and the reference role says so, so nothing downstream
+     can read a view as the thing that decides what this entity looks like. */
   function coverageAuthorityReferences(list, entity, targetSlot = null) {
     const primary = primaryReference(list, entity);
     const media = entityMedia(list, entity);
@@ -58,7 +63,7 @@
       const score = targetSlot && typeof referenceViewScore === "function"
         ? referenceViewScore(desired, candidateView, { referenceKind: "single-angle", priority: slot.id === targetSlot.id ? "primary" : "supporting" })
         : slot.id === targetSlot?.id ? 100 : 10;
-      add(item, slot, score, "coverage");
+      add(item, slot, score, "supporting-view");
     }
     const primaryRow = refs.find((row) => row.kind === "primary") || null;
     const rest = refs.filter((row) => row !== primaryRow).sort((a, b) => b.score - a.score || String(a.slot?.id || "").localeCompare(String(b.slot?.id || "")));
@@ -150,7 +155,7 @@
     const authorities = coverageAuthorityReferences(list, entity, options.slot || null);
     const primary = authorities[0]?.item || null;
     const refs = authorities.map((row, index) => ({
-      key: row.kind === "primary" ? "coverage-primary-authority" : `coverage-approved-view:${row.slot?.id || index}`,
+      key: row.kind === "primary" ? "coverage-primary-authority" : `coverage-supporting-view:${row.slot?.id || index}`,
       token: `#image${index + 1}`,
       label: row.kind === "primary" ? `${entity.name || entity.id} primary approved authority` : `${row.slot?.label || "Approved view"} of ${entity.name || entity.id}`,
       role: list === "locations" ? "location-geometry" : row.kind === "primary" ? "identity-authority" : "approved-view",

@@ -131,64 +131,142 @@ eq(terminal.kind, "complete", "the final descendant of a chain completes");
 eq(terminal.reason, "no-further-states", "with the distinct reason that there is nothing else at all");
 
 /* ===========================================================================
-   4. THE WRITE. Navigation may not reparent, and no write may close a cycle. */
+   4. THE WRITE — AND IN BATCH 1C THERE IS ONLY ONE KIND OF IT.
 
-const navigation = Lineage.safeParentAssignment(states(), GRANDCHILD, ROOT_ID);
-eq(navigation.write, false, "moving to a state does not re-declare where it came from");
-eq(navigation.reason, "navigation-may-not-reparent", "and the refusal names the rule");
-eq(navigation.parentStateId, CHILD, "reporting the parent that stays, so a caller can render the truth");
+   OLD EXPECTATION (removed): a family of assertions about `safeParentAssignment`
+   and `applyStateParentMutation` — navigation may not reparent, an explicit edit
+   may, a cycle-closing reparent is refused, a first parent may be established by
+   an explicit edit, and the eligible-parent list must exclude descendants.
 
-const cycle = Lineage.safeParentAssignment(states(), ROOT_ID, GRANDCHILD, { allowReparent: true });
-eq(cycle.write, false, "even an explicit reparent may not put an ancestor beneath its descendant");
-eq(cycle.reason, "default-state-is-the-root", "the root refuses first, because it is the root");
+   WHY IT IS NO LONGER VALID: every one of those assertions describes a REPARENT
+   OPERATION, and reparenting has been removed. The Batch 1B re-audit's A5
+   findings were all consequences of the graph being mutable — a validator that
+   only checked cycles let duplicate ids and dangling parents through, the
+   simulated graph and the committed graph diverged on a duplicated id, and
+   `addContinuityState`/`removeContinuityState` bypassed the validator entirely
+   because a caller inventory searching for ASSIGNMENTS could not see an object
+   literal or a splice.
 
-const cycleFromChild = Lineage.safeParentAssignment(states(), CHILD, GRANDCHILD, { allowReparent: true });
-eq(cycleFromChild.write, false, "and a non-root reparent that would close a cycle is refused");
-eq(cycleFromChild.reason, "would-create-cycle", "by name");
+   THE NEW INVARIANT: a state's parent is chosen when the state is created and
+   never changes. A create-only graph cannot cycle — the parent must already
+   exist, so nothing existing can point at something created later — which makes
+   the property structural rather than checked.
 
-/* CHANGED IN BATCH 1B, and this is the correction the acceptance audit named.
+   WHY THIS IS SIMPLER AND TRUER: one operation instead of two, no cycle
+   validator on the write path, no eligible-parent filtering, no intent
+   parameter, and no way for a UI control to offer a move the model must then
+   refuse. What remains is validated as a COLLECTION, which is what catches the
+   duplicate ids and dangling parents that "acyclic" never did. */
 
-   This block used to assert that navigation "may still acquire its first
-   parent", calling that "the only lineage write navigation is allowed to make".
-   The invariant does not have an exception clause: NAVIGATION NEVER MUTATES
-   LINEAGE. The audit offered an orphan state as a continuation target and
-   watched a movement button declare its ancestry. Establishing parentage is a
-   separate, explicit act, and it goes through a separate, explicit intent. */
+ok(!("safeParentAssignment" in Lineage), "the reparent decision function is gone, not deprecated");
+ok(!("applyStateParentMutation" in Lineage), "and so is the reparent writer");
+ok(!("planParentMutation" in Lineage), "and its planner");
+ok(!("eligibleParentIds" in Lineage), "and the eligible-parent list a reparent control needed");
+ok(typeof Lineage.reparentingUnsupported === "function",
+  "a caller that still asks gets a named refusal rather than a silent no-op");
+eq(Lineage.reparentingUnsupported().applied, false, "which never applies anything");
 
-const orphanStates = [{ id: ROOT_ID, isDefault: true, parentStateId: "" }, { id: "st-new", name: "New", parentStateId: "" }];
-const firstParentByNavigation = Lineage.safeParentAssignment(orphanStates, "st-new", ROOT_ID);
-eq(firstParentByNavigation.write, false, "a state that declares NO parent does not acquire one from navigation either");
-eq(firstParentByNavigation.reason, "navigation-may-not-reparent", "the rule is categorical, and the refusal names it");
+/* ---- collection integrity, which is the validator that remains ---- */
 
-const firstParentByEdit = Lineage.planParentMutation(orphanStates, "st-new", ROOT_ID, { intent: "explicit-lineage-edit" });
-eq(firstParentByEdit.write, true, "an EXPLICIT lineage edit may establish a first parent");
-eq(firstParentByEdit.parentStateId, ROOT_ID, "with the parent the creator chose");
-eq(firstParentByEdit.reason, "establishing-first-parent", "and the reason distinguishes it from a reparent");
-eq(Lineage.safeParentAssignment(states(), CHILD, ROOT_ID).reason, "already-declared", "and re-declaring the same parent is a no-op");
+ok(Lineage.stateCollectionIntact(states()), "a healthy chain is intact");
+ok(Lineage.stateCollectionIntact(states({ withSibling: true })), "and so is a branching one");
 
-/* A REFUSED MUTATION LEAVES THE PROJECT ALONE. Asserted on the object itself,
-   because "returns write:false" and "wrote nothing" are different claims and
-   only the second one is the property that matters. */
-const untouched = states();
-const before = JSON.stringify(untouched);
-const refused = Lineage.applyStateParentMutation(untouched, CHILD, GRANDCHILD, { intent: "explicit-lineage-edit" });
-eq(refused.applied, false, "a cycle-closing mutation is refused");
-eq(JSON.stringify(untouched), before, "and the state collection is byte-identical afterwards — a rejected edit does not dirty the project");
-
-/* Applying every legal write leaves the graph acyclic. */
-const mutated = states({ withSibling: true });
-for (const node of mutated) {
-  for (const candidate of mutated) {
-    Lineage.applyStateParentMutation(mutated, node.id, candidate.id, { intent: "explicit-lineage-edit" });
-  }
+const integrityCases = [
+  [[{ id: ROOT_ID, isDefault: true }, { id: "dup", parentStateId: ROOT_ID }, { id: "dup", parentStateId: ROOT_ID }],
+   "state-id-duplicated", "two states sharing an id — the case that made the simulated graph and the committed graph disagree"],
+  [[{ id: ROOT_ID, isDefault: true }, { id: "a", parentStateId: "ghost" }],
+   "parent-missing", "a parent that does not exist — dangling, and never a cycle, which is why 'acyclic' was not enough"],
+  [[{ id: ROOT_ID, isDefault: true }, { id: "", parentStateId: ROOT_ID }],
+   "state-id-missing", "a state with no id"],
+  [[{ id: "a", parentStateId: "" }, { id: "b", parentStateId: "a" }],
+   "no-default-state", "a collection with no root"],
+  [[{ id: ROOT_ID, isDefault: true }, { id: "second", isDefault: true }],
+   "multiple-default-states", "two roots"],
+  [[{ id: ROOT_ID, isDefault: true, parentStateId: "x" }, { id: "x", parentStateId: ROOT_ID }],
+   "default-state-has-parent", "a root that declares a parent"],
+  [[{ id: ROOT_ID, isDefault: true }, { id: "a", parentStateId: "b" }, { id: "b", parentStateId: "a" }],
+   "cycle", "and a real cycle, in damaged data an import may hand us"],
+];
+for (const [collection, code, why] of integrityCases) {
+  const outcome = Lineage.validateStateCollection(collection);
+  ok(!outcome.ok, `${why}: reported as broken`);
+  ok(outcome.problems.some((row) => row.code === code), `${why}: by the name ${code}`);
 }
-eq(Lineage.lineageCycles(mutated), [], "exhaustively applying every write the rule permits, through the one mutation API, cannot produce a cycle");
 
-/* THE PARENT CHOICES A SURFACE MAY OFFER exclude self and every descendant, so
-   the control cannot present the move the validator will refuse. */
-eq(Lineage.eligibleParentIds(states({ withSibling: true }), CHILD).sort(), [ROOT_ID, SIBLING].sort(),
-  "the child may derive from the root or the sibling — never from itself, never from its own grandchild");
-ok(!Lineage.eligibleParentIds(states(), ROOT_ID).includes(CHILD), "and a descendant is never offered as a parent");
+/* ---- creation ---- */
+
+const creation = Lineage.planStateCreation(states(), { id: "st-new", parentStateId: CHILD });
+eq(creation.create, true, "a new state may be created under an existing parent");
+eq(creation.parentStateId, CHILD, "with the parent the creator chose");
+eq(Lineage.planStateCreation(states(), { id: CHILD, parentStateId: ROOT_ID }).reason, "state-id-duplicated",
+  "an id already in use is refused");
+eq(Lineage.planStateCreation(states(), { id: "st-new", parentStateId: "ghost" }).reason, "parent-missing",
+  "a parent that does not exist is refused — this is where dangling ancestry would have entered");
+eq(Lineage.planStateCreation(states(), { id: "st-new", parentStateId: "" }).reason, "parent-required",
+  "and a non-root state must say what it derives from");
+
+/* MULTI-LEVEL INHERITANCE SURVIVES. The alpha direction asked whether ancestry
+   could be flattened to base -> named state. It cannot: the preserved Dogfood #2
+   project runs root -> child -> grandchild and the closeout records that chain's
+   inheritance as positive finding P4. Depth is kept; mutability is what went. */
+{
+  const deep = states();
+  eq(Lineage.applyStateCreation(deep, { id: "st-fourth", parentStateId: GRANDCHILD, record: { name: "Fourth" } }).applied, true,
+    "a fourth level may be created below the third");
+  eq(Lineage.stateAncestorIds(deep, "st-fourth"), [GRANDCHILD, CHILD, ROOT_ID],
+    "and its ancestry walks the whole chain, which is the inheritance the dogfood project depends on");
+  ok(Lineage.stateCollectionIntact(deep), "with the collection still intact");
+}
+
+/* A CREATE-ONLY GRAPH CANNOT CYCLE, proved by exhaustion rather than asserted:
+   every state in turn is created under every existing state, and no arrangement
+   produces one. */
+{
+  const grown = states({ withSibling: true });
+  let created = 0;
+  for (const parent of [...grown]) {
+    const outcome = Lineage.applyStateCreation(grown, { id: `st-under-${parent.id}`, parentStateId: parent.id, record: { name: "Grown" } });
+    if (outcome.applied) created += 1;
+  }
+  ok(created > 0, "the exhaustion actually created states");
+  eq(Lineage.lineageCycles(grown), [], "and no sequence of creations can produce a cycle");
+  ok(Lineage.stateCollectionIntact(grown), "with integrity intact throughout");
+}
+
+/* ---- deletion ---- */
+
+{
+  const collection = states();
+  const before = JSON.stringify(collection);
+  const refused = Lineage.applyStateDeletion(collection, CHILD);
+  eq(refused.applied, false, "a state something derives from is not deleted by default");
+  eq(refused.reason, "has-children", "and the refusal names why");
+  eq(refused.children, [GRANDCHILD], "listing what depends on it");
+  eq(JSON.stringify(collection), before, "the collection is byte-identical — a refused deletion changes nothing");
+}
+{
+  const collection = states();
+  eq(Lineage.applyStateDeletion(collection, GRANDCHILD).applied, true, "a leaf may be deleted");
+  eq(collection.map((row) => row.id), [ROOT_ID, CHILD], "and it goes");
+  ok(Lineage.stateCollectionIntact(collection), "leaving the collection intact");
+}
+{
+  const collection = states();
+  eq(Lineage.applyStateDeletion(collection, ROOT_ID).reason, "default-state-is-the-root", "the root is never deleted");
+  eq(collection.length, 3, "and nothing was removed");
+}
+{
+  /* THE RE-AUDIT'S CASE: removing `child` from root -> child -> grand left
+     `grand.parentStateId === "child"` pointing at nothing, and the old check
+     reported the result acyclic. */
+  const collection = states();
+  eq(Lineage.applyStateDeletion(collection, CHILD, { policy: "reparent-to-root" }).applied, true,
+    "an explicit policy may delete an ancestor");
+  eq(collection.find((row) => row.id === GRANDCHILD).parentStateId, ROOT_ID,
+    "and its child is attached to the root rather than left dangling");
+  ok(Lineage.stateCollectionIntact(collection), "with referential integrity preserved");
+  eq(Lineage.lineageCycles(collection), [], "and no cycle");
+}
 
 /* ===========================================================================
    5. THE COPY. Derivation direction is read from the graph. */
@@ -222,36 +300,50 @@ ok(!/safeParentAssignment/.test(code),
 ok(/isValidContinuation\(entityStateList\(x, true\), targetStateId, requestedNextStateId\)/.test(code),
   "the requested next state is still re-validated at the writer, not trusted because it was in a select");
 
-/* EVERY OTHER ANCESTRY WRITER GOES THROUGH THE ONE MUTATION API. The audit found
-   four bypasses; this is the inventory that keeps a fifth from appearing. */
-const lineageWriters = [
-  ["public/creation-studio.js", "the exposed parent selector — the writer that could close a cycle from the UI"],
-  ["public/entities.js", "the continuity variant opener, the correct-from-parent path and the generic state setter"],
-  ["public/automation.js", "entity-state automation"],
-  ["public/app.js", "import and normalisation compatibility"],
-];
-for (const [file, what] of lineageWriters) {
-  const source = read(file).replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
-  ok(/applyStateParentMutation\(/.test(source), `${file}: ${what} routes through the one mutation API`);
-  const rawAssignments = (source.match(/\.parentStateId\s*=(?!=)/g) || []).length;
-  const permitted = (source.match(/st\.parentStateId = "";/g) || []).length;
-  ok(rawAssignments === permitted,
-    `${file}: no raw parentStateId assignment survives outside the validator (found ${rawAssignments}, permitted ${permitted} — normalisation may only initialise the field to an empty string)`);
-}
-const studio = read("public/creation-studio.js");
-ok(/entityStateParentOptions\(entity, state, parentInfo\.parent\?\.id \|\| ""\)/.test(studio),
-  "the parent dropdown is built from the eligible set");
-ok(/eligibleParentIds\(states, state\.id\)/.test(studio),
-  "which excludes self and every descendant, so the control cannot offer the move the validator refuses");
-ok(/continuationDerivation\(states, stateId, nextState\.id\)/.test(code), "the copy reads direction from the graph");
+/* NO WRITER MUTATES ANCESTRY AFTER CREATION.
 
-/* The reveal must open the workspace that CONTAINS the editor. A flow launched
-   from Review used to write the coverage subview and the selected state, and
-   leave the workspace on Review — where no continuity-state editor exists. */
-ok(/boundedWriteFocusedTask\?\.\("entity-task", `\$\{list\}:\$\{id\}`, "coverage"\)/.test(code),
-  "revealEntityContinuityState selects the Coverage task explicitly");
-ok(/boundedWriteState\?\.\("selected:entity-coverage-view"/.test(code), "as well as the coverage subview");
-ok(/boundedWriteState\?\.\("selected:continuity-state"/.test(code), "and the exact state");
-ok(/window\.route\?\.\(\)/.test(code), "and re-renders, so the editor is actually on screen");
+   OLD EXPECTATION (removed): an inventory asserting each of four files called
+   `applyStateParentMutation`, plus an assertion that the creation-studio parent
+   dropdown was built from an eligible-parent list.
+
+   WHY IT IS NO LONGER VALID: it verified that reparenting was ROUTED. Alpha
+   removed the operation, so the honest inventory is that no writer performs it
+   at all — including the two the re-audit found outside the boundary entirely,
+   `addContinuityState` (an object literal) and `removeContinuityState` (a
+   splice), neither of which an assignment search could see.
+
+   THE NEW INVARIANT: `parentStateId` is written in exactly one place per file —
+   at CREATION, through the validator — and nowhere else. */
+
+const LINEAGE_TOUCHING_FILES = [
+  ["public/entities.js", "creation, deletion, the variant opener, correct-from-parent and the generic setter"],
+  ["public/creation-studio.js", "the state generation panel, which used to carry the reparent dropdown"],
+  ["public/automation.js", "entity-state automation, which used to assign the parent it resolved"],
+  ["public/library-tools.js", "approval continuation, which used to establish a first parent"],
+];
+for (const [file, what] of LINEAGE_TOUCHING_FILES) {
+  const source = read(file).replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  ok(!/applyStateParentMutation|safeParentAssignment|planParentMutation/.test(source),
+    `${file}: the removed reparent API is not called (${what})`);
+  /* The only permitted assignments: normalisation initialising a missing key,
+     and the creation record the validator produced. Anything else is a writer
+     that can change ancestry after the fact. */
+  const assignments = (source.match(/\.parentStateId\s*=(?!=)/g) || []).length;
+  const normalisers = (source.match(/st\.parentStateId = st\.isDefault/g) || []).length;
+  eq(assignments, normalisers,
+    `${file}: every parentStateId assignment is a normaliser filling a missing key (found ${assignments}, normalisers ${normalisers})`);
+}
+
+const entitiesSource = read("public/entities.js");
+ok(/applyStateCreation\(/.test(entitiesSource), "addContinuityState creates through the validator");
+ok(/applyStateDeletion\(/.test(entitiesSource), "and removeContinuityState deletes through it");
+ok(/reparentingUnsupported\(\)/.test(entitiesSource), "and the generic setter answers a reparent attempt with the named refusal");
+ok(!/continuityStates\.splice\(/.test(entitiesSource.replace(/\/\*[\s\S]*?\*\//g, "")),
+  "and nothing splices the collection behind the validator's back");
+
+const studioSource = read("public/creation-studio.js");
+ok(!/entityStateParentOptions/.test(studioSource), "the reparent dropdown is gone");
+ok(/entityStateDerivationSummary/.test(studioSource),
+  "replaced by a statement of what the state derives from — production truth stays on screen, it just stops being editable");
 
 console.log(`State-lineage suite passed ${checks} checks: ancestry and descendants including on already-damaged data, ancestors never offered as continuations, a finished chain completing instead of wrapping to the root, navigation refusing to reparent, every permitted write proven cycle-free by exhaustion, derivation direction read from the graph, and the reveal opening the workspace that contains the editor.`);

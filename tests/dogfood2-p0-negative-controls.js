@@ -1,31 +1,56 @@
-/* Negative controls for the Dogfood Pass #2 P0 trust batch.
+/* NEGATIVE CONTROLS FOR THE DOGFOOD #2 TRUST KERNEL.
  *
  * A guarantee nobody has watched fail is a guarantee nobody has tested.
  *
- * TWO TECHNIQUES, and they answer two different doubts.
+ * ---------------------------------------------------------------------------
+ * WHY THIS FILE WAS REWRITTEN (Batch 1C).
  *
- *   REPRODUCTION CONTROLS run the PRE-REPAIR implementation, written out inline,
- *   against the same fixture the positive suite uses, and require it to exhibit
- *   the reported defect. This answers "is the fixture vacuous?" — a test whose
- *   fixture could never have triggered the bug proves nothing about the fix.
+ * The Batch 1B harness had one rule: if the control body threw an
+ * `AssertionError`, the control had fired. The re-audit's §10 took that apart,
+ * and it was right on every count:
  *
- *   MUTATION CONTROLS rebuild a repaired module IN MEMORY from deliberately
- *   broken source and require the invariant to fail. This answers "is the
- *   assertion load-bearing?" — a check that passes against a broken build has
- *   stopped checking.
+ *   - ANY AssertionError counted, including one from an unrelated line, a
+ *     baseline precondition, or a typo in the fixture;
+ *   - C18 and C19 put their baseline "is this branch even live" checks INSIDE
+ *     the catch-as-success region, so a broken baseline reported the control as
+ *     successfully fired before the mutation was applied;
+ *   - C15b's fixture already violated its own assertion before the mutation, so
+ *     it passed for a pre-existing condition and proved nothing about the guard
+ *     it named;
+ *   - nothing verified that execution ever REACHED the assertion, or that the
+ *     real implementation still upholds the invariant.
  *
- * IN MEMORY, ALWAYS. Nothing on disk is modified, so no control can be
- * "restored" by a checkout that also discards real work — the exact mistake that
- * cost four unstaged repairs on this repository once already.
+ * ---------------------------------------------------------------------------
+ * THE CONTRACT NOW. A control is a PROBE, not a throw.
  *
- * PROBE RECEIPTS. Every mutation asserts the text it replaces was really there,
- * so a control cannot quietly become a no-op after a refactor and start passing
- * against nothing.
+ * `probe(module)` returns `{ reached, held }`:
+ *
+ *     reached   execution got to the checkpoint. A probe that fell over on the
+ *               way there proves nothing, and says so.
+ *     held      the invariant is intact under this module.
+ *
+ * The control runs that probe TWICE — against the real module and against the
+ * mutated one — and passes only when all seven conditions hold:
+ *
+ *   1. baseline runs OUTSIDE any catch-as-success region       (`baseline()`)
+ *   2. the mutation is confirmed to have changed the source     (`mutate()` counts)
+ *   3. the probe reaches its checkpoint under BOTH modules      (`reached`)
+ *   4. the invariant FAILS under the mutated module             (`held === false`)
+ *   5. the failure is the named one                             (`reason`)
+ *   6. an unrelated throw fails the suite loudly                (no catch-as-success)
+ *   7. the invariant HOLDS under the real module                (`held === true`)
+ *
+ * There is no `catch (AssertionError) => pass` anywhere in this file, and a
+ * test asserts that there is not.
+ *
+ * IN MEMORY, ALWAYS. Nothing in the working tree is modified, so no control can
+ * be "restored" by a checkout that also discards real work.
  *
  * NO PROJECT DATA IS TOUCHED, AND NO PROVIDER OR PAID CALL IS POSSIBLE.
  */
 const assert = require("assert");
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
 const vm = require("vm");
 
@@ -35,798 +60,686 @@ const source = (name) => fs.readFileSync(path.join(ROOT, name), "utf8");
 let controls = 0;
 const notes = [];
 
+/* THE PROBE RECEIPT. A plain Error, never an assertion: a control whose anchor
+   has moved must fail the suite loudly rather than be mistaken for a firing. */
 function mutate(text, needle, replacement, label, expected = 1) {
   const hits = text.split(needle).length - 1;
-  /* A PLAIN ERROR, DELIBERATELY, AND THIS MATTERS.
-
-     The probe receipt used to be an `assert.strictEqual`. `control()` catches
-     AssertionErrors and reads them as "the invariant broke, so the control
-     fired" — so a control whose anchor had disappeared reported SUCCESS while
-     mutating nothing at all. The receipt that exists to stop a silent no-op was
-     itself producing one. A non-assertion error is re-thrown by `control()` and
-     fails the suite loudly, which is the only outcome that means anything. */
   if (hits !== expected) {
-    throw new Error(
-      `probe receipt: ${label} expected ${expected} occurrence(s) of its anchor, found ${hits}. `
-      + "The control is no longer mutating the live path and must be rewritten.",
-    );
+    throw new Error(`probe receipt: ${label} expected ${expected} occurrence(s) of its anchor, found ${hits}. `
+      + "The control is no longer mutating the live path and must be rewritten.");
   }
   return text.split(needle).join(replacement);
 }
 
-/* Rebuild one shared module from (possibly mutated) source, in its own realm.
-   `window` is absent there, so the module takes its Node export path exactly as
-   require() would. */
+/* Rebuild one module from (possibly mutated) source, in its own realm. */
 function build(relPath, text) {
   const moduleObject = { exports: {} };
-  /* `require` is threaded through because shared-production-media.js pulls in
-     its P4 sibling. Resolved from the real tree, so a control breaks exactly one
-     module and every dependency stays honest. */
   const sandboxRequire = (specifier) => require(specifier.startsWith(".") ? path.join(ROOT, path.dirname(relPath), specifier) : specifier);
-  vm.runInNewContext(text ?? source(relPath), { module: moduleObject, exports: moduleObject.exports, require: sandboxRequire, console }, { filename: relPath });
+  vm.runInNewContext(text ?? source(relPath), { module: moduleObject, exports: moduleObject.exports, require: sandboxRequire, console, structuredClone }, { filename: relPath });
   return moduleObject.exports;
 }
 
-function control(label, run, expectation) {
-  controls += 1;
-  let failed = false;
-  try { run(); }
-  catch (error) {
-    if (error instanceof assert.AssertionError) failed = true;
-    else throw new Error(`${label}: the control threw something other than an assertion, so it proves nothing: ${error.stack || error.message}`);
-  }
-  assert.ok(failed, `${label}: the invariant survived the break. ${expectation}`);
-  notes.push(`  ${label} — failed as required`);
+/* THE CONTROL. Every condition above, in order, with nothing swallowed. */
+/* A guard may legitimately be more than one layer. `mutations` breaks all of
+   them together, which is the only honest way to show that the SET is
+   load-bearing when each layer alone is covered by the others. */
+function applyMutations(spec) {
+  const rows = spec.mutations || [[spec.anchor, spec.replacement, spec.occurrences === undefined ? 1 : spec.occurrences]];
+  let text = source(spec.file);
+  rows.forEach(([anchor, replacement, occurrences], index) => {
+    text = mutate(text, anchor, replacement, `${spec.label}#${index + 1}`, occurrences === undefined ? 1 : occurrences);
+  });
+  return text;
 }
 
-/* The async twin, for a control whose boundary is an HTTP route rather than a
-   pure function. Same contract: a non-assertion escape means the control proved
-   nothing and fails the suite loudly. Collected and awaited at the end so the
-   file keeps reading top to bottom. */
-const pendingControls = [];
-function controlAsync(label, run, expectation) {
+function control(spec) {
+  const { label, file, baseline, probe, reason, explain } = spec;
   controls += 1;
-  pendingControls.push((async () => {
-    let failed = false;
-    try { await run(); }
-    catch (error) {
-      if (error instanceof assert.AssertionError) failed = true;
-      else throw new Error(`${label}: the control threw something other than an assertion, so it proves nothing: ${error.stack || error.message}`);
-    }
-    assert.ok(failed, `${label}: the invariant survived the break. ${expectation}`);
-    notes.push(`  ${label} — failed as required`);
+  /* 1 — BASELINE, OUTSIDE ANY CATCH. If this throws, the suite fails; it is not
+         evidence that anything fired. */
+  if (typeof baseline === "function") baseline(build(file));
+  /* 7 — THE REAL MODULE UPHOLDS THE INVARIANT. Run first, so a control that
+         describes a property the code never had is caught immediately. */
+  const real = probe(build(file));
+  assert.ok(real && real.reached === true,
+    `${label}: the probe did not reach its checkpoint against the REAL module, so it proves nothing about the mutated one`);
+  assert.strictEqual(real.held, true,
+    `${label}: the invariant does not hold in the shipped implementation, so this control is describing a property that does not exist`);
+  /* 2 — THE MUTATION IS CONFIRMED. `mutate` throws a plain Error otherwise. */
+  const broken = build(file, applyMutations(spec));
+  /* 3 & 4 & 5 — reached, failed, and failed for the named reason. */
+  const after = probe(broken);
+  assert.ok(after && after.reached === true,
+    `${label}: the probe did not reach its checkpoint against the MUTATED module — the break stopped execution instead of changing behaviour`);
+  assert.strictEqual(after.held, false,
+    `${label}: the invariant SURVIVED the break. ${explain}`);
+  if (reason !== undefined) {
+    assert.strictEqual(after.reason, reason,
+      `${label}: the invariant failed, but not in the way this control describes (expected ${JSON.stringify(reason)}, got ${JSON.stringify(after.reason)})`);
+  }
+  notes.push(`  ${label} — held under the real module, failed as ${JSON.stringify(after.reason)} under the mutation`);
+}
+
+/* An async twin for a control whose boundary is an HTTP route. Same contract. */
+const pending = [];
+function controlAsync(spec) {
+  const { label, baseline, probe, reason, explain } = spec;
+  controls += 1;
+  pending.push((async () => {
+    if (typeof baseline === "function") await baseline(null);
+    const real = await probe(null);
+    assert.ok(real && real.reached === true, `${label}: the probe did not reach its checkpoint against the REAL route`);
+    assert.strictEqual(real.held, true, `${label}: the invariant does not hold in the shipped route`);
+    const mutatedSource = applyMutations(spec);
+    const after = await probe(mutatedSource);
+    assert.ok(after && after.reached === true, `${label}: the probe did not reach its checkpoint against the MUTATED route`);
+    assert.strictEqual(after.held, false, `${label}: the invariant SURVIVED the break. ${explain}`);
+    if (reason !== undefined) assert.strictEqual(after.reason, reason, `${label}: failed for the wrong reason (expected ${JSON.stringify(reason)}, got ${JSON.stringify(after.reason)})`);
+    notes.push(`  ${label} — held under the real route, failed as ${JSON.stringify(after.reason)} under the mutation`);
   })());
 }
 
-/* ===========================================================================
-   P0-1 — HUMAN-ONLY PRODUCTION AUTHORITY
-   =========================================================================== */
-notes.push("P0-1 production authority:");
+/* ---------------------------------------------------------------------------
+   Shared fixture helpers. */
 
-/* REPRODUCTION. The shipped condition, verbatim from public/automation.js before
-   this batch, on the review row the pass produced: an explicit PASS with an
-   explicit score of 92 against a threshold of 85. If this does not evaluate
-   true, the positive suite is guarding a branch that never fired. */
+const KERNEL_FILE = "public/shared-authority-kernel.js";
+const LINEAGE_FILE = "public/shared-state-lineage.js";
+const PRESENCE_FILE = "public/shared-frame-presence.js";
+const OWNERSHIP_FILE = "public/shared-entity-ownership.js";
+
+function frameProject(winner = "") {
+  return { shots: [{ id: "SH-01", keyframes: [{ id: "fr-a", ...(winner ? { winner } : {}) }] }] };
+}
+/* The edge reader the kernel needs; the same shape shared-production-authority
+   installs, restated here so a control can drive the kernel alone. */
+function installEdges(kernel) {
+  kernel.installAuthorityEdgeReader((project, target) => {
+    if (target.kind !== "shot-frame") return { value: "", assetId: "" };
+    const shot = (project.shots || []).find((row) => row && row.id === target.shotId);
+    const frames = (shot || {}).keyframes || [];
+    const index = frames.findIndex((row) => row && row.id === target.frameId);
+    if (index < 0) return { value: "", assetId: "" };
+    return { value: String(frames[index].winner || (index === 0 ? shot.winner || "" : "")), assetId: "" };
+  });
+  return kernel;
+}
+function goodReceipt(overrides = {}) {
+  return {
+    id: "authority-000001", sequence: 1, actor: "human", act: "explicit-approval",
+    command: "approve-shot-frame", kind: "shot-frame", targetKey: "shot-frame:SH-01#fr-a",
+    shotId: "SH-01", frameId: "fr-a", value: "PICK.png", status: "current",
+    provenance: { manualAction: "gesture-1", via: "test" },
+    ...overrides,
+  };
+}
+function ledger(...receipts) {
+  return { version: 1, receipts };
+}
+const FRAME_TARGET = { kind: "shot-frame", shotId: "SH-01", frameId: "fr-a" };
+
+/* ===========================================================================
+   K1 — THE AUTHORITY KERNEL
+   =========================================================================== */
+notes.push("K1 authority kernel:");
+
+control({
+  label: "C1 the manual-action credential is a shape rather than an identity",
+  file: KERNEL_FILE,
+  anchor: '  const record = MINTED_MANUAL_ACTIONS.get(token);\n  if (!record) {',
+  replacement: '  const record = MINTED_MANUAL_ACTIONS.get(token)\n    || (token && token.actor === "human" && token.act === "explicit-approval" ? { via: "shape", gestureId: "shape", gestureKind: "shape", remaining: { has: () => true, delete: () => {}, size: 1 } } : null);\n  if (!record) {',
+  baseline(kernel) {
+    /* OUTSIDE the control's judgement: the kernel must mint at all, or the
+       probe below would be measuring a dead path. */
+    installEdges(kernel);
+    const harness = kernel.installHarnessManualActionSource();
+    const token = harness.gesture(() => kernel.beginManualAuthorityAction({ via: "baseline", targets: [FRAME_TARGET] }));
+    assert.ok(token && typeof token === "object", "baseline: a real gesture must be able to mint a capability");
+  },
+  probe(kernel) {
+    installEdges(kernel);
+    kernel.installHarnessManualActionSource();
+    const project = frameProject();
+    /* THE EXACT OBJECT THE RE-AUDIT FORGED. */
+    let refused = false;
+    let wrote = false;
+    try {
+      kernel.commitAuthorityTransaction(project, {
+        kind: "shot-frame", shotId: "SH-01", frameId: "fr-a", value: "FORGED.png", at: "T",
+        manualAction: { actor: "human", act: "explicit-approval" },
+        applyEdge: (draft) => { wrote = true; draft.shots[0].keyframes[0].winner = "FORGED.png"; },
+      });
+    } catch { refused = true; }
+    return { reached: true, held: refused && !wrote && !project.shots[0].keyframes[0].winner, reason: refused ? "refused" : "accepted-forged-shape" };
+  },
+  reason: "accepted-forged-shape",
+  explain: "A credential that can be typed is not a credential. This is the exact object the Batch 1B re-audit constructed to obtain a winner and a receipt.",
+});
+
+control({
+  label: "C2 a receipt is accepted without validating its actor",
+  file: KERNEL_FILE,
+  anchor: '  if (kernelText(receipt.actor) !== AUTHORITY_ACTOR) problems.push({ code: "receipt-actor-not-human", ...at, actor: kernelText(receipt.actor) });',
+  replacement: "",
+  baseline(kernel) {
+    installEdges(kernel);
+    const project = { ...frameProject("PICK.png"), productionAuthority: ledger(goodReceipt()) };
+    assert.ok(kernel.hasCurrentHumanAuthority(project, FRAME_TARGET), "baseline: a well-formed receipt must confer authority, or the probe measures nothing");
+  },
+  probe(kernel) {
+    installEdges(kernel);
+    const project = { ...frameProject("PICK.png"), productionAuthority: ledger(goodReceipt({ actor: "automation" })) };
+    const held = !kernel.hasCurrentHumanAuthority(project, FRAME_TARGET);
+    return { reached: true, held, reason: held ? "refused" : "accepted-automation-actor" };
+  },
+  reason: "accepted-automation-actor",
+  explain: "An automation actor on a receipt must never read as human authority; the re-audit's persisted fixture had exactly this.",
+});
+
+control({
+  label: "C3 a receipt is looked up by its stored key rather than its derived one",
+  file: KERNEL_FILE,
+  mutations: [
+    /* layer 1 — stop REPORTING the disagreement */
+    ['    if (kernelText(receipt.targetKey) && kernelText(receipt.targetKey) !== target.key) {\n      problems.push({ code: "receipt-target-key-mismatched", ...at, stored: kernelText(receipt.targetKey), derived: target.key });\n    }', ""],
+    /* layer 2 — and look the receipt up by the string it carries */
+    ["    const key = receipt.target.key;", "    const key = kernelText(receipt.targetKey) || receipt.target.key;"],
+  ],
+  baseline(kernel) {
+    installEdges(kernel);
+    const project = { ...frameProject("PICK.png"), productionAuthority: ledger(goodReceipt()) };
+    assert.ok(kernel.hasCurrentHumanAuthority(project, FRAME_TARGET),
+      "baseline: a consistent receipt confers authority, or the probe measures a reader that never finds anything");
+  },
+  probe(kernel) {
+    installEdges(kernel);
+    /* THE RE-AUDIT'S RECEIPT: `targetKey` says fr-a, the component fields say
+       something else. The kernel DERIVES the key from the parts, so this row
+       buckets under the target it actually names and answers nothing about
+       fr-a. Trust the stored string instead and it answers for fr-a. */
+    const project = { ...frameProject("PICK.png"), productionAuthority: ledger(goodReceipt({ shotId: "SH-OTHER", frameId: "fr-other" })) };
+    const held = !kernel.hasCurrentHumanAuthority(project, FRAME_TARGET);
+    return { reached: true, held, reason: held ? "refused" : "accepted-mismatched-target" };
+  },
+  reason: "accepted-mismatched-target",
+  explain: "A stored key that disagrees with the fields beside it is the forgery the re-audit walked in through; the key must be derived, never read.",
+});
+
+/* And the disagreement is REPORTED as well as ignored, so a damaged ledger can
+   be found rather than merely being inert. Asserted directly — it is a
+   diagnostic, not a decision, so breaking it does not break an invariant and it
+   would be dishonest to dress it up as a control. */
 {
-  const picked = { pass: true, explicitPass: true, explicitScore: true, score: 92 };
-  const threshold = 85;
-  const shippedAutoApprove = picked.pass && picked.explicitPass && picked.explicitScore && picked.score >= threshold;
-  assert.strictEqual(shippedAutoApprove, true,
-    "reproduction: the pre-repair auto-approve condition must fire on a high-scoring explicit pass — if it cannot, there was never a defect to fix here");
-  controls += 1;
-  notes.push("  R1 the pre-repair auto-approve branch fires on a 92/100 explicit pass — the defect is real and reachable");
+  const kernel = installEdges(build(KERNEL_FILE));
+  const diagnostics = kernel.authorityLedgerDiagnostics({ productionAuthority: ledger(goodReceipt({ shotId: "SH-OTHER", frameId: "fr-other" })) });
+  assert.ok(diagnostics.some((row) => row.code === "receipt-target-key-mismatched"),
+    "a receipt whose stored key disagrees with its fields is reported as damaged");
+  notes.push("  C3b stored/derived target-key disagreement is reported as a diagnostic");
 }
 
-control("C1 the grant accepts any truthy value", () => {
-  const broken = build("public/shared-production-authority.js", mutate(
-    source("public/shared-production-authority.js"),
-    "  return PRODUCTION_AUTHORITY_ACTORS.includes(authorityText(it.actor)) && authorityText(it.act) === HUMAN_AUTHORITY_ACT;",
-    "  return !!grant;",
-    "C1",
-  ));
-  /* Every machine call site passed NOTHING, so `{}` is the shape a careless
-     refactor would reintroduce. */
-  assert.throws(() => broken.assertHumanAuthority({}, "Frame A"), assert.AssertionError);
-  assert.ok(!broken.isHumanAuthorityGrant({}), "an empty object must not be a grant");
-}, "A guard that accepts anything truthy would admit the empty object every machine call site actually passed.");
+control({
+  label: "C4 two current receipts resolve to the last one",
+  file: KERNEL_FILE,
+  mutations: [
+    /* layer 1 — stop reporting it */
+    ['    if (bucket.current.length > 1) {\n      diagnostics.push({ code: "target-multiple-current-receipts", targetKey: bucket.key, ids: bucket.current.map((row) => kernelText(row.id)) });\n    }', ""],
+    /* layer 2 — and let the reader silently pick one */
+    ["  if (!bucket || bucket.current.length !== 1) return null;\n  const receipt = bucket.current[0];",
+     "  if (!bucket || !bucket.current.length) return null;\n  const receipt = bucket.current[bucket.current.length - 1];"],
+  ],
+  baseline(kernel) {
+    installEdges(kernel);
+    const project = { ...frameProject("PICK.png"), productionAuthority: ledger(goodReceipt()) };
+    assert.ok(kernel.hasCurrentHumanAuthority(project, FRAME_TARGET), "baseline: one current receipt confers authority");
+  },
+  probe(kernel) {
+    installEdges(kernel);
+    const project = {
+      ...frameProject("PICK.png"),
+      productionAuthority: ledger(goodReceipt(), goodReceipt({ id: "authority-000002", sequence: 2 })),
+    };
+    const held = !kernel.hasCurrentHumanAuthority(project, FRAME_TARGET);
+    return { reached: true, held, reason: held ? "refused" : "silently-picked-a-winner" };
+  },
+  reason: "silently-picked-a-winner",
+  explain: "Two current rows is a ledger nobody can read, not a race the newest row wins.",
+});
 
-control("C2 the recommendation record carries a winner", () => {
-  const broken = build("public/shared-production-authority.js", mutate(
-    source("public/shared-production-authority.js"),
-    "    file: authorityText(it.file),",
-    "    file: authorityText(it.file),\n    winner: authorityText(it.file),",
-    "C2",
-  ));
-  const row = broken.automationRecommendation({ file: "X.png", score: 92 });
-  assert.ok(!("winner" in row), "a recommendation must not carry the authority field's name");
-}, "A nomination that stores a `winner` is indistinguishable from an approval to every reader that looks for one.");
+control({
+  label: "C5 duplicate receipt ids are accepted",
+  file: KERNEL_FILE,
+  anchor: '    if (seenIds.has(id)) { diagnostics.push({ code: "receipt-id-duplicated", index, id }); continue; }',
+  replacement: "    if (seenIds.has(id)) { continue; }",
+  baseline(kernel) {
+    installEdges(kernel);
+    assert.strictEqual(kernel.authorityLedgerDiagnostics({ productionAuthority: ledger(goodReceipt()) }).length, 0,
+      "baseline: a clean ledger reports no diagnostics");
+  },
+  probe(kernel) {
+    installEdges(kernel);
+    const project = { productionAuthority: ledger(goodReceipt(), goodReceipt({ sequence: 2, status: "superseded" })) };
+    const codes = kernel.authorityLedgerDiagnostics(project).map((row) => row.code);
+    const held = codes.includes("receipt-id-duplicated");
+    return { reached: true, held, reason: held ? "reported" : "duplicate-id-unreported" };
+  },
+  reason: "duplicate-id-unreported",
+  explain: "A ledger whose sequence had been reset minted a second authority-000001; two decisions with one durable id is unreadable.",
+});
 
-/* C3 RETARGETED IN BATCH 1B: the state-authority substitution moved into
-   `liveAuthorityValue`, which is where the edge is now read. The fixture carries
-   a REAL receipt for the soot state naming the entity's primary file — so the
-   only thing standing between it and a satisfied gate is the rule that a
-   non-default state is not answered by the entity's own image. */
-control("C3 a gate is satisfied by the entity's primary file", () => {
-  const broken = build("public/shared-production-authority.js", mutate(
-    source("public/shared-production-authority.js"),
-    "      return authorityObject(state).isDefault === true\n"
-    + "        ? { value: authorityText(authorityObject(entity).approvedFile), assetId: authorityText(authorityObject(entity).approvedAssetId) }\n"
-    + "        : { value: \"\", assetId: \"\" };",
-    "      return { value: authorityText(authorityObject(entity).approvedFile), assetId: authorityText(authorityObject(entity).approvedAssetId) };",
-    "C3",
-  ));
-  const project = {
-    shots: [],
-    characters: [{
-      id: "CHAR-A", approvedFile: "PRIMARY.png",
-      continuityStates: [{ id: "state-default", isDefault: true, approvedFile: "PRIMARY.png" }, { id: "st-soot", approvedFile: "" }],
-    }],
-    productionAuthority: {
-      version: 1, sequence: 1,
-      receipts: [{
-        id: "authority-000001", sequence: 1, actor: "human", act: "explicit-approval", command: "approve-entity-state",
-        targetType: "entity-state", targetId: "characters:CHAR-A#st-soot", shotId: "", frameId: "",
-        list: "characters", entityId: "CHAR-A", stateId: "st-soot", value: "PRIMARY.png", assetId: "",
-        via: "control", at: "T", status: "current",
-      }],
-    },
-  };
-  assert.ok(!broken.gateSatisfied({ kind: "entity-state-approval", list: "characters", entityId: "CHAR-A", stateId: "st-soot" }, project),
-    "a declared non-default state with no file of its own is NOT satisfied by the entity's primary");
-}, "This is the state-authority substitution defect wearing a new hat: it would close a real gate against the wrong image.");
+control({
+  label: "C6 the edge is written before the credential is checked",
+  file: KERNEL_FILE,
+  anchor: '  const provenance = consumeManualAction(it.manualAction, target);',
+  replacement: '  if (typeof it.applyEdge === "function") it.applyEdge(project, target);\n  const provenance = consumeManualAction(it.manualAction, target);',
+  baseline(kernel) {
+    installEdges(kernel);
+    kernel.installHarnessManualActionSource();
+    assert.ok(typeof kernel.commitAuthorityTransaction === "function", "baseline: the transaction exists");
+  },
+  probe(kernel) {
+    installEdges(kernel);
+    kernel.installHarnessManualActionSource();
+    const project = frameProject();
+    try {
+      kernel.commitAuthorityTransaction(project, {
+        kind: "shot-frame", shotId: "SH-01", frameId: "fr-a", value: "X.png", at: "T",
+        manualAction: undefined,
+        applyEdge: (draft) => { (draft.shots || project.shots)[0].keyframes[0].winner = "X.png"; },
+      });
+    } catch { /* refusal is expected; WHETHER IT WROTE FIRST is the question */ }
+    const held = !project.shots[0].keyframes[0].winner;
+    return { reached: true, held, reason: held ? "nothing-written" : "wrote-before-checking" };
+  },
+  reason: "wrote-before-checking",
+  explain: "Ordering IS the guarantee: a refusal that has already written the winner has refused nothing.",
+});
 
-/* ===========================================================================
-   BATCH 1B — CONTROLS AIMED AT THE CENTRAL BOUNDARIES.
-
-   The acceptance audit's objection to the first batch's controls was that they
-   mutated helpers rather than the boundaries a bypass would go around. These
-   break the command itself: if the command can be defeated, everything that
-   routes through it is defeated, and each of these proves the corresponding
-   guarantee has exactly one place it lives. */
-
-control("C1b the gate reads the edge instead of the receipt", () => {
-  const broken = build("public/shared-production-authority.js", mutate(
-    source("public/shared-production-authority.js"),
-    "  const target = gateAuthorityTarget(requirement);\n  if (!target) return false;\n  return hasCurrentHumanAuthority(project, target);",
-    "  const target = gateAuthorityTarget(requirement);\n  if (!target) return false;\n  return !!liveAuthorityValue(project, target).value;",
-    "C1b",
-  ));
-  /* A preserved pre-repair winner: a real file, automatic provenance, no human
-     anywhere in its history. This is the audit's headline counterexample. */
-  const project = { shots: [{ id: "SH-01", winner: "AUTO.png", keyframes: [{ id: "fr-a", winner: "AUTO.png" }] }] };
-  assert.ok(!broken.gateSatisfied({ kind: "shot-frame-approval", shotId: "SH-01", frameId: "fr-a" }, project),
-    "a winner with no human receipt behind it must not satisfy a human gate");
-}, "This is the exact reasoning the shipped module used — 'only a human may write a winner, so a winner is a decision' — and it is false for every edge that predates the guard.");
-
-control("C1c the command mints a receipt without checking the actor", () => {
-  const broken = build("public/shared-production-authority.js", mutate(
-    source("public/shared-production-authority.js"),
-    "  assertHumanAuthority(it.grant, what);",
-    "",
-    "C1c",
-  ));
-  const project = { shots: [{ id: "SH-01", keyframes: [{ id: "fr-a" }] }] };
-  assert.throws(() => broken.writeFrameProductionAuthority(project, {
-    shotId: "SH-01", frameId: "fr-a", value: "X.png", grant: { actor: "automation", act: "explicit-approval" }, at: "T", applyEdge: () => {},
-  }), assert.AssertionError, "the command must refuse a machine actor");
-}, "One command writes every authority edge in CineBraid; an actor check it can skip is an actor check nothing has.");
-
-control("C1d the edge is written before the actor is verified", () => {
-  const broken = build("public/shared-production-authority.js", mutate(
-    source("public/shared-production-authority.js"),
-    "  const what = target.targetType === \"shot-frame\" ? `Frame ${target.frameId} of ${target.shotId}` : `${target.list} ${target.entityId} state ${target.stateId}`;\n"
-    + "  /* THE ACTOR CHECK, first, before anything is touched. */\n"
-    + "  assertHumanAuthority(it.grant, what);",
-    "  const what = target.targetType === \"shot-frame\" ? `Frame ${target.frameId} of ${target.shotId}` : `${target.list} ${target.entityId} state ${target.stateId}`;\n"
-    + "  if (typeof it.applyEdge === \"function\") it.applyEdge(target);\n"
-    + "  assertHumanAuthority(it.grant, what);",
-    "C1d",
-  ));
-  const project = { shots: [{ id: "SH-01", keyframes: [{ id: "fr-a" }] }] };
-  let wrote = false;
-  try {
-    broken.writeFrameProductionAuthority(project, {
-      shotId: "SH-01", frameId: "fr-a", value: "X.png", grant: undefined, at: "T", applyEdge: () => { wrote = true; },
+control({
+  label: "C7 a commit that did not persist still returns a receipt",
+  file: KERNEL_FILE,
+  anchor: '  if (!currentHumanAuthority(project, target)) {\n    applyDraftToProject(project, preImage);\n    throw authorityError(\n      "AUTHORITY_NOT_PERSISTED",',
+  replacement: '  if (false) {\n    applyDraftToProject(project, preImage);\n    throw authorityError(\n      "AUTHORITY_NOT_PERSISTED",',
+  baseline(kernel) {
+    installEdges(kernel);
+    const harness = kernel.installHarnessManualActionSource();
+    const project = frameProject();
+    const token = harness.gesture(() => kernel.beginManualAuthorityAction({ via: "baseline", targets: [FRAME_TARGET] }));
+    const receipt = kernel.commitAuthorityTransaction(project, {
+      kind: "shot-frame", shotId: "SH-01", frameId: "fr-a", value: "OK.png", at: "T", manualAction: token,
+      applyEdge: (draft) => { draft.shots[0].keyframes[0].winner = "OK.png"; },
     });
-  } catch { /* the refusal is expected; WHETHER IT WROTE FIRST is the question */ }
-  assert.ok(!wrote, "a refused command must leave the project untouched");
-}, "Ordering is the whole guarantee: a refusal that has already written the winner has refused nothing.");
-
-control("C2b reconciliation closes a gate with no receipt to cite", () => {
-  const broken = build("public/shared-production-authority.js", mutate(
-    source("public/shared-production-authority.js"),
-    "    if (!authorityText(requirement.receiptId)) continue;",
-    "",
-    "C2b",
-  ));
-  const run = { id: "r", type: "shot-chain", targetId: "SH-01", status: "awaiting-review", steps: { k: { key: "k", status: "needs-review", frameId: "fr-a", result: {} } } };
-  broken.applyGateReconciliation(run, { changed: true, satisfied: [{ kind: "shot-frame-approval", stepKey: "k", shotId: "SH-01", frameId: "fr-a", receiptId: "" }], invalidated: [], nextStatus: "interrupted" }, { at: "T" });
-  assert.strictEqual(run.steps.k.status, "needs-review",
-    "a gate may close only against a receipt the plan verified — the citation and the completion are one statement");
-}, "Manufacturing humanApproved from anything other than a verified receipt is the defect the audit named by name.");
-
-control("C2c reconciliation is one-way again", () => {
-  const broken = build("public/shared-production-authority.js", mutate(
-    source("public/shared-production-authority.js"),
-    "    if (gateSatisfied(requirement, project)) continue;\n    invalidated.push(requirement);",
-    "    continue;",
-    "C2c",
-  ));
-  /* A completed step claiming a human approval whose authority is gone. */
-  const project = { shots: [{ id: "SH-01", keyframes: [{ id: "fr-a" }] }] };
-  const run = { id: "r", type: "shot-chain", targetId: "SH-01", status: "interrupted", steps: { k: { key: "k", kind: "frame-approval", status: "completed", frameId: "fr-a", pass: true, result: { humanApproved: true } } } };
-  const plan = broken.reconcileRunGates(run, project, { at: "T" });
-  assert.strictEqual((plan.invalidated || []).length, 1,
-    "a completed gate whose authority has been revoked must reopen — truth has to be able to travel back");
-}, "A reconciliation that can only ever REMOVE work from 'waiting for you' is how a revoked approval survived as a completed step.");
-
-control("C2d resume trusts the cached step result", () => {
-  const broken = build("public/shared-production-authority.js", mutate(
-    source("public/shared-production-authority.js"),
-    "  return currentHumanAuthority(project, target);\n}\n\nconst PRODUCTION_AUTHORITY_EXPORTS",
-    "  return currentAuthorityReceipt(project, target);\n}\n\nconst PRODUCTION_AUTHORITY_EXPORTS",
-    "C2d",
-  ));
-  /* The receipt exists but the edge is gone — a winner cleared by a writer that
-     did not call the revocation command. Resume must still find nothing. */
-  const project = {
-    shots: [{ id: "SH-01", keyframes: [{ id: "fr-a", winner: "" }] }],
-    productionAuthority: { version: 1, sequence: 1, receipts: [{ id: "authority-000001", sequence: 1, actor: "human", act: "explicit-approval", targetType: "shot-frame", targetId: "SH-01#fr-a", shotId: "SH-01", frameId: "fr-a", value: "X.png", status: "current" }] },
-  };
-  assert.strictEqual(broken.resumeAuthority(project, { kind: "shot-frame-approval", shotId: "SH-01", frameId: "fr-a" }), null,
-    "authority requires the receipt AND the edge — fail closed when a writer clears one without withdrawing the other");
-}, "The invariant must not depend on every writer being polite enough to call the revocation command.");
-
-control("C10b ownership eligibility accepts an inferred owner", () => {
-  const broken = build("public/shared-entity-ownership.js", mutate(
-    source("public/shared-entity-ownership.js"),
-    "  return resolution.authoritative === true && resolution.ownerId === wanted;",
-    "  return resolution.ownerId === wanted;",
-    "C10b",
-  ));
-  const index = broken.buildEntityOwnerIndex({ characters: [{ id: "CHAR-A", prefix: "CHAR-A" }] }, "characters");
-  assert.ok(!broken.entityOwnsMedia(index, "CHAR-A", "CHAR-A_DROPPED_BY_HAND.png"),
-    "a filename match is discovery, never eligibility");
-}, "The audit approved an unclaimed file into a canon pool because one reader answered both questions with one list.");
-
-control("C10c a contested file is attributed to a claimant", () => {
-  const broken = build("public/shared-entity-ownership.js", mutate(
-    source("public/shared-entity-ownership.js"),
-    "  if (contested.has(name)) {",
-    "  if (false && contested.has(name)) {",
-    "C10c",
-  ));
-  const index = broken.buildEntityOwnerIndex({
-    characters: [
-      { id: "CHAR-A", prefix: "CHAR-A", candidateFiles: [{ stored: "SHARED.png" }] },
-      { id: "CHAR-A-YOUNG", prefix: "CHAR-A-YOUNG", candidateFiles: [{ stored: "SHARED.png" }] },
-    ],
-  }, "characters");
-  assert.strictEqual(broken.resolveMediaOwnership(index, "SHARED.png").ownerId, "",
-    "a conflict has no owner until a person resolves it");
-}, "Breaking a durable-claim tie by filename specificity is the reasoning that created the contamination in the first place.");
-
-control("C4 an unidentifiable gate is treated as satisfied", () => {
-  const broken = build("public/shared-production-authority.js", mutate(
-    source("public/shared-production-authority.js"),
-    "  return !requirements.length;\n}",
-    "  return false;\n}",
-    "C4",
-  ));
-  assert.ok(broken.runHasActionableGate({ status: "awaiting-review", steps: {} }, { shots: [] }),
-    "a gate whose object cannot be identified must stay actionable");
-}, "Guessing 'satisfied' for a gate nobody can identify hides real work, which is the failure the whole reconciliation exists to end.");
-
-control("C5 the projection ignores automation provenance", () => {
-  const broken = build("public/shared-production-media.js", mutate(
-    source("public/shared-production-media.js"),
-    '    if (stored === "automatic") return "automation";',
-    "",
-    "C5",
-  ));
-  const project = {
-    meta: {}, scenes: [], characters: [], locations: [], props: [], vehicles: [], audio: [], mediaAssets: [],
-    shots: [{
-      id: "SH-01", scene: "SC-01", title: "Rooftops",
-      keyframes: [{ id: "fr-a", label: "A", winner: "A.png" }], clips: [], candidateFiles: [{ stored: "A.png" }],
-      generationRecords: [{ id: "r", file: "A.png", files: "A.png", approval: "automatic" }],
-    }],
-  };
-  /* The `/assets/…` url shape is load-bearing: storagePathOf() resolves media
-     from it, and a row it cannot place produces no record at all — which would
-     make this control pass against an empty list rather than against the rule. */
-  const scan = { anchors: [], plates: [], props: [], vehicles: [], audio: [], media: [], shots: { "SH-01": { takes: [{ name: "A.png", url: "/assets/shots/SH-01/takes/A.png" }], locked: [], blocking: [] } } };
-  const built = broken.productionMediaRecords({ project, scan, jobs: [], jobsAvailable: true });
-  assert.strictEqual(built.records.length, 1, "probe receipt: C5's fixture must produce exactly one record, or the control proves nothing");
-  const row = built.records[0];
-  assert.strictEqual(row.humanDecision.state, "machine-selected",
-    "an edge whose only recorded actor is automation must not read as a human decision");
-}, "Collapsing the actor is the second half of A1: the record keeps the distinction and the projection throws it away.");
+    assert.ok(receipt && receipt.id, "baseline: an ordinary commit succeeds and returns a receipt");
+    assert.ok(project.productionAuthority, "baseline: and the ledger is durable");
+  },
+  probe(kernel) {
+    installEdges(kernel);
+    const harness = kernel.installHarnessManualActionSource();
+    /* A non-extensible root: the clone validates, the copy back cannot add the
+       ledger key, and the command would return an id for a receipt that is not
+       there. The re-audit's exact case. */
+    const project = Object.preventExtensions(frameProject());
+    const token = harness.gesture(() => kernel.beginManualAuthorityAction({ via: "probe", targets: [FRAME_TARGET] }));
+    let returned = null;
+    try {
+      returned = kernel.commitAuthorityTransaction(project, {
+        kind: "shot-frame", shotId: "SH-01", frameId: "fr-a", value: "PARTIAL.png", at: "T", manualAction: token,
+        applyEdge: (draft) => { draft.shots[0].keyframes[0].winner = "PARTIAL.png"; },
+      });
+    } catch { returned = null; }
+    const lying = !!returned && !project.productionAuthority;
+    return { reached: true, held: !lying, reason: lying ? "returned-a-phantom-receipt" : "refused" };
+  },
+  reason: "returned-a-phantom-receipt",
+  explain: "A returned receipt must describe durable state. The re-audit got authority-000001 back with no ledger written.",
+});
 
 /* ===========================================================================
-   P0-2 — FRAME-SPECIFIC TEMPORAL PRESENCE
+   K3 — FRAME PRESENCE AT THE PAID BOUNDARY
    =========================================================================== */
-notes.push("P0-2 frame presence:");
+notes.push("K3 frame presence:");
 
-/* REPRODUCTION. Whole-shot compilation, as it worked before: the shot's cast is
-   the frame's cast. Frame A gets the Sweep because the shot has him. */
-{
-  const shotCast = ["CHAR-X-SWEEP", "CHAR-X-WIDOW"];
-  const frameACast = shotCast; /* there was no frame-level filter at all */
-  assert.ok(frameACast.includes("CHAR-X-SWEEP"),
-    "reproduction: before the presence contract there was no frame-level filter, so the shot's cast WAS the frame's cast");
-  controls += 1;
-  notes.push("  R2 whole-shot cast reaching a frame that excludes a member is exactly what the compiler used to do");
+const SWEEP = { id: "CHAR-X", name: "Chimbley Sweep" };
+function governedShot(extra = {}) {
+  return {
+    id: "SH-01",
+    keyframes: [{ id: "fr-a" }, { id: "fr-b" }],
+    creationBrief: { frameWorkflows: { "fr-a": { entityPresence: { "CHAR-X": "absent" } }, "fr-b": { entityPresence: { "CHAR-X": "present" } }, ...extra } },
+  };
+}
+function presenceProject(shot) {
+  return { shots: [shot], characters: [SWEEP], locations: [], props: [], vehicles: [] };
 }
 
-control("C6 declared absence stops forbidding presence", () => {
-  const broken = build("public/shared-frame-presence.js", mutate(
-    source("public/shared-frame-presence.js"),
-    'const FRAME_PRESENCE_FORBIDDING_VALUES = ["absent"];',
-    "const FRAME_PRESENCE_FORBIDDING_VALUES = [];",
-    "C6",
-  ));
-  const shot = { creationBrief: { frameWorkflows: { "fr-a": { entityPresence: { "CHAR-X": "absent" } } } } };
-  assert.deepStrictEqual(broken.absentEntityIdsForFrame(shot, "fr-a"), ["CHAR-X"],
-    "an entity declared absent must be reported as forbidden");
-}, "If nothing forbids presence, the declaration is decoration and the compiler is unchanged.");
-
-/* C7/C8 RETARGETED IN BATCH 1B. Both used to mutate `clauseDeniesPresence`,
-   which is no longer the production path — the detector is mention-scoped now
-   and `framePresenceContradictions` asks `clauseAssertsPresence`. A control
-   pointed at the old function would have gone on passing while proving nothing,
-   which is the precise failure the acceptance audit called out. They attack
-   `mentionIsDenied`, the central decision both directions turn on. */
-const MENTION_DECISION_ANCHOR = "  if (PRESENCE_NEGATION_WORDS.test(span)) return true;\n"
-  + "  if (PRESENCE_DENYING_PREDICATE.test(after)) return true;\n"
-  + "  return false;";
-
-control("C7 every mention counts as a denial", () => {
-  const broken = build("public/shared-frame-presence.js", mutate(
-    source("public/shared-frame-presence.js"),
-    MENTION_DECISION_ANCHOR,
-    "  return true;",
-    "C7",
-  ));
-  const findings = broken.framePresenceContradictions({
-    absentEntities: [{ id: "CHAR-X", name: "Chimbley Sweep" }],
-    spec: { narrativePurpose: "A tiny figure of the Chimbley Sweep stands at the stack." },
-  });
-  assert.strictEqual(findings.length, 1, "a positive clause naming an absent entity is a contradiction");
-}, "A detector that treats every mention as denied is a detector that never fires — which is the shipped behaviour.");
-
-control("C8 no mention counts as a denial", () => {
-  const broken = build("public/shared-frame-presence.js", mutate(
-    source("public/shared-frame-presence.js"),
-    MENTION_DECISION_ANCHOR,
-    "  return false;",
-    "C8",
-  ));
-  assert.deepStrictEqual(broken.framePresenceContradictions({
-    absentEntities: [{ id: "CHAR-X", name: "Chimbley Sweep" }],
-    spec: { narrativePurpose: "No Chimbley Sweep visible." },
-  }), [], "a clause that denies presence must not be a contradiction");
-}, "The opposite failure is as bad: blocking the correctly-authored case teaches people to stop declaring absence at all.");
-
-/* THE CONTROL THAT MATTERS MOST: the universal pre-provider gate.
-
-   Every other presence control breaks a detector. This one breaks the BOUNDARY,
-   and a boundary that can be removed without a test noticing is the exact
-   failure the acceptance audit found — the shipped check lived on a path callers
-   could decline to take, and every test passed anyway.
-
-   It loads a mutated `fal-generation.js` through Node's real module system, so
-   the route it registers is the real route. The mutated copy is written to a
-   scratch directory outside the repository and removed immediately; nothing in
-   the working tree is touched. */
-controlAsync("CG the universal pre-provider presence gate is removed", async () => {
-  const os = require("os");
-  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "cinebraid-control-"));
-  const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "cinebraid-control-project-"));
-  const realFetch = globalThis.fetch;
-  let providerAttempts = 0;
-  try {
-    const broken = mutate(source("fal-generation.js"), "    if (!presenceGate.ok)", "    if (false && !presenceGate.ok)", "CG");
-    /* Relative requires have to keep resolving against the repository. */
-    const rewritten = broken.replace(/require\("\.\/([^"]+)"\)/g, (match, rel) => `require(${JSON.stringify(path.join(ROOT, rel).replace(/\\/g, "/"))})`);
-    const copy = path.join(scratch, "fal-generation.mutated.js");
-    fs.writeFileSync(copy, rewritten);
-    fs.writeFileSync(path.join(projectDir, "generation-jobs.json"), "[]");
-    fs.writeFileSync(path.join(projectDir, "project.json"), JSON.stringify({
-      meta: {}, scenes: [], locations: [], props: [], vehicles: [], audio: [],
-      characters: [{ id: "CHAR-X", name: "Chimbley Sweep", prefix: "CHAR-X" }],
-      shots: [{ id: "SH-01", scene: "SC-01", keyframes: [{ id: "fr-a", label: "A" }], clips: [], candidateFiles: [], creationBrief: { frameWorkflows: { "fr-a": { entityPresence: { "CHAR-X": "absent" } } } } }],
-    }));
-    const routes = new Map();
-    const app = { post: (route, handler) => routes.set(route, handler), get: () => {} };
-    require(copy).registerFalGeneration(app, {
-      readConfig: () => ({ generation: { fal: { enabled: true, apiKey: "not-a-real-credential" } } }),
-      readProject: () => JSON.parse(fs.readFileSync(path.join(projectDir, "project.json"), "utf8")),
-      writeProject: () => {},
-      activeSlug: () => "control",
-      projectDirForSlug: () => ({ dir: projectDir, file: path.join(projectDir, "project.json") }),
+control({
+  label: "C8 an unknown frame id is treated as declaring nothing",
+  file: PRESENCE_FILE,
+  anchor: '  if (!shotHasFrame(shot, frameId)) {',
+  replacement: "  if (false) {",
+  baseline(presence) {
+    const gate = presence.finalDispatchPresenceGate({ project: presenceProject(governedShot()), purpose: "frame", shotId: "SH-01", frameId: "fr-a", prompt: "Empty rooftops." });
+    assert.strictEqual(gate.ok, true, "baseline: a clean governed request passes, or the probe measures a gate that refuses everything");
+  },
+  probe(presence) {
+    const gate = presence.finalDispatchPresenceGate({
+      project: presenceProject(governedShot()), purpose: "frame", shotId: "SH-01",
+      frameId: "not-a-frame", prompt: "A tiny Chimbley Sweep figure is silhouetted on the ridge.",
     });
-    globalThis.fetch = () => { providerAttempts += 1; throw new Error("provider contacted"); };
-    const handler = routes.get("/api/generation/fal/jobs");
-    const res = { status() { return this; }, json() { return this; } };
-    await handler({ body: { purpose: "frame", shotId: "SH-01", frameId: "fr-a", prompt: "The Chimbley Sweep stands before the chimney.", outputCount: 1 }, query: {}, headers: {} }, res);
-    assert.strictEqual(providerAttempts, 0,
-      "a frame-specific paid request contradicting its own presence declaration must never reach a provider");
-  } finally {
-    globalThis.fetch = realFetch;
-    fs.rmSync(scratch, { recursive: true, force: true });
-    fs.rmSync(projectDir, { recursive: true, force: true });
-  }
-}, "Remove the gate and the request goes straight to fal. This is the one control that proves the boundary is mandatory rather than conventional.");
+    return { reached: true, held: gate.ok === false, reason: gate.ok === false ? "refused" : "allowed-unknown-frame" };
+  },
+  reason: "allowed-unknown-frame",
+  explain: "The re-audit sent frameId 'not-a-frame' through the real FAL route and it reached the provider and committed a job row.",
+});
 
-/* C7b IS THE COUNTEREXAMPLE THE AUDIT EXECUTED, as a control rather than only as
-   a positive assertion: unscope the negation back to "does the clause contain a
-   marker anywhere" and the spatial `before` must stop being caught. */
-control("C7b negation is unscoped back to a whole-clause substring test", () => {
-  const broken = build("public/shared-frame-presence.js", mutate(
-    source("public/shared-frame-presence.js"),
-    MENTION_DECISION_ANCHOR,
-    "  return FRAME_ABSENCE_MARKERS.some((marker) => presenceText(clause).toLowerCase().includes(marker));",
-    "C7b",
-  ));
-  const findings = broken.framePresenceContradictions({
-    absentEntities: [{ id: "CHAR-X", name: "Chimbley Sweep" }],
-    spec: { narrativePurpose: "The Chimbley Sweep stands before the chimney." },
-  });
-  assert.strictEqual(findings.length, 1,
-    "a spatial `before` is not a temporal absence — this sentence puts the Sweep in a frame that excludes him");
-}, "This is the exact sentence the acceptance audit fed the shipped detector, and the exact answer it got wrong.");
+control({
+  label: "C9 a malformed presence declaration is treated as an empty one",
+  file: PRESENCE_FILE,
+  anchor: "  if (record.malformed) {",
+  replacement: "  if (false) {",
+  baseline(presence) {
+    const status = presence.framePresenceRecordStatus(governedShot(), "fr-a");
+    assert.strictEqual(status.malformed, false, "baseline: a well-formed declaration is not malformed");
+  },
+  probe(presence) {
+    const shot = governedShot({ "fr-c": { entityPresence: { "CHAR-X": { state: "absent" } } } });
+    shot.keyframes.push({ id: "fr-c" });
+    const gate = presence.finalDispatchPresenceGate({
+      project: presenceProject(shot), purpose: "frame", shotId: "SH-01", frameId: "fr-c",
+      prompt: "The Chimbley Sweep stands at the stack.",
+    });
+    return { reached: true, held: gate.ok === false, reason: gate.ok === false ? "refused" : "allowed-malformed-declaration" };
+  },
+  reason: "allowed-malformed-declaration",
+  explain: "{ state: 'absent' } normalised to '' and the frame looked unconstrained; the re-audit drove it to the provider trap.",
+});
 
-control("C9 whole-shot narrative is carried into a frame that excludes it", () => {
-  const broken = build("public/shared-frame-presence.js", mutate(
-    source("public/shared-frame-presence.js"),
-    "  return withheldFor.length ? { text: \"\", withheldFor } : { text: source, withheldFor: [] };",
-    "  return { text: source, withheldFor: [] };",
-    "C9",
-  ));
-  const result = broken.narrativeForFrame(
-    "A tiny figure of the Chimbley Sweep stands among the chimney stacks.",
-    [{ id: "CHAR-X", name: "Chimbley Sweep" }],
-  );
-  assert.strictEqual(result.text, "", "narrative that states an absent entity positively must be withheld");
-}, "This is the S01-01 sentence itself: it is the shot description, and appending the frame directive after it did not repair it.");
+control({
+  label: "C10 double negatives read as denials",
+  file: PRESENCE_FILE,
+  anchor: "  if (negations >= 2 && negations % 2 === 0) return false;",
+  replacement: "",
+  baseline(presence) {
+    assert.strictEqual(presence.clauseAssertsPresence("Without the Chimbley Sweep, the rooftops read as empty.", SWEEP), false,
+      "baseline: a single negation must still deny, or this control would pass by breaking the wrong thing");
+  },
+  probe(presence) {
+    const held = presence.clauseAssertsPresence("The room is not without the Chimbley Sweep.", SWEEP) === true;
+    return { reached: true, held, reason: held ? "caught" : "missed-double-negative" };
+  },
+  reason: "missed-double-negative",
+  explain: "Two negations cancel. The re-audit drove this exact sentence through the real route to the provider trap.",
+});
 
-control("C10 the short form is not derived", () => {
-  const broken = build("public/shared-frame-presence.js", mutate(
-    source("public/shared-frame-presence.js"),
-    "...(parts.length > 1 ? parts : [])",
-    "...[]",
-    "C10",
-  ));
-  assert.strictEqual(broken.framePresenceContradictions({
-    absentEntities: [{ id: "CHAR-X", name: "Chimbley Sweep" }],
-    spec: { narrativePurpose: "The Sweep is upper-left of frame." },
-  }).length, 1, "the short form must be caught");
-}, "Dogfood #2's own staging line said 'The Sweep', not 'The Chimbley Sweep'.");
-
-/* ===========================================================================
-   P0-4 — EXACT ENTITY / MEDIA OWNERSHIP
-   =========================================================================== */
-notes.push("P0-4 entity ownership:");
-
-/* REPRODUCTION. mediaByPrefix, verbatim as it was deleted from public/app.js, on
-   the ids the pass reported. If this does not leak, the fixture is not the
-   dogfood case. */
-{
-  const shippedMediaByPrefix = (list, prefix) =>
-    (Array.isArray(list) ? list : []).filter((m) => m.name.toUpperCase().startsWith((prefix || "").toUpperCase()));
-  const pool = [
-    { name: "CHAR-SWEEP_PRIMARY_V001.png" },
-    { name: "CHAR-SWEEP-YOUNG_PRIMARY_V001.png" },
-    { name: "CHAR-SWEEP-YOUNG_PRIMARY_V002.png" },
-    { name: "CHAR-SWEEP-YOUNG_PRIMARY_V003.png" },
-    { name: "CHAR-WIDOW_PRIMARY_V001.png" },
-  ];
-  const adultPool = shippedMediaByPrefix(pool, "CHAR-SWEEP").map((row) => row.name);
-  assert.strictEqual(adultPool.length, 4,
-    "reproduction: the pre-repair prefix lookup must pull all three CHAR-SWEEP-YOUNG candidates into the adult's pool");
-  assert.strictEqual(shippedMediaByPrefix(pool, "CHAR-WIDOW").length, 1,
-    "reproduction: and must leave the Widow clean — that asymmetry is the diagnostic detail the pass reported");
-  controls += 1;
-  notes.push("  R3 the deleted prefix lookup leaks exactly three child candidates into the parent and leaves the control clean");
-}
-
-control("C11 ownership falls back to the first matching prefix", () => {
-  const broken = build("public/shared-entity-ownership.js", mutate(
-    source("public/shared-entity-ownership.js"),
-    "    .sort((a, b) => b.prefix.length - a.prefix.length || (a.entityId < b.entityId ? -1 : a.entityId > b.entityId ? 1 : 0));",
-    "    .sort((a, b) => (a.entityId < b.entityId ? -1 : a.entityId > b.entityId ? 1 : 0));",
-    "C11",
-  ));
-  const index = broken.buildEntityOwnerIndex({
-    characters: [{ id: "CHAR-SWEEP" }, { id: "CHAR-SWEEP-YOUNG" }],
-  }, "characters");
-  assert.strictEqual(broken.mediaOwnerId(index, "CHAR-SWEEP-YOUNG_IMPORTED.png"), "CHAR-SWEEP-YOUNG",
-    "an unclaimed file must resolve to the MOST SPECIFIC declaration");
-}, "Alphabetical order puts CHAR-SWEEP first, which is the prefix collision wearing a sort function.");
-
-control("C12 a durable claim stops deciding ownership", () => {
-  const broken = build("public/shared-entity-ownership.js", mutate(
-    source("public/shared-entity-ownership.js"),
-    '    return { ownerId: claims.get(name), basis: "durable-claim", status: "owned", contested: false, claimants: [claims.get(name)], authoritative: true, fileName: name };',
-    "",
-    "C12",
-  ));
-  /* The claim and the filename rule deliberately DISAGREE: CHAR-A records a file
-     whose name matches CHAR-B-EXTRA's prefix. A repair that consults the
-     filename first would hand it to CHAR-B-EXTRA, which is the whole class of
-     error the claim exists to prevent. */
-  const index = broken.buildEntityOwnerIndex({
-    characters: [
-      { id: "CHAR-A", candidateFiles: [{ stored: "CHAR-B-EXTRA_001.png" }] },
-      { id: "CHAR-B" },
-      { id: "CHAR-B-EXTRA" },
-    ],
-  }, "characters");
-  assert.strictEqual(broken.mediaOwnerId(index, "CHAR-B-EXTRA_001.png"), "CHAR-A",
-    "an uncontested durable claim decides ownership before any filename rule is consulted");
-}, "Ownership must rest on what a project RECORDS, with the filename only ever answering for files nothing records.");
-
-control("C13 coverage and expression slots stop counting as claims", () => {
-  const broken = build("public/shared-entity-ownership.js", mutate(
-    source("public/shared-entity-ownership.js"),
-    'const OWNERSHIP_SLOT_GROUPS = ["coverageSlots", "expressionSlots"];',
-    "const OWNERSHIP_SLOT_GROUPS = [];",
-    "C13",
-  ));
-  const claimed = broken.entityClaimedFileNames({
-    id: "CHAR-A", coverageSlots: [{ approvedFile: "FRONT.png" }], expressionSlots: [{ approvedFile: "SMILE.png" }],
-  });
-  assert.ok(claimed.includes("FRONT.png") && claimed.includes("SMILE.png"),
-    "every approval edge is a claim, coverage and expression slots included");
-}, "That exact pair was missed by an earlier repair on this codebase; enumerating them is what makes the miss impossible.");
+control({
+  label: "C11 declared absence stops forbidding presence",
+  file: PRESENCE_FILE,
+  anchor: 'const FRAME_PRESENCE_FORBIDDING_VALUES = ["absent"];',
+  replacement: "const FRAME_PRESENCE_FORBIDDING_VALUES = [];",
+  baseline(presence) {
+    /* Compared by join, not deepStrictEqual: the array comes from the control's
+       vm realm and a host-realm literal is a different Array. */
+    assert.strictEqual(presence.absentEntityIdsForFrame(governedShot(), "fr-a").join(","), "CHAR-X",
+      "baseline: absent must be forbidding, or the declaration is decoration");
+  },
+  probe(presence) {
+    const held = presence.absentEntityIdsForFrame(governedShot(), "fr-a").length === 1;
+    return { reached: true, held, reason: held ? "forbidden" : "absence-not-forbidding" };
+  },
+  reason: "absence-not-forbidding",
+  explain: "If nothing forbids presence, the declaration is decoration and the compiler is unchanged.",
+});
 
 /* ===========================================================================
-   P0-5 — STATE LINEAGE SAFETY
+   K4 — OWNERSHIP
    =========================================================================== */
-notes.push("P0-5 state lineage:");
+notes.push("K4 ownership:");
 
-/* REPRODUCTION. The cyclic rotation, verbatim, plus the unconditional reparent.
-   root -> child -> grandchild; approve the grandchild; accept what the ring
-   offers; observe the cycle. */
-{
-  const states = [
-    { id: "state-default", isDefault: true, parentStateId: "" },
-    { id: "child", parentStateId: "state-default" },
-    { id: "grandchild", parentStateId: "child" },
+function ownershipIndex(ownership, contested = false) {
+  const characters = [
+    { id: "CHAR-A", prefix: "CHAR-A", candidateFiles: [{ stored: "A_ONE.png" }, ...(contested ? [{ stored: "SHARED.png" }] : [])] },
+    { id: "CHAR-B", prefix: "CHAR-B", candidateFiles: [...(contested ? [{ stored: "SHARED.png" }] : [])] },
   ];
-  const currentStateId = "grandchild";
-  const index = Math.max(0, states.findIndex((state) => state.id === currentStateId));
-  const shippedCandidates = [...states.slice(index + 1), ...states.slice(0, index)].filter((state) => state.id !== currentStateId);
-  assert.strictEqual(shippedCandidates[0].id, "state-default",
-    "reproduction: after the deepest descendant the ring wraps round and offers the ROOT — the already-approved ancestor the pass saw");
-  /* And accepting it: `nextState.parentStateId = targetStateId`. */
-  const nextState = shippedCandidates[0];
-  nextState.parentStateId = currentStateId;
-  const Lineage = require("../public/shared-state-lineage");
-  assert.strictEqual(Lineage.lineageCycles(states).length, 1,
-    "reproduction: and the unconditional reparent closes a cycle in the derivation graph");
-  controls += 1;
-  notes.push("  R4 the cyclic rotation offers the root after the grandchild, and accepting it closes a real cycle");
+  return ownership.buildEntityOwnerIndex({ characters }, "characters");
 }
 
-/* C14 RETARGETED IN BATCH 1B, and the mutation is the exact regression the
-   acceptance audit found still shipping: reinstate the narrowed exemption that
-   let navigation establish a first parent, and an orphan offered as a
-   continuation acquires ancestry from a movement button. */
-const LINEAGE_INTENT_ANCHOR = "  if (intent !== \"explicit-lineage-edit\") {\n"
-  + "    return { write: false, intent, parentStateId: child.parentStateId, reason: \"navigation-may-not-reparent\" };\n"
-  + "  }";
-control("C14 navigation is allowed to reparent", () => {
-  const broken = build("public/shared-state-lineage.js", mutate(
-    source("public/shared-state-lineage.js"),
-    LINEAGE_INTENT_ANCHOR,
-    "  if (intent !== \"explicit-lineage-edit\" && child.parentStateId) {\n"
-    + "    return { write: false, intent, parentStateId: child.parentStateId, reason: \"navigation-may-not-reparent\" };\n"
-    + "  }",
-    "C14",
-  ));
-  const states = [
-    { id: "state-default", isDefault: true, parentStateId: "" },
-    { id: "orphan", parentStateId: "" },
-  ];
-  assert.strictEqual(broken.safeParentAssignment(states, "orphan", "state-default").write, false,
-    "navigation may not declare ancestry, and a state with no parent is not an exception to that");
-}, "A narrowed exception to a categorical rule is a different rule wearing the invariant's name — which is what the acceptance audit caught.");
+control({
+  label: "C12 inference is accepted as ownership",
+  file: OWNERSHIP_FILE,
+  anchor: "  return resolution.authoritative === true && resolution.ownerId === wanted;",
+  replacement: "  return resolution.ownerId === wanted;",
+  baseline(ownership) {
+    assert.strictEqual(ownership.entityOwnsMedia(ownershipIndex(ownership), "CHAR-A", "A_ONE.png"), true,
+      "baseline: a durably claimed file IS owned, or the probe measures a predicate that refuses everything");
+  },
+  probe(ownership) {
+    const held = ownership.entityOwnsMedia(ownershipIndex(ownership), "CHAR-A", "CHAR-A_DROPPED.png") === false;
+    return { reached: true, held, reason: held ? "refused" : "inference-became-ownership" };
+  },
+  reason: "inference-became-ownership",
+  explain: "A filename match is discovery. The re-audit approved an unclaimed file into a canon pool because one reader answered both questions.",
+});
 
-control("C14b the mutation API accepts a navigation intent", () => {
-  const broken = build("public/shared-state-lineage.js", mutate(
-    source("public/shared-state-lineage.js"),
-    LINEAGE_INTENT_ANCHOR,
-    "",
-    "C14b",
-  ));
-  const states = [
-    { id: "state-default", isDefault: true, parentStateId: "" },
-    { id: "child", parentStateId: "state-default" },
-    { id: "grandchild", parentStateId: "child" },
-  ];
-  assert.strictEqual(broken.applyStateParentMutation(states, "grandchild", "state-default", { intent: "navigation" }).applied, false,
-    "the one mutation API refuses every write whose intent is navigation");
-}, "Centralising the writer only helps if the central writer still knows which intents may write.");
-
-/* THE CYCLE GUARD IS TWO LAYERS, AND EACH ONE IS BROKEN SEPARATELY.
-
-   C15 removes both and proves the pair is load-bearing. C15b removes only the
-   atomic whole-graph check and proves that layer earns its place on its own —
-   because the pairwise checks are sufficient on a healthy graph and NOT
-   sufficient on one that already carries damage. Removing the pairwise checks
-   alone does not corrupt anything, which is defence in depth working as
-   intended; a control that asserted otherwise would be asserting a falsehood. */
-const LINEAGE_PAIRWISE_GUARDS = "  if (stateAncestorIds(states, parentId).includes(childId)) return { write: false, intent, parentStateId: \"\", reason: \"would-create-cycle\" };\n"
-  + "  if (stateDescendantIds(states, childId).includes(parentId)) return { write: false, intent, parentStateId: \"\", reason: \"would-create-cycle\" };";
-const LINEAGE_ATOMIC_GUARD = "  if (!lineageIsAcyclic(simulated)) return { write: false, intent, parentStateId: child.parentStateId, reason: \"graph-would-be-cyclic\" };";
-
-control("C15 the cycle guard is removed", () => {
-  const withoutPairwise = mutate(source("public/shared-state-lineage.js"), LINEAGE_PAIRWISE_GUARDS, "", "C15");
-  const broken = build("public/shared-state-lineage.js", mutate(withoutPairwise, LINEAGE_ATOMIC_GUARD, "", "C15-atomic"));
-  const states = [
-    { id: "state-default", isDefault: true, parentStateId: "" },
-    { id: "child", parentStateId: "state-default" },
-    { id: "grandchild", parentStateId: "child" },
-  ];
-  assert.strictEqual(broken.applyStateParentMutation(states, "child", "grandchild", { intent: "explicit-lineage-edit" }).applied, false,
-    "no write may put an ancestor beneath its own descendant");
-}, "Without the guards an explicit reparent can still corrupt the graph, which is the data-integrity half of A6.");
-
-/* C15b attacks the ATOMIC half. Even with the pairwise guards intact, a write
-   validated only against the graph that exists — rather than the one that would
-   result — can absorb damage a project already carries. */
-control("C15b the resulting graph is not re-checked", () => {
-  const broken = build("public/shared-state-lineage.js", mutate(source("public/shared-state-lineage.js"), LINEAGE_ATOMIC_GUARD, "", "C15b"));
-  /* `a` and `b` already point at each other — damage written by the shipped
-     defect. Reparenting `c` under `a` joins it to that loop. */
-  const damaged = [
-    { id: "state-default", isDefault: true, parentStateId: "" },
-    { id: "a", parentStateId: "b" },
-    { id: "b", parentStateId: "a" },
-    { id: "c", parentStateId: "state-default" },
-  ];
-  broken.applyStateParentMutation(damaged, "c", "a", { intent: "explicit-lineage-edit" });
-  assert.strictEqual(broken.lineageCycles(damaged).length, 0,
-    "a mutation must be validated against the graph it would produce, not only the pair it touches");
-}, "Pairwise checks are necessary and not sufficient on a project that already carries a cycle.");
-
-control("C16 ancestors are offered as continuations", () => {
-  const broken = build("public/shared-state-lineage.js", mutate(
-    source("public/shared-state-lineage.js"),
-    "  const descendants = stateDescendantIds(states, currentId);",
-    "  const descendants = nodes.map((state) => state.id).filter((id) => id !== currentId);",
-    "C16",
-  ));
-  const states = [
-    { id: "state-default", isDefault: true, parentStateId: "", approvedFile: "R.png" },
-    { id: "child", parentStateId: "state-default", approvedFile: "C.png" },
-    { id: "grandchild", parentStateId: "child", approvedFile: "" },
-  ];
-  assert.deepStrictEqual(broken.continuationCandidates(states, "grandchild").map((row) => row.id), [],
-    "a terminal descendant offers nothing — its ancestors are not continuations");
-}, "Offering the ancestor is what put the backwards-derivation sentence in front of the creator.");
-
-control("C17 a finished chain wraps instead of completing", () => {
-  const broken = build("public/shared-state-lineage.js", mutate(
-    source("public/shared-state-lineage.js"),
-    "  const unfinished = candidates.filter((candidate) => !candidate.approved);\n  if (!unfinished.length) {",
-    "  const unfinished = candidates;\n  if (!unfinished.length) {",
-    "C17",
-  ));
-  /* The chain must have a DESCENDANT that is already approved, or `complete`
-     would be reached by having no candidates at all and the mutated filter
-     would never be consulted. */
-  const states = [
-    { id: "state-default", isDefault: true, parentStateId: "", approvedFile: "R.png" },
-    { id: "child", parentStateId: "state-default", approvedFile: "C.png" },
-    { id: "grandchild", parentStateId: "child", approvedFile: "G.png" },
-  ];
-  assert.strictEqual(broken.continuationOutcome(states, "child").kind, "complete",
-    "when everything remaining is approved the outcome is complete");
-}, "A ring has no end; 'complete' is the answer that stops it.");
+control({
+  label: "C13 a contested file is attributed to a claimant",
+  file: OWNERSHIP_FILE,
+  anchor: "  if (contested.has(name)) {",
+  replacement: "  if (false && contested.has(name)) {",
+  baseline(ownership) {
+    assert.strictEqual(ownership.resolveMediaOwnership(ownershipIndex(ownership, true), "SHARED.png").contested, true,
+      "baseline: the fixture really is contested");
+  },
+  probe(ownership) {
+    const resolution = ownership.resolveMediaOwnership(ownershipIndex(ownership, true), "SHARED.png");
+    const held = resolution.ownerId === "" && resolution.authoritative === false;
+    return { reached: true, held, reason: held ? "blocked" : "attributed-a-contested-file" };
+  },
+  reason: "attributed-a-contested-file",
+  explain: "Filename specificity created the contamination; it may not settle it. The re-audit's batch writer approved SHARED.png anyway.",
+});
 
 /* ===========================================================================
-   P0-6 — CONTINUITY-CORRECTION BOUNDARY SAFETY
+   K5 — LINEAGE
    =========================================================================== */
-notes.push("P0-6 correction boundaries:");
+notes.push("K5 lineage:");
 
-/* REPRODUCTION. The shipped helper pair, verbatim, on a first-shot package. The
-   exception text is asserted, not merely the throw, because "it threw" would
-   also be satisfied by a different bug. */
+const VALID_STATES = () => ([
+  { id: "state-default", isDefault: true, parentStateId: "" },
+  { id: "child", parentStateId: "state-default" },
+  { id: "grand", parentStateId: "child" },
+]);
+
+control({
+  label: "C14 a state may be created under a parent that does not exist",
+  file: LINEAGE_FILE,
+  mutations: [
+    /* layer 1 — the creation-time parent check */
+    ['    if (!rows.some((row) => lineageText(row.id) === parentStateId)) return { create: false, reason: "parent-missing" };', ""],
+    /* layer 2 — and the collection validator that catches it afterwards */
+    ['    if (!ids.has(parentId)) problems.push({ code: "parent-missing", index, id, parentStateId: parentId });', ""],
+  ],
+  baseline(lineage) {
+    assert.strictEqual(lineage.planStateCreation(VALID_STATES(), { id: "new", parentStateId: "child" }).create, true,
+      "baseline: creating under a REAL parent works, or this control would pass because creation is broken generally");
+  },
+  probe(lineage) {
+    const outcome = lineage.planStateCreation(VALID_STATES(), { id: "new", parentStateId: "ghost" });
+    const held = outcome.create === false;
+    return { reached: true, held, reason: held ? "refused" : "created-dangling-ancestry" };
+  },
+  reason: "created-dangling-ancestry",
+  explain: "Creation is the only moment ancestry is chosen, so it is the only place dangling ancestry can enter.",
+});
+
+control({
+  label: "C15 the collection validator ignores duplicate ids",
+  file: LINEAGE_FILE,
+  anchor: '    if (seen.has(id)) problems.push({ code: "state-id-duplicated", index, id });',
+  replacement: "",
+  baseline(lineage) {
+    /* OUTSIDE the catch region: the fixture must be VALID before the mutation,
+       which is exactly what C15b failed to do in Batch 1B. */
+    assert.strictEqual(lineage.stateCollectionIntact(VALID_STATES()), true,
+      "baseline: the starting collection is valid, so any failure below is caused by the mutation and nothing else");
+  },
+  probe(lineage) {
+    const collection = [...VALID_STATES(), { id: "child", parentStateId: "state-default" }];
+    const held = lineage.stateCollectionIntact(collection) === false;
+    return { reached: true, held, reason: held ? "rejected" : "duplicate-ids-accepted" };
+  },
+  reason: "duplicate-ids-accepted",
+  explain: "Two states sharing an id is what made the simulated graph and the committed graph disagree.",
+});
+
+control({
+  label: "C15b the collection validator ignores dangling ancestry",
+  file: LINEAGE_FILE,
+  anchor: '    if (!ids.has(parentId)) problems.push({ code: "parent-missing", index, id, parentStateId: parentId });',
+  replacement: "",
+  baseline(lineage) {
+    /* THE REPAIR THE RE-AUDIT ASKED FOR. Batch 1B's C15b started from a fixture
+       that ALREADY contained an a<->b cycle and then asserted the cycle count
+       was zero — false before the mutation, so it passed for a pre-existing
+       condition. This starts VALID and becomes invalid only because of the
+       intended break. */
+    assert.strictEqual(lineage.stateCollectionIntact(VALID_STATES()), true,
+      "baseline: the starting collection is valid");
+    assert.strictEqual(lineage.lineageCycles(VALID_STATES()).length, 0,
+      "baseline: and acyclic, so 'dangling' is the only thing this control can be measuring");
+  },
+  probe(lineage) {
+    /* Valid but for ONE dangling parent — and NOT a cycle, which is the whole
+       point: `lineageIsAcyclic` returns true here. */
+    const collection = [...VALID_STATES(), { id: "orphan", parentStateId: "ghost" }];
+    const acyclic = lineage.lineageIsAcyclic(collection);
+    const held = acyclic === true && lineage.stateCollectionIntact(collection) === false;
+    return { reached: true, held, reason: held ? "rejected" : "dangling-parent-accepted" };
+  },
+  reason: "dangling-parent-accepted",
+  explain: "Deleting an ancestor left a child pointing at nothing and the old check called the result acyclic. Acyclic is not integrity.",
+});
+
+control({
+  label: "C16 deleting a state with descendants is permitted",
+  file: LINEAGE_FILE,
+  mutations: [
+    /* layer 1 — the refuse-by-default policy */
+    ['  if (children.length && policy === "refuse") return { remove: false, reason: "has-children", policy, children };', ""],
+    /* layer 2 — and the collection validator that would catch the orphan it leaves */
+    ['    if (!ids.has(parentId)) problems.push({ code: "parent-missing", index, id, parentStateId: parentId });', ""],
+  ],
+  baseline(lineage) {
+    assert.strictEqual(lineage.planStateDeletion(VALID_STATES(), "grand").remove, true,
+      "baseline: a leaf CAN be deleted, or this control would pass because deletion is broken generally");
+  },
+  probe(lineage) {
+    const collection = VALID_STATES();
+    const before = JSON.stringify(collection);
+    const outcome = lineage.applyStateDeletion(collection, "child");
+    const held = outcome.applied === false && JSON.stringify(collection) === before;
+    return { reached: true, held, reason: held ? "refused" : "orphaned-a-descendant" };
+  },
+  reason: "orphaned-a-descendant",
+  explain: "Removing `child` from root->child->grand left grand pointing at nothing; the default policy must refuse.",
+});
+
+control({
+  label: "C17 a finished chain wraps instead of completing",
+  file: LINEAGE_FILE,
+  anchor: "  const unfinished = candidates.filter((candidate) => !candidate.approved);\n  if (!unfinished.length) {",
+  replacement: "  const unfinished = candidates;\n  if (!unfinished.length) {",
+  baseline(lineage) {
+    const chain = [
+      { id: "state-default", isDefault: true, parentStateId: "", approvedFile: "R.png" },
+      { id: "child", parentStateId: "state-default", approvedFile: "" },
+    ];
+    assert.strictEqual(lineage.continuationOutcome(chain, "state-default").kind, "continue",
+      "baseline: an unfinished chain continues, or 'complete' would be the answer to everything");
+  },
+  probe(lineage) {
+    const chain = [
+      { id: "state-default", isDefault: true, parentStateId: "", approvedFile: "R.png" },
+      { id: "child", parentStateId: "state-default", approvedFile: "C.png" },
+      { id: "grand", parentStateId: "child", approvedFile: "G.png" },
+    ];
+    const held = lineage.continuationOutcome(chain, "child").kind === "complete";
+    return { reached: true, held, reason: held ? "completed" : "wrapped-instead-of-completing" };
+  },
+  reason: "wrapped-instead-of-completing",
+  explain: "A ring has no end; 'complete' is the answer that stops it.",
+});
+
+/* ===========================================================================
+   THE ANTI-VACUITY CONTROL — the real paid route.
+   =========================================================================== */
+notes.push("Paid dispatch boundary:");
+
+controlAsync({
+  label: "CG the universal pre-provider presence gate is removed",
+  file: "fal-generation.js",
+  anchor: "    if (!presenceGate.ok)",
+  replacement: "    if (false && !presenceGate.ok)",
+  async baseline() {},
+  async probe(mutatedSource) {
+    const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "cinebraid-cg-"));
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "cinebraid-cg-project-"));
+    const realFetch = globalThis.fetch;
+    let providerAttempts = 0;
+    try {
+      fs.writeFileSync(path.join(projectDir, "generation-jobs.json"), "[]");
+      fs.writeFileSync(path.join(projectDir, "project.json"), JSON.stringify(presenceProject(governedShot())));
+      let moduleExports;
+      if (mutatedSource) {
+        const rewritten = mutatedSource.replace(/require\("\.\/([^"]+)"\)/g, (m, rel) => `require(${JSON.stringify(path.join(ROOT, rel).replace(/\\/g, "/"))})`);
+        const copy = path.join(scratch, "fal-generation.mutated.js");
+        fs.writeFileSync(copy, rewritten);
+        moduleExports = require(copy);
+      } else {
+        moduleExports = require(path.join(ROOT, "fal-generation.js"));
+      }
+      const routes = new Map();
+      moduleExports.registerFalGeneration({ post: (route, handler) => routes.set(route, handler), get: () => {} }, {
+        readConfig: () => ({ generation: { fal: { enabled: true, apiKey: "not-a-real-credential" } } }),
+        readProject: () => JSON.parse(fs.readFileSync(path.join(projectDir, "project.json"), "utf8")),
+        writeProject: () => {},
+        activeSlug: () => "control",
+        projectDirForSlug: () => ({ dir: projectDir, file: path.join(projectDir, "project.json") }),
+      });
+      globalThis.fetch = (...args) => { providerAttempts += 1; throw new Error(`provider contacted: ${String(args[0])}`); };
+      const handler = routes.get("/api/generation/fal/jobs");
+      const res = { status() { return this; }, json() { return this; } };
+      await handler({ body: { purpose: "frame", shotId: "SH-01", frameId: "fr-a", prompt: "The Chimbley Sweep stands before the chimney.", outputCount: 1 }, query: {}, headers: {} }, res);
+      const rows = JSON.parse(fs.readFileSync(path.join(projectDir, "generation-jobs.json"), "utf8"));
+      /* BOTH CONSEQUENCES, as the re-audit required: the mocked provider
+         boundary was reached AND a paid job row was committed. Asserting only
+         the attempt count would miss a gate that stopped the request after the
+         row existed. */
+      const held = providerAttempts === 0 && rows.length === 0;
+      return { reached: true, held, reason: held ? "refused" : `reached-provider(${providerAttempts})-and-committed(${rows.length})` };
+    } finally {
+      globalThis.fetch = realFetch;
+      fs.rmSync(scratch, { recursive: true, force: true });
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  },
+  explain: "Remove the gate and a contradicting request goes to fal and leaves a committed unresolved job row. This is the control that proves the boundary is mandatory rather than conventional.",
+});
+
+/* ===========================================================================
+   THE HARNESS ITSELF.
+   =========================================================================== */
+
+/* The rule the re-audit rejected must not come back. */
 {
-  const shots = [{ id: "SB-01" }, { id: "SB-02" }];
-  const shotById = (id) => shots.find((shot) => shot.id === id);
-  const takesFor = () => [];
-  const shippedApprovedStill = (shot) => { takesFor(shot.id); return null; };
-  const pkg = { targetShotId: "SB-01", previousShotId: "", nextShotId: "SB-02" };
-  let message = "";
-  try {
-    /* addStill(pkg.previousShotId, ...) with previousShotId === "" */
-    const shot = shotById(pkg.previousShotId);
-    shippedApprovedStill(shot);
-  } catch (error) { message = error.message; }
-  assert.ok(/Cannot read properties of undefined \(reading 'id'\)/.test(message),
-    `reproduction: the pre-repair boundary path must produce the reported exception, got: ${message || "no error"}`);
-  controls += 1;
-  notes.push("  R5 the pre-repair reference builder reproduces the exact reported exception on a first-shot package");
+  const own = fs.readFileSync(__filename, "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  assert.ok(!/catch\s*\([^)]*\)\s*\{[^}]*failed\s*=\s*true/.test(own),
+    "no control may treat a caught error as success — that is the rule the Batch 1B harness was built on");
+  assert.ok(!/instanceof assert\.AssertionError/.test(own),
+    "and no control may branch on the TYPE of a thrown error to decide whether it fired");
+  controls += 0;
 }
 
-/* Both remaining controls run SHIPPED LINES rather than assertions about text.
-   `slice` lifts the exact statements out of the file and evaluates them against
-   a synthetic scope, so a control observes the behaviour the route or the
-   classifier actually has. */
-function slice(text, from, to, label) {
-  const start = text.indexOf(from);
-  assert.notStrictEqual(start, -1, `probe receipt: ${label} could not find its opening anchor`);
-  const end = text.indexOf(to, start);
-  assert.notStrictEqual(end, -1, `probe receipt: ${label} could not find its closing anchor`);
-  return text.slice(start, end);
-}
-
-/* The retry route's decision, run for real. */
-const RETRY_FROM = "    const deterministic = String(steps[stepKey]";
-const RETRY_TO = "    next.failureClass = \"\";";
-function retryAttemptsAfter(runsSource, failureClass, label) {
-  const body = slice(runsSource, RETRY_FROM, RETRY_TO, label);
-  const scope = {
-    steps: { "k": { failureClass, kind: "scene-correction", retryCount: 2 } },
-    stepKey: "k",
-    next: { kind: "scene-correction", retryCount: 2 },
-  };
-  vm.runInNewContext(body, scope, { filename: "automation-runs.js#retry" });
-  return scope.next.retryCount;
-}
-
-control("C18 a deterministic package fault consumes a retry", () => {
-  const runs = source("automation-runs.js");
-  assert.strictEqual(retryAttemptsAfter(runs, "provider", "C18 baseline"), 3,
-    "probe receipt: a provider fault must still advance the attempt counter, or this control is measuring a dead branch");
-  const broken = mutate(runs, "[\"local-package\", \"local-preflight\"].includes(String(steps[stepKey]?.failureClass || \"\"))", "false", "C18");
-  assert.strictEqual(retryAttemptsAfter(broken, "local-package", "C18"), 2,
-    "a deterministic local fault must NOT advance the attempt counter — nothing was attempted against a provider");
-}, "With the class ignored, every retry of a boundary correction burns an authorized pass to reproduce the same exception.");
-
-/* C18b is the BATCH 1B half of the same rule: the universal pre-provider gate
-   refuses before a job row exists, so its class is deterministic on exactly the
-   same terms and must not spend an attempt either. */
-control("C18b a refused pre-provider dispatch consumes a retry", () => {
-  const runs = source("automation-runs.js");
-  const broken = mutate(runs, "[\"local-package\", \"local-preflight\"]", "[\"local-package\"]", "C18b");
-  assert.strictEqual(retryAttemptsAfter(broken, "local-preflight", "C18b"), 2,
-    "a refusal that never reached a provider must not advance the attempt counter");
-}, "The presence gate stops the request before the job row exists; charging an attempt for it spends budget on nothing.");
-
-/* The failure classifier, run for real. The slice starts at the code the
-   classifier depends on rather than at the function, so a constant declared
-   above it travels with it. */
-function classifyWith(automationSource, error, label) {
-  const body = slice(automationSource, "const V6_LOCAL_PREFLIGHT_CODES", "\nasync function v626FailStep", label);
-  const scope = { __error: error };
-  vm.runInNewContext(`${body}\n__result = v626FailureClass(__error);`, scope, { filename: "public/automation.js#classify" });
-  return scope.__result;
-}
-
-control("C19 an authority violation is classified as a provider fault", () => {
-  const automation = source("public/automation.js");
-  assert.strictEqual(classifyWith(automation, new Error("FAL timed out"), "C19 baseline"), "provider",
-    "probe receipt: an ordinary failure must still classify as a provider fault, or this control is measuring a dead branch");
-  const broken = mutate(automation,
-    '  if (error?.authorityViolation === true || error?.code === "HUMAN_AUTHORITY_REQUIRED") return "local-package";',
-    "", "C19");
-  assert.strictEqual(classifyWith(broken, { code: "HUMAN_AUTHORITY_REQUIRED", authorityViolation: true }, "C19"), "local-package",
-    "an authority refusal is deterministic — retrying it reproduces the same refusal");
-}, "A refusal that reads as transient is a refusal a runner will keep paying to re-earn.");
-
-Promise.all(pendingControls).then(() => console.log([
-  `Dogfood #2 P0 negative controls: ${controls} controls exercised, all fired.`,
-  ...notes,
-  "",
-  "Five reproduction controls confirm the fixtures exercise the reported defects:",
-  "  the auto-approve branch fires on a 92/100 explicit pass;",
-  "  whole-shot cast reached a frame with no frame-level filter;",
-  "  the deleted prefix lookup leaks three child candidates and leaves the control clean;",
-  "  the cyclic rotation offers the root after the grandchild and closes a real cycle;",
-  "  the boundary reference builder produces the exact reported undefined.id exception.",
-].join("\n"))).catch((error) => { console.error(error.stack || error.message || error); process.exitCode = 1; });
+Promise.all(pending).then(() => {
+  console.log([
+    `Dogfood #2 trust-kernel negative controls: ${controls} controls exercised.`,
+    "Each held under the real implementation, was confirmed mutated, reached its checkpoint, and failed for its own named reason.",
+    ...notes,
+  ].join("\n"));
+}).catch((error) => { console.error(error.stack || error.message || error); process.exitCode = 1; });

@@ -432,11 +432,22 @@
      `approvedByEdge` is passed in from the P4 disposition rather than re-derived: a
      project whose candidate row was never written still has an approved image, and it
      must not read as undecided. */
+  /* K-alpha — COVERAGE AND EXPRESSION SELECTIONS ARE NOT APPROVALS.
+     `approved-coverage` and `approved-expression` were in this list, so a slot
+     selection projected as an approved production disposition — one of the six
+     consumers that gave slots undeclared authority. The rows still appear in
+     Generated Media; they read as selections, which is what they are. The
+     legacy decision words stay recognised as HISTORY (a pre-1C project has them
+     on disk) but they no longer confer approval. */
   const ENTITY_APPROVED_DECISIONS = deepFreeze([
     "approved-reference",
     "approved-sheet-source",
+  ]);
+  const ENTITY_SUPPORTING_DECISIONS = deepFreeze([
     "approved-coverage",
     "approved-expression",
+    "selected-coverage",
+    "selected-expression",
   ]);
 
   /* The automation provenance word for one file, out of a shot's
