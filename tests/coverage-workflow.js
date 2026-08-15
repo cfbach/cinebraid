@@ -194,7 +194,24 @@ async function testLegacySilentThreeQuarterMigrationAndStateVariantFlow() {
      the condition is reported instead. See tests/intent-loss-safety.js. */
   const migrated = vm.runInContext(`(() => { const e=P.characters.find((item)=>item.id==='CHAR-IREN'); const slot=(ensureCoverageSlots('characters',e)||[]).find((item)=>item.id==='front-three-quarter'); return {file:slot.approvedFile, status:slot.status, history:e.coverageMigrationHistory||[], warnings:(P.meta.dataIntegrityWarnings||[])}; })()`, rendered.context);
   assert.strictEqual(migrated.file, "CHAR-IREN-PRIMARY.png", "opening a project must not clear a legacy auto-seeded angle assignment");
-  assert.strictEqual(migrated.status, "approved", "a preserved assignment must keep the status it was stored with");
+  /* CHANGED IN BATCH 1C — "approved" -> "selected".
+
+     THE OLD ASSERTION DID NOT MEAN WHAT IT SAID. This fixture's slot carries no
+     `status` key at all, so there was never a stored status to keep: the word
+     was DERIVED on load by the normaliser, before and after this change. What
+     the assertion actually pinned was the derivation.
+
+     And the derivation is the thing Batch 1C corrected. It produced "approved"
+     on every project load, which silently reverted any slot a routed writer had
+     correctly saved as a selection. This fixture is the sharpest illustration
+     of why it was wrong: the very next assertion requires a warning saying this
+     angle was filled in automatically and NOT CHOSEN — while the status beside
+     it read "approved".
+
+     THE PROPERTY THIS TEST EXISTS FOR IS UNCHANGED and still asserted: the
+     filename survives the load untouched, no migration history is written, and
+     the legacy condition is reported rather than silently corrected. */
+  assert.strictEqual(migrated.status, "selected", "a preserved assignment is a supporting-reference selection, never a derived approval");
   assert.deepStrictEqual(Array.from(migrated.history), [], "a load must not record a migration it did not perform");
   assert(migrated.warnings.some((row) => /automatically|not chosen/i.test(row) && row.includes("CHAR-IREN-PRIMARY.png")), "the legacy condition must be reported rather than silently corrected");
 

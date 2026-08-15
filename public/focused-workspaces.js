@@ -320,7 +320,7 @@
     const aside = document.createElement("aside");
     aside.className = "focused-inspector";
     const { required, approved } = inspectorCoverage(entity);
-    const candidates = Array.isArray(entity?.candidateFiles) ? entity.candidateFiles.filter((row) => !["rejected", "approved-coverage", "approved-expression"].includes(row.decision)).length : 0;
+    const candidates = Array.isArray(entity?.candidateFiles) ? entity.candidateFiles.filter((row) => row.decision !== "rejected" && !decisionIsSlotSelection(row.decision)).length : 0;
     aside.innerHTML = `<header><span>REFERENCE INSPECTOR</span><b>${escapeText(entity?.id || "Reference")}</b><p>${escapeText(entity?.name || "")}</p></header><div class="focused-inspector-facts"><article><span>Status</span><b>${escapeText(entity?.workflowStatus || entity?.status || "Draft")}</b></article><article><span>Coverage</span><b>${approved}/${required}</b></article><article><span>Candidates</span><b>${candidates}</b></article><article><span>States</span><b>${Array.isArray(entity?.continuityStates) ? entity.continuityStates.length : 0}</b></article></div><section><b>Identity / design authority</b><p>${escapeText(entity?.driftNotes || entity?.block || entity?.notes || "No authority note recorded.")}</p></section><section><b>Focused-workspace rule</b><p>Only the selected task is expanded. Use the task rail to move between approval, candidates, coverage, automation, and notes.</p></section>`;
     return aside;
   }

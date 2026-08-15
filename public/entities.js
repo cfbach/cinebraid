@@ -319,7 +319,9 @@ function entityCandidateReviewBadge(entity, fileName) {
   if (!review) return "";
   if (!entityCandidateReviewIsCurrent(review)) return `<span class="entity-ai-review-badge stale">AI ${Math.round(+review.score || 0)} · ${review.pass ? "PASS" : "FLAG"} · ${esc(review.stateName || "Default")} · PREVIOUS REVIEW / RE-RUN REQUIRED</span>`;
   const tone = review.pass ? "pass" : "flag";
-  const assignment = review.pass && row.targetCoverageSlotId && row.decision !== "approved-coverage" && row.decision !== "approved-expression" ? " · NOT ASSIGNED" : "";
+  /* One vocabulary, from shared-entity-slots.js. This pair of literals is why a
+     candidate the creator had just selected went on being badged NOT ASSIGNED. */
+  const assignment = review.pass && row.targetCoverageSlotId && !decisionIsSlotSelection(row.decision) ? " · NOT ASSIGNED" : "";
   return `<span class="entity-ai-review-badge ${tone}">AI ${Math.round(+review.score || 0)} · ${review.pass ? "PASS" : "FLAG"}${assignment} · ${esc(review.stateName || "Default")}</span>`;
 }
 
@@ -1043,7 +1045,7 @@ window.addCoverageSlot = (list, id) => {
 };
 function coveragePassingAssignmentQueue(entity, group = "angles") {
   return (entity.candidateFiles || []).filter((row) => {
-    if (!row?.targetCoverageSlotId || row.decision === "approved-coverage" || row.decision === "approved-expression" || row.decision === "rejected") return false;
+    if (!row?.targetCoverageSlotId || decisionIsSlotSelection(row.decision) || row.decision === "rejected") return false;
     if ((group === "expressions") !== (row.coverageGroup === "expressions")) return false;
     const fileName = row.stored || row.name || row.original || "";
     return entityCandidateTargetReview(entity, fileName)?.pass === true;

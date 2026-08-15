@@ -509,8 +509,17 @@ async function testAiPassAloneIsNotAnApproval(mutateSource = null) {
    them inferred from an AI result. */
 function testApprovalStatesStayDistinct() {
   const review = readLF("public/review.js");
-  assert(/const selection = ENTITY_SUPPORTING_SELECTION_DECISIONS\.includes\(decision\);/.test(review),
-    "a supporting-reference selection is its own state");
+  /* The vocabulary lives in shared-entity-slots.js now — this file held one of
+     four copies of it, and the copies are why the rename half-landed. So the
+     first half of this check is behavioural rather than textual: ask the real
+     predicate, including the two legacy words a pre-1C project still has. */
+  const Slots = require("../public/shared-entity-slots");
+  for (const word of ["selected-coverage", "selected-expression", "approved-coverage", "approved-expression"])
+    assert(Slots.decisionIsSlotSelection(word), `${word} is a supporting-reference selection`);
+  for (const word of ["approved-reference", "approved", "rejected", "unreviewed", ""])
+    assert(!Slots.decisionIsSlotSelection(word), `${word} is not a slot selection`);
+  assert(/const selection = decisionIsSlotSelection\(decision\);/.test(review),
+    "a supporting-reference selection is its own state, decided by the one shared predicate");
   assert(/const approved = !selection && \(row\?\.humanApproved \|\| decision === "approved"\);/.test(review),
     "and it is never also an approval");
   assert(/decision === "rejected" \? "REJECTED BY YOU" : selection \? "SELECTED BY YOU" : approved \? "APPROVED BY YOU" : "NO HUMAN DECISION YET"/.test(review),

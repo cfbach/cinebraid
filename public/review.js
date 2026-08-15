@@ -558,11 +558,12 @@ const ENTITY_REVIEW_ACTIONABILITY_LABELS = {
    became visible to the creator. The legacy `approved-coverage` decision words
    are still recognised, because a pre-1C project has them on disk, and they
    read as selections too. */
-const ENTITY_SUPPORTING_SELECTION_DECISIONS = ["selected-coverage", "selected-expression", "approved-coverage", "approved-expression"];
+/* The vocabulary moved to shared-entity-slots.js, which owns the concept. This
+   file had the fourth copy of it. */
 function entityReviewHumanDecisionMarkup(row, review) {
   const decision = String(row?.decision || "unreviewed");
   const decided = String(row?.decidedAt || "");
-  const selection = ENTITY_SUPPORTING_SELECTION_DECISIONS.includes(decision);
+  const selection = decisionIsSlotSelection(decision);
   const approved = !selection && (row?.humanApproved || decision === "approved");
   const label = decision === "rejected" ? "REJECTED BY YOU" : selection ? "SELECTED BY YOU" : approved ? "APPROVED BY YOU" : "NO HUMAN DECISION YET";
   const tone = decision === "rejected" ? "flag" : selection ? "selected" : approved ? "pass" : "pending";

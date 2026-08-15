@@ -190,12 +190,30 @@ function slotUsableAsSupportingReference(slot) {
 const SLOT_REFERENCE_ROLE = "supporting-view";
 const SLOT_REFERENCE_NOTE = "Supporting view selected by the filmmaker. Context only — not approved production authority.";
 
+/* THE DECISION WORDS, IN ONE PLACE.
+ *
+ * Renaming the word a slot commit writes left four readers behind — the AI
+ * badge's "NOT ASSIGNED" suffix, the passing-assignment queue, the reference
+ * inspector's outstanding count, and the human-decision renderer. Each carried
+ * its own literal pair, so each went on believing a selected candidate was
+ * still unassigned. Four copies of a vocabulary is how a rename half-lands, so
+ * there is one copy now.
+ *
+ * The legacy words stay in the set on purpose: a pre-1C project has them on
+ * disk, nothing rewrites them, and they mean exactly what the new words mean. */
+const SLOT_SELECTION_DECISIONS = ["selected-coverage", "selected-expression", "approved-coverage", "approved-expression"];
+function decisionIsSlotSelection(decision) {
+  return SLOT_SELECTION_DECISIONS.includes(slotText(decision));
+}
+
 const ENTITY_SLOT_EXPORTS = {
   SLOT_GROUPS,
   SLOT_ASSIGNMENT_STATES,
   SLOT_ASSIGNMENT_KIND,
   SLOT_REFERENCE_ROLE,
   SLOT_REFERENCE_NOTE,
+  SLOT_SELECTION_DECISIONS,
+  decisionIsSlotSelection,
   slotSelectedFile,
   slotIsAuthoritative,
   entitySlotFiles,
