@@ -153,7 +153,43 @@ assert.strictEqual(clean.validation.ok, true, "and the candidate must pass the P
 assert.strictEqual(statementsOf(clean).length, 0, "a deterministic migration writes NO statements");
 assert.strictEqual(clean.report.summary.disputes, 0);
 assert.strictEqual(clean.report.summary.inferredMappings, 0);
-assert.strictEqual(clean.report.diagnostics.length, 0, "and raises nothing needing review");
+
+/* CHANGED IN BATCH 1C — AND THE CHANGE IS THE K7 REPAIR, VISIBLE.
+
+   OLD EXPECTATION: `clean.report.diagnostics.length === 0` — a deterministic
+   migration "raises nothing needing review".
+
+   WHY IT IS NO LONGER VALID: this fixture is a pre-OFP CineBraid project, so by
+   construction it has no authority ledger. Under the old collector its two
+   legacy pointers — a frame `winner` and a character `approvedFile` — were
+   materialised as approved-output assets and references. That is exactly the
+   reproduced counterexample: an unreceipted selection exported as approved
+   production output. The migration was deterministic, and it was also wrong,
+   which is why "no diagnostics" was never the same claim as "nothing to say".
+
+   THE NEW INVARIANT: determinism is about GUESSING, not about silence. A clean
+   migration still emits zero statements, zero disputes and zero inferred
+   mappings, because it guesses at nothing. What it now also does is state a
+   FACT about each legacy pointer it declined to promote. That fact is itself
+   deterministic — the same input yields the same two warnings, in the same
+   order, forever — so it strengthens the pin rather than loosening it: the old
+   assertion allowed any set of zero diagnostics, this one allows exactly one
+   set. There must still be no diagnostic of any OTHER code. */
+assert.deepStrictEqual(codesOf(clean), ["migration.authority.historic", "migration.authority.historic"],
+  "the only thing a clean legacy migration has to report is that its unreceipted selections are historic");
+for (const entry of clean.report.diagnostics)
+  assert.strictEqual(entry.severity, "warning", "an honest statement about legacy provenance is a warning, not an error — the migration succeeded");
+
+/* THE REPRODUCED CASE, BOTH HALVES. Counterexample 19 was not "a diagnostic is
+   missing", it was "the pointer left through the approved-output door". So the
+   regression asserts the door it did NOT leave by as well as the one it did. */
+assert.strictEqual(clean.candidate.assets, undefined, "no legacy pointer may mint an approved-output asset without a receipt behind it");
+assert.strictEqual(clean.candidate.references, undefined, "and none may mint an approved-output reference either");
+assert.deepStrictEqual(clean.candidate.extensions["com.cinebraid.workflow"].historicSelections, {
+  "shot:DEPOT-01/frame:frame-a": { other: "DEPOT-01-LEDGER.png" },
+  "character:CHAR-CLERK": { "identity-front": "CHAR-CLERK-FRONT.png" },
+}, "the selections are preserved verbatim as historic workflow evidence — nothing is dropped, hidden or renamed");
+
 assert.strictEqual(clean.candidate.format.id, OFP_FORMAT_ID);
 assert.strictEqual(clean.candidate.format.version, OFP_CONTRACT_VERSION);
 assert.strictEqual(clean.plan.experimental, true, "the API must make the experimental, copied nature explicit");
@@ -222,11 +258,30 @@ for (const name of MIGRATABLE) {
 
 /* The pinned accounting table for the clean fixture. Adding a field to the
    fixture is expected and this list moves with it; a MAPPING that silently
-   became a preservation is what this catches. */
+   became a preservation is what this catches.
+
+   BATCH 1C REPINNED THREE ROWS — mapped -> preserved, and this is the one time
+   the direction this table guards against is the correct answer. All three are
+   authority-bearing legacy pointers in a project with no authority ledger:
+
+     /shots/0/keyframes/0/winner              a frame's approved still
+     /characters/0/approvedFile               a character's canon reference
+     /locations/0/coverageSlots/0/approvedFile a coverage view
+
+   They used to be MAPPED by M030 into OFP core assets and references — that is,
+   exported as approved production output on the strength of a non-empty string.
+   They are now PRESERVED by M013 into the CineBraid workflow extension, the
+   first two as historic selections and the third as a coverage selection,
+   because alpha removed authority semantics from slots entirely.
+
+   No value moved into a corner and no value was lost: each row's target column
+   names the exact pointer its filename now lives at, and the diagnostics
+   asserted in section 3 say so out loud. A mapping became a preservation
+   because the mapping was making a claim the source could not support. */
 const PINNED_ACCOUNTING = [
   ["/agentRuns", "M052", "dropped"],
   ["/audio", "M017", "mapped"],
-  ["/characters/0/approvedFile", "M030", "mapped"],
+  ["/characters/0/approvedFile", "M013", "preserved"],
   ["/characters/0/continuityStates/0/id", "M007", "mapped"],
   ["/characters/0/continuityStates/0/isDefault", "M007", "mapped"],
   ["/characters/0/continuityStates/0/name", "M007", "mapped"],
@@ -242,7 +297,7 @@ const PINNED_ACCOUNTING = [
   ["/decisions", "M052", "dropped"],
   ["/jobs", "M052", "dropped"],
   ["/locations/0/continuityStates", "M007", "mapped"],
-  ["/locations/0/coverageSlots/0/approvedFile", "M030", "mapped"],
+  ["/locations/0/coverageSlots/0/approvedFile", "M013", "preserved"],
   ["/locations/0/coverageSlots/0/id", "M008", "mapped"],
   ["/locations/0/coverageSlots/0/label", "M008", "mapped"],
   ["/locations/0/coverageSlots/0/notes", "M008", "mapped"],
@@ -289,7 +344,7 @@ const PINNED_ACCOUNTING = [
   ["/shots/0/id", "M005", "mapped"],
   ["/shots/0/keyframes/0/description", "M009", "mapped"],
   ["/shots/0/keyframes/0/id", "M009", "mapped"],
-  ["/shots/0/keyframes/0/winner", "M030", "mapped"],
+  ["/shots/0/keyframes/0/winner", "M013", "preserved"],
   ["/shots/0/reviewStatus", "M012", "preserved"],
   ["/shots/0/risks/0", "M005", "mapped"],
   ["/shots/0/scene", "M005", "mapped"],
