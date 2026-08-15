@@ -393,9 +393,56 @@ eq(WRITE_SURFACE, [
   project.shots[0].keyframes[0].winner = "CANONICAL.png";
   project.shots[0].winner = "CANONICAL.png";
   eq(Kernel.hasCurrentHumanAuthority(project, target), false, "a moved edge alone loses canon, which is the safe direction");
-  eq(Kernel.repairCanonValue(project, { from: "RAW.png", to: "CANONICAL.png", assetId: "asset-A" }).length, 1,
-    "the repair moves the receipt");
+  /* THE REPAIR NAMES ITS TARGET. A filename is not an identity, so a repair that
+     selected receipts by basename alone rewrote canon for unrelated objects that
+     happened to share a name — Codex MB-PT-01. */
+  eq(Kernel.repairCanonValue(project, { ...target, from: "RAW.png", to: "CANONICAL.png", assetId: "asset-A" }).length, 1,
+    "the repair moves the receipt for the target the person acted on");
   ok(Kernel.hasCurrentHumanAuthority(project, target), "and the decision the person really made survives its own rename");
+
+  /* MB-PT-01 — AN UNRELATED TARGET IS NOT TOUCHED. Two shots, each with their
+     own approval of the same basename in their own takes folder, is ordinary
+     product data. */
+  const twoShots = { shots: [
+    { id: "SH-A", keyframes: [{ id: "fr-a" }], clips: [], creationBrief: {} },
+    { id: "SH-B", keyframes: [{ id: "fr-a" }], clips: [], creationBrief: {} },
+  ] };
+  const targetA = { kind: "shot-frame", shotId: "SH-A", frameId: "fr-a" };
+  const targetB = { kind: "shot-frame", shotId: "SH-B", frameId: "fr-a" };
+  human(() => Kernel.approveFrameCanon(twoShots, { shotId: "SH-A", frameId: "fr-a", value: "FRAME.png", assetId: "asset-A", at: AT(1) }));
+  human(() => Kernel.approveFrameCanon(twoShots, { shotId: "SH-B", frameId: "fr-a", value: "FRAME.png", assetId: "asset-B", at: AT(2) }));
+  twoShots.shots[0].keyframes[0].winner = "RENAMED.png";
+  twoShots.shots[0].keyframes[0].winnerAssetId = "asset-A2";
+  twoShots.shots[0].winner = "RENAMED.png";
+  twoShots.shots[0].winnerAssetId = "asset-A2";
+  const moved = Kernel.repairCanonValue(twoShots, { ...targetA, from: "FRAME.png", to: "RENAMED.png", assetId: "asset-A2" });
+  eq(moved.length, 0, "a repair whose identity contradicts the receipt writes nothing — it cannot prove the same bytes");
+  eq(Kernel.hasCurrentHumanAuthority(twoShots, targetA), false, "so shot A reads as historic and can be approved again in one act");
+  const receiptB = Authority.currentAuthorityReceipt(twoShots, targetB);
+  ok(receiptB, "and shot B's decision is untouched");
+  eq(receiptB.value, "FRAME.png", "still naming the bytes its creator approved");
+  eq(receiptB.assetId, "asset-B", "with its own identity intact");
+
+  /* AND THE SCOPE HALF ON ITS OWN. Above, the identity check would have caught
+     it anyway; a project whose media ledger has not been indexed carries no
+     identities at all, so only the TARGET distinguishes the two receipts. This
+     is the case where scope is the whole guard. */
+  const unindexed = { shots: [
+    { id: "SH-A", keyframes: [{ id: "fr-a" }], clips: [], creationBrief: {} },
+    { id: "SH-B", keyframes: [{ id: "fr-a" }], clips: [], creationBrief: {} },
+  ] };
+  const unA = { kind: "shot-frame", shotId: "SH-A", frameId: "fr-a" };
+  const unB = { kind: "shot-frame", shotId: "SH-B", frameId: "fr-a" };
+  human(() => Kernel.approveFrameCanon(unindexed, { shotId: "SH-A", frameId: "fr-a", value: "FRAME.png", assetId: "", at: AT(1) }));
+  human(() => Kernel.approveFrameCanon(unindexed, { shotId: "SH-B", frameId: "fr-a", value: "FRAME.png", assetId: "", at: AT(2) }));
+  unindexed.shots[0].keyframes[0].winner = "RENAMED.png";
+  unindexed.shots[0].winner = "RENAMED.png";
+  const scoped = Kernel.repairCanonValue(unindexed, { ...unA, from: "FRAME.png", to: "RENAMED.png", assetId: "" });
+  eq(scoped.length, 1, "the repair follows the bytes for the target the person acted on");
+  ok(Kernel.hasCurrentHumanAuthority(unindexed, unA), "shot A keeps the decision its creator made");
+  eq(Authority.currentAuthorityReceipt(unindexed, unB).value, "FRAME.png",
+    "and shot B — same basename, different target, no identity to tell them apart — is untouched");
+  ok(Kernel.hasCurrentHumanAuthority(unindexed, unB), "so shot B is still canon");
 }
 
 /* ===========================================================================

@@ -325,29 +325,70 @@ function entityCandidateReviewBadge(entity, fileName) {
   return `<span class="entity-ai-review-badge ${tone}">AI ${Math.round(+review.score || 0)} · ${review.pass ? "PASS" : "FLAG"}${assignment} · ${esc(review.stateName || "Default")}</span>`;
 }
 
+/* MB-PT-02 — THE ONE ENTITY-SIDE READER OF PRODUCTION TRUTH.
+ *
+ * The entity page used to answer "is this approved?" itself, three times, from
+ * `state.approvedFile || (state.isDefault && entity.approvedFile)`. A prop with
+ * a raw pointer and no receipt therefore headlined APPROVED IMAGES, counted
+ * "1/1 state has an approved image", and rendered an APPROVED row — while the
+ * projection classified the same pointer as Historic. Two truths, one screen.
+ *
+ * There is one reader now and it is the projection. A pointer with no receipt
+ * is HISTORIC: still shown, still named, still one click from being approved,
+ * and never counted or badged as canon. */
+function entityStateTruth(list, entity) {
+  const truth = typeof entityProductionTruth === "function"
+    ? entityProductionTruth(P, list, entity && entity.id)
+    : { canon: [], references: [], historic: [] };
+  const canon = new Map(truth.canon.map((row) => [row.stateId, row]));
+  const historic = new Map(truth.historic.map((row) => [row.stateId, row]));
+  return {
+    canonCount: canon.size,
+    historicCount: historic.size,
+    of(state) {
+      const id = (state && state.id) || "";
+      if (canon.has(id)) return { standing: "canon", file: canon.get(id).value };
+      if (historic.has(id)) return { standing: "historic", file: historic.get(id).value };
+      return { standing: "missing", file: "" };
+    },
+  };
+}
+/* MB-PT-04, the entity-side twin. Same fallback, same defect: a state whose
+   recorded parent is missing was OPERATIONALLY REPARENTED onto the default for
+   every read this summary feeds. An existing state has the parent it records or
+   it has none, and "none" is what the surface must say. */
 function entityStateParentSummary(entity, state) {
   if (!entity || !state || state.isDefault) return { parent: null, fileName: "", label: "Primary identity" };
-  const states = entityStateListRead(entity, true);
-  const parent = states.find((item) => item.id === state.parentStateId && item.id !== state.id)
-    || states.find((item) => item.isDefault)
-    || states.find((item) => item.id !== state.id)
-    || null;
-  const fileName = parent?.approvedFile || (parent?.isDefault ? entity.approvedFile || "" : "");
-  return { parent, fileName, label: parent?.name || "Default" };
+  const parentId = String(state.parentStateId || "");
+  const parent = parentId
+    ? entityStateListRead(entity, true).find((item) => item.id === parentId && item.id !== state.id) || null
+    : null;
+  if (!parent) {
+    return {
+      parent: null,
+      fileName: "",
+      label: parentId ? `Missing state ${parentId}` : "No declared parent",
+      broken: !!parentId,
+    };
+  }
+  const fileName = parent.approvedFile || (parent.isDefault ? entity.approvedFile || "" : "");
+  return { parent, fileName, label: parent.name || "Default" };
 }
 window.openContinuityStateVariant = async (list, id, stateId) => {
   const entity = P[list]?.find((item) => item.id === id);
   const state = entityStateById(entity, stateId);
   if (!entity || !state || state.isDefault) return toast("Choose a non-default continuity state");
   const parentInfo = entityStateParentSummary(entity, state);
-  let changed = false;
-  /* BATCH 1C: opening the variant editor writes no lineage. It used to
-     establish a parent for a state that declared none — a repair performed as a
-     side effect of navigation, which is the shape of every lineage defect in
-     this file's history. A state with no declared parent is shown as such and
-     stays that way until a person creates one from the reference they mean. */
-  if (state.generationMode !== "derive") { state.generationMode = "derive"; changed = true; }
-  if (changed) dirty();
+  /* OPENING THE VARIANT EDITOR WRITES NOTHING AT ALL.
+   *
+   * Batch 1C stopped it establishing a PARENT and left it establishing a
+   * generation MODE: `state.generationMode = "derive"` on the way past. That is
+   * still a production write performed by navigation — a creator who had
+   * deliberately marked a state independent found it silently switched back by
+   * looking at it, and a cancelled inspection left the project dirty.
+   *
+   * Nothing here mutates. The mode a state generates in is decided at the
+   * generation action, which is where the creator actually asks for one. */
   closeModal();
   window.boundedWriteState?.("selected:entity-coverage-view", `${list}:${id}`, "states");
   window.boundedWriteState?.("selected:continuity-state", `${list}:${id}`, stateId);
@@ -650,15 +691,18 @@ function continuityStatesPanel(list, it, media = []) {
   const selectedIndex = Math.max(0, states.findIndex((state) => state.id === selectedId));
   const st = states[selectedIndex] || states[0];
   const parentInfo = st ? entityStateParentSummary(it, st) : null;
-  const selectedApprovedFile = st ? (st.approvedFile || (st.isDefault ? it.approvedFile || "" : "")) : "";
+  const stateTruth = entityStateTruth(list, it);
+  const selectedStanding = st ? stateTruth.of(st) : { standing: "missing", file: "" };
+  const selectedApprovedFile = selectedStanding.file;
+  const selectedIsCanon = selectedStanding.standing === "canon";
   const selectedApprovedMedia = selectedApprovedFile ? (media || []).find((item) => item.name === selectedApprovedFile) : null;
-  const selectedApprovedHero = st ? `<section class="state-approved-hero ${selectedApprovedMedia ? "is-approved" : "is-missing"}"><div class="state-approved-hero-copy"><span>${selectedApprovedMedia ? "CURRENT APPROVED IMAGE" : "APPROVED IMAGE REQUIRED"}</span><b>${esc(st.name || "State")}</b><small>${selectedApprovedFile ? esc(selectedApprovedFile) : "No image has been approved for this state."}</small>${!st.isDefault && parentInfo?.label ? `<em>Derived from ${esc(parentInfo.label)}</em>` : ""}</div>${selectedApprovedMedia ? `<button type="button" class="state-approved-preview" onclick="openMediaTheatre('${attr(encodeURIComponent(selectedApprovedMedia.url))}','${attr(encodeURIComponent(`${st.name || "State"} approved image · ${selectedApprovedFile}`))}','${isVideo(selectedApprovedMedia.name) ? "video" : "image"}')">${isVideo(selectedApprovedMedia.name) ? `<video muted src="${attr(selectedApprovedMedia.url)}"></video>` : `<img src="${attr(selectedApprovedMedia.url)}" alt="Approved ${attr(st.name || "state")}">`}<span>VIEW LARGE</span></button>` : `<button type="button" class="approve-btn" onclick="approveEntityFile('${attr(list)}','${attr(it.id)}','','${attr(st.id)}')">CHOOSE APPROVED IMAGE</button>`}</section>` : "";
+  const selectedApprovedHero = st ? `<section class="state-approved-hero ${selectedApprovedMedia ? (selectedIsCanon ? "is-approved" : "is-historic") : "is-missing"}"><div class="state-approved-hero-copy"><span>${!selectedApprovedMedia ? "CANON IMAGE REQUIRED" : selectedIsCanon ? "CANON IMAGE" : "HISTORIC IMAGE · NOT APPROVED"}</span><b>${esc(st.name || "State")}</b><small>${!selectedApprovedFile ? "No image has been approved for this state." : selectedIsCanon ? esc(selectedApprovedFile) : `${esc(selectedApprovedFile)} — previously selected, never approved. Approve it to make it canon.`}</small>${!st.isDefault && parentInfo?.label ? `<em>Derived from ${esc(parentInfo.label)}</em>` : ""}</div>${selectedApprovedMedia ? `<button type="button" class="state-approved-preview" onclick="openMediaTheatre('${attr(encodeURIComponent(selectedApprovedMedia.url))}','${attr(encodeURIComponent(`${st.name || "State"} approved image · ${selectedApprovedFile}`))}','${isVideo(selectedApprovedMedia.name) ? "video" : "image"}')">${isVideo(selectedApprovedMedia.name) ? `<video muted src="${attr(selectedApprovedMedia.url)}"></video>` : `<img src="${attr(selectedApprovedMedia.url)}" alt="Approved ${attr(st.name || "state")}">`}<span>VIEW LARGE</span></button>` : `<button type="button" class="approve-btn" onclick="approveEntityFile('${attr(list)}','${attr(it.id)}','','${attr(st.id)}')">CHOOSE APPROVED IMAGE</button>`}</section>` : "";
   const sectionKey = `entity:${list}:${it.id}:continuity-states`;
   const rail = `<nav class="continuity-state-rail" aria-label="Continuity states">${states.map((state, index) => {
-    const approved = !!(state.approvedFile || (state.isDefault && it.approvedFile));
+    const standing = stateTruth.of(state).standing;
     const requirement = referenceRequirement(state, state.isDefault);
-    const tone = approved ? "complete" : requirement === "required" ? "attention" : requirement === "planned" ? "pending" : "optional";
-    const status = state.isDefault ? "Main approved image" : approved ? "Approved" : referenceRequirementLabel(state);
+    const tone = standing === "canon" ? "complete" : standing === "historic" ? "pending" : requirement === "required" ? "attention" : requirement === "planned" ? "pending" : "optional";
+    const status = standing === "canon" ? (state.isDefault ? "Main canon image" : "Canon") : standing === "historic" ? "Historic · not approved" : referenceRequirementLabel(state);
     return `<button type="button" class="tone-${tone} ${state.id===selectedId?"selected":""}" onclick="selectBoundedItem('continuity-state','${attr(list+":"+it.id)}','${attr(state.id)}')"><i></i><span><b>${esc(state.name || `State ${index+1}`)}</b><small>${status}</small></span></button>`;
   }).join("")}</nav>`;
   const editor = st ? `<article class="continuity-state-card continuity-state-card-focused ${st.isDefault ? "is-default" : ""}" data-continuity-state-id="${attr(st.id)}"><div class="continuity-state-head"><span>${selectedIndex + 1}</span><input value="${attr(st.name || "")}" placeholder="Clean suit / Damaged sleeve / Night lighting" onchange="setContinuityState('${list}','${it.id}',${selectedIndex},'name',this.value)" ${st.isDefault ? 'data-default="1"' : ''}><div class="continuity-state-head-actions">${st.isDefault ? `<button class="chip" onclick="approveEntityFile('${list}','${it.id}','${attr(st.approvedFile || '')}','${attr(st.id)}')">CHOOSE AUTHORITY</button>` : `<button class="chip" onclick="openContinuityStateVariant('${attr(list)}','${attr(it.id)}','${attr(st.id)}')">${st.approvedFile ? "EDIT / REGENERATE" : `GENERATE FROM ${esc(parentInfo.label.toUpperCase())}`}</button><button class="ghost-btn" onclick="openStateReferenceUpload('${attr(list)}','${attr(it.id)}','${attr(st.id)}')">UPLOAD STATE REFERENCE</button><button class="chip" onclick="approveEntityFile('${attr(list)}','${attr(it.id)}','','${attr(st.id)}')">CHOOSE CANDIDATE</button><button class="icon-danger" onclick="removeContinuityState('${list}','${it.id}',${selectedIndex})">×</button>`}</div></div>${selectedApprovedHero}${continuityStateValidationMarkup(list,it,st,media)}<div class="continuity-state-scope"><label>Applies to scenes / shots<input value="${attr(st.appliesTo || "")}" placeholder="Scenes 1–2 or L2-01, L2-02" onchange="setContinuityState('${list}','${it.id}',${selectedIndex},'appliesTo',this.value)"></label>${st.isDefault ? `<label>Reference requirement<input value="Required — the main approved image" disabled></label>` : `<label>Reference requirement${referenceRequirementSelect(referenceRequirement(st), `setContinuityState('${list}','${it.id}',${selectedIndex},'referenceRequirement',this.value);dirty();route()`)}</label>`}<div class="state-approved-readout"><span>Approved image</span><b>${esc(st.approvedFile || (st.isDefault ? it.approvedFile || "None selected" : "None selected"))}</b><small>Use Upload State Reference or Choose Candidate above.</small></div></div><label class="continuity-state-delta"><span>${st.isDefault ? "Base-state notes" : "State change / delta"}</span><textarea placeholder="${st.isDefault ? "Primary appearance and any details that must always remain true." : "What changes from the parent state? Also name anything that must remain unchanged."}" onchange="setContinuityState('${list}','${it.id}',${selectedIndex},'notes',this.value)">${esc(st.notes || "")}</textarea></label>${typeof assetStatePromptStudio === "function" ? assetStatePromptStudio(list, it, st) : ""}${continuityStateCandidateTray(list,it,st,media)}</article>` : '<div class="canon-notes">No continuity states yet.</div>';
@@ -1120,20 +1164,28 @@ function referenceCreationHub(list, entity) {
   if (list === "audio") return "";
   const states = entityStateListRead(entity, true);
   const primary = states.find((state) => state.isDefault) || states[0];
-  const primaryFile = primary?.approvedFile || entity.approvedFile || "";
+  /* MB-PT-02: canon, not pointer presence. A raw pointer is historic and the
+     hub reports it as work still to do. */
+  const hubTruth = entityStateTruth(list, entity);
+  const primaryFile = primary ? hubTruth.of(primary).file : "";
+  const primaryIsCanon = primary ? hubTruth.of(primary).standing === "canon" : false;
   const mediaCount = entityMedia(list, entity).length;
   const coverage = typeof ensureCoverageSlots === "function" ? ensureCoverageSlots(list, entity) : (entity.coverageSlots || []);
   const selectedViews = coverage.filter((slot) => slotSelectedFile(slot)).length;
-  const approvedStates = states.filter((state) => state.approvedFile || (state.isDefault && entity.approvedFile)).length;
-  return `<section class="reference-manual-hub"><header><div><span>UPLOAD & ORGANIZE</span><h2>Build the reference pack</h2><p>Import work made anywhere, choose which images are approved, split reference sheets into usable angles, then attach them to shots. AI review and generation are optional.</p></div><span class="reference-manual-status">${primaryFile ? "PRIMARY READY" : "PRIMARY NEEDED"} · ${selectedViews}/${coverage.length || 0} VIEWS · ${approvedStates}/${states.length || 0} STATES</span></header><div class="reference-manual-actions"><button class="approve-btn recommended" onclick="document.getElementById('entity-file').click()"><span>Upload reference files</span><small>Add existing images or video from disk</small></button><button class="ghost-btn" onclick="openImportedReferenceMapper('${attr(list)}','${attr(entity.id)}')"><span>Map imported references</span><small>Assign a single image to primary, state, angle, or expression</small></button><button class="ghost-btn" ${mediaCount ? "" : "disabled"} onclick="openCoverageSheetPicker('${attr(list)}','${attr(entity.id)}')"><span>Crop reference sheet</span><small>Cut a turnaround or contact sheet into individual angle files</small></button><button class="ghost-btn" ${mediaCount ? "" : "disabled"} onclick="approveEntityFile('${attr(list)}','${attr(entity.id)}','${attr(primaryFile)}','${attr(primary?.id || "state-default")}')"><span>Choose the main approved image</span><small>${primaryFile ? `Currently ${esc(primaryFile)}` : mediaCount ? "Select one uploaded image" : "Upload a reference first"}</small></button></div><div class="reference-manual-principle"><b>CineBraid stores the production truth.</b><span>Human approval is enough. Optional AI checks can be run later without changing the image you approved.</span></div></section>`;
+  const approvedStates = states.filter((state) => hubTruth.of(state).standing === "canon").length;
+  return `<section class="reference-manual-hub"><header><div><span>UPLOAD & ORGANIZE</span><h2>Build the reference pack</h2><p>Import work made anywhere, choose which images are approved, split reference sheets into usable angles, then attach them to shots. AI review and generation are optional.</p></div><span class="reference-manual-status">${primaryIsCanon ? "PRIMARY CANON" : primaryFile ? "PRIMARY HISTORIC · APPROVE IT" : "PRIMARY NEEDED"} · ${selectedViews}/${coverage.length || 0} VIEWS · ${approvedStates}/${states.length || 0} STATES</span></header><div class="reference-manual-actions"><button class="approve-btn recommended" onclick="document.getElementById('entity-file').click()"><span>Upload reference files</span><small>Add existing images or video from disk</small></button><button class="ghost-btn" onclick="openImportedReferenceMapper('${attr(list)}','${attr(entity.id)}')"><span>Map imported references</span><small>Assign a single image to primary, state, angle, or expression</small></button><button class="ghost-btn" ${mediaCount ? "" : "disabled"} onclick="openCoverageSheetPicker('${attr(list)}','${attr(entity.id)}')"><span>Crop reference sheet</span><small>Cut a turnaround or contact sheet into individual angle files</small></button><button class="ghost-btn" ${mediaCount ? "" : "disabled"} onclick="approveEntityFile('${attr(list)}','${attr(entity.id)}','${attr(primaryFile)}','${attr(primary?.id || "state-default")}')"><span>Choose the main approved image</span><small>${primaryFile ? `${primaryIsCanon ? "Currently" : "Historic, not approved:"} ${esc(primaryFile)}` : mediaCount ? "Select one uploaded image" : "Upload a reference first"}</small></button></div><div class="reference-manual-principle"><b>CineBraid stores the production truth.</b><span>Human approval is enough. Optional AI checks can be run later without changing the image you approved.</span></div></section>`;
 }
 function referenceAssistedToolsMarkup(list, entity) {
   if (list === "audio") return "";
   const coverage = typeof ensureCoverageSlots === "function" ? ensureCoverageSlots(list, entity) : (entity.coverageSlots || []);
   const missingRequired = coverage.filter((slot) => referenceRequirement(slot) === "required" && !slotSelectedFile(slot) && !slot.retired).length;
-  const primaryReady = !!(entity.approvedFile || (entity.continuityStates || []).find((state) => state.isDefault)?.approvedFile);
+  /* The assisted tools are gated on CANON, which is also what coverage
+     automation itself requires — so the button and the action now agree instead
+     of the button offering something the action refuses. */
+  const toolsTruth = entityStateTruth(list, entity);
+  const primaryReady = entityStateListRead(entity, true).some((state) => state.isDefault && toolsTruth.of(state).standing === "canon");
   const alternateStates = entityStateListRead(entity, true).filter((state) => !state.isDefault && referenceRequirement(state) === "required");
-  const missingStates = alternateStates.filter((state) => !state.approvedFile).length;
+  const missingStates = alternateStates.filter((state) => toolsTruth.of(state).standing !== "canon").length;
   const expressionButton = list === "characters" ? `<button class="ghost-btn" onclick="openCoverageExpressionAutomation('${attr(entity.id)}')"><span>Generate expression sheet</span><small>Optional faces and performance coverage</small></button>` : "";
   const sectionKey = `reference-assisted:${list}:${entity.id}`;
   const open = workspaceSectionOpen(sectionKey, !manualFirstWorkflow());
@@ -1177,7 +1229,8 @@ function boundedEntityTaskStatus(list, entity, taskId, activeCandidates, states)
   /* Same status vocabulary as the shot taskbar (STAGE_STATUS), for the same reason:
      the two taskbars look identical, so they must not speak different languages.
      Counts live in `note`, which the taskbar prints in the description line. */
-  const primary = !!(entity.approvedFile || states.find((state)=>state.isDefault)?.approvedFile);
+  const taskTruth = entityStateTruth(list, entity);
+  const primary = states.some((state) => state.isDefault && taskTruth.of(state).standing === "canon");
   /* An audio entity has no image. It inherited this taskbar because it is an
      entity, and inherited the word "image" with it — so a voice reference used
      to report that it had "no approved image yet". The material a voice is
@@ -1187,8 +1240,8 @@ function boundedEntityTaskStatus(list, entity, taskId, activeCandidates, states)
   if (taskId === "coverage") {
     const coverage = coverageStats(ensureCoverageSlots(list,entity));
     const expressions = list === "characters" ? coverageStats(ensureExpressionSlots(entity).filter((slot)=>!slot.retired)) : {missingRequired:0};
-    const missingStates = states.filter((state)=>!state.isDefault && referenceRequirement(state) === "required" && !state.approvedFile).length;
-    const planned = states.filter((state)=>!state.isDefault && referenceRequirement(state) === "planned" && !state.approvedFile).length + coverage.planned + expressions.planned;
+    const missingStates = states.filter((state)=>!state.isDefault && referenceRequirement(state) === "required" && taskTruth.of(state).standing !== "canon").length;
+    const planned = states.filter((state)=>!state.isDefault && referenceRequirement(state) === "planned" && taskTruth.of(state).standing !== "canon").length + coverage.planned + expressions.planned;
     const active = entityCoverageActiveJobs(list,entity.id,"angles").length + (list === "characters" ? entityCoverageActiveJobs("characters",entity.id,"expressions").length : 0);
     const missing = coverage.missingRequired + expressions.missingRequired + missingStates;
     return active ? {tone:"active",label:STAGE_STATUS.running} : missing ? {tone:"attention",label:STAGE_STATUS.incomplete,note:`${plural(missing, "required view")} missing`} : planned ? {tone:"pending",label:STAGE_STATUS.inProgress,note:`${plural(planned, "view")} planned`} : {tone:"complete",label:STAGE_STATUS.complete};
@@ -1209,24 +1262,34 @@ function boundedEntityTaskbarMarkup(list, entity, specs, selectedId, activeCandi
 }
 function entityAuthoritySummaryMarkup(list, entity, states, mediaByName, selectedTask = "") {
   if (list === "audio") return "";
-  const approvedCount = states.filter((state)=>state.approvedFile || (state.isDefault && entity.approvedFile)).length;
-  const authorityStatus = `<b class="entity-authority-status"><strong>${approvedCount}/${states.length}</strong><span>${pluralWord(states.length, "state has", "states have")} an approved image</span></b>`;
-  if (selectedTask === "coverage") return `<section class="entity-authority-summary is-compact"><header><div><span class="entity-authority-label">APPROVED IMAGES</span>${authorityStatus}<small>Approved images for each state are chosen in the editor below.</small></div></header></section>`;
+  /* MB-PT-02: counted and headlined from the projection, not from pointer
+     presence. A state whose pointer nobody approved is HISTORIC and is reported
+     as work still to do, which is what it is. */
+  const stateTruth = entityStateTruth(list, entity);
+  const approvedCount = states.filter((state) => stateTruth.of(state).standing === "canon").length;
+  const authorityStatus = `<b class="entity-authority-status"><strong>${approvedCount}/${states.length}</strong><span>${pluralWord(states.length, "state has", "states have")} a canon image</span></b>`;
+  if (selectedTask === "coverage") return `<section class="entity-authority-summary is-compact"><header><div><span class="entity-authority-label">CANON IMAGES</span>${authorityStatus}<small>Approved images for each state are chosen in the editor below.</small></div></header></section>`;
   const rows = states.map((state) => {
-    const fileName = state.approvedFile || (state.isDefault ? entity.approvedFile || "" : "");
+    const standing = stateTruth.of(state);
+    const fileName = standing.file;
+    const isCanon = standing.standing === "canon";
     const media = mediaByName.get(fileName);
     const candidate = fileName ? entityCandidateRow(entity, fileName, false) : null;
-    const approvalNote = candidate?.humanApprovedWithoutAI ? " · Human approved, not AI checked" : candidate?.humanApproved ? " · Human approved" : "";
+    /* The note describes the CURRENT standing. A cached humanApproved that no
+       receipt supports reads as history, never as an approval. */
+    const approvalNote = !isCanon ? (fileName ? " · Historic, not approved" : "")
+      : candidate?.humanApprovedWithoutAI ? " · Human approved, not AI checked"
+        : candidate?.humanApproved ? " · Human approved" : "";
     const isSheet = !!(media && entityCandidateIsCoverageSheet(entity, fileName));
     const openState = `boundedWriteState('selected:entity-coverage-view','${attr(list+":"+entity.id)}','states');boundedWriteState('selected:continuity-state','${attr(list+":"+entity.id)}','${attr(state.id)}');selectBoundedTask('entity-task','${attr(list+":"+entity.id)}','coverage')`;
     /* O5: this thumbnail is an APPROVED AUTHORITY — the image that defines a
        continuity state. Inspecting it is the question a filmmaker actually has here
        ("what is this the authority for, and who approved it"), so the click opens the
        Inspector; its own Open-full-preview covers the old behaviour. */
-    const previewAction = media ? `inspectMediaFile('${attr(encodeURIComponent(media.url))}','${attr(media.assetId || "")}','${attr(encodeURIComponent(`${state.name || "Default"} approved image · ${fileName}`))}','${isVideo(media.name) ? "video" : "image"}')` : openState;
-    return `<article class="entity-authority-row ${media?"ready":"missing"} ${isSheet?"is-sheet":""}"><button type="button" class="entity-authority-thumb-button" onclick="${previewAction}" aria-label="${media ? `Preview approved ${attr(state.name || "state")} authority` : `Open ${attr(state.name || "state")}`}"><span class="entity-authority-thumb">${media ? (isVideo(media.name) ? `<video muted src="${attr(media.url)}"></video>` : `<img src="${attr(media.url)}" alt="">`) : "—"}</span><small>${media ? "INSPECT" : "MISSING"}</small></button><button type="button" class="entity-authority-details" onclick="${openState}"><span><b>${esc(state.name || "Default")}</b><small>${fileName ? `${esc(fileName)}${esc(approvalNote)}` : "No approved image yet"}</small></span><em>${isSheet?"MULTI-VIEW SHEET":media?"APPROVED":"MISSING"}</em></button>${isSheet ? `<button type="button" class="chip entity-authority-extract" onclick="openCoverageSheetExtractor('${attr(list)}','${attr(entity.id)}','${attr(fileName)}')">EXTRACT VIEWS</button>` : ""}</article>`;
+    const previewAction = media ? `inspectMediaFile('${attr(encodeURIComponent(media.url))}','${attr(media.assetId || "")}','${attr(encodeURIComponent(`${state.name || "Default"} canon image · ${fileName}`))}','${isVideo(media.name) ? "video" : "image"}')` : openState;
+    return `<article class="entity-authority-row ${media && isCanon ? "ready" : media ? "historic" : "missing"} ${isSheet?"is-sheet":""}"><button type="button" class="entity-authority-thumb-button" onclick="${previewAction}" aria-label="${media ? `Preview approved ${attr(state.name || "state")} authority` : `Open ${attr(state.name || "state")}`}"><span class="entity-authority-thumb">${media ? (isVideo(media.name) ? `<video muted src="${attr(media.url)}"></video>` : `<img src="${attr(media.url)}" alt="">`) : "—"}</span><small>${media ? "INSPECT" : "MISSING"}</small></button><button type="button" class="entity-authority-details" onclick="${openState}"><span><b>${esc(state.name || "Default")}</b><small>${fileName ? `${esc(fileName)}${esc(approvalNote)}` : "No approved image yet"}</small></span><em>${isSheet?"MULTI-VIEW SHEET":media?"APPROVED":"MISSING"}</em></button>${isSheet ? `<button type="button" class="chip entity-authority-extract" onclick="openCoverageSheetExtractor('${attr(list)}','${attr(entity.id)}','${attr(fileName)}')">EXTRACT VIEWS</button>` : ""}</article>`;
   }).join("");
-  return `<section class="entity-authority-summary"><header><div><span class="entity-authority-label">APPROVED IMAGES</span>${rows ? authorityStatus : `<b class="entity-authority-status"><span>No states</span></b>`}</div></header><div>${rows}</div></section>`;
+  return `<section class="entity-authority-summary"><header><div><span class="entity-authority-label">CANON IMAGES</span>${rows ? authorityStatus : `<b class="entity-authority-status"><span>No states</span></b>`}</div></header><div>${rows}</div></section>`;
 }
 function entityCoverageStatesMarkup(list, entity, mediaByName, media) {
   const views = [{id:"coverage",label:"Angles / views",render:()=>coverageBoardMarkup(list,entity,mediaByName,media)}];

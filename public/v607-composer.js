@@ -509,12 +509,15 @@
     const attached = [...resolved.characters, ...resolved.locations, ...resolved.props];
     if (!attached.length)
       return `<div class="guided-empty-inline"><b>No cast or assets yet.</b><span>Attach the shot location, characters, or props before staging it.</span><button class="ghost-btn" onclick="openShotInputsPanel('${s.id}')">CHOOSE CAST & ASSETS</button></div>`;
+    /* WORKFLOW, NOT CANON. Staging needs a usable image on disk; whether the
+       creator approved it is a different question and is not the one this
+       message answers. The wording says so. */
     const missingFile = attached.filter((entity) => entity.approvedFile && !shotCreationReferences(s).some((ref) => ref.entityId === entity.id && ref.url));
     if (missingFile.length)
-      return `<div class="guided-empty-inline"><b>${esc(missingFile.map((item) => item.name || item.id).join(", "))} approved image is missing from the local project folders.</b><span>Restore the file, then sync local folders.</span><button class="ghost-btn" onclick="document.getElementById('rescan')?.click()">SYNC LOCAL FOLDERS</button></div>`;
-    const unapproved = attached.filter((entity) => !entity.approvedFile);
-    if (unapproved.length)
-      return `<div class="guided-empty-inline"><b>${esc(unapproved.map((item) => item.name || item.id).join(", "))} ${unapproved.length === 1 ? "has" : "have"} no approved image yet.</b><span>Open the attached record and approve a usable reference.</span><button class="ghost-btn" onclick="openShotInputsPanel('${s.id}')">REVIEW ATTACHED ASSETS</button></div>`;
+      return `<div class="guided-empty-inline"><b>${esc(missingFile.map((item) => item.name || item.id).join(", "))} reference image is missing from the local project folders.</b><span>Restore the file, then sync local folders.</span><button class="ghost-btn" onclick="document.getElementById('rescan')?.click()">SYNC LOCAL FOLDERS</button></div>`;
+    const withoutImage = attached.filter((entity) => !entity.approvedFile);
+    if (withoutImage.length)
+      return `<div class="guided-empty-inline"><b>${esc(withoutImage.map((item) => item.name || item.id).join(", "))} ${withoutImage.length === 1 ? "has" : "have"} no reference image yet.</b><span>Open the attached record and approve a usable reference.</span><button class="ghost-btn" onclick="openShotInputsPanel('${s.id}')">REVIEW ATTACHED ASSETS</button></div>`;
     return `<div class="guided-empty-inline"><b>No usable staging references are enabled.</b><span>Re-enable an attached image in Source & References.</span><button class="ghost-btn" onclick="openShotInputsPanel('${s.id}')">MANAGE REFERENCES</button></div>`;
   }
   function referenceSetsMarkup(s) {

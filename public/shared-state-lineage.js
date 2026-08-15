@@ -419,7 +419,9 @@ function continuationCandidates(states, currentStateId) {
     .map((state) => ({
       id: state.id,
       name: state.name,
-      approved: !!state.approvedFile,
+      /* HAS AN IMAGE — not "is approved". Whether a person approved it is a
+         receipt question this module deliberately knows nothing about. */
+      hasImage: !!state.approvedFile,
       isDirectChild: childIds.has(state.id),
     }));
 }
@@ -433,7 +435,7 @@ function continuationCandidates(states, currentStateId) {
    is the state whose parent is now available. */
 function continuationOutcome(states, currentStateId) {
   const candidates = continuationCandidates(states, currentStateId);
-  const unfinished = candidates.filter((candidate) => !candidate.approved);
+  const unfinished = candidates.filter((candidate) => !candidate.hasImage);
   if (!unfinished.length) {
     return {
       kind: "complete",

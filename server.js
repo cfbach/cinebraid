@@ -991,7 +991,13 @@ function projectReadinessIssues(P) {
       const entity = (P[list] || []).find((item) => String(item.id) === String(ref.id));
       const href = `#/${route}/${encodeURIComponent(ref.id || "")}`;
       if (!String(ref.canon || "").trim()) addEntityIssue("entity-canon", `${ref.name || ref.id} has no canon text.`, href, shot.id, ref.id);
-      if (!String(ref.approvedFile || "").trim()) addEntityIssue("entity-reference", `${ref.name || ref.id} has no approved reference image.`, href, shot.id, ref.id);
+      /* NON-AUTHORITATIVE BY CONSTRUCTION: this reports the ABSENCE of an image,
+         which pointer presence answers correctly and a receipt does not. It makes
+         no claim that a present image was approved, and the wording no longer
+         says it did — a legacy project full of unreceipted pointers is not
+         "missing references", it is pending approval, which the reference page
+         reports as HISTORIC. */
+      if (!String(ref.approvedFile || "").trim()) addEntityIssue("entity-reference", `${ref.name || ref.id} has no reference image.`, href, shot.id, ref.id);
       else if (!entityApprovedDiskPath(list, entity)) addEntityIssue("missing-file", `${ref.name || ref.id} points to an approved file that is missing from disk.`, href, shot.id, ref.id);
     }
   }
@@ -1666,7 +1672,9 @@ app.post("/api/project/ask", async (req, res) => {
         keyframes: (s.keyframes || []).map((f) => ({
           label: f.label,
           title: f.title,
-          approved: !!f.winner,
+          /* MB-PT-02: the assistant is told what is APPROVED, so it must be
+             told the truth. A pointer is not an approval. */
+          approved: ProductionAuthority.hasCurrentHumanAuthority(P, { kind: "shot-frame", shotId: s.id, frameId: f.id }),
           description: f.description || "",
         })),
         motion: (s.clips || []).map((c) => ({
@@ -1678,7 +1686,7 @@ app.post("/api/project/ask", async (req, res) => {
           fromFrame: c.fromFrame || "",
           toFrame: c.toFrame || "",
           packageCount: (c.generationPackages || []).length,
-          approved: !!c.videoWinner,
+          approved: ProductionAuthority.hasCurrentHumanAuthority(P, { kind: "shot-motion", shotId: s.id, unitKey: c.id || c.suffix || "" }),
         })),
         candidateCount: (mediaScan.shots?.[s.id]?.takes || []).length,
         notes: s.notes || "",
@@ -2696,7 +2704,7 @@ function validateImportedProject(raw) {
       }
       if (entity.approvedFile || states.some((state) => state?.approvedFile))
         warnings.push(
-          `${kind} ${entity.id} claimed approved media; approval filenames will be cleared because files are not part of Project Builder JSON.`,
+          `${kind} ${entity.id} carries reference filenames; they will be cleared because files are not part of Project Builder JSON.`,
         );
     }
   }
@@ -7639,7 +7647,15 @@ app.post("/api/search", async (req, res) => {
 app.get("/api/bible", (req, res) => {
   try {
     const P = readJsonSync(DATA());
-    const approved = (x) => x.status === "APPROVED";
+    /* MB-PT-02 — THE BIBLE PUBLISHES CANON, AND CANON IS A RECEIPT.
+        `x.status === "APPROVED"` is a WORKFLOW word a run can write. An entity
+        is in the Bible's approved set when the creator approved at least one of
+        its states, which is a question only the ledger answers. */
+    const entityCanonFiles = (listName, entity) => new Set(
+      (ProductionAuthority.entityProductionTruth(P, listName, entity && entity.id).canon || [])
+        .map((row) => row.value).filter(Boolean),
+    );
+    const approvedIn = (listName) => (x) => entityCanonFiles(listName, x).size > 0;
     const media = {
       anchors: listMedia("anchors"),
       plates: listMedia("plates"),
@@ -7656,9 +7672,12 @@ app.get("/api/bible", (req, res) => {
       const ownerIndex = EntityOwnership.buildEntityOwnerIndex(P, listName);
       return list.map((e) => {
         const matched = EntityOwnership.filterEntityMedia(ownerIndex, e.id, pool);
-        const selected = e.approvedFile
-          ? matched.filter((m) => m.name === e.approvedFile)
-          : matched;
+        /* CANON ONLY. This fell back to EVERY owned file when the entity had no
+            raw pointer, so a supporting image entered a document that describes
+            itself as approved production truth. An entity with no canon
+            contributes no approved media, which is the honest answer. */
+        const canonFiles = entityCanonFiles(listName, e);
+        const selected = matched.filter((m) => canonFiles.has(m.name));
         return {
           ...e,
           made: (e.made || []).map((g) => ({
@@ -7687,7 +7706,10 @@ app.get("/api/bible", (req, res) => {
           description: f.description || "",
           notes: f.notes || "",
           required: f.required !== false,
-          winner: findMedia(f.winner),
+          /* CANON ONLY. `f.winner` is a pointer; the Bible publishes decisions. */
+          winner: ProductionAuthority.hasCurrentHumanAuthority(P, { kind: "shot-frame", shotId: s.id, frameId: f.id })
+            ? findMedia(f.winner)
+            : null,
           package:
             resolvePromptBuildList(P, f.generationPackages || [])
               .slice()
@@ -7712,7 +7734,9 @@ app.get("/api/bible", (req, res) => {
             line: c.line || "",
             speakerId: c.speakerId || "",
             audioNote: c.audioNote || c.vo || "",
-            winner: findMedia(c.videoWinner),
+            winner: ProductionAuthority.hasCurrentHumanAuthority(P, { kind: "shot-motion", shotId: s.id, unitKey: c.id || c.suffix || "" })
+              ? findMedia(c.videoWinner)
+              : null,
             package:
               resolvePromptBuildList(P, c.generationPackages || [])
                 .slice()
@@ -7720,8 +7744,15 @@ app.get("/api/bible", (req, res) => {
                 .find((g) => g.prompt) || null,
           };
         });
+        /* `locked[0]` IS DELETED. It promoted the first file that happened to be
+            on disk into a document that says these media are approved — file
+            presence standing in for a decision. The shot headline is the opening
+            frame's canon, or the shot's canon deliverable, or nothing. */
         const primaryFrame = keyframes.find((f) => f.winner)?.winner;
-        const winner = primaryFrame || findMedia(s.winner) || locked[0] || null;
+        const deliveryCanon = ProductionAuthority.hasCurrentHumanAuthority(P, { kind: "shot-delivery", shotId: s.id })
+          ? findMedia(s.finalStillFile || (s.creationBrief || {}).finalStillFile || (s.creationBrief || {}).approvedMotionFile)
+          : null;
+        const winner = primaryFrame || deliveryCanon || null;
         const latestPackage = [
           ...keyframes.map((f) => f.package),
           ...motions.map((m) => m.package),
@@ -7793,18 +7824,18 @@ app.get("/api/bible", (req, res) => {
       world: P.meta.world || null,
       styleBlocks: P.meta.styleBlocks || [],
       qcChecklist: P.qcChecklist || [],
-      characters: withMedia("characters", P.characters.filter(approved), media.anchors),
-      locations: withMedia("locations", P.locations.filter(approved), media.plates),
-      props: withMedia("props", P.props.filter(approved), media.props),
-      vehicles: withMedia("vehicles", (P.vehicles || []).filter(approved), media.vehicles || []),
-      audio: withMedia("audio", (P.audio || []).filter(approved), media.audio),
+      characters: withMedia("characters", P.characters.filter(approvedIn("characters")), media.anchors),
+      locations: withMedia("locations", P.locations.filter(approvedIn("locations")), media.plates),
+      props: withMedia("props", P.props.filter(approvedIn("props")), media.props),
+      vehicles: withMedia("vehicles", (P.vehicles || []).filter(approvedIn("vehicles")), media.vehicles || []),
+      audio: withMedia("audio", (P.audio || []).filter(approvedIn("audio")), media.audio),
       shots,
       pending: {
-        characters: P.characters.filter((x) => !approved(x)).length,
-        locations: P.locations.filter((x) => !approved(x)).length,
-        props: P.props.filter((x) => !approved(x)).length,
-        vehicles: (P.vehicles || []).filter((x) => !approved(x)).length,
-        audio: (P.audio || []).filter((x) => !approved(x)).length,
+        characters: P.characters.filter((x) => !approvedIn("characters")(x)).length,
+        locations: P.locations.filter((x) => !approvedIn("locations")(x)).length,
+        props: P.props.filter((x) => !approvedIn("props")(x)).length,
+        vehicles: (P.vehicles || []).filter((x) => !approvedIn("vehicles")(x)).length,
+        audio: (P.audio || []).filter((x) => !approvedIn("audio")(x)).length,
         shots: P.shots.filter(
           (s) => s.status !== "LOCKED" && s.workflowStatus !== "APPROVED",
         ).length,

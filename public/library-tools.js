@@ -359,6 +359,11 @@ window.confirmApproveTake = async () => {
      production output, and the Canon they depend on is the frame authority that
      approved those stills in the first place. */
   const motionEdgeTarget = !(target === "shot" || target.startsWith("frame:") || target.startsWith("segment:"));
+  /* WHICH TARGET THIS CLICK APPROVED. The rename below moves those exact bytes,
+     so the receipt repair is scoped to this one target — a filename is not an
+     identity, and a global sweep rewrote canon for unrelated objects that
+     happened to share a name. */
+  let canonTarget = null;
   try {
     if (target === "shot") {
       const opening = video ? null : (s.keyframes || [])[0];
@@ -366,19 +371,23 @@ window.confirmApproveTake = async () => {
          the shot's winner IS the opening frame's. One receipt, addressed to the
          frame, so the gate predicate finds it whichever way the run named it. */
       if (opening) {
+        canonTarget = { kind: "shot-frame", shotId: id, frameId: opening.id };
         approveFrameCanon(P, { shotId: id, frameId: opening.id, value: name, assetId: displayedAssetId, at, via: "shot-take-approval" });
       } else {
+        canonTarget = { kind: "shot-delivery", shotId: id };
         /* An approved video IS the shot's deliverable, so it goes through the
            delivery boundary rather than writing `s.winner` with no receipt. */
         approveDeliveryCanon(P, { shotId: id, value: name, assetId: displayedAssetId, at, via: "shot-take-approval" });
       }
     } else if (target.startsWith("frame:")) {
       const f = frameById(s, target.slice(6));
+      if (f) canonTarget = { kind: "shot-frame", shotId: id, frameId: f.id };
       if (f) approveFrameCanon(P, { shotId: id, frameId: f.id, value: name, assetId: displayedAssetId, at, via: "shot-take-approval" });
       label = "FRAME APPROVED";
     } else if (target.startsWith("segment:")) {
       const unitId = target.slice(8);
       const c = (s.clips || []).find((x) => unitKey(x) === unitId);
+      if (c) canonTarget = { kind: "shot-motion", shotId: id, unitKey: c.id || unitId };
       if (c) approveMotionCanon(P, { shotId: id, unitKey: c.id || unitId, value: name, assetId: displayedAssetId, at, via: "shot-take-approval" });
       label = "MOTION APPROVED";
     }
@@ -416,7 +425,10 @@ window.confirmApproveTake = async () => {
       /* AND THE RECEIPT FOLLOWS THE BYTES. Without this the receipt names a file
          the edge no longer carries, and the next read revokes a decision a
          person really made. */
-      repairCanonValue(P, { from: name, to: finalName, assetId: renamedAssetId });
+      /* Scoped to the target this click approved, and refused if the identity
+         no longer proves the same bytes — in which case the approval reads as
+         historic rather than being silently repointed. */
+      if (canonTarget) repairCanonValue(P, { ...canonTarget, from: name, to: finalName, assetId: renamedAssetId || displayedAssetId });
       SCAN = await (await fetch("/api/scan")).json();
     } else toast("Could not rename; approval kept the original filename");
   }
@@ -625,7 +637,7 @@ window.syncEntityApprovalContinuation = () => {
   nextNote.textContent = outcome.kind === "complete"
     ? outcome.reason === "no-further-states"
       ? "This is the only continuity state on this reference. Approving completes it."
-      : "Every remaining continuity state on this reference is already approved. Approving completes the chain."
+      : "Every remaining continuity state on this reference already has an image. Approving completes the chain."
     : "Approve this reference and remain on the asset page.";
 };
 window.confirmEntityApproval = async (continueToNext = false) => {
@@ -684,7 +696,11 @@ window.confirmEntityApproval = async (continueToNext = false) => {
       repairApprovalIdentity(x, { from: name, to: finalName, assetId: renamedAssetId, states: entityStateListRead(x, true) });
       /* And the receipt follows the bytes, for the reason given at the shot-side
          twin: otherwise the next read revokes a decision a person really made. */
-      repairCanonValue(P, { from: name, to: finalName, assetId: renamedAssetId });
+      /* Scoped to the entity state this click approved. See the shot-side twin. */
+      repairCanonValue(P, {
+        kind: "entity-state", list, entityId: id, stateId: entityAuthorityStateId,
+        from: name, to: finalName, assetId: renamedAssetId || displayedAssetId,
+      });
       SCAN = await (await fetch("/api/scan")).json();
     } else toast("Rename failed; approved with original filename");
   }

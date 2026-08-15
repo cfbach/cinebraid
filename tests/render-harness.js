@@ -777,6 +777,14 @@ async function main() {
     { stored: "PR-TOOL-CANDIDATE-A.png", decision: "unreviewed", targetStateId: "state-damaged", targetStateName: "Damaged", derivationMode: "derive", structuredReviews: { "state-damaged": { contractVersion: "reference-authority-v3", score: 84, pass: true, stateName: "Damaged", reviewedAt: "2026-07-27T20:00:00Z" } } },
     { stored: "PR-TOOL-CANDIDATE-B.png", decision: "rejected" },
   ];
+  /* Two states the creator approved. Since the acceptance-correction pass that
+     is a statement about the RECEIPT LEDGER, so the fixture carries the receipts
+     a real project has after two approvals — otherwise the page would correctly
+     report 0/2 and this assertion would be testing the defect. */
+  withCanon(stateFixture, [
+    { kind: "entity-state", list: "props", entityId: "PR-TOOL", stateId: "state-default", value: "PR-TOOL_PRIMARY_V001.png" },
+    { kind: "entity-state", list: "props", entityId: "PR-TOOL", stateId: "state-damaged", value: "PR-TOOL_PRIMARY_DAMAGED_V001.png" },
+  ]);
   const stateScan = scanFor(stateFixture);
   stateScan.props = [
     { name: "PR-TOOL_PRIMARY_V001.png", url: "/assets/props/PR-TOOL_PRIMARY_V001.png" },
@@ -785,9 +793,11 @@ async function main() {
     { name: "PR-TOOL-CANDIDATE-B.png", url: "/assets/props/PR-TOOL-CANDIDATE-B.png" },
   ];
   const stateApprovedRender = await render("#/prop/PR-TOOL", stateFixture, { scan: stateScan, storage: { "cinebraid-focused:fixture:entity-task:props:PR-TOOL": "approved" } });
-  assert(stateApprovedRender.html.includes("APPROVED IMAGES"), "reference page must expose the compact approved-image map");
-  assert(/entity-authority-status[^>]*>\s*<strong>2\/2<\/strong>\s*<span>states have an approved image<\/span>/.test(stateApprovedRender.html), "approved-image summary must report continuity coverage with separated label/value markup and correct plural agreement");
-  assert(stateApprovedRender.html.includes("Default") && stateApprovedRender.html.includes("Damaged"), "approved-image summary must name both approved states");
+  /* "CANON IMAGES" since the acceptance-correction pass: the map counts states
+     the creator approved, not states that carry a pointer. */
+  assert(stateApprovedRender.html.includes("CANON IMAGES"), "reference page must expose the compact canon-image map");
+  assert(/entity-authority-status[^>]*>\s*<strong>2\/2<\/strong>\s*<span>states have a canon image<\/span>/.test(stateApprovedRender.html), "canon-image summary must report continuity coverage with separated label/value markup and correct plural agreement");
+  assert(stateApprovedRender.html.includes("Default") && stateApprovedRender.html.includes("Damaged"), "canon-image summary must name both canon states");
   const stateCandidateRender = await render("#/prop/PR-TOOL", stateFixture, { scan: stateScan, storage: { "cinebraid-focused:fixture:entity-task:props:PR-TOOL": "candidates" } });
   assert(stateCandidateRender.html.includes("CHOOSE & APPROVE"), "candidate task must separate unapproved media from canon");
   assert(stateCandidateRender.html.includes("AI 84 · PASS · Damaged"), "stored state-specific vision review must appear on the candidate card");

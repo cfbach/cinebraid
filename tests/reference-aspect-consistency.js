@@ -491,7 +491,7 @@ async function testBrowserAutomationFlow() {
    so it needs its own proof that it carries no literal ratio. */
 async function testBrowserDerivedPrompt() {
   const vm = require("vm");
-  const { render, buildFixture } = require("./render-harness");
+  const { render, buildFixture, withCanon } = require("./render-harness");
   const project = buildFixture();
   project.meta.aspectRatio = "16:9";
   project.meta.format = "Short film · 16:9";
@@ -504,6 +504,10 @@ async function testBrowserDerivedPrompt() {
       { id: "state-dry", name: "Dried off", isDefault: false, approvedFile: "", notes: "Coat dry, hair loose and lifted.", parentStateId: "state-default", generationMode: "derive" },
     ],
   }];
+  /* The default state is APPROVED — a receipt, since the acceptance-correction
+     pass. An unreceipted parent is historic and travels as context, not as an
+     editable base, which is the distinction this assertion is about. */
+  withCanon(project, { kind: "entity-state", list: "characters", entityId: "CHAR-MARA", stateId: "state-default", value: "CHAR-MARA-DEFAULT.png" });
   const rendered = await render("#/character/CHAR-MARA", project, {
     scan: { anchors: [{ name: "CHAR-MARA-DEFAULT.png", url: "/assets/anchors/CHAR-MARA-DEFAULT.png" }], plates: [], props: [], vehicles: [], audio: [], media: [], shots: {} },
     fetch: async (url, init, respond) => (url === "/api/generation/fal/status" ? respond({ enabled: true, configured: true, defaults: {} }) : null),

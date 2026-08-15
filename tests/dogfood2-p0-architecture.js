@@ -375,7 +375,144 @@ async function main() {
     ok(Array.isArray(preflight.errors), "the preflight still reports");
   }
 
-  console.log(`Dogfood #2 counterexample regressions passed ${checks} checks across all eleven Batch 1D findings. Provider calls made: 0.`);
+
+  /* =========================================================================
+     CODEX MB-PT-02 §7.1 — THE ENTITY PAGE.
+     Codex rendered a prop with a raw pointer and no ledger and got
+     "APPROVED IMAGES", "1/1 state has an approved image", an APPROVED row and an
+     APPROVED workflow state — while the projection called the same pointer
+     Historic. Two truths, one screen. */
+  {
+    const project = buildFixture();
+    const prop = project.props.find((row) => row.id === "PR-TOOL") || project.props[0];
+    prop.id = "PR-TOOL";
+    prop.approvedFile = "PR-TOOL-PLATE.png";
+    prop.continuityStates = [{ id: "state-default", name: "Default", isDefault: true, approvedFile: "PR-TOOL-PLATE.png" }];
+    prop.coverageSlots = [];
+    prop.candidateFiles = [{ stored: "PR-TOOL-PLATE.png", decision: "unreviewed" }];
+    project.props = [prop];
+    delete project.productionAuthority;
+    const scan = { anchors: [], plates: [], vehicles: [], audio: [], media: [], shots: {}, props: [{ name: "PR-TOOL-PLATE.png", url: TINY }] };
+    const rendered = await render("#/prop/PR-TOOL", project, { scan, storage: { "cinebraid-focused:fixture:entity-task:props:PR-TOOL": "approved" } });
+    const truth = vm.runInContext('entityProductionTruth(P, "props", "PR-TOOL")', rendered.context);
+    eq(truth.canon.length, 0, "the projection reports no canon for an unreceipted pointer");
+    eq(truth.historic.map((row) => row.value).join(","), "PR-TOOL-PLATE.png", "and reports the plate as historic");
+    const html = rendered.html;
+    ok(!/APPROVED IMAGES/.test(html), "the summary must not be headlined APPROVED IMAGES");
+    ok(/CANON IMAGES/.test(html), "it is headlined CANON IMAGES");
+    ok(/<strong>0\/1<\/strong>/.test(html), "and counts zero of one — a pointer is not a canon state");
+    ok(!/<strong>1\/1<\/strong>/.test(html), "never one of one");
+    ok(/Historic/.test(html), "the pointer is presented as historic");
+    ok(/PR-TOOL-PLATE\.png/.test(html), "while still being shown — historic evidence stays visible and re-approvable");
+  }
+
+  /* =========================================================================
+     CODEX MB-PT-02 §7.2 — THE GENERATION PARENT.
+     An unreceipted parent went out as `role: "base"` labelled
+     "Default approved reference". It may travel as context; it may not be named
+     or ranked as an approved base. */
+  {
+    const project = buildFixture();
+    const prop = project.props.find((row) => row.id === "PR-TOOL") || project.props[0];
+    prop.id = "PR-TOOL";
+    prop.approvedFile = "PR-TOOL-PLATE.png";
+    prop.continuityStates = [
+      { id: "state-default", name: "Default", isDefault: true, approvedFile: "PR-TOOL-PLATE.png" },
+      { id: "state-worn", name: "Worn", isDefault: false, parentStateId: "state-default", approvedFile: "", notes: "Scratched.", generationMode: "derive" },
+    ];
+    project.props = [prop];
+    delete project.productionAuthority;
+    const scan = { anchors: [], plates: [], vehicles: [], audio: [], media: [], shots: {}, props: [{ name: "PR-TOOL-PLATE.png", url: TINY }] };
+    const rendered = await render("#/prop/PR-TOOL", project, { scan });
+    const parsed = JSON.parse(vm.runInContext([
+      '(() => {',
+      '  const e = P.props.find((row) => row.id === "PR-TOOL");',
+      '  const state = e.continuityStates.find((row) => row.id === "state-worn");',
+      '  return JSON.stringify(entityGenerationReferences("props", e, { state, mode: "derive" }).map((r) => ({ role: r.role, label: r.label })));',
+      '})()',
+    ].join("\n"), rendered.context));
+    ok(parsed.length > 0, "the historic parent still travels — it is the image the creator has been working from");
+    ok(!parsed.some((row) => row.role === "base"), "but an unreceipted parent is never an editable base");
+    ok(parsed.some((row) => row.role === "historic-reference"), "it travels under a role that says what it is");
+    ok(!parsed.some((row) => /approved reference/i.test(row.label)), "and is never labelled an approved reference");
+
+    /* And the positive half: with a receipt, the same parent IS the base. */
+    const approved = JSON.parse(JSON.stringify(project));
+    withCanon(approved, { kind: "entity-state", list: "props", entityId: "PR-TOOL", stateId: "state-default", value: "PR-TOOL-PLATE.png" });
+    const withReceipt = await render("#/prop/PR-TOOL", approved, { scan });
+    const canonRefs = JSON.parse(vm.runInContext([
+      '(() => {',
+      '  const e = P.props.find((row) => row.id === "PR-TOOL");',
+      '  const state = e.continuityStates.find((row) => row.id === "state-worn");',
+      '  return JSON.stringify(entityGenerationReferences("props", e, { state, mode: "derive" }).map((r) => ({ role: r.role, label: r.label })));',
+      '})()',
+    ].join("\n"), withReceipt.context));
+    ok(canonRefs.some((row) => row.role === "base"), "an approved parent IS the editable base");
+    ok(canonRefs.some((row) => /canon reference/i.test(row.label)), "and is labelled canon");
+  }
+
+  /* =========================================================================
+     CODEX MB-PT-03 — OPENING THE STATE-VARIANT FLOW WRITES NOTHING.
+     Codex stored a child state as `generationMode: "independent"`, opened the
+     ordinary flow, and watched it become "derive" and the project change. */
+  {
+    const project = buildFixture();
+    const prop = project.props.find((row) => row.id === "PR-TOOL") || project.props[0];
+    prop.id = "PR-TOOL";
+    prop.approvedFile = "PR-TOOL-PLATE.png";
+    prop.continuityStates = [
+      { id: "state-default", name: "Default", isDefault: true, approvedFile: "PR-TOOL-PLATE.png" },
+      { id: "state-worn", name: "Worn", isDefault: false, parentStateId: "state-default", approvedFile: "", notes: "Scratched.", generationMode: "independent" },
+    ];
+    project.props = [prop];
+    const scan = { anchors: [], plates: [], vehicles: [], audio: [], media: [], shots: {}, props: [{ name: "PR-TOOL-PLATE.png", url: TINY }] };
+    const rendered = await render("#/prop/PR-TOOL", project, { scan });
+    const before = vm.runInContext("JSON.stringify(P)", rendered.context);
+    eq(vm.runInContext('P.props[0].continuityStates.find((r) => r.id === "state-worn").generationMode', rendered.context),
+      "independent", "the creator deliberately marked this state independent");
+    vm.runInContext('openContinuityStateVariantHub("props","PR-TOOL")', rendered.context);
+    vm.runInContext('openContinuityStateVariant("props","PR-TOOL","state-worn")', rendered.context);
+    eq(vm.runInContext('P.props[0].continuityStates.find((r) => r.id === "state-worn").generationMode', rendered.context),
+      "independent", "opening the variant flow must not switch it back to derive");
+    eq(vm.runInContext("JSON.stringify(P)", rendered.context), before,
+      "and inspecting or cancelling the flow leaves the project byte-identical");
+  }
+
+  /* =========================================================================
+     CODEX MB-PT-04 — A GHOST PARENT RESOLVES TO NOTHING AND BLOCKS.
+     Codex stored `parentStateId: "ghost"`, watched validation report
+     `parent-missing`, and watched `assetStateParent()` hand back `state-default`
+     anyway — an operational reparent of an immutable state. */
+  {
+    const project = buildFixture();
+    const prop = project.props.find((row) => row.id === "PR-TOOL") || project.props[0];
+    prop.id = "PR-TOOL";
+    prop.approvedFile = "PR-TOOL-PLATE.png";
+    prop.continuityStates = [
+      { id: "state-default", name: "Default", isDefault: true, approvedFile: "PR-TOOL-PLATE.png" },
+      { id: "state-ghosted", name: "Ghosted", isDefault: false, parentStateId: "ghost", approvedFile: "", notes: "Scratched.", generationMode: "derive" },
+    ];
+    project.props = [prop];
+    const scan = { anchors: [], plates: [], vehicles: [], audio: [], media: [], shots: {}, props: [{ name: "PR-TOOL-PLATE.png", url: TINY }] };
+    const rendered = await render("#/prop/PR-TOOL", project, { scan });
+    const probe = JSON.parse(vm.runInContext([
+      '(() => {',
+      '  const e = P.props.find((row) => row.id === "PR-TOOL");',
+      '  const state = e.continuityStates.find((row) => row.id === "state-ghosted");',
+      '  return JSON.stringify({',
+      '    storedParent: state.parentStateId,',
+      '    resolved: (assetStateParent(e, state) || {}).id || "",',
+      '    preflight: v627EntityPreflight("props", e, ["state-ghosted"]).errors,',
+      '  });',
+      '})()',
+    ].join("\n"), rendered.context));
+    eq(probe.storedParent, "ghost", "the durable record names a parent that does not exist");
+    eq(probe.resolved, "", "and it resolves to NOTHING — no default, no other state, no substitute");
+    ok(probe.preflight.some((line) => /no valid parent/i.test(line)),
+      `preflight must block on the broken lineage — got ${JSON.stringify(probe.preflight)}`);
+  }
+
+  console.log(`Dogfood #2 counterexample regressions passed ${checks} checks across all eleven Batch 1D findings and the four Codex acceptance reproductions. Provider calls made: 0.`);
 }
 
 main().catch((error) => {

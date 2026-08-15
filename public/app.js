@@ -135,6 +135,18 @@ const STAGE_STATUS = {
    and "Approved" are deliberately different words for deliberately different states:
    a shot is delivered when a final file is recorded on it, and approved when its
    workflow status is APPROVED. A shot can be either without being the other. */
+/* THE WORKFLOW WORD IS NOT THE CANON WORD.
+ *
+ * `APPROVED` is a shot/reference LIFECYCLE state a run or a human can set; it
+ * means "this record is signed off and closed", and it has never meant that a
+ * person approved specific bytes as production truth. Two different facts wore
+ * one word, and every audit of this codebase has tripped over it.
+ *
+ * The STORED token is unchanged — renaming it would be a data migration, and
+ * nothing here migrates. Only the word a person reads changes. */
+const WORKFLOW_STATUS_LABELS = { APPROVED: "Signed off" };
+const workflowStatusLabel = (key) => WORKFLOW_STATUS_LABELS[key]
+  || String(key).replace(/w/g, (c) => c.toUpperCase());
 const shotIsDelivered = (s) => shotProductionNextAction(s).key === "final";
 const shotIsApproved = (s) => workflowState(s).key === "APPROVED";
 
@@ -2168,10 +2180,23 @@ function shotWinnerApprovalWord(s, name) {
   }
   return best;
 }
+/* THE BADGE ASKS THE LEDGER, NOT THE PROVENANCE RECORD.
+ *
+ * "APPROVED PICK" is the exact phrase the Dogfood #2 forensic audit found on a
+ * machine-written edge, and it was still rendered from `shotWinnerApprovalWord`
+ * — a word an automation RUN writes about itself. A pointer with no receipt is
+ * HISTORIC and the badge says so; it is still shown, because it is real work the
+ * creator can approve in one act. */
 function shotWinnerBadgeMarkup(s, winner) {
-  return shotWinnerApprovalWord(s, winner?.name) === "automatic"
-    ? '<span class="win-badge machine-pick" title="An automated run selected this. It is not an approval.">AUTOMATION PICK</span>'
-    : '<span class="win-badge">APPROVED PICK</span>';
+  if (shotWinnerApprovalWord(s, winner?.name) === "automatic") {
+    return '<span class="win-badge machine-pick" title="An automated run selected this. It is not an approval.">AUTOMATION PICK</span>';
+  }
+  const opening = (s?.keyframes || [])[0];
+  const isCanon = typeof hasCurrentHumanAuthority === "function" && !!opening
+    && hasCurrentHumanAuthority(P, { kind: "shot-frame", shotId: s.id, frameId: opening.id });
+  return isCanon
+    ? '<span class="win-badge">APPROVED PICK</span>'
+    : '<span class="win-badge historic-pick" title="This image was selected but never approved as canon. Approve it to make it production truth.">HISTORIC PICK</span>';
 }
 function workflowState(s, takes = takesFor(s.id)) {
   const explicit = WORKFLOW_STATES.includes(s.workflowStatus)
@@ -2187,7 +2212,7 @@ function workflowState(s, takes = takesFor(s.id)) {
     else key = "DRAFT";
   }
   const cls = key.toLowerCase().replace(/ /g, "-");
-  return { key, label: key.replace(/\b\w/g, (c) => c.toUpperCase()), cls };
+  return { key, label: workflowStatusLabel(key), cls };
 }
 function entityWorkflowState(x) {
   let key = WORKFLOW_STATES.includes(x.workflowStatus) ? x.workflowStatus : "";
@@ -2201,7 +2226,7 @@ function entityWorkflowState(x) {
   }
   return {
     key,
-    label: key.replace(/\b\w/g, (c) => c.toUpperCase()),
+    label: workflowStatusLabel(key),
     cls: key.toLowerCase().replace(/ /g, "-"),
   };
 }

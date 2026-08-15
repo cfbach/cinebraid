@@ -66,9 +66,11 @@ function promptReferenceOptions(s, takes = takesFor(s.id)) {
     const media = entityMediaForReference(entity);
     const selectedState =
       entity.type === "Audio" ? null : selectedEntityStateForShot(s, entity);
-    const approvedFile = selectedState?.approvedFile || entity.approvedFile || "";
+    /* WORKFLOW: which image travels with the prompt. Not a claim that anybody
+       approved it — an unreceipted pointer is historic and still useful here. */
+    const referenceFile = selectedState?.approvedFile || entity.approvedFile || "";
     const chosen =
-      (approvedFile && media.find((item) => item.name === approvedFile)) || media[0];
+      (referenceFile && media.find((item) => item.name === referenceFile)) || media[0];
     if (!chosen) return;
     const mediaType = promptReferenceMediaType(chosen.url || chosen.name);
     out.push({

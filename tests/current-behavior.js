@@ -295,7 +295,7 @@ async function main() {
   assert(llmAdapter.includes('payload.format = "json"'), "strict local tasks must request native structured JSON output");
   assert(read("server.js").includes("returned an empty final response"), "assistant connection testing must reject empty local-model output");
   assert(automation.includes("v628AttachShotAutomationProvenance"), "approved frames must retain durable automation provenance");
-  assert(read("public/entities.js").includes("APPROVED IMAGES"), "reference pages must separate approved state images from the candidate pile");
+  assert(read("public/entities.js").includes("CANON IMAGES"), "reference pages must separate canon state images from the candidate pile");
   assert(read("public/entities.js").includes("Rejected candidates"), "failed entity generations must remain recoverable outside the active candidate grid");
 
   const views = read("public/views.js");

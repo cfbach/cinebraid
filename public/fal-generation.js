@@ -228,13 +228,19 @@ function entityGenerationAuthorityRefs(list, entity, state = null, mode = "indep
   };
   if (state && !state.isDefault && mode === "derive") {
     const parentInfo = typeof assetStateParentMedia === "function" ? assetStateParentMedia(list, entity, state) : { parent: null, media: null, file: "" };
+    /* MB-PT-02: an unreceipted parent is not an approved base. It still
+       travels — it is the image the creator has been working from — under a
+       role and a label that say what it actually is. */
+    const parentIsCanon = parentInfo.standing === "canon";
     if (parentInfo.media) refs.push({
       key: `state-parent:${list}:${entity.id}:${parentInfo.parent?.id || "parent"}`,
-      label: `${parentInfo.parent?.name || "Parent state"} approved reference`,
-      role: "base",
+      label: `${parentInfo.parent?.name || "Parent state"} ${parentIsCanon ? "canon reference" : "historic reference"}`,
+      role: parentIsCanon ? "base" : "historic-reference",
       url: parentInfo.media.url,
       sourceFile: parentInfo.file || parentInfo.media.name || "",
-      instruction: `Exact editable parent for ${state.name || "the target state"}. Preserve the whole image and change only the written state delta.`,
+      instruction: parentIsCanon
+        ? `Exact editable parent for ${state.name || "the target state"}. Preserve the whole image and change only the written state delta.`
+        : `Previously selected for ${parentInfo.parent?.name || "the parent state"} but never approved as canon. Treat it as context for ${state.name || "the target state"}, not as the decision about what this asset looks like.`,
     });
   }
   /* S8A — THE PRIMARY IDENTITY INPUT IS RECEIPT-BACKED, HERE TOO.

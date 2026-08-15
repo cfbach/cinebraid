@@ -304,24 +304,52 @@ function assetStatePromptBuilds(state) {
   state.assetPromptBuilds = Array.isArray(state.assetPromptBuilds) ? state.assetPromptBuilds : [];
   return state.assetPromptBuilds;
 }
+/* AN EXISTING STATE HAS THE PARENT IT RECORDS, OR IT HAS NONE.
+ *
+ * This used to fall back to the default state, and then to any other state at
+ * all. So a state carrying `parentStateId: "ghost"` — which collection
+ * validation correctly reports as `parent-missing` — was OPERATIONALLY
+ * REPARENTED onto the default: it built prompts from the default's image,
+ * previewed against it, and passed a preflight that had already been told the
+ * lineage was broken.
+ *
+ * Ancestry is immutable after creation, and a substitution made at read time is
+ * a reparent nobody authored. There is no fallback. A missing parent resolves to
+ * null, every caller sees "no valid parent", and preflight blocks — which is
+ * what `parent-missing` was always supposed to mean.
+ *
+ * Choosing a DEFAULT parent is still legitimate, but only as an explicit rule
+ * when a state is CREATED. public/shared-state-lineage.js owns that; nothing
+ * here may do it on the way past. */
 function assetStateParent(entity, state) {
   if (!entity || !state || state.isDefault) return null;
-  const states = entityStateListRead(entity, true);
-  return states.find((item) => item.id === state.parentStateId && item.id !== state.id)
-    || states.find((item) => item.isDefault)
-    || states.find((item) => item.id !== state.id)
-    || null;
+  const parentId = String(state.parentStateId || "");
+  if (!parentId) return null;
+  return entityStateListRead(entity, true).find((item) => item.id === parentId && item.id !== state.id) || null;
 }
 function assetStateGenerationMode(entity, state) {
   if (!state || state.isDefault) return "independent";
   return state.generationMode === "independent" ? "independent" : "derive";
 }
+/* MB-PT-02 — THE PARENT CARRIES ITS STANDING, AND EVERY CONSUMER MUST READ IT.
+ *
+ * This resolved the parent's file from a raw pointer, so a default state with
+ * no receipt was handed to generation as an editable base and labelled an
+ * "approved reference". An unreceipted parent is HISTORIC: it may still travel
+ * as context, because it is genuinely the image the creator has been working
+ * from, but nothing may call it approved and a paid run may not derive from it. */
 function assetStateParentMedia(list, entity, state) {
   const parent = assetStateParent(entity, state);
-  const file = parent?.approvedFile || (parent?.isDefault ? entity.approvedFile || "" : "");
-  if (!file) return { parent, file: "", media: null };
+  if (!parent) return { parent: null, file: "", media: null, standing: "none" };
+  const truth = typeof entityProductionTruth === "function"
+    ? entityProductionTruth(P, list, entity && entity.id)
+    : { canon: [], historic: [] };
+  const canonRow = truth.canon.find((row) => row.stateId === parent.id) || null;
+  const historicRow = canonRow ? null : (truth.historic.find((row) => row.stateId === parent.id) || null);
+  const file = (canonRow || historicRow || {}).value || "";
+  if (!file) return { parent, file: "", media: null, standing: "none" };
   const media = entityMedia(list, entity).find((item) => item.name === file) || null;
-  return { parent, file, media };
+  return { parent, file, media, standing: canonRow ? "canon" : "historic" };
 }
 function assetStatePromptMode(list, entity, state) {
   if (!state || state.isDefault) return "t2i";
@@ -2152,8 +2180,15 @@ function guidedFrameRailMarkup(s, frames, takes, selectedId) {
     const step = guidedFrameStepState(s, frame, index, takes);
     const operation = guidedPromptOp("frame", s.id, frame.id);
     const busy = operation?.status === "busy", error = operation?.status === "error";
-    const tone = error ? "attention" : busy ? "active" : step.approved ? "complete" : step.candidates?.length ? "attention" : "pending";
-    const state = error ? "Needs attention" : busy ? "Working" : step.approved ? "Approved" : step.candidates?.length ? `${step.candidates.length} candidate${step.candidates.length === 1 ? "" : "s"}` : step.label;
+    /* MB-PT-02, shot side: the stage label said "Approved" from a raw winner
+       pointer, exactly as the entity page did from a raw approvedFile. The image
+       still shows — it is real work — but a pointer nobody approved reads as
+       HISTORIC and still owes the creator a decision. */
+    const frameIsCanon = !!step.approved && typeof hasCurrentHumanAuthority === "function"
+      && hasCurrentHumanAuthority(P, { kind: "shot-frame", shotId: s.id, frameId: frame.id });
+    const frameIsHistoric = !!step.approved && !frameIsCanon;
+    const tone = error ? "attention" : busy ? "active" : frameIsCanon ? "complete" : frameIsHistoric ? "pending" : step.candidates?.length ? "attention" : "pending";
+    const state = error ? "Needs attention" : busy ? "Working" : frameIsCanon ? "Approved" : frameIsHistoric ? "Historic · approve it" : step.candidates?.length ? `${step.candidates.length} candidate${step.candidates.length === 1 ? "" : "s"}` : step.label;
     return `<button type="button" class="tone-${tone} ${frame.id === selectedId ? "selected" : ""}" onclick="selectBoundedItem('shot-frame','${attr(s.id)}','${attr(frame.id)}')"><i></i><span><b>Frame ${esc(frame.label)}</b><small>${esc(frame.title || (index === 0 ? "Start frame" : index === 1 ? "End frame" : "Additional frame"))}</small></span><small>${esc(state)}</small>${step.approved ? `<img src="${attr(step.approved.url)}" alt="">` : ""}</button>`;
   }).join("")}</nav>`;
 }

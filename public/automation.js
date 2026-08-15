@@ -1182,7 +1182,14 @@ window.openEntityChainAutomationModal = (list, id) => {
   if (!entity) return;
   /* Reads. See openAssetAutomationModal for why. */
   const states = entityStateListRead(entity, true);
-  const defaultIds = states.filter((state) => !(state.approvedFile || (state.isDefault && entity.approvedFile))).map((state) => state.id);
+  /* PRE-TICKED = STILL OWES A DECISION. A state whose pointer nobody approved
+     is HISTORIC and still owes one, so the planner offers it rather than
+     treating a pointer as work already done. */
+  const planTruth = typeof entityProductionTruth === "function"
+    ? entityProductionTruth(P, list, id)
+    : { canon: [] };
+  const planCanon = new Set(planTruth.canon.map((row) => row.stateId));
+  const defaultIds = states.filter((state) => !planCanon.has(state.id)).map((state) => state.id);
   const generationSettings = v6211AutomationGenerationSettings();
   window._v626EntityAutomationDraft = { list, id, stateIds: defaultIds, scope: "state-chain", generationSettings };
   openModal(`<div class="automation-plan-modal"><h3>Plan continuity-state chain — ${esc(entity.name || id)}</h3><div class="modal-sub">PARENT-FIRST DERIVED REFERENCES</div>${v6211GenerationControlsMarkup(generationSettings,"entity",{includeBlocking:false,outputs:3})}<div class="automation-frame-picker">${states.map((state) => { const parent = assetStateParent(entity, state); return `<label><input type="checkbox" class="v626-auto-state" value="${attr(state.id)}" ${defaultIds.includes(state.id) ? "checked" : ""} onchange="updateEntityChainEstimate()"><span><b>${esc(state.name || "State")}</b><small>${state.approvedFile ? `Approved · ${esc(state.approvedFile)}` : "Needs reference"}${state.isDefault ? " · base state" : ` · derives from ${esc(parent?.name || "Default")}`}</small></span></label>`; }).join("")}</div><label class="checkline"><input id="v626-reuse-approved-states" type="checkbox" checked> Reuse already approved states</label><div id="v627-entity-chain-preflight"></div><div id="v626-entity-chain-note" class="automation-cost-guard"></div><div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button id="v626-start-entity-chain" class="approve-btn" onclick="startPlannedEntityAutomation()">START STATE CHAIN</button></div></div>`);
@@ -1196,7 +1203,11 @@ function v626ExpandStateDependencies(entity, stateIds) {
     const state = entityStateById(entity, id);
     if (!state || state.isDefault) return;
     const parent = assetStateParent(entity, state);
-    if (parent && !parent.approvedFile && !(parent.isDefault && entity.approvedFile)) { selected.add(parent.id); visit(parent.id); }
+    /* A parent whose image nobody approved is not a satisfied dependency. */
+    const expandTruth = typeof entityProductionTruth === "function"
+      ? entityProductionTruth(P, typeof entityListOf === "function" ? entityListOf(entity) : "characters", entity && entity.id)
+      : { canon: [] };
+    if (parent && !expandTruth.canon.some((row) => row.stateId === parent.id)) { selected.add(parent.id); visit(parent.id); }
   };
   [...selected].forEach(visit);
   return [...selected];
@@ -2431,8 +2442,19 @@ async function v626AutomateEntityState(run, list, entityId, stateId) {
     await v627PauseForHumanReview(run, gateStep, `Approve ${state.name || "State"}`);
   }
   if (!state.isDefault) {
-    const parent = assetStateParent(entity, state), parentFile = parent?.approvedFile || (parent?.isDefault ? entity.approvedFile : "");
-    if (!parentFile) throw new Error(`${state.name || "State"} needs approved parent state ${parent?.name || "Default"}`);
+    /* MB-PT-02 / MB-PT-04: a paid run derives only from a parent the creator
+       APPROVED, and only from the parent this state actually records. A missing
+       parent is broken lineage and blocks; a historic parent is not canon and
+       blocks with the reason the creator can act on. */
+    const parent = assetStateParent(entity, state);
+    if (!parent) throw new Error(`${state.name || "State"} records a parent state that no longer exists (${state.parentStateId || "none"}). Repair its lineage before generating from it.`);
+    const parentStanding = assetStateParentMedia(list, entity, state);
+    if (parentStanding.standing !== "canon") {
+      throw new Error(parentStanding.file
+        ? `${state.name || "State"} derives from ${parent.name || "its parent"}, whose image ${parentStanding.file} has never been approved as canon. Approve it first.`
+        : `${state.name || "State"} needs approved parent state ${parent.name || "Default"}`);
+    }
+    const parentFile = parentStanding.file;
     /* BATCH 1C: AUTOMATION DOES NOT TOUCH LINEAGE AT ALL.
        It used to assign the parent it had just resolved. A state's derivation is
        chosen when the state is created; a run reads it and generates from it. A

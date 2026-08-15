@@ -1200,12 +1200,38 @@ function repairCanonValue(project, change = {}) {
   const to = kernelText(it.to);
   const assetId = kernelText(it.assetId);
   if (!from || !to || from === to) return [];
+  /* SCOPED TO ONE TARGET, AND ONLY THE ONE THE CALLER JUST APPROVED.
+   *
+   * This used to walk the WHOLE ledger and rewrite every receipt whose value
+   * happened to equal `from`. A filename is not an identity: renaming
+   * `shots/SH-01/takes/A.png` rewrote an entity's canon receipt that named
+   * `anchors/A.png`, and a decision nobody revisited pointed at bytes nobody
+   * approved. A repair that can change WHICH BYTES ARE CANON is an approval, and
+   * this is not an approval path. */
+  const target = authorityTarget(it);
+  if (!target) return [];
   const draft = draftOf(project);
   const ledger = kernelObject(draft[AUTHORITY_LEDGER_KEY]);
   const repaired = [];
   for (const row of kernelList(ledger.receipts)) {
     const receipt = kernelObject(row);
     if (kernelText(receipt.value) !== from) continue;
+    if (authorityTarget(receipt)?.key !== target.key) continue;
+    /* AND ONLY WHEN THE BYTES CAN STILL BE PROVEN THE SAME ONES.
+     *
+     * A rename MOVES bytes; it does not choose different ones. So a receipt
+     * that recorded an identity may only follow the move when the identity is
+     * unchanged. A repair that overwrote `receipt.assetId` — which this did,
+     * unconditionally — rewrote the creator's decision to be about different
+     * bytes.
+     *
+     * When the identity contradicts, or when the receipt named bytes the caller
+     * can no longer name, nothing is written. The edge and the receipt then
+     * disagree, `currentHumanAuthority` fails closed, and the pointer reads as
+     * HISTORIC — visible, and re-approvable in one act. That is the honest
+     * outcome, and it is the one the caller cannot silently avoid. */
+    const recorded = kernelText(receipt.assetId);
+    if (recorded && recorded !== assetId) continue;
     receipt.value = to;
     if (assetId) receipt.assetId = assetId;
     repaired.push(kernelText(receipt.id));

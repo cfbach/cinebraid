@@ -1,7 +1,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
-const { render, buildFixture } = require('./render-harness');
+const { render, buildFixture, withCanon } = require('./render-harness');
 
 const ROOT = path.join(__dirname, '..');
 
@@ -32,6 +32,13 @@ async function main() {
     { id: 'state-default', name: 'Offline', isDefault: true, approvedFile: 'KAI-ANCHOR.png', referenceRequirement: 'required', notes: 'Offline state.' },
     { id: 'state-active', name: 'Active', isDefault: false, parentStateId: 'state-default', approvedFile: 'KAI-ACTIVE.png', referenceRequirement: 'required', notes: 'Active state.' },
   ];
+  /* Both states approved. Since the acceptance-correction pass the hero reads
+     the receipt ledger, so a fixture that wants a CANON hero has to carry the
+     receipts a real project has after two approvals. */
+  withCanon(project, [
+    { kind: "entity-state", list: "characters", entityId: project.characters[0].id, stateId: "state-default", value: "KAI-ANCHOR.png" },
+    { kind: "entity-state", list: "characters", entityId: project.characters[0].id, stateId: "state-active", value: "KAI-ACTIVE.png" },
+  ]);
   project.shots[0].creationBrief = project.shots[0].creationBrief || {};
   project.mediaAssets.push(
     {
@@ -175,7 +182,7 @@ async function main() {
   entity.context.selectBoundedTask('entity-task','characters:KAI','coverage');
   await new Promise((resolve) => setTimeout(resolve, 10));
   const entityStateHtml = entity.context.document.getElementById('main').innerHTML;
-  assert(entityStateHtml.includes('CURRENT APPROVED IMAGE') && entityStateHtml.includes('state-approved-preview'), 'selected state must show its approved image near the top with a large-preview control');
+  assert(entityStateHtml.includes('CANON IMAGE') && entityStateHtml.includes('state-approved-preview'), 'selected state must show its approved image near the top with a large-preview control');
 
   look.context.openShotAutomationModal('L1-01');
   const automationModal = look.context.document.getElementById('modal').innerHTML;
