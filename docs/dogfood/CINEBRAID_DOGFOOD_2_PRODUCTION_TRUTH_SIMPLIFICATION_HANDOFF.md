@@ -557,6 +557,28 @@ this pass — but four were caused by *this branch*, and are fixed here:
 A shared `canon_receipts()` helper was added to `tests/browser_runtime.py` so a
 browser fixture states its approvals once, in the shape the kernel writes.
 
+**Verified gate tally, after the fixes.** `npm run check:browser-gate`, re-run to
+completion on the committed tree:
+
+```
+gated      launched 23   executed 21   skipped 0   failed 2
+quarantine launched 3    failing as recorded 2
+browser launches 26
+isolation  29 files under data/ and projects/ byte-identical after the run
+FAILED   check:stage-surfaces-browser
+FAILED   check:production-media-browser
+CHANGED  check:continuity-workspace-browser no longer fails on "continuity-state-row"
+```
+
+**5 failed → 2 failed**, and executed rose from 18 to 21. The two survivors are
+the two classified above; neither reproduces differently with this pass stashed.
+
+The `CHANGED` line is quarantine bookkeeping, not a failure: a quarantined suite's
+recorded failure signature has moved and its entry needs re-reading. It appeared
+in both gate runs of this session and is **not attributed** to this pass — no
+stashed baseline of that single suite was run. Cheapest next step is exactly
+that run.
+
 ## 28.7 Six-sentence re-audit
 
 | # | Sentence | Verdict |
