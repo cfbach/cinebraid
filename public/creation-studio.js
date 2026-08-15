@@ -3076,16 +3076,6 @@ window.useApprovedBaseAsShot = async (id) => {
       assetId: (takesFor(s.id).find((item) => item.name === d.name) || {}).assetId || "",
       manualAction: baseManualAction,
       at: new Date().toISOString(),
-      applyEdge: (draft) => {
-        const copiedAssetId = (takesFor(s.id).find((item) => item.name === d.name) || {}).assetId || "";
-        const dShot = (draft.shots || []).find((row) => row && row.id === s.id);
-        const dOpening = ((dShot || {}).keyframes || []).find((row) => row && row.id === opening.id);
-        if (!dShot || !dOpening) throw new Error("Shot image target is unavailable");
-        dShot.winner = d.name;
-        dOpening.winner = d.name;
-        stampShotApprovalIdentity(dShot, "winner", copiedAssetId);
-        stampShotApprovalIdentity(dOpening, "winner", copiedAssetId);
-      },
     });
     const c = ensureShotCreation(s);
     c.baseUsedUnchangedAt = new Date().toISOString();
@@ -3428,20 +3418,6 @@ window.markGuidedStillFinal = (id, name) => {
     writeFrameProductionAuthority(P, {
       shotId: s.id, frameId: stillOpening.id, value: name, assetId: stillAssetId,
       manualAction: stillManualAction, at: stillAt,
-      applyEdge: (draft) => {
-        const dShot = (draft.shots || []).find((row) => row && row.id === s.id);
-        const dFrame = ((dShot || {}).keyframes || []).find((row) => row && row.id === stillOpening.id);
-        if (!dShot || !dFrame) throw new Error("Still delivery target is unavailable");
-        dFrame.winner = name;
-        dShot.winner = name;
-        dShot.finalStillFile = name;
-        stampShotApprovalIdentity(dShot, "winner", stillAssetId);
-        dShot.creationBrief = dShot.creationBrief && typeof dShot.creationBrief === "object" ? dShot.creationBrief : {};
-        dShot.creationBrief.finalStillFile = name;
-        dShot.creationBrief.deliveryIntent = "still";
-        dShot.workflowStatus = "APPROVED";
-        dShot.status = "APPROVED";
-      },
     });
     writeStillEdge();
   } else {
@@ -3449,18 +3425,6 @@ window.markGuidedStillFinal = (id, name) => {
       shotId: s.id, value: name, assetId: stillAssetId,
       manualAction: beginManualApproval({ via: "guided-final-still", targets: [{ kind: "shot-delivery", shotId: s.id }] }),
       at: stillAt,
-      applyEdge: (draft) => {
-        const dShot = (draft.shots || []).find((row) => row && row.id === s.id);
-        if (!dShot) throw new Error("Still delivery target is unavailable");
-        dShot.winner = name;
-        dShot.finalStillFile = name;
-        stampShotApprovalIdentity(dShot, "winner", stillAssetId);
-        dShot.creationBrief = dShot.creationBrief && typeof dShot.creationBrief === "object" ? dShot.creationBrief : {};
-        dShot.creationBrief.finalStillFile = name;
-        dShot.creationBrief.deliveryIntent = "still";
-        dShot.workflowStatus = "APPROVED";
-        dShot.status = "APPROVED";
-      },
     });
     writeStillEdge();
   }
@@ -3486,15 +3450,6 @@ window.approveGuidedMotion = (id, name) => {
     shotId: s.id, unitKey: motionUnitKey, value: name, assetId: motionAssetId,
     manualAction: beginManualApproval({ via: "guided-motion-approval", targets: [{ kind: "shot-motion", shotId: s.id, unitKey: motionUnitKey }] }),
     at: new Date().toISOString(),
-    applyEdge: (draft) => {
-      const dShot = (draft.shots || []).find((row) => row && row.id === s.id);
-      const dUnit = ((dShot || {}).clips || []).find((row) => row && (row.id === unit.id || row.suffix === unit.suffix));
-      if (!dShot || !dUnit) throw new Error("Motion approval target is unavailable");
-      dUnit.videoWinner = name;
-      stampShotApprovalIdentity(dUnit, "videoWinner", motionAssetId);
-      dShot.creationBrief = dShot.creationBrief && typeof dShot.creationBrief === "object" ? dShot.creationBrief : {};
-      dShot.creationBrief.approvedMotionFile = name;
-    },
   });
   const row = candidateRecord(s, name, true);
   row.approvedAt = new Date().toISOString();
@@ -3516,15 +3471,6 @@ window.queueGuidedVideoFinish = (id, name) => {
       shotId: s.id, unitKey: queueUnitKey, value: name, assetId: queueAssetId,
       manualAction: beginManualApproval({ via: "guided-motion-finish-queue", targets: [{ kind: "shot-motion", shotId: s.id, unitKey: queueUnitKey }] }),
       at: new Date().toISOString(),
-      applyEdge: (draft) => {
-        const dShot = (draft.shots || []).find((row) => row && row.id === s.id);
-        const dUnit = ((dShot || {}).clips || []).find((row) => row && (row.id === unit.id || row.suffix === unit.suffix));
-        if (!dShot || !dUnit) throw new Error("Motion approval target is unavailable");
-        dUnit.videoWinner = name;
-        stampShotApprovalIdentity(dUnit, "videoWinner", queueAssetId);
-        dShot.creationBrief = dShot.creationBrief && typeof dShot.creationBrief === "object" ? dShot.creationBrief : {};
-        dShot.creationBrief.approvedMotionFile = name;
-      },
     });
     markCandidateApproved(s, name, `segment:${unitKey(unit)}`);
     dirty();
@@ -3538,14 +3484,6 @@ window.markGuidedVideoFinal = (id, name) => {
     shotId: s.id, value: name,
     manualAction: beginManualApproval({ via: "guided-final-video", targets: [{ kind: "shot-delivery", shotId: s.id }] }),
     at: new Date().toISOString(),
-    applyEdge: (draft) => {
-      const dShot = (draft.shots || []).find((row) => row && row.id === s.id);
-      if (!dShot) throw new Error("Video delivery target is unavailable");
-      dShot.finalVideoFile = name;
-      dShot.creationBrief = dShot.creationBrief && typeof dShot.creationBrief === "object" ? dShot.creationBrief : {};
-      dShot.creationBrief.approvedMotionFile = name;
-      dShot.creationBrief.finalVideoFile = name;
-    },
   });
   c.approvedMotionFile = name;
   c.finalVideoFile = name;
@@ -3711,17 +3649,6 @@ window.resetGuidedFrameApproval = (id, frameId) => {
          decision was withdrawn rather than never made. */
       revokeFrameProductionAuthority(P, {
         shotId: s.id, frameId, at: new Date().toISOString(), via: "guided-frame-approval-reset", reason: "withdrawn",
-        applyEdge: (draft) => {
-          const dShot = (draft.shots || []).find((row) => row && row.id === s.id);
-          const dFrame = ((dShot || {}).keyframes || []).find((row) => row && row.id === frameId);
-          if (!dShot || !dFrame) return;
-          dFrame.winner = "";
-          clearShotApprovalIdentity(dFrame, "winner");
-          if (index === 0) {
-            dShot.winner = "";
-            clearShotApprovalIdentity(dShot, "winner");
-          }
-        },
       });
       const state = guidedFrameState(s, frame, index);
       state.selectedCandidate = previous.name;

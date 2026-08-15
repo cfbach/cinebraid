@@ -120,7 +120,10 @@ const AUTHORITY_REVOCATION_REASONS = ["replaced", "withdrawn", "target-cleared",
 const AUTHORITY_ACTOR = "human";
 const AUTHORITY_ACT = "explicit-approval";
 
-/* Where the ledger lives, and the shape version it is written at. */
+/* Where the ledger lives, and the shape version it is written at.
+   1D-05: the version is VALIDATED, not decorative. A ledger written by a build
+   this one does not understand is not something to read approvals out of or
+   append to, so it fails closed like any other unreadable ledger. */
 const AUTHORITY_LEDGER_KEY = "productionAuthority";
 const AUTHORITY_LEDGER_VERSION = 1;
 
@@ -276,7 +279,14 @@ function manualActionSourceInstalled() {
 /* THE BROWSER INSTALLER. Capture phase, so it runs before any handler; a
    macrotask closes the window, so the gesture covers the synchronous prologue
    of the handler and nothing that resumes later. */
+/* 1D-01 — INSTALL ONCE, AND ONLY FROM THE COMPOSITION THAT BOOTS THE PAGE.
+ *
+ * bootstrap.js calls this before load(). Any later call is refused, so page
+ * script cannot install a second source on an event target it controls and
+ * then fire its own events at it. There is exactly one source per process and
+ * the first caller — the composition root — decides what it is. */
 function installBrowserManualActionSource(target, schedule) {
+  if (MANUAL_ACTION_SOURCE) return false;
   const root = target || (typeof document !== "undefined" ? document : null);
   if (!root || typeof root.addEventListener !== "function") return false;
   const later = typeof schedule === "function" ? schedule : (fn) => setTimeout(fn, 0);
@@ -291,25 +301,16 @@ function installBrowserManualActionSource(target, schedule) {
   return true;
 }
 
-/* THE HARNESS INSTALLER. Node has no user agent, so a suite that needs to
-   exercise a manual path opens the window explicitly and says so. Named
-   distinctly from the browser installer so an inventory can tell them apart,
-   and so `manualActionSourceInstalled()` never claims a gesture came from a
-   person when it came from a test. */
-function installHarnessManualActionSource() {
-  MANUAL_ACTION_SOURCE = "harness";
-  return {
-    /* Runs `body` inside one simulated gesture and closes the window after,
-       whether it returned or threw. */
-    gesture(body, kind = "harness") {
-      openTrustedGesture(kind);
-      try { return body(); }
-      finally { closeTrustedGesture(); }
-    },
-    open: (kind = "harness") => openTrustedGesture(kind),
-    close: closeTrustedGesture,
-  };
-}
+/* THERE IS NO SYNTHETIC GESTURE SOURCE. Batch 1C shipped one — an exported
+ * `installHarnessManualActionSource` that opened the window with no event at
+ * all — and the 1C acceptance audit used it from ordinary browser code to mint
+ * `actor: "human"`. A test-only door in a shipped module is a door.
+ *
+ * There is now exactly one way to open the gesture window: a trusted event
+ * delivered by a user agent to the event target the composition root installed
+ * on. Tests drive that same path from OUTSIDE the page scope — see
+ * tests/authority-test-gesture.js — because the test composition owns the DOM
+ * double and page script does not. */
 
 /* MINT. Called at the top of an explicit manual approval handler, synchronously,
    while the gesture is still open.
@@ -317,7 +318,19 @@ function installHarnessManualActionSource() {
  * `targets` binds the token to exactly what it may authorize — a batch approval
  * of four slots mints one token for those four and nothing else. Each target is
  * consumable once, so a token cannot be replayed, and a token for slot A cannot
- * approve slot B. */
+ * approve slot B.
+ *
+ * 1D-02 — AND TO THE EXACT DECISION. A target alone was not enough: the 1C
+ * audit minted a capability while the modal displayed value A / asset-A and
+ * committed value B / asset-B against the same target. A capability now means
+ *
+ *     THIS gesture, approving THIS target, with THESE bytes.
+ *
+ * A target entry may carry `value` and `assetId`. When it does, the commit must
+ * present the same ones or it is refused as stale. A bare target (no value) is
+ * still accepted for the callers that genuinely cannot know the filename until
+ * after an await — a rename, say — but every creator-facing approval binds the
+ * value, and tests/dogfood2-p0-architecture.js pins which ones. */
 function beginManualAuthorityAction(details = {}) {
   const it = kernelObject(details);
   if (!TRUSTED_GESTURE) {
@@ -327,8 +340,21 @@ function beginManualAuthorityAction(details = {}) {
       { source: MANUAL_ACTION_SOURCE || "none" },
     );
   }
-  const targets = kernelList(it.targets).map(authorityTarget).filter(Boolean);
-  if (!targets.length) {
+  /* Each entry keeps its own declared value/asset, so one batch token can bind
+     four different files to four different targets. A top-level `value` /
+     `assetId` is the single-target shorthand. */
+  const entries = [];
+  for (const raw of kernelList(it.targets)) {
+    const target = authorityTarget(raw);
+    if (!target) continue;
+    const row = kernelObject(raw);
+    entries.push({
+      key: target.key,
+      value: kernelText(row.value) || kernelText(it.value),
+      assetId: kernelText(row.assetId) || kernelText(it.assetId),
+    });
+  }
+  if (!entries.length) {
     throw authorityError(
       "MANUAL_ACTION_TARGET_REQUIRED",
       "An approval action must name at least one complete production target. No authority was written.",
@@ -340,7 +366,7 @@ function beginManualAuthorityAction(details = {}) {
     via: kernelText(it.via) || "unspecified-manual-surface",
     gestureId: TRUSTED_GESTURE.id,
     gestureKind: TRUSTED_GESTURE.kind,
-    remaining: new Set(targets.map((target) => target.key)),
+    remaining: new Map(entries.map((entry) => [entry.key, entry])),
   });
   return token;
 }
@@ -357,7 +383,7 @@ function manualActionCovers(token, target) {
 /* CONSUME. Private to the transaction below — a caller cannot spend a token
    without also committing through the kernel, which is what stops "mint, spend,
    write nothing" and "mint once, write twice". */
-function consumeManualAction(token, target) {
+function consumeManualAction(token, target, value, assetId) {
   const record = MINTED_MANUAL_ACTIONS.get(token);
   if (!record) {
     throw authorityError(
@@ -370,7 +396,37 @@ function consumeManualAction(token, target) {
     throw authorityError(
       "MANUAL_ACTION_TARGET_MISMATCH",
       "This approval action does not cover the object being approved. No authority was written.",
-      { expected: [...record.remaining], received: wanted ? wanted.key : "" },
+      { expected: [...record.remaining.keys()], received: wanted ? wanted.key : "" },
+    );
+  }
+  /* 1D-02 — THE DECISION, NOT JUST THE TARGET. If the gesture named the bytes,
+     the commit must present the same bytes. A selection that changed after the
+     capability was minted is STALE and is refused; it is never silently
+     approved instead. */
+  const bound = record.remaining.get(wanted.key);
+  const wantedValue = kernelText(value);
+  const wantedAsset = kernelText(assetId);
+  if (bound.value && bound.value !== wantedValue) {
+    throw authorityError(
+      "MANUAL_ACTION_VALUE_STALE",
+      "The selection changed after you confirmed it, so CineBraid did not approve the new one. Choose again and confirm. No authority was written.",
+      { expected: bound.value, received: wantedValue },
+    );
+  }
+  if (bound.assetId && bound.assetId !== wantedAsset) {
+    throw authorityError(
+      "MANUAL_ACTION_ASSET_STALE",
+      "The image changed after you confirmed it, so CineBraid did not approve the new one. Choose again and confirm. No authority was written.",
+      { expected: bound.assetId, received: wantedAsset },
+    );
+  }
+  /* And the reverse: a capability minted against a specific asset may not be
+     spent on a request that has forgotten the identity. */
+  if (bound.assetId && !wantedAsset) {
+    throw authorityError(
+      "MANUAL_ACTION_ASSET_STALE",
+      "The approval no longer identifies the exact image it was confirmed for. Choose again and confirm. No authority was written.",
+      { expected: bound.assetId, received: "" },
     );
   }
   record.remaining.delete(wanted.key);
@@ -449,6 +505,16 @@ function validateAuthorityLedger(project) {
   if (ledger.receipts !== undefined && !Array.isArray(ledger.receipts)) {
     diagnostics.push({ code: "receipts-not-an-array" });
     return { present: true, trusted: false, version: kernelInteger(ledger.version) || 0, receipts: [], byTarget: new Map(), diagnostics };
+  }
+  const declaredVersion = kernelInteger(ledger.version) || 0;
+  if (declaredVersion > AUTHORITY_LEDGER_VERSION || declaredVersion < 1) {
+    diagnostics.push({
+      code: "AUTHORITY_LEDGER_VERSION_UNSUPPORTED",
+      message: `This project's approval records are written at version ${JSON.stringify(ledger.version)}, which this build of CineBraid does not read. No approval is recognised.`,
+      version: ledger.version,
+      supported: AUTHORITY_LEDGER_VERSION,
+    });
+    return { present: true, trusted: false, version: declaredVersion, receipts: [], byTarget: new Map(), diagnostics };
   }
   const rows = kernelList(ledger.receipts);
   const receipts = [];
@@ -545,9 +611,27 @@ function currentHumanAuthority(project, target) {
   const receipt = bucket.current[0];
   const live = liveAuthorityEdge(project, wanted);
   if (!live.value) return null;
-  const byName = live.value === kernelText(receipt.value);
-  const byIdentity = !!kernelText(receipt.assetId) && kernelText(receipt.assetId) === kernelText(live.assetId);
-  return byName || byIdentity ? receipt : null;
+  /* 1D-05 — AGREEMENT, NOT EITHER-OR.
+   *
+   * This was `byName || byIdentity`, and the 1C audit showed what that buys: a
+   * receipt whose assetId had been changed to name different bytes stayed
+   * current because the filename still matched. One contradictory field is a
+   * contradiction; it is not a half-match to be rounded up.
+   *
+   * THE RULE, and there is only one: the filename must match exactly, and
+   * where BOTH sides carry an asset identity that must match exactly too. A
+   * side that has no identity recorded is not a contradiction — plenty of
+   * legitimate edges predate identity stamping — but two identities that
+   * disagree are.
+   *
+   * A legitimate rename does not need this to be loose: repairAuthorityValue()
+   * is the explicit operation that moves an approval to a new filename and
+   * keeps the receipt true. */
+  if (live.value !== kernelText(receipt.value)) return null;
+  const receiptAsset = kernelText(receipt.assetId);
+  const liveAsset = kernelText(live.assetId);
+  if (receiptAsset && liveAsset && receiptAsset !== liveAsset) return null;
+  return receipt;
 }
 
 function hasCurrentHumanAuthority(project, target) {
@@ -683,17 +767,15 @@ function commitAuthorityTransaction(project, request = {}) {
   }
   const what = describeTarget(target);
   /* THE CREDENTIAL. Identity, not shape. */
-  const provenance = consumeManualAction(it.manualAction, target);
   const value = kernelText(it.value);
+  const assetId = kernelText(it.assetId);
   if (!value) {
     throw authorityError("AUTHORITY_VALUE_REQUIRED", `${what} cannot be approved without naming the media being approved. No authority was written.`);
   }
-  if (typeof it.eligibility === "function") {
-    const verdict = kernelObject(it.eligibility(target, draftReadOnly(project)));
-    if (verdict.ok === false) {
-      throw authorityError(kernelText(verdict.code) || "AUTHORITY_INELIGIBLE", kernelText(verdict.message) || `${what} is not eligible for approval.`);
-    }
-  }
+  /* THE CREDENTIAL. Identity, not shape — and bound to these exact bytes. */
+  const provenance = consumeManualAction(it.manualAction, target, value, assetId);
+  /* STEP 3 — the target kind's own mandatory policy. Not a parameter. */
+  enforceTargetPolicy(project, target, value);
   /* A ledger that is already unreadable is not something to append to. */
   const before = validateAuthorityLedger(project);
   if (!before.trusted) {
@@ -704,9 +786,22 @@ function commitAuthorityTransaction(project, request = {}) {
     );
   }
   const draft = draftOf(project);
-  /* STEP 5 — the edge, on the draft. The callback receives the draft, so a
-     caller physically cannot reach the live document from inside it. */
-  if (typeof it.applyEdge === "function") it.applyEdge(draft, target);
+  /* STEP 5 — the edge, written by the kernel's own installed writer onto the
+     draft. No caller code runs inside this transaction at all, so there is no
+     closure to reason about and no convention for a caller to forget. */
+  if (typeof AUTHORITY_EDGE_WRITER !== "function") {
+    throw authorityError(
+      "AUTHORITY_EDGE_WRITER_MISSING",
+      "CineBraid cannot record approvals because its authority edge writer is not installed. No authority was written.",
+    );
+  }
+  const wrote = AUTHORITY_EDGE_WRITER(draft, target, { value, assetId, at: kernelText(it.at) });
+  if (wrote === false) {
+    throw authorityError(
+      "AUTHORITY_TARGET_UNAVAILABLE",
+      `${what} is not in this project, so there is nothing to approve. No authority was written.`,
+    );
+  }
   /* STEP 6 — supersession and the new receipt, on the draft. */
   const ledger = draft[AUTHORITY_LEDGER_KEY] && typeof draft[AUTHORITY_LEDGER_KEY] === "object" && !Array.isArray(draft[AUTHORITY_LEDGER_KEY])
     ? draft[AUTHORITY_LEDGER_KEY]
@@ -748,7 +843,7 @@ function commitAuthorityTransaction(project, request = {}) {
     stateId: target.stateId,
     slotId: target.slotId,
     value,
-    assetId: kernelText(it.assetId),
+    assetId,
     at,
     status: "current",
     supersededBy: "",
@@ -815,7 +910,13 @@ function revokeAuthorityTransaction(project, request = {}) {
   const reason = AUTHORITY_REVOCATION_REASONS.includes(kernelText(it.reason)) ? kernelText(it.reason) : "withdrawn";
   const at = kernelText(it.at);
   const draft = draftOf(project);
-  if (typeof it.applyEdge === "function") it.applyEdge(draft, target);
+  /* 1D-07 — THE KERNEL CLEARS THE EDGE TOO. A revocation used to take the same
+     caller `applyEdge` the commit did, with the same closure problem. Clearing
+     is the one write that is exactly the inverse of establishing, so the same
+     installed writer does it, with an empty value. */
+  if (it.clearEdge !== false && typeof AUTHORITY_EDGE_WRITER === "function") {
+    AUTHORITY_EDGE_WRITER(draft, target, { value: "", assetId: "", at });
+  }
   const ledger = kernelObject(draft[AUTHORITY_LEDGER_KEY]);
   const revoked = [];
   for (const row of kernelList(ledger.receipts)) {
@@ -865,8 +966,64 @@ function describeTarget(target) {
 /* A frozen read-only view for an eligibility callback: it may inspect, it may
    not write, and it is looking at the state the decision is being made
    against. */
-function draftReadOnly(project) {
-  return kernelObject(project);
+/* 1D-03 — MANDATORY TARGET POLICY, OWNED BY THE KERNEL.
+ *
+ * Batch 1C asked the caller for an `eligibility` callback and ran it only "if
+ * function". The 1C audit passed `eligibility: () => ({ok:true})` and
+ * established Canon for a file two entities both claim. A rule a caller can
+ * decline to supply is not a rule.
+ *
+ * The policy is now a property of the TARGET KIND and lives here. There is no
+ * parameter for it, so there is nothing to omit and nothing to replace.
+ *
+ *   entity-state   the file must have exactly one durable owner, and it must be
+ *                  the entity being approved. Zero owners, an inferred/prefix
+ *                  match, or two claimants all refuse.
+ *   shot-*         no ownership concept — a shot's own take belongs to the shot.
+ *
+ * The resolver is installed once by shared-entity-ownership.js via
+ * useEntityOwnershipResolver(); it is a module wiring, not a per-call argument.
+ */
+let OWNERSHIP_POLICY = null;
+function installAuthorityOwnershipPolicy(policy) {
+  OWNERSHIP_POLICY = typeof policy === "function" ? policy : null;
+  return !!OWNERSHIP_POLICY;
+}
+function enforceTargetPolicy(project, target, value) {
+  if (target.kind !== "entity-state") return;
+  if (typeof OWNERSHIP_POLICY !== "function") {
+    throw authorityError(
+      "AUTHORITY_OWNERSHIP_UNAVAILABLE",
+      "CineBraid cannot check which reference owns this image, so it will not record an approval it cannot justify. No authority was written.",
+    );
+  }
+  const verdict = kernelObject(OWNERSHIP_POLICY(project, target, value));
+  if (verdict.ok === true) return;
+  throw authorityError(
+    kernelText(verdict.code) || "AUTHORITY_OWNERSHIP_INELIGIBLE",
+    kernelText(verdict.message) || `${describeTarget(target)} cannot be approved for this image.`,
+  );
+}
+
+/* 1D-07 — THE EDGE WRITER IS INSTALLED, NOT PASSED.
+ *
+ * Batch 1C took an `applyEdge(draft)` callback from every caller and claimed a
+ * caller "physically cannot reach the live document" from inside it. That was
+ * false — a closure reaches whatever it closed over — and the 1C audit proved
+ * it by mutating the live project from a callback that then threw.
+ *
+ * So callers no longer supply one. `shared-production-authority.js` installs a
+ * single writer at module load which knows how to write all four target kinds,
+ * exactly mirroring the reader installed beside it. A caller passes the target
+ * and the bytes; the kernel decides what that means on disk.
+ *
+ * What this deletes: twelve caller-authored edge callbacks, the `eligibility`
+ * parameter, and `draftReadOnly` — a function whose whole job was to pretend a
+ * live object was a snapshot. */
+let AUTHORITY_EDGE_WRITER = null;
+function installAuthorityEdgeWriter(writer) {
+  AUTHORITY_EDGE_WRITER = typeof writer === "function" ? writer : null;
+  return !!AUTHORITY_EDGE_WRITER;
 }
 
 const AUTHORITY_KERNEL_EXPORTS = {
@@ -886,7 +1043,6 @@ const AUTHORITY_KERNEL_EXPORTS = {
   describeTarget,
   /* manual action provenance */
   installBrowserManualActionSource,
-  installHarnessManualActionSource,
   manualActionSourceInstalled,
   trustedGestureOpen,
   beginManualAuthorityAction,
@@ -903,6 +1059,8 @@ const AUTHORITY_KERNEL_EXPORTS = {
   authorityHistory,
   historicSelection,
   /* writing */
+  installAuthorityEdgeWriter,
+  installAuthorityOwnershipPolicy,
   installAuthorityProjectCommitter,
   commitAuthorityTransaction,
   revokeAuthorityTransaction,
@@ -923,7 +1081,7 @@ const AUTHORITY_KERNEL_EXPORTS = {
  * harnesses call them by name and nothing redefines them. */
 if (typeof window !== "undefined") {
   window.CineBraidAuthorityKernel = AUTHORITY_KERNEL_EXPORTS;
-  for (const key of ["installBrowserManualActionSource", "installHarnessManualActionSource", "manualActionSourceInstalled", "trustedGestureOpen"]) {
+  for (const key of ["installBrowserManualActionSource", "manualActionSourceInstalled", "trustedGestureOpen"]) {
     window[key] = AUTHORITY_KERNEL_EXPORTS[key];
   }
 }

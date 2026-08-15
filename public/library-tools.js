@@ -415,15 +415,6 @@ window.confirmApproveTake = async () => {
     if (opening) {
       writeFrameProductionAuthority(P, {
         shotId: id, frameId: opening.id, value: finalName, assetId: approvedAssetId, manualAction: approvalGrant, at,
-        applyEdge: (draft) => {
-          const dShot = (draft.shots || []).find((row) => row && row.id === id);
-          const dOpening = ((dShot || {}).keyframes || [])[0];
-          if (!dShot || !dOpening) throw new Error("Shot approval target is unavailable");
-          dShot.winner = finalName;
-          stampShotApprovalIdentity(dShot, "winner", approvedAssetId);
-          dOpening.winner = finalName;
-          stampShotApprovalIdentity(dOpening, "winner", approvedAssetId);
-        },
       });
     } else {
       /* K1C — THE VIDEO PATH, WHICH THE RE-AUDIT FOUND UNROUTED.
@@ -433,14 +424,6 @@ window.confirmApproveTake = async () => {
          goes through the delivery boundary. */
       writeDeliveryProductionAuthority(P, {
         shotId: id, value: finalName, assetId: approvedAssetId, manualAction: approvalGrant, at,
-        applyEdge: (draft) => {
-          const dShot = (draft.shots || []).find((row) => row && row.id === id);
-          if (!dShot) throw new Error("Shot approval target is unavailable");
-          dShot.winner = finalName;
-          stampShotApprovalIdentity(dShot, "winner", approvedAssetId);
-          dShot.creationBrief = dShot.creationBrief && typeof dShot.creationBrief === "object" ? dShot.creationBrief : {};
-          dShot.creationBrief.approvedMotionFile = finalName;
-        },
       });
     }
   } else if (target.startsWith("frame:")) {
@@ -448,14 +431,6 @@ window.confirmApproveTake = async () => {
     if (f) {
       writeFrameProductionAuthority(P, {
         shotId: id, frameId: f.id, value: finalName, assetId: approvedAssetId, manualAction: approvalGrant, at,
-        applyEdge: (draft) => {
-          const dShot = (draft.shots || []).find((row) => row && row.id === id);
-          const dFrame = ((dShot || {}).keyframes || []).find((row) => row && row.id === f.id);
-          if (!dShot || !dFrame) throw new Error("Frame approval target is unavailable");
-          dFrame.winner = finalName;
-          stampShotApprovalIdentity(dFrame, "winner", approvedAssetId);
-          if ((dShot.keyframes || [])[0]?.id === dFrame.id) { dShot.winner = finalName; stampShotApprovalIdentity(dShot, "winner", approvedAssetId); }
-        },
       });
     }
     complete = shotApprovalComplete(s);
@@ -468,16 +443,12 @@ window.confirmApproveTake = async () => {
     if (c) {
       writeMotionProductionAuthority(P, {
         shotId: id, unitKey: c.id || unitId, value: finalName, assetId: approvedAssetId, manualAction: approvalGrant, at,
-        applyEdge: (draft) => {
-          const dShot = (draft.shots || []).find((row) => row && row.id === id);
-          const dClip = ((dShot || {}).clips || []).find((row) => row && (row.id === c.id || row.suffix === c.suffix));
-          if (!dShot || !dClip) throw new Error("Motion approval target is unavailable");
-          dClip.videoWinner = finalName;
-          stampShotApprovalIdentity(dClip, "videoWinner", approvedAssetId);
-          dShot.creationBrief = dShot.creationBrief && typeof dShot.creationBrief === "object" ? dShot.creationBrief : {};
-          dShot.creationBrief.approvedMotionFile = finalName;
-        },
       });
+      /* Bookkeeping, after the Canon write: the shot's convenience pointer to
+         its latest approved motion. Not the authority edge — that is the unit's
+         videoWinner, which the kernel wrote. */
+      s.creationBrief = s.creationBrief && typeof s.creationBrief === "object" ? s.creationBrief : {};
+      s.creationBrief.approvedMotionFile = finalName;
     }
     complete = shotApprovalComplete(s);
     label = "MOTION APPROVED";
@@ -762,23 +733,6 @@ window.confirmEntityApproval = async (continueToNext = false) => {
          that reached back to the live objects would leave the draft unchanged,
          the transaction would refuse for a mismatch it caused itself, and the
          approval would silently bail. */
-      applyEdge: (draft) => {
-        const dEntity = (draft[list] || []).find((row) => row && row.id === id);
-        if (!dEntity) throw new Error("Entity approval target is unavailable");
-        const dState = (dEntity.continuityStates || []).find((row) => row && row.id === entityAuthorityStateId);
-        if (dState) {
-          dState.approvedFile = finalName;
-          dState.approvedAt = new Date().toISOString();
-          dState.parentValidation = null;
-          /* P4-SEM-C2: the approval records WHICH BYTES it approved, not only what
-             they were called at the time. */
-          stampApprovalIdentity(dState, approvedAssetId);
-        }
-        if (targetState?.isDefault || targetStateId === "state-default") {
-          dEntity.approvedFile = finalName;
-          stampApprovalIdentity(dEntity, approvedAssetId);
-        }
-      },
     });
   } catch (error) {
     return toast(error.message || "That file cannot be approved for this reference");

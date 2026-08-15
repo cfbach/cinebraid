@@ -23,6 +23,12 @@ const path = require("path");
 const ROOT = path.join(__dirname, "..");
 const read = (name) => fs.readFileSync(path.join(ROOT, name), "utf8");
 const Authority = require("../public/shared-production-authority");
+/* 1D-03: entity-state Canon requires a real ownership answer from the kernel,
+   so the real resolver is wired here exactly as bootstrap wires it in the app.
+   A suite that did not wire it would get AUTHORITY_OWNERSHIP_UNAVAILABLE — the
+   fail-closed direction, which is the correct one. */
+const Ownership = require("../public/shared-entity-ownership");
+Authority.useEntityOwnershipResolver(Ownership);
 const Kernel = require("../public/shared-authority-kernel");
 /* BATCH 1C — THE CREDENTIAL IS A CAPABILITY, NOT A SHAPE.
  *
@@ -36,8 +42,21 @@ const Kernel = require("../public/shared-authority-kernel");
  * a suite that exercises a manual path installs the harness source and opens
  * the window explicitly — and `manualActionSourceInstalled()` reports "harness"
  * rather than claiming a person was present. */
-const MANUAL = Kernel.installHarnessManualActionSource();
-const approvalFor = (...targets) => MANUAL.gesture(() => Authority.beginManualApproval({ via: "test-approval-surface", targets }));
+/* 1D-01: the synthetic source is gone from the product. This drives the REAL
+   trusted-event listener through an event target the test composition owns —
+   see tests/authority-test-gesture.js for why that boundary is compositional
+   rather than a flag. */
+const { installTestManualActionSource } = require("./authority-test-gesture.js");
+const MANUAL = installTestManualActionSource(Kernel);
+/* 1D-02: a capability binds the target AND the bytes. `approvalFor(target)`
+   still mints a target-only capability where a suite is testing target rules;
+   `approvalFor(target, value)` binds the exact value, which is what every real
+   creator-facing approval does. */
+const approvalFor = (target, value) => MANUAL.gesture(() => Authority.beginManualApproval({
+  via: "test-approval-surface",
+  targets: [value === undefined ? target : { ...target, value }],
+}));
+const approvalForAll = (...targets) => MANUAL.gesture(() => Authority.beginManualApproval({ via: "test-approval-surface", targets }));
 const P4 = require("../public/shared-production-media");
 
 let checks = 0;
@@ -298,8 +317,7 @@ function approvedFrameProject(winner, via = "test-approval-surface") {
   const P = projectWithFrameWinner("");
   Authority.writeFrameProductionAuthority(P, {
     shotId: "SH-01", frameId: "fr-a", value: winner, at: "2026-08-14T00:30:00.000Z",
-    manualAction: approvalFor({ kind: "shot-frame", shotId: "SH-01", frameId: "fr-a" }),
-    applyEdge: (draft) => { draft.shots[0].keyframes[0].winner = winner; draft.shots[0].winner = winner; },
+    manualAction: approvalFor({ kind: "shot-frame", shotId: "SH-01", frameId: "fr-a" }, winner),
   });
   return P;
 }
@@ -307,7 +325,12 @@ function projectWithState(approvedFile, isDefault = false) {
   return {
     shots: [],
     characters: [{
-      id: "CHAR-A", name: "A", approvedFile: "CHAR-A_PRIMARY.png",
+      id: "CHAR-A", name: "A", prefix: "CHAR-A", approvedFile: "CHAR-A_PRIMARY.png",
+      /* 1D-03: entity-state Canon now REQUIRES one durable owner, and the
+         kernel asks — there is no eligibility parameter to pass `ok:true` to
+         any more. So the fixture durably claims the files it approves, which is
+         what a real project looks like when the creator imported them. */
+      candidateFiles: [{ stored: "CHAR-A_PRIMARY.png" }, { stored: "CHAR-A_SOOT.png" }],
       continuityStates: [
         { id: "state-default", isDefault: true, approvedFile: "CHAR-A_PRIMARY.png" },
         { id: "st-soot", name: "Heavy soot", isDefault, ...(approvedFile ? { approvedFile } : {}) },
@@ -320,11 +343,11 @@ function approvedStateProject(approvedFile) {
   Authority.writeEntityStateProductionAuthority(P, {
     list: "characters", entityId: "CHAR-A", stateId: "st-soot",
     value: approvedFile, at: "2026-08-14T00:30:00.000Z",
-    manualAction: approvalFor({ kind: "entity-state", list: "characters", entityId: "CHAR-A", stateId: "st-soot" }),
-    /* Ownership is P0-4's question and has its own suite; the veto is exercised
-       there and at the architecture boundary. */
-    eligibility: () => ({ ok: true }),
-    applyEdge: (draft) => { draft.characters[0].continuityStates[1].approvedFile = approvedFile; },
+    manualAction: approvalFor({ kind: "entity-state", list: "characters", entityId: "CHAR-A", stateId: "st-soot" }, approvedFile),
+    /* 1D-03: no `eligibility` override, because there is no such parameter.
+       Ownership is the kernel's rule for this target kind and the fixture above
+       satisfies it honestly — which is the point: the only way to approve an
+       entity state is to actually own the file. */
   });
   return P;
 }

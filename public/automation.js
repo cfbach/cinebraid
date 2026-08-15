@@ -1653,35 +1653,30 @@ function v626ApproveFrame(shotId, frameId, fileName, manualAction) {
      survives the rename it performs. */
   const approvedAssetId = (takesFor(shotId).find((item) => item.name === fileName) || {}).assetId || "";
   /* BATCH 1B: THE EDGE AND THE RECEIPT ARE ONE STATEMENT. The grant check, the
-     winner write and the durable receipt now happen inside a single command, so
+     winner write and the durable receipt happen inside a single command, so
      there is no ordering of calls that produces a winner with nobody's name on
-     it. `applyEdge` runs after the actor is verified and before the receipt is
-     minted, which is why a refusal leaves the frame untouched. */
-  /* BATCH 1C: `applyEdge` RECEIVES THE DRAFT, NOT THE LIVE PROJECT.
-     The kernel stages every change on a cloned document and commits once, so a
-     callback that reached back to the live objects would write outside the
-     transaction — exactly the partial-write the re-audit produced. Every edge
-     below is resolved from `draft`. */
+     it.
+     BATCH 1D: AND THE CALLER NO LONGER WRITES THE EDGE AT ALL. The kernel's
+     installed writer does, so there is no callback here to close over the live
+     project — the mutation route the 1C audit exercised. Workflow bookkeeping
+     that used to ride along inside that callback now runs after the approval
+     lands, which is where it belongs: it is not part of the Canon statement. */
   const receipt = writeFrameProductionAuthority(P, {
     shotId, frameId, value: fileName, assetId: approvedAssetId, manualAction, at: v626Now(),
-    applyEdge: (draft) => {
-      const dShot = (draft.shots || []).find((item) => item && item.id === shotId);
-      const dFrame = ((dShot || {}).keyframes || []).find((item) => item && item.id === frameId);
-      if (!dShot || !dFrame) throw new Error("Frame approval target is unavailable");
-      dFrame.winner = fileName;
-      stampShotApprovalIdentity(dFrame, "winner", approvedAssetId);
-      if ((dShot.keyframes || [])[0]?.id === dFrame.id) {
-        dShot.winner = fileName;
-        stampShotApprovalIdentity(dShot, "winner", approvedAssetId);
-      }
-      dShot.workflowStatus = "IN PROGRESS"; dShot.status = "BUILT";
-      dShot.creationBrief = dShot.creationBrief && typeof dShot.creationBrief === "object" ? dShot.creationBrief : {};
-      dShot.creationBrief.activeGuidedFrameId = dFrame.id;
-    },
   });
   /* Side effects that are NOT the authority edge run after the commit, against
-     the live document, exactly as they always did. */
-  if (typeof markCandidateApproved === "function") markCandidateApproved(shotById(shotId), fileName, `frame:${frameId}`);
+     the live document, exactly as they always did. 1D-07 moved three more of
+     them out here — workflow status and the active-frame pointer — because they
+     were inside the deleted edge callback and were never part of the Canon
+     statement the receipt makes. */
+  const approvedShot = shotById(shotId);
+  if (approvedShot) {
+    approvedShot.workflowStatus = "IN PROGRESS";
+    approvedShot.status = "BUILT";
+    approvedShot.creationBrief = approvedShot.creationBrief && typeof approvedShot.creationBrief === "object" ? approvedShot.creationBrief : {};
+    approvedShot.creationBrief.activeGuidedFrameId = frameId;
+  }
+  if (typeof markCandidateApproved === "function") markCandidateApproved(approvedShot, fileName, `frame:${frameId}`);
   if (previous && previous !== fileName && typeof guidedFrameApprovalChanged === "function") guidedFrameApprovalChanged(shotId, `frame:${frameId}`, previous, fileName);
   dirty();
   return receipt;
@@ -1939,16 +1934,16 @@ function v626ApproveEntity(list, entityId, stateId, fileName, manualAction) {
   if (!entity || !state || !fileName) throw new Error("Entity approval target is unavailable");
   const receipt = writeEntityStateProductionAuthority(P, {
     list, entityId, stateId: state.id, value: fileName, manualAction, at: v626Now(),
-    applyEdge: (draft) => {
-      const dEntity = (draft[list] || []).find((item) => item && item.id === entityId);
-      const dState = ((dEntity || {}).continuityStates || []).find((item) => item && item.id === state.id);
-      if (!dEntity || !dState) throw new Error("Entity approval target is unavailable");
-      dState.approvedFile = fileName; dState.approvedAt = v626Now();
-      if (dState.isDefault) dEntity.approvedFile = fileName;
-      dEntity.workflowStatus = "APPROVED"; dEntity.status = "APPROVED"; dEntity.approvedAt = v626Now();
-    },
   });
-  const row = entityCandidateRow(P[list]?.find((item) => item.id === entityId), fileName, false);
+  /* 1D-07: the entity's workflow status is bookkeeping, not the Canon edge, so
+     it is written after the approval rather than inside it. */
+  const approvedEntity = P[list]?.find((item) => item.id === entityId);
+  if (approvedEntity) {
+    approvedEntity.workflowStatus = "APPROVED";
+    approvedEntity.status = "APPROVED";
+    approvedEntity.approvedAt = v626Now();
+  }
+  const row = entityCandidateRow(approvedEntity, fileName, false);
   if (row?.decision === "rejected") row.decision = "unreviewed";
   dirty();
   return receipt;

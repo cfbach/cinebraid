@@ -412,17 +412,6 @@ window.confirmEntityBatchApproval = async () => {
         writeEntityStateProductionAuthority(P, {
           list: current.list, entityId: entity.id, stateId: state.id, value: best.fileName,
           manualAction: batchManualAction, at: approvedAt,
-          applyEdge: (draft) => {
-            const dEntity = (draft[current.list] || []).find((row) => row && row.id === entity.id);
-            const dState = ((dEntity || {}).continuityStates || []).find((row) => row && row.id === state.id);
-            if (!dEntity || !dState) throw new Error("Entity approval target is unavailable");
-            dState.approvedFile = best.fileName;
-            dState.approvedAt = approvedAt;
-            if (dState.isDefault || dState.id === "state-default") {
-              dEntity.approvedFile = best.fileName;
-              if (current.list === "characters") dEntity.primaryAngleAssignment = { status: "unassigned", sourceFile: best.fileName, updatedAt: approvedAt, note: "Primary identity references are not silently assigned to an angle slot." };
-            }
-          },
         });
       } catch (error) { toast(error.message || `${best.fileName} could not be approved`); continue; }
       row.decision = "approved-reference";

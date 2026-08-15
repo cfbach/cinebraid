@@ -167,6 +167,27 @@ const KERNEL = (() => {
 
 /* ---------- the document shape the kernel does not know ------------------- */
 
+/* 1D-05 — THE ONE PLACE A SHOT EDGE'S ASSET IDENTITY LIVES.
+ *
+ * This reader used to look for `record.approvalIdentity.winner`. Nothing has
+ * ever written that: `stampShotApprovalIdentity` in shared-media-disposition.js
+ * writes `record.winnerAssetId`, and the fixtures and Results projection read
+ * that. So every shot-side `live.assetId` came back blank, and the receipt's
+ * recorded identity was never actually compared against anything.
+ *
+ * That mattered less while the match was disjunctive. Now that agreement must
+ * be exact, a field nobody writes would silently disable half the rule, so the
+ * reader reads the field the writer writes. The legacy shape is still accepted
+ * on read, because a project may carry it; nothing writes it any more.
+ *
+ * tests/dogfood2-p0-architecture.js asserts this name against
+ * shared-media-disposition.js's own answer, so the two cannot drift apart
+ * again without a suite going red. */
+function shotEdgeAssetId(record, field) {
+  const it = authorityObject(record);
+  return authorityText(it[`${field}AssetId`]) || authorityText(authorityObject(it.approvalIdentity)[field]);
+}
+
 /* WHERE EVERY AUTHORITY EDGE LIVES, in one place, for all six target kinds.
    The kernel asks this and never parses the project itself; this file knows
    `keyframes` and `coverageSlots` and the kernel knows what a decision is. */
@@ -185,8 +206,7 @@ function readAuthorityEdge(project, target) {
     /* The opening frame's authority may live on the shot, which is where the
        manual path has always written it. Both are the same edge. */
     const value = authorityText(frame.winner) || (index === 0 ? authorityText(s.winner) : "");
-    const assetId = authorityText(authorityObject(frame.approvalIdentity).winner)
-      || (index === 0 ? authorityText(authorityObject(s.approvalIdentity).winner) : "");
+    const assetId = shotEdgeAssetId(frame, "winner") || (index === 0 ? shotEdgeAssetId(s, "winner") : "");
     return { value, assetId };
   }
   if (it.kind === "shot-motion") {
@@ -194,7 +214,7 @@ function readAuthorityEdge(project, target) {
     if (!s) return { value: "", assetId: "" };
     const unit = authorityList(s.clips).map(authorityObject).find((row) => authorityText(row.id) === it.unitKey || authorityText(row.suffix) === it.unitKey);
     if (!unit) return { value: "", assetId: "" };
-    return { value: authorityText(unit.videoWinner), assetId: authorityText(authorityObject(unit.approvalIdentity).videoWinner) };
+    return { value: authorityText(unit.videoWinner), assetId: shotEdgeAssetId(unit, "videoWinner") };
   }
   if (it.kind === "shot-delivery") {
     const s = shot();
@@ -292,30 +312,131 @@ function historicSelection(project, target) { return KERNEL ? KERNEL.historicSel
 function authorityLedgerDiagnostics(project) { return KERNEL ? KERNEL.authorityLedgerDiagnostics(project) : []; }
 function authorityLedgerTrusted(project) { return !KERNEL || KERNEL.validateAuthorityLedger(project).trusted; }
 
+/* ---------- THE EDGE WRITER, INSTALLED ONCE --------------------------------
+ *
+ * 1D-07. The exact mirror of readAuthorityEdge above: for each target kind it
+ * writes the same field that function reads back, so the kernel's post-commit
+ * "does the project agree with the receipt" check is comparing like with like.
+ *
+ * IT IS NOT A PARAMETER. Callers used to hand `applyEdge(draft)` to every
+ * approval — twelve of them, each re-deriving the same field names, each free
+ * to close over the live project instead of the draft. The 1C audit did exactly
+ * that and mutated the live document from a callback that then threw. The
+ * kernel now runs no caller code at all inside the transaction.
+ *
+ * WHAT A CALLER STILL DOES is everything that is NOT the Canon pointer:
+ * workflow status, delivery intent, angle bookkeeping. Those happen after the
+ * approval returns, which is where they belong — they were never part of the
+ * atomic authority write, only sharing a callback with it. */
+function writeAuthorityEdge(draft, target, details) {
+  const P = authorityObject(draft);
+  const it = authorityObject(target);
+  const value = authorityText(authorityObject(details).value);
+  const assetId = authorityText(authorityObject(details).assetId);
+  const at = authorityText(authorityObject(details).at);
+  /* A CLEAR IS THE SAME WRITE WITH NO VALUE. Revocation calls this with an
+     empty value, and the identity must go with it — a stale asset id that
+     outlived the approval justifying it would silently re-resolve later. */
+  const stampShot = (record, field) => {
+    if (!record) return;
+    if (assetId) record[`${field}AssetId`] = assetId;
+    else if (!value) delete record[`${field}AssetId`];
+  };
+  const shot = () => authorityList(P.shots).find((row) => row && authorityText(row.id) === it.shotId) || null;
+
+  if (it.kind === "shot-frame") {
+    const s = shot();
+    if (!s) return false;
+    const frames = authorityList(s.keyframes);
+    const index = frames.findIndex((row) => row && authorityText(row.id) === it.frameId);
+    if (index < 0) return false;
+    frames[index].winner = value;
+    stampShot(frames[index], "winner");
+    /* The opening frame's authority is also the shot's headline image. Both are
+       the same edge, and readAuthorityEdge falls back to it. */
+    if (index === 0) { s.winner = value; stampShot(s, "winner"); }
+    return true;
+  }
+  if (it.kind === "shot-motion") {
+    const s = shot();
+    if (!s) return false;
+    const unit = authorityList(s.clips).find((row) => row && (authorityText(row.id) === it.unitKey || authorityText(row.suffix) === it.unitKey));
+    if (!unit) return false;
+    unit.videoWinner = value;
+    stampShot(unit, "videoWinner");
+    return true;
+  }
+  if (it.kind === "shot-delivery") {
+    const s = shot();
+    if (!s) return false;
+    s.creationBrief = s.creationBrief && typeof s.creationBrief === "object" ? s.creationBrief : {};
+    /* Which delivery this is, is a fact about the bytes, not a caller's claim. */
+    if (/\.(mp4|mov|webm|m4v|avi|mkv)$/i.test(value)) {
+      s.creationBrief.approvedMotionFile = value;
+      s.creationBrief.deliveryIntent = "video";
+    } else {
+      s.finalStillFile = value;
+      s.creationBrief.finalStillFile = value;
+      s.creationBrief.deliveryIntent = "still";
+    }
+    s.winner = value;
+    stampShot(s, "winner");
+    return true;
+  }
+  if (it.kind === "entity-state") {
+    const x = authorityList(P[it.list]).find((row) => row && authorityText(row.id) === it.entityId) || null;
+    if (!x) return false;
+    const states = authorityList(x.continuityStates);
+    const state = states.find((row) => row && authorityText(row.id) === it.stateId) || null;
+    if (!state && it.stateId !== "state-default") return false;
+    if (state) {
+      state.approvedFile = value;
+      state.approvedAt = at;
+      state.parentValidation = null;
+      if (assetId) state.approvedAssetId = assetId;
+      else if (!value) delete state.approvedAssetId;
+    }
+    if (!state || state.isDefault === true || authorityText(state.id) === "state-default") {
+      x.approvedFile = value;
+      if (assetId) x.approvedAssetId = assetId;
+      else if (!value) delete x.approvedAssetId;
+    }
+    return true;
+  }
+  return false;
+}
+
 /* ---------- the named write boundaries, one per target kind --------------- */
 
-/* Each is the kernel transaction with the kind bound and, where the object has
-   an ownership question, the veto attached. A caller names the surface it is;
-   it cannot name the actor, because the actor is not a string any more. */
-function writeProductionAuthority(project, request = {}) {
+/* 1D-03 — THERE IS NO GENERIC WRITER ANY MORE.
+ *
+ * `writeProductionAuthority` was exported and forwarded any request straight
+ * into the kernel, so a caller could name an entity-state target and skip the
+ * ownership rule entirely — which the 1C audit did. It is private now, and the
+ * only thing it does beyond forwarding is refuse a kind nobody named.
+ *
+ * The four named operations below are the whole public surface. Target policy
+ * is not attached here; it lives in the kernel, keyed by target kind, where no
+ * caller can reach it. */
+function commitNamedAuthority(project, request, kind) {
   if (!KERNEL) throw new Error("The production authority kernel is not loaded. No authority can be established.");
-  return KERNEL.commitAuthorityTransaction(project, request);
+  const it = authorityObject(request);
+  /* A caller cannot smuggle policy or edge behaviour back in. */
+  delete it.eligibility;
+  delete it.applyEdge;
+  return KERNEL.commitAuthorityTransaction(project, { ...it, kind });
 }
 function writeFrameProductionAuthority(project, request = {}) {
-  return writeProductionAuthority(project, { ...authorityObject(request), kind: "shot-frame" });
+  return commitNamedAuthority(project, request, "shot-frame");
 }
 function writeMotionProductionAuthority(project, request = {}) {
-  return writeProductionAuthority(project, { ...authorityObject(request), kind: "shot-motion" });
+  return commitNamedAuthority(project, request, "shot-motion");
 }
 function writeDeliveryProductionAuthority(project, request = {}) {
-  return writeProductionAuthority(project, { ...authorityObject(request), kind: "shot-delivery" });
+  return commitNamedAuthority(project, request, "shot-delivery");
 }
 function writeEntityStateProductionAuthority(project, request = {}) {
-  const it = authorityObject(request);
-  return writeProductionAuthority(project, {
-    ...it, kind: "entity-state",
-    eligibility: typeof it.eligibility === "function" ? it.eligibility : (target, snapshot) => entityOwnershipEligibility(snapshot, target, authorityText(it.value)),
-  });
+  return commitNamedAuthority(project, request, "entity-state");
 }
 /* THERE IS NO writeCoverageProductionAuthority AND NO writeExpressionProductionAuthority.
    Alpha removes authority semantics from slots rather than instrumenting them;
@@ -333,6 +454,17 @@ function revokeEntityStateProductionAuthority(project, request = {}) {
 }
 function repairAuthorityReceiptIdentity(project, change = {}) {
   return KERNEL ? KERNEL.repairAuthorityValue(project, change) : [];
+}
+
+/* THE KERNEL'S TARGET POLICY AND EDGE WRITER, WIRED AT LOAD.
+ *
+ * Both are module wiring, not per-call arguments — that is the whole point of
+ * 1D-03 and 1D-07. A caller has no parameter for either, so there is nothing to
+ * omit, replace or forget. `entityOwnershipEligibility` is defined below and
+ * hoisted; it is the same predicate the resolver suite already covers. */
+if (KERNEL) {
+  KERNEL.installAuthorityEdgeWriter(writeAuthorityEdge);
+  KERNEL.installAuthorityOwnershipPolicy((project, target, value) => entityOwnershipEligibility(project, target, value));
 }
 
 /* ---------- the ownership veto -------------------------------------------- */
@@ -739,7 +871,6 @@ const PRODUCTION_AUTHORITY_EXPORTS = {
   currentHumanAuthority,
   hasCurrentHumanAuthority,
   historicSelection,
-  writeProductionAuthority,
   revokeProductionAuthority,
   writeFrameProductionAuthority,
   writeMotionProductionAuthority,

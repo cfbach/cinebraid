@@ -64,7 +64,11 @@ Authority.useEntityOwnershipResolver(Ownership);
    Node has no user agent, so the harness source opens the gesture window
    explicitly and says so. `manualActionSourceInstalled()` reports "harness"
    rather than claiming a person was present. */
-const MANUAL = Kernel.installHarnessManualActionSource();
+/* 1D-01: no synthetic source in the product any more. The suite installs the
+   real trusted-event listener on an event target it owns and delivers events to
+   it from outside the page scope. */
+const { installTestManualActionSource } = require("./authority-test-gesture.js");
+const MANUAL = installTestManualActionSource(Kernel);
 const approvalFor = (...targets) => MANUAL.gesture(() => Authority.beginManualApproval({ via: "test-approval-surface", targets }));
 
 let checks = 0;

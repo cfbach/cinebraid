@@ -393,6 +393,7 @@ function response(data, status = 200, headers = {}) {
 }
 
 function createDocument() {
+  const documentListeners = new Map();
   const ids = [
     "app",
     "project-title",
@@ -446,14 +447,28 @@ function createDocument() {
       element.tagName = String(tagName || "div").toUpperCase();
       return element;
     },
-    addEventListener() {},
+    /* 1D-01 — A REAL EVENT TARGET, WHOSE LISTENERS PAGE SCRIPT CANNOT REACH.
+     *
+     * This was a no-op stub, which is why Batch 1C needed a synthetic gesture
+     * source exported from the kernel — the source the 1C audit then used from
+     * ordinary browser code to mint human authority.
+     *
+     * Now bootstrap.js installs the REAL trusted-event listener here and the
+     * harness delivers events to it. `documentListeners` lives in this Node
+     * closure: page script inside the vm can call `document.addEventListener`
+     * but cannot enumerate or invoke what is registered, so it cannot fire its
+     * own "trusted" event. The boundary is compositional, not a flag. */
+    addEventListener(type, handler) {
+      if (!documentListeners.has(type)) documentListeners.set(type, []);
+      documentListeners.get(type).push(handler);
+    },
   };
-  return { document, map };
+  return { document, map, documentListeners };
 }
 
 async function render(hash, project, options = {}) {
   const renderOptions = options;
-  const { document, map } = createDocument();
+  const { document, map, documentListeners } = createDocument();
   const storage = new Map(Object.entries(options.storage || {}));
   const localStorage = {
     getItem: (key) => (storage.has(key) ? storage.get(key) : null),
@@ -603,6 +618,20 @@ async function render(hash, project, options = {}) {
     const original = fs.readFileSync(path.join(PUBLIC, file), "utf8");
     const source = mutate ? String(mutate(file, original) ?? original) : original;
     vm.runInContext(source, context, { filename: file });
+    /* 1D-01 — THE HARNESS INSTALLS THE REAL SOURCE, FROM OUT HERE, FIRST.
+     *
+     * The moment the kernel exists, Node-side code installs the product's own
+     * trusted-event listener on the harness document, with a `schedule` that
+     * never closes the window — a suite driving the page over many turns is one
+     * continuous person, not a macrotask.
+     *
+     * Installing first also EXERCISES the install-once guard: bootstrap.js runs
+     * later in this same loop, calls the installer, and is refused. If that
+     * guard regressed, bootstrap would win and the window would close on a real
+     * timer, and the approval suites would start failing. */
+    if (file === "shared-authority-kernel.js" && context.CineBraidAuthorityKernel) {
+      context.CineBraidAuthorityKernel.installBrowserManualActionSource(document, () => {});
+    }
     /* THE MANUAL-ACTION SOURCE, INSTALLED THE MOMENT THE KERNEL EXISTS.
      *
      * In the product this is `installBrowserManualActionSource()` from
@@ -620,14 +649,19 @@ async function render(hash, project, options = {}) {
      * proves the real approval handler REFUSES when no source is installed at
      * all. A suite that wants to exercise the refusal closes the window. */
   }
-  /* Installed AFTER bootstrap.js, so the harness source is the one in force and
-     `manualActionSourceInstalled()` answers "harness". bootstrap installs the
-     browser listener first; in a vm there is no user agent behind it, and a
-     source that cannot ever fire would make every approval refuse. */
-  if (typeof context.installHarnessManualActionSource === "function") {
-    context.__manualHarness = context.installHarnessManualActionSource();
-    context.__manualHarness.open("render-harness");
-  }
+  /* 1D-01 — THE HARNESS IS THE USER, AND IT SAYS SO BY DELIVERING AN EVENT.
+   *
+   * bootstrap.js has already installed the real trusted-event listener on the
+   * document above. There is no synthetic source to install any more; the
+   * harness simply delivers a trusted event the way a user agent would, from
+   * out here in Node where page script cannot follow.
+   *
+   * The window is held open for the session because every call a suite makes
+   * into the page stands in for a person driving it — there is no automation
+   * running inside this vm to be separated from. `manualActionSourceInstalled()`
+   * answers "browser-trusted-event", which is now the accurate answer: the
+   * source in force IS the product's listener. What differs is who fires. */
+  for (const handler of documentListeners.get("click") || []) handler({ type: "click", isTrusted: true });
 
   const deadline = Date.now() + 4000;
   while (
