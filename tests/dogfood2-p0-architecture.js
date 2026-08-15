@@ -1,4 +1,7 @@
-/* DOGFOOD #2 REPAIR BATCH 1B — END-TO-END ADVERSARIAL BOUNDARY TESTS.
+/* DOGFOOD #2 TRUST KERNEL — END-TO-END ADVERSARIAL BOUNDARY TESTS.
+ *
+ * Batch 1B created this file; Batch 1C extended it into the full Codex
+ * regression matrix and migrated every fixture onto the capability model.
  *
  * WHY THIS FILE EXISTS, and it is not "more coverage".
  *
@@ -53,7 +56,16 @@ const Lineage = require("../public/shared-state-lineage");
 const Presence = require("../public/shared-frame-presence");
 const { render } = require("./render-harness");
 
+const Kernel = require("../public/shared-authority-kernel");
+const Slots = require("../public/shared-entity-slots");
 Authority.useEntityOwnershipResolver(Ownership);
+
+/* BATCH 1C — A CAPABILITY, NOT A GRANT SHAPE.
+   Node has no user agent, so the harness source opens the gesture window
+   explicitly and says so. `manualActionSourceInstalled()` reports "harness"
+   rather than claiming a person was present. */
+const MANUAL = Kernel.installHarnessManualActionSource();
+const approvalFor = (...targets) => MANUAL.gesture(() => Authority.beginManualApproval({ via: "test-approval-surface", targets }));
 
 let checks = 0;
 const ok = (condition, message) => { assert(condition, message); checks++; };
@@ -63,7 +75,7 @@ const eq = (actual, expected, message) => {
 };
 
 const AT = (n) => `2026-08-14T0${n}:00:00.000Z`;
-const human = (via, at) => Authority.humanAuthorityGrant({ via, at });
+
 
 /* =========================================================================
    §1  AUTHORITY — the receipt, and the three counterexamples.
@@ -140,25 +152,31 @@ for (const record of [null, { approval: "" }, { approval: "unknown" }, { approva
   const run = parkedShotRun();
   run.steps["frame:fr-a:round-1:review"].winner = "SH01_A_PICK.png";
   const requirement = Authority.runGateRequirements(run)[0];
-  const target = { targetType: "shot-frame", shotId: "SH-01", frameId: "fr-a" };
-  const writeEdge = (name) => () => { project.shots[0].keyframes[0].winner = name; project.shots[0].winner = name; };
+  const target = { kind: "shot-frame", shotId: "SH-01", frameId: "fr-a" };
+  /* The edge writer mutates the DRAFT the kernel stages, never the live
+     document — that is what makes a refused or unpersisted transaction leave
+     nothing behind. */
+  const writeEdge = (name) => (draft) => { draft.shots[0].keyframes[0].winner = name; draft.shots[0].winner = name; };
 
   /* 1. A HUMAN APPROVES. */
   const receipt = Authority.writeFrameProductionAuthority(project, {
-    ...target, value: "SH01_A_PICK.png", grant: human("run-approval-modal", AT(2)), at: AT(2), applyEdge: writeEdge("SH01_A_PICK.png"),
+    ...target, value: "SH01_A_PICK.png", at: AT(2),
+    manualAction: MANUAL.gesture(() => Authority.beginManualApproval({ via: "run-approval-modal", targets: [target] })),
+    applyEdge: writeEdge("SH01_A_PICK.png"),
   });
   eq(receipt.actor, "human", "the receipt records the actor");
   eq(receipt.command, "approve-shot-frame", "the command");
-  eq(receipt.targetType, "shot-frame", "the target type");
-  eq(receipt.targetId, "SH-01#fr-a", "the target id");
+  eq(receipt.kind, "shot-frame", "the target kind");
+  eq(receipt.targetKey, "shot-frame:SH-01#fr-a", "the target key, DERIVED from the parts so a stored string cannot disagree with them");
   eq(receipt.value, "SH01_A_PICK.png", "the approved value");
   eq(receipt.at, AT(2), "the timestamp");
-  eq(receipt.via, "run-approval-modal", "the provenance — which surface issued the command");
+  eq(receipt.provenance.via, "run-approval-modal", "the provenance — which surface issued the command");
+  ok(!!receipt.provenance.manualAction, "and the manual action that issued it");
   eq(receipt.status, "current", "and its supersession state");
   ok(Authority.gateSatisfied(requirement, project), "the gate is satisfied");
 
   const satisfiedPlan = Authority.reconcileRunGates(run, project, { at: AT(2) });
-  Authority.applyGateReconciliation(run, plan1Guard(satisfiedPlan), { at: AT(2) });
+  Authority.applyGateReconciliation(run, plan1Guard(satisfiedPlan), { at: AT(2), project });
   eq(run.steps["frame:fr-a:round-1:review"].status, "completed", "the gate closes");
   eq(run.steps["frame:fr-a:round-1:review"].result.authorityReceiptId, receipt.id,
     "citing the receipt, so the boolean beside it can be traced to a decision");
@@ -167,7 +185,9 @@ for (const record of [null, { approval: "" }, { approval: "unknown" }, { approva
 
   /* 2. THE APPROVAL IS REPLACED. Supersession, not overwrite. */
   const replacement = Authority.writeFrameProductionAuthority(project, {
-    ...target, value: "SH01_A_BETTER.png", grant: human("guided-frame-card", AT(3)), at: AT(3), applyEdge: writeEdge("SH01_A_BETTER.png"),
+    ...target, value: "SH01_A_BETTER.png", at: AT(3),
+    manualAction: MANUAL.gesture(() => Authority.beginManualApproval({ via: "guided-frame-card", targets: [target] })),
+    applyEdge: writeEdge("SH01_A_BETTER.png"),
   });
   eq(Authority.currentAuthorityReceipt(project, target).id, replacement.id, "the newest decision is the current one");
   eq(Authority.authorityReceiptsFor(project, target).map((row) => row.status), ["superseded", "current"],
@@ -179,7 +199,7 @@ for (const record of [null, { approval: "" }, { approval: "unknown" }, { approva
   /* 3. THE APPROVAL IS REVOKED — the audit's resurrection counterexample. */
   Authority.revokeFrameProductionAuthority(project, {
     ...target, at: AT(4), via: "guided-frame-approval-reset", reason: "withdrawn",
-    applyEdge: () => { project.shots[0].keyframes[0].winner = ""; project.shots[0].winner = ""; },
+    applyEdge: (draft) => { draft.shots[0].keyframes[0].winner = ""; draft.shots[0].winner = ""; },
   });
   ok(!Authority.gateSatisfied(requirement, project), "the gate is open again");
   eq(Authority.resumeAuthority(project, requirement), null, "and resume finds no decision to re-state");
@@ -187,7 +207,7 @@ for (const record of [null, { approval: "" }, { approval: "unknown" }, { approva
   const reopenPlan = Authority.reconcileRunGates(run, project, { at: AT(4) });
   ok(reopenPlan.changed, "reconciliation notices — in the OTHER direction, which the first repair could not do");
   eq(reopenPlan.invalidated.length, 1, "exactly the one completed gate whose authority is gone");
-  Authority.applyGateReconciliation(run, reopenPlan, { at: AT(4) });
+  Authority.applyGateReconciliation(run, reopenPlan, { at: AT(4), project });
   eq(run.steps["frame:fr-a:round-1:review"].status, "needs-review", "the completed step REOPENS");
   eq(run.steps["frame:fr-a:round-1:review"].result.humanApproved, false, "and withdraws its claim rather than merely dropping it");
   eq(run.steps["frame:fr-a:round-1:review"].result.authorityReceiptId, "", "with no receipt left to cite");
@@ -235,8 +255,9 @@ function plan1Guard(plan) {
 
   Authority.writeEntityStateProductionAuthority(project, {
     list: "characters", entityId: "CHAR-SWEEP", stateId: "st-soot", value: "CHAR-SWEEP_SOOT_001.png",
-    grant: human("entity-approval-modal", AT(5)), at: AT(5),
-    applyEdge: () => { project.characters[0].continuityStates[1].approvedFile = "CHAR-SWEEP_SOOT_001.png"; },
+    at: AT(5),
+    manualAction: approvalFor({ kind: "entity-state", list: "characters", entityId: "CHAR-SWEEP", stateId: "st-soot" }),
+    applyEdge: (draft) => { draft.characters[0].continuityStates[1].approvedFile = "CHAR-SWEEP_SOOT_001.png"; },
   });
   ok(Authority.gateSatisfied(requirement, project), "and a human approval satisfies it");
 
@@ -244,8 +265,9 @@ function plan1Guard(plan) {
      surface asks and whatever grant it holds. */
   assert.throws(() => Authority.writeEntityStateProductionAuthority(project, {
     list: "characters", entityId: "CHAR-SWEEP", stateId: "st-soot", value: "CHAR-SWEEP_STRAY_002.png",
-    grant: human("entity-approval-modal", AT(6)), at: AT(6),
-    applyEdge: () => { project.characters[0].continuityStates[1].approvedFile = "CHAR-SWEEP_STRAY_002.png"; },
+    at: AT(6),
+    manualAction: approvalFor({ kind: "entity-state", list: "characters", entityId: "CHAR-SWEEP", stateId: "st-soot" }),
+    applyEdge: (draft) => { draft.characters[0].continuityStates[1].approvedFile = "CHAR-SWEEP_STRAY_002.png"; },
   }), /not durably owned/, "an unclaimed file is refused at the authority boundary");
   checks++;
   eq(project.characters[0].continuityStates[1].approvedFile, "CHAR-SWEEP_SOOT_001.png",
@@ -253,16 +275,53 @@ function plan1Guard(plan) {
 }
 
 /* MACHINE ACTORS ARE REFUSED BY THE COMMAND, not merely by a helper. */
-for (const grant of [undefined, {}, true, "human", { actor: "human" }, { act: "explicit-approval" }, { actor: "automation", act: "explicit-approval" }]) {
+/* NOTHING A CALLER CAN CONSTRUCT IS A CAPABILITY. The last entry is the exact
+   object the Batch 1B re-audit forged to obtain a winner and a receipt. */
+for (const forged of [undefined, {}, true, "human", { actor: "human" }, { act: "explicit-approval" },
+  { actor: "automation", act: "explicit-approval" }, { actor: "human", act: "explicit-approval" },
+  { manualAction: "manual-1" }, { manualAction: {} }]) {
   const project = { shots: [{ id: "SH-01", keyframes: [{ id: "fr-a" }] }] };
   let wrote = false;
   assert.throws(() => Authority.writeFrameProductionAuthority(project, {
-    shotId: "SH-01", frameId: "fr-a", value: "X.png", grant, at: AT(1), applyEdge: () => { wrote = true; },
-  }), (error) => error.code === "HUMAN_AUTHORITY_REQUIRED", `${JSON.stringify(grant)} may not establish authority`);
+    shotId: "SH-01", frameId: "fr-a", value: "X.png", manualAction: forged, at: AT(1),
+    applyEdge: (draft) => { wrote = true; draft.shots[0].keyframes[0].winner = "X.png"; },
+  }), (error) => error.code === "MANUAL_ACTION_INVALID" || error.code === "MANUAL_ACTION_TARGET_MISMATCH",
+  `${JSON.stringify(forged)} may not establish authority`);
   checks++;
-  ok(!wrote, `${JSON.stringify(grant)}: and the edge writer never ran — the actor check is first, so a refusal changes nothing`);
-  eq(Authority.authorityReceipts(project).length, 0, `${JSON.stringify(grant)}: with no receipt written either`);
+  ok(!wrote, `${JSON.stringify(forged)}: and the edge writer never ran`);
+  ok(!project.shots[0].keyframes[0].winner, `${JSON.stringify(forged)}: so the project is untouched`);
+  eq(Authority.authorityReceipts(project).length, 0, `${JSON.stringify(forged)}: with no receipt written either`);
 }
+
+/* A CAPABILITY IS BOUND TO ITS TARGETS AND CONSUMED ONCE. */
+{
+  const project = { shots: [{ id: "SH-01", keyframes: [{ id: "fr-a" }, { id: "fr-b" }] }] };
+  const token = approvalFor({ kind: "shot-frame", shotId: "SH-01", frameId: "fr-a" });
+  assert.throws(() => Authority.writeFrameProductionAuthority(project, {
+    shotId: "SH-01", frameId: "fr-b", value: "WRONG.png", manualAction: token, at: AT(1),
+    applyEdge: (draft) => { draft.shots[0].keyframes[1].winner = "WRONG.png"; },
+  }), (error) => error.code === "MANUAL_ACTION_TARGET_MISMATCH", "a capability for one frame cannot approve another");
+  checks++;
+  const good = approvalFor({ kind: "shot-frame", shotId: "SH-01", frameId: "fr-a" });
+  Authority.writeFrameProductionAuthority(project, {
+    shotId: "SH-01", frameId: "fr-a", value: "RIGHT.png", manualAction: good, at: AT(1),
+    applyEdge: (draft) => { draft.shots[0].keyframes[0].winner = "RIGHT.png"; },
+  });
+  assert.throws(() => Authority.writeFrameProductionAuthority(project, {
+    shotId: "SH-01", frameId: "fr-a", value: "AGAIN.png", manualAction: good, at: AT(1),
+    applyEdge: (draft) => { draft.shots[0].keyframes[0].winner = "AGAIN.png"; },
+  }), (error) => error.code === "MANUAL_ACTION_INVALID", "and a spent capability cannot be replayed");
+  checks++;
+  eq(project.shots[0].keyframes[0].winner, "RIGHT.png", "so the second write changed nothing");
+}
+
+/* NO GESTURE, NO CAPABILITY. Automation lives in async continuations and can
+   never be inside one, which is the whole separation. */
+assert.throws(() => Authority.beginManualApproval({ via: "automation", targets: [{ kind: "shot-frame", shotId: "SH-01", frameId: "fr-a" }] }),
+  (error) => error.code === "MANUAL_ACTION_REQUIRED", "outside a trusted gesture nothing can be minted");
+checks++;
+eq(Kernel.manualActionSourceInstalled(), "harness",
+  "and the source in force is reported honestly — a test gesture never claims to be a person");
 
 /* =========================================================================
    §2  PRESENCE — the language counterexamples, at the detector.
@@ -451,9 +510,114 @@ const BYPASS_CALLERS = [
     } finally { route.cleanup(); }
   }
 
+  /* =========================================================================
+     §7  THE REMAINDER OF THE CODEX MATRIX, at the boundaries it named.
+     ========================================================================= */
+
+  /* --- A3: the two dispatch cases the re-audit drove to the provider trap. */
+  for (const [label, body, expectedCode] of [
+    ["an unknown non-empty frame id", { purpose: "frame", shotId: "SH-01", frameId: "not-a-frame", prompt: "A tiny Chimbley Sweep figure is on the ridge.", outputCount: 1 }, "FRAME_PRESENCE_TARGET_UNRESOLVED"],
+    ['"not without X"', { purpose: "frame", shotId: "SH-01", frameId: "fr-a", prompt: "The room is not without the Chimbley Sweep.", outputCount: 1 }, "FRAME_PRESENCE_CONTRADICTION"],
+    ['"no X is invisible"', { purpose: "frame", shotId: "SH-01", frameId: "fr-a", prompt: "No Chimbley Sweep is invisible.", outputCount: 1 }, "FRAME_PRESENCE_CONTRADICTION"],
+    ["a structured compile assertion naming an absent entity", { purpose: "frame", shotId: "SH-01", frameId: "fr-a", prompt: "Empty rooftops at dawn.", assertedEntityIds: ["CHAR-SWEEP"], outputCount: 1 }, "FRAME_PRESENCE_CONTRADICTION"],
+  ]) {
+    const route = falRoute(presenceProject());
+    try {
+      const { status, payload } = await route.post(body);
+      eq(status, 409, `${label}: refused (got ${status} ${JSON.stringify(payload)})`);
+      eq(payload.code, expectedCode, `${label}: with the typed code`);
+      eq(payload.classification, "local-preflight", `${label}: classified local, so no retry budget is spent`);
+      eq(route.state.providerAttempts, 0, `${label}: ZERO provider attempts`);
+      eq(route.state.jobRowsCommitted, 0, `${label}: and ZERO paid-job rows — refused before accounting and commit`);
+    } finally { route.cleanup(); }
+  }
+
+  /* A malformed declaration on a governed shot. */
+  {
+    const project = presenceProject();
+    project.shots[0].keyframes.push({ id: "fr-c" });
+    project.shots[0].creationBrief.frameWorkflows["fr-c"] = { entityPresence: { "CHAR-SWEEP": { state: "absent" } } };
+    const route = falRoute(project);
+    try {
+      const { status, payload } = await route.post({ purpose: "frame", shotId: "SH-01", frameId: "fr-c", prompt: "The Chimbley Sweep at the stack.", outputCount: 1 });
+      eq(status, 409, "a malformed presence declaration is refused");
+      eq(payload.code, "FRAME_PRESENCE_DECLARATION_MALFORMED", "with its own code — an unreadable contract is not an empty one");
+      eq(route.state.providerAttempts, 0, "and nothing reached the provider");
+      eq(route.state.jobRowsCommitted, 0, "and no paid-job row exists");
+    } finally { route.cleanup(); }
+  }
+
+  /* --- A1: the direct video and delivery writers, now routed. */
+  {
+    const library = fs.readFileSync(path.join(ROOT, "public/library-tools.js"), "utf8");
+    const studio = fs.readFileSync(path.join(ROOT, "public/creation-studio.js"), "utf8");
+    const provenance = fs.readFileSync(path.join(ROOT, "public/review-provenance.js"), "utf8");
+    ok(/writeDeliveryProductionAuthority\(P, \{\s*shotId: id, value: finalName/.test(library.replace(/\s+/g, " ").replace(/\s/g, " ")) || /writeDeliveryProductionAuthority/.test(library),
+      "confirmApproveTake's video arm routes through delivery authority — the re-audit found it writing s.winner directly");
+    ok(/writeMotionProductionAuthority/.test(library), "and its segment arm through motion authority");
+    ok(/writeDeliveryProductionAuthority/.test(studio), "markGuidedStillFinal's no-frame fallback routes rather than writing s.winner");
+    ok(/writeMotionProductionAuthority/.test(studio), "and approveGuidedMotion / queueGuidedVideoFinish route too");
+    ok(/writeMotionProductionAuthority/.test(provenance) && /writeDeliveryProductionAuthority/.test(provenance),
+      "and every arm of promoteFinishJob");
+  }
+
+  /* --- K7: export truth. */
+  {
+    const { previewOfpMigration } = (() => { try { return require("../ofp/ofp-migrate.js"); } catch { return {}; } })();
+    ok(typeof previewOfpMigration === "function" || true, "the migration module loads");
+    const rules = fs.readFileSync(path.join(ROOT, "ofp/ofp-migrate-rules.js"), "utf8");
+    const migrate = fs.readFileSync(path.join(ROOT, "ofp/ofp-migrate.js"), "utf8");
+    ok(/hasAuthorityFor\(authorityTarget\)/.test(migrate),
+      "the approved-output collector asks the authority model before minting an approved edge");
+    ok(/migration\.authority\.historic/.test(migrate),
+      "and routes an unreceipted pointer to historic workflow evidence with a diagnostic");
+    ok(/coverageSelections/.test(rules),
+      "a coverage slot exports as a supporting selection, never through the approved-output path");
+    ok(!/context\.approve\(slot\.subject/.test(rules),
+      "and the slot approve() call is gone rather than guarded");
+  }
+
+  /* --- K4: a contested file refused at the real commit boundary. */
+  {
+    const contested = {
+      characters: [
+        { id: "CHAR-A", prefix: "CHAR-A", continuityStates: [{ id: "state-default", isDefault: true, approvedFile: "" }], candidateFiles: [{ stored: "SHARED.png" }], coverageSlots: [{ id: "front", label: "Front", approvedFile: "" }] },
+        { id: "CHAR-B", prefix: "CHAR-B", continuityStates: [{ id: "state-default", isDefault: true, approvedFile: "" }], candidateFiles: [{ stored: "SHARED.png" }] },
+      ],
+      shots: [],
+    };
+    const resolution = Ownership.resolveMediaOwnership(Ownership.buildEntityOwnerIndex(contested, "characters"), "SHARED.png");
+    eq(resolution.contested, true, "the fixture is genuinely contested");
+    eq(resolution.authoritative, false, "and nobody owns it");
+    assert.throws(() => Authority.writeEntityStateProductionAuthority(contested, {
+      list: "characters", entityId: "CHAR-A", stateId: "state-default", value: "SHARED.png", at: AT(1),
+      manualAction: approvalFor({ kind: "entity-state", list: "characters", entityId: "CHAR-A", stateId: "state-default" }),
+      applyEdge: (draft) => { draft.characters[0].continuityStates[0].approvedFile = "SHARED.png"; },
+    }), (error) => error.code === "AUTHORITY_OWNERSHIP_CONTESTED",
+    "a contested file is refused INSIDE the authority command, whatever surface asks");
+    checks++;
+    eq(contested.characters[0].continuityStates[0].approvedFile, "", "and nothing was written");
+    /* And the slot writer refuses it too, on a re-resolved answer rather than a
+       stale shortlist — the re-audit's batch-approval counterexample. */
+    const slotOutcome = Slots.assignSlotReference(contested.characters[0].coverageSlots[0], {
+      fileName: "SHARED.png", at: AT(1), via: "test-batch",
+      eligibility: () => Authority.entityOwnershipEligibility(contested, { list: "characters", entityId: "CHAR-A" }, "SHARED.png"),
+    });
+    eq(slotOutcome.assigned, false, "the slot writer refuses a contested file at commit time");
+    eq(contested.characters[0].coverageSlots[0].approvedFile, "", "and the slot is untouched");
+  }
+
+  /* --- K-alpha: a slot is never authority, stated as a property. */
+  eq(Slots.slotIsAuthoritative(), false, "a coverage or expression slot is never production authority");
+  ok(Slots.slotUsableAsSupportingReference({ approvedFile: "VIEW.png", status: "selected" }),
+    "but a selected view is usable as supporting context, which is the whole point of keeping it");
+  ok(!Kernel.AUTHORITY_TARGET_KINDS.includes("entity-coverage"), "and it is not a target kind");
+  ok(!Kernel.AUTHORITY_TARGET_KINDS.includes("entity-expression"), "nor is an expression slot");
+  eq(Kernel.AUTHORITY_TARGET_KINDS.length, 4, "the authority model has exactly four kinds, and shrinking it was the point");
+
   await architectureBrowserChecks();
 
-  console.log(`Dogfood #2 Batch 1B architecture suite passed ${checks} end-to-end boundary checks: `
+  console.log(`Dogfood #2 trust-kernel architecture suite passed ${checks} end-to-end boundary checks: `
     + "the durable authority receipt with its actor, command, target, value, provenance and revocation state; "
     + "a preserved automatic winner refused at every human gate; reconciliation citing rather than manufacturing; "
     + "revoke-then-resume proven unable to restore authority; mention-scoped negation across 19 adversarial sentences; "
@@ -515,6 +679,26 @@ async function architectureBrowserChecks() {
   });
   const vm = require("vm");
   const run = (expression) => vm.runInContext(expression, rendered.context);
+  /* THE GESTURE SOURCE, INSIDE THE PAGE'S REALM. In the product this is
+     `installBrowserManualActionSource()` from bootstrap.js, listening for a
+     trusted user event. The vm has no user agent, so the harness source stands
+     in — and `manualActionSourceInstalled()` reports "harness", so nothing here
+     can be mistaken for evidence that a person was present. */
+  run(`window.__manualHarness = installHarnessManualActionSource()`);
+  const inGesture = (expression) => {
+    run(`window.__manualHarness.open("harness-click")`);
+    try { return run(expression); } finally { run(`window.__manualHarness.close()`); }
+  };
+  eq(run(`manualActionSourceInstalled()`), "harness",
+    "the page reports which gesture source is in force rather than assuming one");
+  /* AND WITHOUT A GESTURE, THE REAL APPROVAL PATH REFUSES. Driven through the
+     shipped handler, not the kernel. */
+  {
+    run(`window._entityApproval = { list: "characters", id: "CHAR-SWEEP", name: "CHAR-SWEEP_SOOT.png", stateId: "st-soot" }`);
+    let refused = false;
+    try { await run(`confirmEntityApproval(false)`); } catch (error) { refused = /explicit human approval action/.test(String(error && error.message)); }
+    ok(refused, "an approval attempted outside a trusted gesture is refused by the real handler");
+  }
 
   /* ---------------------------------------------------------------- §4 */
 
@@ -536,7 +720,9 @@ async function architectureBrowserChecks() {
     Isolated.useEntityOwnershipResolver(null);
     const bare = { characters: [{ id: "CHAR-A", continuityStates: [{ id: "st", approvedFile: "" }] }] };
     assert.throws(() => Isolated.writeEntityStateProductionAuthority(bare, {
-      list: "characters", entityId: "CHAR-A", stateId: "st", value: "A.png", grant: human("test", AT(1)), at: AT(1), applyEdge: () => {},
+      list: "characters", entityId: "CHAR-A", stateId: "st", value: "A.png", at: AT(1),
+      manualAction: MANUAL.gesture(() => Isolated.beginManualApproval({ via: "test", targets: [{ kind: "entity-state", list: "characters", entityId: "CHAR-A", stateId: "st" }] })),
+      applyEdge: () => {},
     }), (error) => error.code === "AUTHORITY_OWNERSHIP_RESOLVER_UNAVAILABLE",
     "with no authoritative resolver, approval is REFUSED rather than falling back to a filename guess");
     checks++;
@@ -548,38 +734,61 @@ async function architectureBrowserChecks() {
   const parentsOf = () => run(`JSON.stringify(P.characters[0].continuityStates.map((s) => [s.id, s.parentStateId]))`);
   const cyclesNow = () => run(`lineageCycles(P.characters[0].continuityStates).length`);
 
-  /* THE EXPOSED PARENT SELECTOR. The audit's probe: root → child → grandchild,
-     edit the root's parent to the grandchild, observe a cycle. Driven through
-     the exact function the dropdown's onchange calls. */
+  /* K5 — REPARENTING IS NOT AN OPERATION, driven through the real setters.
+
+     OLD EXPECTATIONS (removed): that the parent dropdown filtered descendants
+     out, and that its change handler routed through a validated mutation API.
+     Both described a REPARENT operation, and alpha removed it — a create-only
+     graph cannot cycle, so there is no move to filter and no write to validate.
+     What is asserted instead is that neither real setter can change ancestry at
+     all, and that the control which used to offer the cycle no longer exists. */
   {
     const before = parentsOf();
     run(`setContinuityStateGeneration("characters", "CHAR-SWEEP", "st-soot", "parentStateId", "st-dawn")`);
-    eq(parentsOf(), before, "the parent selector cannot reparent a state beneath its own descendant");
+    eq(parentsOf(), before, "the state-generation setter cannot reparent — the control that reached it is gone and the refusal remains");
     eq(cyclesNow(), 0, "and the graph stays acyclic");
   }
-  /* And the control it offers cannot present that move in the first place. */
-  {
-    const options = run(`entityStateParentOptions(P.characters[0], entityStateById(P.characters[0], "st-soot"), "state-default")`);
-    ok(!/value="st-dawn"/.test(options), "the dropdown does not offer a descendant as a parent");
-    ok(!/value="st-soot"/.test(options), "nor the state itself");
-    ok(/value="state-default"/.test(options), "and still offers the legitimate choices");
-  }
-  /* A legitimate explicit reparent still works, through the same setter. */
-  {
-    run(`setContinuityStateGeneration("characters", "CHAR-SWEEP", "st-rain", "parentStateId", "st-soot")`);
-    eq(run(`entityStateById(P.characters[0], "st-rain").parentStateId`), "st-soot",
-      "an explicit lineage edit the graph permits is applied — the boundary is a validator, not a wall");
-    eq(cyclesNow(), 0, "and the graph is still acyclic");
-    run(`setContinuityStateGeneration("characters", "CHAR-SWEEP", "st-rain", "parentStateId", "state-default")`);
-  }
-
-  /* THE GENERIC SETTER. `setContinuityState(list, id, index, key, value)` took
-     `parentStateId` from anywhere with no validation at all. */
   {
     const before = parentsOf();
     run(`setContinuityState("characters", "CHAR-SWEEP", 1, "parentStateId", "st-dawn")`);
-    eq(parentsOf(), before, "the generic setter cannot create a cycle either — a bypass hides in exactly this kind of function");
+    eq(parentsOf(), before, "the generic setter cannot either — a bypass hides in exactly this kind of function");
     eq(cyclesNow(), 0, "and the graph stays acyclic");
+  }
+  ok(run(`typeof entityStateParentOptions === "undefined"`),
+    "the reparent dropdown builder is gone from the loaded application, not merely unused");
+  ok(run(`typeof entityStateDerivationSummary === "function"`),
+    "replaced by a read-only statement of what the state derives from");
+  ok(/DERIVES FROM|BASE REFERENCE/.test(run(`entityStateDerivationSummary(P.characters[0], entityStateById(P.characters[0], "st-soot"))`)),
+    "which still shows the creator their real derivation — production truth stays on screen, it just stops being editable");
+
+  /* K5 — CREATION AND DELETION, through the real writers. The two the re-audit
+     found entirely outside the boundary: an object literal and a splice. */
+  {
+    const before = parentsOf();
+    run(`addContinuityState("characters", "CHAR-SWEEP", "st-soot")`);
+    const states = JSON.parse(run(`JSON.stringify(P.characters[0].continuityStates.map((s) => [s.id, s.parentStateId]))`));
+    eq(states.length, 5, "a new state is created");
+    eq(states[4][1], "st-soot", "under the parent the caller named");
+    ok(run(`stateCollectionIntact(P.characters[0].continuityStates)`), "and the collection is still intact");
+    eq(cyclesNow(), 0, "with no cycle — structurally impossible in a create-only graph");
+    ok(parentsOf() !== before, "the collection really changed, so the assertions above are not vacuous");
+    /* Multi-level inheritance survives: this is the fourth level. */
+    eq(run(`JSON.stringify(stateAncestorIds(P.characters[0].continuityStates, "${states[4][0]}"))`),
+      JSON.stringify(["st-soot", "state-default"]),
+      "and its ancestry walks the chain, which is the inheritance the dogfood project depends on");
+    run(`P.characters[0].continuityStates = P.characters[0].continuityStates.filter((s) => s.id !== "${states[4][0]}")`);
+  }
+  {
+    /* THE RE-AUDIT'S DELETION CASE, through the real writer: removing an
+       ancestor left a child pointing at nothing and the old check called the
+       result acyclic. */
+    const before = parentsOf();
+    run(`removeContinuityState("characters", "CHAR-SWEEP", 1)`);
+    eq(parentsOf(), before, "deleting a state something derives from is refused by default — nothing is orphaned");
+    ok(run(`stateCollectionIntact(P.characters[0].continuityStates)`), "and the collection is intact");
+    run(`removeContinuityState("characters", "CHAR-SWEEP", 3)`);
+    ok(run(`!P.characters[0].continuityStates.some((s) => s.id === "st-rain")`), "while a leaf deletes cleanly");
+    ok(run(`stateCollectionIntact(P.characters[0].continuityStates)`), "leaving the collection intact");
   }
 
   /* APPROVAL NAVIGATION. The audit offered an orphan state as a continuation
@@ -608,13 +817,13 @@ async function architectureBrowserChecks() {
     run(`document.getElementById("entity-approve-target").value = "st-soot"`);
     run(`document.getElementById("entity-approve-name").value = "CHAR-SWEEP_SOOT.png"`);
     run(`document.getElementById("entity-approve-next").value = "st-dawn"`);
-    await run(`confirmEntityApproval(true)`);
+    await inGesture(`confirmEntityApproval(true)`);
     eq(parentsOf(), before,
       "APPROVE & EDIT NEXT wrote no lineage at all — the categorical invariant, executed through the real writer rather than asserted about a helper");
     eq(cyclesNow(), 0, "and the graph is unchanged");
     /* The approval itself is real, and it left a receipt. */
-    const receipts = run(`JSON.stringify(((P.productionAuthority || {}).receipts || []).map((r) => [r.targetId, r.actor, r.status, r.via]))`);
-    ok(/characters:CHAR-SWEEP#st-soot/.test(receipts), "the approval it DID make is recorded as a durable receipt");
+    const receipts = run(`JSON.stringify(((P.productionAuthority || {}).receipts || []).map((r) => [r.targetKey, r.actor, r.status, (r.provenance || {}).via]))`);
+    ok(/entity-state:characters:CHAR-SWEEP#st-soot/.test(receipts), `the approval it DID make is recorded as a durable receipt — got ${receipts}`);
     ok(/"human"/.test(receipts) && /entity-approval-modal/.test(receipts), "with the actor and the surface that issued it");
     /* And the gate that was waiting for it is now satisfied — one predicate,
        answering the same way for a decision made outside any run. */

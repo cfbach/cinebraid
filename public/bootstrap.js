@@ -1,3 +1,21 @@
+/* K1A — THE TRUSTED MANUAL ACTION BOUNDARY, INSTALLED ONCE.
+ *
+ * This is the only place CineBraid learns what a human gesture is. A
+ * capture-phase listener on `document` opens a short window whenever the user
+ * agent reports `isTrusted` — which page script cannot forge — and every
+ * approval handler mints its capability inside that window, synchronously, in
+ * its own prologue.
+ *
+ * Automation runs in `await` continuations and timer callbacks, always outside
+ * the window, so it cannot mint. That is the entire separation between "a
+ * person approved this" and "code called a function", and for a local
+ * single-user tool it is the proportionate amount of it: no login, no identity,
+ * no cryptography, one primitive the browser already gives us for free.
+ *
+ * Without this line, every approval in the product refuses. That is the correct
+ * failure direction and it is why it is the first thing that runs. */
+if (typeof installBrowserManualActionSource === "function") installBrowserManualActionSource();
+
 /* Start after every view and action module has loaded. */
 load()
   .then(() => {

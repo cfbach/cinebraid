@@ -158,17 +158,10 @@ function authorityList(value) {
 
 const KERNEL = (() => {
   if (typeof module !== "undefined" && module.exports) return require("./shared-authority-kernel.js");
-  if (typeof authorityTarget === "function") return {
-    AUTHORITY_TARGET_KINDS, AUTHORITY_COMMANDS, AUTHORITY_RECEIPT_STATES, AUTHORITY_REVOCATION_REASONS,
-    AUTHORITY_LEDGER_KEY, AUTHORITY_LEDGER_VERSION, AUTHORITY_ACTOR, AUTHORITY_ACT, AUTHORITY_DIAGNOSTIC_CODES,
-    authorityError, authorityTarget, sameAuthorityTarget, describeTarget,
-    installBrowserManualActionSource, installHarnessManualActionSource, manualActionSourceInstalled,
-    trustedGestureOpen, beginManualAuthorityAction, manualActionCovers,
-    validateReceiptShape, validateAuthorityLedger, authorityLedgerDiagnostics,
-    installAuthorityEdgeReader, liveAuthorityEdge, currentHumanAuthority, hasCurrentHumanAuthority,
-    authorityHistory, historicSelection,
-    installAuthorityProjectCommitter, commitAuthorityTransaction, revokeAuthorityTransaction, repairAuthorityValue,
-  };
+  /* One namespace, for the reason the kernel's own export block gives: the
+     wrappers below share a lexical scope with it, and reading loose names here
+     made each wrapper call itself. */
+  if (typeof window !== "undefined" && window.CineBraidAuthorityKernel) return window.CineBraidAuthorityKernel;
   return null;
 })();
 
@@ -387,10 +380,6 @@ function gateAuthorityTarget(requirement) {
   if (need.kind === "entity-state-approval") return authorityTargetFor({ kind: "entity-state", list: need.list, entityId: need.entityId, stateId: need.stateId });
   return null;
 }
-function sameAuthorityTarget(a, b) {
-  return !!KERNEL && KERNEL.sameAuthorityTarget(a, b);
-}
-function authorityTarget(details) { return authorityTargetFor(details); }
 
 /* ---------- was this decision a human one --------------------------------- */
 
@@ -715,7 +704,7 @@ function runHasRevokedAuthority(run, project) {
    Returns the receipt so the caller re-states a decision that exists rather
    than issuing a fresh grant of its own. */
 function resumeAuthority(project, requirementOrTarget) {
-  const target = gateAuthorityTarget(requirementOrTarget) || authorityTarget(requirementOrTarget);
+  const target = gateAuthorityTarget(requirementOrTarget) || authorityTargetFor(requirementOrTarget);
   if (!target) return null;
   return currentHumanAuthority(project, target);
 }
@@ -741,9 +730,8 @@ const PRODUCTION_AUTHORITY_EXPORTS = {
   stepIsHumanApproval,
   stepClaimsHumanApproval,
   provenanceActor,
-  authorityTarget,
+  authorityTarget: authorityTargetFor,
   gateAuthorityTarget,
-  sameAuthorityTarget,
   authorityReceipts,
   authorityReceiptsFor,
   currentAuthorityReceipt,

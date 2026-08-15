@@ -874,5 +874,22 @@ const AUTHORITY_KERNEL_EXPORTS = {
   repairAuthorityValue,
 };
 
-if (typeof window !== "undefined") for (const [key, value] of Object.entries(AUTHORITY_KERNEL_EXPORTS)) window[key] = value;
+/* A NAMESPACE, NOT LOOSE GLOBALS — and this is not tidiness.
+ *
+ * Every public/*.js shares one lexical scope in the browser. Exporting the
+ * kernel's names individually meant `shared-production-authority.js`, which
+ * defines its own `currentHumanAuthority` and `authorityTarget` as thin
+ * wrappers, SHADOWED the kernel functions those wrappers call — and each
+ * wrapper called itself until the stack ran out. The whole product blanked, and
+ * no Node suite could see it because Node has no shared scope.
+ *
+ * The kernel is reached through one object nothing else is named. Only the
+ * installers are also exposed loosely, because bootstrap.js and the test
+ * harnesses call them by name and nothing redefines them. */
+if (typeof window !== "undefined") {
+  window.CineBraidAuthorityKernel = AUTHORITY_KERNEL_EXPORTS;
+  for (const key of ["installBrowserManualActionSource", "installHarnessManualActionSource", "manualActionSourceInstalled", "trustedGestureOpen"]) {
+    window[key] = AUTHORITY_KERNEL_EXPORTS[key];
+  }
+}
 if (typeof module !== "undefined" && module.exports) module.exports = AUTHORITY_KERNEL_EXPORTS;
