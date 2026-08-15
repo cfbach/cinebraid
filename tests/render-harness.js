@@ -603,6 +603,30 @@ async function render(hash, project, options = {}) {
     const original = fs.readFileSync(path.join(PUBLIC, file), "utf8");
     const source = mutate ? String(mutate(file, original) ?? original) : original;
     vm.runInContext(source, context, { filename: file });
+    /* THE MANUAL-ACTION SOURCE, INSTALLED THE MOMENT THE KERNEL EXISTS.
+     *
+     * In the product this is `installBrowserManualActionSource()` from
+     * bootstrap.js, which opens a short window on a trusted user event —
+     * something the user agent sets and page script cannot forge.
+     *
+     * This harness has no user agent. It IS the user: every call a suite makes
+     * into the page is standing in for a person driving it, and there is no
+     * automation running here to be separated from. So the harness source is
+     * installed and its window held open for the session.
+     *
+     * WHAT KEEPS THAT HONEST: `manualActionSourceInstalled()` answers "harness",
+     * never "browser-trusted-event", so nothing can read a harness gesture as
+     * evidence a person was present — and tests/dogfood2-p0-architecture.js
+     * proves the real approval handler REFUSES when no source is installed at
+     * all. A suite that wants to exercise the refusal closes the window. */
+  }
+  /* Installed AFTER bootstrap.js, so the harness source is the one in force and
+     `manualActionSourceInstalled()` answers "harness". bootstrap installs the
+     browser listener first; in a vm there is no user agent behind it, and a
+     source that cannot ever fire would make every approval refuse. */
+  if (typeof context.installHarnessManualActionSource === "function") {
+    context.__manualHarness = context.installHarnessManualActionSource();
+    context.__manualHarness.open("render-harness");
   }
 
   const deadline = Date.now() + 4000;

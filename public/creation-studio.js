@@ -3076,12 +3076,15 @@ window.useApprovedBaseAsShot = async (id) => {
       assetId: (takesFor(s.id).find((item) => item.name === d.name) || {}).assetId || "",
       manualAction: baseManualAction,
       at: new Date().toISOString(),
-      applyEdge: () => {
+      applyEdge: (draft) => {
         const copiedAssetId = (takesFor(s.id).find((item) => item.name === d.name) || {}).assetId || "";
-        s.winner = d.name;
-        opening.winner = d.name;
-        stampShotApprovalIdentity(s, "winner", copiedAssetId);
-        stampShotApprovalIdentity(opening, "winner", copiedAssetId);
+        const dShot = (draft.shots || []).find((row) => row && row.id === s.id);
+        const dOpening = ((dShot || {}).keyframes || []).find((row) => row && row.id === opening.id);
+        if (!dShot || !dOpening) throw new Error("Shot image target is unavailable");
+        dShot.winner = d.name;
+        dOpening.winner = d.name;
+        stampShotApprovalIdentity(dShot, "winner", copiedAssetId);
+        stampShotApprovalIdentity(dOpening, "winner", copiedAssetId);
       },
     });
     const c = ensureShotCreation(s);
@@ -3708,12 +3711,15 @@ window.resetGuidedFrameApproval = (id, frameId) => {
          decision was withdrawn rather than never made. */
       revokeFrameProductionAuthority(P, {
         shotId: s.id, frameId, at: new Date().toISOString(), via: "guided-frame-approval-reset", reason: "withdrawn",
-        applyEdge: () => {
-          frame.winner = "";
-          clearShotApprovalIdentity(frame, "winner");
+        applyEdge: (draft) => {
+          const dShot = (draft.shots || []).find((row) => row && row.id === s.id);
+          const dFrame = ((dShot || {}).keyframes || []).find((row) => row && row.id === frameId);
+          if (!dShot || !dFrame) return;
+          dFrame.winner = "";
+          clearShotApprovalIdentity(dFrame, "winner");
           if (index === 0) {
-            s.winner = "";
-            clearShotApprovalIdentity(s, "winner");
+            dShot.winner = "";
+            clearShotApprovalIdentity(dShot, "winner");
           }
         },
       });

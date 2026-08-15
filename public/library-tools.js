@@ -746,19 +746,25 @@ window.confirmEntityApproval = async (continueToNext = false) => {
   try {
     writeEntityStateProductionAuthority(P, {
       list, entityId: id, stateId: entityAuthorityStateId, value: finalName, assetId: approvedAssetId, manualAction: entityGrant, at: new Date().toISOString(),
-      applyEdge: () => {
-        if (targetState) {
-          targetState.approvedFile = finalName;
-          targetState.approvedAt = new Date().toISOString();
-          targetState.parentValidation = null;
+      /* BATCH 1C: the edge is written on the DRAFT the kernel stages. A callback
+         that reached back to the live objects would leave the draft unchanged,
+         the transaction would refuse for a mismatch it caused itself, and the
+         approval would silently bail. */
+      applyEdge: (draft) => {
+        const dEntity = (draft[list] || []).find((row) => row && row.id === id);
+        if (!dEntity) throw new Error("Entity approval target is unavailable");
+        const dState = (dEntity.continuityStates || []).find((row) => row && row.id === entityAuthorityStateId);
+        if (dState) {
+          dState.approvedFile = finalName;
+          dState.approvedAt = new Date().toISOString();
+          dState.parentValidation = null;
           /* P4-SEM-C2: the approval records WHICH BYTES it approved, not only what
-             they were called at the time. Refused rather than stored when there is
-             no id, so a record never carries a malformed identity. */
-          stampApprovalIdentity(targetState, approvedAssetId);
+             they were called at the time. */
+          stampApprovalIdentity(dState, approvedAssetId);
         }
         if (targetState?.isDefault || targetStateId === "state-default") {
-          x.approvedFile = finalName;
-          stampApprovalIdentity(x, approvedAssetId);
+          dEntity.approvedFile = finalName;
+          stampApprovalIdentity(dEntity, approvedAssetId);
         }
       },
     });
@@ -773,11 +779,13 @@ window.confirmEntityApproval = async (continueToNext = false) => {
         const preferredId = ({ props: "hero", vehicles: "front-three-quarter", locations: "establishing" })[list];
         const coverageSlot = slots.find((slot) => slot.id === preferredId) || slots[0];
         if (coverageSlot) {
-          coverageSlot.approvedFile = finalName;
+          /* K-alpha: seeding a view from the approved primary SELECTS a
+             supporting reference. It is not a second approval, and the record
+             says so. Ownership is already settled — these are the entity's own
+             approved bytes. */
+          assignSlotReference(coverageSlot, { fileName: finalName, at: new Date().toISOString(), via: "seeded-from-primary-reference", by: "cinebraid" });
           stampApprovalIdentity(coverageSlot, approvedAssetId);
-          coverageSlot.status = "approved";
           coverageSlot.notes = coverageSlot.notes || "Automatically seeded from the first approved primary reference.";
-          coverageSlot.provenance = { source: "primary-approved-reference", seededAt: new Date().toISOString() };
         }
       }
     }

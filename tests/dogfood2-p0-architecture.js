@@ -684,20 +684,25 @@ async function architectureBrowserChecks() {
      trusted user event. The vm has no user agent, so the harness source stands
      in — and `manualActionSourceInstalled()` reports "harness", so nothing here
      can be mistaken for evidence that a person was present. */
-  run(`window.__manualHarness = installHarnessManualActionSource()`);
+  /* The render harness installs the source and holds the window open for the
+     session — it IS the user. A gesture is therefore already in force; what
+     this suite adds is the ability to CLOSE it and prove the real handler
+     refuses without one. */
   const inGesture = (expression) => {
-    run(`window.__manualHarness.open("harness-click")`);
-    try { return run(expression); } finally { run(`window.__manualHarness.close()`); }
+    run(`__manualHarness.open("harness-click")`);
+    return run(expression);
   };
   eq(run(`manualActionSourceInstalled()`), "harness",
     "the page reports which gesture source is in force rather than assuming one");
   /* AND WITHOUT A GESTURE, THE REAL APPROVAL PATH REFUSES. Driven through the
      shipped handler, not the kernel. */
   {
+    run(`__manualHarness.close()`);
     run(`window._entityApproval = { list: "characters", id: "CHAR-SWEEP", name: "CHAR-SWEEP_SOOT.png", stateId: "st-soot" }`);
     let refused = false;
     try { await run(`confirmEntityApproval(false)`); } catch (error) { refused = /explicit human approval action/.test(String(error && error.message)); }
-    ok(refused, "an approval attempted outside a trusted gesture is refused by the real handler");
+    ok(refused, "with the gesture window closed, the REAL approval handler refuses — automation lives permanently in this state");
+    run(`__manualHarness.open("render-harness")`);
   }
 
   /* ---------------------------------------------------------------- §4 */

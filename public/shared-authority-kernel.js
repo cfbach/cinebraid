@@ -609,14 +609,49 @@ function draftOf(project) {
   return JSON.parse(JSON.stringify(source));
 }
 
-/* Copy the draft's committed state back onto the live document. Keys the draft
-   dropped are removed, so a transaction that deletes something really deletes
-   it. */
+/* Copy the draft's committed state back onto the live document, IN PLACE.
+ *
+ * WHY THIS IS A DEEP MERGE AND NOT AN ASSIGNMENT, learned the hard way: the
+ * first version did `project[key] = draft[key]`, which replaces `project.shots`
+ * with the draft's cloned array. Every reference a caller was already holding —
+ * `const s = shotById(id)`, `const c = ensureShotCreation(s)` — then pointed at
+ * a detached object, and its later writes went nowhere. A motion approval
+ * reopened on a frame change stopped reopening, because the code clearing it
+ * was writing to an orphan.
+ *
+ * Object identity is preserved wherever the shape matches: same array, same
+ * element objects, same nested records. A commit becomes invisible to anything
+ * holding a reference, which is the property a browser page needs and the one
+ * an in-place mutation model has always assumed. */
+function mergeInPlace(live, next) {
+  if (Array.isArray(live) && Array.isArray(next)) {
+    for (let index = 0; index < next.length; index++) {
+      const value = next[index];
+      if (index < live.length && live[index] && value && typeof live[index] === "object" && typeof value === "object"
+        && Array.isArray(live[index]) === Array.isArray(value)) {
+        mergeInPlace(live[index], value);
+      } else {
+        live[index] = value;
+      }
+    }
+    live.length = next.length;
+    return live;
+  }
+  for (const key of Object.keys(live)) if (!(key in next)) delete live[key];
+  for (const key of Object.keys(next)) {
+    const value = next[key];
+    const existing = live[key];
+    if (existing && value && typeof existing === "object" && typeof value === "object" && Array.isArray(existing) === Array.isArray(value)) {
+      mergeInPlace(existing, value);
+    } else {
+      live[key] = value;
+    }
+  }
+  return live;
+}
 function applyDraftToProject(project, draft) {
   if (typeof PROJECT_COMMITTER === "function") return PROJECT_COMMITTER(project, draft);
-  for (const key of Object.keys(project)) if (!(key in draft)) delete project[key];
-  for (const key of Object.keys(draft)) project[key] = draft[key];
-  return project;
+  return mergeInPlace(project, draft);
 }
 
 /* THE ONE COMMAND. Every production-authority change in CineBraid comes through
