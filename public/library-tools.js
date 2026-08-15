@@ -376,13 +376,24 @@ window.confirmApproveTake = async () => {
   /* P4-SEM-C3: each approval records WHICH BYTES it approved, beside the filename
      it also keeps. Refused rather than stored when there is no id, so a record
      never carries a malformed identity that would resolve to nothing. */
+  /* K1A — THE MANUAL BOUNDARY. Minted synchronously inside the click that
+     confirmed the approval, while the trusted gesture is still open. The token
+     is bound to this exact target and consumed once by the kernel. */
+  const shotApprovalManualAction = beginManualApproval({
+    via: "shot-take-approval",
+    targets: target === "shot"
+      ? [{ kind: "shot-frame", shotId: id, frameId: ((s.keyframes || [])[0] || {}).id }]
+      : target.startsWith("frame:")
+        ? [{ kind: "shot-frame", shotId: id, frameId: target.slice(6) }]
+        : [{ kind: "shot-motion", shotId: id, unitKey: target.startsWith("segment:") ? target.slice(8) : target }],
+  });
   /* BATCH 1B: THIS IS A HUMAN APPROVAL COMMAND, and it now says so durably.
      `approveTake` is reached only from an approval control a person pressed, so
      it mints the grant here and writes the edge INSIDE the authority command —
      the same boundary automation uses. A frame approved from this screen and a
      frame approved from the run modal leave identical evidence, which is what
      lets one gate predicate serve both. */
-  const approvalGrant = humanAuthorityGrant({ via: "shot-take-approval", at: new Date().toISOString() });
+  const approvalGrant = shotApprovalManualAction;
   if (target === "shot") {
     const opening = video ? null : (s.keyframes || [])[0];
     const writeShotEdge = () => {
@@ -396,13 +407,13 @@ window.confirmApproveTake = async () => {
     /* The opening frame and the shot are ONE authority edge — the shot's winner
        IS the opening frame's. One receipt, addressed to the frame, so the gate
        predicate finds it whichever way the run named the target. */
-    if (opening) writeFrameProductionAuthority(P, { shotId: id, frameId: opening.id, value: finalName, assetId: approvedAssetId, grant: approvalGrant, at: new Date().toISOString(), applyEdge: writeShotEdge });
+    if (opening) writeFrameProductionAuthority(P, { shotId: id, frameId: opening.id, value: finalName, assetId: approvedAssetId, manualAction: approvalGrant, at: new Date().toISOString(), applyEdge: writeShotEdge });
     else writeShotEdge();
   } else if (target.startsWith("frame:")) {
     const f = frameById(s, target.slice(6));
     if (f) {
       writeFrameProductionAuthority(P, {
-        shotId: id, frameId: f.id, value: finalName, assetId: approvedAssetId, grant: approvalGrant, at: new Date().toISOString(),
+        shotId: id, frameId: f.id, value: finalName, assetId: approvedAssetId, manualAction: approvalGrant, at: new Date().toISOString(),
         applyEdge: () => {
           f.winner = finalName;
           stampShotApprovalIdentity(f, "winner", approvedAssetId);
@@ -626,6 +637,11 @@ window.syncEntityApprovalContinuation = () => {
 window.confirmEntityApproval = async (continueToNext = false) => {
   const { list, id } = window._entityApproval || {};
   if (!list) return;
+  /* K1A — minted before the first await, inside the confirming click. */
+  const entityApprovalManualAction = beginManualApproval({
+    via: "entity-approval-modal",
+    targets: [{ kind: "entity-state", list, entityId: id, stateId: document.getElementById("entity-approve-target")?.value || "state-default" }],
+  });
   const x = P[list].find((e) => e.id === id),
     name = document.getElementById("entity-approve-file")?.value || window._entityApproval.name || "",
     targetStateId = document.getElementById("entity-approve-target")?.value || "state-default",
@@ -681,11 +697,11 @@ window.confirmEntityApproval = async (continueToNext = false) => {
      everything else, and the same command applies the ownership veto — so a file
      whose owner is unresolved or contested cannot be made canon from this screen
      either. A refusal writes nothing and says why. */
-  const entityGrant = humanAuthorityGrant({ via: "entity-approval-modal", at: new Date().toISOString() });
+  const entityGrant = entityApprovalManualAction;
   const entityAuthorityStateId = targetState?.id || targetStateId || "state-default";
   try {
     writeEntityStateProductionAuthority(P, {
-      list, entityId: id, stateId: entityAuthorityStateId, value: finalName, assetId: approvedAssetId, grant: entityGrant, at: new Date().toISOString(),
+      list, entityId: id, stateId: entityAuthorityStateId, value: finalName, assetId: approvedAssetId, manualAction: entityGrant, at: new Date().toISOString(),
       applyEdge: () => {
         if (targetState) {
           targetState.approvedFile = finalName;

@@ -23,6 +23,21 @@ const path = require("path");
 const ROOT = path.join(__dirname, "..");
 const read = (name) => fs.readFileSync(path.join(ROOT, name), "utf8");
 const Authority = require("../public/shared-production-authority");
+const Kernel = require("../public/shared-authority-kernel");
+/* BATCH 1C — THE CREDENTIAL IS A CAPABILITY, NOT A SHAPE.
+ *
+ * These tests used `Authority.humanAuthorityGrant({ via })` — the public
+ * builder for `{ actor: "human", act: "explicit-approval" }`. The Batch 1B
+ * re-audit forged exactly that object and got a winner and a receipt out of the
+ * shipped writer, so the builder is gone and so is the shape check behind it.
+ *
+ * A manual approval is now a one-use capability minted inside a trusted user
+ * gesture and bound to the targets it may authorize. Node has no user agent, so
+ * a suite that exercises a manual path installs the harness source and opens
+ * the window explicitly — and `manualActionSourceInstalled()` reports "harness"
+ * rather than claiming a person was present. */
+const MANUAL = Kernel.installHarnessManualActionSource();
+const approvalFor = (...targets) => MANUAL.gesture(() => Authority.beginManualApproval({ via: "test-approval-surface", targets }));
 const P4 = require("../public/shared-production-media");
 
 let checks = 0;
@@ -39,25 +54,38 @@ const eq = (actual, expected, message) => {
    site in automation.js passed NOTHING, and a guard that accepted anything
    truthy would have accepted `{}` from the first refactor that added one. */
 
-ok(Authority.isHumanAuthorityGrant(Authority.humanAuthorityGrant({ via: "test" })), "a minted grant is a grant");
-ok(!Authority.isHumanAuthorityGrant(undefined), "an omitted argument is not a grant");
-ok(!Authority.isHumanAuthorityGrant({}), "an empty object is not a grant");
-ok(!Authority.isHumanAuthorityGrant(true), "a boolean is not a grant");
-ok(!Authority.isHumanAuthorityGrant({ actor: "human" }), "an actor without an act is not a grant");
-ok(!Authority.isHumanAuthorityGrant({ act: "explicit-approval" }), "an act without an actor is not a grant");
-ok(!Authority.isHumanAuthorityGrant({ actor: "automation", act: "explicit-approval" }), "automation may not claim the human act");
-ok(!Authority.isHumanAuthorityGrant({ actor: "human", act: "auto-approve" }), "a different act is not the approval act");
-
-assert.throws(
-  () => Authority.assertHumanAuthority(undefined, "Frame A of SH-01"),
-  (error) => error.code === "HUMAN_AUTHORITY_REQUIRED" && error.authorityViolation === true,
-  "the guard must throw a recognisable authority error, not a generic one",
-);
+/* THE FORGEABLE TRIO IS GONE, and its absence is the assertion. Re-exporting any
+   of them restores the credential the re-audit forged in one line. */
+for (const name of ["isHumanAuthorityGrant", "humanAuthorityGrant", "assertHumanAuthority"]) {
+  ok(!(name in Authority), `${name} must not exist — a credential cannot be a shape a caller can type`);
+}
+/* A capability cannot be minted without a trusted gesture. */
+assert.throws(() => Authority.beginManualApproval({ via: "x", targets: [{ kind: "shot-frame", shotId: "SH-01", frameId: "fr-a" }] }),
+  (error) => error.code === "MANUAL_ACTION_REQUIRED", "no gesture, no capability");
 checks++;
-/* Recognisable so a runner cannot mistake it for a transient provider fault and
-   retry it. v626FailureClass reads exactly these two fields. */
-ok(/only an explicit human approval command/i.test(Authority.productionAuthorityError("x").message),
-  "the refusal names the rule rather than saying 'invalid argument'");
+/* And the exact object the re-audit forged authorizes nothing. */
+{
+  const P = { shots: [{ id: "SH-01", keyframes: [{ id: "fr-a" }] }] };
+  let wrote = false;
+  assert.throws(() => Authority.writeFrameProductionAuthority(P, {
+    shotId: "SH-01", frameId: "fr-a", value: "FORGED.png", at: "T",
+    manualAction: { actor: "human", act: "explicit-approval" },
+    applyEdge: (draft) => { wrote = true; draft.shots[0].keyframes[0].winner = "FORGED.png"; },
+  }), (error) => error.code === "MANUAL_ACTION_INVALID", "the forged credential shape authorizes nothing");
+  checks++;
+  ok(!wrote, "and the edge writer never ran");
+  ok(!P.shots[0].keyframes[0].winner, "so the project is untouched");
+}
+
+/* The refusal is recognisable, so a runner cannot mistake it for a transient
+   provider fault and retry it. */
+{
+  const P = { shots: [{ id: "SH-01", keyframes: [{ id: "fr-a" }] }] };
+  let code = "";
+  try { Authority.writeFrameProductionAuthority(P, { shotId: "SH-01", frameId: "fr-a", value: "X.png", at: "T", manualAction: undefined, applyEdge: () => {} }); }
+  catch (error) { code = error.code; ok(error.authorityViolation === true, "and it is flagged as an authority violation"); }
+  eq(code, "MANUAL_ACTION_INVALID", "an omitted capability is refused by a named code");
+}
 
 /* ===========================================================================
    2. THE NOMINATION. What a strong automated pass is allowed to produce. */
@@ -112,21 +140,32 @@ ok(/V627_AUTOMATION_RECOMMENDATION_SCORE = 85/.test(automationCode),
   "the strong-pass threshold itself remains explicit and unchanged at 85");
 ok(/v627RecordFrameRecommendation/.test(automation),
   "a strong pass records a nomination instead");
-ok(/assertHumanAuthority\(grant, `Frame/.test(automation),
-  "v626ApproveFrame is guarded");
-ok(/assertHumanAuthority\(grant, `\$\{list\}/.test(automation),
-  "so is v626ApproveEntity, which never had the defect — a correct path is not an invariant");
+/* BATCH 1C: the guard moved INSIDE the kernel transaction, so what these
+   assertions look for is that both writers take a capability and hand it to the
+   command rather than checking a shape themselves. */
+ok(/function v626ApproveFrame\(shotId, frameId, fileName, manualAction\)/.test(automation),
+  "v626ApproveFrame takes a manual-action capability");
+ok(/function v626ApproveEntity\(list, entityId, stateId, fileName, manualAction\)/.test(automation),
+  "so does v626ApproveEntity, which never had the defect — a correct path is not an invariant");
+ok(!/assertHumanAuthority/.test(automationCode), "and neither checks a credential shape itself any more");
 
 /* Every call of the two authority writers passes a grant. Counted rather than
    spot-checked: a new call site added without one is exactly the regression. */
-for (const [file, source] of [["public/automation.js", automationCode], ["public/scene-automation.js", sceneAutomationCode]]) {
-  const calls = (source.match(/(?:function\s+)?v626Approve(?:Frame|Entity)\([^)]*\)/g) || [])
+{
+  const calls = (automationCode.match(/(?:function\s+)?v626Approve(?:Frame|Entity)\([^)]*\)/g) || [])
     .filter((call) => !call.startsWith("function "));
-  ok(calls.length > 0, `${file}: the scan must actually find the authority writers`);
+  ok(calls.length > 0, "public/automation.js: the scan must actually find the authority writers");
   for (const call of calls) {
-    ok(/grant/i.test(call), `${file}: every authority write must carry a grant — found ${call}`);
+    ok(/manualAction/i.test(call), `public/automation.js: every authority write must carry a manual-action capability — found ${call}`);
   }
 }
+/* BATCH 1C: scene automation calls NO authority writer at all. It used to read
+   a cached `result.humanApproved` and build itself a credential from it — the
+   re-audit cited that line as proof the builder was not confined to a trusted
+   human event. A correction is approved at the gate, by a person, like
+   everything else. */
+ok(!/v626Approve(?:Frame|Entity)\(/.test(sceneAutomationCode),
+  "public/scene-automation.js: automation establishes no authority on any path");
 
 /* The resumed-completed path.
 
@@ -259,8 +298,8 @@ function approvedFrameProject(winner, via = "test-approval-surface") {
   const P = projectWithFrameWinner("");
   Authority.writeFrameProductionAuthority(P, {
     shotId: "SH-01", frameId: "fr-a", value: winner, at: "2026-08-14T00:30:00.000Z",
-    grant: Authority.humanAuthorityGrant({ via, at: "2026-08-14T00:30:00.000Z" }),
-    applyEdge: () => { P.shots[0].keyframes[0].winner = winner; P.shots[0].winner = winner; },
+    manualAction: approvalFor({ kind: "shot-frame", shotId: "SH-01", frameId: "fr-a" }),
+    applyEdge: (draft) => { draft.shots[0].keyframes[0].winner = winner; draft.shots[0].winner = winner; },
   });
   return P;
 }
@@ -278,14 +317,14 @@ function projectWithState(approvedFile, isDefault = false) {
 }
 function approvedStateProject(approvedFile) {
   const P = projectWithState("");
-  Authority.commandProductionAuthority(P, {
-    targetType: "entity-state", list: "characters", entityId: "CHAR-A", stateId: "st-soot",
+  Authority.writeEntityStateProductionAuthority(P, {
+    list: "characters", entityId: "CHAR-A", stateId: "st-soot",
     value: approvedFile, at: "2026-08-14T00:30:00.000Z",
-    grant: Authority.humanAuthorityGrant({ via: "test-approval-surface", at: "2026-08-14T00:30:00.000Z" }),
+    manualAction: approvalFor({ kind: "entity-state", list: "characters", entityId: "CHAR-A", stateId: "st-soot" }),
     /* Ownership is P0-4's question and has its own suite; the veto is exercised
        there and at the architecture boundary. */
     eligibility: () => ({ ok: true }),
-    applyEdge: () => { P.characters[0].continuityStates[1].approvedFile = approvedFile; },
+    applyEdge: (draft) => { draft.characters[0].continuityStates[1].approvedFile = approvedFile; },
   });
   return P;
 }
@@ -327,7 +366,9 @@ eq(plan.nextStatus, "interrupted",
 eq(shotRun.status, "awaiting-review", "the plan did not touch the run");
 eq(shotRun.steps["frame:fr-a:round-1:review"].status, "needs-review", "nor its step");
 
-const applied = Authority.applyGateReconciliation(JSON.parse(JSON.stringify(shotRun)), plan, { at: "2026-08-14T01:00:00.000Z" });
+/* K2: the applier is handed the PROJECT, and re-verifies the cited receipt
+   against it immediately before writing the step. A plan alone is a request. */
+const applied = Authority.applyGateReconciliation(JSON.parse(JSON.stringify(shotRun)), plan, { at: "2026-08-14T01:00:00.000Z", project: satisfiedProject });
 eq(applied.status, "interrupted", "applying the plan moves the run");
 eq(applied.steps["frame:fr-a:round-1:review"].status, "completed", "and closes the gate");
 ok(applied.steps["frame:fr-a:round-1:review"].result.humanApproved === true,

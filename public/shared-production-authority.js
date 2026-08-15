@@ -133,46 +133,123 @@ function authorityList(value) {
   return Array.isArray(value) ? value : [];
 }
 
-/* ---------- the authority grant ------------------------------------------- */
+/* ---------------------------------------------------------------------------
+   BATCH 1C — THE KERNEL OWNS THE CREDENTIAL, THE SCHEMA AND THE TRANSACTION.
 
-/* THE predicate. Both fields, both exact. A step result carrying
-   `humanApproved: true` is EVIDENCE that a human approved and is accepted as a
-   grant source through `humanAuthorityGrant`, but it is not itself a grant —
-   otherwise every truthy record in the run ledger would become one. */
-function isHumanAuthorityGrant(grant) {
-  const it = authorityObject(grant);
-  return PRODUCTION_AUTHORITY_ACTORS.includes(authorityText(it.actor)) && authorityText(it.act) === HUMAN_AUTHORITY_ACT;
-}
+   The Batch 1B re-audit did not disprove the receipt idea; it disproved this
+   module's implementation of it. `isHumanAuthorityGrant` compared two strings,
+   so `{ actor: "human", act: "explicit-approval" }` typed by any caller was a
+   credential. The reader checked a target string and a filename and nothing
+   else, so a row with a blank id, sequence 0 and `actor: "automation"` passed.
+   Two `current` rows silently resolved to the last one. The edge was written
+   before the ledger, with no rollback.
 
-/* Build one. `via` records WHICH human surface issued the command — the run
-   approval modal, the entity approval modal, the generated-media workspace — so
-   a later audit can say where authority entered, not merely that it did. */
-function humanAuthorityGrant(details = {}) {
-  const it = authorityObject(details);
-  return {
-    actor: "human",
-    act: HUMAN_AUTHORITY_ACT,
-    via: authorityText(it.via) || "unspecified-human-surface",
-    at: authorityText(it.at),
+   Those are all one mistake: TRUTH DERIVED FROM THE SHAPE OF CALLER DATA. So
+   they move behind one boundary that does not work that way —
+   public/shared-authority-kernel.js — and this module becomes what it should
+   have been: the place that knows CineBraid's document shape and the run
+   ledger's vocabulary, expressed in the kernel's terms.
+
+   WHAT LEFT THIS FILE, and must not come back:
+     isHumanAuthorityGrant   a shape check standing in for a credential
+     humanAuthorityGrant     a public builder for that shape, on `window`
+     assertHumanAuthority    the guard both of them made meaningless
+   --------------------------------------------------------------------------- */
+
+const KERNEL = (() => {
+  if (typeof module !== "undefined" && module.exports) return require("./shared-authority-kernel.js");
+  if (typeof authorityTarget === "function") return {
+    AUTHORITY_TARGET_KINDS, AUTHORITY_COMMANDS, AUTHORITY_RECEIPT_STATES, AUTHORITY_REVOCATION_REASONS,
+    AUTHORITY_LEDGER_KEY, AUTHORITY_LEDGER_VERSION, AUTHORITY_ACTOR, AUTHORITY_ACT, AUTHORITY_DIAGNOSTIC_CODES,
+    authorityError, authorityTarget, sameAuthorityTarget, describeTarget,
+    installBrowserManualActionSource, installHarnessManualActionSource, manualActionSourceInstalled,
+    trustedGestureOpen, beginManualAuthorityAction, manualActionCovers,
+    validateReceiptShape, validateAuthorityLedger, authorityLedgerDiagnostics,
+    installAuthorityEdgeReader, liveAuthorityEdge, currentHumanAuthority, hasCurrentHumanAuthority,
+    authorityHistory, historicSelection,
+    installAuthorityProjectCommitter, commitAuthorityTransaction, revokeAuthorityTransaction, repairAuthorityValue,
   };
-}
+  return null;
+})();
 
-/* An error a caller can recognise, so a machine-authority attempt is never
-   mistaken for a transient provider fault and retried. */
-function productionAuthorityError(what) {
-  const error = new Error(
-    `${what || "This edge"} is production authority and only an explicit human approval command may establish it. No authority was written.`,
-  );
-  error.code = "HUMAN_AUTHORITY_REQUIRED";
-  error.authorityViolation = true;
-  return error;
-}
+/* ---------- the document shape the kernel does not know ------------------- */
 
-/* THE GUARD. Called by every writer of a production-authority edge; throws for
-   anything that is not an explicit human command. */
-function assertHumanAuthority(grant, what) {
-  if (!isHumanAuthorityGrant(grant)) throw productionAuthorityError(what);
-  return grant;
+/* WHERE EVERY AUTHORITY EDGE LIVES, in one place, for all six target kinds.
+   The kernel asks this and never parses the project itself; this file knows
+   `keyframes` and `coverageSlots` and the kernel knows what a decision is. */
+function readAuthorityEdge(project, target) {
+  const P = authorityObject(project);
+  const it = authorityObject(target);
+  const shot = () => authorityList(P.shots).map(authorityObject).find((row) => authorityText(row.id) === it.shotId) || null;
+  const entity = () => authorityList(P[it.list]).map(authorityObject).find((row) => authorityText(row.id) === it.entityId) || null;
+  if (it.kind === "shot-frame") {
+    const s = shot();
+    if (!s) return { value: "", assetId: "" };
+    const frames = authorityList(s.keyframes).map(authorityObject);
+    const index = frames.findIndex((row) => authorityText(row.id) === it.frameId);
+    if (index < 0) return { value: "", assetId: "" };
+    const frame = frames[index];
+    /* The opening frame's authority may live on the shot, which is where the
+       manual path has always written it. Both are the same edge. */
+    const value = authorityText(frame.winner) || (index === 0 ? authorityText(s.winner) : "");
+    const assetId = authorityText(authorityObject(frame.approvalIdentity).winner)
+      || (index === 0 ? authorityText(authorityObject(s.approvalIdentity).winner) : "");
+    return { value, assetId };
+  }
+  if (it.kind === "shot-motion") {
+    const s = shot();
+    if (!s) return { value: "", assetId: "" };
+    const unit = authorityList(s.clips).map(authorityObject).find((row) => authorityText(row.id) === it.unitKey || authorityText(row.suffix) === it.unitKey);
+    if (!unit) return { value: "", assetId: "" };
+    return { value: authorityText(unit.videoWinner), assetId: authorityText(authorityObject(unit.approvalIdentity).videoWinner) };
+  }
+  if (it.kind === "shot-delivery") {
+    const s = shot();
+    if (!s) return { value: "", assetId: "" };
+    const creation = authorityObject(s.creationBrief);
+    return { value: authorityText(s.finalStillFile) || authorityText(creation.finalStillFile) || authorityText(creation.approvedMotionFile), assetId: "" };
+  }
+  if (it.kind === "entity-state") {
+    const x = entity();
+    if (!x) return { value: "", assetId: "" };
+    const states = authorityList(x.continuityStates).map(authorityObject);
+    const state = states.find((row) => authorityText(row.id) === it.stateId);
+    if (state) {
+      const own = authorityText(state.approvedFile);
+      if (own) return { value: own, assetId: authorityText(state.approvedAssetId) };
+      /* A non-default state with no file of its own is NOT answered by the
+         entity's primary — that substitution is the state-authority defect. */
+      return state.isDefault === true
+        ? { value: authorityText(x.approvedFile), assetId: authorityText(x.approvedAssetId) }
+        : { value: "", assetId: "" };
+    }
+    return it.stateId === "state-default"
+      ? { value: authorityText(x.approvedFile), assetId: authorityText(x.approvedAssetId) }
+      : { value: "", assetId: "" };
+  }
+  if (it.kind === "entity-coverage" || it.kind === "entity-expression") {
+    const x = entity();
+    if (!x) return { value: "", assetId: "" };
+    const group = it.kind === "entity-coverage" ? "coverageSlots" : "expressionSlots";
+    const slot = authorityList(x[group]).map(authorityObject).find((row) => authorityText(row.id) === it.slotId);
+    if (!slot) return { value: "", assetId: "" };
+    return { value: authorityText(slot.approvedFile), assetId: authorityText(slot.approvedAssetId) };
+  }
+  return { value: "", assetId: "" };
+}
+if (KERNEL) KERNEL.installAuthorityEdgeReader(readAuthorityEdge);
+
+/* ---------- the manual action boundary, re-exported ----------------------- */
+
+/* The only way to obtain the credential. Re-exported from here so a caller has
+   one import site for "I am an explicit human approval surface", and so an
+   inventory test can enumerate its call sites in one grep. */
+function beginManualApproval(details = {}) {
+  if (!KERNEL) throw new Error("The production authority kernel is not loaded. No authority can be established.");
+  return KERNEL.beginManualAuthorityAction(details);
+}
+function manualApprovalActive() {
+  return !!KERNEL && KERNEL.trustedGestureOpen();
 }
 
 /* ---------- the non-authoritative nomination ------------------------------ */
@@ -186,7 +263,6 @@ function automationRecommendation(details = {}) {
   return {
     decision: "ai-recommendation",
     actor: "automation",
-    /* NOT `winner`. A surface looking for authority finds nothing here. */
     file: authorityText(it.file),
     assetId: authorityText(it.assetId),
     score: Number.isFinite(Number(it.score)) ? Math.round(Number(it.score)) : null,
@@ -195,381 +271,83 @@ function automationRecommendation(details = {}) {
     runId: authorityText(it.runId),
     stepKey: authorityText(it.stepKey),
     at: authorityText(it.at),
-    /* The sentence every surface must be able to print without re-deriving it. */
     requiresHumanApproval: true,
   };
 }
-
 function isAutomationRecommendation(value) {
   const it = authorityObject(value);
   return authorityText(it.decision) === "ai-recommendation" && it.requiresHumanApproval === true;
 }
-
-/* Read a frame's or state's nomination back. Returns null rather than a partial
-   record, because a half-read recommendation is what a surface would render as
-   a decision. */
 function readAutomationRecommendation(record) {
   const value = authorityObject(record)[AUTOMATION_RECOMMENDATION_FIELD];
   return isAutomationRecommendation(value) ? value : null;
 }
 
-/* ==========================================================================
-   THE DURABLE AUTHORITY RECEIPT LEDGER.
+/* ---------- reading, delegated -------------------------------------------- */
 
-   One append-only collection on the project document. A receipt is the ONLY
-   evidence that a person issued an approval command, and it carries everything
-   an audit needs to say who did what to which object, when, from where, and
-   whether it still stands.
-
-   Append-only in the sense that matters: a decision is never deleted, it is
-   SUPERSEDED or REVOKED. "This was approved and then un-approved" is production
-   history, and a ledger that forgets it cannot answer why a gate reopened. */
-
-const PRODUCTION_AUTHORITY_LEDGER_KEY = "productionAuthority";
-const PRODUCTION_AUTHORITY_LEDGER_VERSION = 1;
-
-/* The production objects a human may hold authority over. A closed set: adding
-   one is a contract change that has to be argued for. */
-const AUTHORITY_TARGET_TYPES = ["shot-frame", "entity-state"];
-
-/* current   this receipt IS the authority right now
-   superseded a later receipt replaced it (the creator approved a different file)
-   revoked   the authority was withdrawn and nothing replaced it */
-const AUTHORITY_RECEIPT_STATES = ["current", "superseded", "revoked"];
-
-/* The commands. Named after what a person did, not after which function ran. */
-const AUTHORITY_COMMANDS = ["approve-shot-frame", "approve-entity-state"];
-
-/* Why a receipt stopped being current. Recorded so a reopened gate can say
-   which of the two happened. */
-const AUTHORITY_REVOCATION_REASONS = ["replaced", "withdrawn", "target-cleared", "target-removed"];
-
-function authorityNumber(value) {
-  const n = Number(value);
-  return Number.isFinite(n) ? n : 0;
-}
-
-/* ---------- the target descriptor ----------------------------------------- */
-
-/* One shape for "which production object". Returns null rather than a partial
-   descriptor, because a half-identified target is what would let a receipt for
-   one frame satisfy a gate on another. */
-function authorityTarget(details) {
-  const it = authorityObject(details);
-  const type = authorityText(it.targetType);
-  if (type === "shot-frame") {
-    const shotId = authorityText(it.shotId);
-    const frameId = authorityText(it.frameId);
-    if (!shotId || !frameId) return null;
-    return { targetType: "shot-frame", targetId: `${shotId}#${frameId}`, shotId, frameId, list: "", entityId: "", stateId: "" };
-  }
-  if (type === "entity-state") {
-    const list = authorityText(it.list);
-    const entityId = authorityText(it.entityId);
-    const stateId = authorityText(it.stateId);
-    if (!list || !entityId || !stateId) return null;
-    return { targetType: "entity-state", targetId: `${list}:${entityId}#${stateId}`, shotId: "", frameId: "", list, entityId, stateId };
-  }
-  return null;
-}
-
-/* A parked gate and an approval command name the same object different ways.
-   This is the one translation, so the two can never drift. */
-function gateAuthorityTarget(requirement) {
-  const need = authorityObject(requirement);
-  if (need.kind === "shot-frame-approval") return authorityTarget({ targetType: "shot-frame", shotId: need.shotId, frameId: need.frameId });
-  if (need.kind === "entity-state-approval") return authorityTarget({ targetType: "entity-state", list: need.list, entityId: need.entityId, stateId: need.stateId });
-  return null;
-}
-
-function sameAuthorityTarget(a, b) {
-  const left = authorityObject(a);
-  const right = authorityObject(b);
-  return !!left.targetType && left.targetType === right.targetType && left.targetId === right.targetId;
-}
-
-/* ---------- reading the ledger -------------------------------------------- */
-
+function authorityTargetFor(details) { return KERNEL ? KERNEL.authorityTarget(details) : null; }
 function authorityReceipts(project) {
-  return authorityList(authorityObject(authorityObject(project)[PRODUCTION_AUTHORITY_LEDGER_KEY]).receipts).map(authorityObject);
+  const view = KERNEL ? KERNEL.validateAuthorityLedger(project) : null;
+  return view && view.trusted ? view.receipts : [];
 }
+function authorityReceiptsFor(project, target) { return KERNEL ? KERNEL.authorityHistory(project, target) : []; }
+function currentAuthorityReceipt(project, target) { return KERNEL ? KERNEL.currentHumanAuthority(project, target) : null; }
+function currentHumanAuthority(project, target) { return KERNEL ? KERNEL.currentHumanAuthority(project, target) : null; }
+function hasCurrentHumanAuthority(project, target) { return !!currentHumanAuthority(project, target); }
+function liveAuthorityValue(project, target) { return KERNEL ? KERNEL.liveAuthorityEdge(project, target) : { value: "", assetId: "" }; }
+function historicSelection(project, target) { return KERNEL ? KERNEL.historicSelection(project, target) : null; }
+function authorityLedgerDiagnostics(project) { return KERNEL ? KERNEL.authorityLedgerDiagnostics(project) : []; }
+function authorityLedgerTrusted(project) { return !KERNEL || KERNEL.validateAuthorityLedger(project).trusted; }
 
-/* Every receipt for one target, oldest first. History, including the superseded
-   and revoked ones — a caller asking "who approved this and when" wants them. */
-function authorityReceiptsFor(project, target) {
-  const wanted = authorityTarget(target) || authorityObject(target);
-  if (!authorityText(wanted.targetId)) return [];
-  return authorityReceipts(project).filter((receipt) => sameAuthorityTarget(receipt, wanted));
+/* ---------- the named write boundaries, one per target kind --------------- */
+
+/* Each is the kernel transaction with the kind bound and, where the object has
+   an ownership question, the veto attached. A caller names the surface it is;
+   it cannot name the actor, because the actor is not a string any more. */
+function writeProductionAuthority(project, request = {}) {
+  if (!KERNEL) throw new Error("The production authority kernel is not loaded. No authority can be established.");
+  return KERNEL.commitAuthorityTransaction(project, request);
 }
-
-/* THE PREDICATE THE WHOLE BATCH TURNS ON: is there a live human decision about
-   this object right now.
-
-   Returns the receipt, or null. Never a boolean, because every caller that
-   matters wants to cite it. */
-function currentAuthorityReceipt(project, target) {
-  const rows = authorityReceiptsFor(project, target).filter((receipt) => authorityText(receipt.status) === "current");
-  return rows.length ? rows[rows.length - 1] : null;
-}
-
-/* WHAT THE PROJECT CURRENTLY SAYS is approved for this target. The edge, read
-   without interpretation. */
-function liveAuthorityValue(project, target) {
-  const need = authorityTarget(target) || authorityObject(target);
-  const P = authorityObject(project);
-  if (need.targetType === "shot-frame") {
-    const shot = authorityList(P.shots).find((item) => authorityObject(item).id === need.shotId);
-    if (!shot) return { value: "", assetId: "" };
-    const frames = authorityList(authorityObject(shot).keyframes);
-    const index = frames.findIndex((item) => authorityObject(item).id === need.frameId);
-    if (index < 0) return { value: "", assetId: "" };
-    const frame = authorityObject(frames[index]);
-    const value = authorityText(frame.winner) || (index === 0 ? authorityText(authorityObject(shot).winner) : "");
-    const assetId = authorityText(authorityObject(frame.approvalIdentity).winner) || (index === 0 ? authorityText(authorityObject(authorityObject(shot).approvalIdentity).winner) : "");
-    return { value, assetId };
-  }
-  if (need.targetType === "entity-state") {
-    const entity = authorityList(P[need.list]).find((item) => authorityObject(item).id === need.entityId);
-    if (!entity) return { value: "", assetId: "" };
-    const states = authorityList(authorityObject(entity).continuityStates);
-    const state = states.find((item) => authorityObject(item).id === need.stateId);
-    if (state) {
-      const own = authorityText(authorityObject(state).approvedFile);
-      if (own) return { value: own, assetId: authorityText(authorityObject(state).approvedAssetId) };
-      /* The default state's file IS the entity's. A non-default state with no
-         file of its own is NOT satisfied by the entity's — that substitution is
-         the state-authority defect and it must stay fixed. */
-      return authorityObject(state).isDefault === true
-        ? { value: authorityText(authorityObject(entity).approvedFile), assetId: authorityText(authorityObject(entity).approvedAssetId) }
-        : { value: "", assetId: "" };
-    }
-    return need.stateId === "state-default"
-      ? { value: authorityText(authorityObject(entity).approvedFile), assetId: authorityText(authorityObject(entity).approvedAssetId) }
-      : { value: "", assetId: "" };
-  }
-  return { value: "", assetId: "" };
-}
-
-/* IS THERE CURRENT HUMAN AUTHORITY over this object.
-
-   Both halves, and both are load-bearing:
-
-     the RECEIPT  — a person issued the command, and it has not been revoked or
-                    superseded. A pre-repair winner has no receipt and therefore
-                    no authority, which is the audit's headline counterexample.
-     the EDGE     — the project still carries what that person approved. A
-                    writer that clears a winner without calling the revocation
-                    command still loses authority here, so the invariant does
-                    not depend on every writer being polite. FAIL CLOSED.
-
-   Identity is accepted as well as filename: a rename that repaired the edge but
-   not the receipt must not silently revoke a real decision. */
-function currentHumanAuthority(project, target) {
-  const receipt = currentAuthorityReceipt(project, target);
-  if (!receipt) return null;
-  const live = liveAuthorityValue(project, target);
-  if (!live.value) return null;
-  const byName = live.value === authorityText(receipt.value);
-  const byIdentity = !!authorityText(receipt.assetId) && authorityText(receipt.assetId) === authorityText(live.assetId);
-  return byName || byIdentity ? receipt : null;
-}
-
-function hasCurrentHumanAuthority(project, target) {
-  return !!currentHumanAuthority(project, target);
-}
-
-/* A winner that no human ever confirmed. NOT an error and NOT hidden: it is a
-   real selection somebody's machine made, and the product shows it as a
-   recommendation the creator can accept in one act. This function is what a
-   surface asks to know which of the two words to print. */
-function historicSelection(project, target) {
-  const live = liveAuthorityValue(project, target);
-  if (!live.value) return null;
-  if (currentHumanAuthority(project, target)) return null;
-  const revoked = authorityReceiptsFor(project, target).filter((receipt) => authorityText(receipt.status) !== "current");
-  return {
-    ...(authorityTarget(target) || authorityObject(target)),
-    value: live.value,
-    assetId: live.assetId,
-    /* WHY it is not authority. A file nobody ever decided on reads differently
-       from one whose approval was withdrawn, and a creator deserves both. */
-    basis: revoked.length ? "authority-revoked" : "no-human-receipt",
-    priorReceiptCount: revoked.length,
-    requiresHumanApproval: true,
-  };
-}
-
-/* ---------- the command --------------------------------------------------- */
-
-function authorityLedgerError(message, code) {
-  const error = new Error(message);
-  error.code = code || "PRODUCTION_AUTHORITY_REJECTED";
-  error.authorityViolation = true;
-  return error;
-}
-
-/* The ledger, created on first write and never on a read. A read that
-   materialised the key would dirty a project just by rendering it. */
-function ensureAuthorityLedger(project) {
-  const P = authorityObject(project);
-  const existing = authorityObject(P[PRODUCTION_AUTHORITY_LEDGER_KEY]);
-  const ledger = {
-    version: authorityNumber(existing.version) || PRODUCTION_AUTHORITY_LEDGER_VERSION,
-    sequence: authorityNumber(existing.sequence),
-    receipts: authorityList(existing.receipts),
-  };
-  P[PRODUCTION_AUTHORITY_LEDGER_KEY] = ledger;
-  return ledger;
-}
-
-/* THE ONE COMMAND. Every production-authority mutation in CineBraid comes
-   through here — automation, correction automation, the reference approval
-   modal, Generated Media, creation studio, review, review provenance, library
-   tools, resume, import and normalisation compatibility.
-
-   It does three things in one indivisible step, which is the entire reason it
-   exists: assert the actor, write the edge, and record the receipt. A caller
-   cannot get one without the others, so there is no arrangement of call sites
-   that produces an edge nobody decided or a receipt for an edge that was never
-   written.
-
-   `applyEdge` is supplied by the caller and is the only part that touches
-   project shape this module has no business knowing (approval identity stamps,
-   candidate rows, workflow status). It runs AFTER the actor check and BEFORE
-   the receipt, so a refusal writes nothing at all. */
-function commandProductionAuthority(project, request = {}) {
-  const it = authorityObject(request);
-  const target = authorityTarget(it);
-  if (!target) throw authorityLedgerError("A production-authority command must name a complete target. No authority was written.", "AUTHORITY_TARGET_INCOMPLETE");
-  const what = target.targetType === "shot-frame" ? `Frame ${target.frameId} of ${target.shotId}` : `${target.list} ${target.entityId} state ${target.stateId}`;
-  /* THE ACTOR CHECK, first, before anything is touched. */
-  assertHumanAuthority(it.grant, what);
-  const value = authorityText(it.value);
-  if (!value) throw authorityLedgerError(`${what} cannot be approved without naming the media being approved. No authority was written.`, "AUTHORITY_VALUE_REQUIRED");
-  const command = AUTHORITY_COMMANDS.includes(authorityText(it.command))
-    ? authorityText(it.command)
-    : target.targetType === "shot-frame" ? "approve-shot-frame" : "approve-entity-state";
-  /* An eligibility veto the caller supplies — today it is media ownership, so a
-     file whose owner is unresolved or contested cannot become canon. Refused
-     before the edge, so a blocked approval leaves no trace. */
-  if (typeof it.eligibility === "function") {
-    const verdict = authorityObject(it.eligibility(target));
-    if (verdict.ok === false) throw authorityLedgerError(authorityText(verdict.message) || `${what} is not eligible for approval.`, authorityText(verdict.code) || "AUTHORITY_INELIGIBLE");
-  }
-  if (typeof it.applyEdge === "function") it.applyEdge(target);
-  const ledger = ensureAuthorityLedger(project);
-  const at = authorityText(it.at);
-  const via = authorityText(authorityObject(it.grant).via) || authorityText(it.via) || "unspecified-human-surface";
-  /* SUPERSESSION, not overwrite. The previous decision stays readable. */
-  for (const receipt of ledger.receipts) {
-    const row = authorityObject(receipt);
-    if (!sameAuthorityTarget(row, target) || authorityText(row.status) !== "current") continue;
-    row.status = "superseded";
-    row.supersededAt = at;
-    row.revocationReason = "replaced";
-  }
-  ledger.sequence = authorityNumber(ledger.sequence) + 1;
-  const receipt = {
-    id: `authority-${String(ledger.sequence).padStart(6, "0")}`,
-    sequence: ledger.sequence,
-    actor: "human",
-    act: HUMAN_AUTHORITY_ACT,
-    command,
-    targetType: target.targetType,
-    targetId: target.targetId,
-    shotId: target.shotId,
-    frameId: target.frameId,
-    list: target.list,
-    entityId: target.entityId,
-    stateId: target.stateId,
-    value,
-    assetId: authorityText(it.assetId),
-    via,
-    at,
-    status: "current",
-    supersededBy: "",
-    supersededAt: "",
-    revokedAt: "",
-    revocationReason: "",
-    note: authorityText(it.note),
-  };
-  for (const row of ledger.receipts) {
-    const previous = authorityObject(row);
-    if (sameAuthorityTarget(previous, target) && authorityText(previous.status) === "superseded" && !authorityText(previous.supersededBy)) previous.supersededBy = receipt.id;
-  }
-  ledger.receipts.push(receipt);
-  return receipt;
-}
-
-/* WITHDRAWING AUTHORITY. The other half of the command, and the half the first
-   repair had no concept of at all: a cleared winner left a completed gate step
-   claiming a person had approved it, and resume believed the step.
-
-   Revocation records WHY, invalidates the receipt, and — because every gate
-   predicate is derived rather than cached — every dependent gate reopens on the
-   next read without any surface being notified. */
-function revokeProductionAuthority(project, request = {}) {
-  const it = authorityObject(request);
-  const target = authorityTarget(it);
-  if (!target) throw authorityLedgerError("A revocation must name a complete target. Nothing was changed.", "AUTHORITY_TARGET_INCOMPLETE");
-  const reason = AUTHORITY_REVOCATION_REASONS.includes(authorityText(it.reason)) ? authorityText(it.reason) : "withdrawn";
-  const at = authorityText(it.at);
-  if (typeof it.applyEdge === "function") it.applyEdge(target);
-  const ledger = ensureAuthorityLedger(project);
-  const revoked = [];
-  for (const row of ledger.receipts) {
-    const receipt = authorityObject(row);
-    if (!sameAuthorityTarget(receipt, target) || authorityText(receipt.status) !== "current") continue;
-    receipt.status = "revoked";
-    receipt.revokedAt = at;
-    receipt.revocationReason = reason;
-    receipt.revokedVia = authorityText(it.via);
-    revoked.push(receipt);
-  }
-  return revoked;
-}
-
-/* ---------- the two named boundaries every writer calls -------------------- */
-
-/* THE SHOT-SIDE BOUNDARY. Every frame or shot winner in CineBraid is written
-   here — the run approval modal, the guided frame card, library approval,
-   review provenance, the motion composer's opening-frame link, scene correction
-   approval. Callers keep their own side effects; they hand them in as
-   `applyEdge` so the actor check still comes first.
-
-   Named rather than inlined so a grep for the writers of production authority
-   returns a list, and so the negative controls have one function to break. */
 function writeFrameProductionAuthority(project, request = {}) {
-  const it = authorityObject(request);
-  return commandProductionAuthority(project, {
-    ...it,
-    targetType: "shot-frame",
-    command: "approve-shot-frame",
-  });
+  return writeProductionAuthority(project, { ...authorityObject(request), kind: "shot-frame" });
 }
-
-/* THE ENTITY-SIDE BOUNDARY, and the place media ownership becomes an authority
-   rule rather than a display rule: an approval of a file whose owner is
-   unresolved or contested is refused HERE, so no surface can approve its way
-   around P0-4 by calling a different writer. */
+function writeMotionProductionAuthority(project, request = {}) {
+  return writeProductionAuthority(project, { ...authorityObject(request), kind: "shot-motion" });
+}
+function writeDeliveryProductionAuthority(project, request = {}) {
+  return writeProductionAuthority(project, { ...authorityObject(request), kind: "shot-delivery" });
+}
 function writeEntityStateProductionAuthority(project, request = {}) {
   const it = authorityObject(request);
-  return commandProductionAuthority(project, {
-    ...it,
-    targetType: "entity-state",
-    command: "approve-entity-state",
-    eligibility: typeof it.eligibility === "function" ? it.eligibility : (target) => entityOwnershipEligibility(project, target, authorityText(it.value)),
+  return writeProductionAuthority(project, {
+    ...it, kind: "entity-state",
+    eligibility: typeof it.eligibility === "function" ? it.eligibility : (target, snapshot) => entityOwnershipEligibility(snapshot, target, authorityText(it.value)),
   });
 }
+/* THERE IS NO writeCoverageProductionAuthority AND NO writeExpressionProductionAuthority.
+   Alpha removes authority semantics from slots rather than instrumenting them;
+   public/shared-entity-slots.js owns the assignment, and a test asserts these
+   two names do not come back. */
+function revokeProductionAuthority(project, request = {}) {
+  if (!KERNEL) throw new Error("The production authority kernel is not loaded.");
+  return KERNEL.revokeAuthorityTransaction(project, request);
+}
+function revokeFrameProductionAuthority(project, request = {}) {
+  return revokeProductionAuthority(project, { ...authorityObject(request), kind: "shot-frame" });
+}
+function revokeEntityStateProductionAuthority(project, request = {}) {
+  return revokeProductionAuthority(project, { ...authorityObject(request), kind: "entity-state" });
+}
+function repairAuthorityReceiptIdentity(project, change = {}) {
+  return KERNEL ? KERNEL.repairAuthorityValue(project, change) : [];
+}
 
-/* The ownership veto, resolved through the shared ownership module when it is
-   loaded. FAIL CLOSED is the rule the audit asked for: if the authoritative
-   resolver is unavailable this refuses rather than guessing, because the
-   fallback it would otherwise reach for is the prefix inference that caused the
-   defect. */
-/* Node has no shared browser scope, so a server-side caller hands the ownership
-   module in once at wire-up. The browser needs nothing: the two files share one
-   lexical scope there, and the lookup below finds the function directly. */
+/* ---------- the ownership veto -------------------------------------------- */
+
+/* K4: RE-RESOLVED INSIDE THE COMMIT BOUNDARY, against the snapshot the decision
+   is being made on — never against a list a modal rendered minutes ago. The
+   re-audit approved a contested `SHARED.png` from a stale shortlist because the
+   writer that did it never asked this question at commit time. */
 let INJECTED_OWNERSHIP_RESOLVER = null;
 function useEntityOwnershipResolver(api) {
   const it = authorityObject(api);
@@ -578,7 +356,6 @@ function useEntityOwnershipResolver(api) {
     : null;
   return INJECTED_OWNERSHIP_RESOLVER;
 }
-
 function entityOwnershipEligibility(project, target, fileName) {
   const need = authorityObject(target);
   const name = authorityText(fileName);
@@ -589,58 +366,31 @@ function entityOwnershipEligibility(project, target, fileName) {
       ? { resolve: globalThis.resolveMediaOwnership, build: globalThis.buildEntityOwnerIndex }
       : null);
   if (!resolver || typeof resolver.build !== "function") {
-    return {
-      ok: false,
-      code: "AUTHORITY_OWNERSHIP_RESOLVER_UNAVAILABLE",
-      message: `CineBraid cannot confirm which reference owns ${name}, so it will not make it canon. No authority was written.`,
-    };
+    return { ok: false, code: "AUTHORITY_OWNERSHIP_RESOLVER_UNAVAILABLE", message: `CineBraid cannot confirm which reference owns ${name}, so it will not make it canon. No authority was written.` };
   }
   const resolution = authorityObject(resolver.resolve(resolver.build(project, need.list), name));
   if (resolution.contested === true) {
-    return {
-      ok: false,
-      code: "AUTHORITY_OWNERSHIP_CONTESTED",
-      message: `${name} is durably claimed by more than one reference (${authorityList(resolution.claimants).join(", ")}). Resolve the conflict before approving it. No authority was written.`,
-    };
+    return { ok: false, code: "AUTHORITY_OWNERSHIP_CONTESTED", message: `${name} is durably claimed by more than one reference (${authorityList(resolution.claimants).join(", ")}). Resolve the conflict before approving it. No authority was written.` };
   }
   if (resolution.authoritative !== true || authorityText(resolution.ownerId) !== authorityText(need.entityId)) {
-    return {
-      ok: false,
-      code: "AUTHORITY_OWNERSHIP_UNRESOLVED",
-      message: `${name} is not durably owned by ${need.entityId}${authorityText(resolution.basis) === "prefix-inference" ? " — a filename match is a possible match, not ownership. Claim it for this reference first." : "."} No authority was written.`,
-    };
+    return { ok: false, code: "AUTHORITY_OWNERSHIP_UNRESOLVED", message: `${name} is not durably owned by ${need.entityId}${authorityText(resolution.basis) === "prefix-inference" ? " — a filename match is a possible match, not ownership. Claim it for this reference first." : "."} No authority was written.` };
   }
   return { ok: true };
 }
 
-function revokeFrameProductionAuthority(project, request = {}) {
-  return revokeProductionAuthority(project, { ...authorityObject(request), targetType: "shot-frame" });
-}
-function revokeEntityStateProductionAuthority(project, request = {}) {
-  return revokeProductionAuthority(project, { ...authorityObject(request), targetType: "entity-state" });
-}
 
-/* A rename moved the bytes and the edge followed. The receipt has to follow
-   too, or the next read sees a receipt naming a file that no longer exists and
-   silently revokes a decision a person really made. Called from the same two
-   places that already repair approval identity on rename. */
-function repairAuthorityReceiptIdentity(project, change = {}) {
-  const it = authorityObject(change);
-  const from = authorityText(it.from);
-  const to = authorityText(it.to);
-  const assetId = authorityText(it.assetId);
-  if (!from || !to || from === to) return [];
-  const ledger = authorityObject(authorityObject(project)[PRODUCTION_AUTHORITY_LEDGER_KEY]);
-  const repaired = [];
-  for (const row of authorityList(ledger.receipts)) {
-    const receipt = authorityObject(row);
-    if (authorityText(receipt.value) !== from) continue;
-    receipt.value = to;
-    if (assetId) receipt.assetId = assetId;
-    repaired.push(receipt.id);
-  }
-  return repaired;
+/* A parked gate and an approval command name the same object different ways.
+   This is the one translation, so the two can never drift. */
+function gateAuthorityTarget(requirement) {
+  const need = authorityObject(requirement);
+  if (need.kind === "shot-frame-approval") return authorityTargetFor({ kind: "shot-frame", shotId: need.shotId, frameId: need.frameId });
+  if (need.kind === "entity-state-approval") return authorityTargetFor({ kind: "entity-state", list: need.list, entityId: need.entityId, stateId: need.stateId });
+  return null;
 }
+function sameAuthorityTarget(a, b) {
+  return !!KERNEL && KERNEL.sameAuthorityTarget(a, b);
+}
+function authorityTarget(details) { return authorityTargetFor(details); }
 
 /* ---------- was this decision a human one --------------------------------- */
 
@@ -835,14 +585,37 @@ function applyGateReconciliation(run, plan, options = {}) {
   const p = authorityObject(plan);
   if (!p.changed) return r;
   const at = authorityText(authorityObject(options).at) || authorityText(p.at);
+  /* K2 — THE APPLIER REVALIDATES. IT DOES NOT TRUST THE PLAN.
+   *
+   * The Batch 1B re-audit handed this function a plan it built by hand, with
+   * `receiptId: "not-a-real-receipt"`, no project and no ledger — and watched a
+   * real `needs-review` step become `completed` with `humanApproved: true`. The
+   * only check was that the string was non-empty, which is not a check; it is a
+   * spelling test.
+   *
+   * A plan is now a REQUEST. The project it is applied against is the evidence,
+   * and every gate this function closes is re-verified against that project
+   * immediately before the step is written: the receipt must exist in a
+   * trustworthy ledger, be the single current one for the exact target, carry
+   * valid human provenance, and match the live edge. All of that is what
+   * `currentHumanAuthority` already means, so the applier simply asks it again.
+   *
+   * `options.project` is required to close a gate. Without it nothing is
+   * completed — an applier that cannot see the evidence does not get to act on
+   * a claim about it. Invalidation is still applied, because reopening a gate
+   * is the safe direction and must never depend on having the project. */
+  const project = authorityObject(options).project;
   const steps = authorityObject(r.steps);
   for (const requirement of authorityList(p.satisfied)) {
     const step = authorityObject(steps[requirement.stepKey]);
     if (!step || step.status !== "needs-review") continue;
-    /* No receipt, no citation, no completion. Unreachable through
-       reconcileRunGates, and stated anyway so a hand-built plan cannot close a
-       gate this module never verified. */
-    if (!authorityText(requirement.receiptId)) continue;
+    if (!project) continue;
+    const verified = currentHumanAuthority(project, gateAuthorityTarget(requirement));
+    /* The receipt must exist NOW, and be the one the plan cited. A stale plan
+       whose receipt was superseded or revoked between planning and applying
+       closes nothing. */
+    if (!verified) continue;
+    if (authorityText(requirement.receiptId) && authorityText(requirement.receiptId) !== authorityText(verified.id)) continue;
     step.status = "completed";
     step.pass = true;
     step.completedAt = step.completedAt || at;
@@ -851,9 +624,9 @@ function applyGateReconciliation(run, plan, options = {}) {
       ...authorityObject(step.result),
       humanApproved: true,
       autoApprove: false,
-      /* WHICH decision closed this. A run report can now print the receipt
-         rather than assert a boolean nobody can trace. */
-      authorityReceiptId: authorityText(requirement.receiptId),
+      /* WHICH decision closed this — the id of the receipt just re-verified
+         against the durable project, not the one the plan asserted. */
+      authorityReceiptId: authorityText(verified.id),
       /* WHY this gate closed without anyone touching the run. */
       satisfiedByReconciliation: true,
       satisfiedRequirement: requirement.kind,
@@ -953,16 +726,15 @@ const PRODUCTION_AUTHORITY_EXPORTS = {
   HUMAN_AUTHORITY_ACT,
   AUTOMATION_RECOMMENDATION_FIELD,
   HUMAN_GATE_KINDS,
-  PRODUCTION_AUTHORITY_LEDGER_KEY,
-  PRODUCTION_AUTHORITY_LEDGER_VERSION,
-  AUTHORITY_TARGET_TYPES,
-  AUTHORITY_RECEIPT_STATES,
-  AUTHORITY_COMMANDS,
-  AUTHORITY_REVOCATION_REASONS,
-  isHumanAuthorityGrant,
-  humanAuthorityGrant,
-  productionAuthorityError,
-  assertHumanAuthority,
+  /* K1C: the forgeable trio — isHumanAuthorityGrant, humanAuthorityGrant and
+     assertHumanAuthority — is deliberately absent. A test asserts their
+     absence, because re-exporting any of them restores the credential the
+     re-audit forged in one line. */
+  beginManualApproval,
+  manualApprovalActive,
+  authorityLedgerDiagnostics,
+  authorityLedgerTrusted,
+  readAuthorityEdge,
   automationRecommendation,
   isAutomationRecommendation,
   readAutomationRecommendation,
@@ -979,9 +751,11 @@ const PRODUCTION_AUTHORITY_EXPORTS = {
   currentHumanAuthority,
   hasCurrentHumanAuthority,
   historicSelection,
-  commandProductionAuthority,
+  writeProductionAuthority,
   revokeProductionAuthority,
   writeFrameProductionAuthority,
+  writeMotionProductionAuthority,
+  writeDeliveryProductionAuthority,
   writeEntityStateProductionAuthority,
   revokeFrameProductionAuthority,
   revokeEntityStateProductionAuthority,

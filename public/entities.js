@@ -339,12 +339,11 @@ window.openContinuityStateVariant = async (list, id, stateId) => {
   if (!entity || !state || state.isDefault) return toast("Choose a non-default continuity state");
   const parentInfo = entityStateParentSummary(entity, state);
   let changed = false;
-  /* BATCH 1B: routed through the one lineage mutation API. Opening the variant
-     editor is an explicit act on this state's derivation, so it may establish
-     parentage — but only what the validator permits, and never by assignment. */
-  if (!state.parentStateId && parentInfo.parent?.id) {
-    changed = applyStateParentMutation(entityStateList(entity, true), state.id, parentInfo.parent.id, { intent: "explicit-lineage-edit", via: "continuity-state-variant" }).applied || changed;
-  }
+  /* BATCH 1C: opening the variant editor writes no lineage. It used to
+     establish a parent for a state that declared none — a repair performed as a
+     side effect of navigation, which is the shape of every lineage defect in
+     this file's history. A state with no declared parent is shown as such and
+     stays that way until a person creates one from the reference they mean. */
   if (state.generationMode !== "derive") { state.generationMode = "derive"; changed = true; }
   if (changed) dirty();
   closeModal();
@@ -535,10 +534,8 @@ window.correctContinuityStateFromParent = async (list, id, stateId) => {
   const parentInfo = entityStateParentSummary(entity, state);
   if (!entity || !state || state.isDefault || !parentInfo.fileName) return toast("Approve the parent state first");
   state.generationMode = "derive";
-  /* BATCH 1B: through the one mutation API, for the reason at
-     openContinuityStateVariant. A refusal leaves the graph as it is and the
-     correction still runs against whatever parent the state really declares. */
-  if (parentInfo.parent?.id) applyStateParentMutation(entityStateList(entity, true), state.id, parentInfo.parent.id, { intent: "explicit-lineage-edit", via: "correct-state-from-parent" });
+  /* BATCH 1C: correcting from the parent READS the parent; it does not declare
+     one. The correction runs against whatever derivation the state really has. */
   const validation = continuityStateValidationCurrent(entity, state);
   const findings = [validation?.review?.summary, ...(validation?.review?.hardGateFailures || []), ...Object.values(validation?.review?.categories || {}).map((row) => row?.note)].filter(Boolean).join("\n");
   if (findings && !String(state.assetPromptNotes || "").includes("PARENT VALIDATION CORRECTION")) state.assetPromptNotes = [state.assetPromptNotes, `PARENT VALIDATION CORRECTION\n${findings}`].filter(Boolean).join("\n\n");
@@ -660,25 +657,46 @@ function continuityStatesPanel(list, it, media = []) {
   const editor = st ? `<article class="continuity-state-card continuity-state-card-focused ${st.isDefault ? "is-default" : ""}" data-continuity-state-id="${attr(st.id)}"><div class="continuity-state-head"><span>${selectedIndex + 1}</span><input value="${attr(st.name || "")}" placeholder="Clean suit / Damaged sleeve / Night lighting" onchange="setContinuityState('${list}','${it.id}',${selectedIndex},'name',this.value)" ${st.isDefault ? 'data-default="1"' : ''}><div class="continuity-state-head-actions">${st.isDefault ? `<button class="chip" onclick="approveEntityFile('${list}','${it.id}','${attr(st.approvedFile || '')}','${attr(st.id)}')">CHOOSE AUTHORITY</button>` : `<button class="chip" onclick="openContinuityStateVariant('${attr(list)}','${attr(it.id)}','${attr(st.id)}')">${st.approvedFile ? "EDIT / REGENERATE" : `GENERATE FROM ${esc(parentInfo.label.toUpperCase())}`}</button><button class="ghost-btn" onclick="openStateReferenceUpload('${attr(list)}','${attr(it.id)}','${attr(st.id)}')">UPLOAD STATE REFERENCE</button><button class="chip" onclick="approveEntityFile('${attr(list)}','${attr(it.id)}','','${attr(st.id)}')">CHOOSE CANDIDATE</button><button class="icon-danger" onclick="removeContinuityState('${list}','${it.id}',${selectedIndex})">×</button>`}</div></div>${selectedApprovedHero}${continuityStateValidationMarkup(list,it,st,media)}<div class="continuity-state-scope"><label>Applies to scenes / shots<input value="${attr(st.appliesTo || "")}" placeholder="Scenes 1–2 or L2-01, L2-02" onchange="setContinuityState('${list}','${it.id}',${selectedIndex},'appliesTo',this.value)"></label>${st.isDefault ? `<label>Reference requirement<input value="Required — the main approved image" disabled></label>` : `<label>Reference requirement${referenceRequirementSelect(referenceRequirement(st), `setContinuityState('${list}','${it.id}',${selectedIndex},'referenceRequirement',this.value);dirty();route()`)}</label>`}<div class="state-approved-readout"><span>Approved image</span><b>${esc(st.approvedFile || (st.isDefault ? it.approvedFile || "None selected" : "None selected"))}</b><small>Use Upload State Reference or Choose Candidate above.</small></div></div><label class="continuity-state-delta"><span>${st.isDefault ? "Base-state notes" : "State change / delta"}</span><textarea placeholder="${st.isDefault ? "Primary appearance and any details that must always remain true." : "What changes from the parent state? Also name anything that must remain unchanged."}" onchange="setContinuityState('${list}','${it.id}',${selectedIndex},'notes',this.value)">${esc(st.notes || "")}</textarea></label>${typeof assetStatePromptStudio === "function" ? assetStatePromptStudio(list, it, st) : ""}${continuityStateCandidateTray(list,it,st,media)}</article>` : '<div class="canon-notes">No continuity states yet.</div>';
   return `<details class="fold continuity-states" data-entity-continuity="${attr(list + ":" + it.id)}" ${workspaceSectionOpen(sectionKey, true) ? "open" : ""} ontoggle="rememberWorkspaceSection('${attr(sectionKey)}',this.open)"><summary>Continuity states <span>${states.length}</span></summary><div class="entity-coverage-intro"><div><b>Edit one state at a time</b><small>Other states stay compact so the workflow remains readable.</small></div></div>${continuityTrackingPanel(list, it)}${rail}<details class="state-chain-tools"><summary><span>State tools</span><small>Add another state or automate several parent-first</small></summary><div class="state-tool-actions"><button class="add-btn" onclick="addContinuityState('${list}','${it.id}')">+ Add continuity state</button></div>${typeof entityChainAutomationPanel === "function" ? entityChainAutomationPanel(list, it) : ""}</details><div class="continuity-state-list bounded-single-state">${editor}</div></details>`;
 }
-window.addContinuityState = (list, id) => {
+/* CREATION IS THE ONE MOMENT LINEAGE IS DECIDED.
+ *
+ * BATCH 1C. The re-audit found this function pushing an object literal with
+ * `parentStateId` set directly, entirely outside the mutation boundary — and it
+ * was right that a caller inventory searching for ASSIGNMENTS could never have
+ * found it. Creation now goes through the same validator as everything else,
+ * which is also the only place a parent is ever chosen.
+ *
+ * `parentStateId` may be supplied by the caller; it defaults to the root. The
+ * validator refuses a parent that does not exist and a duplicate id, and it
+ * validates the exact resulting collection — so a project already carrying
+ * damage is not added to. */
+window.addContinuityState = (list, id, parentStateId = "") => {
   const x = P[list].find((e) => e.id === id);
   x.continuityStates = entityStateList(x, true);
   const defaultState = x.continuityStates.find((item) => item.isDefault) || x.continuityStates[0];
-  x.continuityStates.push({
+  const outcome = applyStateCreation(x.continuityStates, {
     id: "state-" + Date.now().toString(36),
-    name: "New state",
-    appliesTo: "",
-    approvedFile: "",
-    notes: "",
+    parentStateId: String(parentStateId || "") || defaultState?.id || "state-default",
     isDefault: false,
-    parentStateId: defaultState?.id || "state-default",
-    generationMode: "derive",
-    referenceRequirement: "planned",
-    assetPromptProfile: "",
-    assetPromptNotes: "",
-    assetPromptBuilds: [],
+    dirty,
+    record: {
+      name: "New state",
+      appliesTo: "",
+      approvedFile: "",
+      notes: "",
+      generationMode: "derive",
+      referenceRequirement: "planned",
+      assetPromptProfile: "",
+      assetPromptNotes: "",
+      assetPromptBuilds: [],
+    },
   });
-  dirty();
+  if (!outcome.applied) {
+    return toast(outcome.reason === "parent-missing"
+      ? "That parent reference no longer exists. Choose one that does."
+      : outcome.reason === "collection-invalid"
+        ? "This reference's continuity states need repair before another can be added."
+        : "The state could not be created.");
+  }
   route();
 };
 window.setContinuityState = (list, id, i, k, v) => {
@@ -691,25 +709,36 @@ window.setContinuityState = (list, id, i, k, v) => {
      second, unvalidated ancestry writer sitting beside the validated one. A
      generic setter is exactly where a bypass hides, so the one field that can
      damage the graph is routed and the rest are untouched. */
-  if (k === "parentStateId") {
-    const outcome = applyStateParentMutation(entityStateList(x, true), state.id, v, { intent: "explicit-lineage-edit", via: "continuity-state-setter" });
-    if (!outcome.applied && outcome.reason !== "already-declared") {
-      return toast(outcome.reason === "would-create-cycle" || outcome.reason === "graph-would-be-cyclic"
-        ? `${state.name || "This state"} cannot derive from a state that already derives from it.`
-        : "That parent cannot be set.");
-    }
-    dirty();
-    return;
-  }
+  if (k === "parentStateId") return toast(reparentingUnsupported().detail);
   state[k] = v;
   if (["notes", "name"].includes(k)) state.parentValidation = null;
   dirty();
 };
-window.removeContinuityState = (list, id, i) => {
+/* DELETION SAYS WHAT HAPPENS TO THE CHILDREN.
+ *
+ * BATCH 1C. This used to `splice` the array. The re-audit removed `child` from
+ * `root -> child -> grand` and left `grand.parentStateId === "child"` pointing
+ * at a state that no longer existed — and the old integrity check reported the
+ * result acyclic, because a dangling parent is not a loop.
+ *
+ * The policy is explicit and it defaults to REFUSE, which is the answer that
+ * cannot lose information: a state something else derives from is not deleted
+ * by accident. A creator who means it is offered the reparent-to-root path. */
+window.removeContinuityState = (list, id, i, policy = "refuse") => {
   const x = P[list].find((e) => e.id === id);
-  if (x.continuityStates[i]?.isDefault) return toast("The default state remains available for every continuity record");
-  x.continuityStates.splice(i, 1);
-  dirty();
+  const state = x?.continuityStates?.[i];
+  if (!state) return;
+  const outcome = applyStateDeletion(x.continuityStates, state.id, { policy, dirty });
+  if (!outcome.applied) {
+    if (outcome.reason === "default-state-is-the-root") return toast("The base state remains available for every continuity record");
+    if (outcome.reason === "has-children") {
+      return confirmModal(
+        `${state.name || "This state"} is what ${outcome.children.length} other state${outcome.children.length === 1 ? "" : "s"} derive${outcome.children.length === 1 ? "s" : ""} from. Delete it and attach ${outcome.children.length === 1 ? "that state" : "those states"} to the base reference instead?`,
+        () => { removeContinuityState(list, id, i, "reparent-to-root"); },
+      );
+    }
+    return toast("That state could not be removed.");
+  }
   route();
 };
 window.requestHumanEntityCandidateApproval = (list, id, fileName, stateId = "state-default", continuation = "entity") => {
@@ -899,23 +928,30 @@ function recordCoverageReplacement(slot, previousFile, nextFile, source = "manua
   slot.replacementHistory.push({ at: new Date().toISOString(), previousFile: previousFile || "", nextFile: nextFile || "", source });
   slot.replacementHistory = slot.replacementHistory.slice(-20);
 }
+/* K4: THE OTHER DIRECT SETTER, ROUTED. The re-audit named this one alongside
+   the batch writer: manual assignment and manual replacement both wrote the
+   slot with no commit-time ownership question, so UI filtering was the only
+   protection and stale state walked straight past it. */
 function applyCoverageAssignment(list, entity, slot, fileName, source = "manual") {
-  if (fileName && entityCandidateIsCoverageSheet(entity, fileName)) return toast("A multi-view sheet cannot be approved as a single angle. Extract a panel first.");
-  const previous = String(slot.approvedFile || "");
-  if (previous !== String(fileName || "")) recordCoverageReplacement(slot, previous, fileName, source);
-  slot.approvedFile = String(fileName || "");
-  slot.status = slot.approvedFile ? "approved" : "missing";
-  slot.approvedAt = slot.approvedFile ? new Date().toISOString() : "";
-  /* P4-SEM-C2. The coverage funnel records WHICH BYTES the view approved, so a
-     later rename cannot leave this slot pointing at a filename that no longer
-     exists — the exact miss the approval rename made before C2, because it
-     patched states and the candidate row and never reached the coverage slots.
-     Cleared when the view is unassigned, so a stale identity cannot outlive the
-     approval that justified it. */
-  if (slot.approvedFile)
-    stampApprovalIdentity(slot, (entityMedia(list, entity).find((item) => item.name === slot.approvedFile) || {}).assetId || "");
-  else delete slot[APPROVED_ASSET_ID_FIELD];
-  if (slot.approvedFile) slot.provenance = { ...(slot.provenance || {}), source, approvedAt: slot.approvedAt };
+  if (fileName && entityCandidateIsCoverageSheet(entity, fileName)) return toast("A multi-view sheet cannot be assigned as a single angle. Extract a panel first.");
+  const at = new Date().toISOString();
+  if (!String(fileName || "")) {
+    clearSlotReference(slot, { at, via: source });
+    delete slot[APPROVED_ASSET_ID_FIELD];
+    dirty();
+    route();
+    return;
+  }
+  const outcome = assignSlotReference(slot, {
+    fileName: String(fileName),
+    at,
+    via: source,
+    eligibility: () => entityOwnershipEligibility(P, { list, entityId: entity.id }, String(fileName)),
+  });
+  if (!outcome.assigned) return toast(outcome.message || `${fileName} could not be assigned to ${slot.label || slot.id}`);
+  /* P4-SEM-C2. The slot records WHICH BYTES it selected, so a later rename
+     cannot leave it pointing at a filename that no longer exists. */
+  stampApprovalIdentity(slot, (entityMedia(list, entity).find((item) => item.name === slot.approvedFile) || {}).assetId || "");
   dirty();
   route();
 }
@@ -940,31 +976,20 @@ window.approveCoverageCandidate = (list, id, fileName, slotId, directOverride = 
   if (!slot) return toast("Coverage slot is unavailable");
   const review = entityCandidateTargetReview(entity, fileName);
   if (!directOverride && !review?.pass) return toast("Run and pass AI review before approving this coverage view.");
-  /* BATCH 1B: A COVERAGE SLOT IS AN APPROVAL EDGE TOO.
-
-     It is not a human GATE object — the gate model covers shot frames and
-     continuity states — so it carries no authority receipt. It is a durable
-     ownership CLAIM, though, which means approving a contested or unowned file
-     into a slot would quietly change who owns those bytes. The same veto the
-     authority command applies is asked here, so the ownership rule has no
-     side door. */
-  {
-    const resolution = resolveMediaOwnership(entityOwnerIndex(list), fileName);
-    if (resolution.contested) return toast(`${fileName} is claimed by more than one reference (${resolution.claimants.join(", ")}). Resolve that conflict before making it a coverage authority.`);
-    if (!resolution.authoritative || resolution.ownerId !== entity.id) return toast(`${fileName} is not durably owned by ${entity.name || entity.id}. Claim it for this reference first.`);
-  }
+  /* K4 + K-alpha: ONE SLOT WRITER, OWNERSHIP RE-RESOLVED AT COMMIT, AND NO
+     APPROVAL CLAIM. A slot is a supporting reference — see
+     public/shared-entity-slots.js — so this SELECTS a file for it, refuses a
+     contested or unowned one against current state, and asserts nothing about
+     canon. */
   const commit = () => {
-    if (row.coverageGroup === "expressions") {
-      const previous = String(slot.approvedFile || "");
-      if (previous !== fileName) recordCoverageReplacement(slot, previous, fileName, directOverride ? "human-expression-approval" : "reviewed-expression-candidate");
-      slot.approvedFile = fileName; slot.status = "approved"; slot.approvedAt = new Date().toISOString();
-    } else {
-      const previous = String(slot.approvedFile || "");
-      if (previous !== fileName) recordCoverageReplacement(slot, previous, fileName, directOverride ? "human-coverage-approval" : "reviewed-coverage-candidate");
-      slot.approvedFile = fileName; slot.status = "approved"; slot.approvedAt = new Date().toISOString();
-      slot.provenance = { ...(slot.provenance || {}), source: directOverride ? "human-coverage-approval" : "reviewed-coverage-candidate", approvedAt: slot.approvedAt };
-    }
-    row.decision = row.coverageGroup === "expressions" ? "approved-expression" : "approved-coverage";
+    const outcome = assignSlotReference(slot, {
+      fileName,
+      at: new Date().toISOString(),
+      via: directOverride ? "human-coverage-selection" : "reviewed-coverage-candidate",
+      eligibility: () => entityOwnershipEligibility(P, { list, entityId: entity.id }, fileName),
+    });
+    if (!outcome.assigned) return toast(outcome.message || `${fileName} could not be assigned to ${slot.label || slot.id}`);
+    row.decision = row.coverageGroup === "expressions" ? "selected-expression" : "selected-coverage";
     row.reviewRequired = false;
     row.directApprovalOverride = !!directOverride;
     row.humanApproved = true;

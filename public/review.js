@@ -356,6 +356,16 @@ window.confirmEntityBatchApproval = async () => {
   const selected = [...document.querySelectorAll?.("[data-batch-approval-index]:checked") || []].map((input) => shortlist[Number(input.dataset.batchApprovalIndex)]).filter(Boolean);
   if (!selected.length) return toast("Select at least one passing candidate");
   const approvedAt = new Date().toISOString();
+  /* K1A — ONE MANUAL ACTION, BOUND TO EVERY TARGET IN THE BATCH. Minted inside
+     the confirming click and consumed once per target by the kernel, so a batch
+     cannot approve anything the creator did not select. Slot targets are not in
+     the list: coverage and expression are supporting references now and carry
+     no authority receipt. */
+  const stateTargets = selected
+    .filter((item) => item.type !== "coverage" && item.type !== "expressions")
+    .map((item) => ({ kind: "entity-state", list: current.list, entityId: entity.id, stateId: (entityStateById(entity, item.best.stateId) || entityStateList(entity, true)[0] || {}).id }))
+    .filter((target) => target.stateId);
+  const batchManualAction = stateTargets.length ? beginManualApproval({ via: "entity-batch-approval", targets: stateTargets }) : null;
   const approvals = [];
   for (const item of selected) {
     const best = item.best;
@@ -364,17 +374,32 @@ window.confirmEntityBatchApproval = async () => {
       const slots = item.type === "expressions" ? ensureExpressionSlots(entity).filter((slot) => !slot.retired) : ensureCoverageSlots(current.list, entity);
       const slot = slots.find((candidate) => candidate.id === best.slotId);
       if (!slot) continue;
-      const previous = String(slot.approvedFile || "");
-      if (previous !== best.fileName) recordCoverageReplacement(slot, previous, best.fileName, "batch-reviewed-candidate");
-      slot.approvedFile = best.fileName;
-      slot.status = "approved";
-      slot.approvedAt = approvedAt;
-      slot.provenance = { ...(slot.provenance || {}), source: "batch-reviewed-candidate", approvedAt, batchId: run.id };
-      row.decision = item.type === "expressions" ? "approved-expression" : "approved-coverage";
+      /* K4 — OWNERSHIP IS RE-RESOLVED HERE, INSIDE THE COMMIT.
+       *
+       * The Batch 1B re-audit handed this writer a stale shortlist naming
+       * `SHARED.png`, durably claimed by two entities. The resolver reported
+       * `contested, authoritative: false` before and after — and this function
+       * wrote the slot anyway, because the only ownership check was the filter
+       * that had built the shortlist minutes earlier. A stale list is not
+       * evidence; the answer has to be asked again at the moment of writing.
+       *
+       * K-alpha — AND THIS IS NO LONGER AN APPROVAL. Coverage and expression
+       * slots are supporting references now, not production authority, so the
+       * writer records a SELECTION. See public/shared-entity-slots.js. */
+      const outcome = assignSlotReference(slot, {
+        fileName: best.fileName,
+        at: approvedAt,
+        via: "entity-batch-selection",
+        eligibility: () => entityOwnershipEligibility(P, { list: current.list, entityId: entity.id }, best.fileName),
+      });
+      if (!outcome.assigned) {
+        toast(outcome.message || `${best.fileName} could not be assigned to ${slot.label || slot.id}`);
+        continue;
+      }
+      row.decision = item.type === "expressions" ? "selected-expression" : "selected-coverage";
       row.approvedCoverageSlotId = slot.id;
       row.reviewRequired = false;
       row.decidedAt = approvedAt;
-      markBatchApprovalAsHumanDecision(row);
     } else {
       const state = entityStateById(entity, best.stateId) || entityStateList(entity, true)[0];
       if (!state) continue;
@@ -386,7 +411,7 @@ window.confirmEntityBatchApproval = async () => {
       try {
         writeEntityStateProductionAuthority(P, {
           list: current.list, entityId: entity.id, stateId: state.id, value: best.fileName,
-          grant: humanAuthorityGrant({ via: "entity-batch-approval", at: approvedAt }), at: approvedAt,
+          manualAction: batchManualAction, at: approvedAt,
           applyEdge: () => {
             state.approvedFile = best.fileName;
             state.approvedAt = approvedAt;

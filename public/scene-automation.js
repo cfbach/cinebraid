@@ -6,6 +6,30 @@ function v640SceneShots(sceneId) {
 function v640SceneOpeningFrame(shot) {
   return typeof guidedFrames === "function" ? guidedFrames(shot)[0] || null : (shot?.keyframes || [])[0] || null;
 }
+/* THE SAME QUESTION, WITHOUT TOUCHING ANYTHING.
+ *
+ * BATCH 1C / re-audit A6. `guidedFrames` is a NORMALISER: it calls
+ * `normalizeShotV5` and, when a shot has no keyframes, CREATES one. Correction
+ * preflight called it, so a shot with zero frames did not fail preflight — it
+ * silently GREW a frame, reported no error, and the real runner carried on to
+ * the dispatch boundary. The audit observed `keyframeCountBefore: 0,
+ * keyframeCountAfter: 1` and a mocked dispatch reached once.
+ *
+ * A preflight that repairs the thing it is checking is not a preflight. This is
+ * a structural read: it looks at what is there and answers, and a malformed
+ * `keyframes` value is a fact to report rather than a shape to fix. */
+function v640SceneOpeningFrameRead(shot) {
+  const s = shot && typeof shot === "object" ? shot : null;
+  if (!s) return { ok: false, frame: null, reason: "no-shot" };
+  const frames = s.keyframes;
+  if (frames === undefined || frames === null) return { ok: false, frame: null, reason: "no-frames" };
+  if (!Array.isArray(frames)) return { ok: false, frame: null, reason: "frames-malformed" };
+  if (!frames.length) return { ok: false, frame: null, reason: "no-frames" };
+  const first = frames[0];
+  if (!first || typeof first !== "object" || Array.isArray(first)) return { ok: false, frame: null, reason: "frame-malformed" };
+  if (!String(first.id || "")) return { ok: false, frame: null, reason: "frame-has-no-id" };
+  return { ok: true, frame: first, reason: "" };
+}
 /* A MISSING NEIGHBOUR IS NOT A SHOT. Dogfood #2 A5 / forensic F7: the reference
    builder always asked for a previous AND a next shot, and boundary packages
    carry "" for one of them. `shotById("")` returns undefined, and this function
@@ -386,8 +410,12 @@ function v643HydrateSceneCorrectionPackage(pkg, run = null) {
   if (!targetShotId) throw v640CorrectionPackageError("This correction package names no target shot.", { packageId: pkg?.id, remediation: "Rebuild the correction from the scene continuity review." });
   const shot = shotById(targetShotId);
   if (!shot) throw v640CorrectionPackageError(`${targetShotId} no longer exists in this project.`, { packageId: pkg.id, remediation: "Remove the stale correction package and re-run the scene continuity review." });
-  const frame = v640SceneOpeningFrame(shot);
-  if (!frame) throw v640CorrectionPackageError(`${targetShotId} has no opening frame to correct.`, { packageId: pkg.id, remediation: `Add an opening frame to ${targetShotId} before correcting it.` });
+  /* Hydration runs AFTER preflight, so the frame is known to exist — but it
+     reads rather than normalises for the same reason preflight does: a hydrator
+     that creates the structure it needs cannot report that it was missing. */
+  const frameRead = v640SceneOpeningFrameRead(shot);
+  const frame = frameRead.frame;
+  if (!frameRead.ok) throw v640CorrectionPackageError(`${targetShotId} has no opening frame to correct.`, { packageId: pkg.id, remediation: `Open ${targetShotId} and add an opening frame before correcting it.` });
   const source = v643ApprovedCorrectionSource(shot);
   if (!source?.name) throw v640CorrectionPackageError(`${targetShotId} has no approved base still for correction.`, { packageId: pkg.id, remediation: `Approve a still for ${targetShotId} first — a correction edits an approved image.` });
   const record = v643CorrectionSourceRecord(shot, source.name);
@@ -560,9 +588,16 @@ function v640SceneCorrectionPreflight(pkg) {
   if (!targetShotId) errors.push({ message: "This correction package names no target shot.", remediation: "Rebuild the correction from the scene continuity review." });
   const shot = targetShotId ? shotById(targetShotId) : null;
   if (targetShotId && !shot) errors.push({ message: `${targetShotId} no longer exists in this project.`, remediation: "Remove the stale correction package and re-run the scene continuity review." });
-  const frame = shot ? v640SceneOpeningFrame(shot) : null;
-  if (shot && !frame) errors.push({ message: `${targetShotId} has no opening frame to correct.`, remediation: `Add an opening frame to ${targetShotId} before correcting it.` });
-  if (shot && !v640SceneApprovedStill(shot)) errors.push({ message: `${targetShotId} has no approved base still for correction.`, remediation: `Approve a still for ${targetShotId} first — a correction edits an approved image.` });
+  /* PURE READ. See v640SceneOpeningFrameRead: the old call created the frame it
+     was checking for, so "missing opening frame" could not be reported. */
+  const read = shot ? v640SceneOpeningFrameRead(shot) : { ok: false, frame: null, reason: "no-shot" };
+  const frame = read.frame;
+  if (shot && !read.ok) {
+    errors.push(read.reason === "frames-malformed" || read.reason === "frame-malformed" || read.reason === "frame-has-no-id"
+      ? { message: `${targetShotId} has a damaged frame record and cannot be corrected.`, remediation: `Open ${targetShotId} and rebuild its frames before correcting it.` }
+      : { message: `${targetShotId} has no opening frame to correct.`, remediation: `Open ${targetShotId} and add an opening frame before correcting it.` });
+  }
+  if (shot && read.ok && !v640SceneApprovedStill(shot)) errors.push({ message: `${targetShotId} has no approved base still for correction.`, remediation: `Approve a still for ${targetShotId} first — a correction edits an approved image.` });
   return { errors, shot, frame };
 }
 /* WHAT A CORRECTION IS AIMED AT, resolved WITHOUT touching the project.
@@ -665,17 +700,13 @@ async function v640AutomateSceneCorrection(run, pkg) {
        exactly the same terms as the frame path. Only a human decision reaches it
        now, and the package records `director` because that is the only actor that
        can get here. */
-    if (reviewed.pass && reviewed.winner && reviewed.result?.humanApproved) {
-      await v628RequireAutomationLease(run);
-      v626ApproveFrame(pkg.targetShotId, frame.id, reviewed.winner, humanAuthorityGrant({ via: "scene-correction-approval-gate", at: v626Now() }));
-      v628AttachShotAutomationProvenance(run, frame.id, reviewed.winner, reviewKey, { shotId: pkg.targetShotId, score: reviewed.score, humanApproved: true });
-      pkg.status = "approved"; pkg.approvedFile = reviewed.winner; pkg.score = reviewed.score; pkg.completedAt = v626Now(); pkg.approval = "director";
-      const scenePkg = (sceneById(run.targetId).continuityCorrectionPackages || []).find((item) => item.id === pkg.id); if (scenePkg) Object.assign(scenePkg, pkg);
-      const runPkg = (run.result?.correctionPackages || []).find((item) => item.id === pkg.id); if (runPkg) Object.assign(runPkg, pkg);
-      dirty(); await flushPendingProjectSave();
-      await v626Log(run, `${pkg.targetShotId} continuity correction approved: ${reviewed.winner} (${Math.round(Number(reviewed.score || 0))}/100).`, "success");
-      return reviewed.winner;
-    }
+    /* BATCH 1C: AUTOMATION MINTS NOTHING. This branch read a cached
+       `result.humanApproved` and then built itself a credential from it — the
+       re-audit cited this exact line as proof the builder was not confined to a
+       trusted human event. A correction is approved the way everything else is:
+       at the gate, by a person, in the run modal. The branch is unreachable now
+       because automation cannot obtain a capability, so it is removed rather
+       than left as a trap. */
     if (reviewed.pass && reviewed.winner && reviewed.result?.recommend) {
       pkg.recommendation = automationRecommendation({
         file: reviewed.winner, score: reviewed.score, threshold: v640RecommendationScore(run),

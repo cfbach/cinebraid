@@ -32,6 +32,12 @@ const MIGRATION_DIAGNOSTICS = {
   "migration.code.unresolved": { severity: SEVERITY.WARNING, summary: "a legacy dependency token names nothing; the raw token is preserved" },
   "migration.ref.unresolved": { severity: SEVERITY.WARNING, summary: "a migrated cross-reference names a record that does not exist" },
   "migration.review.required": { severity: SEVERITY.WARNING, summary: "a value needs a human decision that migration must not make" },
+  /* Dogfood #2 Batch 1C / K7. A legacy pointer with no valid human approval
+     receipt behind it is not approved production output. It is preserved as
+     historic workflow evidence and reported, because the difference between
+     "somebody approved this" and "this is what was selected" is exactly what
+     the export used to lose. */
+  "migration.authority.historic": { severity: SEVERITY.WARNING, summary: "a legacy selection has no human approval receipt; exported as historic evidence, not approved output" },
   "migration.secret.quarantined": { severity: SEVERITY.WARNING, summary: "a credential-shaped value was refused entry to the OFP document" },
   "migration.path.quarantined": { severity: SEVERITY.WARNING, summary: "an absolute path or local endpoint was refused entry to the OFP document" },
 

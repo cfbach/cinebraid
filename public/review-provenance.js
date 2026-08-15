@@ -434,17 +434,20 @@ window.promoteFinishJob = (jobId) => {
   /* BATCH 1B: promoting a finish job is a human approval command and routes
      through the one authority boundary, so the receipt it leaves is
      indistinguishable from any other approval of the same frame. */
-  const promoteGrant = humanAuthorityGrant({ via: "finish-job-promotion", at: new Date().toISOString() });
+  const promoteGrant = beginManualApproval({
+    via: "finish-job-promotion",
+    targets: [{ kind: "shot-frame", shotId: job.shotId, frameId: target.startsWith("frame:") ? target.slice(6) : ((s.keyframes || [])[0] || {}).id }],
+  });
   if (target === "shot") {
     const opening = (s.keyframes || [])[0];
     const writeShotEdge = () => { s.winner = job.resultFile; stampShotApprovalIdentity(s, "winner", approvedAssetId); };
-    if (opening) writeFrameProductionAuthority(P, { shotId: job.shotId, frameId: opening.id, value: job.resultFile, assetId: approvedAssetId, grant: promoteGrant, at: new Date().toISOString(), applyEdge: writeShotEdge });
+    if (opening) writeFrameProductionAuthority(P, { shotId: job.shotId, frameId: opening.id, value: job.resultFile, assetId: approvedAssetId, manualAction: promoteGrant, at: new Date().toISOString(), applyEdge: writeShotEdge });
     else writeShotEdge();
   } else if (target.startsWith("frame:")) {
     const f = frameById(s, target.slice(6));
     if (f) {
       writeFrameProductionAuthority(P, {
-        shotId: job.shotId, frameId: f.id, value: job.resultFile, assetId: approvedAssetId, grant: promoteGrant, at: new Date().toISOString(),
+        shotId: job.shotId, frameId: f.id, value: job.resultFile, assetId: approvedAssetId, manualAction: promoteGrant, at: new Date().toISOString(),
         applyEdge: () => {
           f.winner = job.resultFile;
           stampShotApprovalIdentity(f, "winner", approvedAssetId);

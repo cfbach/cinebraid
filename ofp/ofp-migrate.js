@@ -105,6 +105,14 @@ class MigrationContext {
   constructor(source, detection, options) {
     this.source = source;
     this.detection = detection;
+    /* K7: the migration reads the SAME project the authority kernel reads, so
+       "is this pointer approved" has one answer across the runtime and the
+       export. `source` IS the project document a migration is handed. */
+    this.sourceProject = source;
+    this.authorityReader = (() => {
+      try { return require("../public/shared-production-authority.js"); }
+      catch { return null; }
+    })();
     this.candidate = {};
     this.ledger = new SourceLedger(source);
     this.at = options.at;
@@ -558,9 +566,48 @@ class MigrationContext {
   }
 
   /* ---- media identity ---- */
-  approve(subject, filename, pointer, purpose) {
+
+  /* K7 — AN APPROVED-OUTPUT EDGE REQUIRES A VALID DURABLE RECEIPT.
+   *
+   * The Batch 1B re-audit's §3.5: this collector took any non-empty legacy
+   * pointer — a frame winner, a shot winner, an entity or state approvedFile, a
+   * creation-final file, a coverage slot — and materialised it as the subject's
+   * approved-output reference. It never wrote a false OFP human-approval
+   * STATEMENT, which is why the earlier finding was narrow, but it did export a
+   * machine, unknown, or unreceipted selection as approved production output.
+   *
+   * The question is now asked of the authority kernel, against the same project
+   * document the migration is reading. A pointer with no current human receipt
+   * behind it is not dropped and not hidden — it is routed to workflow evidence,
+   * where it reads as the historic selection it actually is.
+   *
+   * `authorityTarget` is supplied by the rule, because only the rule knows
+   * whether a pointer is a frame, a state, or something with no authority
+   * concept at all. A pointer with no target descriptor is legacy workflow by
+   * definition. */
+  approve(subject, filename, pointer, purpose, authorityTarget = null) {
     if (this.isQuarantined(pointer)) return;
+    if (!this.hasAuthorityFor(authorityTarget)) {
+      this.workflowPut(["historicSelections", subject, purpose], filename, pointer,
+        "a legacy selection with no current human approval receipt; preserved as historic workflow evidence rather than exported as approved production output");
+      this.diagnostic("migration.authority.historic",
+        `${subject}: ${JSON.stringify(filename)} is recorded as a selection but carries no valid human approval receipt, so it is exported as historic workflow evidence rather than as approved output. Approve it in CineBraid to make it authoritative.`,
+        { where: pointer, target: subject });
+      return;
+    }
     this.pendingApprovals.push({ subject, filename, pointer, purpose, rule: this.rule });
+  }
+
+  /* Does the source project carry current human authority for this target. The
+     kernel answers; the migration does not re-implement the rule. A migration
+     run without the source project available answers NO, which is the same
+     fail-closed direction every other authority reader takes. */
+  hasAuthorityFor(target) {
+    if (!target) return false;
+    const Authority = this.authorityReader || null;
+    if (!Authority || typeof Authority.hasCurrentHumanAuthority !== "function") return false;
+    try { return Authority.hasCurrentHumanAuthority(this.sourceProject || {}, target); }
+    catch { return false; }
   }
 
   flushApprovals() {

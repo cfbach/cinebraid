@@ -27,25 +27,30 @@
    this state inherit, is this chain complete — then has no answer, or loops.
 
    ---------------------------------------------------------------------------
-   THE RULES.
+   THE RULES, as they stand after Batch 1C.
 
-     1. NAVIGATION NEVER MUTATES LINEAGE. Choosing what to edit next is a
-        movement, not a declaration. An existing parent edge is never rewritten
-        because a creator pressed a continue button.
-     2. THE GRAPH IS ACYCLIC. Every write that could close a cycle is refused at
-        the writer, not detected afterwards.
-     3. ANCESTORS ARE NEVER CONTINUATION CANDIDATES. A state you derived FROM is
-        not a state to continue INTO.
-     4. A FINISHED CHAIN STOPS. When nothing downstream still needs work the
+     1. LINEAGE IS CREATE-ONLY. A state's parent is chosen when the state is
+        created and never changes. There is no reparent operation, so there is
+        no cycle to prevent: a new state's parent must already exist, and
+        nothing that already exists can point at something created later.
+     2. THE COLLECTION IS VALIDATED AS A WHOLE. Unique non-empty ids, exactly
+        one root, every parent resolves. "Acyclic" was never enough — a
+        duplicated id and a dangling parent are both broken and neither loops.
+     3. DELETION STATES ITS POLICY. Removing a state something derives from
+        refuses by default, and never leaves a child pointing at nothing.
+     4. NAVIGATION NEVER MUTATES LINEAGE. Choosing what to edit next is a
+        movement, not a declaration — not even for a state that declares no
+        parent yet.
+     5. ANCESTORS ARE NEVER CONTINUATION CANDIDATES, and neither is anything
+        off the chain. Continuation moves DOWN.
+     6. A FINISHED CHAIN STOPS. When nothing downstream still needs work the
         answer is "complete", not "start again at the root".
 
-   THE DEFAULT STATE IS THE ROOT. It has no parent and must never acquire one;
-   entityStateList() already normalises `parentStateId` to "" for it.
+   THE DEFAULT STATE IS THE ROOT. It has no parent and cannot acquire one.
 
-   NOTHING IS MUTATED BY A READ. Every function here takes a state collection and
-   returns values. The one function that describes a WRITE — `safeParentAssignment`
-   — returns a decision the caller applies, so the refusal and the write cannot
-   drift apart.
+   NOTHING IS MUTATED BY A READ. The two functions that WRITE —
+   `applyStateCreation` and `applyStateDeletion` — each validate the exact
+   resulting collection first and leave the original untouched on refusal.
 
    Deliberately absent, and required to stay absent:
      - file or network I/O
@@ -161,128 +166,214 @@ function lineageIsAcyclic(states) {
   return lineageCycles(states).length === 0;
 }
 
-/* ---------- the write decision -------------------------------------------- */
-
 /* ==========================================================================
-   BATCH 1B — ONE MUTATION API, AND NAVIGATION IS NOT ONE OF ITS CALLERS.
+   BATCH 1C — LINEAGE IS CREATE-ONLY. REPARENTING IS GONE.
 
-   The acceptance audit found two things the first repair left standing.
+   The Batch 1B re-audit's A5 findings were all consequences of one thing: the
+   derivation graph was MUTABLE. Because a parent could be changed, a validator
+   had to prove that every change kept the graph acyclic; because the validator
+   only looked at cycles, duplicate ids and dangling parents walked past it;
+   because `addContinuityState` and `removeContinuityState` created and
+   destroyed edges without going through it at all, the "one writer" claim was
+   false; and because the simulated graph updated both copies of a duplicated id
+   while the commit updated one, the thing validated was not the thing written.
 
-   First, the invariant said "navigation never mutates lineage" and the code
-   said "navigation may establish a FIRST parent". Those are different rules.
-   The audit offered an orphan state as a continuation target and watched it
-   acquire a parent from a button whose entire meaning is "open this next". A
-   partial exemption to a categorical rule is not a weaker rule, it is a
-   different rule with the old name on it.
+   Alpha deletes the cause rather than instrumenting the consequences.
 
-   Second, and worse: the exposed parent dropdown in the creation studio listed
-   every state except the current one — descendants included — and its change
-   handler executed `state[key] = value` directly. The validated helper existed
-   and had exactly one production caller. A validator nothing has to call is
-   documentation.
+       A STATE'S PARENT IS CHOSEN WHEN THE STATE IS CREATED, AND NEVER CHANGES.
 
-   So there are two intents now, and only one of them can write:
+   That single rule removes reparenting, the cycle-creation surface, the parent
+   dropdown, the generic setter's lineage path, and the need for a graph
+   transaction — because A CREATE-ONLY GRAPH CANNOT CYCLE. A new state's parent
+   must already exist, and nothing already existing can point at something
+   created after it. The property is structural, not checked.
 
-     "navigation"            -> NEVER writes. Not a first parent, not anything.
-     "explicit-lineage-edit" -> may write, and is validated against the graph
-                                THAT WOULD RESULT, not the one that exists.
+   WHY THIS IS NOT COLLAPSED FURTHER. The alpha direction asked whether
+   inheritance could be reduced to base → named state, one level. The preserved
+   Dogfood #2 project answers no: it runs `Rooftop working → Heavy soot → Dawn
+   with burgundy scarf`, and the closeout records that chain's inheritance
+   reasoning as positive finding P4 — "carry forward heavy soot, add the scarf".
+   Flattening it would discard a working feature and rewrite real evidence. The
+   depth is kept; the MUTABILITY is what goes.
 
-   And `applyStateParentMutation` is the only function in CineBraid that assigns
-   `parentStateId`. Everything else asks it. */
+   WHAT STILL NEEDS VALIDATING, and does not come free from create-only:
+     - unique, non-empty state ids
+     - exactly one default/root
+     - every non-root parent resolves to a state that exists
+     - deletion never leaves a dangling child
+   Imported and pre-existing collections can violate all four, so the collection
+   validator below stays and is the gate for add and remove. */
 
-const LINEAGE_MUTATION_INTENTS = ["navigation", "explicit-lineage-edit"];
+const LINEAGE_DELETION_POLICIES = ["refuse", "reparent-to-root", "cascade"];
 
-/* Every reason a mutation can be refused, enumerated so a surface can switch on
-   one rather than matching prose. */
-const LINEAGE_MUTATION_REASONS = [
-  "unknown-state", "default-state-is-the-root", "invalid-parent", "unknown-parent",
-  "would-create-cycle", "navigation-may-not-reparent", "already-declared",
-  "establishing-first-parent", "reparented", "graph-would-be-cyclic",
+const LINEAGE_INTEGRITY_CODES = [
+  "state-id-missing",
+  "state-id-duplicated",
+  "no-default-state",
+  "multiple-default-states",
+  "default-state-has-parent",
+  "parent-missing",
+  "parent-is-self",
+  "cycle",
 ];
 
-/* THE ONLY DESCRIPTION OF A LINEAGE WRITE. Returns a decision rather than
-   performing one, so the caller's refusal path and the rule are the same code. */
-function planParentMutation(states, childStateId, proposedParentId, options = {}) {
-  const opts = lineageObject(options);
-  const intent = LINEAGE_MUTATION_INTENTS.includes(lineageText(opts.intent)) ? lineageText(opts.intent) : "navigation";
-  const childId = lineageText(childStateId);
-  const parentId = lineageText(proposedParentId);
-  const child = lineageNode(states, childId);
-  if (!child) return { write: false, intent, parentStateId: "", reason: "unknown-state" };
-  if (child.isDefault) return { write: false, intent, parentStateId: "", reason: "default-state-is-the-root" };
-  if (!parentId || parentId === childId) return { write: false, intent, parentStateId: "", reason: "invalid-parent" };
-  if (!lineageNode(states, parentId)) return { write: false, intent, parentStateId: "", reason: "unknown-parent" };
-  /* RULE 2, at the writer. The proposed parent living below the child is exactly
-     the ancestor-beneath-descendant move that closed the dogfood cycle. */
-  if (stateAncestorIds(states, parentId).includes(childId)) return { write: false, intent, parentStateId: "", reason: "would-create-cycle" };
-  if (stateDescendantIds(states, childId).includes(parentId)) return { write: false, intent, parentStateId: "", reason: "would-create-cycle" };
-  if (child.parentStateId === parentId) return { write: false, intent, parentStateId: parentId, reason: "already-declared" };
-  /* RULE 1, CATEGORICALLY. Moving to a state says nothing about where it came
-     from — including when it currently says nothing at all. */
-  if (intent !== "explicit-lineage-edit") {
-    return { write: false, intent, parentStateId: child.parentStateId, reason: "navigation-may-not-reparent" };
+/* THE WHOLE COLLECTION, CHECKED. `lineageIsAcyclic` was never a sufficient
+   integrity predicate — the re-audit's duplicate-id and dangling-parent cases
+   both returned "acyclic: true" — so integrity is its own question with its own
+   answer, and cycles are one clause of it. */
+function validateStateCollection(states) {
+  const rows = lineageList(states).map(lineageObject);
+  const problems = [];
+  const seen = new Set();
+  const ids = new Set();
+  let defaults = 0;
+  for (let index = 0; index < rows.length; index++) {
+    const id = lineageText(rows[index].id);
+    if (!id) { problems.push({ code: "state-id-missing", index }); continue; }
+    if (seen.has(id)) problems.push({ code: "state-id-duplicated", index, id });
+    seen.add(id);
+    ids.add(id);
+    if (rows[index].isDefault === true) {
+      defaults += 1;
+      if (lineageText(rows[index].parentStateId)) problems.push({ code: "default-state-has-parent", index, id });
+    }
   }
-  /* ATOMIC AGAINST THE RESULTING GRAPH. The pairwise checks above are necessary
-     and, on a project that already carries damage, not sufficient: a graph with
-     a pre-existing cycle elsewhere can absorb a write that looks locally fine.
-     The whole graph is simulated and re-checked before this returns `write`. */
-  const simulated = lineageNodes(states).map((state) => (state.id === childId ? { ...state, parentStateId: parentId } : state));
-  if (!lineageIsAcyclic(simulated)) return { write: false, intent, parentStateId: child.parentStateId, reason: "graph-would-be-cyclic" };
-  return { write: true, intent, parentStateId: parentId, reason: child.parentStateId ? "reparented" : "establishing-first-parent" };
+  if (!defaults && rows.length) problems.push({ code: "no-default-state" });
+  if (defaults > 1) problems.push({ code: "multiple-default-states", count: defaults });
+  for (let index = 0; index < rows.length; index++) {
+    const id = lineageText(rows[index].id);
+    const parentId = lineageText(rows[index].parentStateId);
+    if (!id || !parentId) continue;
+    if (parentId === id) { problems.push({ code: "parent-is-self", index, id }); continue; }
+    if (!ids.has(parentId)) problems.push({ code: "parent-missing", index, id, parentStateId: parentId });
+  }
+  for (const cycle of lineageCycles(rows)) problems.push({ code: "cycle", ids: cycle });
+  return { ok: problems.length === 0, problems };
+}
+function stateCollectionIntact(states) {
+  return validateStateCollection(states).ok;
 }
 
-/* THE ONE MUTATION API. Every writer of `parentStateId` in CineBraid calls this
-   — the creation-studio parent selector, the continuity variant opener, the
-   correct-from-parent path, the generic state setter, entity-state automation,
-   import and normalisation compatibility.
+/* ---------- the two mutations that remain --------------------------------- */
 
-   A REFUSED MUTATION WRITES NOTHING AND DIRTIES NOTHING. `dirty` is invoked only
-   on a real write, so a rejected dropdown change cannot leave a project marked
-   modified with no modification in it. */
-function applyStateParentMutation(states, childStateId, proposedParentId, options = {}) {
+/* CREATE. The only way a parent edge comes into existence.
+ *
+ * The parent must already exist, which is what makes the result acyclic without
+ * a cycle check: the new id is not reachable from anything, so nothing can
+ * point back to it. Validation is still run against the exact resulting
+ * collection, because the collection may already have been damaged by an import
+ * and this refuses to add to a broken graph. */
+function planStateCreation(states, request = {}) {
+  const it = lineageObject(request);
+  const rows = lineageList(states).map(lineageObject);
+  const id = lineageText(it.id);
+  const parentStateId = lineageText(it.parentStateId);
+  if (!id) return { create: false, reason: "state-id-missing" };
+  if (rows.some((row) => lineageText(row.id) === id)) return { create: false, reason: "state-id-duplicated" };
+  const isDefault = it.isDefault === true;
+  if (!isDefault) {
+    if (!parentStateId) return { create: false, reason: "parent-required" };
+    if (!rows.some((row) => lineageText(row.id) === parentStateId)) return { create: false, reason: "parent-missing" };
+  }
+  const next = [...rows, { ...lineageObject(it.record), id, parentStateId: isDefault ? "" : parentStateId, isDefault }];
+  const integrity = validateStateCollection(next);
+  if (!integrity.ok) return { create: false, reason: "collection-invalid", problems: integrity.problems };
+  return { create: true, reason: isDefault ? "root" : "derived", id, parentStateId: isDefault ? "" : parentStateId };
+}
+
+function applyStateCreation(states, request = {}) {
+  const decision = planStateCreation(states, request);
+  if (!decision.create) return { ...decision, applied: false };
+  const it = lineageObject(request);
+  const record = { ...lineageObject(it.record), id: decision.id, parentStateId: decision.parentStateId, isDefault: it.isDefault === true };
+  states.push(record);
+  if (typeof it.dirty === "function") it.dirty();
+  return { ...decision, applied: true, record };
+}
+
+/* DELETE, WITH AN EXPLICIT POLICY. The re-audit removed `child` from
+   `root → child → grand` and left `grand.parentStateId === "child"` pointing at
+   nothing, then observed the result was still reported acyclic. A dangling
+   parent is a broken graph whether or not it loops, so deletion has to say what
+   happens to the children rather than leaving it to whoever splices the array.
+ *
+ *   refuse            — the default. A state with children is not deleted.
+ *   reparent-to-root  — children are attached to the default state.
+ *   cascade           — the state and its whole subtree go.
+ *
+ * The resulting collection is validated before it is committed, and a refusal
+ * leaves the original array untouched. */
+function planStateDeletion(states, stateId, options = {}) {
   const opts = lineageObject(options);
-  const decision = planParentMutation(states, childStateId, proposedParentId, opts);
-  if (!decision.write) return { ...decision, applied: false };
-  const target = lineageList(states).map(lineageObject).find((state) => lineageText(state.id) === lineageText(childStateId));
-  if (!target) return { ...decision, write: false, applied: false, reason: "unknown-state" };
-  const previous = lineageText(target.parentStateId);
-  target.parentStateId = decision.parentStateId;
-  /* The parent moved, so any recorded judgement about the OLD parent is about a
-     relationship that no longer exists. */
-  if (Object.prototype.hasOwnProperty.call(target, "parentValidation")) target.parentValidation = null;
+  const policy = LINEAGE_DELETION_POLICIES.includes(lineageText(opts.policy)) ? lineageText(opts.policy) : "refuse";
+  const rows = lineageList(states).map(lineageObject);
+  const id = lineageText(stateId);
+  const node = rows.find((row) => lineageText(row.id) === id);
+  if (!node) return { remove: false, reason: "unknown-state", policy };
+  if (node.isDefault === true) return { remove: false, reason: "default-state-is-the-root", policy };
+  const children = rows.filter((row) => lineageText(row.parentStateId) === id).map((row) => lineageText(row.id));
+  if (children.length && policy === "refuse") return { remove: false, reason: "has-children", policy, children };
+  const descendants = stateDescendantIds(rows, id);
+  const removing = policy === "cascade" ? new Set([id, ...descendants]) : new Set([id]);
+  const rootId = lineageText((rows.find((row) => row.isDefault === true) || {}).id);
+  if (policy === "reparent-to-root" && children.length && !rootId) return { remove: false, reason: "no-default-state", policy, children };
+  const next = rows
+    .filter((row) => !removing.has(lineageText(row.id)))
+    .map((row) => (lineageText(row.parentStateId) === id && policy === "reparent-to-root" ? { ...row, parentStateId: rootId } : row));
+  const integrity = validateStateCollection(next);
+  if (!integrity.ok) return { remove: false, reason: "collection-invalid", policy, problems: integrity.problems };
+  return { remove: true, reason: policy, policy, removedIds: [...removing], reparented: policy === "reparent-to-root" ? children : [] };
+}
+
+function applyStateDeletion(states, stateId, options = {}) {
+  const decision = planStateDeletion(states, stateId, options);
+  if (!decision.remove) return { ...decision, applied: false };
+  const opts = lineageObject(options);
+  const removing = new Set(decision.removedIds);
+  const rootId = lineageText((lineageList(states).map(lineageObject).find((row) => row.isDefault === true) || {}).id);
+  for (const row of lineageList(states)) {
+    const record = lineageObject(row);
+    if (decision.policy === "reparent-to-root" && lineageText(record.parentStateId) === lineageText(stateId)) record.parentStateId = rootId;
+  }
+  for (let index = states.length - 1; index >= 0; index--) {
+    if (removing.has(lineageText(lineageObject(states[index]).id))) states.splice(index, 1);
+  }
   if (typeof opts.dirty === "function") opts.dirty();
-  return { ...decision, applied: true, previousParentStateId: previous, via: lineageText(opts.via) };
+  return { ...decision, applied: true };
 }
 
-/* WHICH STATES MAY BE OFFERED AS A PARENT. Excludes self and every descendant,
-   so the dropdown cannot present the move that closes a cycle. The selector no
-   longer needs to know why — it renders this list. */
-function eligibleParentIds(states, childStateId) {
-  const childId = lineageText(childStateId);
-  const forbidden = new Set([childId, ...stateDescendantIds(states, childId)]);
-  return lineageNodes(states).filter((state) => !forbidden.has(state.id)).map((state) => state.id);
+/* ---------- what a caller asks instead of reparenting --------------------- */
+
+/* REPARENTING IS NOT A SUPPORTED OPERATION. This exists so a call site that
+   used to reparent gets a clear, greppable refusal instead of silently doing
+   nothing, and so the reason travels to the surface that has to explain it. */
+function reparentingUnsupported(reason = "") {
+  return {
+    write: false,
+    applied: false,
+    reason: "reparenting-unsupported",
+    detail: lineageText(reason)
+      || "A continuity state's derivation is chosen when the state is created and does not change. Create a new state from the parent you want instead.",
+  };
 }
 
-/* Retained under its shipped name for callers that only want the decision. It
-   defaults to the navigation intent, which now refuses every write — so a
-   caller that did not think about intent gets the safe answer. */
-function safeParentAssignment(states, childStateId, proposedParentId, options = {}) {
-  const opts = lineageObject(options);
-  return planParentMutation(states, childStateId, proposedParentId, {
-    ...opts,
-    intent: lineageText(opts.intent) || (opts.allowReparent === true ? "explicit-lineage-edit" : "navigation"),
-  });
+/* Which states may be offered as a parent WHEN CREATING one. Every existing
+   state qualifies — there is no self and no descendant to exclude, because the
+   state being created does not exist yet. Kept as a named function so the
+   creation UI has one source for the list. */
+function eligibleCreationParentIds(states) {
+  return lineageNodes(states).map((state) => state.id);
 }
 
-/* ---------- continuation -------------------------------------------------- */
+/* ---------- continuation --------------------------------------------------- */
 
 /* Which states may legitimately be edited next after approving `currentStateId`.
 
-   BATCH 1B: DESCENDANTS ONLY. The shipped version excluded ancestors and self
-   and then appended "the rest of the graph" — siblings, cousins and orphans —
-   so an unrelated state was still a continuation target, and continuing into
-   one was what asked navigation to invent a parent for it. Continuation means
-   moving DOWN the chain that was just extended. A state on another branch is
+   DESCENDANTS ONLY. The shipped version excluded ancestors and self and then
+   appended "the rest of the graph" — siblings, cousins and orphans — so an
+   unrelated state was still a continuation target, and continuing into one was
+   what asked navigation to invent a parent for it. Continuation moves DOWN the
+   chain that was just extended. A state on another branch is
    reached by opening it, not by continuing into it.
 
    Direct children first, then deeper descendants, so the order matches the way
@@ -355,18 +446,22 @@ function continuationDerivation(states, currentStateId, nextStateId) {
 
 const STATE_LINEAGE_EXPORTS = {
   LINEAGE_CONTINUATION_KINDS,
-  LINEAGE_MUTATION_INTENTS,
-  LINEAGE_MUTATION_REASONS,
+  LINEAGE_DELETION_POLICIES,
+  LINEAGE_INTEGRITY_CODES,
   lineageNodes,
   lineageNode,
   stateAncestorIds,
   stateDescendantIds,
   lineageCycles,
   lineageIsAcyclic,
-  planParentMutation,
-  applyStateParentMutation,
-  eligibleParentIds,
-  safeParentAssignment,
+  validateStateCollection,
+  stateCollectionIntact,
+  planStateCreation,
+  applyStateCreation,
+  planStateDeletion,
+  applyStateDeletion,
+  reparentingUnsupported,
+  eligibleCreationParentIds,
   continuationCandidates,
   continuationOutcome,
   isValidContinuation,

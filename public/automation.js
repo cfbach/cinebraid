@@ -1615,7 +1615,7 @@ function v628AttachEntityAutomationProvenance(run, list, entityId, stateId, file
   if (index >= 0) entity.made[index] = record; else entity.made.push(record);
   dirty();
 }
-function v626ApproveFrame(shotId, frameId, fileName, grant) {
+function v626ApproveFrame(shotId, frameId, fileName, manualAction) {
   /* THE GATE. Dogfood #2 A1 / forensic F1: this function is the shot-side writer
      of production authority, and until this batch anything inside automation
      could call it. The comment below used to claim "the run still reaches a
@@ -1626,7 +1626,7 @@ function v626ApproveFrame(shotId, frameId, fileName, grant) {
      command; assertHumanAuthority throws for everything else, including an
      omitted argument, which is what every machine call site looked like. */
   const shot = shotById(shotId), frame = frameById(shot, frameId), previous = frame?.winner || "";
-  if (!shot || !frame || !fileName) { assertHumanAuthority(grant, `Frame ${frameId} of ${shotId}`); throw new Error("Frame approval target is unavailable"); }
+  if (!shot || !frame || !fileName) throw new Error("Frame approval target is unavailable");
   /* P4-SEM-C3. The edge records identity as well as the filename, so an approval
      survives the rename it performs. */
   const approvedAssetId = (takesFor(shotId).find((item) => item.name === fileName) || {}).assetId || "";
@@ -1635,21 +1635,32 @@ function v626ApproveFrame(shotId, frameId, fileName, grant) {
      there is no ordering of calls that produces a winner with nobody's name on
      it. `applyEdge` runs after the actor is verified and before the receipt is
      minted, which is why a refusal leaves the frame untouched. */
+  /* BATCH 1C: `applyEdge` RECEIVES THE DRAFT, NOT THE LIVE PROJECT.
+     The kernel stages every change on a cloned document and commits once, so a
+     callback that reached back to the live objects would write outside the
+     transaction — exactly the partial-write the re-audit produced. Every edge
+     below is resolved from `draft`. */
   const receipt = writeFrameProductionAuthority(P, {
-    shotId, frameId, value: fileName, assetId: approvedAssetId, grant, at: v626Now(),
-    applyEdge: () => {
-      frame.winner = fileName;
-      stampShotApprovalIdentity(frame, "winner", approvedAssetId);
-      if ((shot.keyframes || [])[0]?.id === frame.id) {
-        shot.winner = fileName;
-        stampShotApprovalIdentity(shot, "winner", approvedAssetId);
+    shotId, frameId, value: fileName, assetId: approvedAssetId, manualAction, at: v626Now(),
+    applyEdge: (draft) => {
+      const dShot = (draft.shots || []).find((item) => item && item.id === shotId);
+      const dFrame = ((dShot || {}).keyframes || []).find((item) => item && item.id === frameId);
+      if (!dShot || !dFrame) throw new Error("Frame approval target is unavailable");
+      dFrame.winner = fileName;
+      stampShotApprovalIdentity(dFrame, "winner", approvedAssetId);
+      if ((dShot.keyframes || [])[0]?.id === dFrame.id) {
+        dShot.winner = fileName;
+        stampShotApprovalIdentity(dShot, "winner", approvedAssetId);
       }
-      if (typeof markCandidateApproved === "function") markCandidateApproved(shot, fileName, `frame:${frame.id}`);
-      if (previous && previous !== fileName && typeof guidedFrameApprovalChanged === "function") guidedFrameApprovalChanged(shotId, `frame:${frame.id}`, previous, fileName);
-      shot.workflowStatus = "IN PROGRESS"; shot.status = "BUILT";
-      ensureShotCreation(shot).activeGuidedFrameId = frame.id;
+      dShot.workflowStatus = "IN PROGRESS"; dShot.status = "BUILT";
+      dShot.creationBrief = dShot.creationBrief && typeof dShot.creationBrief === "object" ? dShot.creationBrief : {};
+      dShot.creationBrief.activeGuidedFrameId = dFrame.id;
     },
   });
+  /* Side effects that are NOT the authority edge run after the commit, against
+     the live document, exactly as they always did. */
+  if (typeof markCandidateApproved === "function") markCandidateApproved(shotById(shotId), fileName, `frame:${frameId}`);
+  if (previous && previous !== fileName && typeof guidedFrameApprovalChanged === "function") guidedFrameApprovalChanged(shotId, `frame:${frameId}`, previous, fileName);
   dirty();
   return receipt;
 }
@@ -1901,19 +1912,24 @@ function v626EntityTarget(run) { const list = run.config?.list || run.entityList
    `result.humanApproved` before re-stating an approval — but "this path happens
    to be correct today" is not an invariant, and one writer that can be called by
    a machine is enough to lose the property again. */
-function v626ApproveEntity(list, entityId, stateId, fileName, grant) {
+function v626ApproveEntity(list, entityId, stateId, fileName, manualAction) {
   const entity = P[list]?.find((item) => item.id === entityId), state = entityStateById(entity, stateId);
-  if (!entity || !state || !fileName) { assertHumanAuthority(grant, `${list} ${entityId} state ${stateId}`); throw new Error("Entity approval target is unavailable"); }
-  writeEntityStateProductionAuthority(P, {
-    list, entityId, stateId: state.id, value: fileName, grant, at: v626Now(),
-    applyEdge: () => {
-      state.approvedFile = fileName; state.approvedAt = v626Now();
-      if (state.isDefault) entity.approvedFile = fileName;
-      const row = entityCandidateRow(entity, fileName, false); if (row?.decision === "rejected") row.decision = "unreviewed";
-      entity.workflowStatus = "APPROVED"; entity.status = "APPROVED"; entity.approvedAt = v626Now();
+  if (!entity || !state || !fileName) throw new Error("Entity approval target is unavailable");
+  const receipt = writeEntityStateProductionAuthority(P, {
+    list, entityId, stateId: state.id, value: fileName, manualAction, at: v626Now(),
+    applyEdge: (draft) => {
+      const dEntity = (draft[list] || []).find((item) => item && item.id === entityId);
+      const dState = ((dEntity || {}).continuityStates || []).find((item) => item && item.id === state.id);
+      if (!dEntity || !dState) throw new Error("Entity approval target is unavailable");
+      dState.approvedFile = fileName; dState.approvedAt = v626Now();
+      if (dState.isDefault) dEntity.approvedFile = fileName;
+      dEntity.workflowStatus = "APPROVED"; dEntity.status = "APPROVED"; dEntity.approvedAt = v626Now();
     },
   });
+  const row = entityCandidateRow(P[list]?.find((item) => item.id === entityId), fileName, false);
+  if (row?.decision === "rejected") row.decision = "unreviewed";
   dirty();
+  return receipt;
 }
 async function v626EntityBuild(run, list, entityId, stateId, round, revision = "") {
   const key = `entity:${stateId}:round-${round}:prompt`, step = v626Step(run, key, "prompt", `State prompt · round ${round}`);
@@ -2375,9 +2391,11 @@ async function v626AutomateEntityState(run, list, entityId, stateId) {
   if (!state.isDefault) {
     const parent = assetStateParent(entity, state), parentFile = parent?.approvedFile || (parent?.isDefault ? entity.approvedFile : "");
     if (!parentFile) throw new Error(`${state.name || "State"} needs approved parent state ${parent?.name || "Default"}`);
-    /* BATCH 1B: parentage is a lineage mutation, so automation asks the one
-       validator rather than assigning. A refusal leaves the graph untouched. */
-    applyStateParentMutation(entityStateList(entity, true), state.id, parent.id, { intent: "explicit-lineage-edit", via: "entity-state-automation" });
+    /* BATCH 1C: AUTOMATION DOES NOT TOUCH LINEAGE AT ALL.
+       It used to assign the parent it had just resolved. A state's derivation is
+       chosen when the state is created; a run reads it and generates from it. A
+       state that declares no parent is a project question for a person, not
+       something a run repairs on its way past. */
     state.generationMode = "derive"; dirty(); await flushPendingProjectSave();
   }
   let revision = "";
@@ -2663,18 +2681,26 @@ window.approveAutomationCandidate = async (runId, stepKey, fileName) => {
   /* THE HUMAN COMMAND. This handler is reached only from the run's approval
      control, which a person clicked; it is where the grant is minted and the
      only place in automation that may mint one. */
-  const grant = humanAuthorityGrant({ via: "automation-run-approval-modal", at: v626Now() });
+  /* K1A — THE MANUAL BOUNDARY. This runs inside the click that approved the
+     candidate, so the gesture window is open and a capability can be minted.
+     Automation cannot reach this line: it has no gesture. */
+  const manualAction = beginManualApproval({
+    via: "automation-run-approval-modal",
+    targets: run.type === "entity-chain"
+      ? [{ kind: "entity-state", list: run.config?.list || run.entityList, entityId: run.config?.entityId || run.entityId, stateId: step.stateId }]
+      : [{ kind: "shot-frame", shotId: run.type === "scene-chain" ? (step.shotId || step.result?.targetShotId || "") : run.targetId, frameId: step.frameId }],
+  });
   if (run.type === "shot-chain" || run.type === "scene-chain") {
     const shotId = run.type === "scene-chain" ? (step.shotId || step.result?.targetShotId || "") : run.targetId;
     if (!shotId) return toast("Correction shot is unavailable");
-    v626ApproveFrame(shotId, step.frameId, fileName, grant);
+    v626ApproveFrame(shotId, step.frameId, fileName, manualAction);
     const frame = frameById(shotById(shotId), step.frameId);
     const approvalKey = run.type === "scene-chain" ? `scene-correction:${shotId}:${step.frameId}:approval` : `frame:${step.frameId}:approval`;
     run.steps[approvalKey] = { key: approvalKey, kind: "frame-approval", label: `Frame ${frame?.label || step.frameId} approved by director`, status: "completed", shotId, frameId: step.frameId, winner: fileName, score: candidate.score, pass: true, result: { humanApproved: true, targetShotId: shotId, rationale: candidate.note || "Director-selected candidate" }, completedAt: v626Now(), updatedAt: v626Now() };
     v628AttachShotAutomationProvenance(run, step.frameId, fileName, approvalKey, { shotId, score: candidate.score, humanApproved: true });
   } else {
     const list = run.config?.list || run.entityList, entityId = run.config?.entityId || run.entityId;
-    v626ApproveEntity(list, entityId, step.stateId, fileName, grant);
+    v626ApproveEntity(list, entityId, step.stateId, fileName, manualAction);
     const entity = P[list]?.find((item) => item.id === entityId), state = entityStateById(entity, step.stateId);
     const approvalKey = `entity:${step.stateId}:approval`;
     run.steps[approvalKey] = { key: approvalKey, kind: "entity-approval", label: `${state?.name || "State"} approved by director`, status: "completed", stateId: step.stateId, winner: fileName, score: candidate.score, pass: true, result: { humanApproved: true, rationale: candidate.note || "Director-selected candidate" }, completedAt: v626Now(), updatedAt: v626Now() };

@@ -998,7 +998,8 @@ const RULES = [
         frames.forEach((frame, index) => {
           const winnerPointer = frame.from + ptr("winner");
           if (context.exists(winnerPointer) && nonEmptyString(context.read(winnerPointer)))
-            context.approve(frame.subject, context.read(winnerPointer), winnerPointer, FRAME_APPROVED_PURPOSE);
+            context.approve(frame.subject, context.read(winnerPointer), winnerPointer, FRAME_APPROVED_PURPOSE,
+              { kind: "shot-frame", shotId: shot.record.id, frameId: frame.record.id });
           else if (context.exists(winnerPointer))
             context.dropped(winnerPointer, "empty approval filename");
           const selectedPointer = frame.from + ptr("selectedCandidate");
@@ -1013,7 +1014,8 @@ const RULES = [
              frame - otherwise nobody can say which frame it approved. */
           const shotWinnerPointer = shot.from + ptr("winner");
           if (index === 0 && context.exists(shotWinnerPointer) && nonEmptyString(context.read(shotWinnerPointer))) {
-            if (frames.length === 1) context.approve(frame.subject, context.read(shotWinnerPointer), shotWinnerPointer, FRAME_APPROVED_PURPOSE);
+            if (frames.length === 1) context.approve(frame.subject, context.read(shotWinnerPointer), shotWinnerPointer, FRAME_APPROVED_PURPOSE,
+              { kind: "shot-frame", shotId: shot.record.id, frameId: frame.record.id });
             else {
               context.preserve(shotWinnerPointer, "the legacy shot-level single still cannot be attributed to one of several frames");
               context.diagnostic("migration.review.required", `${shot.subject}: a shot-level winner exists alongside ${frames.length} frames and cannot be attributed to one of them`, { where: shotWinnerPointer, target: shot.subject });
@@ -1031,26 +1033,38 @@ const RULES = [
           if (!context.exists(pointer)) continue;
           const value = context.read(pointer);
           if (!nonEmptyString(value)) { context.dropped(pointer, `creationBrief.${key} is empty`); continue; }
-          context.approve(shot.subject, value, pointer, "other");
+          /* K7: creation-final pointers are shot-delivery authority. */
+          context.approve(shot.subject, value, pointer, "other", { kind: "shot-delivery", shotId: shot.record.id });
         }
       }
       for (const entity of context.entities()) {
         const pointer = entity.from + ptr("approvedFile");
         if (context.exists(pointer) && nonEmptyString(context.read(pointer)))
-          context.approve(entity.subject, context.read(pointer), pointer, entity.type === "character" ? "identity-front" : entity.type === "location" ? "location-view" : entity.type === "prop" ? "prop-view" : "other");
+          context.approve(entity.subject, context.read(pointer), pointer, entity.type === "character" ? "identity-front" : entity.type === "location" ? "location-view" : entity.type === "prop" ? "prop-view" : "other",
+            { kind: "entity-state", list: entity.legacy, entityId: entity.record.id, stateId: "state-default" });
         else if (context.exists(pointer)) context.dropped(pointer, "empty approval filename");
         if (context.exists(entity.from + ptr("candidateFiles")))
           context.workflowSubtree(["entities", entity.subject, "candidateFiles"], entity.from + ptr("candidateFiles"), "candidate review bookkeeping is CineBraid workflow state");
       }
       for (const state of context.states()) {
         const pointer = state.from + ptr("approvedFile");
-        if (context.exists(pointer) && nonEmptyString(context.read(pointer))) context.approve(state.subject, context.read(pointer), pointer, "other");
+        if (context.exists(pointer) && nonEmptyString(context.read(pointer)))
+          context.approve(state.subject, context.read(pointer), pointer, "other",
+            { kind: "entity-state", list: state.entity?.legacy, entityId: state.entity?.record?.id, stateId: state.record.id });
         else if (context.exists(pointer)) context.dropped(pointer, "empty approval filename");
       }
       for (const slot of context.coverageSlots()) {
         const pointer = slot.from + ptr("approvedFile");
-        if (context.exists(pointer) && nonEmptyString(context.read(pointer))) context.approve(slot.subject, context.read(pointer), pointer, "location-view");
-        else if (context.exists(pointer)) context.dropped(pointer, "empty approval filename");
+        /* K-alpha: A COVERAGE SLOT IS NOT APPROVED PRODUCTION OUTPUT.
+           Alpha removed authority semantics from coverage and expression slots
+           entirely — they are supporting references — and the re-audit was right
+           that exporting them through the approved-output path was one of the
+           places that contradiction became visible. The selection is preserved
+           as workflow evidence, with the filename intact. */
+        if (context.exists(pointer) && nonEmptyString(context.read(pointer))) {
+          context.workflowPut(["coverageSelections", slot.subject], context.read(pointer), pointer,
+            "a coverage view is a supporting reference selected by the filmmaker, not approved production output");
+        } else if (context.exists(pointer)) context.dropped(pointer, "empty approval filename");
       }
     },
   },

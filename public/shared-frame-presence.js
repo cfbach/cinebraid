@@ -278,12 +278,44 @@ function presenceGoverningSpan(before) {
   return text.slice(start);
 }
 
+/* BATCH 1C — A BOUNDED DOUBLE-NEGATIVE RULE, AND NOT ONE STEP FURTHER.
+ *
+ * The re-audit found two positive sentences classified as denials:
+ *
+ *     "The room is not without the Chimbley Sweep."
+ *     "No Chimbley Sweep is invisible."
+ *
+ * Both are a negation cancelling another negation. The temptation is to reach
+ * for grammar; the alpha direction is explicit that this must NOT become a
+ * natural-language engine, and it is right — arbitrary English negation is not
+ * solvable here and a half-solved parser is worse than a bounded one.
+ *
+ * So the rule is deliberately small: COUNT THE NEGATIONS GOVERNING THE MENTION.
+ * An even number greater than zero cancels out and the mention is an assertion
+ * of presence. That handles both reported cases and nothing cleverer.
+ *
+ * THE STRUCTURED DECLARATION IS STILL THE TRUTH. This is the last safety net on
+ * prose CineBraid did not write, and its failure mode is now over-blocking a
+ * baroque sentence rather than allowing a wrong paid render. */
+const PRESENCE_DOUBLE_NEGATIVE_TOKEN = /\b(?:no|not|never|nor|neither|without|sans|lacking|absent|devoid|excluding|except)\b|\w+n['’]t\b/gi;
+const PRESENCE_CANCELLING_PREDICATE = /^\s*(?:['’]s)?\s*(?:is|are|was|were|remains?|stays?|becomes?)\s+(?:not\s+|never\s+)?(?:invisible|unseen|hidden|absent|missing|off[-\s]?screen)\b/i;
+
+function countGoverningNegations(span) {
+  const matches = presenceText(span).match(PRESENCE_DOUBLE_NEGATIVE_TOKEN);
+  return matches ? matches.length : 0;
+}
+
 /* Is THIS occurrence of the entity denied by the text around it. */
 function mentionIsDenied(clause, matchStart, matchEnd) {
   const text = presenceText(clause);
   const rawBefore = text.slice(0, matchStart);
   const after = text.slice(matchEnd);
   const span = presenceGoverningSpan(rawBefore).replace(PRESENCE_NEGATION_IDIOMS, " ");
+  /* "not without X" — two negations before the mention cancel. */
+  const negations = countGoverningNegations(span);
+  if (negations >= 2 && negations % 2 === 0) return false;
+  /* "No X is invisible" — one negation before, one inside the predicate after. */
+  if (negations === 1 && PRESENCE_CANCELLING_PREDICATE.test(after)) return false;
   /* "before the Sweep appears" — the lead word must govern the mention directly
      AND the mention must be arriving. Checked before the plain negation scan so
      "before" never counts on its own. */
@@ -514,6 +546,7 @@ const FRAME_SPECIFIC_PAID_PURPOSES = ["frame", "blocking", "correction"];
 
 const FRAME_PRESENCE_REFUSAL_CODE = "FRAME_PRESENCE_CONTRADICTION";
 const FRAME_IDENTITY_REFUSAL_CODE = "FRAME_PRESENCE_TARGET_UNRESOLVED";
+const FRAME_PRESENCE_MALFORMED_CODE = "FRAME_PRESENCE_DECLARATION_MALFORMED";
 
 /* Does this shot declare presence for ANY frame. When it does not, the contract
    is opt-in and absent, and a request without a frame id is the ordinary
@@ -523,6 +556,67 @@ function shotDeclaresFramePresence(shot) {
   const workflows = presenceObject(creation.frameWorkflows);
   for (const frameId of Object.keys(workflows)) if (framePresenceDeclarations(shot, frameId).length) return true;
   return false;
+}
+
+/* ---------------------------------------------------------------------------
+   BATCH 1C — WHAT "GOVERNED" MEANS, AND WHY THE GATE USED TO FAIL OPEN.
+
+   The Batch 1B gate asked two questions: does the shot declare presence, and is
+   there a frame id. Both could be answered yes by a request that meant nothing.
+   The re-audit drove three of them through the real FAL route and each reached
+   the provider trap and committed a paid job row:
+
+     frameId: "not-a-frame"     — non-empty, so the id check passed; the frame
+                                  does not exist, so `absentEntitiesForFrame`
+                                  found no declarations and the gate concluded
+                                  "no declared absence" and allowed it.
+     { state: "absent" }        — a malformed declaration value.
+                                  `normalizeFramePresence` silently returns ""
+                                  for anything it does not recognise, so the
+                                  frame resolved to zero absent entities.
+     double negatives           — "The room is not without the Chimbley Sweep"
+                                  read as a denial.
+
+   The first two share one cause: ABSENCE OF EVIDENCE WAS READ AS EVIDENCE OF
+   ABSENCE. An unresolvable frame and an unparseable declaration both produced
+   an empty absent-set, and an empty absent-set means "nothing to check".
+
+   So the gate now distinguishes three answers instead of two:
+
+     GOVERNED + RESOLVED   check the prompt against the declared absences
+     GOVERNED + UNRESOLVED refuse, typed, before anything is spent
+     UNGOVERNED            proceed exactly as before the contract existed
+   --------------------------------------------------------------------------- */
+
+/* Is this value a usable presence declaration record. A map of entity id to a
+   recognised value. Anything else is MALFORMED — not empty. */
+function framePresenceRecordStatus(shot, frameId) {
+  const creation = presenceObject(presenceObject(shot).creationBrief);
+  const workflow = presenceObject(creation.frameWorkflows)[presenceText(frameId)];
+  if (workflow === undefined || workflow === null) return { present: false, malformed: false, entries: 0 };
+  if (typeof workflow !== "object" || Array.isArray(workflow)) return { present: true, malformed: true, entries: 0, reason: "frame-workflow-not-an-object" };
+  const raw = workflow[RUNTIME_FRAME_PRESENCE_KEY];
+  if (raw === undefined || raw === null) return { present: false, malformed: false, entries: 0 };
+  if (typeof raw !== "object" || Array.isArray(raw)) return { present: true, malformed: true, entries: 0, reason: "entity-presence-not-an-object" };
+  const keys = Object.keys(raw);
+  const bad = [];
+  for (const entityId of keys) {
+    const value = raw[entityId];
+    /* A recognised token, or nothing. `{ state: "absent" }` is neither, and
+       reading it as "declares nothing" is what let it through. */
+    if (value === undefined || value === null || value === "") continue;
+    if (typeof value !== "string" || !normalizeFramePresence(value)) bad.push({ entityId, value: typeof value === "string" ? value : typeof value });
+  }
+  return { present: keys.length > 0, malformed: bad.length > 0, entries: keys.length, invalid: bad, reason: bad.length ? "unrecognised-presence-value" : "" };
+}
+
+/* Does this frame id name a frame that exists on this shot. A shot's frames are
+   `keyframes`; a request naming anything else cannot be checked against a
+   per-frame contract, so on a governed shot it must not be guessed at. */
+function shotHasFrame(shot, frameId) {
+  const wanted = presenceText(frameId);
+  if (!wanted) return false;
+  return presenceList(presenceObject(shot).keyframes).map(presenceObject).some((frame) => presenceText(frame.id) === wanted);
 }
 
 /* The entity records for the ids a frame declares absent, resolved against the
@@ -569,6 +663,7 @@ function finalDispatchPresenceGate(options = {}) {
     };
   }
   if (!shotDeclaresFramePresence(shot)) return { ok: true, applied: false, reason: "shot-declares-no-presence", contradictions: [] };
+  /* FROM HERE THE SHOT IS GOVERNED, and every uncertainty is a refusal. */
   if (!frameId) {
     /* FAIL CLOSED. The shot has a presence contract and this request cannot say
        which frame it is for. Answering "no contradictions" here is the audit's
@@ -581,8 +676,70 @@ function finalDispatchPresenceGate(options = {}) {
       message: `${shotId} declares which characters are present in which frames, and this generation did not name a frame — so CineBraid cannot tell which contract applies. Generate from the frame you are working on. No paid request was submitted.`,
     };
   }
+  /* K3: AN UNKNOWN FRAME ID IS NOT AN ABSENT DECLARATION. The re-audit sent
+     `frameId: "not-a-frame"` through this route and it reached the provider,
+     because a frame that does not exist declares nothing and "declares nothing"
+     was being read as "nothing to check". */
+  if (!shotHasFrame(shot, frameId)) {
+    return {
+      ok: false,
+      code: FRAME_IDENTITY_REFUSAL_CODE,
+      classification: "local-preflight",
+      contradictions: [],
+      message: `${shotId} has no frame ${frameId}, so CineBraid cannot tell which presence contract this generation is for. No paid request was submitted.`,
+    };
+  }
+  /* K3: A MALFORMED DECLARATION IS NOT AN EMPTY ONE. `{ state: "absent" }`
+     normalised to "" and vanished; the frame then looked unconstrained. A value
+     CineBraid cannot parse is a project fault a person must fix, and it refuses
+     here rather than rendering against a contract nobody can read. */
+  const record = framePresenceRecordStatus(shot, frameId);
+  if (record.malformed) {
+    return {
+      ok: false,
+      code: FRAME_PRESENCE_MALFORMED_CODE,
+      classification: "local-preflight",
+      contradictions: [],
+      malformed: presenceList(record.invalid),
+      message: `The presence declaration for frame ${frameId} of ${shotId} cannot be read${presenceList(record.invalid).length ? ` (${record.invalid.map((row) => `${row.entityId}: ${row.value}`).join(", ")})` : ""}, so CineBraid cannot tell who this frame excludes. Re-set the presence for this frame. No paid request was submitted.`,
+    };
+  }
   const absent = absentEntitiesForFrame(project, shot, frameId, presenceList(it.entityLists).length ? it.entityLists : undefined);
   if (!absent.length) return { ok: true, applied: true, reason: "no-declared-absence", contradictions: [] };
+  /* ---------------------------------------------------------------------
+     K3A — STRUCTURED INTENT FIRST. TEXT IS THE NET, NOT THE MECHANISM.
+
+     Where CineBraid compiled the prompt itself it knows, as data, which
+     entities it positively asserted — it built the identity canon and the
+     subject list. That set is stamped on the request as `assertedEntityIds`,
+     and comparing two id lists is exact in a way no amount of English
+     grammar will ever be.
+
+     So the structured check runs first and is decisive. The mention-scoped
+     text analysis below still runs, because a filmmaker may have edited the
+     prompt after compilation and because a provider adapter may append to
+     it — but it is now the second line rather than the only one. */
+  const asserted = presenceList(it.assertedEntityIds).map(presenceText).filter(Boolean);
+  if (asserted.length) {
+    const conflict = absent.filter((entity) => asserted.includes(presenceText(entity.id)));
+    if (conflict.length) {
+      return {
+        ok: false,
+        code: FRAME_PRESENCE_REFUSAL_CODE,
+        classification: "local-preflight",
+        basis: "structured-compile-metadata",
+        absentEntityIds: absent.map((entity) => entity.id),
+        contradictions: conflict.map((entity) => ({
+          entityId: presenceText(entity.id),
+          entityName: presenceText(entity.name) || presenceText(entity.id),
+          surface: "compiled subject list",
+          fragment: presenceText(entity.name) || presenceText(entity.id),
+          reason: `${presenceText(entity.name) || presenceText(entity.id)} is declared absent from this frame, and the compiled request asserts it as a subject.`,
+        })),
+        message: `This frame declares ${conflict.map((entity) => entity.name || entity.id).join(", ")} absent, and the compiled request names ${conflict.length === 1 ? "it" : "them"} as a subject. Nothing was sent to the provider and nothing was charged.`,
+      };
+    }
+  }
   /* THE EXACT SUBMITTED TEXT, plus any structured spec the caller has. Reference
      labels and per-reference instructions travel with the request and are read
      by the model, so they are inspected too. */
@@ -630,7 +787,11 @@ const FRAME_PRESENCE_EXPORTS = {
   FRAME_SPECIFIC_PAID_PURPOSES,
   FRAME_PRESENCE_REFUSAL_CODE,
   FRAME_IDENTITY_REFUSAL_CODE,
+  FRAME_PRESENCE_MALFORMED_CODE,
   shotDeclaresFramePresence,
+  shotHasFrame,
+  framePresenceRecordStatus,
+  countGoverningNegations,
   absentEntitiesForFrame,
   finalDispatchPresenceGate,
 };

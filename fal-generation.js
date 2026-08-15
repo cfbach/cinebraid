@@ -1612,6 +1612,12 @@ function registerFalGeneration(app, context) {
       frameId: job.frameId,
       prompt: job.prompt,
       references: job.references,
+      /* K3A: the structured half. When the caller compiled through CineBraid it
+         sends the entity ids the compiler positively asserted, and the gate
+         compares id lists rather than reading English. Absent, the text check
+         below still runs — this makes the common path exact, not the only path
+         safe. */
+      assertedEntityIds: Array.isArray(req.body?.assertedEntityIds) ? req.body.assertedEntityIds : [],
     });
     if (!presenceGate.ok)
       return res.status(409).json({
