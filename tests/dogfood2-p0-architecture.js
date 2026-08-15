@@ -668,6 +668,38 @@ const BYPASS_CALLERS = [
   ok(!Kernel.AUTHORITY_TARGET_KINDS.includes("entity-expression"), "nor is an expression slot");
   eq(Kernel.AUTHORITY_TARGET_KINDS.length, 4, "the authority model has exactly four kinds, and shrinking it was the point");
 
+  /* --- 1D-03: THE GENERIC PATH IS NOT A BYPASS, AND THIS IS WHY.
+     `writeProductionAuthority` — the policy-free wrapper the 1C audit used — is
+     gone from the exports. The KERNEL command it forwarded to is still reachable
+     through the namespace, because the four named operations are built on it and
+     shared-production-authority.js reaches it that way in the browser.
+     That is safe only because the policy moved INTO the kernel rather than into
+     the wrappers, so calling the command directly is exactly equivalent to
+     calling the named operation. Asserted, not assumed. */
+  {
+    eq(Authority.writeProductionAuthority, undefined, "the policy-free wrapper is not exported");
+    const contested = () => ({
+      characters: [
+        { id: "CHAR-A", prefix: "CHAR-A", continuityStates: [{ id: "state-default", isDefault: true, approvedFile: "" }], candidateFiles: [{ stored: "SHARED.png" }] },
+        { id: "CHAR-B", prefix: "CHAR-B", continuityStates: [{ id: "state-default", isDefault: true, approvedFile: "" }], candidateFiles: [{ stored: "SHARED.png" }] },
+      ],
+      shots: [],
+    });
+    const target = { kind: "entity-state", list: "characters", entityId: "CHAR-A", stateId: "state-default" };
+    const attempt = (write) => {
+      const project = contested();
+      try {
+        write(project, { ...target, value: "SHARED.png", at: AT(1), manualAction: approvalFor(target, "SHARED.png") });
+        return { threw: "", approvedFile: project.characters[0].continuityStates[0].approvedFile };
+      } catch (error) { return { threw: error.code || error.message, approvedFile: project.characters[0].continuityStates[0].approvedFile }; }
+    };
+    const viaNamed = attempt((p, request) => Authority.writeEntityStateProductionAuthority(p, request));
+    const viaKernel = attempt((p, request) => Kernel.commitAuthorityTransaction(p, request));
+    eq(viaNamed, viaKernel, "the kernel command and the named operation give the SAME answer — the generic path grants nothing extra");
+    eq(viaKernel.threw, "AUTHORITY_OWNERSHIP_CONTESTED", "and that answer is a refusal, because the policy is intrinsic to the target kind");
+    eq(viaKernel.approvedFile, "", "with nothing written");
+  }
+
   /* --- K1C: NO SECOND SLOT SETTER. The demotion is only true while
      shared-entity-slots.js is the only thing that writes a slot's status, and
      the post-green sweep found three writers that had never been routed:
