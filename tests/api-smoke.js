@@ -1398,6 +1398,21 @@ async function main() {
         candidateFiles: [{ stored: "PROP-REVIEW-CANDIDATE.png", decision: "unreviewed" }],
       },
     ];
+    /* The creator approved the default reference. Since the simplification pass
+       that is a statement about the RECEIPT LEDGER — a raw pointer is HISTORIC —
+       and the reviewer is told which of the two it is being handed. */
+    entityReviewProject.productionAuthority = {
+      version: 1,
+      receipts: [{
+        id: "authority-000001", sequence: 1, actor: "human", act: "explicit-approval",
+        command: "approve-entity-state", kind: "entity-state",
+        targetKey: "entity-state:props:PROP-REVIEW#state-default",
+        shotId: "", frameId: "", unitKey: "", list: "props", entityId: "PROP-REVIEW", stateId: "state-default", slotId: "",
+        value: "PROP-REVIEW-DEFAULT.png", assetId: "", at: "2026-08-14T00:00:00.000Z",
+        status: "current", supersededBy: "", supersededAt: "", revokedAt: "", revocationReason: "", note: "",
+        provenance: { manualAction: "gesture-api-fixture", via: "api-smoke-fixture", gesture: "click" },
+      }],
+    };
     result = await request("/api/projects/smoke-project/project", {
       method: "PUT",
       headers: { "content-type": "application/json", "if-match": "*" },
@@ -1471,7 +1486,8 @@ async function main() {
     assert.strictEqual(result.body.review.categories.state.severity, "minor");
     assert.strictEqual(result.body.state.name, "Damaged");
     assert.strictEqual(result.body.inputLabels[0].role, "candidate under review");
-    assert.strictEqual(result.body.inputLabels[1].role, "exact parent-state editable authority");
+    assert.strictEqual(result.body.inputLabels[1].role, "exact parent-state editable canon",
+      "a receipt-backed parent is handed to the reviewer as canon");
     assert.strictEqual(result.body.review.contractVersion, "reference-authority-v3");
     assert.strictEqual(result.body.authorityMode, "validate", "an approved parent reference means the route is validating, not establishing");
     assert(result.body.requiredHardChecks.includes("sameUnderlyingEntity"), "identity stays gated when authority exists");

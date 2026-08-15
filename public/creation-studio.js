@@ -306,7 +306,7 @@ function assetStatePromptBuilds(state) {
 }
 function assetStateParent(entity, state) {
   if (!entity || !state || state.isDefault) return null;
-  const states = entityStateList(entity, true);
+  const states = entityStateListRead(entity, true);
   return states.find((item) => item.id === state.parentStateId && item.id !== state.id)
     || states.find((item) => item.isDefault)
     || states.find((item) => item.id !== state.id)
@@ -344,7 +344,7 @@ function assetStatePromptProfile(list, entity, state) {
    simply cannot rewrite it here. To derive differently, create a state from the
    parent you want. */
 function entityStateDerivationSummary(entity, state) {
-  const states = entityStateList(entity, true);
+  const states = entityStateListRead(entity, true);
   const parent = states.find((item) => item.id === state.parentStateId && item.id !== state.id) || null;
   if (state.isDefault) {
     return `<div class="entity-state-derivation is-root"><span>BASE REFERENCE</span><b>The root of this chain</b><small>Every other state derives from this one, directly or through another.</small></div>`;
@@ -1475,8 +1475,8 @@ function coverageSlotReferences(list, entity, s) {
   const media = entityMedia(list, entity);
   const desiredView = desiredCoverageViewForShot(s, list, entity);
   const desiredRegion = [ensureShotCreation(s).action, ensureShotCreation(s).staging, s.positioning, s.desc].filter(Boolean).join(" ");
-  const candidates = slots.filter((slot) => slot.approvedFile && slot.approvedFile !== entity.approvedFile).map((slot) => {
-    const item = media.find((row) => row.name === slot.approvedFile);
+  const candidates = slots.filter((slot) => slotSelectedFile(slot) && slotSelectedFile(slot) !== entity.approvedFile).map((slot) => {
+    const item = media.find((row) => row.name === slotSelectedFile(slot));
     if (!item) return null;
     const role = list === "characters" ? "identity" : list === "locations" ? "alternate-view" : "prop";
     const angleTag = coverageSlotReferenceView(slot);
@@ -3050,11 +3050,6 @@ window.useApprovedBaseAsShot = async (id) => {
   const s = shotById(id);
   const base = guidedBaseReference(s);
   if (!base?.url) return toast("Select an approved location plate first");
-  /* K1A — minted before the first await, inside the click. */
-  const baseManualAction = beginManualApproval({
-    via: "guided-use-approved-base",
-    targets: [{ kind: "shot-frame", shotId: s.id, frameId: ((s.keyframes || [])[0] || {}).id || "frame-a" }],
-  });
   try {
     const r = await fetch(`/api/shots/${encodeURIComponent(id)}/use-reference`, {
       method: "POST",
@@ -3066,24 +3061,27 @@ window.useApprovedBaseAsShot = async (id) => {
     SCAN = await (await fetch("/api/scan")).json();
     const opening = (s.keyframes || [])[0] || newKeyframe(0, "Opening frame");
     if (!(s.keyframes || []).length) s.keyframes = [opening];
-    if (!(s.keyframes || []).length) s.keyframes = [opening];
-    /* P4-SEM-C3: a plate copied in as the shot image is an authoritative edge
-       like any other, so it records identity from the scan just refreshed.
-       BATCH 1B: and it is a human command, so it leaves a receipt like any
-       other — this is the creator saying "use this plate as the shot image". */
-    writeFrameProductionAuthority(P, {
-      shotId: s.id, frameId: opening.id, value: d.name,
-      assetId: (takesFor(s.id).find((item) => item.name === d.name) || {}).assetId || "",
-      manualAction: baseManualAction,
-      at: new Date().toISOString(),
-    });
     const c = ensureShotCreation(s);
     c.baseUsedUnchangedAt = new Date().toISOString();
-    if (typeof markCandidateApproved === "function")
-      markCandidateApproved(s, d.name, "shot");
+    /* THIS COPIES A PLATE IN. IT DOES NOT APPROVE ONE.
+     *
+     * The file being made Canon here does not exist until the server has copied
+     * it, which is after an `await`, which is after the creator's click has
+     * finished. Batch 1D bridged that gap with a capability minted in the
+     * prologue and spent on whatever filename came back — a decision the person
+     * never saw, on bytes that did not exist when they decided.
+     *
+     * There is no bridge any more, and the honest reading is that the app is
+     * acting on its own here: it selects the copied plate and shows the creator
+     * the ordinary approval modal, pre-filled, with the exact filename and image
+     * they are about to make Canon. That is the product's existing confirmation
+     * for every other still — one click, no new ceremony — and it is the only
+     * way the person can see what they are approving. */
+    c.selectedCandidate = d.name;
     dirty();
     route();
-    toast("Approved plate copied into the shot and set as the opening frame");
+    if (typeof approveGuidedStill === "function") approveGuidedStill(s.id, d.name);
+    else toast("Approved plate copied into the shot — approve it as the shot image to make it canon");
   } catch (e) {
     toast("Could not use plate: " + e.message);
   }
@@ -3391,17 +3389,13 @@ window.markGuidedStillFinal = (id, name) => {
   const s = shotById(id), c = ensureShotCreation(s);
   if (!name) return toast("Approve a still first");
   const stillOpening = (s.keyframes || [])[0];
-  /* K1A — minted inside the click that marked the still final. */
-  const stillManualAction = stillOpening
-    ? beginManualApproval({ via: "guided-final-still", targets: [{ kind: "shot-frame", shotId: s.id, frameId: stillOpening.id }] })
-    : null;
-  const writeStillEdge = () => {
-    c.finalStillFile = name;
+  /* WORKFLOW BOOKKEEPING ONLY. Every pointer this used to write —
+     `s.winner`, its identity stamp, `finalStillFile` on both records — IS a
+     canon edge, and the kernel owns all of them. Writing them here produced a
+     second, unreceipted copy of the same decision, and on the no-frame arm it
+     produced a `s.winner` with no frame receipt behind it at all. */
+  const markStillFinal = () => {
     c.deliveryIntent = "still";
-    s.finalStillFile = name;
-    s.winner = name;
-    /* P4-SEM-C3: the still-delivery approval names which bytes it approved. */
-    stampShotApprovalIdentity(s, "winner", (takesFor(s.id).find((item) => item.name === name) || {}).assetId || "");
     s.workflowStatus = "APPROVED";
     s.status = "APPROVED";
   };
@@ -3414,20 +3408,17 @@ window.markGuidedStillFinal = (id, name) => {
      authority, without one it is the shot's delivery pointer. */
   const stillAt = new Date().toISOString();
   const stillAssetId = (takesFor(s.id).find((item) => item.name === name) || {}).assetId || "";
-  if (stillOpening) {
-    writeFrameProductionAuthority(P, {
-      shotId: s.id, frameId: stillOpening.id, value: name, assetId: stillAssetId,
-      manualAction: stillManualAction, at: stillAt,
-    });
-    writeStillEdge();
-  } else {
-    writeDeliveryProductionAuthority(P, {
-      shotId: s.id, value: name, assetId: stillAssetId,
-      manualAction: beginManualApproval({ via: "guided-final-still", targets: [{ kind: "shot-delivery", shotId: s.id }] }),
-      at: stillAt,
-    });
-    writeStillEdge();
+  /* MARKING A STILL FINAL IS A DELIVERY DECISION, and when the shot has an
+     opening frame it is also a frame decision. Both are canon, both are made in
+     this one click, and both go through the kernel — which is what stops the
+     delivery half from being a raw pointer nobody approved. */
+  try {
+    if (stillOpening) approveFrameCanon(P, { shotId: s.id, frameId: stillOpening.id, value: name, assetId: stillAssetId, at: stillAt, via: "guided-final-still" });
+    approveDeliveryCanon(P, { shotId: s.id, value: name, assetId: stillAssetId, at: stillAt, via: "guided-final-still" });
+  } catch (error) {
+    return toast(error.message || "That still could not be approved");
   }
+  markStillFinal();
   const row = candidateRecord(s, name, true);
   row.approvedAt = row.approvedAt || new Date().toISOString();
   row.finalAt = new Date().toISOString();
@@ -3446,11 +3437,11 @@ window.approveGuidedMotion = (id, name) => {
      directly, outside the receipt model. */
   const motionAssetId = (takesFor(s.id).find((item) => item.name === name) || {}).assetId || "";
   const motionUnitKey = unit.id || unitKey(unit);
-  writeMotionProductionAuthority(P, {
-    shotId: s.id, unitKey: motionUnitKey, value: name, assetId: motionAssetId,
-    manualAction: beginManualApproval({ via: "guided-motion-approval", targets: [{ kind: "shot-motion", shotId: s.id, unitKey: motionUnitKey }] }),
-    at: new Date().toISOString(),
-  });
+  try {
+    approveMotionCanon(P, { shotId: s.id, unitKey: motionUnitKey, value: name, assetId: motionAssetId, at: new Date().toISOString(), via: "guided-motion-approval" });
+  } catch (error) {
+    return toast(error.message || "That video could not be approved");
+  }
   const row = candidateRecord(s, name, true);
   row.approvedAt = new Date().toISOString();
   row.approvedTarget = `segment:${unitKey(unit)}`;
@@ -3467,11 +3458,11 @@ window.queueGuidedVideoFinish = (id, name) => {
     /* K1C: queueing for finish establishes the motion winner, so it routes. */
     const queueAssetId = (takesFor(s.id).find((item) => item.name === name) || {}).assetId || "";
     const queueUnitKey = unit.id || unitKey(unit);
-    writeMotionProductionAuthority(P, {
-      shotId: s.id, unitKey: queueUnitKey, value: name, assetId: queueAssetId,
-      manualAction: beginManualApproval({ via: "guided-motion-finish-queue", targets: [{ kind: "shot-motion", shotId: s.id, unitKey: queueUnitKey }] }),
-      at: new Date().toISOString(),
-    });
+    try {
+      approveMotionCanon(P, { shotId: s.id, unitKey: queueUnitKey, value: name, assetId: queueAssetId, at: new Date().toISOString(), via: "guided-motion-finish-queue" });
+    } catch (error) {
+      return toast(error.message || "That video could not be approved");
+    }
     markCandidateApproved(s, name, `segment:${unitKey(unit)}`);
     dirty();
   }
@@ -3480,12 +3471,16 @@ window.queueGuidedVideoFinish = (id, name) => {
 window.markGuidedVideoFinal = (id, name) => {
   const s = shotById(id), c = ensureShotCreation(s);
   /* K1C: the shot's final video IS its delivery Canon. */
-  writeDeliveryProductionAuthority(P, {
-    shotId: s.id, value: name,
-    manualAction: beginManualApproval({ via: "guided-final-video", targets: [{ kind: "shot-delivery", shotId: s.id }] }),
-    at: new Date().toISOString(),
-  });
-  c.approvedMotionFile = name;
+  try {
+    approveDeliveryCanon(P, {
+      shotId: s.id, value: name,
+      assetId: (takesFor(s.id).find((item) => item.name === name) || {}).assetId || "",
+      at: new Date().toISOString(), via: "guided-final-video",
+    });
+  } catch (error) {
+    return toast(error.message || "That video could not be approved as the final delivery");
+  }
+  /* `approvedMotionFile` is the delivery edge and the kernel just wrote it. */
   c.finalVideoFile = name;
   s.finalVideoFile = name;
   const row = candidateRecord(s, name, true);
@@ -3587,11 +3582,11 @@ function guidedInvalidateMotionAfterFrameChange(s, previousName = "", nextName =
      rather than the safety net — but a project should be able to say WHY a
      decision stopped standing, and "the frame it was built on changed" is the
      reason. */
-  if (typeof revokeProductionAuthority === "function") {
-    revokeProductionAuthority(P, { kind: "shot-delivery", shotId: s.id, at: new Date().toISOString(), via: "frame-input-changed", reason: "target-cleared" });
+  if (typeof revokeDeliveryCanon === "function") {
+    revokeDeliveryCanon(P, { shotId: s.id, at: new Date().toISOString(), via: "frame-input-changed", reason: "target-cleared" });
     for (const clip of s.clips || []) {
       if (!clip.videoWinner) continue;
-      revokeProductionAuthority(P, { kind: "shot-motion", shotId: s.id, unitKey: clip.id || unitKey(clip), at: new Date().toISOString(), via: "frame-input-changed", reason: "target-cleared" });
+      revokeMotionCanon(P, { shotId: s.id, unitKey: clip.id || unitKey(clip), at: new Date().toISOString(), via: "frame-input-changed", reason: "target-cleared" });
     }
   }
   c.approvedMotionFile = "";
@@ -3647,7 +3642,7 @@ window.resetGuidedFrameApproval = (id, frameId) => {
          resume rebuilt authority from that step. Withdrawing the receipt is what
          reopens every dependent gate on the next read, and it records that the
          decision was withdrawn rather than never made. */
-      revokeFrameProductionAuthority(P, {
+      revokeFrameCanon(P, {
         shotId: s.id, frameId, at: new Date().toISOString(), via: "guided-frame-approval-reset", reason: "withdrawn",
       });
       const state = guidedFrameState(s, frame, index);

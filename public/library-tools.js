@@ -321,29 +321,29 @@ window.confirmApproveTake = async () => {
   const s = shotById(id),
     target = document.getElementById("approve-target")?.value || "shot",
     requested = document.getElementById("approve-name")?.value.trim();
-  /* K1A — THE MANUAL BOUNDARY, IN THE PROLOGUE, BEFORE THE FIRST AWAIT.
+  /* THE CANON WRITE IS THE FIRST THING THAT HAPPENS, AND IT IS SYNCHRONOUS.
    *
-   * The trusted gesture window is open for the synchronous turn of the click
-   * that got here and is closed by a macrotask. This function awaits a rename
-   * partway through, so a capability minted after that point would be asking
-   * for one that had already shut — the approval would refuse on a real click.
-   * Minting first and carrying the token is what makes an async handler safe.
+   * Batch 1D minted a capability here, awaited a rename, and then committed
+   * whatever filename came back. The acceptance audit spent that target-only
+   * token on CHANGED.png/asset-B while the modal displayed DISPLAYED.png/asset-A.
+   *
+   * The order is inverted, and inverting it is what deletes the whole class:
+   *
+   *     approve the bytes the person is looking at, inside their click
+   *     THEN rename them, if they asked for a rename
+   *     THEN move the receipt with them
+   *
+   * That is strictly more honest than the old order — the creator approved the
+   * image in front of them, and the canonical filename is a storage decision
+   * that follows — and it needs no capability, because nothing crosses an
+   * `await`. If the rename fails the approval still stands on the original
+   * name, which is what the toast has always said happens.
    *
    * A video approval targets the shot's DELIVERY pointer, because `opening` is
-   * deliberately null for video; that arm is the one the re-audit found writing
-   * `s.winner` with no receipt behind it. */
-  const shotApprovalManualAction = beginManualApproval({
-    via: "shot-take-approval",
-    targets: target === "shot"
-      ? (isVideo(name) || !((s.keyframes || [])[0])
-        ? [{ kind: "shot-delivery", shotId: id }]
-        : [{ kind: "shot-frame", shotId: id, frameId: (s.keyframes || [])[0].id }])
-      : target.startsWith("frame:")
-        ? [{ kind: "shot-frame", shotId: id, frameId: target.slice(6) }]
-        : target.startsWith("segment:")
-          ? [{ kind: "shot-motion", shotId: id, unitKey: ((s.clips || []).find((x) => unitKey(x) === target.slice(8)) || {}).id || target.slice(8) }]
-          : [{ kind: "shot-frame", shotId: id, frameId: ((s.keyframes || [])[0] || {}).id }],
-  });
+   * deliberately null for video. */
+  const displayedAssetId = (takesFor(id).find((item) => item.name === name) || {}).assetId || "";
+  const at = new Date().toISOString();
+  const video = isVideo(name);
   const previousActiveName = target === "shot"
     ? s.winner || ""
     : target.startsWith("frame:")
@@ -351,6 +351,43 @@ window.confirmApproveTake = async () => {
       : target.startsWith("segment:")
         ? (s.clips || []).find((x) => unitKey(x) === target.slice(8))?.videoWinner || ""
         : "";
+  let complete = false,
+    label = "VERSION APPROVED";
+  /* CLASSIFICATION B — A MOTION UNIT'S START/END FRAME POINTERS ARE NOT CANON.
+     `clips[i].winner` and `clips[i].winnerEnd` select WHICH APPROVED STILLS a
+     motion unit interpolates between. They are inputs to a generation, not
+     production output, and the Canon they depend on is the frame authority that
+     approved those stills in the first place. */
+  const motionEdgeTarget = !(target === "shot" || target.startsWith("frame:") || target.startsWith("segment:"));
+  try {
+    if (target === "shot") {
+      const opening = video ? null : (s.keyframes || [])[0];
+      /* THE STILL CASE. The opening frame and the shot are ONE authority edge —
+         the shot's winner IS the opening frame's. One receipt, addressed to the
+         frame, so the gate predicate finds it whichever way the run named it. */
+      if (opening) {
+        approveFrameCanon(P, { shotId: id, frameId: opening.id, value: name, assetId: displayedAssetId, at, via: "shot-take-approval" });
+      } else {
+        /* An approved video IS the shot's deliverable, so it goes through the
+           delivery boundary rather than writing `s.winner` with no receipt. */
+        approveDeliveryCanon(P, { shotId: id, value: name, assetId: displayedAssetId, at, via: "shot-take-approval" });
+      }
+    } else if (target.startsWith("frame:")) {
+      const f = frameById(s, target.slice(6));
+      if (f) approveFrameCanon(P, { shotId: id, frameId: f.id, value: name, assetId: displayedAssetId, at, via: "shot-take-approval" });
+      label = "FRAME APPROVED";
+    } else if (target.startsWith("segment:")) {
+      const unitId = target.slice(8);
+      const c = (s.clips || []).find((x) => unitKey(x) === unitId);
+      if (c) approveMotionCanon(P, { shotId: id, unitKey: c.id || unitId, value: name, assetId: displayedAssetId, at, via: "shot-take-approval" });
+      label = "MOTION APPROVED";
+    }
+  } catch (error) {
+    return toast(error.message || "That file could not be approved");
+  }
+
+  /* EVERYTHING BELOW IS AFTER THE DECISION. The rename moves the bytes and the
+     receipt follows them; nothing here can change WHAT was approved. */
   let finalName = name, renamedAssetId = "";
   if (requested && requested !== name) {
     const r = await fetch("/api/media/rename", {
@@ -374,93 +411,23 @@ window.confirmApproveTake = async () => {
          pointing at the renamed file kept the old name, so approving a take
          under a new filename could leave s.winner, another frame's winner, a
          clip's videoWinner or canonicalName naming a file no longer on disk.
-         This is the shot-side twin of the coverage-slot miss C2 fixed, and it
-         is repaired the same way: by enumerating the edges rather than
-         remembering them. The assetId the route just anchored is recorded on
-         each repaired edge, so a LATER rename resolves by identity instead of
-         by a string that has already changed. */
+         This enumerates the edges rather than remembering them. */
       repairShotApprovalIdentity(s, { from: name, to: finalName, assetId: renamedAssetId });
-      /* BATCH 1B: the durable authority receipt follows the bytes too. Without
-         this the receipt names a file the edge no longer carries, and the next
-         read revokes a decision a person really made. */
-      repairAuthorityReceiptIdentity(P, { from: name, to: finalName, assetId: renamedAssetId });
+      /* AND THE RECEIPT FOLLOWS THE BYTES. Without this the receipt names a file
+         the edge no longer carries, and the next read revokes a decision a
+         person really made. */
+      repairCanonValue(P, { from: name, to: finalName, assetId: renamedAssetId });
       SCAN = await (await fetch("/api/scan")).json();
     } else toast("Could not rename; approval kept the original filename");
   }
-  /* The durable identity of what is about to become an authoritative shot edge.
-     Read from the refreshed scan when the ledger knows this file, and from the
-     rename anchor otherwise. Empty is legal and common — a project whose first
-     pass has not run has no identity to record, and the approval proceeds on the
-     filename exactly as it did before C3. */
-  const approvedAssetId = (takesFor(id).find((item) => item.name === finalName) || {}).assetId || renamedAssetId || "";
-  const video = isVideo(finalName);
-  let complete = false,
-    label = "VERSION APPROVED";
-  /* P4-SEM-C3: each approval records WHICH BYTES it approved, beside the filename
-     it also keeps. Refused rather than stored when there is no id, so a record
-     never carries a malformed identity that would resolve to nothing. */
-  /* BATCH 1B: THIS IS A HUMAN APPROVAL COMMAND, and it now says so durably.
-     `approveTake` is reached only from an approval control a person pressed, so
-     it mints the grant here and writes the edge INSIDE the authority command —
-     the same boundary automation uses. A frame approved from this screen and a
-     frame approved from the run modal leave identical evidence, which is what
-     lets one gate predicate serve both. */
-  const approvalGrant = shotApprovalManualAction;
-  const at = new Date().toISOString();
-  if (target === "shot") {
-    const opening = video ? null : (s.keyframes || [])[0];
-    /* THE STILL CASE. The opening frame and the shot are ONE authority edge —
-       the shot's winner IS the opening frame's. One receipt, addressed to the
-       frame, so the gate predicate finds it whichever way the run named it. */
-    if (opening) {
-      writeFrameProductionAuthority(P, {
-        shotId: id, frameId: opening.id, value: finalName, assetId: approvedAssetId, manualAction: approvalGrant, at,
-      });
-    } else {
-      /* K1C — THE VIDEO PATH, WHICH THE RE-AUDIT FOUND UNROUTED.
-         `opening` is deliberately null for video, so this branch wrote
-         `s.winner` directly and produced canonical production output with no
-         receipt behind it. An approved video IS the shot's deliverable, so it
-         goes through the delivery boundary. */
-      writeDeliveryProductionAuthority(P, {
-        shotId: id, value: finalName, assetId: approvedAssetId, manualAction: approvalGrant, at,
-      });
-    }
-  } else if (target.startsWith("frame:")) {
-    const f = frameById(s, target.slice(6));
-    if (f) {
-      writeFrameProductionAuthority(P, {
-        shotId: id, frameId: f.id, value: finalName, assetId: approvedAssetId, manualAction: approvalGrant, at,
-      });
-    }
-    complete = shotApprovalComplete(s);
-    label = "FRAME APPROVED";
-  } else if (target.startsWith("segment:")) {
-    /* K1C — A MOTION WINNER IS CANON. Same reasoning as the video path: this
-       wrote `videoWinner` and `approvedMotionFile` outside the receipt model. */
-    const unitId = target.slice(8);
-    const c = (s.clips || []).find((x) => unitKey(x) === unitId);
-    if (c) {
-      writeMotionProductionAuthority(P, {
-        shotId: id, unitKey: c.id || unitId, value: finalName, assetId: approvedAssetId, manualAction: approvalGrant, at,
-      });
-      /* Bookkeeping, after the Canon write: the shot's convenience pointer to
-         its latest approved motion. Not the authority edge — that is the unit's
-         videoWinner, which the kernel wrote. */
-      s.creationBrief = s.creationBrief && typeof s.creationBrief === "object" ? s.creationBrief : {};
-      s.creationBrief.approvedMotionFile = finalName;
-    }
-    complete = shotApprovalComplete(s);
-    label = "MOTION APPROVED";
-  } else {
-    /* CLASSIFICATION B — A MOTION UNIT'S START/END FRAME POINTERS ARE NOT CANON.
-       `clips[i].winner` and `clips[i].winnerEnd` select WHICH APPROVED STILLS a
-       motion unit interpolates between. They are inputs to a generation, not
-       production output, and the Canon they depend on is the frame authority
-       that approved those stills in the first place. Adding a receipt kind for
-       them would grow the authority model to describe a pointer that decides
-       nothing — the opposite of the alpha direction — so they stay direct and
-       are named here as non-authoritative. */
+  const approvedAssetId = (takesFor(id).find((item) => item.name === finalName) || {}).assetId || renamedAssetId || displayedAssetId;
+  if (target.startsWith("frame:") || target.startsWith("segment:")) complete = shotApprovalComplete(s);
+  /* `creationBrief.approvedMotionFile` USED TO BE WRITTEN HERE, as a
+     "convenience pointer". It is the shot's DELIVERY edge, so approving one
+     motion take silently produced a delivery pointer nobody had approved —
+     a raw pointer establishing something that looks like canon. Approving a
+     motion take is not deciding the shot's deliverable; Mark as final is. */
+  if (motionEdgeTarget) {
     const [ci, edge] = target.split(":");
     if (edge === "last") {
       s.clips[+ci].winnerEnd = finalName;
@@ -533,14 +500,14 @@ function entityCanonicalSuggestion(list, id, name, stateId = "") {
    public/shared-state-lineage.js owns the rule; these two functions are its call
    sites and hold no opinion of their own. */
 function entityApprovalContinuationStates(entity, currentStateId) {
-  const states = entityStateList(entity, true);
+  const states = entityStateListRead(entity, true);
   const byId = new Map(states.map((state) => [state.id, state]));
   return continuationCandidates(states, currentStateId)
     .map((candidate) => byId.get(candidate.id))
     .filter(Boolean);
 }
 function entityApprovalContinuationOutcome(entity, currentStateId) {
-  return continuationOutcome(entityStateList(entity, true), currentStateId);
+  return continuationOutcome(entityStateListRead(entity, true), currentStateId);
 }
 function entitySuggestedContinuationState(entity, currentStateId) {
   return entityApprovalContinuationOutcome(entity, currentStateId).suggestedStateId;
@@ -576,7 +543,7 @@ function revealEntityContinuityState(stateId) {
 }
 window.approveEntityFile = (list, id, name, stateId = "") => {
   const x = P[list].find((e) => e.id === id),
-    states = entityStateList(x, true),
+    states = entityStateListRead(x, true),
     media = entityMedia(list, x);
   if (!media.length) return toast("Add or generate a candidate before approving a reference");
   const requestedState = entityStateById(x, stateId || "state-default") || states[0];
@@ -629,7 +596,7 @@ window.syncEntityApprovalContinuation = () => {
   const stateId = document.getElementById("entity-approve-target")?.value || current.stateId || "state-default";
   const state = entityStateById(x, stateId);
   const nextStateId = document.getElementById("entity-approve-next")?.value || "";
-  const states = entityStateList(x, true);
+  const states = entityStateListRead(x, true);
   /* A stale form value cannot move the creator onto an ancestor: the id is
      re-checked against the lineage rule rather than trusted because it is in the
      select. */
@@ -664,11 +631,6 @@ window.syncEntityApprovalContinuation = () => {
 window.confirmEntityApproval = async (continueToNext = false) => {
   const { list, id } = window._entityApproval || {};
   if (!list) return;
-  /* K1A — minted before the first await, inside the confirming click. */
-  const entityApprovalManualAction = beginManualApproval({
-    via: "entity-approval-modal",
-    targets: [{ kind: "entity-state", list, entityId: id, stateId: document.getElementById("entity-approve-target")?.value || "state-default" }],
-  });
   const x = P[list].find((e) => e.id === id),
     name = document.getElementById("entity-approve-file")?.value || window._entityApproval.name || "",
     targetStateId = document.getElementById("entity-approve-target")?.value || "state-default",
@@ -677,7 +639,7 @@ window.confirmEntityApproval = async (continueToNext = false) => {
     /* Re-validated at the writer. `isValidContinuation` excludes the current
        state and every ancestor of it, so an id that survived a stale render
        cannot open an editor the lineage rule forbids. */
-    nextStateId = requestedNextStateId && isValidContinuation(entityStateList(x, true), targetStateId, requestedNextStateId) ? requestedNextStateId : "",
+    nextStateId = requestedNextStateId && isValidContinuation(entityStateListRead(x, true), targetStateId, requestedNextStateId) ? requestedNextStateId : "",
     nextState = nextStateId ? entityStateById(x, nextStateId) : null,
     to = document.getElementById("entity-approve-name")?.value.trim();
   const originalApprovalRow = entityCandidateRow(x, name, false);
@@ -686,6 +648,21 @@ window.confirmEntityApproval = async (continueToNext = false) => {
     return toast(requestedNextStateId
       ? "That state cannot follow this one — it is what this state derives from. Choose a state further down the chain."
       : "Choose the continuity state to edit next");
+  }
+  /* CANON FIRST, INSIDE THE CLICK, ON THE BYTES THE CREATOR IS LOOKING AT.
+     The shot-side twin carries the full argument; the shape is identical here.
+     The same command still applies the ownership veto, so a file whose owner is
+     unresolved or contested cannot be made canon from this screen. A refusal
+     writes nothing and says why. */
+  const displayedAssetId = (entityMedia(list, x).find((item) => item.name === name) || {}).assetId || "";
+  const entityAuthorityStateId = targetState?.id || targetStateId || "state-default";
+  try {
+    approveEntityStateCanon(P, {
+      list, entityId: id, stateId: entityAuthorityStateId, value: name, assetId: displayedAssetId,
+      at: new Date().toISOString(), via: "entity-approval-modal",
+    });
+  } catch (error) {
+    return toast(error.message || "That file cannot be approved for this reference");
   }
   let finalName = name, renamedAssetId = "";
   if (to && name && to !== name) {
@@ -701,47 +678,22 @@ window.confirmEntityApproval = async (continueToNext = false) => {
       /* P4-SEM-C2. This used to be four hand-written patches — states,
          entity.approvedFile, the candidate row, generatedCandidates[] — and the
          list was incomplete: coverageSlots[] and expressionSlots[] were never
-         repaired, so approving a rename of a file a coverage slot already
-         approved left that slot pointing at a filename that no longer existed.
-         Enumerating the edges is what makes that class of miss impossible, and
-         it is why the repair moved into the shared resolver rather than growing
-         two more lines here. The assetId the route just anchored is recorded on
-         each repaired edge, so the NEXT rename can be resolved by identity
-         instead of by a string that has already changed. */
-      repairApprovalIdentity(x, { from: name, to: finalName, assetId: renamedAssetId, states: entityStateList(x, true) });
-      /* BATCH 1B: and the receipt, for the reason given at the shot-side twin. */
-      repairAuthorityReceiptIdentity(P, { from: name, to: finalName, assetId: renamedAssetId });
+         repaired, so renaming a file a coverage slot already held left that slot
+         pointing at a filename that no longer existed. Enumerating the edges is
+         what makes that class of miss impossible. */
+      repairApprovalIdentity(x, { from: name, to: finalName, assetId: renamedAssetId, states: entityStateListRead(x, true) });
+      /* And the receipt follows the bytes, for the reason given at the shot-side
+         twin: otherwise the next read revokes a decision a person really made. */
+      repairCanonValue(P, { from: name, to: finalName, assetId: renamedAssetId });
       SCAN = await (await fetch("/api/scan")).json();
     } else toast("Rename failed; approved with original filename");
   }
-  /* The durable identity of what is about to become canon. Read from the refreshed
-     scan when the ledger knows this file, and from the rename anchor otherwise.
-     Empty is legal and common — a project whose first pass has not run yet has no
-     identity to record, and the approval proceeds on the filename exactly as it
-     did before C2. */
-  const approvedAssetId = (entityMedia(list, x).find((item) => item.name === finalName) || {}).assetId || renamedAssetId || "";
-  /* BATCH 1B: the reference approval modal writes through the same command as
-     everything else, and the same command applies the ownership veto — so a file
-     whose owner is unresolved or contested cannot be made canon from this screen
-     either. A refusal writes nothing and says why. */
-  const entityGrant = entityApprovalManualAction;
-  const entityAuthorityStateId = targetState?.id || targetStateId || "state-default";
-  try {
-    writeEntityStateProductionAuthority(P, {
-      list, entityId: id, stateId: entityAuthorityStateId, value: finalName, assetId: approvedAssetId, manualAction: entityGrant, at: new Date().toISOString(),
-      /* BATCH 1C: the edge is written on the DRAFT the kernel stages. A callback
-         that reached back to the live objects would leave the draft unchanged,
-         the transaction would refuse for a mismatch it caused itself, and the
-         approval would silently bail. */
-    });
-  } catch (error) {
-    return toast(error.message || "That file cannot be approved for this reference");
-  }
+  const approvedAssetId = (entityMedia(list, x).find((item) => item.name === finalName) || {}).assetId || renamedAssetId || displayedAssetId;
   if (targetState?.isDefault || targetStateId === "state-default") {
-    for (const childState of entityStateList(x, true)) if (!childState.isDefault) childState.parentValidation = null;
+    for (const childState of ensureEntityStateList(x, true)) if (!childState.isDefault) childState.parentValidation = null;
     if (!approvedIsCoverageSheet && typeof ensureCoverageSlots === "function" && list !== "characters") {
       const slots = ensureCoverageSlots(list, x);
-      if (!slots.some((slot) => slot.approvedFile)) {
+      if (!slots.some((slot) => slotSelectedFile(slot))) {
         const preferredId = ({ props: "hero", vehicles: "front-three-quarter", locations: "establishing" })[list];
         const coverageSlot = slots.find((slot) => slot.id === preferredId) || slots[0];
         if (coverageSlot) {

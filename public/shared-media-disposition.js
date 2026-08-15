@@ -60,7 +60,7 @@
    tests/continuity-ui-render-only.js enforces.
 
    NOTHING IS MUTATED BY A READ. Every resolver returns fresh values and writes
-   nothing back. In particular this module never calls entityStateList(), which
+   nothing back. In particular this module never calls ensureEntityStateList(), which
    normalises the entity it is handed; a disposition read must not canonicalise a
    legacy project merely by rendering it.
 
@@ -159,7 +159,7 @@
   /* Every approval pointer an entity carries, in one list.
 
      `states` is accepted as an option because the caller usually already holds a
-     normalised list and because entityStateList() MUTATES — this module must not
+     normalised list and because ensureEntityStateList() MUTATES — this module must not
      be the thing that quietly writes a default state into a project the user
      only looked at. When it is not supplied, the raw collection is read.
 
@@ -186,7 +186,7 @@
     }
 
     /* The entity's own approvedFile is normally the default state's, kept in
-       sync by entityStateList(). It is emitted as its own edge only when no
+       sync by ensureEntityStateList(). It is emitted as its own edge only when no
        state claims it, so a stateless entity still reports its primary approval
        and a normal entity does not report the same approval twice. */
     const primaryFile = dispositionText(it.approvedFile);
@@ -210,7 +210,11 @@
           label: dispositionText(record.label) || dispositionText(record.id),
           isDefault: false,
           record,
-          file: dispositionText(record.approvedFile),
+          /* A SLOT HOLDS `selectedFile`. `approvedFile` is the legacy key a
+             pre-existing project still carries, read here so no media is lost —
+             but a value under either name is a SUPPORTING SELECTION, and this
+             edge is not a canon edge whichever key it came from. */
+          file: dispositionText(record.selectedFile) || dispositionText(record.approvedFile),
           assetId: isLedgerAssetId(record[APPROVED_ASSET_ID_FIELD]) ? record[APPROVED_ASSET_ID_FIELD] : "",
         });
       }
@@ -370,16 +374,21 @@
          reports the old name without holding it — and writing there would
          materialise a key the document did not have, which P0 §8 rule 9 forbids
          and which the pre-C2 repair also never did. */
-      if (dispositionText(edge.record.approvedFile) !== from) continue;
-      /* The primary edge's record IS the entity, and its field is approvedFile
-         either way, so one assignment covers both shapes. */
-      edge.record.approvedFile = to;
+      /* WHICHEVER KEY THIS RECORD ACTUALLY HOLDS. A slot writes `selectedFile`;
+         a state or the entity itself writes `approvedFile`. Repairing a key the
+         record does not have would materialise one the document never had,
+         which P0 §8 rule 9 forbids and which the pre-C2 repair never did. */
+      const heldKey = dispositionText(edge.record.selectedFile) === from
+        ? "selectedFile"
+        : dispositionText(edge.record.approvedFile) === from ? "approvedFile" : "";
+      if (!heldKey) continue;
+      edge.record[heldKey] = to;
       if (assetId) stampApprovalIdentity(edge.record, assetId);
       repaired.push({ kind: edge.kind, id: edge.id, assetId });
     }
 
     /* entity.approvedFile is kept in sync with the default state by
-       entityStateList(). When a state edge just moved, the entity's own copy has
+       ensureEntityStateList(). When a state edge just moved, the entity's own copy has
        to move with it or the two disagree until the next normalisation. */
     if (dispositionText(it.approvedFile) === from) {
       it.approvedFile = to;

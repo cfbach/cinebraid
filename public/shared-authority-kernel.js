@@ -1,60 +1,72 @@
-/* CINEBRAID — THE PRODUCTION AUTHORITY KERNEL.
+/* CINEBRAID — CANON.
  *
  * Browser and Node, the same way public/shared-media-disposition.js is shared.
  *
  * ---------------------------------------------------------------------------
- * WHY THERE IS A KERNEL (Dogfood #2, Repair Batch 1C).
+ * THE WHOLE MODEL, AND THERE IS NO SECOND PAGE.
  *
- * Batch 1B introduced a durable authority receipt and routed the frame and
- * entity-state writers through one command. The independent re-audit accepted
- * that the honest path was now honest, and then walked around it six ways:
+ *     CANON      a creator explicitly approved these exact bytes as production
+ *                truth. A current receipt in this project's ledger, and a live
+ *                edge that matches it exactly.
+ *     REFERENCE  useful selected supporting media. May guide generation and
+ *                review. Never establishes Canon. Lives in
+ *                public/shared-entity-slots.js and has no receipt.
+ *     HISTORIC   an old pointer with no current Canon behind it. Visible,
+ *                traceable, never promoted.
  *
- *   - the credential was a SHAPE. `{ actor: "human", act: "explicit-approval" }`
- *     is two strings any caller can type, and the public builder that produces
- *     them was exported to `window`. "Human" meant "somebody said human".
- *   - the reader validated almost nothing. A row with a blank id, sequence 0,
- *     `actor: "automation"`, and component fields naming a different frame was
- *     accepted as current human authority because its `targetId` string matched
- *     and its value matched the live edge.
- *   - two rows could both be `current`; the last one silently won. A ledger
- *     whose sequence had been reset minted a second `authority-000001`.
- *   - the write was not a transaction. `applyEdge` ran first; a non-extensible
- *     project root then made the ledger write a no-op, and the command returned
- *     a receipt id for a receipt that was never persisted.
- *   - whole classes of canonical pointer — video winners, coverage slots,
- *     expression slots, creation-final — were never in the model at all, while
- *     being consumed downstream as generation, continuity and export authority.
- *   - reconciliation completed a real gate against `receiptId:
- *     "not-a-real-receipt"`, because its only check was that the string was
- *     non-empty.
+ * Six sentences this file has to make literally true:
  *
- * Every one of those is the same mistake in a different place: TRUTH WAS BEING
- * DERIVED FROM THE SHAPE OF DATA A CALLER SUPPLIED. So the kernel owns three
- * things and nothing else owns any of them:
- *
- *     1. WHAT a production authority target IS         (canonical descriptor)
- *     2. WHETHER a durable ledger is TRUSTWORTHY       (full schema validation)
- *     3. HOW an authority change is COMMITTED          (one transaction)
+ *   1. HUMAN EXPLICITLY APPROVES CANON.
+ *   2. AUTOMATION ONLY RECOMMENDS.
+ *   3. SUPPORTING REFERENCES ARE NOT CANON.
+ *   4. LEGACY POINTERS WITHOUT CURRENT CANON ARE HISTORIC.
+ *   5. STATE ANCESTRY IS IMMUTABLE AFTER CREATION.
+ *   6. PREFLIGHT DOES NOT MUTATE.
  *
  * ---------------------------------------------------------------------------
- * WHAT THIS IS NOT, stated because the scope matters as much as the mechanism.
+ * WHY THIS FILE LOOKS THE WAY IT DOES (Dogfood #2, the simplification pass).
  *
- * CineBraid is a local, single-user application. This is NOT an authentication
- * system, NOT a cryptographic identity system, and NOT a defence against a
- * hostile operator of the machine. Building any of those here would be
- * disproportionate and would not make a filmmaker's project truer.
+ * Batches 1B, 1C and 1D each added a guard and each failed acceptance, because
+ * the shape being guarded kept offering a way around:
  *
- * The invariant that IS required:
+ *   1B  the credential was a SHAPE two strings could forge.
+ *   1C  the credential became an object identity — and shipped a synthetic
+ *       source that minted one with no event at all.
+ *   1D  the synthetic source went, and the credential became a CAPABILITY: a
+ *       token minted in a click and spent by whatever code ran next. All
+ *       twelve shipped surfaces minted target-only tokens, so the value and
+ *       asset checks were optional on every real approval; and the gesture
+ *       window stayed open across every Promise microtask in the event's
+ *       macrotask. Meanwhile the rules themselves — ownership, edge reading,
+ *       edge writing, persistence — were exported INSTALLERS that ordinary
+ *       application code could replace after boot.
+ *
+ * THE SIMPLIFICATION IS A DELETION, NOT A SEVENTH GUARD.
+ *
+ *   THERE IS NO CAPABILITY.  A Canon write is a single synchronous call that
+ *   happens inside the trusted user event itself. It names the target, the
+ *   exact value and the exact asset identity in one statement. Nothing is
+ *   minted, so nothing can be carried across an `await`, held by a later
+ *   microtask, or spent on a decision the person never saw.
+ *
+ *   THERE ARE NO INSTALLERS.  Target validation, ownership, edge reading, edge
+ *   writing, receipt validation, staging and persistence are private functions
+ *   in this file. There is no parameter for them, no setter for them, and no
+ *   exported name that reaches them. Application code cannot redefine
+ *   production truth after boot because there is nothing to redefine.
+ *
+ * WHAT KEEPS "HUMAN" HONEST is one primitive the browser already gives us:
+ * `event.isTrusted`, which the user agent sets and page script cannot forge.
+ * The window it opens is closed on a MICROTASK, so it covers the synchronous
+ * dispatch of the event and nothing that resumes after it. Automation lives in
+ * continuations; it is never inside that window.
+ *
+ * CineBraid is a local, single-user application. This is NOT authentication,
+ * NOT cryptographic provenance, and NOT a defence against a hostile operator of
+ * the machine. The invariant that IS required, and the only one:
  *
  *     AUTOMATION AND ORDINARY INTERNAL APPLICATION PATHS MUST NOT BE ABLE TO
  *     SYNTHESIZE HUMAN PRODUCTION AUTHORITY.
- *
- * That is met by making the credential an OBJECT IDENTITY held in a registry
- * private to this module, minted only inside a trusted user gesture, bound to
- * the exact targets it may authorize, and consumed once. A caller cannot
- * construct one by writing the right fields, because there are no right fields
- * — the kernel checks whether it minted this exact object. Automation runs in
- * async continuations, outside any gesture, so it cannot obtain one.
  *
  * Deliberately absent, and required to stay absent:
  *   - file or network I/O
@@ -66,39 +78,19 @@
 /* VOCABULARY                                                                 */
 /* ========================================================================== */
 
-/* EVERY PRODUCTION OBJECT A HUMAN CAN HOLD AUTHORITY OVER.
+/* EVERY PRODUCTION OBJECT A HUMAN CAN HOLD CANON OVER. A closed set of four.
  *
- * Batch 1B carried two. The re-audit's §9 is the argument for the rest: a
- * coverage slot is read by the generation reference builder, by server-side
- * entity review as "approved alternate-view design authority", by the
- * production-media projection as an `approved-coverage` disposition, and by OFP
- * export as an approved-output reference. Calling that "not a gate object,
- * therefore not authority" confused gate SCHEDULING with production TRUTH.
- *
- * A closed set. Adding a member is a contract change that has to be argued for,
- * which is the point of writing it down. */
+ * Coverage and expression slots are NOT here and must not come back. They are
+ * supporting references; public/shared-entity-slots.js owns them, they carry no
+ * receipt, and no consumer may read one as Canon. Removing an authority surface
+ * is a smaller model than instrumenting one. */
 const AUTHORITY_TARGET_KINDS = [
   "shot-frame",         /* the still approved for one frame; the opening frame's edge is also the shot's */
   "shot-motion",        /* the video approved for one motion unit */
-  "shot-delivery",      /* the shot's final deliverable pointer */
+  "shot-delivery",      /* the shot's final deliverable pointer, still or video */
   "entity-state",       /* a continuity state's approved reference */
 ];
 
-/* FOUR, NOT SIX — AND THE TWO THAT ARE MISSING WERE REMOVED, NOT FORGOTTEN.
- *
- * The re-audit was right that coverage and expression slots were being consumed
- * as generation, continuity, export and implicit-human authority while carrying
- * no receipt. There were two ways to end that contradiction: extend the kernel
- * to cover them, or stop the consumers treating them as authority.
- *
- * ALPHA TAKES THE SECOND. A coverage slot is a useful supporting reference — a
- * three-quarter view a creator wants on hand — and nothing in the evidenced
- * workflow needs it to be canon. Making it non-authoritative removes a whole
- * authority surface instead of instrumenting one, which is a smaller and more
- * honest model. public/shared-entity-slots.js owns what they are now.
- *
- * Adding a kind back is a contract change that has to be argued for. That is
- * the point of the list being closed and short. */
 const AUTHORITY_COMMANDS = [
   "approve-shot-frame",
   "approve-shot-motion",
@@ -120,10 +112,9 @@ const AUTHORITY_REVOCATION_REASONS = ["replaced", "withdrawn", "target-cleared",
 const AUTHORITY_ACTOR = "human";
 const AUTHORITY_ACT = "explicit-approval";
 
-/* Where the ledger lives, and the shape version it is written at.
-   1D-05: the version is VALIDATED, not decorative. A ledger written by a build
-   this one does not understand is not something to read approvals out of or
-   append to, so it fails closed like any other unreadable ledger. */
+/* Where the ledger lives, and the shape version it is written at. The version
+   is VALIDATED, not decorative: a ledger written by a build this one does not
+   understand is not something to read approvals out of, or append to. */
 const AUTHORITY_LEDGER_KEY = "productionAuthority";
 const AUTHORITY_LEDGER_VERSION = 1;
 
@@ -178,17 +169,17 @@ function authorityError(code, message, detail = {}) {
 
 /* ONE SHAPE FOR "WHICH PRODUCTION OBJECT", and one string that identifies it.
  *
- * The re-audit accepted a receipt whose `targetId` matched while its `shotId`
- * and `frameId` named something else — because the two were stored separately
+ * An earlier audit accepted a receipt whose `targetId` matched while its
+ * `shotId` and `frameId` named something else — the two were stored separately
  * and only one was compared. The key is DERIVED from the parts here, and
- * validation re-derives it, so the two can never disagree without being caught.
+ * validation re-derives it, so the two cannot disagree without being caught.
  *
  * Returns null rather than a partial descriptor. A half-identified target is
  * exactly what lets a receipt for one frame answer for another. */
 function authorityTarget(details) {
   const it = kernelObject(details);
-  /* `kind` is the field; `targetType` is accepted for the Batch 1B call sites
-     that already speak it, so both vocabularies resolve to one descriptor. */
+  /* `kind` is the field; `targetType` is accepted for the call sites that
+     already speak it, so both vocabularies resolve to one descriptor. */
   const kind = kernelText(it.kind || it.targetType);
   const shotId = kernelText(it.shotId);
   const frameId = kernelText(it.frameId);
@@ -196,7 +187,6 @@ function authorityTarget(details) {
   const list = kernelText(it.list || it.entityList);
   const entityId = kernelText(it.entityId);
   const stateId = kernelText(it.stateId);
-  const slotId = kernelText(it.slotId);
   const base = { kind, shotId: "", frameId: "", unitKey: "", list: "", entityId: "", stateId: "", slotId: "" };
   if (kind === "shot-frame") {
     if (!shotId || !frameId) return null;
@@ -217,58 +207,58 @@ function authorityTarget(details) {
   return null;
 }
 
-function sameAuthorityTarget(a, b) {
-  const left = kernelObject(a);
-  const right = kernelObject(b);
-  return !!kernelText(left.key) && kernelText(left.key) === kernelText(right.key);
+function describeTarget(target) {
+  const it = kernelObject(target);
+  if (it.kind === "shot-frame") return `Frame ${it.frameId} of ${it.shotId}`;
+  if (it.kind === "shot-motion") return `Motion ${it.unitKey} of ${it.shotId}`;
+  if (it.kind === "shot-delivery") return `The final deliverable for ${it.shotId}`;
+  if (it.kind === "entity-state") return `${it.list} ${it.entityId} state ${it.stateId}`;
+  return "This edge";
 }
 
 /* ========================================================================== */
-/* 2. TRUSTED MANUAL ACTION PROVENANCE                                        */
+/* 2. IS A REAL PERSON DOING SOMETHING RIGHT NOW                              */
 /* ========================================================================== */
 
-/* THE CREDENTIAL IS AN OBJECT IDENTITY, NOT A SHAPE.
+/* THERE IS NO TOKEN. This is a live predicate, asked inside the Canon write.
  *
- * `MINTED` is private to this module and keyed by the token object itself. A
- * caller who constructs `{ actor: "human", act: "explicit-approval" }` — the
- * exact value the re-audit forged — holds an object this map has never seen,
- * and there is no field they can add that changes that. There is nothing to
- * guess because there is nothing being compared.
+ * WHAT "RIGHT NOW" MEANS, and getting this exactly right took three attempts.
  *
- * A Map rather than a WeakSet: the token carries what it may authorize, and the
- * kernel needs to read that on consumption. Entries are removed when exhausted,
- * so the map does not grow. */
-const MINTED_MANUAL_ACTIONS = new Map();
-
-/* IS A REAL PERSON DOING SOMETHING RIGHT NOW.
+ * `event.isTrusted` is set by the user agent and page script cannot forge it,
+ * so a capture-phase listener knows a real person acted. The hard part is the
+ * WINDOW — how long that stays true.
  *
- * In the browser this is `event.isTrusted`, which the user agent sets and page
- * script cannot forge — the one primitive that distinguishes a human gesture
- * from a function call, available for free, with no login and no crypto. The
- * gesture window is open for the synchronous turn of the event dispatch, which
- * is exactly when an `onclick` handler's prologue runs.
+ *   Batch 1D closed it with `setTimeout(fn, 0)`. Timers run after the microtask
+ *   queue drains, so every `.then()` continuation in the event's macrotask still
+ *   saw it open. The audit minted from one.
  *
- * Automation lives in `await` continuations and timer callbacks. It is never
- * inside a trusted gesture, so it cannot mint. That is the whole separation,
- * and for a local single-user tool it is the proportionate amount of it. */
+ *   Closing on a microtask instead is WRONG IN THE OTHER DIRECTION, and only a
+ *   real browser shows it: the event loop runs a microtask checkpoint whenever
+ *   the JS stack empties, which is after EVERY listener — so a microtask queued
+ *   during the capture phase runs before the target's own handler, and every
+ *   approval in the product refuses.
+ *
+ * So the window is not a span of time at all. It is AN EVENT DISPATCH, and the
+ * question is whether the code asking is running inside the one that opened it:
+ *
+ *     window.event === the trusted event this gesture was opened for
+ *
+ * `window.event` is set by the user agent around each listener invocation and
+ * restored afterwards, so it is exactly true inside the synchronous handler and
+ * exactly false in every continuation the handler queues — an `await` resumption,
+ * a `.then()`, a timer, an automation loop. No timer, no span, no leak.
+ *
+ * In a bare Node process there is no dispatch to be inside; the composition that
+ * owns the event target is the boundary, and the stored gesture is the whole
+ * check. tests/render-harness.js sets `context.event` around its dispatch, so
+ * the page code it runs is held to the same rule the browser holds it to. */
 let TRUSTED_GESTURE = null;
 let GESTURE_SEQUENCE = 0;
-let MANUAL_ACTION_SEQUENCE = 0;
 
-/* Composition installs this once. Absent — which is the state in a bare Node
-   process — every mint FAILS CLOSED. A test harness installs its own gate and
-   drives it explicitly; that is a seam in the composition, not a hole in the
-   model, and `manualActionSourceInstalled()` reports which one is in force. */
+/* Composition installs a source once. Absent — which is the state in a bare
+   Node process — every Canon write FAILS CLOSED. */
 let MANUAL_ACTION_SOURCE = "";
 
-function openTrustedGesture(kind) {
-  GESTURE_SEQUENCE += 1;
-  TRUSTED_GESTURE = { id: `gesture-${GESTURE_SEQUENCE}`, kind: kernelText(kind) };
-  return TRUSTED_GESTURE;
-}
-function closeTrustedGesture() {
-  TRUSTED_GESTURE = null;
-}
 function trustedGestureOpen() {
   return !!TRUSTED_GESTURE;
 }
@@ -276,174 +266,97 @@ function manualActionSourceInstalled() {
   return MANUAL_ACTION_SOURCE;
 }
 
-/* THE BROWSER INSTALLER. Capture phase, so it runs before any handler; a
-   macrotask closes the window, so the gesture covers the synchronous prologue
-   of the handler and nothing that resumes later. */
-/* 1D-01 — INSTALL ONCE, AND ONLY FROM THE COMPOSITION THAT BOOTS THE PAGE.
+/* THE EVENT CURRENTLY BEING DISPATCHED, or null.
  *
- * bootstrap.js calls this before load(). Any later call is refused, so page
- * script cannot install a second source on an event target it controls and
- * then fire its own events at it. There is exactly one source per process and
- * the first caller — the composition root — decides what it is. */
-function installBrowserManualActionSource(target, schedule) {
+ * READ THROUGH THE PROTOTYPE ACCESSOR THE USER AGENT DEFINED, captured once at
+ * install time. `window.event` is an attribute on the Window interface, so it
+ * lives as an accessor on the prototype — and page script can shadow it with an
+ * own property (`Object.defineProperty(window, "event", { get })`) that returns
+ * whatever it likes. Calling the original getter with `window` as the receiver
+ * steps over any such shadow, so the answer comes from the user agent rather
+ * than from whoever last assigned to the name.
+ *
+ * This is not a defence against a hostile operator of the machine, which stays
+ * explicitly out of scope. It closes the ORDINARY mistake: code that reassigns a
+ * global and is then believed. */
+let NATIVE_EVENT_GETTER = null;
+function captureNativeEventGetter() {
+  if (typeof window === "undefined" || !window) return;
+  for (let scope = Object.getPrototypeOf(window); scope; scope = Object.getPrototypeOf(scope)) {
+    const descriptor = Object.getOwnPropertyDescriptor(scope, "event");
+    if (descriptor && typeof descriptor.get === "function") { NATIVE_EVENT_GETTER = descriptor.get; return; }
+  }
+}
+function dispatchingEvent() {
+  if (typeof window === "undefined" || !window) return null;
+  if (NATIVE_EVENT_GETTER) {
+    try { return NATIVE_EVENT_GETTER.call(window) || null; } catch { return null; }
+  }
+  return window.event || null;
+}
+/* Does this runtime report the current dispatch at all. A window without it is
+   a runtime this build does not know how to scope a gesture in, and the answer
+   there is to refuse rather than to fall back to a span of time — falling back
+   is what every earlier batch did, and it is the hole each audit walked in. */
+function dispatchScopeAvailable() {
+  return typeof window !== "undefined" && !!window && "event" in window;
+}
+
+/* THE BROWSER INSTALLER, AND THE ONLY WAY THE WINDOW OPENS.
+ *
+ * INSTALL ONCE, AND ONLY FROM THE COMPOSITION THAT BOOTS THE PAGE.
+ * public/bootstrap.js calls this before load(). Any later call is refused, so
+ * page script cannot install a second source on an event target it controls and
+ * then fire its own events at it.
+ *
+ * RETURNS `endGesture` TO ITS ONE CALLER. Not exported, not on `window`: the
+ * composition root gets a handle that can only ever CLOSE the window, which is
+ * the direction that refuses more Canon rather than less. A test composition
+ * that must assert the refusal path uses it; nothing inside the page can. */
+function installBrowserManualActionSource(target) {
   if (MANUAL_ACTION_SOURCE) return false;
   const root = target || (typeof document !== "undefined" ? document : null);
   if (!root || typeof root.addEventListener !== "function") return false;
-  const later = typeof schedule === "function" ? schedule : (fn) => setTimeout(fn, 0);
   for (const type of ["click", "keydown", "change", "submit"]) {
     root.addEventListener(type, (event) => {
       if (!event || event.isTrusted !== true) return;
-      openTrustedGesture(type);
-      later(closeTrustedGesture);
+      GESTURE_SEQUENCE += 1;
+      /* The EVENT is kept, not a timestamp. It is what the check compares. */
+      TRUSTED_GESTURE = { id: `gesture-${GESTURE_SEQUENCE}`, kind: kernelText(type), event };
     }, true);
   }
+  captureNativeEventGetter();
   MANUAL_ACTION_SOURCE = "browser-trusted-event";
-  return true;
+  return { ok: true, endGesture: () => { TRUSTED_GESTURE = null; } };
 }
 
-/* THERE IS NO SYNTHETIC GESTURE SOURCE. Batch 1C shipped one — an exported
- * `installHarnessManualActionSource` that opened the window with no event at
- * all — and the 1C acceptance audit used it from ordinary browser code to mint
- * `actor: "human"`. A test-only door in a shipped module is a door.
- *
- * There is now exactly one way to open the gesture window: a trusted event
- * delivered by a user agent to the event target the composition root installed
- * on. Tests drive that same path from OUTSIDE the page scope — see
- * tests/authority-test-gesture.js — because the test composition owns the DOM
- * double and page script does not. */
-
-/* MINT. Called at the top of an explicit manual approval handler, synchronously,
-   while the gesture is still open.
- *
- * `targets` binds the token to exactly what it may authorize — a batch approval
- * of four slots mints one token for those four and nothing else. Each target is
- * consumable once, so a token cannot be replayed, and a token for slot A cannot
- * approve slot B.
- *
- * 1D-02 — AND TO THE EXACT DECISION. A target alone was not enough: the 1C
- * audit minted a capability while the modal displayed value A / asset-A and
- * committed value B / asset-B against the same target. A capability now means
- *
- *     THIS gesture, approving THIS target, with THESE bytes.
- *
- * A target entry may carry `value` and `assetId`. When it does, the commit must
- * present the same ones or it is refused as stale. A bare target (no value) is
- * still accepted for the callers that genuinely cannot know the filename until
- * after an await — a rename, say — but every creator-facing approval binds the
- * value, and tests/dogfood2-p0-architecture.js pins which ones. */
-function beginManualAuthorityAction(details = {}) {
-  const it = kernelObject(details);
-  if (!TRUSTED_GESTURE) {
+/* THE ONE CHECK. Called inside the Canon write, never before it, never by a
+   caller who then does something else with the answer. */
+function requireTrustedGesture(what) {
+  const gesture = TRUSTED_GESTURE;
+  const refuse = () => {
     throw authorityError(
       "MANUAL_ACTION_REQUIRED",
-      "Production authority may only be established by an explicit human approval action. No authority was written.",
+      `${what} can only be approved by an explicit human approval action. No authority was written.`,
       { source: MANUAL_ACTION_SOURCE || "none" },
     );
-  }
-  /* Each entry keeps its own declared value/asset, so one batch token can bind
-     four different files to four different targets. A top-level `value` /
-     `assetId` is the single-target shorthand. */
-  const entries = [];
-  for (const raw of kernelList(it.targets)) {
-    const target = authorityTarget(raw);
-    if (!target) continue;
-    const row = kernelObject(raw);
-    entries.push({
-      key: target.key,
-      value: kernelText(row.value) || kernelText(it.value),
-      assetId: kernelText(row.assetId) || kernelText(it.assetId),
-    });
-  }
-  if (!entries.length) {
-    throw authorityError(
-      "MANUAL_ACTION_TARGET_REQUIRED",
-      "An approval action must name at least one complete production target. No authority was written.",
-    );
-  }
-  MANUAL_ACTION_SEQUENCE += 1;
-  const token = { manualAction: `manual-${MANUAL_ACTION_SEQUENCE}` };
-  MINTED_MANUAL_ACTIONS.set(token, {
-    via: kernelText(it.via) || "unspecified-manual-surface",
-    gestureId: TRUSTED_GESTURE.id,
-    gestureKind: TRUSTED_GESTURE.kind,
-    remaining: new Map(entries.map((entry) => [entry.key, entry])),
-  });
-  return token;
-}
-
-/* READ-ONLY: may this token authorize this target. Used by a caller that wants
-   to check before doing expensive work; consumption still happens in the
-   command. */
-function manualActionCovers(token, target) {
-  const record = MINTED_MANUAL_ACTIONS.get(token);
-  const wanted = authorityTarget(target);
-  return !!record && !!wanted && record.remaining.has(wanted.key);
-}
-
-/* CONSUME. Private to the transaction below — a caller cannot spend a token
-   without also committing through the kernel, which is what stops "mint, spend,
-   write nothing" and "mint once, write twice". */
-function consumeManualAction(token, target, value, assetId) {
-  const record = MINTED_MANUAL_ACTIONS.get(token);
-  if (!record) {
-    throw authorityError(
-      "MANUAL_ACTION_INVALID",
-      "This approval was not issued by an explicit human action. No authority was written.",
-    );
-  }
-  const wanted = authorityTarget(target);
-  if (!wanted || !record.remaining.has(wanted.key)) {
-    throw authorityError(
-      "MANUAL_ACTION_TARGET_MISMATCH",
-      "This approval action does not cover the object being approved. No authority was written.",
-      { expected: [...record.remaining.keys()], received: wanted ? wanted.key : "" },
-    );
-  }
-  /* 1D-02 — THE DECISION, NOT JUST THE TARGET. If the gesture named the bytes,
-     the commit must present the same bytes. A selection that changed after the
-     capability was minted is STALE and is refused; it is never silently
-     approved instead. */
-  const bound = record.remaining.get(wanted.key);
-  const wantedValue = kernelText(value);
-  const wantedAsset = kernelText(assetId);
-  if (bound.value && bound.value !== wantedValue) {
-    throw authorityError(
-      "MANUAL_ACTION_VALUE_STALE",
-      "The selection changed after you confirmed it, so CineBraid did not approve the new one. Choose again and confirm. No authority was written.",
-      { expected: bound.value, received: wantedValue },
-    );
-  }
-  if (bound.assetId && bound.assetId !== wantedAsset) {
-    throw authorityError(
-      "MANUAL_ACTION_ASSET_STALE",
-      "The image changed after you confirmed it, so CineBraid did not approve the new one. Choose again and confirm. No authority was written.",
-      { expected: bound.assetId, received: wantedAsset },
-    );
-  }
-  /* And the reverse: a capability minted against a specific asset may not be
-     spent on a request that has forgotten the identity. */
-  if (bound.assetId && !wantedAsset) {
-    throw authorityError(
-      "MANUAL_ACTION_ASSET_STALE",
-      "The approval no longer identifies the exact image it was confirmed for. Choose again and confirm. No authority was written.",
-      { expected: bound.assetId, received: "" },
-    );
-  }
-  record.remaining.delete(wanted.key);
-  if (!record.remaining.size) MINTED_MANUAL_ACTIONS.delete(token);
-  return { via: record.via, gestureId: record.gestureId, gestureKind: record.gestureKind };
+  };
+  if (!gesture) refuse();
+  /* Wherever the runtime can tell us, the answer is whether we are INSIDE the
+     dispatch of the very event this gesture was opened for. A continuation —
+     `await`, `.then()`, a timer, an automation loop — is not. */
+  if (dispatchScopeAvailable() && dispatchingEvent() !== gesture.event) refuse();
+  return { id: gesture.id, kind: gesture.kind };
 }
 
 /* ========================================================================== */
 /* 3. LEDGER VALIDATION — the whole schema, at every read                     */
 /* ========================================================================== */
 
-/* ONE RECEIPT, CHECKED COMPLETELY.
- *
- * The re-audit's §3.2 list is this function's specification: id, actor, act,
- * command, command/kind agreement, canonical target, target-key agreement with
- * the component fields, value, status, sequence, and the provenance marker that
- * says a trusted manual action issued it. */
+/* ONE RECEIPT, CHECKED COMPLETELY: id, actor, act, command, command/kind
+   agreement, canonical target, target-key agreement with the component fields,
+   value, status, sequence, and the marker that says a trusted human action
+   issued it. */
 function validateReceiptShape(row, index) {
   const problems = [];
   const receipt = kernelObject(row);
@@ -460,7 +373,7 @@ function validateReceiptShape(row, index) {
   if (!target) problems.push({ code: "receipt-target-invalid", ...at, kind: kernelText(receipt.kind || receipt.targetType) });
   else {
     /* THE KEY IS RE-DERIVED FROM THE PARTS. A stored key that disagrees with the
-       fields beside it is the forgery the re-audit walked in through. */
+       fields beside it is a forgery. */
     if (kernelText(receipt.targetKey) && kernelText(receipt.targetKey) !== target.key) {
       problems.push({ code: "receipt-target-key-mismatched", ...at, stored: kernelText(receipt.targetKey), derived: target.key });
     }
@@ -472,29 +385,26 @@ function validateReceiptShape(row, index) {
   if (!AUTHORITY_RECEIPT_STATES.includes(kernelText(receipt.status))) problems.push({ code: "receipt-status-invalid", ...at, status: kernelText(receipt.status) });
   const sequence = kernelInteger(receipt.sequence);
   if (sequence === null || sequence < 1) problems.push({ code: "receipt-sequence-invalid", ...at, sequence: receipt.sequence });
-  /* THE MARKER A TRUSTED MANUAL ACTION LEAVES. Not a credential — the token was
-     the credential and it was consumed at commit — but a receipt that does not
-     carry it was not written by this kernel, and the kernel will not vouch for
-     it. */
+  /* THE MARKER A TRUSTED HUMAN ACTION LEAVES. Not a credential — there is no
+     credential — but a receipt that does not carry it was not written by this
+     kernel, and the kernel will not vouch for it. */
   if (!kernelText(kernelObject(receipt.provenance).manualAction)) problems.push({ code: "receipt-provenance-missing", ...at });
   return { ok: !problems.length, receipt: problems.length ? null : { ...receipt, target }, problems };
 }
 
-/* THE WHOLE LEDGER, AND THE CROSS-ROW RULES no single row can enforce:
-   unique ids, unique sequences, and EXACTLY ONE CURRENT RECEIPT PER TARGET.
+/* THE WHOLE LEDGER, AND THE CROSS-ROW RULES no single row can enforce: unique
+   ids, unique sequences, and EXACTLY ONE CURRENT RECEIPT PER TARGET.
  *
  * FAILS CLOSED AND DOES NOT REPAIR. A malformed ledger yields `trusted: false`
- * and a diagnostic list; every authority question then answers "no". Silently
- * dropping the bad rows and carrying on would be the same class of mistake as
- * inferring authority from a pointer: it invents an answer where the project
- * does not have one. */
+ * and a diagnostic list; every Canon question then answers "no". Silently
+ * dropping the bad rows would invent an answer the project does not have. */
 function validateAuthorityLedger(project) {
   const raw = kernelObject(project)[AUTHORITY_LEDGER_KEY];
   const diagnostics = [];
   if (raw === undefined || raw === null) {
     /* NO LEDGER IS NOT A MALFORMED LEDGER. It is a project in which nobody has
-       approved anything yet — every pre-1B project, and the honest answer for
-       every legacy pointer in it. */
+       approved anything yet — every pre-receipt project, and the honest answer
+       for every legacy pointer in it. */
     return { present: false, trusted: true, version: AUTHORITY_LEDGER_VERSION, receipts: [], byTarget: new Map(), diagnostics };
   }
   if (typeof raw !== "object" || Array.isArray(raw)) {
@@ -533,8 +443,7 @@ function validateAuthorityLedger(project) {
     receipts.push(outcome.receipt);
   }
   /* Exactly one current per target. Two is not "the newest wins" — it is a
-     ledger nobody can read, and reading it anyway is how the re-audit got a
-     silent winner. */
+     ledger nobody can read. */
   const byTarget = new Map();
   for (const receipt of receipts) {
     const key = receipt.target.key;
@@ -558,7 +467,7 @@ function validateAuthorityLedger(project) {
   };
 }
 
-/* The diagnostic a surface prints when a project's authority cannot be read.
+/* The diagnostic a surface prints when a project's Canon cannot be read.
    Deterministic ordering, so the same damage produces the same message. */
 function authorityLedgerDiagnostics(project) {
   const view = validateAuthorityLedger(project);
@@ -568,36 +477,312 @@ function authorityLedgerDiagnostics(project) {
 }
 
 /* ========================================================================== */
-/* 4. READING AUTHORITY                                                       */
+/* 4. THE LIVE EDGE — private, fixed, one implementation                      */
 /* ========================================================================== */
 
-/* WHAT THE PROJECT CURRENTLY SAYS is approved for this target — the live edge,
-   read without interpretation. Supplied by the host module, which knows the
-   document shape; the kernel knows only that an edge has a value and maybe an
-   asset id. */
-let EDGE_READER = null;
-function installAuthorityEdgeReader(reader) {
-  EDGE_READER = typeof reader === "function" ? reader : null;
-  return EDGE_READER;
+/* WHERE EVERY CANON EDGE LIVES, for all four target kinds.
+ *
+ * This used to be installed from public/shared-production-authority.js through
+ * `installAuthorityEdgeReader`, with a matching `installAuthorityEdgeWriter`,
+ * an `installAuthorityOwnershipPolicy` and an `installAuthorityProjectCommitter`
+ * beside them. All four were exported, none was install-once, and the 1D audit
+ * replaced the writer with a closure that mutated the live project and threw.
+ *
+ * There is no installer now. The kernel knows CineBraid's document shape, and
+ * the reader and writer below are the same knowledge stated twice — read where
+ * the writer writes — so the post-commit "does the project agree with the
+ * receipt" check compares like with like. */
+
+/* A shot edge's durable asset identity. `stampShotApprovalIdentity` in
+   shared-media-disposition.js writes `<field>AssetId`; the legacy
+   `approvalIdentity.<field>` shape is still accepted on read because a project
+   may carry it, but nothing writes it any more. */
+function shotEdgeAssetId(record, field) {
+  const it = kernelObject(record);
+  return kernelText(it[`${field}AssetId`]) || kernelText(kernelObject(it.approvalIdentity)[field]);
 }
+
+/* Which half of the delivery pointer currently holds the shot's deliverable,
+   and the identity stamped beside it. One place, so read and write and clear
+   cannot disagree about what "the delivery edge" is. */
+function deliveryEdgeOf(shot) {
+  const s = kernelObject(shot);
+  const creation = kernelObject(s.creationBrief);
+  const still = kernelText(s.finalStillFile) || kernelText(creation.finalStillFile);
+  if (still) {
+    return { form: "still", value: still, assetId: kernelText(s.finalStillAssetId) || kernelText(creation.finalStillAssetId) };
+  }
+  const motion = kernelText(creation.approvedMotionFile);
+  if (motion) return { form: "video", value: motion, assetId: kernelText(creation.approvedMotionAssetId) };
+  return { form: "", value: "", assetId: "" };
+}
+
+function readAuthorityEdge(project, target) {
+  const P = kernelObject(project);
+  const it = kernelObject(target);
+  const shot = () => kernelList(P.shots).map(kernelObject).find((row) => kernelText(row.id) === it.shotId) || null;
+  const entity = () => kernelList(P[it.list]).map(kernelObject).find((row) => kernelText(row.id) === it.entityId) || null;
+  if (it.kind === "shot-frame") {
+    const s = shot();
+    if (!s) return { value: "", assetId: "" };
+    const frames = kernelList(s.keyframes).map(kernelObject);
+    const index = frames.findIndex((row) => kernelText(row.id) === it.frameId);
+    if (index < 0) return { value: "", assetId: "" };
+    const frame = frames[index];
+    /* The opening frame's Canon may live on the shot, which is where the manual
+       path has always written it. Both are the same edge. */
+    const value = kernelText(frame.winner) || (index === 0 ? kernelText(s.winner) : "");
+    const assetId = shotEdgeAssetId(frame, "winner") || (index === 0 ? shotEdgeAssetId(s, "winner") : "");
+    return { value, assetId };
+  }
+  if (it.kind === "shot-motion") {
+    const s = shot();
+    if (!s) return { value: "", assetId: "" };
+    const unit = kernelList(s.clips).map(kernelObject).find((row) => kernelText(row.id) === it.unitKey || kernelText(row.suffix) === it.unitKey);
+    if (!unit) return { value: "", assetId: "" };
+    return { value: kernelText(unit.videoWinner), assetId: shotEdgeAssetId(unit, "videoWinner") };
+  }
+  if (it.kind === "shot-delivery") {
+    const s = shot();
+    if (!s) return { value: "", assetId: "" };
+    /* S5A — DELIVERY IS NOT STRUCTURALLY SPECIAL. It reports its asset identity
+       like every other Canon edge. Batch 1D returned a hard-coded `assetId: ""`
+       here while approval callers stamped one into the receipt, so a delivery
+       receipt could never be checked against the bytes it named. */
+    const edge = deliveryEdgeOf(s);
+    return { value: edge.value, assetId: edge.assetId };
+  }
+  if (it.kind === "entity-state") {
+    const x = entity();
+    if (!x) return { value: "", assetId: "" };
+    const states = kernelList(x.continuityStates).map(kernelObject);
+    const state = states.find((row) => kernelText(row.id) === it.stateId);
+    if (state) {
+      const own = kernelText(state.approvedFile);
+      if (own) return { value: own, assetId: kernelText(state.approvedAssetId) };
+      /* A non-default state with no file of its own is NOT answered by the
+         entity's primary — that substitution is the state-authority defect. */
+      return state.isDefault === true
+        ? { value: kernelText(x.approvedFile), assetId: kernelText(x.approvedAssetId) }
+        : { value: "", assetId: "" };
+    }
+    return it.stateId === "state-default"
+      ? { value: kernelText(x.approvedFile), assetId: kernelText(x.approvedAssetId) }
+      : { value: "", assetId: "" };
+  }
+  return { value: "", assetId: "" };
+}
+
 function liveAuthorityEdge(project, target) {
   const wanted = authorityTarget(target);
-  if (!wanted || !EDGE_READER) return { value: "", assetId: "" };
-  const edge = kernelObject(EDGE_READER(project, wanted));
+  if (!wanted) return { value: "", assetId: "" };
+  const edge = kernelObject(readAuthorityEdge(project, wanted));
   return { value: kernelText(edge.value), assetId: kernelText(edge.assetId) };
 }
 
-/* IS THERE CURRENT HUMAN AUTHORITY over this object.
+/* WRITING THE EDGE. The exact mirror of the reader above, and private for the
+   same reason: a caller-supplied writer is a closure over whatever the caller
+   chose, which is how the 1D audit mutated a live project from inside a
+   transaction that then threw.
  *
- * Four conditions, and every one of them is a counterexample the re-audit
+ * Returns false when the target is not in the project, so the transaction can
+ * refuse before it writes a receipt for something that does not exist. */
+function writeAuthorityEdge(draft, target, details) {
+  const P = kernelObject(draft);
+  const it = kernelObject(target);
+  const value = kernelText(kernelObject(details).value);
+  const assetId = kernelText(kernelObject(details).assetId);
+  const at = kernelText(kernelObject(details).at);
+  /* A CLEAR IS THE SAME WRITE WITH NO VALUE. The identity goes with it — a
+     stale asset id that outlived the approval justifying it would silently
+     re-resolve later. */
+  const stampShot = (record, field) => {
+    if (!record) return;
+    if (assetId) record[`${field}AssetId`] = assetId;
+    else if (!value) delete record[`${field}AssetId`];
+  };
+  const shot = () => kernelList(P.shots).find((row) => row && kernelText(row.id) === it.shotId) || null;
+
+  if (it.kind === "shot-frame") {
+    const s = shot();
+    if (!s) return false;
+    const frames = kernelList(s.keyframes);
+    const index = frames.findIndex((row) => row && kernelText(row.id) === it.frameId);
+    if (index < 0) return false;
+    frames[index].winner = value;
+    stampShot(frames[index], "winner");
+    /* The opening frame's Canon is also the shot's headline image. Both are the
+       same edge, and readAuthorityEdge falls back to it. */
+    if (index === 0) { s.winner = value; stampShot(s, "winner"); }
+    return true;
+  }
+  if (it.kind === "shot-motion") {
+    const s = shot();
+    if (!s) return false;
+    const unit = kernelList(s.clips).find((row) => row && (kernelText(row.id) === it.unitKey || kernelText(row.suffix) === it.unitKey));
+    if (!unit) return false;
+    unit.videoWinner = value;
+    stampShot(unit, "videoWinner");
+    return true;
+  }
+  if (it.kind === "shot-delivery") {
+    const s = shot();
+    if (!s) return false;
+    s.creationBrief = s.creationBrief && typeof s.creationBrief === "object" ? s.creationBrief : {};
+    if (!value) {
+      /* S5B — REVOCATION KNOWS ITS TARGET KIND, AND CLEARS ALL OF IT.
+       *
+       * Batch 1D decided still-versus-video from the NEW value's extension. On a
+       * revocation the new value is empty, so every video revocation took the
+       * still branch: it cleared `finalStillFile`, left `approvedMotionFile`
+       * behind, and the revoked video pointer stayed in the document.
+       *
+       * The inference is deleted. `shot-delivery` names ONE edge — the shot's
+       * final deliverable pointer — and clearing that edge clears the pointer in
+       * whichever form it took, with its identity. `deliveryIntent` is the
+       * creator's PLAN, not Canon, and is left alone; and `s.winner` is the
+       * OPENING FRAME's edge, so this must never touch it. */
+      delete s.finalStillFile;
+      delete s.finalStillAssetId;
+      delete s.creationBrief.finalStillFile;
+      delete s.creationBrief.finalStillAssetId;
+      delete s.creationBrief.approvedMotionFile;
+      delete s.creationBrief.approvedMotionAssetId;
+      return true;
+    }
+    /* Which delivery form this is, is a fact about the bytes. Establishing one
+       form clears the other, so the shot has exactly one deliverable. */
+    if (/\.(mp4|mov|webm|m4v|avi|mkv)$/i.test(value)) {
+      delete s.finalStillFile;
+      delete s.finalStillAssetId;
+      delete s.creationBrief.finalStillFile;
+      delete s.creationBrief.finalStillAssetId;
+      s.creationBrief.approvedMotionFile = value;
+      if (assetId) s.creationBrief.approvedMotionAssetId = assetId;
+      else delete s.creationBrief.approvedMotionAssetId;
+      s.creationBrief.deliveryIntent = "video";
+    } else {
+      delete s.creationBrief.approvedMotionFile;
+      delete s.creationBrief.approvedMotionAssetId;
+      s.finalStillFile = value;
+      s.creationBrief.finalStillFile = value;
+      if (assetId) { s.finalStillAssetId = assetId; s.creationBrief.finalStillAssetId = assetId; }
+      else { delete s.finalStillAssetId; delete s.creationBrief.finalStillAssetId; }
+      s.creationBrief.deliveryIntent = "still";
+    }
+    return true;
+  }
+  if (it.kind === "entity-state") {
+    const x = kernelList(P[it.list]).find((row) => row && kernelText(row.id) === it.entityId) || null;
+    if (!x) return false;
+    const states = kernelList(x.continuityStates);
+    const state = states.find((row) => row && kernelText(row.id) === it.stateId) || null;
+    if (!state && it.stateId !== "state-default") return false;
+    if (state) {
+      state.approvedFile = value;
+      state.approvedAt = at;
+      state.parentValidation = null;
+      if (assetId) state.approvedAssetId = assetId;
+      else if (!value) delete state.approvedAssetId;
+    }
+    if (!state || state.isDefault === true || kernelText(state.id) === "state-default") {
+      x.approvedFile = value;
+      if (assetId) x.approvedAssetId = assetId;
+      else if (!value) delete x.approvedAssetId;
+    }
+    return true;
+  }
+  return false;
+}
+
+/* ========================================================================== */
+/* 5. OWNERSHIP — a property of the target kind, not a parameter              */
+/* ========================================================================== */
+
+/* WHICH REFERENCE OWNS THESE BYTES.
+ *
+ * Batch 1C asked the caller for an `eligibility` callback and ran it only "if
+ * function", so passing `() => ({ok:true})` made a contested file Canon. Batch
+ * 1D deleted the parameter and replaced it with an exported
+ * `installAuthorityOwnershipPolicy`, which ordinary code overwrote after boot
+ * and then approved the same contested file.
+ *
+ * There is no parameter and no installer. The kernel depends on
+ * public/shared-entity-ownership.js the way any module depends on another: by
+ * name, resolved at call time. If that module is not in the composition, entity
+ * Canon FAILS CLOSED rather than proceeding uninformed.
+ *
+ *   entity-state   the file must have exactly one durable owner, and it must be
+ *                  the entity being approved. Zero owners, an inferred prefix
+ *                  match, or two claimants all refuse.
+ *   shot-*         no ownership concept — a shot's own take belongs to the shot. */
+function ownershipModule() {
+  if (typeof module !== "undefined" && module.exports) {
+    try { return require("./shared-entity-ownership.js"); } catch { return null; }
+  }
+  if (typeof buildEntityOwnerIndex === "function" && typeof resolveMediaOwnership === "function") {
+    return { buildEntityOwnerIndex, resolveMediaOwnership };
+  }
+  if (typeof globalThis !== "undefined" && typeof globalThis.buildEntityOwnerIndex === "function" && typeof globalThis.resolveMediaOwnership === "function") {
+    return { buildEntityOwnerIndex: globalThis.buildEntityOwnerIndex, resolveMediaOwnership: globalThis.resolveMediaOwnership };
+  }
+  return null;
+}
+
+function entityOwnershipVerdict(project, target, fileName) {
+  const need = kernelObject(target);
+  const name = kernelText(fileName);
+  if (!name) return { ok: true };
+  const owners = ownershipModule();
+  if (!owners || typeof owners.buildEntityOwnerIndex !== "function" || typeof owners.resolveMediaOwnership !== "function") {
+    return {
+      ok: false,
+      code: "AUTHORITY_OWNERSHIP_RESOLVER_UNAVAILABLE",
+      message: `CineBraid cannot confirm which reference owns ${name}, so it will not make it canon. No authority was written.`,
+    };
+  }
+  const resolution = kernelObject(owners.resolveMediaOwnership(owners.buildEntityOwnerIndex(project, need.list), name));
+  if (resolution.contested === true) {
+    return {
+      ok: false,
+      code: "AUTHORITY_OWNERSHIP_CONTESTED",
+      message: `${name} is durably claimed by more than one reference (${kernelList(resolution.claimants).join(", ")}). Resolve the conflict before approving it. No authority was written.`,
+    };
+  }
+  if (resolution.authoritative !== true || kernelText(resolution.ownerId) !== kernelText(need.entityId)) {
+    return {
+      ok: false,
+      code: "AUTHORITY_OWNERSHIP_UNRESOLVED",
+      message: `${name} is not durably owned by ${need.entityId}${kernelText(resolution.basis) === "prefix-inference" ? " — a filename match is a possible match, not ownership. Claim it for this reference first." : "."} No authority was written.`,
+    };
+  }
+  return { ok: true };
+}
+
+function enforceTargetPolicy(project, target, value) {
+  if (target.kind !== "entity-state") return;
+  const verdict = kernelObject(entityOwnershipVerdict(project, target, value));
+  if (verdict.ok === true) return;
+  throw authorityError(
+    kernelText(verdict.code) || "AUTHORITY_OWNERSHIP_INELIGIBLE",
+    kernelText(verdict.message) || `${describeTarget(target)} cannot be approved for this image.`,
+  );
+}
+
+/* ========================================================================== */
+/* 6. READING CANON                                                           */
+/* ========================================================================== */
+
+/* IS THERE CURRENT HUMAN CANON over this object.
+ *
+ * Four conditions, and every one of them is a counterexample a re-audit
  * reproduced when it was missing:
  *
  *   the LEDGER is trustworthy   — a malformed ledger answers "no" for
  *                                 everything, rather than for nothing
  *   exactly ONE current receipt — two current rows is unreadable, not "latest"
  *   the receipt is VALID        — full schema, checked in validateAuthorityLedger
- *   the EDGE still matches      — a writer that cleared the pointer without
- *                                 revoking still loses authority. FAIL CLOSED.
+ *   the EDGE still matches      — exactly, in both halves. FAIL CLOSED.
  *
  * Returns the receipt, never a boolean, because every caller that matters wants
  * to cite it. */
@@ -611,26 +796,25 @@ function currentHumanAuthority(project, target) {
   const receipt = bucket.current[0];
   const live = liveAuthorityEdge(project, wanted);
   if (!live.value) return null;
-  /* 1D-05 — AGREEMENT, NOT EITHER-OR.
+  /* S5 — IDENTITY IS SYMMETRIC.
    *
-   * This was `byName || byIdentity`, and the 1C audit showed what that buys: a
-   * receipt whose assetId had been changed to name different bytes stayed
-   * current because the filename still matched. One contradictory field is a
-   * contradiction; it is not a half-match to be rounded up.
+   * Batch 1D compared asset ids only "where both sides carry one", and the
+   * audit deleted the live identity from an edge whose receipt named `asset-A`:
+   * the filename still matched, so the approval survived pointing at bytes
+   * nothing could confirm.
    *
-   * THE RULE, and there is only one: the filename must match exactly, and
-   * where BOTH sides carry an asset identity that must match exactly too. A
-   * side that has no identity recorded is not a contradiction — plenty of
-   * legitimate edges predate identity stamping — but two identities that
-   * disagree are.
+   * THE RULE, and there is only one: the value must match exactly, and if the
+   * RECEIPT records an asset identity the live edge must record the same one.
+   * A live edge that has lost its identity is a contradiction, not a half-match
+   * to be rounded up. A receipt with no identity — a project whose media ledger
+   * had not been indexed when the creator approved — asks nothing extra.
    *
-   * A legitimate rename does not need this to be loose: repairAuthorityValue()
-   * is the explicit operation that moves an approval to a new filename and
-   * keeps the receipt true. */
+   * A legitimate rename does not need this to be loose: repairCanonValue() is
+   * the explicit operation that moves an approval to new bytes and keeps the
+   * receipt true. */
   if (live.value !== kernelText(receipt.value)) return null;
   const receiptAsset = kernelText(receipt.assetId);
-  const liveAsset = kernelText(live.assetId);
-  if (receiptAsset && liveAsset && receiptAsset !== liveAsset) return null;
+  if (receiptAsset && receiptAsset !== kernelText(live.assetId)) return null;
   return receipt;
 }
 
@@ -648,9 +832,9 @@ function authorityHistory(project, target) {
   return (view.byTarget.get(wanted.key) || { all: [] }).all.slice();
 }
 
-/* A POINTER NOBODY APPROVED. Not an error and not hidden: it is a real
-   selection somebody's machine made, and the product shows it as a
-   recommendation a person can accept in one act. */
+/* HISTORIC — A POINTER NOBODY CURRENTLY VOUCHES FOR. Not an error and not
+   hidden: it is a real selection somebody's machine made, and the product shows
+   it as something a person can accept in one act. It is never Canon. */
 function historicSelection(project, target) {
   const wanted = authorityTarget(target);
   if (!wanted) return null;
@@ -659,33 +843,121 @@ function historicSelection(project, target) {
   if (currentHumanAuthority(project, wanted)) return null;
   const view = validateAuthorityLedger(project);
   const bucket = view.byTarget.get(wanted.key);
-  const revoked = bucket ? bucket.all.filter((row) => kernelText(row.status) !== "current") : [];
+  const priors = bucket ? bucket.all.filter((row) => kernelText(row.status) !== "current") : [];
   return {
     ...wanted,
     value: live.value,
     assetId: live.assetId,
-    basis: !view.trusted ? "authority-ledger-unreadable" : revoked.length ? "authority-revoked" : "no-human-receipt",
-    priorReceiptCount: revoked.length,
+    basis: !view.trusted ? "authority-ledger-unreadable" : priors.length ? "authority-revoked" : "no-human-receipt",
+    priorReceiptCount: priors.length,
     requiresHumanApproval: true,
   };
 }
 
 /* ========================================================================== */
-/* 5. THE TRANSACTION                                                         */
+/* 6A. THE ONE PROJECTION — Canon, References, Historic                       */
 /* ========================================================================== */
 
-/* THE HOST SUPPLIES PERSISTENCE. The kernel stages a complete draft document
-   and hands it over in one call; whether that is an in-memory assignment or a
-   file write is not its business. Default is a same-document apply, which is
-   what the browser needs. */
-let PROJECT_COMMITTER = null;
-function installAuthorityProjectCommitter(committer) {
-  PROJECT_COMMITTER = typeof committer === "function" ? committer : null;
-  return PROJECT_COMMITTER;
+/* S9 — ONE ANSWER, DERIVED ONCE, READ BY EVERYBODY.
+ *
+ * The 1D audit's sharpest finding was not a missing guard: it was that
+ * Generated Media, the Library and coverage automation each re-derived
+ * "approved" from raw fields, and got three different answers for the same
+ * entity. The Library counted every `slot.approvedFile` and rendered APPROVED;
+ * coverage automation promoted a receipt-less `entity.approvedFile` to
+ * identity-authority; Generated Media alone got it right.
+ *
+ * So there is one function. It is READ-ONLY DERIVED STATE — it writes nothing,
+ * caches nothing, and is not a source of truth; it is the shared reading of the
+ * two things that are (the receipt ledger, and the slots).
+ *
+ *   canon       receipt-backed, one entry per continuity state that has one
+ *   references  supporting selections — coverage and expression slots
+ *   historic    a pointer with no current Canon behind it */
+function slotsModule() {
+  if (typeof module !== "undefined" && module.exports) {
+    try { return require("./shared-entity-slots.js"); } catch { return null; }
+  }
+  if (typeof slotSelectedFile === "function") return { slotSelectedFile };
+  return null;
+}
+function selectedSlotFile(slot) {
+  const it = kernelObject(slot);
+  return kernelText(it.selectedFile) || kernelText(it.approvedFile);
 }
 
-/* Structured-clone the parts a transaction may touch. `structuredClone` when
-   the runtime has it; a JSON round trip otherwise. Both are total for project
+function entityProductionTruth(project, list, entityId) {
+  const P = kernelObject(project);
+  const x = kernelList(P[list]).map(kernelObject).find((row) => kernelText(row.id) === kernelText(entityId)) || null;
+  const empty = { list: kernelText(list), entityId: kernelText(entityId), canon: [], references: [], historic: [] };
+  if (!x) return empty;
+  const slots = slotsModule();
+  const fileOf = slots && typeof slots.slotSelectedFile === "function" ? slots.slotSelectedFile : selectedSlotFile;
+  const canon = [];
+  const historic = [];
+  /* Every continuity state is a Canon TARGET, whether or not it holds Canon.
+     The default state answers for `entity.approvedFile`, which is the pointer
+     every legacy project has and no legacy project has a receipt for. */
+  const states = kernelList(x.continuityStates).map(kernelObject);
+  const targets = states.length
+    ? states.map((state) => ({ state, stateId: kernelText(state.id) })).filter((row) => row.stateId)
+    : [{ state: { id: "state-default", name: "Default", isDefault: true }, stateId: "state-default" }];
+  for (const { state, stateId } of targets) {
+    const target = { kind: "entity-state", list, entityId, stateId };
+    const receipt = currentHumanAuthority(P, target);
+    if (receipt) {
+      canon.push({
+        stateId,
+        stateName: kernelText(state.name) || (state.isDefault ? "Default" : stateId),
+        isDefault: state.isDefault === true || stateId === "state-default",
+        value: kernelText(receipt.value),
+        assetId: kernelText(receipt.assetId),
+        receiptId: kernelText(receipt.id),
+        at: kernelText(receipt.at),
+      });
+      continue;
+    }
+    const past = historicSelection(P, target);
+    if (past) {
+      historic.push({
+        stateId,
+        stateName: kernelText(state.name) || (state.isDefault ? "Default" : stateId),
+        isDefault: state.isDefault === true || stateId === "state-default",
+        value: past.value,
+        assetId: past.assetId,
+        basis: past.basis,
+        priorReceiptCount: past.priorReceiptCount,
+      });
+    }
+  }
+  /* SUPPORTING REFERENCES. Never Canon, never historic, never counted as
+     either — a third thing, with its own name. */
+  const references = [];
+  for (const group of ["coverageSlots", "expressionSlots"]) {
+    for (const slot of kernelList(x[group]).map(kernelObject)) {
+      const value = kernelText(fileOf(slot));
+      if (!value) continue;
+      if (kernelText(slot.status) === "retired" || slot.retired === true) continue;
+      references.push({
+        group: group === "coverageSlots" ? "coverage" : "expression",
+        slotId: kernelText(slot.id),
+        label: kernelText(slot.label) || kernelText(slot.id),
+        value,
+        assetId: kernelText(slot.selectedAssetId) || kernelText(slot.approvedAssetId),
+        /* Stated, so no consumer has to infer it and none may conclude
+           otherwise: a selection is not an approval. */
+        authoritative: false,
+      });
+    }
+  }
+  return { list: kernelText(list), entityId: kernelText(entityId), canon, references, historic };
+}
+
+/* ========================================================================== */
+/* 7. THE ONE PRIVATE CANON COMMIT                                            */
+/* ========================================================================== */
+
+/* Structured-clone the parts a transaction may touch. Total for project
    documents, which are JSON by construction. */
 function draftOf(project) {
   const source = kernelObject(project);
@@ -697,16 +969,14 @@ function draftOf(project) {
  *
  * WHY THIS IS A DEEP MERGE AND NOT AN ASSIGNMENT, learned the hard way: the
  * first version did `project[key] = draft[key]`, which replaces `project.shots`
- * with the draft's cloned array. Every reference a caller was already holding —
- * `const s = shotById(id)`, `const c = ensureShotCreation(s)` — then pointed at
- * a detached object, and its later writes went nowhere. A motion approval
- * reopened on a frame change stopped reopening, because the code clearing it
- * was writing to an orphan.
+ * with the draft's cloned array. Every reference a caller was already holding
+ * then pointed at a detached object and its later writes went nowhere.
  *
- * Object identity is preserved wherever the shape matches: same array, same
- * element objects, same nested records. A commit becomes invisible to anything
- * holding a reference, which is the property a browser page needs and the one
- * an in-place mutation model has always assumed. */
+ * Object identity is preserved wherever the shape matches, so a commit is
+ * invisible to anything holding a reference — the property a browser page needs
+ * and the one an in-place mutation model has always assumed.
+ *
+ * THERE IS NO `installAuthorityProjectCommitter`. Persistence is this, fixed. */
 function mergeInPlace(live, next) {
   if (Array.isArray(live) && Array.isArray(next)) {
     for (let index = 0; index < next.length; index++) {
@@ -733,48 +1003,54 @@ function mergeInPlace(live, next) {
   }
   return live;
 }
-function applyDraftToProject(project, draft) {
-  if (typeof PROJECT_COMMITTER === "function") return PROJECT_COMMITTER(project, draft);
-  return mergeInPlace(project, draft);
-}
 
-/* THE ONE COMMAND. Every production-authority change in CineBraid comes through
-   here.
+/* THE PRIVATE CANON COMMIT. Every Canon write in CineBraid comes through here,
+ * and nothing outside this file can call it. The four named commands below are
+ * the whole public surface; each fixes its own target kind, so there is no
+ * request in which a caller names an arbitrary one.
  *
- * THE ORDER IS THE GUARANTEE, and the re-audit's §3.3 is what happens without
- * it: `applyEdge` ran first, the ledger write silently failed against a
- * non-extensible root, and the command returned a receipt id for a receipt that
- * did not exist. So:
+ * THE ORDER IS THE GUARANTEE:
  *
  *   1. resolve the target                      — nothing touched
- *   2. consume the manual action               — nothing touched
- *   3. eligibility veto (ownership)            — nothing touched
- *   4. DRAFT the document
- *   5. apply the edge to the DRAFT
- *   6. supersede + append the receipt on the DRAFT
- *   7. VALIDATE the draft's whole ledger, and the edge/receipt correspondence
- *   8. commit the draft in one write
+ *   2. require value AND a stated identity     — nothing touched
+ *   3. require a LIVE trusted human gesture    — nothing touched
+ *   4. ownership veto for the target kind      — nothing touched
+ *   5. DRAFT the document
+ *   6. write the edge on the DRAFT
+ *   7. supersede + append the receipt on the DRAFT
+ *   8. VALIDATE the draft's whole ledger, and the edge/receipt correspondence
+ *   9. commit the draft in one write, and re-read to prove it landed
  *
  * A failure at any step leaves the live document untouched, because until step
- * 8 nothing has been written to it. The manual action is consumed at step 2 and
- * that is deliberate: a refused approval burns the gesture rather than leaving
- * a live token a retry loop could spend. */
-function commitAuthorityTransaction(project, request = {}) {
+ * 9 nothing has been written to it. */
+function commitCanon(project, request, kind) {
   const it = kernelObject(request);
-  const target = authorityTarget(it);
+  const target = authorityTarget({ ...it, kind });
   if (!target) {
-    throw authorityError("AUTHORITY_TARGET_INCOMPLETE", "A production-authority command must name a complete target. No authority was written.");
+    throw authorityError("AUTHORITY_TARGET_INCOMPLETE", "A Canon approval must name a complete target. No authority was written.");
   }
   const what = describeTarget(target);
-  /* THE CREDENTIAL. Identity, not shape. */
   const value = kernelText(it.value);
-  const assetId = kernelText(it.assetId);
   if (!value) {
     throw authorityError("AUTHORITY_VALUE_REQUIRED", `${what} cannot be approved without naming the media being approved. No authority was written.`);
   }
-  /* THE CREDENTIAL. Identity, not shape — and bound to these exact bytes. */
-  const provenance = consumeManualAction(it.manualAction, target, value, assetId);
-  /* STEP 3 — the target kind's own mandatory policy. Not a parameter. */
+  /* S1A — THE IDENTITY IS NOT AN OPTIONAL PARAMETER A CALLER MAY FORGET.
+   *
+   * Batch 1D made `assetId` optional and every one of the twelve shipped
+   * surfaces omitted it. A missing key is now an error; an explicit "" is the
+   * caller stating that these bytes have no identity in this project, which is
+   * a real and common answer and a different statement from silence. */
+  if (!Object.prototype.hasOwnProperty.call(it, "assetId")) {
+    throw authorityError(
+      "AUTHORITY_ASSET_IDENTITY_REQUIRED",
+      `${what} cannot be approved without stating the identity of the media being approved. No authority was written.`,
+      { target: target.key, value },
+    );
+  }
+  const assetId = kernelText(it.assetId);
+  /* THE HUMAN, ASKED HERE AND NOWHERE ELSE. No token was minted earlier, so
+     there is nothing that could have been minted for a different decision. */
+  const gesture = requireTrustedGesture(what);
   enforceTargetPolicy(project, target, value);
   /* A ledger that is already unreadable is not something to append to. */
   const before = validateAuthorityLedger(project);
@@ -786,29 +1062,18 @@ function commitAuthorityTransaction(project, request = {}) {
     );
   }
   const draft = draftOf(project);
-  /* STEP 5 — the edge, written by the kernel's own installed writer onto the
-     draft. No caller code runs inside this transaction at all, so there is no
-     closure to reason about and no convention for a caller to forget. */
-  if (typeof AUTHORITY_EDGE_WRITER !== "function") {
-    throw authorityError(
-      "AUTHORITY_EDGE_WRITER_MISSING",
-      "CineBraid cannot record approvals because its authority edge writer is not installed. No authority was written.",
-    );
-  }
-  const wrote = AUTHORITY_EDGE_WRITER(draft, target, { value, assetId, at: kernelText(it.at) });
-  if (wrote === false) {
+  const at = kernelText(it.at);
+  if (writeAuthorityEdge(draft, target, { value, assetId, at }) === false) {
     throw authorityError(
       "AUTHORITY_TARGET_UNAVAILABLE",
       `${what} is not in this project, so there is nothing to approve. No authority was written.`,
     );
   }
-  /* STEP 6 — supersession and the new receipt, on the draft. */
   const ledger = draft[AUTHORITY_LEDGER_KEY] && typeof draft[AUTHORITY_LEDGER_KEY] === "object" && !Array.isArray(draft[AUTHORITY_LEDGER_KEY])
     ? draft[AUTHORITY_LEDGER_KEY]
     : {};
   ledger.version = kernelInteger(ledger.version) || AUTHORITY_LEDGER_VERSION;
   ledger.receipts = kernelList(ledger.receipts);
-  const at = kernelText(it.at);
   for (const row of ledger.receipts) {
     const existing = kernelObject(row);
     const existingTarget = authorityTarget(existing);
@@ -851,8 +1116,8 @@ function commitAuthorityTransaction(project, request = {}) {
     revokedAt: "",
     revocationReason: "",
     note: kernelText(it.note),
-    /* WHICH manual action issued this, and from which surface. */
-    provenance: { manualAction: kernelText(provenance.gestureId) || "manual-action", via: kernelText(provenance.via), gesture: kernelText(provenance.gestureKind) },
+    /* WHICH gesture issued this, and from which surface. */
+    provenance: { manualAction: kernelText(gesture.id) || "manual-action", via: kernelText(it.via) || "unspecified-manual-surface", gesture: kernelText(gesture.kind) },
   };
   for (const row of ledger.receipts) {
     const existing = kernelObject(row);
@@ -860,9 +1125,9 @@ function commitAuthorityTransaction(project, request = {}) {
   }
   ledger.receipts.push(receipt);
   draft[AUTHORITY_LEDGER_KEY] = ledger;
-  /* STEP 7 — the draft must be readable, and the edge it just wrote must be the
-     one the receipt describes. This is what makes the returned receipt a
-     statement about durable state rather than about an intention. */
+  /* The draft must be readable, and the edge it just wrote must be the one the
+     receipt describes. This is what makes the returned receipt a statement
+     about durable state rather than about an intention. */
   const after = validateAuthorityLedger(draft);
   if (!after.trusted) {
     throw authorityError(
@@ -878,21 +1143,16 @@ function commitAuthorityTransaction(project, request = {}) {
       { expected: value, observed: liveAuthorityEdge(draft, target).value },
     );
   }
-  /* STEP 8 — one write, AND PROOF THAT IT LANDED.
-   *
-   * The re-audit's non-extensible-root case survives everything above: the draft
-   * is a clone and therefore extensible, so it validates perfectly, and only the
-   * copy back into the live document fails — silently, because a refused
-   * property add on a non-extensible object is a no-op outside strict mode. The
-   * command would return a receipt id for a ledger the project does not have.
-   *
-   * So the live document is re-read after the write and asked the same question
-   * the caller is about to believe the answer to. If the answer is no, the
-   * pre-image goes back and the caller gets an exception instead of a lie. */
+  /* ONE WRITE, AND PROOF THAT IT LANDED. A non-extensible live root survives
+     everything above — the draft is a clone and validates perfectly, and only
+     the copy back fails, silently, because a refused property add is a no-op
+     outside strict mode. So the live document is re-read and asked the same
+     question the caller is about to believe the answer to. If the answer is no,
+     the pre-image goes back and the caller gets an exception instead of a lie. */
   const preImage = draftOf(project);
-  applyDraftToProject(project, draft);
+  mergeInPlace(project, draft);
   if (!currentHumanAuthority(project, target)) {
-    applyDraftToProject(project, preImage);
+    mergeInPlace(project, preImage);
     throw authorityError(
       "AUTHORITY_NOT_PERSISTED",
       `${what} could not be approved: the change could not be written to this project. Nothing was changed.`,
@@ -902,21 +1162,17 @@ function commitAuthorityTransaction(project, request = {}) {
   return receipt;
 }
 
-/* WITHDRAWING AUTHORITY, on the same terms and through the same draft. */
-function revokeAuthorityTransaction(project, request = {}) {
+/* WITHDRAWING CANON, on the same terms and through the same draft. The target
+   kind decides which edge is cleared; nothing is inferred from the new value,
+   because on a revocation there is no new value. */
+function revokeCanon(project, request, kind) {
   const it = kernelObject(request);
-  const target = authorityTarget(it);
+  const target = authorityTarget({ ...it, kind });
   if (!target) throw authorityError("AUTHORITY_TARGET_INCOMPLETE", "A revocation must name a complete target. Nothing was changed.");
   const reason = AUTHORITY_REVOCATION_REASONS.includes(kernelText(it.reason)) ? kernelText(it.reason) : "withdrawn";
   const at = kernelText(it.at);
   const draft = draftOf(project);
-  /* 1D-07 — THE KERNEL CLEARS THE EDGE TOO. A revocation used to take the same
-     caller `applyEdge` the commit did, with the same closure problem. Clearing
-     is the one write that is exactly the inverse of establishing, so the same
-     installed writer does it, with an empty value. */
-  if (it.clearEdge !== false && typeof AUTHORITY_EDGE_WRITER === "function") {
-    AUTHORITY_EDGE_WRITER(draft, target, { value: "", assetId: "", at });
-  }
+  if (it.clearEdge !== false) writeAuthorityEdge(draft, target, { value: "", assetId: "", at });
   const ledger = kernelObject(draft[AUTHORITY_LEDGER_KEY]);
   const revoked = [];
   for (const row of kernelList(ledger.receipts)) {
@@ -928,13 +1184,17 @@ function revokeAuthorityTransaction(project, request = {}) {
     receipt.revokedVia = kernelText(it.via);
     revoked.push(receipt.id);
   }
-  applyDraftToProject(project, draft);
+  mergeInPlace(project, draft);
   return revoked;
 }
 
 /* A rename moved the bytes and the edge followed; the receipt has to follow or
-   the next read revokes a decision a person really made. Same transaction. */
-function repairAuthorityValue(project, change = {}) {
+   the next read revokes a decision a person really made.
+ *
+ * THIS IS LOAD-BEARING NOW. The shipped approval order is approve-then-rename:
+ * Canon is committed synchronously inside the click, on the bytes the creator
+ * was looking at, and the rename that follows moves the receipt with them. */
+function repairCanonValue(project, change = {}) {
   const it = kernelObject(change);
   const from = kernelText(it.from);
   const to = kernelText(it.to);
@@ -950,78 +1210,31 @@ function repairAuthorityValue(project, change = {}) {
     if (assetId) receipt.assetId = assetId;
     repaired.push(kernelText(receipt.id));
   }
-  if (repaired.length) applyDraftToProject(project, draft);
+  if (repaired.length) mergeInPlace(project, draft);
   return repaired;
 }
 
-function describeTarget(target) {
-  const it = kernelObject(target);
-  if (it.kind === "shot-frame") return `Frame ${it.frameId} of ${it.shotId}`;
-  if (it.kind === "shot-motion") return `Motion ${it.unitKey} of ${it.shotId}`;
-  if (it.kind === "shot-delivery") return `The final deliverable for ${it.shotId}`;
-  if (it.kind === "entity-state") return `${it.list} ${it.entityId} state ${it.stateId}`;
-  return "This edge";
-}
+/* ========================================================================== */
+/* 8. THE FOUR NAMED CANON COMMANDS — the whole public write surface          */
+/* ========================================================================== */
 
-/* 1D-03 — MANDATORY TARGET POLICY, OWNED BY THE KERNEL.
- *
- * Batch 1C asked the caller for an `eligibility` callback and ran it only "if
- * function". The 1C audit passed `eligibility: () => ({ok:true})` and
- * established Canon for a file two entities both claim. A rule a caller can
- * decline to supply is not a rule.
- *
- * The policy is now a property of the TARGET KIND and lives here. There is no
- * parameter for it, so there is nothing to omit and nothing to replace.
- *
- *   entity-state   the file must have exactly one durable owner, and it must be
- *                  the entity being approved. Zero owners, an inferred/prefix
- *                  match, or two claimants all refuse.
- *   shot-*         no ownership concept — a shot's own take belongs to the shot.
- *
- * The resolver is installed once by shared-entity-ownership.js via
- * useEntityOwnershipResolver(); it is a module wiring, not a per-call argument.
- */
-let OWNERSHIP_POLICY = null;
-function installAuthorityOwnershipPolicy(policy) {
-  OWNERSHIP_POLICY = typeof policy === "function" ? policy : null;
-  return !!OWNERSHIP_POLICY;
-}
-function enforceTargetPolicy(project, target, value) {
-  if (target.kind !== "entity-state") return;
-  if (typeof OWNERSHIP_POLICY !== "function") {
-    throw authorityError(
-      "AUTHORITY_OWNERSHIP_UNAVAILABLE",
-      "CineBraid cannot check which reference owns this image, so it will not record an approval it cannot justify. No authority was written.",
-    );
-  }
-  const verdict = kernelObject(OWNERSHIP_POLICY(project, target, value));
-  if (verdict.ok === true) return;
-  throw authorityError(
-    kernelText(verdict.code) || "AUTHORITY_OWNERSHIP_INELIGIBLE",
-    kernelText(verdict.message) || `${describeTarget(target)} cannot be approved for this image.`,
-  );
-}
+/* Thin, explicit, and each one fixes its target kind. There is no generic
+   `commitAuthorityTransaction` any more: a caller cannot name a kind, cannot
+   supply a policy, an eligibility predicate, an edge writer or a committer, and
+   cannot reach the private commit above. */
+function approveFrameCanon(project, request = {}) { return commitCanon(project, request, "shot-frame"); }
+function approveMotionCanon(project, request = {}) { return commitCanon(project, request, "shot-motion"); }
+function approveDeliveryCanon(project, request = {}) { return commitCanon(project, request, "shot-delivery"); }
+function approveEntityStateCanon(project, request = {}) { return commitCanon(project, request, "entity-state"); }
 
-/* 1D-07 — THE EDGE WRITER IS INSTALLED, NOT PASSED.
- *
- * Batch 1C took an `applyEdge(draft)` callback from every caller and claimed a
- * caller "physically cannot reach the live document" from inside it. That was
- * false — a closure reaches whatever it closed over — and the 1C audit proved
- * it by mutating the live project from a callback that then threw.
- *
- * So callers no longer supply one. `shared-production-authority.js` installs a
- * single writer at module load which knows how to write all four target kinds,
- * exactly mirroring the reader installed beside it. A caller passes the target
- * and the bytes; the kernel decides what that means on disk.
- *
- * What this deletes: twelve caller-authored edge callbacks, the `eligibility`
- * parameter, and `draftReadOnly` — a function whose whole job was to pretend a
- * live object was a snapshot. */
-let AUTHORITY_EDGE_WRITER = null;
-function installAuthorityEdgeWriter(writer) {
-  AUTHORITY_EDGE_WRITER = typeof writer === "function" ? writer : null;
-  return !!AUTHORITY_EDGE_WRITER;
-}
+function revokeFrameCanon(project, request = {}) { return revokeCanon(project, request, "shot-frame"); }
+function revokeMotionCanon(project, request = {}) { return revokeCanon(project, request, "shot-motion"); }
+function revokeDeliveryCanon(project, request = {}) { return revokeCanon(project, request, "shot-delivery"); }
+function revokeEntityStateCanon(project, request = {}) { return revokeCanon(project, request, "entity-state"); }
+
+/* THERE IS NO approveCoverageCanon AND NO approveExpressionCanon. Coverage and
+   expression slots are supporting references; public/shared-entity-slots.js
+   owns them, and a test asserts these names do not come back. */
 
 const AUTHORITY_KERNEL_EXPORTS = {
   AUTHORITY_TARGET_KINDS,
@@ -1036,46 +1249,47 @@ const AUTHORITY_KERNEL_EXPORTS = {
   AUTHORITY_DIAGNOSTIC_CODES,
   authorityError,
   authorityTarget,
-  sameAuthorityTarget,
   describeTarget,
-  /* manual action provenance */
+  /* the human */
   installBrowserManualActionSource,
   manualActionSourceInstalled,
   trustedGestureOpen,
-  beginManualAuthorityAction,
-  manualActionCovers,
   /* ledger validation */
   validateReceiptShape,
   validateAuthorityLedger,
   authorityLedgerDiagnostics,
   /* reading */
-  installAuthorityEdgeReader,
   liveAuthorityEdge,
   currentHumanAuthority,
   hasCurrentHumanAuthority,
   authorityHistory,
   historicSelection,
-  /* writing */
-  installAuthorityEdgeWriter,
-  installAuthorityOwnershipPolicy,
-  installAuthorityProjectCommitter,
-  commitAuthorityTransaction,
-  revokeAuthorityTransaction,
-  repairAuthorityValue,
+  /* the one projection — read-only derived state */
+  entityProductionTruth,
+  /* writing — four named commands, four named revocations, one repair */
+  approveFrameCanon,
+  approveMotionCanon,
+  approveDeliveryCanon,
+  approveEntityStateCanon,
+  revokeFrameCanon,
+  revokeMotionCanon,
+  revokeDeliveryCanon,
+  revokeEntityStateCanon,
+  repairCanonValue,
 };
 
 /* A NAMESPACE, NOT LOOSE GLOBALS — and this is not tidiness.
  *
  * Every public/*.js shares one lexical scope in the browser. Exporting the
- * kernel's names individually meant `shared-production-authority.js`, which
- * defines its own `currentHumanAuthority` and `authorityTarget` as thin
- * wrappers, SHADOWED the kernel functions those wrappers call — and each
- * wrapper called itself until the stack ran out. The whole product blanked, and
- * no Node suite could see it because Node has no shared scope.
+ * kernel's names individually meant shared-production-authority.js, which
+ * defines thin wrappers of the same names, SHADOWED the kernel functions those
+ * wrappers call — and each wrapper called itself until the stack ran out. The
+ * whole product blanked, and no Node suite could see it because Node has no
+ * shared scope.
  *
  * The kernel is reached through one object nothing else is named. Only the
- * installers are also exposed loosely, because bootstrap.js and the test
- * harnesses call them by name and nothing redefines them. */
+ * gesture-source installer and its two read-only predicates are also exposed
+ * loosely, because bootstrap.js calls them by name and nothing redefines them. */
 if (typeof window !== "undefined") {
   window.CineBraidAuthorityKernel = AUTHORITY_KERNEL_EXPORTS;
   for (const key of ["installBrowserManualActionSource", "manualActionSourceInstalled", "trustedGestureOpen"]) {

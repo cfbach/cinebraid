@@ -206,13 +206,13 @@ async function testSampleCompletesProviderFree() {
   });
   const context = rendered.context;
   for (const [shotId, file] of [["SAMPLE-01", "SAMPLE-01-ARRIVAL.png"], ["SAMPLE-02", "SAMPLE-02-BENCH.png"]]) {
-    context.markGuidedStillFinal(shotId, file);
+    rendered.gesture.act(() => context.markGuidedStillFinal(shotId, file));
   }
   context.approveTake("SAMPLE-03", "SAMPLE-03-OPEN.png");
   context.document.getElementById("approve-target").value = "frame:frame-a";
   context.document.getElementById("approve-name").value = "SAMPLE-03-OPEN.png";
-  await context.confirmApproveTake();
-  context.markGuidedStillFinal("SAMPLE-03", "SAMPLE-03-OPEN.png");
+  await rendered.gesture.act(() => context.confirmApproveTake());
+  rendered.gesture.act(() => context.markGuidedStillFinal("SAMPLE-03", "SAMPLE-03-OPEN.png"));
 
   assert(vm.runInContext("P.shots.every((shot) => !!shot.finalStillFile)", context), "every sample shot must be finalizable with existing media");
   assert(vm.runInContext("P.shots.every((shot) => [\"APPROVED\", \"LOCKED\"].includes(shot.workflowStatus))", context), "sample completion must record approved workflow status");

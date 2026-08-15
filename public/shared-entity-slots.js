@@ -78,9 +78,26 @@ function slotList(value) {
 
 /* ---------- reading ------------------------------------------------------- */
 
-/* The file a slot currently holds. Deliberately NOT called an approved file. */
+/* THE ONE ACCESSOR. Every reader of a slot's file goes through here.
+ *
+ * `selectedFile` is what a slot assignment writes now. `approvedFile` is read
+ * only as a LEGACY ALIAS, because a pre-existing project has the file under that
+ * name and no data may be destroyed — but a value found there is a SUPPORTING
+ * SELECTION, exactly like a value found under the new name. It has never been
+ * Canon and reading it from the old key does not make it Canon.
+ *
+ * The rename is the point: `slot.approvedFile` put the word "approved" in front
+ * of every consumer, and consumers duly concluded approval. There is no field on
+ * a slot with that word in it any more, so the mistake has nothing to read. */
 function slotSelectedFile(slot) {
-  return slotText(slotObject(slot).approvedFile);
+  const it = slotObject(slot);
+  return slotText(it.selectedFile) || slotText(it.approvedFile);
+}
+/* The legacy value alone, for a surface that wants to say "this came from an
+   older project" rather than silently presenting it as a current selection. */
+function slotLegacyFile(slot) {
+  const it = slotObject(slot);
+  return slotText(it.selectedFile) ? "" : slotText(it.approvedFile);
 }
 
 /* IS THIS SLOT AUTHORITY. No. It never is, and the answer is a function rather
@@ -114,19 +131,31 @@ function entitySlotFiles(entity) {
  * true, and because the re-audit's batch writer proved that a second setter is
  * where the check goes missing.
  *
- * OWNERSHIP IS INTRINSIC, NOT A CALLER CALLBACK. Six call sites used to pass
- * the identical `eligibility: () => entityOwnershipEligibility(...)` closure,
- * which meant six chances to pass something else — the shape 1D-03 removed from
- * the Canon path, still present here on the supporting-reference path. The
- * resolver is installed once, exactly as the kernel's is, and the caller names
- * the OWNER it is assigning for rather than the rule to apply.
+ * OWNERSHIP IS INTRINSIC, AND THERE IS NO INSTALLER.
+ *
+ * Six call sites used to pass the identical eligibility closure. Batch 1D
+ * replaced that with `installSlotOwnershipPolicy`, an exported setter — the
+ * same optional-policy architecture the Canon path had just deleted, and the 1D
+ * audit noted that a caller omitting `owner.project` skipped the check
+ * entirely.
+ *
+ * This module depends on public/shared-entity-ownership.js directly, by
+ * `require` in Node and by name in the browser's shared scope, and the check is
+ * unconditional: an assignment that cannot be justified is refused.
  *
  * Returns a decision. Applies it only when it passes, so a refused assignment
  * leaves the slot exactly as it was. */
-let SLOT_OWNERSHIP_POLICY = null;
-function installSlotOwnershipPolicy(policy) {
-  SLOT_OWNERSHIP_POLICY = typeof policy === "function" ? policy : null;
-  return !!SLOT_OWNERSHIP_POLICY;
+function slotOwnershipModule() {
+  if (typeof module !== "undefined" && module.exports) {
+    try { return require("./shared-entity-ownership.js"); } catch { return null; }
+  }
+  if (typeof buildEntityOwnerIndex === "function" && typeof resolveMediaOwnership === "function") {
+    return { buildEntityOwnerIndex, resolveMediaOwnership };
+  }
+  if (typeof globalThis !== "undefined" && typeof globalThis.buildEntityOwnerIndex === "function" && typeof globalThis.resolveMediaOwnership === "function") {
+    return { buildEntityOwnerIndex: globalThis.buildEntityOwnerIndex, resolveMediaOwnership: globalThis.resolveMediaOwnership };
+  }
+  return null;
 }
 function assignSlotReference(slot, request = {}) {
   const it = slotObject(request);
@@ -139,18 +168,31 @@ function assignSlotReference(slot, request = {}) {
      moment of writing — never against a shortlist a modal rendered minutes ago,
      which is the stale-evidence defect the 1B re-audit produced here. */
   const owner = slotObject(it.owner);
-  if (owner.project && typeof SLOT_OWNERSHIP_POLICY === "function") {
-    const verdict = slotObject(SLOT_OWNERSHIP_POLICY(owner.project, { list: slotText(owner.list), entityId: slotText(owner.entityId) }, fileName));
-    if (verdict.ok === false) return { assigned: false, reason: slotText(verdict.code) || "ineligible", message: slotText(verdict.message) };
+  if (owner.project) {
+    const owners = slotOwnershipModule();
+    if (!owners) {
+      return { assigned: false, reason: "SLOT_OWNERSHIP_RESOLVER_UNAVAILABLE", message: `CineBraid cannot confirm which reference owns ${fileName}, so it will not select it here.` };
+    }
+    const resolution = slotObject(owners.resolveMediaOwnership(owners.buildEntityOwnerIndex(owner.project, slotText(owner.list)), fileName));
+    if (resolution.contested === true) {
+      return { assigned: false, reason: "SLOT_OWNERSHIP_CONTESTED", message: `${fileName} is durably claimed by more than one reference (${slotList(resolution.claimants).join(", ")}). Resolve the conflict first.` };
+    }
+    if (resolution.authoritative !== true || slotText(resolution.ownerId) !== slotText(owner.entityId)) {
+      return { assigned: false, reason: "SLOT_OWNERSHIP_UNRESOLVED", message: `${fileName} is not durably owned by ${slotText(owner.entityId)}. Claim it for this reference first.` };
+    }
   }
   const previous = slotSelectedFile(target);
   if (previous && previous !== fileName) {
     target.replacementHistory = slotList(target.replacementHistory);
     target.replacementHistory.push({ from: previous, to: fileName, at, source: slotText(it.via) });
   }
-  target.approvedFile = fileName;
-  /* `selected`, not `approved`. The field name stays for compatibility with
-     every reader that already knows it; the CLAIM does not. */
+  /* THE FIELD IS RENAMED, NOT MIRRORED. Writing both would leave the word
+     "approved" on a supporting reference forever, and the 1D audit showed
+     exactly what consumers do with it: the Library badged a coverage selection
+     APPROVED and coverage automation submitted one as `approved-view`.
+     The value moves; nothing is lost. */
+  target.selectedFile = fileName;
+  delete target.approvedFile;
   target.status = "selected";
   target.selectedAt = at;
   /* The record says what this was. A reader that wants to know whether a person
@@ -180,7 +222,8 @@ function clearSlotReference(slot, request = {}) {
   if (!previous) return { cleared: false, reason: "already-empty" };
   target.replacementHistory = slotList(target.replacementHistory);
   target.replacementHistory.push({ from: previous, to: "", at: slotText(it.at), source: slotText(it.via) });
-  target.approvedFile = "";
+  target.selectedFile = "";
+  delete target.approvedFile;
   target.status = "missing";
   target.assignment = { kind: SLOT_ASSIGNMENT_KIND, authoritative: false, by: slotText(it.by) || "human", via: slotText(it.via), at: slotText(it.at) };
   return { cleared: true, previous };
@@ -228,12 +271,12 @@ const ENTITY_SLOT_EXPORTS = {
   SLOT_SELECTION_DECISIONS,
   decisionIsSlotSelection,
   slotSelectedFile,
+  slotLegacyFile,
   slotIsAuthoritative,
   entitySlotFiles,
   assignSlotReference,
   clearSlotReference,
   slotUsableAsSupportingReference,
-  installSlotOwnershipPolicy,
 };
 
 if (typeof window !== "undefined") for (const [key, value] of Object.entries(ENTITY_SLOT_EXPORTS)) window[key] = value;

@@ -11,7 +11,7 @@
  *     server.js  entityApprovedDiskPath()   state?.approvedFile || entity.approvedFile
  *     app.js     entityApprovedFileForState()  st?.approvedFile || entity.approvedFile
  *
- * and entityStateList() keeps `entity.approvedFile` synced to the DEFAULT
+ * and ensureEntityStateList() keeps `entity.approvedFile` synced to the DEFAULT
  * state's file. So a frame that declared "Rhea is rain-soaked", resolved that
  * state correctly, and found it had no approved reference of its own was handed
  * the clean image as its character identity authority. The declared state and
@@ -593,7 +593,7 @@ async function noMutationSection() {
   } finally { env.dispose(); }
 
   /* --- The browser path. ------------------------------------------------
-     entityStateList() normalises an entity on read and has since continuity
+     ensureEntityStateList() normalises an entity on read and has since continuity
      states existed — it seeds a default record and keeps entity.approvedFile
      synced to it. That is stated here rather than asserted away, because a suite
      claiming the browser writes literally nothing would be asserting something
@@ -623,7 +623,7 @@ async function noMutationSection() {
   ));
 
   /* One normalising pass first, so what is compared is the effect of RESOLVING
-     rather than the effect of entityStateList()'s long-standing repair. */
+     rather than the effect of ensureEntityStateList()'s long-standing repair. */
   referenceFilesFor(browser, "fr-a", "CHAR-RHEA");
   const beforeDeclared = declared(browser.shot);
   const beforeApprovals = approvals();

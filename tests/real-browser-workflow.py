@@ -246,7 +246,7 @@ try:
         page.get_by_text("MAP FOR OPTIONAL AI CHECK", exact=True).click()
         page.wait_for_selector(".entity-candidate-review-modal")
         page.get_by_text("RUN AI REVIEW", exact=True).click()
-        page.wait_for_function("() => P.characters.find(x=>x.id==='CHAR-AUDIT').coverageSlots.find(x=>x.id==='profile').approvedFile === 'CHAR-AUDIT-IMPORTED-PROFILE.png'", timeout=10000)
+        page.wait_for_function("() => P.characters.find(x=>x.id==='CHAR-AUDIT').coverageSlots.find(x=>x.id==='profile').selectedFile === 'CHAR-AUDIT-IMPORTED-PROFILE.png'", timeout=10000)
         # BATCH 1C: a coverage slot is a supporting reference, so committing one
         # records a SELECTION. The old expectation, "approved-coverage", asserted
         # that a view is production authority - the semantics alpha removed.

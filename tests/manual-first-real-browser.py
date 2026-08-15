@@ -115,7 +115,7 @@ try:
             page.wait_for_selector("#main")
         open_hash("#/character/CHAR-MANUAL")
         page.wait_for_timeout(250)
-        assert page.get_by_text("Build the approved reference pack").count() == 1
+        assert page.get_by_text("Build the reference pack").count() == 1
         assert page.get_by_text("Human approval is enough", exact=False).count() >= 1
         assisted = page.locator("details.reference-assisted-tools")
         assert assisted.count() == 1 and not assisted.first.evaluate("node => node.open"), "assisted tools must start collapsed"
@@ -132,8 +132,14 @@ try:
         page.wait_for_timeout(150)
         assert page.get_by_text("Front", exact=True).count() >= 1
         front_button = page.locator(".bounded-slot-rail button").filter(has=page.locator("span", has_text="Front")).first
-        assert "tone-complete" in (front_button.get_attribute("class") or ""), "human-assigned view must become approved authority"
-        assert "Approved" in (front_button.text_content() or "")
+        # A human-assigned coverage view is a SUPPORTING REFERENCE, not canon.
+        # This used to assert the word "Approved" here, which is exactly the
+        # claim the Dogfood #2 simplification pass removed: a selected view is
+        # useful context and never production truth.
+        assert "tone-complete" in (front_button.get_attribute("class") or ""), "human-assigned view must read as filled in"
+        front_text = front_button.text_content() or ""
+        assert "Selected" in front_text, "a chosen coverage view reads as Selected"
+        assert "Approved" not in front_text, "a supporting view must never be badged Approved"
         assert page.get_by_text("Planned", exact=True).count() >= 1
         assert page.get_by_text("Not required", exact=True).count() >= 1
         coverage_section = page.locator("details.entity-coverage-section")
@@ -149,18 +155,26 @@ try:
         page.wait_for_timeout(100)
         page.get_by_role("button", name="ASSIGN VIEW").click()
         page.wait_for_timeout(250)
-        assert page.evaluate("() => P.characters.find(x=>x.id==='CHAR-MANUAL').coverageSlots.find(x=>x.id==='profile').approvedFile") == "CHAR-MANUAL-PROFILE.png"
+        # The slot stores its file under selectedFile now. Same value, a key that
+        # cannot be misread as an approval.
+        assert page.evaluate("() => P.characters.find(x=>x.id==='CHAR-MANUAL').coverageSlots.find(x=>x.id==='profile').selectedFile") == "CHAR-MANUAL-PROFILE.png"
+        assert page.evaluate("() => P.characters.find(x=>x.id==='CHAR-MANUAL').coverageSlots.find(x=>x.id==='profile').approvedFile") is None, "no slot may carry an approvedFile after assignment"
         if SCREENSHOT_DIR:
             page.screenshot(path=str(SCREENSHOT_DIR / "manual-reference-coverage.png"), full_page=True)
 
-        open_hash("#/library/approved")
-        # The heading became "References" in 7bc1470 ("Speak one language for sections,
-        # statuses and counts"). tests/manual-first-workflow.js was updated with it; this
-        # line was not, and nothing noticed because this file had never actually run. The
-        # subtitle is what distinguishes the approved tab from the full library, so it is
-        # the assertion that carries the meaning.
+        # The "Approved" tab is the Canon tab now, and it is receipt-backed. This
+        # entity has a selected coverage view and NO canon receipt, so the point of
+        # the assertion is that it does NOT appear here — the Dogfood #2 acceptance
+        # audit rendered exactly this entity under Approved, with an APPROVED badge
+        # and copy saying these media define production truth.
+        open_hash("#/library/canon")
         assert page.locator(".view-head .view-title").inner_text().strip() == "References"
-        assert page.get_by_text("Candidates and automation are hidden", exact=False).count() == 1
+        assert page.get_by_text("Supporting views, historic pointers, candidates and automation are hidden", exact=False).count() == 1
+        assert page.locator(".library-card.canon").count() == 0, "a supporting selection must not put an entity in the Canon tab"
+        assert page.get_by_text("APPROVED", exact=True).count() == 0, "the library must never badge a supporting selection APPROVED"
+        open_hash("#/library/all")
+        assert page.locator(".library-status.canon").count() == 0, "no canon badge without a receipt"
+        assert page.locator(".library-status.reference").count() >= 1, "a selected supporting view reads as REFERENCES"
 
         open_hash(f"#/shot/{shot_id}")
         page.locator(".focused-task-button").filter(has=page.get_by_text("Frames", exact=True)).click()

@@ -434,35 +434,25 @@ window.promoteFinishJob = (jobId) => {
   /* BATCH 1B: promoting a finish job is a human approval command and routes
      through the one authority boundary, so the receipt it leaves is
      indistinguishable from any other approval of the same frame. */
-  const promoteGrant = beginManualApproval({
-    via: "finish-job-promotion",
-    targets: [{ kind: "shot-frame", shotId: job.shotId, frameId: target.startsWith("frame:") ? target.slice(6) : ((s.keyframes || [])[0] || {}).id }],
-  });
-  if (target === "shot") {
-    const opening = (s.keyframes || [])[0];
-    /* K1C: both arms route — with a frame it is frame authority, without one it
-       is the shot delivery pointer. 1D-07: neither supplies an edge callback,
-       because the kernel's installed writer owns both edges. */
-    if (opening) writeFrameProductionAuthority(P, { shotId: job.shotId, frameId: opening.id, value: job.resultFile, assetId: approvedAssetId, manualAction: promoteGrant, at: new Date().toISOString() });
-    else writeDeliveryProductionAuthority(P, { shotId: job.shotId, value: job.resultFile, assetId: approvedAssetId, manualAction: promoteGrant, at: new Date().toISOString() });
-  } else if (target.startsWith("frame:")) {
-    const f = frameById(s, target.slice(6));
-    if (f) {
-      writeFrameProductionAuthority(P, {
-        shotId: job.shotId, frameId: f.id, value: job.resultFile, assetId: approvedAssetId, manualAction: promoteGrant, at: new Date().toISOString(),
-      });
+  /* Promotion runs synchronously inside the click that pressed SAVE + PROMOTE,
+     on the result file the modal is showing, so the Canon write names exactly
+     the bytes the creator chose. Both delivery arms route: with an opening frame
+     it is frame Canon, without one it is the shot's delivery pointer. */
+  const at = new Date().toISOString();
+  try {
+    if (target === "shot") {
+      const opening = (s.keyframes || [])[0];
+      if (opening) approveFrameCanon(P, { shotId: job.shotId, frameId: opening.id, value: job.resultFile, assetId: approvedAssetId, at, via: "finish-job-promotion" });
+      else approveDeliveryCanon(P, { shotId: job.shotId, value: job.resultFile, assetId: approvedAssetId, at, via: "finish-job-promotion" });
+    } else if (target.startsWith("frame:")) {
+      const f = frameById(s, target.slice(6));
+      if (f) approveFrameCanon(P, { shotId: job.shotId, frameId: f.id, value: job.resultFile, assetId: approvedAssetId, at, via: "finish-job-promotion" });
+    } else if (target.startsWith("segment:")) {
+      const seg = (s.clips || []).find((x) => unitKey(x) === target.slice(8));
+      if (seg) approveMotionCanon(P, { shotId: job.shotId, unitKey: seg.id || unitKey(seg), value: job.resultFile, assetId: approvedAssetId, at, via: "finish-job-promotion" });
     }
-  } else if (target.startsWith("segment:")) {
-    /* K1C: a promoted finish job's motion output is canon, like any other
-       motion winner. */
-    const seg = (s.clips || []).find((x) => unitKey(x) === target.slice(8));
-    if (seg) {
-      writeMotionProductionAuthority(P, {
-        shotId: job.shotId, unitKey: seg.id || unitKey(seg), value: job.resultFile, assetId: approvedAssetId,
-        manualAction: beginManualApproval({ via: "finish-job-promotion", targets: [{ kind: "shot-motion", shotId: job.shotId, unitKey: seg.id || unitKey(seg) }] }),
-        at: new Date().toISOString(),
-      });
-    }
+  } catch (error) {
+    return toast(error.message || "That result could not be promoted");
   }
   const row = candidateRecord(s, job.resultFile, true);
   row.approvedAt = new Date().toISOString();

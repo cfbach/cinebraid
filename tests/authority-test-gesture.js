@@ -52,17 +52,25 @@ function testEventTarget() {
 }
 
 /* Install the REAL browser source on a target this composition owns, and return
-   the same small surface the suites already use.
+ * the same small surface the suites already use.
  *
- * `schedule` is handed to the kernel so the gesture window closes exactly when
- * the test says so instead of on a real macrotask — a suite that ran on
- * setTimeout would be racing its own assertions. */
+ * THE `schedule` SEAM IS GONE. The kernel used to take a callback that decided
+ * when the gesture window closed, and this file captured it and never ran it, so
+ * one delivered event held the window open for a whole test session. The kernel
+ * scopes a gesture to the DISPATCH it belongs to now, and there is nothing to
+ * inject.
+ *
+ * What the installer does return, to its one caller, is `endGesture` — a handle
+ * that can only close the window early. A suite needs it because a synchronous
+ * test turn has no dispatch boundary between two statements, and closing early
+ * only ever refuses MORE canon, which is the safe direction. Page script has no
+ * equivalent. */
 function installTestManualActionSource(kernel) {
   const api = kernel && typeof kernel.installBrowserManualActionSource === "function" ? kernel : null;
   if (!api) throw new Error("installTestManualActionSource needs the authority kernel");
   const events = testEventTarget();
-  let close = null;
-  const installed = api.installBrowserManualActionSource(events.target, (fn) => { close = fn; });
+  const installed = api.installBrowserManualActionSource(events.target);
+  const close = installed && typeof installed.endGesture === "function" ? installed.endGesture : null;
   if (!installed) {
     throw new Error(
       "The manual-action source is already installed in this process. The kernel installs once on purpose; "

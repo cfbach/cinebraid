@@ -925,7 +925,7 @@ window.startPlannedBlockingAutomation = async () => {
 
    A state's approval is its OWN approvedFile. `entity.approvedFile` stands in
    only for the DEFAULT state, because that is the file the default is seeded
-   from and synced to in entityStateList() - it is the default's image, and it
+   from and synced to in ensureEntityStateList() - it is the default's image, and it
    cannot answer for "rain-soaked". Without that distinction a declared state
    with no reference of its own silently reports the default's, which is the
    second half of the false READY: resolving the frame's state correctly is not
@@ -1114,7 +1114,7 @@ window.startPlannedShotAutomation = async () => {
   runShotAutomation(saved.id);
 };
 
-/* 1D — PURE. The 1C audit found this calling `entityStateList(entity, true)`,
+/* 1D — PURE. The 1C audit found this calling `ensureEntityStateList(entity, true)`,
    which inserts a default state, migrates notes, adds generation fields and
    syncs the entity's approved file. Opening the planner edited the project.
    `entityStateListRead` answers the same question and writes nothing. */
@@ -1147,9 +1147,22 @@ function v627EntityPreflight(list, entity, stateIds) {
 function v627PreflightMarkup(preflight) {
   return `${preflight.errors.length ? `<div class="guided-prompt-error"><b>Cannot start yet</b><span>${esc(preflight.errors.join(" "))}</span></div>` : `<div class="prompt-check ok">Automation preflight passed.</div>`}${preflight.warnings.length ? `<div class="prompt-check warn">${esc(preflight.warnings.join(" "))}</div>` : ""}`;
 }
+/* S12 — OPENING A PLANNER READS. IT DOES NOT BUILD.
+ *
+ * `v627EntityPreflight` was made pure in Batch 1D and the audit confirmed it —
+ * then found the modal wrapper calling the mutating list builder one line
+ * earlier, so merely opening this dialog created a default state, generation
+ * fields, prompt fields and a build array on a bare entity. The guard had moved;
+ * the reachable surface had not.
+ *
+ * The reader answers the same question. When there is nothing to read, the
+ * preflight SAYS the default state is not initialized rather than quietly
+ * initializing one — initialization is a decision, and it belongs to the act
+ * that starts the run. */
 window.openAssetAutomationModal = (list, id) => {
-  const entity = P[list]?.find((item) => item.id === id), state = entityStateList(entity, true).find((item) => item.isDefault);
+  const entity = P[list]?.find((item) => item.id === id);
   if (!entity) return;
+  const state = entityStateListRead(entity, true).find((item) => item.isDefault);
   const stateIds = [state?.id || "state-default"], preflight = v627EntityPreflight(list, entity, stateIds);
   const generationSettings = v6211AutomationGenerationSettings();
   window._v626EntityAutomationDraft = { list, id, stateIds, scope: "default-only", generationSettings };
@@ -1165,16 +1178,20 @@ window.openEntityStateAutomationModal = (list, id, stateId) => {
   openModal(`<div class="automation-plan-modal compact"><h3>Automate ${esc(state.name || "state")} — ${esc(entity.name || id)}</h3><div class="modal-sub">DERIVED REFERENCE · THREE PASSES MAXIMUM${v628CostEstimateText(9)}</div>${v6211GenerationControlsMarkup(generationSettings,"entity",{includeBlocking:false,outputs:3})}<p class="hint">The approved ${esc(parent?.name || "base")} reference becomes the editable input. Review checks identity preservation and only the requested visible state delta. If no candidate passes, automation aggregates why they failed, corrects the prompt, and retries within the confirmed cap. Approval always stays with you.</p><label class="checkline"><input id="v626-reuse-approved-states" type="checkbox" checked> Reuse this state when it is already approved</label><div>${v627PreflightMarkup(preflight)}</div><div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button class="approve-btn" ${preflight.errors.length ? "disabled" : ""} onclick="startPlannedEntityAutomation()">START</button></div></div>`);
 };
 window.openEntityChainAutomationModal = (list, id) => {
-  const entity = P[list]?.find((item) => item.id === id), states = entityStateList(entity, true);
+  const entity = P[list]?.find((item) => item.id === id);
   if (!entity) return;
+  /* Reads. See openAssetAutomationModal for why. */
+  const states = entityStateListRead(entity, true);
   const defaultIds = states.filter((state) => !(state.approvedFile || (state.isDefault && entity.approvedFile))).map((state) => state.id);
   const generationSettings = v6211AutomationGenerationSettings();
   window._v626EntityAutomationDraft = { list, id, stateIds: defaultIds, scope: "state-chain", generationSettings };
   openModal(`<div class="automation-plan-modal"><h3>Plan continuity-state chain — ${esc(entity.name || id)}</h3><div class="modal-sub">PARENT-FIRST DERIVED REFERENCES</div>${v6211GenerationControlsMarkup(generationSettings,"entity",{includeBlocking:false,outputs:3})}<div class="automation-frame-picker">${states.map((state) => { const parent = assetStateParent(entity, state); return `<label><input type="checkbox" class="v626-auto-state" value="${attr(state.id)}" ${defaultIds.includes(state.id) ? "checked" : ""} onchange="updateEntityChainEstimate()"><span><b>${esc(state.name || "State")}</b><small>${state.approvedFile ? `Approved · ${esc(state.approvedFile)}` : "Needs reference"}${state.isDefault ? " · base state" : ` · derives from ${esc(parent?.name || "Default")}`}</small></span></label>`; }).join("")}</div><label class="checkline"><input id="v626-reuse-approved-states" type="checkbox" checked> Reuse already approved states</label><div id="v627-entity-chain-preflight"></div><div id="v626-entity-chain-note" class="automation-cost-guard"></div><div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button id="v626-start-entity-chain" class="approve-btn" onclick="startPlannedEntityAutomation()">START STATE CHAIN</button></div></div>`);
   updateEntityChainEstimate();
 };
+/* Planners READ. They are called from render paths and from estimate updaters,
+   which are informational surfaces. */
 function v626ExpandStateDependencies(entity, stateIds) {
-  const selected = new Set(stateIds), states = entityStateList(entity, true);
+  const selected = new Set(stateIds), states = entityStateListRead(entity, true);
   const visit = (id) => {
     const state = entityStateById(entity, id);
     if (!state || state.isDefault) return;
@@ -1193,7 +1210,7 @@ function v626StateOrder(entity, stateIds) {
     if (parent && selected.has(parent.id)) visit(parent);
     visiting.delete(state.id); done.add(state.id); if (selected.has(state.id)) ordered.push(state.id);
   };
-  entityStateList(entity, true).forEach(visit);
+  entityStateListRead(entity, true).forEach(visit);
   return ordered;
 }
 window.updateEntityChainEstimate = () => {
@@ -1641,7 +1658,7 @@ function v628AttachEntityAutomationProvenance(run, list, entityId, stateId, file
   if (index >= 0) entity.made[index] = record; else entity.made.push(record);
   dirty();
 }
-function v626ApproveFrame(shotId, frameId, fileName, manualAction) {
+function v626ApproveFrame(shotId, frameId, fileName) {
   /* THE GATE. Dogfood #2 A1 / forensic F1: this function is the shot-side writer
      of production authority, and until this batch anything inside automation
      could call it. The comment below used to claim "the run still reaches a
@@ -1665,8 +1682,8 @@ function v626ApproveFrame(shotId, frameId, fileName, manualAction) {
      project — the mutation route the 1C audit exercised. Workflow bookkeeping
      that used to ride along inside that callback now runs after the approval
      lands, which is where it belongs: it is not part of the Canon statement. */
-  const receipt = writeFrameProductionAuthority(P, {
-    shotId, frameId, value: fileName, assetId: approvedAssetId, manualAction, at: v626Now(),
+  const receipt = approveFrameCanon(P, {
+    shotId, frameId, value: fileName, assetId: approvedAssetId, at: v626Now(), via: "automation-run-approval-modal",
   });
   /* Side effects that are NOT the authority edge run after the commit, against
      the live document, exactly as they always did. 1D-07 moved three more of
@@ -1933,11 +1950,15 @@ function v626EntityTarget(run) { const list = run.config?.list || run.entityList
    `result.humanApproved` before re-stating an approval — but "this path happens
    to be correct today" is not an invariant, and one writer that can be called by
    a machine is enough to lose the property again. */
-function v626ApproveEntity(list, entityId, stateId, fileName, manualAction) {
+function v626ApproveEntity(list, entityId, stateId, fileName) {
   const entity = P[list]?.find((item) => item.id === entityId), state = entityStateById(entity, stateId);
   if (!entity || !state || !fileName) throw new Error("Entity approval target is unavailable");
-  const receipt = writeEntityStateProductionAuthority(P, {
-    list, entityId, stateId: state.id, value: fileName, manualAction, at: v626Now(),
+  /* The exact bytes, stated rather than omitted. An entity whose media ledger
+     has not been indexed genuinely has no identity for this file, and "" says
+     so; the kernel refuses a request that leaves the question unanswered. */
+  const approvedAssetId = (entityMedia(list, entity).find((item) => item.name === fileName) || {}).assetId || "";
+  const receipt = approveEntityStateCanon(P, {
+    list, entityId, stateId: state.id, value: fileName, assetId: approvedAssetId, at: v626Now(), via: "automation-run-approval-modal",
   });
   /* 1D-07: the entity's workflow status is bookkeeping, not the Canon edge, so
      it is written after the approval rather than inside it. */
@@ -2696,38 +2717,49 @@ window.continueAutomationRevision = async (runId) => {
 };
 /* THE RUN APPROVAL GATE — the one place in automation a person decides.
  *
- * K1A: THE CAPABILITY IS MINTED BEFORE THE FIRST AWAIT, and that ordering is
- * load-bearing. The trusted gesture window covers the synchronous turn of the
- * click and is closed by a macrotask; this handler refreshes the run from the
- * server first, so a mint after that point would ask for a window that had
- * already shut and every real approval would refuse. The cached run is enough
- * to name the target — and if the refreshed run disagrees, the capability is
- * simply never spent and the gate stays open. */
+ * THE CANON WRITE HAPPENS FIRST, SYNCHRONOUSLY, INSIDE THE CLICK.
+ *
+ * Batch 1D minted a capability here, refreshed the run from the server, and
+ * then resolved the candidate and spent the token — the exact "approve target
+ * now, decide what was approved later" shape the acceptance audit reproduced by
+ * committing CHANGED.png/asset-B against a modal displaying DISPLAYED.png.
+ *
+ * The order is inverted. `fileName` is the file on the button the person
+ * pressed and `cachedRun`/`cachedStep` are the run they are looking at, so the
+ * decision is fully known before any I/O: it is committed in the synchronous
+ * prologue, against exactly those bytes. Everything after the first `await` is
+ * run-ledger bookkeeping, which is not Canon and never was.
+ *
+ * If the gate has moved on server-side, the person still made a real decision
+ * about a real frame; reconciliation is what settles the run. */
 window.approveAutomationCandidate = async (runId, stepKey, fileName) => {
   const cachedRun = v626Runs().find((item) => item.id === runId) || null;
   const cachedStep = cachedRun?.steps?.[stepKey] || null;
-  if (!cachedStep) return toast("This review gate is no longer active");
-  const manualAction = beginManualApproval({
-    via: "automation-run-approval-modal",
-    targets: cachedRun.type === "entity-chain"
-      ? [{ kind: "entity-state", list: cachedRun.config?.list || cachedRun.entityList, entityId: cachedRun.config?.entityId || cachedRun.entityId, stateId: cachedStep.stateId }]
-      : [{ kind: "shot-frame", shotId: cachedRun.type === "scene-chain" ? (cachedStep.shotId || cachedStep.result?.targetShotId || "") : cachedRun.targetId, frameId: cachedStep.frameId }],
-  });
+  if (!cachedStep || cachedStep.status !== "needs-review") return toast("This review gate is no longer active");
+  if (!fileName) return toast("Candidate is unavailable");
+  const cachedShotId = cachedRun.type === "scene-chain"
+    ? (cachedStep.shotId || cachedStep.result?.targetShotId || "")
+    : cachedRun.targetId;
+  const cachedList = cachedRun.config?.list || cachedRun.entityList;
+  const cachedEntityId = cachedRun.config?.entityId || cachedRun.entityId;
+  try {
+    if (cachedRun.type === "entity-chain") v626ApproveEntity(cachedList, cachedEntityId, cachedStep.stateId, fileName);
+    else if (cachedShotId) v626ApproveFrame(cachedShotId, cachedStep.frameId, fileName);
+    else return toast("Correction shot is unavailable");
+  } catch (error) {
+    return toast(error.message || "That candidate could not be approved");
+  }
   const run = await v626RefreshRun(runId, false), step = run.steps?.[stepKey];
-  if (!step || step.status !== "needs-review") return toast("This review gate is no longer active");
-  const candidates = v627ReviewCandidates(run, step), candidate = candidates.find((item) => item.file === fileName);
-  if (!candidate) return toast("Candidate is unavailable");
+  if (!step) return toast("This review gate is no longer active");
+  const candidates = v627ReviewCandidates(run, step), candidate = candidates.find((item) => item.file === fileName) || { score: 0, note: "" };
   if (run.type === "shot-chain" || run.type === "scene-chain") {
-    const shotId = run.type === "scene-chain" ? (step.shotId || step.result?.targetShotId || "") : run.targetId;
-    if (!shotId) return toast("Correction shot is unavailable");
-    v626ApproveFrame(shotId, step.frameId, fileName, manualAction);
+    const shotId = cachedShotId;
     const frame = frameById(shotById(shotId), step.frameId);
     const approvalKey = run.type === "scene-chain" ? `scene-correction:${shotId}:${step.frameId}:approval` : `frame:${step.frameId}:approval`;
     run.steps[approvalKey] = { key: approvalKey, kind: "frame-approval", label: `Frame ${frame?.label || step.frameId} approved by director`, status: "completed", shotId, frameId: step.frameId, winner: fileName, score: candidate.score, pass: true, result: { humanApproved: true, targetShotId: shotId, rationale: candidate.note || "Director-selected candidate" }, completedAt: v626Now(), updatedAt: v626Now() };
     v628AttachShotAutomationProvenance(run, step.frameId, fileName, approvalKey, { shotId, score: candidate.score, humanApproved: true });
   } else {
-    const list = run.config?.list || run.entityList, entityId = run.config?.entityId || run.entityId;
-    v626ApproveEntity(list, entityId, step.stateId, fileName, manualAction);
+    const list = cachedList, entityId = cachedEntityId;
     const entity = P[list]?.find((item) => item.id === entityId), state = entityStateById(entity, step.stateId);
     const approvalKey = `entity:${step.stateId}:approval`;
     run.steps[approvalKey] = { key: approvalKey, kind: "entity-approval", label: `${state?.name || "State"} approved by director`, status: "completed", stateId: step.stateId, winner: fileName, score: candidate.score, pass: true, result: { humanApproved: true, rationale: candidate.note || "Director-selected candidate" }, completedAt: v626Now(), updatedAt: v626Now() };

@@ -191,6 +191,15 @@
      here, computed fresh from the slots handed in. A caller that persisted this
      object would be storing a rollup beside the facts it came from, which is the
      drift P0 §5 refuses. */
+  /* The file a coverage slot holds, under either name. `selectedFile` is what a
+     slot assignment writes; `approvedFile` is the legacy key a pre-existing
+     project still carries. Both mean the same thing — A SUPPORTING SELECTION —
+     and neither is Canon, which is why the fields this summary returns count
+     SELECTED views rather than approvals. */
+  function coverageSlotFile(slot) {
+    const it = slot && typeof slot === "object" ? slot : {};
+    return String(it.selectedFile || it.approvedFile || "");
+  }
   function summariseCoverage(slots) {
     const active = activeCoverageSlots(slots);
     const required = active.filter((slot) => coverageRequirement(slot) === "required");
@@ -200,10 +209,15 @@
       required: required.length,
       planned: planned.length,
       notRequired: notRequired.length,
-      approvedRequired: required.filter((slot) => slot.approvedFile).length,
-      approvedTotal: active.filter((slot) => slot.approvedFile).length,
+      /* SELECTED, not approved. The keys keep their names because every caller
+         and several suites already read them, but what they count is how many
+         supporting views have been chosen — never how many were approved. */
+      approvedRequired: required.filter((slot) => coverageSlotFile(slot)).length,
+      approvedTotal: active.filter((slot) => coverageSlotFile(slot)).length,
+      selectedRequired: required.filter((slot) => coverageSlotFile(slot)).length,
+      selectedTotal: active.filter((slot) => coverageSlotFile(slot)).length,
       total: active.length,
-      missingRequired: required.filter((slot) => !slot.approvedFile).length,
+      missingRequired: required.filter((slot) => !coverageSlotFile(slot)).length,
     };
   }
 
@@ -224,6 +238,7 @@
     writeCoverageRequirement,
     templateRequirement,
     activeCoverageSlots,
+    coverageSlotFile,
     summariseCoverage,
     requirementLabel,
   };

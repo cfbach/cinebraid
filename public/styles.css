@@ -1347,7 +1347,7 @@ body:not([data-help="minimal"]) [data-tip]:focus-visible::before{content:"";posi
    pill in every theme, while --green/--amber are darkened under the light surface to
    read on white. APPROVED measured 3.41:1 here before. --muted is left alone: it is a
    neutral that stays legible on the pill in both themes. */
-.library-status.approved{color:var(--preview-ink-ok)}.library-status.candidate{color:var(--preview-ink-warn)}.library-status.missing{color:var(--muted)}.library-card .workflow-chip{display:none}
+.library-status.canon{color:var(--preview-ink-ok)}.library-status.reference{color:var(--preview-ink-info,var(--preview-ink-warn))}.library-status.historic{color:var(--preview-ink-warn)}.library-status.candidate{color:var(--preview-ink-warn)}.library-status.missing{color:var(--muted)}.library-card .workflow-chip{display:none}
 .slate .state-pair{display:flex;align-items:center;gap:7px}.slate .state-pair small{color:var(--muted);font-size:10px}.slate-route,.slate .workflow-chip{display:none}.slate-body{gap:7px}.slate-footer{opacity:.72}
 @media(max-width:800px){.production-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.production-next{align-items:flex-start;flex-direction:column}.production-inbox-item,.decision-inbox-row{grid-template-columns:56px minmax(0,1fr)}.production-inbox-item i,.decision-inbox-row i{display:none}.production-active-list>a{grid-template-columns:1fr}.global-add-grid{grid-template-columns:1fr}.topbar-add{display:none}}
 

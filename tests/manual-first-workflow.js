@@ -99,7 +99,12 @@ async function testManualReferencePath() {
      assignment lands, the provenance records that a HUMAN made it, and
      `aiReviewed: false` says no AI was consulted. The only thing withdrawn is
      the word "approved" on something that establishes no canon. */
-  assert.strictEqual(character.coverageSlots[0].approvedFile, "KAI-FRONT-IMPORTED.png", "the manual assignment lands with no AI in the loop");
+  /* SIMPLIFICATION PASS: the value moved from `approvedFile` to `selectedFile`.
+     The word "approved" on a supporting reference was what every downstream
+     consumer read as production truth. Same file, same act, a key that cannot
+     be misread. */
+  assert.strictEqual(character.coverageSlots[0].selectedFile, "KAI-FRONT-IMPORTED.png", "the manual assignment lands with no AI in the loop");
+  assert.strictEqual(character.coverageSlots[0].approvedFile, undefined, "and the slot carries no approvedFile at all");
   assert.strictEqual(character.coverageSlots[0].status, "selected", "and is recorded as a selection, because a view is a supporting reference");
   assert.strictEqual(character.candidateFiles[0].humanApproved, false, "a slot selection claims no approval on the candidate row");
   assert.strictEqual(character.candidateFiles[0].humanApprovedWithoutAI, false, "nor an unreviewed one");
@@ -132,9 +137,12 @@ async function testManualShotAndApprovedLibrary() {
   /* The heading stays the canonical section name ("References") so navigation, heading
      and breadcrumb agree; the approved-only view is distinguished by its subtitle. */
   assert(approved.html.includes('<span class="view-title">References</span>'));
-  assert(approved.html.includes("Candidates and automation are hidden"));
+  assert(approved.html.includes("Supporting views, historic pointers, candidates and automation are hidden"));
   assert(!approved.html.includes("AWAITING REVIEW"));
   assert(!approved.html.includes("AI REVIEW"));
+  assert(!approved.html.includes(">APPROVED<"), "the library never badges anything APPROVED");
+  const canon = await render("#/library/canon", project, { agentStatus: disabledAgents() });
+  assert(!canon.html.includes("library-card canon"), "an entity with no receipt is not canon, however many views it has selected");
 }
 
 function testSourceContracts() {

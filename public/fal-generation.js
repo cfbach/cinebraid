@@ -237,18 +237,34 @@ function entityGenerationAuthorityRefs(list, entity, state = null, mode = "indep
       instruction: `Exact editable parent for ${state.name || "the target state"}. Preserve the whole image and change only the written state delta.`,
     });
   }
-  const defaultState = typeof entityStateList === "function" ? entityStateList(entity, true).find((item) => item.isDefault) : null;
-  add(entity.approvedFile || defaultState?.approvedFile, `approved:${list}:${entity.id}`, `${entity.name || entity.id} primary approved authority`, list === "characters" ? "identity" : list === "locations" ? "location" : list === "vehicles" ? "vehicle" : "prop", list === "locations"
-    ? "Exact location identity and spatial authority. Preserve fixed architecture, topology, openings, fixtures, landmark placement and proportions."
-    : list === "props"
-      ? "Exact prop authority. Preserve dimensions, materials, wear and any embedded photograph, artwork, printing, label, screen or document content."
-      : "Exact approved identity and design authority.");
+  /* S8A — THE PRIMARY IDENTITY INPUT IS RECEIPT-BACKED, HERE TOO.
+     This read `entity.approvedFile` and labelled it "primary approved
+     authority" with no receipt behind it, exactly as coverage automation did.
+     A pointer nobody approved is HISTORIC, and it still travels — as context,
+     under a role that does not claim it decides what this entity looks like. */
+  const entityTruth = typeof entityProductionTruth === "function" ? entityProductionTruth(P, list, entity.id) : { canon: [], historic: [] };
+  const canonRow = entityTruth.canon.find((row) => row.isDefault) || entityTruth.canon[0] || null;
+  const historicRow = canonRow ? null : (entityTruth.historic.find((row) => row.isDefault) || entityTruth.historic[0] || null);
+  if (canonRow) {
+    add(canonRow.value, `canon:${list}:${entity.id}`, `${entity.name || entity.id} canon identity`, list === "characters" ? "identity" : list === "locations" ? "location" : list === "vehicles" ? "vehicle" : "prop", list === "locations"
+      ? "Exact location identity and spatial canon. Preserve fixed architecture, topology, openings, fixtures, landmark placement and proportions."
+      : list === "props"
+        ? "Exact prop canon. Preserve dimensions, materials, wear and any embedded photograph, artwork, printing, label, screen or document content."
+        : "Exact canon identity and design. Preserve it.");
+  } else if (historicRow) {
+    add(historicRow.value, `historic:${list}:${entity.id}`, `${entity.name || entity.id} historic reference`, "historic-reference",
+      "This image was previously selected for this reference but nobody has approved it as canon. Treat it as context, not as the decision about what this asset looks like.");
+  }
   const coverage = [...(entity.coverageSlots || []), ...(entity.expressionSlots || [])]
-    .filter((slot) => slot?.approvedFile && !(typeof entityCandidateIsCoverageSheet === "function" && entityCandidateIsCoverageSheet(entity, slot.approvedFile)))
+    .filter((slot) => slotSelectedFile(slot) && !(typeof entityCandidateIsCoverageSheet === "function" && entityCandidateIsCoverageSheet(entity, slotSelectedFile(slot))))
     .sort((a, b) => String(a.id || "").localeCompare(String(b.id || "")));
-  for (const slot of coverage) add(slot.approvedFile, `approved-view:${slot.id}`, `${slot.label || slot.id} approved authority`, list === "locations" ? "location-geometry" : "approved-view", list === "locations"
+  /* S8 — PURPOSE, NOT APPROVAL. A slot is a supporting view the creator chose;
+     it is not an authority and the role it travels under must not say it is.
+     `approved-view` / "approved authority" were the words a 1D counterexample
+     read back out of the submitted job. */
+  for (const slot of coverage) add(slotSelectedFile(slot), `supporting-view:${slot.id}`, `${slot.label || slot.id} selected view`, list === "locations" ? "environment-reference" : "supporting-view", list === "locations"
     ? `This is another view of the same physical location. Use it to preserve shared geometry and reveal only what the requested camera angle would naturally see.`
-    : `Approved ${slot.label || slot.id} view. Preserve design details visible from this side.`);
+    : `Selected ${slot.label || slot.id} view. Context only — preserve design details visible from this side.`);
   return refs;
 }
 function entityGenerationReferences(list, entity, options = {}) {

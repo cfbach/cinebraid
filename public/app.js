@@ -735,13 +735,19 @@ function normalizeReferenceCoverageData() {
       }
       const merged = defaults.map((slot) => {
         const candidates = aliasGroups.get(slot.id) || [];
-        const prior = candidates.find((item) => String(item?.id) === slot.id) || candidates.find((item) => item?.approvedFile) || candidates[0];
+        const prior = candidates.find((item) => String(item?.id) === slot.id) || candidates.find((item) => slotSelectedFile(item)) || candidates[0];
         const next = seedCoverageRequirement(slot, prior);
         for (const imported of candidates.filter((item) => item !== prior)) {
-          if (!next.approvedFile && imported?.approvedFile) next.approvedFile = imported.approvedFile;
+          if (!slotSelectedFile(next) && slotSelectedFile(imported)) next.selectedFile = slotSelectedFile(imported);
           next.notes = mergeCoverageSlotNotes(next, imported);
         }
-        next.approvedFile = String(next.approvedFile || "");
+        /* S6 — THE FIELD MOVES, THE VALUE DOES NOT. A legacy slot carries its
+           file under `approvedFile`; normalisation carries it forward under
+           `selectedFile`, which is the same supporting selection under a name
+           that cannot be misread as an approval. No media is touched and no
+           history is dropped — only the key the value lives under. */
+        next.selectedFile = slotSelectedFile(next);
+        delete next.approvedFile;
         next.notes = String(next.notes || "");
         /* K-alpha — NORMALISATION MUST NOT REINSTATE THE WORD THE WRITERS GAVE
            UP. This line, and its two twins below, recompute a slot's status
@@ -751,7 +757,7 @@ function normalizeReferenceCoverageData() {
            opened, and no writer was at fault. Deriving "selected" is not a
            migration — `status` is already recomputed here unconditionally, and
            `approvedFile`, the actual data, is untouched. */
-        next.status = next.approvedFile ? "selected" : "missing";
+        next.status = next.selectedFile ? "selected" : "missing";
         next.replacementHistory = Array.isArray(next.replacementHistory) ? next.replacementHistory : [];
         /* Two legacy conditions used to be corrected here, by clearing the
            slot's approvedFile while the project was merely being opened. Both
@@ -764,15 +770,15 @@ function normalizeReferenceCoverageData() {
            owns, which the entity view lists and the app toasts on load. The
            correction itself belongs to the explicit migration framework. */
         const entityLabel = String(entity.name || entity.id || "entity");
-        if (next.approvedFile && projectCandidateIsCoverageSheet(entity, next.approvedFile)) {
-          warnings.push(`${entityLabel} — the "${next.label || next.id}" view is approved to ${next.approvedFile}, which is a multi-view sheet rather than a single angle. The approval is kept as stored; extract the panel you meant before relying on this view.`);
+        if (next.selectedFile && projectCandidateIsCoverageSheet(entity, next.selectedFile)) {
+          warnings.push(`${entityLabel} — the "${next.label || next.id}" view is set to ${next.selectedFile}, which is a multi-view sheet rather than a single angle. The selection is kept as stored; extract the panel you meant before relying on this view.`);
         }
         const wasSilentCharacterSeed = list === "characters"
-          && next.approvedFile
-          && next.approvedFile === String(entity.approvedFile || "")
+          && next.selectedFile
+          && next.selectedFile === String(entity.approvedFile || "")
           && (next.provenance?.source === "primary-approved-reference" || /automatically seeded from (?:the )?(?:first )?approved primary reference/i.test(next.notes || ""));
         if (wasSilentCharacterSeed) {
-          warnings.push(`${entityLabel} — the "${next.label || next.id}" view was filled in automatically from the primary reference ${next.approvedFile}, not chosen. The approval is kept as stored; confirm or reassign the angle before relying on it.`);
+          warnings.push(`${entityLabel} — the "${next.label || next.id}" view was filled in automatically from the primary reference ${next.selectedFile}, not chosen. The selection is kept as stored; confirm or reassign the angle before relying on it.`);
         }
         return next;
       });
@@ -781,7 +787,7 @@ function normalizeReferenceCoverageData() {
          an undeclared slot to `false` here, which read as "planned" — the seed
          below says "planned" outright and stops writing the boolean to say it. */
       for (const custom of existing.filter((item) => item && !defaults.some((slot) => slot.id === item.id) && !normalizedCoverageAlias(list, item))) {
-        merged.push({ ...seedCoverageRequirement({ requirement: templateRequirement(false) }, custom), approvedFile: String(custom.approvedFile || ""), notes: String(custom.notes || ""), status: custom.approvedFile ? "selected" : "missing", replacementHistory: Array.isArray(custom.replacementHistory) ? custom.replacementHistory : [] });
+        merged.push({ ...seedCoverageRequirement({ requirement: templateRequirement(false) }, custom), selectedFile: slotSelectedFile(custom), notes: String(custom.notes || ""), status: slotSelectedFile(custom) ? "selected" : "missing", replacementHistory: Array.isArray(custom.replacementHistory) ? custom.replacementHistory : [] });
       }
       if (JSON.stringify(existing) !== JSON.stringify(merged)) { entity.coverageSlots = merged; changed = true; }
       if (list === "characters") {
@@ -791,9 +797,11 @@ function normalizeReferenceCoverageData() {
         const reconciled = desired.map((slot) => {
           const prior = priorSlots.find((item) => String(item?.id) === slot.id);
           const next = { ...seedCoverageRequirement(slot, prior), retired: false };
-          next.approvedFile = String(next.approvedFile || "");
-          /* K-alpha: the expression twin of the coverage derivation above. */
-          next.status = next.approvedFile ? "selected" : "missing";
+          /* The expression twin of the coverage migration above: same value,
+             same supporting meaning, a key that cannot be misread. */
+          next.selectedFile = slotSelectedFile(next);
+          delete next.approvedFile;
+          next.status = next.selectedFile ? "selected" : "missing";
           next.replacementHistory = Array.isArray(next.replacementHistory) ? next.replacementHistory : [];
           return next;
         });
@@ -802,7 +810,7 @@ function normalizeReferenceCoverageData() {
              slot out of the required set. `retired: true` already says that, and
              public/shared-coverage.js now reads it directly, so retirement no
              longer has to overwrite a requirement the filmmaker authored. */
-          if (stale.approvedFile) reconciled.push({ ...stale, retired: true, status: "retired", label: String(stale.label || stale.id) + (String(stale.label || "").includes("retired") ? "" : " (retired)") });
+          if (slotSelectedFile(stale)) reconciled.push({ ...stale, retired: true, status: "retired", label: String(stale.label || stale.id) + (String(stale.label || "").includes("retired") ? "" : " (retired)") });
         }
         if (JSON.stringify(priorSlots) !== JSON.stringify(reconciled)) { entity.expressionSlots = reconciled; changed = true; }
       }
@@ -925,6 +933,17 @@ function normalizeProjectV5() {
         if (!st.name) st.name = st.isDefault ? "Default" : `State ${i + 1}`;
         if (st.approvedFile == null) st.approvedFile = "";
         if (st.notes == null) st.notes = "";
+        /* S12 — THE LEGACY DELTA MIGRATION HAPPENS HERE, AT LOAD, ON PURPOSE.
+         *
+         * It used to live inside the list builder, which meant a project was
+         * migrated by whichever inspector, planner or renderer happened to read
+         * it first. Normalisation is CineBraid's named, deliberate mutation of a
+         * project it has just opened, so the migration belongs here and the
+         * readers downstream can be pure. */
+        if (!String(st.notes || "").trim() && typeof continuityStateDeltaText === "function") {
+          const migratedDelta = continuityStateDeltaText(st);
+          if (migratedDelta) st.notes = migratedDelta;
+        }
         if (st.appliesTo == null) st.appliesTo = "";
         if (st.isDefault == null) st.isDefault = st.id === "state-default";
         /* 1D-06 — LOAD DOES NOT AUTHOR ANCESTRY. This filled a missing
@@ -2458,7 +2477,17 @@ function entityStateListRead(entity, includeDefault = true) {
   return includeDefault ? states : states.filter((st) => !st.isDefault);
 }
 
-function entityStateList(entity, includeDefault = true) {
+/* THE NAMED MUTATION. `ensureEntityStateList` was `entityStateList`: a function
+ * every reader in the product called, which inserts a default state, migrates
+ * notes, fills generation fields and syncs the entity pointer. The 1D audit
+ * opened an automation modal and watched a bare entity gain a continuityStates
+ * array, a state-default, generationMode, prompt fields and a build array — the
+ * project edited by the act of looking at it.
+ *
+ * The behaviour is unchanged and still wanted; what changed is that its name now
+ * says it writes, so a reader reaching for it can see it is reaching for the
+ * wrong one. `entityStateListRead` is the reader. */
+function ensureEntityStateList(entity, includeDefault = true) {
   if (!entity) return [];
   entity.continuityStates = Array.isArray(entity.continuityStates)
     ? entity.continuityStates
@@ -2492,16 +2521,21 @@ function entityStateList(entity, includeDefault = true) {
     ? entity.continuityStates
     : entity.continuityStates.filter((st) => !st.isDefault);
 }
+/* S12A — A FUNCTION NAMED FOR A LOOKUP DOES A LOOKUP. This called the
+ * initializer, so every `entityStateById` in an inspector, a planner or a
+ * renderer was a write. It reads now; a caller that genuinely needs the
+ * collection built calls `ensureEntityStateList` first, deliberately, by its own
+ * name. */
 function entityStateById(entity, stateId) {
-  const states = entityStateList(entity, true);
+  const states = entityStateListRead(entity, true);
   if (!stateId) return states.find((st) => st.isDefault) || states[0] || null;
   return states.find((st) => st.id === stateId) || null;
 }
 function selectedEntityStateForShot(s, entity) {
-  return entityStateById(entity, s?.continuityStateSelections?.[entity.id] || "") || entityStateList(entity, true)[0] || null;
+  return entityStateById(entity, s?.continuityStateSelections?.[entity.id] || "") || entityStateListRead(entity, true)[0] || null;
 }
 /* `st?.approvedFile || entity.approvedFile` used to end this function. Because
-   entityStateList() keeps `entity.approvedFile` synced to the DEFAULT state's
+   ensureEntityStateList() keeps `entity.approvedFile` synced to the DEFAULT state's
    file, that `||` served the clean image for a request naming a declared
    non-default state with no approved reference of its own. The rule is one
    thing in one place now — Continuity.stateApprovedFile() — shared with the
@@ -2511,7 +2545,7 @@ function entityApprovedFileForState(entity, stateId = "") {
   return stateApprovedFile(entity, entityStateById(entity, stateId));
 }
 function entityApprovalBadges(entity, file) {
-  return entityStateList(entity, true)
+  return entityStateListRead(entity, true)
     .filter((st) => (st.approvedFile || "") === file)
     .map((st) => (st.isDefault ? "DEFAULT" : st.name || "STATE"));
 }
@@ -3124,30 +3158,59 @@ function productionView(tab = "board") {
   const pager = boundedPagerMarkup("shots",boardPageKey,shotPage,"shots");
   return head + controls + pager + body + pager;
 }
-function entityApprovedReferenceCount(entity) {
-  const names = new Set([
-    entity?.approvedFile,
-    ...(entity?.continuityStates || []).map((state) => state.approvedFile),
-    ...(entity?.coverageSlots || []).map((slot) => slot.approvedFile),
-    ...(entity?.expressionSlots || []).map((slot) => slot.approvedFile),
-  ].filter(Boolean));
-  return names.size;
+/* S7 — THE LIBRARY SPEAKS THE THREE-CONCEPT LANGUAGE.
+ *
+ * `entityApprovedReferenceCount` is deleted. It counted `entity.approvedFile`,
+ * every state's `approvedFile` AND every coverage and expression slot file into
+ * one number, and `libraryCard` turned any nonzero result into CSS status
+ * `approved`, a badge reading APPROVED, and copy reading "1 approved file". The
+ * 1D audit rendered exactly that for an entity with NO Canon at all and one
+ * selected supporting view, on a tab whose subtitle told the creator these media
+ * "currently define production truth".
+ *
+ * Three counts now, from the one projection, and they never merge:
+ *
+ *   CANON       receipt-backed. The creator approved these exact bytes.
+ *   REFERENCES  supporting selections. Useful; not production truth.
+ *   HISTORIC    a pointer nobody currently vouches for.
+ *
+ * A reference-only entity reads REFERENCES, never APPROVED, and is not in the
+ * Canon tab. */
+function entityTruthCounts(list, entity) {
+  const truth = typeof entityProductionTruth === "function"
+    ? entityProductionTruth(P, list, entity && entity.id)
+    : { canon: [], references: [], historic: [] };
+  const canon = new Set(truth.canon.map((row) => row.value).filter(Boolean));
+  const references = new Set(truth.references.map((row) => row.value).filter(Boolean));
+  const historic = new Set(truth.historic.map((row) => row.value).filter(Boolean));
+  /* A file that IS canon is not also counted as a reference or as history. One
+     file, one strongest standing. */
+  for (const name of canon) { references.delete(name); historic.delete(name); }
+  return { canon: canon.size, references: references.size, historic: historic.size, canonFiles: canon };
 }
-function libraryCard(list, x, approvedOnly = false) {
-  const media = entityMedia(list, x), route = ENTITY_ROUTE[list], approvedFile = entityApprovedFileForState(x, ""), approvedMedia = media.find((item) => item.name === approvedFile), previewMedia = approvedMedia || media.at(-1);
+function libraryCard(list, x, canonOnly = false) {
+  const media = entityMedia(list, x), route = ENTITY_ROUTE[list];
+  const counts = entityTruthCounts(list, x);
+  /* The preview prefers Canon, then whatever pointer the entity carries, then
+     the newest import — so a card always shows something, and showing it never
+     implies it was approved. */
+  const canonFile = [...counts.canonFiles][0] || "";
+  const previewMedia = media.find((item) => item.name === canonFile)
+    || media.find((item) => item.name === entityApprovedFileForState(x, ""))
+    || media.at(-1);
   const preview = previewMedia ? (isAudio(previewMedia.name) ? '<span class="library-audio-icon">◉</span>' : isVideo(previewMedia.name) ? `<video muted src="${previewMedia.url}"></video>` : `<img src="${previewMedia.url}" alt="">`) : `<div class="library-empty">${esc((x.name || x.id).slice(0,1))}</div>`;
   const type = { characters: "Character", locations: "Location", props: "Prop", vehicles: "Vehicle", audio: "Audio" }[list];
-  /* This counts the distinct files a filmmaker has approved for the reference — its main
-     look plus any approved state, angle or expression — so it is described as approved
-     files rather than as a count of an internal noun. */
-  const approvedFiles = entityApprovedReferenceCount(x);
-  const stateCount = (x.continuityStates || []).filter((state) => state.approvedFile || (state.isDefault && x.approvedFile)).length;
-  const pending = Math.max(0, media.length - approvedFiles);
-  const status = approvedFiles ? "approved" : media.length ? "candidate" : "missing";
-  const statusLabel = approvedFiles ? "APPROVED" : media.length ? "TO ORGANIZE" : "EMPTY";
-  const description = approvedOnly
-    ? `${plural(approvedFiles, "approved file")}${stateCount > 1 ? ` · ${plural(stateCount, "state")}` : ""}`
-    : approvedFiles ? `${plural(approvedFiles, "approved file")}${pending ? ` · ${plural(pending, "unassigned file")}` : ""}` : media.length ? `${plural(pending, "imported file")} to organize` : "Add the first reference";
+  const status = counts.canon ? "canon" : counts.references ? "reference" : counts.historic ? "historic" : media.length ? "candidate" : "missing";
+  const statusLabel = counts.canon ? "CANON" : counts.references ? "REFERENCES" : counts.historic ? "HISTORIC" : media.length ? "TO ORGANIZE" : "EMPTY";
+  const parts = [];
+  if (counts.canon) parts.push(plural(counts.canon, "canon file"));
+  if (counts.references) parts.push(plural(counts.references, "supporting reference"));
+  if (counts.historic) parts.push(`${plural(counts.historic, "historic pointer")} to confirm`);
+  const unassigned = Math.max(0, media.length - counts.canon - counts.references - counts.historic);
+  if (!canonOnly && unassigned) parts.push(plural(unassigned, "unassigned file"));
+  const description = parts.length
+    ? parts.join(" · ")
+    : media.length ? `${plural(media.length, "imported file")} to organize` : "Add the first reference";
   /* Same reasoning as the shot board: the card navigates, so the reference image
      gets its own inspection control that does not open the reference page. */
   const enlarge = previewMedia && !isAudio(previewMedia.name) && !isVideo(previewMedia.name)
@@ -3156,7 +3219,10 @@ function libraryCard(list, x, approvedOnly = false) {
   return `<div class="library-card-shell"><a class="library-card ${status}" href="#/${route}/${x.id}"><div class="library-preview">${preview}<span class="library-status ${status}">${statusLabel}</span></div><div class="library-body"><span class="review-kind">${type}</span><b>${esc(x.name || x.id)}</b><small>${description}</small></div></a>${enlarge}</div>`;
 }
 function libraryView(tab = "all") {
-  if (!["all", "approved", "characters", "locations", "props", "vehicles", "audio"].includes(tab)) tab = "all";
+  /* "approved" is still accepted as an incoming route so an old bookmark or a
+     remembered tab lands somewhere sensible; it resolves to Canon. */
+  if (tab === "approved") tab = "canon";
+  if (!["all", "canon", "characters", "locations", "props", "vehicles", "audio"].includes(tab)) tab = "all";
   LIBRARY_TAB = tab;
   localStorage.setItem("cinebraid-library-tab", tab);
   const counts = {
@@ -3167,25 +3233,30 @@ function libraryView(tab = "all") {
     audio: (P.audio || []).length,
   };
   const allLists = ["characters", "locations", "props", "vehicles", "audio"];
-  const approvedCount = allLists.flatMap((list) => P[list] || []).filter((entity) => entityApprovedReferenceCount(entity) > 0).length;
+  /* THE CANON TAB IS RECEIPT-BACKED, FULL STOP. It was the "Approved" tab and it
+     admitted any entity with any file in any slot. */
+  const canonCount = allLists.flatMap((list) => (P[list] || []).map((entity) => ({ list, entity })))
+    .filter(({ list, entity }) => entityTruthCounts(list, entity).canon > 0).length;
   const tabs = workspaceTabs("library", tab, [
     ["all", "All", Object.values(counts).reduce((a, b) => a + b, 0)],
-    ["approved", "Approved", approvedCount],
+    ["canon", "Canon", canonCount],
     ["characters", "Characters", counts.characters],
     ["locations", "Locations", counts.locations],
     ["props", "Props", counts.props],
     ["vehicles", "Vehicles", counts.vehicles],
     ["audio", "Audio", counts.audio],
   ]);
-  const lists = tab === "all" || tab === "approved" ? allLists : [tab];
+  const lists = tab === "all" || tab === "canon" ? allLists : [tab];
   let allRows = lists.flatMap((list) => (P[list] || []).map((entity) => ({ list, entity })));
-  if (tab === "approved") allRows = allRows.filter(({ entity }) => entityApprovedReferenceCount(entity) > 0);
+  if (tab === "canon") allRows = allRows.filter(({ list, entity }) => entityTruthCounts(list, entity).canon > 0);
   const referencePage = boundedPage(allRows, "references", `library:${tab}`, BOUNDED_PAGE_SIZES.references);
-  const add = `<button class="add-btn" onclick="openGlobalAdd('${tab === "all" || tab === "approved" ? "" : tab === "audio" ? "audio" : tab.slice(0,-1)}')">＋ Add reference</button>`;
+  const add = `<button class="add-btn" onclick="openGlobalAdd('${tab === "all" || tab === "canon" ? "" : tab === "audio" ? "audio" : tab.slice(0,-1)}')">＋ Add reference</button>`;
   const pager = boundedPagerMarkup("references",`library:${tab}`,referencePage,"references");
   const title = "References";
-  const subtitle = tab === "approved" ? "A clean view of the images, views, states, and media that currently define production truth. Candidates and automation are hidden." : "Import work made anywhere, organize it into authoritative states and views, and use optional assisted tools only when needed.";
-  return `<div class="view-head"><div><div class="eyebrow">References</div><span class="view-title">${title}</span><div class="view-sub">${subtitle}</div></div>${add}</div>${tabs}${pager}<div class="library-grid bounded-source-section">${referencePage.rows.map(({list,entity}) => libraryCard(list,entity,tab === "approved")).join("") || `<div class="empty-state"><div class="empty-mark">＋</div><h2>${tab === "approved" ? "No approved references yet" : "No references yet"}</h2><p>${tab === "approved" ? "Choose an imported file as an authority to add it here." : "Add a character, location, prop, vehicle, or audio asset."}</p><button class="add-btn" onclick="openGlobalAdd()">Add reference</button></div>`}</div>${pager}`;
+  const subtitle = tab === "canon"
+    ? "Only media you explicitly approved as canon. Supporting views, historic pointers, candidates and automation are hidden."
+    : "Import work made anywhere, organize it into authoritative states and views, and use optional assisted tools only when needed.";
+  return `<div class="view-head"><div><div class="eyebrow">References</div><span class="view-title">${title}</span><div class="view-sub">${subtitle}</div></div>${add}</div>${tabs}${pager}<div class="library-grid bounded-source-section">${referencePage.rows.map(({list,entity}) => libraryCard(list,entity,tab === "canon")).join("") || `<div class="empty-state"><div class="empty-mark">＋</div><h2>${tab === "canon" ? "Nothing is canon yet" : "No references yet"}</h2><p>${tab === "canon" ? "Approve an imported file as canon to add it here." : "Add a character, location, prop, vehicle, or audio asset."}</p><button class="add-btn" onclick="openGlobalAdd()">Add reference</button></div>`}</div>${pager}`;
 }
 
 function currentPromptOption(s) {

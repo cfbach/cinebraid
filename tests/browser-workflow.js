@@ -88,7 +88,7 @@ async function testFrameReplacementReopensMotion() {
   rendered.context.approveGuidedStill("L1-01", "FRAME_B.png");
   rendered.context.document.getElementById("approve-target").value = "shot";
   rendered.context.document.getElementById("approve-name").value = "FRAME_B.png";
-  await rendered.context.confirmApproveTake();
+  await rendered.gesture.act(() => rendered.context.confirmApproveTake());
   await delay(20);
   const state = vm.runInContext(
     `(() => { const s=P.shots[0]; return { shot:s.winner, frame:s.keyframes[0].winner, motion:s.clips[0].videoWinner||"" }; })()`,

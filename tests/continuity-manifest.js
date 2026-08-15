@@ -157,7 +157,7 @@ assert.notStrictEqual(canonicalJson([1, 2]), canonicalJson([2, 1]), "arrays are 
 
 /* ---- 3. building a manifest never mutates the project ----
 
-   entityStateList() in app.js repairs entities as a side effect of reading
+   ensureEntityStateList() in app.js repairs entities as a side effect of reading
    them. The manifest builder must not: it runs on the server against a record
    it does not own. */
 const pristine = buildProject();

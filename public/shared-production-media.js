@@ -22,7 +22,7 @@
    media and what stops a rendering from becoming production state.
 
    NOTHING IS STORED AND NOTHING IS MUTATED. Every record is built fresh and returned
-   frozen. In particular this module never calls entityStateList() or
+   frozen. In particular this module never calls ensureEntityStateList() or
    entityCandidateRow(create), both of which normalise what they are handed — an
    Inspector read must not canonicalise a legacy project merely by looking at it.
 

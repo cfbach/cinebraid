@@ -51,7 +51,7 @@ assert(coverage.includes('No automatic guess'), 'character primary references mu
    read, and P-1 ended it; the correction belongs to an explicit migration.
    See tests/intent-loss-safety.js. */
 assert(app.includes('wasSilentCharacterSeed'), 'legacy silent angle assignments must still be detected when a project is opened');
-assert(app.includes('not chosen. The approval is kept as stored'), 'a detected legacy silent angle must be reported to the filmmaker');
+assert(app.includes('not chosen. The selection is kept as stored'), 'a detected legacy silent angle must be reported to the filmmaker');
 const seedBranch = app.slice(app.indexOf('const wasSilentCharacterSeed'), app.indexOf('return next;'));
 assert(seedBranch && !/approvedFile\s*=\s*""/.test(seedBranch), 'opening a project must not clear a legacy silent angle assignment');
 assert(!libraryTools.includes('characters: "front-three-quarter"'), 'primary approval must not silently seed character 3/4 coverage');

@@ -2,7 +2,7 @@ const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
-const { render, buildFixture } = require("./render-harness");
+const { render, buildFixture, withCanon } = require("./render-harness");
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -25,7 +25,16 @@ function coverageFixture() {
     },
   }];
   project.shots[0].characters = [character.id];
-  return project;
+  /* Coverage automation runs off CANON, not off a raw pointer. Before the
+     simplification pass `entity.approvedFile` alone was enough, and the Dogfood
+     #2 audit used exactly that to send an unreceipted LEGACY.png out as this
+     entity's identity authority. A fixture that wants automation available has
+     to say the creator approved the primary, because that is what a real project
+     says. */
+  return withCanon(project, {
+    kind: "entity-state", list: "characters", entityId: character.id, stateId: "state-default",
+    value: "CHAR-IREN-PRIMARY.png",
+  });
 }
 
 function coverageScan() {
@@ -101,7 +110,7 @@ async function testSheetApprovalDoesNotSeedAngleAndRemainsExtractable() {
   rendered.context.document.getElementById("entity-approve-target").value = "state-default";
   rendered.context.document.getElementById("entity-approve-name").value = "CHAR-IREN-SHEET.png";
   rendered.context.document.getElementById("entity-approve-next").value = "";
-  await rendered.context.confirmEntityApproval(false);
+  await rendered.gesture.act(() => rendered.context.confirmEntityApproval(false));
   await delay(80);
   const state = vm.runInContext(`(() => { const e=P.characters.find((item)=>item.id==='CHAR-IREN'); const assigned=(ensureCoverageSlots('characters',e)||[]).filter((slot)=>slot.approvedFile); return {approved:e.approvedFile, assigned:assigned.map((slot)=>({id:slot.id,file:slot.approvedFile}))}; })()`, rendered.context);
   assert.strictEqual(state.approved, "CHAR-IREN-SHEET.png", "the sheet can remain an approved source artifact when the user explicitly chooses it");
@@ -161,7 +170,7 @@ async function testPrimaryReferenceNeverSilentlyBecomesThreeQuarter() {
   rendered.context.document.getElementById("entity-approve-target").value = "state-default";
   rendered.context.document.getElementById("entity-approve-name").value = "CHAR-IREN-PRIMARY.png";
   rendered.context.document.getElementById("entity-approve-next").value = "";
-  await rendered.context.confirmEntityApproval(false);
+  await rendered.gesture.act(() => rendered.context.confirmEntityApproval(false));
   await delay(60);
   const state = vm.runInContext(`(() => { const e=P.characters.find((item)=>item.id==='CHAR-IREN'); return { approved:e.approvedFile, assigned:(ensureCoverageSlots('characters',e)||[]).filter((slot)=>slot.approvedFile).map((slot)=>slot.id), angle:e.primaryAngleAssignment }; })()`, rendered.context);
   assert.strictEqual(state.approved, "CHAR-IREN-PRIMARY.png", "primary identity approval must still succeed");
@@ -192,8 +201,15 @@ async function testLegacySilentThreeQuarterMigrationAndStateVariantFlow() {
      angle nobody chose is not an authority — but correcting it belongs to an
      explicit migration, not to a read. So the approval is now preserved and
      the condition is reported instead. See tests/intent-loss-safety.js. */
-  const migrated = vm.runInContext(`(() => { const e=P.characters.find((item)=>item.id==='CHAR-IREN'); const slot=(ensureCoverageSlots('characters',e)||[]).find((item)=>item.id==='front-three-quarter'); return {file:slot.approvedFile, status:slot.status, history:e.coverageMigrationHistory||[], warnings:(P.meta.dataIntegrityWarnings||[])}; })()`, rendered.context);
+  const migrated = vm.runInContext(`(() => { const e=P.characters.find((item)=>item.id==='CHAR-IREN'); const slot=(ensureCoverageSlots('characters',e)||[]).find((item)=>item.id==='front-three-quarter'); return {file:slotSelectedFile(slot), legacyKey:slot.approvedFile, status:slot.status, history:e.coverageMigrationHistory||[], warnings:(P.meta.dataIntegrityWarnings||[])}; })()`, rendered.context);
   assert.strictEqual(migrated.file, "CHAR-IREN-PRIMARY.png", "opening a project must not clear a legacy auto-seeded angle assignment");
+  /* CHANGED IN THE SIMPLIFICATION PASS — the FIELD moved, the VALUE did not.
+     A slot holds its file under `selectedFile` now. `approvedFile` put the word
+     "approved" in front of every consumer of a supporting reference, and the
+     Library and coverage automation duly concluded approval from it. Carrying
+     the value across on load is a rename, not a migration: no media is touched,
+     no history is dropped, and the assertion above proves the value survived. */
+  assert.strictEqual(migrated.legacyKey, undefined, "a normalised slot carries no approvedFile — the value moved to selectedFile");
   /* CHANGED IN BATCH 1C — "approved" -> "selected".
 
      THE OLD ASSERTION DID NOT MEAN WHAT IT SAID. This fixture's slot carries no

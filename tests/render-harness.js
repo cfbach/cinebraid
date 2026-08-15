@@ -603,6 +603,9 @@ async function render(hash, project, options = {}) {
     structuredClone,
   };
   context.window = context;
+  /* The currently-dispatching event, like a browser Window. `gesture.act()`
+     sets it; nothing else does, so page code outside a dispatch sees null. */
+  context.event = null;
   context.window.addEventListener = () => {};
   context.window.removeEventListener = () => {};
   context.window.location = location;
@@ -634,7 +637,8 @@ async function render(hash, project, options = {}) {
       /* The `schedule` the kernel would use to close the window is captured
          rather than run, so one delivered event holds the gesture open for the
          session and the suite decides when it ends. */
-      context.CineBraidAuthorityKernel.installBrowserManualActionSource(document, (fn) => { closeHarnessGesture = fn; });
+      const source = context.CineBraidAuthorityKernel.installBrowserManualActionSource(document);
+      if (source && typeof source.endGesture === "function") closeHarnessGesture = source.endGesture;
     }
     /* THE MANUAL-ACTION SOURCE, INSTALLED THE MOMENT THE KERNEL EXISTS.
      *
@@ -669,11 +673,44 @@ async function render(hash, project, options = {}) {
      returned from render(), never reachable from inside the page. A suite that
      wants to prove the real approval handler refuses without a gesture calls
      `gesture.close()`; page script has no equivalent. */
+  /* THE HARNESS IS THE USER, AND IT SAYS SO ONE ACT AT A TIME.
+   *
+   * Batch 1D held the window open for the whole session by injecting a scheduler
+   * that captured the close callback and never ran it. That seam is deleted: the
+   * kernel closes on a microtask, exactly as it does in a real browser, so a
+   * suite now has to deliver an event around each act it is standing in for.
+   *
+   * `act(fn)` is that: fire a trusted click, run `fn` synchronously inside it,
+   * close. An async page handler still commits its Canon in the synchronous
+   * prologue — that is the whole point of the new approval shape — so the
+   * returned promise resolves outside the window, which is correct. */
   const gesture = {
-    open: () => { for (const handler of documentListeners.get("click") || []) handler({ type: "click", isTrusted: true }); },
+    /* A trusted click, delivered the way a user agent delivers one — INCLUDING
+       `window.event`, which is how the kernel scopes a gesture to the dispatch
+       it belongs to. Without setting it here the harness would be an easier
+       environment than the product, which is the opposite of what a harness is
+       for: the real browser would refuse what the suites accepted. */
+    open: () => {
+      for (const handler of documentListeners.get("click") || []) handler({ type: "click", isTrusted: true });
+    },
     close: () => closeHarnessGesture(),
+    /* Open a dispatch and hand back the way to end it, for a suite whose act
+       runs inside a vm script rather than a callback. */
+    begin() {
+      const previous = context.event;
+      const event = { type: "click", isTrusted: true };
+      for (const handler of documentListeners.get("click") || []) {
+        context.event = event;
+        try { handler(event); } finally { context.event = previous; }
+      }
+      context.event = event;
+      return () => { context.event = previous; closeHarnessGesture(); };
+    },
+    act(fn) {
+      const end = this.begin();
+      try { return fn(); } finally { end(); }
+    },
   };
-  gesture.open();
 
   const deadline = Date.now() + 4000;
   while (
@@ -775,7 +812,7 @@ async function main() {
   stateRender.context.document.getElementById("entity-approve-target").value = "state-default";
   stateRender.context.document.getElementById("entity-approve-name").value = "PR-TOOL-CANDIDATE-A.png";
   stateRender.context.document.getElementById("entity-approve-next").value = "state-damaged";
-  await stateRender.context.confirmEntityApproval(true);
+  await stateRender.gesture.act(() => stateRender.context.confirmEntityApproval(true));
   const approvalContinuation = vm.runInContext(`(() => { const x=P.props.find((item)=>item.id==='PR-TOOL'); const next=x.continuityStates.find((state)=>state.id==='state-damaged'); return { approved:x.approvedFile, parent:next.parentStateId, mode:next.generationMode }; })()`, stateRender.context);
   assert.strictEqual(approvalContinuation.approved, "PR-TOOL-CANDIDATE-A.png", "approve-and-continue must approve the selected candidate");
   assert.strictEqual(approvalContinuation.parent, "state-default", "approve-and-continue must set the selected next state's parent to the approved state");
@@ -944,7 +981,78 @@ async function main() {
   console.log(`Render harness passed ${cases.length} current views, state-specific entity approval/review, entity prompt busy feedback, candidate selection persistence, approval reset, guarded composer recovery, safe mode, and the single guided shot workflow.`);
 }
 
-module.exports = { render, buildFixture, emptyFixture };
+/* A DURABLE CANON RECEIPT, FOR FIXTURES THAT NEED ONE.
+ *
+ * Since the simplification pass, "this entity has an approved primary" is a
+ * statement about the RECEIPT LEDGER, not about `entity.approvedFile` — a raw
+ * pointer is HISTORIC. Suites whose subject is downstream of Canon (coverage
+ * automation, the Library, generation references) therefore need a project that
+ * actually carries one, in the same way a real project does after the creator
+ * has approved something.
+ *
+ * This writes the ledger row the kernel writes, and it must satisfy the kernel's
+ * full validation on read — id, sequence, actor, act, command/kind agreement, a
+ * target key re-derived from the parts, value, status, and the provenance marker.
+ * A fixture that gets any of them wrong makes the whole ledger untrusted, which
+ * fails closed and would look like a product bug rather than a fixture bug.
+ *
+ * It does NOT fabricate history: the caller is stating that in this scenario the
+ * creator already approved these bytes, and the edge must say the same thing or
+ * the kernel will refuse to recognise it. */
+const CANON_COMMAND_FOR_KIND = {
+  "shot-frame": "approve-shot-frame",
+  "shot-motion": "approve-shot-motion",
+  "shot-delivery": "approve-shot-delivery",
+  "entity-state": "approve-entity-state",
+};
+function canonTargetKey(target) {
+  const it = target || {};
+  if (it.kind === "shot-frame") return `shot-frame:${it.shotId}#${it.frameId}`;
+  if (it.kind === "shot-motion") return `shot-motion:${it.shotId}#${it.unitKey}`;
+  if (it.kind === "shot-delivery") return `shot-delivery:${it.shotId}`;
+  return `entity-state:${it.list}:${it.entityId}#${it.stateId}`;
+}
+function withCanon(project, entries) {
+  const rows = Array.isArray(entries) ? entries : [entries];
+  const ledger = project.productionAuthority && typeof project.productionAuthority === "object"
+    ? project.productionAuthority
+    : { version: 1, receipts: [] };
+  ledger.version = 1;
+  ledger.receipts = Array.isArray(ledger.receipts) ? ledger.receipts : [];
+  for (const entry of rows) {
+    const sequence = ledger.receipts.length + 1;
+    ledger.receipts.push({
+      id: `authority-${String(sequence).padStart(6, "0")}`,
+      sequence,
+      actor: "human",
+      act: "explicit-approval",
+      command: CANON_COMMAND_FOR_KIND[entry.kind],
+      kind: entry.kind,
+      targetKey: canonTargetKey(entry),
+      shotId: entry.shotId || "",
+      frameId: entry.frameId || "",
+      unitKey: entry.unitKey || "",
+      list: entry.list || "",
+      entityId: entry.entityId || "",
+      stateId: entry.stateId || "",
+      slotId: "",
+      value: entry.value,
+      assetId: entry.assetId || "",
+      at: entry.at || "2026-08-14T00:00:00.000Z",
+      status: "current",
+      supersededBy: "",
+      supersededAt: "",
+      revokedAt: "",
+      revocationReason: "",
+      note: "",
+      provenance: { manualAction: `gesture-fixture-${sequence}`, via: entry.via || "test-fixture", gesture: "click" },
+    });
+  }
+  project.productionAuthority = ledger;
+  return project;
+}
+
+module.exports = { render, buildFixture, emptyFixture, withCanon };
 if (require.main === module) main().catch((error) => {
   console.error(error.stack || error.message || error);
   process.exitCode = 1;

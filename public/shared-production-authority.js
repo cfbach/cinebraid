@@ -37,11 +37,11 @@
                         approved, complete an approval step, or unblock work
                         that requires human authority.
 
-   A grant is not a boolean and not a truthy object: `isHumanAuthorityGrant`
-   requires the actor AND the act, so a record that merely mentions approval
-   cannot be mistaken for one. This does not make forgery impossible in a
-   language where any object can be constructed — it makes it IMPOSSIBLE BY
-   ACCIDENT, and it gives the invariant one name a test can hold.
+   THERE IS NO GRANT OBJECT ANY MORE. Three batches tried one — a shape, then an
+   object identity, then a one-use capability — and each time an audit found a
+   way to obtain or reuse it. A canon write is now a single synchronous call
+   inside the trusted user event itself, so there is nothing to hold, hand on, or
+   spend later. public/shared-authority-kernel.js owns it.
 
    ---------------------------------------------------------------------------
    THE SECOND HALF: WHEN IS A PARKED GATE ACTUALLY DONE (Dogfood #2 A2 / F2).
@@ -165,105 +165,46 @@ const KERNEL = (() => {
   return null;
 })();
 
-/* ---------- the document shape the kernel does not know ------------------- */
+/* ---------------------------------------------------------------------------
+   THE SIMPLIFICATION PASS — WHAT LEFT THIS FILE, AND WHY IT CANNOT COME BACK.
 
-/* 1D-05 — THE ONE PLACE A SHOT EDGE'S ASSET IDENTITY LIVES.
- *
- * This reader used to look for `record.approvalIdentity.winner`. Nothing has
- * ever written that: `stampShotApprovalIdentity` in shared-media-disposition.js
- * writes `record.winnerAssetId`, and the fixtures and Results projection read
- * that. So every shot-side `live.assetId` came back blank, and the receipt's
- * recorded identity was never actually compared against anything.
- *
- * That mattered less while the match was disjunctive. Now that agreement must
- * be exact, a field nobody writes would silently disable half the rule, so the
- * reader reads the field the writer writes. The legacy shape is still accepted
- * on read, because a project may carry it; nothing writes it any more.
- *
- * tests/dogfood2-p0-architecture.js asserts this name against
- * shared-media-disposition.js's own answer, so the two cannot drift apart
- * again without a suite going red. */
-function shotEdgeAssetId(record, field) {
-  const it = authorityObject(record);
-  return authorityText(it[`${field}AssetId`]) || authorityText(authorityObject(it.approvalIdentity)[field]);
-}
+   Batch 1D put the document shape here and handed it to the kernel through
+   four exported installers: `installAuthorityEdgeReader`,
+   `installAuthorityEdgeWriter`, `installAuthorityOwnershipPolicy` and
+   `installAuthorityProjectCommitter`. None was install-once. The 1D acceptance
+   audit overwrote the ownership policy and made a contested file Canon, and
+   replaced the edge writer with a closure that mutated the live project and
+   threw.
 
-/* WHERE EVERY AUTHORITY EDGE LIVES, in one place, for all six target kinds.
-   The kernel asks this and never parses the project itself; this file knows
-   `keyframes` and `coverageSlots` and the kernel knows what a decision is. */
-function readAuthorityEdge(project, target) {
-  const P = authorityObject(project);
-  const it = authorityObject(target);
-  const shot = () => authorityList(P.shots).map(authorityObject).find((row) => authorityText(row.id) === it.shotId) || null;
-  const entity = () => authorityList(P[it.list]).map(authorityObject).find((row) => authorityText(row.id) === it.entityId) || null;
-  if (it.kind === "shot-frame") {
-    const s = shot();
-    if (!s) return { value: "", assetId: "" };
-    const frames = authorityList(s.keyframes).map(authorityObject);
-    const index = frames.findIndex((row) => authorityText(row.id) === it.frameId);
-    if (index < 0) return { value: "", assetId: "" };
-    const frame = frames[index];
-    /* The opening frame's authority may live on the shot, which is where the
-       manual path has always written it. Both are the same edge. */
-    const value = authorityText(frame.winner) || (index === 0 ? authorityText(s.winner) : "");
-    const assetId = shotEdgeAssetId(frame, "winner") || (index === 0 ? shotEdgeAssetId(s, "winner") : "");
-    return { value, assetId };
-  }
-  if (it.kind === "shot-motion") {
-    const s = shot();
-    if (!s) return { value: "", assetId: "" };
-    const unit = authorityList(s.clips).map(authorityObject).find((row) => authorityText(row.id) === it.unitKey || authorityText(row.suffix) === it.unitKey);
-    if (!unit) return { value: "", assetId: "" };
-    return { value: authorityText(unit.videoWinner), assetId: shotEdgeAssetId(unit, "videoWinner") };
-  }
-  if (it.kind === "shot-delivery") {
-    const s = shot();
-    if (!s) return { value: "", assetId: "" };
-    const creation = authorityObject(s.creationBrief);
-    return { value: authorityText(s.finalStillFile) || authorityText(creation.finalStillFile) || authorityText(creation.approvedMotionFile), assetId: "" };
-  }
-  if (it.kind === "entity-state") {
-    const x = entity();
-    if (!x) return { value: "", assetId: "" };
-    const states = authorityList(x.continuityStates).map(authorityObject);
-    const state = states.find((row) => authorityText(row.id) === it.stateId);
-    if (state) {
-      const own = authorityText(state.approvedFile);
-      if (own) return { value: own, assetId: authorityText(state.approvedAssetId) };
-      /* A non-default state with no file of its own is NOT answered by the
-         entity's primary — that substitution is the state-authority defect. */
-      return state.isDefault === true
-        ? { value: authorityText(x.approvedFile), assetId: authorityText(x.approvedAssetId) }
-        : { value: "", assetId: "" };
-    }
-    return it.stateId === "state-default"
-      ? { value: authorityText(x.approvedFile), assetId: authorityText(x.approvedAssetId) }
-      : { value: "", assetId: "" };
-  }
-  if (it.kind === "entity-coverage" || it.kind === "entity-expression") {
-    const x = entity();
-    if (!x) return { value: "", assetId: "" };
-    const group = it.kind === "entity-coverage" ? "coverageSlots" : "expressionSlots";
-    const slot = authorityList(x[group]).map(authorityObject).find((row) => authorityText(row.id) === it.slotId);
-    if (!slot) return { value: "", assetId: "" };
-    return { value: authorityText(slot.approvedFile), assetId: authorityText(slot.approvedAssetId) };
-  }
-  return { value: "", assetId: "" };
-}
-if (KERNEL) KERNEL.installAuthorityEdgeReader(readAuthorityEdge);
+   The lesson is not "make the installers install-once". It is that a truth rule
+   reachable through an exported function is a truth rule the application can
+   redefine, and this alpha does not need that flexibility at all. So the whole
+   seam is deleted: the kernel privately owns target validation, ownership, edge
+   reading, edge writing, receipt validation, staging and persistence.
 
-/* ---------- the manual action boundary, re-exported ----------------------- */
+   WHAT LEFT, and must not return:
+     readAuthorityEdge / writeAuthorityEdge  the document shape, now private to
+                                             the kernel
+     entityOwnershipEligibility              the ownership veto, now a direct
+                                             kernel dependency on
+                                             shared-entity-ownership.js
+     useEntityOwnershipResolver              a second way to replace that answer
+     beginManualApproval                     the human capability. There is no
+                                             token: a Canon write happens inside
+                                             the trusted event, synchronously
+     commitNamedAuthority / write*ProductionAuthority
+                                             replaced by the kernel's four named
+                                             approve*Canon commands
 
-/* The only way to obtain the credential. Re-exported from here so a caller has
-   one import site for "I am an explicit human approval surface", and so an
-   inventory test can enumerate its call sites in one grep. */
-function beginManualApproval(details = {}) {
-  if (!KERNEL) throw new Error("The production authority kernel is not loaded. No authority can be established.");
-  return KERNEL.beginManualAuthorityAction(details);
-}
-function manualApprovalActive() {
-  return !!KERNEL && KERNEL.trustedGestureOpen();
-}
+   WHAT STAYED is this file's actual subject: the run ledger's gate vocabulary,
+   and reconciling it against Canon.
+   --------------------------------------------------------------------------- */
+
+/* `manualApprovalActive()` and `authorityLedgerTrusted()` used to live here.
+   Nothing called either one once the capability model went, and a predicate with
+   no caller is a concept a reader still has to understand. The kernel exports
+   `trustedGestureOpen()` and `authorityLedgerDiagnostics()` for a surface that
+   ever needs them again. */
 
 /* ---------- the non-authoritative nomination ------------------------------ */
 
@@ -310,214 +251,31 @@ function hasCurrentHumanAuthority(project, target) { return !!currentHumanAuthor
 function liveAuthorityValue(project, target) { return KERNEL ? KERNEL.liveAuthorityEdge(project, target) : { value: "", assetId: "" }; }
 function historicSelection(project, target) { return KERNEL ? KERNEL.historicSelection(project, target) : null; }
 function authorityLedgerDiagnostics(project) { return KERNEL ? KERNEL.authorityLedgerDiagnostics(project) : []; }
-function authorityLedgerTrusted(project) { return !KERNEL || KERNEL.validateAuthorityLedger(project).trusted; }
 
-/* ---------- THE EDGE WRITER, INSTALLED ONCE --------------------------------
+/* ---------- the four named Canon commands are NOT redefined here ----------
  *
- * 1D-07. The exact mirror of readAuthorityEdge above: for each target kind it
- * writes the same field that function reads back, so the kernel's post-commit
- * "does the project agree with the receipt" check is comparing like with like.
+ * They are the kernel's `approveFrameCanon`, `approveMotionCanon`,
+ * `approveDeliveryCanon` and `approveEntityStateCanon`, plus the four matching
+ * `revoke*Canon` and `repairCanonValue`. In the browser they are already in the
+ * shared lexical scope, because the kernel declares them at the top level of
+ * the script that loads before this one; in Node they arrive through KERNEL and
+ * are re-exported at the bottom of this file.
  *
- * IT IS NOT A PARAMETER. Callers used to hand `applyEdge(draft)` to every
- * approval — twelve of them, each re-deriving the same field names, each free
- * to close over the live project instead of the draft. The 1C audit did exactly
- * that and mutated the live document from a callback that then threw. The
- * kernel now runs no caller code at all inside the transaction.
+ * DEFINING A WRAPPER HERE WOULD BE A BUG, TWICE OVER. A `const` of the same
+ * name is a SyntaxError against the kernel's function declaration and blanks
+ * the entire product — every public/*.js shares one global scope. And a `function`
+ * of the same name would shadow the kernel's, which is exactly how an earlier
+ * batch produced wrappers that called themselves until the stack ran out.
  *
- * WHAT A CALLER STILL DOES is everything that is NOT the Canon pointer:
- * workflow status, delivery intent, angle bookkeeping. Those happen after the
- * approval returns, which is where they belong — they were never part of the
- * atomic authority write, only sharing a callback with it. */
-function writeAuthorityEdge(draft, target, details) {
-  const P = authorityObject(draft);
-  const it = authorityObject(target);
-  const value = authorityText(authorityObject(details).value);
-  const assetId = authorityText(authorityObject(details).assetId);
-  const at = authorityText(authorityObject(details).at);
-  /* A CLEAR IS THE SAME WRITE WITH NO VALUE. Revocation calls this with an
-     empty value, and the identity must go with it — a stale asset id that
-     outlived the approval justifying it would silently re-resolve later. */
-  const stampShot = (record, field) => {
-    if (!record) return;
-    if (assetId) record[`${field}AssetId`] = assetId;
-    else if (!value) delete record[`${field}AssetId`];
-  };
-  const shot = () => authorityList(P.shots).find((row) => row && authorityText(row.id) === it.shotId) || null;
-
-  if (it.kind === "shot-frame") {
-    const s = shot();
-    if (!s) return false;
-    const frames = authorityList(s.keyframes);
-    const index = frames.findIndex((row) => row && authorityText(row.id) === it.frameId);
-    if (index < 0) return false;
-    frames[index].winner = value;
-    stampShot(frames[index], "winner");
-    /* The opening frame's authority is also the shot's headline image. Both are
-       the same edge, and readAuthorityEdge falls back to it. */
-    if (index === 0) { s.winner = value; stampShot(s, "winner"); }
-    return true;
-  }
-  if (it.kind === "shot-motion") {
-    const s = shot();
-    if (!s) return false;
-    const unit = authorityList(s.clips).find((row) => row && (authorityText(row.id) === it.unitKey || authorityText(row.suffix) === it.unitKey));
-    if (!unit) return false;
-    unit.videoWinner = value;
-    stampShot(unit, "videoWinner");
-    return true;
-  }
-  if (it.kind === "shot-delivery") {
-    const s = shot();
-    if (!s) return false;
-    s.creationBrief = s.creationBrief && typeof s.creationBrief === "object" ? s.creationBrief : {};
-    /* Which delivery this is, is a fact about the bytes, not a caller's claim. */
-    if (/\.(mp4|mov|webm|m4v|avi|mkv)$/i.test(value)) {
-      s.creationBrief.approvedMotionFile = value;
-      s.creationBrief.deliveryIntent = "video";
-    } else {
-      s.finalStillFile = value;
-      s.creationBrief.finalStillFile = value;
-      s.creationBrief.deliveryIntent = "still";
-    }
-    /* `s.winner` IS NOT THE DELIVERY EDGE and this writer must not touch it.
-       readAuthorityEdge reads it as the OPENING FRAME's authority — the legacy
-       location the manual path writes a frame approval to — so writing it here
-       made two target kinds share one field, and clearing it on a delivery
-       revocation silently withdrew a frame approval nobody had withdrawn. The
-       delivery edge is finalStillFile / creationBrief, which is what the reader
-       reads for this kind. */
-    return true;
-  }
-  if (it.kind === "entity-state") {
-    const x = authorityList(P[it.list]).find((row) => row && authorityText(row.id) === it.entityId) || null;
-    if (!x) return false;
-    const states = authorityList(x.continuityStates);
-    const state = states.find((row) => row && authorityText(row.id) === it.stateId) || null;
-    if (!state && it.stateId !== "state-default") return false;
-    if (state) {
-      state.approvedFile = value;
-      state.approvedAt = at;
-      state.parentValidation = null;
-      if (assetId) state.approvedAssetId = assetId;
-      else if (!value) delete state.approvedAssetId;
-    }
-    if (!state || state.isDefault === true || authorityText(state.id) === "state-default") {
-      x.approvedFile = value;
-      if (assetId) x.approvedAssetId = assetId;
-      else if (!value) delete x.approvedAssetId;
-    }
-    return true;
-  }
-  return false;
-}
-
-/* ---------- the named write boundaries, one per target kind --------------- */
-
-/* 1D-03 — THERE IS NO GENERIC WRITER ANY MORE.
+ * Each command is SYNCHRONOUS and must be called inside the trusted user event
+ * that is the human's decision. Each requires the exact value and an explicitly
+ * stated asset identity. There is no token to mint, carry across an `await`, or
+ * spend on a decision the person never saw.
  *
- * `writeProductionAuthority` was exported and forwarded any request straight
- * into the kernel, so a caller could name an entity-state target and skip the
- * ownership rule entirely — which the 1C audit did. It is private now, and the
- * only thing it does beyond forwarding is refuse a kind nobody named.
- *
- * The four named operations below are the whole public surface. Target policy
- * is not attached here; it lives in the kernel, keyed by target kind, where no
- * caller can reach it. */
-function commitNamedAuthority(project, request, kind) {
-  if (!KERNEL) throw new Error("The production authority kernel is not loaded. No authority can be established.");
-  const it = authorityObject(request);
-  /* A caller cannot smuggle policy or edge behaviour back in. */
-  delete it.eligibility;
-  delete it.applyEdge;
-  return KERNEL.commitAuthorityTransaction(project, { ...it, kind });
-}
-function writeFrameProductionAuthority(project, request = {}) {
-  return commitNamedAuthority(project, request, "shot-frame");
-}
-function writeMotionProductionAuthority(project, request = {}) {
-  return commitNamedAuthority(project, request, "shot-motion");
-}
-function writeDeliveryProductionAuthority(project, request = {}) {
-  return commitNamedAuthority(project, request, "shot-delivery");
-}
-function writeEntityStateProductionAuthority(project, request = {}) {
-  return commitNamedAuthority(project, request, "entity-state");
-}
-/* THERE IS NO writeCoverageProductionAuthority AND NO writeExpressionProductionAuthority.
-   Alpha removes authority semantics from slots rather than instrumenting them;
-   public/shared-entity-slots.js owns the assignment, and a test asserts these
-   two names do not come back. */
-function revokeProductionAuthority(project, request = {}) {
-  if (!KERNEL) throw new Error("The production authority kernel is not loaded.");
-  return KERNEL.revokeAuthorityTransaction(project, request);
-}
-function revokeFrameProductionAuthority(project, request = {}) {
-  return revokeProductionAuthority(project, { ...authorityObject(request), kind: "shot-frame" });
-}
-function revokeEntityStateProductionAuthority(project, request = {}) {
-  return revokeProductionAuthority(project, { ...authorityObject(request), kind: "entity-state" });
-}
-function repairAuthorityReceiptIdentity(project, change = {}) {
-  return KERNEL ? KERNEL.repairAuthorityValue(project, change) : [];
-}
-
-/* THE KERNEL'S TARGET POLICY AND EDGE WRITER, WIRED AT LOAD.
- *
- * Both are module wiring, not per-call arguments — that is the whole point of
- * 1D-03 and 1D-07. A caller has no parameter for either, so there is nothing to
- * omit, replace or forget. `entityOwnershipEligibility` is defined below and
- * hoisted; it is the same predicate the resolver suite already covers. */
-if (KERNEL) {
-  KERNEL.installAuthorityEdgeWriter(writeAuthorityEdge);
-  KERNEL.installAuthorityOwnershipPolicy((project, target, value) => entityOwnershipEligibility(project, target, value));
-}
-/* The SUPPORTING-reference writer gets the same treatment, for the same reason.
-   A slot is not Canon, but "which entity owns this file" is the same question
-   with the same right answer, and six call sites each passing their own copy of
-   the predicate was six chances to pass a different one. */
-if (typeof installSlotOwnershipPolicy === "function") {
-  installSlotOwnershipPolicy((project, target, value) => entityOwnershipEligibility(project, target, value));
-} else if (typeof module !== "undefined" && module.exports) {
-  try { require("./shared-entity-slots.js").installSlotOwnershipPolicy((project, target, value) => entityOwnershipEligibility(project, target, value)); }
-  catch { /* a composition without the slot module simply has no slots */ }
-}
-
-/* ---------- the ownership veto -------------------------------------------- */
-
-/* K4: RE-RESOLVED INSIDE THE COMMIT BOUNDARY, against the snapshot the decision
-   is being made on — never against a list a modal rendered minutes ago. The
-   re-audit approved a contested `SHARED.png` from a stale shortlist because the
-   writer that did it never asked this question at commit time. */
-let INJECTED_OWNERSHIP_RESOLVER = null;
-function useEntityOwnershipResolver(api) {
-  const it = authorityObject(api);
-  INJECTED_OWNERSHIP_RESOLVER = typeof it.resolveMediaOwnership === "function" && typeof it.buildEntityOwnerIndex === "function"
-    ? { resolve: it.resolveMediaOwnership, build: it.buildEntityOwnerIndex }
-    : null;
-  return INJECTED_OWNERSHIP_RESOLVER;
-}
-function entityOwnershipEligibility(project, target, fileName) {
-  const need = authorityObject(target);
-  const name = authorityText(fileName);
-  if (!name) return { ok: true };
-  const resolver = INJECTED_OWNERSHIP_RESOLVER
-    || (typeof resolveMediaOwnership === "function" ? { resolve: resolveMediaOwnership, build: buildEntityOwnerIndex } : null)
-    || (typeof globalThis !== "undefined" && typeof globalThis.resolveMediaOwnership === "function"
-      ? { resolve: globalThis.resolveMediaOwnership, build: globalThis.buildEntityOwnerIndex }
-      : null);
-  if (!resolver || typeof resolver.build !== "function") {
-    return { ok: false, code: "AUTHORITY_OWNERSHIP_RESOLVER_UNAVAILABLE", message: `CineBraid cannot confirm which reference owns ${name}, so it will not make it canon. No authority was written.` };
-  }
-  const resolution = authorityObject(resolver.resolve(resolver.build(project, need.list), name));
-  if (resolution.contested === true) {
-    return { ok: false, code: "AUTHORITY_OWNERSHIP_CONTESTED", message: `${name} is durably claimed by more than one reference (${authorityList(resolution.claimants).join(", ")}). Resolve the conflict before approving it. No authority was written.` };
-  }
-  if (resolution.authoritative !== true || authorityText(resolution.ownerId) !== authorityText(need.entityId)) {
-    return { ok: false, code: "AUTHORITY_OWNERSHIP_UNRESOLVED", message: `${name} is not durably owned by ${need.entityId}${authorityText(resolution.basis) === "prefix-inference" ? " — a filename match is a possible match, not ownership. Claim it for this reference first." : "."} No authority was written.` };
-  }
-  return { ok: true };
-}
-
+ * THERE IS NO approveCoverageCanon AND NO approveExpressionCanon. Alpha removes
+ * authority semantics from slots rather than instrumenting them;
+ * public/shared-entity-slots.js owns the assignment, and a test asserts these
+ * two names do not come back. */
 
 /* A parked gate and an approval command name the same object different ways.
    This is the one translation, so the two can never drift. */
@@ -862,15 +620,18 @@ const PRODUCTION_AUTHORITY_EXPORTS = {
   HUMAN_AUTHORITY_ACT,
   AUTOMATION_RECOMMENDATION_FIELD,
   HUMAN_GATE_KINDS,
-  /* K1C: the forgeable trio — isHumanAuthorityGrant, humanAuthorityGrant and
-     assertHumanAuthority — is deliberately absent. A test asserts their
-     absence, because re-exporting any of them restores the credential the
-     re-audit forged in one line. */
-  beginManualApproval,
-  manualApprovalActive,
+  /* DELIBERATELY ABSENT, and a test asserts each one stays absent, because
+     re-exporting any of them restores an architecture an audit walked through:
+
+       isHumanAuthorityGrant / humanAuthorityGrant / assertHumanAuthority
+                                        a credential that was a SHAPE
+       beginManualApproval              a reusable human capability
+       readAuthorityEdge / writeAuthorityEdge
+                                        the document shape, as a replaceable seam
+       entityOwnershipEligibility / useEntityOwnershipResolver
+                                        a replaceable ownership answer
+       write*ProductionAuthority        wrappers around a generic transaction */
   authorityLedgerDiagnostics,
-  authorityLedgerTrusted,
-  readAuthorityEdge,
   automationRecommendation,
   isAutomationRecommendation,
   readAutomationRecommendation,
@@ -886,16 +647,20 @@ const PRODUCTION_AUTHORITY_EXPORTS = {
   currentHumanAuthority,
   hasCurrentHumanAuthority,
   historicSelection,
-  revokeProductionAuthority,
-  writeFrameProductionAuthority,
-  writeMotionProductionAuthority,
-  writeDeliveryProductionAuthority,
-  writeEntityStateProductionAuthority,
-  revokeFrameProductionAuthority,
-  revokeEntityStateProductionAuthority,
-  entityOwnershipEligibility,
-  useEntityOwnershipResolver,
-  repairAuthorityReceiptIdentity,
+  /* S9 — the one projection. Read-only derived state; every surface that wants
+     to know what an entity's production truth is asks this rather than
+     re-deriving it from raw fields. */
+  entityProductionTruth: KERNEL && KERNEL.entityProductionTruth,
+  /* The kernel's own function objects, not wrappers — see the note above. */
+  approveFrameCanon: KERNEL && KERNEL.approveFrameCanon,
+  approveMotionCanon: KERNEL && KERNEL.approveMotionCanon,
+  approveDeliveryCanon: KERNEL && KERNEL.approveDeliveryCanon,
+  approveEntityStateCanon: KERNEL && KERNEL.approveEntityStateCanon,
+  revokeFrameCanon: KERNEL && KERNEL.revokeFrameCanon,
+  revokeMotionCanon: KERNEL && KERNEL.revokeMotionCanon,
+  revokeDeliveryCanon: KERNEL && KERNEL.revokeDeliveryCanon,
+  revokeEntityStateCanon: KERNEL && KERNEL.revokeEntityStateCanon,
+  repairCanonValue: KERNEL && KERNEL.repairCanonValue,
   gateRequirement,
   gateRequirementForAnyStatus,
   runGateRequirements,

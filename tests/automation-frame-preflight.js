@@ -24,7 +24,7 @@
  *   1. WHICH STATE. Resolved per frame through resolveDeclaredStateId(), the same
  *      entry point the manifest uses. Case 1-8 below.
  *   2. WHICH FILE. `entityApprovedFileForState()` falls back to
- *      `entity.approvedFile` for ANY state, and entityStateList() keeps that
+ *      `entity.approvedFile` for ANY state, and ensureEntityStateList() keeps that
  *      field synced to the DEFAULT state's file — so "rain-soaked" resolved to
  *      the clean image even once the right state id was in hand. A state's
  *      approval is its OWN approvedFile; the entity-level file answers only for
@@ -325,7 +325,7 @@ async function unchangedSection() {
   };
 
   /* Case 10 — a pre-6.7 entity: approval on the entity, no continuityStates at
-     all. entityStateList() seeds the default FROM entity.approvedFile, and the
+     all. ensureEntityStateList() seeds the default FROM entity.approvedFile, and the
      entity-level file must keep answering for it. */
   eq(referenceErrors(await legacyShaped((project) => {
     delete project.characters[0].continuityStates;

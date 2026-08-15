@@ -327,7 +327,7 @@ function entityCandidateReviewBadge(entity, fileName) {
 
 function entityStateParentSummary(entity, state) {
   if (!entity || !state || state.isDefault) return { parent: null, fileName: "", label: "Primary identity" };
-  const states = entityStateList(entity, true);
+  const states = entityStateListRead(entity, true);
   const parent = states.find((item) => item.id === state.parentStateId && item.id !== state.id)
     || states.find((item) => item.isDefault)
     || states.find((item) => item.id !== state.id)
@@ -365,7 +365,7 @@ window.openContinuityStateVariant = async (list, id, stateId) => {
 window.openContinuityStateVariantHub = (list, id) => {
   const entity = P[list]?.find((item) => item.id === id);
   if (!entity) return;
-  const states = entityStateList(entity, true).filter((state) => !state.isDefault);
+  const states = entityStateListRead(entity, true).filter((state) => !state.isDefault);
   if (!states.length) {
     window.boundedWriteState?.("selected:entity-coverage-view", `${list}:${id}`, "states");
     window.selectBoundedTask?.("entity-task", `${list}:${id}`, "coverage");
@@ -642,7 +642,7 @@ window.setEntityContinuityTracking = (list, id, key, value) => {
 
 function continuityStatesPanel(list, it, media = []) {
   if (list === "audio") return "";
-  const states = entityStateList(it, true);
+  const states = entityStateListRead(it, true);
   const ids = states.map((state) => state.id);
   const activePromptState = states.find((state) => typeof guidedPromptOp === "function" && guidedPromptOp("asset-state", `${list}:${it.id}`, state.id)?.status === "busy");
   const fallback = activePromptState?.id || states.find((state) => !state.approvedFile && !state.isDefault)?.id || ids[0] || "";
@@ -678,7 +678,7 @@ function continuityStatesPanel(list, it, media = []) {
  * damage is not added to. */
 window.addContinuityState = (list, id, parentStateId = "") => {
   const x = P[list].find((e) => e.id === id);
-  x.continuityStates = entityStateList(x, true);
+  x.continuityStates = ensureEntityStateList(x, true);
   const defaultState = x.continuityStates.find((item) => item.isDefault) || x.continuityStates[0];
   const outcome = applyStateCreation(x.continuityStates, {
     id: "state-" + Date.now().toString(36),
@@ -821,7 +821,7 @@ function coverageTemplateForList(list) {
   /* The preset table still reads as booleans because that is how a template
      naturally reads — "front: yes, detail: no" — but what it SEEDS is the enum,
      through the one function that decides what a template boolean means. */
-  return (presets[list] || []).map(([id, label, required]) => ({ id, label, requirement: templateRequirement(required), approvedFile: '', notes: '', status: 'missing' }));
+  return (presets[list] || []).map(([id, label, required]) => ({ id, label, requirement: templateRequirement(required), selectedFile: '', notes: '', status: 'missing' }));
 }
 function ensureCoverageSlots(list, entity) {
   // v6.5.3.3: explicit project migration owns schema repair. Rendering is read-only.
@@ -836,8 +836,8 @@ window.setExpressionSlotField = (id, index, key, value) => {
   if (!entity) return;
   const slot = ensureExpressionSlots(entity)[index];
   if (!slot) return;
-  if (key !== "approvedFile") { slot[key] = value; dirty(); return; }
-  const next = String(value || ""), previous = String(slot.approvedFile || "");
+  if (key !== "selectedFile" && key !== "approvedFile") { slot[key] = value; dirty(); return; }
+  const next = String(value || ""), previous = slotSelectedFile(slot);
   if (next && entityCandidateIsCoverageSheet(entity, next)) return toast("A full sheet cannot be assigned to a single expression. Extract the panel first.");
   /* K1C/K-alpha — THE EXPRESSION SETTER, ROUTED. This is the coverage setter's
      twin and it was missed by both earlier passes: it wrote `approvedFile`,
@@ -873,7 +873,10 @@ function referenceRequirementLabel(item, isDefault = false) {
   return requirementLabel(item, isDefault);
 }
 function referenceSlotStatus(slot) {
-  if (slot?.approvedFile) return { tone: "complete", label: "Approved" };
+  /* S7 — "Selected", never "Approved". A slot holding a file is a supporting
+     reference the creator chose; the word that used to be here is the one every
+     downstream surface read as production truth. */
+  if (slotSelectedFile(slot)) return { tone: "complete", label: "Selected" };
   const requirement = referenceRequirement(slot);
   if (requirement === "not-required") return { tone: "optional", label: "Not required" };
   if (requirement === "planned") return { tone: "pending", label: "Planned" };
@@ -919,14 +922,14 @@ function expressionBoardMarkup(entity, mediaByName, media) {
   const key = entityCoverageSectionKey("characters", entity.id, "expressions");
   const open = workspaceSectionOpen(key, active || stats.missingRequired > 0);
   const ids = slots.map((row) => row.slot.id);
-  const fallback = slots.find((row) => referenceRequirement(row.slot) === "required" && !row.slot.approvedFile)?.slot.id || ids[0] || "";
+  const fallback = slots.find((row) => referenceRequirement(row.slot) === "required" && !slotSelectedFile(row.slot))?.slot.id || ids[0] || "";
   const selectedId = boundedSelected("expression-slot", entity.id, ids, fallback);
   const selected = slots.find((row) => row.slot.id === selectedId) || slots[0];
   const slot = selected?.slot;
-  const item = slot ? mediaByName.get(slot.approvedFile || "") : null;
+  const item = slot ? mediaByName.get(slotSelectedFile(slot)) : null;
   const slotState = slot ? referenceSlotStatus(slot) : null;
   const requirement = slot ? referenceRequirement(slot) : "planned";
-  const editor = slot ? `<article class="coverage-slot-card focused-slot-selected ${slot.approvedFile ? "is-ready" : requirement === "required" ? "needs-attention" : ""}"><header><div><span>${esc(referenceRequirementLabel(slot).toUpperCase())} EXPRESSION</span><b>${esc(slot.label)}</b></div><span class="coverage-slot-state">${slotState.label}</span></header><div class="coverage-slot-preview">${item ? `<img src="${attr(item.url)}" alt="">` : `<div class="coverage-slot-empty">${requirement === "not-required" ? "No reference needed" : "No approved expression"}</div>`}</div><label><span>Project need</span>${referenceRequirementSelect(requirement, `setExpressionSlotRequirement('${entity.id}',${selected.sourceIndex},this.value)`)}</label><label><span>Approved file</span><select onchange="setExpressionSlotField('${entity.id}',${selected.sourceIndex},'approvedFile',this.value)">${coverageSlotOptions(media,slot.approvedFile||"",entity)}</select></label><label><span>Performance notes</span><textarea placeholder="Physical expression, intensity, and what must remain unchanged." onchange="setExpressionSlotField('${entity.id}',${selected.sourceIndex},'notes',this.value)">${esc(slot.notes||"")}</textarea></label></article>` : `<div class="entity-candidate-empty"><b>No expression slots configured</b><span>Add expressions only when this project needs them.</span></div>`;
+  const editor = slot ? `<article class="coverage-slot-card focused-slot-selected ${slotSelectedFile(slot) ? "is-ready" : requirement === "required" ? "needs-attention" : ""}"><header><div><span>${esc(referenceRequirementLabel(slot).toUpperCase())} EXPRESSION</span><b>${esc(slot.label)}</b></div><span class="coverage-slot-state">${slotState.label}</span></header><div class="coverage-slot-preview">${item ? `<img src="${attr(item.url)}" alt="">` : `<div class="coverage-slot-empty">${requirement === "not-required" ? "No reference needed" : "No expression selected"}</div>`}</div><label><span>Project need</span>${referenceRequirementSelect(requirement, `setExpressionSlotRequirement('${entity.id}',${selected.sourceIndex},this.value)`)}</label><label><span>Selected file</span><select onchange="setExpressionSlotField('${entity.id}',${selected.sourceIndex},'selectedFile',this.value)">${coverageSlotOptions(media,slotSelectedFile(slot),entity)}</select></label><label><span>Performance notes</span><textarea placeholder="Physical expression, intensity, and what must remain unchanged." onchange="setExpressionSlotField('${entity.id}',${selected.sourceIndex},'notes',this.value)">${esc(slot.notes||"")}</textarea></label></article>` : `<div class="entity-candidate-empty"><b>No expression slots configured</b><span>Add expressions only when this project needs them.</span></div>`;
   const manual = `<div class="compact-section-actions coverage-board-actions manual-coverage-actions"><button class="approve-btn" onclick="openCoverageSheetPicker('characters','${entity.id}')">Crop expression sheet</button></div>`;
   const assisted = `<details class="coverage-assisted-actions" ${manualFirstWorkflow() ? "" : "open"}><summary>Optional assisted creation</summary><div class="compact-section-actions coverage-board-actions"><button class="approve-btn" onclick="openCoverageExpressionAutomation('${entity.id}')">Generate expression sheet</button></div></details>`;
   return `<details class="fold compact-entity-section entity-expression-section bounded-source-section" ${open ? "open" : ""} ontoggle="rememberWorkspaceSection('${attr(key)}',this.open)"><summary>Expression board <span>${stats.approvedRequired}/${stats.required} required approved${stats.planned ? ` · ${stats.planned} planned` : ""}${active ? " · generating" : ""}</span></summary>${entityCoverageActivityMarkup("characters", entity, "expressions")}<div class="entity-coverage-intro"><div><b>${stats.approvedTotal} of ${stats.total} expressions assigned</b><small>Mark each expression Required, Planned, or Not required. Only required gaps affect project attention.</small></div></div>${referenceSlotRailMarkup("expression-slot", entity.id, slots.map((row) => row.slot), selectedId)}<div class="coverage-slot-grid bounded-single-slot">${editor}</div>${manual}${assisted}</details>`;
@@ -999,7 +1002,7 @@ function applyCoverageAssignment(list, entity, slot, fileName, source = "manual"
   if (!outcome.assigned) return toast(outcome.message || `${fileName} could not be assigned to ${slot.label || slot.id}`);
   /* P4-SEM-C2. The slot records WHICH BYTES it selected, so a later rename
      cannot leave it pointing at a filename that no longer exists. */
-  stampApprovalIdentity(slot, (entityMedia(list, entity).find((item) => item.name === slot.approvedFile) || {}).assetId || "");
+  stampApprovalIdentity(slot, (entityMedia(list, entity).find((item) => item.name === slotSelectedFile(slot)) || {}).assetId || "");
   dirty();
   route();
 }
@@ -1008,8 +1011,8 @@ window.setCoverageSlotField = (list, id, index, key, value) => {
   if (!entity) return;
   const slot = ensureCoverageSlots(list, entity)[index];
   if (!slot) return;
-  if (key !== "approvedFile") { slot[key] = value; dirty(); return; }
-  const previous = String(slot.approvedFile || ""), next = String(value || "");
+  if (key !== "selectedFile" && key !== "approvedFile") { slot[key] = value; dirty(); return; }
+  const previous = slotSelectedFile(slot), next = String(value || "");
   if (previous && next && previous !== next) {
     return confirmModal(`Replace ${slot.label}?`, () => applyCoverageAssignment(list, entity, slot, next, "manual-replacement"), { title: "Replace the image selected for this view", confirmLabel: "REPLACE VIEW", body: `${previous} will remain in history, but ${next} becomes the image selected for this view.` });
   }
@@ -1058,7 +1061,8 @@ window.approveCoverageCandidate = (list, id, fileName, slotId, directOverride = 
     dirty(); route(); toast(`${slot.label} ${row.coverageGroup === "expressions" ? "expression" : "coverage"} selected`);
   };
   const replaceOrCommit = () => {
-    if (slot.approvedFile && slot.approvedFile !== fileName) return confirmModal(`Replace ${slot.label}? ${slot.approvedFile} will remain in replacement history.`, commit, { title: "Replace the image selected for this view", confirmLabel: "REPLACE VIEW" });
+    const held = slotSelectedFile(slot);
+    if (held && held !== fileName) return confirmModal(`Replace ${slot.label}? ${held} will remain in replacement history.`, commit, { title: "Replace the image selected for this view", confirmLabel: "REPLACE VIEW" });
     commit();
   };
   if (directOverride) return confirmModal(`Assign ${fileName} to ${slot.label} based on human judgment? CineBraid will record that no current AI check authorized this assignment.`, replaceOrCommit, { title: "Human approval", confirmLabel: "ASSIGN VIEW" });
@@ -1071,7 +1075,7 @@ window.addCoverageSlot = (list, id) => {
   /* `requirement: "planned"`, not `required: false`. Same meaning — a new custom
      slot is a view somebody may want, not one the project demands — written in
      the one encoding this build authors. */
-  slots.push({ id: 'custom-' + Date.now().toString(36), label: 'Custom slot', requirement: templateRequirement(false), approvedFile: '', notes: '', status: 'missing' });
+  slots.push({ id: 'custom-' + Date.now().toString(36), label: 'Custom slot', requirement: templateRequirement(false), selectedFile: '', notes: '', status: 'missing' });
   dirty();
   route();
 };
@@ -1097,14 +1101,14 @@ function coverageBoardMarkup(list, entity, mediaByName, media) {
   const key = entityCoverageSectionKey(list, entity.id, "angles");
   const open = workspaceSectionOpen(key, active || stats.missingRequired > 0);
   const ids = slots.map((slot) => slot.id);
-  const fallback = slots.find((slot) => referenceRequirement(slot) === "required" && !slot.approvedFile)?.id || ids[0] || "";
+  const fallback = slots.find((slot) => referenceRequirement(slot) === "required" && !slotSelectedFile(slot))?.id || ids[0] || "";
   const selectedId = boundedSelected("coverage-slot", `${list}:${entity.id}`, ids, fallback);
   const selectedIndex = Math.max(0, slots.findIndex((slot) => slot.id === selectedId));
   const slot = slots[selectedIndex];
-  const mediaItem = slot ? mediaByName.get(slot.approvedFile || "") : null;
+  const mediaItem = slot ? mediaByName.get(slotSelectedFile(slot)) : null;
   const slotState = slot ? referenceSlotStatus(slot) : null;
   const requirement = slot ? referenceRequirement(slot) : "planned";
-  const editor = slot ? `<article class="coverage-slot-card focused-slot-selected ${slot.approvedFile ? "is-ready" : requirement === "required" ? "needs-attention" : ""}"><header><div><span>${esc(referenceRequirementLabel(slot).toUpperCase())} SLOT</span><b>${esc(slot.label)}</b></div><span class="coverage-slot-state">${slotState.label}</span></header><div class="coverage-slot-preview">${mediaItem ? (isVideo(mediaItem.name) ? `<video muted src="${attr(mediaItem.url)}"></video>` : `<img src="${attr(mediaItem.url)}" alt="">`) : `<div class="coverage-slot-empty">${requirement === "not-required" ? "No reference needed" : "No approved reference"}</div>`}</div><label><span>Project need</span>${referenceRequirementSelect(requirement, `setCoverageSlotRequirement('${list}','${entity.id}',${selectedIndex},this.value)`)}</label><label><span>Approved file</span><select onchange="setCoverageSlotField('${list}','${entity.id}',${selectedIndex},'approvedFile',this.value)">${coverageSlotOptions(media, slot.approvedFile || "", entity)}</select></label>${slot.approvedFile ? `<div class="approval-provenance-note">${String(slot.provenance?.source || "").includes("human") ? "Human approved" : "Approved image"}${String(slot.provenance?.source || "").includes("human") && !entityCandidateTargetReview(entity, slot.approvedFile)?.pass ? " · not AI checked" : ""}</div>` : ""}<label><span>Notes</span><textarea placeholder="When to use this slot, framing constraints, or what makes this view the right one to approve." onchange="setCoverageSlotField('${list}','${entity.id}',${selectedIndex},'notes',this.value)">${esc(slot.notes || "")}</textarea></label></article>` : `<div class="entity-candidate-empty"><b>No coverage slots configured</b><span>Add only the views this project actually needs.</span></div>`;
+  const editor = slot ? `<article class="coverage-slot-card focused-slot-selected ${slotSelectedFile(slot) ? "is-ready" : requirement === "required" ? "needs-attention" : ""}"><header><div><span>${esc(referenceRequirementLabel(slot).toUpperCase())} SLOT</span><b>${esc(slot.label)}</b></div><span class="coverage-slot-state">${slotState.label}</span></header><div class="coverage-slot-preview">${mediaItem ? (isVideo(mediaItem.name) ? `<video muted src="${attr(mediaItem.url)}"></video>` : `<img src="${attr(mediaItem.url)}" alt="">`) : `<div class="coverage-slot-empty">${requirement === "not-required" ? "No reference needed" : "No reference selected"}</div>`}</div><label><span>Project need</span>${referenceRequirementSelect(requirement, `setCoverageSlotRequirement('${list}','${entity.id}',${selectedIndex},this.value)`)}</label><label><span>Selected file</span><select onchange="setCoverageSlotField('${list}','${entity.id}',${selectedIndex},'selectedFile',this.value)">${coverageSlotOptions(media, slotSelectedFile(slot), entity)}</select></label>${slotSelectedFile(slot) ? `<div class="approval-provenance-note">Supporting reference${String(slot.provenance?.source || "").includes("human") ? " chosen by you" : ""} — context for generation, not production truth.</div>` : ""}<label><span>Notes</span><textarea placeholder="When to use this slot, framing constraints, or what makes this view the right one to approve." onchange="setCoverageSlotField('${list}','${entity.id}',${selectedIndex},'notes',this.value)">${esc(slot.notes || "")}</textarea></label></article>` : `<div class="entity-candidate-empty"><b>No coverage slots configured</b><span>Add only the views this project actually needs.</span></div>`;
   const manualActions = `<div class="compact-section-actions coverage-board-actions manual-coverage-actions"><button class="approve-btn" onclick="openImportedReferenceMapper('${list}','${entity.id}')">Map imported references</button><button class="ghost-btn" onclick="openCoverageSheetPicker('${list}','${entity.id}')">Crop reference sheet</button><button class="add-btn" onclick="addCoverageSlot('${list}','${entity.id}')">+ Add custom slot</button></div>`;
   const assistedActions = `<details class="coverage-assisted-actions" ${manualFirstWorkflow() ? "" : "open"}><summary>Optional assisted creation</summary><div class="compact-section-actions coverage-board-actions"><button class="approve-btn" onclick="openCoverageAutomationModal('${list}','${entity.id}','hybrid')">Generate missing angles</button></div></details>`;
   return `<details class="fold compact-entity-section entity-coverage-section bounded-source-section" ${open ? "open" : ""} ontoggle="rememberWorkspaceSection('${attr(key)}',this.open)"><summary>Coverage board <span>${stats.approvedRequired}/${stats.required} required approved${stats.planned ? ` · ${stats.planned} planned` : ""}${active ? " · generating" : ""}</span></summary>${entityCoverageActivityMarkup(list, entity, "angles")}${assignmentNotice}<div class="entity-coverage-intro"><div><b>${stats.approvedTotal} of ${stats.total} views assigned</b><small>Mark each view Required, Planned, or Not required. Imported references can fill slots directly; generation is optional.</small></div></div>${referenceSlotRailMarkup("coverage-slot", `${list}:${entity.id}`, slots, selectedId)}<div class="coverage-slot-grid bounded-single-slot">${editor}</div>${manualActions}${assistedActions}</details>`;
@@ -1114,21 +1118,21 @@ function coverageBoardMarkup(list, entity, mediaByName, media) {
 
 function referenceCreationHub(list, entity) {
   if (list === "audio") return "";
-  const states = entityStateList(entity, true);
+  const states = entityStateListRead(entity, true);
   const primary = states.find((state) => state.isDefault) || states[0];
   const primaryFile = primary?.approvedFile || entity.approvedFile || "";
   const mediaCount = entityMedia(list, entity).length;
   const coverage = typeof ensureCoverageSlots === "function" ? ensureCoverageSlots(list, entity) : (entity.coverageSlots || []);
-  const approvedViews = coverage.filter((slot) => slot.approvedFile).length;
+  const selectedViews = coverage.filter((slot) => slotSelectedFile(slot)).length;
   const approvedStates = states.filter((state) => state.approvedFile || (state.isDefault && entity.approvedFile)).length;
-  return `<section class="reference-manual-hub"><header><div><span>UPLOAD & ORGANIZE</span><h2>Build the approved reference pack</h2><p>Import work made anywhere, choose which images are approved, split reference sheets into usable angles, then attach them to shots. AI review and generation are optional.</p></div><span class="reference-manual-status">${primaryFile ? "PRIMARY READY" : "PRIMARY NEEDED"} · ${approvedViews}/${coverage.length || 0} VIEWS · ${approvedStates}/${states.length || 0} STATES</span></header><div class="reference-manual-actions"><button class="approve-btn recommended" onclick="document.getElementById('entity-file').click()"><span>Upload reference files</span><small>Add existing images or video from disk</small></button><button class="ghost-btn" onclick="openImportedReferenceMapper('${attr(list)}','${attr(entity.id)}')"><span>Map imported references</span><small>Assign a single image to primary, state, angle, or expression</small></button><button class="ghost-btn" ${mediaCount ? "" : "disabled"} onclick="openCoverageSheetPicker('${attr(list)}','${attr(entity.id)}')"><span>Crop reference sheet</span><small>Cut a turnaround or contact sheet into individual angle files</small></button><button class="ghost-btn" ${mediaCount ? "" : "disabled"} onclick="approveEntityFile('${attr(list)}','${attr(entity.id)}','${attr(primaryFile)}','${attr(primary?.id || "state-default")}')"><span>Choose the main approved image</span><small>${primaryFile ? `Currently ${esc(primaryFile)}` : mediaCount ? "Select one uploaded image" : "Upload a reference first"}</small></button></div><div class="reference-manual-principle"><b>CineBraid stores the production truth.</b><span>Human approval is enough. Optional AI checks can be run later without changing the image you approved.</span></div></section>`;
+  return `<section class="reference-manual-hub"><header><div><span>UPLOAD & ORGANIZE</span><h2>Build the reference pack</h2><p>Import work made anywhere, choose which images are approved, split reference sheets into usable angles, then attach them to shots. AI review and generation are optional.</p></div><span class="reference-manual-status">${primaryFile ? "PRIMARY READY" : "PRIMARY NEEDED"} · ${selectedViews}/${coverage.length || 0} VIEWS · ${approvedStates}/${states.length || 0} STATES</span></header><div class="reference-manual-actions"><button class="approve-btn recommended" onclick="document.getElementById('entity-file').click()"><span>Upload reference files</span><small>Add existing images or video from disk</small></button><button class="ghost-btn" onclick="openImportedReferenceMapper('${attr(list)}','${attr(entity.id)}')"><span>Map imported references</span><small>Assign a single image to primary, state, angle, or expression</small></button><button class="ghost-btn" ${mediaCount ? "" : "disabled"} onclick="openCoverageSheetPicker('${attr(list)}','${attr(entity.id)}')"><span>Crop reference sheet</span><small>Cut a turnaround or contact sheet into individual angle files</small></button><button class="ghost-btn" ${mediaCount ? "" : "disabled"} onclick="approveEntityFile('${attr(list)}','${attr(entity.id)}','${attr(primaryFile)}','${attr(primary?.id || "state-default")}')"><span>Choose the main approved image</span><small>${primaryFile ? `Currently ${esc(primaryFile)}` : mediaCount ? "Select one uploaded image" : "Upload a reference first"}</small></button></div><div class="reference-manual-principle"><b>CineBraid stores the production truth.</b><span>Human approval is enough. Optional AI checks can be run later without changing the image you approved.</span></div></section>`;
 }
 function referenceAssistedToolsMarkup(list, entity) {
   if (list === "audio") return "";
   const coverage = typeof ensureCoverageSlots === "function" ? ensureCoverageSlots(list, entity) : (entity.coverageSlots || []);
-  const missingRequired = coverage.filter((slot) => referenceRequirement(slot) === "required" && !slot.approvedFile && !slot.retired).length;
+  const missingRequired = coverage.filter((slot) => referenceRequirement(slot) === "required" && !slotSelectedFile(slot) && !slot.retired).length;
   const primaryReady = !!(entity.approvedFile || (entity.continuityStates || []).find((state) => state.isDefault)?.approvedFile);
-  const alternateStates = entityStateList(entity, true).filter((state) => !state.isDefault && referenceRequirement(state) === "required");
+  const alternateStates = entityStateListRead(entity, true).filter((state) => !state.isDefault && referenceRequirement(state) === "required");
   const missingStates = alternateStates.filter((state) => !state.approvedFile).length;
   const expressionButton = list === "characters" ? `<button class="ghost-btn" onclick="openCoverageExpressionAutomation('${attr(entity.id)}')"><span>Generate expression sheet</span><small>Optional faces and performance coverage</small></button>` : "";
   const sectionKey = `reference-assisted:${list}:${entity.id}`;
@@ -1229,7 +1233,7 @@ function entityCoverageStatesMarkup(list, entity, mediaByName, media) {
   if (list === "characters") views.push({id:"expressions",label:"Expressions",render:()=>expressionBoardMarkup(entity,mediaByName,media)});
   views.push({id:"states",label:"Continuity states",render:()=>continuityStatesPanel(list,entity,media)});
   const ids=views.map((view)=>view.id), context=`${list}:${entity.id}`;
-  const fallback = entityStateList(entity,true).some((state)=>!state.isDefault && !state.approvedFile) ? "states" : "coverage";
+  const fallback = entityStateListRead(entity,true).some((state)=>!state.isDefault && !state.approvedFile) ? "states" : "coverage";
   const selectedId=boundedSelected("entity-coverage-view",context,ids,fallback), selected=views.find((view)=>view.id===selectedId)||views[0];
   return `<section class="entity-subworkspace"><nav class="entity-subworkspace-tabs" aria-label="Coverage and state tools">${views.map((view)=>`<button type="button" class="${view.id===selectedId?"selected":""}" onclick="selectBoundedItem('entity-coverage-view','${attr(context)}','${attr(view.id)}')">${esc(view.label)}</button>`).join("")}</nav><div data-entity-subworkspace="${attr(selected.id)}">${selected.render()}</div></section>`;
 }
@@ -1249,7 +1253,7 @@ function entityPage(list, id, extra) {
     const typeLabel={characters:"Character",locations:"Location",props:"Prop",vehicles:"Vehicle",audio:"Audio reference"}[list] || "Reference";
     return sharedNotFoundView(typeLabel,id,`#/library/${list}`,`${typeLabel}s`,rows.map((row)=>row.id),`#/${list === "characters" ? "character" : list === "locations" ? "location" : list === "props" ? "prop" : list === "vehicles" ? "vehicle" : "audio"}`);
   }
-  const media=entityMedia(list,it), wf=entityWorkflowState(it), states=list === "audio" ? [] : entityStateList(it,true), mediaByName=new Map(media.map((item)=>[item.name,item]));
+  const media=entityMedia(list,it), wf=entityWorkflowState(it), states=list === "audio" ? [] : entityStateListRead(it,true), mediaByName=new Map(media.map((item)=>[item.name,item]));
   /* P4-SEM-C2. This surface no longer decides for itself what its media IS.
 
      It used to build an `approvedNames` Set inline and subtract it from BOTH the

@@ -166,7 +166,7 @@ async function main() {
         `    const summary = window.summariseCoverage ? window.summariseCoverage(slots) : { required: 0, approvedRequired: 0 };
     return { required: summary.required, approved: summary.approvedRequired };`,
         `    const required = slots.filter((slot) => slot.required !== false);
-    return { required: required.length, approved: required.filter((slot) => slot.approvedFile).length };`,
+    return { required: required.length, approved: required.filter((slot) => slotSelectedFile(slot)).length };`,
       ]],
     },
     probe: async (suite, mutate) => {
@@ -269,11 +269,11 @@ async function main() {
     defect: "an approved primary image automatically satisfies a required view",
     mutatesBrowser: {
       "app.js": [[
-        `        next.approvedFile = String(next.approvedFile || "");
-        next.notes = String(next.notes || "");`,
-        `        next.approvedFile = String(next.approvedFile || "");
-        if (!next.approvedFile && entity.approvedFile && templateRequirement(true) === coverageRequirement(next)) next.approvedFile = String(entity.approvedFile);
-        next.notes = String(next.notes || "");`,
+        `        next.selectedFile = slotSelectedFile(next);
+        delete next.approvedFile;`,
+        `        next.selectedFile = slotSelectedFile(next);
+        if (!next.selectedFile && entity.approvedFile && templateRequirement(true) === coverageRequirement(next)) next.selectedFile = String(entity.approvedFile);
+        delete next.approvedFile;`,
       ]],
     },
     probe: async (suite, mutate) => {
@@ -288,7 +288,7 @@ async function main() {
       const seen = await suite.renderedCoverage(project, "characters", character.id, { mutateSource: mutate });
       assert(seen.board.approvedRequired > 0,
         "NC-E probe: the primary image was expected to start counting as completed coverage");
-      assert(seen.stored.some((slot) => slot.approvedFile === "KAI-PRIMARY.png"),
+      assert(seen.stored.some((slot) => (slot.selectedFile || slot.approvedFile) === "KAI-PRIMARY.png"),
         "NC-E probe: and to have been written into a named view nobody assigned it to");
     },
     guard: (suite, mutate) => suite.surfacesSection({ mutateSource: mutate }),

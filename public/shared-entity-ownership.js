@@ -99,7 +99,7 @@ function entityClaimedFileNames(entity) {
   }
   for (const group of OWNERSHIP_SLOT_GROUPS) {
     for (const slot of ownershipList(it[group])) {
-      const file = ownershipText(ownershipObject(slot).approvedFile);
+      const file = ownershipText(ownershipObject(slot).selectedFile) || ownershipText(ownershipObject(slot).approvedFile);
       if (file) names.push(file);
     }
   }

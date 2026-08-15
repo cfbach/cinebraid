@@ -9,7 +9,7 @@
   function updateCoverageTerminalState(list, entity) {
     const slots = list === "characters" && entity.coverageAutomation?.sheetType === "expressions" ? ensureExpressionSlots(entity) : ensureCoverageSlots(list, entity);
     const required = slots.filter((slot) => isRequiredCoverage(slot) && !slot.retired);
-    const missing = required.filter((slot) => !slot.approvedFile).length;
+    const missing = required.filter((slot) => !slotSelectedFile(slot)).length;
     if (!entity.coverageAutomation) return;
     if (!missing) { entity.coverageAutomation.status = "completed"; entity.coverageAutomation.completedAt = new Date().toISOString(); }
     else if (["sheet-ready-for-review","slot-candidates-ready","ready-for-review"].includes(entity.coverageAutomation.status)) entity.coverageAutomation.status = "needs-attention";
@@ -24,40 +24,64 @@
   function entityIdentityText(list, entity) {
     return String(entity.coverageDescription || "").trim() || entityVisualDescription(entity, list);
   }
-  /* The file expression is preserved exactly as it was; what changed in P4-SEM-C2
-     is how it is RESOLVED. When the approval recorded a durable assetId, the
-     lookup goes through identity first, so an image renamed since approval still
-     resolves instead of silently becoming "no primary reference". A project with
-     no ledger yet carries no id and falls back to the filename, which is the
-     pre-C2 behaviour exactly. */
-  function primaryReference(list, entity) {
-    if (!entity) return null;
-    const file = entity.approvedFile || (entity.continuityStates || []).find((state) => state.isDefault)?.approvedFile || "";
-    if (!file) return null;
-    const identified = approvalEdges(entity).find((edge) => edge.file === file && edge.assetId);
-    return resolveApprovalMedia({ file, assetId: identified?.assetId || "" }, entityMedia(list, entity));
+  /* S8A — THE CANONICAL IDENTITY INPUT REQUIRES CURRENT CANON.
+   *
+   * This used to read `entity.approvedFile` or the default state's raw
+   * `approvedFile` with no receipt predicate at all, and `submitCoverageJob`
+   * then serialized whatever it found as `role: "identity-authority"` under the
+   * label "primary approved authority". The 1D audit drove a project with a null
+   * ledger to the dispatch boundary and watched an unreceipted LEGACY.png go out
+   * as this entity's identity authority.
+   *
+   * A raw pointer is HISTORIC. It stays visible — `historicPrimaryPointer()`
+   * below is how a surface offers it — but it is not what this entity looks
+   * like until a person says so. */
+  function canonPrimaryRow(list, entity) {
+    if (!entity || typeof entityProductionTruth !== "function") return null;
+    const truth = entityProductionTruth(P, list, entity.id);
+    return truth.canon.find((row) => row.isDefault) || truth.canon[0] || null;
   }
-  /* K-alpha — SLOTS ARE SUPPORTING REFERENCES, NOT AUTHORITY.
-     This function is named for what it used to claim. The primary reference IS
-     entity Canon and keeps its role; every coverage slot it adds is context the
-     model may look at, and the reference role says so, so nothing downstream
-     can read a view as the thing that decides what this entity looks like. */
-  function coverageAuthorityReferences(list, entity, targetSlot = null) {
+  function primaryReference(list, entity) {
+    const row = canonPrimaryRow(list, entity);
+    if (!row) return null;
+    /* Identity first, filename second, so an image renamed since the approval
+       still resolves instead of silently becoming "no primary reference". */
+    return resolveApprovalMedia({ file: row.value, assetId: row.assetId || "" }, entityMedia(list, entity));
+  }
+  /* What is sitting there with nobody's name on it. Offered to the creator as
+     something they may confirm in one act; never used as identity input. */
+  function historicPrimaryPointer(list, entity) {
+    if (!entity || typeof entityProductionTruth !== "function") return null;
+    const truth = entityProductionTruth(P, list, entity.id);
+    const row = truth.historic.find((item) => item.isDefault) || truth.historic[0] || null;
+    if (!row) return null;
+    const item = resolveApprovalMedia({ file: row.value, assetId: row.assetId || "" }, entityMedia(list, entity));
+    return item ? { ...item, historic: true, basis: row.basis } : null;
+  }
+  /* S8 — THE REFERENCE PACKAGE, NAMED FOR WHAT EACH IMAGE IS FOR.
+   *
+   * Roles express PURPOSE. `identity-canon` is receipt-backed and is the only
+   * member that carries any authority claim; everything else is context the
+   * model may look at. The old names — `identity-authority` for a raw pointer,
+   * `approved-view` for a slot selection — were the two halves of the same
+   * mistake, and both are gone. */
+  function coverageReferencePackage(list, entity, targetSlot = null) {
     const primary = primaryReference(list, entity);
     const media = entityMedia(list, entity);
     const desired = targetSlot ? coverageSlotViewTag(list, targetSlot) : "custom";
     const refs = [];
-    const add = (item, slot = null, score = 0, kind = "approved-view") => {
+    const add = (item, slot = null, score = 0, kind = "supporting-view") => {
       if (!item?.url || entityCandidateIsCoverageSheet(entity, item.name) || refs.some((row) => row.item.name === item.name)) return;
       refs.push({ item, slot, score, kind });
     };
-    add(primary, null, 1000, "primary");
+    add(primary, null, 1000, "identity-canon");
     for (const slot of ensureCoverageSlots(list, entity)) {
-      if (!slot.approvedFile || entityCandidateIsCoverageSheet(entity, slot.approvedFile)) continue;
+      const slotFile = slotSelectedFile(slot);
+      if (!slotFile || entityCandidateIsCoverageSheet(entity, slotFile)) continue;
       /* Identity first, filename second — the same rule primaryReference() uses,
          so a coverage view and the primary cannot disagree about whether the
          image they both point at still exists. */
-      const item = resolveApprovalMedia({ file: slot.approvedFile, assetId: slot.approvedAssetId || "" }, media);
+      const item = resolveApprovalMedia({ file: slotFile, assetId: slot.selectedAssetId || slot.approvedAssetId || "" }, media);
       if (!item) continue;
       const candidateView = coverageSlotViewTag(list, slot);
       const score = targetSlot && typeof referenceViewScore === "function"
@@ -65,14 +89,14 @@
         : slot.id === targetSlot?.id ? 100 : 10;
       add(item, slot, score, "supporting-view");
     }
-    const primaryRow = refs.find((row) => row.kind === "primary") || null;
+    const primaryRow = refs.find((row) => row.kind === "identity-canon") || null;
     const rest = refs.filter((row) => row !== primaryRow).sort((a, b) => b.score - a.score || String(a.slot?.id || "").localeCompare(String(b.slot?.id || "")));
     const ordered = primaryRow ? [primaryRow, ...rest] : rest;
     return ordered.slice(0, list === "locations" ? 10 : 8);
   }
   function missingCoverageSlots(list, entity, includeOptional = false) {
     const slots = typeof ensureCoverageSlots === "function" ? ensureCoverageSlots(list, entity) : (entity.coverageSlots || []);
-    return slots.filter((slot) => !slot.approvedFile && (includeOptional || isRequiredCoverage(slot)));
+    return slots.filter((slot) => !slotSelectedFile(slot) && (includeOptional || isRequiredCoverage(slot)));
   }
   function coverageSlotViewTag(list, slot) {
     const map = {
@@ -116,8 +140,8 @@
     const names = slots.map((slot) => slot.label).join(", ");
     const immutable = String(entity.coverageCharacteristics || entity.driftNotes || entity.coverageNotes || "").trim();
     const common = [
-      `Create one high-resolution ${sheetType === "expressions" ? "expression reference sheet" : "multi-view reference sheet"} for the SAME ${entityTypeLabel(list)} shown in the supplied approved reference.`,
-      identity ? `DESIGN AUTHORITY: ${identity}` : "Preserve every visible identifying feature from the supplied reference.",
+      `Create one high-resolution ${sheetType === "expressions" ? "expression reference sheet" : "multi-view reference sheet"} for the SAME ${entityTypeLabel(list)} shown in the supplied canon reference.`,
+      identity ? `DESIGN DESCRIPTION: ${identity}` : "Preserve every visible identifying feature from the supplied reference.",
       immutable ? `IMMUTABLE CHARACTERISTICS: ${immutable}` : "Keep silhouette, proportions, materials, colors, construction and distinguishing details identical in every panel.",
       `PANELS IN THIS EXACT ORDER: ${names}.`,
       "Use clean, even lighting and a plain neutral background. Keep generous gutters between panels. Do not overlap panels. Do not place text, labels, borders, arrows, captions or watermarks inside the generated image. CineBraid will label and crop the panels after generation.",
@@ -142,8 +166,8 @@
           ? "CHARACTER IDENTITY LOCK: preserve the exact same face, anatomy, proportions, hair, wardrobe construction and accessories while changing only the camera angle."
           : "VEHICLE DESIGN LOCK: preserve exact silhouette, construction, wheels, panels, openings, materials and components while changing only the camera angle.";
     return [
-      `Create the ${slot.label} production reference for the exact same ${entityTypeLabel(list)} shown across the supplied approved authority package.`,
-      identity ? `DESIGN AUTHORITY: ${identity}` : "Preserve every visible identifying feature from every supplied authority.",
+      `Create the ${slot.label} production reference for the exact same ${entityTypeLabel(list)} shown across the supplied reference package.`,
+      identity ? `DESIGN DESCRIPTION: ${identity}` : "Preserve every visible identifying feature from every supplied image.",
       immutable ? `IMMUTABLE CHARACTERISTICS: ${immutable}` : "Preserve silhouette, proportions, colors, materials, construction and distinguishing details.",
       contract,
       `TARGET VIEW: ${slot.label}. ${slot.notes || ""}`,
@@ -152,21 +176,29 @@
     ].filter(Boolean).join("\n\n");
   }
   async function submitCoverageJob(list, entity, options) {
-    const authorities = coverageAuthorityReferences(list, entity, options.slot || null);
+    const authorities = coverageReferencePackage(list, entity, options.slot || null);
     const primary = authorities[0]?.item || null;
-    const refs = authorities.map((row, index) => ({
-      key: row.kind === "primary" ? "coverage-primary-authority" : `coverage-supporting-view:${row.slot?.id || index}`,
-      token: `#image${index + 1}`,
-      label: row.kind === "primary" ? `${entity.name || entity.id} primary approved authority` : `${row.slot?.label || "Selected view"} of ${entity.name || entity.id}`,
-      role: list === "locations" ? "location-geometry" : row.kind === "primary" ? "identity-authority" : "approved-view",
-      instruction: list === "locations"
-        ? "This image is one viewpoint of the same exact physical space. Preserve shared geometry, topology, fixed landmarks and material boundaries; move only the camera."
-        : row.kind === "primary"
-          ? "Use as exact identity/design authority. Preserve the asset; change only to the requested view."
-          : "Use this selected supporting view to preserve construction and details visible from this side.",
-      url: row.item.url,
-      sourceFile: row.item.name,
-    }));
+    /* S8 — EVERY ROLE NAMES A PURPOSE. Only `identity-canon` is receipt-backed,
+       and only it makes a claim; a supporting view travels as context and says
+       so in its role, its label and its instruction. */
+    const refs = authorities.map((row, index) => {
+      const isCanon = row.kind === "identity-canon";
+      const environment = list === "locations";
+      const expression = !isCanon && row.slot && (entity.expressionSlots || []).some((slot) => slot.id === row.slot.id);
+      return {
+        key: isCanon ? "coverage-identity-canon" : `coverage-supporting-view:${row.slot?.id || index}`,
+        token: `#image${index + 1}`,
+        label: isCanon ? `${entity.name || entity.id} canon identity` : `${row.slot?.label || "Selected view"} of ${entity.name || entity.id}`,
+        role: isCanon ? "identity-canon" : environment ? "environment-reference" : expression ? "expression-reference" : "supporting-view",
+        instruction: environment && !isCanon
+          ? "This image is one viewpoint of the same exact physical space. Preserve shared geometry, topology, fixed landmarks and material boundaries; move only the camera."
+          : isCanon
+            ? "Use as the exact identity/design canon. Preserve the asset; change only to the requested view."
+            : "Use this selected supporting view to preserve construction and details visible from this side. Context only — it is not production truth.",
+        url: row.item.url,
+        sourceFile: row.item.name,
+      };
+    });
     const body = {
       purpose: "entity-reference",
       entityList: list,
@@ -175,7 +207,9 @@
       sourceBuildId: options.sourceBuildId || `coverage-${Date.now().toString(36)}`,
       prompt: options.prompt,
       references: refs,
-      authorityManifest: refs.map((ref) => ({ token: ref.token, label: ref.label, role: ref.role, sourceFile: ref.sourceFile || "" })),
+      /* `referenceManifest`, not `authorityManifest`. Most of what travels here
+         is not authority, and the key said otherwise on every job. */
+      referenceManifest: refs.map((ref) => ({ token: ref.token, label: ref.label, role: ref.role, sourceFile: ref.sourceFile || "" })),
       /* One source of truth for the contract version: a hard-coded copy here
          silently kept stamping v2 onto jobs after the contract moved on. */
       authorityContractVersion: typeof ENTITY_REFERENCE_REVIEW_CONTRACT_VERSION === "string" ? ENTITY_REFERENCE_REVIEW_CONTRACT_VERSION : "reference-authority-v3",
@@ -388,7 +422,7 @@
     const sheetType = row.coverageSheetType || "angles";
     let slots = coverageSheetSlots(list, entity, sheetType);
     if (!slots.length) slots = (typeof ensureCoverageSlots === "function" ? ensureCoverageSlots(list, entity) : entity.coverageSlots || []).slice(0, 4);
-    const firstMissing = slots.findIndex((slot) => !slot.approvedFile);
+    const firstMissing = slots.findIndex((slot) => !slotSelectedFile(slot));
     const firstIndex = firstMissing >= 0 ? firstMissing : 0;
     const layout = sheetType === "expressions" ? "3x2" : "3x1";
     const panelCount = COVERAGE_CROP_LAYOUTS[layout].cols * COVERAGE_CROP_LAYOUTS[layout].rows;
@@ -473,7 +507,7 @@
     updateCoverageTerminalState(state.list, entity);
     dirty();
     rememberWorkspaceSection(entityCoverageSectionKey(state.list, state.entityId, state.sheetType === "expressions" ? "expressions" : "angles"), true);
-    const nextSlot = state.slots.find((item) => item.id !== slot.id && !item.approvedFile) || null;
+    const nextSlot = state.slots.find((item) => item.id !== slot.id && !slotSelectedFile(item)) || null;
     closeModal();
     await route();
     if (!closeAfter && nextSlot) {
@@ -506,7 +540,7 @@
     if (!media.length) return toast("Upload or generate reference images first");
     const coverage = ensureCoverageSlots(list, entity).filter((slot) => !slot.retired);
     const expressions = list === "characters" && typeof ensureExpressionSlots === "function" ? ensureExpressionSlots(entity).filter((slot) => !slot.retired) : [];
-    const states = typeof entityStateList === "function" ? entityStateList(entity, true) : [];
+    const states = typeof entityStateList === "function" ? entityStateListRead(entity, true) : [];
     window._importedReferenceMap = { list, entityId };
     const targetOptions = [
       `<optgroup label="Continuity authority">${states.map((state) => `<option value="state:${attr(state.id)}">${esc(state.name || "Default")} state${state.approvedFile ? ` · currently ${esc(state.approvedFile)}` : ""}</option>`).join("")}</optgroup>`,
@@ -649,5 +683,5 @@
      and for the same stated reason. They are the automation-side answer to "which
      approved media does this entity have", and the manual selector is the other
      answer; a suite asserting the two agree has to call both for real. */
-  window.__CINEBRAID_COVERAGE_AUTOMATION = { missingCoverageSlots, coverageSheetSlots, updateCoverageTerminalState, primaryReference, coverageAuthorityReferences };
+  window.__CINEBRAID_COVERAGE_AUTOMATION = { missingCoverageSlots, coverageSheetSlots, updateCoverageTerminalState, primaryReference, historicPrimaryPointer, coverageReferencePackage };
 })();

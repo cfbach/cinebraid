@@ -336,7 +336,11 @@ ok(!/parentStateId\s*=/.test(code.split("window.confirmEntityApproval")[1] || ""
   "the approval/continuation path assigns no parentage of any kind");
 ok(!/safeParentAssignment/.test(code),
   "and it no longer even consults the write decision, because it has no write to make");
-ok(/isValidContinuation\(entityStateList\(x, true\), targetStateId, requestedNextStateId\)/.test(code),
+/* The reader is `entityStateListRead` since the simplification pass — the
+   ambiguous `entityStateList` was renamed `ensureEntityStateList` so a caller
+   can see which one writes. The property is unchanged: the continuation is
+   re-validated at the writer, against the live collection. */
+ok(/isValidContinuation\(entityStateListRead\(x, true\), targetStateId, requestedNextStateId\)/.test(code),
   "the requested next state is still re-validated at the writer, not trusted because it was in a select");
 
 /* NO WRITER MUTATES ANCESTRY AFTER CREATION.

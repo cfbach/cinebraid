@@ -396,7 +396,15 @@ async function batchApproval(kind, mutateSource = null) {
   character.coverageSlots = [{ id: "front", label: "Front", required: true, approvedFile: "", notes: "" }];
   character.expressionSlots = [{ id: "smile", label: "Smile", required: true, approvedFile: "", notes: "" }];
   const rendered = await render("#/library", fixture, mutateSource ? { mutateSource } : {});
-  return vm.runInContext(`(async () => {
+  /* The confirming click, delivered from Node the way a user agent delivers one.
+     The batch writer commits its Canon synchronously inside it; everything after
+     the first await is bookkeeping and correctly runs outside the window. */
+  /* One confirming click, spanning the vm script the way a real one spans the
+     handler it triggers. The batch writer commits its Canon synchronously inside
+     it; everything after the first await is bookkeeping and correctly runs
+     outside the window. */
+  const endGesture = rendered.gesture.begin();
+  const pending = vm.runInContext(`(async () => {
     const entity = P.characters[0];
     const kind = ${JSON.stringify(kind)};
     /* Slot ids are read back from the loaded entity: project normalization reconciles
@@ -445,6 +453,8 @@ async function batchApproval(kind, mutateSource = null) {
       rejectedRendering: entityReviewHumanDecisionMarkup({ decision: "rejected", decidedAt: row && row.decidedAt }, passingReview),
     };
   })()`, rendered.context);
+  endGesture();
+  return pending;
 }
 
 /* CHANGED IN BATCH 1C — D2 AND D3, AND THE CHANGE IS THE REPAIR.
@@ -520,10 +530,14 @@ function testApprovalStatesStayDistinct() {
     assert(!Slots.decisionIsSlotSelection(word), `${word} is not a slot selection`);
   assert(/const selection = decisionIsSlotSelection\(decision\);/.test(review),
     "a supporting-reference selection is its own state, decided by the one shared predicate");
-  assert(/const approved = !selection && \(row\?\.humanApproved \|\| decision === "approved"\);/.test(review),
+  assert(/const claimed = !selection && \(row\?\.humanApproved \|\| decision === "approved"\);/.test(review),
     "and it is never also an approval");
-  assert(/decision === "rejected" \? "REJECTED BY YOU" : selection \? "SELECTED BY YOU" : approved \? "APPROVED BY YOU" : "NO HUMAN DECISION YET"/.test(review),
-    "the human-decision reader tells rejection, selection, approval and no-decision apart");
+  /* SIMPLIFICATION PASS: a fifth outcome. A cached `humanApproved` that no
+     current receipt supports reads as history, not as production truth. */
+  assert(/const current = !canonFiles \|\| !fileName \? claimed : \(claimed && canonFiles\.has\(fileName\)\);/.test(review),
+    "a claimed approval is only current while the file is still canon");
+  assert(/"APPROVED EARLIER · NOT CURRENT CANON" : "NO HUMAN DECISION YET"/.test(review),
+    "the human-decision reader tells rejection, selection, current approval, stale approval and no-decision apart");
   assert(/function markBatchApprovalAsHumanDecision\(row\)/.test(review), "the batch approval must mark the human decision");
   assert(/row\.humanApprovedWithoutAI = false;/.test(review),
     "and must not claim the director approved without an AI result in front of them");

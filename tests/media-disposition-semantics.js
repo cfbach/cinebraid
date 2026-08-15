@@ -127,7 +127,7 @@ function contractSection() {
 
   {
     /* NOTHING IS MUTATED BY A READ — a legacy project must not be canonicalised
-       merely by being rendered. entityStateList() normalises, which is why this
+       merely by being rendered. ensureEntityStateList() normalises, which is why this
        module never calls it. */
     const entity = { id: "LOC-BARE", approvedFile: "ONLY.png" };
     const before = JSON.stringify(entity);
@@ -264,8 +264,8 @@ async function surfacesSection(options = {}) {
   assert(html.includes("LOC-HULL-C.png"), "undecided candidates remain available to choose from");
   assert(html.includes(`data-media-role="candidate"`), "and are marked as candidates rather than as authority");
 
-  /* Two readers, one answer. coverage-automation.js resolves the approved
-     authority through its own function; the partition resolves it through the
+  /* Two readers, one answer. coverage-automation.js resolves the reference
+     package through its own function; the partition resolves it through the
      shared one. Proving they agree is worth nothing if the test reimplements
      either, so both are called for real inside the page's own context. */
   const agreement = JSON.parse(vm.runInContext(`JSON.stringify((() => {
@@ -274,7 +274,7 @@ async function surfacesSection(options = {}) {
     const partition = partitionEntityMedia(entity, media);
     return {
       manual: partition.approved.map((row) => row.name),
-      automation: (window.__CINEBRAID_COVERAGE_AUTOMATION.coverageAuthorityReferences("locations", entity) || []).map((row) => row.item.name),
+      automation: (window.__CINEBRAID_COVERAGE_AUTOMATION.coverageReferencePackage("locations", entity) || []).map((row) => row.item.name),
       roles: media.map((item) => mediaDisposition(entity, item.name).role),
     };
   })())`, rendered.context));
@@ -356,8 +356,13 @@ async function compatibilitySection(options = {}) {
     "no identity field appears anywhere in a project that was only read");
   assert.strictEqual(after.approvedFile, before.approvedFile);
   assert.strictEqual(after.continuityStates[0].approvedFile, before.continuityStates[0].approvedFile);
-  assert.strictEqual(after.coverageSlots.find((slot) => slot.id === "establishing").approvedFile,
-    before.coverageSlots[0].approvedFile, "the approved view still points where it pointed");
+  /* The slot value moved key during load — `approvedFile` became `selectedFile`,
+     because a supporting reference must not carry the word approved. The VALUE
+     is what this assertion is about, and it is unchanged. */
+  const slotAfter = after.coverageSlots.find((slot) => slot.id === "establishing");
+  assert.strictEqual(slotAfter.selectedFile || slotAfter.approvedFile,
+    before.coverageSlots[0].selectedFile || before.coverageSlots[0].approvedFile,
+    "the selected view still points where it pointed");
   assert.deepStrictEqual(after.candidateFiles.map((row) => `${row.stored}:${row.decision}`),
     before.candidateFiles.map((row) => `${row.stored}:${row.decision}`), "and no candidate decision moved");
   console.log("  compatibility · a pre-C2 project renders identically and acquires no identity merely by being opened");

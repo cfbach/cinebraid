@@ -2,7 +2,7 @@ const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
-const { render, buildFixture } = require("./render-harness");
+const { render, buildFixture, withCanon } = require("./render-harness");
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -11,12 +11,12 @@ function scanFor(project) {
   const add = (folder, name) => { if (name && !scan[folder].some((row) => row.name === name)) scan[folder].push({ name, url: `/assets/${folder}/${name}` }); };
   for (const row of project.characters || []) {
     add("anchors", row.approvedFile);
-    for (const slot of [...(row.coverageSlots || []), ...(row.expressionSlots || [])]) add("anchors", slot.approvedFile);
+    for (const slot of [...(row.coverageSlots || []), ...(row.expressionSlots || [])]) add("anchors", slot.selectedFile || slot.approvedFile);
     for (const candidate of row.candidateFiles || []) add("anchors", candidate.stored || candidate.name);
   }
   for (const row of project.locations || []) {
     add("plates", row.approvedFile);
-    for (const slot of row.coverageSlots || []) add("plates", slot.approvedFile);
+    for (const slot of row.coverageSlots || []) add("plates", slot.selectedFile || slot.approvedFile);
     for (const candidate of row.candidateFiles || []) add("plates", candidate.stored || candidate.name);
   }
   for (const row of project.props || []) {
@@ -42,6 +42,10 @@ async function testLocationAuthorityPackage() {
     ],
     candidateFiles: [],
   }];
+  /* The location has an approved master plate — a statement about the RECEIPT
+     LEDGER since the simplification pass, because a raw pointer is HISTORIC and
+     coverage automation will not accept one as identity. */
+  withCanon(project, { kind: "entity-state", list: "locations", entityId: "LOC-SPATIAL", stateId: "state-default", value: "LOC-SPATIAL-MASTER.png" });
   let submitted = null;
   const rendered = await render("#/location/LOC-SPATIAL", project, {
     scan: scanFor(project),
@@ -62,8 +66,16 @@ async function testLocationAuthorityPackage() {
   assert(submitted.prompt.includes("SPATIAL CONTINUITY LOCK"), "location prompts must carry the hard spatial lock");
   assert(submitted.prompt.includes("Do not invent, remove, mirror, relocate or redesign architecture"));
   assert(submitted.references.some((ref) => ref.url.endsWith("LOC-SPATIAL-MASTER.png")));
-  assert(submitted.references.some((ref) => ref.url.endsWith("LOC-SPATIAL-REVERSE.png")), "every approved location angle must join the generation authority package");
-  assert(submitted.references.every((ref) => ref.role === "location-geometry"), "location references must be labelled as shared geometry authority");
+  assert(submitted.references.some((ref) => ref.url.endsWith("LOC-SPATIAL-REVERSE.png")), "every selected location angle must join the generation reference package");
+  /* S8 — ROLES NAME A PURPOSE, and the two purposes here are different things.
+     The master plate is receipt-backed CANON and says so; the other angles are
+     selected supporting views of the same space and travel as environment
+     references. All of them used to go out as "location-geometry", which
+     flattened an approval and a selection into one word. */
+  const roles = submitted.references.map((ref) => ref.role);
+  assert.strictEqual(roles[0], "identity-canon", "the receipt-backed master plate is the canon identity");
+  assert(roles.slice(1).every((role) => role === "environment-reference"), "selected location angles travel as environment references, never as authority");
+  assert(!roles.includes("identity-authority") && !roles.includes("approved-view"), "the approval-flavoured role names are gone");
 }
 
 async function testImportedMappingAndAssignment() {
@@ -93,7 +105,7 @@ async function testImportedMappingAndAssignment() {
 
   mapped.structuredReviews = { "state-default": { contractVersion: "reference-authority-v3", score: 92, pass: true, stateId: "state-default", stateName: "Default", reviewedAt: new Date().toISOString() } };
   rendered.context.approveCoverageCandidate("characters", "CHAR-IMPORT", "CHAR-IMPORT-PROFILE.png", "profile");
-  const assigned = vm.runInContext(`P.characters[0].coverageSlots.find((slot)=>slot.id==='profile').approvedFile`, rendered.context);
+  const assigned = vm.runInContext(`slotSelectedFile(P.characters[0].coverageSlots.find((slot)=>slot.id==='profile'))`, rendered.context);
   assert.strictEqual(assigned, "CHAR-IMPORT-PROFILE.png", "a current passing imported review must assign the exact target slot");
 }
 
@@ -107,7 +119,7 @@ async function testStaleReviewCannotAssign() {
   character.candidateFiles = [{ stored: "CHAR-STALE-FRONT.png", decision: "unreviewed", targetCoverageSlotId: "front", targetCoverageSlotName: "Front", coverageGroup: "angles", targetStateId: "state-default", structuredReviews: { "state-default": { score: 95, pass: true, reviewedAt: "2026-07-01T00:00:00Z" } } }];
   const rendered = await render("#/character/CHAR-STALE", project, { scan: scanFor(project), storage: { "cinebraid-focused:fixture:entity-task:characters:CHAR-STALE": "review" } });
   rendered.context.approveCoverageCandidate("characters", "CHAR-STALE", "CHAR-STALE-FRONT.png", "front");
-  const slot = vm.runInContext(`P.characters[0].coverageSlots[0].approvedFile`, rendered.context);
+  const slot = vm.runInContext(`slotSelectedFile(P.characters[0].coverageSlots[0])`, rendered.context);
   assert.strictEqual(slot, "", "legacy reviews must not authorize a current coverage assignment");
   assert(rendered.context.document.getElementById("main").innerHTML.includes("PREVIOUS REVIEW / RE-RUN REQUIRED"), "old reviews must remain visible but clearly stale");
 }

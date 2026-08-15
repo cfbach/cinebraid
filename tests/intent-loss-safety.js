@@ -396,8 +396,13 @@ async function testLoadDoesNotClearApprovedReferences() {
     const state = evaluate(rendered, `(() => {
       const entity = P.characters.find((row) => row.id === "CHAR-IREN");
       const slot = (entity.coverageSlots || []).find((row) => row.id === ${JSON.stringify(slotId)});
+      /* The slot value moved key on load: approvedFile became selectedFile, so
+         a supporting reference no longer carries the word approved. The
+         assertion is about the VALUE surviving, which is what "a project must
+         not become less complete for having been opened" actually means. */
       return {
-        file: slot ? slot.approvedFile : null,
+        file: slot ? (slot.selectedFile || slot.approvedFile) : null,
+        legacyKey: slot ? slot.approvedFile : null,
         status: slot ? slot.status : null,
         notes: slot ? slot.notes : null,
         history: entity.coverageMigrationHistory || [],
@@ -466,7 +471,11 @@ async function testOpeningTheShippedSampleChangesNothing() {
     for (const [list, entityId, slotId, file] of approvalsOnDisk) {
       const entity = (loaded[list] || []).find((row) => row.id === entityId);
       const slot = (entity?.coverageSlots || []).find((row) => row.id === slotId);
-      assert.strictEqual(slot?.approvedFile, file, `opening the sample must not disturb ${entityId}/${slotId}`);
+      /* The KEY moved on load — approvedFile becomes selectedFile, so a
+         supporting reference stops carrying the word approved — and the VALUE
+         is what must survive. The shipped bytes are unchanged, asserted twenty
+         lines up along with zero project writes. */
+      assert.strictEqual(slot?.selectedFile || slot?.approvedFile, file, `opening the sample must not disturb ${entityId}/${slotId}`);
       /* CHANGED IN BATCH 1C, and squarely inside the allowance the comment
          above already makes: normalization raises a record to the baseline
          shape IN MEMORY, and `status` is one of the fields it derives. The

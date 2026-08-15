@@ -79,7 +79,7 @@ const LEDGER = (seed) => `asset-${String(seed).repeat(32).slice(0, 32)}`;
 const Authority = require("../public/shared-production-authority");
 const Ownership = require("../public/shared-entity-ownership");
 const Kernel = require("../public/shared-authority-kernel");
-Authority.useEntityOwnershipResolver(Ownership);
+/* Nothing to wire: the kernel depends on the ownership resolver directly. */
 const MANUAL = require("./authority-test-gesture.js").installTestManualActionSource(Kernel);
 const ISO = (day) => `2026-08-${String(day).padStart(2, "0")}T12:00:00.000Z`;
 
@@ -293,18 +293,19 @@ function fixture() {
  * the receipt schema living in a test. */
 function withAuthority(p) {
   const at = "2026-08-14T00:30:00.000Z";
-  const grant = (target, value, assetId) => MANUAL.gesture(() => Authority.beginManualApproval({
-    via: "production-media-fixture", targets: [{ ...target, value, assetId }],
-  }));
   const approvals = [
     [{ kind: "entity-state", list: "characters", entityId: "KAI", stateId: "state-default" }, "KAI_DEFAULT_V001.png", LEDGER("a")],
     [{ kind: "shot-frame", shotId: "SH010", frameId: "kf-a" }, "SH010_FRAME_A_V001.png", LEDGER("b")],
     [{ kind: "shot-frame", shotId: "SH010", frameId: "kf-b" }, "SH010_FRAME_B_V001.png", ""],
   ];
   for (const [target, value, assetId] of approvals) {
-    const request = { ...target, value, assetId, at, manualAction: grant(target, value, assetId) };
-    if (target.kind === "shot-frame") Authority.writeFrameProductionAuthority(p, request);
-    else Authority.writeEntityStateProductionAuthority(p, request);
+    /* One delivered trusted event per decision — the same shape a creator's
+       click has. There is no token to mint, so the whole approval is this one
+       synchronous call. */
+    const request = { ...target, value, assetId, at, via: "production-media-fixture" };
+    MANUAL.gesture(() => (target.kind === "shot-frame"
+      ? Kernel.approveFrameCanon(p, request)
+      : Kernel.approveEntityStateCanon(p, request)));
   }
   return p;
 }

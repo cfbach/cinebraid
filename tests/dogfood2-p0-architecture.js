@@ -1,76 +1,37 @@
-/* DOGFOOD #2 TRUST KERNEL — END-TO-END ADVERSARIAL BOUNDARY TESTS.
+/* THE ELEVEN BATCH 1D COUNTEREXAMPLES, AS REGRESSIONS — through the real
+ * product surfaces, not through the kernel's front door.
  *
- * Batch 1B created this file; Batch 1C extended it into the full Codex
- * regression matrix and migrated every fixture onto the capability model.
+ * tests/production-authority.js asserts the six-sentence model against the
+ * modules. This file asserts it against the SCREENS, because every one of the
+ * findings below was reproduced by an independent audit driving shipped
+ * application paths while the module-level suites were green:
  *
- * WHY THIS FILE EXISTS, and it is not "more coverage".
+ *    1  a later Promise microtask using the same trusted-event window
+ *    2  a target-only approval turning DISPLAYED.png/asset-A into CHANGED.png/asset-B
+ *    3  replacing the exported ownership policy and approving contested bytes
+ *    4  replacing the writer/committer and mutating live state
+ *    5  a supporting coverage slot appearing under the Approved Library
+ *    6  an unreceipted LEGACY.png becoming identity-authority
+ *    7  a supporting SIDE.png becoming approved-view
+ *    8  a receipt asset present while the live asset disappears
+ *    9  a delivery receipt unable to compare live asset identity
+ *   10  video revocation leaving approvedMotionFile behind
+ *   11  opening the entity automation modal creating continuity state
  *
- * The independent acceptance audit passed every suite in Repair Batch 1 and
- * still found live P0 behaviour in all six areas. Its verdict on the tests was
- * precise: they assert at the wrong boundary. A helper can be correct while the
- * writer beside it is not; a source pattern can match while the dispatcher that
- * matters never runs the matched code. So the batch was green and the product
- * was not.
+ * 8, 9 and 10 are module-level facts and are asserted in the suite above; the
+ * rest need a rendered page, a real DOM double and the real fetch boundary.
  *
- * EVERY TEST HERE ATTACKS A REAL BOUNDARY, and each one fails on one of exactly
- * two things:
- *
- *     DURABLE FALSE STATE       — the project, or the run ledger, ends up
- *                                 asserting something untrue.
- *     ATTEMPTED PROVIDER SPEND  — a request reaches, or would reach, a paid
- *                                 endpoint it should have been refused before.
- *
- * Not "the helper returned the right value". Not "the source contains a string".
- *
- * THE COUNTEREXAMPLES ARE THE AUDIT'S OWN. Where it executed a probe and got a
- * wrong answer, that probe is reproduced here verbatim as a test:
- *
- *   §1  a preserved automatic winner satisfying a human gate
- *   §1  reconciliation manufacturing `humanApproved: true`
- *   §1  revoke, then resume, restoring authority from a stale step
- *   §2  "The Chimbley Sweep stands before the chimney" read as an absence
- *   §3  automation and correction dispatching around the compiler
- *   §4  an unclaimed filename entering an approval pool
- *   §4  a contested file attributed to one claimant
- *   §5  approval navigation writing a first parent
- *   §5  the parent dropdown offering a descendant, and its setter closing a cycle
- *   §6  the real correction runner throwing an unclassified TypeError
- *
- * NO PAID CALL AND NO LOCAL MODEL CALL IS POSSIBLE. The FAL route is exercised
- * against a submit function that records an attempt and throws; reaching it at
- * all is a test failure. The browser paths run in the existing vm render
- * harness, whose `fetch` is intercepted.
- *
- * NO PROJECT DATA IS TOUCHED. Fixtures are literals and a scratch directory this
- * file creates and removes.
+ * NO PAID PROVIDER CALL IS POSSIBLE HERE. The coverage dispatch is observed at a
+ * local fetch double; no request leaves the process.
  */
 const assert = require("assert");
 const fs = require("fs");
-const os = require("os");
 const path = require("path");
 const vm = require("vm");
+const { render, buildFixture, withCanon } = require("./render-harness");
 
 const ROOT = path.join(__dirname, "..");
-const Authority = require("../public/shared-production-authority");
-const Ownership = require("../public/shared-entity-ownership");
-const Lineage = require("../public/shared-state-lineage");
-const Presence = require("../public/shared-frame-presence");
-const { render } = require("./render-harness");
-
-const Kernel = require("../public/shared-authority-kernel");
-const Slots = require("../public/shared-entity-slots");
-Authority.useEntityOwnershipResolver(Ownership);
-
-/* BATCH 1C — A CAPABILITY, NOT A GRANT SHAPE.
-   Node has no user agent, so the harness source opens the gesture window
-   explicitly and says so. `manualActionSourceInstalled()` reports "harness"
-   rather than claiming a person was present. */
-/* 1D-01: no synthetic source in the product any more. The suite installs the
-   real trusted-event listener on an event target it owns and delivers events to
-   it from outside the page scope. */
-const { installTestManualActionSource } = require("./authority-test-gesture.js");
-const MANUAL = installTestManualActionSource(Kernel);
-const approvalFor = (...targets) => MANUAL.gesture(() => Authority.beginManualApproval({ via: "test-approval-surface", targets }));
+const read = (name) => fs.readFileSync(path.join(ROOT, name), "utf8").replace(/\r\n/g, "\n");
 
 let checks = 0;
 const ok = (condition, message) => { assert(condition, message); checks++; };
@@ -79,951 +40,345 @@ const eq = (actual, expected, message) => {
   checks++;
 };
 
-const AT = (n) => `2026-08-14T0${n}:00:00.000Z`;
+const TINY = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='8'%3E%3C/svg%3E";
 
-
-/* =========================================================================
-   §1  AUTHORITY — the receipt, and the three counterexamples.
-   ========================================================================= */
-
-/* A PRESERVED PRE-REPAIR PROJECT. The winner is exactly what scene automation
-   used to write: a real file, real automatic provenance, and no human anywhere
-   in its history. Nothing here is hypothetical — it is the shape the Dogfood #2
-   evidence is preserved in. */
-function legacyAutomaticProject() {
-  return {
-    shots: [{
-      id: "SH-01", scene: "SC-01",
-      winner: "SH01_A_AUTOPICK.png",
-      keyframes: [{ id: "fr-a", label: "A", winner: "SH01_A_AUTOPICK.png" }],
-      generationRecords: [{ id: "r1", file: "SH01_A_AUTOPICK.png", files: "SH01_A_AUTOPICK.png", approval: "automatic", score: 92 }],
-    }],
-    characters: [],
-  };
+/* --------------------------------------------------------------------------
+   A shot fixture whose opening frame has two real candidates, so an approval
+   modal has something to display and something else to change to. */
+function shotFixture() {
+  const project = buildFixture();
+  const shot = project.shots[0];
+  shot.id = "SH-DF2";
+  shot.winner = "";
+  shot.keyframes = [{ id: "fr-a", label: "Opening" }];
+  shot.clips = [];
+  shot.creationBrief = {};
+  project.shots = [shot];
+  return project;
 }
-function parkedShotRun() {
-  return {
-    id: "run-shot", type: "shot-chain", targetId: "SH-01", status: "awaiting-review",
-    steps: {
-      "frame:fr-a:round-1:review": {
-        key: "frame:fr-a:round-1:review", kind: "frame-review", status: "needs-review",
-        frameId: "fr-a", pass: true, score: 92, winner: "SH01_A_AUTOPICK.png",
-        result: { rationale: "Strong automated pass", recommend: true },
-      },
-    },
-  };
+const shotScan = () => ({
+  anchors: [], plates: [], props: [], vehicles: [], audio: [], media: [],
+  shots: { "SH-DF2": { takes: [
+    { name: "DISPLAYED.png", url: TINY, assetId: "asset-A" },
+    { name: "CHANGED.png", url: TINY, assetId: "asset-B" },
+  ], locked: [] } },
+});
+
+/* --------------------------------------------------------------------------
+   An entity with a raw legacy pointer, one selected supporting view, and no
+   receipt anywhere — the shape of every pre-receipt dogfood project. */
+function legacyEntityFixture() {
+  const project = buildFixture();
+  const character = project.characters[0];
+  character.id = "CHAR-LEG";
+  character.name = "Legacy";
+  character.prefix = "CHAR-LEG";
+  character.approvedFile = "CHAR-LEG-LEGACY.png";
+  character.continuityStates = [{ id: "state-default", name: "Default", isDefault: true, approvedFile: "CHAR-LEG-LEGACY.png" }];
+  character.coverageSlots = [
+    { id: "front", label: "Front", requirement: "required", selectedFile: "CHAR-LEG-SIDE.png", status: "selected", assignment: { authoritative: false } },
+    { id: "profile", label: "Profile", requirement: "required", selectedFile: "", status: "missing" },
+  ];
+  character.expressionSlots = [];
+  character.candidateFiles = [
+    { stored: "CHAR-LEG-LEGACY.png", decision: "unreviewed" },
+    { stored: "CHAR-LEG-SIDE.png", decision: "selected-coverage" },
+  ];
+  project.characters = [character];
+  project.shots[0].characters = [character.id];
+  return project;
 }
+const legacyScan = () => ({
+  anchors: [
+    { name: "CHAR-LEG-LEGACY.png", url: TINY, assetId: "asset-L" },
+    { name: "CHAR-LEG-SIDE.png", url: TINY, assetId: "asset-S" },
+  ],
+  plates: [], props: [], vehicles: [], audio: [], media: [], shots: {},
+});
 
-/* THE AUDIT'S HEADLINE COUNTEREXAMPLE. Its probe returned
-   `{gateSatisfied: true, stepStatus: "completed", humanApproved: true}`. */
-{
-  const project = legacyAutomaticProject();
-  const run = parkedShotRun();
-  const requirement = Authority.runGateRequirements(run)[0];
-  ok(!!requirement, "the parked gate is identified");
-  ok(!Authority.gateSatisfied(requirement, project),
-    "a preserved automatic winner does NOT satisfy a human gate — the audit's probe returned true here");
+async function main() {
+  /* =========================================================================
+     COUNTEREXAMPLE 1 — a Promise continuation of a trusted event.
 
-  const plan = Authority.reconcileRunGates(run, project, { at: AT(1) });
-  ok(!plan.changed, "reconciliation finds nothing to close");
-  Authority.applyGateReconciliation(run, plan, { at: AT(1) });
-  eq(run.steps["frame:fr-a:round-1:review"].status, "needs-review", "the step is still parked");
-  eq(run.status, "awaiting-review", "the run is still waiting for a person");
-  eq(run.steps["frame:fr-a:round-1:review"].result.humanApproved, undefined,
-    "and NOTHING wrote humanApproved — reconciliation may cite a decision, never manufacture one");
-  ok(Authority.runHasActionableGate(run, project), "every surface still reports this as waiting for you");
-
-  /* The selection is not hidden. It is offered, correctly labelled. */
-  const historic = Authority.gateHistoricSelection(requirement, project);
-  eq(historic.value, "SH01_A_AUTOPICK.png", "the automatic selection is still surfaced");
-  eq(historic.basis, "no-human-receipt", "described as a selection nobody decided on");
-  eq(historic.requiresHumanApproval, true, "and explicitly requiring approval");
-}
-
-/* MACHINE PROVENANCE IS NOT THE ONLY LEGACY SHAPE. Missing and unknown
-   provenance must fail the same way — a project that cannot say who chose a file
-   has not said a human did. */
-for (const record of [null, { approval: "" }, { approval: "unknown" }, { approval: "automatic" }]) {
-  const project = legacyAutomaticProject();
-  project.shots[0].generationRecords = record ? [{ id: "r", file: "SH01_A_AUTOPICK.png", files: "SH01_A_AUTOPICK.png", ...record }] : [];
-  ok(!Authority.gateSatisfied(Authority.runGateRequirements(parkedShotRun())[0], project),
-    `a winner whose provenance is ${record ? JSON.stringify(record.approval) : "absent"} does not satisfy a human gate`);
-}
-
-/* THE APPROVAL, THE REVOCATION, AND THE RESUME. One continuous story, because
-   the audit's second counterexample is a sequence rather than a state. */
-{
-  const project = { shots: [{ id: "SH-01", keyframes: [{ id: "fr-a", label: "A" }] }], characters: [] };
-  const run = parkedShotRun();
-  run.steps["frame:fr-a:round-1:review"].winner = "SH01_A_PICK.png";
-  const requirement = Authority.runGateRequirements(run)[0];
-  const target = { kind: "shot-frame", shotId: "SH-01", frameId: "fr-a" };
-  /* The edge writer mutates the DRAFT the kernel stages, never the live
-     document — that is what makes a refused or unpersisted transaction leave
-     nothing behind. */
-  const writeEdge = (name) => (draft) => { draft.shots[0].keyframes[0].winner = name; draft.shots[0].winner = name; };
-
-  /* 1. A HUMAN APPROVES. */
-  const receipt = Authority.writeFrameProductionAuthority(project, {
-    ...target, value: "SH01_A_PICK.png", at: AT(2),
-    manualAction: MANUAL.gesture(() => Authority.beginManualApproval({ via: "run-approval-modal", targets: [target] })),
-    applyEdge: writeEdge("SH01_A_PICK.png"),
-  });
-  eq(receipt.actor, "human", "the receipt records the actor");
-  eq(receipt.command, "approve-shot-frame", "the command");
-  eq(receipt.kind, "shot-frame", "the target kind");
-  eq(receipt.targetKey, "shot-frame:SH-01#fr-a", "the target key, DERIVED from the parts so a stored string cannot disagree with them");
-  eq(receipt.value, "SH01_A_PICK.png", "the approved value");
-  eq(receipt.at, AT(2), "the timestamp");
-  eq(receipt.provenance.via, "run-approval-modal", "the provenance — which surface issued the command");
-  ok(!!receipt.provenance.manualAction, "and the manual action that issued it");
-  eq(receipt.status, "current", "and its supersession state");
-  ok(Authority.gateSatisfied(requirement, project), "the gate is satisfied");
-
-  const satisfiedPlan = Authority.reconcileRunGates(run, project, { at: AT(2) });
-  Authority.applyGateReconciliation(run, plan1Guard(satisfiedPlan), { at: AT(2), project });
-  eq(run.steps["frame:fr-a:round-1:review"].status, "completed", "the gate closes");
-  eq(run.steps["frame:fr-a:round-1:review"].result.authorityReceiptId, receipt.id,
-    "citing the receipt, so the boolean beside it can be traced to a decision");
-  eq(run.status, "interrupted", "and the run stops waiting");
-  eq(Authority.resumeAuthority(project, requirement).id, receipt.id, "resume finds a live decision");
-
-  /* 2. THE APPROVAL IS REPLACED. Supersession, not overwrite. */
-  const replacement = Authority.writeFrameProductionAuthority(project, {
-    ...target, value: "SH01_A_BETTER.png", at: AT(3),
-    manualAction: MANUAL.gesture(() => Authority.beginManualApproval({ via: "guided-frame-card", targets: [target] })),
-    applyEdge: writeEdge("SH01_A_BETTER.png"),
-  });
-  eq(Authority.currentAuthorityReceipt(project, target).id, replacement.id, "the newest decision is the current one");
-  eq(Authority.authorityReceiptsFor(project, target).map((row) => row.status), ["superseded", "current"],
-    "and the previous one is preserved as history rather than deleted");
-  eq(Authority.authorityReceiptsFor(project, target)[0].supersededBy, replacement.id, "naming what replaced it");
-  eq(Authority.resumeAuthority(project, requirement).value, "SH01_A_BETTER.png",
-    "resume answers with the CURRENT decision, never a superseded one");
-
-  /* 3. THE APPROVAL IS REVOKED — the audit's resurrection counterexample. */
-  Authority.revokeFrameProductionAuthority(project, {
-    ...target, at: AT(4), via: "guided-frame-approval-reset", reason: "withdrawn",
-    applyEdge: (draft) => { draft.shots[0].keyframes[0].winner = ""; draft.shots[0].winner = ""; },
-  });
-  ok(!Authority.gateSatisfied(requirement, project), "the gate is open again");
-  eq(Authority.resumeAuthority(project, requirement), null, "and resume finds no decision to re-state");
-
-  const reopenPlan = Authority.reconcileRunGates(run, project, { at: AT(4) });
-  ok(reopenPlan.changed, "reconciliation notices — in the OTHER direction, which the first repair could not do");
-  eq(reopenPlan.invalidated.length, 1, "exactly the one completed gate whose authority is gone");
-  Authority.applyGateReconciliation(run, reopenPlan, { at: AT(4), project });
-  eq(run.steps["frame:fr-a:round-1:review"].status, "needs-review", "the completed step REOPENS");
-  eq(run.steps["frame:fr-a:round-1:review"].result.humanApproved, false, "and withdraws its claim rather than merely dropping it");
-  eq(run.steps["frame:fr-a:round-1:review"].result.authorityReceiptId, "", "with no receipt left to cite");
-  ok(run.steps["frame:fr-a:round-1:review"].result.authorityInvalidated === true, "recorded as invalidated, so the run report can explain the reopening");
-  eq(run.status, "awaiting-review", "the run is waiting again");
-  ok(Authority.runHasActionableGate(run, project), "and every surface says so");
-
-  /* 4. A FORGED STALE STEP CANNOT RESTORE IT. This is the resurrection, executed
-        against the predicate resume actually asks. */
-  run.steps["frame:fr-a:round-1:review"].status = "completed";
-  run.steps["frame:fr-a:round-1:review"].pass = true;
-  run.steps["frame:fr-a:round-1:review"].result.humanApproved = true;
-  eq(Authority.resumeAuthority(project, requirement), null,
-    "a step claiming humanApproved after a revocation restores NOTHING — resume reads the ledger, not the step");
-  ok(Authority.runHasActionableGate(run, project), "and the gate is still actionable despite the step saying otherwise");
-  eq(Authority.historicSelection(project, target), null, "with no edge left, there is not even a historic selection to offer");
-
-  /* 5. THE HISTORY SURVIVES ALL OF IT. */
-  eq(Authority.authorityReceiptsFor(project, target).map((row) => `${row.status}:${row.revocationReason}`),
-    ["superseded:replaced", "revoked:withdrawn"],
-    "two decisions, both preserved, each with the reason it stopped standing — a ledger that forgets cannot answer why a gate reopened");
-}
-/* A guard used above: the plan handed to applyGateReconciliation must be the one
-   reconcileRunGates produced. Written as a function so the assertion travels
-   with the call rather than sitting three lines away from it. */
-function plan1Guard(plan) {
-  assert.strictEqual(plan.satisfied.length, 1, "the satisfied plan must contain exactly the one gate");
-  assert.ok(plan.satisfied[0].receiptId, "and it must carry the receipt it is citing");
-  return plan;
-}
-
-/* THE ENTITY CHAIN GETS THE SAME RULE, and the ownership veto rides the same
-   command — so there is no writer that can approve past either. */
-{
-  const project = {
-    shots: [],
-    characters: [{
-      id: "CHAR-SWEEP", name: "Chimbley Sweep", prefix: "CHAR-SWEEP", approvedFile: "",
-      continuityStates: [{ id: "state-default", isDefault: true, approvedFile: "" }, { id: "st-soot", name: "Heavy soot", approvedFile: "" }],
-      candidateFiles: [{ stored: "CHAR-SWEEP_SOOT_001.png" }],
-    }],
-  };
-  const requirement = { kind: "entity-state-approval", list: "characters", entityId: "CHAR-SWEEP", stateId: "st-soot" };
-  ok(!Authority.gateSatisfied(requirement, project), "the state gate starts outstanding");
-
-  Authority.writeEntityStateProductionAuthority(project, {
-    list: "characters", entityId: "CHAR-SWEEP", stateId: "st-soot", value: "CHAR-SWEEP_SOOT_001.png",
-    at: AT(5),
-    manualAction: approvalFor({ kind: "entity-state", list: "characters", entityId: "CHAR-SWEEP", stateId: "st-soot" }),
-    applyEdge: (draft) => { draft.characters[0].continuityStates[1].approvedFile = "CHAR-SWEEP_SOOT_001.png"; },
-  });
-  ok(Authority.gateSatisfied(requirement, project), "and a human approval satisfies it");
-
-  /* A file the entity does not durably own cannot be approved for it, whatever
-     surface asks and whatever grant it holds. */
-  assert.throws(() => Authority.writeEntityStateProductionAuthority(project, {
-    list: "characters", entityId: "CHAR-SWEEP", stateId: "st-soot", value: "CHAR-SWEEP_STRAY_002.png",
-    at: AT(6),
-    manualAction: approvalFor({ kind: "entity-state", list: "characters", entityId: "CHAR-SWEEP", stateId: "st-soot" }),
-    applyEdge: (draft) => { draft.characters[0].continuityStates[1].approvedFile = "CHAR-SWEEP_STRAY_002.png"; },
-  }), /not durably owned/, "an unclaimed file is refused at the authority boundary");
-  checks++;
-  eq(project.characters[0].continuityStates[1].approvedFile, "CHAR-SWEEP_SOOT_001.png",
-    "and the refusal wrote nothing — the edge is untouched, which is what makes the veto safe to place inside the command");
-}
-
-/* MACHINE ACTORS ARE REFUSED BY THE COMMAND, not merely by a helper. */
-/* NOTHING A CALLER CAN CONSTRUCT IS A CAPABILITY. The last entry is the exact
-   object the Batch 1B re-audit forged to obtain a winner and a receipt. */
-for (const forged of [undefined, {}, true, "human", { actor: "human" }, { act: "explicit-approval" },
-  { actor: "automation", act: "explicit-approval" }, { actor: "human", act: "explicit-approval" },
-  { manualAction: "manual-1" }, { manualAction: {} }]) {
-  const project = { shots: [{ id: "SH-01", keyframes: [{ id: "fr-a" }] }] };
-  let wrote = false;
-  assert.throws(() => Authority.writeFrameProductionAuthority(project, {
-    shotId: "SH-01", frameId: "fr-a", value: "X.png", manualAction: forged, at: AT(1),
-    applyEdge: (draft) => { wrote = true; draft.shots[0].keyframes[0].winner = "X.png"; },
-  }), (error) => error.code === "MANUAL_ACTION_INVALID" || error.code === "MANUAL_ACTION_TARGET_MISMATCH",
-  `${JSON.stringify(forged)} may not establish authority`);
-  checks++;
-  ok(!wrote, `${JSON.stringify(forged)}: and the edge writer never ran`);
-  ok(!project.shots[0].keyframes[0].winner, `${JSON.stringify(forged)}: so the project is untouched`);
-  eq(Authority.authorityReceipts(project).length, 0, `${JSON.stringify(forged)}: with no receipt written either`);
-}
-
-/* A CAPABILITY IS BOUND TO ITS TARGETS AND CONSUMED ONCE. */
-{
-  const project = { shots: [{ id: "SH-01", keyframes: [{ id: "fr-a" }, { id: "fr-b" }] }] };
-  const token = approvalFor({ kind: "shot-frame", shotId: "SH-01", frameId: "fr-a" });
-  assert.throws(() => Authority.writeFrameProductionAuthority(project, {
-    shotId: "SH-01", frameId: "fr-b", value: "WRONG.png", manualAction: token, at: AT(1),
-    applyEdge: (draft) => { draft.shots[0].keyframes[1].winner = "WRONG.png"; },
-  }), (error) => error.code === "MANUAL_ACTION_TARGET_MISMATCH", "a capability for one frame cannot approve another");
-  checks++;
-  const good = approvalFor({ kind: "shot-frame", shotId: "SH-01", frameId: "fr-a" });
-  Authority.writeFrameProductionAuthority(project, {
-    shotId: "SH-01", frameId: "fr-a", value: "RIGHT.png", manualAction: good, at: AT(1),
-    applyEdge: (draft) => { draft.shots[0].keyframes[0].winner = "RIGHT.png"; },
-  });
-  assert.throws(() => Authority.writeFrameProductionAuthority(project, {
-    shotId: "SH-01", frameId: "fr-a", value: "AGAIN.png", manualAction: good, at: AT(1),
-    applyEdge: (draft) => { draft.shots[0].keyframes[0].winner = "AGAIN.png"; },
-  }), (error) => error.code === "MANUAL_ACTION_INVALID", "and a spent capability cannot be replayed");
-  checks++;
-  eq(project.shots[0].keyframes[0].winner, "RIGHT.png", "so the second write changed nothing");
-}
-
-/* NO GESTURE, NO CAPABILITY. Automation lives in async continuations and can
-   never be inside one, which is the whole separation. */
-assert.throws(() => Authority.beginManualApproval({ via: "automation", targets: [{ kind: "shot-frame", shotId: "SH-01", frameId: "fr-a" }] }),
-  (error) => error.code === "MANUAL_ACTION_REQUIRED", "outside a trusted gesture nothing can be minted");
-checks++;
-/* CHANGED IN BATCH 1D — the honesty is structural now, not a label.
-
-   OLD EXPECTATION: `manualActionSourceInstalled() === "harness"`, proving a
-   test gesture never claimed to be a person. It was a true statement about a
-   source that should not have existed: the 1C audit called that same installer
-   from ordinary BROWSER code and minted `actor: "human"`.
-
-   THE NEW INVARIANT: there is no synthetic source to label. The source in force
-   is the product's own trusted-event listener — "browser-trusted-event" is the
-   accurate answer — and what differs in a test is only who delivers the event,
-   which is the test composition, from outside page scope. So the assertion
-   moves from "the label is honest" to "the door is not there". */
-eq(Kernel.manualActionSourceInstalled(), "browser-trusted-event",
-  "the source in force is the product's own trusted-event listener, not a test-only one");
-eq(Kernel.installHarnessManualActionSource, undefined,
-  "and the kernel exports no synthetic gesture source at all — the 1C escape, deleted rather than renamed");
-checks++;
-{
-  /* THE BROWSER COMPOSITION, WHICH IS WHERE THE 1C AUDIT STOOD. Everything the
-     page can see, checked for a way to open a gesture window without an event. */
-  const sandbox = { console };
-  sandbox.window = sandbox;
-  sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
-  for (const file of ["shared-entity-ownership.js", "shared-authority-kernel.js", "shared-production-authority.js"]) {
-    vm.runInContext(fs.readFileSync(path.join(ROOT, "public", file), "utf8"), sandbox, { filename: file });
-  }
-  eq(typeof sandbox.installHarnessManualActionSource, "undefined", "no synthetic installer as a browser global");
-  eq(typeof (sandbox.CineBraidAuthorityKernel || {}).installHarnessManualActionSource, "undefined", "nor on the kernel namespace");
-  const exported = Object.keys(sandbox.CineBraidAuthorityKernel || {}).filter((key) => /harness|synthetic|test/i.test(key));
-  eq(exported, [], "and nothing else test-shaped is exported into the page either");
-  checks++;
-
-  /* INSTALL-ONCE. The composition root installs on the real document; every
-     later caller is refused, so page script cannot install a source on an
-     event target it controls and fire its own "trusted" events at it. */
-  const first = sandbox.installBrowserManualActionSource({ addEventListener() {} }, () => {});
-  const second = sandbox.installBrowserManualActionSource({ addEventListener() {} }, () => {});
-  eq([first, second], [true, false], "the manual-action source installs exactly once per page");
-  checks++;
-
-  /* AND WITH NO EVENT DELIVERED, NOTHING MINTS. */
-  assert.throws(() => sandbox.beginManualAuthorityAction({ via: "page-script", targets: [{ kind: "shot-frame", shotId: "S", frameId: "f" }] }),
-    (error) => error.code === "MANUAL_ACTION_REQUIRED",
-    "browser code that never received a trusted event cannot mint a capability");
-  checks++;
-}
-
-/* =========================================================================
-   §2  PRESENCE — the language counterexamples, at the detector.
-   ========================================================================= */
-
-const SWEEP = { id: "CHAR-SWEEP", name: "Chimbley Sweep" };
-
-/* THE AUDIT'S SENTENCE. Its probe returned `clauseDeniesPresence: true` and
-   `contradictions: []` — the Sweep walked into a frame that excludes him. */
-const PRESENCE_MUST_CATCH = [
-  ["The Chimbley Sweep stands before the chimney.", "a spatial `before` is not a temporal absence"],
-  ["The Chimbley Sweep moves without hesitation.", "`without` governs the hesitation, not the Sweep"],
-  ["Not only is the Chimbley Sweep visible, he is central.", "`not only` is an intensifier that asserts presence twice"],
-  ["The Sweep is upper-left of frame.", "the short form is derived and still caught"],
-  ["A tiny Chimbley Sweep figure is silhouetted on the far ridge.", "the exact S01-01 failure, in the words the compiler used"],
-  ["The Sweep is absent, but the Sweep casts a shadow across the tiles.", "one negated mention does not excuse a positive one in the same clause"],
-  ["The chimney is absent, and the Chimbley Sweep stands on the ridge.", "a negation attached to something else is not a negation of him"],
-];
-const PRESENCE_MUST_PERMIT = [
-  ["Before the Chimbley Sweep appears, the rooftops are empty.", "a true temporal absence"],
-  ["Do not show the Chimbley Sweep.", "an explicit prohibition"],
-  ["The Chimbley Sweep is absent.", "a plain statement of absence"],
-  ["No Chimbley Sweep visible.", "the shorthand a creator actually writes"],
-  ["The Chimbley Sweep is not yet visible.", "not yet"],
-  ["The Chimbley Sweep has yet to appear.", "yet to appear"],
-  ["The Chimbley Sweep is off-screen.", "off-screen"],
-  ["The rooftops are empty and the Chimbley Sweep is nowhere to be seen.", "a negation after a conjunction still governs its own clause"],
-  ["The Chimbley Sweep isn't visible.", "a contraction"],
-  ["Prior to the Chimbley Sweep entering, smoke drifts.", "prior to … entering"],
-  ["The Chimbley Sweep must not appear.", "a compiled mustAvoid line"],
-  ["Without the Chimbley Sweep, the rooftops read as empty.", "`without` governing the Sweep himself"],
-];
-for (const [clause, why] of PRESENCE_MUST_CATCH) {
-  const findings = Presence.framePresenceContradictions({ absentEntities: [SWEEP], spec: { narrativePurpose: clause } });
-  eq(findings.length, 1, `CONTRADICTION: ${why} — ${clause}`);
-}
-for (const [clause, why] of PRESENCE_MUST_PERMIT) {
-  const findings = Presence.framePresenceContradictions({ absentEntities: [SWEEP], spec: { narrativePurpose: clause } });
-  eq(findings.length, 0, `PERMITTED: ${why} — ${clause}`);
-}
-
-/* WITHHOLDING MOVES WITH THE DETECTOR. The spatial-`before` sentence used to
-   survive into the compiled frame because the same broken test excused it. */
-eq(Presence.narrativeForFrame("The Chimbley Sweep stands before the chimney.", [SWEEP]).text, "",
-  "the sentence that used to leak into the frame is withheld");
-eq(Presence.narrativeForFrame("Before the Chimbley Sweep appears, the rooftops are empty.", [SWEEP]).text,
-  "Before the Chimbley Sweep appears, the rooftops are empty.",
-  "and a correctly-authored absence is kept in full — over-withholding teaches creators to stop declaring absence");
-
-/* =========================================================================
-   §3  PRESENCE AT THE PAID BOUNDARY — the real dispatch route.
-
-   The audit's finding was not about the detector. It was that `imagePlan: true`
-   gated the only place the detector ran, and automation, correction and every
-   legacy caller simply did not set it. So this section runs the ACTUAL
-   `POST /api/generation/fal/jobs` handler with the bodies those callers really
-   send, and counts provider attempts.
-   ========================================================================= */
-
-function presenceProject() {
-  return {
-    meta: {}, scenes: [{ id: "SC-01", title: "Rooftops" }],
-    characters: [{ id: "CHAR-SWEEP", name: "Chimbley Sweep", prefix: "CHAR-SWEEP" }],
-    locations: [], props: [], vehicles: [], audio: [],
-    shots: [{
-      id: "SH-01", scene: "SC-01", title: "The Illustration Breathes",
-      keyframes: [{ id: "fr-a", label: "A" }, { id: "fr-b", label: "B" }],
-      clips: [], candidateFiles: [],
-      creationBrief: { frameWorkflows: { "fr-a": { entityPresence: { "CHAR-SWEEP": "absent" } }, "fr-b": { entityPresence: { "CHAR-SWEEP": "present" } } } },
-    }],
-  };
-}
-
-/* A minimal express stand-in that captures the one route under test, and a
-   provider `submit` that fails the suite if it is ever reached. */
-function falRoute(project) {
-  const routes = new Map();
-  const app = { post: (route, handler) => routes.set(`POST ${route}`, handler), get: (route, handler) => routes.set(`GET ${route}`, handler) };
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cinebraid-1b-"));
-  fs.writeFileSync(path.join(dir, "project.json"), JSON.stringify(project));
-  fs.writeFileSync(path.join(dir, "generation-jobs.json"), "[]");
-  const state = { providerAttempts: 0, jobRowsCommitted: 0, dir };
-  const { registerFalGeneration } = require("../fal-generation");
-  registerFalGeneration(app, {
-    readConfig: () => ({ generation: { fal: { enabled: true, apiKey: "not-a-real-credential", maxConcurrent: 2, requireConfirmation: false } } }),
-    readProject: () => JSON.parse(fs.readFileSync(path.join(dir, "project.json"), "utf8")),
-    writeProject: (slug, next) => fs.writeFileSync(path.join(dir, "project.json"), JSON.stringify(next)),
-    activeSlug: () => "fixture",
-    projectDirForSlug: () => ({ dir, file: path.join(dir, "project.json") }),
-  });
-  const handler = routes.get("POST /api/generation/fal/jobs");
-  assert.ok(handler, "the paid dispatch route must be registered, or this whole section proves nothing");
-  /* THE PROVIDER TRAP. Reaching the network is the failure this section exists
-     to detect, so the global fetch is replaced with one that records and throws.
-     A refusal that happens after this point is not a refusal. */
-  const realFetch = globalThis.fetch;
-  globalThis.fetch = (...args) => {
-    state.providerAttempts += 1;
-    throw new Error(`PROVIDER CONTACTED: ${String(args[0])} — the gate let a request through`);
-  };
-  return {
-    state,
-    async post(body) {
-      let status = 200, payload = null;
-      const res = {
-        status(code) { status = code; return this; },
-        json(value) { payload = value; return this; },
-      };
-      try { await handler({ body, query: {}, headers: {} }, res); }
-      finally { state.jobRowsCommitted = JSON.parse(fs.readFileSync(path.join(dir, "generation-jobs.json"), "utf8")).length; }
-      return { status, payload };
-    },
-    cleanup() {
-      globalThis.fetch = realFetch;
-      fs.rmSync(dir, { recursive: true, force: true });
-    },
-  };
-}
-
-/* The exact bodies the four callers the audit named actually send. None of them
-   sets `imagePlan`, which is precisely why the compiled-path check never saw
-   them. */
-const BYPASS_CALLERS = [
-  ["full-shot automation frame generation", { purpose: "frame", shotId: "SH-01", frameId: "fr-a", frameLabel: "A", prompt: "A tiny Chimbley Sweep figure is silhouetted on the far ridge.", outputCount: 3 }],
-  ["automation blocking generation", { purpose: "blocking", shotId: "SH-01", frameId: "fr-a", frameLabel: "A", prompt: "The Chimbley Sweep stands before the chimney.", outputCount: 3 }],
-  ["scene continuity correction", { purpose: "correction", shotId: "SH-01", frameId: "fr-a", frameLabel: "A", sourceCandidate: "SH01_A_001.png", prompt: "Strengthen the Chimbley Sweep's silhouette against the dawn sky.", references: [{ key: "base", role: "base", url: "/assets/shots/SH-01/takes/SH01_A_001.png" }], outputCount: 1 }],
-  ["a caller whose contradiction is only in a reference instruction", { purpose: "frame", shotId: "SH-01", frameId: "fr-a", prompt: "Empty rooftops at dawn.", references: [{ key: "r1", role: "reference", url: "/assets/anchors/CHAR-SWEEP.png", instruction: "Place the Chimbley Sweep at the stack." }], outputCount: 1 }],
-];
-
-(async () => {
-  for (const [label, body] of BYPASS_CALLERS) {
-    const route = falRoute(presenceProject());
-    try {
-      const { status, payload } = await route.post(body);
-      eq(status, 409, `${label}: refused at the paid boundary (got ${status} ${JSON.stringify(payload)})`);
-      eq(payload.code, "FRAME_PRESENCE_CONTRADICTION", `${label}: with the structured code a classifier can switch on`);
-      eq(payload.classification, "local-preflight", `${label}: classified local, so no retry budget is spent`);
-      ok((payload.contradictions || []).length >= 1, `${label}: naming the fragment that caused it`);
-      eq(payload.providerContacted, false, `${label}: and stating that nothing was sent`);
-      eq(route.state.providerAttempts, 0, `${label}: ZERO provider attempts`);
-      eq(route.state.jobRowsCommitted, 0, `${label}: and ZERO durable paid-job rows — the refusal is before the commit`);
-    } finally { route.cleanup(); }
-  }
-
-  /* THE FRAME-IDENTITY HOLE. `v626DerivativeBlockingBuild()` compiled and
-     dispatched without a frame id, so no per-frame contract could be applied.
-     A shot that declares presence and a request that cannot say which frame it
-     is for must FAIL CLOSED. */
+     THE MECHANISM, WHERE IT CAN BE TESTED. The harness has a window and sets
+     `window.event` around its dispatch exactly as a user agent does, so the
+     kernel takes the same path here as it does in Chromium. The Node-only twin
+     in tests/production-authority.js proves the consequence but cannot reach
+     this code, which is why both exist. */
   {
-    const route = falRoute(presenceProject());
-    try {
-      const { status, payload } = await route.post({ purpose: "blocking", shotId: "SH-01", prompt: "Rooftops at dawn.", outputCount: 3 });
-      eq(status, 409, "a frame-specific request with no frame id is refused");
-      eq(payload.code, "FRAME_PRESENCE_TARGET_UNRESOLVED", "with the identity code rather than a contradiction code");
-      eq(route.state.providerAttempts, 0, "and nothing reached the provider");
-      eq(route.state.jobRowsCommitted, 0, "and no paid job row exists");
-    } finally { route.cleanup(); }
-  }
-
-  /* THE GATE MUST NOT BE A BLANKET REFUSAL. A frame that declares nothing, and
-     a frame that declares the entity PRESENT, both pass — otherwise the repair
-     would simply have stopped generation, which is not a repair. */
-  {
-    const undeclared = presenceProject();
-    delete undeclared.shots[0].creationBrief;
-    const route = falRoute(undeclared);
-    try {
-      const { status } = await route.post({ purpose: "frame", shotId: "SH-01", prompt: "The Chimbley Sweep stands before the chimney.", outputCount: 1 });
-      ok(status !== 409 || route.state.providerAttempts > 0, "a shot with no presence contract compiles exactly as it always did");
-      eq(route.state.providerAttempts, 1, "and reaches the provider — proving the trap works and the gate is not refusing everything");
-    } finally { route.cleanup(); }
-  }
-  {
-    const route = falRoute(presenceProject());
-    try {
-      await route.post({ purpose: "frame", shotId: "SH-01", frameId: "fr-b", prompt: "The Chimbley Sweep stands before the chimney.", outputCount: 1 });
-      eq(route.state.providerAttempts, 1, "and a frame that declares the entity PRESENT is not blocked by a sentence about him");
-    } finally { route.cleanup(); }
-  }
-  /* Purposes with no frame contract are untouched. */
-  {
-    const route = falRoute(presenceProject());
-    try {
-      await route.post({ purpose: "entity-reference", entityList: "characters", entityId: "CHAR-SWEEP", prompt: "Reference sheet.", outputCount: 1 });
-      ok(route.state.providerAttempts <= 1, "an entity reference carries no frame presence contract and is not gated by one");
-    } finally { route.cleanup(); }
+    const project = shotFixture();
+    const rendered = await render("#/shot/SH-DF2", project, { scan: shotScan() });
+    const outcome = { insideDispatch: "", microtask: "" };
+    /* The attempt runs IN PAGE SCOPE, which is where the audit stood and where
+       the kernel actually lives. */
+    vm.runInContext(`window.__attemptCanon = () => {
+      try { approveFrameCanon(P, { shotId: "SH-DF2", frameId: "fr-a", value: "DISPLAYED.png", assetId: "asset-A", at: "T" }); return "WROTE-CANON"; }
+      catch (error) { return error.code || error.message; }
+    };`, rendered.context);
+    const attempt = () => rendered.context.__attemptCanon();
+    let resolveDone;
+    const done = new Promise((resolve) => { resolveDone = resolve; });
+    rendered.gesture.act(() => {
+      outcome.insideDispatch = attempt();
+      Promise.resolve().then(() => { outcome.microtask = attempt(); resolveDone(); });
+    });
+    await done;
+    eq(outcome.insideDispatch, "WROTE-CANON", "the creator's own click writes canon — the guard must not break the product");
+    eq(outcome.microtask, "MANUAL_ACTION_REQUIRED",
+      "a Promise continuation of that same trusted event may not write canon");
+    const receipts = vm.runInContext(`(P.productionAuthority?.receipts || []).length`, rendered.context);
+    eq(receipts, 1, "exactly one decision was recorded — the one a person made");
   }
 
   /* =========================================================================
-     §7  THE REMAINDER OF THE CODEX MATRIX, at the boundaries it named.
-     ========================================================================= */
+     COUNTEREXAMPLE 2 — DISPLAYED.png / asset-A cannot become CHANGED.png /
+     asset-B.
 
-  /* --- A3: the two dispatch cases the re-audit drove to the provider trap. */
-  for (const [label, body, expectedCode] of [
-    ["an unknown non-empty frame id", { purpose: "frame", shotId: "SH-01", frameId: "not-a-frame", prompt: "A tiny Chimbley Sweep figure is on the ridge.", outputCount: 1 }, "FRAME_PRESENCE_TARGET_UNRESOLVED"],
-    ['"not without X"', { purpose: "frame", shotId: "SH-01", frameId: "fr-a", prompt: "The room is not without the Chimbley Sweep.", outputCount: 1 }, "FRAME_PRESENCE_CONTRADICTION"],
-    ['"no X is invisible"', { purpose: "frame", shotId: "SH-01", frameId: "fr-a", prompt: "No Chimbley Sweep is invisible.", outputCount: 1 }, "FRAME_PRESENCE_CONTRADICTION"],
-    ["a structured compile assertion naming an absent entity", { purpose: "frame", shotId: "SH-01", frameId: "fr-a", prompt: "Empty rooftops at dawn.", assertedEntityIds: ["CHAR-SWEEP"], outputCount: 1 }, "FRAME_PRESENCE_CONTRADICTION"],
-  ]) {
-    const route = falRoute(presenceProject());
-    try {
-      const { status, payload } = await route.post(body);
-      eq(status, 409, `${label}: refused (got ${status} ${JSON.stringify(payload)})`);
-      eq(payload.code, expectedCode, `${label}: with the typed code`);
-      eq(payload.classification, "local-preflight", `${label}: classified local, so no retry budget is spent`);
-      eq(route.state.providerAttempts, 0, `${label}: ZERO provider attempts`);
-      eq(route.state.jobRowsCommitted, 0, `${label}: and ZERO paid-job rows — refused before accounting and commit`);
-    } finally { route.cleanup(); }
-  }
-
-  /* A malformed declaration on a governed shot. */
+     Batch 1D minted a target-only capability in the modal prologue, awaited a
+     rename, and committed whatever came back. There is no capability now: the
+     approval modal commits synchronously against the bytes it is displaying,
+     and the rename that follows moves the receipt with them. */
   {
-    const project = presenceProject();
-    project.shots[0].keyframes.push({ id: "fr-c" });
-    project.shots[0].creationBrief.frameWorkflows["fr-c"] = { entityPresence: { "CHAR-SWEEP": { state: "absent" } } };
-    const route = falRoute(project);
-    try {
-      const { status, payload } = await route.post({ purpose: "frame", shotId: "SH-01", frameId: "fr-c", prompt: "The Chimbley Sweep at the stack.", outputCount: 1 });
-      eq(status, 409, "a malformed presence declaration is refused");
-      eq(payload.code, "FRAME_PRESENCE_DECLARATION_MALFORMED", "with its own code — an unreadable contract is not an empty one");
-      eq(route.state.providerAttempts, 0, "and nothing reached the provider");
-      eq(route.state.jobRowsCommitted, 0, "and no paid-job row exists");
-    } finally { route.cleanup(); }
-  }
-
-  /* --- A1: the direct video and delivery writers, now routed. */
-  {
-    const library = fs.readFileSync(path.join(ROOT, "public/library-tools.js"), "utf8");
-    const studio = fs.readFileSync(path.join(ROOT, "public/creation-studio.js"), "utf8");
-    const provenance = fs.readFileSync(path.join(ROOT, "public/review-provenance.js"), "utf8");
-    ok(/writeDeliveryProductionAuthority\(P, \{\s*shotId: id, value: finalName/.test(library.replace(/\s+/g, " ").replace(/\s/g, " ")) || /writeDeliveryProductionAuthority/.test(library),
-      "confirmApproveTake's video arm routes through delivery authority — the re-audit found it writing s.winner directly");
-    ok(/writeMotionProductionAuthority/.test(library), "and its segment arm through motion authority");
-    ok(/writeDeliveryProductionAuthority/.test(studio), "markGuidedStillFinal's no-frame fallback routes rather than writing s.winner");
-    ok(/writeMotionProductionAuthority/.test(studio), "and approveGuidedMotion / queueGuidedVideoFinish route too");
-    ok(/writeMotionProductionAuthority/.test(provenance) && /writeDeliveryProductionAuthority/.test(provenance),
-      "and every arm of promoteFinishJob");
-  }
-
-  /* --- K7: export truth. */
-  {
-    const { previewOfpMigration } = (() => { try { return require("../ofp/ofp-migrate.js"); } catch { return {}; } })();
-    ok(typeof previewOfpMigration === "function" || true, "the migration module loads");
-    const rules = fs.readFileSync(path.join(ROOT, "ofp/ofp-migrate-rules.js"), "utf8");
-    const migrate = fs.readFileSync(path.join(ROOT, "ofp/ofp-migrate.js"), "utf8");
-    ok(/hasAuthorityFor\(authorityTarget\)/.test(migrate),
-      "the approved-output collector asks the authority model before minting an approved edge");
-    ok(/migration\.authority\.historic/.test(migrate),
-      "and routes an unreceipted pointer to historic workflow evidence with a diagnostic");
-    ok(/coverageSelections/.test(rules),
-      "a coverage slot exports as a supporting selection, never through the approved-output path");
-    ok(!/context\.approve\(slot\.subject/.test(rules),
-      "and the slot approve() call is gone rather than guarded");
-  }
-
-  /* --- K4: a contested file refused at the real commit boundary. */
-  {
-    const contested = {
-      characters: [
-        { id: "CHAR-A", prefix: "CHAR-A", continuityStates: [{ id: "state-default", isDefault: true, approvedFile: "" }], candidateFiles: [{ stored: "SHARED.png" }], coverageSlots: [{ id: "front", label: "Front", approvedFile: "" }] },
-        { id: "CHAR-B", prefix: "CHAR-B", continuityStates: [{ id: "state-default", isDefault: true, approvedFile: "" }], candidateFiles: [{ stored: "SHARED.png" }] },
-      ],
-      shots: [],
-    };
-    const resolution = Ownership.resolveMediaOwnership(Ownership.buildEntityOwnerIndex(contested, "characters"), "SHARED.png");
-    eq(resolution.contested, true, "the fixture is genuinely contested");
-    eq(resolution.authoritative, false, "and nobody owns it");
-    assert.throws(() => Authority.writeEntityStateProductionAuthority(contested, {
-      list: "characters", entityId: "CHAR-A", stateId: "state-default", value: "SHARED.png", at: AT(1),
-      manualAction: approvalFor({ kind: "entity-state", list: "characters", entityId: "CHAR-A", stateId: "state-default" }),
-      applyEdge: (draft) => { draft.characters[0].continuityStates[0].approvedFile = "SHARED.png"; },
-    }), (error) => error.code === "AUTHORITY_OWNERSHIP_CONTESTED",
-    "a contested file is refused INSIDE the authority command, whatever surface asks");
-    checks++;
-    eq(contested.characters[0].continuityStates[0].approvedFile, "", "and nothing was written");
-    /* And the slot writer refuses it too, on a re-resolved answer rather than a
-       stale shortlist — the re-audit's batch-approval counterexample. */
-    /* 1D: the slot writer's ownership rule is intrinsic too — the caller names
-       the OWNER, not the predicate, so there is no callback to substitute. */
-    Slots.installSlotOwnershipPolicy((project, target, value) => Authority.entityOwnershipEligibility(project, target, value));
-    const slotOutcome = Slots.assignSlotReference(contested.characters[0].coverageSlots[0], {
-      fileName: "SHARED.png", at: AT(1), via: "test-batch",
-      owner: { project: contested, list: "characters", entityId: "CHAR-A" },
+    const project = shotFixture();
+    let renamed = null;
+    const rendered = await render("#/shot/SH-DF2", project, {
+      scan: shotScan(),
+      fetch: async (url, options, respond) => {
+        if (url === "/api/media/rename") {
+          renamed = JSON.parse(options.body || "{}");
+          return respond({ ok: true, name: "SH-DF2_A_001.png", assetId: "asset-A" });
+        }
+        if (url === "/api/scan") return respond(shotScan());
+        return null;
+      },
     });
-    eq(slotOutcome.assigned, false, "the slot writer refuses a contested file at commit time");
-    eq(contested.characters[0].coverageSlots[0].approvedFile, "", "and the slot is untouched");
+    rendered.context.approveTake("SH-DF2", "DISPLAYED.png");
+    rendered.context.document.getElementById("approve-target").value = "shot";
+    rendered.context.document.getElementById("approve-name").value = "SH-DF2_A_001.png";
+    await rendered.gesture.act(() => rendered.context.confirmApproveTake());
+    const state = vm.runInContext(`(() => {
+      const s = P.shots[0];
+      const receipt = (P.productionAuthority?.receipts || [])[0] || {};
+      return { winner: s.winner, assetId: s.winnerAssetId || "", value: receipt.value, receiptAsset: receipt.assetId, count: (P.productionAuthority?.receipts || []).length };
+    })()`, rendered.context);
+    ok(renamed, "the modal still performs the rename the creator asked for");
+    eq(state.count, 1, "one approval, one receipt");
+    eq(state.value, "SH-DF2_A_001.png", "the receipt follows the bytes through the rename");
+    eq(state.receiptAsset, "asset-A", "and still names the exact bytes the creator was looking at");
+    eq(state.winner, "SH-DF2_A_001.png", "the edge agrees");
+    ok(state.value !== "CHANGED.png" && state.receiptAsset !== "asset-B",
+      "and nothing turned the displayed decision into a different one");
   }
 
-  /* --- K-alpha: a slot is never authority, stated as a property. */
-  eq(Slots.slotIsAuthoritative(), false, "a coverage or expression slot is never production authority");
-  ok(Slots.slotUsableAsSupportingReference({ approvedFile: "VIEW.png", status: "selected" }),
-    "but a selected view is usable as supporting context, which is the whole point of keeping it");
-  ok(!Kernel.AUTHORITY_TARGET_KINDS.includes("entity-coverage"), "and it is not a target kind");
-  ok(!Kernel.AUTHORITY_TARGET_KINDS.includes("entity-expression"), "nor is an expression slot");
-  eq(Kernel.AUTHORITY_TARGET_KINDS.length, 4, "the authority model has exactly four kinds, and shrinking it was the point");
-
-  /* --- 1D-03: THE GENERIC PATH IS NOT A BYPASS, AND THIS IS WHY.
-     `writeProductionAuthority` — the policy-free wrapper the 1C audit used — is
-     gone from the exports. The KERNEL command it forwarded to is still reachable
-     through the namespace, because the four named operations are built on it and
-     shared-production-authority.js reaches it that way in the browser.
-     That is safe only because the policy moved INTO the kernel rather than into
-     the wrappers, so calling the command directly is exactly equivalent to
-     calling the named operation. Asserted, not assumed. */
+  /* The approval modal has NO capability to mint, and the source says so. A
+     capability minted before an await is the shape this pass deleted; a grep is
+     the cheapest way to keep it deleted. */
   {
-    eq(Authority.writeProductionAuthority, undefined, "the policy-free wrapper is not exported");
-    const contested = () => ({
-      characters: [
-        { id: "CHAR-A", prefix: "CHAR-A", continuityStates: [{ id: "state-default", isDefault: true, approvedFile: "" }], candidateFiles: [{ stored: "SHARED.png" }] },
-        { id: "CHAR-B", prefix: "CHAR-B", continuityStates: [{ id: "state-default", isDefault: true, approvedFile: "" }], candidateFiles: [{ stored: "SHARED.png" }] },
-      ],
-      shots: [],
-    });
-    const target = { kind: "entity-state", list: "characters", entityId: "CHAR-A", stateId: "state-default" };
-    const attempt = (write) => {
-      const project = contested();
-      try {
-        write(project, { ...target, value: "SHARED.png", at: AT(1), manualAction: approvalFor(target, "SHARED.png") });
-        return { threw: "", approvedFile: project.characters[0].continuityStates[0].approvedFile };
-      } catch (error) { return { threw: error.code || error.message, approvedFile: project.characters[0].continuityStates[0].approvedFile }; }
-    };
-    const viaNamed = attempt((p, request) => Authority.writeEntityStateProductionAuthority(p, request));
-    const viaKernel = attempt((p, request) => Kernel.commitAuthorityTransaction(p, request));
-    eq(viaNamed, viaKernel, "the kernel command and the named operation give the SAME answer — the generic path grants nothing extra");
-    eq(viaKernel.threw, "AUTHORITY_OWNERSHIP_CONTESTED", "and that answer is a refusal, because the policy is intrinsic to the target kind");
-    eq(viaKernel.approvedFile, "", "with nothing written");
-  }
-
-  /* --- K1C: NO SECOND SLOT SETTER. The demotion is only true while
-     shared-entity-slots.js is the only thing that writes a slot's status, and
-     the post-green sweep found three writers that had never been routed:
-     setExpressionSlotField, seedCoverageFromPrimary and
-     confirmPrimaryCoverageAssignment all set `status = "approved"` on a
-     supporting reference. A prose rule does not survive the next feature, so
-     the rule is a test: the only file allowed to author that string is the one
-     that owns the concept. */
-  {
-    const PUBLIC = path.join(ROOT, "public");
-    const slotWriterFiles = fs.readdirSync(PUBLIC).filter((name) => name.endsWith(".js") && name !== "shared-entity-slots.js");
-    const offenders = [];
-    for (const name of slotWriterFiles) {
-      /* Comments stripped first, or this guard's own documentation trips it. */
-      const source = fs.readFileSync(path.join(PUBLIC, name), "utf8")
-        .replace(/\/\*[\s\S]*?\*\//g, "").replace(/^[ \t]*\/\/.*$/gm, "");
-      /* TWO SHAPES, because the first version of this guard caught only the
-         first and the normaliser walked through the gap. A slot's status is
-         either ASSIGNED the word or DERIVED from `approvedFile` presence, and
-         the derivation is the more dangerous one: it runs on every project load
-         and needs no writer to be at fault. app.js had three, so a slot
-         correctly saved as a selection came back as an approval the next time
-         the project was opened.
-
-         Both patterns require the `.status` property or a `status:` key — a
-         local `const status` computed for a card label is a different noun and
-         is not in scope. */
-      for (const match of source.matchAll(/\.status\s*=\s*[^;\n]*["']approved["']/g)) offenders.push(`${name}:${match[0].trim()}`);
-      for (const match of source.matchAll(/\bstatus:\s*[^,}\n]*["']approved["']/g)) offenders.push(`${name}: ${match[0].trim()}`);
+    const tools = read("public/library-tools.js");
+    const studio = read("public/creation-studio.js");
+    const automation = read("public/automation.js");
+    const provenance = read("public/review-provenance.js");
+    const review = read("public/review.js");
+    for (const [name, source] of Object.entries({ "library-tools.js": tools, "creation-studio.js": studio, "automation.js": automation, "review-provenance.js": provenance, "review.js": review })) {
+      ok(!/beginManualApproval/.test(source), `${name} must not mint a human capability`);
+      ok(!/write(Frame|Motion|Delivery|EntityState)ProductionAuthority/.test(source), `${name} must not call a generic authority wrapper`);
     }
-    eq(offenders.join(" | "), "", "only shared-entity-slots.js may write a slot's status, and it never writes \"approved\"");
-    checks++;
-    /* And the row half of the same claim: a slot selection must not leave a
-       candidate row asserting `humanApproved`, because that is the field
-       shared-production-media.js reads to call a file human-approved. */
-    const entitiesSource = fs.readFileSync(path.join(PUBLIC, "entities.js"), "utf8");
-    const commitBlock = entitiesSource.slice(entitiesSource.indexOf("row.decision = row.coverageGroup"), entitiesSource.indexOf("row.approvedCoverageSlotId"));
-    ok(/row\.humanApproved = false/.test(commitBlock), "a coverage selection records humanApproved:false on its candidate row");
-    ok(!/approvalProvenance/.test(commitBlock), "and does not write an approval provenance for a supporting reference");
-    checks++;
+    /* And every approve*Canon call states the bytes. A call with no `assetId:`
+       key is refused at runtime; this catches it at review time. */
+    for (const [name, source] of Object.entries({ "library-tools.js": tools, "creation-studio.js": studio, "automation.js": automation, "review-provenance.js": provenance, "review.js": review })) {
+      const calls = source.match(/approve(Frame|Motion|Delivery|EntityState)Canon\(P, \{[\s\S]{0,400}?\}\)/g) || [];
+      for (const call of calls) ok(/assetId:/.test(call), `${name}: every canon approval must state the bytes — found ${call.slice(0, 90)}`);
+    }
   }
 
-  await architectureBrowserChecks();
+  /* =========================================================================
+     COUNTEREXAMPLES 3 AND 4 — from inside the page, where the audit stood.
 
-  console.log(`Dogfood #2 trust-kernel architecture suite passed ${checks} end-to-end boundary checks: `
-    + "the durable authority receipt with its actor, command, target, value, provenance and revocation state; "
-    + "a preserved automatic winner refused at every human gate; reconciliation citing rather than manufacturing; "
-    + "revoke-then-resume proven unable to restore authority; mention-scoped negation across 19 adversarial sentences; "
-    + "the universal pre-provider gate refusing four real bypass callers and one unresolvable target with zero provider "
-    + "attempts and zero paid-job rows; ownership eligibility resolved and vetoed inside the authority command; "
-    + "navigation, the exposed parent selector and the generic setter all proven unable to damage the lineage graph "
-    + "through their real call sites; and the real correction runner failing typed, before hydration, with no dispatch.");
-})().catch((error) => { console.error(error.stack || error.message || error); process.exitCode = 1; });
-
-/* =========================================================================
-   §4-§6  THE BROWSER BOUNDARIES — real setters, real writers, real runner.
-
-   Everything below runs inside the shipped module graph in the vm harness, so a
-   test drives the same function an onchange attribute does.
-   ========================================================================= */
-
-async function architectureBrowserChecks() {
-  const project = {
-    meta: { title: "Batch 1B" }, scenes: [{ id: "SC-01", title: "Rooftops" }],
-    shots: [
-      { id: "SH-01", scene: "SC-01", title: "First", keyframes: [{ id: "fr-a", label: "A", winner: "SH01_A.png" }], clips: [], candidateFiles: [{ stored: "SH01_A.png", decision: "approved-reference" }], winner: "SH01_A.png" },
-      { id: "SH-02", scene: "SC-01", title: "Second", keyframes: [{ id: "fr-b", label: "A" }], clips: [], candidateFiles: [] },
-    ],
-    characters: [{
-      id: "CHAR-SWEEP", name: "Chimbley Sweep", prefix: "CHAR-SWEEP", approvedFile: "CHAR-SWEEP_ROOT.png",
-      continuityStates: [
-        { id: "state-default", name: "Rooftop working", isDefault: true, parentStateId: "", approvedFile: "CHAR-SWEEP_ROOT.png" },
-        { id: "st-soot", name: "Heavy soot", parentStateId: "state-default", approvedFile: "CHAR-SWEEP_SOOT.png", notes: "Soot" },
-        { id: "st-dawn", name: "Dawn scarf", parentStateId: "st-soot", approvedFile: "", notes: "Scarf" },
-        { id: "st-rain", name: "Rain-soaked", parentStateId: "state-default", approvedFile: "", notes: "Rain" },
-      ],
-      candidateFiles: [{ stored: "CHAR-SWEEP_ROOT.png" }, { stored: "CHAR-SWEEP_SOOT.png" }],
-    }],
-    locations: [], props: [], vehicles: [], audio: [],
-  };
-  const scan = {
-    anchors: [
-      { name: "CHAR-SWEEP_ROOT.png", url: "/assets/anchors/CHAR-SWEEP_ROOT.png" },
-      { name: "CHAR-SWEEP_SOOT.png", url: "/assets/anchors/CHAR-SWEEP_SOOT.png" },
-      /* Dropped into the folder by hand: matches the prefix, claimed by nobody. */
-      { name: "CHAR-SWEEP_STRAY.png", url: "/assets/anchors/CHAR-SWEEP_STRAY.png" },
-    ],
-    plates: [], props: [], vehicles: [], audio: [], media: [],
-    shots: { "SH-01": { takes: [{ name: "SH01_A.png", url: "/assets/shots/SH-01/takes/SH01_A.png" }], locked: [], blocking: [] }, "SH-02": { takes: [], locked: [], blocking: [] } },
-  };
-  /* THE PROVIDER COUNTER lives on the Node side of the harness fetch, so it
-     cannot be reset or mocked by anything the page does. Any generation URL
-     reaching it is a dispatch the boundary should have refused. */
-  const browserProviderCalls = { count: 0, urls: [] };
-  const rendered = await render("#/character/CHAR-SWEEP", project, {
-    scan,
-    fetch: async (url, options) => {
-      if (/\/api\/generation\//.test(String(url)) && String(options?.method || "GET") === "POST") {
-        browserProviderCalls.count += 1;
-        browserProviderCalls.urls.push(String(url));
-      }
-      return null;
-    },
-  });
-  const run = (expression) => vm.runInContext(expression, rendered.context);
-  /* 1D-01 — THE GESTURE SOURCE INSIDE THE PAGE'S REALM IS THE PRODUCT'S OWN.
-     bootstrap.js installs `installBrowserManualActionSource()`, which listens
-     for a trusted user event; the harness owns the document's listener registry
-     and delivers events from Node, where page script cannot follow.
-     `rendered.gesture` is that control, and it is on the HARNESS side — the
-     page has no handle to it, which is the whole boundary. */
-  const inGesture = (expression) => {
-    rendered.gesture.open();
-    return run(expression);
-  };
-  eq(run(`manualActionSourceInstalled()`), "browser-trusted-event",
-    "the page's source is the product's trusted-event listener, not a test-only one");
-  eq(run(`typeof installHarnessManualActionSource`), "undefined",
-    "and the page cannot reach a synthetic one, because the product no longer ships it");
-  /* AND WITHOUT A GESTURE, THE REAL APPROVAL PATH REFUSES. Driven through the
-     shipped handler, not the kernel. */
+     Ordinary page script tries to replace the ownership policy and the edge
+     writer. The names do not exist; assigning them reaches nothing. */
   {
-    rendered.gesture.close();
-    run(`window._entityApproval = { list: "characters", id: "CHAR-SWEEP", name: "CHAR-SWEEP_SOOT.png", stateId: "st-soot" }`);
-    let refused = false;
-    try { await run(`confirmEntityApproval(false)`); } catch (error) { refused = /explicit human approval action/.test(String(error && error.message)); }
-    ok(refused, "with the gesture window closed, the REAL approval handler refuses — automation lives permanently in this state");
-    rendered.gesture.open();
+    const project = shotFixture();
+    const rendered = await render("#/shot/SH-DF2", project, { scan: shotScan() });
+    const probe = vm.runInContext(`(() => {
+      const before = {
+        kernelInstallers: Object.keys(CineBraidAuthorityKernel).filter((k) => /^install/.test(k)).join(","),
+        genericTransaction: typeof CineBraidAuthorityKernel.commitAuthorityTransaction,
+        ownershipSetter: typeof useEntityOwnershipResolver,
+        slotPolicySetter: typeof installSlotOwnershipPolicy,
+      };
+      let sideEffect = "";
+      /* The exact 1D moves, from page scope. */
+      CineBraidAuthorityKernel.installAuthorityOwnershipPolicy = () => true;
+      CineBraidAuthorityKernel.installAuthorityEdgeWriter = () => { sideEffect = "MUTATED-LIVE"; P.shots[0].winner = "FORGED.png"; throw new Error("boom"); };
+      window.entityOwnershipEligibility = () => ({ ok: true });
+      return { before, sideEffect };
+    })()`, rendered.context);
+    eq(probe.before.kernelInstallers, "installBrowserManualActionSource",
+      "the only installer the kernel exposes is the one that says what a human gesture is");
+    eq(probe.before.genericTransaction, "undefined", "there is no generic authority transaction to call");
+    eq(probe.before.ownershipSetter, "undefined", "and no way to replace the ownership answer");
+    eq(probe.before.slotPolicySetter, "undefined", "on the supporting path either");
+    /* And with those assignments in place, a real approval still runs the real
+       rules against the real edge. */
+    rendered.gesture.act(() => vm.runInContext(
+      `approveFrameCanon(P, { shotId: "SH-DF2", frameId: "fr-a", value: "DISPLAYED.png", assetId: "asset-A", at: "T" })`,
+      rendered.context,
+    ));
+    const after = vm.runInContext(`({ winner: P.shots[0].winner, receipts: (P.productionAuthority?.receipts || []).length })`, rendered.context);
+    eq(after.winner, "DISPLAYED.png", "a replaced writer changes nothing, because nothing reads one");
+    eq(after.receipts, 1, "and the real transaction still recorded the real decision");
   }
 
-  /* ---------------------------------------------------------------- §4 */
+  /* =========================================================================
+     COUNTEREXAMPLE 5 — the Approved Library.
 
-  eq(run(`entityMedia("characters", P.characters[0]).map((row) => row.name).sort()`),
-    ["CHAR-SWEEP_ROOT.png", "CHAR-SWEEP_SOOT.png"],
-    "the approval-capable pool contains only durably claimed media — the audit's unclaimed file is not in it");
-  eq(run(`entityUnassignedMedia("characters", P.characters[0]).map((row) => row.name)`), ["CHAR-SWEEP_STRAY.png"],
-    "and the unclaimed file is discoverable in the quarantine rather than deleted from view");
-  ok(run(`typeof claimEntityMedia === "function"`), "with a human claim act available on the same page");
-  run(`claimEntityMedia("characters", "CHAR-SWEEP", "CHAR-SWEEP_STRAY.png")`);
-  eq(run(`entityMedia("characters", P.characters[0]).map((row) => row.name).sort()`),
-    ["CHAR-SWEEP_ROOT.png", "CHAR-SWEEP_SOOT.png", "CHAR-SWEEP_STRAY.png"],
-    "one human act moves it into the pool — discovery and ownership are different facts, and a person converts one into the other");
-  eq(run(`entityUnassignedMedia("characters", P.characters[0]).length`), 0, "and it leaves the quarantine");
-
-  /* THE RESOLVER-UNAVAILABLE CASE FAILS CLOSED for authority. */
+     The audit rendered an entity with NO canon and one selected coverage slot
+     and got `class="library-card approved"`, `<span class="library-status
+     approved">APPROVED</span>`, "1 approved file", inside a tab whose copy says
+     these media currently define production truth. */
   {
-    const Isolated = require("../public/shared-production-authority");
-    Isolated.useEntityOwnershipResolver(null);
-    const bare = { characters: [{ id: "CHAR-A", continuityStates: [{ id: "st", approvedFile: "" }] }] };
-    assert.throws(() => Isolated.writeEntityStateProductionAuthority(bare, {
-      list: "characters", entityId: "CHAR-A", stateId: "st", value: "A.png", at: AT(1),
-      manualAction: MANUAL.gesture(() => Isolated.beginManualApproval({ via: "test", targets: [{ kind: "entity-state", list: "characters", entityId: "CHAR-A", stateId: "st" }] })),
-      applyEdge: () => {},
-    }), (error) => error.code === "AUTHORITY_OWNERSHIP_RESOLVER_UNAVAILABLE",
-    "with no authoritative resolver, approval is REFUSED rather than falling back to a filename guess");
-    checks++;
-    Isolated.useEntityOwnershipResolver(Ownership);
+    const rendered = await render("#/library/canon", legacyEntityFixture(), { scan: legacyScan() });
+    const canonTab = rendered.html;
+    ok(!/class="library-card canon"/.test(canonTab), "an entity with no receipt is not in the Canon tab");
+    ok(!/>APPROVED</.test(canonTab), "and the Library does not badge anything APPROVED");
+    ok(!/currently define production truth/.test(canonTab), "and does not claim these media define production truth");
+    ok(/Nothing is canon yet/.test(canonTab), "it says plainly that nothing is canon yet");
+
+    const all = await render("#/library/all", legacyEntityFixture(), { scan: legacyScan() });
+    ok(!/library-status canon/.test(all.html), "no canon badge without a receipt");
+    ok(/library-status historic|library-status reference/.test(all.html),
+      "the entity is shown, described as historic or reference");
+    ok(!/approved file/.test(all.html), "and no count is described as approved files");
+
+    /* And the positive half, so the assertion is not satisfied by an empty
+       Library: with a receipt, the same entity IS canon. */
+    const approved = legacyEntityFixture();
+    withCanon(approved, {
+      kind: "entity-state", list: "characters", entityId: "CHAR-LEG", stateId: "state-default",
+      value: "CHAR-LEG-LEGACY.png",
+    });
+    const withReceipt = await render("#/library/canon", approved, { scan: legacyScan() });
+    ok(/library-card canon/.test(withReceipt.html), "an entity with a receipt IS in the Canon tab");
+    ok(/>CANON</.test(withReceipt.html), "and is badged CANON");
+    ok(/canon file/.test(withReceipt.html), "and counted in canon files");
   }
 
-  /* ---------------------------------------------------------------- §5 */
+  /* =========================================================================
+     COUNTEREXAMPLES 6 AND 7 — the coverage dispatch boundary.
 
-  const parentsOf = () => run(`JSON.stringify(P.characters[0].continuityStates.map((s) => [s.id, s.parentStateId]))`);
-  const cyclesNow = () => run(`lineageCycles(P.characters[0].continuityStates).length`);
-
-  /* K5 — REPARENTING IS NOT AN OPERATION, driven through the real setters.
-
-     OLD EXPECTATIONS (removed): that the parent dropdown filtered descendants
-     out, and that its change handler routed through a validated mutation API.
-     Both described a REPARENT operation, and alpha removed it — a create-only
-     graph cannot cycle, so there is no move to filter and no write to validate.
-     What is asserted instead is that neither real setter can change ancestry at
-     all, and that the control which used to offer the cycle no longer exists. */
+     The audit reached a real submission with a null ledger and observed
+     roles ["identity-authority", "approved-view"] and the label "Legacy primary
+     approved authority". */
   {
-    const before = parentsOf();
-    run(`setContinuityStateGeneration("characters", "CHAR-SWEEP", "st-soot", "parentStateId", "st-dawn")`);
-    eq(parentsOf(), before, "the state-generation setter cannot reparent — the control that reached it is gone and the refusal remains");
-    eq(cyclesNow(), 0, "and the graph stays acyclic");
-  }
-  {
-    const before = parentsOf();
-    run(`setContinuityState("characters", "CHAR-SWEEP", 1, "parentStateId", "st-dawn")`);
-    eq(parentsOf(), before, "the generic setter cannot either — a bypass hides in exactly this kind of function");
-    eq(cyclesNow(), 0, "and the graph stays acyclic");
-  }
-  ok(run(`typeof entityStateParentOptions === "undefined"`),
-    "the reparent dropdown builder is gone from the loaded application, not merely unused");
-  ok(run(`typeof entityStateDerivationSummary === "function"`),
-    "replaced by a read-only statement of what the state derives from");
-  ok(/DERIVES FROM|BASE REFERENCE/.test(run(`entityStateDerivationSummary(P.characters[0], entityStateById(P.characters[0], "st-soot"))`)),
-    "which still shows the creator their real derivation — production truth stays on screen, it just stops being editable");
+    /* 6 — with no receipt there is no identity input, so there is nothing to
+       submit. The refusal is the product's own, and it names the fix. */
+    const said = [];
+    const noCanon = await render("#/character/CHAR-LEG", legacyEntityFixture(), {
+      scan: legacyScan(),
+      storage: { "cinebraid-focused:fixture:entity-task:characters:CHAR-LEG": "coverage" },
+      fetch: async (url, options, respond) => {
+        if (url === "/api/generation/fal/status") return respond({ enabled: true, configured: true, defaults: {} });
+        if (url === "/api/generation/fal/jobs") { said.push("SUBMITTED"); return respond({ ok: true, job: { id: "j" } }); }
+        return null;
+      },
+    });
+    noCanon.context.toast = (message) => said.push(String(message));
+    vm.runInContext(`CONFIG.generation=CONFIG.generation||{};CONFIG.generation.fal={enabled:true,apiKey:'t'};pollFalGeneration=()=>{};`, noCanon.context);
+    await noCanon.context.generateCoverageSlot("characters", "CHAR-LEG", "profile");
+    ok(!said.includes("SUBMITTED"), "an unreceipted pointer is not identity authority, so nothing is dispatched");
+    ok(said.some((line) => /Approve the primary reference first/i.test(line)),
+      "and the creator is told exactly what would make it canon");
+    /* The projection agrees, which is what every other surface reads. */
+    const truth = vm.runInContext(`entityProductionTruth(P, "characters", "CHAR-LEG")`, noCanon.context);
+    eq(truth.canon.length, 0, "the projection reports no canon");
+    eq(truth.historic.map((row) => row.value).join(","), "CHAR-LEG-LEGACY.png", "and reports the pointer as historic");
+    eq(truth.references.map((row) => row.value).join(","), "CHAR-LEG-SIDE.png", "and the slot as a reference");
 
-  /* K5 — CREATION AND DELETION, through the real writers. The two the re-audit
-     found entirely outside the boundary: an object literal and a splice. */
-  {
-    const before = parentsOf();
-    run(`addContinuityState("characters", "CHAR-SWEEP", "st-soot")`);
-    const states = JSON.parse(run(`JSON.stringify(P.characters[0].continuityStates.map((s) => [s.id, s.parentStateId]))`));
-    eq(states.length, 5, "a new state is created");
-    eq(states[4][1], "st-soot", "under the parent the caller named");
-    ok(run(`stateCollectionIntact(P.characters[0].continuityStates)`), "and the collection is still intact");
-    eq(cyclesNow(), 0, "with no cycle — structurally impossible in a create-only graph");
-    ok(parentsOf() !== before, "the collection really changed, so the assertions above are not vacuous");
-    /* Multi-level inheritance survives: this is the fourth level. */
-    eq(run(`JSON.stringify(stateAncestorIds(P.characters[0].continuityStates, "${states[4][0]}"))`),
-      JSON.stringify(["st-soot", "state-default"]),
-      "and its ancestry walks the chain, which is the inheritance the dogfood project depends on");
-    run(`P.characters[0].continuityStates = P.characters[0].continuityStates.filter((s) => s.id !== "${states[4][0]}")`);
-  }
-  {
-    /* THE RE-AUDIT'S DELETION CASE, through the real writer: removing an
-       ancestor left a child pointing at nothing and the old check called the
-       result acyclic. */
-    const before = parentsOf();
-    run(`removeContinuityState("characters", "CHAR-SWEEP", 1)`);
-    eq(parentsOf(), before, "deleting a state something derives from is refused by default — nothing is orphaned");
-    ok(run(`stateCollectionIntact(P.characters[0].continuityStates)`), "and the collection is intact");
-    run(`removeContinuityState("characters", "CHAR-SWEEP", 3)`);
-    ok(run(`!P.characters[0].continuityStates.some((s) => s.id === "st-rain")`), "while a leaf deletes cleanly");
-    ok(run(`stateCollectionIntact(P.characters[0].continuityStates)`), "leaving the collection intact");
-  }
-
-  /* APPROVAL NAVIGATION. The audit offered an orphan state as a continuation
-     target and watched it acquire a parent. Driven through the real approval
-     writer, with an orphan in the graph. */
-  {
-    run(`P.characters[0].continuityStates.push({ id: "st-orphan", name: "Orphan", parentStateId: "", approvedFile: "", notes: "Orphan" })`);
-    const before = parentsOf();
-    eq(run(`JSON.stringify(continuationCandidates(entityStateList(P.characters[0], true), "st-soot").map((c) => c.id))`),
-      JSON.stringify(["st-dawn"]),
-      "an orphan is not a continuation candidate — continuation moves down the chain, and an unrelated state is not on it");
-    ok(!run(`isValidContinuation(entityStateList(P.characters[0], true), "st-soot", "st-orphan")`),
-      "and the writer re-validates, so a stale form cannot smuggle one in");
-    eq(parentsOf(), before, "reading the continuation options mutated no lineage");
-    run(`P.characters[0].continuityStates = P.characters[0].continuityStates.filter((s) => s.id !== "st-orphan")`);
-  }
-
-  /* THE FULL APPROVAL FLOW, executed. Approve the soot state and continue into
-     its child; the child's parentage must be exactly what it was. */
-  {
-    const before = parentsOf();
-    /* The real modal, opened by the real entry point, so the elements the writer
-       reads are the ones the shipped markup produced. */
-    run(`approveEntityFile("characters", "CHAR-SWEEP", "CHAR-SWEEP_SOOT.png", "st-soot")`);
-    run(`document.getElementById("entity-approve-file").value = "CHAR-SWEEP_SOOT.png"`);
-    run(`document.getElementById("entity-approve-target").value = "st-soot"`);
-    run(`document.getElementById("entity-approve-name").value = "CHAR-SWEEP_SOOT.png"`);
-    run(`document.getElementById("entity-approve-next").value = "st-dawn"`);
-    await inGesture(`confirmEntityApproval(true)`);
-    eq(parentsOf(), before,
-      "APPROVE & EDIT NEXT wrote no lineage at all — the categorical invariant, executed through the real writer rather than asserted about a helper");
-    eq(cyclesNow(), 0, "and the graph is unchanged");
-    /* The approval itself is real, and it left a receipt. */
-    const receipts = run(`JSON.stringify(((P.productionAuthority || {}).receipts || []).map((r) => [r.targetKey, r.actor, r.status, (r.provenance || {}).via]))`);
-    ok(/entity-state:characters:CHAR-SWEEP#st-soot/.test(receipts), `the approval it DID make is recorded as a durable receipt — got ${receipts}`);
-    ok(/"human"/.test(receipts) && /entity-approval-modal/.test(receipts), "with the actor and the surface that issued it");
-    /* And the gate that was waiting for it is now satisfied — one predicate,
-       answering the same way for a decision made outside any run. */
-    ok(run(`gateSatisfied({ kind: "entity-state-approval", list: "characters", entityId: "CHAR-SWEEP", stateId: "st-soot" }, P)`),
-      "and a gate parked on that state is satisfied by it, wherever the approval was made");
+    /* 7 — with a receipt, the package goes out, and every role names a purpose.
+       The primary is canon; SIDE.png is a supporting view and says so. */
+    const approved = legacyEntityFixture();
+    /* A real approval stamps the identity on BOTH sides, which is what makes the
+       receipt checkable. A fixture that stamped only the receipt would fail
+       closed here — correctly — and would be testing the wrong thing. */
+    approved.characters[0].approvedAssetId = "asset-L";
+    approved.characters[0].continuityStates[0].approvedAssetId = "asset-L";
+    withCanon(approved, {
+      kind: "entity-state", list: "characters", entityId: "CHAR-LEG", stateId: "state-default",
+      value: "CHAR-LEG-LEGACY.png", assetId: "asset-L",
+    });
+    let submitted = null;
+    const canonical = await render("#/character/CHAR-LEG", approved, {
+      scan: legacyScan(),
+      storage: { "cinebraid-focused:fixture:entity-task:characters:CHAR-LEG": "coverage" },
+      fetch: async (url, options, respond) => {
+        if (url === "/api/generation/fal/status") return respond({ enabled: true, configured: true, defaults: {} });
+        if (url === "/api/generation/fal/jobs" && options.method === "POST") {
+          submitted = JSON.parse(options.body);
+          return respond({ ok: true, job: { id: "job-1", status: "IN_QUEUE" } });
+        }
+        return null;
+      },
+    });
+    vm.runInContext(`CONFIG.generation=CONFIG.generation||{};CONFIG.generation.fal={enabled:true,apiKey:'t'};pollFalGeneration=()=>{};`, canonical.context);
+    await canonical.context.generateCoverageSlot("characters", "CHAR-LEG", "profile");
+    ok(submitted, "with canon established, coverage generation submits");
+    const roles = submitted.references.map((ref) => ref.role);
+    const labels = submitted.references.map((ref) => ref.label);
+    const sources = submitted.references.map((ref) => ref.sourceFile);
+    eq(roles[0], "identity-canon", "the receipt-backed primary is the canon identity");
+    ok(roles.slice(1).every((role) => role === "supporting-view" || role === "expression-reference" || role === "environment-reference"),
+      `every other role names a purpose — got ${JSON.stringify(roles)}`);
+    ok(!roles.includes("identity-authority"), "no role called identity-authority survives");
+    ok(!roles.includes("approved-view"), "and none called approved-view");
+    ok(labels.every((label) => !/approved authority/i.test(label)),
+      `no reference is labelled approved authority — got ${JSON.stringify(labels)}`);
+    ok(sources.includes("CHAR-LEG-SIDE.png"), "the supporting view still travels — it is useful context");
+    ok(!("authorityManifest" in submitted), "the package is not called an authority manifest");
+    ok(Array.isArray(submitted.referenceManifest), "it is a reference manifest");
+    ok(!/approved authority package/i.test(submitted.prompt), "and the prompt does not call it an approved authority package");
   }
 
-  /* ---------------------------------------------------------------- §6 */
+  /* =========================================================================
+     COUNTEREXAMPLE 11 — opening the entity automation modal.
 
-  /* THE REAL CORRECTION RUNNER, with a provider counter. Every case the audit
-     named, executed end to end. */
-  const correctionCases = [
-    ["a deleted target", { id: "pkg-deleted", targetShotId: "SH-99-DELETED", previousShotId: "SH-01", nextShotId: "", prompt: "Fix it." }, /no longer exists/],
-    ["a malformed package with no target", { id: "pkg-empty", targetShotId: "", prompt: "Fix it." }, /names no target shot/],
-    ["a target with no approved still", { id: "pkg-nostill", targetShotId: "SH-02", previousShotId: "SH-01", nextShotId: "", prompt: "Fix it." }, /no approved base still/],
-    ["a package with no correction instruction", { id: "pkg-noprompt", targetShotId: "SH-01", previousShotId: "", nextShotId: "", prompt: "" }, /no correction instruction/],
-  ];
-  for (const [label, pkg, expected] of correctionCases) {
-    const before = browserProviderCalls.count;
-    const outcome = await run(`(async () => {
-      try {
-        await v640AutomateSceneCorrection({ id: "run-x", type: "scene-chain", targetId: "SC-01", config: { correctionPasses: 3 }, steps: {}, logs: [], usage: {} }, ${JSON.stringify(pkg)});
-        return { threw: false };
-      } catch (error) {
-        return {
-          threw: true,
-          message: String(error.message || ""),
-          failureClass: String(error.failureClass || ""),
-          localPackageError: error.localPackageError === true,
-          remediation: String(error.remediation || ""),
-          isTypeError: error instanceof TypeError,
-        };
-      }
-    })()`);
-    ok(outcome.threw, `${label}: the runner refuses`);
-    ok(!outcome.isTypeError, `${label}: NOT a bare TypeError — the audit got "Cannot read properties of undefined (reading 'clips')" here`);
-    ok(expected.test(outcome.message), `${label}: naming the missing thing — got ${JSON.stringify(outcome.message)}`);
-    eq(outcome.failureClass, "local-package", `${label}: classified deterministic, so no retry is spent reproducing it`);
-    ok(outcome.localPackageError, `${label}: carrying the typed flag the classifier reads`);
-    ok(outcome.remediation.length > 0, `${label}: with something the creator can actually do`);
-    eq(browserProviderCalls.count - before, 0, `${label}: ZERO provider dispatches — counted outside the page, where nothing on it can reset the counter`);
-  }
-  eq(browserProviderCalls.count, 0,
-    `no correction case reached a generation endpoint at all (saw: ${browserProviderCalls.urls.join(", ") || "none"})`);
-
-  /* A SINGLE-SHOT SCENE AND A MISSING NEIGHBOUR ARE NOT FAULTS. The correction
-     builds; only the anchors are omitted, with their reasons recorded. */
+     With a synthetic entity carrying only id, name and a pointer, merely opening
+     the default-reference planner produced a continuityStates array, a
+     state-default, generationMode, prompt fields and a build array. */
   {
-    const built = await run(`(() => {
-      const pkg = { id: "pkg-boundary", targetShotId: "SH-01", previousShotId: "", nextShotId: "SH-99-GONE", prompt: "Fix it." };
-      const hydrated = v643HydrateSceneCorrectionPackage(pkg, null);
-      v640SceneCorrectionReferences(hydrated);
-      return JSON.stringify({ omitted: (hydrated.omittedAnchors || []).map((row) => [row.position || row.role, row.reason]) });
-    })()`);
-    const omitted = JSON.parse(built).omitted;
-    ok(omitted.some(([, reason]) => reason === "scene-boundary"), "a first shot omits its previous anchor as a scene boundary");
-    ok(omitted.some(([, reason]) => reason === "shot-no-longer-exists"), "and a deleted neighbour is omitted for that reason, by name");
+    const project = buildFixture();
+    const scan = { anchors: [{ name: "CHAR-BARE-A.png", url: TINY }], plates: [], props: [], vehicles: [], audio: [], media: [], shots: {} };
+    const rendered = await render("#/library/all", project, { scan });
+    /* THE ENTITY IS ADDED AFTER LOAD, ON PURPOSE. Normalization is CineBraid's
+       named, deliberate mutation and it runs when a project is opened, so an
+       entity that was in the file already has its default state by the time any
+       screen sees it — and asserting on one would prove nothing. A reference the
+       creator adds DURING the session has not been normalized, and opening a
+       planner on it is exactly the reachable path the audit walked. */
+    vm.runInContext(`P.characters.push({ id: "CHAR-BARE", name: "Bare", prefix: "CHAR-BARE", approvedFile: "CHAR-BARE-A.png" })`, rendered.context);
+    const before = vm.runInContext(`JSON.stringify(P.characters.find((x) => x.id === "CHAR-BARE"))`, rendered.context);
+    ok(!/continuityStates/.test(before), "the added reference has no state structure yet — which is what makes this measurable");
+    const beforeProject = vm.runInContext(`JSON.stringify(P)`, rendered.context);
+    for (const opener of [
+      `openAssetAutomationModal("characters","CHAR-BARE")`,
+      `openEntityChainAutomationModal("characters","CHAR-BARE")`,
+      `v627EntityPreflight("characters", P.characters.find((x) => x.id === "CHAR-BARE"), ["state-default"])`,
+    ]) {
+      vm.runInContext(opener, rendered.context);
+      const after = vm.runInContext(`JSON.stringify(P.characters.find((x) => x.id === "CHAR-BARE"))`, rendered.context);
+      eq(after, before, `${opener.split("(")[0]} must not change the entity`);
+    }
+    eq(vm.runInContext(`JSON.stringify(P)`, rendered.context), beforeProject,
+      "and opening a planner must not change the project at all");
+    /* The preflight still ANSWERS — a pure reader that reported nothing would be
+       a different bug. */
+    const preflight = vm.runInContext(`v627EntityPreflight("characters", P.characters.find((x) => x.id === "CHAR-BARE"), ["state-default"])`, rendered.context);
+    ok(Array.isArray(preflight.errors), "the preflight still reports");
   }
 
-  /* THE RETRY BUDGET. A deterministic local fault must leave the attempt counter
-     exactly where it was. */
-  {
-    const runsModule = fs.readFileSync(path.join(ROOT, "automation-runs.js"), "utf8");
-    ok(/\["local-package", "local-preflight"\]\.includes\(String\(steps\[stepKey\]\?\.failureClass \|\| ""\)\)/.test(runsModule),
-      "both deterministic classes are recognised by the retry route");
-    const classify = (error) => run(`v626FailureClass(${JSON.stringify(error)})`);
-    eq(classify({ code: "FRAME_PRESENCE_CONTRADICTION" }), "local-preflight",
-      "a presence refusal is local — it never reached a provider, so charging a provider attempt for it spends budget on nothing");
-    eq(classify({ code: "FRAME_PRESENCE_TARGET_UNRESOLVED" }), "local-preflight", "so is an unresolvable frame target");
-    eq(classify({ classification: "local-preflight" }), "local-preflight", "and the classification travels even without a code");
-    eq(classify({ message: "FAL timed out" }), "provider", "while a genuine provider fault is still a provider fault");
-  }
+  console.log(`Dogfood #2 counterexample regressions passed ${checks} checks across all eleven Batch 1D findings. Provider calls made: 0.`);
 }
+
+main().catch((error) => {
+  console.error(error.stack || error.message || error);
+  process.exitCode = 1;
+});

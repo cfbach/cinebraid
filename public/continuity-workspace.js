@@ -477,7 +477,7 @@ function continuityFrameStatePanelMarkup(s, rows, pair) {
   const frames = [pair.a, pair.b];
   const declared = rows.reduce((total, row) => total + frames.filter((frameRow) => frameStateSelection(s, frameRow.frame.id, row.type, row.entity.id)).length, 0);
   const body = rows.map((row) => {
-    const states = typeof entityStateList === "function" ? entityStateList(row.entity, true) : (row.entity.continuityStates || []);
+    const states = typeof entityStateList === "function" ? entityStateListRead(row.entity, true) : (row.entity.continuityStates || []);
     if (states.length < 2) return "";
     const cells = frames.map((frameRow) => {
       const current = frameStateSelection(s, frameRow.frame.id, row.type, row.entity.id);

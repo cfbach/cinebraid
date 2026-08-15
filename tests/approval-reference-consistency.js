@@ -73,7 +73,7 @@ function inspect(context) {
 }
 
 async function approve(project, { target, from, to }) {
-  const { context } = await render(`#/shot/${SHOT}`, project, {
+  const rendered = await render(`#/shot/${SHOT}`, project, {
     fetch: async (url, options, response) => {
       if (url === "/api/media/rename") {
         const body = JSON.parse(options.body || "{}");
@@ -84,11 +84,12 @@ async function approve(project, { target, from, to }) {
       return null;
     },
   });
+  const { context } = rendered;
   context.confirmModal = (message, action) => action();
   context.approveTake(SHOT, from);
   context.document.getElementById("approve-target").value = target;
   context.document.getElementById("approve-name").value = to;
-  await context.confirmApproveTake();
+  await rendered.gesture.act(() => context.confirmApproveTake());
   await new Promise((r) => setTimeout(r, 30));
   return context;
 }

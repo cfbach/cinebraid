@@ -246,7 +246,7 @@ const OBSERVATION_RELEVANT_FIELDS = [
 function entityStateRecords(entity) {
   return Array.isArray(entity && entity.continuityStates) ? entity.continuityStates.filter(Boolean) : [];
 }
-/* Read-only: unlike entityStateList() in app.js this never repairs the entity,
+/* Read-only: unlike ensureEntityStateList() in app.js this never repairs the entity,
    because a manifest build must not mutate the project. */
 function resolveStateRecord(entity, stateId) {
   const states = entityStateRecords(entity);

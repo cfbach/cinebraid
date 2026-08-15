@@ -32,11 +32,11 @@ const Continuity = require("./public/shared-continuity");
 const EntityOwnership = require("./public/shared-entity-ownership");
 const FramePresence = require("./public/shared-frame-presence");
 const ProductionAuthority = require("./public/shared-production-authority");
-/* Node has no shared browser scope, so the ownership resolver the authority
-   command uses for its eligibility veto is handed over once, here. Without this
-   the command fails closed on every server-side entity approval — which is the
-   correct default, and not the behaviour anybody wants in the running product. */
-ProductionAuthority.useEntityOwnershipResolver(EntityOwnership);
+/* There is nothing to wire. The Canon kernel depends on
+   public/shared-entity-ownership.js directly — by `require` in Node, by name in
+   the browser's shared scope — so the ownership veto cannot be handed over,
+   forgotten, or replaced with a different answer after boot. This line used to
+   be `ProductionAuthority.useEntityOwnershipResolver(EntityOwnership)`. */
 const { createContinuityCache } = require("./continuity-cache");
 const ContinuityJson = require("./continuity-json");
 const { resolvePromptBuild, resolvePromptBuildList, normalizePromptBuildHistory, registerPromptBuild, promptBuildRef, applyPromptBuildRetention } = require("./public/shared-build-history");
@@ -2151,9 +2151,12 @@ function normalizeBuilderCoverage(source, kind) {
     ...builderCoverageRequirement(slot),
     id: String(slot?.id || "").trim(),
     label: String(slot?.label || slot?.name || "").trim(),
-    approvedFile: String(slot?.approvedFile || ""),
+    /* S6 — a slot holds a SELECTED supporting file. The imported key may be the
+       legacy `approvedFile`; what this build writes is `selectedFile`, and the
+       status it derives is "selected", never "approved". */
+    selectedFile: String(slot?.selectedFile || slot?.approvedFile || ""),
     notes: String(slot?.notes || slot?.characteristics || ""),
-    status: String(slot?.status || (slot?.approvedFile ? "approved" : "missing")),
+    status: String(slot?.status === "approved" ? "selected" : slot?.status || ((slot?.selectedFile || slot?.approvedFile) ? "selected" : "missing")),
   })).filter((slot) => slot.id || slot.label);
   const defaultIds = new Set(defaultSlots.map(([id]) => id));
   const slots = [];
@@ -2164,11 +2167,13 @@ function normalizeBuilderCoverage(source, kind) {
       const defaultLabel = defaultSlots.find(([id]) => id === alias)?.[1] || suppliedSlot.label || alias;
       const detail = String(suppliedSlot.notes || suppliedSlot.label || "").trim();
       if (existing) {
-        if (!existing.approvedFile && suppliedSlot.approvedFile) existing.approvedFile = suppliedSlot.approvedFile;
+        if (!existing.selectedFile && suppliedSlot.selectedFile) existing.selectedFile = suppliedSlot.selectedFile;
         if (detail && detail.toLowerCase() !== String(defaultLabel).toLowerCase() && !String(existing.notes || "").includes(detail)) {
           existing.notes = [existing.notes, `Imported view detail: ${detail}`].filter(Boolean).join("\n");
         }
-        existing.status = existing.approvedFile ? "approved" : "missing";
+        /* SELECTED, never approved. Deriving "approved" from file presence is
+           how a supporting reference acquired an approval nobody made. */
+        existing.status = existing.selectedFile ? "selected" : "missing";
         continue;
       }
       slots.push({ ...suppliedSlot, id: alias, label: defaultLabel, notes: detail && detail.toLowerCase() !== String(defaultLabel).toLowerCase() ? `Imported view detail: ${detail}` : suppliedSlot.notes });
@@ -2184,7 +2189,7 @@ function normalizeBuilderCoverage(source, kind) {
          requirement, so there is nothing left to fill in here. The line that used
          to sit here filled in the template's boolean and could contradict the
          enum the kit supplied. */
-    } else slots.push({ id, label, requirement: Coverage.templateRequirement(required), approvedFile: "", notes: "", status: "missing" });
+    } else slots.push({ id, label, requirement: Coverage.templateRequirement(required), selectedFile: "", notes: "", status: "missing" });
   }
   return slots;
 }
@@ -2212,9 +2217,9 @@ function normalizeBuilderEntity(entity, kind, index, warnings) {
         ...builderCoverageRequirement(slot),
         id: String(slot?.id || `expression-${index + 1}`),
         label: String(slot?.label || slot?.name || `Expression ${index + 1}`),
-        approvedFile: String(slot?.approvedFile || ""),
+        selectedFile: String(slot?.selectedFile || slot?.approvedFile || ""),
         notes: String(slot?.notes || slot?.performance || ""),
-        status: String(slot?.status || (slot?.approvedFile ? "approved" : "missing")),
+        status: String(slot?.status === "approved" ? "selected" : slot?.status || ((slot?.selectedFile || slot?.approvedFile) ? "selected" : "missing")),
       })) : builderArray(source.expressionSlots),
     };
   if (kind === "character") {
@@ -5950,11 +5955,29 @@ app.post("/api/llm/review-entity-candidate", async (req, res) => {
     };
     const defaultState = entityReviewStateRecord(entity, "state-default");
     const parentState = entityReviewParentState(entity, state);
-    if (parentState) addEntityFile(parentState.approvedFile || (parentState.isDefault ? entity.approvedFile : ""), `${parentState.name || "Parent"} approved reference`, "exact parent-state editable authority");
-    addEntityFile(defaultState.approvedFile || entity.approvedFile, `${defaultState.name || "Default"} approved reference`, "primary identity / design authority");
-    if (state.id !== defaultState.id) addEntityFile(state.approvedFile, `${state.name || "Target state"} current approved reference`, "existing target-state authority / replacement comparison");
+    /* S8A — WHAT THE REVIEWER IS TOLD DEPENDS ON WHETHER ANYBODY APPROVED IT.
+     *
+     * These three inputs were labelled "approved reference" and
+     * "primary identity / design authority" from raw pointers, with no receipt
+     * predicate anywhere — the server-side twin of the coverage-automation
+     * defect the Dogfood #2 audit reproduced. The image still travels either
+     * way, because it is genuinely useful context; what changes is whether the
+     * reviewer is told it decides anything. */
+    const canonValues = new Set(
+      (ProductionAuthority.entityProductionTruth(P, list, entity.id).canon || []).map((row) => row.value).filter(Boolean),
+    );
+    const addStateFile = (file, name, canonRole, historicRole) => {
+      const value = String(file || "");
+      if (!value) return;
+      const isCanon = canonValues.has(value);
+      addEntityFile(value, `${name} ${isCanon ? "canon reference" : "historic reference"}`, isCanon ? canonRole : historicRole);
+    };
+    const HISTORIC_ROLE = "previously selected, not approved as canon — context only";
+    if (parentState) addStateFile(parentState.approvedFile || (parentState.isDefault ? entity.approvedFile : ""), parentState.name || "Parent", "exact parent-state editable canon", HISTORIC_ROLE);
+    addStateFile(defaultState.approvedFile || entity.approvedFile, defaultState.name || "Default", "primary identity / design canon", HISTORIC_ROLE);
+    if (state.id !== defaultState.id) addStateFile(state.approvedFile, state.name || "Target state", "existing target-state canon / replacement comparison", HISTORIC_ROLE);
     const allCoverage = [...(entity.coverageSlots || []), ...(entity.expressionSlots || [])]
-      .filter((slot) => slot?.approvedFile)
+      .filter((slot) => Coverage.coverageSlotFile(slot))
       .sort((a, b) => String(a.id || "").localeCompare(String(b.id || "")));
     for (const slot of allCoverage) {
       /* K-alpha: a coverage view is a SUPPORTING reference. It used to be sent
@@ -5962,7 +5985,7 @@ app.post("/api/llm/review-entity-candidate", async (req, res) => {
          one of the places the slot's undeclared authority became visible. The
          image still travels — it is useful context — under a label that does
          not make it canon. */
-      addEntityFile(slot.approvedFile, `${slot.label || slot.id} selected view`, list === "locations" ? "same-location supporting view (context only)" : "supporting alternate view (context only)");
+      addEntityFile(Coverage.coverageSlotFile(slot), `${slot.label || slot.id} selected view`, list === "locations" ? "same-location supporting view (context only)" : "supporting alternate view (context only)");
     }
     const targetType = entityReviewType(list);
     for (const asset of P.mediaAssets || []) {
