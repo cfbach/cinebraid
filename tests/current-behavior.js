@@ -337,6 +337,7 @@ async function main() {
     "api-smoke.js",
     "approval-reference-consistency.js",
     "asset-lifecycle.js",
+    "authority-test-gesture.js",
     "automation-diagnostics.js",
     "automation-frame-preflight-negative-controls.js",
     "automation-frame-preflight.js",

@@ -230,22 +230,67 @@ function decisionFor(approvalWord) {
   return row;
 }
 
+/* CHANGED IN BATCH 1D — AND THE 1C ACCEPTANCE AUDIT NAMED THIS BLOCK.
+
+   OLD EXPECTATIONS: every fixture here has a raw `keyframes[0].winner` and NO
+   authority ledger at all, and this block required the projection to call each
+   of them `approved`, with three of the four also reporting `humanDecision:
+   "approved"`. The audit's words were that the suite "pins the unreceipted case
+   as an ordinary manual approval" — and it did, which is why Results and the
+   Inspector rendered "Approved by you · It is production canon" for a project
+   nobody had approved anything in.
+
+   WHY THEY ARE NO LONGER VALID: a legacy pointer and an automation provenance
+   word are both things a machine leaves behind. Reading either as a human
+   decision is the second representation of production truth that 1D-04 removes.
+
+   THE NEW INVARIANT: `approved` requires a valid current receipt. Everything
+   else with an edge is `historic` — a real selection nobody approved as Canon.
+
+   WHAT SURVIVES UNCHANGED, because it was the point of the block: the EVIDENCE
+   IS NOT REWRITTEN. The edges are still enumerated in `disposition.targets`,
+   `disposition.authority.claimed` still says an edge points here, and the
+   automation provenance word is still read and reported. Nothing is hidden;
+   what stopped is CineBraid claiming the filmmaker chose it. */
 const machine = decisionFor("automatic");
-eq(machine.disposition.role, "approved", "the EDGE is still reported as it is — evidence is not rewritten");
-eq(machine.humanDecision.state, "machine-selected", "but the DECISION is not called a human one");
-eq(machine.humanDecision.actor.value, "automation", "and the actor is named");
+eq(machine.disposition.role, "historic", "an edge with no receipt behind it is a historic selection, not an approval");
+eq(machine.disposition.authority.claimed, true, "the edge is still reported as it is — evidence is not rewritten");
+eq(machine.disposition.authority.receiptBacked, false, "and the reason it is not canon is stated, not implied");
+eq(machine.disposition.targets.length > 0, true, "the targets it points at are still enumerated");
+eq(machine.humanDecision.state, "undecided", "nobody has decided this, which is the truth about a project with no ledger");
+eq(machine.humanDecision.actor.value, "automation", "and the actor the run recorded is still named");
 
 const director = decisionFor("director");
-eq(director.humanDecision.state, "approved", "a director-approved edge is a human decision");
-eq(director.humanDecision.actor.value, "human", "and says so");
+eq(director.disposition.role, "historic", "even a run that recorded \"director\" has no receipt to show");
+eq(director.humanDecision.state, "undecided",
+  "an automation provenance WORD is not a durable human decision — it is the run's own note about itself, and 1B already proved a run can write it without a person");
+eq(director.humanDecision.actor.value, "human", "the word is still reported, because it is real evidence about the run");
 
 const reused = decisionFor("reused");
-eq(reused.humanDecision.state, "approved", "a reused edge rests on an earlier human decision");
 eq(reused.humanDecision.actor.value, "prior-human", "recorded as such rather than collapsed into either extreme");
 
 const unrecorded = decisionFor("");
-eq(unrecorded.humanDecision.state, "approved", "an edge with no provenance is the ordinary manual approval and stays approved");
+eq(unrecorded.disposition.role, "historic", "an edge with no provenance at all is historic too");
 eq(unrecorded.humanDecision.actor.state, "not-recorded", "with the actor reported as unrecorded rather than assumed");
+
+/* AND THE RECEIPTED CASE, which is the other half of the invariant and was not
+   covered here before: with a valid current receipt the same projection says
+   approved, and names the targets the receipt covers. */
+{
+  const project = shotProject("");
+  const target = { kind: "shot-frame", shotId: "SH-01", frameId: "fr-a" };
+  project.shots[0].keyframes[0].winner = "";
+  Authority.writeFrameProductionAuthority(project, {
+    shotId: "SH-01", frameId: "fr-a", value: "SH01_A_001.png", at: "2026-08-14T00:30:00.000Z",
+    manualAction: approvalFor(target, "SH01_A_001.png"),
+  });
+  const built = P4.productionMediaRecords({ project, scan: shotScan(), jobs: [], jobsAvailable: true });
+  const row = built.records.find((item) => item.file.name === "SH01_A_001.png");
+  eq(row.disposition.role, "approved", "a receipted edge IS approved production media");
+  eq(row.disposition.authority.receiptBacked, true, "and says what makes it so");
+  eq(row.humanDecision.state, "approved", "and reads as a human decision");
+  eq(built.counts.approved, 1, "and is counted as one");
+}
 
 ok(P4.PRODUCTION_MEDIA_DECISION_STATES.includes("machine-selected"),
   "the fourth state is declared in the contract's own vocabulary, not invented at a call site");

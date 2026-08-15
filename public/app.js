@@ -882,6 +882,9 @@ if (typeof window !== "undefined") window.markContinuitySchema = markContinuityS
 
 function normalizeProjectV5() {
   let changed = false;
+  /* 1D-06: legacy states whose derivation was never recorded. Reported, never
+     filled in — see the state loop below. */
+  const lineageWarnings = [];
   for (const key of ["characters", "locations", "props", "vehicles", "audio", "scenes", "shots"]) {
     if (!Array.isArray(P[key])) { P[key] = []; changed = true; }
   }
@@ -938,12 +941,14 @@ function normalizeProjectV5() {
         if (st.assetPromptNotes == null) st.assetPromptNotes = "";
         if (!Array.isArray(st.assetPromptBuilds)) st.assetPromptBuilds = [];
       });
-      /* 1D-06: what load does instead of filling ancestry — say so. */
+      /* 1D-06: what load does instead of filling ancestry — say so. Collected
+         here and merged into the durable channel at the end of this pass, which
+         is the same list the coverage normaliser above writes. */
       if (typeof validateStateCollection === "function") {
         const unrecorded = (validateStateCollection(x.continuityStates).legacy || [])
           .map((row) => (x.continuityStates.find((st) => st && st.id === row.id) || {}).name || row.id);
         if (unrecorded.length) {
-          warnings.push(
+          lineageWarnings.push(
             `${x.name || x.id} — ${unrecorded.length === 1 ? "the state" : "the states"} ${unrecorded.join(", ")} `
             + `${unrecorded.length === 1 ? "does" : "do"} not record what ${unrecorded.length === 1 ? "it derives" : "they derive"} from. `
             + `CineBraid will not guess. Create a new state from the reference you meant, or leave it as independent history.`,
@@ -1072,6 +1077,14 @@ function normalizeProjectV5() {
       item.sameObjectAs = "";
       changed = true;
     }
+  }
+  /* 1D-06: merge the unrecorded-derivation reports into the durable channel the
+     coverage normaliser already owns, de-duplicated so reopening a project does
+     not stack the same sentence. */
+  if (lineageWarnings.length) {
+    P.meta = P.meta || {};
+    const existing = Array.isArray(P.meta.dataIntegrityWarnings) ? P.meta.dataIntegrityWarnings : [];
+    P.meta.dataIntegrityWarnings = [...new Set([...existing, ...lineageWarnings])];
   }
   return changed;
 }

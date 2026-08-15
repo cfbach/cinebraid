@@ -379,8 +379,13 @@ function writeAuthorityEdge(draft, target, details) {
       s.creationBrief.finalStillFile = value;
       s.creationBrief.deliveryIntent = "still";
     }
-    s.winner = value;
-    stampShot(s, "winner");
+    /* `s.winner` IS NOT THE DELIVERY EDGE and this writer must not touch it.
+       readAuthorityEdge reads it as the OPENING FRAME's authority — the legacy
+       location the manual path writes a frame approval to — so writing it here
+       made two target kinds share one field, and clearing it on a delivery
+       revocation silently withdrew a frame approval nobody had withdrawn. The
+       delivery edge is finalStillFile / creationBrief, which is what the reader
+       reads for this kind. */
     return true;
   }
   if (it.kind === "entity-state") {
