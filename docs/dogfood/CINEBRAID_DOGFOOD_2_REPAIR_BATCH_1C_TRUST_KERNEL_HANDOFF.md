@@ -20,7 +20,7 @@ Neither prior repair is rewritten, squashed or reverted. Batch 1's commits, Batc
 | Batch 1B target the re-audit judged | `b23d2313ae9d3cc789dfa09c91ac703c3580b55a` |
 | 1B acceptance-audit checkpoint | `58fc25998146ace5b2a146ab48a74b849666bc27` |
 | `origin/main` | `afe1853ce2fa69f43489822c0e86d5a4c45ea3f6` |
-| **Final HEAD** | *(recorded at §17 with the validation receipt)* |
+| **Final HEAD** | *(recorded at §18 with the validation receipt)* |
 
 # 3. Commits
 
@@ -32,9 +32,15 @@ Neither prior repair is rewritten, squashed or reverted. Batch 1's commits, Batc
 | `edcff32` | `test(K8): rebuild the control harness on a seven-condition contract` |
 | `553df53` | `test: extend the architecture suite into the full Codex regression matrix` |
 | `7b64a5d` | `fix: stage every authority edge on the draft, and merge the commit in place` |
-| `4a44ba0` | `fix(K6+K-alpha): pure automation preflight, and a fourth decision word` |
-| `e2ff1cb` | `fix: mint the capability before the first await in async approval handlers` |
+| `37413b1` | `fix(K6+K-alpha): pure automation preflight, and a fourth decision word` |
+| `f981585` | `fix: mint the capability before the first await in async approval handlers` |
+| `d00067b` | `test(K7): migrate the OFP clean-migration expectation to receipted export truth` |
+| `bc95d9b` | `fix(K1C): close the four slot writers the post-green sweep found` |
+| `db42438` | `fix: one slot-decision vocabulary, and stop deriving the withdrawn word` |
+| `e17956a` | `test: follow the slot vocabulary out of entities.js` |
 | *(this document)* | `docs: dogfood #2 repair batch 1C trust kernel handoff` |
+
+**38 files, +4823 / −1902** against `b23d231`.
 
 # 4. Files changed
 
@@ -42,12 +48,12 @@ Neither prior repair is rewritten, squashed or reverted. Batch 1's commits, Batc
 
 | File | Owns |
 |---|---|
-| `public/shared-authority-kernel.js` | The canonical target descriptor, full receipt-schema validation, the manual-action capability, and the one commit transaction |
-| `public/shared-entity-slots.js` | What a coverage/expression slot *is* after the demotion: a supporting reference with no authority semantics |
+| `public/shared-authority-kernel.js` (+930) | The canonical target descriptor, full receipt-schema validation, the manual-action capability, and the one commit transaction |
+| `public/shared-entity-slots.js` (+226) | What a coverage/expression slot *is* after the demotion: a supporting reference, its one writer, and the one decision vocabulary |
 
-**Modified source (17):** `public/shared-production-authority.js`, `public/shared-state-lineage.js`, `public/shared-frame-presence.js`, `public/shared-production-media.js`, `public/shared-entity-ownership.js` *(unchanged in 1C)*, `public/automation.js`, `public/scene-automation.js`, `public/library-tools.js`, `public/creation-studio.js`, `public/entities.js`, `public/review.js`, `public/review-provenance.js`, `public/coverage-automation.js`, `public/app.js`, `public/bootstrap.js`, `public/index.html`, `server.js`, `fal-generation.js`, `ofp/ofp-migrate.js`, `ofp/ofp-migrate-rules.js`, `ofp/ofp-migrate-diagnostics.js`.
+**Modified source (19):** `shared-production-authority.js` (net −430; the batch deleted more of it than it added), `shared-state-lineage.js`, `shared-frame-presence.js`, `shared-production-media.js`, `app.js`, `automation.js`, `scene-automation.js`, `library-tools.js`, `creation-studio.js`, `entities.js`, `review.js`, `review-provenance.js`, `coverage-automation.js`, `focused-workspaces.js`, `bootstrap.js`, `index.html`, `server.js`, `fal-generation.js`, `ofp/ofp-migrate*.js` (3).
 
-**Modified tests (8):** `tests/dogfood2-p0-negative-controls.js` *(rewritten)*, `tests/dogfood2-p0-architecture.js`, `tests/state-lineage-safety.js`, `tests/production-authority.js`, `tests/render-harness.js`, `tests/alpha-production-loop.js`, `tests/alpha-production-loop-negative-controls.js`, `tests/real-browser-workflow.py`.
+**Modified tests (12) + 1 re-pinned golden:** `dogfood2-p0-negative-controls.js` *(rewritten)*, `dogfood2-p0-architecture.js`, `state-lineage-safety.js`, `production-authority.js`, `render-harness.js`, `alpha-production-loop.js`, `alpha-production-loop-negative-controls.js`, `real-browser-workflow.py`, `ofp-migration.js`, `manual-first-workflow.js`, `coverage-workflow.js`, `safety-integrity.js`, `fixtures/ofp-migration/overfit/goldens/summary.json`.
 
 No project data, generated media, provider state, credential or environment configuration is in the diff.
 
@@ -119,15 +125,15 @@ controls        a probe returning {reached, held}, run against the real AND the
 | **K1** | Unified authority kernel | **Done.** Four target kinds, canonical descriptor, full schema validation, fail-closed, deterministic diagnostics, no silent repair. |
 | **K1A** | Manual action provenance | **Done.** Forgeable trio removed. Capability = object identity, gesture-gated, target-bound, one-use. Automation cannot mint. |
 | **K1B** | Transactional write | **Done.** Draft-staged, validated, committed in place, then re-read to prove persistence. |
-| **K1C** | Alternate writers | **Done.** Seven routed (both the re-audit named plus five the sweep found); three classified non-authoritative and named. |
+| **K1C** | Alternate writers | **Done.** Seven authority writers routed; **four more slot writers and a three-place normaliser found and closed by the post-green sweep**; five classified non-authoritative and named. |
 | **K1D** | Authority readers | **Done.** Gates, reconciliation, resume, reuse, projections and export all go through the validated reader. |
 | **K2** | Reconciliation | **Done.** The applier revalidates against the project; a fabricated receiptId closes nothing; no project ⇒ nothing completes. |
 | **K3** | Dispatch fails closed | **Done.** Unknown frame id and malformed declaration are typed local refusals before accounting, commit and submit. |
 | **K3A** | Structured intent | **Done.** Compile assertions compared as ids; bounded double-negative rule; no NLP engine. |
-| **K4** | Ownership at commit | **Done.** Re-resolved inside the authority command and inside the single slot writer; batch, replacement and stale-modal paths all route. |
+| **K4** | Ownership at commit | **Done.** Re-resolved inside the authority command and inside the single slot writer; batch, replacement, seeding and stale-modal paths all route. |
 | **K5** | Lineage | **Done, by removal.** Create-only; add/remove validated against the whole collection; reparenting deleted. |
 | **K6** | Pure preflight | **Done.** Correction preflight and the automation shot preflight are both non-mutating structural reads. |
-| **K7** | Export truth | **Done.** Migration consults the authority model; coverage exports as a supporting selection. |
+| **K7** | Export truth | **Done.** Migration consults the authority model. Measured on the real corpus: ten pointers stopped exporting as approved output. |
 | **K8** | Control harness | **Done.** Seven-condition contract; C15b repaired; C18/C19 replaced by probe-form controls; CG asserts both consequences. |
 
 ---
@@ -144,7 +150,7 @@ controls        a probe returning {reached, held}, run against the real AND the
 | 6 | non-extensible root ⇒ partial edge + phantom receipt | draft + post-commit proof | arch §1; controls **C6**, **C7** |
 | 7 | `confirmApproveTake` video arm wrote `s.winner` directly | routed to shot-delivery | arch §7 writer inventory |
 | 8 | `markGuidedStillFinal` fallback wrote `s.winner` directly | routed to shot-delivery | arch §7 |
-| 9 | `applyGateReconciliation` completed a gate on `receiptId: "not-a-real-receipt"` | applier revalidates | production-authority §7 (three cases: fabricated id, no project, empty id) |
+| 9 | `applyGateReconciliation` completed a gate on `receiptId: "not-a-real-receipt"` | applier revalidates | production-authority §7 (fabricated id, no project, empty id) |
 | 10 | unknown non-empty frame id reached the provider and committed a row | fails closed | arch §7 through the real FAL route; control **C8** |
 | 11 | `{state:"absent"}` malformed declaration reached the provider | typed refusal | arch §7 real route; control **C9** |
 | 12 | "The room is not without the Chimbley Sweep" | bounded double negative | arch §7 real route; control **C10** |
@@ -154,14 +160,14 @@ controls        a probe returning {reached, held}, run against the real AND the
 | 16 | `removeContinuityState` orphaned a descendant | explicit policy, refuse by default | lineage §4; arch browser §K5; control **C16** |
 | 17 | duplicate and dangling ids reported "acyclic" | collection integrity | lineage §4; controls **C15**, **C15b** |
 | 18 | preflight created the missing opening frame and reached dispatch | pure reads | arch §6 (zero frames created, zero dispatch, project byte-identical) |
-| 19 | OFP exported unreceipted pointers as approved output | receipt-aware `approve()` | arch §7 export block |
-| 20 | coverage slots consumed as five kinds of authority | demoted | arch §7 slot block; §10 below |
+| 19 | OFP exported unreceipted pointers as approved output | receipt-aware `approve()` | arch §7 export block; ofp-migration §3 (both halves); overfit conformance |
+| 20 | coverage slots consumed as five kinds of authority | demoted | arch §7 slot block; the source guard in §9 |
 
 ---
 
 # 8. Direct writers: routed, or classified
 
-## Routed through the kernel (7)
+## Routed through the kernel
 
 | Writer | Target kind |
 |---|---|
@@ -175,13 +181,13 @@ controls        a probe returning {reached, held}, run against the real AND the
 | `review-provenance.js` `promoteFinishJob` — all three arms | frame / delivery / motion |
 | `library-tools.js` `confirmEntityApproval`, `review.js` batch, `automation.js` × 2 | entity-state |
 
-## Classified non-authoritative, and named as such (B)
+## Classified non-authoritative, and named as such
 
 | Writer | Why it may stay direct |
 |---|---|
 | `clips[i].winner` / `winnerEnd` | motion **interpolation endpoints** — they select which already-approved stills a unit runs between. The Canon is the frame authority that approved those stills; a receipt kind here would describe a pointer that decides nothing. |
 | `canonicalName` | a derived copy of a winner, repaired by the rename resolver |
-| `app.js` normalisation | propagates an existing edge between two records of one fact; mints no receipt, so it cannot create authority |
+| `app.js` winner normalisation | propagates an existing edge between two records of one fact; mints no receipt, so it cannot create authority |
 | `mutations.js` duplicate | clears on a **copy**; a new shot id has no receipts |
 | `server.js` import clear | clears edges **and drops any imported ledger**, with a warning |
 
@@ -191,20 +197,39 @@ controls        a probe returning {reached, held}, run against the real AND the
 
 ---
 
-# 9. Slot-consumer demotions
+# 9. Slot demotion: consumers, writers, and the vocabulary
 
-Every consumer the re-audit's §9 listed:
+## The consumers the re-audit's §9 listed
 
 | Consumer | Before | After |
 |---|---|---|
 | `coverage-automation.js` reference builder | slots added as `"coverage"` authority refs | `"supporting-view"`, keyed `coverage-supporting-view:` |
-| `server.js` entity review | *"approved alternate-view design authority"* / *"same-location geometry authority"* | *"supporting alternate view (context only)"* |
+| `server.js` entity review | *"approved alternate-view design authority"* | *"supporting alternate view (context only)"* |
 | `shared-production-media.js` | `approved-coverage`/`approved-expression` in `ENTITY_APPROVED_DECISIONS` | moved to `ENTITY_SUPPORTING_DECISIONS` |
 | `ofp-migrate-rules.js` M013 | `context.approve(slot.subject, …)` | `context.workflowPut(["coverageSelections", …])` |
-| single / batch / manual-replacement writers | set `humanApproved`, approval provenance, `status: "approved"` | one writer, `assignSlotReference`, `status: "selected"`, no approval claim |
-| `review.js` decision renderer | rendered **APPROVED BY YOU** | renders **SELECTED BY YOU**, a fourth distinct state |
+| single / batch / manual-replacement writers | `humanApproved`, approval provenance, `status: "approved"` | one writer, `assignSlotReference`, `status: "selected"` |
+| `review.js` decision renderer | **APPROVED BY YOU** | **SELECTED BY YOU**, a fourth distinct state |
 
-**No data was destroyed.** Every `approvedFile`, replacement-history entry and provenance record stays where it is. Legacy `approved-coverage` decision words are still recognised on read — a pre-1C project has them on disk — and now read as selections.
+## The four writers the post-green sweep found
+
+| Writer | Defect |
+|---|---|
+| `entities.js` `setExpressionSlotField` | the coverage setter's twin, never routed: wrote `approvedFile` / `status:"approved"` / `approvedAt` with no ownership question |
+| `coverage-automation.js` `seedCoverageFromPrimary` | `status = "approved"` |
+| `coverage-automation.js` `confirmPrimaryCoverageAssignment` | `status = "approved"` |
+| `entities.js` `approveCoverageCandidate` | the slot was demoted but the **candidate row** still wrote `humanApproved: true` and a human approval provenance — the two fields `shared-production-media.js` reads to call a file human-approved |
+
+## And the one that made the rest moot
+
+`app.js` project normalisation **derived** a slot's status from `approvedFile` presence, in three places, on every project load — and derived the word `"approved"`. A slot that a correctly-routed writer had saved as a selection came back an approval the next time the project was opened, with no writer at fault.
+
+This is why the rule is now a **test**, not a convention: no file but `shared-entity-slots.js` may produce that word for a slot's status, in either the **assigned** or the **derived** shape. Both shapes were negative-controlled by reintroducing the real defect and confirming the guard names the file and the expression.
+
+## One vocabulary
+
+Four readers each carried their own copy of the decision words, so each went on treating a just-selected candidate as unassigned: the AI badge's *NOT ASSIGNED* suffix, the passing-assignment queue, the reference inspector's outstanding count, and the decision renderer. There is one copy now — `SLOT_SELECTION_DECISIONS` in `shared-entity-slots.js`. The legacy words stay in the set deliberately: a pre-1C project has them on disk, nothing rewrites them, and they mean what the new words mean.
+
+**No data was destroyed.** Every `approvedFile`, replacement-history entry and provenance record stays where it is.
 
 ---
 
@@ -237,6 +262,10 @@ Navigation never mutates ancestry.
 | coverage slot selection | `coverageSelections` workflow evidence — never the approved-output path |
 | malformed ledger | fails closed; nothing exports as approved |
 
+**Measured on the real corpus.** Re-pinning the Overfit goldens quantified the defect: across 18 sanitized historical generations, **10 legacy pointers in 4 generations** were being materialised as approved-output assets and references with no receipt behind them. They are now preserved as workflow evidence, each accounting row naming the exact pointer its filename moved to. Nothing else moved — no generation's validation outcome changed, no statement changed, 0 unaccounted values, and still **0 approved statements** corpus-wide.
+
+The goldens were re-pinned through the documented `--goldens-only` path, which reads the committed sanitized fixtures and **never opens the archive**.
+
 ---
 
 # 12. Negative-control harness
@@ -258,14 +287,19 @@ There is no `catch (AssertionError) ⇒ passed`, and **the file asserts that abo
 | Expectation | Old behaviour it encoded | Why invalid | New invariant | Why simpler |
 |---|---|---|---|---|
 | `production-authority.js` grant-shape suite | a credential is two strings | that shape is the forgery | a capability is an identity, gesture-gated | one credential concept, unforgeable by construction |
-| `production-authority.js` reconciliation calls | applier trusts the plan | it completed a gate on a fake id | the applier revalidates against the project | evidence lives in one place |
-| `state-lineage-safety.js` §4 (reparent family) | reparenting exists and is validated | the operation is removed | create-only; collection integrity | one operation instead of two, no cycle check on the write path |
-| `state-lineage-safety.js` §6 (writer inventory) | reparenting is *routed* | nothing reparents | `parentStateId` is written only at creation | an absence is checkable; a routing claim was not |
-| `alpha-production-loop.js` D2/D3 | slot commit = human approval | the semantics alpha removed | slot commit = selection | one authority concept, and the creator is not told a view is canon |
-| `alpha-production-loop.js` states-stay-distinct | three outcomes, matched verbatim | a fourth exists | four mutually exclusive outcomes | a selection has somewhere honest to render |
+| `production-authority.js` reconciliation | applier trusts the plan | it completed a gate on a fake id | the applier revalidates | evidence lives in one place |
+| `state-lineage-safety.js` §4 | reparenting exists and is validated | the operation is removed | create-only; collection integrity | one operation, no cycle check on the write path |
+| `state-lineage-safety.js` §6 | reparenting is *routed* | nothing reparents | `parentStateId` written only at creation | an absence is checkable; a routing claim was not |
+| `alpha-production-loop.js` D2/D3 | slot commit = human approval | the semantics alpha removed | slot commit = selection | one authority concept; the creator is not told a view is canon |
+| `alpha-production-loop.js` states-stay-distinct | three outcomes, matched verbatim | a fourth exists, and the literal moved | four outcomes, asserted through the real predicate | behavioural, not textual |
 | `alpha-production-loop-negative-controls.js` NC-D2 | anchored on the three-outcome expression | the expression changed | same control, new anchor | unchanged in intent |
-| `real-browser-workflow.py` imported-reference | `decision === "approved-coverage"` | asserts a view is authority | `selected-coverage` | assignment unchanged; only the claim about it |
-| `entity-media-ownership.js`, `production-media.js` *(1B)* | carried forward unchanged | — | — | — |
+| `real-browser-workflow.py` imported reference | `decision === "approved-coverage"` | asserts a view is authority | `selected-coverage` | assignment unchanged; only the claim |
+| `manual-first-workflow.js` coverage | `humanApproved: true` on a slot assignment | the row half of the same claim | `selectionProvenance`, `authoritative: false` | manual-first still proven: the act lands, with no AI, recorded as human |
+| `coverage-workflow.js` preserved status | *"the status it was stored with"* | the fixture stores no status — it pinned the **derivation**, and the next line requires a warning saying the angle was NOT CHOSEN | `selected` | the status and the warning finally agree |
+| `ofp-migration.js` clean migration | `diagnostics.length === 0` | zero diagnostics ≠ nothing to say | exactly two `authority.historic`, plus both halves of the reproduced case | pins one set instead of allowing any empty one |
+| `ofp-migration.js` accounting pin | 3 rows `M030 mapped` | the mapping made a claim the source could not support | `M013 preserved`, each naming where its filename went | the one time the direction this table guards is the right answer |
+| Overfit goldens | 10 pointers minting approved output | same, on real data | preserved as workflow evidence | re-pinned by the documented path, archive untouched |
+| `safety-integrity.js` expression inbox | matched a literal in `entities.js` | the literal moved to the shared predicate | the queue consults the predicate; the predicate knows both words | one vocabulary instead of four |
 
 No unrelated behaviour was weakened, and no compatibility shim was created for any removed concept.
 
@@ -273,24 +307,24 @@ No unrelated behaviour was weakened, and no compatibility shim was created for a
 
 # 14. Post-green semantic source audit
 
-Ten sweeps, every match classified.
+Ten sweeps, every match classified. **This section found six genuine defects, all fixed before this document was written** — which is the reason it had to run after green rather than instead of it.
 
 | # | Sweep | Findings |
 |---|---|---|
-| 1 | authority written without the kernel | 7 routed; 5 classified **NON-AUTHORITATIVE HISTORY / SUPPORTING REFERENCE** (§8) |
-| 2 | authority consumed from raw pointer existence | 2 hits — `app.js:796` coverage-slot retirement (**SUPPORTING**), `server.js:3243` a ZIP export reading a file path (**SAFE**) |
+| 1 | authority written without the kernel | routed writers accounted for; 5 **NON-AUTHORITATIVE / SUPPORTING** (§8); **3 BUGS** — `setExpressionSlotField`, `seedCoverageFromPrimary`, `confirmPrimaryCoverageAssignment`, each writing `status:"approved"` on a supporting reference. Fixed. |
+| 2 | authority concluded from raw pointer existence | **1 BUG, the most consequential of the batch** — `app.js` normalisation derived slot status from `approvedFile` presence in 3 places, produced `"approved"` on every load, and silently reverted the demotion. Fixed, and both shapes are now guarded by test. Also 1 **SUPPORTING REFERENCE** (coverage-slot retirement) and 1 **SAFE** (a ZIP export reading a file path). |
 | 3 | current receipt accepted without full validation | none — one reader, `currentHumanAuthority`, and it validates the whole ledger |
-| 4 | `humanApproved` read as provenance | 2 hits in `automation.js`, both writing a provenance *label* on a generation record downstream of a kernel commit (**SAFE**); 2 display strings in `entities.js` (**SAFE**) |
-| 5 | coverage/expression treated as Canon | 3 hits reading legacy decision words for **display grouping** (**SAFE**); 1 is the new supporting list |
-| 6 | unreceipted pointer exported as approved output | none — all five `context.approve` sites pass a target descriptor |
+| 4 | `humanApproved` read as provenance | **1 BUG** — `approveCoverageCandidate` left `humanApproved: true` and a human `approvalProvenance` on the candidate row after demoting the slot, which is exactly what `shared-production-media.js` reads. Fixed. Remaining: 6 run-step and report reads (**SAFE**), 2 display strings (**SAFE**), the renderer, which tests for a selection first (**SAFE**). |
+| 5 | coverage/expression treated as Canon | **1 BUG in 3 places** — the AI badge, the assignment queue and the inspector count each knew only the legacy words, so a just-selected candidate read as unassigned. Fixed by one shared vocabulary. |
+| 6 | unreceipted pointer exported as approved output | none — all 5 `context.approve` sites pass a target descriptor (verified across line breaks) |
 | 7 | `parentStateId` mutated after creation | 2 normalisers filling a missing key (**SAFE**); 1 reparent-to-root inside the deletion transaction (**SAFE**) |
-| 8 | deletion that can orphan descendants | none — `applyStateDeletion` is the only remover and validates the result |
-| 9 | preflight/validate/check that mutates | **1 BUG FOUND AND FIXED** — `v626ShotPreflight` called `guidedFrames`, which creates an opening frame, so opening the automation planner edited the project. Now a pure read. |
+| 8 | deletion that can orphan descendants | none — `removeContinuityState` is the only remover and goes through the transaction; the other matches are one schema repair and two read filters |
+| 9 | preflight/validate/check that mutates | **1 BUG, found and fixed earlier in the batch** — `v626ShotPreflight` called `guidedFrames`, so opening the automation planner created a frame. Re-verified: none of the five preflights calls any mutating helper. |
 | 10 | paid dispatch reachable before local validation | none — the gate precedes `submissionAccounting`, `commit()` and `submit()` |
 
-**Two further genuine defects were found by the suite and fixed**, both introduced by this batch: `applyEdge` callbacks that wrote live objects instead of the draft (the transaction then refused for a mismatch it had caused), and `applyDraftToProject` replacing top-level keys, which detached every reference a caller already held. The commit is a deep in-place merge now.
+**Three further defects were found by the suites, all introduced by this batch and all fixed:** `applyEdge` callbacks writing live objects instead of the draft (the transaction then refused for a mismatch it had caused); `applyDraftToProject` replacing top-level keys, which detached every reference a caller already held (the commit is a deep in-place merge now); and kernel exports shadowing their own callers into infinite recursion (namespaced under `window.CineBraidAuthorityKernel`).
 
-**And one real product bug Playwright caught:** an async approval handler that minted its capability *after* an `await` was asking for a gesture window that had already closed — every real click would have refused. Both such handlers mint in their prologue now.
+**And one real product bug Playwright caught:** an async approval handler minting its capability *after* an `await` was asking for a gesture window that had already closed — every real click would have refused. Both such handlers mint in their prologue now.
 
 ---
 
@@ -298,9 +332,10 @@ Ten sweeps, every match classified.
 
 1. **The gesture window is time-scoped, not call-scoped.** Any code running synchronously inside a trusted event's turn could mint. That is the proportionate boundary for a local single-user tool; a call-site-scoped capability would need a different language-level mechanism.
 2. **`v626ShotPreflight` still reads `resolveShotEntities` and `capabilityState`.** Neither mutates the project, but neither is a pure function of the shot either.
-3. **Legacy `approved-coverage` decision words remain on disk** in pre-1C projects and are read as selections. No migration rewrites them; a project that wants the new word gets it on the next commit.
-4. **The `interrupted` run status is still overloaded** (carried from 1B, P1).
-5. **Historic contaminated ownership rows are still not migrated** (carried from 1B, P1) — quarantined conservatively and surfaced.
+3. **Legacy `approved-coverage` decision words remain on disk** in pre-1C projects and are read as selections. No migration rewrites them.
+4. **A coverage slot stored as `retired` with a file** has its status recomputed by the normaliser, as it did before this batch. Retired *expression* slots are preserved explicitly; the coverage path has no equivalent. Pre-existing and out of scope, named here because sweep 2 walked past it.
+5. **The `interrupted` run status is still overloaded** (carried from 1B, P1).
+6. **Historic contaminated ownership rows are still not migrated** (carried from 1B, P1) — quarantined conservatively and surfaced.
 
 ---
 
@@ -309,7 +344,7 @@ Ten sweeps, every match classified.
 | BEFORE | ALPHA MODEL |
 |---|---|
 | Multiple authority-like pointers — winner, videoWinner, approvedFile, coverage approvedFile, expression approvedFile, creation-final, `humanApproved` | **One human Canon authority**, four target kinds, one command |
-| Coverage/expression approval semantics across five consumers | **Non-authoritative supporting references**, one writer, one predicate |
+| Coverage/expression approval semantics across five consumers, four unrouted writers, a three-place normaliser and four private vocabularies | **Non-authoritative supporting references** — one writer, one predicate, one vocabulary, enforced by a source guard |
 | Mutable state ancestry with a reparent operation, an intent parameter, a cycle validator on the write path, and an eligible-parent filter | **Create-only immutable ancestry** — cycles structurally impossible |
 | Legacy pointer inferred as approval | **Historic / non-authoritative until an explicit human action** |
 | Prompt-text interpretation as the primary safety | **Structured frame truth first; bounded textual safeguard second** |
@@ -317,7 +352,7 @@ Ten sweeps, every match classified.
 | Credential as a caller-constructible shape, with a public builder on `window` | **One-use capability identity, minted only at a trusted gesture** |
 | `catch(AssertionError) ⇒ control passed` | **Probe contract: held under real, failed under mutation, for its own reason** |
 
-**Net:** 2 authority target kinds removed, 1 whole authority surface removed (slots), 1 mutation operation removed (reparent), 3 public functions removed (`isHumanAuthorityGrant`, `humanAuthorityGrant`, `assertHumanAuthority`), 4 lineage functions removed (`planParentMutation`, `applyStateParentMutation`, `safeParentAssignment`, `eligibleParentIds`), 1 UI control removed (the parent dropdown).
+**Net:** 2 authority target kinds removed · 1 whole authority surface removed (slots) · 1 mutation operation removed (reparent) · 3 public functions removed (`isHumanAuthorityGrant`, `humanAuthorityGrant`, `assertHumanAuthority`) · 4 lineage functions removed (`planParentMutation`, `applyStateParentMutation`, `safeParentAssignment`, `eligibleParentIds`) · 1 UI control removed (the parent dropdown) · 4 duplicate decision vocabularies collapsed to 1 · `shared-production-authority.js` is 430 lines shorter than it was.
 
 # 17. Deferred to Professional / Enterprise
 
@@ -342,22 +377,24 @@ No paid provider calls. No local-model calls.
 
 | Command | Result |
 |---|---|
-| `npm.cmd run check:production-authority` | **93** assertions |
-| `npm.cmd run check:frame-presence` | **63** assertions |
-| `npm.cmd run check:entity-ownership` | **52** assertions |
-| `npm.cmd run check:state-lineage` | **98** assertions |
-| `npm.cmd run check:correction-boundary` | **47** assertions |
-| `npm.cmd run check:dogfood2-architecture` | **266** end-to-end boundary checks |
-| **Focused positive total** | **619** |
-| `npm.cmd run check:dogfood2-p0-negative` | **19 controls**, each held under the real module and failed for its own named reason |
-| `npm.cmd run check` | *(recorded below)* |
+| `check:production-authority` | **93** assertions |
+| `check:frame-presence` | **63** assertions |
+| `check:entity-ownership` | **52** assertions |
+| `check:state-lineage` | **98** assertions |
+| `check:correction-boundary` | **47** assertions |
+| `check:dogfood2-architecture` | **271** end-to-end boundary checks |
+| **Focused positive total** | **624** |
+| `check:dogfood2-p0-negative` | **19 controls**, each held under the real module and failed for its own named reason |
+| `check:ofp-migration` | 33 rules, 20 fixtures, 84 accounted values, 0 unaccounted |
+| `check:ofp-overfit` | 18 generations, 18431 values accounted, 0 unaccounted, **0 approved statements** |
+| `npm.cmd run check` | *(final line recorded at the foot of this section)* |
 | `git diff --check b23d231` | clean |
 
 **How no paid call is possible.** The dispatch tests replace `globalThis.fetch` with a recorder that throws and register the FAL module against a scratch directory outside the repository; reaching the network is the failure condition. Browser paths run in the vm render harness, whose `fetch` is intercepted. The real-Chromium suites run against a locally launched CineBraid with provider access unconfigured.
 
 # 19. Preserved evidence
 
-**The Dogfood #2 project state was not modified.** No project directory, `project.json`, `automation-runs.json`, `generation-jobs.json` or generated media was read for mutation or written.
+**The Dogfood #2 project state was not modified.** No project directory, `project.json`, `automation-runs.json`, `generation-jobs.json` or generated media was read for mutation or written. The Overfit archive was not opened.
 
 - No historic candidate ownership rewritten.
 - No historic authority edge rewritten — a pre-repair winner is exactly where it was; what changed is that CineBraid no longer claims a person chose it.

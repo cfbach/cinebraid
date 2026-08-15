@@ -405,7 +405,19 @@ async function testLoadDoesNotClearApprovedReferences() {
       };
     })()`);
     assert.strictEqual(state.file, file, `${kind}: opening a project must not clear a persisted approved reference`);
-    assert.strictEqual(state.status, "approved", `${kind}: a preserved approval must keep its status`);
+    /* CHANGED IN BATCH 1C — "approved" -> "selected", and this suite's own
+       subject is why. `status` is not persisted intent: the load normaliser
+       recomputes it from `approvedFile` presence every time, before and after
+       this change. What this line pinned was that derivation, and the
+       derivation was producing an authority word for a supporting reference —
+       which silently reverted any slot a routed writer had correctly saved as a
+       selection.
+
+       What THIS test is for is untouched and still asserted on either side of
+       this line: the filename survives, the filmmaker's note survives, no
+       migration history is invented, and the legacy condition is reported by
+       name. Nothing was lost on load; one derived label got honest. */
+    assert.strictEqual(state.status, "selected", `${kind}: the preserved reference is a supporting-reference selection, not a derived approval`);
     assert(String(state.notes || "").trim(), `${kind}: the filmmaker's own note must survive the load`);
     assert.deepStrictEqual(Array.from(state.history), [], `${kind}: a mere load must not record a migration it did not perform`);
     /* Preserved, but not hidden. */
@@ -455,7 +467,17 @@ async function testOpeningTheShippedSampleChangesNothing() {
       const entity = (loaded[list] || []).find((row) => row.id === entityId);
       const slot = (entity?.coverageSlots || []).find((row) => row.id === slotId);
       assert.strictEqual(slot?.approvedFile, file, `opening the sample must not disturb ${entityId}/${slotId}`);
-      assert.strictEqual(slot?.status, "approved", `${entityId}/${slotId} must remain approved after a mere load`);
+      /* CHANGED IN BATCH 1C, and squarely inside the allowance the comment
+         above already makes: normalization raises a record to the baseline
+         shape IN MEMORY, and `status` is one of the fields it derives. The
+         derivation now produces "selected" for a coverage view, because a view
+         is a supporting reference.
+
+         THE SHIPPED SAMPLE'S BYTES ARE UNCHANGED — asserted twenty lines up,
+         along with zero project writes — so no stored value was migrated by
+         this. The file each slot points at is asserted on the line above and is
+         identical. What changed is one derived in-memory label. */
+      assert.strictEqual(slot?.status, "selected", `${entityId}/${slotId} must remain a selected supporting view after a mere load`);
     }
     for (const shot of stored.shots || []) {
       const context = PromptEngine.buildContext(loaded, shot.id, "");
