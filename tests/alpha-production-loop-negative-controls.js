@@ -253,8 +253,12 @@ async function main() {
 
   /* NC-D2 — the opposite error, and the more dangerous one: an AI pass implying the
      human approval. */
-  const D2_ANCHOR = `  const label = decision === "rejected" ? "REJECTED BY YOU" : row?.humanApproved || decision === "approved" ? "APPROVED BY YOU" : "NO HUMAN DECISION YET";`;
-  const D2_BROKEN = `  const label = decision === "rejected" ? "REJECTED BY YOU" : row?.humanApproved || decision === "approved" || review?.pass ? "APPROVED BY YOU" : "NO HUMAN DECISION YET";`;
+  /* BATCH 1C: the label expression gained a fourth outcome — SELECTED BY YOU,
+     for a supporting-reference commit that establishes no canon — so the anchor
+     moved with it. The control is unchanged in intent: make a passing AI review
+     read as a human approval, and require the invariant to notice. */
+  const D2_ANCHOR = `  const label = decision === "rejected" ? "REJECTED BY YOU" : selection ? "SELECTED BY YOU" : approved ? "APPROVED BY YOU" : "NO HUMAN DECISION YET";`;
+  const D2_BROKEN = `  const label = decision === "rejected" ? "REJECTED BY YOU" : selection ? "SELECTED BY YOU" : approved || review?.pass ? "APPROVED BY YOU" : "NO HUMAN DECISION YET";`;
   const brokenAiApproval = () => mutateScript("review.js", D2_ANCHOR, D2_BROKEN, "NC-D2 an AI pass reads as an approval");
   await control({
     id: "NC-D2",

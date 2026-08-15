@@ -447,21 +447,47 @@ async function batchApproval(kind, mutateSource = null) {
   })()`, rendered.context);
 }
 
+/* CHANGED IN BATCH 1C — D2 AND D3, AND THE CHANGE IS THE REPAIR.
+
+   OLD EXPECTATION: a batch coverage or expression commit recorded
+   `decision: "approved-coverage"` / `"approved-expression"` with
+   `humanApproved: true`, and rendered as APPROVED BY YOU.
+
+   WHY IT IS NO LONGER VALID: it asserted that a coverage slot is production
+   authority. The Batch 1B re-audit's §9 listed five consumers that read slots
+   as generation, continuity, export and implicit-human authority while they
+   carried no receipt — and this expectation is the fifth, written down as a
+   requirement. Alpha resolves the contradiction by REMOVING the authority
+   rather than instrumenting it.
+
+   THE NEW INVARIANT: a slot commit is a SELECTION. It is still an explicit
+   human act, it is still recorded, it is still shown — and it establishes no
+   Canon, so it does not claim `humanApproved` and does not render as an
+   approval. D1 is unchanged, because a reference approval IS Canon.
+
+   WHY THIS IS SIMPLER AND TRUER: one authority concept instead of two, and a
+   creator can no longer read "APPROVED BY YOU" on something that decides
+   nothing. */
 async function testBatchApprovalRendersAsHumanApproval(mutateSource = null) {
-  const cases = [
-    { kind: "reference", decision: "approved-reference", label: "D1 reference" },
-    { kind: "coverage", decision: "approved-coverage", label: "D2 coverage" },
-    { kind: "expressions", decision: "approved-expression", label: "D3 expression" },
-  ];
-  for (const row of cases) {
+  const canon = await batchApproval("reference", mutateSource);
+  assert.strictEqual(canon.decision, "approved-reference", "D1 reference: the batch writer records its own decision unchanged");
+  assert.strictEqual(canon.humanApproved, true, "D1 reference: an explicit batch approval of a reference is a human decision");
+  assert.strictEqual(canon.humanApprovedWithoutAI, false, "D1 reference: the batch only offers AI-reviewed candidates");
+  assert(/APPROVED BY YOU/.test(canon.rendered), "D1 reference: and must render as one");
+  assert(!/NO HUMAN DECISION YET/.test(canon.rendered), "D1 reference: and must not render as undecided");
+
+  for (const row of [
+    { kind: "coverage", decision: "selected-coverage", label: "D2 coverage" },
+    { kind: "expressions", decision: "selected-expression", label: "D3 expression" },
+  ]) {
     const result = await batchApproval(row.kind, mutateSource);
-    assert.strictEqual(result.decision, row.decision, `${row.label}: the batch writer must record its own decision unchanged`);
-    assert.strictEqual(result.humanApproved, true, `${row.label}: an explicit batch approval is a human decision`);
-    assert.strictEqual(result.humanApprovedWithoutAI, false, `${row.label}: the batch only offers AI-reviewed candidates`);
-    assert(/APPROVED BY YOU/.test(result.rendered), `${row.label}: and must render as one`);
-    assert(!/NO HUMAN DECISION YET/.test(result.rendered), `${row.label}: and must not render as undecided`);
+    assert.strictEqual(result.decision, row.decision, `${row.label}: a slot commit records a SELECTION, not an approval`);
+    assert.strictEqual(result.humanApproved, false, `${row.label}: and claims no human approval, because a slot establishes no canon`);
+    assert(/SELECTED BY YOU/.test(result.rendered), `${row.label}: and renders as a selection — a real human act with no authority`);
+    assert(!/APPROVED BY YOU/.test(result.rendered), `${row.label}: never as an approval`);
+    assert(!/NO HUMAN DECISION YET/.test(result.rendered), `${row.label}: and never as undecided — a person did choose it`);
   }
-  note("D1/D2/D3: batch-approved reference, coverage and expression candidates all render as APPROVED BY YOU");
+  note("D1: a batch-approved reference renders as APPROVED BY YOU. D2/D3: coverage and expression commits render as SELECTED BY YOU — supporting references, not canon.");
 }
 
 async function testAiPassAloneIsNotAnApproval(mutateSource = null) {
@@ -473,11 +499,22 @@ async function testAiPassAloneIsNotAnApproval(mutateSource = null) {
   note("D4: a passing AI review on its own is still NO HUMAN DECISION YET; a rejection still reads as a rejection");
 }
 
-/* The four states stay four. */
+/* THE STATES STAY DISTINCT — AND IN BATCH 1C THERE IS ONE MORE OF THEM.
+
+   OLD EXPECTATION: the reader's label expression, matched verbatim, with three
+   outcomes. WHY IT CHANGED: a slot commit is a human act that establishes no
+   canon, and it had nowhere to render but APPROVED BY YOU. Collapsing it into
+   approval is what let a creator read authority into a supporting view.
+   THE NEW INVARIANT: four outcomes, still mutually exclusive, still none of
+   them inferred from an AI result. */
 function testApprovalStatesStayDistinct() {
   const review = readLF("public/review.js");
-  assert(/decision === "rejected" \? "REJECTED BY YOU" : row\?\.humanApproved \|\| decision === "approved" \? "APPROVED BY YOU" : "NO HUMAN DECISION YET"/.test(review),
-    "the human-decision reader must still tell approval, rejection and no-decision apart");
+  assert(/const selection = ENTITY_SUPPORTING_SELECTION_DECISIONS\.includes\(decision\);/.test(review),
+    "a supporting-reference selection is its own state");
+  assert(/const approved = !selection && \(row\?\.humanApproved \|\| decision === "approved"\);/.test(review),
+    "and it is never also an approval");
+  assert(/decision === "rejected" \? "REJECTED BY YOU" : selection \? "SELECTED BY YOU" : approved \? "APPROVED BY YOU" : "NO HUMAN DECISION YET"/.test(review),
+    "the human-decision reader tells rejection, selection, approval and no-decision apart");
   assert(/function markBatchApprovalAsHumanDecision\(row\)/.test(review), "the batch approval must mark the human decision");
   assert(/row\.humanApprovedWithoutAI = false;/.test(review),
     "and must not claim the director approved without an AI result in front of them");

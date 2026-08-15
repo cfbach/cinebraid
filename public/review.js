@@ -551,16 +551,28 @@ const ENTITY_REVIEW_ACTIONABILITY_LABELS = {
    image, and this panel is where they are read side by side. Neither is allowed
    to stand in for the other: an assistant pass a director turned down still says
    both things, and it says which one came last. */
+/* K-alpha: THREE WORDS, NOT TWO.
+   A coverage or expression slot is a supporting reference, so committing one is
+   a SELECTION — a real human act that establishes no Canon. Rendering it as
+   "APPROVED BY YOU" was one of the places the slot's undeclared authority
+   became visible to the creator. The legacy `approved-coverage` decision words
+   are still recognised, because a pre-1C project has them on disk, and they
+   read as selections too. */
+const ENTITY_SUPPORTING_SELECTION_DECISIONS = ["selected-coverage", "selected-expression", "approved-coverage", "approved-expression"];
 function entityReviewHumanDecisionMarkup(row, review) {
   const decision = String(row?.decision || "unreviewed");
   const decided = String(row?.decidedAt || "");
-  const label = decision === "rejected" ? "REJECTED BY YOU" : row?.humanApproved || decision === "approved" ? "APPROVED BY YOU" : "NO HUMAN DECISION YET";
-  const tone = decision === "rejected" ? "flag" : row?.humanApproved || decision === "approved" ? "pass" : "pending";
+  const selection = ENTITY_SUPPORTING_SELECTION_DECISIONS.includes(decision);
+  const approved = !selection && (row?.humanApproved || decision === "approved");
+  const label = decision === "rejected" ? "REJECTED BY YOU" : selection ? "SELECTED BY YOU" : approved ? "APPROVED BY YOU" : "NO HUMAN DECISION YET";
+  const tone = decision === "rejected" ? "flag" : selection ? "selected" : approved ? "pass" : "pending";
   const detail = decision === "rejected"
     ? `Your rejection stands regardless of the AI result${review ? ` (AI said ${Math.round(Number(review.score || 0))}/100 · ${review.pass ? "PASS" : "FLAG"})` : ""}. Restore it from the rejected list if you change your mind.`
-    : row?.humanApproved || decision === "approved"
-      ? "You approved this image. The AI result above is kept as supporting evidence only."
-      : "Nothing here has been decided by a person yet. The AI result is advisory.";
+    : selection
+      ? "You chose this image for a supporting view. It travels as context and does not make it this reference's canon — the approved reference does that."
+      : approved
+        ? "You approved this image. The AI result above is kept as supporting evidence only."
+        : "Nothing here has been decided by a person yet. The AI result is advisory.";
   return `<section class="entity-review-human-decision state-${attr(tone)}"><div><span>HUMAN DECISION</span><b>${esc(label)}</b><small>${esc(detail)}</small></div>${decided ? `<em>${esc(new Date(decided).toLocaleString())}</em>` : ""}</section>`;
 }
 function entityReviewModalMarkup(list, entity, media, state, review, busy = false, error = "") {

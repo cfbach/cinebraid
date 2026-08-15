@@ -981,16 +981,38 @@ function v670FramePresenceContradictions(shot, frame, resolved, description) {
   if (!absentEntities.length) return [];
   return framePresenceContradictions({ absentEntities, spec: { narrativePurpose: description }, prompt: "" });
 }
+/* K6, APPLIED BEYOND THE CORRECTION RUNNER.
+ *
+ * The post-green source audit asked for anything named preflight/validate/check
+ * that mutates project state, and found this one: it called `guidedFrames`,
+ * which normalises the shot and CREATES an opening frame when none exists, and
+ * `guidedFrameState`, which rebuilds the per-frame workflow record. Opening the
+ * automation planner therefore edited the project.
+ *
+ * Neither creates authority, so this is not the correction-runner defect — but
+ * it is the same principle, and a check that repairs what it is checking cannot
+ * report that it was missing. Both reads are non-mutating now. */
+function v626ShotFramesRead(shot) {
+  const frames = shot && Array.isArray(shot.keyframes) ? shot.keyframes.filter((frame) => frame && typeof frame === "object") : [];
+  return frames;
+}
+function v626FrameStateRead(shot, frame) {
+  const creation = shot && typeof shot.creationBrief === "object" && shot.creationBrief ? shot.creationBrief : {};
+  const workflows = creation.frameWorkflows && typeof creation.frameWorkflows === "object" ? creation.frameWorkflows : {};
+  const state = workflows[frame?.id];
+  return state && typeof state === "object" ? state : {};
+}
 function v626ShotPreflight(shot, frameIds) {
   const errors = [], warnings = [];
   if (!falGenerationReady()) errors.push("FAL GPT Image 2 generation is not enabled.");
   if (!capabilityState("text").ready) errors.push(capabilityState("text").message || "The text assistant is unavailable.");
   if (!capabilityState("vision").ready) errors.push(capabilityState("vision").message || "The vision assistant is unavailable.");
-  const frames = guidedFrames(shot), selected = frameIds.map((id) => frames.find((frame) => frame.id === id)).filter(Boolean);
+  const frames = v626ShotFramesRead(shot), selected = frameIds.map((id) => frames.find((frame) => frame.id === id)).filter(Boolean);
+  if (!frames.length) errors.push(`${shot?.id || "This shot"} has no frames yet. Open it and add an opening frame before automating it.`);
   if (!selected.length) errors.push("Choose at least one frame.");
   const resolved = typeof resolveShotEntities === "function" ? resolveShotEntities(P, shot) : null;
   for (const frame of selected) {
-    const index = frames.indexOf(frame), state = guidedFrameState(shot, frame, index);
+    const index = frames.indexOf(frame), state = v626FrameStateRead(shot, frame);
     const description = String(state.action || frame.description || "").trim();
     if (!description) errors.push(`Frame ${frame.label} needs a description.`);
     if (index > 0 && !frameIds.includes(frames[index - 1].id) && !guidedFrameApproved(shot, frames[index - 1], takesFor(shot.id), index - 1)) errors.push(`Frame ${frame.label} needs approved Frame ${frames[index - 1].label} or that parent frame included in this run.`);
