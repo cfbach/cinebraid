@@ -924,18 +924,32 @@ function normalizeProjectV5() {
         if (st.notes == null) st.notes = "";
         if (st.appliesTo == null) st.appliesTo = "";
         if (st.isDefault == null) st.isDefault = st.id === "state-default";
-        /* BATCH 1C: normalisation fills a MISSING KEY and nothing more. It
-           records the derivation the document already implies; it does not
-           reparent, because reparenting no longer exists. A collection whose
-           integrity is genuinely broken is REPORTED by validateStateCollection
-           rather than quietly patched here. */
-        if (st.parentStateId == null) st.parentStateId = st.isDefault ? "" : (x.continuityStates.find((item) => item && item.isDefault)?.id || "state-default");
+        /* 1D-06 — LOAD DOES NOT AUTHOR ANCESTRY. This filled a missing
+           `parentStateId` with the default state on every open, which decides
+           what a state derives from without asking the person who made it. A
+           derivation is chosen at creation; an unrecorded one stays unrecorded
+           and is reported below. The key is normalised to a string only when it
+           already exists, so readers still see a consistent type. */
+        if (st.isDefault === true && st.parentStateId != null) st.parentStateId = "";
+        else if (st.parentStateId != null) st.parentStateId = String(st.parentStateId || "");
         if (!["derive", "independent"].includes(st.generationMode))
           st.generationMode = st.isDefault ? "independent" : "derive";
         if (st.assetPromptProfile == null) st.assetPromptProfile = "";
         if (st.assetPromptNotes == null) st.assetPromptNotes = "";
         if (!Array.isArray(st.assetPromptBuilds)) st.assetPromptBuilds = [];
       });
+      /* 1D-06: what load does instead of filling ancestry — say so. */
+      if (typeof validateStateCollection === "function") {
+        const unrecorded = (validateStateCollection(x.continuityStates).legacy || [])
+          .map((row) => (x.continuityStates.find((st) => st && st.id === row.id) || {}).name || row.id);
+        if (unrecorded.length) {
+          warnings.push(
+            `${x.name || x.id} — ${unrecorded.length === 1 ? "the state" : "the states"} ${unrecorded.join(", ")} `
+            + `${unrecorded.length === 1 ? "does" : "do"} not record what ${unrecorded.length === 1 ? "it derives" : "they derive"} from. `
+            + `CineBraid will not guess. Create a new state from the reference you meant, or leave it as independent history.`,
+          );
+        }
+      }
       if (x.approvedFile && x.continuityStates[0] && !x.continuityStates[0].approvedFile) x.continuityStates[0].approvedFile = x.approvedFile;
       if ((x.continuityStates[0] || {}).approvedFile && x.approvedFile !== x.continuityStates[0].approvedFile) x.approvedFile = x.continuityStates[0].approvedFile;
       if (before !== JSON.stringify(x.continuityStates)) changed = true;
@@ -2415,6 +2429,22 @@ function continuityStateDeltaText(state) {
   }
   return "";
 }
+/* 1D-06 / PHASE 2 — THE PURE READ, SPLIT OUT OF THE MIGRATING ONE.
+ *
+ * `entityStateList` below is a READ + CREATE + MIGRATE hybrid: it inserts a
+ * default state, rewrites notes, normalises generation fields and syncs the
+ * entity's approved file. The 1C audit found `v627EntityPreflight` calling it,
+ * which means opening the automation planner edited the project — the same
+ * class of defect as the shot preflight closed in 1C, in the entity half.
+ *
+ * This is the reader every preflight, inspector and rendering path should use.
+ * It answers the question and changes nothing. A caller that genuinely needs
+ * the collection repaired calls the hybrid, deliberately, by its own name. */
+function entityStateListRead(entity, includeDefault = true) {
+  const states = Array.isArray(entity && entity.continuityStates) ? entity.continuityStates.filter(Boolean) : [];
+  return includeDefault ? states : states.filter((st) => !st.isDefault);
+}
+
 function entityStateList(entity, includeDefault = true) {
   if (!entity) return [];
   entity.continuityStates = Array.isArray(entity.continuityStates)
@@ -2435,8 +2465,9 @@ function entityStateList(entity, includeDefault = true) {
     if (!st) return;
     const migratedDelta = continuityStateDeltaText(st);
     if (!String(st.notes || "").trim() && migratedDelta) st.notes = migratedDelta;
-    /* BATCH 1C: fills a missing key, for the reason at the normaliser above. */
-    if (st.parentStateId == null) st.parentStateId = st.isDefault ? "" : defaultState?.id || "state-default";
+    /* 1D-06: this filled a missing key too, and for the same reason it must
+       not — see the normaliser above. Reading a project does not decide what
+       its states derive from. */
     if (!["derive", "independent"].includes(st.generationMode)) st.generationMode = st.isDefault ? "independent" : "derive";
     if (st.assetPromptProfile == null) st.assetPromptProfile = "";
     if (st.assetPromptNotes == null) st.assetPromptNotes = "";

@@ -204,7 +204,18 @@ function lineageIsAcyclic(states) {
    Imported and pre-existing collections can violate all four, so the collection
    validator below stays and is the gate for add and remove. */
 
-const LINEAGE_DELETION_POLICIES = ["refuse", "reparent-to-root", "cascade"];
+/* 1D-06 — THERE IS ONE DELETION POLICY, AND IT IS "REFUSE".
+ *
+ * Batch 1C called this module immutable while shipping `reparent-to-root` and
+ * `cascade`, and the 1C audit used the first one — through the creator's own
+ * confirm dialog — to rewrite a grandchild's parent. A rule contradicted by an
+ * exported policy is not a rule.
+ *
+ * The constant stays as a one-element list rather than disappearing, because
+ * callers and tests read it to assert exactly this: that reparenting is not on
+ * the menu. A creator who wants a state gone deletes its descendants first,
+ * which is a sequence of decisions they can see, each one refusable. */
+const LINEAGE_DELETION_POLICIES = ["refuse"];
 
 const LINEAGE_INTEGRITY_CODES = [
   "state-id-missing",
@@ -216,6 +227,11 @@ const LINEAGE_INTEGRITY_CODES = [
   "parent-is-self",
   "cycle",
 ];
+
+/* Reported alongside, but NOT an integrity failure — see validateStateCollection.
+   A legacy state whose derivation was never recorded is incomplete history, not
+   a damaged graph, and 1D-06 forbids filling it in on the filmmaker's behalf. */
+const LINEAGE_LEGACY_CODES = ["state-derivation-unrecorded"];
 
 /* THE WHOLE COLLECTION, CHECKED. `lineageIsAcyclic` was never a sufficient
    integrity predicate — the re-audit's duplicate-id and dangling-parent cases
@@ -248,7 +264,25 @@ function validateStateCollection(states) {
     if (!ids.has(parentId)) problems.push({ code: "parent-missing", index, id, parentStateId: parentId });
   }
   for (const cycle of lineageCycles(rows)) problems.push({ code: "cycle", ids: cycle });
-  return { ok: problems.length === 0, problems };
+  /* 1D-06 — UNRECORDED DERIVATION IS REPORTED, NOT INVENTED AND NOT FATAL.
+   *
+   * A non-default state written before ancestry existed has no `parentStateId`.
+   * Batch 1C's normaliser quietly filled it in with the default state on every
+   * load, which is authorship: it decides, on the filmmaker's behalf and
+   * without asking, what a state derives from. That is exactly what an
+   * immutable-ancestry rule must not do.
+   *
+   * It is also not a broken graph — nothing dangles and nothing loops — so it
+   * does not fail validation, because failing it would stop a legacy project
+   * from ever adding a new state. It is surfaced as `legacy` for the load
+   * warning to name, and left alone. */
+  const legacy = [];
+  for (const row of rows) {
+    if (row.isDefault === true) continue;
+    const id = lineageText(row.id);
+    if (id && !lineageText(row.parentStateId)) legacy.push({ code: "state-derivation-unrecorded", id });
+  }
+  return { ok: problems.length === 0, problems, legacy };
 }
 function stateCollectionIntact(states) {
   return validateStateCollection(states).ok;
@@ -297,32 +331,29 @@ function applyStateCreation(states, request = {}) {
    parent is a broken graph whether or not it loops, so deletion has to say what
    happens to the children rather than leaving it to whoever splices the array.
  *
- *   refuse            — the default. A state with children is not deleted.
- *   reparent-to-root  — children are attached to the default state.
- *   cascade           — the state and its whole subtree go.
- *
- * The resulting collection is validated before it is committed, and a refusal
- * leaves the original array untouched. */
+ * 1D-06: THE ONLY POLICY IS REFUSE. A state with descendants is not deleted,
+ * full stop — no reparenting, no cascade, no option that rewrites an ancestry
+ * chosen at creation. The resulting collection is validated before it is
+ * committed, and a refusal leaves the original array byte-identical. */
 function planStateDeletion(states, stateId, options = {}) {
   const opts = lineageObject(options);
-  const policy = LINEAGE_DELETION_POLICIES.includes(lineageText(opts.policy)) ? lineageText(opts.policy) : "refuse";
+  /* An unrecognised policy is not honoured and not silently downgraded either —
+     `refuse` is the only value, so anything else asks for behaviour that no
+     longer exists and the caller should hear about it. */
+  const asked = lineageText(opts.policy);
+  const policy = "refuse";
+  if (asked && asked !== policy) return { remove: false, reason: "unsupported-deletion-policy", policy, asked };
   const rows = lineageList(states).map(lineageObject);
   const id = lineageText(stateId);
   const node = rows.find((row) => lineageText(row.id) === id);
   if (!node) return { remove: false, reason: "unknown-state", policy };
   if (node.isDefault === true) return { remove: false, reason: "default-state-is-the-root", policy };
   const children = rows.filter((row) => lineageText(row.parentStateId) === id).map((row) => lineageText(row.id));
-  if (children.length && policy === "refuse") return { remove: false, reason: "has-children", policy, children };
-  const descendants = stateDescendantIds(rows, id);
-  const removing = policy === "cascade" ? new Set([id, ...descendants]) : new Set([id]);
-  const rootId = lineageText((rows.find((row) => row.isDefault === true) || {}).id);
-  if (policy === "reparent-to-root" && children.length && !rootId) return { remove: false, reason: "no-default-state", policy, children };
-  const next = rows
-    .filter((row) => !removing.has(lineageText(row.id)))
-    .map((row) => (lineageText(row.parentStateId) === id && policy === "reparent-to-root" ? { ...row, parentStateId: rootId } : row));
+  if (children.length) return { remove: false, reason: "has-children", policy, children };
+  const next = rows.filter((row) => lineageText(row.id) !== id);
   const integrity = validateStateCollection(next);
   if (!integrity.ok) return { remove: false, reason: "collection-invalid", policy, problems: integrity.problems };
-  return { remove: true, reason: policy, policy, removedIds: [...removing], reparented: policy === "reparent-to-root" ? children : [] };
+  return { remove: true, reason: policy, policy, removedIds: [id], reparented: [] };
 }
 
 function applyStateDeletion(states, stateId, options = {}) {
@@ -330,11 +361,8 @@ function applyStateDeletion(states, stateId, options = {}) {
   if (!decision.remove) return { ...decision, applied: false };
   const opts = lineageObject(options);
   const removing = new Set(decision.removedIds);
-  const rootId = lineageText((lineageList(states).map(lineageObject).find((row) => row.isDefault === true) || {}).id);
-  for (const row of lineageList(states)) {
-    const record = lineageObject(row);
-    if (decision.policy === "reparent-to-root" && lineageText(record.parentStateId) === lineageText(stateId)) record.parentStateId = rootId;
-  }
+  /* No ancestry is rewritten here, because a deletion that reaches this line
+     has no descendants to rewrite. That is the whole of 1D-06. */
   for (let index = states.length - 1; index >= 0; index--) {
     if (removing.has(lineageText(lineageObject(states[index]).id))) states.splice(index, 1);
   }
@@ -448,6 +476,7 @@ const STATE_LINEAGE_EXPORTS = {
   LINEAGE_CONTINUATION_KINDS,
   LINEAGE_DELETION_POLICIES,
   LINEAGE_INTEGRITY_CODES,
+  LINEAGE_LEGACY_CODES,
   lineageNodes,
   lineageNode,
   stateAncestorIds,

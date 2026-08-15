@@ -256,16 +256,55 @@ eq(Lineage.planStateCreation(states(), { id: "st-new", parentStateId: "" }).reas
   eq(collection.length, 3, "and nothing was removed");
 }
 {
-  /* THE RE-AUDIT'S CASE: removing `child` from root -> child -> grand left
-     `grand.parentStateId === "child"` pointing at nothing, and the old check
-     reported the result acyclic. */
+  /* CHANGED IN BATCH 1D — AND THIS TEST WAS PINNING THE DEFECT.
+
+     OLD EXPECTATION: `applyStateDeletion(collection, CHILD, {policy:
+     "reparent-to-root"})` succeeds and rewrites the grandchild's
+     `parentStateId` from CHILD to ROOT. It sat directly beneath prose claiming
+     ancestry is immutable, and the 1C acceptance audit named the contradiction:
+     the module and the creator's own confirm dialog both performed reparenting.
+
+     WHY IT IS NO LONGER VALID: an ancestry chosen at creation and rewritten by
+     a delete confirmation was never immutable. "Immutable unless you accept the
+     dialog" is not a rule a maintainer can hold in their head, and it is the
+     exact caveat the closure pass exists to remove.
+
+     THE NEW INVARIANT: there is ONE deletion policy and it is `refuse`. A state
+     with descendants is not deleted; the creator removes the descendants first,
+     each removal its own visible decision. The re-audit's dangling-parent case
+     is closed more simply than before — the deletion that would create it
+     cannot happen at all. */
   const collection = states();
-  eq(Lineage.applyStateDeletion(collection, CHILD, { policy: "reparent-to-root" }).applied, true,
-    "an explicit policy may delete an ancestor");
-  eq(collection.find((row) => row.id === GRANDCHILD).parentStateId, ROOT_ID,
-    "and its child is attached to the root rather than left dangling");
-  ok(Lineage.stateCollectionIntact(collection), "with referential integrity preserved");
-  eq(Lineage.lineageCycles(collection), [], "and no cycle");
+  const before = JSON.stringify(collection);
+  eq(Lineage.LINEAGE_DELETION_POLICIES, ["refuse"], "there is exactly one deletion policy");
+  const refused = Lineage.applyStateDeletion(collection, CHILD, { policy: "reparent-to-root" });
+  eq(refused.applied, false, "asking for the removed policy by name does not resurrect it");
+  eq(refused.reason, "unsupported-deletion-policy", "and the caller is told the policy does not exist rather than being silently downgraded");
+  eq(JSON.stringify(collection), before, "the collection is byte-identical");
+  eq(collection.find((row) => row.id === GRANDCHILD).parentStateId, CHILD,
+    "the grandchild still derives from exactly what it was created from");
+
+  /* Cascade is gone by the same rule and for the same reason. */
+  const cascade = Lineage.applyStateDeletion(states(), CHILD, { policy: "cascade" });
+  eq(cascade.applied, false, "cascade is not a policy either");
+
+  /* THE SEQUENCE THAT DOES WORK, and it never rewrites an ancestry: remove the
+     leaf, then its parent. Two decisions, both refusable, no re-rooting. */
+  const ordered = states();
+  eq(Lineage.applyStateDeletion(ordered, GRANDCHILD).applied, true, "the leaf goes first");
+  eq(Lineage.applyStateDeletion(ordered, CHILD).applied, true, "and then its parent, which is now a leaf itself");
+  eq(ordered.map((row) => row.id), [ROOT_ID], "leaving the root");
+  ok(Lineage.stateCollectionIntact(ordered), "intact, with nothing dangling");
+}
+
+{
+  /* 1D-06 — AND NOTHING REPARENTS THROUGH THE UI EITHER. The shipped confirm
+     dialog invoked `reparent-to-root` directly; asserted as an absence, which
+     is the only way to assert that a capability is gone. */
+  const entities = read("public/entities.js").replace(/\/\*[\s\S]*?\*\//g, "");
+  ok(!/reparent-to-root/.test(entities), "no creator surface asks for the removed policy");
+  ok(!/attach[^"'`]{0,60}base reference/i.test(entities), "and none offers to re-root a descendant");
+  ok(/cannot be removed while/.test(entities), "the creator is told what depends on the state instead");
 }
 
 /* ===========================================================================

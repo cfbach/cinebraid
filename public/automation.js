@@ -1114,8 +1114,12 @@ window.startPlannedShotAutomation = async () => {
   runShotAutomation(saved.id);
 };
 
+/* 1D — PURE. The 1C audit found this calling `entityStateList(entity, true)`,
+   which inserts a default state, migrates notes, adds generation fields and
+   syncs the entity's approved file. Opening the planner edited the project.
+   `entityStateListRead` answers the same question and writes nothing. */
 function v627EntityPreflight(list, entity, stateIds) {
-  const errors = [], warnings = [], selected = new Set(stateIds || []), states = entityStateList(entity, true), byId = new Map(states.map((state) => [state.id, state]));
+  const errors = [], warnings = [], selected = new Set(stateIds || []), states = entityStateListRead(entity, true), byId = new Map(states.map((state) => [state.id, state]));
   if (!falGenerationReady()) errors.push("FAL GPT Image 2 generation is not enabled.");
   if (!capabilityState("text").ready) errors.push(capabilityState("text").message || "The text assistant is unavailable.");
   if (!capabilityState("vision").ready) errors.push(capabilityState("vision").message || "The vision assistant is unavailable.");

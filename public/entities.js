@@ -723,20 +723,31 @@ window.setContinuityState = (list, id, i, k, v) => {
  * at a state that no longer existed — and the old integrity check reported the
  * result acyclic, because a dangling parent is not a loop.
  *
- * The policy is explicit and it defaults to REFUSE, which is the answer that
- * cannot lose information: a state something else derives from is not deleted
- * by accident. A creator who means it is offered the reparent-to-root path. */
-window.removeContinuityState = (list, id, i, policy = "refuse") => {
+ * BATCH 1D. And the "creator who means it" escape is gone with it. This used to
+ * offer "Delete it and attach those states to the base reference instead?",
+ * which the 1C audit accepted — and reparenting a grandchild is exactly what
+ * this module claims cannot happen. A derivation chosen at creation is not
+ * rewritten by a delete confirmation.
+ *
+ * What the creator is told instead is the truth and the next step: which states
+ * derive from this one, and that those go first. Each of those is its own
+ * decision, visible and refusable, and none of them silently re-roots anything
+ * the filmmaker built on. */
+window.removeContinuityState = (list, id, i) => {
   const x = P[list].find((e) => e.id === id);
   const state = x?.continuityStates?.[i];
   if (!state) return;
-  const outcome = applyStateDeletion(x.continuityStates, state.id, { policy, dirty });
+  const outcome = applyStateDeletion(x.continuityStates, state.id, { dirty });
   if (!outcome.applied) {
     if (outcome.reason === "default-state-is-the-root") return toast("The base state remains available for every continuity record");
     if (outcome.reason === "has-children") {
-      return confirmModal(
-        `${state.name || "This state"} is what ${outcome.children.length} other state${outcome.children.length === 1 ? "" : "s"} derive${outcome.children.length === 1 ? "s" : ""} from. Delete it and attach ${outcome.children.length === 1 ? "that state" : "those states"} to the base reference instead?`,
-        () => { removeContinuityState(list, id, i, "reparent-to-root"); },
+      const names = outcome.children
+        .map((childId) => (x.continuityStates.find((row) => row && row.id === childId) || {}).name || childId)
+        .join(", ");
+      const many = outcome.children.length !== 1;
+      return toast(
+        `${state.name || "This state"} cannot be removed while ${many ? "these states derive" : "another state derives"} from it: ${names}. `
+        + `Remove ${many ? "them" : "it"} first. A state's derivation is chosen when it is created and CineBraid will not re-point it.`,
       );
     }
     return toast("That state could not be removed.");
