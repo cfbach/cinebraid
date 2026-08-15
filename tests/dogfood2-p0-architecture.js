@@ -649,9 +649,12 @@ const BYPASS_CALLERS = [
     eq(contested.characters[0].continuityStates[0].approvedFile, "", "and nothing was written");
     /* And the slot writer refuses it too, on a re-resolved answer rather than a
        stale shortlist — the re-audit's batch-approval counterexample. */
+    /* 1D: the slot writer's ownership rule is intrinsic too — the caller names
+       the OWNER, not the predicate, so there is no callback to substitute. */
+    Slots.installSlotOwnershipPolicy((project, target, value) => Authority.entityOwnershipEligibility(project, target, value));
     const slotOutcome = Slots.assignSlotReference(contested.characters[0].coverageSlots[0], {
       fileName: "SHARED.png", at: AT(1), via: "test-batch",
-      eligibility: () => Authority.entityOwnershipEligibility(contested, { list: "characters", entityId: "CHAR-A" }, "SHARED.png"),
+      owner: { project: contested, list: "characters", entityId: "CHAR-A" },
     });
     eq(slotOutcome.assigned, false, "the slot writer refuses a contested file at commit time");
     eq(contested.characters[0].coverageSlots[0].approvedFile, "", "and the slot is untouched");

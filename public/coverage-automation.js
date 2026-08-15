@@ -157,13 +157,13 @@
     const refs = authorities.map((row, index) => ({
       key: row.kind === "primary" ? "coverage-primary-authority" : `coverage-supporting-view:${row.slot?.id || index}`,
       token: `#image${index + 1}`,
-      label: row.kind === "primary" ? `${entity.name || entity.id} primary approved authority` : `${row.slot?.label || "Approved view"} of ${entity.name || entity.id}`,
+      label: row.kind === "primary" ? `${entity.name || entity.id} primary approved authority` : `${row.slot?.label || "Selected view"} of ${entity.name || entity.id}`,
       role: list === "locations" ? "location-geometry" : row.kind === "primary" ? "identity-authority" : "approved-view",
       instruction: list === "locations"
         ? "This image is one viewpoint of the same exact physical space. Preserve shared geometry, topology, fixed landmarks and material boundaries; move only the camera."
         : row.kind === "primary"
           ? "Use as exact identity/design authority. Preserve the asset; change only to the requested view."
-          : "Use this approved view to preserve construction and details visible from this side.",
+          : "Use this selected supporting view to preserve construction and details visible from this side.",
       url: row.item.url,
       sourceFile: row.item.name,
     }));
@@ -607,7 +607,7 @@
       fileName: primary.name,
       at: new Date().toISOString(),
       via: "seeded-from-primary-reference",
-      eligibility: () => entityOwnershipEligibility(P, { list, entityId: entity.id }, primary.name),
+      owner: { project: P, list, entityId: entity.id },
     });
     if (!outcome.assigned) return toast(outcome.message || `${primary.name} could not be assigned to ${slot.label || slot.id}`);
     slot.notes = slot.notes || "Selected from the primary approved reference as a supporting view.";
@@ -630,7 +630,7 @@
       fileName: primary.name,
       at: assignedAt,
       via: "primary-angle-assignment",
-      eligibility: () => entityOwnershipEligibility(P, { list, entityId: entity.id }, primary.name),
+      owner: { project: P, list, entityId: entity.id },
     });
     if (!outcome.assigned) return toast(outcome.message || `${primary.name} could not be assigned to ${slot.label || slot.id}`);
     slot.notes = slot.notes || "Explicitly selected from the primary identity reference.";

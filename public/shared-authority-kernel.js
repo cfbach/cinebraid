@@ -963,9 +963,6 @@ function describeTarget(target) {
   return "This edge";
 }
 
-/* A frozen read-only view for an eligibility callback: it may inspect, it may
-   not write, and it is looking at the state the decision is being made
-   against. */
 /* 1D-03 — MANDATORY TARGET POLICY, OWNED BY THE KERNEL.
  *
  * Batch 1C asked the caller for an `eligibility` callback and ran it only "if

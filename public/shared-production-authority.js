@@ -471,6 +471,16 @@ if (KERNEL) {
   KERNEL.installAuthorityEdgeWriter(writeAuthorityEdge);
   KERNEL.installAuthorityOwnershipPolicy((project, target, value) => entityOwnershipEligibility(project, target, value));
 }
+/* The SUPPORTING-reference writer gets the same treatment, for the same reason.
+   A slot is not Canon, but "which entity owns this file" is the same question
+   with the same right answer, and six call sites each passing their own copy of
+   the predicate was six chances to pass a different one. */
+if (typeof installSlotOwnershipPolicy === "function") {
+  installSlotOwnershipPolicy((project, target, value) => entityOwnershipEligibility(project, target, value));
+} else if (typeof module !== "undefined" && module.exports) {
+  try { require("./shared-entity-slots.js").installSlotOwnershipPolicy((project, target, value) => entityOwnershipEligibility(project, target, value)); }
+  catch { /* a composition without the slot module simply has no slots */ }
+}
 
 /* ---------- the ownership veto -------------------------------------------- */
 

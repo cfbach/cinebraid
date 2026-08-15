@@ -387,13 +387,18 @@ window.openStateReferenceUpload = (list, id, stateId) => {
    filtered out before it got here. */
 function entityCandidateCard(list, entity, media, index, mediaJson, rejected = false, disposition = null) {
   const row = entityCandidateRow(entity, media.name, false) || {};
-  const approved = disposition?.role === "approved";
-  /* WHAT it is authority for, not merely THAT it is approved. One image can be
-     the authority for a state and a coverage view at once, and a creator
-     choosing between images needs to know which. */
-  const authorityFor = approved
+  /* 1D-04 — TWO QUESTIONS, AND THEY HAD BEEN ONE.
+     WHAT IS THIS IMAGE USED FOR is answered by the edges, always, and a creator
+     choosing between images needs it whether or not anyone has approved
+     anything. DID A PERSON APPROVE IT is answered only by the receipt, through
+     the same predicate Results and the Inspector use, so this card cannot
+     disagree with them. */
+  const usedFor = disposition?.role === "approved"
     ? (disposition.targets || []).map((target) => target.label || target.kind).filter(Boolean).join(" · ")
     : "";
+  const approved = !!usedFor
+    && edgesAreReceiptBacked(P, disposition.targets, { list, entityId: entity && entity.id });
+  const authorityFor = usedFor;
   const targetState = row.targetStateId ? entityStateById(entity, row.targetStateId) : null;
   const targetName = row.targetStateName || targetState?.name || "";
   const coverageName = row.targetCoverageSlotName || "";
@@ -848,7 +853,7 @@ window.setExpressionSlotField = (id, index, key, value) => {
       fileName: next,
       at,
       via: previous ? "expression-replacement" : "expression-assignment",
-      eligibility: () => entityOwnershipEligibility(P, { list: "characters", entityId: entity.id }, next),
+      owner: { project: P, list: "characters", entityId: entity.id },
     });
     if (!outcome.assigned) return toast(outcome.message || `${next} could not be assigned to ${slot.label || slot.id}`);
     dirty(); route();
@@ -940,13 +945,29 @@ function coverageStats(slots) {
    working from canon. The option now carries its role, and an approved one says
    what it is already authority for — which is the fact that makes the difference
    between "pick a file" and "replace a canon decision". */
+/* Which list an entity lives in. The selector is handed the entity alone, and
+   the ownership question is list-scoped, so this is the one place that answers
+   it rather than each caller threading a parameter through. */
+function entityListOf(entity) {
+  if (!entity) return "";
+  for (const list of ["characters", "locations", "props", "vehicles"]) {
+    if ((P[list] || []).some((row) => row && row.id === entity.id)) return list;
+  }
+  return "";
+}
 function coverageSlotOptions(media, selected = '', entity = null) {
   const eligible = (media || []).filter((item) => !entity || !entityCandidateIsCoverageSheet(entity, item.name));
   const roles = entity ? partitionEntityMedia(entity, eligible).byName : new Map();
-  return [`<option value="">— no approved view assigned —</option>`].concat(eligible.map((item) => {
+  return [`<option value="">— no view selected —</option>`].concat(eligible.map((item) => {
     const row = roles.get(item.name);
-    const authorityFor = row?.role === "approved" ? row.targets.map((target) => target.label || target.kind).filter(Boolean).join(" · ") : "";
-    const marker = row?.role === "approved" ? ` — approved${authorityFor ? ` · ${authorityFor}` : ""}` : row?.role === "rejected" ? " — rejected" : "";
+    /* 1D-04: same split as the candidate card. WHAT the option is already used
+       for is always named — replacing it is a real decision either way — and
+       only the word "approved" waits on a receipt. */
+    const usedFor = row?.role === "approved" ? row.targets.map((target) => target.label || target.kind).filter(Boolean).join(" · ") : "";
+    const backed = !!usedFor && edgesAreReceiptBacked(P, row.targets, { list: entityListOf(entity), entityId: entity && entity.id });
+    const marker = usedFor
+      ? `${backed ? " — approved" : " — selected, not approved"} · ${usedFor}`
+      : row?.role === "rejected" ? " — rejected" : "";
     return `<option value="${attr(item.name)}" data-media-role="${attr(row?.role || "candidate")}" ${item.name === selected ? 'selected' : ''}>${esc(item.name)}${esc(marker)}</option>`;
   })).join('');
 }
@@ -973,7 +994,7 @@ function applyCoverageAssignment(list, entity, slot, fileName, source = "manual"
     fileName: String(fileName),
     at,
     via: source,
-    eligibility: () => entityOwnershipEligibility(P, { list, entityId: entity.id }, String(fileName)),
+    owner: { project: P, list, entityId: entity.id },
   });
   if (!outcome.assigned) return toast(outcome.message || `${fileName} could not be assigned to ${slot.label || slot.id}`);
   /* P4-SEM-C2. The slot records WHICH BYTES it selected, so a later rename
@@ -990,7 +1011,7 @@ window.setCoverageSlotField = (list, id, index, key, value) => {
   if (key !== "approvedFile") { slot[key] = value; dirty(); return; }
   const previous = String(slot.approvedFile || ""), next = String(value || "");
   if (previous && next && previous !== next) {
-    return confirmModal(`Replace ${slot.label}?`, () => applyCoverageAssignment(list, entity, slot, next, "manual-replacement"), { title: "Replace the approved image for this view", confirmLabel: "REPLACE VIEW", body: `${previous} will remain in history, but ${next} becomes the new approved image for this view.` });
+    return confirmModal(`Replace ${slot.label}?`, () => applyCoverageAssignment(list, entity, slot, next, "manual-replacement"), { title: "Replace the image selected for this view", confirmLabel: "REPLACE VIEW", body: `${previous} will remain in history, but ${next} becomes the image selected for this view.` });
   }
   applyCoverageAssignment(list, entity, slot, next, "manual-assignment");
 };
@@ -1002,7 +1023,7 @@ window.approveCoverageCandidate = (list, id, fileName, slotId, directOverride = 
   const slot = slots.find((item) => item.id === slotId);
   if (!slot) return toast("Coverage slot is unavailable");
   const review = entityCandidateTargetReview(entity, fileName);
-  if (!directOverride && !review?.pass) return toast("Run and pass AI review before approving this coverage view.");
+  if (!directOverride && !review?.pass) return toast("Run and pass AI review before selecting this coverage view.");
   /* K4 + K-alpha: ONE SLOT WRITER, OWNERSHIP RE-RESOLVED AT COMMIT, AND NO
      APPROVAL CLAIM. A slot is a supporting reference — see
      public/shared-entity-slots.js — so this SELECTS a file for it, refuses a
@@ -1013,7 +1034,7 @@ window.approveCoverageCandidate = (list, id, fileName, slotId, directOverride = 
       fileName,
       at: new Date().toISOString(),
       via: directOverride ? "human-coverage-selection" : "reviewed-coverage-candidate",
-      eligibility: () => entityOwnershipEligibility(P, { list, entityId: entity.id }, fileName),
+      owner: { project: P, list, entityId: entity.id },
     });
     if (!outcome.assigned) return toast(outcome.message || `${fileName} could not be assigned to ${slot.label || slot.id}`);
     /* K-alpha, THE ROW HALF. The slot itself was demoted above, but the
@@ -1034,10 +1055,10 @@ window.approveCoverageCandidate = (list, id, fileName, slotId, directOverride = 
     row.selectionProvenance = { source: "human", aiReviewed: !directOverride, authoritative: false, selectedAt: slot.selectedAt };
     row.decidedAt = slot.selectedAt;
     row.approvedCoverageSlotId = slot.id;
-    dirty(); route(); toast(`${slot.label} ${row.coverageGroup === "expressions" ? "expression" : "coverage"} approved`);
+    dirty(); route(); toast(`${slot.label} ${row.coverageGroup === "expressions" ? "expression" : "coverage"} selected`);
   };
   const replaceOrCommit = () => {
-    if (slot.approvedFile && slot.approvedFile !== fileName) return confirmModal(`Replace ${slot.label}? ${slot.approvedFile} will remain in replacement history.`, commit, { title: "Replace the approved image for this view", confirmLabel: "REPLACE VIEW" });
+    if (slot.approvedFile && slot.approvedFile !== fileName) return confirmModal(`Replace ${slot.label}? ${slot.approvedFile} will remain in replacement history.`, commit, { title: "Replace the image selected for this view", confirmLabel: "REPLACE VIEW" });
     commit();
   };
   if (directOverride) return confirmModal(`Assign ${fileName} to ${slot.label} based on human judgment? CineBraid will record that no current AI check authorized this assignment.`, replaceOrCommit, { title: "Human approval", confirmLabel: "ASSIGN VIEW" });

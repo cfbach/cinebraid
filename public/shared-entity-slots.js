@@ -114,11 +114,20 @@ function entitySlotFiles(entity) {
  * true, and because the re-audit's batch writer proved that a second setter is
  * where the check goes missing.
  *
- * `eligibility` is re-resolved by the caller against CURRENT state and handed
- * in; a stale shortlist rendered minutes ago is not evidence of anything.
+ * OWNERSHIP IS INTRINSIC, NOT A CALLER CALLBACK. Six call sites used to pass
+ * the identical `eligibility: () => entityOwnershipEligibility(...)` closure,
+ * which meant six chances to pass something else — the shape 1D-03 removed from
+ * the Canon path, still present here on the supporting-reference path. The
+ * resolver is installed once, exactly as the kernel's is, and the caller names
+ * the OWNER it is assigning for rather than the rule to apply.
  *
  * Returns a decision. Applies it only when it passes, so a refused assignment
  * leaves the slot exactly as it was. */
+let SLOT_OWNERSHIP_POLICY = null;
+function installSlotOwnershipPolicy(policy) {
+  SLOT_OWNERSHIP_POLICY = typeof policy === "function" ? policy : null;
+  return !!SLOT_OWNERSHIP_POLICY;
+}
 function assignSlotReference(slot, request = {}) {
   const it = slotObject(request);
   const target = slotObject(slot);
@@ -126,8 +135,12 @@ function assignSlotReference(slot, request = {}) {
   const at = slotText(it.at);
   if (!target || typeof slot !== "object") return { assigned: false, reason: "unknown-slot" };
   if (!fileName) return { assigned: false, reason: "no-file" };
-  if (typeof it.eligibility === "function") {
-    const verdict = slotObject(it.eligibility());
+  /* The owner this slot belongs to, re-resolved against CURRENT state at the
+     moment of writing — never against a shortlist a modal rendered minutes ago,
+     which is the stale-evidence defect the 1B re-audit produced here. */
+  const owner = slotObject(it.owner);
+  if (owner.project && typeof SLOT_OWNERSHIP_POLICY === "function") {
+    const verdict = slotObject(SLOT_OWNERSHIP_POLICY(owner.project, { list: slotText(owner.list), entityId: slotText(owner.entityId) }, fileName));
     if (verdict.ok === false) return { assigned: false, reason: slotText(verdict.code) || "ineligible", message: slotText(verdict.message) };
   }
   const previous = slotSelectedFile(target);
@@ -220,6 +233,7 @@ const ENTITY_SLOT_EXPORTS = {
   assignSlotReference,
   clearSlotReference,
   slotUsableAsSupportingReference,
+  installSlotOwnershipPolicy,
 };
 
 if (typeof window !== "undefined") for (const [key, value] of Object.entries(ENTITY_SLOT_EXPORTS)) window[key] = value;

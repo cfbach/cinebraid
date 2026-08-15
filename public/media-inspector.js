@@ -270,8 +270,15 @@
           ${row.humanDecision.approvedWithoutAI.state === "known" ? `<i>Approved without a current AI check.</i>` : ""}
         </article>
         <article class="mi-disposition tone-${attr(row.disposition.role)}" data-mi-disposition="${attr(row.disposition.role)}">
-          <span>Disposition</span><b>${esc({ approved: "Approved", candidate: "Candidate", rejected: "Rejected" }[row.disposition.role] || row.disposition.role)}</b>
-          <small>${esc(row.disposition.role === "approved" ? "This media is the authority for at least one target." : row.disposition.role === "rejected" ? "Retained so the decision stays auditable." : "Not yet chosen for any target.")}</small>
+          <span>Disposition</span><b>${esc({ approved: "Approved", historic: "Historic selection", candidate: "Candidate", rejected: "Rejected" }[row.disposition.role] || row.disposition.role)}</b>
+          <small>${esc(row.disposition.role === "approved"
+            ? "This media is the authority for at least one target."
+            /* 1D-04: an edge points here, but no human approval receipt stands
+               behind it. The Inspector is the surface built to be exact about
+               production canon, so it says which of the two it is looking at. */
+            : row.disposition.role === "historic"
+              ? "Something selected this for a target, but nobody has approved it. It is not production canon until you approve it."
+              : row.disposition.role === "rejected" ? "Retained so the decision stays auditable." : "Not the authority for any target.")}</small>
         </article>
         <article class="mi-recommendation tone-${attr(recommendation.tone)}" data-mi-recommendation="${attr(row.aiRecommendation.value || "none")}">
           <span>AI recommendation</span><b>${esc(recommendation.label)}</b>

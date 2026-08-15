@@ -490,6 +490,13 @@
     if (kind === "entity" || kind === "reference") return { kind: "entity-state", list: text(ctx.list), entityId: text(it.id), stateId: "state-default" };
     return null;
   }
+  /* Exported, because two smaller surfaces — the reference candidate card and
+     the view-picker — label media from the raw P4 partition and must ask the
+     same question the projection asks. One implementation of "is this edge
+     backed by a receipt", or there are two answers again. */
+  function edgesAreReceiptBacked(project, edges, context) {
+    return receiptBackedEdges(project, edges, context).length > 0;
+  }
   function receiptBackedEdges(project, edges, context) {
     const reader = AUTHORITY && typeof AUTHORITY.hasCurrentHumanAuthority === "function" ? AUTHORITY : null;
     if (!reader || !project) return [];
@@ -1474,5 +1481,6 @@
     productionMediaKeyForFile,
     productionMediaRecords,
     productionMediaByKey,
+  edgesAreReceiptBacked,
   };
 });

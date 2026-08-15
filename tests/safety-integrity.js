@@ -32,7 +32,9 @@ async function main() {
 
   assert(entities.includes("entityCandidateIsCoverageSheet(entity, item.name)"), "single-angle selectors must exclude complete sheets");
   assert(entities.includes("replacementHistory"), "coverage authority replacement must preserve history");
-  assert(entities.includes("Run and pass AI review before approving"), "coverage approval must enforce the review gate");
+  /* 1D wording: a coverage view is SELECTED, not approved — the gate itself is
+   unchanged and is what this asserts. */
+  assert(entities.includes("Run and pass AI review before selecting"), "coverage selection must enforce the review gate");
   /* BATCH 1C: the literal this used to match moved out of entities.js. The
      property is unchanged — a candidate assigned to an expression slot must
      leave the assignment queue — but the queue now asks one shared predicate

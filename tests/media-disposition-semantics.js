@@ -297,8 +297,24 @@ async function surfacesSection(options = {}) {
   /* Both authorities, not just the one this editor happens to be about. The image
      is canon for the continuity state AND the coverage view, and a creator about
      to replace it needs to know the full extent of what they are replacing. */
-  assert(coverageHtml.includes("— approved · Moonlit night · Master establishing"),
-    "and name everything that option is already authority for, so replacing it is visibly a canon decision");
+  /* CHANGED IN BATCH 1D — the labels are unchanged, the word in front of them
+     is not.
+
+     OLD EXPECTATION: "— approved · Moonlit night · Master establishing". The
+     fixture declares those two edges and carries NO authority ledger, so under
+     1D-04 nobody has approved this image and the selector must not say they
+     have. The 1C acceptance audit's MB-1C-04 is exactly this sentence appearing
+     for a project with no receipts in it.
+
+     WHAT THIS ASSERTION IS FOR IS UNCHANGED and is still asserted in full: a
+     creator about to replace an option is told EVERYTHING that option is
+     already used for — both edges, not just the one this editor is about — so
+     the consequence of replacing it is visible. That was always the point; the
+     approval claim was riding along beside it. */
+  assert(coverageHtml.includes("— selected, not approved · Moonlit night · Master establishing"),
+    "name everything that option is already used for, so replacing it is visibly consequential");
+  assert(!coverageHtml.includes("— approved · Moonlit night"),
+    "and do not call it approved while no receipt says a person did");
   assert(coverageHtml.includes(`data-media-role="rejected"`),
     "a rejected alternate must not be offered as though it were undecided");
 

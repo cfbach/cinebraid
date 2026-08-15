@@ -390,7 +390,7 @@ window.confirmEntityBatchApproval = async () => {
         fileName: best.fileName,
         at: approvedAt,
         via: "entity-batch-selection",
-        eligibility: () => entityOwnershipEligibility(P, { list: current.list, entityId: entity.id }, best.fileName),
+        owner: { project: P, list: current.list, entityId: entity.id },
       });
       if (!outcome.assigned) {
         toast(outcome.message || `${best.fileName} could not be assigned to ${slot.label || slot.id}`);
