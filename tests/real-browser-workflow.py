@@ -247,7 +247,11 @@ try:
         page.wait_for_selector(".entity-candidate-review-modal")
         page.get_by_text("RUN AI REVIEW", exact=True).click()
         page.wait_for_function("() => P.characters.find(x=>x.id==='CHAR-AUDIT').coverageSlots.find(x=>x.id==='profile').approvedFile === 'CHAR-AUDIT-IMPORTED-PROFILE.png'", timeout=10000)
-        assert page.evaluate("() => P.characters.find(x=>x.id==='CHAR-AUDIT').candidateFiles.find(x=>x.stored==='CHAR-AUDIT-IMPORTED-PROFILE.png').decision") == "approved-coverage", "mapped imported reference was reviewed but not assigned to its slot"
+        # BATCH 1C: a coverage slot is a supporting reference, so committing one
+        # records a SELECTION. The old expectation, "approved-coverage", asserted
+        # that a view is production authority - the semantics alpha removed.
+        # The assignment itself is unchanged and is proved by the wait above.
+        assert page.evaluate("() => P.characters.find(x=>x.id==='CHAR-AUDIT').candidateFiles.find(x=>x.stored==='CHAR-AUDIT-IMPORTED-PROFILE.png').decision") == "selected-coverage", "mapped imported reference was reviewed but not selected for its slot"
         if SCREENSHOT_DIR:
             page.screenshot(path=str(SCREENSHOT_DIR / "imported-profile-assigned.png"), full_page=False)
         checkpoint("imported reference mapping complete")

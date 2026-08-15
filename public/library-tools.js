@@ -321,6 +321,29 @@ window.confirmApproveTake = async () => {
   const s = shotById(id),
     target = document.getElementById("approve-target")?.value || "shot",
     requested = document.getElementById("approve-name")?.value.trim();
+  /* K1A — THE MANUAL BOUNDARY, IN THE PROLOGUE, BEFORE THE FIRST AWAIT.
+   *
+   * The trusted gesture window is open for the synchronous turn of the click
+   * that got here and is closed by a macrotask. This function awaits a rename
+   * partway through, so a capability minted after that point would be asking
+   * for one that had already shut — the approval would refuse on a real click.
+   * Minting first and carrying the token is what makes an async handler safe.
+   *
+   * A video approval targets the shot's DELIVERY pointer, because `opening` is
+   * deliberately null for video; that arm is the one the re-audit found writing
+   * `s.winner` with no receipt behind it. */
+  const shotApprovalManualAction = beginManualApproval({
+    via: "shot-take-approval",
+    targets: target === "shot"
+      ? (isVideo(name) || !((s.keyframes || [])[0])
+        ? [{ kind: "shot-delivery", shotId: id }]
+        : [{ kind: "shot-frame", shotId: id, frameId: (s.keyframes || [])[0].id }])
+      : target.startsWith("frame:")
+        ? [{ kind: "shot-frame", shotId: id, frameId: target.slice(6) }]
+        : target.startsWith("segment:")
+          ? [{ kind: "shot-motion", shotId: id, unitKey: ((s.clips || []).find((x) => unitKey(x) === target.slice(8)) || {}).id || target.slice(8) }]
+          : [{ kind: "shot-frame", shotId: id, frameId: ((s.keyframes || [])[0] || {}).id }],
+  });
   const previousActiveName = target === "shot"
     ? s.winner || ""
     : target.startsWith("frame:")
@@ -376,17 +399,6 @@ window.confirmApproveTake = async () => {
   /* P4-SEM-C3: each approval records WHICH BYTES it approved, beside the filename
      it also keeps. Refused rather than stored when there is no id, so a record
      never carries a malformed identity that would resolve to nothing. */
-  /* K1A — THE MANUAL BOUNDARY. Minted synchronously inside the click that
-     confirmed the approval, while the trusted gesture is still open. The token
-     is bound to this exact target and consumed once by the kernel. */
-  const shotApprovalManualAction = beginManualApproval({
-    via: "shot-take-approval",
-    targets: target === "shot"
-      ? [{ kind: "shot-frame", shotId: id, frameId: ((s.keyframes || [])[0] || {}).id }]
-      : target.startsWith("frame:")
-        ? [{ kind: "shot-frame", shotId: id, frameId: target.slice(6) }]
-        : [{ kind: "shot-motion", shotId: id, unitKey: target.startsWith("segment:") ? target.slice(8) : target }],
-  });
   /* BATCH 1B: THIS IS A HUMAN APPROVAL COMMAND, and it now says so durably.
      `approveTake` is reached only from an approval control a person pressed, so
      it mints the grant here and writes the edge INSIDE the authority command —

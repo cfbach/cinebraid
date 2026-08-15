@@ -2695,23 +2695,29 @@ window.continueAutomationRevision = async (runId) => {
   const saved = await v626SaveRun(run, false);
   v640RunDispatch(saved);
 };
+/* THE RUN APPROVAL GATE — the one place in automation a person decides.
+ *
+ * K1A: THE CAPABILITY IS MINTED BEFORE THE FIRST AWAIT, and that ordering is
+ * load-bearing. The trusted gesture window covers the synchronous turn of the
+ * click and is closed by a macrotask; this handler refreshes the run from the
+ * server first, so a mint after that point would ask for a window that had
+ * already shut and every real approval would refuse. The cached run is enough
+ * to name the target — and if the refreshed run disagrees, the capability is
+ * simply never spent and the gate stays open. */
 window.approveAutomationCandidate = async (runId, stepKey, fileName) => {
+  const cachedRun = v626Runs().find((item) => item.id === runId) || null;
+  const cachedStep = cachedRun?.steps?.[stepKey] || null;
+  if (!cachedStep) return toast("This review gate is no longer active");
+  const manualAction = beginManualApproval({
+    via: "automation-run-approval-modal",
+    targets: cachedRun.type === "entity-chain"
+      ? [{ kind: "entity-state", list: cachedRun.config?.list || cachedRun.entityList, entityId: cachedRun.config?.entityId || cachedRun.entityId, stateId: cachedStep.stateId }]
+      : [{ kind: "shot-frame", shotId: cachedRun.type === "scene-chain" ? (cachedStep.shotId || cachedStep.result?.targetShotId || "") : cachedRun.targetId, frameId: cachedStep.frameId }],
+  });
   const run = await v626RefreshRun(runId, false), step = run.steps?.[stepKey];
   if (!step || step.status !== "needs-review") return toast("This review gate is no longer active");
   const candidates = v627ReviewCandidates(run, step), candidate = candidates.find((item) => item.file === fileName);
   if (!candidate) return toast("Candidate is unavailable");
-  /* THE HUMAN COMMAND. This handler is reached only from the run's approval
-     control, which a person clicked; it is where the grant is minted and the
-     only place in automation that may mint one. */
-  /* K1A — THE MANUAL BOUNDARY. This runs inside the click that approved the
-     candidate, so the gesture window is open and a capability can be minted.
-     Automation cannot reach this line: it has no gesture. */
-  const manualAction = beginManualApproval({
-    via: "automation-run-approval-modal",
-    targets: run.type === "entity-chain"
-      ? [{ kind: "entity-state", list: run.config?.list || run.entityList, entityId: run.config?.entityId || run.entityId, stateId: step.stateId }]
-      : [{ kind: "shot-frame", shotId: run.type === "scene-chain" ? (step.shotId || step.result?.targetShotId || "") : run.targetId, frameId: step.frameId }],
-  });
   if (run.type === "shot-chain" || run.type === "scene-chain") {
     const shotId = run.type === "scene-chain" ? (step.shotId || step.result?.targetShotId || "") : run.targetId;
     if (!shotId) return toast("Correction shot is unavailable");
