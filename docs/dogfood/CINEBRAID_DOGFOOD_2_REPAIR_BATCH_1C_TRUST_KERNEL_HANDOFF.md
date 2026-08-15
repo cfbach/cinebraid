@@ -20,7 +20,8 @@ Neither prior repair is rewritten, squashed or reverted. Batch 1's commits, Batc
 | Batch 1B target the re-audit judged | `b23d2313ae9d3cc789dfa09c91ac703c3580b55a` |
 | 1B acceptance-audit checkpoint | `58fc25998146ace5b2a146ab48a74b849666bc27` |
 | `origin/main` | `afe1853ce2fa69f43489822c0e86d5a4c45ea3f6` |
-| **Final HEAD** | *(recorded at §18 with the validation receipt)* |
+| **Verified HEAD** | `3c5fe9c769b3` — the last code commit, and the tree the 167-suite run was executed against |
+| **Branch HEAD** | this document, committed on top. Docs-only; no source or test file differs from the verified tree |
 
 # 3. Commits
 
@@ -38,6 +39,7 @@ Neither prior repair is rewritten, squashed or reverted. Batch 1's commits, Batc
 | `bc95d9b` | `fix(K1C): close the four slot writers the post-green sweep found` |
 | `db42438` | `fix: one slot-decision vocabulary, and stop deriving the withdrawn word` |
 | `e17956a` | `test: follow the slot vocabulary out of entities.js` |
+| `3c5fe9c` | `test: the load normaliser derives "selected", in intent-loss too` |
 | *(this document)* | `docs: dogfood #2 repair batch 1C trust kernel handoff` |
 
 **38 files, +4823 / −1902** against `b23d231`.
@@ -51,9 +53,9 @@ Neither prior repair is rewritten, squashed or reverted. Batch 1's commits, Batc
 | `public/shared-authority-kernel.js` (+930) | The canonical target descriptor, full receipt-schema validation, the manual-action capability, and the one commit transaction |
 | `public/shared-entity-slots.js` (+226) | What a coverage/expression slot *is* after the demotion: a supporting reference, its one writer, and the one decision vocabulary |
 
-**Modified source (19):** `shared-production-authority.js` (net −430; the batch deleted more of it than it added), `shared-state-lineage.js`, `shared-frame-presence.js`, `shared-production-media.js`, `app.js`, `automation.js`, `scene-automation.js`, `library-tools.js`, `creation-studio.js`, `entities.js`, `review.js`, `review-provenance.js`, `coverage-automation.js`, `focused-workspaces.js`, `bootstrap.js`, `index.html`, `server.js`, `fal-generation.js`, `ofp/ofp-migrate*.js` (3).
+**Modified source (19):** `shared-production-authority.js` (+211 / −449; the batch deleted twice what it added), `shared-state-lineage.js`, `shared-frame-presence.js`, `shared-production-media.js`, `app.js`, `automation.js`, `scene-automation.js`, `library-tools.js`, `creation-studio.js`, `entities.js`, `review.js`, `review-provenance.js`, `coverage-automation.js`, `focused-workspaces.js`, `bootstrap.js`, `index.html`, `server.js`, `fal-generation.js`, `ofp/ofp-migrate*.js` (3).
 
-**Modified tests (12) + 1 re-pinned golden:** `dogfood2-p0-negative-controls.js` *(rewritten)*, `dogfood2-p0-architecture.js`, `state-lineage-safety.js`, `production-authority.js`, `render-harness.js`, `alpha-production-loop.js`, `alpha-production-loop-negative-controls.js`, `real-browser-workflow.py`, `ofp-migration.js`, `manual-first-workflow.js`, `coverage-workflow.js`, `safety-integrity.js`, `fixtures/ofp-migration/overfit/goldens/summary.json`.
+**Modified tests (13) + 1 re-pinned golden:** `dogfood2-p0-negative-controls.js` *(rewritten)*, `dogfood2-p0-architecture.js`, `state-lineage-safety.js`, `production-authority.js`, `render-harness.js`, `alpha-production-loop.js`, `alpha-production-loop-negative-controls.js`, `real-browser-workflow.py`, `ofp-migration.js`, `manual-first-workflow.js`, `coverage-workflow.js`, `safety-integrity.js`, `intent-loss-safety.js`, `fixtures/ofp-migration/overfit/goldens/summary.json`.
 
 No project data, generated media, provider state, credential or environment configuration is in the diff.
 
@@ -223,6 +225,8 @@ controls        a probe returning {reached, held}, run against the real AND the
 
 `app.js` project normalisation **derived** a slot's status from `approvedFile` presence, in three places, on every project load — and derived the word `"approved"`. A slot that a correctly-routed writer had saved as a selection came back an approval the next time the project was opened, with no writer at fault.
 
+The tell was there to be read: `SLOT_ASSIGNMENT_STATES` declares exactly `missing | selected | retired`, and the normaliser was writing a fourth word that appears in no slot vocabulary at all.
+
 This is why the rule is now a **test**, not a convention: no file but `shared-entity-slots.js` may produce that word for a slot's status, in either the **assigned** or the **derived** shape. Both shapes were negative-controlled by reintroducing the real defect and confirming the guard names the file and the expression.
 
 ## One vocabulary
@@ -352,7 +356,7 @@ Ten sweeps, every match classified. **This section found six genuine defects, al
 | Credential as a caller-constructible shape, with a public builder on `window` | **One-use capability identity, minted only at a trusted gesture** |
 | `catch(AssertionError) ⇒ control passed` | **Probe contract: held under real, failed under mutation, for its own reason** |
 
-**Net:** 2 authority target kinds removed · 1 whole authority surface removed (slots) · 1 mutation operation removed (reparent) · 3 public functions removed (`isHumanAuthorityGrant`, `humanAuthorityGrant`, `assertHumanAuthority`) · 4 lineage functions removed (`planParentMutation`, `applyStateParentMutation`, `safeParentAssignment`, `eligibleParentIds`) · 1 UI control removed (the parent dropdown) · 4 duplicate decision vocabularies collapsed to 1 · `shared-production-authority.js` is 430 lines shorter than it was.
+**Net:** 2 authority target kinds removed · 1 whole authority surface removed (slots) · 1 mutation operation removed (reparent) · 3 public functions removed (`isHumanAuthorityGrant`, `humanAuthorityGrant`, `assertHumanAuthority`) · 4 lineage functions removed (`planParentMutation`, `applyStateParentMutation`, `safeParentAssignment`, `eligibleParentIds`) · 1 UI control removed (the parent dropdown) · 4 duplicate decision vocabularies collapsed to 1 · `shared-production-authority.js` is 238 lines shorter than it was, having deleted 449 and added 211.
 
 # 17. Deferred to Professional / Enterprise
 
@@ -387,8 +391,9 @@ No paid provider calls. No local-model calls.
 | `check:dogfood2-p0-negative` | **19 controls**, each held under the real module and failed for its own named reason |
 | `check:ofp-migration` | 33 rules, 20 fixtures, 84 accounted values, 0 unaccounted |
 | `check:ofp-overfit` | 18 generations, 18431 values accounted, 0 unaccounted, **0 approved statements** |
-| `npm.cmd run check` | *(final line recorded at the foot of this section)* |
+| `npm.cmd run check` | **167 suites, 142.4s, all green.** Slowest: alpha-loop-browser 33.7s, focused-browser 23.4s, job-media-identity 18.3s, browser-real 17.6s, ui-state 16.9s |
 | `git diff --check b23d231` | clean |
+| worktree | clean at the recorded HEAD |
 
 **How no paid call is possible.** The dispatch tests replace `globalThis.fetch` with a recorder that throws and register the FAL module against a scratch directory outside the repository; reaching the network is the failure condition. Browser paths run in the vm render harness, whose `fetch` is intercepted. The real-Chromium suites run against a locally launched CineBraid with provider access unconfigured.
 
