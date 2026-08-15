@@ -161,7 +161,30 @@ function installEdges(kernel) {
     if (index < 0) return { value: "", assetId: "" };
     return { value: String(frames[index].winner || (index === 0 ? shot.winner || "" : "")), assetId: "" };
   });
+  /* 1D-07: the kernel writes the edge now, from a writer installed once — the
+     mirror of the reader above. These controls load a FRESH kernel module per
+     probe, so each one gets its own pair, and neither is a per-call argument
+     any test could supply differently. */
+  kernel.installAuthorityEdgeWriter((draft, target, details) => {
+    if (target.kind !== "shot-frame") return false;
+    const shot = (draft.shots || []).find((row) => row && row.id === target.shotId);
+    const frames = (shot || {}).keyframes || [];
+    const index = frames.findIndex((row) => row && row.id === target.frameId);
+    if (index < 0) return false;
+    frames[index].winner = String(details.value || "");
+    if (index === 0) shot.winner = String(details.value || "");
+    return true;
+  });
   return kernel;
+}
+
+/* 1D-01: the synthetic source is gone from the product, so each freshly-loaded
+   kernel gets the REAL trusted-event listener installed on an event target this
+   file owns. Same boundary as tests/authority-test-gesture.js, applied to a
+   module instance rather than the singleton. */
+const { installTestManualActionSource } = require("./authority-test-gesture.js");
+function gestureSource(kernel) {
+  return installTestManualActionSource(kernel);
 }
 function goodReceipt(overrides = {}) {
   return {
@@ -177,6 +200,25 @@ function ledger(...receipts) {
 }
 const FRAME_TARGET = { kind: "shot-frame", shotId: "SH-01", frameId: "fr-a" };
 
+/* The 1C audit's MB-1C-04 fixture: a shot whose opening frame carries a raw
+   automatic winner, and no authority ledger anywhere in the project. */
+const legacyPointerProject = () => ({
+  shots: [{
+    id: "SH010", scene: "SC01", title: "Hull check", winner: "AUTOPICK.png",
+    keyframes: [{ id: "kf-a", label: "A", winner: "AUTOPICK.png" }], clips: [],
+    candidateFiles: [{ stored: "AUTOPICK.png", addedAt: "2026-08-01T00:00:00.000Z", decision: "unreviewed" }],
+    /* NO generationRecords, which is the audit's exact fixture: the actor is
+       `not-recorded`, so nothing diverts the projection to `machine-selected`
+       and the old code reported a plain human approval. That is the worst case
+       and the one worth pinning — a pointer nobody can even attribute. */
+  }],
+  characters: [], locations: [], props: [], vehicles: [], audio: [],
+});
+const legacyPointerScan = () => ({
+  anchors: [], props: [], plates: [], vehicles: [], audio: [], media: [],
+  shots: { SH010: { takes: [{ name: "AUTOPICK.png", url: "/assets/shots/SH010/takes/AUTOPICK.png" }] } },
+});
+
 /* ===========================================================================
    K1 — THE AUTHORITY KERNEL
    =========================================================================== */
@@ -186,18 +228,21 @@ control({
   label: "C1 the manual-action credential is a shape rather than an identity",
   file: KERNEL_FILE,
   anchor: '  const record = MINTED_MANUAL_ACTIONS.get(token);\n  if (!record) {',
-  replacement: '  const record = MINTED_MANUAL_ACTIONS.get(token)\n    || (token && token.actor === "human" && token.act === "explicit-approval" ? { via: "shape", gestureId: "shape", gestureKind: "shape", remaining: { has: () => true, delete: () => {}, size: 1 } } : null);\n  if (!record) {',
+  /* The synthesized record mirrors the 1D shape — a Map of bound entries — so
+     the mutation reintroduces the DEFECT rather than merely crashing. A control
+     that "holds" because the broken code threw a TypeError proves nothing. */
+  replacement: '  const record = MINTED_MANUAL_ACTIONS.get(token)\n    || (token && token.actor === "human" && token.act === "explicit-approval" ? { via: "shape", gestureId: "shape", gestureKind: "shape", remaining: new Map([["shot-frame:SH-01#fr-a", { key: "shot-frame:SH-01#fr-a", value: "", assetId: "" }]]) } : null);\n  if (!record) {',
   baseline(kernel) {
     /* OUTSIDE the control's judgement: the kernel must mint at all, or the
        probe below would be measuring a dead path. */
     installEdges(kernel);
-    const harness = kernel.installHarnessManualActionSource();
+    const harness = gestureSource(kernel);
     const token = harness.gesture(() => kernel.beginManualAuthorityAction({ via: "baseline", targets: [FRAME_TARGET] }));
     assert.ok(token && typeof token === "object", "baseline: a real gesture must be able to mint a capability");
   },
   probe(kernel) {
     installEdges(kernel);
-    kernel.installHarnessManualActionSource();
+    gestureSource(kernel);
     const project = frameProject();
     /* THE EXACT OBJECT THE RE-AUDIT FORGED. */
     let refused = false;
@@ -206,7 +251,6 @@ control({
       kernel.commitAuthorityTransaction(project, {
         kind: "shot-frame", shotId: "SH-01", frameId: "fr-a", value: "FORGED.png", at: "T",
         manualAction: { actor: "human", act: "explicit-approval" },
-        applyEdge: (draft) => { wrote = true; draft.shots[0].keyframes[0].winner = "FORGED.png"; },
       });
     } catch { refused = true; }
     return { reached: true, held: refused && !wrote && !project.shots[0].keyframes[0].winner, reason: refused ? "refused" : "accepted-forged-shape" };
@@ -328,22 +372,25 @@ control({
 control({
   label: "C6 the edge is written before the credential is checked",
   file: KERNEL_FILE,
-  anchor: '  const provenance = consumeManualAction(it.manualAction, target);',
-  replacement: '  if (typeof it.applyEdge === "function") it.applyEdge(project, target);\n  const provenance = consumeManualAction(it.manualAction, target);',
+  /* 1D: the same defect, re-expressed against the code that exists now. There
+     is no caller `applyEdge` left to move, so the mutation makes the KERNEL's
+     own installed writer run against the LIVE project before the credential is
+     consumed — the identical ordering failure, at the boundary that owns it. */
+  anchor: '  const provenance = consumeManualAction(it.manualAction, target, value, assetId);',
+  replacement: '  if (typeof AUTHORITY_EDGE_WRITER === "function") AUTHORITY_EDGE_WRITER(project, target, { value, assetId, at: kernelText(it.at) });\n  const provenance = consumeManualAction(it.manualAction, target, value, assetId);',
   baseline(kernel) {
     installEdges(kernel);
-    kernel.installHarnessManualActionSource();
+    gestureSource(kernel);
     assert.ok(typeof kernel.commitAuthorityTransaction === "function", "baseline: the transaction exists");
   },
   probe(kernel) {
     installEdges(kernel);
-    kernel.installHarnessManualActionSource();
+    gestureSource(kernel);
     const project = frameProject();
     try {
       kernel.commitAuthorityTransaction(project, {
         kind: "shot-frame", shotId: "SH-01", frameId: "fr-a", value: "X.png", at: "T",
         manualAction: undefined,
-        applyEdge: (draft) => { (draft.shots || project.shots)[0].keyframes[0].winner = "X.png"; },
       });
     } catch { /* refusal is expected; WHETHER IT WROTE FIRST is the question */ }
     const held = !project.shots[0].keyframes[0].winner;
@@ -360,19 +407,18 @@ control({
   replacement: '  if (false) {\n    applyDraftToProject(project, preImage);\n    throw authorityError(\n      "AUTHORITY_NOT_PERSISTED",',
   baseline(kernel) {
     installEdges(kernel);
-    const harness = kernel.installHarnessManualActionSource();
+    const harness = gestureSource(kernel);
     const project = frameProject();
     const token = harness.gesture(() => kernel.beginManualAuthorityAction({ via: "baseline", targets: [FRAME_TARGET] }));
     const receipt = kernel.commitAuthorityTransaction(project, {
       kind: "shot-frame", shotId: "SH-01", frameId: "fr-a", value: "OK.png", at: "T", manualAction: token,
-      applyEdge: (draft) => { draft.shots[0].keyframes[0].winner = "OK.png"; },
     });
     assert.ok(receipt && receipt.id, "baseline: an ordinary commit succeeds and returns a receipt");
     assert.ok(project.productionAuthority, "baseline: and the ledger is durable");
   },
   probe(kernel) {
     installEdges(kernel);
-    const harness = kernel.installHarnessManualActionSource();
+    const harness = gestureSource(kernel);
     /* A non-extensible root: the clone validates, the copy back cannot add the
        ledger key, and the command would return an id for a receipt that is not
        there. The re-audit's exact case. */
@@ -382,7 +428,6 @@ control({
     try {
       returned = kernel.commitAuthorityTransaction(project, {
         kind: "shot-frame", shotId: "SH-01", frameId: "fr-a", value: "PARTIAL.png", at: "T", manualAction: token,
-        applyEdge: (draft) => { draft.shots[0].keyframes[0].winner = "PARTIAL.png"; },
       });
     } catch { returned = null; }
     const lying = !!returned && !project.productionAuthority;
@@ -620,8 +665,9 @@ control({
   label: "C16 deleting a state with descendants is permitted",
   file: LINEAGE_FILE,
   mutations: [
-    /* layer 1 — the refuse-by-default policy */
-    ['  if (children.length && policy === "refuse") return { remove: false, reason: "has-children", policy, children };', ""],
+    /* layer 1 — the refusal itself. 1D-06 removed the `policy === "refuse"`
+       qualifier, because refuse is now the only policy there is. */
+    ['  if (children.length) return { remove: false, reason: "has-children", policy, children };', ""],
     /* layer 2 — and the collection validator that would catch the orphan it leaves */
     ['    if (!ids.has(parentId)) problems.push({ code: "parent-missing", index, id, parentStateId: parentId });', ""],
   ],
@@ -720,6 +766,359 @@ controlAsync({
     }
   },
   explain: "Remove the gate and a contradicting request goes to fal and leaves a committed unresolved job row. This is the control that proves the boundary is mandatory rather than conventional.",
+});
+
+
+/* ===========================================================================
+   BATCH 1D — ONE CONTROL PER MERGE BLOCKER THE 1C ACCEPTANCE AUDIT FOUND.
+
+   Each reintroduces the EXACT counterexample the audit executed and proves the
+   suite goes red for it. They obey the same seven-condition contract as every
+   control above: valid baseline outside any catch, confirmed mutation, reached
+   checkpoint, invariant holds under the real module, fails under the mutation,
+   and fails for its own named reason.
+   =========================================================================== */
+notes.push("1D closure controls:");
+
+/* --- CONTROL 1 (MB-1C-01) ------------------------------------------------ */
+/* Not a source mutation: the property is that a shipped export DOES NOT EXIST,
+   and there is nothing to break in a way that would be honest. So this one
+   reintroduces the export itself — the literal Batch 1C line — and proves the
+   browser composition can then mint human authority with no event at all. */
+{
+  controls += 1;
+  const label = "D1 the test-harness gesture source is exported into the browser";
+  const kernelSource = fs.readFileSync(path.join(ROOT, KERNEL_FILE), "utf8");
+
+  const runBrowser = (source) => {
+    const sandbox = { console };
+    sandbox.window = sandbox;
+    sandbox.globalThis = sandbox;
+    vm.createContext(sandbox);
+    vm.runInContext(source, sandbox, { filename: "shared-authority-kernel.js" });
+    sandbox.installAuthorityEdgeReader((project, target) => {
+      const shot = (project.shots || []).find((row) => row && row.id === target.shotId);
+      const frame = ((shot || {}).keyframes || []).find((row) => row && row.id === target.frameId);
+      return { value: String((frame || {}).winner || ""), assetId: "" };
+    });
+    sandbox.installAuthorityEdgeWriter((draft, target, details) => {
+      const shot = (draft.shots || []).find((row) => row && row.id === target.shotId);
+      const frame = ((shot || {}).keyframes || []).find((row) => row && row.id === target.frameId);
+      if (!frame) return false;
+      frame.winner = String(details.value || "");
+      return true;
+    });
+    /* EXACTLY WHAT THE 1C AUDIT DID: ordinary page script, no user agent, no
+       event — reach for a synthetic source and mint. */
+    const installer = sandbox.installHarnessManualActionSource
+      || (sandbox.CineBraidAuthorityKernel || {}).installHarnessManualActionSource;
+    if (typeof installer !== "function") return { minted: false, actor: "", reason: "no-synthetic-source-exists" };
+    const project = { shots: [{ id: "SH-01", keyframes: [{ id: "fr-a" }] }] };
+    try {
+      const harness = installer();
+      const token = harness.gesture(() => sandbox.beginManualAuthorityAction({
+        via: "ordinary-browser-code", targets: [{ kind: "shot-frame", shotId: "SH-01", frameId: "fr-a" }],
+      }));
+      sandbox.commitAuthorityTransaction(project, {
+        kind: "shot-frame", shotId: "SH-01", frameId: "fr-a", value: "FORGED.png", at: "T", manualAction: token,
+      });
+      return { minted: true, actor: String(project.productionAuthority.receipts[0].actor), reason: "browser-minted-human-authority" };
+    } catch (error) { return { minted: false, actor: "", reason: String(error.code || error.message) }; }
+  };
+
+  /* 1 — BASELINE, OUTSIDE ANY CATCH: the browser composition loads and the real
+         approval path works when a trusted event IS delivered. */
+  {
+    const sandbox = { console };
+    sandbox.window = sandbox; sandbox.globalThis = sandbox;
+    vm.createContext(sandbox);
+    vm.runInContext(kernelSource, sandbox, { filename: "shared-authority-kernel.js" });
+    assert.ok(typeof sandbox.beginManualAuthorityAction === "function", "baseline: the kernel loads in a browser composition");
+    assert.ok(typeof sandbox.installBrowserManualActionSource === "function", "baseline: and the real trusted-event installer is there");
+  }
+
+  /* 7 — THE REAL MODULE UPHOLDS IT. */
+  const real = runBrowser(kernelSource);
+  assert.strictEqual(real.minted, false, `${label}: the shipped kernel must not let browser code mint without an event`);
+  assert.strictEqual(real.reason, "no-synthetic-source-exists",
+    `${label}: and the reason must be that the export is absent, not that some other guard happened to fire`);
+
+  /* 2 — THE MUTATION, CONFIRMED: put Batch 1C's installer back, verbatim. */
+  const restored = kernelSource.replace(
+    "const AUTHORITY_KERNEL_EXPORTS = {",
+    'function installHarnessManualActionSource() {\n'
+    + '  MANUAL_ACTION_SOURCE = "harness";\n'
+    + '  return { gesture(body) { openTrustedGesture("harness"); try { return body(); } finally { closeTrustedGesture(); } } };\n'
+    + '}\n'
+    + "const AUTHORITY_KERNEL_EXPORTS = {\n  installHarnessManualActionSource,",
+  );
+  assert.notStrictEqual(restored, kernelSource, `${label}: the mutation anchor is stale and nothing was reintroduced`);
+
+  /* 3, 4, 5 — reached, failed, and for its own reason. */
+  const after = runBrowser(restored);
+  assert.strictEqual(after.minted, true,
+    `${label}: the mutation did not reproduce the 1C counterexample, so this control proves nothing`);
+  assert.strictEqual(after.actor, "human",
+    `${label}: and the forged receipt must claim a person, which is what made it a blocker`);
+  notes.push(`  ${label} -> caught as "${after.reason}"`);
+}
+
+/* --- CONTROL 2 (MB-1C-02) ------------------------------------------------ */
+control({
+  label: "D2 a capability is bound to the target but not to the displayed value",
+  file: KERNEL_FILE,
+  mutations: [
+    /* Remove BOTH staleness checks. Either alone leaves the other covering it,
+       and a control that a single-layer break survives proves nothing. */
+    ['  if (bound.value && bound.value !== wantedValue) {', '  if (false) {'],
+    ['  if (bound.assetId && bound.assetId !== wantedAsset) {', '  if (false) {'],
+  ],
+  baseline(kernel) {
+    installEdges(kernel);
+    const harness = gestureSource(kernel);
+    const project = frameProject();
+    const token = harness.gesture(() => kernel.beginManualAuthorityAction({
+      via: "baseline", targets: [{ ...FRAME_TARGET, value: "A.png" }],
+    }));
+    kernel.commitAuthorityTransaction(project, {
+      kind: "shot-frame", shotId: "SH-01", frameId: "fr-a", value: "A.png", at: "T", manualAction: token,
+    });
+    assert.strictEqual(project.shots[0].keyframes[0].winner, "A.png",
+      "baseline: approving the value the gesture named must WORK, or the probe measures a dead path");
+  },
+  probe(kernel) {
+    installEdges(kernel);
+    const harness = gestureSource(kernel);
+    const project = frameProject();
+    /* The 1C audit's case: the modal displayed A, the selection changed to B. */
+    const token = harness.gesture(() => kernel.beginManualAuthorityAction({
+      via: "approve-modal", targets: [{ ...FRAME_TARGET, value: "A.png", assetId: "asset-A" }],
+    }));
+    let refused = false;
+    try {
+      kernel.commitAuthorityTransaction(project, {
+        kind: "shot-frame", shotId: "SH-01", frameId: "fr-a", value: "B.png", assetId: "asset-B", at: "T", manualAction: token,
+      });
+    } catch { refused = true; }
+    const committed = String(project.shots[0].keyframes[0].winner || "");
+    const held = refused && committed !== "B.png";
+    return { reached: true, held, reason: held ? "refused-stale" : `approved-the-other-asset(${committed})` };
+  },
+  reason: "approved-the-other-asset(B.png)",
+  explain: "A capability that names only the target approves whatever the UI is showing by the time the commit runs, which is not what the person confirmed.",
+});
+
+/* --- CONTROL 3 (MB-1C-03) ------------------------------------------------ */
+control({
+  label: "D3 entity ownership is skippable at the commit boundary",
+  file: KERNEL_FILE,
+  mutations: [
+    /* Layer 1: make the policy optional again, the way 1C had it. */
+    ['  if (target.kind !== "entity-state") return;', '  if (true) return;'],
+  ],
+  baseline(kernel) {
+    installEdges(kernel);
+    gestureSource(kernel);
+    kernel.installAuthorityOwnershipPolicy(() => ({ ok: true }));
+    assert.ok(typeof kernel.commitAuthorityTransaction === "function", "baseline: the transaction exists");
+  },
+  probe(kernel) {
+    installEdges(kernel);
+    const harness = gestureSource(kernel);
+    /* The resolver's real answer for the audit's fixture: SHARED.png is claimed
+       by two entities, so nobody may make it canon. */
+    kernel.installAuthorityOwnershipPolicy((project, target, value) => (
+      value === "SHARED.png"
+        ? { ok: false, code: "AUTHORITY_OWNERSHIP_CONTESTED", message: "claimed by CHAR-A and CHAR-B" }
+        : { ok: true }
+    ));
+    /* A matching reader/writer PAIR for entity-state, or the commit would refuse
+       at the post-write agreement check for an unrelated reason and this control
+       would "hold" without ever exercising the policy. */
+    kernel.installAuthorityEdgeReader((project, target) => {
+      const entity = (project.characters || []).find((row) => row && row.id === target.entityId);
+      return { value: String((entity || {}).approvedFile || ""), assetId: "" };
+    });
+    kernel.installAuthorityEdgeWriter((draft, target, details) => {
+      const entity = (draft.characters || []).find((row) => row && row.id === target.entityId);
+      if (!entity) return false;
+      entity.approvedFile = String(details.value || "");
+      return true;
+    });
+    const project = { characters: [{ id: "CHAR-A", approvedFile: "", continuityStates: [{ id: "state-default", isDefault: true }] }], shots: [] };
+    const target = { kind: "entity-state", list: "characters", entityId: "CHAR-A", stateId: "state-default" };
+    let refused = false;
+    try {
+      kernel.commitAuthorityTransaction(project, {
+        ...target, value: "SHARED.png", at: "T",
+        /* The 1C escape, attempted: a caller-supplied override. There is no such
+           parameter any more, so this is inert — which is the point. */
+        eligibility: () => ({ ok: true }),
+        manualAction: harness.gesture(() => kernel.beginManualAuthorityAction({ via: "probe", targets: [target] })),
+      });
+    } catch { refused = true; }
+    const held = refused && !project.characters[0].approvedFile;
+    return { reached: true, held, reason: held ? "vetoed" : "contested-file-became-canon" };
+  },
+  reason: "contested-file-became-canon",
+  explain: "Ownership must be a property of the target kind. While it was a caller-supplied callback, the caller could pass ok:true — and the 1C audit did.",
+});
+
+/* --- CONTROL 4 (MB-1C-04) ------------------------------------------------ */
+control({
+  label: "D4 an unreceipted legacy pointer projects as approved production media",
+  file: "public/shared-production-media.js",
+  mutations: [
+    /* Layer 1: the downgrade itself. Layer 2: the human-decision half, which
+       would otherwise still report "undecided" and cover the first. */
+    ['    const disposition = claimedApproved && !receiptBacked\n      ? { ...claimed, role: "historic" }\n      : claimed;',
+     '    const disposition = claimed;'],
+    ['      humanDecision: humanDecisionOf(row, receiptBacked, input.automationApproval),',
+     '      humanDecision: humanDecisionOf(row, claimedApproved, input.automationApproval),'],
+  ],
+  baseline(media) {
+    /* OUTSIDE the control's judgement: the projection must produce a record for
+       this fixture at all, or the probe measures an empty list. */
+    const built = media.productionMediaRecords({ project: legacyPointerProject(), scan: legacyPointerScan(), jobs: [], jobsAvailable: true });
+    assert.strictEqual(built.records.length, 1, "baseline: the fixture must produce exactly one media record");
+    assert.strictEqual(built.records[0].disposition.authority.claimed, true,
+      "baseline: and an approval EDGE must point at it, or there is no claim to check");
+  },
+  probe(media) {
+    /* THE 1C AUDIT'S FIXTURE: a raw winner, and productionAuthority null. */
+    const built = media.productionMediaRecords({ project: legacyPointerProject(), scan: legacyPointerScan(), jobs: [], jobsAvailable: true });
+    const row = built.records[0];
+    const role = String(row.disposition.role || "");
+    const decision = String(row.humanDecision.state || "");
+    const held = role !== "approved" && decision !== "approved" && built.counts.approved === 0;
+    return { reached: true, held, reason: held ? "historic" : `projected-as-${role}/${decision}` };
+  },
+  reason: "projected-as-approved/approved",
+  explain: "Results filtered it as APPROVED and the Inspector printed \"Approved by you — it is production canon\" for a project with no ledger at all.",
+});
+
+/* --- CONTROL 5 (MB-1C-05) ------------------------------------------------ */
+control({
+  label: "D5 receipt/live-edge agreement is disjunctive again",
+  file: KERNEL_FILE,
+  mutations: [
+    ['  if (live.value !== kernelText(receipt.value)) return null;', '  if (false) return null;'],
+  ],
+  baseline(kernel) {
+    installEdges(kernel);
+    const project = { ...frameProject("PICK.png"), productionAuthority: ledger(goodReceipt()) };
+    assert.ok(kernel.hasCurrentHumanAuthority(project, FRAME_TARGET),
+      "baseline: an exactly-agreeing receipt and edge must confer authority, or the probe measures nothing");
+  },
+  probe(kernel) {
+    installEdges(kernel);
+    /* The 1C audit's case: the receipt names bytes the project does not have.
+       Under `byName || byIdentity` this stayed current whenever the other half
+       happened to match. */
+    const project = { ...frameProject("PICK.png"), productionAuthority: ledger(goodReceipt({ value: "WRONG.png" })) };
+    const held = !kernel.hasCurrentHumanAuthority(project, FRAME_TARGET);
+    return { reached: true, held, reason: held ? "rejected-contradiction" : "contradictory-receipt-stayed-current" };
+  },
+  reason: "contradictory-receipt-stayed-current",
+  explain: "One contradictory field is a contradiction, not a half-match to be rounded up. A rename has its own explicit operation.",
+});
+
+/* --- CONTROL 5b: the ledger version, which 1C carried but never checked. --- */
+control({
+  label: "D5b an unsupported ledger version is still trusted",
+  file: KERNEL_FILE,
+  mutations: [
+    ['  if (declaredVersion > AUTHORITY_LEDGER_VERSION || declaredVersion < 1) {', '  if (false) {'],
+  ],
+  baseline(kernel) {
+    installEdges(kernel);
+    const project = { ...frameProject("PICK.png"), productionAuthority: ledger(goodReceipt()) };
+    assert.ok(kernel.hasCurrentHumanAuthority(project, FRAME_TARGET), "baseline: a version-1 ledger reads normally");
+  },
+  probe(kernel) {
+    installEdges(kernel);
+    const project = { ...frameProject("PICK.png"), productionAuthority: { version: 99, receipts: [goodReceipt()] } };
+    const held = !kernel.hasCurrentHumanAuthority(project, FRAME_TARGET);
+    return { reached: true, held, reason: held ? "fails-closed" : "read-a-ledger-it-does-not-understand" };
+  },
+  reason: "read-a-ledger-it-does-not-understand",
+  explain: "A version field that is written and never checked is decorative. Either it means something or it should not be there.",
+});
+
+/* --- CONTROL 6 (MB-1C-06) ------------------------------------------------ */
+control({
+  label: "D6 reparenting comes back as a deletion policy",
+  file: LINEAGE_FILE,
+  mutations: [
+    /* Layer 1: the policy list. Layer 2: the refusal that would otherwise still
+       stop it. Both, because either alone leaves the other covering. */
+    ['const LINEAGE_DELETION_POLICIES = ["refuse"];', 'const LINEAGE_DELETION_POLICIES = ["refuse", "reparent-to-root"];'],
+    ['  if (asked && asked !== policy) return { remove: false, reason: "unsupported-deletion-policy", policy, asked };',
+     '  const policyAsked = asked === "reparent-to-root" ? asked : policy;'],
+    ['  if (children.length) return { remove: false, reason: "has-children", policy, children };',
+     '  if (children.length && policyAsked !== "reparent-to-root") return { remove: false, reason: "has-children", policy, children };\n'
+     + '  if (children.length) { const rootId = (rows.find((row) => row.isDefault === true) || {}).id; for (const row of rows) if (row.parentStateId === id) row.parentStateId = rootId; }'],
+  ],
+  baseline(lineage) {
+    assert.strictEqual(lineage.planStateDeletion(VALID_STATES(), "grand").remove, true,
+      "baseline: a leaf CAN be deleted, or this control would pass because deletion is broken generally");
+  },
+  probe(lineage) {
+    const collection = VALID_STATES();
+    const outcome = lineage.applyStateDeletion(collection, "child", { policy: "reparent-to-root" });
+    const grand = collection.find((row) => row && row.id === "grand") || {};
+    /* The 1C audit's exact observation: child removed, grand re-rooted. */
+    const reparented = outcome.applied === true || grand.parentStateId === "root";
+    return { reached: true, held: !reparented, reason: reparented ? "rewrote-an-ancestry" : "refused" };
+  },
+  reason: "rewrote-an-ancestry",
+  explain: "An ancestry chosen at creation and rewritten by a delete confirmation was never immutable. The 1C creator UI invoked exactly this policy.",
+});
+
+/* --- CONTROL 7 (MB-1C-07) ------------------------------------------------ */
+control({
+  label: "D7 a caller callback can mutate live project state during a failed write",
+  file: KERNEL_FILE,
+  mutations: [
+    /* Put the 1C callback seam back: honour a caller-supplied applyEdge, against
+       the LIVE project, before the transaction can refuse. */
+    ['  const draft = draftOf(project);\n  /* STEP 5 — the edge, written by the kernel',
+     '  const draft = draftOf(project);\n  if (typeof it.applyEdge === "function") { try { it.applyEdge(project, target); } catch (error) { throw error; } }\n  /* STEP 5 — the edge, written by the kernel'],
+  ],
+  baseline(kernel) {
+    installEdges(kernel);
+    const harness = gestureSource(kernel);
+    const project = frameProject();
+    const token = harness.gesture(() => kernel.beginManualAuthorityAction({ via: "baseline", targets: [FRAME_TARGET] }));
+    kernel.commitAuthorityTransaction(project, {
+      kind: "shot-frame", shotId: "SH-01", frameId: "fr-a", value: "OK.png", at: "T", manualAction: token,
+    });
+    assert.strictEqual(project.shots[0].keyframes[0].winner, "OK.png", "baseline: an ordinary commit lands");
+  },
+  probe(kernel) {
+    installEdges(kernel);
+    const harness = gestureSource(kernel);
+    const project = frameProject();
+    project.shots[0].keyframes[0].winner = "ORIGINAL.png";
+    const before = JSON.stringify(project);
+    const token = harness.gesture(() => kernel.beginManualAuthorityAction({ via: "probe", targets: [FRAME_TARGET] }));
+    try {
+      kernel.commitAuthorityTransaction(project, {
+        kind: "shot-frame", shotId: "SH-01", frameId: "fr-a", value: "NEW.png", at: "T", manualAction: token,
+        /* The 1C audit's callback: it closes over the live project, writes, and
+           throws. The command refused and the mutation stayed. */
+        applyEdge: () => { project.shots[0].keyframes[0].winner = "MUTATED-BY-CLOSURE"; throw new Error("edge failed"); },
+      });
+    } catch { /* a refusal is fine; WHETHER THE LIVE DOCUMENT MOVED is the question */ }
+    const winner = String(project.shots[0].keyframes[0].winner || "");
+    /* Held means: either the write succeeded normally (the callback was ignored
+       entirely, which is the 1D behaviour) or it refused and left the document
+       untouched. What must NEVER be true is the closure's value surviving. */
+    const held = winner !== "MUTATED-BY-CLOSURE";
+    return { reached: true, held, reason: held ? "callback-ignored" : `live-mutated(${winner})`, before };
+  },
+  reason: "live-mutated(MUTATED-BY-CLOSURE)",
+  explain: "JavaScript cannot stop a closure reaching what it closed over. The only way the boundary can be real is for the kernel to run no caller code at all.",
 });
 
 /* ===========================================================================
