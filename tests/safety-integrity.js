@@ -33,7 +33,17 @@ async function main() {
   assert(entities.includes("entityCandidateIsCoverageSheet(entity, item.name)"), "single-angle selectors must exclude complete sheets");
   assert(entities.includes("replacementHistory"), "coverage authority replacement must preserve history");
   assert(entities.includes("Run and pass AI review before approving"), "coverage approval must enforce the review gate");
-  assert(entities.includes("approved-expression"), "expression approvals must leave the candidate inbox");
+  /* BATCH 1C: the literal this used to match moved out of entities.js. The
+     property is unchanged — a candidate assigned to an expression slot must
+     leave the assignment queue — but the queue now asks one shared predicate
+     instead of matching two words inline, which is what let the rename to
+     `selected-expression` half-land in the first place. So the check follows
+     the logic: the queue consults the predicate, and the predicate knows both
+     the current word and the legacy one a pre-1C project still carries. */
+  assert(/coveragePassingAssignmentQueue[\s\S]{0,400}decisionIsSlotSelection\(row\.decision\)/.test(entities),
+    "expression and coverage assignments must leave the candidate inbox, via the shared predicate");
+  for (const word of ["selected-expression", "approved-expression", "selected-coverage", "approved-coverage"])
+    assert(require("../public/shared-entity-slots").decisionIsSlotSelection(word), `${word} must be recognised as an assignment`);
   assert(serverFal.includes('"sheet-ready-for-review"'), "sheet jobs need a terminal ready-for-review state");
   assert(serverFal.includes('"slot-candidates-ready"'), "slot jobs need a terminal ready-for-review state");
   assert(coverage.includes("paid request"), "fan-out generation must disclose paid request counts");
