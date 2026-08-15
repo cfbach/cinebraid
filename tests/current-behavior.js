@@ -391,6 +391,7 @@ async function main() {
     "deep-bot-safety.js",
     "dogfood2-p0-architecture.js",
     "dogfood2-p0-negative-controls.js",
+    "entity-derivation-authority.js",
     "entity-media-ownership.js",
     "external-test-readiness.js",
     "fal-generation.js",

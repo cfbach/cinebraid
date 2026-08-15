@@ -520,7 +520,16 @@ function continuityStateCandidateTray(list, entity, state, media) {
   const mediaJson = encodeURIComponent(JSON.stringify(rows));
   const parent = entityStateParentSummary(entity, state);
   const heading = state.isDefault ? "Primary-state candidates" : `${state.name || "State"} candidates`;
-  const source = state.isDefault ? "Main approved image" : parent?.fileName ? `Derived from approved ${parent.label}` : "Generated independently — approved parent unavailable";
+  /* "Derived from approved X" from a pointer was the copy half of the same
+     defect. The word waits on the receipt; the image is still named. */
+  const parentStanding = parent?.parent ? entityStateTruth(entityListOf(entity), entity).of(parent.parent) : { standing: "missing" };
+  const source = state.isDefault
+    ? "Main canon image"
+    : parentStanding.standing === "canon"
+      ? `Derived from approved ${parent.label}`
+      : parent?.fileName
+        ? `Generated independently — ${parent.label} has not been approved as canon`
+        : "Generated independently — no approved parent";
   return `<section class="continuity-candidate-tray"><header><div><span>GENERATED FOR THIS STATE</span><b>${esc(heading)}</b><small>${esc(source)} · review and approve here without leaving the Continuity tab.</small></div><strong>${rows.length}</strong></header>${rows.length ? `<div class="entity-media entity-candidate-grid continuity-candidate-grid">${rows.map((item,index)=>entityCandidateCard(list,entity,item,index,mediaJson,false)).join("")}</div>` : `<div class="entity-candidate-empty"><b>No unapproved candidates for ${esc(state.name || "this state")}</b><span>Generate or upload a state reference and it will appear here automatically.</span></div>`}</section>`;
 }
 
@@ -561,18 +570,28 @@ window.validateContinuityStateAgainstParent = async (list, id, stateId) => {
   const state = entityStateById(entity, stateId);
   const parentInfo = entityStateParentSummary(entity, state);
   if (!entity || !state || state.isDefault) return toast("Choose a derived continuity state");
-  if (!state.approvedFile || !parentInfo.fileName) return toast("Approve both the parent and target state first");
+  /* VALIDATION ASSERTS APPROVAL ON BOTH SIDES, so both sides must actually be
+     approved. This checked pointer presence and then submitted the pair to the
+     reviewer as the approved target and its approved parent. */
+  const stateTruth = entityStateTruth(list, entity);
+  const targetStanding = stateTruth.of(state);
+  const parentStanding = parentInfo.parent ? stateTruth.of(parentInfo.parent) : { standing: "missing", file: "" };
+  if (targetStanding.standing !== "canon" || parentStanding.standing !== "canon") {
+    return toast(targetStanding.standing === "historic" || parentStanding.standing === "historic"
+      ? "Approve both the parent and this state as canon before validating them against each other"
+      : "Approve both the parent and target state first");
+  }
   if (!String(state.notes || "").trim()) return toast("Describe the allowed state delta first");
   const capability = capabilityState("vision");
   if (!capability.ready) return toast(capability.message || "Vision assistant is unavailable");
-  state.parentValidation = { status: "working", targetFile: state.approvedFile, parentFile: parentInfo.fileName, stateDelta: String(state.notes || "").trim(), reviewedAt: new Date().toISOString() };
+  state.parentValidation = { status: "working", targetFile: targetStanding.file, parentFile: parentStanding.file, stateDelta: String(state.notes || "").trim(), reviewedAt: new Date().toISOString() };
   dirty(); route();
   try {
     if (typeof flushPendingProjectSave === "function") await flushPendingProjectSave();
     const response = await fetch("/api/llm/review-entity-candidate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ list, id, fileName: state.approvedFile, stateId: state.id }) });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || "State validation failed");
-    state.parentValidation = { status: "complete", review: data.review, targetFile: state.approvedFile, parentFile: parentInfo.fileName, stateDelta: String(state.notes || "").trim(), reviewedAt: new Date().toISOString(), inputLabels: data.inputLabels || [], authoritySignature: data.authoritySignature || data.review?.authoritySignature || "" };
+    state.parentValidation = { status: "complete", review: data.review, targetFile: targetStanding.file, parentFile: parentStanding.file, stateDelta: String(state.notes || "").trim(), reviewedAt: new Date().toISOString(), inputLabels: data.inputLabels || [], authoritySignature: data.authoritySignature || data.review?.authoritySignature || "" };
     dirty(); route();
     toast(data.review?.pass ? `${state.name || "State"} passed parent continuity` : `${state.name || "State"} needs continuity correction`);
   } catch (error) {
@@ -584,7 +603,17 @@ window.correctContinuityStateFromParent = async (list, id, stateId) => {
   const entity = P[list]?.find((item) => item.id === id);
   const state = entityStateById(entity, stateId);
   const parentInfo = entityStateParentSummary(entity, state);
-  if (!entity || !state || state.isDefault || !parentInfo.fileName) return toast("Approve the parent state first");
+  if (!entity || !state || state.isDefault) return toast("Choose a derived continuity state");
+  /* CORRECTION SWITCHES THE STATE INTO DERIVE, which is a derivation decision
+     and needs the same canon the generation path needs. It read
+     `parentInfo.fileName` — pointer presence — and set `generationMode` from a
+     parent nobody had approved. */
+  const correctionParent = parentInfo.parent ? entityStateTruth(list, entity).of(parentInfo.parent) : { standing: "missing", file: "" };
+  if (correctionParent.standing !== "canon") {
+    return toast(correctionParent.standing === "historic"
+      ? `${correctionParent.file} is on ${parentInfo.label} but has never been approved as canon. Approve it before correcting from it.`
+      : "Approve the parent state first");
+  }
   state.generationMode = "derive";
   /* BATCH 1C: correcting from the parent READS the parent; it does not declare
      one. The correction runs against whatever derivation the state really has. */
@@ -1290,8 +1319,8 @@ function entityAuthoritySummaryMarkup(list, entity, states, mediaByName, selecte
        continuity state. Inspecting it is the question a filmmaker actually has here
        ("what is this the authority for, and who approved it"), so the click opens the
        Inspector; its own Open-full-preview covers the old behaviour. */
-    const previewAction = media ? `inspectMediaFile('${attr(encodeURIComponent(media.url))}','${attr(media.assetId || "")}','${attr(encodeURIComponent(`${state.name || "Default"} canon image · ${fileName}`))}','${isVideo(media.name) ? "video" : "image"}')` : openState;
-    return `<article class="entity-authority-row ${media && isCanon ? "ready" : media ? "historic" : "missing"} ${isSheet?"is-sheet":""}"><button type="button" class="entity-authority-thumb-button" onclick="${previewAction}" aria-label="${media ? `Preview approved ${attr(state.name || "state")} authority` : `Open ${attr(state.name || "state")}`}"><span class="entity-authority-thumb">${media ? (isVideo(media.name) ? `<video muted src="${attr(media.url)}"></video>` : `<img src="${attr(media.url)}" alt="">`) : "—"}</span><small>${media ? "INSPECT" : "MISSING"}</small></button><button type="button" class="entity-authority-details" onclick="${openState}"><span><b>${esc(state.name || "Default")}</b><small>${fileName ? `${esc(fileName)}${esc(approvalNote)}` : "No approved image yet"}</small></span><em>${isSheet?"MULTI-VIEW SHEET":media?"APPROVED":"MISSING"}</em></button>${isSheet ? `<button type="button" class="chip entity-authority-extract" onclick="openCoverageSheetExtractor('${attr(list)}','${attr(entity.id)}','${attr(fileName)}')">EXTRACT VIEWS</button>` : ""}</article>`;
+    const previewAction = media ? `inspectMediaFile('${attr(encodeURIComponent(media.url))}','${attr(media.assetId || "")}','${attr(encodeURIComponent(`${state.name || "Default"} ${isCanon ? "canon" : "historic"} image · ${fileName}`))}','${isVideo(media.name) ? "video" : "image"}')` : openState;
+    return `<article class="entity-authority-row ${media && isCanon ? "ready" : media ? "historic" : "missing"} ${isSheet?"is-sheet":""}"><button type="button" class="entity-authority-thumb-button" onclick="${previewAction}" aria-label="${!media ? `Open ${attr(state.name || "state")}` : isCanon ? `Preview the approved ${attr(state.name || "state")} canon image` : `Preview the historic ${attr(state.name || "state")} image, which has not been approved`}"><span class="entity-authority-thumb">${media ? (isVideo(media.name) ? `<video muted src="${attr(media.url)}"></video>` : `<img src="${attr(media.url)}" alt="">`) : "—"}</span><small>${media ? "INSPECT" : "MISSING"}</small></button><button type="button" class="entity-authority-details" onclick="${openState}"><span><b>${esc(state.name || "Default")}</b><small>${fileName ? `${esc(fileName)}${esc(approvalNote)}` : "No approved image yet"}</small></span><em>${isSheet?"MULTI-VIEW SHEET":!media?"MISSING":isCanon?"CANON":"HISTORIC"}</em></button>${isSheet ? `<button type="button" class="chip entity-authority-extract" onclick="openCoverageSheetExtractor('${attr(list)}','${attr(entity.id)}','${attr(fileName)}')">EXTRACT VIEWS</button>` : ""}</article>`;
   }).join("");
   return `<section class="entity-authority-summary"><header><div><span class="entity-authority-label">CANON IMAGES</span>${rows ? authorityStatus : `<b class="entity-authority-status"><span>No states</span></b>`}</div></header><div>${rows}</div></section>`;
 }

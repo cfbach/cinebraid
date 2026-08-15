@@ -52,6 +52,7 @@ const nodeSuites = [
      correction runner, and fails on durable false state or on a provider being
      contacted — never on a helper's return value. */
   "check:dogfood2-architecture",
+  "check:entity-derivation",
   "check:reference-aspect",
   "check:recovery",
   "check:bounded",

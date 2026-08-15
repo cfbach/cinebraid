@@ -363,9 +363,13 @@ window.openFalEntityGenerationModal = (list, entityId, buildId = "", stateId = "
   const builds = state ? assetStatePromptBuilds(state) : assetPromptBuilds(entity);
   const build = builds.find((item) => item.id === buildId) || builds.at(-1);
   if (!build?.prompt) return toast("Build the reference prompt first");
-  const requestedMode = state ? assetStateGenerationMode(entity, state) : "independent";
+  /* ONE READER. This asked `parentInfo?.media` — does the parent HAVE an image —
+     so a historic parent opened the modal in derive mode and everything
+     downstream inherited it. */
+  const derivation = state ? assetStateDerivation(list, entity, state) : null;
+  const requestedMode = derivation ? derivation.requested : "independent";
   const parentInfo = state ? assetStateParentMedia(list, entity, state) : null;
-  const effectiveMode = state && !state.isDefault && requestedMode === "derive" && parentInfo?.media ? "derive" : "independent";
+  const effectiveMode = derivation ? derivation.mode : "independent";
   const refs = entityGenerationReferences(list, entity, { state, mode: effectiveMode });
   const cfg = falGenerationConfig(), count = Number(cfg.frameOutputs || 2), quality = cfg.frameQuality || "high", resolution = falResolutionValue("frame");
   const typeLabel = { characters: "character", locations: "location", props: "prop", vehicles: "vehicle" }[list] || "entity";
@@ -391,9 +395,9 @@ window.generateMoreEntityStateCandidates = async (list, entityId, stateId, build
   const builds = state ? assetStatePromptBuilds(state) : assetPromptBuilds(entity);
   const build = (buildId && builds.find((item) => item.id === buildId)) || builds.at(-1);
   if (!build?.prompt) return toast("Build the state prompt first");
-  const requestedMode = state ? assetStateGenerationMode(entity, state) : "independent";
-  const parentInfo = state ? assetStateParentMedia(list, entity, state) : null;
-  const effectiveMode = state && !state.isDefault && requestedMode === "derive" && parentInfo?.media ? "derive" : "independent";
+  const derivation = assetStateDerivation(list, entity, state);
+  const parentInfo = assetStateParentMedia(list, entity, state);
+  const effectiveMode = derivation.mode;
   const references = entityGenerationReferences(list, entity, { state, mode: effectiveMode });
   const body = {
     purpose: "entity-reference",
@@ -404,7 +408,9 @@ window.generateMoreEntityStateCandidates = async (list, entityId, stateId, build
     continuityStateName: state?.name || "",
     parentStateId: parentInfo?.parent?.id || "",
     parentStateName: parentInfo?.parent?.name || "",
-    parentApprovedFile: effectiveMode === "derive" ? parentInfo?.file || "" : "",
+    /* CANON ONLY. `parentInfo.file` is the parent image whatever its standing;
+       `derivation.file` is populated only when a receipt stands behind it. */
+    parentApprovedFile: derivation ? derivation.file : "",
     derivationMode: effectiveMode,
     sourceBuildId: build.id,
     profileId: build.profileId || "",
@@ -440,8 +446,12 @@ window.startFalEntityGeneration = async () => {
   const builds = entity ? (state ? assetStatePromptBuilds(state) : assetPromptBuilds(entity)) : [];
   const build = builds.find((item) => item.id === request.buildId);
   if (!entity || !build?.prompt) return toast("Reference prompt is unavailable");
+  const derivation = state ? assetStateDerivation(request.list, entity, state) : null;
   const parentInfo = state ? assetStateParentMedia(request.list, entity, state) : null;
-  const effectiveMode = state && !state.isDefault && request.requestedMode === "derive" && parentInfo?.media ? "derive" : "independent";
+  /* THE DISPATCH BOUNDARY DECIDES FOR ITSELF. `request.requestedMode` was
+     captured when the modal opened; the receipt behind the parent may have been
+     revoked since, and a paid request must not inherit a stale readiness. */
+  const effectiveMode = derivation ? derivation.mode : "independent";
   const references = entityGenerationReferences(request.list, entity, { state, mode: effectiveMode });
   const body = {
     purpose: "entity-reference",
@@ -452,7 +462,9 @@ window.startFalEntityGeneration = async () => {
     continuityStateName: state?.name || "",
     parentStateId: parentInfo?.parent?.id || "",
     parentStateName: parentInfo?.parent?.name || "",
-    parentApprovedFile: effectiveMode === "derive" ? parentInfo?.file || "" : "",
+    /* CANON ONLY. `parentInfo.file` is the parent image whatever its standing;
+       `derivation.file` is populated only when a receipt stands behind it. */
+    parentApprovedFile: derivation ? derivation.file : "",
     derivationMode: effectiveMode,
     sourceBuildId: build.id,
     profileId: build.profileId || "",

@@ -399,11 +399,53 @@ function assetStateParentMedia(list, entity, state) {
  * production output — the pointer becomes authority by being edited. A historic
  * parent still travels as context (public/fal-generation.js sends it under
  * `historic-reference`); it does not put the compiler into edit mode. */
+/* ============================================================================
+ * THE ONE DERIVATION READER.
+ *
+ * "May this state derive from its parent, and from which bytes" was recomputed
+ * in five places — the state card, the generation modal, the more-candidates
+ * path, the paid dispatch, and the compiler — and every one of them asked
+ * `!!parentInfo.media`: does the parent HAVE an image. A historic parent has
+ * one, so a pointer nobody approved became the editable base of production
+ * output, populated `parentApprovedFile`, and shipped as `role: "base"`.
+ *
+ * There is one answer now, and it is a thin reader over the receipt-backed
+ * projection — `assetStateParentMedia` already resolves the parent's standing
+ * from `entityProductionTruth`. This adds no authority architecture; it removes
+ * four independent re-derivations of one question.
+ *
+ *   canDerive    the ONLY thing that may enable derive/edit, an approved base,
+ *                validation-as-approval, correction-into-derive, or dispatch
+ *   file         the parent bytes, POPULATED ONLY WHEN CANON. This is what
+ *                `parentApprovedFile` is allowed to be.
+ *   contextFile  the parent image whatever its standing, for display and for
+ *                non-authoritative context. Never an approved base.
+ *   reason       why derivation is unavailable, so a surface can say it
+ * ========================================================================== */
+function assetStateDerivation(list, entity, state) {
+  if (!state || state.isDefault) {
+    return { requested: "independent", mode: "independent", canDerive: false, parent: null, standing: "none", file: "", contextFile: "", media: null, reason: "default-state" };
+  }
+  const requested = assetStateGenerationMode(entity, state);
+  const info = assetStateParentMedia(list, entity, state);
+  const canDerive = requested === "derive" && !!info.media && info.standing === "canon";
+  return {
+    requested,
+    mode: canDerive ? "derive" : "independent",
+    canDerive,
+    parent: info.parent,
+    standing: info.standing,
+    file: canDerive ? info.file : "",
+    contextFile: info.file,
+    media: info.media,
+    reason: !info.parent ? "no-parent"
+      : !info.media ? "parent-has-no-image"
+        : info.standing !== "canon" ? "parent-not-canon"
+          : requested !== "derive" ? "independent-by-choice" : "",
+  };
+}
 function assetStatePromptMode(list, entity, state) {
-  if (!state || state.isDefault) return "t2i";
-  const mode = assetStateGenerationMode(entity, state);
-  const parentInfo = assetStateParentMedia(list, entity, state);
-  return mode === "derive" && !!parentInfo.media && parentInfo.standing === "canon" ? "edit" : "t2i";
+  return assetStateDerivation(list, entity, state).canDerive ? "edit" : "t2i";
 }
 function assetStatePromptProfile(list, entity, state) {
   const mode = assetStatePromptMode(list, entity, state);
@@ -438,10 +480,11 @@ function assetStatePromptStudio(list, entity, state) {
   const operation = guidedPromptOp("asset-state", `${list}:${entity.id}`, state.id);
   const busy = operation?.status === "busy";
   const action = operation?.action || "compile";
-  const mode = assetStateGenerationMode(entity, state);
+  const derivation = assetStateDerivation(list, entity, state);
+  const mode = derivation.requested;
   const parentInfo = assetStateParentMedia(list, entity, state);
-  const deriveReady = mode === "derive" && !!parentInfo.media;
-  const effectiveMode = deriveReady ? "derive" : "independent";
+  const deriveReady = derivation.canDerive;
+  const effectiveMode = derivation.mode;
   const promptMode = assetStatePromptMode(list, entity, state);
   const selected = assetStatePromptProfile(list, entity, state);
   const sectionKey = `entity:${list}:${entity.id}:state-generation:${state.id}`;
@@ -454,6 +497,8 @@ function assetStatePromptStudio(list, entity, state) {
     ? `<div class="entity-state-generation-status independent"><b>BASE REFERENCE</b><span>Creates the main approved design from the reference’s canon description.</span></div>`
     : deriveReady
       ? `<div class="entity-state-generation-status derive"><b>DERIVE FROM ${esc((parentInfo.parent?.name || "PARENT").toUpperCase())}</b><span>${esc(parentInfo.file)} is used as the editable identity/design base.</span></div>`
+      : mode === "derive" && derivation.reason === "parent-not-canon"
+        ? `<div class="entity-state-generation-status warning"><b>PARENT NOT APPROVED</b><span>${esc(derivation.contextFile)} is on ${esc(parentInfo.parent?.name || "the parent state")} but nobody has approved it as canon, so CineBraid will create independently. Approve it to derive from it.</span></div>`
       : mode === "derive"
         ? `<div class="entity-state-generation-status warning"><b>PARENT REFERENCE MISSING</b><span>CineBraid will create independently until ${esc(parentInfo.parent?.name || "the parent state")} has an approved image.</span></div>`
         : `<div class="entity-state-generation-status independent"><b>CREATE INDEPENDENTLY</b><span>Uses the reference’s canon description and this state’s changes, with no parent image to edit.</span></div>`;

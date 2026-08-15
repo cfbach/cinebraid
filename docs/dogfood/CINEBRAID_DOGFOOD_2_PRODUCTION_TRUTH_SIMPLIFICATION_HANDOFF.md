@@ -6,6 +6,34 @@ pass deletes the architecture the guards were guarding.
 
 ---
 
+## 0. CORRECTION TO THIS DOCUMENT
+
+Two claims made in earlier revisions of this handoff were **weaker than they
+read**, and are withdrawn here rather than carried forward:
+
+1. **The "32-sink authority inventory" was not exhaustive.** It was produced by
+   grep and reasoning over field names, not by tracing execution, and it did not
+   prove closure. It missed the entire entity-state derivation subsystem — five
+   independent recomputations of "can this derive" in `fal-generation.js` and
+   `creation-studio.js` — because those ask `!!parentInfo.media` and name no
+   approval field a grep would match. Do not read that table as complete. The
+   bounded, traced replacement for the subsystem it missed is
+   `docs/dogfood/ENTITY_DERIVATION_DECISION_TABLE.md`.
+
+2. **One closure regression was falsely green.** The "historic parent cannot
+   reach paid dispatch" test never called the shipped dispatch path; it wrote
+   its own `if (standing !== "canon") throw` inside the test and asserted its
+   own throw. It would have passed against a product with no guard at all, and
+   it did — `startFalEntityGeneration` was deriving from historic media
+   throughout. Its mutation control passed for the same reason: mutating code
+   the test never invoked could not affect it. It is replaced by
+   `tests/entity-derivation-authority.js`, where every check calls the shipped
+   function and the paid paths are captured at the transport boundary.
+
+The rest of this document stands, with those two claims struck.
+
+---
+
 ## 1. Branch
 
 `fix/dogfood2-production-truth-simplification`
