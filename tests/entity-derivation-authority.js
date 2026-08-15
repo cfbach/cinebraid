@@ -33,13 +33,13 @@ const TINY = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width
 const PARENT_FILE = "PR-TOOL-PLATE.png";
 const SCAN = {
   anchors: [], plates: [], vehicles: [], audio: [], media: [], shots: {},
-  props: [{ name: PARENT_FILE, url: TINY, assetId: "asset-P" }],
+  props: [{ name: PARENT_FILE, url: TINY, assetId: "asset-P" }, { name: "PR-TOOL-WORN.png", url: TINY, assetId: "asset-W" }],
 };
 
 /* A prop whose default state holds an image, and a child that derives from it.
    `canon: true` gives the default state a receipt; `false` leaves it HISTORIC,
    which is the shape of every pre-receipt project. */
-function derivationProject({ canon }) {
+function derivationProject({ canon, stateFile = "" }) {
   const project = rawFixture();
   const prop = project.props.find((row) => row.id === "PR-TOOL") || project.props[0];
   prop.id = "PR-TOOL";
@@ -52,7 +52,7 @@ function derivationProject({ canon }) {
     { id: "state-default", name: "Default", isDefault: true, approvedFile: PARENT_FILE, approvedAssetId: canon ? "asset-P" : "", notes: "Clean tool." },
     {
       id: "state-worn", name: "Worn", isDefault: false, parentStateId: "state-default",
-      approvedFile: "", notes: "Scratched casing and chipped grip.", generationMode: "derive",
+      approvedFile: stateFile, notes: "Scratched casing and chipped grip.", generationMode: "derive",
       assetPromptBuilds: [{
         id: "build-worn", date: "2026-08-15T00:00:00.000Z", stateId: "state-worn", stateName: "Worn",
         profileId: "gpt-image-2/edit", profileName: "GPT Image 2 · Reference Edit",
@@ -69,10 +69,11 @@ function derivationProject({ canon }) {
 
 /* Render the prop page with FAL enabled and the provider transport doubled.
    `sent` collects every generation request the product actually issued. */
-async function page({ canon, task = "states" }) {
+async function page({ canon, task = "states", mutateSource, stateFile }) {
   const sent = [];
-  const rendered = await render("#/prop/PR-TOOL", derivationProject({ canon }), {
+  const rendered = await render("#/prop/PR-TOOL", derivationProject({ canon, stateFile }), {
     scan: SCAN,
+    mutateSource,
     /* Open the continuity-state workspace and the derived state's generation
        card — the surfaces whose readiness copy is under test. */
     storage: {
@@ -286,7 +287,216 @@ async function main() {
     eq(compiled.promptMode, "t2i", "and never requests an edit profile for one");
   }
 
-  console.log(`Entity derivation authority suite passed ${checks} checks: prompt mode, more-candidates, paid dispatch, generation references, readiness copy, validation, correction, row semantics and compiler request — every one through the shipped path. Provider calls made: 0.`);
+  /* =========================================================================
+     10 — THE AUTOMATION DISPATCH BOUNDARY, entered through the shipped run.
+
+     v626AutomateEntityState already refuses a historic parent up front. That
+     check runs BEFORE the prompt is compiled and improved, and those are two
+     network round trips — a window in which the creator can revoke the very
+     approval the run is about to spend money on. Before this pass the request
+     built after that window hard-coded derive mode for any non-default state,
+     so a revoked receipt still produced a paid edit request against the
+     parent's bytes.
+
+     This test does not simulate the window. It enters the shipped run function
+     with an APPROVED parent, so every earlier guard passes for real, and
+     revokes the receipt inside the fetch double answering the improvement
+     request — precisely where a person clicking Revoke would land. Then it
+     reads what, if anything, reached the transport. */
+  {
+    /* The transport double aborts the run the moment a paid request appears,
+       so the assertion is about the request body and nothing beyond it runs. */
+    async function automationRun({ revokeDuringImprove, mutateSource }) {
+      const sent = [];
+      const seen = [];
+      let rendered = null;
+      let revoked = false;
+      rendered = await render("#/prop/PR-TOOL", derivationProject({ canon: true }), {
+        scan: SCAN,
+        mutateSource,
+        fetch: async (url, options, respond) => {
+          const method = (options && options.method) || "GET";
+          seen.push(method + " " + url);
+          if (url === "/api/generation/fal/status") return respond({ enabled: true, configured: true, defaults: {} });
+          if (url.indexOf("/api/automation/runs") === 0) {
+            return respond({ ok: true, run: JSON.parse((options && options.body) || "{}") });
+          }
+          if (url === "/api/prompt/asset-compile") {
+            const body = JSON.parse((options && options.body) || "{}");
+            const answer = respond({
+              ok: true,
+              compiledPrompt: "COMPILED WORN STATE INSTRUCTION",
+              state: { parentStateId: body.parentStateId || "", parentStateName: "Default", generationMode: body.generationMode || "" },
+              warnings: [], confirmations: [], profileId: body.profileId || "",
+            });
+            /* THE WINDOW. The prompt compile is a real network round trip that
+               happens AFTER the run's up-front parent check and BEFORE the paid
+               request is built. A revocation landing here is a real creator
+               action mid-run, not a test-authored guard. */
+            if (revokeDuringImprove && !revoked) {
+              revoked = true;
+              vm.runInContext(
+                /* clearEdge:false is the HISTORIC shape exactly: the receipt is
+                   withdrawn, the creator's chosen image stays on the state. */
+                'revokeEntityStateCanon(P, { list: "props", entityId: "PR-TOOL", stateId: "state-default", clearEdge: false, reason: "withdrawn" });',
+                rendered.context,
+              );
+            }
+            return answer;
+          }
+          if (url === "/api/generation/fal/jobs" && method === "POST") {
+            sent.push(JSON.parse((options && options.body) || "{}"));
+            /* Stop here. What was collected is what CineBraid tried to buy. */
+            throw new Error("HALT-AT-TRANSPORT");
+          }
+          return null;
+        },
+      });
+      vm.runInContext(
+        'CONFIG.generation = CONFIG.generation || {}; CONFIG.generation.fal = { enabled: true, apiKey: "t" };'
+        + ' CONFIG.ai = CONFIG.ai || {}; CONFIG.ai.text = { provider: "local", model: "m", baseUrl: "http://127.0.0.1:1" };'
+        + ' pollFalGeneration = () => {}; toast = () => {}; route = () => {};',
+        rendered.context,
+      );
+      let error = "";
+      try {
+        await vm.runInContext(
+          '(async () => { const run = v626NewRun("entity", "PR-TOOL", "main", "Worn", "auto",'
+          + ' { list: "props", entityId: "PR-TOOL", stateIds: ["state-worn"], reuseApproved: false, outputsPerRequest: 1, stateRounds: 1, maxImages: 4 });'
+          + ' run.runnerId = V627_AUTOMATION_RUNNER_ID; run.leaseExpiresAt = new Date(Date.now() + 600000).toISOString();'
+          + ' await v626AutomateEntityState(run, "props", "PR-TOOL", "state-worn"); })()',
+          rendered.context,
+        );
+      } catch (thrown) { error = String((thrown && thrown.message) || thrown); }
+      const standing = vm.runInContext(
+        'assetStateParentMedia("props", P.props[0], P.props[0].continuityStates.find((r) => r.id === "state-worn")).standing',
+        rendered.context,
+      );
+      return { sent, seen, error, revoked, standing };
+    }
+
+    /* 10a — the shipped product. The receipt is revoked mid-run; nothing is
+       bought, and the refusal names the parent. */
+    const revoked = await automationRun({ revokeDuringImprove: true });
+    ok(revoked.seen.some((entry) => entry.indexOf("/api/prompt/asset-compile") >= 0),
+      "the run really did compile a prompt — the earlier guards passed on an approved parent");
+    ok(revoked.revoked, "and the approval really was revoked while that request was in flight");
+    eq(revoked.standing, "historic", "the parent kept its image and lost only its receipt — the historic shape");
+    eq(revoked.sent.length, 0, "and after the approval was revoked mid-run, NO paid request was made");
+    ok(/never|not .*approved|approve it/i.test(revoked.error),
+      "the run stopped with a reason the creator can act on: " + revoked.error);
+
+    /* 10b — the same run, approval intact. The boundary is not simply refusing
+       everything: a live receipt still derives, and the request says so. */
+    const intact = await automationRun({ revokeDuringImprove: false });
+    eq(intact.sent.length, 1, "with the approval still standing, the run does reach the transport");
+    eq(intact.sent[0].derivationMode, "derive", "and asks to derive");
+    eq(intact.sent[0].parentApprovedFile, PARENT_FILE, "naming the approved parent bytes");
+
+    /* 10c — THE MUTATION CONTROL. Put the hard-coded mode back, in memory, and
+       run the identical revoked scenario. If the boundary were not doing the
+       work, this is the paid request that would go out. */
+    const unguarded = await automationRun({
+      revokeDuringImprove: true,
+      mutateSource: (file, source) => file !== "automation.js" ? source : source
+        .replace(
+          'const derivationMode = dispatchDerivation && dispatchDerivation.canDerive ? "derive" : "independent";',
+          'const derivationMode = state.isDefault ? "independent" : "derive";',
+        )
+        .replace(
+          'if (dispatchDerivation && !dispatchDerivation.canDerive && dispatchDerivation.reason === "parent-not-canon") {',
+          'if (false) {',
+        )
+        .replace(
+          'parentApprovedFile: dispatchDerivation ? dispatchDerivation.file : "",',
+          'parentApprovedFile: derivationMode === "derive" ? parentInfo?.file || "" : "",',
+        ),
+    });
+    eq(unguarded.sent.length, 1, "CONTROL: without the boundary the revoked run DOES reach the transport");
+    eq(unguarded.sent[0].derivationMode, "derive", "CONTROL: asking to derive from a revoked parent");
+    eq(unguarded.sent[0].parentApprovedFile, PARENT_FILE, "CONTROL: and naming its bytes as approved");
+  }
+  /* =========================================================================
+     11 — MUTATION CONTROLS FOR THE PRESENTATION AND READINESS SURFACES.
+
+     Section 6 to 8 assert what four independently-painted surfaces say about a
+     historic state. An assertion that a string is absent proves nothing unless
+     something could have produced it. Each control below reverts ONE shipped
+     guard to the raw-pointer test it replaced — in memory, in the file the page
+     actually loads — runs the same historic project through the same shipped
+     renderer, and requires the false claim to come back.
+
+     A control that fails is not a broken test. It means the assertion beside it
+     is vacuous and the guard it names is not doing the work. */
+  {
+    const HELD = "PR-TOOL-WORN.png";
+    const revert = (needle, replacement) => (file, source) => {
+      if (file !== "entities.js") return source;
+      if (source.indexOf(needle) < 0) throw new Error("CONTROL could not find the guard it must break: " + needle.slice(0, 60));
+      return source.split(needle).join(replacement);
+    };
+    const hubOf = (rendered) => {
+      evaluate(rendered, 'openContinuityStateVariantHub("props", "PR-TOOL")');
+      return evaluate(rendered, 'document.getElementById("modal").innerHTML');
+    };
+
+    /* H1 — the hub's variant label. A raw pointer wins again. */
+    /* Several of these need the STATE to hold a pointer of its own, receiptless —
+       the shape the surfaces were reading straight off. */
+    const hubLabel = await page({
+      canon: false, stateFile: HELD,
+      mutateSource: revert(
+        'const label = standing === "canon" ? "CANON VARIANT"',
+        'const label = state.approvedFile ? "APPROVED VARIANT" : standing === "canon" ? "CANON VARIANT"',
+      ),
+    });
+    ok(/APPROVED VARIANT/.test(hubOf(hubLabel)),
+      "CONTROL H1: reverting the hub label to the raw pointer must badge a receiptless variant APPROVED");
+
+    /* H2 — the hub's derive readiness. */
+    const hubReady = await page({
+      canon: false,
+      mutateSource: revert('const ready = parentStanding === "canon";', 'const ready = !!parentInfo.fileName;'),
+    });
+    ok(/READY TO DERIVE/.test(hubOf(hubReady)),
+      "CONTROL H2: reverting hub readiness to parent-pointer presence must offer derive from an unapproved parent");
+
+    /* H3 — the validation workspace's readiness. */
+    const validationReady = await page({
+      canon: false, stateFile: HELD,
+      mutateSource: revert(
+        'const ready = !!(targetIsCanon && parentIsCanon && targetMedia && parentMedia && String(state.notes || "").trim());',
+        'const ready = !!(targetMedia && parentMedia && String(state.notes || "").trim());',
+      ),
+    });
+    const validationHtml = evaluate(validationReady, 'document.getElementById("main").innerHTML');
+    ok(/Validate the approved state against its parent/.test(validationHtml),
+      "CONTROL H3: reverting validation readiness to media presence must frame two unapproved images as approved");
+
+    /* H4 — the hero's accessibility text. */
+    const heroAlt = await page({
+      canon: false, stateFile: HELD,
+      mutateSource: revert(
+        'alt="${selectedIsCanon ? `Approved canon image for ${attr(st.name || "state")}` : `Historic image for ${attr(st.name || "state")}, not approved`}"',
+        'alt="Approved ${attr(st.name || "state")}"',
+      ),
+    });
+    const heroHtml = evaluate(heroAlt, 'document.getElementById("main").innerHTML');
+    ok(/alt="Approved Worn"/.test(heroHtml),
+      "CONTROL H4: reverting the hero alt text must describe an unapproved image as approved to a screen reader");
+
+    /* H5 — the head action offered on the state. */
+    const headAction = await page({
+      canon: false,
+      mutateSource: revert(
+        '${selectedIsCanon ? "EDIT / REGENERATE" : selectedParentIsCanon ? `GENERATE FROM ${esc(parentInfo.label.toUpperCase())}` : "OPEN STATE WORKFLOW"}',
+        '${st.approvedFile ? "EDIT / REGENERATE" : `GENERATE FROM ${esc(parentInfo.label.toUpperCase())}`}',
+      ),
+    });
+    ok(/GENERATE FROM DEFAULT/.test(evaluate(headAction, 'document.getElementById("main").innerHTML')),
+      "CONTROL H5: reverting the head action must offer generation from a parent that was never approved");
+  }
+  console.log(`Entity derivation authority suite passed ${checks} checks: prompt mode, more-candidates, paid dispatch, generation references, readiness copy, validation, correction, row semantics, compiler request and the automation dispatch boundary — every one through the shipped path, with fifteen source-mutation controls. Provider calls made: 0.`);
 }
 
 main().catch((error) => {

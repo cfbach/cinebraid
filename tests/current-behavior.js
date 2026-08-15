@@ -393,6 +393,7 @@ async function main() {
     "dogfood2-p0-negative-controls.js",
     "entity-derivation-authority.js",
     "entity-media-ownership.js",
+    "entity-truth-surfaces-real-browser.py",
     "external-test-readiness.js",
     "fal-generation.js",
     "fixtures",
@@ -582,6 +583,35 @@ async function main() {
     const html = read(`public/${page}`);
     const loadedScripts = [...html.matchAll(/<script src="([^"?]+\.js)/g)].map((match) => match[1]);
     assert(loadedScripts.length, `expected ${page} to load frontend scripts, found none`);
+    /* LOAD ORDER IS A CONTRACT, NOT A STYLE.
+
+       shared-production-media.js binds the authority reader ONCE, at load, from
+       `window.CineBraidAuthorityKernel`. It shipped loaded before the kernel, so
+       that reader was null and `receiptBackedEdges` returned nothing: every
+       approved file in Generated Media and the Universal Media Inspector was
+       classified HISTORIC in the real browser. No Node suite could see it,
+       because require() resolves a dependency whatever the page order is.
+
+       Any module that captures a global at load time needs that global to exist
+       first. This pins the two pairs that do. */
+    if (page === "index.html") {
+      const at = (name) => loadedScripts.indexOf(name);
+      for (const [dependency, dependent, why] of [
+        ["shared-authority-kernel.js", "shared-production-media.js",
+          "the projection binds the authority reader at load; without it every approved file reads HISTORIC"],
+        ["shared-media-disposition.js", "shared-production-media.js",
+          "the projection binds the P4 partition at load"],
+        ["shared-authority-kernel.js", "shared-production-authority.js",
+          "the wrapper reads the kernel namespace at load"],
+      ]) {
+        assert(at(dependency) >= 0 && at(dependent) >= 0,
+          `index.html must load both ${dependency} and ${dependent}`);
+        assert(at(dependency) < at(dependent),
+          `index.html loads ${dependent} before ${dependency}, and ${why}. ` +
+          "Move the dependency above it, and mirror the order in tests/render-harness.js SCRIPT_ORDER.");
+      }
+    }
+
     if (page === "index.html")
       assert(loadedScripts.length > 30, `expected index.html to load the frontend scripts, found ${loadedScripts.length}`);
     for (const name of loadedScripts)

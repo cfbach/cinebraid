@@ -47,6 +47,7 @@ const SUITES = [
   "check:production-media-browser",
   "check:candidate-review-browser",
   "check:focused-browser",
+  "check:entity-truth-browser",
   "check:state-binding-browser",
   "check:alpha-loop-browser",
 ];

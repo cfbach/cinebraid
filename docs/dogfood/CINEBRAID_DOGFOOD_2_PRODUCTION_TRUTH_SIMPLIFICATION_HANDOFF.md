@@ -18,7 +18,7 @@ read**, and are withdrawn here rather than carried forward:
    `creation-studio.js` — because those ask `!!parentInfo.media` and name no
    approval field a grep would match. Do not read that table as complete. The
    bounded, traced replacement for the subsystem it missed is
-   `docs/dogfood/ENTITY_DERIVATION_DECISION_TABLE.md`.
+   `docs/dogfood/ENTITY_TRUTH_SURFACE_MATRIX.md`.
 
 2. **One closure regression was falsely green.** The "historic parent cannot
    reach paid dispatch" test never called the shipped dispatch path; it wrote
@@ -30,7 +30,17 @@ read**, and are withdrawn here rather than carried forward:
    `tests/entity-derivation-authority.js`, where every check calls the shipped
    function and the paid paths are captured at the transport boundary.
 
-The rest of this document stands, with those two claims struck.
+3. **The decision table that replaced claim 1 was itself too narrow.** It traced
+   one question — *can this derive?* — and traced it correctly, but derivation is
+   only one of four things a surface decides. Presentation, readiness and side
+   effect were still being decided independently from raw pointers, so a state
+   the generator refused to derive could be captioned "Approved", offered a
+   VALIDATE button and badged APPROVED VARIANT on the same screen. The table is
+   deleted and replaced by the four-column
+   `docs/dogfood/ENTITY_TRUTH_SURFACE_MATRIX.md`, whose unit is a surface rather
+   than a decision.
+
+The rest of this document stands, with those three claims struck.
 
 ---
 
@@ -427,3 +437,149 @@ implemented and the one limitation this alpha accepts.
   three were added (the map, the deferrals note, this handoff).
 - **`main` untouched. Nothing merged.** The branch is pushed for independent
   Codex acceptance.
+
+---
+
+# 28. Entity Truth Surface Alignment (final correction pass)
+
+Codex accepted the derivation fix and found the next layer: **derivation was
+Canon-gated while presentation, readiness and one dispatch boundary still
+inferred authority from raw media presence.** A state the generator refused to
+derive could, on the same screen, be captioned "Approved", offered a VALIDATE
+button and badged APPROVED VARIANT.
+
+The unit of audit changed from a decision to a **surface**, and every surface now
+answers four questions from one standing:
+`docs/dogfood/ENTITY_TRUTH_SURFACE_MATRIX.md` (replaces the deleted
+`ENTITY_DERIVATION_DECISION_TABLE.md`).
+
+## 28.1 What changed
+
+| # | Surface | Was | Is |
+|---|---|---|---|
+| E2-a | variant hub label / tone | `state.approvedFile ? "APPROVED VARIANT"` | `CANON VARIANT` / `HISTORIC · NOT APPROVED` from `entityStateTruth` |
+| E2-b | variant hub readiness | `!!parentInfo.fileName` → READY TO DERIVE | parent `standing === "canon"`; otherwise `PARENT NOT APPROVED`, naming the file |
+| E2-c | validation currency | compared raw pointers | a stored finding stays current only while both sides are still canon **and** unchanged |
+| E2-d | validation readiness | `!!(targetMedia && parentMedia && notes)` | both sides canon; the button is disabled otherwise, with a reason naming the file and the fix |
+| E2-e | validation copy / thumbnails / alt | "Validate the approved state against its parent", "Parent approved image" | "Approve both sides before validating"; alt text states the standing |
+| E2-f | hero `alt` + theatre caption | "Approved X" regardless | "Historic image for X, not approved" / "X historic image · file" |
+| E2-g | hero derivation line | "Derived from P" regardless | "P is not approved as canon — this state cannot derive from it yet" |
+| E2-h | approved readout | label "Approved image", raw pointer | "Canon image" / "Historic image · not approved", with the upgrade sentence |
+| E2-i | head action | `st.approvedFile ? EDIT / REGENERATE : GENERATE FROM <PARENT>` | `EDIT / REGENERATE` only when canon; `GENERATE FROM <PARENT>` only when the parent is canon; otherwise `OPEN STATE WORKFLOW` |
+| E3 | `automation.js:2497` final paid request | `derivationMode = state.isDefault ? "independent" : "derive"` — hard-coded, no standing check | re-reads `assetStateDerivation` immediately before the body is built; refuses a parent that lost canon mid-run |
+
+## 28.2 A shipped defect found while validating, and fixed
+
+`public/index.html` loaded `shared-production-media.js` **before**
+`shared-authority-kernel.js`. That module binds the authority reader **once, at
+load**, from `window.CineBraidAuthorityKernel`:
+
+```js
+const authority = nodeModule ? require("./shared-production-authority.js")
+                             : (root && root.CineBraidAuthorityKernel ? root : null);
+```
+
+Loaded first, `authority` was `null`, `receiptBackedEdges()` returned `[]`, and
+**every approved file in Generated Media and the Universal Media Inspector was
+classified HISTORIC in the real browser.** No Node suite could see it, because
+`require()` resolves a dependency whatever the page order is.
+
+- Fixed by loading the kernel and its wrapper before the projection, in
+  `public/index.html` and in `tests/render-harness.js` SCRIPT_ORDER.
+- Pinned by a new load-order contract in `tests/current-behavior.js`: three
+  dependency pairs, with the failure message naming the consequence.
+
+## 28.3 Regressions
+
+`tests/entity-derivation-authority.js` — **69 checks** (was 53), every one
+through a shipped function.
+
+`tests/entity-truth-surfaces-real-browser.py` — **new**, registered in
+`package.json`, `tests/run-browser-gate.js`, `tests/run-full-check.js` and the
+`tests/current-behavior.js` manifest. It loads the same prop twice at
+`#/prop/PROP-PARCEL` — once with no receipts, once with a receipt behind each
+pointer — and asserts the variant hub, the hero, the readout, the head action,
+the validation workspace (heading, blocked reason, **button disabled state**) and
+the authority row all report one standing.
+
+## 28.4 Mutation receipts
+
+Every control below reverts one shipped guard **in memory** and runs the same
+shipped path. Each was observed to produce the false claim; a control that does
+not is a vacuous assertion, and the suite says so in its own message.
+
+| Control | File and guard reverted | Observed when reverted |
+|---|---|---|
+| H1 | `entities.js` — `const label = standing === "canon" ? "CANON VARIANT"` → raw pointer first | hub badges a receiptless variant `APPROVED VARIANT` |
+| H2 | `entities.js` — `const ready = parentStanding === "canon";` → `!!parentInfo.fileName` | hub offers `READY TO DERIVE` from an unapproved parent |
+| H3 | `entities.js` — validation `ready` drops `targetIsCanon && parentIsCanon` | "Validate the approved state against its parent" returns on two unapproved images |
+| H4 | `entities.js` — hero `alt` → `alt="Approved ${…}"` | `alt="Approved Worn"` on an unapproved image |
+| H5 | `entities.js` — head action → `st.approvedFile ? … : GENERATE FROM …` | `GENERATE FROM DEFAULT` offered on a parent nobody approved |
+| A1 | `automation.js` — all three dispatch-boundary edits reverted together | the revoked run **reaches the transport** with `derivationMode: "derive"` and the parent's bytes in `parentApprovedFile` |
+| Browser | `entities.js` served rewritten in flight by the Playwright route — readout standing test → `<span>Approved image</span>` | the false `Approved image` label returns in real Chromium on a state with no receipt |
+
+The automation control is the load-bearing one. Its scenario is not simulated:
+the run enters `v626AutomateEntityState` with an **approved** parent, so every
+earlier guard passes for real, and the receipt is revoked (`clearEdge: false`,
+which is the historic shape exactly) inside the fetch double answering the prompt
+compile — the round trip that sits between the run's up-front check and the paid
+request. Shipped product: **0 paid requests**, and the run stops with a reason
+naming the file. Guard reverted: **1 paid request**, deriving from bytes nobody
+approved.
+
+## 28.5 Validation
+
+| Command | Result |
+|---|---|
+| `npm.cmd run check` | **PASS — 169 suites in 179.1s** |
+| `npm.cmd run check:entity-derivation` | PASS — **69 checks**, 0 provider calls |
+| `npm.cmd run check:entity-truth-browser` | PASS — real Chromium, 0 provider calls |
+| `npm.cmd run check:state-binding-browser` | PASS (was failing — see 28.6) |
+| `npm.cmd run check:generation-truth-browser` | PASS (was failing) |
+| `npm.cmd run check:generation-defaults-browser` | PASS (was failing) |
+| `npm.cmd run check:browser-real` | PASS |
+
+## 28.6 The strict browser gate, run for the first time on this branch
+
+`npm run check:browser-gate` is not reachable from `npm run check`, and earlier
+passes of this branch never ran it. Run here, it reported **five failures. All
+five reproduced identically with today's changes stashed**, so none was caused by
+this pass — but four were caused by *this branch*, and are fixed here:
+
+| Suite | Cause | Disposition |
+|---|---|---|
+| `check:state-binding-browser` | fixture approved frames by `winner` pointer; `guidedFrameApproved` reads Canon, so zero approved frames → no frame pair → the continuity surface never rendered | **FIXED** — frame receipts added to the fixture |
+| `check:generation-truth-browser` | same: three beats with winners, no receipts, so no motion package could be built | **FIXED** — frame receipts added |
+| `check:generation-defaults-browser` | same, plus the F-065 gate needed two approved anchors and the sample ships one. The branch under test had **never run** | **FIXED** — a second beat (a copy of the sample's own frame) plus receipts for both; the gate's real branch now executes |
+| `check:production-media-browser` | fixture had no receipts **and** the shipped load-order defect in 28.2 | **ADVANCED, still red** — the disposition premise and ~50 later assertions now pass; it fails at negative control **N9**, which pushes a renamed path into `SCAN.anchors` and expects one collapsed duplicate and gets zero. N9 is in the media-identity subject, not production truth, and was masked by the earlier failure. Not fixed here. |
+| `check:stage-surfaces-browser` | `10. an available primary must dispatch` | **NOT FIXED** — identical before and after; matches the recorded load-flakiness of this suite on a warm machine. Needs its own diagnosis. |
+
+A shared `canon_receipts()` helper was added to `tests/browser_runtime.py` so a
+browser fixture states its approvals once, in the shape the kernel writes.
+
+## 28.7 Six-sentence re-audit
+
+| # | Sentence | Verdict |
+|---|---|---|
+| 1 | Human explicitly approves Canon. | **PASS** — unchanged; no new write path. |
+| 2 | Automation only recommends. | **PASS, strengthened** — automation can no longer *derive from* work a human did not approve, even when the approval lapses mid-run. |
+| 3 | Supporting references are not Canon. | **PASS** — unchanged. |
+| 4 | Legacy pointers are Historic. | **PASS, extended** — they are now Historic on every *surface*, not only in the generator, including alt text and captions. |
+| 5 | State ancestry is immutable. | **PASS** — unchanged; nothing here writes lineage. |
+| 6 | Preflight does not mutate. | **PASS** — the new dispatch read is `assetStateDerivation`, which is pure; `pendingStateGeneration` is a Map read. |
+
+## 28.8 Known limitations added by this pass
+
+1. **The automation dispatch boundary honours a live UI draft.**
+   `assetStateDerivation` reads the transient `PENDING_STATE_GENERATION` choice,
+   so a creator who has an uncommitted "independent" selection open while a run
+   dispatches will get an independent request. It fails **closed** — the
+   conservative direction — and using the one reader was the instruction, so this
+   is accepted rather than special-cased.
+2. **A revoked validation finding disappears rather than being annotated.**
+   `continuityStateValidationCurrent` already returned null when the compared
+   files changed; this extends the same currency test to standing. The stored
+   `parentValidation` is **not deleted** — it is not shown as current, and the
+   pending panel names exactly what is missing.
+3. **Two strict-gate browser suites remain red** (28.6), both pre-existing, both
+   outside this pass's subject.

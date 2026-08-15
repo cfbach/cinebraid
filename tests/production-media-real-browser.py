@@ -55,7 +55,7 @@ import json, os, pathlib, socket, struct, subprocess, sys, tempfile, time, zlib
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tests"))
-from browser_runtime import require_browser, launch_chromium
+from browser_runtime import require_browser, launch_chromium, canon_receipts
 
 LABEL = "Generated Media and Universal Media Inspector real-browser audit"
 sync_playwright = require_browser(LABEL)
@@ -230,6 +230,19 @@ def build_fixture(projects_root):
                         "order": 0, "generationInput": False, "agentContext": True}]},
         ],
     }
+    # THE APPROVED DISPOSITION IS A RECEIPT, NOT A POINTER. The three dispositions this
+    # suite exists to tell apart - approved / candidate / rejected - are read through the
+    # production-truth projection, so a fixture that only sets approvedFile and winner has
+    # nothing approved in it and the whole disposition case is untested. These are the
+    # approvals the fixture always meant to describe.
+    project["productionAuthority"] = canon_receipts([
+        {"kind": "entity-state", "list": "characters", "entityId": "KAI", "stateId": "state-default",
+         "value": "KAI_DEFAULT_V001.png"},
+        {"kind": "entity-state", "list": "locations", "entityId": "HULL", "stateId": "state-default",
+         "value": "HULL_DEFAULT_V001.png"},
+        {"kind": "shot-frame", "shotId": "SH010", "frameId": "kf-a", "value": "SH010_FRAME_A_V001.png"},
+        {"kind": "shot-frame", "shotId": "SH010", "frameId": "kf-b", "value": "SH010_FRAME_B_V001.png"},
+    ], via="production-media-fixture")
     (root / "project.json").write_text(json.dumps(project, indent=2) + "\n", encoding="utf-8")
 
     def estimate(amount=None, confidence="estimated", unpriced=None):

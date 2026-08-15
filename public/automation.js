@@ -2481,10 +2481,27 @@ async function v626AutomateEntityState(run, list, entityId, stateId) {
     const genKey = `entity:${stateId}:round-${round}:generate`, genStep = v626Step(run, genKey, "generation", `Generate ${state.name || "state"} candidates · round ${round}`);
     if (genStep.status !== "completed") {
       await v626BeginStep(run, genKey, "generation", `Generate ${v640OutputsPerRequest(run)} ${state.name || "state"} candidates · round ${round}`, { stateId, attempt: round, maxAttempts: v668EffectiveStateRounds(run) });
-      const parentInfo = state.isDefault ? null : assetStateParentMedia(list, entity, state), derivationMode = state.isDefault ? "independent" : "derive";
+      /* THE FINAL DISPATCH BOUNDARY RE-DECIDES CANON FOR ITSELF.
+       *
+       * `derivationMode` was hard-coded to "derive" for any non-default state,
+       * so the paid request derived from whatever the parent happened to hold.
+       * The build step checks standing, but that check ran earlier — a receipt
+       * can be revoked between building a prompt and spending money on it, and a
+       * run resumed from a stored step never re-ran it at all.
+       *
+       * This reads the receipt-backed standing immediately before the request is
+       * constructed, through the same one reader every other surface uses. It
+       * does not recompute derive from parent presence and it does not trust an
+       * earlier decision. */
+      const parentInfo = state.isDefault ? null : assetStateParentMedia(list, entity, state);
+      const dispatchDerivation = state.isDefault ? null : assetStateDerivation(list, entity, state);
+      if (dispatchDerivation && !dispatchDerivation.canDerive && dispatchDerivation.reason === "parent-not-canon") {
+        throw new Error(`${state.name || "State"} derives from ${parentInfo?.parent?.name || "its parent"}, whose image ${dispatchDerivation.contextFile} is no longer approved as canon. Approve it before generating from it.`);
+      }
+      const derivationMode = dispatchDerivation && dispatchDerivation.canDerive ? "derive" : "independent";
       const references = state.isDefault ? [] : entityGenerationReferences(list, entity, { state, mode: derivationMode });
       const prompt = state.isDefault ? build.prompt : entityGenerationPrompt(list, entity, build, references, { state, mode: derivationMode });
-      const job = await v626WaitFalJob(run, genStep, { purpose: "entity-reference", entityList: list, entityId, entityType: { characters: "character", locations: "location", props: "prop", vehicles: "vehicle" }[list] || "entity", continuityStateId: state.id, continuityStateName: state.name || "", parentStateId: parentInfo?.parent?.id || "", parentStateName: parentInfo?.parent?.name || "", parentApprovedFile: derivationMode === "derive" ? parentInfo?.file || "" : "", derivationMode, sourceBuildId: build.id, prompt, references, outputCount: v640OutputsPerRequest(run), quality: v6211RunGenerationSettings(run).frameQuality, resolution: v6211RunGenerationSettings(run).frameResolution, aspectRatio: referenceAspectLabel(list) });
+      const job = await v626WaitFalJob(run, genStep, { purpose: "entity-reference", entityList: list, entityId, entityType: { characters: "character", locations: "location", props: "prop", vehicles: "vehicle" }[list] || "entity", continuityStateId: state.id, continuityStateName: state.name || "", parentStateId: parentInfo?.parent?.id || "", parentStateName: parentInfo?.parent?.name || "", parentApprovedFile: dispatchDerivation ? dispatchDerivation.file : "", derivationMode, sourceBuildId: build.id, prompt, references, outputCount: v640OutputsPerRequest(run), quality: v6211RunGenerationSettings(run).frameQuality, resolution: v6211RunGenerationSettings(run).frameResolution, aspectRatio: referenceAspectLabel(list) });
       /* BATCH 1B: THE RUN RECORDS WHAT IT ASKED FOR, ON BEHALF OF WHOM.
 
          Ownership authority requires a durable claim, and a file CineBraid

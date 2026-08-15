@@ -22,9 +22,11 @@ const SCRIPT_ORDER = [
   "shared-coverage.js",
   "shared-entity-ownership.js",
   "shared-media-disposition.js",
-  "shared-production-media.js",
+  /* The kernel first: shared-production-media.js binds the authority reader at
+     load from the global, so loading it earlier leaves that reader null. */
   "shared-authority-kernel.js",
   "shared-production-authority.js",
+  "shared-production-media.js",
   "shared-build-history.js",
   "shared-generation-capability.js",
   "shared-stage-model.js",

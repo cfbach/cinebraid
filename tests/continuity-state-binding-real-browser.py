@@ -99,6 +99,23 @@ class Red(Exception):
     """A negative control that failed to go red."""
 
 
+def frame_receipts():
+    """One current human receipt per keyframe winner, in the shape the kernel writes."""
+    rows = []
+    for index, (frame_id, winner) in enumerate((("fr-a", "SH-01-A.png"), ("fr-b", "SH-01-B.png"), ("fr-c", "SH-01-C.png")), start=1):
+        rows.append({
+            "id": "authority-%06d" % index, "sequence": index, "actor": "human",
+            "act": "explicit-approval", "command": "approve-shot-frame", "kind": "shot-frame",
+            "targetKey": "shot-frame:%s#%s" % (SHOT, frame_id),
+            "shotId": SHOT, "frameId": frame_id, "unitKey": "", "list": "", "entityId": "",
+            "stateId": "", "slotId": "", "value": winner, "assetId": "",
+            "at": "2026-08-15T00:00:00.000Z", "status": "current", "supersededBy": "",
+            "supersededAt": "", "revokedAt": "", "revocationReason": "", "note": "",
+            "provenance": {"manualAction": "gesture-binding-%d" % index, "via": "binding-fixture", "gesture": "click"},
+        })
+    return rows
+
+
 def project_document():
     return {
         "meta": {"title": "Binding fixture", "schemaVersion": "6.7"},
@@ -151,6 +168,11 @@ def project_document():
         }],
         "vehicles": [], "audio": [], "mediaAssets": [],
         "jobs": [], "agentRuns": [], "decisions": [], "sessions": [],
+        # CANON, NOT POINTERS. The continuity surface reads approved frames through
+        # guidedFrameApproved, which answers from the receipt ledger. A winner with no
+        # receipt is a HISTORIC selection: the frame is shown, it is not authority, and
+        # no frame pair is offered for comparison.
+        "productionAuthority": {"version": 1, "receipts": frame_receipts()},
     }
 
 

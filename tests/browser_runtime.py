@@ -171,3 +171,53 @@ def launch_chromium(pw, label="", headless=True, args=None, **extra):
 def browser_unavailable(label, error):
     """Turn a launch failure into the same skip/fail decision as a missing import."""
     _end(label, f"no usable Chromium was available ({error}).")
+
+
+CANON_COMMAND_FOR_KIND = {
+    "shot-frame": "approve-shot-frame",
+    "shot-motion": "approve-shot-motion",
+    "shot-delivery": "approve-shot-delivery",
+    "entity-state": "approve-entity-state",
+}
+
+
+def _canon_target_key(entry):
+    kind = entry["kind"]
+    if kind == "shot-frame":
+        return "shot-frame:%s#%s" % (entry["shotId"], entry["frameId"])
+    if kind == "shot-motion":
+        return "shot-motion:%s#%s" % (entry["shotId"], entry.get("unitKey", ""))
+    if kind == "shot-delivery":
+        return "shot-delivery:%s" % entry["shotId"]
+    return "entity-state:%s:%s#%s" % (entry["list"], entry["entityId"], entry["stateId"])
+
+
+def canon_receipts(entries, via="browser-fixture"):
+    """Build a productionAuthority ledger for a browser fixture.
+
+    A winner or an approvedFile is a POINTER. Canon is a current human receipt
+    that matches that pointer, and the shipped readers - guidedFrameApproved,
+    entityStateTruth, entityProductionTruth - answer from the ledger, not from
+    the pointer. A fixture that only sets pointers is a HISTORIC project: the
+    images are shown, nothing is authority, and every readiness gate correctly
+    refuses. Suites that need approved work must say so here.
+
+    Each entry: {kind, value, assetId?} plus the target fields for its kind -
+    shotId/frameId, shotId/unitKey, shotId, or list/entityId/stateId.
+    """
+    receipts = []
+    for index, entry in enumerate(entries, start=1):
+        receipts.append({
+            "id": "authority-%06d" % index, "sequence": index, "actor": "human",
+            "act": "explicit-approval", "command": CANON_COMMAND_FOR_KIND[entry["kind"]],
+            "kind": entry["kind"], "targetKey": _canon_target_key(entry),
+            "shotId": entry.get("shotId", ""), "frameId": entry.get("frameId", ""),
+            "unitKey": entry.get("unitKey", ""), "list": entry.get("list", ""),
+            "entityId": entry.get("entityId", ""), "stateId": entry.get("stateId", ""),
+            "slotId": "", "value": entry["value"], "assetId": entry.get("assetId", ""),
+            "at": entry.get("at", "2026-08-15T00:00:00.000Z"), "status": "current",
+            "supersededBy": "", "supersededAt": "", "revokedAt": "", "revocationReason": "",
+            "note": "", "provenance": {"manualAction": "gesture-fixture-%d" % index,
+                                       "via": via, "gesture": "click"},
+        })
+    return {"version": 1, "receipts": receipts}

@@ -32,7 +32,7 @@ are never touched, and the directory is removed at the end.
 import json, os, pathlib, shutil, socket, subprocess, sys, tempfile, time
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-from browser_runtime import require_browser, launch_chromium
+from browser_runtime import require_browser, launch_chromium, canon_receipts
 LABEL = "UX B1 saved generation defaults real-browser audit"
 sync_playwright = require_browser(LABEL)
 
@@ -55,6 +55,28 @@ subprocess.run(["node", "scripts/qa-sandbox.js", "--out", str(sandbox / "env"), 
                cwd=ROOT, check=True, stdout=subprocess.DEVNULL)
 config_path = sandbox / "env" / "config.json"
 projects_root = sandbox / "env" / "projects"
+
+# F-065 NEEDS TWO APPROVED ANCHORS AND NO PASSING REVIEW, and the suite says so itself:
+# "a gate that is never actually reached reports a green that proves nothing". The sample
+# ships one keyframe and no receipts, so before this the precondition was never met and
+# the branch under test never ran. The second beat is a copy of the sample's own frame -
+# no new binary - and BOTH are approved through the receipt ledger, because
+# guidedFrameApproved reads Canon, not the winner pointer.
+gate_project_dir = projects_root / "dogfood-sample"
+gate_takes = gate_project_dir / "shots" / "SAMPLE-01" / "takes"
+shutil.copyfile(gate_takes / "SAMPLE-01-ARRIVAL.png", gate_takes / "SAMPLE-01-BEAT-B.png")
+gate_file = gate_project_dir / "project.json"
+gate_project = json.loads(gate_file.read_text(encoding="utf-8"))
+gate_shot = next(row for row in gate_project["shots"] if row["id"] == "SAMPLE-01")
+gate_shot["keyframes"].append({
+    "id": "frame-b", "label": "B", "title": "Second frame", "winner": "SAMPLE-01-BEAT-B.png",
+    "description": "The courier reaches the bench with the parcel.", "required": True,
+    "generationPackages": [], "selectedCandidate": "",
+})
+gate_project["productionAuthority"] = canon_receipts(
+    [{"kind": "shot-frame", "shotId": "SAMPLE-01", "frameId": row["id"], "value": row["winner"]}
+     for row in gate_shot["keyframes"]], via="generation-defaults-fixture")
+gate_file.write_text(json.dumps(gate_project, indent=2), encoding="utf-8")
 
 
 def write_config(generation_fal):

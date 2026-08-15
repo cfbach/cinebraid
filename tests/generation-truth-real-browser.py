@@ -39,7 +39,7 @@ import json, os, pathlib, shutil, socket, subprocess, sys, tempfile, time
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tests"))
-from browser_runtime import require_browser, launch_chromium
+from browser_runtime import require_browser, launch_chromium, canon_receipts
 
 LABEL = "Generation truth / routing real-browser audit"
 sync_playwright = require_browser(LABEL)
@@ -87,6 +87,12 @@ shot["keyframes"] = [
 shot["creationBrief"]["frames"] = [
     {"id": row["id"], "label": row["label"], "title": row["title"], "action": row["description"],
      "selectedCandidate": "", "promptBuilds": []} for row in shot["keyframes"]]
+# The three beats are APPROVED, not merely selected. A motion package is built from
+# approved frames, and guidedFrameApproved answers from the receipt ledger - a fixture
+# that only writes winners is a historic project and the compiler correctly declines it.
+project["productionAuthority"] = canon_receipts(
+    [{"kind": "shot-frame", "shotId": SHOT, "frameId": row["id"], "value": row["winner"]}
+     for row in shot["keyframes"]], via="generation-truth-fixture")
 project_file.write_text(json.dumps(project, indent=2), encoding="utf-8")
 
 config = json.loads(config_path.read_text(encoding="utf-8"))

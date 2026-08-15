@@ -91,9 +91,14 @@
 <script src="shared-coverage.js?v=6.7.0-private.1"></script>
 <script src="shared-entity-ownership.js?v=6.7.0-private.1"></script>
 <script src="shared-media-disposition.js?v=6.7.0-private.1"></script>
-<script src="shared-production-media.js?v=6.7.0-private.1"></script>
+<!-- The kernel loads BEFORE shared-production-media.js. That module binds the
+     authority reader once, at load, from window.CineBraidAuthorityKernel; loaded
+     after it, the reader was null and every approved file in Generated Media and
+     the Inspector was classified HISTORIC in the real browser. Node saw none of
+     it, because require() resolves regardless of order. -->
 <script src="shared-authority-kernel.js?v=6.7.0-private.1"></script>
 <script src="shared-production-authority.js?v=6.7.0-private.1"></script>
+<script src="shared-production-media.js?v=6.7.0-private.1"></script>
 <script src="shared-build-history.js?v=6.7.0-private.1"></script>
 <script src="shared-generation-capability.js?v=6.7.0-private.1"></script>
 <script src="shared-model-intelligence.js?v=6.7.0-private.1"></script>
