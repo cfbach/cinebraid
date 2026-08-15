@@ -389,6 +389,10 @@ window.openContinuityStateVariant = async (list, id, stateId) => {
    *
    * Nothing here mutates. The mode a state generates in is decided at the
    * generation action, which is where the creator actually asks for one. */
+  /* Cancelling or navigating away drops any generation choice the creator was
+     comparing. Nothing was written, so there is nothing to undo — this only
+     stops a stale draft from being honoured by a later render. */
+  if (typeof discardPendingStateGeneration === "function") discardPendingStateGeneration(entity, state);
   closeModal();
   window.boundedWriteState?.("selected:entity-coverage-view", `${list}:${id}`, "states");
   window.boundedWriteState?.("selected:continuity-state", `${list}:${id}`, stateId);

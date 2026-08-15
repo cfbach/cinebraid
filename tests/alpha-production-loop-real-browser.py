@@ -73,6 +73,38 @@ subprocess.run(["node", "scripts/qa-sandbox.js", "--out", str(sandbox / "env"), 
 config_path = sandbox / "env" / "config.json"
 projects_root = sandbox / "env" / "projects"
 
+# MOTION READINESS IS CANON since the closure pass: a raw `frame.winner` no
+# longer unlocks the motion workspace. The sandbox demo project is generated
+# legacy data, so this stamps the receipts a creator who had approved those
+# frames would have left. It writes only inside the temp sandbox — the shipped
+# sample and every real project are untouched.
+def _stamp_sandbox_canon():
+    for project_file in projects_root.rglob("project.json"):
+        data = json.loads(project_file.read_text(encoding="utf-8"))
+        rows, seq = [], 0
+        for shot in data.get("shots") or []:
+            for frame in shot.get("keyframes") or []:
+                if not frame.get("winner"):
+                    continue
+                seq += 1
+                rows.append({
+                    "id": "authority-%06d" % seq, "sequence": seq, "actor": "human",
+                    "act": "explicit-approval", "command": "approve-shot-frame", "kind": "shot-frame",
+                    "targetKey": "shot-frame:%s#%s" % (shot["id"], frame["id"]),
+                    "shotId": shot["id"], "frameId": frame["id"], "unitKey": "",
+                    "list": "", "entityId": "", "stateId": "", "slotId": "",
+                    "value": frame["winner"], "assetId": "", "at": "2026-08-15T00:00:00.000Z",
+                    "status": "current", "supersededBy": "", "supersededAt": "", "revokedAt": "",
+                    "revocationReason": "", "note": "",
+                    "provenance": {"manualAction": "gesture-sandbox-fixture", "via": "alpha-loop-sandbox", "gesture": "click"},
+                })
+        if rows:
+            data["productionAuthority"] = {"version": 1, "receipts": rows}
+            project_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+_stamp_sandbox_canon()
+
 console_errors, page_errors, offsite, paid_calls, failed_requests = [], [], [], [], []
 findings, controls = [], []
 # When armed, the guard below serves a MUTATED module instead of the shipped one:

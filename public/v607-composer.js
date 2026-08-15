@@ -314,7 +314,9 @@
   function baseFrameChoices(s) {
     const out = [{ value: "auto", label: "Automatic best base" }, { value: "blank", label: "Blank composition canvas" }];
     const current = guidedCurrentShotStill(s);
-    if (current) out.push({ value: `shot:${current.name}`, label: "Current approved shot image", ref: { key: `shot-current:${s.id}:${current.name}`, label: "Current approved shot image", file: current.name, url: current.url, role: "base", mediaType: "image", priority: "primary", approved: true } });
+    /* Only a canon still is offered as a prompt BASE. A historic one is still
+       on the shot and still visible; it is not an approved starting point. */
+    if (current && current.isCanon) out.push({ value: `shot:${current.name}`, label: "Current approved shot image", ref: { key: `shot-current:${s.id}:${current.name}`, label: "Current approved shot image", file: current.name, url: current.url, role: "base", mediaType: "image", priority: "primary", approved: true } });
     guidedFrames(s).forEach((frame, index) => {
       const take = guidedFrameApproved(s, frame, takesFor(s.id), index);
       if (take) out.push({ value: `frame:${frame.id}:${take.name}`, label: `Approved Frame ${frame.label}`, ref: { key: `approved-frame:${frame.id}:${take.name}`, label: `Approved Frame ${frame.label}`, file: take.name, url: take.url, role: "base", mediaType: "image", priority: "primary", approved: true } });

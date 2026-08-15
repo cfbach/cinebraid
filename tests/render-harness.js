@@ -135,7 +135,32 @@ class FakeElement {
   }
 }
 
+/* THE SHARED FIXTURE REPRESENTS A PROJECT WHOSE CREATOR HAS APPROVED ITS
+ * FRAMES, and since the closure pass that is a statement about the RECEIPT
+ * LEDGER rather than about `frame.winner`.
+ *
+ * `buildFixture()` therefore stamps a receipt for every frame winner it seeds.
+ * Without it every suite built on this fixture would be describing a project
+ * full of HISTORIC pointers — which is a legitimate state, and the one the
+ * Codex reproductions construct deliberately, but not the one most of these
+ * suites are about. A suite that WANTS the historic case deletes
+ * `productionAuthority` or seeds its own winners, and several now do. */
 function buildFixture() {
+  return withFixtureCanon(rawFixture());
+}
+function withFixtureCanon(project) {
+  const rows = [];
+  for (const shot of project.shots || []) {
+    for (const frame of shot.keyframes || []) {
+      if (frame.winner) rows.push({ kind: "shot-frame", shotId: shot.id, frameId: frame.id, value: frame.winner });
+    }
+    for (const clip of shot.clips || []) {
+      if (clip.videoWinner) rows.push({ kind: "shot-motion", shotId: shot.id, unitKey: clip.id || clip.suffix || "", value: clip.videoWinner });
+    }
+  }
+  return rows.length ? withCanon(project, rows) : project;
+}
+function rawFixture() {
   return {
     meta: {
       title: "Render Harness Project",
@@ -1062,7 +1087,7 @@ function withCanon(project, entries) {
   return project;
 }
 
-module.exports = { render, buildFixture, emptyFixture, withCanon };
+module.exports = { render, buildFixture, rawFixture, withFixtureCanon, emptyFixture, withCanon };
 if (require.main === module) main().catch((error) => {
   console.error(error.stack || error.message || error);
   process.exitCode = 1;

@@ -1,6 +1,6 @@
 const assert = require("assert");
 const vm = require("vm");
-const { render, buildFixture } = require("./render-harness");
+const { render, buildFixture, withCanon } = require("./render-harness");
 
 function fixture() {
   const project = buildFixture();
@@ -39,6 +39,9 @@ function fixture() {
     },
   ];
   project.shots[0].codes = [mural.id];
+  /* The default mural is APPROVED — a receipt, since derivation now requires
+     canon and a raw pointer is HISTORIC. */
+  withCanon(project, { kind: "entity-state", list: "props", entityId: "PROP-MURAL", stateId: "state-default", value: "PROP-MURAL-DEFAULT.png" });
   return project;
 }
 

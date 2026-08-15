@@ -57,7 +57,25 @@ const PNG = Buffer.from(
 /* The production format is deliberately widescreen and deliberately written in
    both places a project can carry it. Every literal 16:9 that turns up in a
    reference prompt below came from here. */
+/* The creator approved CHAR-MARA's default reference. Derivation and the
+   reference-edit profile require CANON on the server too since the closure
+   pass, so the server-side fixture carries the receipt a real approved project
+   has — the same statement its browser-side twin makes with withCanon(). */
 const PROJECT = {
+  productionAuthority: {
+    version: 1,
+    receipts: [{
+      id: "authority-000001", sequence: 1, actor: "human", act: "explicit-approval",
+      command: "approve-entity-state", kind: "entity-state",
+      targetKey: "entity-state:characters:CHAR-MARA#state-default",
+      shotId: "", frameId: "", unitKey: "", list: "characters",
+      entityId: "CHAR-MARA", stateId: "state-default", slotId: "",
+      value: "CHAR-MARA-DEFAULT.png", assetId: "", at: "2026-08-15T00:00:00.000Z",
+      status: "current", supersededBy: "", supersededAt: "", revokedAt: "",
+      revocationReason: "", note: "",
+      provenance: { manualAction: "gesture-aspect-fixture", via: "aspect-fixture", gesture: "click" },
+    }],
+  },
   meta: {
     title: "Aspect Fixture",
     format: "Short film · 16:9",
@@ -552,6 +570,74 @@ function testResolverAndDetector() {
 
 /* -------------------------------------------------------------------- main */
 
+
+/* ===========================================================================
+   CODEX CLOSURE, SERVER SIDE — /api/prompt/asset-compile.
+
+   The browser resolvers were corrected and this route independently
+   reintroduced the old rules: it accepted a caller-supplied parent id, fell back
+   to the default state when it did not resolve, and shipped a raw `approvedFile`
+   as `role: "base"`, `approved: true`, labelled "Approved … reference".
+
+   Both are exercised against the real route, over HTTP, with no provider call. */
+async function testServerAncestryAndCanon() {
+  /* A — A GHOST PARENT FAILS CLOSED, BEFORE COMPILATION. */
+  const ghosted = JSON.parse(fs.readFileSync(path.join(PROJECT_DIR, "project.json"), "utf8"));
+  const mara = ghosted.characters.find((row) => row.id === "CHAR-MARA");
+  const dry = mara.continuityStates.find((row) => row.id === "state-dry");
+  const realParent = dry.parentStateId;
+  dry.parentStateId = "ghost";
+  fs.writeFileSync(path.join(PROJECT_DIR, "project.json"), JSON.stringify(ghosted, null, 2));
+
+  const ghostResult = await post("/api/prompt/asset-compile", {
+    useLLM: false, list: "characters", id: "CHAR-MARA", stateId: "state-dry",
+    profileId: "gpt-image-2/edit", generationMode: "derive",
+  });
+  assert.strictEqual(ghostResult.response.status, 400,
+    `a state whose recorded parent is missing must be refused, got ${ghostResult.response.status}`);
+  assert.strictEqual(ghostResult.body.code, "STATE_ANCESTRY_UNRESOLVED",
+    `and refused for the lineage reason, got ${JSON.stringify(ghostResult.body)}`);
+  assert.match(String(ghostResult.body.error || ""), /ghost/,
+    "naming the parent the record points at");
+  assert(!ghostResult.body.compiledPrompt, "nothing was compiled");
+
+  /* AND IT DOES NOT SILENTLY USE THE DEFAULT STATE, which is what it used to do. */
+  assert(!/Rain-soaked arrival/.test(JSON.stringify(ghostResult.body)),
+    "the default state must not appear anywhere in the refusal — it is not this state's parent");
+
+  /* B — A HISTORIC PARENT CANNOT BECOME AN APPROVED BASE. */
+  const historic = JSON.parse(fs.readFileSync(path.join(PROJECT_DIR, "project.json"), "utf8"));
+  historic.characters.find((row) => row.id === "CHAR-MARA")
+    .continuityStates.find((row) => row.id === "state-dry").parentStateId = realParent;
+  delete historic.productionAuthority;
+  fs.writeFileSync(path.join(PROJECT_DIR, "project.json"), JSON.stringify(historic, null, 2));
+
+  const historicResult = await post("/api/prompt/asset-compile", {
+    useLLM: false, list: "characters", id: "CHAR-MARA", stateId: "state-dry",
+    profileId: "gpt-image-2/edit", generationMode: "derive",
+  });
+  assert.strictEqual(historicResult.response.status, 400,
+    `an unreceipted parent must not become an editable base, got ${historicResult.response.status}`);
+  assert.strictEqual(historicResult.body.code, "PARENT_NOT_CANON",
+    `and refused for the canon reason, got ${JSON.stringify(historicResult.body)}`);
+  const historicPayload = JSON.stringify(historicResult.body);
+  assert(!/"role":"base"/.test(historicPayload), "no base reference is emitted");
+  assert(!/"approved":true/.test(historicPayload), "nothing is marked approved");
+  assert(!/Approved .* reference/.test(historicPayload), "and nothing is labelled an approved reference");
+
+  /* C — THE POSITIVE HALF. With the receipt restored the same request compiles,
+         so the two refusals above are not satisfied by everything failing. */
+  fs.writeFileSync(path.join(PROJECT_DIR, "project.json"), JSON.stringify(PROJECT, null, 2));
+  const canonResult = await post("/api/prompt/asset-compile", {
+    useLLM: false, list: "characters", id: "CHAR-MARA", stateId: "state-dry",
+    profileId: "gpt-image-2/edit", generationMode: "derive",
+  });
+  assert.strictEqual(canonResult.response.status, 200,
+    `a receipt-backed parent still compiles, got ${canonResult.response.status}: ${JSON.stringify(canonResult.body)}`);
+  assert(String(canonResult.body.compiledPrompt || "").length > 0, "and returns a prompt");
+  console.log("  server · asset-compile resolves exact ancestry, fails closed on a ghost parent, and refuses a historic parent as an approved base");
+}
+
 async function main() {
   fs.mkdirSync(PROJECT_DIR, { recursive: true });
   for (const dir of ["anchors", "plates", "props", "vehicles", "audio", "media", "shots", "docs"]) {
@@ -585,6 +671,7 @@ async function main() {
     await testLaterPassStability();
     await testBrowserAutomationFlow();
     await testBrowserDerivedPrompt();
+    await testServerAncestryAndCanon();
   } finally {
     if (child) child.kill();
     if (appServer) appServer.close();

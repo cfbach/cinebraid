@@ -157,13 +157,21 @@ const shotById = (id) => P.shots.find((x) => x.id === id);
 const sceneById = (id) => P.scenes.find((x) => x.id === id);
 const clipNeedsWinner = (c) =>
   ["hold", "i2v", "flf"].includes(c.kind || "hold");
+/* A MOTION UNIT'S START/END FRAME POINTERS ARE NOT CANON — they select WHICH
+   approved stills a unit interpolates between, and the canon they depend on is
+   the frame authority that approved those stills. This predicate answers "is
+   this unit configured", which is a workflow question, and it is used as such. */
 const clipDone = (c) =>
   c.kind === "flf"
     ? !!(c.winner && c.winnerEnd)
     : clipNeedsWinner(c)
       ? !!c.winner
       : true;
-const frameDone = (f) => !!f?.winner;
+/* IS THIS FRAME DONE — an AUTHORITY question, and it was answered by pointer
+   presence. A legacy project therefore reported every frame complete and
+   `shotApprovalComplete` unlocked delivery on decisions nobody had made. */
+const frameDone = (s, f) => !!f && typeof hasCurrentHumanAuthority === "function"
+  && hasCurrentHumanAuthority(P, { kind: "shot-frame", shotId: s && s.id, frameId: f.id });
 const requiredFrames = (s) =>
   (s.keyframes || []).filter((f) => f.required !== false);
 const motionUnitsForApproval = (s) =>
@@ -173,8 +181,11 @@ const motionUnitsForApproval = (s) =>
 const shotApprovalComplete = (s) => {
   const frames = requiredFrames(s),
     motions = motionUnitsForApproval(s);
-  const framesReady = !frames.length || frames.every(frameDone);
-  const motionReady = !motions.length || motions.every((c) => !!c.videoWinner);
+  const framesReady = !frames.length || frames.every((frame) => frameDone(s, frame));
+  /* MOTION READINESS IS CANON TOO. `!!c.videoWinner` is a pointer, and a shot
+     whose motion nobody approved is not complete. */
+  const motionReady = !motions.length || motions.every((c) => typeof hasCurrentHumanAuthority === "function"
+    && hasCurrentHumanAuthority(P, { kind: "shot-motion", shotId: s.id, unitKey: c.id || c.suffix || "" }));
   const sequenceReview = s?.creationBrief?.frameSequenceReview || null;
   const sequenceFiles = frames.map((frame) => frame.winner).filter(Boolean);
   const sequenceReady = frames.length < 2 || !!(
@@ -3018,8 +3029,11 @@ function projectDecisionItems() {
       const rows = typeof guidedFrameCandidateRows === "function"
         ? guidedFrameCandidateRows(shot, frames[i], takes, i)
         : takes.filter((take) => !isVideo(take.name) && !isAudio(take.name));
-      const approved = rows.some((row) => row.name === frames[i]?.winner);
-      if (rows.length && !approved) framePending += rows.length;
+      /* WORKFLOW QUEUE, NOT AUTHORITY. "has this frame already been picked" is
+         what decides whether its candidates still read as unreviewed; it makes
+         no claim that anybody approved the pick. */
+      const alreadyPicked = rows.some((row) => row.name === frames[i]?.winner);
+      if (rows.length && !alreadyPicked) framePending += rows.length;
     }
     const videos = takes.filter((take) => isVideo(take.name));
     const approvedVideo = (shot.creationBrief?.approvedMotionFile || shot.creationBrief?.finalVideoFile || (shot.clips || []).find((clip) => clip.videoWinner)?.videoWinner);

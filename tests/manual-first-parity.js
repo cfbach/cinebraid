@@ -1,7 +1,7 @@
 const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
-const { render, buildFixture } = require("./render-harness");
+const { render, buildFixture, withFixtureCanon } = require("./render-harness");
 
 const ROOT = path.resolve(__dirname, "..");
 const SAMPLE = JSON.parse(fs.readFileSync(path.join(ROOT, "projects", "cinebraid-sample", "project.json"), "utf8"));
@@ -149,7 +149,13 @@ const ROUTES = [
 async function renderSet(project, emphasis) {
   const rows = [];
   for (const spec of ROUTES) {
-    const copy = structuredClone(project);
+    /* THE SHIPPED SAMPLE IS LEGACY DATA — pointers, no receipts — and this suite
+       is about which CONTROLS each workflow emphasis exposes, not about whether
+       the sample has been approved. Motion and delivery are canon-gated since
+       the closure pass, so the in-memory copy carries the receipts a creator
+       who had approved those frames would have left. The file on disk is not
+       touched; `structuredClone` above is the copy this stamps. */
+    const copy = withFixtureCanon(structuredClone(project));
     copy.meta.workflowEmphasis = emphasis;
     copy.mediaAssets = Array.isArray(copy.mediaAssets) ? copy.mediaAssets : [];
     if (!copy.mediaAssets.some((asset) => asset.id === "manual-parity-blocking")) copy.mediaAssets.push({

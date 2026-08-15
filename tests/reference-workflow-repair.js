@@ -2,7 +2,7 @@ const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
-const { render, buildFixture } = require("./render-harness");
+const { render, buildFixture, withCanon } = require("./render-harness");
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -17,6 +17,8 @@ function fixture() {
     { id: "state-default", name: "Clean overall", isDefault: true, approvedFile: "CHAR-NORA-PRIMARY.png", notes: "Primary identity and clean work coveralls." },
     { id: "state-night", name: "After the night's work", isDefault: false, approvedFile: "", parentStateId: "state-default", generationMode: "derive", notes: "Coveralls are dirty and worn. Preserve identity, face, hair, proportions, and garment construction." },
   ];
+  /* The primary is APPROVED — a receipt, since derivation now requires canon. */
+  withCanon(project, { kind: "entity-state", list: "characters", entityId: "CHAR-NORA", stateId: "state-default", value: "CHAR-NORA-PRIMARY.png" });
   character.coverageSlots = [
     { id: "front", label: "Front", required: true, approvedFile: "", status: "missing" },
     { id: "front-three-quarter", label: "3/4 front", required: true, approvedFile: "", status: "missing" },

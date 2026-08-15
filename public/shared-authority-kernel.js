@@ -1217,23 +1217,31 @@ function repairCanonValue(project, change = {}) {
     const receipt = kernelObject(row);
     if (kernelText(receipt.value) !== from) continue;
     if (authorityTarget(receipt)?.key !== target.key) continue;
-    /* AND ONLY WHEN THE BYTES CAN STILL BE PROVEN THE SAME ONES.
+    /* AND ONLY WHEN THE RECEIPT ITSELF CAN PROVE THE BYTES ARE THE SAME ONES.
      *
-     * A rename MOVES bytes; it does not choose different ones. So a receipt
-     * that recorded an identity may only follow the move when the identity is
-     * unchanged. A repair that overwrote `receipt.assetId` — which this did,
-     * unconditionally — rewrote the creator's decision to be about different
-     * bytes.
+     * A rename MOVES bytes; it does not choose different ones. The only thing
+     * that can testify to that after the fact is an identity the receipt
+     * ALREADY held when the creator approved it. So:
      *
-     * When the identity contradicts, or when the receipt named bytes the caller
-     * can no longer name, nothing is written. The edge and the receipt then
-     * disagree, `currentHumanAuthority` fails closed, and the pointer reads as
-     * HISTORIC — visible, and re-approvable in one act. That is the honest
-     * outcome, and it is the one the caller cannot silently avoid. */
+     *   receipt has an identity, and it matches   follow the move
+     *   receipt has an identity, and it differs   refuse
+     *   receipt has NO identity                   refuse
+     *
+     * The third case is the one Codex reproduced. This used to accept it and
+     * then write the caller's new `assetId` into the old receipt — inventing
+     * proof from the very operation being justified, and restoring Canon on
+     * bytes nothing had ever tied to the decision. A receipt with no identity is
+     * a decision about a FILENAME, and once that filename moves there is nothing
+     * left that says the new file is what the creator approved.
+     *
+     * A refusal is not a loss. The edge and the receipt disagree,
+     * `currentHumanAuthority` fails closed, and the pointer reads as HISTORIC —
+     * visible, named, and one explicit click from being Canon again on bytes the
+     * creator can actually see. */
     const recorded = kernelText(receipt.assetId);
-    if (recorded && recorded !== assetId) continue;
+    if (!recorded) continue;
+    if (recorded !== assetId) continue;
     receipt.value = to;
-    if (assetId) receipt.assetId = assetId;
     repaired.push(kernelText(receipt.id));
   }
   if (repaired.length) mergeInPlace(project, draft);

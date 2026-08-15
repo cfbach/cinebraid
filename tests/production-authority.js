@@ -423,10 +423,17 @@ eq(WRITE_SURFACE, [
   eq(receiptB.value, "FRAME.png", "still naming the bytes its creator approved");
   eq(receiptB.assetId, "asset-B", "with its own identity intact");
 
-  /* AND THE SCOPE HALF ON ITS OWN. Above, the identity check would have caught
-     it anyway; a project whose media ledger has not been indexed carries no
-     identities at all, so only the TARGET distinguishes the two receipts. This
-     is the case where scope is the whole guard. */
+  /* CODEX MB-PT-01, THE EMPTY-IDENTITY CASE — REPAIR REFUSES.
+   *
+   * THIS EXPECTATION IS INVERTED FROM THE PREVIOUS PASS, and Codex was right to
+   * call the old one out. It asserted that a repair SUCCEEDS for a project whose
+   * media ledger has not been indexed. That is exactly the hole: with no
+   * recorded identity there is nothing that ties the renamed file to the
+   * decision, and the implementation "proved" the move by writing the caller's
+   * own new assetId into the receipt.
+   *
+   * A receipt with no identity is a decision about a filename. Once the filename
+   * moves, the decision cannot follow it, and Canon fails closed. */
   const unindexed = { shots: [
     { id: "SH-A", keyframes: [{ id: "fr-a" }], clips: [], creationBrief: {} },
     { id: "SH-B", keyframes: [{ id: "fr-a" }], clips: [], creationBrief: {} },
@@ -437,12 +444,35 @@ eq(WRITE_SURFACE, [
   human(() => Kernel.approveFrameCanon(unindexed, { shotId: "SH-B", frameId: "fr-a", value: "FRAME.png", assetId: "", at: AT(2) }));
   unindexed.shots[0].keyframes[0].winner = "RENAMED.png";
   unindexed.shots[0].winner = "RENAMED.png";
-  const scoped = Kernel.repairCanonValue(unindexed, { ...unA, from: "FRAME.png", to: "RENAMED.png", assetId: "" });
-  eq(scoped.length, 1, "the repair follows the bytes for the target the person acted on");
-  ok(Kernel.hasCurrentHumanAuthority(unindexed, unA), "shot A keeps the decision its creator made");
+  /* The caller offers an identity the rename just minted. It proves nothing
+     about what the creator approved, and the repair refuses it. */
+  const scoped = Kernel.repairCanonValue(unindexed, { ...unA, from: "FRAME.png", to: "RENAMED.png", assetId: "asset-NEW" });
+  eq(scoped.length, 0, "a receipt with no recorded identity cannot follow its bytes anywhere");
+  eq(Authority.authorityReceiptsFor(unindexed, unA)[0].assetId, "",
+    "and the receipt does NOT acquire an identity from the rename that needed one");
+  eq(Authority.authorityReceiptsFor(unindexed, unA)[0].value, "FRAME.png",
+    "it still names exactly what the creator approved");
+  eq(Kernel.hasCurrentHumanAuthority(unindexed, unA), false, "so shot A is no longer canon — it fails closed");
+  const past = Kernel.historicSelection(unindexed, unA);
+  ok(past && past.value === "RENAMED.png", "the moved file is visible as a historic selection");
+  eq(past.requiresHumanApproval, true, "and the creator can make it canon in one explicit act");
+  /* AND THE UNRELATED TARGET IS STILL UNTOUCHED, which is the scope half. */
   eq(Authority.currentAuthorityReceipt(unindexed, unB).value, "FRAME.png",
-    "and shot B — same basename, different target, no identity to tell them apart — is untouched");
+    "shot B — same basename, different target — is untouched");
   ok(Kernel.hasCurrentHumanAuthority(unindexed, unB), "so shot B is still canon");
+
+  /* AND THE ONE CASE THAT LEGITIMATELY FOLLOWS: the receipt already held the
+     identity, and the rename reports the same one. Nothing is invented. */
+  const indexed = { shots: [{ id: "SH-C", keyframes: [{ id: "fr-a" }], clips: [], creationBrief: {} }] };
+  const unC = { kind: "shot-frame", shotId: "SH-C", frameId: "fr-a" };
+  human(() => Kernel.approveFrameCanon(indexed, { shotId: "SH-C", frameId: "fr-a", value: "RAW.png", assetId: "asset-C", at: AT(1) }));
+  indexed.shots[0].keyframes[0].winner = "TIDY.png";
+  indexed.shots[0].winner = "TIDY.png";
+  eq(Kernel.repairCanonValue(indexed, { ...unC, from: "RAW.png", to: "TIDY.png", assetId: "asset-C" }).length, 1,
+    "a receipt that already proved its bytes follows them through a rename");
+  ok(Kernel.hasCurrentHumanAuthority(indexed, unC), "and the decision survives its own rename");
+  eq(Kernel.repairCanonValue(indexed, { ...unC, from: "TIDY.png", to: "OTHER.png", assetId: "asset-DIFFERENT" }).length, 0,
+    "while a different identity is refused outright");
 }
 
 /* ===========================================================================

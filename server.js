@@ -3747,7 +3747,12 @@ function assetPromptContext(P, list, entity, state = null, parentState = null, g
           generationMode: state.isDefault ? "independent" : generationMode,
           parentStateId: parentState?.id || "",
           parentStateName: parentName,
-          parentApprovedFile: parentState?.approvedFile || (parentState?.isDefault ? entity.approvedFile || "" : ""),
+          /* CANON ONLY. This fed the compiled prompt and the provider payload a
+             raw pointer as the parent's approved image. */
+          parentApprovedFile: parentState
+            ? ((ProductionAuthority.entityProductionTruth(P, list, entity.id).canon || [])
+              .find((row) => row.stateId === parentState.id) || {}).value || ""
+            : "",
         }
       : null,
   };
@@ -3771,23 +3776,59 @@ app.post("/api/prompt/asset-compile", async (req, res) => {
       ? states.find((item) => String(item.id) === requestedStateId)
       : states.find((item) => item.isDefault) || null;
     if (requestedStateId && !state) return res.status(400).json({ error: "Continuity state not found" });
-    const requestedParentId = String(req.body.parentStateId || state?.parentStateId || "").trim();
+    /* MB-PT-04, SERVER SIDE — EXACT ANCESTRY, AND IT FAILS CLOSED.
+     *
+     * The browser resolvers were corrected and this route independently
+     * reintroduced the old rule: it accepted a caller-supplied parent id, and
+     * when that did not resolve it substituted the DEFAULT state. So a state
+     * carrying `parentStateId: "ghost"` compiled a prompt against the default
+     * image — an operational reparent of an immutable state, performed by the
+     * compiler, after the client had already refused to do it.
+     *
+     * An existing state has the parent IT RECORDS. The caller does not get to
+     * name one, and there is no substitute. */
+    const recordedParentId = String(state?.parentStateId || "").trim();
     const parentState = state && !state.isDefault
-      ? states.find((item) => String(item.id) === requestedParentId && String(item.id) !== String(state.id))
-        || states.find((item) => item.isDefault)
-        || null
+      ? states.find((item) => String(item.id) === recordedParentId && String(item.id) !== String(state.id)) || null
       : null;
+    if (state && !state.isDefault && !parentState) {
+      return res.status(400).json({
+        error: recordedParentId
+          ? `${state.name || "This continuity state"} records a parent state (${recordedParentId}) that no longer exists. Repair its lineage before compiling a prompt for it.`
+          : `${state.name || "This continuity state"} does not record what it derives from. Create it from the reference you mean, or generate it independently.`,
+        code: "STATE_ANCESTRY_UNRESOLVED",
+      });
+    }
     const generationMode = state && !state.isDefault && req.body.generationMode === "derive" ? "derive" : "independent";
     const profile = PromptEngine.getProfile(req.body.profileId);
     const derivedEdit = !!(state && !state.isDefault && generationMode === "derive" && profile?.mode === "edit");
     if (!profile || profile.mediaType !== "image" || !["t2i", "edit"].includes(profile.mode) || (profile.mode === "edit" && !derivedEdit))
       return res.status(400).json({ error: state && !state.isDefault ? "Choose a text-to-image profile, or a reference-edit profile when deriving from an approved parent state" : "Choose a text-to-image profile" });
-    const parentApprovedFile = parentState?.approvedFile || (parentState?.isDefault ? entity.approvedFile || "" : "");
-    if (derivedEdit && !parentApprovedFile)
-      return res.status(400).json({ error: `${state.name || "Continuity state"} needs an approved parent-state image before using a reference-edit profile` });
+    /* AND THE PARENT MUST BE CANON, NOT MERELY PRESENT.
+     *
+     * `parentApprovedFile` was read straight off the record and then shipped as
+     * `role: "base"`, `approved: true`, labelled "Approved … reference". A
+     * pointer nobody approved became the editable base of production output —
+     * the server-side twin of the browser defect, using the same words. It is
+     * populated only from receipt-backed canon now; a historic parent produces
+     * no base and the route says why. */
+    const parentCanon = parentState
+      ? (ProductionAuthority.entityProductionTruth(P, list, entity.id).canon || [])
+        .find((row) => row.stateId === parentState.id) || null
+      : null;
+    const parentApprovedFile = parentCanon ? parentCanon.value : "";
+    if (derivedEdit && !parentApprovedFile) {
+      const held = parentState ? (parentState.approvedFile || (parentState.isDefault ? entity.approvedFile || "" : "")) : "";
+      return res.status(400).json({
+        error: held
+          ? `${state.name || "Continuity state"} derives from ${parentState.name || "its parent"}, whose image ${held} has never been approved as canon. Approve it before using a reference-edit profile.`
+          : `${state.name || "Continuity state"} needs an approved parent-state image before using a reference-edit profile`,
+        code: "PARENT_NOT_CANON",
+      });
+    }
     const references = derivedEdit ? [{
       key: `continuity-parent:${parentState?.id || "state-default"}`,
-      label: `Approved ${parentState?.name || "parent state"} reference`,
+      label: `Canon ${parentState?.name || "parent state"} reference`,
       asset: parentApprovedFile,
       role: "base",
       mediaType: "image",

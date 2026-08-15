@@ -327,9 +327,50 @@ function assetStateParent(entity, state) {
   if (!parentId) return null;
   return entityStateListRead(entity, true).find((item) => item.id === parentId && item.id !== state.id) || null;
 }
+/* MB-PT-03 — A GENERATION CHOICE IS TRANSIENT UNTIL THE CREATOR GENERATES.
+ *
+ * Opening the flow was made pure, and Codex then found that CHANGING the
+ * generation-mode control still wrote `state.generationMode` and dirtied the
+ * project. Inspecting options, comparing them, and then cancelling left the
+ * project changed — a pre-commit inspection with a durable side effect.
+ *
+ * Pending choices live here, in page memory, keyed by entity and state. They are
+ * never saved, never survive a reload, and are discarded by closing the flow.
+ * `buildEntityStatePrompt` — the actual generation action — is the one place
+ * that commits them, because that is the point at which the choice becomes part
+ * of a real request. */
+const PENDING_STATE_GENERATION = new Map();
+const pendingGenerationKey = (entity, state) => `${(entity && entity.id) || ""}:${(state && state.id) || ""}`;
+function pendingStateGeneration(entity, state) {
+  return PENDING_STATE_GENERATION.get(pendingGenerationKey(entity, state)) || null;
+}
+function setPendingStateGeneration(entity, state, key, value) {
+  const id = pendingGenerationKey(entity, state);
+  const draft = { ...(PENDING_STATE_GENERATION.get(id) || {}) };
+  draft[key] = value;
+  PENDING_STATE_GENERATION.set(id, draft);
+}
+/* THE COMMITMENT BOUNDARY. Returns whether anything was actually written, so a
+   caller does not dirty a project it did not change. */
+function commitPendingStateGeneration(entity, state) {
+  const id = pendingGenerationKey(entity, state);
+  const draft = PENDING_STATE_GENERATION.get(id);
+  if (!draft || !state) return false;
+  let changed = false;
+  for (const key of ["generationMode", "assetPromptProfile"]) {
+    if (draft[key] !== undefined && state[key] !== draft[key]) { state[key] = draft[key]; changed = true; }
+  }
+  PENDING_STATE_GENERATION.delete(id);
+  return changed;
+}
+function discardPendingStateGeneration(entity, state) {
+  PENDING_STATE_GENERATION.delete(pendingGenerationKey(entity, state));
+}
 function assetStateGenerationMode(entity, state) {
   if (!state || state.isDefault) return "independent";
-  return state.generationMode === "independent" ? "independent" : "derive";
+  const pending = pendingStateGeneration(entity, state);
+  const mode = pending && pending.generationMode !== undefined ? pending.generationMode : state.generationMode;
+  return mode === "independent" ? "independent" : "derive";
 }
 /* MB-PT-02 — THE PARENT CARRIES ITS STANDING, AND EVERY CONSUMER MUST READ IT.
  *
@@ -351,15 +392,24 @@ function assetStateParentMedia(list, entity, state) {
   const media = entityMedia(list, entity).find((item) => item.name === file) || null;
   return { parent, file, media, standing: canonRow ? "canon" : "historic" };
 }
+/* DERIVATION NEEDS A CANON PARENT, NOT MERELY A PARENT IMAGE.
+ *
+ * "edit" means "take the parent's exact bytes and change only the delta". Doing
+ * that from a HISTORIC parent silently makes an unapproved image the base of
+ * production output — the pointer becomes authority by being edited. A historic
+ * parent still travels as context (public/fal-generation.js sends it under
+ * `historic-reference`); it does not put the compiler into edit mode. */
 function assetStatePromptMode(list, entity, state) {
   if (!state || state.isDefault) return "t2i";
   const mode = assetStateGenerationMode(entity, state);
   const parentInfo = assetStateParentMedia(list, entity, state);
-  return mode === "derive" && !!parentInfo.media ? "edit" : "t2i";
+  return mode === "derive" && !!parentInfo.media && parentInfo.standing === "canon" ? "edit" : "t2i";
 }
 function assetStatePromptProfile(list, entity, state) {
   const mode = assetStatePromptMode(list, entity, state);
-  const selected = state.assetPromptProfile || entity.assetPromptProfile || P.meta?.promptDefaults?.imageProfile || "";
+  const pending = pendingStateGeneration(entity, state);
+  const selected = (pending && pending.assetPromptProfile !== undefined ? pending.assetPromptProfile : state.assetPromptProfile)
+    || entity.assetPromptProfile || P.meta?.promptDefaults?.imageProfile || "";
   return preferredCreationProfile(mode, selected);
 }
 /* WHAT THIS STATE DERIVES FROM. A STATEMENT, NOT A CONTROL.
@@ -439,13 +489,23 @@ window.setContinuityStateGeneration = (list, id, stateId, key, value) => {
      branch is gone; the refusal stays, because a stale page or a future caller
      must get a clear answer rather than a silent write. */
   if (key === "parentStateId") return toast(reparentingUnsupported().detail);
-  state[key] = value;
-  if (["generationMode", "parentStateId"].includes(key)) {
-    const desiredMode = assetStatePromptMode(list, entity, state);
-    if (!creationImageProfiles(desiredMode).some((profile) => profile.id === state.assetPromptProfile)) {
-      state.assetPromptProfile = preferredCreationProfile(desiredMode, "");
+  /* GENERATION CHOICES ARE TRANSIENT. `generationMode` and the profile it
+     implies are held in page memory until the creator actually generates; a
+     cancelled comparison leaves the project byte-identical. `assetPromptNotes`
+     is authored content, not a choice about how to run, so it persists — losing
+     what someone typed would be the opposite of the property being protected. */
+  if (key === "generationMode" || key === "assetPromptProfile") {
+    setPendingStateGeneration(entity, state, key, value);
+    if (key === "generationMode") {
+      const desiredMode = assetStatePromptMode(list, entity, state);
+      const current = assetStatePromptProfile(list, entity, state);
+      if (!creationImageProfiles(desiredMode).some((profile) => profile.id === current)) {
+        setPendingStateGeneration(entity, state, "assetPromptProfile", preferredCreationProfile(desiredMode, ""));
+      }
     }
+    return route();
   }
+  state[key] = value;
   dirty();
   route();
 };
@@ -458,7 +518,10 @@ window.buildEntityStatePrompt = async (list, id, stateId, useLLM = false) => {
   if (!state.isDefault && !stateDelta) { toast("Describe the state change / delta first. ‘Applies to scenes / shots’ does not describe the visual change."); return null; }
   if (!String(state.notes || "").trim() && stateDelta) state.notes = stateDelta;
   if (useLLM && !capabilityState("text").ready) { toast(capabilityState("text").message); return null; }
+  /* THE COMMITMENT BOUNDARY. The creator asked for a generation, so the choices
+     they were comparing become part of the project now — and only now. */
   const profileId = assetStatePromptProfile(list, entity, state);
+  if (commitPendingStateGeneration(entity, state)) dirty();
   const action = useLLM ? "improve" : "compile";
   setGuidedPromptOp("asset-state", `${list}:${id}`, state.id, { status: "busy", action, startedAt: Date.now() });
   route();
@@ -856,11 +919,31 @@ function guidedFrameState(s, frame, index = 0) {
   }
   return state;
 }
-function guidedFrameApproved(s, frame, takes = takesFor(s.id), index = 0) {
+/* THE FRAME IMAGE THAT IS SITTING THERE, whoever put it there. Display,
+   diagnostics and "what am I looking at" — never authority. */
+function guidedFrameImage(s, frame, takes = takesFor(s.id), index = 0) {
   const name = frame.winner || (index === 0 ? s.winner : "");
   if (!name) return null;
   const take = takes.find((item) => item.name === name && !isVideo(item.name) && !isAudio(item.name));
   return take ? { ...take, name: take.name, url: take.url } : null;
+}
+/* IS THIS FRAME APPROVED — THE AUTHORITY SINK.
+ *
+ * This is the single most consumed approval question in the product: frame
+ * completeness, motion readiness, the prompt reference picker, automation
+ * planning and the continuity workspace all ask it. It answered from
+ * `frame.winner || shot.winner` — a raw pointer — so every one of those
+ * decisions treated a selection nobody approved as production truth, and a
+ * legacy project unlocked paid motion generation on the strength of it.
+ *
+ * It asks the ledger. The image is still THERE and `guidedFrameImage` returns
+ * it, because a historic selection is real work a creator can approve in one
+ * act; what it no longer does is decide anything. */
+function guidedFrameApproved(s, frame, takes = takesFor(s.id), index = 0) {
+  if (!s || !frame) return null;
+  if (typeof hasCurrentHumanAuthority !== "function") return null;
+  if (!hasCurrentHumanAuthority(P, { kind: "shot-frame", shotId: s.id, frameId: frame.id })) return null;
+  return guidedFrameImage(s, frame, takes, index);
 }
 function guidedFrameCandidateRows(s, frame, takes = takesFor(s.id), index = 0) {
   return takes.filter((take) => {
@@ -1591,9 +1674,17 @@ function shotCreationReferences(s, frameId = "") {
   }
   return deduped;
 }
+/* THE SHOT'S CURRENT STILL, and whether anybody approved it.
+ *
+ * `source` used to read "Approved shot image" from a raw pointer, and the
+ * composer put that string on a prompt reference. The image is unchanged — it is
+ * what the shot is currently showing — but the word waits on the receipt, and
+ * `isCanon` lets a caller refuse to treat it as a base. */
 function guidedCurrentShotStill(s, takes = takesFor(s.id)) {
   normalizeShotV5(s);
   const openingFrame = (s.keyframes || [])[0];
+  const openingIsCanon = !!openingFrame && typeof hasCurrentHumanAuthority === "function"
+    && hasCurrentHumanAuthority(P, { kind: "shot-frame", shotId: s.id, frameId: openingFrame.id });
   const names = [s.winner, openingFrame?.winner].filter(Boolean);
   for (const name of [...new Set(names)]) {
     if (isVideo(name) || isAudio(name)) continue;
@@ -1602,7 +1693,10 @@ function guidedCurrentShotStill(s, takes = takesFor(s.id)) {
       return {
         name: take.name,
         url: take.url,
-        source: s.winner === take.name ? "Approved shot image" : "Approved opening frame",
+        isCanon: openingIsCanon,
+        source: openingIsCanon
+          ? (s.winner === take.name ? "Approved shot image" : "Approved opening frame")
+          : "Historic shot image — not approved",
       };
   }
   return null;
@@ -3662,7 +3756,11 @@ window.guidedFrameApprovalChanged = (id, target, previousName, nextName) => {
 window.resetGuidedFrameApproval = (id, frameId) => {
   const s = shotById(id), frames = guidedFrames(s), index = frames.findIndex((frame) => frame.id === frameId);
   if (index < 0) return;
-  const frame = frames[index], previous = guidedFrameApproved(s, frame, takesFor(id), index);
+  /* RESET ACTS ON WHATEVER IMAGE IS SITTING THERE, canon or historic. Reading
+     it through the canon predicate meant a creator could not clear a stale
+     historic selection at all — the one case where clearing is most obviously
+     wanted. `revokeFrameCanon` below withdraws the receipt if there is one. */
+  const frame = frames[index], previous = guidedFrameImage(s, frame, takesFor(id), index);
   if (!previous) return;
   const warning = `Reset approved Frame ${frame.label}? Motion approvals built from this frame will be reopened. Returned files will stay available.`;
   confirmModal(

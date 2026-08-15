@@ -57,6 +57,23 @@ try:
         ],
     })
     audit_project["characters"] = [audit_character]
+    # The creator approved the primary reference. Since the closure pass that is
+    # a statement about the RECEIPT LEDGER: derivation, prompt mode and every
+    # approved/base role require canon, and a raw pointer is HISTORIC.
+    audit_project["productionAuthority"] = {
+        "version": 1,
+        "receipts": [{
+            "id": "authority-000001", "sequence": 1, "actor": "human", "act": "explicit-approval",
+            "command": "approve-entity-state", "kind": "entity-state",
+            "targetKey": "entity-state:characters:CHAR-AUDIT#state-default",
+            "shotId": "", "frameId": "", "unitKey": "", "list": "characters",
+            "entityId": "CHAR-AUDIT", "stateId": "state-default", "slotId": "",
+            "value": "CHAR-AUDIT-PRIMARY.png", "assetId": "", "at": "2026-08-15T00:00:00.000Z",
+            "status": "current", "supersededBy": "", "supersededAt": "", "revokedAt": "",
+            "revocationReason": "", "note": "",
+            "provenance": {"manualAction": "gesture-browser-fixture", "via": "real-browser-fixture", "gesture": "click"},
+        }],
+    }
     audit_shot = (audit_project.get("shots") or [{}])[0]
     audit_shot["characters"] = ["CHAR-AUDIT", "MISSING-CHAR"]
     audit_shot["creationBrief"] = {**(audit_shot.get("creationBrief") or {}), "locationId": "MISSING-LOC", "propIds": ["MISSING-PROP"], "vehicleIds": ["MISSING-VEH"]}
