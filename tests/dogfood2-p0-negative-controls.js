@@ -55,16 +55,56 @@ const source = (name) => fs.readFileSync(path.join(ROOT, name), "utf8");
 let controls = 0;
 const notes = [];
 
+/* LINE ENDINGS ARE NOT PART OF AN ANCHOR.
+
+   Every anchor below is written as LF source, because that is how these files
+   are stored. `core.autocrlf=true` checks them out with CRLF, so a multi-line
+   anchor matched zero times on a fresh clone and C8 refused itself — a loud,
+   accurate-sounding failure report about nothing, raised by a control that was
+   working perfectly. Normalising both sides before matching removes the whole
+   class, and it weakens nothing: a line ending was never what any of these
+   controls was asserting.
+
+   The text handed back is LF as well. It goes straight to `vm`, which does not
+   care, and nothing here is ever written to disk. */
+const toLF = (text) => String(text).split("\r\n").join("\n");
+
 /* THE PROBE RECEIPT. A plain Error, never an assertion: a control whose anchor
    has moved must fail the suite loudly rather than be mistaken for a firing. */
 function mutate(text, needle, replacement, label, expected = 1) {
-  const hits = text.split(needle).length - 1;
+  const body = toLF(text);
+  const anchor = toLF(needle);
+  const hits = body.split(anchor).length - 1;
   if (hits !== expected) {
     throw new Error(`probe receipt: ${label} expected ${expected} occurrence(s) of its anchor, found ${hits}. `
       + "The control is no longer mutating the live path and must be rewritten.");
   }
-  return text.split(needle).join(replacement);
+  return body.split(anchor).join(toLF(replacement));
 }
+
+/* THE PROBE'S OWN PROBE.
+   `mutate` is what every control below trusts to tell it whether it really
+   changed the shipped source, so both of its failure modes are pinned here
+   rather than assumed: it must find a multi-line anchor under either line
+   ending, and it must still refuse an anchor that genuinely is not there.
+   The second half is the one that keeps these controls honest. */
+(function proveTheProbe() {
+  const LF_SOURCE = ["  const row = pick(list);", "  if (!row) return null;", ""].join("\n");
+  const CRLF_SOURCE = LF_SOURCE.split("\n").join("\r\n");
+  const ANCHOR = ["  const row = pick(list);", "  if (!row) return null;"].join("\n");
+  const ABSENT = ["  const row = gone(list);", "  if (!row) return null;"].join("\n");
+  const REPLACEMENT = ["  const row = pick(list) || FALLBACK;", "  if (!row) return null;"].join("\n");
+  for (const [name, text] of [["LF", LF_SOURCE], ["CRLF", CRLF_SOURCE]]) {
+    const out = mutate(text, ANCHOR, REPLACEMENT, `probe self-check ${name}`);
+    assert(out.includes("pick(list) || FALLBACK"),
+      `mutate() did not apply a multi-line anchor to ${name} source`);
+    assert(!out.includes("\r"), `mutate() returned ${name} source with carriage returns left in it`);
+    assert.throws(
+      () => mutate(text, ABSENT, REPLACEMENT, `probe self-check absent ${name}`),
+      /probe receipt: probe self-check absent/,
+      `mutate() accepted an anchor that is not present in ${name} source`);
+  }
+})();
 
 /* Rebuild one module from (possibly mutated) source, in its own realm. */
 function build(relPath, text) {
