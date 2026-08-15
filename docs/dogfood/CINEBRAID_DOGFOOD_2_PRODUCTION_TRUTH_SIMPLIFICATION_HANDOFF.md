@@ -23,12 +23,17 @@ pass deletes the architecture the guards were guarding.
 
 ## 3. Final HEAD
 
-See §25. The branch is pushed; **do not merge** — it is submitted for independent
+Implementation commit: `999cc9179e083192ec1ec1386bc9322b95db76ad`
+Final HEAD is that commit plus the one documentation commit that adds this
+line. The branch is pushed; **do not merge** — it is submitted for independent
 Codex acceptance.
 
 ## 4. Commits
 
-One implementation commit plus this handoff. See `git log` on the branch.
+| Commit | Contents |
+|---|---|
+| `999cc91` | `fix(dogfood2): delete the production-authority architecture the guards were guarding` — the whole implementation, the test reset, and the simplification map and deferrals note |
+| *(this one)* | `docs: dogfood #2 production truth simplification handoff` — records the implementation commit hash |
 
 ## 5. Files changed
 
