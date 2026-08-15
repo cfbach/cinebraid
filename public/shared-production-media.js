@@ -1432,6 +1432,9 @@
       counts: deepFreeze({
         total: unique.length,
         approved: unique.filter((row) => row.disposition.role === "approved").length,
+        /* 1D-04: counted separately so a surface can say how much of a project
+           is legacy selection rather than folding it into either neighbour. */
+        historic: unique.filter((row) => row.disposition.role === "historic").length,
         candidate: unique.filter((row) => row.disposition.role === "candidate").length,
         rejected: unique.filter((row) => row.disposition.role === "rejected").length,
       }),

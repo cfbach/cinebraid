@@ -72,6 +72,15 @@ const P4 = require(path.join(PUBLIC, "shared-media-disposition.js"));
 const Cost = require(path.join(ROOT, "generation-cost.js"));
 
 const LEDGER = (seed) => `asset-${String(seed).repeat(32).slice(0, 32)}`;
+
+/* 1D: the fixture establishes its approvals through the shipped writers, so it
+   needs the same wiring the app has — the ownership resolver and a gesture
+   source the test composition owns. See tests/authority-test-gesture.js. */
+const Authority = require("../public/shared-production-authority");
+const Ownership = require("../public/shared-entity-ownership");
+const Kernel = require("../public/shared-authority-kernel");
+Authority.useEntityOwnershipResolver(Ownership);
+const MANUAL = require("./authority-test-gesture.js").installTestManualActionSource(Kernel);
 const ISO = (day) => `2026-08-${String(day).padStart(2, "0")}T12:00:00.000Z`;
 
 const esc = (v) => String(v == null ? "" : v).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -269,9 +278,40 @@ function fixture() {
   };
 }
 
+/* BATCH 1D — THE FIXTURE CARRIES A REAL AUTHORITY LEDGER NOW.
+ *
+ * The 1C acceptance audit's MB-1C-04: with `productionAuthority` absent, this
+ * projection called every raw pointer `approved` and every one of them a human
+ * decision. It does not any more — an approval requires a valid current
+ * receipt — so a fixture that declares approvals must have the receipts a real
+ * project would have. Otherwise this suite would be asserting the projection's
+ * behaviour on a project state no creator can produce.
+ *
+ * The receipts are established through the SHIPPED writers, not hand-built, so
+ * they are valid by construction and this fixture cannot drift away from what
+ * the kernel accepts. A hand-written ledger would be a second implementation of
+ * the receipt schema living in a test. */
+function withAuthority(p) {
+  const at = "2026-08-14T00:30:00.000Z";
+  const grant = (target, value, assetId) => MANUAL.gesture(() => Authority.beginManualApproval({
+    via: "production-media-fixture", targets: [{ ...target, value, assetId }],
+  }));
+  const approvals = [
+    [{ kind: "entity-state", list: "characters", entityId: "KAI", stateId: "state-default" }, "KAI_DEFAULT_V001.png", LEDGER("a")],
+    [{ kind: "shot-frame", shotId: "SH010", frameId: "kf-a" }, "SH010_FRAME_A_V001.png", LEDGER("b")],
+    [{ kind: "shot-frame", shotId: "SH010", frameId: "kf-b" }, "SH010_FRAME_B_V001.png", ""],
+  ];
+  for (const [target, value, assetId] of approvals) {
+    const request = { ...target, value, assetId, at, manualAction: grant(target, value, assetId) };
+    if (target.kind === "shot-frame") Authority.writeFrameProductionAuthority(p, request);
+    else Authority.writeEntityStateProductionAuthority(p, request);
+  }
+  return p;
+}
+
 function project(PM, overrides = {}) {
   const f = fixture();
-  return PM.productionMediaRecords({ project: f.project, scan: f.scan, jobs: f.jobs, ...overrides });
+  return PM.productionMediaRecords({ project: withAuthority(f.project), scan: f.scan, jobs: f.jobs, ...overrides });
 }
 const byName = (built, name) => built.records.find((row) => row.file.name === name);
 const stripComments = (source) => source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
@@ -391,11 +431,33 @@ function checkDisposition({ PM }) {
     assert.strictEqual(byName(built, entry.name).disposition.role, "approved",
       `${entry.name}: the projection must report what partitionShotMedia decided`);
 
-  /* APPROVED WITH NO CANDIDATE ROW. The prop's approval exists only as an edge. A
-     projection that read disposition off the row would call it a candidate. */
+  /* CHANGED IN BATCH 1D — AND THE PROP IS THE CLEAREST CASE OF THE WHOLE FIX.
+
+     OLD EXPECTATION: the prop's approval exists ONLY as an edge — no candidate
+     row, no provenance, no receipt — and the projection called it `approved`
+     with `humanDecision: "approved"`. The comment above it read "a projection
+     that read disposition off the row would call it a candidate", and it was
+     right that the row is the wrong place to look. The edge is the wrong place
+     too.
+
+     WHY IT IS NO LONGER VALID: an edge with nothing behind it is exactly the
+     legacy pointer MB-1C-04 is about. This one cannot even be attributed — the
+     project cannot say who chose it or when. Calling that a human decision is
+     the claim 1D-04 removes.
+
+     IT IS ALSO NOT APPROVABLE, and that is not an accident: PR-TOOL has no
+     candidate row, so it does not durably own the file, and 1D-03 makes
+     ownership a mandatory rule of the entity-state target kind. The fixture
+     therefore CANNOT establish a receipt here even by going through the real
+     writer, which is the rule working rather than a gap.
+
+     THE NEW INVARIANT: the edge is still surfaced, still enumerated, still
+     described — as a historic selection nobody has approved. */
   const prop = byName(built, "TOOL_DEFAULT_V001.png");
-  assert.strictEqual(prop.disposition.role, "approved", "an edge-only approval is still an approval");
-  assert.strictEqual(prop.humanDecision.state, "approved", "...and the human decision follows the edge, not the missing row");
+  assert.strictEqual(prop.disposition.role, "historic", "an edge with no receipt behind it is a historic selection");
+  assert.strictEqual(prop.disposition.authority.claimed, true, "the edge is still reported — the evidence is not hidden");
+  assert.strictEqual(prop.disposition.authority.receiptBacked, false, "and the reason it is not canon is stated");
+  assert.strictEqual(prop.humanDecision.state, "undecided", "nobody decided it, which is the truth about an unattributable pointer");
   return "disposition: cross-read against partitionEntityMedia / partitionShotMedia, edge-only approvals honoured";
 }
 
@@ -908,10 +970,18 @@ function checkRendering({ PM, Results, Inspector }) {
   const rejectedTab = Results.tabRecords(built.records, "rejected");
   assert.strictEqual(rejectedTab.length, built.counts.rejected, "...which is still fully reachable under Rejected");
   assert.strictEqual(Results.tabRecords(built.records, "approved").length, built.counts.approved);
-  assert.strictEqual(Results.tabRecords(built.records, "candidates").length, built.counts.candidate);
+  /* 1D-04: HISTORIC rows — a pointer something selected and nobody approved —
+     sit under Candidates, because the tabs answer "is this canon" and historic
+     and candidate share that answer. They keep their own status word on the
+     card, so the distinction stays visible where it matters. */
+  assert.strictEqual(
+    Results.tabRecords(built.records, "candidates").length,
+    built.counts.candidate + built.counts.historic,
+    "Candidates holds everything that is not canon and not rejected");
   assert.strictEqual(
     Results.tabRecords(built.records, "approved").length + Results.tabRecords(built.records, "candidates").length + rejectedTab.length,
-    built.records.length, "the four status views must partition the population with nothing lost");
+    built.records.length, "the status views must partition the population with nothing lost");
+  assert(built.counts.historic > 0, "and the fixture must actually contain a historic pointer, or this proves nothing");
 
   /* SORTING USES RECORDED FIELDS ONLY: a record with no timestamp sorts last rather
      than being treated as the oldest. */
@@ -1002,7 +1072,12 @@ function checkScale({ PM }) {
   const expected = 10 + SHOTS * TAKES;
   assert.strictEqual(built.records.length, expected, `expected ${expected} records at scale, got ${built.records.length}`);
   assert.strictEqual(built.duplicatesCollapsed, 0, "no logical asset may be duplicated at scale");
-  assert.strictEqual(built.counts.approved + built.counts.candidate + built.counts.rejected, expected, "counts must partition the population at scale");
+  /* 1D-04: four roles now, and `historic` is one of them — the scale fixture has
+     no authority ledger, so every winner it declares is a legacy pointer. The
+     partition property is what this asserts, and it is unchanged. */
+  assert.strictEqual(
+    built.counts.approved + built.counts.historic + built.counts.candidate + built.counts.rejected,
+    expected, "counts must partition the population at scale");
   assert(built.counts.rejected >= SHOTS, "rejected media must survive at scale");
 
   /* A BOUND, NOT A BENCHMARK. The number is generous because CI machines vary; what it

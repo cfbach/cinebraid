@@ -108,7 +108,12 @@
 
   function tabRecords(records, tab) {
     if (tab === "approved") return records.filter((row) => row.disposition.role === "approved");
-    if (tab === "candidates") return records.filter((row) => row.disposition.role === "candidate");
+    /* 1D-04: a HISTORIC row is a selection something made and nobody approved,
+       so it sits with the work that is not canon yet — which is what it is —
+       and carries its own status word on the card so the distinction from a
+       plain candidate stays visible. Deliberately NOT a fifth tab: the tabs
+       answer "is this canon", and historic and candidate share that answer. */
+    if (tab === "candidates") return records.filter((row) => ["candidate", "historic"].includes(row.disposition.role));
     if (tab === "rejected") return records.filter((row) => row.disposition.role === "rejected");
     /* current — everything a filmmaker is still working with. */
     return records.filter((row) => row.disposition.role !== "rejected");
@@ -144,7 +149,11 @@
        recommendation gets its own separate marker below and can never be painted into
        this chip, because a card that said APPROVED because a model liked it is the
        exact confusion the whole batch exists to end. */
-    const statusWord = { approved: "APPROVED", candidate: "CANDIDATE", rejected: "REJECTED" }[row.disposition.role] || "";
+    /* 1D-04: HISTORIC is the fourth word, and it is the one that stops Results
+       telling a filmmaker they approved something they did not. It reads as its
+       own status on the card rather than borrowing APPROVED or hiding as a
+       plain candidate. */
+    const statusWord = { approved: "APPROVED", historic: "HISTORIC", candidate: "CANDIDATE", rejected: "REJECTED" }[row.disposition.role] || "";
     const recommended = row.aiRecommendation.state === "known" && row.disposition.role !== "approved"
       ? `<span class="results-card-ai" title="An AI reviewer suggested this. It is not an approval.">AI SUGGESTED</span>`
       : "";
