@@ -120,9 +120,13 @@ control("C5 an approval target is labelled from free text instead of the stored 
 notes.push("Semantic safety:");
 
 control("C6 a passing AI review is treated as an approval", "checkSemanticSafety",
+  /* 1D-04 re-expressed the anchor. `approved` used to be a four-way disjunction
+     and this control added AI pass as a fifth term. It is a single source now —
+     the authority receipt — so the mutation adds the AI term to THAT, which is
+     the same defect against the code that exists. */
   { projection: mutate(SOURCES.projection,
-      "    const approved = approvedByEdge\n      || ENTITY_APPROVED_DECISIONS.includes(decision)",
-      "    const approved = approvedByEdge\n      || Object.values(record(it.structuredReviews)).some((review) => record(review).pass === true)\n      || record(it.aiReview).pass === true\n      || ENTITY_APPROVED_DECISIONS.includes(decision)",
+      "    const approved = receiptBacked === true;",
+      "    const approved = receiptBacked === true\n      || Object.values(record(it.structuredReviews)).some((review) => record(review).pass === true)\n      || record(it.aiReview).pass === true;",
       "C6") },
   "AI PASS must cause nothing by itself. This is the hidden auto-approval the brief forbids, and it would silently promote every well-reviewed candidate to canon.");
 
@@ -135,8 +139,8 @@ control("C7 the recommendation vocabulary gains a decision word", "checkSemantic
 
 control("C8 an AI recommendation is painted as an APPROVED chip", "checkRendering",
   { results: mutate(SOURCES.results,
-      '    const statusWord = { approved: "APPROVED", candidate: "CANDIDATE", rejected: "REJECTED" }[row.disposition.role] || "";',
-      '    const statusWord = row.aiRecommendation.value === "approve" ? "APPROVED" : { approved: "APPROVED", candidate: "CANDIDATE", rejected: "REJECTED" }[row.disposition.role] || "";',
+      '    const statusWord = { approved: "APPROVED", historic: "HISTORIC", candidate: "CANDIDATE", rejected: "REJECTED" }[row.disposition.role] || "";',
+      '    const statusWord = row.aiRecommendation.value === "approve" ? "APPROVED" : { approved: "APPROVED", historic: "HISTORIC", candidate: "CANDIDATE", rejected: "REJECTED" }[row.disposition.role] || "";',
       "C8") },
   "The card's status chip must print the DISPOSITION. Letting a recommendation reach it is the single most dangerous confusion in the batch: a grid of AI-liked candidates would read as a grid of approved canon.");
 
