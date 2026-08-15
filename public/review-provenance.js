@@ -440,26 +440,50 @@ window.promoteFinishJob = (jobId) => {
   });
   if (target === "shot") {
     const opening = (s.keyframes || [])[0];
-    const writeShotEdge = () => { s.winner = job.resultFile; stampShotApprovalIdentity(s, "winner", approvedAssetId); };
-    if (opening) writeFrameProductionAuthority(P, { shotId: job.shotId, frameId: opening.id, value: job.resultFile, assetId: approvedAssetId, manualAction: promoteGrant, at: new Date().toISOString(), applyEdge: writeShotEdge });
-    else writeShotEdge();
+    const promoteEdge = (draft) => {
+      const dShot = (draft.shots || []).find((row) => row && row.id === job.shotId);
+      if (!dShot) throw new Error("Promotion target is unavailable");
+      dShot.winner = job.resultFile;
+      stampShotApprovalIdentity(dShot, "winner", approvedAssetId);
+      const dOpening = (dShot.keyframes || [])[0];
+      if (dOpening) { dOpening.winner = job.resultFile; stampShotApprovalIdentity(dOpening, "winner", approvedAssetId); }
+    };
+    /* K1C: both arms route — with a frame it is frame authority, without one it
+       is the shot delivery pointer. Neither writes outside the kernel. */
+    if (opening) writeFrameProductionAuthority(P, { shotId: job.shotId, frameId: opening.id, value: job.resultFile, assetId: approvedAssetId, manualAction: promoteGrant, at: new Date().toISOString(), applyEdge: promoteEdge });
+    else writeDeliveryProductionAuthority(P, { shotId: job.shotId, value: job.resultFile, assetId: approvedAssetId, manualAction: promoteGrant, at: new Date().toISOString(), applyEdge: promoteEdge });
   } else if (target.startsWith("frame:")) {
     const f = frameById(s, target.slice(6));
     if (f) {
       writeFrameProductionAuthority(P, {
         shotId: job.shotId, frameId: f.id, value: job.resultFile, assetId: approvedAssetId, manualAction: promoteGrant, at: new Date().toISOString(),
-        applyEdge: () => {
-          f.winner = job.resultFile;
-          stampShotApprovalIdentity(f, "winner", approvedAssetId);
-          if ((s.keyframes || [])[0]?.id === f.id) { s.winner = job.resultFile; stampShotApprovalIdentity(s, "winner", approvedAssetId); }
+        applyEdge: (draft) => {
+          const dShot = (draft.shots || []).find((row) => row && row.id === job.shotId);
+          const dFrame = ((dShot || {}).keyframes || []).find((row) => row && row.id === f.id);
+          if (!dShot || !dFrame) throw new Error("Promotion target is unavailable");
+          dFrame.winner = job.resultFile;
+          stampShotApprovalIdentity(dFrame, "winner", approvedAssetId);
+          if ((dShot.keyframes || [])[0]?.id === dFrame.id) { dShot.winner = job.resultFile; stampShotApprovalIdentity(dShot, "winner", approvedAssetId); }
         },
       });
     }
   } else if (target.startsWith("segment:")) {
+    /* K1C: a promoted finish job's motion output is canon, like any other
+       motion winner. */
     const seg = (s.clips || []).find((x) => unitKey(x) === target.slice(8));
     if (seg) {
-      seg.videoWinner = job.resultFile;
-      stampShotApprovalIdentity(seg, "videoWinner", approvedAssetId);
+      writeMotionProductionAuthority(P, {
+        shotId: job.shotId, unitKey: seg.id || unitKey(seg), value: job.resultFile, assetId: approvedAssetId,
+        manualAction: beginManualApproval({ via: "finish-job-promotion", targets: [{ kind: "shot-motion", shotId: job.shotId, unitKey: seg.id || unitKey(seg) }] }),
+        at: new Date().toISOString(),
+        applyEdge: (draft) => {
+          const dShot = (draft.shots || []).find((row) => row && row.id === job.shotId);
+          const dSeg = ((dShot || {}).clips || []).find((row) => row && (row.id === seg.id || row.suffix === seg.suffix));
+          if (!dShot || !dSeg) throw new Error("Motion promotion target is unavailable");
+          dSeg.videoWinner = job.resultFile;
+          stampShotApprovalIdentity(dSeg, "videoWinner", approvedAssetId);
+        },
+      });
     }
   }
   const row = candidateRecord(s, job.resultFile, true);

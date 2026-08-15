@@ -394,46 +394,90 @@ window.confirmApproveTake = async () => {
      frame approved from the run modal leave identical evidence, which is what
      lets one gate predicate serve both. */
   const approvalGrant = shotApprovalManualAction;
+  const at = new Date().toISOString();
   if (target === "shot") {
     const opening = video ? null : (s.keyframes || [])[0];
-    const writeShotEdge = () => {
-      s.winner = finalName;
-      stampShotApprovalIdentity(s, "winner", approvedAssetId);
-      if (opening) {
-        opening.winner = finalName;
-        stampShotApprovalIdentity(opening, "winner", approvedAssetId);
-      }
-    };
-    /* The opening frame and the shot are ONE authority edge — the shot's winner
-       IS the opening frame's. One receipt, addressed to the frame, so the gate
-       predicate finds it whichever way the run named the target. */
-    if (opening) writeFrameProductionAuthority(P, { shotId: id, frameId: opening.id, value: finalName, assetId: approvedAssetId, manualAction: approvalGrant, at: new Date().toISOString(), applyEdge: writeShotEdge });
-    else writeShotEdge();
+    /* THE STILL CASE. The opening frame and the shot are ONE authority edge —
+       the shot's winner IS the opening frame's. One receipt, addressed to the
+       frame, so the gate predicate finds it whichever way the run named it. */
+    if (opening) {
+      writeFrameProductionAuthority(P, {
+        shotId: id, frameId: opening.id, value: finalName, assetId: approvedAssetId, manualAction: approvalGrant, at,
+        applyEdge: (draft) => {
+          const dShot = (draft.shots || []).find((row) => row && row.id === id);
+          const dOpening = ((dShot || {}).keyframes || [])[0];
+          if (!dShot || !dOpening) throw new Error("Shot approval target is unavailable");
+          dShot.winner = finalName;
+          stampShotApprovalIdentity(dShot, "winner", approvedAssetId);
+          dOpening.winner = finalName;
+          stampShotApprovalIdentity(dOpening, "winner", approvedAssetId);
+        },
+      });
+    } else {
+      /* K1C — THE VIDEO PATH, WHICH THE RE-AUDIT FOUND UNROUTED.
+         `opening` is deliberately null for video, so this branch wrote
+         `s.winner` directly and produced canonical production output with no
+         receipt behind it. An approved video IS the shot's deliverable, so it
+         goes through the delivery boundary. */
+      writeDeliveryProductionAuthority(P, {
+        shotId: id, value: finalName, assetId: approvedAssetId, manualAction: approvalGrant, at,
+        applyEdge: (draft) => {
+          const dShot = (draft.shots || []).find((row) => row && row.id === id);
+          if (!dShot) throw new Error("Shot approval target is unavailable");
+          dShot.winner = finalName;
+          stampShotApprovalIdentity(dShot, "winner", approvedAssetId);
+          dShot.creationBrief = dShot.creationBrief && typeof dShot.creationBrief === "object" ? dShot.creationBrief : {};
+          dShot.creationBrief.approvedMotionFile = finalName;
+        },
+      });
+    }
   } else if (target.startsWith("frame:")) {
     const f = frameById(s, target.slice(6));
     if (f) {
       writeFrameProductionAuthority(P, {
-        shotId: id, frameId: f.id, value: finalName, assetId: approvedAssetId, manualAction: approvalGrant, at: new Date().toISOString(),
-        applyEdge: () => {
-          f.winner = finalName;
-          stampShotApprovalIdentity(f, "winner", approvedAssetId);
-          if ((s.keyframes || [])[0]?.id === f.id) { s.winner = finalName; stampShotApprovalIdentity(s, "winner", approvedAssetId); }
+        shotId: id, frameId: f.id, value: finalName, assetId: approvedAssetId, manualAction: approvalGrant, at,
+        applyEdge: (draft) => {
+          const dShot = (draft.shots || []).find((row) => row && row.id === id);
+          const dFrame = ((dShot || {}).keyframes || []).find((row) => row && row.id === f.id);
+          if (!dShot || !dFrame) throw new Error("Frame approval target is unavailable");
+          dFrame.winner = finalName;
+          stampShotApprovalIdentity(dFrame, "winner", approvedAssetId);
+          if ((dShot.keyframes || [])[0]?.id === dFrame.id) { dShot.winner = finalName; stampShotApprovalIdentity(dShot, "winner", approvedAssetId); }
         },
       });
     }
     complete = shotApprovalComplete(s);
     label = "FRAME APPROVED";
   } else if (target.startsWith("segment:")) {
-    const c = (s.clips || []).find((x) => unitKey(x) === target.slice(8));
+    /* K1C — A MOTION WINNER IS CANON. Same reasoning as the video path: this
+       wrote `videoWinner` and `approvedMotionFile` outside the receipt model. */
+    const unitId = target.slice(8);
+    const c = (s.clips || []).find((x) => unitKey(x) === unitId);
     if (c) {
-      c.videoWinner = finalName;
-      stampShotApprovalIdentity(c, "videoWinner", approvedAssetId);
+      writeMotionProductionAuthority(P, {
+        shotId: id, unitKey: c.id || unitId, value: finalName, assetId: approvedAssetId, manualAction: approvalGrant, at,
+        applyEdge: (draft) => {
+          const dShot = (draft.shots || []).find((row) => row && row.id === id);
+          const dClip = ((dShot || {}).clips || []).find((row) => row && (row.id === c.id || row.suffix === c.suffix));
+          if (!dShot || !dClip) throw new Error("Motion approval target is unavailable");
+          dClip.videoWinner = finalName;
+          stampShotApprovalIdentity(dClip, "videoWinner", approvedAssetId);
+          dShot.creationBrief = dShot.creationBrief && typeof dShot.creationBrief === "object" ? dShot.creationBrief : {};
+          dShot.creationBrief.approvedMotionFile = finalName;
+        },
+      });
     }
-    const creation = typeof ensureShotCreation === "function" ? ensureShotCreation(s) : (s.creationBrief = s.creationBrief || {});
-    creation.approvedMotionFile = finalName;
     complete = shotApprovalComplete(s);
     label = "MOTION APPROVED";
   } else {
+    /* CLASSIFICATION B — A MOTION UNIT'S START/END FRAME POINTERS ARE NOT CANON.
+       `clips[i].winner` and `clips[i].winnerEnd` select WHICH APPROVED STILLS a
+       motion unit interpolates between. They are inputs to a generation, not
+       production output, and the Canon they depend on is the frame authority
+       that approved those stills in the first place. Adding a receipt kind for
+       them would grow the authority model to describe a pointer that decides
+       nothing — the opposite of the alpha direction — so they stay direct and
+       are named here as non-authoritative. */
     const [ci, edge] = target.split(":");
     if (edge === "last") {
       s.clips[+ci].winnerEnd = finalName;

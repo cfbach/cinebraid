@@ -3415,14 +3415,52 @@ window.markGuidedStillFinal = (id, name) => {
   /* BATCH 1B: marking a still final IS a shot-winner write, so it goes through
      the authority command. The receipt is what makes a later gate read agree
      with what this screen just did. */
+  /* K1C — BOTH ARMS ROUTE. The fallback used to write `s.winner` directly when
+     a shot had no opening frame, which is a canonical selection with no receipt
+     behind it. There is no un-routed arm now: with a frame it is frame
+     authority, without one it is the shot's delivery pointer. */
+  const stillAt = new Date().toISOString();
+  const stillAssetId = (takesFor(s.id).find((item) => item.name === name) || {}).assetId || "";
   if (stillOpening) {
     writeFrameProductionAuthority(P, {
-      shotId: s.id, frameId: stillOpening.id, value: name,
-      assetId: (takesFor(s.id).find((item) => item.name === name) || {}).assetId || "",
-      manualAction: stillManualAction,
-      at: new Date().toISOString(), applyEdge: () => { stillOpening.winner = name; writeStillEdge(); },
+      shotId: s.id, frameId: stillOpening.id, value: name, assetId: stillAssetId,
+      manualAction: stillManualAction, at: stillAt,
+      applyEdge: (draft) => {
+        const dShot = (draft.shots || []).find((row) => row && row.id === s.id);
+        const dFrame = ((dShot || {}).keyframes || []).find((row) => row && row.id === stillOpening.id);
+        if (!dShot || !dFrame) throw new Error("Still delivery target is unavailable");
+        dFrame.winner = name;
+        dShot.winner = name;
+        dShot.finalStillFile = name;
+        stampShotApprovalIdentity(dShot, "winner", stillAssetId);
+        dShot.creationBrief = dShot.creationBrief && typeof dShot.creationBrief === "object" ? dShot.creationBrief : {};
+        dShot.creationBrief.finalStillFile = name;
+        dShot.creationBrief.deliveryIntent = "still";
+        dShot.workflowStatus = "APPROVED";
+        dShot.status = "APPROVED";
+      },
     });
-  } else writeStillEdge();
+    writeStillEdge();
+  } else {
+    writeDeliveryProductionAuthority(P, {
+      shotId: s.id, value: name, assetId: stillAssetId,
+      manualAction: beginManualApproval({ via: "guided-final-still", targets: [{ kind: "shot-delivery", shotId: s.id }] }),
+      at: stillAt,
+      applyEdge: (draft) => {
+        const dShot = (draft.shots || []).find((row) => row && row.id === s.id);
+        if (!dShot) throw new Error("Still delivery target is unavailable");
+        dShot.winner = name;
+        dShot.finalStillFile = name;
+        stampShotApprovalIdentity(dShot, "winner", stillAssetId);
+        dShot.creationBrief = dShot.creationBrief && typeof dShot.creationBrief === "object" ? dShot.creationBrief : {};
+        dShot.creationBrief.finalStillFile = name;
+        dShot.creationBrief.deliveryIntent = "still";
+        dShot.workflowStatus = "APPROVED";
+        dShot.status = "APPROVED";
+      },
+    });
+    writeStillEdge();
+  }
   const row = candidateRecord(s, name, true);
   row.approvedAt = row.approvedAt || new Date().toISOString();
   row.finalAt = new Date().toISOString();
@@ -3436,9 +3474,25 @@ window.approveGuidedMotion = (id, name) => {
   const s = shotById(id), c = ensureShotCreation(s), current = guidedCurrentShotStill(s);
   const profile = guidedVideoProfiles().find((item) => item.id === c.motionProfileId);
   const unit = ensureGuidedMotionUnit(s, current?.name || "", profile);
-  unit.videoWinner = name;
-  stampShotApprovalIdentity(unit, "videoWinner", (takesFor(s.id).find((item) => item.name === name) || {}).assetId || "");
-  c.approvedMotionFile = name;
+  /* K1C — A MOTION WINNER IS CANON, so it goes through the kernel like every
+     other canonical selection. This wrote videoWinner and approvedMotionFile
+     directly, outside the receipt model. */
+  const motionAssetId = (takesFor(s.id).find((item) => item.name === name) || {}).assetId || "";
+  const motionUnitKey = unit.id || unitKey(unit);
+  writeMotionProductionAuthority(P, {
+    shotId: s.id, unitKey: motionUnitKey, value: name, assetId: motionAssetId,
+    manualAction: beginManualApproval({ via: "guided-motion-approval", targets: [{ kind: "shot-motion", shotId: s.id, unitKey: motionUnitKey }] }),
+    at: new Date().toISOString(),
+    applyEdge: (draft) => {
+      const dShot = (draft.shots || []).find((row) => row && row.id === s.id);
+      const dUnit = ((dShot || {}).clips || []).find((row) => row && (row.id === unit.id || row.suffix === unit.suffix));
+      if (!dShot || !dUnit) throw new Error("Motion approval target is unavailable");
+      dUnit.videoWinner = name;
+      stampShotApprovalIdentity(dUnit, "videoWinner", motionAssetId);
+      dShot.creationBrief = dShot.creationBrief && typeof dShot.creationBrief === "object" ? dShot.creationBrief : {};
+      dShot.creationBrief.approvedMotionFile = name;
+    },
+  });
   const row = candidateRecord(s, name, true);
   row.approvedAt = new Date().toISOString();
   row.approvedTarget = `segment:${unitKey(unit)}`;
@@ -3452,9 +3506,23 @@ window.queueGuidedVideoFinish = (id, name) => {
   const s = shotById(id), c = ensureShotCreation(s);
   if (c.approvedMotionFile !== name) {
     const current = guidedCurrentShotStill(s), profile = guidedVideoProfiles().find((item) => item.id === c.motionProfileId), unit = ensureGuidedMotionUnit(s, current?.name || "", profile);
-    unit.videoWinner = name;
-    stampShotApprovalIdentity(unit, "videoWinner", (takesFor(s.id).find((item) => item.name === name) || {}).assetId || "");
-    c.approvedMotionFile = name;
+    /* K1C: queueing for finish establishes the motion winner, so it routes. */
+    const queueAssetId = (takesFor(s.id).find((item) => item.name === name) || {}).assetId || "";
+    const queueUnitKey = unit.id || unitKey(unit);
+    writeMotionProductionAuthority(P, {
+      shotId: s.id, unitKey: queueUnitKey, value: name, assetId: queueAssetId,
+      manualAction: beginManualApproval({ via: "guided-motion-finish-queue", targets: [{ kind: "shot-motion", shotId: s.id, unitKey: queueUnitKey }] }),
+      at: new Date().toISOString(),
+      applyEdge: (draft) => {
+        const dShot = (draft.shots || []).find((row) => row && row.id === s.id);
+        const dUnit = ((dShot || {}).clips || []).find((row) => row && (row.id === unit.id || row.suffix === unit.suffix));
+        if (!dShot || !dUnit) throw new Error("Motion approval target is unavailable");
+        dUnit.videoWinner = name;
+        stampShotApprovalIdentity(dUnit, "videoWinner", queueAssetId);
+        dShot.creationBrief = dShot.creationBrief && typeof dShot.creationBrief === "object" ? dShot.creationBrief : {};
+        dShot.creationBrief.approvedMotionFile = name;
+      },
+    });
     markCandidateApproved(s, name, `segment:${unitKey(unit)}`);
     dirty();
   }
@@ -3462,6 +3530,20 @@ window.queueGuidedVideoFinish = (id, name) => {
 };
 window.markGuidedVideoFinal = (id, name) => {
   const s = shotById(id), c = ensureShotCreation(s);
+  /* K1C: the shot's final video IS its delivery Canon. */
+  writeDeliveryProductionAuthority(P, {
+    shotId: s.id, value: name,
+    manualAction: beginManualApproval({ via: "guided-final-video", targets: [{ kind: "shot-delivery", shotId: s.id }] }),
+    at: new Date().toISOString(),
+    applyEdge: (draft) => {
+      const dShot = (draft.shots || []).find((row) => row && row.id === s.id);
+      if (!dShot) throw new Error("Video delivery target is unavailable");
+      dShot.finalVideoFile = name;
+      dShot.creationBrief = dShot.creationBrief && typeof dShot.creationBrief === "object" ? dShot.creationBrief : {};
+      dShot.creationBrief.approvedMotionFile = name;
+      dShot.creationBrief.finalVideoFile = name;
+    },
+  });
   c.approvedMotionFile = name;
   c.finalVideoFile = name;
   s.finalVideoFile = name;
@@ -3557,6 +3639,20 @@ function guidedInvalidateMotionAfterFrameChange(s, previousName = "", nextName =
   }
   c.motionPromptBuilds = [];
   c.lastMotionPackageId = "";
+  /* K1C — CLEARING A CANONICAL EDGE IS A REVOCATION.
+     The motion approvals being reopened here are Canon, so the receipts behind
+     them are withdrawn rather than left standing beside an emptied pointer. A
+     receipt with no edge already fails closed, so this is the honest record
+     rather than the safety net — but a project should be able to say WHY a
+     decision stopped standing, and "the frame it was built on changed" is the
+     reason. */
+  if (typeof revokeProductionAuthority === "function") {
+    revokeProductionAuthority(P, { kind: "shot-delivery", shotId: s.id, at: new Date().toISOString(), via: "frame-input-changed", reason: "target-cleared" });
+    for (const clip of s.clips || []) {
+      if (!clip.videoWinner) continue;
+      revokeProductionAuthority(P, { kind: "shot-motion", shotId: s.id, unitKey: clip.id || unitKey(clip), at: new Date().toISOString(), via: "frame-input-changed", reason: "target-cleared" });
+    }
+  }
   c.approvedMotionFile = "";
   c.finalVideoFile = "";
   s.finalVideoFile = "";
