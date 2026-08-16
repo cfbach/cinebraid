@@ -88,6 +88,34 @@ const FAL_H3_BACKEND = {
      exactly as C1 built it — no invented field, no fabricated value. */
   seed: { supported: false, establishedBy: "absence-in-fal-endpoint-schema" },
 
+  /* PROMPT EXPANSION, AND WHY IT IS SET RATHER THAN LEFT ALONE.
+   *
+   * All three H3 endpoints carry `enable_prompt_expansion`, and fal DEFAULTS IT TO TRUE:
+   * a vision-language model rewrites the prompt before generation. The rewritten text
+   * was not observed to come back on any of them, so with the default in place CineBraid
+   * sends one prompt, the model renders from another, and nobody can see the difference.
+   *
+   * That makes it a correctness question rather than a preference. Everything this
+   * compiler asserts — that a camera move survived into the prompt, that an intent was
+   * represented and verified at 50% word survival, that identical production state
+   * compiles byte-identically — is a claim about text a provider was silently free to
+   * replace. A deterministic compiler in front of a non-deterministic rewriter is a
+   * deterministic compiler in name only.
+   *
+   * This is a BACKEND fact, so it lives here: it is what fal's queue does, not what
+   * MiniMax H3 is, and a future backend without a rewriter inherits nothing from it.
+   *
+   * Consequence, stated rather than discovered: renders made after this change differ
+   * from renders made before it, because the prompt is no longer being rewritten.
+   * Comparisons across that boundary are not like for like. */
+  promptExpansion: {
+    field: "enable_prompt_expansion",
+    providerDefault: true,
+    send: false,
+    establishedBy: "fal-endpoint-schema",
+    returnsRewrittenPrompt: false,
+  },
+
   references: {
     /* fal documents the combined ceiling explicitly: "Reference images, videos, and
        audio clips must add up to at most 12 files." */
@@ -288,6 +316,12 @@ function serializeH3PlanForFal(plan, capability, options = {}) {
     );
 
   const input = { prompt, duration };
+  /* Sent on every mode and every request, never conditionally: the field defaults to
+     true on all three endpoints, so OMITTING it is switching it ON. The value is a
+     backend constant rather than a caller option — a rewriter that can be re-enabled by
+     a caller is a rewriter that will be on for some shot nobody remembers configuring,
+     and the resulting render would carry no record of which prompt produced it. */
+  input[FAL_H3_BACKEND.promptExpansion.field] = FAL_H3_BACKEND.promptExpansion.send;
   if (resolution) input.resolution = resolution;
 
   /* Aspect ratio, only where fal has a field for it. i2v and flf take the ratio from
