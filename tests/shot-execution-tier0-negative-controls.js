@@ -56,7 +56,7 @@ function control(id, title, run) {
    This is the defect Tier 0 exists to prevent: a fact with no row cannot be carried,
    cannot be verified, and cannot be reported as unsupported. It simply stops existing
    between the shot and the model, with no warning anywhere. */
-for (const intent of ["editorial", "endpoints.start", "endpoints.end", "performance.lipSync", "interaction", "subjects.count"])
+for (const intent of ["editorial", "endpoints.start", "endpoints.end", "performance.lipSync", "interaction", "subjects.count", "output.nativeAudio"])
   control(`NC-1:${intent}`, `dropping the ${intent} inventory row`, () => {
     const source = mutated("generation-compiler.js", (text) => {
       const line = text.split("\n").find((row) => row.includes(`{ key: "${intent}",`));
@@ -69,6 +69,7 @@ for (const intent of ["editorial", "endpoints.start", "endpoints.end", "performa
       endpoints: { start: "exact", end: "approximate" },
       interaction: "precise",
       audio: { ...F.baseSpec().audio, lipSyncRequired: true },
+      output: { nativeAudio: false },
     });
 
     /* THE LIVE DEFECT: the fact is genuinely no longer inventoried. */
@@ -168,6 +169,35 @@ control("NC-2c", "persisting the derived lip-sync level into the brief", async (
   assert.strictEqual(outcome.flag, false, "and silently reverts the boolean with it");
   /* THE GUARD asserts the opposite: the tick takes effect and nothing is stored. */
   assert.notStrictEqual(outcome.level, "critical");
+});
+
+/* ===========================================================================
+   NC-5 — drop the pack's explicit refusal of an unsatisfiable audio request.
+
+   The row survives, so the core's backstop still catches it and the state is still
+   `unsupported` — which is why this control exists separately from NC-1. What is lost is
+   the SENTENCE: the filmmaker is handed a maintenance note about a pack that is behaving
+   correctly, instead of being told the video will arrive with sound they are paying for. */
+control("NC-5", "dropping the H3 pack's explicit audio refusal", () => {
+  const source = mutated("model-packs/minimax-h3.js", (text) =>
+    text.replace(/ *reportUnsatisfiedAudioRequest\(context\);\r?\n/, ""));
+  const Pack = compileModule("model-packs/minimax-h3.js", source);
+  const Compiler = require("../generation-compiler");
+  const plan = Compiler.compileGenerationPlan({
+    spec: F.baseSpec({ output: { nativeAudio: false } }),
+    references: [F.FRAME_A], mode: "i2v", pack: Pack.pack,
+    modelId: F.modelIdFor("i2v"), surface: "api", capability: F.capabilityFor("i2v"),
+  });
+  const warning = plan.warnings.find((row) => row.intent === "output.nativeAudio");
+
+  /* THE LIVE DEFECT: the backstop fires instead, so the code and the words both change. */
+  assert(warning, "the backstop still catches the intent, which is the point of this control");
+  assert.strictEqual(warning.code, "intent-unaccounted", "the control must reach the generic backstop");
+  assert(/compiler does not carry it/i.test(warning.message) && /model pack/i.test(warning.action),
+    "and hand a filmmaker a note addressed to whoever maintains the pack");
+  /* THE GUARD asserts the opposite on all three counts. */
+  assert.notStrictEqual(warning.code, "native-audio-unsupported");
+  assert(!/charged/i.test(warning.message), "the cost the filmmaker would actually pay goes unmentioned");
 });
 
 /* ===========================================================================
@@ -337,15 +367,16 @@ async function main() {
   assert.strictEqual(Backend.FAL_H3_BACKEND.promptExpansion.send, false);
   const Compiler = require("../generation-compiler");
   const keys = Compiler.INTENT_FIELDS.map((row) => row.key);
-  for (const intent of ["editorial", "endpoints.start", "endpoints.end", "performance.lipSync", "interaction", "subjects.count"])
+  for (const intent of ["editorial", "endpoints.start", "endpoints.end", "performance.lipSync", "interaction", "subjects.count", "output.nativeAudio"])
     assert(keys.includes(intent), `${intent} must still be inventoried by the real compiler`);
   assert(read("public/app.js").includes('"t2v", "i2v", "flf", "r2v", "plan", "post", "reuse"'));
   assert(read("server.js").includes('framelessKinds = ["t2v", "plan", "post", "reuse"]'));
 
   console.log(
     `Shot Execution Tier 0 negative controls passed: ${detected.length} deliberate defects reintroduced in memory — `
-    + "each of the six inventory rows dropped in turn, the dialogue-implies-lip-sync shortcut restored in the shared "
-    + "derivation and at a former call site, the derived level persisted into the record it outranks, the "
+    + "each of the seven inventory rows dropped in turn, the dialogue-implies-lip-sync shortcut restored in the shared "
+    + "derivation and at a former call site, the derived level persisted into the record it outranks, the H3 pack's "
+    + "explicit audio refusal dropped back to the generic backstop, the "
     + "prompt-expansion flag omitted and then sent on, and t2v removed from "
     + "the browser vocabulary, the import vocabulary and the frameless list — every one detected by the property that "
     + "guards it, with the real modules green afterwards. Nothing was written to disk and nothing was reverted with "

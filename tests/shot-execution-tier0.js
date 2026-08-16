@@ -559,11 +559,98 @@ async function main() {
   assert.strictEqual(plan.output.audio, "native", "the route's real audio behaviour stays recorded on the plan");
 }
 
+/* T0-4c, second half — AN EXPLICIT REQUEST FOR NO GENERATED AUDIO IS NOT SILENCE.
+ *
+ * CineBraid ships a control for this: "Include native audio instructions" on the motion
+ * package, writing `output.nativeAudio`. Untick it and the request reached the compiler
+ * and stopped — byte-identical prompt, no parameter moved, nothing warned, and the plan
+ * went on recording `audio: "native"`. The filmmaker was told the opposite of what would
+ * happen and was charged for the track regardless.
+ *
+ * H3 cannot comply and fal offers no field to make it, so the correction is accounting
+ * rather than behaviour: the request is visible, refused by name, and explained. */
+{
+  const silentRequest = executionSpec({ output: { ...(baseSpec().output || {}), nativeAudio: false } });
+  const plan = compile("i2v", [FRAME_A], { spec: silentRequest });
+
+  /* 1 — the request resolves to `unsupported`, which is what the contract reserves for
+     something the filmmaker asked for and will not get. */
+  assert.strictEqual(state(plan, "output.nativeAudio"), "unsupported",
+    "a request for no generated audio must not disappear on a route that always renders it");
+  assert(covered(plan, "output.nativeAudio").reason.trim(), "and must record why");
+
+  /* …with a warning written for a filmmaker rather than for whoever maintains the pack.
+     The core's backstop would have said "the minimax-h3 i2v compiler does not carry it.
+     Record it as anchored or omitted by design" — a maintenance note about a pack that
+     is in fact behaving correctly. */
+  const warning = plan.warnings.find((row) => row.intent === "output.nativeAudio");
+  assert(warning, "an unsupported request must warn by name");
+  assert.strictEqual(warning.code, "native-audio-unsupported");
+  assert.strictEqual(warning.field, "output.nativeAudio");
+  assert(/native audio track/i.test(warning.message) && /charged/i.test(warning.message),
+    "the warning must say what will actually happen and that it costs money");
+  assert(warning.action.trim(), "and offer something the filmmaker can do about it");
+  assert(!/model pack|omitted by design|anchored/i.test(warning.message),
+    "the sentence a filmmaker reads must not be a note to a developer");
+
+  /* 3 — the route's real behaviour is still recorded truthfully. Refusing the request
+     does not license the plan to claim the video arrives silent, because it does not. */
+  assert.strictEqual(plan.output.audio, "native",
+    "the unsatisfied request must not overwrite the true fact about what arrives");
+
+  /* 2 — AND NOTHING REACHES THE PROVIDER. The refusal is accounting; inventing a field
+     to carry it would put a parameter fal never published into a paid request. Proved by
+     byte-comparing the payload against the same shot without the request. */
+  const capability = resolveH3FalCapability("i2v", H3.capabilityLayer("i2v", "api"));
+  const serialize = (input) => serializeH3PlanForFal(input, capability, { resolveReference: (row) => `https://x/${row.refId}` });
+  const withRequest = serialize(plan);
+  const without = serialize(compile("i2v", [FRAME_A]));
+  assert.deepStrictEqual(withRequest.input, without.input,
+    "asking for no generated audio must change the request to fal in no way at all");
+  for (const field of ["generate_audio", "audio", "enable_audio", "with_audio", "nativeAudio", "native_audio"])
+    assert(!(field in withRequest.input), `${field} is not a field fal publishes and must not be invented to carry a refusal`);
+
+  /* Every mode, because every H3 checkpoint renders a track. */
+  for (const [mode, references] of [["t2v", []], ["flf", [F.FRAME_A, F.FRAME_B]], ["r2v", [F.REF_IDENTITY, F.REF_LOCATION]]]) {
+    const row = compile(mode, references, { spec: silentRequest });
+    assert.strictEqual(state(row, "output.nativeAudio"), "unsupported", `${mode} renders audio too and must say so`);
+  }
+}
+
+/* 4 — AND A SHOT THAT NEVER ASKED IS NEVER ASKED TO EXPLAIN ITSELF. The reader is
+   strictly `=== false`, so the default and an explicit `true` are both silent: this
+   correction must not put a new note on every shot that simply did not mention audio. */
+{
+  for (const output of [undefined, {}, { nativeAudio: true }]) {
+    const spec = executionSpec(output === undefined ? {} : { output });
+    const plan = compile("i2v", [FRAME_A], { spec });
+    assert(!covered(plan, "output.nativeAudio"),
+      `no audio request was made (${JSON.stringify(output)}) and none may be inventoried`);
+    assert(!plan.warnings.some((row) => row.intent === "output.nativeAudio"),
+      "and nothing may warn about a decision nobody took");
+  }
+  /* The still route reaches the same shot differently and must also stay quiet: a frame
+     renders no audio, so a request for none is already met. */
+  const stillPlan = Compiler.compileGenerationPlan({
+    spec: executionSpec({ output: { nativeAudio: false } }),
+    references: [], mode: "t2i", modelId: "gpt-image-2/standard", surface: "api",
+    capability: require("../public/shared-generation-capability").resolveCapability({
+      model: require("../model-packs/gpt-image-2").capabilityLayer("t2i", "api"),
+    }),
+  });
+  assert.strictEqual(state(stillPlan, "output.nativeAudio"), "omitted-by-design",
+    "a still renders no audio, so the request is met rather than refused");
+  assert(!stillPlan.warnings.some((row) => row.intent === "output.nativeAudio"),
+    "and a met request must not warn");
+}
+
 console.log(
   "Shot Execution Tier 0 passed: six filmmaking facts inventoried, carried and accounted for with unknowns left unknown; "
   + "a dialogue line no longer manufactures a lip-sync requirement at either former site and nothing stored is rewritten; "
   + "t2v survives normalisation and import as t2v, is refused a start frame and gates on no approved still; "
-  + "and the serialised fal request carries prompt expansion off and an explicit, capability-bounded resolution. "
+  + "the serialised fal request carries prompt expansion off and an explicit, capability-bounded resolution; "
+  + "and an explicit request for no generated audio is refused by name on a route that cannot comply, with the "
+  + "payload byte-identical and no invented provider field. "
   + "Provider calls made: 0.",
 );
 }

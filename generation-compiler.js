@@ -125,6 +125,16 @@ const INTENT_FIELDS = [
      says the model "will flexibly adjust" — so an editorial decision the production
      already made was being remade per request by whatever was rendering it. */
   { key: "editorial", label: "editorial form", read: (s) => text(s.editorial) },
+  /* A REQUEST NOT TO GENERATE SOUND, which is a production decision and not the absence
+     of one. CineBraid ships a control for it — "Include native audio instructions" on
+     the motion package — and the request reached the compiler and stopped there: the
+     prompt was byte-identical either way, no parameter moved, nothing warned, and the
+     plan went on recording `audio: "native"`. The filmmaker was told the opposite of
+     what would happen, and paid for the track anyway.
+
+     Read STRICTLY as `=== false`. Absent and true are not requests, so a shot that
+     never asked for silence is never asked to explain why it did not. */
+  { key: "output.nativeAudio", label: "generated audio", read: (s) => (s.output?.nativeAudio === false ? "no generated audio" : "") },
   { key: "output.aspectRatio", label: "aspect ratio", read: (s) => text(s.aspectRatio || s.world?.aspectRatio) },
 ];
 
