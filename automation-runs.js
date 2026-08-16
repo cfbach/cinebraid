@@ -24,6 +24,39 @@ function leaseExpired(run, at = Date.now()) {
   const expiry = Date.parse(run?.leaseExpiresAt || "");
   return !run?.runnerId || !Number.isFinite(expiry) || expiry <= at;
 }
+/* One missed heartbeat BEYOND the lease before a run is declared abandoned. The lease is
+   already five heartbeats long, so this only absorbs clock skew between the window that
+   wrote the record and the process reading it. */
+const ABANDON_GRACE_MS = HEARTBEAT_MS;
+/* HAS THE WINDOW DRIVING THIS RUN GONE AWAY FOR GOOD?
+ *
+ * Deliberately narrower than leaseExpired(). That predicate answers "may I take this
+ * lease", which is true for a run nobody has ever claimed; this one answers "is the
+ * durable record now a lie", which a brand-new run is not. The three differences:
+ *
+ *   no runnerId       nothing has claimed it yet. v627AcquireAutomationLease adds the run
+ *                     to the active set and stores its lease in the same step, so the gap
+ *                     is real and momentary. Treating it as abandoned would interrupt a
+ *                     run at the instant it starts.
+ *   grace             a lease that expired one second ago is indistinguishable from a
+ *                     clock a second out of step. ABANDON_GRACE_MS is the margin.
+ *   heartbeat too     the lease is DERIVED from the last heartbeat, so the two normally
+ *                     agree; where a hand-edited or partially written record makes them
+ *                     disagree, BOTH have to say the runner is gone. Interrupting a run
+ *                     that is still beating is the expensive direction.
+ *
+ * Only `running` is considered. Every other status already describes a stopped run. */
+function runnerAbandoned(run, at = Date.now()) {
+  if (String(run?.status || "") !== "running") return false;
+  if (!String(run?.runnerId || "")) return false;
+  const expiry = Date.parse(run?.leaseExpiresAt || "");
+  /* A runner is recorded and its lease is unreadable: it owns nothing that can be checked. */
+  if (!Number.isFinite(expiry)) return true;
+  if (expiry + ABANDON_GRACE_MS > at) return false;
+  const beat = Date.parse(run?.heartbeatAt || "");
+  if (Number.isFinite(beat) && beat + LEASE_MS + ABANDON_GRACE_MS > at) return false;
+  return true;
+}
 function sanitizeLeaseDiagnostics(value, base = {}) {
   const source = plainObject(value);
   const prior = plainObject(base);
@@ -333,14 +366,81 @@ function registerAutomationRuns(app, deps) {
     }
     return changed;
   }
+  /* ==========================================================================
+     STALE-LEASE RECONCILIATION — a run nothing owns must stop saying `running`.
+
+     A window driving a run holds a lease and renews it every HEARTBEAT_MS. Close the
+     tab, sleep the laptop, kill the browser, and the durable record keeps its last
+     word: status `running`, a stage that names the step it was on, a runnerId whose
+     process no longer exists. Nothing ever wrote the ending.
+
+     Every activity surface already KNEW this — v670WaitingForHumanRun reads the lapsed
+     lease and says "orchestration stopped, choose Resume Run" — but it knew it only
+     while a browser was open to ask. The durable record, which is what Reports read,
+     what a diagnostic export carries and what the next window loads, still claimed live
+     machine work. This writes the ending the runner never got to write.
+
+     `interrupted` is not a new status: it is what v628FinishRunAfterError already
+     records when a run stops safely, and what v626RunActions already offers RESUME RUN
+     for. Choosing it means a reconciled run behaves exactly like one the browser
+     interrupted itself, because it IS one.
+
+     THIS IS A STATE CORRECTION, NOT A RESUME. No step advances, no gate opens, no
+     request is prepared or sent, and `usage` is untouched. The lease fields are cleared
+     so a returning runner reacquires cleanly rather than being told the lease belongs
+     to a runner that no longer exists — and what was cleared is preserved in
+     leaseDiagnostics, which is what that record is for. */
+  function reconcileStaleLeases(runs, at = Date.now()) {
+    const reconciled = [];
+    for (let index = 0; index < runs.length; index++) {
+      const run = runs[index];
+      if (!runnerAbandoned(run, at)) continue;
+      const stamp = now();
+      const message = "The window driving this run stopped and its lease expired with no heartbeat. "
+        + "CineBraid recorded the run as interrupted. Nothing was cancelled and no new work was started.";
+      runs[index] = bump({}, run, {
+        status: "interrupted",
+        stage: "Interrupted — resume required",
+        summary: `${message} Choose Resume Run to continue from the last unfinished step.`,
+        cancelRequested: false,
+        runnerId: "", leaseAcquiredAt: "", heartbeatAt: "", leaseExpiresAt: "",
+        leaseDiagnostics: sanitizeLeaseDiagnostics({
+          lastRunnerId: run.runnerId,
+          lastAcquiredAt: run.leaseAcquiredAt,
+          lastHeartbeatAt: run.heartbeatAt,
+          lastExpiresAt: run.leaseExpiresAt,
+          lastReleasedAt: stamp,
+          lastReleaseReason: "Lease expired with no heartbeat; CineBraid recorded the run as interrupted.",
+        }, run.leaseDiagnostics),
+        logs: [...(Array.isArray(run.logs) ? run.logs : []), { at: stamp, tone: "warn", message }].slice(-MAX_LOGS),
+      });
+      reconciled.push(String(run.id));
+    }
+    return reconciled;
+  }
   function readReconciled() {
     const runs = read();
+    /* Ordered deliberately: a run that has just been recorded as interrupted becomes
+       reconcilable by the gate pass below in the same read, rather than on the next one. */
+    let changed = reconcileStaleLeases(runs).length > 0;
     let project;
-    try { project = readProjectSafe(); } catch { return runs; }
-    if (reconcileParkedGates(runs, project)) {
+    try { project = readProjectSafe(); } catch { project = null; }
+    if (project && reconcileParkedGates(runs, project)) changed = true;
+    if (changed) {
       try { write(runs); } catch { /* the answer is still reconciled; the ledger catches up on the next writable read */ }
     }
     return runs;
+  }
+  /* The same correction, entered on purpose rather than as a side effect of a read.
+     This is the entry point the server-side ingest reaper uses, so a run abandoned by a
+     closed tab stops claiming to be running even when no window ever opens again.
+     It reconciles state and nothing else — see reconcileStaleLeases. */
+  function reconcileStaleRuns(at = Date.now()) {
+    const runs = read();
+    const reconciled = reconcileStaleLeases(runs, at);
+    if (!reconciled.length) return [];
+    try { write(runs); } catch { return []; }
+    return reconciled;
   }
   function generationJobsFile() { return path.join(projectDir(), "generation-jobs.json"); }
   function readGenerationJobs() {
@@ -984,7 +1084,7 @@ function registerAutomationRuns(app, deps) {
     res.json({ run: publicRun(runs[index]) });
   });
 
-  return { readRuns: read, writeRuns: write, sanitizeRun, leaseExpired };
+  return { readRuns: read, writeRuns: write, sanitizeRun, leaseExpired, reconcileStaleRuns };
 }
 
-module.exports = { registerAutomationRuns };
+module.exports = { registerAutomationRuns, runnerAbandoned, ABANDON_GRACE_MS, LEASE_MS, HEARTBEAT_MS };
