@@ -76,7 +76,19 @@
         startTime: String(dialogue.startTime || ""),
         endTime: String(dialogue.endTime || ""),
         locked: dialogue.locked !== false,
-        lipSyncRequired: dialogue.lipSyncRequired === true || !!line,
+        /* THREE VALUES, DERIVED IN ONE PLACE. `lipSyncRequired` read
+           `lipSyncRequired === true || !!line`, which made a line existing enough to
+           require lip sync — so every voice-over, off-screen line, phone call, radio
+           transmission and back-to-camera delivery was classified as needing the mouth
+           to match the words, and the value was written into the project.
+
+           An explicitly recorded level is PRESERVED here and never manufactured. Writing
+           the derived answer back into the field the derivation reads as authoritative
+           would pin it: once a level had been stored, unticking the requirement below
+           would set the boolean and change nothing, because the stored level outranks
+           it. Deriving on read keeps the control the thing that decides. */
+        lipSync: String(dialogue.lipSync || ""),
+        lipSyncRequired: lipSyncRequiredFrom({ ...dialogue, line }),
         voiceDesign: String(dialogue.voiceDesign || authority.voiceDesign || ""),
       },
       sound: {

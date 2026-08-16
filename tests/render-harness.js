@@ -17,6 +17,7 @@ const SCRIPT_ORDER = [
   "shared-continuity.js",
   "shared-voice.js",
   "shared-camera.js",
+  "shared-lip-sync.js",
   "shared-aspect.js",
   "shared-reference-views.js",
   "shared-coverage.js",

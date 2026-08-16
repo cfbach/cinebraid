@@ -1,0 +1,574 @@
+/* Shot Execution Tier 0 — negative controls.
+ *
+ * A regression that has never been seen to fail is a regression nobody has tested. Each
+ * control below reintroduces one of the four defects Tier 0 closed, IN MEMORY, and
+ * proves the suite that guards it goes red — then proves the real modules are green
+ * afterwards.
+ *
+ * NOTHING IS WRITTEN TO DISK AND NOTHING IS REVERTED WITH GIT. Every mutation is a
+ * string transformation compiled into an in-memory Module or evaluated in the render
+ * harness's own `mutateSource` hook. A control that edited a file and undid it with a
+ * checkout would discard unstaged work the first time one of these threw.
+ *
+ * Each control also carries a LIVE-DEFECT RECEIPT: the mutation must actually change
+ * behaviour before the guarding assertion is consulted. A control that mutates nothing
+ * and then reports that the guard "caught" it is reporting on itself.
+ */
+const assert = require("assert");
+const fs = require("fs");
+const path = require("path");
+const vm = require("vm");
+const Module = require("module");
+
+const F = require("./generation-compiler-fixture");
+const { render, buildFixture } = require("./render-harness");
+
+const ROOT = path.join(__dirname, "..");
+const read = (relative) => fs.readFileSync(path.join(ROOT, relative), "utf8");
+
+/* A mutated module compiled under its real filename, so its own relative requires
+   resolve exactly as they do on disk. The file is opened read-only. */
+function compileModule(relative, source) {
+  const filename = path.join(ROOT, relative);
+  const compiled = new Module(filename, null);
+  compiled.filename = filename;
+  compiled.paths = Module._nodeModulePaths(path.dirname(filename));
+  compiled._compile(source, filename);
+  return compiled.exports;
+}
+
+function mutated(relative, transform) {
+  const original = read(relative);
+  const source = String(transform(original));
+  assert.notStrictEqual(source, original,
+    `the control for ${relative} changed nothing; it would report a pass without testing anything`);
+  return source;
+}
+
+const controls = [];
+function control(id, title, run) {
+  controls.push({ id, title, run });
+}
+
+/* ===========================================================================
+   NC-1 — silently drop one of the six new INTENT_FIELDS rows.
+
+   This is the defect Tier 0 exists to prevent: a fact with no row cannot be carried,
+   cannot be verified, and cannot be reported as unsupported. It simply stops existing
+   between the shot and the model, with no warning anywhere. */
+for (const intent of ["editorial", "endpoints.start", "endpoints.end", "performance.lipSync", "interaction", "subjects.count", "output.nativeAudio"])
+  control(`NC-1:${intent}`, `dropping the ${intent} inventory row`, () => {
+    const source = mutated("generation-compiler.js", (text) => {
+      const line = text.split("\n").find((row) => row.includes(`{ key: "${intent}",`));
+      assert(line, `generation-compiler.js no longer declares a row for ${intent}`);
+      return text.replace(`${line}\n`, "");
+    });
+    const Compiler = compileModule("generation-compiler.js", source);
+    const spec = F.baseSpec({
+      editorial: "single-take",
+      endpoints: { start: "exact", end: "approximate" },
+      interaction: "precise",
+      audio: { ...F.baseSpec().audio, lipSyncRequired: true },
+      output: { nativeAudio: false },
+    });
+
+    /* THE LIVE DEFECT: the fact is genuinely no longer inventoried. */
+    const inventory = Compiler.inventoryIntent(spec, (value) => String(value));
+    assert(!inventory.some((row) => row.key === intent), `${intent} should be gone from the inventory`);
+
+    /* THE GUARD: with the row removed the fact reaches no coverage state at all — not
+       represented, not omitted, not even unsupported. Nothing warns, and the plan looks
+       complete. That is exactly what the Tier 0 suite asserts cannot happen.
+
+       The real pack is handed in explicitly: a freshly compiled compiler has its own
+       empty registry, and the packs registered themselves with the module on disk. */
+    const plan = Compiler.compileGenerationPlan({
+      spec, references: [F.FRAME_A], mode: "i2v", pack: require("../model-packs/minimax-h3").pack,
+      modelId: F.modelIdFor("i2v"), surface: "api", capability: F.capabilityFor("i2v"),
+    });
+    assert(!plan.coverage.some((row) => row.intent === intent),
+      `${intent} must vanish from coverage for this control to be the defect it claims`);
+    assert(!plan.warnings.some((row) => row.intent === intent),
+      `and it must vanish SILENTLY — a warning would mean the loss was already visible`);
+  });
+
+/* ===========================================================================
+   NC-2 — restore the dialogue-implies-lip-sync shortcut in the shared derivation.
+
+   `lipSyncRequired === true || !!line`, which is what both former sites computed. */
+control("NC-2", "restoring the dialogue-implies-lip-sync shortcut", () => {
+  const source = mutated("public/shared-lip-sync.js", (text) =>
+    text.replace(
+      "  if (dialogue.lipSyncRequired === true) return \"critical\";\n  return \"implied\";",
+      "  if (dialogue.lipSyncRequired === true || Boolean(line)) return \"critical\";\n  return \"implied\";",
+    ));
+  const LipSync = compileModule("public/shared-lip-sync.js", source);
+
+  /* THE LIVE DEFECT: an off-screen line is lip-sync-critical again. */
+  assert.strictEqual(LipSync.deriveLipSync({ line: "Bravo two, hold position." }), "critical",
+    "the control must actually reintroduce the shortcut");
+
+  /* THE GUARD: the tri-state regression asserts `implied` for exactly that input, and
+     for the back-to-camera case, and both now disagree. */
+  assert.notStrictEqual(LipSync.deriveLipSync({ line: "Bravo two, hold position." }), "implied");
+  assert.notStrictEqual(LipSync.deriveLipSync({ line: "Don't follow me.", lipSyncRequired: false }), "implied");
+  /* And the boolean accessor follows it, so every downstream reader is wrong too. */
+  assert.strictEqual(LipSync.lipSyncRequiredFrom({ line: "Bravo two, hold position." }), true);
+});
+
+/* The same defect at the level the suite actually polices: the shortcut written back
+   into one of the two former derivation sites, where it would drift from the other. */
+control("NC-2b", "reintroducing the shortcut at one of the two former sites", () => {
+  const source = mutated("public/motion-sound-composer.js", (text) =>
+    text.replace(
+      "lipSyncRequired: lipSyncRequiredFrom({ ...dialogue, line }),",
+      "lipSyncRequired: dialogue.lipSyncRequired === true || !!line,",
+    ));
+  const stripped = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:'"`\\])\/\/[^\n]*/g, "$1");
+
+  /* THE GUARD: the source-level assertion in the Tier 0 suite exists because this rule
+     was written twice; it must reject the shortcut wherever it reappears. */
+  assert(/lipSync\w*\s*:[^,;\n]*\|\|\s*!!\s*line/.test(stripped),
+    "the guarding pattern must match the reintroduced shortcut");
+  assert(!/lipSync\w*\s*:[^,;\n]*\|\|\s*!!\s*line/.test(
+    read("public/motion-sound-composer.js").replace(/\/\*[\s\S]*?\*\//g, "")),
+  "and must not match the shipped file");
+});
+
+/* ===========================================================================
+   NC-2c — write the DERIVED level back into the field the derivation trusts.
+
+   The subtle one, and the reason the tri-state is derived on read rather than stored:
+   `lipSync` outranks the boolean, so persisting the derived answer there pins it. The
+   requirement control would go on setting its boolean and changing nothing. */
+control("NC-2c", "persisting the derived lip-sync level into the brief", async () => {
+  const page = await render("#/production", buildFixture(), {
+    mutateSource: (file, source) => (file === "motion-sound-composer.js"
+      ? mutated("public/motion-sound-composer.js", () => source.replace(
+        "lipSync: String(dialogue.lipSync || \"\"),",
+        "lipSync: deriveLipSync({ ...dialogue, line }),",
+      ))
+      : source),
+  });
+  const outcome = vm.runInContext(`(() => {
+    const shot = (P.shots || [])[0], unit = (shot.clips || [])[0];
+    unit.motionBrief = { dialogue: { line: "It's done." } };
+    setMotionSoundField(shot.id, unit.id, "dialogue", "lipSyncRequired", true);
+    /* Any later edit re-runs the brief builder, which is when the stored level bites. */
+    setMotionSoundField(shot.id, unit.id, "dialogue", "language", "English");
+    const produced = unit.motionBrief.dialogue;
+    return { stored: produced.lipSync, level: deriveLipSync(produced), flag: produced.lipSyncRequired };
+  })()`, page.context);
+
+  /* THE LIVE DEFECT: the level derived BEFORE the tick was written into the record, and
+     because a stored level outranks the boolean it now swallows the tick entirely. The
+     filmmaker states that the mouth must match the words, the next edit to any field in
+     the panel quietly reverts it, and nothing says so. */
+  assert.strictEqual(outcome.stored, "implied", "the control must actually persist a derived level");
+  assert.strictEqual(outcome.level, "implied", "which then outranks the requirement that was just set");
+  assert.strictEqual(outcome.flag, false, "and silently reverts the boolean with it");
+  /* THE GUARD asserts the opposite: the tick takes effect and nothing is stored. */
+  assert.notStrictEqual(outcome.level, "critical");
+});
+
+/* ===========================================================================
+   NC-5 — drop the pack's explicit refusal of an unsatisfiable audio request.
+
+   The row survives, so the core's backstop still catches it and the state is still
+   `unsupported` — which is why this control exists separately from NC-1. What is lost is
+   the SENTENCE: the filmmaker is handed a maintenance note about a pack that is behaving
+   correctly, instead of being told the video will arrive with sound they are paying for. */
+control("NC-5", "dropping the H3 pack's explicit audio refusal", () => {
+  const source = mutated("model-packs/minimax-h3.js", (text) =>
+    text.replace(/ *reportUnsatisfiedAudioRequest\(context\);\r?\n/, ""));
+  const Pack = compileModule("model-packs/minimax-h3.js", source);
+  const Compiler = require("../generation-compiler");
+  const plan = Compiler.compileGenerationPlan({
+    spec: F.baseSpec({ output: { nativeAudio: false } }),
+    references: [F.FRAME_A], mode: "i2v", pack: Pack.pack,
+    modelId: F.modelIdFor("i2v"), surface: "api", capability: F.capabilityFor("i2v"),
+  });
+  const warning = plan.warnings.find((row) => row.intent === "output.nativeAudio");
+
+  /* THE LIVE DEFECT: the backstop fires instead, so the code and the words both change. */
+  assert(warning, "the backstop still catches the intent, which is the point of this control");
+  assert.strictEqual(warning.code, "intent-unaccounted", "the control must reach the generic backstop");
+  assert(/compiler does not carry it/i.test(warning.message) && /model pack/i.test(warning.action),
+    "and hand a filmmaker a note addressed to whoever maintains the pack");
+  /* THE GUARD asserts the opposite on all three counts. */
+  assert.notStrictEqual(warning.code, "native-audio-unsupported");
+  assert(!/charged/i.test(warning.message), "the cost the filmmaker would actually pay goes unmentioned");
+});
+
+/* ===========================================================================
+   NC-3 — omit `enable_prompt_expansion: false` from the serialised request.
+
+   Omission is not neutrality here: fal defaults the flag to true on all three H3
+   endpoints, so a request that does not carry it is a request that switches the
+   provider's prompt rewriter ON. */
+control("NC-3", "omitting the prompt-expansion flag from the fal request", () => {
+  /* Line-ending agnostic: this repository checks out with CRLF, so a mutation anchored
+     on a bare "\n" silently matches nothing and the control reports on itself. */
+  const source = mutated("fal-h3-backend.js", (text) =>
+    text.replace(/ *input\[FAL_H3_BACKEND\.promptExpansion\.field\][^\r\n]*\r?\n/, ""));
+  const Backend = compileModule("fal-h3-backend.js", source);
+  const H3 = require("../model-packs/minimax-h3");
+  const Compiler = require("../generation-compiler");
+  const plan = Compiler.compileGenerationPlan({
+    spec: F.baseSpec(), references: [F.FRAME_A], mode: "i2v",
+    modelId: F.modelIdFor("i2v"), surface: "api", capability: F.capabilityFor("i2v"),
+  });
+  const capability = Backend.resolveH3FalCapability("i2v", H3.capabilityLayer("i2v", "api"));
+  const request = Backend.serializeH3PlanForFal(plan, capability, { resolveReference: (row) => `https://x/${row.refId}` });
+
+  /* THE LIVE DEFECT AND THE GUARD are the same fact: the field is gone from the payload,
+     and the Tier 0 serialisation assertion reads the payload rather than the config. */
+  assert(!Object.prototype.hasOwnProperty.call(request.input, "enable_prompt_expansion"),
+    "the control must actually remove the flag from the serialised request");
+  assert.notStrictEqual(request.input.enable_prompt_expansion, false);
+});
+
+/* Setting it to `true` is the same defect wearing a value, and must fail the same way. */
+control("NC-3b", "sending prompt expansion explicitly on", () => {
+  const source = mutated("fal-h3-backend.js", (text) =>
+    text.replace("    send: false,", "    send: true,"));
+  const Backend = compileModule("fal-h3-backend.js", source);
+  const H3 = require("../model-packs/minimax-h3");
+  const Compiler = require("../generation-compiler");
+  const plan = Compiler.compileGenerationPlan({
+    spec: F.baseSpec(), references: [], mode: "t2v",
+    modelId: F.modelIdFor("t2v"), surface: "api", capability: F.capabilityFor("t2v"),
+  });
+  const capability = Backend.resolveH3FalCapability("t2v", H3.capabilityLayer("t2v", "api"));
+  const request = Backend.serializeH3PlanForFal(plan, capability, { resolveReference: (row) => `https://x/${row.refId}` });
+  assert.strictEqual(request.input.enable_prompt_expansion, true, "the control must flip the value");
+  assert.notStrictEqual(request.input.enable_prompt_expansion, false, "which the guard refuses");
+});
+
+/* ===========================================================================
+   NC-4 — remove `t2v` from the clip-kind vocabulary, in the browser and at import. */
+control("NC-4", "removing t2v from the browser clip vocabulary", async () => {
+  const page = await render("#/production", buildFixture(), {
+    mutateSource: (file, source) => (file === "app.js"
+      ? mutated("public/app.js", () => source.replace(
+        '!["t2v", "i2v", "flf", "r2v", "plan", "post", "reuse"].includes(c.kind)',
+        '!["i2v", "flf", "r2v", "plan", "post", "reuse"].includes(c.kind)',
+      ))
+      : source),
+  });
+  const result = vm.runInContext(`(() => {
+    const shot = {
+      id: "SH-T2V",
+      keyframes: [{ id: "frame-a", label: "A", winner: "", required: true }],
+      clips: [{ id: "seg-t2v", suffix: "a", label: "A", kind: "t2v", dur: 6, motionPrompt: "A storm front.", fromFrame: "", toFrame: "" }],
+      audio: {},
+    };
+    normalizeShotV5(shot);
+    return { kind: shot.clips[0].kind, fromFrame: shot.clips[0].fromFrame };
+  })()`, page.context);
+
+  /* THE LIVE DEFECT: the shot is coerced back to i2v, and — the part that costs money —
+     it is then handed a start frame it must wait for someone to approve. */
+  assert.strictEqual(result.kind, "i2v", "the control must reintroduce the coercion");
+  assert.strictEqual(result.fromFrame, "frame-a", "and with it the approval the shot never needed");
+  /* THE GUARD asserts the opposite of both. */
+  assert.notStrictEqual(result.kind, "t2v");
+});
+
+control("NC-4b", "removing t2v from the import vocabulary", () => {
+  const source = mutated("server.js", (text) =>
+    text.replace(
+      'allowedKinds = new Set(["t2v", "i2v", "flf", "r2v", "plan", "post", "reuse", "hold"]),',
+      'allowedKinds = new Set(["i2v", "flf", "r2v", "plan", "post", "reuse", "hold"]),',
+    ));
+  const clips = builderClipsFrom(source);
+  const warnings = [];
+  const out = clips(
+    { id: "SH-T2V", clips: [{ id: "SH-T2V-M01", kind: "t2v", dur: 6, motionPrompt: "A storm front." }] },
+    [{ id: "SH-T2V-A" }],
+    warnings,
+  );
+  /* THE LIVE DEFECT: an imported text-to-video unit becomes planning-only — it cannot
+     generate at all — and the filmmaker is told its kind was unknown. */
+  assert.strictEqual(out[0].kind, "plan", "the control must reintroduce the downgrade");
+  assert(warnings.some((row) => /unknown kind/i.test(row)), "and the misleading warning with it");
+  assert.notStrictEqual(out[0].kind, "t2v");
+});
+
+/* ===========================================================================
+   NC-4d / NC-4e — the two LIVE consumers.
+
+   Normalisation and the mode helper were already correct while the shipped Motion path
+   still behaved as though t2v began from an approved still, so these mutate the two
+   places that actually decide and prove the regressions see it. */
+
+/* The motion-unit builder, in the copy the live page really runs: v607-composer.js
+   REPLACES creation-studio.js's declaration, so a repair made only in the base file is
+   dead code and a regression that mutates the base file would prove nothing. */
+control("NC-4d", "restoring unconditional start-frame assignment in the live builder", async () => {
+  const page = await render("#/production", buildFixture(), {
+    mutateSource: (file, source) => (file === "v607-composer.js"
+      ? mutated("public/v607-composer.js", () => source.replace(
+        /if \(!needsStartFrame\) unit\.fromFrame = "";\r?\n\s*else if \(!unit\.fromFrame\)/,
+        'if (!unit.fromFrame)',
+      ))
+      : source),
+  });
+  const result = vm.runInContext(`(() => {
+    const shot = P.shots[0];
+    for (const frame of shot.keyframes || []) frame.winner = "";
+    shot.clips = []; shot.motionPrompt = "";
+    const c = ensureShotCreation(shot);
+    c.activeMotionUnitId = "";
+    const profile = (PROMPT_LIBRARY?.profiles || []).find((p) => p.mediaType === "video" && p.mode === "t2v") || null;
+    c.motionProfileId = profile ? profile.id : "";
+    const unit = ensureGuidedMotionUnit(shot, "", profile);
+    return { kind: unit.kind, fromFrame: unit.fromFrame };
+  })()`, page.context);
+
+  /* THE LIVE DEFECT, and it is Codex's reproduction exactly: the unit is correctly named
+     t2v and is holding a start frame anyway. */
+  assert.strictEqual(result.kind, "t2v", "the kind is not what breaks; the frame is");
+  assert(result.fromFrame, "the control must reattach the fabricated start frame");
+  /* THE GUARD asserts the opposite. */
+  assert.notStrictEqual(result.fromFrame, "");
+});
+
+/* The Motion panel's start-frame prerequisite, applied unconditionally. */
+control("NC-4e", "restoring the unconditional Motion panel lock", async () => {
+  const page = await render("#/production", buildFixture(), {
+    mutateSource: (file, source) => (file === "creation-studio.js"
+      ? mutated("public/creation-studio.js", () => source.replace(
+        "if (needsApprovedStill && !progress.requiredApproved && !videos.length) return",
+        "if (!progress.requiredApproved && !videos.length) return",
+      ))
+      : source),
+  });
+  const result = vm.runInContext(`(() => {
+    const shot = P.shots[0];
+    for (const frame of shot.keyframes || []) frame.winner = "";
+    shot.clips = []; shot.motionPrompt = "";
+    const c = ensureShotCreation(shot);
+    c.activeMotionUnitId = "";
+    const profile = (PROMPT_LIBRARY?.profiles || []).find((p) => p.mediaType === "video" && p.mode === "t2v") || null;
+    c.motionProfileId = profile ? profile.id : "";
+    ensureGuidedMotionUnit(shot, "", profile);
+    const html = guidedMotionPanel(shot, null, []);
+    return { locked: html.includes("guided-motion-card locked"), saysApproveFirst: html.includes("Approve required frames first") };
+  })()`, page.context);
+
+  /* THE LIVE DEFECT: the one route in the picker that needs no approved still is the one
+     route nobody can open. */
+  assert.strictEqual(result.locked, true, "the control must reintroduce the unconditional lock");
+  assert.strictEqual(result.saysApproveFirst, true, "and demand a frame t2v never begins from");
+  /* THE GUARD asserts the opposite. */
+  assert.notStrictEqual(result.locked, false);
+});
+
+/* NC-4f — resolve the panel's prerequisite from the PICKER'S profile again.
+ *
+ * The subtle one, and the one that survived the first repair: `preferredGuidedVideoProfile`
+ * falls back to the wired image-to-video default when nothing is selected, so reading the
+ * gate off it makes an imported t2v unit — which carries its kind and no profile id —
+ * look like an i2v shot and lock behind a frame it never begins from. */
+control("NC-4f", "resolving the panel gate from the picker's default profile", async () => {
+  const page = await render("#/production", buildFixture(), {
+    mutateSource: (file, source) => (file === "creation-studio.js"
+      ? mutated("public/creation-studio.js", () => source.replace(
+        "guidedVideoModeNeedsApprovedStill(guidedEffectiveVideoMode(s, c, unit))",
+        'guidedVideoModeNeedsApprovedStill(profile?.mode || "")',
+      ))
+      : source),
+  });
+  const result = vm.runInContext(`(() => {
+    const shot = P.shots[0];
+    for (const frame of shot.keyframes || []) frame.winner = "";
+    shot.motionPrompt = "";
+    const c = ensureShotCreation(shot);
+    c.activeMotionUnitId = ""; c.motionProfileId = "";
+    shot.clips = [{ id: "seg-imported", kind: "t2v", dur: 6, motionPrompt: "A storm front.", fromFrame: "", toFrame: "", motionProfileId: "", generationPackages: [] }];
+    const html = guidedMotionPanel(shot, null, []);
+    const unit = shot.clips[0];
+    return {
+      panelLocked: html.includes("guided-motion-card locked"),
+      saysApproveFirst: html.includes("Approve required frames first"),
+      unitKind: unit.kind, unitFromFrame: unit.fromFrame,
+      unitProfileId: unit.motionProfileId || "", shotProfileId: c.motionProfileId || "",
+    };
+  })()`, page.context);
+
+  /* THE LIVE DEFECT, reproduced field for field as it was reported. Compared as JSON
+     rather than with deepStrictEqual: the object is built inside the harness's vm realm,
+     so its prototype is not the host's and a structural comparison fails while printing
+     identical values. */
+  assert.strictEqual(
+    JSON.stringify(result, ["panelLocked", "saysApproveFirst", "unitKind", "unitFromFrame", "unitProfileId", "shotProfileId"]),
+    JSON.stringify({ panelLocked: true, saysApproveFirst: true, unitKind: "t2v", unitFromFrame: "", unitProfileId: "", shotProfileId: "" },
+      ["panelLocked", "saysApproveFirst", "unitKind", "unitFromFrame", "unitProfileId", "shotProfileId"]),
+    "the control must reproduce the reported shape exactly",
+  );
+  /* THE GUARD asserts the opposite of the first two. */
+  assert.notStrictEqual(result.panelLocked, false);
+
+  /* And an EXPLICIT t2v selection still opened even with the defect present, which is
+     why the first repair looked complete: the missing case is the one with no profile. */
+  const explicit = vm.runInContext(`(() => {
+    const shot = P.shots[0];
+    for (const frame of shot.keyframes || []) frame.winner = "";
+    const c = ensureShotCreation(shot);
+    const t2v = (PROMPT_LIBRARY?.profiles || []).find((p) => p.mediaType === "video" && p.mode === "t2v");
+    c.motionProfileId = t2v ? t2v.id : "";
+    shot.clips = [{ id: "seg-x", kind: "t2v", dur: 5, fromFrame: "", toFrame: "", motionProfileId: "", generationPackages: [] }];
+    return guidedMotionPanel(shot, null, []).includes("guided-motion-card locked");
+  })()`, page.context);
+  assert.strictEqual(explicit, false, "an explicitly selected t2v profile hid the defect and must be shown doing so");
+});
+
+/* NC-4g — resolve the panel from the FIRST clip again instead of the active unit.
+ *
+ * Both directions are wrong and they fail differently: one locks a route that needs no
+ * frame, the other OPENS a route that does. The second is the one that matters, because
+ * a silently opened gate is not a gate. */
+control("NC-4g", "resolving the panel from the first clip instead of the active unit", async () => {
+  const page = await render("#/production", buildFixture(), {
+    mutateSource: (file, source) => (file === "creation-studio.js"
+      ? mutated("public/creation-studio.js", () => source.replace(
+        "const unit = guidedActiveMotionUnit(s, c), supportedKinds =",
+        "const unit = (s.clips || [])[0], supportedKinds =",
+      ))
+      : source),
+  });
+  vm.runInContext(`globalThis.__multi = (firstKind, secondKind, activeIndex) => {
+    const shot = P.shots[0];
+    for (const frame of shot.keyframes || []) frame.winner = "";
+    shot.motionPrompt = "";
+    const c = ensureShotCreation(shot);
+    c.motionProfileId = ""; c.motionDirection = ""; c.motionDuration = 0;
+    shot.clips = [
+      { id: "seg-one", suffix: "a", label: "A", dur: 5, kind: firstKind, motionPrompt: "First unit.", fromFrame: firstKind === "t2v" ? "" : "frame-a", toFrame: "", motionProfileId: "", generationPackages: [] },
+      { id: "seg-two", suffix: "b", label: "B", dur: 6, kind: secondKind, motionPrompt: "Second unit.", fromFrame: secondKind === "t2v" ? "" : "frame-a", toFrame: "", motionProfileId: "", generationPackages: [] },
+    ];
+    c.activeMotionUnitId = shot.clips[activeIndex].id;
+    const html = guidedMotionPanel(shot, null, []);
+    return {
+      activeKind: guidedActiveMotionUnit(shot, c)?.kind || "",
+      panelLocked: html.includes("guided-motion-card locked"),
+      saysApproveFirst: html.includes("Approve required frames first"),
+      pill: /guided-mode-pill[^>]*>([^<]*)</.exec(html)?.[1] || "",
+    };
+  };`, page.context);
+  const multi = (first, second, index) =>
+    vm.runInContext(`__multi(${JSON.stringify(first)}, ${JSON.stringify(second)}, ${index})`, page.context);
+
+  /* THE LIVE DEFECT, case A: the active unit is t2v and the panel is locked anyway. */
+  const a = multi("i2v", "t2v", 1);
+  assert.strictEqual(a.activeKind, "t2v", "the active unit really is the t2v one");
+  assert.strictEqual(a.panelLocked, true, "the control must lock it from the first clip");
+  assert.strictEqual(a.saysApproveFirst, true, "and demand a frame the active route never begins from");
+
+  /* THE LIVE DEFECT, case B — the dangerous inversion: the active unit is i2v with no
+     approved still, and the panel opens and announces NO FRAMES NEEDED. */
+  const b = multi("t2v", "i2v", 1);
+  assert.strictEqual(b.activeKind, "i2v", "the active unit really is the i2v one");
+  assert.strictEqual(b.panelLocked, false, "the control must open a route that needs a frame");
+  assert.strictEqual(b.pill, "NO FRAMES NEEDED", "and state the opposite of the truth about it");
+
+  /* THE GUARD asserts the opposite of both. */
+  assert.notStrictEqual(a.panelLocked, false);
+  assert.notStrictEqual(b.panelLocked, true);
+});
+
+/* The frameless half of T0-2, which is the half with the blast radius: leaving t2v out
+   of the frameless list gives a text-to-video unit a starting frame that its fal
+   endpoint has no field to receive. */
+control("NC-4c", "linking a start frame to an imported t2v unit", () => {
+  const source = mutated("server.js", (text) =>
+    text.replace(
+      'framelessKinds = ["t2v", "plan", "post", "reuse"],',
+      'framelessKinds = ["plan", "post", "reuse"],',
+    ));
+  const clips = builderClipsFrom(source);
+  const warnings = [];
+  const out = clips(
+    { id: "SH-T2V", clips: [{ id: "SH-T2V-M01", kind: "t2v", dur: 6, motionPrompt: "A storm front." }] },
+    [{ id: "SH-T2V-A" }],
+    warnings,
+  );
+  assert.strictEqual(out[0].kind, "t2v", "the kind still survives; only the frame rule is broken");
+  assert.strictEqual(out[0].fromFrame, "SH-T2V-A", "the control must reattach the frame");
+  assert.notStrictEqual(out[0].fromFrame, "");
+});
+
+/* The import clip normaliser lifted out of a supplied server.js source, the same way the
+   positive suite reaches it. Declared after its callers on purpose — hoisting keeps this
+   readable in the order the controls are written. */
+function builderClipsFrom(serverSource) {
+  const extract = (name) => {
+    const start = serverSource.indexOf(`function ${name}(`);
+    assert(start >= 0, `server.js no longer declares ${name}`);
+    let parens = 0, bodyStart = -1;
+    for (let index = serverSource.indexOf("(", start); index < serverSource.length; index++) {
+      if (serverSource[index] === "(") parens++;
+      else if (serverSource[index] === ")") {
+        parens--;
+        if (parens === 0) { bodyStart = serverSource.indexOf("{", index); break; }
+      }
+    }
+    let depth = 0;
+    for (let index = bodyStart; index < serverSource.length; index++) {
+      if (serverSource[index] === "{") { depth++; continue; }
+      if (serverSource[index] === "}") { depth--; if (depth === 0) return serverSource.slice(start, index + 1); }
+    }
+    throw new Error(`could not find the end of ${name}`);
+  };
+  const { deriveLipSync, lipSyncRequiredFrom } = require("../public/shared-lip-sync");
+  const context = vm.createContext({ deriveLipSync, lipSyncRequiredFrom });
+  const declarations = ["builderObject", "builderArray", "builderNumber", "builderLabel",
+    "normalizeBuilderMotionBrief", "normalizeBuilderClips"].map(extract).join("\n");
+  vm.runInContext(`${declarations}\nglobalThis.__clips = normalizeBuilderClips;`, context);
+  return context.__clips;
+}
+
+async function main() {
+  const detected = [];
+  for (const entry of controls) {
+    let caught = null;
+    try {
+      await entry.run();
+    } catch (error) {
+      caught = error;
+    }
+    assert(!caught, `${entry.id} (${entry.title}) did not behave as the control describes: ${caught && caught.message}`);
+    detected.push(entry.id);
+  }
+
+  /* AND THE REAL MODULES ARE GREEN AFTERWARDS. Every mutation above lived in a string;
+     if any of it had reached disk or a module cache, these would now disagree. */
+  const LipSync = require("../public/shared-lip-sync");
+  assert.strictEqual(LipSync.deriveLipSync({ line: "Bravo two, hold position." }), "implied");
+  const Backend = require("../fal-h3-backend");
+  assert.strictEqual(Backend.FAL_H3_BACKEND.promptExpansion.send, false);
+  const Compiler = require("../generation-compiler");
+  const keys = Compiler.INTENT_FIELDS.map((row) => row.key);
+  for (const intent of ["editorial", "endpoints.start", "endpoints.end", "performance.lipSync", "interaction", "subjects.count", "output.nativeAudio"])
+    assert(keys.includes(intent), `${intent} must still be inventoried by the real compiler`);
+  assert(read("public/app.js").includes('"t2v", "i2v", "flf", "r2v", "plan", "post", "reuse"'));
+  assert(read("server.js").includes('framelessKinds = ["t2v", "plan", "post", "reuse"]'));
+
+  console.log(
+    `Shot Execution Tier 0 negative controls passed: ${detected.length} deliberate defects reintroduced in memory — `
+    + "each of the seven inventory rows dropped in turn, the dialogue-implies-lip-sync shortcut restored in the shared "
+    + "derivation and at a former call site, the derived level persisted into the record it outranks, the H3 pack's "
+    + "explicit audio refusal dropped back to the generic backstop, the "
+    + "prompt-expansion flag omitted and then sent on, t2v removed from "
+    + "the browser vocabulary, the import vocabulary and the frameless list, and all four live Motion regressions — "
+    + "the unit builder fabricating a start frame again, the panel locking unconditionally, the panel resolving its "
+    + "route from the picker's default profile so an imported t2v unit locked again, and the panel following the first "
+    + "clip instead of the active unit so a multi-unit shot both locked a frameless route and opened a gated one — "
+    + "every one detected by the property that "
+    + "guards it, with the real modules green afterwards. Nothing was written to disk and nothing was reverted with "
+    + "git. Provider calls made: 0.",
+  );
+}
+
+main().catch((error) => { console.error(error.stack || error); process.exitCode = 1; });

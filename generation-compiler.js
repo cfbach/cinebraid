@@ -37,6 +37,7 @@ const {
   CINEBRAID_REFERENCE_ROLES,
   checkRequestAgainstCapability,
 } = require("./public/shared-generation-capability");
+const { deriveLipSync } = require("./public/shared-lip-sync");
 
 const COMPILER_VERSION = 1;
 
@@ -73,6 +74,13 @@ const INTENT_FIELDS = [
   { key: "action.secondary", label: "secondary beats", read: (s) => secondaryActions(s).join(" | ") },
   { key: "action.environment", label: "environment motion", read: (s) => list(s.environmentMotion).join("; ") },
   { key: "staging", label: "blocking and staging", read: (s) => list(s.stagingLines).join(" ") },
+  /* HOW MANY PEOPLE THE SHOT IS ABOUT. Derived rather than declared, because CineBraid
+     already knows it exactly: promptEntities is the character list after frame presence
+     has removed anyone this frame declares absent, which is the same list the prompt is
+     allowed to describe. One subject and six subjects are different shots to route, to
+     split and to review, and nothing downstream could previously ask. */
+  { key: "subjects.count", label: "subjects in frame", read: (s) => subjectCount(s) },
+  { key: "interaction", label: "subject interaction", read: (s) => text(s.interaction) },
   { key: "camera.framing", label: "framing", read: (s) => text(s.camera?.framing) },
   { key: "camera.movement", label: "camera movement", read: (s) => meaningfulCamera(s) },
   { key: "camera.timing", label: "camera move timing", read: (s) => text(s.camera?.timing) },
@@ -81,6 +89,10 @@ const INTENT_FIELDS = [
   { key: "performance.facial", label: "facial performance", read: (s) => text(s.performance?.facial) },
   { key: "performance.body", label: "body language", read: (s) => text(s.performance?.bodyLanguage) },
   { key: "performance.gaze", label: "gaze", read: (s) => text(s.performance?.gaze) },
+  /* Whether the mouth has to match the words, which gates an entire route class. Read
+     through the shared derivation so this row and the two brief builders cannot drift
+     apart; `none` is not intent and is correctly never inventoried. */
+  { key: "performance.lipSync", label: "lip-sync requirement", read: (s) => lipSyncIntent(s) },
   { key: "timing.duration", label: "shot duration", read: (s) => (Number(s.durationSeconds) > 0 ? String(Number(s.durationSeconds)) : "") },
   { key: "dialogue.line", label: "dialogue", read: (s) => text(s.audio?.dialogue) },
   { key: "dialogue.delivery", label: "dialogue delivery", read: (s) => text(s.audio?.delivery) },
@@ -93,6 +105,14 @@ const INTENT_FIELDS = [
   { key: "sound.priorities", label: "audio priority", read: (s) => text(s.audio?.priorities) },
   { key: "state.initial", label: "opening state", read: (s) => text(s.initialState?.subject) },
   { key: "state.final", label: "required ending state", read: (s) => text(s.finalState?.subject) },
+  /* HOW FIXED THE SHOT'S OWN FIRST AND LAST FRAMES ARE — free, approximate or exact.
+     Not the same fact as the prose above it, and the difference is the one that decides
+     which generation method can serve the shot at all: "he ends facing the door" is a
+     description, "this shot must end on THIS frame" is a contract. CineBraid carried
+     only the description, so a required ending was indistinguishable from a preferred
+     one and no downstream reader could tell. */
+  { key: "endpoints.start", label: "opening frame requirement", read: (s) => text(s.endpoints?.start) },
+  { key: "endpoints.end", label: "ending frame requirement", read: (s) => text(s.endpoints?.end) },
   { key: "environment", label: "environment", read: (s) => text(s.initialState?.environment) },
   { key: "identity.canon", label: "approved identity canon", read: (s) => list(s.identityCanon).join(" ") },
   { key: "continuity.drift", label: "drift restatements", read: (s) => list(s.driftRestatements).join(" ") },
@@ -100,8 +120,42 @@ const INTENT_FIELDS = [
   { key: "continuity.avoid", label: "must-avoid requirements", read: (s) => list(s.mustAvoid).join("; ") },
   { key: "style.visual", label: "visual style", read: (s) => list(s.visualStyle).join(" ") },
   { key: "production.risks", label: "production risks", read: (s) => list(s.productionRisks).join("; ") },
+  /* Whether the shot is one continuous take or may be cut inside. A model decides this
+     for itself unless it is told — Kling's `multi_shot` defaults on and its own guide
+     says the model "will flexibly adjust" — so an editorial decision the production
+     already made was being remade per request by whatever was rendering it. */
+  { key: "editorial", label: "editorial form", read: (s) => text(s.editorial) },
+  /* A REQUEST NOT TO GENERATE SOUND, which is a production decision and not the absence
+     of one. CineBraid ships a control for it — "Include native audio instructions" on
+     the motion package — and the request reached the compiler and stopped there: the
+     prompt was byte-identical either way, no parameter moved, nothing warned, and the
+     plan went on recording `audio: "native"`. The filmmaker was told the opposite of
+     what would happen, and paid for the track anyway.
+
+     Read STRICTLY as `=== false`. Absent and true are not requests, so a shot that
+     never asked for silence is never asked to explain why it did not. */
+  { key: "output.nativeAudio", label: "generated audio", read: (s) => (s.output?.nativeAudio === false ? "no generated audio" : "") },
   { key: "output.aspectRatio", label: "aspect ratio", read: (s) => text(s.aspectRatio || s.world?.aspectRatio) },
 ];
+
+/* The people this frame is allowed to depict, counted the same way the prompt is built:
+   promptEntities where the spec has them, and the character references otherwise. Frame
+   presence has already removed anyone declared absent, so this counts who is in the
+   shot rather than who is attached to it. */
+function subjectCount(spec) {
+  const entities = Array.isArray(spec.promptEntities) && spec.promptEntities.length
+    ? spec.promptEntities
+    : (Array.isArray(spec.blockingEntities) ? spec.blockingEntities : []).filter((row) => text(row?.type) === "character");
+  const count = entities.filter((row) => text(row?.id) || text(row?.name)).length;
+  return count > 0 ? String(count) : "";
+}
+
+/* One derivation, three values, and `none` is an absence rather than a fact — so a shot
+   with no lip-sync requirement is not asked to explain why it did not express one. */
+function lipSyncIntent(spec) {
+  const level = deriveLipSync(spec.audio);
+  return level === "none" ? "" : level;
+}
 
 function firstAction(spec) {
   const actions = Array.isArray(spec.actions) ? spec.actions.filter((item) => text(item?.action)) : [];

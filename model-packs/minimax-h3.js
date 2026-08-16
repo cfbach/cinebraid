@@ -1066,7 +1066,54 @@ function serialise(surface, header, sections) {
 }
 
 /* ---------------------------------------------------------------------------
-   Pack entry point. */
+   Intent H3 receives and deliberately does not send as its own instruction.
+ *
+ * These are `omitted-by-design` rather than `unsupported` because nothing is lost: the
+ * fact reaches the pack, the pack states why it does not become a separate instruction,
+ * and the record says so. `unsupported` is reserved for something the filmmaker asked
+ * for and will not get, which is a sentence worth showing them.
+ *
+ * Both arrived with the intent inventory. They are read by routing and by review, and
+ * they were previously invisible to every layer — which is the point of inventorying
+ * them — but MiniMax H3 exposes no control for either. */
+const H3_OMITTED_BY_DESIGN = {
+  "subjects.count": "MiniMax H3 has no subject-count control; each subject is named individually in the description instead.",
+  /* H3 speaks the supplied line with native audio and synchronises it structurally.
+     There is no flag that could assert the requirement or relax it, so CineBraid neither
+     claims to have sent one nor reports a capability the model never offered. */
+  "performance.lipSync": "MiniMax H3 speaks the supplied line with its own native audio; there is no separate lip-sync control to set.",
+};
+
+/* THE ONE AUDIO REQUEST THIS ROUTE CANNOT HONOUR.
+ *
+ * H3 is a video-and-audio checkpoint: every mode renders its own track, and fal
+ * publishes no field on any of the three endpoints that could switch that off. So a
+ * shot asking for no generated audio is asking for something it will not get — which is
+ * what `unsupported` is for, and it is the opposite of the two rows above, where nothing
+ * is lost.
+ *
+ * Reported HERE rather than left to the core's backstop so the sentence is written for a
+ * filmmaker. The backstop's wording is a note to whoever maintains this pack, and this
+ * is not a maintenance gap: the pack is behaving correctly and the model cannot comply.
+ *
+ * Nothing is serialised. Inventing `generate_audio` to carry the refusal would put a
+ * parameter fal never offered into a paid request, and the plan's own output block keeps
+ * recording `audio: "native"` because that remains the true fact about what arrives. */
+function reportUnsatisfiedAudioRequest(context) {
+  if (!intentValue(context.intent, "output.nativeAudio")) return;
+  if (context.coverage.has("output.nativeAudio")) return;
+  context.coverage.unsupported(
+    "output.nativeAudio",
+    "MiniMax H3 renders its own audio track in every mode and fal exposes no field to switch it off.",
+    {
+      code: "native-audio-unsupported",
+      field: "output.nativeAudio",
+      message: "This shot asks for no generated audio, but MiniMax H3 always renders a native audio track and there is no way to turn it off. The video will arrive with sound, and the track is charged for whether it is used or not.",
+      action: "Mute or replace the track in the finish pass, or choose a model that can render silent.",
+    },
+  );
+}
+
 const MODE_COMPILERS = { t2v: compileT2V, i2v: compileI2V, flf: compileFLF, r2v: compileR2V };
 
 function compileMode(context) {
@@ -1080,6 +1127,11 @@ function compileMode(context) {
   const ctx = { ...context, manifest, capability };
 
   const { sections, parameters, header } = build(ctx);
+  /* Applied AFTER the mode compiler, so a section that genuinely expressed one of these
+     keeps its stronger claim; `omit` is the fallback, never an override. */
+  for (const [key, reason] of Object.entries(H3_OMITTED_BY_DESIGN))
+    if (intentValue(context.intent, key) && !context.coverage.has(key)) context.coverage.omit(key, reason);
+  reportUnsatisfiedAudioRequest(context);
   const prompt = serialise(context.surface, header, sections);
 
   /* The effective ceiling, whoever set it. When only the model has an opinion this is

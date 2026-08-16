@@ -200,6 +200,14 @@ const GPT_IMAGE_2_PLAYBOOK = {
     "sound.music": "A still frame carries no sound.",
     "sound.silence": "A still frame carries no sound.",
     "sound.priorities": "A still frame carries no sound.",
+    /* Both arrived with the intent inventory, and both are directed elsewhere in
+       CineBraid's own workflow rather than being beyond the model. */
+    "performance.lipSync": "A still frame holds one instant. Whether the mouth has to match the words is directed on the motion pass.",
+    "subjects.count": "A still frame has no subject-count control; each subject is named individually in the description instead.",
+    /* Not `unsupported`: a still renders no audio at all, so a request for none is
+       already met and there is nothing to switch off. The refusal belongs to the routes
+       that really do produce a track. */
+    "output.nativeAudio": "A still frame renders no audio, so there is none to switch off.",
   },
   /* Blocking is deliberately impoverished. The shipped profile's rule is explicit:
      labelled placeholders, no production identity, wardrobe, materials, colour,

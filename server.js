@@ -27,6 +27,7 @@ const { annotateProfileLibraryExecution } = require("./generation-options");
 const { httpStatusForError } = require("./http-errors");
 const { resolveShotEntities, shotEntityTokenMatches, unresolvedShotDependencies, entityVisualDescription, resolveShotDuration, lossyShotCodeTokens } = require("./public/shared-entities");
 const { referenceAspectLabel, aspectRatioMentions } = require("./public/shared-aspect");
+const { deriveLipSync, lipSyncRequiredFrom } = require("./public/shared-lip-sync");
 const Coverage = require("./public/shared-coverage");
 const Continuity = require("./public/shared-continuity");
 const EntityOwnership = require("./public/shared-entity-ownership");
@@ -2376,7 +2377,17 @@ function normalizeBuilderMotionBrief(source, shotAudio = {}, duration = 0) {
       startTime: String(dialogue.startTime || ""),
       endTime: String(dialogue.endTime || ""),
       locked: dialogue.locked !== false,
-      lipSyncRequired: dialogue.lipSyncRequired === true || !!line,
+      /* The second, independently written copy of the same bad rule, on the path that
+         WRITES DURABLE PROJECT DATA. An imported shot with any line came back with
+         lipSyncRequired true, which is why a stored `true` cannot be trusted as a
+         filmmaker's decision and why nothing stored is converted: the level is derived
+         on read, and the boolean now follows it instead of leading it.
+
+         A level the document actually declared is carried through untouched; one it did
+         not is left empty rather than filled in with a derived answer, so importing a
+         project never manufactures an authority the source never claimed. */
+      lipSync: String(dialogue.lipSync || ""),
+      lipSyncRequired: lipSyncRequiredFrom({ ...dialogue, line }),
       voiceDesign: String(dialogue.voiceDesign || ""),
     },
     sound: {
@@ -2397,7 +2408,15 @@ function normalizeBuilderMotionBrief(source, shotAudio = {}, duration = 0) {
 
 function normalizeBuilderClips(shot, frames, warnings) {
   const shotId = String(shot.id || "SHOT"),
-    allowedKinds = new Set(["i2v", "flf", "r2v", "plan", "post", "reuse", "hold"]),
+    /* The import path's own copy of the clip vocabulary, and the one that decides what
+       a Project Builder document is allowed to say. Without `t2v` an imported
+       text-to-video unit was downgraded to `plan` — a planning-only unit that cannot
+       generate at all — and told the filmmaker its kind was unknown. */
+    allowedKinds = new Set(["t2v", "i2v", "flf", "r2v", "plan", "post", "reuse", "hold"]),
+    /* The kinds that begin from no frame. `plan`, `post` and `reuse` produce nothing
+       from a still; `t2v` produces video from the prompt alone. Linking a start frame
+       to any of them states a dependency the workflow does not have. */
+    framelessKinds = ["t2v", "plan", "post", "reuse"],
     firstFrame = frames[0]?.id || "",
     lastFrame = frames.at(-1)?.id || "";
   return builderArray(shot.clips).map((clip, index) => {
@@ -2417,7 +2436,7 @@ function normalizeBuilderClips(shot, frames, warnings) {
       );
       kind = "plan";
     }
-    if (!fromFrame && !["plan", "post", "reuse"].includes(kind) && firstFrame) {
+    if (!fromFrame && !framelessKinds.includes(kind) && firstFrame) {
       fromFrame = firstFrame;
       warnings.push(
         `Shot ${shotId} motion unit ${id} had no starting frame; CineBraid linked ${firstFrame}.`,

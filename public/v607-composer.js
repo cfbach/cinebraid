@@ -657,12 +657,23 @@
     normalizeShotV5(s);
     const frames = guidedFrames(s), c = ensureShotCreation(s);
     let unit = (s.clips || []).find((item) => item.id === c.activeMotionUnitId) || (s.clips || [])[0];
+    /* THE LIVE MOTION-UNIT BUILDER, and the one that had to be corrected: this function
+       REPLACES the base composer's, so the same repair made there alone would have been
+       dead code on every real page.
+       The route is settled before a frame is attached, because the kind was applied at
+       the end and the frame near the start — so a text-to-video unit was built as `i2v`
+       with `fromFrame` already set and only then renamed `t2v`, keeping a frame its fal
+       endpoint has no field to receive. Read from the picker's own helper so the two
+       composers cannot answer this differently. */
+    const kind = profile?.mode ? (profile.mode === "audio-video" ? "r2v" : profile.mode) : String(unit?.kind || "i2v");
+    const needsStartFrame = guidedVideoModeNeedsApprovedStill(kind);
     if (!unit) {
-      unit = { id: `seg-guided-${Date.now().toString(36)}`, suffix: "a", label: "A", title: "Primary motion", dur: 5, kind: "i2v", note: "", motionPrompt: "", fromFrame: frames[0]?.id || "", toFrame: "", generationPackages: [], motionPlan: null };
+      unit = { id: `seg-guided-${Date.now().toString(36)}`, suffix: "a", label: "A", title: "Primary motion", dur: 5, kind, note: "", motionPrompt: "", fromFrame: needsStartFrame ? (frames[0]?.id || "") : "", toFrame: "", generationPackages: [], motionPlan: null };
       s.clips = [unit];
     }
     c.activeMotionUnitId = unit.id;
-    if (!unit.fromFrame) unit.fromFrame = frames[0]?.id || "";
+    if (!needsStartFrame) unit.fromFrame = "";
+    else if (!unit.fromFrame) unit.fromFrame = frames[0]?.id || "";
     /* BATCH 1B: MOTION SETUP DOES NOT ESTABLISH FRAME AUTHORITY.
 
        This used to write `frames[0].winner = currentName` — a production
@@ -676,7 +687,7 @@
       const last = [...frames].reverse().find((frame, reverseIndex) => guidedFrameApproved(s, frame, takesFor(s.id), frames.length - 1 - reverseIndex));
       if (last && last.id !== unit.fromFrame) unit.toFrame = last.id;
     }
-    if (profile?.mode) unit.kind = profile.mode === "audio-video" ? "r2v" : profile.mode;
+    unit.kind = kind;
     unit.generationPackages = unit.generationPackages || [];
     return unit;
   };

@@ -13,6 +13,8 @@ const nodeSuites = [
   "check:history",
   "check:fal",
   "check:h3",
+  "check:shot-execution-tier0",
+  "check:shot-execution-tier0-negative",
   "check:preview-ux",
   "check:api",
   "check:diagnostics",

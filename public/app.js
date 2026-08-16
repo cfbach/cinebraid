@@ -580,12 +580,22 @@ function normalizeShotV5(s) {
       c.kind = (c.motionPrompt || c.note || "").trim() ? "i2v" : "plan";
       changed = true;
     } else if (
-      !["i2v", "flf", "r2v", "plan", "post", "reuse"].includes(c.kind)
+      /* `t2v` belongs here, and its absence was not cosmetic: a text-to-video clip
+         was COERCED to i2v, which then demanded a paid still and a human approval
+         gate the shot never needed. The route was already wired — the fal adapter
+         serves t2v, minimax-h3/t2v is dispatchable, and the still gate already
+         exempts it — so the only thing standing between an establishing shot and
+         the workflow written for it was this list. */
+      !["t2v", "i2v", "flf", "r2v", "plan", "post", "reuse"].includes(c.kind)
     ) {
       c.kind = "i2v";
       changed = true;
     }
-    if (!c.fromFrame) {
+    /* A start frame is attached only to the kinds that begin from one. Text-to-video
+       begins from a prompt by construction, so handing it a keyframe would make the
+       shot look as though it were waiting on an approval it does not need — and would
+       be sent to a fal endpoint that has no field to put it in. */
+    if (!c.fromFrame && c.kind !== "t2v") {
       c.fromFrame =
         s.keyframes[Math.min(i, s.keyframes.length - 1)]?.id ||
         s.keyframes[0]?.id ||
