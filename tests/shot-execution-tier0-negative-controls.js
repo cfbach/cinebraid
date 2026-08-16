@@ -424,6 +424,60 @@ control("NC-4f", "resolving the panel gate from the picker's default profile", a
   assert.strictEqual(explicit, false, "an explicitly selected t2v profile hid the defect and must be shown doing so");
 });
 
+/* NC-4g — resolve the panel from the FIRST clip again instead of the active unit.
+ *
+ * Both directions are wrong and they fail differently: one locks a route that needs no
+ * frame, the other OPENS a route that does. The second is the one that matters, because
+ * a silently opened gate is not a gate. */
+control("NC-4g", "resolving the panel from the first clip instead of the active unit", async () => {
+  const page = await render("#/production", buildFixture(), {
+    mutateSource: (file, source) => (file === "creation-studio.js"
+      ? mutated("public/creation-studio.js", () => source.replace(
+        "const unit = guidedActiveMotionUnit(s, c), supportedKinds =",
+        "const unit = (s.clips || [])[0], supportedKinds =",
+      ))
+      : source),
+  });
+  vm.runInContext(`globalThis.__multi = (firstKind, secondKind, activeIndex) => {
+    const shot = P.shots[0];
+    for (const frame of shot.keyframes || []) frame.winner = "";
+    shot.motionPrompt = "";
+    const c = ensureShotCreation(shot);
+    c.motionProfileId = ""; c.motionDirection = ""; c.motionDuration = 0;
+    shot.clips = [
+      { id: "seg-one", suffix: "a", label: "A", dur: 5, kind: firstKind, motionPrompt: "First unit.", fromFrame: firstKind === "t2v" ? "" : "frame-a", toFrame: "", motionProfileId: "", generationPackages: [] },
+      { id: "seg-two", suffix: "b", label: "B", dur: 6, kind: secondKind, motionPrompt: "Second unit.", fromFrame: secondKind === "t2v" ? "" : "frame-a", toFrame: "", motionProfileId: "", generationPackages: [] },
+    ];
+    c.activeMotionUnitId = shot.clips[activeIndex].id;
+    const html = guidedMotionPanel(shot, null, []);
+    return {
+      activeKind: guidedActiveMotionUnit(shot, c)?.kind || "",
+      panelLocked: html.includes("guided-motion-card locked"),
+      saysApproveFirst: html.includes("Approve required frames first"),
+      pill: /guided-mode-pill[^>]*>([^<]*)</.exec(html)?.[1] || "",
+    };
+  };`, page.context);
+  const multi = (first, second, index) =>
+    vm.runInContext(`__multi(${JSON.stringify(first)}, ${JSON.stringify(second)}, ${index})`, page.context);
+
+  /* THE LIVE DEFECT, case A: the active unit is t2v and the panel is locked anyway. */
+  const a = multi("i2v", "t2v", 1);
+  assert.strictEqual(a.activeKind, "t2v", "the active unit really is the t2v one");
+  assert.strictEqual(a.panelLocked, true, "the control must lock it from the first clip");
+  assert.strictEqual(a.saysApproveFirst, true, "and demand a frame the active route never begins from");
+
+  /* THE LIVE DEFECT, case B — the dangerous inversion: the active unit is i2v with no
+     approved still, and the panel opens and announces NO FRAMES NEEDED. */
+  const b = multi("t2v", "i2v", 1);
+  assert.strictEqual(b.activeKind, "i2v", "the active unit really is the i2v one");
+  assert.strictEqual(b.panelLocked, false, "the control must open a route that needs a frame");
+  assert.strictEqual(b.pill, "NO FRAMES NEEDED", "and state the opposite of the truth about it");
+
+  /* THE GUARD asserts the opposite of both. */
+  assert.notStrictEqual(a.panelLocked, false);
+  assert.notStrictEqual(b.panelLocked, true);
+});
+
 /* The frameless half of T0-2, which is the half with the blast radius: leaving t2v out
    of the frameless list gives a text-to-video unit a starting frame that its fal
    endpoint has no field to receive. */
@@ -507,9 +561,11 @@ async function main() {
     + "derivation and at a former call site, the derived level persisted into the record it outranks, the H3 pack's "
     + "explicit audio refusal dropped back to the generic backstop, the "
     + "prompt-expansion flag omitted and then sent on, t2v removed from "
-    + "the browser vocabulary, the import vocabulary and the frameless list, and all three live Motion regressions — "
-    + "the unit builder fabricating a start frame again, the panel locking unconditionally, and the panel resolving its "
-    + "route from the picker's default profile so an imported t2v unit locked again — every one detected by the property that "
+    + "the browser vocabulary, the import vocabulary and the frameless list, and all four live Motion regressions — "
+    + "the unit builder fabricating a start frame again, the panel locking unconditionally, the panel resolving its "
+    + "route from the picker's default profile so an imported t2v unit locked again, and the panel following the first "
+    + "clip instead of the active unit so a multi-unit shot both locked a frameless route and opened a gated one — "
+    + "every one detected by the property that "
     + "guards it, with the real modules green afterwards. Nothing was written to disk and nothing was reverted with "
     + "git. Provider calls made: 0.",
   );

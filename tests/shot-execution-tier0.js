@@ -634,6 +634,88 @@ async function main() {
   assert.strictEqual(empty.locked, true, "which stays fail-safe");
 }
 
+/* AND ON A SHOT WITH MORE THAN ONE MOTION UNIT, THE PANEL IS ABOUT THE ACTIVE ONE.
+ *
+ * `activeMotionUnitId` is the existing answer — the composer writes it when a unit is
+ * selected and the builders, the sound composer and the profile resolver all read it.
+ * The Motion panel took `clips[0]` instead, so the gate, its wording and the pill all
+ * followed a unit the filmmaker was not looking at. Both directions were wrong, and the
+ * second is the dangerous one: it OPENS a frame-gated route. */
+{
+  const page = await render("#/production", buildFixture());
+  vm.runInContext(`globalThis.__readPanel = (shot, c) => {
+    const html = guidedMotionPanel(shot, null, []);
+    const unit = guidedActiveMotionUnit(shot, c);
+    return {
+      activeId: c.activeMotionUnitId, activeKind: unit ? unit.kind : "",
+      effectiveMode: guidedEffectiveVideoMode(shot, c, unit),
+      panelLocked: html.includes("guided-motion-card locked"),
+      saysApproveFirst: html.includes("Approve required frames first"),
+      pill: /guided-mode-pill[^>]*>([^<]*)</.exec(html)?.[1] || "",
+    };
+  };
+  globalThis.__multi = (firstKind, secondKind, activeIndex) => {
+    const shot = P.shots[0];
+    for (const frame of shot.keyframes || []) frame.winner = "";
+    shot.motionPrompt = "";
+    const c = ensureShotCreation(shot);
+    c.motionProfileId = ""; c.motionDirection = ""; c.motionDuration = 0;
+    shot.clips = [
+      { id: "seg-one", suffix: "a", label: "A", title: "One", dur: 5, kind: firstKind, note: "", motionPrompt: "First unit.", fromFrame: firstKind === "t2v" ? "" : "frame-a", toFrame: "", motionProfileId: "", generationPackages: [] },
+      { id: "seg-two", suffix: "b", label: "B", title: "Two", dur: 6, kind: secondKind, note: "", motionPrompt: "Second unit.", fromFrame: secondKind === "t2v" ? "" : "frame-a", toFrame: "", motionProfileId: "", generationPackages: [] },
+    ];
+    c.activeMotionUnitId = shot.clips[activeIndex].id;
+    return globalThis.__readPanel(shot, c);
+  };`, page.context);
+  const multi = (first, second, activeIndex) =>
+    vm.runInContext(`__multi(${JSON.stringify(first)}, ${JSON.stringify(second)}, ${activeIndex})`, page.context);
+
+  /* A — first clip i2v, ACTIVE unit t2v. The active route governs and the panel opens. */
+  const a = multi("i2v", "t2v", 1);
+  assert.strictEqual(a.activeKind, "t2v", "the active unit is the t2v one");
+  assert.strictEqual(a.effectiveMode, "t2v", "and it is what the route resolves to");
+  assert.strictEqual(a.panelLocked, false, "an active t2v unit must open the panel behind an i2v first clip");
+  assert.strictEqual(a.saysApproveFirst, false, "and must not demand a frame the active route never begins from");
+  assert.strictEqual(a.pill, "NO FRAMES NEEDED", "and must say so truthfully");
+
+  /* B — first clip t2v, ACTIVE unit i2v. The gate must come BACK. This is the direction
+     that silently opened a frame-gated route, which is the worse of the two. */
+  const b = multi("t2v", "i2v", 1);
+  assert.strictEqual(b.activeKind, "i2v", "the active unit is the i2v one");
+  assert.strictEqual(b.effectiveMode, "i2v", "and it is what the route resolves to");
+  assert.strictEqual(b.panelLocked, true, "an active i2v unit must stay gated behind a t2v first clip");
+  assert.strictEqual(b.saysApproveFirst, true, "and must still say why it is gated");
+  assert.strictEqual(b.pill, "LOCKED", "and must present its frame status truthfully");
+
+  /* SINGLE-UNIT BEHAVIOUR IS UNCHANGED, in both directions. */
+  const soloT2v = multi("t2v", "t2v", 0), soloI2v = multi("i2v", "i2v", 0);
+  assert.strictEqual(soloT2v.panelLocked, false, "a single t2v unit still opens");
+  assert.strictEqual(soloT2v.pill, "NO FRAMES NEEDED");
+  assert.strictEqual(soloI2v.panelLocked, true, "a single i2v unit is still gated");
+  assert.strictEqual(soloI2v.saysApproveFirst, true);
+
+  /* SWITCHING THE ACTIVE UNIT CHANGES THE PANEL, driven through the shipped selector
+     rather than by writing the id directly — `selectMotionUnit` is what the composer's
+     unit chips call. */
+  const swap = vm.runInContext(`(() => {
+    __multi("i2v", "t2v", 0);
+    const shot = P.shots[0];
+    const before = __readPanel(shot, ensureShotCreation(shot));
+    selectMotionUnit(shot.id, "seg-two");
+    const after = __readPanel(shot, ensureShotCreation(shot));
+    selectMotionUnit(shot.id, "seg-one");
+    const back = __readPanel(shot, ensureShotCreation(shot));
+    return { api: typeof selectMotionUnit, before, after, back };
+  })()`, page.context);
+  assert.strictEqual(swap.api, "function", "the shipped active-unit selector must exist");
+  assert.strictEqual(swap.before.panelLocked, true, "starts on the i2v unit, gated");
+  assert.strictEqual(swap.after.activeId, "seg-two", "selecting the t2v unit moves the active id");
+  assert.strictEqual(swap.after.panelLocked, false, "and the gate lifts immediately");
+  assert.strictEqual(swap.after.pill, "NO FRAMES NEEDED", "and the pill follows it");
+  assert.strictEqual(swap.back.panelLocked, true, "selecting back returns the gate");
+  assert.strictEqual(swap.back.saysApproveFirst, true, "with its reason");
+}
+
 /* THE SAME ANSWERS FROM THE FALLBACK BUILDER.
  *
  * `ensureGuidedMotionUnit` exists twice: creation-studio.js declares it and
@@ -863,8 +945,10 @@ console.log(
   + "a dialogue line no longer manufactures a lip-sync requirement at either former site and nothing stored is rewritten; "
   + "t2v survives normalisation and import as t2v and, in both live Motion builders and the Motion panel itself, "
   + "is given no start frame and is not locked behind one — resolved from an explicit profile where there is one and "
-  + "from the unit's own kind where there is not, so an imported t2v shot carrying no profile id opens too, while every "
-  + "other route keeps its frame and its gate and an unrecognised one stays fail-safe; "
+  + "from the unit's own kind where there is not, so an imported t2v shot carrying no profile id opens too, and from the "
+  + "ACTIVE motion unit rather than the first clip, so a multi-unit shot gates on the unit the filmmaker selected and "
+  + "changes the moment they select another, while every other route keeps its frame and its gate and an unrecognised "
+  + "one stays fail-safe; "
   + "the serialised fal request carries prompt expansion off and an explicit, capability-bounded resolution; "
   + "and an explicit request for no generated audio is refused by name on a route that cannot comply, with the "
   + "payload byte-identical and no invented provider field. "

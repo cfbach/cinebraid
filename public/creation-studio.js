@@ -2503,7 +2503,23 @@ function guidedVideoModeNeedsApprovedStill(mode) {
  * Returning "" rather than guessing is what keeps step 3 honest: an unrecognised route
  * asks for its frame, so the gate is relaxed only where a route is KNOWN not to need
  * one. */
-function guidedEffectiveVideoMode(s, c = ensureShotCreation(s), unit = (s?.clips || [])[0]) {
+/* THE MOTION UNIT A SURFACE IS ABOUT, which on a shot with more than one is not the
+   first one in the array.
+ *
+ * `activeMotionUnitId` is the existing answer — the composer writes it when a unit is
+ * selected, and the builders, the sound composer and the profile resolver all read it
+ * this way. The Motion panel did not: it took `clips[0]`, so on a multi-unit shot the
+ * gate, its wording and the frame-status pill all followed a unit the filmmaker was not
+ * looking at. Selecting a t2v unit behind an i2v first clip locked the panel; selecting
+ * an i2v unit behind a t2v first clip opened it and said NO FRAMES NEEDED.
+ *
+ * Falling back to the first clip is deliberate and is the behaviour that already exists
+ * everywhere else: it is what a shot with no selection yet has always meant. */
+function guidedActiveMotionUnit(s, c = ensureShotCreation(s)) {
+  const clips = Array.isArray(s?.clips) ? s.clips : [];
+  return clips.find((item) => item.id === c?.activeMotionUnitId) || clips[0] || null;
+}
+function guidedEffectiveVideoMode(s, c = ensureShotCreation(s), unit = guidedActiveMotionUnit(s, c)) {
   const profiles = guidedVideoProfiles();
   const selected = String(unit?.motionProfileId || c?.motionProfileId || "");
   const chosen = profiles.find((profile) => profile.id === selected);
@@ -3038,7 +3054,10 @@ function guidedAudioPanel(s, c, profile, audioRefs) {
 
 function guidedMotionPanel(s, current, takes, open = false) {
   const c = ensureShotCreation(s), approved = guidedApprovedMotion(s, takes), progress = guidedFrameProgress(s, takes), frames = progress.frames;
-  const unit = (s.clips || [])[0], supportedKinds = ["t2v", "i2v", "flf", "r2v", "audio-video"], complex = (s.clips || []).length > 1 || (unit && !supportedKinds.includes(unit.kind));
+  /* THE ACTIVE unit, not the first one. Everything below that reads a unit — the route
+     the gate is gated on, the direction shown and the duration offered — is about the
+     unit the filmmaker has selected, and on a multi-unit shot those are different units. */
+  const unit = guidedActiveMotionUnit(s, c), supportedKinds = ["t2v", "i2v", "flf", "r2v", "audio-video"], complex = (s.clips || []).length > 1 || (unit && !supportedKinds.includes(unit.kind));
   const direction = c.motionDirection || unit?.motionPrompt || s.motionPrompt || "";
   const profileId = preferredGuidedVideoProfile(c.motionProfileId || ""), profile = guidedVideoProfiles().find((item) => item.id === profileId);
   const duration = guidedClampedMotionDuration(c.motionDuration || unit?.dur || 5, profile);
@@ -3361,6 +3380,10 @@ function suggestedMotionProfileForApprovedFrames(s, approvedCount) {
    *
    * The unit is consulted first because that is what the build path resolves from;
    * the shot-level fields remain the fallback for a project written before units. */
+  /* Deliberately left inline rather than routed through guidedActiveMotionUnit: this is
+     the anchor NC-J in the generation-truth negative controls mutates to prove the route
+     guard still reads the unit before the shot. Rewriting it to accommodate a cosmetic
+     refactor would weaken an unrelated guard for no behavioural gain. */
   const unit = (s.clips || []).find((item) => item.id === c.activeMotionUnitId) || (s.clips || [])[0] || null;
   const current = profiles.find((profile) => profile.id === (unit?.motionProfileId || c.motionProfileId));
   const hasUserMotionWork = !!String(unit?.motionPrompt || c.motionDirection || s.motionPrompt || "").trim() || !!(c.motionPromptBuilds || []).length;
