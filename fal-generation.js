@@ -229,6 +229,46 @@ function registerFalGeneration(app, context) {
     jobOperationChains.set(key, next.catch(() => {}));
     return next;
   }
+  /* ---- what CineBraid collected with nobody watching -------------------------
+   *
+   * A result the SERVER took delivery of, because the ingest reaper asked while no
+   * browser was driving the job. Kept per project and only for the life of this
+   * process: it is a notice, not a record. What actually happened is durable on the
+   * job row and in the project — the outputs, the ingest stamp, the candidate files —
+   * and this exists so the next window that opens is TOLD, instead of the work
+   * appearing in a list with no explanation of when it arrived.
+   *
+   * Claimed once, by the browser's initial ledger load. The activity drawer re-reads
+   * the same route every 3.5 seconds and must not consume the notice or announce it
+   * again; see the route below for which request claims it. */
+  const unattendedCollections = new Map();
+  function recordUnattendedCollection(owner, job) {
+    const rows = unattendedCollections.get(owner.slug) || [];
+    rows.push({
+      jobId: String(job.id || ""),
+      purpose: String(job.purpose || ""),
+      shotId: String(job.shotId || ""),
+      entityId: String(job.entityId || ""),
+      outputs: Array.isArray(job.outputs) ? job.outputs.length : 0,
+      at: now(),
+    });
+    unattendedCollections.set(owner.slug, rows);
+  }
+  /* Plain language, and a count of RESULTS rather than of jobs: "2 results" is what a
+     filmmaker sees in the workspace, and a job that returned four candidates delivered
+     four of them. */
+  function unattendedRecoveryNotice(slug, { claim = false } = {}) {
+    const rows = unattendedCollections.get(slug) || [];
+    if (!rows.length) return null;
+    if (claim) unattendedCollections.delete(slug);
+    const results = rows.reduce((sum, row) => sum + Math.max(0, Number(row.outputs) || 0), 0);
+    return {
+      jobs: rows.length,
+      results,
+      collections: rows,
+      message: `Collected ${results} result${results === 1 ? "" : "s"} while no CineBraid window was open.`,
+    };
+  }
   /* Express 4 does not catch a rejected async handler, and an unanswered request
      is worse than an error: the browser waits forever on a generation it cannot
      see the state of. Every serialized route ends here. */
@@ -1195,12 +1235,18 @@ function registerFalGeneration(app, context) {
       keySource: process.env.FAL_KEY ? "environment" : cfg.apiKey ? "settings" : "none",
     });
   });
+  /* `claimRecovery=1` is sent by ONE caller — the browser's initial ledger load — and
+     it is what takes delivery of the background-recovery notice. Every other reader of
+     this route, including the activity drawer's 3.5-second refresh, leaves the notice
+     where it is, so a result collected while nobody was watching is announced once to
+     the next window that opens rather than on every poll. */
   app.get("/api/generation/fal/jobs", (req, res) => {
     try {
       const owner = captureOwner();
       const shotId = String(req.query.shotId || ""), entityId = String(req.query.entityId || ""), entityList = String(req.query.entityList || "");
       const jobs = readJobs(owner).filter((job) => (!shotId || String(job.shotId) === shotId) && (!entityId || String(job.entityId) === entityId) && (!entityList || String(job.entityList) === entityList));
-      res.json({ jobs: jobs.map(publicJob) });
+      const recovery = unattendedRecoveryNotice(owner.slug, { claim: String(req.query.claimRecovery || "") === "1" });
+      res.json({ jobs: jobs.map(publicJob), ...(recovery ? { backgroundRecovery: recovery } : {}) });
     } catch (error) {
       res.status(ledgerFailureStatus(error)).json(ledgerFailurePayload(error));
     }
@@ -1968,32 +2014,47 @@ function registerFalGeneration(app, context) {
       res.json({ ok: true, job: publicJob(job) });
     }));
   });
-  app.post("/api/generation/fal/jobs/:id/refresh", async (req, res) => {
-    let owner;
-    try {
-      owner = captureOwner();
-    } catch (error) {
-      return res.status(ledgerFailureStatus(error)).json(ledgerFailurePayload(error));
-    }
-    /* Serialised per job: two overlapping refreshes must not both observe
-       `!ingestedAt` and ingest the same paid result twice. */
-    return guardRoute(res, serializeJobOperation(owner, req.params.id, async () => {
-      let job;
-      try {
-        job = readJobs(owner).find((item) => item.id === req.params.id);
-      } catch (error) {
-        return res.status(ledgerFailureStatus(error)).json(ledgerFailurePayload(error));
-      }
-      if (!job) return res.status(404).json({ error: "Generation job not found." });
+  /* ---- THE ONE COLLECTION PATH ------------------------------------------------
+   *
+   * Ask the provider what happened to a request that has ALREADY been submitted, and
+   * take delivery of the result if there is one. This is the body POST .../refresh has
+   * always run; it is a function now because the server-side ingest reaper
+   * (generation-poller.js) has to run the SAME path rather than a second one that
+   * would drift from it. Nothing here can create provider work: it reaches the network
+   * only through refresh(), which fetches `statusUrl`, fetches `responseUrl`, and
+   * downloads the assets those name.
+   *
+   * Still serialised per job, for the reason it always was: two overlapping
+   * collections must not both observe `!ingestedAt` and ingest the same paid result
+   * twice. The job is re-read INSIDE the turn, so the second one observes the first's
+   * durable outcome instead of the snapshot it queued with. That is also what makes a
+   * browser tab and this server polling the same job at the same time safe.
+   *
+   * `markFailureOnError` is the one difference between the two callers, and it is a
+   * difference about who asked. A person pressing Refresh has established that they
+   * want an answer now, and a failed round-trip is an answer they should see on the
+   * job. A background sweep has established nothing: writing FAILED because a network
+   * blip lost one status request would mark a live, paid, in-queue render as finished
+   * and — because FAILED does not block resubmission — invite a second one. The reaper
+   * therefore commits NOTHING when it cannot ask, and tries again later. */
+  async function collectJob(owner, jobId, options = {}) {
+    const markFailureOnError = options.markFailureOnError !== false;
+    const unattended = options.unattended === true;
+    return serializeJobOperation(owner, jobId, async () => {
+      const job = readJobs(owner).find((item) => item.id === jobId);
+      if (!job) return { ok: false, outcome: "not-found", error: "Generation job not found." };
       /* An unresolved job with no request id has nothing to poll. Pretending otherwise
          would fetch an empty URL and report the resulting error as though the provider
          had answered — inventing a status out of a failure. */
       if (Lifecycle.isUnresolved(job) && !job.externalId)
-        return res.status(409).json({
-          error: "CineBraid never received a request id for this submission, so there is nothing it can check. Look for it at the provider and record what you find.",
+        return {
+          ok: false,
+          outcome: "no-handle",
           code: "GENERATION_UNRESOLVED_NO_HANDLE",
-          job: publicJob(job),
-        });
+          job,
+          error: "CineBraid never received a request id for this submission, so there is nothing it can check. Look for it at the provider and record what you find.",
+        };
+      const deliveredBefore = !!job.ingestedAt;
       try {
         await refresh(owner, job);
         await commit(owner, (current) => {
@@ -2003,26 +2064,48 @@ function registerFalGeneration(app, context) {
           if (row) Object.assign(job, mergeJobOutcome(row, job, { authoritative: true }));
           else current.push(job); // the row vanished underneath us; do not lose it
         });
-        res.json({ ok: true, job: publicJob(job) });
+        /* COLLECTED means THIS call took delivery — it went in without an ingest stamp
+           and came out with one. A job that was already delivered is not counted again,
+           which is what keeps a duplicate tick, a duplicate tab, or a tab and the reaper
+           together from reporting the same result twice. */
+        const collected = !deliveredBefore && !!job.ingestedAt;
+        if (collected && unattended) recordUnattendedCollection(owner, job);
+        return { ok: true, outcome: "polled", job, collected, outputs: collected ? (job.outputs || []).length : 0 };
       } catch (error) {
-        await commit(owner, (current) => {
-          const row = current.find((item) => item.id === job.id);
-          if (row) {
-            /* A poll that FAILED is not a provider answer, so it is never authoritative:
-               an unresolved job stays unresolved. Not being able to ask is not an answer,
-               and every other status keeps its existing behaviour. */
-            row.status = Lifecycle.nextStatus(row.status, "FAILED", {
-              ingested: !!row.ingestedAt,
-              authoritative: false,
-            });
-            row.error = error.message;
-            row.updatedAt = now();
-            Object.assign(job, row);
-          }
-        }).catch(() => {});
-        updateEntityCoverageRun(owner, job, "needs-attention", error.message);
-        res.status(502).json({ error: error.message, job: publicJob(job) });
+        if (markFailureOnError)
+          await commit(owner, (current) => {
+            const row = current.find((item) => item.id === job.id);
+            if (row) {
+              /* A poll that FAILED is not a provider answer, so it is never authoritative:
+                 an unresolved job stays unresolved. Not being able to ask is not an answer,
+                 and every other status keeps its existing behaviour. */
+              row.status = Lifecycle.nextStatus(row.status, "FAILED", {
+                ingested: !!row.ingestedAt,
+                authoritative: false,
+              });
+              row.error = error.message;
+              row.updatedAt = now();
+              Object.assign(job, row);
+            }
+          }).catch(() => {});
+        return { ok: false, outcome: "provider-error", job, error: error.message };
       }
+    });
+  }
+  app.post("/api/generation/fal/jobs/:id/refresh", async (req, res) => {
+    let owner;
+    try {
+      owner = captureOwner();
+    } catch (error) {
+      return res.status(ledgerFailureStatus(error)).json(ledgerFailurePayload(error));
+    }
+    return guardRoute(res, collectJob(owner, req.params.id).then((result) => {
+      if (result.ok) return res.json({ ok: true, job: publicJob(result.job) });
+      if (result.outcome === "not-found") return res.status(404).json({ error: result.error });
+      if (result.outcome === "no-handle")
+        return res.status(409).json({ error: result.error, code: result.code, job: publicJob(result.job) });
+      updateEntityCoverageRun(owner, result.job, "needs-attention", result.error);
+      res.status(502).json({ error: result.error, job: publicJob(result.job) });
     }));
   });
   app.post("/api/generation/fal/jobs/:id/cancel", async (req, res) => {
@@ -2072,10 +2155,34 @@ function registerFalGeneration(app, context) {
     }));
   });
 
-  /* The one thing this module exposes to a caller that is not a route: the
-     P4-SEM-C4 repair, so POST /api/media/rename can keep the generation ledger
-     truthful without becoming a second writer of it. */
-  return { repairJobMediaIdentity };
+  /* What this module exposes to callers that are not routes.
+   *
+   * `repairJobMediaIdentity` is the P4-SEM-C4 repair, so POST /api/media/rename can
+   * keep the generation ledger truthful without becoming a second writer of it.
+   *
+   * `recovery` is the ingest reaper's whole surface, and its shape is the guarantee.
+   * It can read the durable ledger, and it can COLLECT — ask about a request the
+   * provider was already given and take delivery of what came back. There is no
+   * submit, no retry, no repair-and-retry, no job constructor and no route handle in
+   * it, so a poller holding this object has nothing that could start paid work even if
+   * it tried. Everything it does goes through the same serialised turn, the same
+   * lifecycle rules and the same commit chain as the browser's own Refresh. */
+  return {
+    repairJobMediaIdentity,
+    recovery: {
+      /* Whether asking the provider anything is possible at all. Not configured is not
+         a job failure and must never be recorded as one — it is a reason to do nothing. */
+      providerReady() {
+        const cfg = config();
+        return cfg.enabled === true && Boolean(cfg.apiKey);
+      },
+      ownerFor: ownerForSlug,
+      /* Throws JobLedgerUnreadableError on a corrupt ledger, exactly as every other
+         reader does. A sweep must skip that project, never rewrite it. */
+      jobsFor: readJobs,
+      collect: collectJob,
+    },
+  };
 }
 
 module.exports = { registerFalGeneration };

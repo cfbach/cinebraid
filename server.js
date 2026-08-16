@@ -45,6 +45,7 @@ const { SimpleZipWriter } = require("./zip-stream");
 const AgentSuite = require("./agent-suite");
 const { registerFalGeneration } = require("./fal-generation");
 const { registerAutomationRuns } = require("./automation-runs");
+const { createGenerationPoller } = require("./generation-poller");
 const { isAccountCallbackPath, registerAccountConnections } = require("./accounts-api");
 const { createRequestBoundary, createRequestPosture } = require("./request-origin");
 /* The MediaAsset ledger's single production entry point. server.js talks to this
@@ -3596,12 +3597,32 @@ const FalGeneration = registerFalGeneration(app, {
   activeSlug,
   projectDirForSlug,
 });
-registerAutomationRuns(app, {
+const AutomationRuns = registerAutomationRuns(app, {
   projectDir: PROJECT_DIR,
   readProject,
   activeSlug,
   projectReadinessIssues,
 });
+/* ---- the server-side ingest reaper -----------------------------------------
+ *
+ * Keeps ALREADY-SUBMITTED generation work moving when no browser is open, and
+ * records a run whose window went away as interrupted instead of leaving it
+ * claiming to be running. It cannot start work: the only generation capability
+ * it is handed is FalGeneration.recovery, which reads the ledger and collects
+ * results, and holds no submission path at all. See generation-poller.js.
+ *
+ * Every project, not just the active one. A generation belongs permanently to
+ * the project it started for — the same rule the ownership capture in
+ * fal-generation.js exists for — so switching projects must not be what strands
+ * a paid render. The automation-run correction stays with the active project,
+ * because that ledger has exactly one writer and it is bound to that project. */
+const GenerationPoller = createGenerationPoller({
+  listProjectSlugs: () => listProjects().map((project) => project.slug),
+  recovery: FalGeneration.recovery,
+  reconcileStaleRuns: AutomationRuns.reconcileStaleRuns,
+  log: (message) => console.log(message),
+});
+GenerationPoller.start();
 /* Account connections take config and the listening port and nothing else. No
    project reader, no project writer, no project directory — the absence of those
    three is the structural statement that connecting an account cannot touch a
@@ -8077,6 +8098,7 @@ function shutdownServer(signal) {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log(`\n  CineBraid received ${signal}; closing the listener on port ${PORT}.`);
+  GenerationPoller.stop();
   const forceExit = setTimeout(() => {
     console.error("  CineBraid shutdown timed out; exiting.");
     process.exit(1);
