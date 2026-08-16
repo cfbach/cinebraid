@@ -478,6 +478,119 @@ async function main() {
   assert(unknown.some((row) => /unknown kind/i.test(row)), "and still says so");
 }
 
+/* THE LIVE CONSUMERS, which normalisation and the mode helper do not reach.
+ *
+ * `normalizeShotV5` kept a t2v clip as t2v and `guidedVideoModeNeedsApprovedStill("t2v")`
+ * answered false, and both were true while the shipped Motion path still behaved as
+ * though t2v began from an approved still:
+ *
+ *   the motion-unit builder assigned `fromFrame` BEFORE the unit was identified as t2v,
+ *   so the route was renamed after it had already been given a frame it cannot use;
+ *   and the Motion panel applied its start-frame prerequisite unconditionally, so the
+ *   one route in the picker that needs no frame was the one route nobody could open.
+ *
+ * Asserting a helper's return value could not have caught either. These drive the real
+ * functions in the loaded page. */
+{
+  const page = await render("#/production", buildFixture());
+  /* One case, fully reset: no approved still anywhere, no motion unit, and the route
+     selected the way the picker selects it. */
+  const install = `globalThis.__t2vCase = (mode) => {
+    const shot = P.shots[0];
+    for (const frame of shot.keyframes || []) frame.winner = "";
+    shot.clips = [];
+    shot.motionPrompt = "";
+    const c = ensureShotCreation(shot);
+    c.activeMotionUnitId = "";
+    const profile = (PROMPT_LIBRARY?.profiles || []).find((p) => p.mediaType === "video" && p.mode === mode) || null;
+    c.motionProfileId = profile ? profile.id : "";
+    const unit = ensureGuidedMotionUnit(shot, "", profile);
+    const html = guidedMotionPanel(shot, null, []);
+    return {
+      selected: c.motionProfileId,
+      kind: unit.kind,
+      fromFrame: unit.fromFrame,
+      locked: html.includes("guided-motion-card locked"),
+      saysApproveFirst: html.includes("Approve required frames first"),
+      pill: /guided-mode-pill[^>]*>([^<]*)</.exec(html)?.[1] || "",
+    };
+  };`;
+  vm.runInContext(install, page.context);
+  const probe = (mode) => vm.runInContext(`__t2vCase(${JSON.stringify(mode)})`, page.context);
+
+  /* 1 + 2 — a t2v unit keeps its kind and is given no frame at all. */
+  const t2v = probe("t2v");
+  assert(t2v.selected, "a t2v profile must be selectable for this proof to mean anything");
+  assert.strictEqual(t2v.kind, "t2v", "the selected route must survive unit construction");
+  assert.strictEqual(t2v.fromFrame, "",
+    "a t2v unit must not be handed a start frame; fal's t2v endpoint has no field to receive one");
+
+  /* 3 + 4 — and the panel opens with no approved still anywhere on the shot. */
+  assert.strictEqual(t2v.locked, false,
+    "t2v must not be locked behind a start frame it never begins from");
+  assert.strictEqual(t2v.saysApproveFirst, false, "and must not ask for one in words either");
+  assert.strictEqual(t2v.pill, "NO FRAMES NEEDED",
+    "an open panel must stop claiming a start frame is ready when none exists and none is needed");
+
+  /* 5 — AND EVERY OTHER ROUTE IS EXACTLY AS IT WAS. Each still receives its start frame,
+     and each is still held behind the approval it genuinely depends on. This is the half
+     that makes the fix a correction rather than a hole in the gate. */
+  for (const mode of ["i2v", "flf", "r2v"]) {
+    const row = probe(mode);
+    assert.strictEqual(row.kind, mode === "audio-video" ? "r2v" : mode, `${mode} must keep its kind`);
+    assert(row.fromFrame, `${mode} begins from an approved still and must still be given one`);
+    assert.strictEqual(row.locked, true,
+      `${mode} must still be locked until its required frames are approved`);
+    assert.strictEqual(row.saysApproveFirst, true, `${mode} must still say why it is locked`);
+  }
+
+  /* 6 — an unknown route is treated as needing a frame, which is the safe direction:
+     the gate is relaxed only where a route is known not to need one. */
+  const unknown = probe("wormhole");
+  assert.strictEqual(unknown.selected, "", "no profile exists for an unknown mode");
+  assert(unknown.fromFrame, "an unrecognised route keeps the start-frame requirement");
+  assert.strictEqual(unknown.locked, true, "and keeps the lock");
+}
+
+/* THE SAME ANSWERS FROM THE FALLBACK BUILDER.
+ *
+ * `ensureGuidedMotionUnit` exists twice: creation-studio.js declares it and
+ * v607-composer.js REPLACES it, so the live page runs the v607 copy and a repair made
+ * only in creation-studio.js is dead code. The v607 composer also disables itself on
+ * error and restores the base functions, which makes the base copy a live path too — so
+ * both must agree, and this drives the base one through the real restore path. */
+{
+  const page = await render("#/production", buildFixture());
+  const result = vm.runInContext(`(() => {
+    const originals = window.__cinebraidComposerOriginals607;
+    if (!originals || typeof originals.ensureGuidedMotionUnit !== "function") return { skipped: "no v607 originals captured" };
+    const before = ensureGuidedMotionUnit.name;
+    window.__cinebraidRestoreComposer607
+      ? window.__cinebraidRestoreComposer607("tier0 regression")
+      : (ensureGuidedMotionUnit = window.ensureGuidedMotionUnit = originals.ensureGuidedMotionUnit);
+    const shot = P.shots[0];
+    for (const frame of shot.keyframes || []) frame.winner = "";
+    shot.clips = [];
+    shot.motionPrompt = "";
+    const c = ensureShotCreation(shot);
+    c.activeMotionUnitId = "";
+    const profile = (PROMPT_LIBRARY?.profiles || []).find((p) => p.mediaType === "video" && p.mode === "t2v") || null;
+    c.motionProfileId = profile ? profile.id : "";
+    const unit = ensureGuidedMotionUnit(shot, "", profile);
+    const i2vProfile = (PROMPT_LIBRARY?.profiles || []).find((p) => p.mediaType === "video" && p.mode === "i2v") || null;
+    shot.clips = [];
+    c.activeMotionUnitId = "";
+    const i2vUnit = ensureGuidedMotionUnit(shot, "", i2vProfile);
+    return { before, after: ensureGuidedMotionUnit.name, kind: unit.kind, fromFrame: unit.fromFrame, i2vFrom: i2vUnit.fromFrame };
+  })()`, page.context);
+  assert(!result.skipped, `the v607 fallback must be reachable: ${result.skipped}`);
+  assert.notStrictEqual(result.before, result.after, "the restore must actually swap the builder");
+  assert.strictEqual(result.kind, "t2v", "the fallback builder must keep the route too");
+  assert.strictEqual(result.fromFrame, "",
+    "the fallback builder must not fabricate a start frame either — a repair in one copy only is dead code");
+  assert(result.i2vFrom, "and must still give i2v the frame it depends on");
+}
+
 /* ===========================================================================
    T0-4 — the provider parameters CineBraid was leaving at provider defaults.
 
@@ -647,7 +760,8 @@ async function main() {
 console.log(
   "Shot Execution Tier 0 passed: six filmmaking facts inventoried, carried and accounted for with unknowns left unknown; "
   + "a dialogue line no longer manufactures a lip-sync requirement at either former site and nothing stored is rewritten; "
-  + "t2v survives normalisation and import as t2v, is refused a start frame and gates on no approved still; "
+  + "t2v survives normalisation and import as t2v and, in both live Motion builders and the Motion panel itself, "
+  + "is given no start frame and is not locked behind one while every other route keeps its frame and its gate; "
   + "the serialised fal request carries prompt expansion off and an explicit, capability-bounded resolution; "
   + "and an explicit request for no generated audio is refused by name on a route that cannot comply, with the "
   + "payload byte-identical and no invented provider field. "

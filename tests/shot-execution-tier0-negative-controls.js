@@ -295,6 +295,76 @@ control("NC-4b", "removing t2v from the import vocabulary", () => {
   assert.notStrictEqual(out[0].kind, "t2v");
 });
 
+/* ===========================================================================
+   NC-4d / NC-4e — the two LIVE consumers.
+
+   Normalisation and the mode helper were already correct while the shipped Motion path
+   still behaved as though t2v began from an approved still, so these mutate the two
+   places that actually decide and prove the regressions see it. */
+
+/* The motion-unit builder, in the copy the live page really runs: v607-composer.js
+   REPLACES creation-studio.js's declaration, so a repair made only in the base file is
+   dead code and a regression that mutates the base file would prove nothing. */
+control("NC-4d", "restoring unconditional start-frame assignment in the live builder", async () => {
+  const page = await render("#/production", buildFixture(), {
+    mutateSource: (file, source) => (file === "v607-composer.js"
+      ? mutated("public/v607-composer.js", () => source.replace(
+        /if \(!needsStartFrame\) unit\.fromFrame = "";\r?\n\s*else if \(!unit\.fromFrame\)/,
+        'if (!unit.fromFrame)',
+      ))
+      : source),
+  });
+  const result = vm.runInContext(`(() => {
+    const shot = P.shots[0];
+    for (const frame of shot.keyframes || []) frame.winner = "";
+    shot.clips = []; shot.motionPrompt = "";
+    const c = ensureShotCreation(shot);
+    c.activeMotionUnitId = "";
+    const profile = (PROMPT_LIBRARY?.profiles || []).find((p) => p.mediaType === "video" && p.mode === "t2v") || null;
+    c.motionProfileId = profile ? profile.id : "";
+    const unit = ensureGuidedMotionUnit(shot, "", profile);
+    return { kind: unit.kind, fromFrame: unit.fromFrame };
+  })()`, page.context);
+
+  /* THE LIVE DEFECT, and it is Codex's reproduction exactly: the unit is correctly named
+     t2v and is holding a start frame anyway. */
+  assert.strictEqual(result.kind, "t2v", "the kind is not what breaks; the frame is");
+  assert(result.fromFrame, "the control must reattach the fabricated start frame");
+  /* THE GUARD asserts the opposite. */
+  assert.notStrictEqual(result.fromFrame, "");
+});
+
+/* The Motion panel's start-frame prerequisite, applied unconditionally. */
+control("NC-4e", "restoring the unconditional Motion panel lock", async () => {
+  const page = await render("#/production", buildFixture(), {
+    mutateSource: (file, source) => (file === "creation-studio.js"
+      ? mutated("public/creation-studio.js", () => source.replace(
+        "if (needsApprovedStill && !progress.requiredApproved && !videos.length) return",
+        "if (!progress.requiredApproved && !videos.length) return",
+      ))
+      : source),
+  });
+  const result = vm.runInContext(`(() => {
+    const shot = P.shots[0];
+    for (const frame of shot.keyframes || []) frame.winner = "";
+    shot.clips = []; shot.motionPrompt = "";
+    const c = ensureShotCreation(shot);
+    c.activeMotionUnitId = "";
+    const profile = (PROMPT_LIBRARY?.profiles || []).find((p) => p.mediaType === "video" && p.mode === "t2v") || null;
+    c.motionProfileId = profile ? profile.id : "";
+    ensureGuidedMotionUnit(shot, "", profile);
+    const html = guidedMotionPanel(shot, null, []);
+    return { locked: html.includes("guided-motion-card locked"), saysApproveFirst: html.includes("Approve required frames first") };
+  })()`, page.context);
+
+  /* THE LIVE DEFECT: the one route in the picker that needs no approved still is the one
+     route nobody can open. */
+  assert.strictEqual(result.locked, true, "the control must reintroduce the unconditional lock");
+  assert.strictEqual(result.saysApproveFirst, true, "and demand a frame t2v never begins from");
+  /* THE GUARD asserts the opposite. */
+  assert.notStrictEqual(result.locked, false);
+});
+
 /* The frameless half of T0-2, which is the half with the blast radius: leaving t2v out
    of the frameless list gives a text-to-video unit a starting frame that its fal
    endpoint has no field to receive. */
@@ -377,8 +447,9 @@ async function main() {
     + "each of the seven inventory rows dropped in turn, the dialogue-implies-lip-sync shortcut restored in the shared "
     + "derivation and at a former call site, the derived level persisted into the record it outranks, the H3 pack's "
     + "explicit audio refusal dropped back to the generic backstop, the "
-    + "prompt-expansion flag omitted and then sent on, and t2v removed from "
-    + "the browser vocabulary, the import vocabulary and the frameless list — every one detected by the property that "
+    + "prompt-expansion flag omitted and then sent on, t2v removed from "
+    + "the browser vocabulary, the import vocabulary and the frameless list, and both live Motion consumers regressed — "
+    + "the unit builder fabricating a start frame again and the panel locking unconditionally — every one detected by the property that "
     + "guards it, with the real modules green afterwards. Nothing was written to disk and nothing was reverted with "
     + "git. Provider calls made: 0.",
   );
