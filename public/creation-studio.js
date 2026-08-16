@@ -2485,6 +2485,32 @@ function guidedVideoProfiles() {
 function guidedVideoModeNeedsApprovedStill(mode) {
   return String(mode || "") !== "t2v";
 }
+/* WHICH ROUTE THIS SHOT IS ACTUALLY ON, which is not the same question as which profile
+   the picker would show.
+ *
+ * `preferredGuidedVideoProfile("")` answers the second question and answers it with a
+ * DEFAULT — the wired image-to-video target — because a picker with nothing selected
+ * still has to draw something. Reading the gate off that made an imported or
+ * previously-built `t2v` unit with no profile id look like an i2v shot, and the Motion
+ * panel locked it behind a frame it never begins from. A default nobody chose is not a
+ * route decision.
+ *
+ * Precedence, and the order is the whole meaning:
+ *   1. an explicit, valid profile selection — the unit's own, then the shot's
+ *   2. otherwise the unit's own recognised kind, which is what an imported shot carries
+ *   3. otherwise nothing, and the caller stays fail-safe
+ *
+ * Returning "" rather than guessing is what keeps step 3 honest: an unrecognised route
+ * asks for its frame, so the gate is relaxed only where a route is KNOWN not to need
+ * one. */
+function guidedEffectiveVideoMode(s, c = ensureShotCreation(s), unit = (s?.clips || [])[0]) {
+  const profiles = guidedVideoProfiles();
+  const selected = String(unit?.motionProfileId || c?.motionProfileId || "");
+  const chosen = profiles.find((profile) => profile.id === selected);
+  if (chosen?.mode) return String(chosen.mode);
+  const kind = String(unit?.kind || "");
+  return profiles.some((profile) => (profile.mode === "audio-video" ? "r2v" : profile.mode) === kind) ? kind : "";
+}
 function guidedMotionDurationBounds(profile) {
   const range = profile?.limits?.durationSeconds;
   if (Array.isArray(range) && range.length >= 2) return [Math.max(1, Number(range[0]) || 1), Math.max(1, Number(range[1]) || 30)];
@@ -3023,9 +3049,13 @@ function guidedMotionPanel(s, current, takes, open = false) {
   /* THE LOCK IS A PREREQUISITE, AND A PREREQUISITE ONLY THIS ROUTE'S OWN WORKFLOW CAN
      STATE. Applied unconditionally, it held text-to-video behind an approved still that
      t2v never begins from — the one route in the picker that needs no frame was the one
-     route that could not be reached. Asked from the mode, never from a family, using the
-     same helper that decides whether the unit gets a start frame at all. */
-  const needsApprovedStill = guidedVideoModeNeedsApprovedStill(profile?.mode || "");
+     route that could not be reached.
+     Resolved from the EFFECTIVE route rather than from `profile`, because `profile` is
+     what the picker would display and falls back to a default nobody chose: an imported
+     `t2v` unit carrying no profile id read as i2v and locked again. One value decides
+     the lock, its wording and the frame-status pill, so the gate and what the panel says
+     about it cannot disagree. */
+  const needsApprovedStill = guidedVideoModeNeedsApprovedStill(guidedEffectiveVideoMode(s, c, unit));
   if (needsApprovedStill && !progress.requiredApproved && !videos.length) return `<details class="guided-work-panel guided-motion-card locked" data-guided-panel="motion"><summary><div><span>MOTION · OPTIONAL</span><b>Approve required frames first</b><small>Motion opens after the first frame and any required additional frames are approved.</small></div><span class="guided-mode-pill">LOCKED</span><i>⌄</i></summary></details>`;
   /* And once it is open, it must not go on describing a frame prerequisite it just
      stopped applying. Both strings asserted an approved start frame that a t2v shot does

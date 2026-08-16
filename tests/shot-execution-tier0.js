@@ -552,6 +552,88 @@ async function main() {
   assert.strictEqual(unknown.locked, true, "and keeps the lock");
 }
 
+/* THE ROUTE A SHOT IS ON IS NOT THE PROFILE THE PICKER WOULD SHOW.
+ *
+ * The panel resolved its prerequisite from `preferredGuidedVideoProfile`, which answers
+ * a different question and answers it with a DEFAULT — the wired image-to-video target —
+ * because a picker with nothing selected still has to draw something. An imported or
+ * previously-built t2v unit carries its kind and no profile id at all, so it read as i2v
+ * and was locked behind a frame it never begins from, with the unit sitting right there
+ * saying `t2v`. A default nobody chose is not a route decision. */
+{
+  const page = await render("#/production", buildFixture());
+  const install = `globalThis.__routeCase = (unitKind, unitProfileMode, shotProfileMode) => {
+    const shot = P.shots[0];
+    for (const frame of shot.keyframes || []) frame.winner = "";
+    shot.motionPrompt = "";
+    const c = ensureShotCreation(shot);
+    c.activeMotionUnitId = "";
+    const idFor = (mode) => (mode ? ((PROMPT_LIBRARY?.profiles || []).find((p) => p.mediaType === "video" && p.mode === mode)?.id || "") : "");
+    c.motionProfileId = idFor(shotProfileMode);
+    shot.clips = [{ id: "seg-route", suffix: "a", label: "A", title: "Primary motion", dur: 6, kind: unitKind,
+      note: "", motionPrompt: "A storm front crosses the ridge.", fromFrame: "", toFrame: "",
+      motionProfileId: idFor(unitProfileMode), generationPackages: [] }];
+    const html = guidedMotionPanel(shot, null, []);
+    const unit = shot.clips[0];
+    return {
+      panelLocked: html.includes("guided-motion-card locked"),
+      saysApproveFirst: html.includes("Approve required frames first"),
+      pill: /guided-mode-pill[^>]*>([^<]*)</.exec(html)?.[1] || "",
+      unitKind: unit.kind, unitFromFrame: unit.fromFrame,
+      unitProfileId: unit.motionProfileId || "", shotProfileId: c.motionProfileId || "",
+      effectiveMode: guidedEffectiveVideoMode(shot, c, unit),
+    };
+  };`;
+  vm.runInContext(install, page.context);
+  const route = (kind, unitProfile = "", shotProfile = "") =>
+    vm.runInContext(`__routeCase(${JSON.stringify(kind)}, ${JSON.stringify(unitProfile)}, ${JSON.stringify(shotProfile)})`, page.context);
+
+  /* THE REPORTED CASE, exactly: a t2v unit with every profile id blank. */
+  const imported = route("t2v");
+  assert.strictEqual(imported.unitProfileId, "", "this proof is about a unit carrying NO profile id");
+  assert.strictEqual(imported.shotProfileId, "", "and a shot carrying none either");
+  assert.strictEqual(imported.effectiveMode, "t2v", "the unit's own kind is the route when nothing else states one");
+  assert.strictEqual(imported.panelLocked, false, "an imported t2v shot must open");
+  assert.strictEqual(imported.saysApproveFirst, false, "and must not ask for a frame it never begins from");
+  assert.strictEqual(imported.pill, "NO FRAMES NEEDED", "and must say so truthfully");
+  assert.strictEqual(imported.unitKind, "t2v", "the unit stays t2v");
+  assert.strictEqual(imported.unitFromFrame, "", "and stays frameless");
+
+  /* PRECEDENCE 1 — an explicit selection outranks a stale kind, in both directions, so
+     switching route in the picker still decides. */
+  assert.strictEqual(route("i2v", "", "t2v").panelLocked, false,
+    "a t2v profile chosen on the shot must open a unit still marked i2v");
+  assert.strictEqual(route("i2v", "t2v", "").panelLocked, false,
+    "and a t2v profile carried on the unit must do the same");
+  assert.strictEqual(route("t2v", "i2v", "").panelLocked, true,
+    "an explicit i2v selection outranks a t2v kind and keeps its gate");
+
+  /* PRECEDENCE 2 and 3 — every other kind with no profile anywhere still gates, and an
+     unrecognised one gates too. This is what keeps the fix a correction rather than a
+     hole: the relaxation reaches exactly one route. */
+  for (const kind of ["i2v", "flf", "r2v"]) {
+    const row = route(kind);
+    assert.strictEqual(row.effectiveMode, kind, `${kind} resolves from its own kind`);
+    assert.strictEqual(row.panelLocked, true, `${kind} must still be gated on its approved frame`);
+    assert.strictEqual(row.saysApproveFirst, true, `${kind} must still say why`);
+  }
+  for (const kind of ["plan", "post", "reuse", "wormhole"]) {
+    assert.strictEqual(route(kind).panelLocked, true,
+      `${kind} is not a recognised video route and must stay fail-safe`);
+  }
+  /* And with no unit at all there is nothing to read a route from, which is also gated. */
+  const empty = vm.runInContext(`(() => {
+    const shot = P.shots[0];
+    for (const frame of shot.keyframes || []) frame.winner = "";
+    shot.clips = []; shot.motionPrompt = "";
+    const c = ensureShotCreation(shot);
+    c.activeMotionUnitId = ""; c.motionProfileId = "";
+    return { mode: guidedEffectiveVideoMode(shot, c, undefined), locked: guidedMotionPanel(shot, null, []).includes("guided-motion-card locked") };
+  })()`, page.context);
+  assert.strictEqual(empty.mode, "", "no unit and no selection states no route");
+  assert.strictEqual(empty.locked, true, "which stays fail-safe");
+}
+
 /* THE SAME ANSWERS FROM THE FALLBACK BUILDER.
  *
  * `ensureGuidedMotionUnit` exists twice: creation-studio.js declares it and
@@ -562,12 +644,15 @@ async function main() {
 {
   const page = await render("#/production", buildFixture());
   const result = vm.runInContext(`(() => {
-    const originals = window.__cinebraidComposerOriginals607;
-    if (!originals || typeof originals.ensureGuidedMotionUnit !== "function") return { skipped: "no v607 originals captured" };
+    /* THE SHIPPED RESTORE, not a test-only hook. \`window.disableComposerEnhancements\`
+       IS \`restoreComposerOriginals607\`, and it is what the composer's own error handler
+       and the ?safe=1 path call. An earlier version of this test reached for a
+       \`__cinebraidRestoreComposer607\` that does not exist and silently took its own
+       direct-assignment fallback — proving the assignment, not the mechanism. */
+    if (typeof window.disableComposerEnhancements !== "function") return { skipped: "no shipped restore mechanism" };
     const before = ensureGuidedMotionUnit.name;
-    window.__cinebraidRestoreComposer607
-      ? window.__cinebraidRestoreComposer607("tier0 regression")
-      : (ensureGuidedMotionUnit = window.ensureGuidedMotionUnit = originals.ensureGuidedMotionUnit);
+    window.disableComposerEnhancements("tier0 regression: exercising the shipped restore path");
+    if (!window.__CINEBRAID_COMPOSER_607_DISABLED) return { skipped: "restore did not disable the composer" };
     const shot = P.shots[0];
     for (const frame of shot.keyframes || []) frame.winner = "";
     shot.clips = [];
@@ -581,14 +666,30 @@ async function main() {
     shot.clips = [];
     c.activeMotionUnitId = "";
     const i2vUnit = ensureGuidedMotionUnit(shot, "", i2vProfile);
-    return { before, after: ensureGuidedMotionUnit.name, kind: unit.kind, fromFrame: unit.fromFrame, i2vFrom: i2vUnit.fromFrame };
+    return {
+      before, after: ensureGuidedMotionUnit.name, disabled: !!window.__CINEBRAID_COMPOSER_607_DISABLED,
+      kind: unit.kind, fromFrame: unit.fromFrame, i2vFrom: i2vUnit.fromFrame,
+      /* The base panel must resolve the same route from the same unit. */
+      importedT2vLocked: (() => {
+        const s = P.shots[0];
+        for (const frame of s.keyframes || []) frame.winner = "";
+        const cc = ensureShotCreation(s);
+        cc.activeMotionUnitId = ""; cc.motionProfileId = "";
+        s.clips = [{ id: "seg-imported", kind: "t2v", dur: 6, motionPrompt: "A storm front.", fromFrame: "", toFrame: "", motionProfileId: "", generationPackages: [] }];
+        return guidedMotionPanel(s, null, []).includes("guided-motion-card locked");
+      })(),
+    };
   })()`, page.context);
-  assert(!result.skipped, `the v607 fallback must be reachable: ${result.skipped}`);
-  assert.notStrictEqual(result.before, result.after, "the restore must actually swap the builder");
+  assert(!result.skipped, `the shipped restore must be reachable: ${result.skipped}`);
+  assert.strictEqual(result.disabled, true, "the shipped restore must mark the composer disabled");
+  assert.strictEqual(result.before, "ensureGuidedMotionUnit607", "the v607 builder must be live before the restore");
+  assert.strictEqual(result.after, "ensureGuidedMotionUnit", "and the base builder live after it");
   assert.strictEqual(result.kind, "t2v", "the fallback builder must keep the route too");
   assert.strictEqual(result.fromFrame, "",
     "the fallback builder must not fabricate a start frame either — a repair in one copy only is dead code");
   assert(result.i2vFrom, "and must still give i2v the frame it depends on");
+  assert.strictEqual(result.importedT2vLocked, false,
+    "and the panel must resolve an imported t2v route the same way with the base builder live");
 }
 
 /* ===========================================================================
@@ -761,7 +862,9 @@ console.log(
   "Shot Execution Tier 0 passed: six filmmaking facts inventoried, carried and accounted for with unknowns left unknown; "
   + "a dialogue line no longer manufactures a lip-sync requirement at either former site and nothing stored is rewritten; "
   + "t2v survives normalisation and import as t2v and, in both live Motion builders and the Motion panel itself, "
-  + "is given no start frame and is not locked behind one while every other route keeps its frame and its gate; "
+  + "is given no start frame and is not locked behind one — resolved from an explicit profile where there is one and "
+  + "from the unit's own kind where there is not, so an imported t2v shot carrying no profile id opens too, while every "
+  + "other route keeps its frame and its gate and an unrecognised one stays fail-safe; "
   + "the serialised fal request carries prompt expansion off and an explicit, capability-bounded resolution; "
   + "and an explicit request for no generated audio is refused by name on a route that cannot comply, with the "
   + "payload byte-identical and no invented provider field. "

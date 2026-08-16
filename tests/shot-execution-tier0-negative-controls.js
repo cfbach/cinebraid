@@ -365,6 +365,65 @@ control("NC-4e", "restoring the unconditional Motion panel lock", async () => {
   assert.notStrictEqual(result.locked, false);
 });
 
+/* NC-4f — resolve the panel's prerequisite from the PICKER'S profile again.
+ *
+ * The subtle one, and the one that survived the first repair: `preferredGuidedVideoProfile`
+ * falls back to the wired image-to-video default when nothing is selected, so reading the
+ * gate off it makes an imported t2v unit — which carries its kind and no profile id —
+ * look like an i2v shot and lock behind a frame it never begins from. */
+control("NC-4f", "resolving the panel gate from the picker's default profile", async () => {
+  const page = await render("#/production", buildFixture(), {
+    mutateSource: (file, source) => (file === "creation-studio.js"
+      ? mutated("public/creation-studio.js", () => source.replace(
+        "guidedVideoModeNeedsApprovedStill(guidedEffectiveVideoMode(s, c, unit))",
+        'guidedVideoModeNeedsApprovedStill(profile?.mode || "")',
+      ))
+      : source),
+  });
+  const result = vm.runInContext(`(() => {
+    const shot = P.shots[0];
+    for (const frame of shot.keyframes || []) frame.winner = "";
+    shot.motionPrompt = "";
+    const c = ensureShotCreation(shot);
+    c.activeMotionUnitId = ""; c.motionProfileId = "";
+    shot.clips = [{ id: "seg-imported", kind: "t2v", dur: 6, motionPrompt: "A storm front.", fromFrame: "", toFrame: "", motionProfileId: "", generationPackages: [] }];
+    const html = guidedMotionPanel(shot, null, []);
+    const unit = shot.clips[0];
+    return {
+      panelLocked: html.includes("guided-motion-card locked"),
+      saysApproveFirst: html.includes("Approve required frames first"),
+      unitKind: unit.kind, unitFromFrame: unit.fromFrame,
+      unitProfileId: unit.motionProfileId || "", shotProfileId: c.motionProfileId || "",
+    };
+  })()`, page.context);
+
+  /* THE LIVE DEFECT, reproduced field for field as it was reported. Compared as JSON
+     rather than with deepStrictEqual: the object is built inside the harness's vm realm,
+     so its prototype is not the host's and a structural comparison fails while printing
+     identical values. */
+  assert.strictEqual(
+    JSON.stringify(result, ["panelLocked", "saysApproveFirst", "unitKind", "unitFromFrame", "unitProfileId", "shotProfileId"]),
+    JSON.stringify({ panelLocked: true, saysApproveFirst: true, unitKind: "t2v", unitFromFrame: "", unitProfileId: "", shotProfileId: "" },
+      ["panelLocked", "saysApproveFirst", "unitKind", "unitFromFrame", "unitProfileId", "shotProfileId"]),
+    "the control must reproduce the reported shape exactly",
+  );
+  /* THE GUARD asserts the opposite of the first two. */
+  assert.notStrictEqual(result.panelLocked, false);
+
+  /* And an EXPLICIT t2v selection still opened even with the defect present, which is
+     why the first repair looked complete: the missing case is the one with no profile. */
+  const explicit = vm.runInContext(`(() => {
+    const shot = P.shots[0];
+    for (const frame of shot.keyframes || []) frame.winner = "";
+    const c = ensureShotCreation(shot);
+    const t2v = (PROMPT_LIBRARY?.profiles || []).find((p) => p.mediaType === "video" && p.mode === "t2v");
+    c.motionProfileId = t2v ? t2v.id : "";
+    shot.clips = [{ id: "seg-x", kind: "t2v", dur: 5, fromFrame: "", toFrame: "", motionProfileId: "", generationPackages: [] }];
+    return guidedMotionPanel(shot, null, []).includes("guided-motion-card locked");
+  })()`, page.context);
+  assert.strictEqual(explicit, false, "an explicitly selected t2v profile hid the defect and must be shown doing so");
+});
+
 /* The frameless half of T0-2, which is the half with the blast radius: leaving t2v out
    of the frameless list gives a text-to-video unit a starting frame that its fal
    endpoint has no field to receive. */
@@ -448,8 +507,9 @@ async function main() {
     + "derivation and at a former call site, the derived level persisted into the record it outranks, the H3 pack's "
     + "explicit audio refusal dropped back to the generic backstop, the "
     + "prompt-expansion flag omitted and then sent on, t2v removed from "
-    + "the browser vocabulary, the import vocabulary and the frameless list, and both live Motion consumers regressed — "
-    + "the unit builder fabricating a start frame again and the panel locking unconditionally — every one detected by the property that "
+    + "the browser vocabulary, the import vocabulary and the frameless list, and all three live Motion regressions — "
+    + "the unit builder fabricating a start frame again, the panel locking unconditionally, and the panel resolving its "
+    + "route from the picker's default profile so an imported t2v unit locked again — every one detected by the property that "
     + "guards it, with the real modules green afterwards. Nothing was written to disk and nothing was reverted with "
     + "git. Provider calls made: 0.",
   );
