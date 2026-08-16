@@ -295,7 +295,12 @@ function compile(mode, references, options = {}) {
     if (row.state === "represented") assert(Contracts.INTENT_REPRESENTATION_CHANNELS.includes(row.via), `${row.intent} must say where it landed`);
     if (row.state === "anchored") assert(row.via, `${row.intent} must name what anchors it`);
     if (row.state === "omitted-by-design") assert(row.reason, `${row.intent} must record why it was left out`);
-    if (row.state === "unsupported") assert(warnedAbout(plan, new RegExp(row.intent.replace(".", "\\."))), `${row.intent} must warn`);
+    /* Matched on the warning's own `intent` field rather than by pattern-matching its
+       prose. The message is written for a filmmaker and says "subjects in frame", not
+       "subjects.count", so a regex over the text was quietly unable to confirm the
+       pairing it was asserting — it passed only while no intent was unsupported here. */
+    if (row.state === "unsupported")
+      assert(plan.warnings.some((warning) => warning.intent === row.intent), `${row.intent} must warn`);
   }
   /* Every intent the shot carries appears exactly once. */
   const inventory = Compiler.inventoryIntent(baseSpec(), (value) => String(value));

@@ -1066,7 +1066,24 @@ function serialise(surface, header, sections) {
 }
 
 /* ---------------------------------------------------------------------------
-   Pack entry point. */
+   Intent H3 receives and deliberately does not send as its own instruction.
+ *
+ * These are `omitted-by-design` rather than `unsupported` because nothing is lost: the
+ * fact reaches the pack, the pack states why it does not become a separate instruction,
+ * and the record says so. `unsupported` is reserved for something the filmmaker asked
+ * for and will not get, which is a sentence worth showing them.
+ *
+ * Both arrived with the intent inventory. They are read by routing and by review, and
+ * they were previously invisible to every layer — which is the point of inventorying
+ * them — but MiniMax H3 exposes no control for either. */
+const H3_OMITTED_BY_DESIGN = {
+  "subjects.count": "MiniMax H3 has no subject-count control; each subject is named individually in the description instead.",
+  /* H3 speaks the supplied line with native audio and synchronises it structurally.
+     There is no flag that could assert the requirement or relax it, so CineBraid neither
+     claims to have sent one nor reports a capability the model never offered. */
+  "performance.lipSync": "MiniMax H3 speaks the supplied line with its own native audio; there is no separate lip-sync control to set.",
+};
+
 const MODE_COMPILERS = { t2v: compileT2V, i2v: compileI2V, flf: compileFLF, r2v: compileR2V };
 
 function compileMode(context) {
@@ -1080,6 +1097,10 @@ function compileMode(context) {
   const ctx = { ...context, manifest, capability };
 
   const { sections, parameters, header } = build(ctx);
+  /* Applied AFTER the mode compiler, so a section that genuinely expressed one of these
+     keeps its stronger claim; `omit` is the fallback, never an override. */
+  for (const [key, reason] of Object.entries(H3_OMITTED_BY_DESIGN))
+    if (intentValue(context.intent, key) && !context.coverage.has(key)) context.coverage.omit(key, reason);
   const prompt = serialise(context.surface, header, sections);
 
   /* The effective ceiling, whoever set it. When only the model has an opinion this is
