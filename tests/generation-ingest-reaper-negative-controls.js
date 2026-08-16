@@ -21,6 +21,7 @@ const net = require("net");
 const os = require("os");
 const path = require("path");
 const Module = require("module");
+const vm = require("vm");
 const express = require("express");
 const { spawn } = require("child_process");
 
@@ -257,6 +258,32 @@ async function guardTheRecoveryNoticeIsToldOnce(modules) {
   } finally { h.close(); }
 }
 
+/* The reconciled run as the activity surfaces read it, against the real
+   public/live-activity.js under the render harness. Its `modules` parameter is the
+   RELEASE CODE the reconciliation stamps: drop it and the surfaces lose the only thing
+   that tells a run whose window went away from a run that stopped on its own. */
+async function guardTheReconciledRunStillReadsAsWaiting(releaseCode = "lease-expired") {
+  const { render, buildFixture } = require("./render-harness");
+  const view = await render("#/production", buildFixture());
+  const runs = [{
+    id: "run-abandoned", type: "shot-chain", targetId: "L1-01", scope: "stills", label: "Window went away",
+    status: "interrupted", stage: "Interrupted — resume required", summary: "The lease expired with no heartbeat.",
+    runnerId: "", leaseAcquiredAt: "", heartbeatAt: "", leaseExpiresAt: "",
+    leaseDiagnostics: { lastRunnerId: "runner-that-went-away", lastReleasedAt: ago(60), lastReleaseCode: releaseCode },
+    current: { stepKey: "" }, config: {}, usage: {}, steps: {}, logs: [],
+    createdAt: ago(1200), updatedAt: ago(60), completedAt: "",
+  }];
+  vm.runInContext(`AUTOMATION_RUNS = ${JSON.stringify(runs)};`, view.context);
+  const partition = vm.runInContext(`(() => ({
+    waiting: AUTOMATION_RUNS.filter(v670WaitingForHumanRun).map((run) => run.id),
+    attention: AUTOMATION_RUNS.filter(v670AttentionRun).map((run) => run.id),
+  }))()`, view.context);
+  assert.deepStrictEqual(Array.from(partition.waiting).map(String), ["run-abandoned"],
+    "a run whose window went away still reads as waiting for the director");
+  assert.deepStrictEqual(Array.from(partition.attention).map(String), [],
+    "and is NOT filed as a previous failure — nothing about it failed");
+}
+
 /* ---------------------------------------------------------------------------
    The boot guard, spawned exactly as the positive suite spawns it. The control here is
    not a patched module: it is the sweep not running at all, which is what would happen
@@ -424,7 +451,17 @@ async function main() {
     }),
   );
 
-  /* 8. The sweep not running at all — what dropping the wiring in server.js looks like
+  /* 8. The correction landing WITHOUT the release code that names which half of
+        `interrupted` it is. This is the shape the first version of the change actually
+        had, and tests/production-state-honesty-real-browser.py caught it: a resumable
+        run left WAITING FOR YOU for PREVIOUS FAILURES. */
+  await control(
+    "a stale-lease correction that does not say why the lease was released",
+    "a reconciled run still reads as waiting for you, not as a failure",
+    () => guardTheReconciledRunStillReadsAsWaiting(""),
+  );
+
+  /* 9. The sweep not running at all — what dropping the wiring in server.js looks like
         from outside. Without this control, the boot test could be passing on something
         other than the reaper. */
   await control(

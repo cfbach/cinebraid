@@ -141,8 +141,26 @@ function v670RunGateOutstanding(run) {
   if (!requirements.length) return true;
   return requirements.some((requirement) => !gateSatisfied(requirement, project));
 }
+/* DID THE WINDOW DRIVING THIS RUN GO AWAY?
+ *
+ * `interrupted` has always meant two things - a run that stopped for a reason of its
+ * own, and a run whose runner vanished - and until the server started reconciling stale
+ * leases, only the second one existed as `running` with a lapsed lease, which
+ * v670WaitingForHumanRun read below. Now that the durable record says `interrupted`
+ * (automation-runs.js reconcileStaleLeases), the two halves arrive wearing the same
+ * status and the surfaces have to tell them apart.
+ *
+ * The reconciliation stamps WHY it released the lease. Reading that code rather than the
+ * sentence beside it means rewording the message is not a behaviour change. */
+function v670RunnerWentAway(run) {
+  return run?.status === "interrupted" && String(run?.leaseDiagnostics?.lastReleaseCode || "") === "lease-expired";
+}
 function v670WaitingForHumanRun(run) {
   if (run?.status === "awaiting-review") return v670RunGateOutstanding(run);
+  /* Nothing failed and nothing is running: the runner went away and only a person can
+     start it again. Exactly what the `running`-with-a-lapsed-lease branch below says,
+     for the same run after the server has written its ending. */
+  if (v670RunnerWentAway(run)) return true;
   /* BATCH 1B: an INTERRUPTED run one of whose recorded approvals has since been
      WITHDRAWN is waiting again. Narrow on purpose — `runHasRevokedAuthority`
      answers only that second direction, so an ordinary interrupted run is not
@@ -163,13 +181,18 @@ function v670WaitingForHumanRun(run) {
    fifth. Four copies of one idea is how the idea drifts from its meaning, which is the
    whole lesson of the machine-active predicate.
 
-   THE SEMANTICS ARE UNCHANGED. This returns exactly what those four expressions
-   returned, for exactly the same runs. `interrupted` is known to be overloaded
-   upstream - it means both "the director approved, resuming now" and "a child run
-   needs a director" - and it is passed through here unchanged rather than split,
-   because splitting it touches the dispatch path and is a different piece of work. */
+   THE SEMANTICS ARE UNCHANGED for every run the browser itself interrupts. `interrupted`
+   is known to be overloaded upstream - it means both "the director approved, resuming
+   now" and "a child run needs a director" - and those are passed through here unchanged
+   rather than split, because splitting them touches the dispatch path and is a different
+   piece of work.
+
+   THE ONE EXCLUSION is the half the server can now name: a run whose window went away.
+   Nothing went wrong with it, so calling it a previous failure is false, and it is
+   already counted where it belongs - waiting for a person to press Resume Run. Without
+   this it would sit in BOTH sections at once, which is how it would have arrived. */
 function v670AttentionRun(run) {
-  return ["failed", "interrupted", "cancelled"].includes(run?.status);
+  return ["failed", "interrupted", "cancelled"].includes(run?.status) && !v670RunnerWentAway(run);
 }
 /* Unfinished, so the poller keeps asking - deliberately NOT the active predicate.
    A run parked at a human gate still needs refreshing, because the approval may
@@ -199,6 +222,7 @@ function v670ManualElapsedLabel(row) {
 }
 window.v670MachineActiveRun = v670MachineActiveRun;
 window.v670WaitingForHumanRun = v670WaitingForHumanRun;
+window.v670RunnerWentAway = v670RunnerWentAway;
 window.v670AttentionRun = v670AttentionRun;
 window.v670RunLeaseLapsed = v670RunLeaseLapsed;
 window.v670StepElapsedLabel = v670StepElapsedLabel;

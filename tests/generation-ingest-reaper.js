@@ -26,6 +26,7 @@ const fs = require("fs");
 const net = require("net");
 const os = require("os");
 const path = require("path");
+const vm = require("vm");
 const express = require("express");
 const { spawn } = require("child_process");
 
@@ -563,7 +564,65 @@ async function staleRunChecks() {
 }
 
 /* ---------------------------------------------------------------------------
-   8. THE ONE BROWSER EDIT, AND THE URL IT MUST NOT CHANGE.
+   8. THE RECONCILED RUN, AS THE ACTIVITY SURFACES READ IT.
+
+   The durable correction changes what a run's status STRING is, and every activity
+   surface partitions on that string. Before it, an abandoned run was `running` with a
+   lapsed lease and v670WaitingForHumanRun said "waiting for you · choose Resume Run".
+   After it the run is `interrupted`, which v670AttentionRun counts as a previous
+   failure — so without the release code the correction would have moved a resumable run
+   into the failures section AND left it in neither honestly.
+
+   Asserted here, in Node, against the real public/live-activity.js under the render
+   harness, so the guarantee does not depend on a Playwright environment being present.
+   tests/production-state-honesty-real-browser.py proves the same thing in Chromium. */
+async function reconciledRunSurfaceChecks() {
+  const { render, buildFixture } = require("./render-harness");
+  const view = await render("#/production", buildFixture());
+  const runs = [
+    /* What reconcileStaleLeases actually writes, including the diagnostics it preserves. */
+    {
+      id: "run-abandoned", type: "shot-chain", targetId: "L1-01", scope: "stills", label: "Window went away",
+      status: "interrupted", stage: "Interrupted — resume required",
+      summary: "The window driving this run stopped and its lease expired with no heartbeat.",
+      runnerId: "", leaseAcquiredAt: "", heartbeatAt: "", leaseExpiresAt: "",
+      leaseDiagnostics: { lastRunnerId: "runner-that-went-away", lastReleasedAt: ago(60), lastReleaseCode: "lease-expired" },
+      current: { stepKey: "" }, config: {}, usage: {}, steps: {}, logs: [],
+      createdAt: ago(1200), updatedAt: ago(60), completedAt: "",
+    },
+    /* A run the BROWSER interrupted for a reason of its own. Same status, and it must
+       keep reading as something that needs attention. */
+    {
+      id: "run-stopped", type: "shot-chain", targetId: "L1-02", scope: "stills", label: "Stopped safely",
+      status: "interrupted", stage: "Automation stopped", summary: "Automation stopped safely.",
+      runnerId: "", leaseAcquiredAt: "", heartbeatAt: "", leaseExpiresAt: "", leaseDiagnostics: {},
+      current: { stepKey: "" }, config: {}, usage: {}, steps: {}, logs: [],
+      createdAt: ago(1200), updatedAt: ago(60), completedAt: "",
+    },
+  ];
+  vm.runInContext(`AUTOMATION_RUNS = ${JSON.stringify(runs)};`, view.context);
+  const partition = vm.runInContext(`(() => ({
+    active: AUTOMATION_RUNS.filter(v670MachineActiveRun).map((run) => run.id),
+    waiting: AUTOMATION_RUNS.filter(v670WaitingForHumanRun).map((run) => run.id),
+    attention: AUTOMATION_RUNS.filter(v670AttentionRun).map((run) => run.id),
+    unsettled: AUTOMATION_RUNS.filter(v670RunUnsettled).map((run) => run.id),
+  }))()`, view.context);
+
+  assert.deepStrictEqual(Array.from(partition.active).map(String), [],
+    "a reconciled run is not machine work — nothing is driving it");
+  assert.deepStrictEqual(Array.from(partition.waiting).map(String), ["run-abandoned"],
+    "a run whose window went away still reads as waiting for the director");
+  assert.deepStrictEqual(Array.from(partition.attention).map(String), ["run-stopped"],
+    "and is NOT filed as a previous failure — nothing about it failed");
+  assert.deepStrictEqual(Array.from(partition.unsettled).map(String), ["run-abandoned"],
+    "so the poll gate stays open for it");
+  const detail = vm.runInContext(`v670WaitingDetail(AUTOMATION_RUNS[0], null)`, view.context);
+  assert(/Resume Run/.test(detail), `the drawer must offer the resume, got ${JSON.stringify(detail)}`);
+  note("surfaces: a reconciled run reads as waiting-for-you with a Resume Run, never as a previous failure");
+}
+
+/* ---------------------------------------------------------------------------
+   9. THE ONE BROWSER EDIT, AND THE URL IT MUST NOT CHANGE.
 
    Asserted against the source, which this suite otherwise never does, because the
    surface it protects is reachable only in a real Chromium: several real-browser
@@ -592,7 +651,7 @@ function browserClaimChecks() {
 }
 
 /* ---------------------------------------------------------------------------
-   9. BOOT RECOVERY IN THE REAL SERVER, WITH NO BROWSER AT ALL.
+   10. BOOT RECOVERY IN THE REAL SERVER, WITH NO BROWSER AT ALL.
 
    Everything above drives the poller directly. This spawns server.js the way a
    filmmaker's machine does and never opens a page: no /refresh is ever posted, no
@@ -723,6 +782,7 @@ async function main() {
   await transientFailureChecks();
   await unconfiguredChecks();
   await staleRunChecks();
+  await reconciledRunSurfaceChecks();
   browserClaimChecks();
   await bootRecoveryChecks();
   console.log("Generation ingest reaper suite passed:\n" + notes.map((line) => `  - ${line}`).join("\n"));

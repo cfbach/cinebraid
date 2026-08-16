@@ -28,6 +28,11 @@ function leaseExpired(run, at = Date.now()) {
    already five heartbeats long, so this only absorbs clock skew between the window that
    wrote the record and the process reading it. */
 const ABANDON_GRACE_MS = HEARTBEAT_MS;
+/* The lease was released because the window driving the run went away, not because the
+   run stopped for a reason of its own. Written into leaseDiagnostics and read by the
+   activity surfaces, which have to keep saying "waiting for you · choose Resume Run"
+   about a run in this state rather than filing it under previous failures. */
+const RELEASE_CODE_LEASE_EXPIRED = "lease-expired";
 /* HAS THE WINDOW DRIVING THIS RUN GONE AWAY FOR GOOD?
  *
  * Deliberately narrower than leaseExpired(). That predicate answers "may I take this
@@ -69,6 +74,12 @@ function sanitizeLeaseDiagnostics(value, base = {}) {
     lastPaidStepKey: cleanText(source.lastPaidStepKey || prior.lastPaidStepKey, 240),
     lastReleasedAt: cleanText(source.lastReleasedAt || prior.lastReleasedAt, 80),
     lastReleaseReason: cleanText(source.lastReleaseReason || prior.lastReleaseReason, 240),
+    /* WHY the lease was released, as a stable code rather than the sentence beside it.
+       `interrupted` means two things — a runner that stopped safely and a run whose
+       window went away — and every surface that has to tell them apart reads this.
+       Matching on lastReleaseReason instead would make a wording change a behaviour
+       change. See RELEASE_CODE_LEASE_EXPIRED. */
+    lastReleaseCode: cleanText(source.lastReleaseCode || prior.lastReleaseCode, 80),
     lastFailureAt: cleanText(source.lastFailureAt || prior.lastFailureAt, 80),
     lastFailureCode: cleanText(source.lastFailureCode || prior.lastFailureCode, 120),
     lastFailureMessage: cleanText(source.lastFailureMessage || prior.lastFailureMessage, 1000),
@@ -411,6 +422,12 @@ function registerAutomationRuns(app, deps) {
           lastExpiresAt: run.leaseExpiresAt,
           lastReleasedAt: stamp,
           lastReleaseReason: "Lease expired with no heartbeat; CineBraid recorded the run as interrupted.",
+          /* THE HALF OF `interrupted` THIS ONE IS. Without it the drawer cannot tell a
+             run whose window went away from a run that stopped for its own reason, and
+             an abandoned run would leave WAITING FOR YOU for PREVIOUS FAILURES — which
+             is a downgrade in truth, not an upgrade: nothing failed, and the creator's
+             next move is still Resume Run. */
+          lastReleaseCode: RELEASE_CODE_LEASE_EXPIRED,
         }, run.leaseDiagnostics),
         logs: [...(Array.isArray(run.logs) ? run.logs : []), { at: stamp, tone: "warn", message }].slice(-MAX_LOGS),
       });
@@ -1087,4 +1104,11 @@ function registerAutomationRuns(app, deps) {
   return { readRuns: read, writeRuns: write, sanitizeRun, leaseExpired, reconcileStaleRuns };
 }
 
-module.exports = { registerAutomationRuns, runnerAbandoned, ABANDON_GRACE_MS, LEASE_MS, HEARTBEAT_MS };
+module.exports = {
+  registerAutomationRuns,
+  runnerAbandoned,
+  ABANDON_GRACE_MS,
+  HEARTBEAT_MS,
+  LEASE_MS,
+  RELEASE_CODE_LEASE_EXPIRED,
+};
