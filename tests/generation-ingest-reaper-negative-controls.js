@@ -249,9 +249,10 @@ async function guardTheRecoveryNoticeIsToldOnce(modules) {
     h.statusFor.set("req-notice", "COMPLETED");
     h.writeLedger([queued("job-notice", "req-notice", h.origin)]);
     await h.poller.runOnce();
-    const claimed = await fetch(`${h.base}/api/generation/fal/jobs?claimRecovery=1`).then((r) => r.json());
+    const claim = { headers: { "x-cinebraid-claim-recovery": "1" } };
+    const claimed = await fetch(`${h.base}/api/generation/fal/jobs`, claim).then((r) => r.json());
     assert(claimed.backgroundRecovery, "the first window must be told what arrived while it was closed");
-    const again = await fetch(`${h.base}/api/generation/fal/jobs?claimRecovery=1`).then((r) => r.json());
+    const again = await fetch(`${h.base}/api/generation/fal/jobs`, claim).then((r) => r.json());
     assert(!again.backgroundRecovery, "and told once — a claimed notice must not repeat");
   } finally { h.close(); }
 }

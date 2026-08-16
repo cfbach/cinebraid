@@ -16,6 +16,11 @@ const { submissionAccounting } = require("./generation-cost");
 const Lifecycle = require("./generation-lifecycle");
 const FramePresence = require("./public/shared-frame-presence");
 
+/* The request that takes delivery of the background-recovery notice says so here rather
+   than in the URL. See the GET /api/generation/fal/jobs route for why. Lowercase because
+   that is how Node presents an incoming header name. */
+const CLAIM_RECOVERY_HEADER = "x-cinebraid-claim-recovery";
+
 function registerFalGeneration(app, context) {
   const { readConfig, readProject, writeProject, activeSlug, projectDirForSlug } = context;
 
@@ -1235,17 +1240,24 @@ function registerFalGeneration(app, context) {
       keySource: process.env.FAL_KEY ? "environment" : cfg.apiKey ? "settings" : "none",
     });
   });
-  /* `claimRecovery=1` is sent by ONE caller — the browser's initial ledger load — and
-     it is what takes delivery of the background-recovery notice. Every other reader of
-     this route, including the activity drawer's 3.5-second refresh, leaves the notice
+  /* CLAIM_RECOVERY_HEADER is sent by ONE caller — the browser's initial ledger load —
+     and it is what takes delivery of the background-recovery notice. Every other reader
+     of this route, including the activity drawer's 3.5-second refresh, leaves the notice
      where it is, so a result collected while nobody was watching is announced once to
-     the next window that opens rather than on every poll. */
+     the next window that opens rather than on every poll.
+
+     A HEADER RATHER THAN A QUERY PARAMETER, deliberately. Which request claims the
+     notice is a property of the requester, not of the resource, and the URL of this
+     route is matched exactly by suites and guards that have nothing to do with this
+     — tests/ui-state-stability-real-browser.py fulfils `suffix == "/api/generation/fal/jobs"`
+     and proxies anything else upstream. Adding a query string would have changed what
+     those matched, in a surface no Node suite can execute. */
   app.get("/api/generation/fal/jobs", (req, res) => {
     try {
       const owner = captureOwner();
       const shotId = String(req.query.shotId || ""), entityId = String(req.query.entityId || ""), entityList = String(req.query.entityList || "");
       const jobs = readJobs(owner).filter((job) => (!shotId || String(job.shotId) === shotId) && (!entityId || String(job.entityId) === entityId) && (!entityList || String(job.entityList) === entityList));
-      const recovery = unattendedRecoveryNotice(owner.slug, { claim: String(req.query.claimRecovery || "") === "1" });
+      const recovery = unattendedRecoveryNotice(owner.slug, { claim: String(req.headers?.[CLAIM_RECOVERY_HEADER] || "") === "1" });
       res.json({ jobs: jobs.map(publicJob), ...(recovery ? { backgroundRecovery: recovery } : {}) });
     } catch (error) {
       res.status(ledgerFailureStatus(error)).json(ledgerFailurePayload(error));
@@ -2185,4 +2197,4 @@ function registerFalGeneration(app, context) {
   };
 }
 
-module.exports = { registerFalGeneration };
+module.exports = { registerFalGeneration, CLAIM_RECOVERY_HEADER };

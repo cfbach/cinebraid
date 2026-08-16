@@ -30,7 +30,7 @@ const express = require("express");
 const { spawn } = require("child_process");
 
 const ROOT = path.join(__dirname, "..");
-const { registerFalGeneration } = require(path.join(ROOT, "fal-generation"));
+const { registerFalGeneration, CLAIM_RECOVERY_HEADER } = require(path.join(ROOT, "fal-generation"));
 const { registerAutomationRuns, runnerAbandoned, LEASE_MS } = require(path.join(ROOT, "automation-runs"));
 const { createGenerationPoller, pollEligibility, eligibleJobs } = require(path.join(ROOT, "generation-poller"));
 
@@ -563,7 +563,36 @@ async function staleRunChecks() {
 }
 
 /* ---------------------------------------------------------------------------
-   8. BOOT RECOVERY IN THE REAL SERVER, WITH NO BROWSER AT ALL.
+   8. THE ONE BROWSER EDIT, AND THE URL IT MUST NOT CHANGE.
+
+   Asserted against the source, which this suite otherwise never does, because the
+   surface it protects is reachable only in a real Chromium: several real-browser
+   suites match "/api/generation/fal/jobs" EXACTLY — tests/ui-state-stability-real-browser.py
+   fulfils that suffix and proxies anything else upstream, and every paid-call guard
+   tests the route string against the method. Claiming the recovery notice with a query
+   parameter would silently change what all of them matched, in a place no Node suite
+   can execute. So the claim travels in a header, and the URL stays as it was. */
+function browserClaimChecks() {
+  const readLF = (file) => fs.readFileSync(path.join(ROOT, file), "utf8").replace(/\r\n/g, "\n");
+  const app = readLF(path.join("public", "app.js"));
+  const call = app.match(/FAL_GENERATION_JOBS = await fetch\(([^\n]*)\)\n/);
+  assert(call, "public/app.js must still load the generation ledger on open");
+  assert(call[1].startsWith('"/api/generation/fal/jobs"'), `the initial ledger load must keep its exact URL: ${call[1]}`);
+  assert(!/["'`]\/api\/generation\/fal\/jobs\?/.test(app), "no query string may be added to the ledger route");
+  assert(call[1].includes("x-cinebraid-claim-recovery"), `the initial load must carry the claim header: ${call[1]}`);
+  assert.strictEqual(CLAIM_RECOVERY_HEADER, "x-cinebraid-claim-recovery", "and the server must read that same header");
+  assert(app.includes("backgroundRecovery?.message"), "and must announce what it claimed");
+
+  /* The other half: the drawer re-reads this route every 3.5 seconds and must never be
+     the request that consumes the notice. */
+  const activity = readLF(path.join("public", "live-activity.js"));
+  assert(activity.includes('fetch("/api/generation/fal/jobs")'), "the drawer refresh must read the ledger plainly");
+  assert(!activity.includes("x-cinebraid-claim-recovery"), "the drawer refresh must never claim the recovery notice");
+  note("browser: the claim rides a header; the ledger URL is byte-identical and the drawer never claims");
+}
+
+/* ---------------------------------------------------------------------------
+   9. BOOT RECOVERY IN THE REAL SERVER, WITH NO BROWSER AT ALL.
 
    Everything above drives the poller directly. This spawns server.js the way a
    filmmaker's machine does and never opens a page: no /refresh is ever posted, no
@@ -666,12 +695,13 @@ async function bootRecoveryChecks() {
     assert.strictEqual(runs[0].status, "interrupted", "the abandoned run was corrected on disk before anything read it");
 
     /* --- the recovery notice, through the ledger route the first window loads --- */
-    const claimed = await fetch(`${base}/api/generation/fal/jobs?claimRecovery=1`).then((response) => response.json());
+    const claim = { headers: { [CLAIM_RECOVERY_HEADER]: "1" } };
+    const claimed = await fetch(`${base}/api/generation/fal/jobs`, claim).then((response) => response.json());
     assert(claimed.backgroundRecovery, "the first window must be told what arrived while it was closed");
     assert.strictEqual(claimed.backgroundRecovery.results, 1, "one result");
     assert.strictEqual(claimed.backgroundRecovery.message, "Collected 1 result while no CineBraid window was open.",
       `unexpected notice: ${claimed.backgroundRecovery.message}`);
-    const again = await fetch(`${base}/api/generation/fal/jobs?claimRecovery=1`).then((response) => response.json());
+    const again = await fetch(`${base}/api/generation/fal/jobs`, claim).then((response) => response.json());
     assert(!again.backgroundRecovery, "and told once — a claimed notice must not repeat");
     /* The drawer re-reads this route every 3.5 seconds and must never have consumed it. */
     const drawer = await fetch(`${base}/api/generation/fal/jobs`).then((response) => response.json());
@@ -693,6 +723,7 @@ async function main() {
   await transientFailureChecks();
   await unconfiguredChecks();
   await staleRunChecks();
+  browserClaimChecks();
   await bootRecoveryChecks();
   console.log("Generation ingest reaper suite passed:\n" + notes.map((line) => `  - ${line}`).join("\n"));
 }
