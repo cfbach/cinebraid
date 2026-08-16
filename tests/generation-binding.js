@@ -762,6 +762,55 @@ async function main() {
       note("legacy blocking: a genuine zero-input dispatch records an EMPTY set, never the pre-instrumentation shape");
     }
     {
+      /* TWO DIFFERENT FILES, ONE REFERENCE KEY.
+       *
+       * The uncompiled route's keys come straight from the request body, so nothing
+       * stops two references sharing one. Both files are dispatched, and the record must
+       * describe both — correlating by key alone keeps only the last row and hands
+       * provider index 0 the bytes index 1 received. Internally consistent, and false. */
+      const { result, call } = await submitLegacy(h, {
+        purpose: "frame", shotId: "SH-1", frameId: "FR-A", frameLabel: "A",
+        prompt: "Frame A from two same-keyed references.",
+        references: [
+          { key: "dup", role: "reference", mediaType: "image", label: "First", url: KAI_PNG },
+          { key: "dup", role: "reference", mediaType: "image", label: "Second", url: HANGAR_PNG },
+        ],
+        outputCount: 1, aspectRatio: "16:9", clientRequestId: "legacy-dup-key-1",
+      });
+      assert.strictEqual(result.status, 200, JSON.stringify(result.data));
+      const job = storedJob(h, result.data.job.id);
+      const bindings = bindingsOf(job);
+
+      /* THE PREMISE: both really were dispatched, as two different files. */
+      assert.strictEqual(call.body.image_urls.length, 2, "the provider received both files");
+      const sentA = Buffer.from(String(call.body.image_urls[0]).split(",")[1], "base64");
+      const sentB = Buffer.from(String(call.body.image_urls[1]).split(",")[1], "base64");
+      assert.strictEqual(sha256(sentA), sha256(BYTES["KAI.png"]), "index 0 is the first file");
+      assert.strictEqual(sha256(sentB), sha256(BYTES["HANGAR.png"]), "index 1 is the second");
+      assert.notStrictEqual(sha256(sentA), sha256(sentB));
+      /* And the job really does carry the duplicate key, so this is the case it claims. */
+      assert.deepStrictEqual(job.references.map((row) => row.key), ["dup", "dup"]);
+
+      /* ONE ROW PER DISPATCHED INPUT, each describing the bytes at ITS index. */
+      assert.strictEqual(bindings.length, 2, "neither input was collapsed away");
+      assert.deepStrictEqual(bindings.map((row) => row.providerIndex), [0, 1]);
+      assert.deepStrictEqual(bindings.map((row) => row.refId), ["dup", "dup"],
+        "the shared key is preserved rather than rewritten to manufacture uniqueness");
+      assert.strictEqual(bindings[0].file, KAI_PNG);
+      assert.strictEqual(bindings[1].file, HANGAR_PNG);
+      assert.strictEqual(bindings[0].fileHash, sha256(BYTES["KAI.png"]));
+      assert.strictEqual(bindings[1].fileHash, sha256(BYTES["HANGAR.png"]));
+      assert.notStrictEqual(bindings[0].fileHash, bindings[1].fileHash,
+        "two distinct inputs must not end up describing one file");
+      /* Row N describes the bytes provider index N received. */
+      for (const row of bindings)
+        assert.strictEqual(
+          sha256(Buffer.from(String(call.body.image_urls[row.providerIndex]).split(",")[1], "base64")),
+          row.fileHash,
+        );
+      note("duplicate keys: two same-keyed references dispatching different files keep one truthful row each");
+    }
+    {
       /* THE FINAL LIMIT. The uncompiled edit route sends at most sixteen references; the
          seventeenth is not sent, so it is not consumed, so it is not recorded. */
       const many = Array.from({ length: 18 }, (unused, index) =>

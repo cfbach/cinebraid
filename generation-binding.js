@@ -115,6 +115,29 @@ function isRecord(value) {
 function listOf(value) {
   return Array.isArray(value) ? value : [];
 }
+/* Rows grouped by key IN ORDER, so a repeated key keeps every one of its rows rather
+   than only the last. A Map built with `[key, row]` pairs is the shape that loses them. */
+function occurrenceQueues(rows, keyOf) {
+  const queues = new Map();
+  for (const row of rows) {
+    const key = keyOf(row);
+    if (!queues.has(key)) queues.set(key, []);
+    queues.get(key).push(row);
+  }
+  return queues;
+}
+
+/* The next unconsumed row for this key, or null if the key was never present at all.
+   A key that WAS present and has been used up calls `onExhausted`, because pairing a
+   dispatched input with a row that already described a different one is the collapse
+   this exists to prevent. */
+function takeOccurrence(queues, key, onExhausted) {
+  if (!queues.has(key)) return null;
+  const queue = queues.get(key);
+  if (!queue.length) return onExhausted();
+  return queue.shift();
+}
+
 /* posix basename. A stored reference address is a project-relative URL and always uses
    forward slashes; path.basename on Windows would also split on a backslash that is a
    legal character in a stored name. */
@@ -339,18 +362,52 @@ function buildGenerationBinding(input = {}) {
       : (file) => hashMediaFile(file, { subject: "Generation binding" }),
   };
 
-  const planReferences = new Map(
-    listOf(plan.inputs?.references).filter(isRecord).map((row) => [text(row.refId), row]),
-  );
-  const sourceReferences = new Map(
-    listOf(input.sourceReferences).filter(isRecord).map((row) => [text(row.refId || row.key), row]),
-  );
+  /* CORRELATED BY ORDERED OCCURRENCE, NOT BY KEY.
+   *
+   * `new Map(rows.map((row) => [row.refId, row]))` keeps the LAST row for a repeated key
+   * and silently discards the rest. A dispatch carrying two different files whose
+   * references happen to share a key therefore produced two binding rows both describing
+   * the second file — so the row for provider index 0 named bytes that index never
+   * received. False provenance, and the worst kind: internally consistent.
+   *
+   * refIds are unique on a COMPILED route by contract — generation-contracts.js refuses a
+   * plan with a duplicate — so a queue there is always one deep and this behaves exactly
+   * as a keyed lookup did. The uncompiled route has no such validator: its keys come
+   * straight from the request body, where two references may legitimately share one.
+   *
+   * Occurrence order is the correlation because it is the same order on both sides.
+   * `serializeLegacyRequest` pushes the binding and the reference view for an input in
+   * one pass over the dispatched payload, and the compiled serializers emit one binding
+   * per plan reference. So the Nth binding naming a refId describes the Nth reference
+   * naming it — not by convention, but because they were built together.
+   *
+   * refId is left alone. Rewriting it to manufacture uniqueness would make the field
+   * mean something it is not defined to mean, and a reader correlating a binding back to
+   * `job.providerBindings` or to the plan would stop finding it. */
+  const planQueues = occurrenceQueues(listOf(plan.inputs?.references).filter(isRecord), (row) => text(row.refId));
+  const sourceQueues = occurrenceQueues(listOf(input.sourceReferences).filter(isRecord), (row) => text(row.refId || row.key));
 
-  return listOf(serialized.bindings).filter(isRecord).map((bound) => {
+  return listOf(serialized.bindings).filter(isRecord).map((bound, position) => {
     const refId = text(bound.refId);
-    const reference = planReferences.get(refId) || null;
+    /* EXHAUSTED IS NOT THE SAME AS ABSENT. A refId the plan never carried leaves the
+       source unknown, which the row already records honestly. A refId the plan carried
+       FEWER times than the request dispatched cannot be paired without reusing a row
+       that describes different bytes — so it refuses instead. */
+    const reference = takeOccurrence(planQueues, refId, () => {
+      throw new GenerationBindingError(
+        "CineBraid could not tell which approved input this request was sending, because two of them share one "
+        + "reference key and the compiled record cannot separate them. Nothing was sent and nothing was charged.",
+        { refId, field: text(bound.field), position },
+      );
+    });
     const source = isRecord(reference?.source) ? reference.source : {};
-    const origin = sourceReferences.get(refId) || null;
+    const origin = takeOccurrence(sourceQueues, refId, () => {
+      throw new GenerationBindingError(
+        "CineBraid could not tell which approved input this request was sending, because two of them share one "
+        + "reference key and the stored package cannot separate them. Nothing was sent and nothing was charged.",
+        { refId, field: text(bound.field), position },
+      );
+    });
 
     const identity = resolveFileIdentity(source, options);
     /* Never inferred from a label, a filename or a reference key. The build recorded

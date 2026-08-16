@@ -71,6 +71,7 @@ const sha256 = (buffer) => crypto.createHash("sha256").update(buffer).digest("he
 
 const A_PNG = "/assets/shots/SH-1/takes/A.png";
 const C_PNG = "/assets/shots/SH-1/takes/C.png";
+const KAI_PNG = "/assets/anchors/KAI.png";
 const KAI_RAIN_PNG = "/assets/anchors/KAI-RAIN.png";
 const KAI_STORM_PNG = "/assets/shots/SH-1/takes/KAI-STORM.png";
 const TRACK_MP4 = "/assets/media/track.mp4";
@@ -379,6 +380,30 @@ function crossFrameCase() {
   };
 }
 
+/* TWO DIFFERENT FILES UNDER ONE REFERENCE KEY, in the shape serializeLegacyRequest
+   produces: the plan view and the bindings are index-aligned because they were built in
+   one pass over the dispatched payload, and both carry the repeated key. */
+function duplicateKeyCase() {
+  const references = [
+    { ...planRef("dup", "reference", "image", KAI_PNG, 0) },
+    { ...planRef("dup", "reference", "image", KAI_RAIN_PNG, 1) },
+  ];
+  return {
+    plan: planFor(references),
+    serialized: {
+      bindings: [
+        bound("dup", "reference", "image", "image_urls", 0, 0),
+        bound("dup", "reference", "image", "image_urls", 1, 1),
+      ],
+    },
+    sourceReferences: [{ refId: "dup", entityId: "" }, { refId: "dup", entityId: "" }],
+    project: project(),
+    shot: project().shots[0],
+    frameId: "",
+    resolveFile,
+  };
+}
+
 /* An entity that declares no continuity states at all. The shared resolver answers an
    unresolved id for it with a SYNTHESISED `state-default` record, which is right for a
    renderer and is the fact NC-7 is about. */
@@ -447,8 +472,8 @@ control("NC-1", "resolving the state from current Canon instead of the dispatch 
 control("NC-2", "recording a reference that was dropped before serialization", () => {
   const source = mutated("generation-binding.js", (text) =>
     text.replace(
-      /return listOf\(serialized\.bindings\)\.filter\(isRecord\)\.map\(\(bound\) => \{/,
-      "return listOf(input.sourceReferences).filter(isRecord).map((bound) => {",
+      /return listOf\(serialized\.bindings\)\.filter\(isRecord\)\.map\(\(bound, position\) => \{/,
+      "return listOf(input.sourceReferences).filter(isRecord).map((bound, position) => {",
     ));
   assert(/listOf\(input\.sourceReferences\)\.filter\(isRecord\)\.map/.test(source));
 
@@ -934,6 +959,59 @@ control("NC-12", "resolving state against the target frame instead of the consum
   }, /Frame B/);
 });
 
+/* ===========================================================================
+   NC-13 — correlate bindings to references by KEY rather than by ordered
+   occurrence.
+
+   `new Map(rows.map((row) => [row.refId, row]))` keeps the last row for a repeated key,
+   so every binding sharing that key resolves to the same reference. The provider still
+   receives both files; the record describes one of them twice, and the row for provider
+   index 0 names bytes that index never received.
+
+   The mutation returns the LAST row and never consumes it, which is exactly the keyed
+   Map's semantics expressed inside the accessor. */
+control("NC-13", "collapsing two same-keyed inputs by correlating on refId alone", () => {
+  const source = mutated("generation-binding.js", (text) =>
+    text.replace(
+      /if \(!queue\.length\) return onExhausted\(\);(\r?\n\s*)return queue\.shift\(\);/,
+      "if (!queue.length) return onExhausted();$1return queue[queue.length - 1];",
+    ));
+  assert(/return queue\[queue\.length - 1\];/.test(source), "the mutation must stop consuming in order");
+  assert(!/return queue\[queue\.length - 1\];/.test(read("generation-binding.js")), "and the shipped source must not");
+
+  const Binding = compileModule("generation-binding.js", source);
+  const real = require("../generation-binding");
+  const input = duplicateKeyCase();
+
+  const shipped = real.buildGenerationBinding(input);
+  const broken = Binding.buildGenerationBinding(input);
+
+  /* THE PREMISE: two dispatched inputs, two different files, one shared key. */
+  assert.strictEqual(input.serialized.bindings.length, 2);
+  assert.deepStrictEqual(input.plan.inputs.references.map((row) => row.refId), ["dup", "dup"]);
+  assert.notStrictEqual(input.plan.inputs.references[0].source.path, input.plan.inputs.references[1].source.path);
+
+  /* RECEIPT — THE LIVE DEFECT: both rows describe the second file, so provider index 0
+     carries false provenance. */
+  assert.strictEqual(shipped.length, 2);
+  assert.strictEqual(shipped[0].file, KAI_PNG);
+  assert.strictEqual(shipped[1].file, KAI_RAIN_PNG);
+  assert.notStrictEqual(shipped[0].fileHash, shipped[1].fileHash);
+  assert.strictEqual(broken.length, 2, "the mutated module still emits one row per dispatched input");
+  assert.strictEqual(broken[0].file, KAI_RAIN_PNG, "but row 0 names the file index 1 received");
+  assert.strictEqual(broken[1].file, KAI_RAIN_PNG);
+  assert.strictEqual(broken[0].fileHash, broken[1].fileHash, "two distinct inputs collapsed onto one");
+  assert.strictEqual(broken[0].fileHash, sha256(BYTES["KAI-RAIN.png"]));
+
+  assert.throws(() => {
+    assert.strictEqual(broken[0].file, KAI_PNG);
+  });
+  assert.throws(() => {
+    assert.notStrictEqual(broken[0].fileHash, broken[1].fileHash,
+      "two distinct inputs must not end up describing one file");
+  }, /must not end up describing one file/);
+});
+
 async function main() {
   /* THE NO-VACUOUS-CONTROL GUARD, SELF-TESTED. It is the one piece of this harness that
      must not rot: a `mutated()` that stopped refusing a no-op would turn every control
@@ -981,6 +1059,10 @@ async function main() {
     assert.strictEqual(cross.frameId, "FR-B");
     assert.strictEqual(cross.stateId, "state-storm");
     assert.strictEqual(cross.stateAuthority, "matched");
+    const dup = Binding.buildGenerationBinding(duplicateKeyCase());
+    assert.deepStrictEqual(dup.map((row) => row.file), [KAI_PNG, KAI_RAIN_PNG],
+      "two same-keyed inputs keep one truthful row each");
+    assert.notStrictEqual(dup[0].fileHash, dup[1].fileHash);
     const live = await dispatchLegacyOnce(require("../fal-generation"), LEGACY_ZERO_INPUT_BODY);
     assert.strictEqual(live.status, 200, JSON.stringify(live.data));
     assert.deepStrictEqual(Binding.readGenerationBinding(live.stored).bindings, [],
@@ -995,8 +1077,9 @@ async function main() {
       + "the paid POST, a reader that re-resolves history from current project state, a default continuity state "
       + "minted for an entity that declares none, the uncompiled path's binding writer removed so a new job backdates "
       + "itself, a capture failure allowed through to the provider, a reference the final uncompiled limit dropped "
-      + "recorded as consumed, a zero-input uncompiled dispatch collapsed into no record, and the continuity state "
-      + "resolved against the target frame instead of the consumed one — every one detected by the "
+      + "recorded as consumed, a zero-input uncompiled dispatch collapsed into no record, the continuity state "
+      + "resolved against the target frame instead of the consumed one, and two same-keyed inputs collapsed onto one "
+      + "file by correlating on refId alone — every one detected by the "
       + "property that guards it, with the real modules green afterwards. Nothing was written to disk and nothing was "
       + "reverted with git. Provider calls made: 0.",
     );
