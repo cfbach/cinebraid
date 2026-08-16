@@ -84,6 +84,28 @@ const STATE_AUTHORITY = {
   NONE: "none",
 };
 
+/* A capture that could not be completed.
+ *
+ * THIS IS A REFUSAL, NOT A WARNING, and it exists because the alternative is worse than
+ * failing. A new dispatch whose binding could not be built has exactly two options:
+ * refuse before the provider is contacted, or send paid work and record nothing. The
+ * second one produces a job that is indistinguishable from genuine pre-instrumentation
+ * history — `recorded: false`, `bindings: null` — which is the one representation this
+ * record reserves for jobs that predate it. A silent fail-open would therefore not just
+ * lose evidence; it would forge the absence of it, permanently and undetectably.
+ *
+ * Nothing has been sent when this is thrown. It is raised before the ledger commit and
+ * before the POST, so a refusal costs nothing and changes nothing. */
+class GenerationBindingError extends Error {
+  constructor(message, detail = {}) {
+    super(message);
+    this.name = "GenerationBindingError";
+    this.code = "GENERATION_BINDING_UNRECORDABLE";
+    this.status = 500;
+    this.detail = detail;
+  }
+}
+
 function text(value) {
   return String(value == null ? "" : value).trim();
 }
@@ -129,29 +151,39 @@ function entityRecordFor(project, list, entityId) {
    name resolution — stored, then name, then original.
 
    A frame's own `winner` is the fallback, for a take approved before candidate rows
-   carried a frame. Both are refused when more than one frame answers: two frames naming
-   one file cannot both be the frame this generation consumed, and picking either is how
-   a binding comes to name the wrong beat.
+   carried a frame.
 
-   Returns "" for anything that is not one of this shot's takes — an entity reference,
-   a library asset, an audio file. That is not a failure; those inputs are not frames. */
-function resolveConsumedFrameId(shot, file) {
+   THREE ANSWERS, NOT TWO, and the difference is load-bearing:
+
+     { frameId: "FR-B" }                 exactly one frame owns these bytes
+     { frameId: "", ambiguous: false }   no frame does — an entity reference, a library
+                                         asset, an audio file. Not a failure; those
+                                         inputs are not frames.
+     { frameId: "", ambiguous: true }    more than one frame claims them, disagreeing
+
+   Collapsing the last two into "" is what lets an ambiguous input quietly inherit the
+   TARGET frame's continuity state, which is a definitive answer built on a provenance
+   nobody could establish. The caller has to be able to tell them apart. */
+function resolveConsumedFrame(shot, file) {
+  const none = { frameId: "", ambiguous: false };
   const name = baseName(file);
-  if (!shot || !name) return "";
+  if (!shot || !name) return none;
 
   const rows = listOf(shot.candidateFiles).filter((row) => {
     const key = row && (row.stored || row.name || row.original);
     return text(key) === name;
   });
   const declared = [...new Set(rows.map((row) => text(row?.frameId)).filter(Boolean))];
-  if (declared.length === 1) return declared[0];
-  /* More than one row, disagreeing. The file is genuinely ambiguous and the honest
-     answer is that this generation's frame is unknown. */
-  if (declared.length > 1) return "";
+  if (declared.length === 1) return { frameId: declared[0], ambiguous: false };
+  if (declared.length > 1) return { frameId: "", ambiguous: true };
 
-  const winners = listOf(shot.keyframes).filter((frame) => baseName(frame?.winner) === name);
-  if (winners.length === 1) return text(winners[0]?.id);
-  return "";
+  const winners = [...new Set(listOf(shot.keyframes)
+    .filter((frame) => baseName(frame?.winner) === name)
+    .map((frame) => text(frame?.id))
+    .filter(Boolean))];
+  if (winners.length === 1) return { frameId: winners[0], ambiguous: false };
+  if (winners.length > 1) return { frameId: "", ambiguous: true };
+  return none;
 }
 
 /* ---------------------------------------------------------------------------
@@ -325,8 +357,34 @@ function buildGenerationBinding(input = {}) {
        which entity a reference is for, or it did not, and "" means it did not. */
     const entityId = text(origin?.entityId);
     const list = entityListFor(project, entityId);
-    const state = resolveConsumedState(project, shot, frameId, list, entityId, identity.file);
-    const consumedFrameId = resolveConsumedFrameId(shot, identity.file);
+
+    /* ONE ROW, ONE PROVENANCE.
+     *
+     * The consumed frame is resolved FIRST, because it is what the continuity state has
+     * to be resolved AGAINST. This used to run the other way round: the state was scoped
+     * to the frame the generation was FOR, and the consumed frame was worked out
+     * afterwards and written beside it. A frame-A request consuming frame B's approved
+     * bytes therefore produced a row reading `frameId: FR-B` next to frame A's state —
+     * three fields on one line describing two different things, which is worse than
+     * either fact alone because it looks complete.
+     *
+     * The scope, in order:
+     *
+     *   ambiguous consumed frame  no state at all. More than one frame claims these
+     *                             bytes, so no continuity state can be established for
+     *                             them, and falling back to the shot or the default
+     *                             would be a definitive answer resting on a provenance
+     *                             nobody could resolve.
+     *   a consumed frame          THAT frame scopes the state. The bytes belong to it.
+     *   no consumed frame         the target frame scopes it. An entity authority image
+     *                             is not one of the shot's frames; it was selected FOR
+     *                             the frame being generated, and that is the context
+     *                             that chose it. */
+    const consumed = resolveConsumedFrame(shot, identity.file);
+    const state = consumed.ambiguous
+      ? { stateId: "", stateName: "", stateDeclared: false, stateAuthority: "", unresolved: "consumed-frame-ambiguous" }
+      : resolveConsumedState(project, shot, consumed.frameId || frameId, list, entityId, identity.file);
+    const consumedFrameId = consumed.frameId;
 
     return {
       /* Ties the binding to job.providerBindings and to the plan, so a reader never has
@@ -351,7 +409,8 @@ function buildGenerationBinding(input = {}) {
       stateAuthority: state.stateAuthority,
       /* The frame these BYTES are, which is not the frame this generation is for. It is
          what separates "this generation consumed Frame A" from "this generation belonged
-         to shot SH-12". */
+         to shot SH-12" — and, with stateId resolved against it, the row describes one
+         provenance rather than two. */
       frameId: consumedFrameId,
       sourceKind: text(source.kind),
       file: identity.file,
@@ -397,6 +456,7 @@ function readGenerationBinding(job) {
 module.exports = {
   ENTITY_LISTS,
   GENERATION_BINDING_VERSION,
+  GenerationBindingError,
   HASH_STATUS,
   KIND_FOR_LIST,
   STATE_AUTHORITY,
@@ -404,6 +464,6 @@ module.exports = {
   entityListFor,
   generationBindingRecord,
   readGenerationBinding,
-  resolveConsumedFrameId,
+  resolveConsumedFrame,
   resolveConsumedState,
 };

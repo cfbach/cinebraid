@@ -42,6 +42,12 @@ const BYTES = {
   "KAI.png": Buffer.from("89504e470d0a1a0a0000000d4948445200000001000000010802000000907753de0000000c4944415408d76360000000020001", "hex"),
   "KAI-RAIN.png": Buffer.from("89504e470d0a1a0a0000000d4948445200000001000000010802000000907753de0000000c4944415408d76364000000030001", "hex"),
   "HANGAR.png": Buffer.from("89504e470d0a1a0a0000000d4948445200000001000000010802000000907753de0000000c4944415408d76368000000040001", "hex"),
+  /* Kai's storm-state authority, which lives in the SHOT's takes folder and is bound to
+     Frame B by the shot's candidate ledger. It is the whole of the consumed-frame/state
+     regression: a request targeting Frame A that consumes these bytes. */
+  "KAI-STORM.png": Buffer.from("89504e470d0a1a0a0000000d4948445200000001000000010802000000907753de0000000c4944415408d7636c000000050001", "hex"),
+  /* Claimed by two frames at once, so no frame owns it. */
+  "SHARED.png": Buffer.from("89504e470d0a1a0a0000000d4948445200000001000000010802000000907753de0000000c4944415408d76370000000060001", "hex"),
 };
 const MP4 = Buffer.from("00000018667479706d703432000000006d703432", "hex");
 const WAV = Buffer.from("524946462400000057415645666d7420", "hex");
@@ -56,6 +62,8 @@ const B_PNG = "/assets/shots/SH-1/takes/B.png";
 const C_PNG = "/assets/shots/SH-1/takes/C.png";
 const KAI_PNG = "/assets/anchors/KAI.png";
 const KAI_RAIN_PNG = "/assets/anchors/KAI-RAIN.png";
+const KAI_STORM_PNG = "/assets/shots/SH-1/takes/KAI-STORM.png";
+const SHARED_PNG = "/assets/shots/SH-1/takes/SHARED.png";
 const HANGAR_PNG = "/assets/plates/HANGAR.png";
 const TRACK_MP4 = "/assets/media/track.mp4";
 const VOICE_WAV = "/assets/audio/kai.wav";
@@ -97,10 +105,18 @@ function makeProject() {
           { stored: "A.png", frameId: "FR-A" },
           { stored: "B.png", frameId: "FR-B" },
           { stored: "C.png", frameId: "FR-C" },
+          /* Frame B owns Kai's storm authority. */
+          { stored: "KAI-STORM.png", frameId: "FR-B" },
+          /* Two frames, one file. Neither owns it, and nothing may pretend otherwise. */
+          { stored: "SHARED.png", frameId: "FR-A" },
+          { stored: "SHARED.png", frameId: "FR-C" },
         ],
         creationBrief: {
           frameWorkflows: {
             "FR-A": { characterStateSelections: { [KAI]: "state-rain" } },
+            /* A DIFFERENT state on the frame that owns KAI-STORM.png. A request aimed at
+               Frame A that consumes those bytes must record THIS state, not Frame A's. */
+            "FR-B": { characterStateSelections: { [KAI]: "state-storm" } },
           },
         },
       },
@@ -113,6 +129,7 @@ function makeProject() {
       continuityStates: [
         { id: "state-default", name: "Default", isDefault: true, approvedFile: "KAI.png" },
         { id: "state-rain", name: "Rain-soaked", approvedFile: "KAI-RAIN.png" },
+        { id: "state-storm", name: "Storm-lashed", approvedFile: "KAI-STORM.png" },
       ],
     }],
     locations: [{ id: HANGAR, name: "Hangar 4", approvedFile: "HANGAR.png", continuityStates: [] }],
@@ -126,7 +143,8 @@ async function harness() {
   fs.mkdirSync(path.join(dir, "shots", "SH-1", "takes"), { recursive: true });
   for (const sub of ["anchors", "plates", "props", "vehicles", "media", "audio"])
     fs.mkdirSync(path.join(dir, sub), { recursive: true });
-  for (const name of ["A.png", "B.png", "C.png"]) fs.writeFileSync(path.join(dir, "shots", "SH-1", "takes", name), BYTES[name]);
+  for (const name of ["A.png", "B.png", "C.png", "KAI-STORM.png", "SHARED.png"])
+    fs.writeFileSync(path.join(dir, "shots", "SH-1", "takes", name), BYTES[name]);
   for (const name of ["KAI.png", "KAI-RAIN.png"]) fs.writeFileSync(path.join(dir, "anchors", name), BYTES[name]);
   fs.writeFileSync(path.join(dir, "plates", "HANGAR.png"), BYTES["HANGAR.png"]);
   fs.writeFileSync(path.join(dir, "media", "track.mp4"), MP4);
@@ -256,6 +274,17 @@ async function submitFrame(h, buildOptions = {}, overrides = {}) {
   });
   if (result.status === 200) await settle(h, result.data.job.id);
   return { result, call: h.calls[before] || null, buildId };
+}
+
+/* One UNCOMPILED submission — `entity-reference`, `correction`, or `frame`/`blocking`
+   posted without `imagePlan`. These never reach the compiler, so there is no build to
+   register: the request body carries the prompt and the reference array directly, which
+   is exactly the shape that made them easy to leave uninstrumented. */
+async function submitLegacy(h, body) {
+  const before = h.calls.length;
+  const result = await h.api("/api/generation/fal/jobs", { body });
+  if (result.status === 200) await settle(h, result.data.job.id);
+  return { result, call: h.calls[before] || null };
 }
 
 /* The durable row, re-read from disk. Never the response body: what a later reader gets
@@ -549,6 +578,208 @@ async function main() {
       assert.notStrictEqual(kaiBinding.fileHash, sha256(BYTES["KAI.png"]),
         "the clean state's image was demonstrably not what travelled");
       note("continuity: the state ACTUALLY resolved for the frame is recorded, and the entity default is not");
+    }
+
+    /* ===================================================================
+       7b. ONE ROW, ONE PROVENANCE — the state follows the CONSUMED frame,
+           not the frame the generation is for.
+       =================================================================== */
+    let crossFrameJobId = "";
+    {
+      /* The request is aimed at Frame A. What it consumes is a file the shot's own
+         candidate ledger binds to Frame B, and Frame B declares a different state for
+         Kai than Frame A does. A row that paired Frame B's bytes with Frame A's state
+         would be worse than either fact alone, because it reads as complete. */
+      const { result, call } = await submitFrame(h, {
+        id: "frame-cross", frameId: "FR-A",
+        references: [ref("id-kai", "identity", "image", KAI_STORM_PNG, { entityId: KAI })],
+      });
+      assert.strictEqual(result.status, 200, JSON.stringify(result.data));
+      crossFrameJobId = result.data.job.id;
+      const binding = bindingsOf(storedJob(h, crossFrameJobId))[0];
+
+      /* THE PREMISE, stated rather than assumed: the two frames genuinely disagree. */
+      const project = h.project();
+      const workflows = project.shots[0].creationBrief.frameWorkflows;
+      assert.strictEqual(workflows["FR-A"].characterStateSelections[KAI], "state-rain");
+      assert.strictEqual(workflows["FR-B"].characterStateSelections[KAI], "state-storm");
+
+      assert.strictEqual(binding.file, KAI_STORM_PNG);
+      assert.strictEqual(binding.frameId, "FR-B", "the bytes belong to Frame B");
+      assert.strictEqual(binding.stateId, "state-storm",
+        "so the state is Frame B's — not the state the TARGET frame declares");
+      assert.strictEqual(binding.stateName, "Storm-lashed");
+      assert.notStrictEqual(binding.stateId, "state-rain", "Frame A's state must not appear on Frame B's bytes");
+      assert.notStrictEqual(binding.stateId, "state-default");
+      assert.strictEqual(binding.stateDeclared, true);
+      /* And the three fields now agree: this state authorises exactly these bytes. */
+      assert.strictEqual(binding.stateAuthority, "matched");
+      assert.strictEqual(binding.fileHash, sha256(BYTES["KAI-STORM.png"]));
+      assert.strictEqual(
+        sha256(Buffer.from(String(call.body.image_urls[binding.providerIndex]).split(",")[1], "base64")),
+        binding.fileHash,
+      );
+      note("one provenance: frameId, stateId and file on a row all describe the CONSUMED input, not the dispatch target");
+    }
+    {
+      /* AMBIGUITY IS NOT A DEFAULT. Two frames claim this file, so no frame owns it —
+         and an input with no resolvable frame must not therefore inherit the target
+         frame's state as though it had one. */
+      const { result } = await submitFrame(h, {
+        id: "frame-ambiguous", frameId: "FR-A",
+        references: [ref("id-kai", "identity", "image", SHARED_PNG, { entityId: KAI })],
+      });
+      assert.strictEqual(result.status, 200, JSON.stringify(result.data));
+      const binding = bindingsOf(storedJob(h, result.data.job.id))[0];
+
+      /* THE PREMISE: the ledger really does name two different frames for this file. */
+      const rows = h.project().shots[0].candidateFiles.filter((row) => row.stored === "SHARED.png");
+      assert.deepStrictEqual(rows.map((row) => row.frameId), ["FR-A", "FR-C"]);
+
+      assert.strictEqual(binding.file, SHARED_PNG);
+      assert.strictEqual(binding.entityId, KAI, "the entity is still known — only the frame is not");
+      assert.strictEqual(binding.frameId, "", "no frame owns these bytes");
+      assert.strictEqual(binding.stateId, "", "and no state is written on an unresolvable provenance");
+      assert.strictEqual(binding.stateName, "");
+      assert.strictEqual(binding.stateDeclared, false);
+      assert.deepStrictEqual(binding.unresolved, ["consumed-frame-ambiguous"],
+        "the uncertainty is recorded explicitly rather than filled in");
+      /* The bytes are still identified. Losing the frame does not lose the file. */
+      assert.strictEqual(binding.fileHash, sha256(BYTES["SHARED.png"]));
+      note("ambiguity: a file two frames claim acquires no frame and no state, and says why");
+    }
+
+    /* ===================================================================
+       7c. THE UNCOMPILED ROUTES.
+       =================================================================== */
+    {
+      /* entity-reference: no plan, no capability layer, a reference array posted
+         straight to the dispatcher. It is still a paid request and it still consumes a
+         file. */
+      const { result, call } = await submitLegacy(h, {
+        purpose: "entity-reference", entityList: "characters", entityId: KAI,
+        prompt: "Kai, three-quarter view, neutral studio light.",
+        references: [ref("base-kai", "base", "image", KAI_PNG)],
+        outputCount: 1, aspectRatio: "16:9", clientRequestId: "legacy-entity-1",
+      });
+      assert.strictEqual(result.status, 200, JSON.stringify(result.data));
+      const job = storedJob(h, result.data.job.id);
+      const bindings = bindingsOf(job);
+
+      assert.strictEqual(call.endpoint, "/openai/gpt-image-2/edit");
+      assert.strictEqual(bindings.length, 1);
+      assert.strictEqual(bindings.length, call.body.image_urls.length, "one binding per file actually sent");
+      assert.strictEqual(bindings[0].providerField, "image_urls");
+      assert.strictEqual(bindings[0].providerIndex, 0);
+      assert.strictEqual(bindings[0].file, KAI_PNG);
+      assert.strictEqual(bindings[0].fileHash, sha256(BYTES["KAI.png"]));
+      assert.strictEqual(
+        sha256(Buffer.from(String(call.body.image_urls[0]).split(",")[1], "base64")),
+        bindings[0].fileHash,
+        "the hash on the record is the hash of what was sent",
+      );
+      /* NO INVENTED PROVENANCE. `job.entityId` names the entity being GENERATED, not the
+         entity this consumed file depicts, so nothing claims one. */
+      assert.strictEqual(job.entityId, KAI, "the job names its target entity");
+      assert.strictEqual(bindings[0].entityId, "", "and the binding does not borrow it for a consumed input");
+      assert.strictEqual(bindings[0].list, "");
+      assert.strictEqual(bindings[0].stateId, "");
+      /* Durable before the paid POST, exactly like the compiled routes. */
+      const atBarrier = call.ledgerAtRequest.find((row) => row.id === job.id);
+      assert(atBarrier, "the row exists at the instant the paid request arrives");
+      assert.strictEqual(atBarrier.generationBinding[0].fileHash, bindings[0].fileHash);
+      note("legacy entity-reference: the consumed file is recorded, durable before the POST, with no borrowed entity");
+    }
+    {
+      /* correction: the failed candidate travels back as the editable base. */
+      const { result, call } = await submitLegacy(h, {
+        purpose: "correction", shotId: "SH-1", sourceCandidate: "B.png",
+        prompt: "Correct the horizon line.",
+        references: [ref("base-take", "base", "image", B_PNG)],
+        outputCount: 1, aspectRatio: "16:9", clientRequestId: "legacy-correction-1",
+      });
+      assert.strictEqual(result.status, 200, JSON.stringify(result.data));
+      const bindings = bindingsOf(storedJob(h, result.data.job.id));
+      assert.strictEqual(bindings.length, 1);
+      assert.strictEqual(bindings[0].file, B_PNG);
+      assert.strictEqual(bindings[0].fileHash, sha256(BYTES["B.png"]));
+      assert.strictEqual(bindings[0].frameId, "FR-B", "the candidate ledger still says which frame those bytes are");
+      assert.strictEqual(
+        sha256(Buffer.from(String(call.body.image_urls[0]).split(",")[1], "base64")),
+        bindings[0].fileHash,
+      );
+      note("legacy correction: the editable base is recorded, and keeps the frame identity the ledger proves");
+    }
+    {
+      /* frame, submitted without imagePlan — the automation runner's shape. */
+      const { result, call } = await submitLegacy(h, {
+        purpose: "frame", shotId: "SH-1", frameId: "FR-A", frameLabel: "A",
+        prompt: "Frame A, wide.",
+        references: [
+          ref("id-kai", "identity", "image", KAI_RAIN_PNG),
+          ref("loc-hangar", "location", "image", HANGAR_PNG),
+        ],
+        outputCount: 1, aspectRatio: "16:9", clientRequestId: "legacy-frame-1",
+      });
+      assert.strictEqual(result.status, 200, JSON.stringify(result.data));
+      const bindings = bindingsOf(storedJob(h, result.data.job.id));
+      assert.strictEqual(bindings.length, 2);
+      assert.strictEqual(bindings.length, call.body.image_urls.length);
+      assert.deepStrictEqual(bindings.map((row) => row.providerIndex), [0, 1], "in the order they were sent");
+      assert.deepStrictEqual(bindings.map((row) => row.file), [KAI_RAIN_PNG, HANGAR_PNG]);
+      for (const row of bindings)
+        assert.strictEqual(
+          sha256(Buffer.from(String(call.body.image_urls[row.providerIndex]).split(",")[1], "base64")),
+          row.fileHash,
+        );
+      note("legacy frame: every reference actually sent is recorded, in dispatch order");
+    }
+    let zeroInputLegacyJobId = "";
+    {
+      /* blocking with no references at all: fal's text-to-image route, which consumes no
+         files. The record must say so POSITIVELY. */
+      const { result, call } = await submitLegacy(h, {
+        purpose: "blocking", shotId: "SH-1",
+        prompt: "Flat greyscale blocking, no production detail.",
+        references: [], outputCount: 1, aspectRatio: "16:9", clientRequestId: "legacy-blocking-1",
+      });
+      assert.strictEqual(result.status, 200, JSON.stringify(result.data));
+      zeroInputLegacyJobId = result.data.job.id;
+      const job = storedJob(h, zeroInputLegacyJobId);
+      const record = readGenerationBinding(job);
+
+      assert.strictEqual(call.endpoint, "/openai/gpt-image-2", "the text-to-image route");
+      assert.strictEqual(call.body.image_urls, undefined, "nothing was consumed");
+      /* THE POINT OF THE WHOLE CORRECTION. A new zero-input dispatch is `recorded: true`
+         with an empty set — never the `recorded: false` / `bindings: null` shape that
+         belongs to jobs written before any of this existed. */
+      assert.strictEqual(record.recorded, true, "a newly dispatched job always carries a record");
+      assert.deepStrictEqual(record.bindings, [], "and an empty one means it consumed nothing");
+      assert.notStrictEqual(record.bindings, null);
+      assert.strictEqual(record.version, GENERATION_BINDING_VERSION);
+      const atBarrier = call.ledgerAtRequest.find((row) => row.id === job.id);
+      assert(Array.isArray(atBarrier.generationBinding), "and it was already durable when the request arrived");
+      note("legacy blocking: a genuine zero-input dispatch records an EMPTY set, never the pre-instrumentation shape");
+    }
+    {
+      /* THE FINAL LIMIT. The uncompiled edit route sends at most sixteen references; the
+         seventeenth is not sent, so it is not consumed, so it is not recorded. */
+      const many = Array.from({ length: 18 }, (unused, index) =>
+        ref(`extra-${index + 1}`, "reference", "image", index % 2 ? KAI_PNG : HANGAR_PNG));
+      const { result, call } = await submitLegacy(h, {
+        purpose: "frame", shotId: "SH-1", frameId: "FR-A", frameLabel: "A",
+        prompt: "Frame A with many references.",
+        references: many, outputCount: 1, aspectRatio: "16:9", clientRequestId: "legacy-limit-1",
+      });
+      assert.strictEqual(result.status, 200, JSON.stringify(result.data));
+      const bindings = bindingsOf(storedJob(h, result.data.job.id));
+      assert.strictEqual(call.body.image_urls.length, 16, "sixteen files travelled");
+      assert.strictEqual(bindings.length, 16, "and sixteen were recorded");
+      assert.deepStrictEqual(bindings.map((row) => row.refId), many.slice(0, 16).map((row) => row.key));
+      for (const dropped of many.slice(16))
+        assert(!bindings.some((row) => row.refId === dropped.key),
+          `${dropped.key} was never sent and must not appear as consumed`);
+      note("legacy limit: references past the route's sixteen-file ceiling are not sent and are not recorded");
     }
 
     /* ===================================================================
