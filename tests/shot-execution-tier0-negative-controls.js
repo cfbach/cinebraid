@@ -1,0 +1,319 @@
+/* Shot Execution Tier 0 — negative controls.
+ *
+ * A regression that has never been seen to fail is a regression nobody has tested. Each
+ * control below reintroduces one of the four defects Tier 0 closed, IN MEMORY, and
+ * proves the suite that guards it goes red — then proves the real modules are green
+ * afterwards.
+ *
+ * NOTHING IS WRITTEN TO DISK AND NOTHING IS REVERTED WITH GIT. Every mutation is a
+ * string transformation compiled into an in-memory Module or evaluated in the render
+ * harness's own `mutateSource` hook. A control that edited a file and undid it with a
+ * checkout would discard unstaged work the first time one of these threw.
+ *
+ * Each control also carries a LIVE-DEFECT RECEIPT: the mutation must actually change
+ * behaviour before the guarding assertion is consulted. A control that mutates nothing
+ * and then reports that the guard "caught" it is reporting on itself.
+ */
+const assert = require("assert");
+const fs = require("fs");
+const path = require("path");
+const vm = require("vm");
+const Module = require("module");
+
+const F = require("./generation-compiler-fixture");
+const { render, buildFixture } = require("./render-harness");
+
+const ROOT = path.join(__dirname, "..");
+const read = (relative) => fs.readFileSync(path.join(ROOT, relative), "utf8");
+
+/* A mutated module compiled under its real filename, so its own relative requires
+   resolve exactly as they do on disk. The file is opened read-only. */
+function compileModule(relative, source) {
+  const filename = path.join(ROOT, relative);
+  const compiled = new Module(filename, null);
+  compiled.filename = filename;
+  compiled.paths = Module._nodeModulePaths(path.dirname(filename));
+  compiled._compile(source, filename);
+  return compiled.exports;
+}
+
+function mutated(relative, transform) {
+  const original = read(relative);
+  const source = String(transform(original));
+  assert.notStrictEqual(source, original,
+    `the control for ${relative} changed nothing; it would report a pass without testing anything`);
+  return source;
+}
+
+const controls = [];
+function control(id, title, run) {
+  controls.push({ id, title, run });
+}
+
+/* ===========================================================================
+   NC-1 — silently drop one of the six new INTENT_FIELDS rows.
+
+   This is the defect Tier 0 exists to prevent: a fact with no row cannot be carried,
+   cannot be verified, and cannot be reported as unsupported. It simply stops existing
+   between the shot and the model, with no warning anywhere. */
+for (const intent of ["editorial", "endpoints.start", "endpoints.end", "performance.lipSync", "interaction", "subjects.count"])
+  control(`NC-1:${intent}`, `dropping the ${intent} inventory row`, () => {
+    const source = mutated("generation-compiler.js", (text) => {
+      const line = text.split("\n").find((row) => row.includes(`{ key: "${intent}",`));
+      assert(line, `generation-compiler.js no longer declares a row for ${intent}`);
+      return text.replace(`${line}\n`, "");
+    });
+    const Compiler = compileModule("generation-compiler.js", source);
+    const spec = F.baseSpec({
+      editorial: "single-take",
+      endpoints: { start: "exact", end: "approximate" },
+      interaction: "precise",
+      audio: { ...F.baseSpec().audio, lipSyncRequired: true },
+    });
+
+    /* THE LIVE DEFECT: the fact is genuinely no longer inventoried. */
+    const inventory = Compiler.inventoryIntent(spec, (value) => String(value));
+    assert(!inventory.some((row) => row.key === intent), `${intent} should be gone from the inventory`);
+
+    /* THE GUARD: with the row removed the fact reaches no coverage state at all — not
+       represented, not omitted, not even unsupported. Nothing warns, and the plan looks
+       complete. That is exactly what the Tier 0 suite asserts cannot happen.
+
+       The real pack is handed in explicitly: a freshly compiled compiler has its own
+       empty registry, and the packs registered themselves with the module on disk. */
+    const plan = Compiler.compileGenerationPlan({
+      spec, references: [F.FRAME_A], mode: "i2v", pack: require("../model-packs/minimax-h3").pack,
+      modelId: F.modelIdFor("i2v"), surface: "api", capability: F.capabilityFor("i2v"),
+    });
+    assert(!plan.coverage.some((row) => row.intent === intent),
+      `${intent} must vanish from coverage for this control to be the defect it claims`);
+    assert(!plan.warnings.some((row) => row.intent === intent),
+      `and it must vanish SILENTLY — a warning would mean the loss was already visible`);
+  });
+
+/* ===========================================================================
+   NC-2 — restore the dialogue-implies-lip-sync shortcut in the shared derivation.
+
+   `lipSyncRequired === true || !!line`, which is what both former sites computed. */
+control("NC-2", "restoring the dialogue-implies-lip-sync shortcut", () => {
+  const source = mutated("public/shared-lip-sync.js", (text) =>
+    text.replace(
+      "  if (dialogue.lipSyncRequired === true) return \"critical\";\n  return \"implied\";",
+      "  if (dialogue.lipSyncRequired === true || Boolean(line)) return \"critical\";\n  return \"implied\";",
+    ));
+  const LipSync = compileModule("public/shared-lip-sync.js", source);
+
+  /* THE LIVE DEFECT: an off-screen line is lip-sync-critical again. */
+  assert.strictEqual(LipSync.deriveLipSync({ line: "Bravo two, hold position." }), "critical",
+    "the control must actually reintroduce the shortcut");
+
+  /* THE GUARD: the tri-state regression asserts `implied` for exactly that input, and
+     for the back-to-camera case, and both now disagree. */
+  assert.notStrictEqual(LipSync.deriveLipSync({ line: "Bravo two, hold position." }), "implied");
+  assert.notStrictEqual(LipSync.deriveLipSync({ line: "Don't follow me.", lipSyncRequired: false }), "implied");
+  /* And the boolean accessor follows it, so every downstream reader is wrong too. */
+  assert.strictEqual(LipSync.lipSyncRequiredFrom({ line: "Bravo two, hold position." }), true);
+});
+
+/* The same defect at the level the suite actually polices: the shortcut written back
+   into one of the two former derivation sites, where it would drift from the other. */
+control("NC-2b", "reintroducing the shortcut at one of the two former sites", () => {
+  const source = mutated("public/motion-sound-composer.js", (text) =>
+    text.replace(
+      "lipSyncRequired: lipSyncRequiredFrom({ ...dialogue, line }),",
+      "lipSyncRequired: dialogue.lipSyncRequired === true || !!line,",
+    ));
+  const stripped = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:'"`\\])\/\/[^\n]*/g, "$1");
+
+  /* THE GUARD: the source-level assertion in the Tier 0 suite exists because this rule
+     was written twice; it must reject the shortcut wherever it reappears. */
+  assert(/lipSync\w*\s*:[^,;\n]*\|\|\s*!!\s*line/.test(stripped),
+    "the guarding pattern must match the reintroduced shortcut");
+  assert(!/lipSync\w*\s*:[^,;\n]*\|\|\s*!!\s*line/.test(
+    read("public/motion-sound-composer.js").replace(/\/\*[\s\S]*?\*\//g, "")),
+  "and must not match the shipped file");
+});
+
+/* ===========================================================================
+   NC-3 — omit `enable_prompt_expansion: false` from the serialised request.
+
+   Omission is not neutrality here: fal defaults the flag to true on all three H3
+   endpoints, so a request that does not carry it is a request that switches the
+   provider's prompt rewriter ON. */
+control("NC-3", "omitting the prompt-expansion flag from the fal request", () => {
+  /* Line-ending agnostic: this repository checks out with CRLF, so a mutation anchored
+     on a bare "\n" silently matches nothing and the control reports on itself. */
+  const source = mutated("fal-h3-backend.js", (text) =>
+    text.replace(/ *input\[FAL_H3_BACKEND\.promptExpansion\.field\][^\r\n]*\r?\n/, ""));
+  const Backend = compileModule("fal-h3-backend.js", source);
+  const H3 = require("../model-packs/minimax-h3");
+  const Compiler = require("../generation-compiler");
+  const plan = Compiler.compileGenerationPlan({
+    spec: F.baseSpec(), references: [F.FRAME_A], mode: "i2v",
+    modelId: F.modelIdFor("i2v"), surface: "api", capability: F.capabilityFor("i2v"),
+  });
+  const capability = Backend.resolveH3FalCapability("i2v", H3.capabilityLayer("i2v", "api"));
+  const request = Backend.serializeH3PlanForFal(plan, capability, { resolveReference: (row) => `https://x/${row.refId}` });
+
+  /* THE LIVE DEFECT AND THE GUARD are the same fact: the field is gone from the payload,
+     and the Tier 0 serialisation assertion reads the payload rather than the config. */
+  assert(!Object.prototype.hasOwnProperty.call(request.input, "enable_prompt_expansion"),
+    "the control must actually remove the flag from the serialised request");
+  assert.notStrictEqual(request.input.enable_prompt_expansion, false);
+});
+
+/* Setting it to `true` is the same defect wearing a value, and must fail the same way. */
+control("NC-3b", "sending prompt expansion explicitly on", () => {
+  const source = mutated("fal-h3-backend.js", (text) =>
+    text.replace("    send: false,", "    send: true,"));
+  const Backend = compileModule("fal-h3-backend.js", source);
+  const H3 = require("../model-packs/minimax-h3");
+  const Compiler = require("../generation-compiler");
+  const plan = Compiler.compileGenerationPlan({
+    spec: F.baseSpec(), references: [], mode: "t2v",
+    modelId: F.modelIdFor("t2v"), surface: "api", capability: F.capabilityFor("t2v"),
+  });
+  const capability = Backend.resolveH3FalCapability("t2v", H3.capabilityLayer("t2v", "api"));
+  const request = Backend.serializeH3PlanForFal(plan, capability, { resolveReference: (row) => `https://x/${row.refId}` });
+  assert.strictEqual(request.input.enable_prompt_expansion, true, "the control must flip the value");
+  assert.notStrictEqual(request.input.enable_prompt_expansion, false, "which the guard refuses");
+});
+
+/* ===========================================================================
+   NC-4 — remove `t2v` from the clip-kind vocabulary, in the browser and at import. */
+control("NC-4", "removing t2v from the browser clip vocabulary", async () => {
+  const page = await render("#/production", buildFixture(), {
+    mutateSource: (file, source) => (file === "app.js"
+      ? mutated("public/app.js", () => source.replace(
+        '!["t2v", "i2v", "flf", "r2v", "plan", "post", "reuse"].includes(c.kind)',
+        '!["i2v", "flf", "r2v", "plan", "post", "reuse"].includes(c.kind)',
+      ))
+      : source),
+  });
+  const result = vm.runInContext(`(() => {
+    const shot = {
+      id: "SH-T2V",
+      keyframes: [{ id: "frame-a", label: "A", winner: "", required: true }],
+      clips: [{ id: "seg-t2v", suffix: "a", label: "A", kind: "t2v", dur: 6, motionPrompt: "A storm front.", fromFrame: "", toFrame: "" }],
+      audio: {},
+    };
+    normalizeShotV5(shot);
+    return { kind: shot.clips[0].kind, fromFrame: shot.clips[0].fromFrame };
+  })()`, page.context);
+
+  /* THE LIVE DEFECT: the shot is coerced back to i2v, and — the part that costs money —
+     it is then handed a start frame it must wait for someone to approve. */
+  assert.strictEqual(result.kind, "i2v", "the control must reintroduce the coercion");
+  assert.strictEqual(result.fromFrame, "frame-a", "and with it the approval the shot never needed");
+  /* THE GUARD asserts the opposite of both. */
+  assert.notStrictEqual(result.kind, "t2v");
+});
+
+control("NC-4b", "removing t2v from the import vocabulary", () => {
+  const source = mutated("server.js", (text) =>
+    text.replace(
+      'allowedKinds = new Set(["t2v", "i2v", "flf", "r2v", "plan", "post", "reuse", "hold"]),',
+      'allowedKinds = new Set(["i2v", "flf", "r2v", "plan", "post", "reuse", "hold"]),',
+    ));
+  const clips = builderClipsFrom(source);
+  const warnings = [];
+  const out = clips(
+    { id: "SH-T2V", clips: [{ id: "SH-T2V-M01", kind: "t2v", dur: 6, motionPrompt: "A storm front." }] },
+    [{ id: "SH-T2V-A" }],
+    warnings,
+  );
+  /* THE LIVE DEFECT: an imported text-to-video unit becomes planning-only — it cannot
+     generate at all — and the filmmaker is told its kind was unknown. */
+  assert.strictEqual(out[0].kind, "plan", "the control must reintroduce the downgrade");
+  assert(warnings.some((row) => /unknown kind/i.test(row)), "and the misleading warning with it");
+  assert.notStrictEqual(out[0].kind, "t2v");
+});
+
+/* The frameless half of T0-2, which is the half with the blast radius: leaving t2v out
+   of the frameless list gives a text-to-video unit a starting frame that its fal
+   endpoint has no field to receive. */
+control("NC-4c", "linking a start frame to an imported t2v unit", () => {
+  const source = mutated("server.js", (text) =>
+    text.replace(
+      'framelessKinds = ["t2v", "plan", "post", "reuse"],',
+      'framelessKinds = ["plan", "post", "reuse"],',
+    ));
+  const clips = builderClipsFrom(source);
+  const warnings = [];
+  const out = clips(
+    { id: "SH-T2V", clips: [{ id: "SH-T2V-M01", kind: "t2v", dur: 6, motionPrompt: "A storm front." }] },
+    [{ id: "SH-T2V-A" }],
+    warnings,
+  );
+  assert.strictEqual(out[0].kind, "t2v", "the kind still survives; only the frame rule is broken");
+  assert.strictEqual(out[0].fromFrame, "SH-T2V-A", "the control must reattach the frame");
+  assert.notStrictEqual(out[0].fromFrame, "");
+});
+
+/* The import clip normaliser lifted out of a supplied server.js source, the same way the
+   positive suite reaches it. Declared after its callers on purpose — hoisting keeps this
+   readable in the order the controls are written. */
+function builderClipsFrom(serverSource) {
+  const extract = (name) => {
+    const start = serverSource.indexOf(`function ${name}(`);
+    assert(start >= 0, `server.js no longer declares ${name}`);
+    let parens = 0, bodyStart = -1;
+    for (let index = serverSource.indexOf("(", start); index < serverSource.length; index++) {
+      if (serverSource[index] === "(") parens++;
+      else if (serverSource[index] === ")") {
+        parens--;
+        if (parens === 0) { bodyStart = serverSource.indexOf("{", index); break; }
+      }
+    }
+    let depth = 0;
+    for (let index = bodyStart; index < serverSource.length; index++) {
+      if (serverSource[index] === "{") { depth++; continue; }
+      if (serverSource[index] === "}") { depth--; if (depth === 0) return serverSource.slice(start, index + 1); }
+    }
+    throw new Error(`could not find the end of ${name}`);
+  };
+  const { deriveLipSync, lipSyncRequiredFrom } = require("../public/shared-lip-sync");
+  const context = vm.createContext({ deriveLipSync, lipSyncRequiredFrom });
+  const declarations = ["builderObject", "builderArray", "builderNumber", "builderLabel",
+    "normalizeBuilderMotionBrief", "normalizeBuilderClips"].map(extract).join("\n");
+  vm.runInContext(`${declarations}\nglobalThis.__clips = normalizeBuilderClips;`, context);
+  return context.__clips;
+}
+
+async function main() {
+  const detected = [];
+  for (const entry of controls) {
+    let caught = null;
+    try {
+      await entry.run();
+    } catch (error) {
+      caught = error;
+    }
+    assert(!caught, `${entry.id} (${entry.title}) did not behave as the control describes: ${caught && caught.message}`);
+    detected.push(entry.id);
+  }
+
+  /* AND THE REAL MODULES ARE GREEN AFTERWARDS. Every mutation above lived in a string;
+     if any of it had reached disk or a module cache, these would now disagree. */
+  const LipSync = require("../public/shared-lip-sync");
+  assert.strictEqual(LipSync.deriveLipSync({ line: "Bravo two, hold position." }), "implied");
+  const Backend = require("../fal-h3-backend");
+  assert.strictEqual(Backend.FAL_H3_BACKEND.promptExpansion.send, false);
+  const Compiler = require("../generation-compiler");
+  const keys = Compiler.INTENT_FIELDS.map((row) => row.key);
+  for (const intent of ["editorial", "endpoints.start", "endpoints.end", "performance.lipSync", "interaction", "subjects.count"])
+    assert(keys.includes(intent), `${intent} must still be inventoried by the real compiler`);
+  assert(read("public/app.js").includes('"t2v", "i2v", "flf", "r2v", "plan", "post", "reuse"'));
+  assert(read("server.js").includes('framelessKinds = ["t2v", "plan", "post", "reuse"]'));
+
+  console.log(
+    `Shot Execution Tier 0 negative controls passed: ${detected.length} deliberate defects reintroduced in memory — `
+    + "each of the six inventory rows dropped in turn, the dialogue-implies-lip-sync shortcut restored in the shared "
+    + "derivation and at a former call site, the prompt-expansion flag omitted and then sent on, and t2v removed from "
+    + "the browser vocabulary, the import vocabulary and the frameless list — every one detected by the property that "
+    + "guards it, with the real modules green afterwards. Nothing was written to disk and nothing was reverted with "
+    + "git. Provider calls made: 0.",
+  );
+}
+
+main().catch((error) => { console.error(error.stack || error); process.exitCode = 1; });

@@ -80,6 +80,8 @@
     "check:release": "npm run check && npm run check:browser-gate",
     "check:repair": "node tests/studio-repair.js",
     "check:h3": "node tests/minimax-h3.js",
+    "check:shot-execution-tier0": "node tests/shot-execution-tier0.js",
+    "check:shot-execution-tier0-negative": "node tests/shot-execution-tier0-negative-controls.js",
     "check:h3-browser": "node tests/run-python-check.js tests/minimax-h3-real-browser.py",
     "check:preview-ux": "node tests/private-preview-ux.js",
     "check:preview-layout": "node tests/run-python-check.js tests/private-preview-layout-real-browser.py",

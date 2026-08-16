@@ -500,6 +500,8 @@ async function main() {
     "run-python-check.js",
     "safety-integrity.js",
     "settings-consistency.js",
+    "shot-execution-tier0-negative-controls.js",
+    "shot-execution-tier0.js",
     "shot-media-identity-negative-controls.js",
     "shot-media-identity.js",
     "shot-workspace-responsive-layout.js",
