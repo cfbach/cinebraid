@@ -252,6 +252,10 @@ function compileImageExecutionPlan(request = {}) {
     plan,
     capability,
     validation,
+    /* The rows the plan was compiled FROM. The plan keeps ids out of a reference's
+       production block by contract, so the dispatcher reads a reference's entityId here
+       rather than parsing it back out of a label or a key. */
+    sourceReferences: references,
     mode,
     purpose,
     modelId: IMAGE_MODEL_ID,

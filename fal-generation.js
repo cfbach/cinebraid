@@ -11,6 +11,7 @@ const { serializeH3PlanForFal, H3BackendError, FAL_H3_BACKEND } = require("./fal
 const { compileImageExecutionPlan, imagePlanProvenance, ImageExecutionError, IMAGE_MODEL_ID } = require("./image-execution");
 const { serializeImagePlanForFal, FalImageBackendError, FAL_IMAGE_BACKEND } = require("./fal-image-backend");
 const { generationOptionsFor, generationConnections } = require("./generation-options");
+const { generationBindingRecord } = require("./generation-binding");
 const { submissionAccounting } = require("./generation-cost");
 const Lifecycle = require("./generation-lifecycle");
 const FramePresence = require("./public/shared-frame-presence");
@@ -438,6 +439,58 @@ function registerFalGeneration(app, context) {
     const resolved = planReferenceAddress(owner, row);
     if (resolved.inline) return resolved.inline;
     return `data:${mimeFor(resolved.file)};base64,${fs.readFileSync(resolved.file).toString("base64")}`;
+  }
+
+  /* WHAT THIS PAID REQUEST ACTUALLY CONSUMED, frozen onto the row.
+   *
+   * Called from the two compiled branches of the submission route, after the preflight
+   * serialization has proved which references survive capability resolution and before
+   * `commit()` makes the row durable — so the evidence exists before the POST, on the
+   * same terms as the endpoint, the backend and the provider bindings beside it. A
+   * process that dies between sending and answering leaves a row that still names the
+   * exact files, bytes, states and frames the provider was handed.
+   *
+   * The consumed set comes from `serialized.bindings`, which is the serializer's own
+   * account of what it put in the request. A reference the route refused, or the
+   * capability layer dropped, never appears in it and therefore never appears here.
+   *
+   * The project is read ONCE, at this instant, and what it says is frozen. Every later
+   * Canon edit, state re-declaration, approval and rename leaves this record alone —
+   * that immutability is the whole value, and it is the same durability the compiled
+   * plan, the submitted prompt and the cost estimate already have.
+   *
+   * NEVER FATAL. Provenance capture must not be the reason a filmmaker's generation is
+   * refused, so a failure records nothing rather than throwing into the dispatch path.
+   * `generationBinding` then stays absent, which the reader already defines as "not
+   * recorded" — the same thing a job written before this shipped says, and never "no
+   * references were used". */
+  function bindingRecordFor(owner, job, compiled, serialized) {
+    try {
+      const project = ownerProject(owner);
+      return generationBindingRecord({
+        at: now(),
+        plan: compiled.plan,
+        serialized,
+        sourceReferences: compiled.sourceReferences,
+        project,
+        shot: (Array.isArray(project?.shots) ? project.shots : []).find((row) => String(row?.id) === String(job.shotId)) || null,
+        frameId: job.frameId,
+        /* The dispatcher's own containment rule, so the bytes that are hashed are the
+           bytes that are sent and a reference outside media storage is unreadable here
+           for exactly the reason it is unsendable there. The DIGEST is not passed:
+           generation-binding.js applies CineBraid's one media hash itself, so this
+           module keeps no opinion about what identifies a file. */
+        resolveFile: (address) => localAssetFile(owner, address),
+      });
+    } catch (error) {
+      return null;
+    }
+  }
+  function applyBindingRecord(job, record) {
+    if (!record) return;
+    job.generationBindingVersion = record.generationBindingVersion;
+    job.generationBindingRecordedAt = record.generationBindingRecordedAt;
+    job.generationBinding = record.generationBinding;
   }
 
   /* Everything the compilation decided, written onto the job record. After this the job
@@ -1497,6 +1550,10 @@ function registerFalGeneration(app, context) {
         job.backendId = preflight.backendId;
         job.providerBindings = preflight.bindings;
         job.submittedPromptCharacters = preflight.submittedPromptCharacters;
+        /* WHAT IT WILL CONSUME, recorded beside WHERE it will go and for the same
+           reason. submitH3 re-serializes the identical plan against the identical
+           capability, so the set bound here is the set the provider receives. */
+        applyBindingRecord(job, bindingRecordFor(owner, job, compiled, preflight));
       } catch (error) {
         return h3Refusal(res, error);
       }
@@ -1549,6 +1606,11 @@ function registerFalGeneration(app, context) {
         job.backendId = preflight.backendId;
         job.providerBindings = preflight.bindings;
         job.submittedPromptCharacters = preflight.submittedPromptCharacters;
+        /* The same evidence the motion path records, on the same terms. A still image
+           route that could not answer "which approved reference did this frame come
+           from" would leave the identity question open on exactly the generations that
+           produce the references everything else is built on. */
+        applyBindingRecord(job, bindingRecordFor(owner, job, compiled, preflight));
       } catch (error) {
         return imageRefusal(res, error);
       }
