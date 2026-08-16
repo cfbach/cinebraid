@@ -400,6 +400,8 @@ async function main() {
     "focused-workspaces-real-browser.py",
     "focused-workspaces.js",
     "frame-presence-authority.js",
+    "generation-binding-negative-controls.js",
+    "generation-binding.js",
     "generation-capability.js",
     "generation-compiler-fixture.js",
     "generation-compiler-negative-controls.js",

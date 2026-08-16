@@ -11,6 +11,7 @@ const { serializeH3PlanForFal, H3BackendError, FAL_H3_BACKEND } = require("./fal
 const { compileImageExecutionPlan, imagePlanProvenance, ImageExecutionError, IMAGE_MODEL_ID } = require("./image-execution");
 const { serializeImagePlanForFal, FalImageBackendError, FAL_IMAGE_BACKEND } = require("./fal-image-backend");
 const { generationOptionsFor, generationConnections } = require("./generation-options");
+const { generationBindingRecord, GenerationBindingError } = require("./generation-binding");
 const { submissionAccounting } = require("./generation-cost");
 const Lifecycle = require("./generation-lifecycle");
 const FramePresence = require("./public/shared-frame-presence");
@@ -440,6 +441,73 @@ function registerFalGeneration(app, context) {
     return `data:${mimeFor(resolved.file)};base64,${fs.readFileSync(resolved.file).toString("base64")}`;
   }
 
+  /* WHAT THIS PAID REQUEST ACTUALLY CONSUMED, frozen onto the row.
+   *
+   * Called from the two compiled branches of the submission route, after the preflight
+   * serialization has proved which references survive capability resolution and before
+   * `commit()` makes the row durable — so the evidence exists before the POST, on the
+   * same terms as the endpoint, the backend and the provider bindings beside it. A
+   * process that dies between sending and answering leaves a row that still names the
+   * exact files, bytes, states and frames the provider was handed.
+   *
+   * The consumed set comes from `serialized.bindings`, which is the serializer's own
+   * account of what it put in the request. A reference the route refused, or the
+   * capability layer dropped, never appears in it and therefore never appears here.
+   *
+   * The project is read ONCE, at this instant, and what it says is frozen. Every later
+   * Canon edit, state re-declaration, approval and rename leaves this record alone —
+   * that immutability is the whole value, and it is the same durability the compiled
+   * plan, the submitted prompt and the cost estimate already have.
+   *
+   * IT FAILS CLOSED. A capture that cannot be completed REFUSES the dispatch rather than
+   * recording nothing and carrying on. The reason is that the fail-open answer is not
+   * "slightly less evidence": a new job with no binding is byte-for-byte the
+   * representation reserved for genuine pre-instrumentation history — `recorded: false`,
+   * `bindings: null` — so quietly skipping the capture forges that history rather than
+   * merely omitting a field. Every throw here happens before the ledger commit and
+   * before the POST, so refusing costs nothing and charges nothing. */
+  function bindingRecordFor(owner, job, source, serialized) {
+    let record;
+    try {
+      const project = ownerProject(owner);
+      record = generationBindingRecord({
+        at: now(),
+        plan: source.plan,
+        serialized,
+        sourceReferences: source.sourceReferences,
+        project,
+        shot: (Array.isArray(project?.shots) ? project.shots : []).find((row) => String(row?.id) === String(job.shotId)) || null,
+        frameId: job.frameId,
+        /* The dispatcher's own containment rule, so the bytes that are hashed are the
+           bytes that are sent and a reference outside media storage is unreadable here
+           for exactly the reason it is unsendable there. The DIGEST is not passed:
+           generation-binding.js applies CineBraid's one media hash itself, so this
+           module keeps no opinion about what identifies a file. */
+        resolveFile: (address) => localAssetFile(owner, address),
+      });
+    } catch (error) {
+      throw new GenerationBindingError(
+        "CineBraid could not record what this generation would consume, so it did not submit it. "
+        + `Nothing was sent and nothing was charged. (${error.message})`,
+        { jobId: job.id, purpose: job.purpose },
+      );
+    }
+    /* A record the constructor returned but that describes nothing, for a request that
+       demonstrably carries inputs, is the same forgery by another route. */
+    if (!record || !Array.isArray(record.generationBinding))
+      throw new GenerationBindingError(
+        "CineBraid could not record what this generation would consume, so it did not submit it. "
+        + "Nothing was sent and nothing was charged.",
+        { jobId: job.id, purpose: job.purpose },
+      );
+    return record;
+  }
+  function applyBindingRecord(job, record) {
+    job.generationBindingVersion = record.generationBindingVersion;
+    job.generationBindingRecordedAt = record.generationBindingRecordedAt;
+    job.generationBinding = record.generationBinding;
+  }
+
   /* Everything the compilation decided, written onto the job record. After this the job
      IS the compiled request: its prompt, references, duration, resolution and format are
      the plan's, not the caller's. */
@@ -701,18 +769,43 @@ function registerFalGeneration(app, context) {
     return out;
   }
 
-  async function submit(owner, job, refs) {
-    const cfg = config();
-    if (job.profileFamily === "minimax-h3" || job.purpose === "motion-h3") return submitH3(owner, job, cfg);
-    /* A job that was compiled goes through its plan, whatever it produces. The test is
-       the presence of a plan rather than a purpose string, so nothing has to be kept
-       in step with a list of which purposes compile — and a job minted before this
-       phase simply has no plan and takes the path it always took. */
-    if (job.compilation?.plan && String(job.compilation.plan.outputType) === "image") return submitImage(owner, job, cfg);
+  /* WHICH JOBS TAKE THE UNCOMPILED PATH.
+   *
+   * Asked in exactly one place, because the submission route and `submit()` both have to
+   * answer it and a disagreement between them is a job that prepares one request and
+   * sends another. The test is the same one `submit()` has always applied: not H3, and
+   * no compiled image plan. */
+  function legacyDispatch(job) {
+    if (job.profileFamily === "minimax-h3" || job.purpose === "motion-h3") return false;
+    return !(job.compilation?.plan && String(job.compilation.plan.outputType) === "image");
+  }
+
+  /* THE UNCOMPILED REQUEST, BUILT ONCE.
+   *
+   * `entity-reference`, `correction`, and `frame`/`blocking` submitted without
+   * `imagePlan` never reach the compiler, so they have no GenerationPlan and no
+   * capability layer to serialize against. What they DO have is a final payload, and
+   * that payload is the whole of what the provider consumes — so it is built here,
+   * before the ledger commit, and handed to `submit()` rather than rebuilt there.
+   *
+   * WHY BUILD IT EARLY. The consumed set has to be the set that is actually sent. If
+   * this ran inside `submit()` — after the row was already durable — the binding would
+   * either be derived from a second computation that could disagree, or attached after
+   * the POST, which is the one ordering that cannot be made safe. One construction, one
+   * payload, one set of bindings, all before anything leaves the machine.
+   *
+   * `bindings` and `planView` are deliberately the SAME shapes the compiled serializers
+   * produce, so generation-binding.js stays the single construction authority and this
+   * path gets no provenance system of its own. What it cannot supply — an entityId, a
+   * continuity state — it simply does not supply, and the record says so. Inventing them
+   * from `job.entityId` would be worse than an absence: that field names the entity being
+   * GENERATED, not the entity a consumed reference depicts. */
+  function serializeLegacyRequest(owner, job, cfg) {
     const edit = job.mode === "edit";
     const model = edit ? cfg.editModel : cfg.textModel;
     const compatibility = modelCompatibilityError(job, model);
     if (compatibility) throw new Error(compatibility);
+
     const input = {
       prompt: job.prompt,
       image_size: aspectSize(job.aspectRatio, edit, job.resolution),
@@ -720,25 +813,78 @@ function registerFalGeneration(app, context) {
       num_images: job.outputCount,
       output_format: "png",
     };
+    const bindings = [];
+    const references = [];
+    let sent = [];
     if (edit) {
-      if (!refs.length) throw new Error("The configured edit endpoint needs at least one input image.");
-      input.image_urls = refs.slice(0, 16).map((ref) => referenceInput(owner, ref));
+      const supplied = Array.isArray(job.references) ? job.references : [];
+      if (!supplied.length) throw new Error("The configured edit endpoint needs at least one input image.");
+      /* THE FINAL LIMIT, APPLIED ONCE, HERE. Reference seventeen is not sent, so it is
+         not consumed, so it does not appear in the binding — and because the payload
+         below is the payload that ships, the two cannot come apart. */
+      sent = supplied.slice(0, 16);
+      input.image_urls = sent.map((ref, index) => {
+        const refId = String(ref?.key || ref?.token || `image-${index + 1}`);
+        const mediaType = ["image", "video", "audio"].includes(String(ref?.mediaType || "").toLowerCase())
+          ? String(ref.mediaType).toLowerCase()
+          : "image";
+        const role = String(ref?.role || "reference");
+        const url = String(ref?.url || "");
+        bindings.push({ refId, role, mediaType, field: "image_urls", index, order: index });
+        references.push({
+          refId,
+          role,
+          mediaType,
+          source: url.startsWith("data:") ? { kind: "data-uri", dataUri: url } : { kind: "project-asset", path: url },
+          production: { label: String(ref?.label || refId), purpose: String(ref?.instruction || "") },
+          order: index,
+        });
+        return referenceInput(owner, ref);
+      });
     }
-    /* The same boundary the H3 path uses. The uncertainty state is a property of paid
-       submission, not of one model family, so the image path earns it for free. */
-    const { data } = await providerPost(`${cfg.baseUrl}/${model}`, {
+    return {
+      model,
+      modelFamily: inferModelFamily(model),
+      input,
+      bindings,
+      /* The plan-shaped view the binding constructor reads a source address out of. It
+         is a projection of these references and never a compiled plan; nothing else may
+         treat it as one. */
+      planView: { inputs: { prompt: input.prompt, references } },
+      /* No entityId is claimed for any of them. */
+      sourceReferences: references.map((row) => ({ refId: row.refId, entityId: "" })),
+      redacted: { ...input, image_urls: edit ? sent.map((ref) => ref.url || "local-image") : undefined },
+    };
+  }
+
+  async function submit(owner, job, refs, prepared) {
+    const cfg = config();
+    if (job.profileFamily === "minimax-h3" || job.purpose === "motion-h3") return submitH3(owner, job, cfg);
+    /* A job that was compiled goes through its plan, whatever it produces. The test is
+       the presence of a plan rather than a purpose string, so nothing has to be kept
+       in step with a list of which purposes compile — and a job minted before this
+       phase simply has no plan and takes the path it always took. */
+    if (!legacyDispatch(job)) return submitImage(owner, job, cfg);
+    /* THE PAYLOAD IS NOT REBUILT HERE. It was built before the row became durable, and
+       the binding on that row describes it. Recomputing would reintroduce exactly the
+       gap between what was recorded and what was sent that building it early closes, so
+       a missing payload is a refusal rather than a rebuild. */
+    if (!prepared || !prepared.input)
+      throw new Error("This request was not prepared before submission, so CineBraid will not send it.");
+    const { data } = await providerPost(`${cfg.baseUrl}/${prepared.model}`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
         Authorization: `Key ${cfg.apiKey}`,
         "X-Fal-No-Retry": "1",
       },
-      body: JSON.stringify(input),
-    }, model);
+      body: JSON.stringify(prepared.input),
+    }, prepared.model);
     return {
-      model,
-      modelFamily: inferModelFamily(model),
-      providerRequest: { ...input, image_urls: edit ? refs.slice(0, 16).map((ref) => ref.url || "local-image") : undefined },
+      model: prepared.model,
+      modelFamily: prepared.modelFamily,
+      providerRequest: prepared.redacted,
+      providerBindings: prepared.bindings,
       externalId: data.request_id || "",
       statusUrl: data.status_url || "",
       responseUrl: data.response_url || "",
@@ -1497,6 +1643,10 @@ function registerFalGeneration(app, context) {
         job.backendId = preflight.backendId;
         job.providerBindings = preflight.bindings;
         job.submittedPromptCharacters = preflight.submittedPromptCharacters;
+        /* WHAT IT WILL CONSUME, recorded beside WHERE it will go and for the same
+           reason. submitH3 re-serializes the identical plan against the identical
+           capability, so the set bound here is the set the provider receives. */
+        applyBindingRecord(job, bindingRecordFor(owner, job, compiled, preflight));
       } catch (error) {
         return h3Refusal(res, error);
       }
@@ -1549,6 +1699,11 @@ function registerFalGeneration(app, context) {
         job.backendId = preflight.backendId;
         job.providerBindings = preflight.bindings;
         job.submittedPromptCharacters = preflight.submittedPromptCharacters;
+        /* The same evidence the motion path records, on the same terms. A still image
+           route that could not answer "which approved reference did this frame come
+           from" would leave the identity question open on exactly the generations that
+           produce the references everything else is built on. */
+        applyBindingRecord(job, bindingRecordFor(owner, job, compiled, preflight));
       } catch (error) {
         return imageRefusal(res, error);
       }
@@ -1631,6 +1786,46 @@ function registerFalGeneration(app, context) {
         providerContacted: false,
         paidRequestSubmitted: false,
       });
+    /* THE UNCOMPILED ROUTES, PREPARED AND RECORDED HERE.
+     *
+     * `entity-reference`, `correction` and `frame`/`blocking` without `imagePlan` reach
+     * the provider through `submit()`'s own payload builder rather than through a
+     * compiled plan. They were left uninstrumented in the first pass, and the effect was
+     * not "less provenance": a newly dispatched job with no binding is byte-for-byte the
+     * representation reserved for jobs that predate this record — `recorded: false`,
+     * `bindings: null` — so every new legacy dispatch was writing a false claim about
+     * its own age.
+     *
+     * The payload is built, the binding is frozen from that same payload, and only then
+     * does the row commit. `submit()` is handed the prepared payload rather than
+     * building a second one, so what was recorded and what is sent are the same object.
+     *
+     * A FAILURE HERE REFUSES. Nothing has been committed and nothing has been sent, so
+     * the cost of refusing is zero — and the alternative is dispatching paid work whose
+     * record would claim it was made before any of this existed. */
+    let preparedLegacy = null;
+    if (legacyDispatch(job)) {
+      try {
+        preparedLegacy = serializeLegacyRequest(owner, job, cfg);
+        applyBindingRecord(job, bindingRecordFor(
+          owner,
+          job,
+          { plan: preparedLegacy.planView, sourceReferences: preparedLegacy.sourceReferences },
+          preparedLegacy,
+        ));
+        job.model = preparedLegacy.model;
+        job.modelFamily = preparedLegacy.modelFamily;
+        job.providerBindings = preparedLegacy.bindings;
+      } catch (error) {
+        const typed = error instanceof GenerationBindingError;
+        return res.status(typed ? error.status : 400).json({
+          error: error.message,
+          ...(typed ? { code: error.code, detail: error.detail } : {}),
+          providerContacted: false,
+          paidRequestSubmitted: false,
+        });
+      }
+    }
     /* WHAT THIS WAS ESTIMATED TO COST, decided HERE and never again.
      *
      * Last thing before the row becomes durable, so it is computed against the
@@ -1657,7 +1852,7 @@ function registerFalGeneration(app, context) {
       return res.status(ledgerFailureStatus(error)).json(ledgerFailurePayload(error));
     }
     try {
-      const outcome = await submit(owner, job, job.references);
+      const outcome = await submit(owner, job, job.references, preparedLegacy);
       try {
         await commit(owner, (current) => {
           const row = current.find((item) => item.id === job.id);

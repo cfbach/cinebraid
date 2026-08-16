@@ -245,12 +245,18 @@ function compileH3ExecutionPlan(request = {}) {
   if (aspectGate.carriesAspectRatio) spec.aspectRatio = aspectGate.value;
   else delete spec.aspectRatio;
 
+  /* Resolved ONCE. The plan is compiled from these rows, the coverage re-check reads
+     the same rows, and the dispatcher's generation binding needs them because the plan
+     does not project a reference's entityId. Three readers of one resolution rather
+     than three resolutions that could differ. */
+  const sourceReferences = buildReferences(build);
+
   const { plan, validation } = compileValidatedGenerationPlan({
     mode,
     modelId: H3_MODEL_IDS[mode],
     surface,
     spec,
-    references: buildReferences(build),
+    references: sourceReferences,
     capability,
     resolution: text(request.resolution),
     target: { kind: "shot-motion", shotId: text(shot.id), purpose: "motion-h3" },
@@ -279,13 +285,18 @@ function compileH3ExecutionPlan(request = {}) {
      longer in. Nothing is refused on this basis — the words are the filmmaker's — but
      the difference is recorded rather than absorbed. */
   const editedCoverage = promptEdited
-    ? checkPromptCoverage({ spec, references: buildReferences(build), coverage: plan.coverage }, submittedPrompt)
+    ? checkPromptCoverage({ spec, references: sourceReferences, coverage: plan.coverage }, submittedPrompt)
     : null;
 
   return {
     plan,
     capability,
     validation,
+    /* The rows the plan was compiled FROM, surfaced for the one caller that needs a
+       fact the plan deliberately does not carry: which entity a reference belongs to.
+       generation-contracts.js keeps ids out of a reference's production block, so the
+       dispatcher reads it here instead of parsing it back out of a label or a key. */
+    sourceReferences,
     mode,
     modelId: H3_MODEL_IDS[mode],
     surface,

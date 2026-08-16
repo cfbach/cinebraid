@@ -81,6 +81,8 @@ const nodeSuites = [
   "check:generation-negative",
   "check:h3-execution",
   "check:h3-execution-negative",
+  "check:generation-binding",
+  "check:generation-binding-negative",
   "check:generation-unresolved",
   "check:generation-unresolved-negative",
   "check:model-intelligence",
