@@ -15,6 +15,7 @@
  * and then reports that the guard "caught" it is reporting on itself.
  */
 const assert = require("assert");
+const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
@@ -43,6 +44,27 @@ function mutated(relative, transform) {
   assert.notStrictEqual(source, original,
     `the control for ${relative} changed nothing; it would report a pass without testing anything`);
   return source;
+}
+
+/* Every production file any control below rewrites in memory. Hashed before and after
+   the run, because "nothing is written to disk" is a claim this suite makes in its own
+   summary line and had no evidence for. A control that reached for the filesystem — or a
+   future one written with fs.writeFileSync instead of a string — is caught here rather
+   than by whatever breaks next. */
+const MUTATED_FILES = [
+  "generation-compiler.js",
+  "fal-h3-backend.js",
+  "model-packs/minimax-h3.js",
+  "server.js",
+  "public/shared-lip-sync.js",
+  "public/motion-sound-composer.js",
+  "public/app.js",
+  "public/creation-studio.js",
+  "public/v607-composer.js",
+];
+function sourceFingerprints() {
+  return Object.fromEntries(MUTATED_FILES.map((relative) =>
+    [relative, crypto.createHash("sha256").update(fs.readFileSync(path.join(ROOT, relative))).digest("hex")]));
 }
 
 const controls = [];
@@ -95,25 +117,60 @@ for (const intent of ["editorial", "endpoints.start", "endpoints.end", "performa
 /* ===========================================================================
    NC-2 — restore the dialogue-implies-lip-sync shortcut in the shared derivation.
 
-   `lipSyncRequired === true || !!line`, which is what both former sites computed. */
+   `lipSyncRequired === true || !!line`, which is what both former sites computed.
+
+   THE ANCHOR IS A REGEX, AND THAT IS THE REPAIR. It was a literal two-line string joined
+   by a bare "\n". `public/shared-lip-sync.js` is `i/lf w/crlf` — LF in the index, CRLF in
+   the working tree — so the moment git re-checked the file out after the Tier-0 merge the
+   anchor stopped matching, `String.replace` returned the source untouched, and the control
+   would have reported a pass having mutated nothing. It did not: `mutated()` refused, which
+   is the guard doing its job. Matching `\r?\n` makes the control indifferent to how the
+   file happens to be checked out. */
 control("NC-2", "restoring the dialogue-implies-lip-sync shortcut", () => {
+  const original = read("public/shared-lip-sync.js");
   const source = mutated("public/shared-lip-sync.js", (text) =>
     text.replace(
-      "  if (dialogue.lipSyncRequired === true) return \"critical\";\n  return \"implied\";",
-      "  if (dialogue.lipSyncRequired === true || Boolean(line)) return \"critical\";\n  return \"implied\";",
+      /if \(dialogue\.lipSyncRequired === true\) return "critical";(\r?\n\s*)return "implied";/,
+      'if (dialogue.lipSyncRequired === true || Boolean(line)) return "critical";$1return "implied";',
     ));
+
+  /* RECEIPT 1 — the mutation changed real production source, and changed it into the
+     forbidden shortcut rather than into something merely different. */
+  assert(/lipSyncRequired === true \|\| Boolean\(line\)/.test(source),
+    "the mutated source must carry the dialogue-implies-lip-sync shortcut");
+  assert(!/lipSyncRequired === true \|\| Boolean\(line\)/.test(original),
+    "and the shipped source must not");
+  assert.strictEqual(source.length - original.length, " || Boolean(line)".length,
+    "exactly the shortcut was inserted and nothing else moved");
+
   const LipSync = compileModule("public/shared-lip-sync.js", source);
 
-  /* THE LIVE DEFECT: an off-screen line is lip-sync-critical again. */
+  /* RECEIPT 2 — THE LIVE DEFECT: an off-screen line is lip-sync-critical again. */
   assert.strictEqual(LipSync.deriveLipSync({ line: "Bravo two, hold position." }), "critical",
     "the control must actually reintroduce the shortcut");
-
-  /* THE GUARD: the tri-state regression asserts `implied` for exactly that input, and
-     for the back-to-camera case, and both now disagree. */
   assert.notStrictEqual(LipSync.deriveLipSync({ line: "Bravo two, hold position." }), "implied");
   assert.notStrictEqual(LipSync.deriveLipSync({ line: "Don't follow me.", lipSyncRequired: false }), "implied");
   /* And the boolean accessor follows it, so every downstream reader is wrong too. */
   assert.strictEqual(LipSync.lipSyncRequiredFrom({ line: "Bravo two, hold position." }), true);
+
+  /* RECEIPT 3 — THE GUARD ITSELF, run rather than described. These are the assertions
+     tests/shot-execution-tier0.js makes about the tri-state; each must throw against the
+     mutated module. A control that only checks a return value is asserting that IT
+     disagrees with the defect, not that the suite guarding production does. */
+  for (const [dialogue, expected] of [
+    [{ line: "Bravo two, hold position." }, "implied"],
+    [{ line: "Don't follow me.", lipSyncRequired: false }, "implied"],
+  ]) {
+    assert.throws(
+      () => assert.strictEqual(LipSync.deriveLipSync(dialogue), expected),
+      { name: "AssertionError" },
+      `the Tier-0 tri-state assertion for ${JSON.stringify(dialogue)} must fail under this defect`,
+    );
+  }
+  /* And the cases the defect does NOT break still hold, so the control is specific:
+     a shot with no line is still `none`, and an explicit level still outranks. */
+  assert.strictEqual(LipSync.deriveLipSync({ line: "" }), "none");
+  assert.strictEqual(LipSync.deriveLipSync({ line: "x", lipSync: "none" }), "none");
 });
 
 /* The same defect at the level the suite actually polices: the shortcut written back
@@ -530,6 +587,17 @@ function builderClipsFrom(serverSource) {
 }
 
 async function main() {
+  /* THE NO-VACUOUS-CONTROL GUARD, SELF-TESTED. It is the assertion that caught NC-2's
+     anchor going stale after a CRLF checkout, so it is the one piece of this harness that
+     must not be allowed to rot silently: a `mutated()` that stopped refusing a no-op would
+     turn every control below into a pass that tested nothing. */
+  assert.throws(
+    () => mutated("public/shared-lip-sync.js", (text) => text),
+    /changed nothing/,
+    "a mutation that changes nothing must fail loudly rather than count as a pass",
+  );
+
+  const before = sourceFingerprints();
   const detected = [];
   for (const entry of controls) {
     let caught = null;
@@ -542,8 +610,13 @@ async function main() {
     detected.push(entry.id);
   }
 
-  /* AND THE REAL MODULES ARE GREEN AFTERWARDS. Every mutation above lived in a string;
-     if any of it had reached disk or a module cache, these would now disagree. */
+  /* AND NOT ONE BYTE OF PRODUCTION SOURCE MOVED. Every mutation above lived in a string
+     and was compiled in memory; this proves it rather than asserting it in prose. */
+  assert.deepStrictEqual(sourceFingerprints(), before,
+    "a control wrote to disk; nothing in this suite may modify production source");
+
+  /* AND THE REAL MODULES ARE GREEN AFTERWARDS. If any mutation had reached a module
+     cache, these would now disagree. */
   const LipSync = require("../public/shared-lip-sync");
   assert.strictEqual(LipSync.deriveLipSync({ line: "Bravo two, hold position." }), "implied");
   const Backend = require("../fal-h3-backend");
