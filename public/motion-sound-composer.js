@@ -76,7 +76,15 @@
         startTime: String(dialogue.startTime || ""),
         endTime: String(dialogue.endTime || ""),
         locked: dialogue.locked !== false,
-        lipSyncRequired: dialogue.lipSyncRequired === true || !!line,
+        /* THREE VALUES, DERIVED IN ONE PLACE. This read `lipSyncRequired === true ||
+           !!line`, which made a line existing enough to require lip sync — so every
+           voice-over, off-screen line, phone call, radio transmission and back-to-camera
+           delivery was classified as needing the mouth to match the words, and the value
+           was written into the project. The boolean stays for the controls and the
+           preflight that already read it, derived from the level rather than beside it,
+           so the two cannot disagree. */
+        lipSync: deriveLipSync({ ...dialogue, line }),
+        lipSyncRequired: lipSyncRequiredFrom({ ...dialogue, line }),
         voiceDesign: String(dialogue.voiceDesign || authority.voiceDesign || ""),
       },
       sound: {

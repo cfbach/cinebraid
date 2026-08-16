@@ -27,6 +27,7 @@ const { annotateProfileLibraryExecution } = require("./generation-options");
 const { httpStatusForError } = require("./http-errors");
 const { resolveShotEntities, shotEntityTokenMatches, unresolvedShotDependencies, entityVisualDescription, resolveShotDuration, lossyShotCodeTokens } = require("./public/shared-entities");
 const { referenceAspectLabel, aspectRatioMentions } = require("./public/shared-aspect");
+const { deriveLipSync, lipSyncRequiredFrom } = require("./public/shared-lip-sync");
 const Coverage = require("./public/shared-coverage");
 const Continuity = require("./public/shared-continuity");
 const EntityOwnership = require("./public/shared-entity-ownership");
@@ -2376,7 +2377,13 @@ function normalizeBuilderMotionBrief(source, shotAudio = {}, duration = 0) {
       startTime: String(dialogue.startTime || ""),
       endTime: String(dialogue.endTime || ""),
       locked: dialogue.locked !== false,
-      lipSyncRequired: dialogue.lipSyncRequired === true || !!line,
+      /* The second, independently written copy of the same bad rule, on the path that
+         WRITES DURABLE PROJECT DATA. An imported shot with any line came back with
+         lipSyncRequired true, which is why a stored `true` cannot be trusted as a
+         filmmaker's decision and why nothing stored is converted: the level is derived
+         on read, and the boolean now follows it instead of leading it. */
+      lipSync: deriveLipSync({ ...dialogue, line }),
+      lipSyncRequired: lipSyncRequiredFrom({ ...dialogue, line }),
       voiceDesign: String(dialogue.voiceDesign || ""),
     },
     sound: {

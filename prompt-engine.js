@@ -2,6 +2,7 @@ const fs = require("fs");
 const path = require("path");
 const { resolveShotEntities, entityVisualDescription, resolveShotDuration } = require("./public/shared-entities");
 const { buildCameraPhrases } = require("./public/shared-camera");
+const { deriveLipSync, lipSyncRequiredFrom } = require("./public/shared-lip-sync");
 /* One parser for the whole product. It lives in the shared module so the browser can use
    the same rule the prompt compiler does; this re-export keeps the Node API unchanged. */
 const { parseAspectRatio } = require("./public/shared-aspect");
@@ -972,7 +973,12 @@ function applyMotionAudioBrief(spec, rawBrief) {
     startTime: cleanText(dialogue.startTime),
     endTime: cleanText(dialogue.endTime),
     locked: dialogue.locked !== false,
-    lipSyncRequired: dialogue.lipSyncRequired === true,
+    /* Carried as the level, not only as the boolean. The compiler inventories
+       `performance.lipSync`, and a spec that dropped the tri-state on the way would
+       hand it a value re-derived from a flag — which is how `implied` becomes
+       indistinguishable from `none` again. */
+    lipSync: deriveLipSync({ ...dialogue, line }),
+    lipSyncRequired: lipSyncRequiredFrom({ ...dialogue, line }),
     mode: nativeAudio && line ? "generate-voice" : "none",
     sfx: motionBriefSfxText(sound.sfxEvents) || cleanText(out.audio?.sfx),
     ambience: cleanText(sound.ambience || out.audio?.ambience),
@@ -1029,7 +1035,8 @@ function validateSpec(raw, fallback) {
     startTime: fallback.audio?.startTime || "",
     endTime: fallback.audio?.endTime || "",
     locked: fallback.audio?.locked !== false,
-    lipSyncRequired: !!fallback.audio?.lipSyncRequired,
+    lipSync: deriveLipSync(fallback.audio),
+    lipSyncRequired: lipSyncRequiredFrom(fallback.audio),
     music: fallback.audio?.music || "",
     silence: fallback.audio?.silence || "",
     priorities: fallback.audio?.priorities || "",
