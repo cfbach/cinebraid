@@ -3000,7 +3000,7 @@ function guidedAudioPanel(s, c, profile, audioRefs) {
 
 function guidedMotionPanel(s, current, takes, open = false) {
   const c = ensureShotCreation(s), approved = guidedApprovedMotion(s, takes), progress = guidedFrameProgress(s, takes), frames = progress.frames;
-  const unit = (s.clips || [])[0], supportedKinds = ["i2v", "flf", "r2v", "audio-video"], complex = (s.clips || []).length > 1 || (unit && !supportedKinds.includes(unit.kind));
+  const unit = (s.clips || [])[0], supportedKinds = ["t2v", "i2v", "flf", "r2v", "audio-video"], complex = (s.clips || []).length > 1 || (unit && !supportedKinds.includes(unit.kind));
   const direction = c.motionDirection || unit?.motionPrompt || s.motionPrompt || "";
   const profileId = preferredGuidedVideoProfile(c.motionProfileId || ""), profile = guidedVideoProfiles().find((item) => item.id === profileId);
   const duration = guidedClampedMotionDuration(c.motionDuration || unit?.dur || 5, profile);

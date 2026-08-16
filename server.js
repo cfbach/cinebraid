@@ -2397,7 +2397,15 @@ function normalizeBuilderMotionBrief(source, shotAudio = {}, duration = 0) {
 
 function normalizeBuilderClips(shot, frames, warnings) {
   const shotId = String(shot.id || "SHOT"),
-    allowedKinds = new Set(["i2v", "flf", "r2v", "plan", "post", "reuse", "hold"]),
+    /* The import path's own copy of the clip vocabulary, and the one that decides what
+       a Project Builder document is allowed to say. Without `t2v` an imported
+       text-to-video unit was downgraded to `plan` — a planning-only unit that cannot
+       generate at all — and told the filmmaker its kind was unknown. */
+    allowedKinds = new Set(["t2v", "i2v", "flf", "r2v", "plan", "post", "reuse", "hold"]),
+    /* The kinds that begin from no frame. `plan`, `post` and `reuse` produce nothing
+       from a still; `t2v` produces video from the prompt alone. Linking a start frame
+       to any of them states a dependency the workflow does not have. */
+    framelessKinds = ["t2v", "plan", "post", "reuse"],
     firstFrame = frames[0]?.id || "",
     lastFrame = frames.at(-1)?.id || "";
   return builderArray(shot.clips).map((clip, index) => {
@@ -2417,7 +2425,7 @@ function normalizeBuilderClips(shot, frames, warnings) {
       );
       kind = "plan";
     }
-    if (!fromFrame && !["plan", "post", "reuse"].includes(kind) && firstFrame) {
+    if (!fromFrame && !framelessKinds.includes(kind) && firstFrame) {
       fromFrame = firstFrame;
       warnings.push(
         `Shot ${shotId} motion unit ${id} had no starting frame; CineBraid linked ${firstFrame}.`,
