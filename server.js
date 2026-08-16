@@ -2381,8 +2381,12 @@ function normalizeBuilderMotionBrief(source, shotAudio = {}, duration = 0) {
          WRITES DURABLE PROJECT DATA. An imported shot with any line came back with
          lipSyncRequired true, which is why a stored `true` cannot be trusted as a
          filmmaker's decision and why nothing stored is converted: the level is derived
-         on read, and the boolean now follows it instead of leading it. */
-      lipSync: deriveLipSync({ ...dialogue, line }),
+         on read, and the boolean now follows it instead of leading it.
+
+         A level the document actually declared is carried through untouched; one it did
+         not is left empty rather than filled in with a derived answer, so importing a
+         project never manufactures an authority the source never claimed. */
+      lipSync: String(dialogue.lipSync || ""),
       lipSyncRequired: lipSyncRequiredFrom({ ...dialogue, line }),
       voiceDesign: String(dialogue.voiceDesign || ""),
     },

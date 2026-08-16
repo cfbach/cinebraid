@@ -295,7 +295,8 @@ async function main() {
     const source = stripComments(fs.readFileSync(path.join(ROOT, file), "utf8"));
     assert(!/lipSync\w*\s*:[^,;\n]*\|\|\s*!!\s*line/.test(source),
       `${file} must not derive a lip-sync requirement from line presence`);
-    assert(/deriveLipSync\(/.test(source), `${file} must read the one shared derivation`);
+    assert(/\b(deriveLipSync|lipSyncRequiredFrom)\(/.test(source),
+      `${file} must read the one shared derivation rather than compute its own`);
   }
 }
 
@@ -314,21 +315,28 @@ async function main() {
   /* The server's import normaliser, running as shipped. */
   const normaliseOnServer = builderNormalisers().motionBrief;
 
-  /* The browser composer, in the real loaded page scope. */
+  /* The browser composer, driven through its real entry point in the loaded page scope
+     rather than by calling the shared module twice — which would compare the derivation
+     with itself and prove nothing about either site. */
   const page = await render("#/production", buildFixture());
   for (const dialogue of cases) {
     const expected = deriveLipSync(dialogue);
     const onServer = normaliseOnServer({ motionBrief: { dialogue } }, {}, 5).dialogue;
-    const inBrowser = vm.runInContext(
-      `deriveLipSync(${JSON.stringify(dialogue)})`,
-      page.context,
-    );
-    assert.strictEqual(inBrowser, expected,
-      `the composer must derive ${expected} for ${JSON.stringify(dialogue)}`);
-    assert.strictEqual(onServer.lipSync, expected,
-      `the import normaliser must derive ${expected} for ${JSON.stringify(dialogue)}`);
+    const inBrowser = vm.runInContext(`(() => {
+      const shot = (P.shots || [])[0], unit = (shot.clips || [])[0];
+      unit.motionBrief = { dialogue: ${JSON.stringify(dialogue)} };
+      setMotionSoundField(shot.id, unit.id, "dialogue", "language", "English");
+      const produced = unit.motionBrief.dialogue;
+      return { level: deriveLipSync(produced), required: produced.lipSyncRequired };
+    })()`, page.context);
+    assert.strictEqual(inBrowser.level, expected,
+      `the composer's brief must read ${expected} for ${JSON.stringify(dialogue)}`);
+    assert.strictEqual(deriveLipSync(onServer), expected,
+      `the imported brief must read ${expected} for ${JSON.stringify(dialogue)}`);
     assert.strictEqual(onServer.lipSyncRequired, expected === "critical",
       "the legacy boolean stays consistent with the level it now reports");
+    assert.strictEqual(inBrowser.required, onServer.lipSyncRequired,
+      `the two former derivation sites must not drift apart for ${JSON.stringify(dialogue)}`);
   }
 }
 
@@ -346,14 +354,47 @@ async function main() {
   const brief = normalise(legacy, {}, 5);
   assert.strictEqual(JSON.stringify(legacy), before, "normalising must not mutate the supplied project data");
   assert.strictEqual(brief.dialogue.lipSyncRequired, true, "an explicit stored requirement survives unchanged");
-  assert.strictEqual(brief.dialogue.lipSync, "critical", "and reads as critical without being rewritten on disk");
+  assert.strictEqual(brief.dialogue.lipSync, "", "no level is written into the record it did not have");
+  assert.strictEqual(deriveLipSync(brief.dialogue), "critical", "and it still READS as critical, derived rather than stored");
 
   /* The case the old rule manufactured: a line with no recorded requirement. It must no
      longer come back as `true`, and it must not be recorded as a hard requirement. */
   const manufactured = normalise({ motionBrief: { dialogue: { line: "Bravo two, hold position." } } }, {}, 5);
   assert.strictEqual(manufactured.dialogue.lipSyncRequired, false,
     "a line with no recorded requirement must not be written back as one");
-  assert.strictEqual(manufactured.dialogue.lipSync, "implied");
+  assert.strictEqual(manufactured.dialogue.lipSync, "",
+    "and a level the document never declared must not be manufactured into it either");
+
+  /* A level the source DID declare travels through untouched, because that is a
+     recorded decision rather than a derived one. */
+  const declared = normalise({ motionBrief: { dialogue: { line: "It's done.", lipSync: "implied" } } }, {}, 5);
+  assert.strictEqual(declared.dialogue.lipSync, "implied");
+  assert.strictEqual(declared.dialogue.lipSyncRequired, false, "and the boolean follows the level it declares");
+}
+
+/* THE DERIVED LEVEL IS NEVER WRITTEN BACK INTO THE FIELD THE DERIVATION TRUSTS.
+ *
+ * `lipSync` outranks the boolean — that is what makes an explicit `none` on a shot with
+ * a line expressible at all. Storing the DERIVED answer there would therefore pin the
+ * control: once a level had been written, the requirement checkbox would set its boolean
+ * and change nothing, because the stored level wins. So the brief preserves a declared
+ * level and derives everything else on read, and unticking still takes effect. */
+{
+  const page = await render("#/production", buildFixture());
+  const outcome = vm.runInContext(`(() => {
+    const shot = (P.shots || [])[0];
+    const unit = (shot.clips || [])[0];
+    unit.motionBrief = { dialogue: { line: "It's done." } };
+    setMotionSoundField(shot.id, unit.id, "dialogue", "lipSyncRequired", true);
+    const ticked = { level: deriveLipSync(unit.motionBrief.dialogue), stored: unit.motionBrief.dialogue.lipSync, flag: unit.motionBrief.dialogue.lipSyncRequired };
+    setMotionSoundField(shot.id, unit.id, "dialogue", "lipSyncRequired", false);
+    const unticked = { level: deriveLipSync(unit.motionBrief.dialogue), stored: unit.motionBrief.dialogue.lipSync, flag: unit.motionBrief.dialogue.lipSyncRequired };
+    return { ticked, unticked };
+  })()`, page.context);
+  assert.strictEqual(outcome.ticked.level, "critical", "ticking the requirement makes visible speech critical");
+  assert.strictEqual(outcome.ticked.stored, "", "and stores no level, so nothing is pinned");
+  assert.strictEqual(outcome.unticked.level, "implied", "unticking must take effect rather than be outranked");
+  assert.strictEqual(outcome.unticked.flag, false);
 }
 
 /* ===========================================================================

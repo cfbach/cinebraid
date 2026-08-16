@@ -135,6 +135,42 @@ control("NC-2b", "reintroducing the shortcut at one of the two former sites", ()
 });
 
 /* ===========================================================================
+   NC-2c — write the DERIVED level back into the field the derivation trusts.
+
+   The subtle one, and the reason the tri-state is derived on read rather than stored:
+   `lipSync` outranks the boolean, so persisting the derived answer there pins it. The
+   requirement control would go on setting its boolean and changing nothing. */
+control("NC-2c", "persisting the derived lip-sync level into the brief", async () => {
+  const page = await render("#/production", buildFixture(), {
+    mutateSource: (file, source) => (file === "motion-sound-composer.js"
+      ? mutated("public/motion-sound-composer.js", () => source.replace(
+        "lipSync: String(dialogue.lipSync || \"\"),",
+        "lipSync: deriveLipSync({ ...dialogue, line }),",
+      ))
+      : source),
+  });
+  const outcome = vm.runInContext(`(() => {
+    const shot = (P.shots || [])[0], unit = (shot.clips || [])[0];
+    unit.motionBrief = { dialogue: { line: "It's done." } };
+    setMotionSoundField(shot.id, unit.id, "dialogue", "lipSyncRequired", true);
+    /* Any later edit re-runs the brief builder, which is when the stored level bites. */
+    setMotionSoundField(shot.id, unit.id, "dialogue", "language", "English");
+    const produced = unit.motionBrief.dialogue;
+    return { stored: produced.lipSync, level: deriveLipSync(produced), flag: produced.lipSyncRequired };
+  })()`, page.context);
+
+  /* THE LIVE DEFECT: the level derived BEFORE the tick was written into the record, and
+     because a stored level outranks the boolean it now swallows the tick entirely. The
+     filmmaker states that the mouth must match the words, the next edit to any field in
+     the panel quietly reverts it, and nothing says so. */
+  assert.strictEqual(outcome.stored, "implied", "the control must actually persist a derived level");
+  assert.strictEqual(outcome.level, "implied", "which then outranks the requirement that was just set");
+  assert.strictEqual(outcome.flag, false, "and silently reverts the boolean with it");
+  /* THE GUARD asserts the opposite: the tick takes effect and nothing is stored. */
+  assert.notStrictEqual(outcome.level, "critical");
+});
+
+/* ===========================================================================
    NC-3 — omit `enable_prompt_expansion: false` from the serialised request.
 
    Omission is not neutrality here: fal defaults the flag to true on all three H3
@@ -309,7 +345,8 @@ async function main() {
   console.log(
     `Shot Execution Tier 0 negative controls passed: ${detected.length} deliberate defects reintroduced in memory — `
     + "each of the six inventory rows dropped in turn, the dialogue-implies-lip-sync shortcut restored in the shared "
-    + "derivation and at a former call site, the prompt-expansion flag omitted and then sent on, and t2v removed from "
+    + "derivation and at a former call site, the derived level persisted into the record it outranks, the "
+    + "prompt-expansion flag omitted and then sent on, and t2v removed from "
     + "the browser vocabulary, the import vocabulary and the frameless list — every one detected by the property that "
     + "guards it, with the real modules green afterwards. Nothing was written to disk and nothing was reverted with "
     + "git. Provider calls made: 0.",
