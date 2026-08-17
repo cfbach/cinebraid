@@ -411,6 +411,8 @@ async function main() {
     "generation-default-inheritance-negative-controls.js",
     "generation-default-inheritance.js",
     "generation-defaults-real-browser.py",
+    "generation-ingest-reaper-negative-controls.js",
+    "generation-ingest-reaper.js",
     "generation-job-contract.js",
     "generation-job-durability.js",
     "generation-options-negative-controls.js",

@@ -46,6 +46,7 @@ const { SimpleZipWriter } = require("./zip-stream");
 const AgentSuite = require("./agent-suite");
 const { registerFalGeneration } = require("./fal-generation");
 const { registerAutomationRuns } = require("./automation-runs");
+const { createGenerationPoller } = require("./generation-poller");
 const { isAccountCallbackPath, registerAccountConnections } = require("./accounts-api");
 const { createRequestBoundary, createRequestPosture } = require("./request-origin");
 /* The MediaAsset ledger's single production entry point. server.js talks to this
@@ -3690,12 +3691,32 @@ const FalGeneration = registerFalGeneration(app, {
   activeSlug,
   projectDirForSlug,
 });
-registerAutomationRuns(app, {
+const AutomationRuns = registerAutomationRuns(app, {
   projectDir: PROJECT_DIR,
   readProject,
   activeSlug,
   projectReadinessIssues,
 });
+/* ---- the server-side ingest reaper -----------------------------------------
+ *
+ * Keeps ALREADY-SUBMITTED generation work moving without waiting for something to
+ * ask, and records a run whose lease has lapsed as interrupted instead of leaving
+ * it claiming to be running. It cannot start work: the only generation capability
+ * it is handed is FalGeneration.recovery, which reads the ledger and collects
+ * results, and holds no submission path at all. See generation-poller.js.
+ *
+ * Every project, not just the active one. A generation belongs permanently to
+ * the project it started for — the same rule the ownership capture in
+ * fal-generation.js exists for — so switching projects must not be what strands
+ * a paid render. The automation-run correction stays with the active project,
+ * because that ledger has exactly one writer and it is bound to that project. */
+const GenerationPoller = createGenerationPoller({
+  listProjectSlugs: () => listProjects().map((project) => project.slug),
+  recovery: FalGeneration.recovery,
+  reconcileStaleRuns: AutomationRuns.reconcileStaleRuns,
+  log: (message) => console.log(message),
+});
+GenerationPoller.start();
 /* Account connections take config and the listening port and nothing else. No
    project reader, no project writer, no project directory — the absence of those
    three is the structural statement that connecting an account cannot touch a
@@ -8180,16 +8201,29 @@ function shutdownServer(signal) {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log(`\n  CineBraid received ${signal}; closing the listener on port ${PORT}.`);
+  /* Stop scheduling recovery immediately, and hold the exit until a collection that had
+     already begun reaches a truthful boundary. Closing the listener does nothing to a
+     sweep that is mid-collection of an already-paid result, and exiting underneath one
+     is what left the next boot to collect it a second time. The wait is bounded by the
+     poller's own grace window, which is deliberately shorter than the force-exit below,
+     so recovery can never be the reason CineBraid fails to exit. See
+     generation-poller.js stop(). */
+  const recoverySettled = GenerationPoller.stop().catch(() => ({ waited: false, timedOut: false }));
   const forceExit = setTimeout(() => {
     console.error("  CineBraid shutdown timed out; exiting.");
     process.exit(1);
   }, 5000);
   if (typeof forceExit.unref === "function") forceExit.unref();
-  httpServer.close(() => {
+  const listenerClosed = new Promise((resolve) => httpServer.close(resolve));
+  if (typeof httpServer.closeAllConnections === "function") httpServer.closeAllConnections();
+  Promise.all([recoverySettled, listenerClosed]).then(([recovery]) => {
+    if (recovery?.waited)
+      console.log(recovery.timedOut
+        ? "  CineBraid stopped waiting for background recovery; nothing partial was written."
+        : "  CineBraid waited for background recovery to finish before exiting.");
     clearTimeout(forceExit);
     process.exit(0);
   });
-  if (typeof httpServer.closeAllConnections === "function") httpServer.closeAllConnections();
 }
 for (const signal of ["SIGINT", "SIGTERM", "SIGHUP", "SIGBREAK"]) {
   process.on(signal, () => shutdownServer(signal));

@@ -1269,14 +1269,23 @@ async function load() {
   FAL_GENERATION_JOBS = [];
   FAL_GENERATION_LEDGER_LOADED = false;
   const falConfig = CONFIG.generation?.fal || {};
+  /* What the server collected through its own background recovery rather than through a
+     refresh from here — which is all the server can know, and all it says. The header marks THIS
+     request — the initial ledger load — as the one that takes delivery of the notice,
+     so the activity drawer's 3.5-second refresh of the same route neither consumes it
+     nor repeats it. The URL is unchanged on purpose: it is matched exactly by route
+     stubs and paid-call guards that have nothing to do with this. Announced through the
+     ordinary toast; nothing new. */
+  let backgroundRecovery = null;
   if (falConfig.enabled && falConfig.keySource !== "none") {
     /* Loaded means the request was made AND answered. A refused or failed fetch
        leaves the flag false, so a surface reading provenance says the record is
        unavailable instead of claiming the project has no generation history. */
-    FAL_GENERATION_JOBS = await fetch("/api/generation/fal/jobs")
+    FAL_GENERATION_JOBS = await fetch("/api/generation/fal/jobs", { headers: { "x-cinebraid-claim-recovery": "1" } })
       .then((r) => r.ok ? r.json() : { jobs: [] })
       .then((data) => {
         FAL_GENERATION_LEDGER_LOADED = Array.isArray(data.jobs);
+        backgroundRecovery = data.backgroundRecovery || null;
         return data.jobs || [];
       })
       .catch(() => []);
@@ -1321,6 +1330,11 @@ async function load() {
   if (!location.hash) location.hash = "#/production";
   route();
   if ((P.meta?.dataIntegrityWarnings || []).length) setTimeout(() => toast(`${P.meta.dataIntegrityWarnings.length} project data-integrity warning${P.meta.dataIntegrityWarnings.length === 1 ? "" : "s"} found. Review Settings or Reports before relying on ambiguous IDs.`), 120);
+  /* Work the server collected through background recovery rather than through a
+     browser refresh. The results are already in the workspace; this is what says HOW
+     they got there. The sentence is the server's — it is the only side that knows
+     which collector won — and it deliberately makes no claim about what was open. */
+  if (backgroundRecovery?.message) setTimeout(() => toast(backgroundRecovery.message), 200);
   if (schemaWasOlder && migratedV5) setTimeout(() => dirty(), 50);
   if (
     (AGENT_STATUS.runs || []).some((x) =>

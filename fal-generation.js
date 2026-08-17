@@ -16,6 +16,11 @@ const { submissionAccounting } = require("./generation-cost");
 const Lifecycle = require("./generation-lifecycle");
 const FramePresence = require("./public/shared-frame-presence");
 
+/* The request that takes delivery of the background-recovery notice says so here rather
+   than in the URL. See the GET /api/generation/fal/jobs route for why. Lowercase because
+   that is how Node presents an incoming header name. */
+const CLAIM_RECOVERY_HEADER = "x-cinebraid-claim-recovery";
+
 function registerFalGeneration(app, context) {
   const { readConfig, readProject, writeProject, activeSlug, projectDirForSlug } = context;
 
@@ -160,6 +165,49 @@ function registerFalGeneration(app, context) {
     return next;
   }
 
+  /* ---- one project-write turn per project ------------------------------------
+
+     THE SAME ARGUMENT AS `commit` ABOVE, FOR THE OTHER DURABLE RECORD.
+
+     `commit` ended the snapshot-clobbering defect on the generation ledger. The
+     PROJECT document still had exactly that shape in it. Every ingest read the whole
+     project, awaited downloads for seconds, mutated its own copy, and wrote it whole:
+
+         const P = ownerProject(owner);   // snapshot
+         ... await download ...           // seconds of network
+         saveOwnerProject(owner, P);      // snapshot wins
+
+     Per-JOB serialisation did not help, because its key is the job. Two DIFFERENT
+     jobs of the same project — a background sweep collecting one while a browser
+     refresh collects another — each held a snapshot across their own downloads, and
+     whichever saved last silently dropped the other's candidate row. The bytes stayed
+     on disk and BOTH ledger rows still said `ingestedAt`, so an already-paid result
+     became an unreferenced file that the record claimed had been delivered.
+
+     `commitProject` serialises project writes per PROJECT and RE-READS the document
+     inside its own turn, so a mutation always applies to current state rather than to
+     what the caller read before its downloads. `mutate` is synchronous by contract and
+     must not await: that is what makes the turn indivisible, and it is also what makes
+     the file writes inside it safe — two collections can no longer pick the same
+     filename, because `nextFile` and `writeFileSync` run inside the same turn.
+
+     KEYED ON owner.dir, deliberately. Two different projects never wait on each other;
+     a background sweep of project B cannot be the reason a save in project A is slow.
+     The narrowest key that still protects the record being written. */
+  const projectChains = new Map();
+  function commitProject(owner, mutate) {
+    const key = owner.dir;
+    const previous = projectChains.get(key) || Promise.resolve();
+    const next = previous.catch(() => {}).then(() => {
+      const project = ownerProject(owner);
+      const result = mutate(project);
+      saveOwnerProject(owner, project);
+      return result;
+    });
+    projectChains.set(key, next.catch(() => {}));
+    return next;
+  }
+
   /* P4-SEM-C4 — the job record follows the bytes it delivered.
    *
    * THE ONE WRITER of durable identity onto a job output, called by
@@ -228,6 +276,54 @@ function registerFalGeneration(app, context) {
     const next = previous.catch(() => {}).then(run);
     jobOperationChains.set(key, next.catch(() => {}));
     return next;
+  }
+  /* ---- what the SERVER took delivery of ---------------------------------------
+   *
+   * A result collected by the ingest reaper's sweep rather than by a browser refresh.
+   * Kept per project and only for the life of this process: it is a notice, not a
+   * record. What actually happened is durable on the job row and in the project — the
+   * outputs, the ingest stamp, the candidate files — and this exists so the next window
+   * that opens is TOLD, instead of the work appearing in a list with no explanation of
+   * when it arrived.
+   *
+   * WHAT THIS KNOWS, AND WHAT IT MUST NOT CLAIM. It knows exactly one thing: the sweep
+   * won the turn for this job. Nothing on the server observes browsers. `pollEligibility`
+   * is derived from durable job fields alone — ingest stamp, reconciliation, status,
+   * provider handle, age — and never from whether a window is open, so a sweep that
+   * wins a race against three live refreshes is indistinguishable here from a sweep on
+   * a machine with no browser running at all. The notice therefore says HOW the result
+   * was collected and never asserts what the user was or was not doing.
+   *
+   * Claimed once, by the browser's initial ledger load. The activity drawer re-reads
+   * the same route every 3.5 seconds and must not consume the notice or announce it
+   * again; see the route below for which request claims it. */
+  const unattendedCollections = new Map();
+  function recordUnattendedCollection(owner, job) {
+    const rows = unattendedCollections.get(owner.slug) || [];
+    rows.push({
+      jobId: String(job.id || ""),
+      purpose: String(job.purpose || ""),
+      shotId: String(job.shotId || ""),
+      entityId: String(job.entityId || ""),
+      outputs: Array.isArray(job.outputs) ? job.outputs.length : 0,
+      at: now(),
+    });
+    unattendedCollections.set(owner.slug, rows);
+  }
+  /* Plain language, and a count of RESULTS rather than of jobs: "2 results" is what a
+     filmmaker sees in the workspace, and a job that returned four candidates delivered
+     four of them. */
+  function unattendedRecoveryNotice(slug, { claim = false } = {}) {
+    const rows = unattendedCollections.get(slug) || [];
+    if (!rows.length) return null;
+    if (claim) unattendedCollections.delete(slug);
+    const results = rows.reduce((sum, row) => sum + Math.max(0, Number(row.outputs) || 0), 0);
+    return {
+      jobs: rows.length,
+      results,
+      collections: rows,
+      message: `Collected ${results} result${results === 1 ? "" : "s"} through background recovery.`,
+    };
   }
   /* Express 4 does not catch a rejected async handler, and an unanswered request
      is worse than an error: the browser waits forever on a generation it cannot
@@ -943,105 +1039,132 @@ function registerFalGeneration(app, context) {
     if (!entity) throw new Error("Entity no longer exists.");
     return { list, folder, entity };
   }
-  function updateEntityCoverageRun(owner, job, status, error = "") {
+  /* Routed through the project turn like every other project write. This is a
+     read-modify-write of the WHOLE document, so left outside the turn it could drop a
+     candidate row an overlapping ingest had just committed — the same clobbering
+     defect, reached from an error path instead of a success path. It still never
+     throws: a coverage annotation that cannot be written is not a reason to fail the
+     response its caller is already sending. */
+  async function updateEntityCoverageRun(owner, job, status, error = "") {
     if (job?.purpose !== "entity-reference" || !job.entityList || !job.entityId) return;
     try {
-      const project = ownerProject(owner);
-      const entity = (project[job.entityList] || []).find((item) => String(item.id) === String(job.entityId));
-      if (!entity?.coverageAutomation) return;
-      entity.coverageAutomation.status = status;
-      entity.coverageAutomation.updatedAt = now();
-      if (error) entity.coverageAutomation.error = String(error);
-      if (["failed", "cancelled", "needs-attention"].includes(status)) entity.coverageAutomation.needsAttentionAt = now();
-      saveOwnerProject(owner, project);
+      const known = (ownerProject(owner)[job.entityList] || []).find((item) => String(item.id) === String(job.entityId));
+      if (!known?.coverageAutomation) return;
+      await commitProject(owner, (project) => {
+        const entity = (project[job.entityList] || []).find((item) => String(item.id) === String(job.entityId));
+        if (!entity?.coverageAutomation) return;
+        entity.coverageAutomation.status = status;
+        entity.coverageAutomation.updatedAt = now();
+        if (error) entity.coverageAutomation.error = String(error);
+        if (["failed", "cancelled", "needs-attention"].includes(status)) entity.coverageAutomation.needsAttentionAt = now();
+      });
     } catch {}
   }
   function entityRole(list) {
     return { characters: "character-reference", locations: "location-reference", props: "prop-reference", vehicles: "vehicle-reference" }[list] || "planning-reference";
   }
-  async function ingestEntity(owner, job, images, project) {
-    const { list, folder, entity } = entityTarget(job, project);
-    const dir = path.join(owner.dir, folder);
-    fs.mkdirSync(dir, { recursive: true });
-    entity.candidateFiles = Array.isArray(entity.candidateFiles) ? entity.candidateFiles : [];
-    entity.generatedCandidates = Array.isArray(entity.generatedCandidates) ? entity.generatedCandidates : [];
-    const outputs = [];
-    for (let index = 0; index < images.length; index++) {
-      const downloaded = await downloadImage(images[index]);
-      const ext = downloaded.mime.includes("jpeg") ? ".jpg" : downloaded.mime.includes("webp") ? ".webp" : ".png";
-      const name = nextFile(dir, safeName(`${entity.id}_FAL_CANDIDATE_${index + 1}${ext}`, `${entity.id}_FAL${ext}`));
-      fs.writeFileSync(path.join(dir, name), downloaded.buffer);
-      const provenance = {
-        stored: name, original: downloaded.originalName, addedAt: now(), decision: "unreviewed",
-        generationProvider: "fal", generationModel: job.model, generationJobId: job.id,
-        generationRequestId: job.externalId, sourceBuildId: job.sourceBuildId || "",
-        automationRunId: job.automationRunId || "", automationStepKey: job.automationStepKey || "",
-        prompt: job.prompt, referenceCount: job.references.length, quality: job.quality, resolution: job.resolution, aspectRatio: job.aspectRatio,
-        targetStateId: job.continuityStateId || "",
-        targetStateName: job.continuityStateName || "",
-        parentStateId: job.parentStateId || "",
-        parentStateName: job.parentStateName || "",
-        parentApprovedFile: job.parentApprovedFile || "",
-        derivationMode: job.derivationMode || "independent",
-        coverageJobType: job.coverageJobType || "",
-        coverageSheetType: job.coverageSheetType || "",
-        targetCoverageSlotId: job.targetCoverageSlotId || "",
-        targetCoverageSlotName: job.targetCoverageSlotName || "",
-        coverageSourceFile: job.coverageSourceFile || "",
-        authorityContractVersion: job.authorityContractVersion || "",
-        authorityManifest: (job.references || []).map((ref) => ({ token: ref.token || "", label: ref.label || "", role: ref.role || "", sourceFile: path.basename(String(ref.url || "").split("?")[0]) })),
-      };
-      entity.candidateFiles.push(provenance);
-      entity.generatedCandidates.push({ ...provenance, role: entityRole(list) });
-      outputs.push({ type: "entity-candidate", entityList: list, entityId: entity.id, continuityStateId: job.continuityStateId || "", continuityStateName: job.continuityStateName || "", name, url: `/assets/${folder}/${name}` });
-    }
-    if (!entity.workflowStatus || entity.workflowStatus === "DRAFT") entity.workflowStatus = "IN PROGRESS";
-    if (!entity.status || entity.status === "NOT STARTED") entity.status = "IN PROGRESS";
-    if (job.coverageJobType) {
-      entity.coverageAutomation = entity.coverageAutomation && typeof entity.coverageAutomation === "object" ? entity.coverageAutomation : { list, entityId: entity.id, mode: job.coverageJobType === "sheet" ? "sheet" : "individual", sheetType: job.coverageSheetType || "angles", startedAt: job.createdAt || now(), jobs: [] };
-      entity.coverageAutomation.jobs = Array.isArray(entity.coverageAutomation.jobs) ? entity.coverageAutomation.jobs : [];
-      if (!entity.coverageAutomation.jobs.includes(job.id)) entity.coverageAutomation.jobs.push(job.id);
-      const knownJobs = readJobs(owner);
-      const pending = knownJobs.filter((item) => entity.coverageAutomation.jobs.includes(item.id) && item.id !== job.id && !["COMPLETED", "FAILED", "CANCELLED"].includes(String(item.status || "").toUpperCase()));
-      if (!pending.length) {
-        entity.coverageAutomation.status = job.coverageJobType === "sheet" ? "sheet-ready-for-review" : "slot-candidates-ready";
-        entity.coverageAutomation.readyAt = now();
+  async function ingestEntity(owner, job, images) {
+    /* Refused early against current state, exactly as before. The authoritative read
+       is the one inside the turn below. */
+    entityTarget(job, ownerProject(owner));
+    /* DOWNLOAD PHASE — network only. Nothing is written to disk and no project state
+       is held across it, so an interrupted download leaves no file to orphan and no
+       snapshot to go stale. */
+    const downloads = [];
+    for (let index = 0; index < images.length; index++) downloads.push(await downloadImage(images[index]));
+    /* COMMIT PHASE — one indivisible turn against freshly read state. */
+    const outputs = await commitProject(owner, (project) => {
+      const { list, folder, entity } = entityTarget(job, project);
+      const dir = path.join(owner.dir, folder);
+      fs.mkdirSync(dir, { recursive: true });
+      entity.candidateFiles = Array.isArray(entity.candidateFiles) ? entity.candidateFiles : [];
+      entity.generatedCandidates = Array.isArray(entity.generatedCandidates) ? entity.generatedCandidates : [];
+      const outputs = [];
+      for (let index = 0; index < downloads.length; index++) {
+        const downloaded = downloads[index];
+        const ext = downloaded.mime.includes("jpeg") ? ".jpg" : downloaded.mime.includes("webp") ? ".webp" : ".png";
+        const name = nextFile(dir, safeName(`${entity.id}_FAL_CANDIDATE_${index + 1}${ext}`, `${entity.id}_FAL${ext}`));
+        fs.writeFileSync(path.join(dir, name), downloaded.buffer);
+        const provenance = {
+          stored: name, original: downloaded.originalName, addedAt: now(), decision: "unreviewed",
+          generationProvider: "fal", generationModel: job.model, generationJobId: job.id,
+          generationRequestId: job.externalId, sourceBuildId: job.sourceBuildId || "",
+          automationRunId: job.automationRunId || "", automationStepKey: job.automationStepKey || "",
+          prompt: job.prompt, referenceCount: job.references.length, quality: job.quality, resolution: job.resolution, aspectRatio: job.aspectRatio,
+          targetStateId: job.continuityStateId || "",
+          targetStateName: job.continuityStateName || "",
+          parentStateId: job.parentStateId || "",
+          parentStateName: job.parentStateName || "",
+          parentApprovedFile: job.parentApprovedFile || "",
+          derivationMode: job.derivationMode || "independent",
+          coverageJobType: job.coverageJobType || "",
+          coverageSheetType: job.coverageSheetType || "",
+          targetCoverageSlotId: job.targetCoverageSlotId || "",
+          targetCoverageSlotName: job.targetCoverageSlotName || "",
+          coverageSourceFile: job.coverageSourceFile || "",
+          authorityContractVersion: job.authorityContractVersion || "",
+          authorityManifest: (job.references || []).map((ref) => ({ token: ref.token || "", label: ref.label || "", role: ref.role || "", sourceFile: path.basename(String(ref.url || "").split("?")[0]) })),
+        };
+        entity.candidateFiles.push(provenance);
+        entity.generatedCandidates.push({ ...provenance, role: entityRole(list) });
+        outputs.push({ type: "entity-candidate", entityList: list, entityId: entity.id, continuityStateId: job.continuityStateId || "", continuityStateName: job.continuityStateName || "", name, url: `/assets/${folder}/${name}` });
       }
-    }
-    saveOwnerProject(owner, project);
+      if (!entity.workflowStatus || entity.workflowStatus === "DRAFT") entity.workflowStatus = "IN PROGRESS";
+      if (!entity.status || entity.status === "NOT STARTED") entity.status = "IN PROGRESS";
+      if (job.coverageJobType) {
+        entity.coverageAutomation = entity.coverageAutomation && typeof entity.coverageAutomation === "object" ? entity.coverageAutomation : { list, entityId: entity.id, mode: job.coverageJobType === "sheet" ? "sheet" : "individual", sheetType: job.coverageSheetType || "angles", startedAt: job.createdAt || now(), jobs: [] };
+        entity.coverageAutomation.jobs = Array.isArray(entity.coverageAutomation.jobs) ? entity.coverageAutomation.jobs : [];
+        if (!entity.coverageAutomation.jobs.includes(job.id)) entity.coverageAutomation.jobs.push(job.id);
+        const knownJobs = readJobs(owner);
+        const pending = knownJobs.filter((item) => entity.coverageAutomation.jobs.includes(item.id) && item.id !== job.id && !["COMPLETED", "FAILED", "CANCELLED"].includes(String(item.status || "").toUpperCase()));
+        if (!pending.length) {
+          entity.coverageAutomation.status = job.coverageJobType === "sheet" ? "sheet-ready-for-review" : "slot-candidates-ready";
+          entity.coverageAutomation.readyAt = now();
+        }
+      }
+      return outputs;
+    });
     job.outputs = outputs;
     job.ingestedAt = now();
     return job;
   }
-  async function ingestMotion(owner, job, assets, project) {
+  async function ingestMotion(owner, job, assets) {
     if (job.ingestedAt) return job;
-    const shot = (project.shots || []).find((item) => String(item.id) === String(job.shotId));
-    if (!shot) throw new Error("Shot no longer exists.");
-    const dir = path.join(owner.dir, "shots", shot.id, "takes");
-    fs.mkdirSync(dir, { recursive: true });
-    shot.candidateFiles = Array.isArray(shot.candidateFiles) ? shot.candidateFiles : [];
-    const outputs = [];
-    for (let index = 0; index < assets.length; index++) {
-      const downloaded = await downloadOutput(assets[index], "video/mp4");
-      const ext = downloaded.mime.includes("webm") ? ".webm" : downloaded.mime.includes("quicktime") ? ".mov" : ".mp4";
-      const name = nextFile(dir, safeName(`${shot.id}_MOTION_H3_${index + 1}${ext}`, `${shot.id}_H3${ext}`));
-      fs.writeFileSync(path.join(dir, name), downloaded.buffer);
-      shot.candidateFiles.push({
-        stored: name, original: downloaded.originalName, addedAt: now(), decision: "unreviewed", notes: "",
-        labels: ["MiniMax H3", job.profileMode || "motion"], sourceBuildId: job.sourceBuildId || "",
-        sourcePackageId: job.packageId || job.sourceBuildId || "", sourcePackageLabel: job.packageId || job.profileName || "MiniMax H3 generation",
-        generationProvider: "fal", generationModel: job.model, generationJobId: job.id, generationRequestId: job.externalId,
-        generationDuration: job.durationSeconds, generationResolution: job.resolution,
-        generationAspectRatio: ["i2v", "flf"].includes(job.profileMode) ? "source image" : job.aspectRatio,
-        generationProfileId: job.profileId, generationProfileMode: job.profileMode,
-        generationReferenceManifest: (job.references || []).map((ref) => ({ token: ref.token, label: ref.label, role: ref.role, mediaType: ref.mediaType, url: ref.url })),
-      });
-      outputs.push({ type: "motion-candidate", name, url: `/assets/shots/${shot.id}/takes/${name}`, profileId: job.profileId, profileMode: job.profileMode });
-    }
-    shot.workflowStatus = "IN PROGRESS";
-    shot.status = "BUILT";
-    shot.reviewStatus = "PENDING";
-    saveOwnerProject(owner, project);
+    if (!(ownerProject(owner).shots || []).some((item) => String(item.id) === String(job.shotId)))
+      throw new Error("Shot no longer exists.");
+    /* DOWNLOAD PHASE — see ingestEntity. A held video download leaves nothing behind. */
+    const downloads = [];
+    for (let index = 0; index < assets.length; index++) downloads.push(await downloadOutput(assets[index], "video/mp4"));
+    /* COMMIT PHASE — one indivisible turn against freshly read state. */
+    const outputs = await commitProject(owner, (project) => {
+      const shot = (project.shots || []).find((item) => String(item.id) === String(job.shotId));
+      if (!shot) throw new Error("Shot no longer exists.");
+      const dir = path.join(owner.dir, "shots", shot.id, "takes");
+      fs.mkdirSync(dir, { recursive: true });
+      shot.candidateFiles = Array.isArray(shot.candidateFiles) ? shot.candidateFiles : [];
+      const outputs = [];
+      for (let index = 0; index < downloads.length; index++) {
+        const downloaded = downloads[index];
+        const ext = downloaded.mime.includes("webm") ? ".webm" : downloaded.mime.includes("quicktime") ? ".mov" : ".mp4";
+        const name = nextFile(dir, safeName(`${shot.id}_MOTION_H3_${index + 1}${ext}`, `${shot.id}_H3${ext}`));
+        fs.writeFileSync(path.join(dir, name), downloaded.buffer);
+        shot.candidateFiles.push({
+          stored: name, original: downloaded.originalName, addedAt: now(), decision: "unreviewed", notes: "",
+          labels: ["MiniMax H3", job.profileMode || "motion"], sourceBuildId: job.sourceBuildId || "",
+          sourcePackageId: job.packageId || job.sourceBuildId || "", sourcePackageLabel: job.packageId || job.profileName || "MiniMax H3 generation",
+          generationProvider: "fal", generationModel: job.model, generationJobId: job.id, generationRequestId: job.externalId,
+          generationDuration: job.durationSeconds, generationResolution: job.resolution,
+          generationAspectRatio: ["i2v", "flf"].includes(job.profileMode) ? "source image" : job.aspectRatio,
+          generationProfileId: job.profileId, generationProfileMode: job.profileMode,
+          generationReferenceManifest: (job.references || []).map((ref) => ({ token: ref.token, label: ref.label, role: ref.role, mediaType: ref.mediaType, url: ref.url })),
+        });
+        outputs.push({ type: "motion-candidate", name, url: `/assets/shots/${shot.id}/takes/${name}`, profileId: job.profileId, profileMode: job.profileMode });
+      }
+      shot.workflowStatus = "IN PROGRESS";
+      shot.status = "BUILT";
+      shot.reviewStatus = "PENDING";
+      return outputs;
+    });
     job.outputs = outputs;
     job.ingestedAt = now();
     return job;
@@ -1049,111 +1172,118 @@ function registerFalGeneration(app, context) {
 
   async function ingest(owner, job, images) {
     if (job.ingestedAt) return job;
-    const P = ownerProject(owner);
-    if (job.purpose === "motion-h3" || job.profileFamily === "minimax-h3") return ingestMotion(owner, job, images, P);
-    if (job.purpose === "entity-reference") return ingestEntity(owner, job, images, P);
-    const shot = (P.shots || []).find((item) => String(item.id) === String(job.shotId));
-    if (!shot) throw new Error("Shot no longer exists.");
-    const outputs = [];
-    P.mediaAssets = Array.isArray(P.mediaAssets) ? P.mediaAssets : [];
-    shot.candidateFiles = Array.isArray(shot.candidateFiles) ? shot.candidateFiles : [];
-    for (let index = 0; index < images.length; index++) {
-      const downloaded = await downloadImage(images[index]);
-      const ext = downloaded.mime.includes("jpeg") ? ".jpg" : downloaded.mime.includes("webp") ? ".webp" : ".png";
-      if (job.purpose === "blocking") {
-        const dir = path.join(owner.dir, "shots", shot.id, "blocking");
-        fs.mkdirSync(dir, { recursive: true });
-        const name = nextFile(dir, safeName(`${shot.id}_BLOCKING_FAL_${index + 1}${ext}`, `${shot.id}_BLOCKING${ext}`));
-        fs.writeFileSync(path.join(dir, name), downloaded.buffer);
-        const link = newMediaLink(shot.id, P.mediaAssets.length + index);
-        link.blockingFrameId = job.frameId || "";
-        link.blockingVersion = `B${String((P.mediaAssets || []).filter((asset) => (asset.links || []).some((row) => row.targetType === "shot" && row.targetId === shot.id && row.role === "blocking-frame")).length + 1).padStart(2, "0")}`;
-        const asset = {
-          id: uid("blocking-media"),
-          file: name,
-          storagePath: `shots/${shot.id}/blocking/${name}`,
-          originalName: downloaded.originalName,
-          title: job.frameId ? `${shot.id} · Frame ${job.frameLabel || "?"} — FAL blocking ${index + 1}` : `${shot.id} — FAL blocking ${index + 1}`,
-          kind: "image",
-          notes: job.revisionRequest ? `Blocking revision request: ${job.revisionRequest}` : "Blocking frame — geometric planning scaffold, not visual canon.",
-          provenance: job.packageId || job.sourceBuildId || "",
-          generationRecord: {
-            provider: "fal",
-            model: job.model,
-            requestId: job.externalId,
-            jobId: job.id,
+    if (job.purpose === "motion-h3" || job.profileFamily === "minimax-h3") return ingestMotion(owner, job, images);
+    if (job.purpose === "entity-reference") return ingestEntity(owner, job, images);
+    if (!(ownerProject(owner).shots || []).some((item) => String(item.id) === String(job.shotId)))
+      throw new Error("Shot no longer exists.");
+    /* DOWNLOAD PHASE — see ingestEntity. */
+    const downloads = [];
+    for (let index = 0; index < images.length; index++) downloads.push(await downloadImage(images[index]));
+    /* COMMIT PHASE — one indivisible turn against freshly read state. */
+    const outputs = await commitProject(owner, (P) => {
+      const shot = (P.shots || []).find((item) => String(item.id) === String(job.shotId));
+      if (!shot) throw new Error("Shot no longer exists.");
+      const outputs = [];
+      P.mediaAssets = Array.isArray(P.mediaAssets) ? P.mediaAssets : [];
+      shot.candidateFiles = Array.isArray(shot.candidateFiles) ? shot.candidateFiles : [];
+      for (let index = 0; index < downloads.length; index++) {
+        const downloaded = downloads[index];
+        const ext = downloaded.mime.includes("jpeg") ? ".jpg" : downloaded.mime.includes("webp") ? ".webp" : ".png";
+        if (job.purpose === "blocking") {
+          const dir = path.join(owner.dir, "shots", shot.id, "blocking");
+          fs.mkdirSync(dir, { recursive: true });
+          const name = nextFile(dir, safeName(`${shot.id}_BLOCKING_FAL_${index + 1}${ext}`, `${shot.id}_BLOCKING${ext}`));
+          fs.writeFileSync(path.join(dir, name), downloaded.buffer);
+          const link = newMediaLink(shot.id, P.mediaAssets.length + index);
+          link.blockingFrameId = job.frameId || "";
+          link.blockingVersion = `B${String((P.mediaAssets || []).filter((asset) => (asset.links || []).some((row) => row.targetType === "shot" && row.targetId === shot.id && row.role === "blocking-frame")).length + 1).padStart(2, "0")}`;
+          const asset = {
+            id: uid("blocking-media"),
+            file: name,
+            storagePath: `shots/${shot.id}/blocking/${name}`,
+            originalName: downloaded.originalName,
+            title: job.frameId ? `${shot.id} · Frame ${job.frameLabel || "?"} — FAL blocking ${index + 1}` : `${shot.id} — FAL blocking ${index + 1}`,
+            kind: "image",
+            notes: job.revisionRequest ? `Blocking revision request: ${job.revisionRequest}` : "Blocking frame — geometric planning scaffold, not visual canon.",
+            provenance: job.packageId || job.sourceBuildId || "",
+            generationRecord: {
+              provider: "fal",
+              model: job.model,
+              requestId: job.externalId,
+              jobId: job.id,
+              automationRunId: job.automationRunId || "",
+              automationStepKey: job.automationStepKey || "",
+              prompt: job.prompt,
+              packageId: job.packageId || "",
+              sourceBuildId: job.sourceBuildId || "",
+              revisedFromAssetId: job.revisedFromAssetId || "",
+              requestedChanges: job.revisionRequest || "",
+              quality: job.quality,
+              resolution: job.resolution,
+              date: now(),
+            },
+            createdAt: now(),
+            links: [link],
+          };
+          P.mediaAssets.push(asset);
+          outputs.push({ type: "blocking", assetId: asset.id, frameId: job.frameId || "", frameLabel: job.frameLabel || "", name, url: `/assets/${asset.storagePath}` });
+        } else {
+          const dir = path.join(owner.dir, "shots", shot.id, "takes");
+          fs.mkdirSync(dir, { recursive: true });
+          const frameLabel = job.frameLabel || "A";
+          const correction = job.purpose === "correction";
+          const stem = correction
+            ? `${shot.id}_FRAME_${frameLabel}_CORRECTION_FAL_${index + 1}${ext}`
+            : `${shot.id}_FRAME_${frameLabel}_FAL_${index + 1}${ext}`;
+          const name = nextFile(dir, safeName(stem, `${shot.id}_FAL${ext}`));
+          fs.writeFileSync(path.join(dir, name), downloaded.buffer);
+          const candidate = {
+            stored: name,
+            original: downloaded.originalName,
+            addedAt: now(),
+            decision: "unreviewed",
+            notes: "",
+            labels: [],
+            frameId: job.frameId || "",
+            sourceBuildId: job.sourceBuildId || "",
+            sourcePackageId: job.sourceBuildId || job.packageId || "",
+            sourcePackageLabel: job.packageId || "FAL generation",
+            generationProvider: "fal",
+            generationModel: job.model,
+            generationJobId: job.id,
+            generationRequestId: job.externalId,
             automationRunId: job.automationRunId || "",
             automationStepKey: job.automationStepKey || "",
-            prompt: job.prompt,
-            packageId: job.packageId || "",
-            sourceBuildId: job.sourceBuildId || "",
-            revisedFromAssetId: job.revisedFromAssetId || "",
-            requestedChanges: job.revisionRequest || "",
-            quality: job.quality,
-            resolution: job.resolution,
-            date: now(),
-          },
-          createdAt: now(),
-          links: [link],
-        };
-        P.mediaAssets.push(asset);
-        outputs.push({ type: "blocking", assetId: asset.id, frameId: job.frameId || "", frameLabel: job.frameLabel || "", name, url: `/assets/${asset.storagePath}` });
-      } else {
-        const dir = path.join(owner.dir, "shots", shot.id, "takes");
-        fs.mkdirSync(dir, { recursive: true });
-        const frameLabel = job.frameLabel || "A";
-        const correction = job.purpose === "correction";
-        const stem = correction
-          ? `${shot.id}_FRAME_${frameLabel}_CORRECTION_FAL_${index + 1}${ext}`
-          : `${shot.id}_FRAME_${frameLabel}_FAL_${index + 1}${ext}`;
-        const name = nextFile(dir, safeName(stem, `${shot.id}_FAL${ext}`));
-        fs.writeFileSync(path.join(dir, name), downloaded.buffer);
-        const candidate = {
-          stored: name,
-          original: downloaded.originalName,
-          addedAt: now(),
-          decision: "unreviewed",
-          notes: "",
-          labels: [],
-          frameId: job.frameId || "",
-          sourceBuildId: job.sourceBuildId || "",
-          sourcePackageId: job.sourceBuildId || job.packageId || "",
-          sourcePackageLabel: job.packageId || "FAL generation",
-          generationProvider: "fal",
-          generationModel: job.model,
-          generationJobId: job.id,
-          generationRequestId: job.externalId,
-          automationRunId: job.automationRunId || "",
-          automationStepKey: job.automationStepKey || "",
-          generationQuality: job.quality,
-          generationResolution: job.resolution,
-        };
-        if (correction) {
-          candidate.correctionOf = job.sourceCandidate || "";
-          candidate.correctionBuildId = job.sourceBuildId || "";
-          candidate.correctionParentBuildId = job.parentBuildId || "";
-          candidate.correctionParentPackageId = job.parentPackageId || "";
-          candidate.correctionGuideAssetId = job.guideAssetId || "";
-          candidate.correctionReferenceCount = job.references.length;
-          candidate.correctionGeneratedAt = now();
-          const source = shot.candidateFiles.find((item) => (item.stored || item.name) === job.sourceCandidate);
-          if (source) {
-            source.correctionResultNames = Array.isArray(source.correctionResultNames) ? source.correctionResultNames : [];
-            source.correctionJobIds = Array.isArray(source.correctionJobIds) ? source.correctionJobIds : [];
-            if (!source.correctionResultNames.includes(name)) source.correctionResultNames.push(name);
-            if (!source.correctionJobIds.includes(job.id)) source.correctionJobIds.push(job.id);
+            generationQuality: job.quality,
+            generationResolution: job.resolution,
+          };
+          if (correction) {
+            candidate.correctionOf = job.sourceCandidate || "";
+            candidate.correctionBuildId = job.sourceBuildId || "";
+            candidate.correctionParentBuildId = job.parentBuildId || "";
+            candidate.correctionParentPackageId = job.parentPackageId || "";
+            candidate.correctionGuideAssetId = job.guideAssetId || "";
+            candidate.correctionReferenceCount = job.references.length;
+            candidate.correctionGeneratedAt = now();
+            const source = shot.candidateFiles.find((item) => (item.stored || item.name) === job.sourceCandidate);
+            if (source) {
+              source.correctionResultNames = Array.isArray(source.correctionResultNames) ? source.correctionResultNames : [];
+              source.correctionJobIds = Array.isArray(source.correctionJobIds) ? source.correctionJobIds : [];
+              if (!source.correctionResultNames.includes(name)) source.correctionResultNames.push(name);
+              if (!source.correctionJobIds.includes(job.id)) source.correctionJobIds.push(job.id);
+            }
           }
+          shot.candidateFiles.push(candidate);
+          outputs.push({ type: "candidate", name, url: `/assets/shots/${shot.id}/takes/${name}`, frameId: job.frameId || "", correctionOf: job.sourceCandidate || "" });
         }
-        shot.candidateFiles.push(candidate);
-        outputs.push({ type: "candidate", name, url: `/assets/shots/${shot.id}/takes/${name}`, frameId: job.frameId || "", correctionOf: job.sourceCandidate || "" });
       }
-    }
-    if (job.purpose === "frame" || job.purpose === "correction") {
-      shot.workflowStatus = "IN PROGRESS";
-      shot.status = "BUILT";
-      shot.reviewStatus = "PENDING";
-    }
-    saveOwnerProject(owner, P);
+      if (job.purpose === "frame" || job.purpose === "correction") {
+        shot.workflowStatus = "IN PROGRESS";
+        shot.status = "BUILT";
+        shot.reviewStatus = "PENDING";
+      }
+      return outputs;
+    });
     job.outputs = outputs;
     job.ingestedAt = now();
     return job;
@@ -1195,12 +1325,25 @@ function registerFalGeneration(app, context) {
       keySource: process.env.FAL_KEY ? "environment" : cfg.apiKey ? "settings" : "none",
     });
   });
+  /* CLAIM_RECOVERY_HEADER is sent by ONE caller — the browser's initial ledger load —
+     and it is what takes delivery of the background-recovery notice. Every other reader
+     of this route, including the activity drawer's 3.5-second refresh, leaves the notice
+     where it is, so a result the sweep collected is announced once to the next window
+     that opens rather than on every poll.
+
+     A HEADER RATHER THAN A QUERY PARAMETER, deliberately. Which request claims the
+     notice is a property of the requester, not of the resource, and the URL of this
+     route is matched exactly by suites and guards that have nothing to do with this
+     — tests/ui-state-stability-real-browser.py fulfils `suffix == "/api/generation/fal/jobs"`
+     and proxies anything else upstream. Adding a query string would have changed what
+     those matched, in a surface no Node suite can execute. */
   app.get("/api/generation/fal/jobs", (req, res) => {
     try {
       const owner = captureOwner();
       const shotId = String(req.query.shotId || ""), entityId = String(req.query.entityId || ""), entityList = String(req.query.entityList || "");
       const jobs = readJobs(owner).filter((job) => (!shotId || String(job.shotId) === shotId) && (!entityId || String(job.entityId) === entityId) && (!entityList || String(job.entityList) === entityList));
-      res.json({ jobs: jobs.map(publicJob) });
+      const recovery = unattendedRecoveryNotice(owner.slug, { claim: String(req.headers?.[CLAIM_RECOVERY_HEADER] || "") === "1" });
+      res.json({ jobs: jobs.map(publicJob), ...(recovery ? { backgroundRecovery: recovery } : {}) });
     } catch (error) {
       res.status(ledgerFailureStatus(error)).json(ledgerFailurePayload(error));
     }
@@ -1904,7 +2047,7 @@ function registerFalGeneration(app, context) {
           Object.assign(job, row);
         }
       }).catch(() => {});
-      updateEntityCoverageRun(owner, job, "needs-attention", error.message);
+      await updateEntityCoverageRun(owner, job, "needs-attention", error.message);
       res.status(502).json({
         error: error.message,
         ...(verdict.status === Lifecycle.UNRESOLVED ? { code: "GENERATION_UNRESOLVED" } : {}),
@@ -1968,32 +2111,47 @@ function registerFalGeneration(app, context) {
       res.json({ ok: true, job: publicJob(job) });
     }));
   });
-  app.post("/api/generation/fal/jobs/:id/refresh", async (req, res) => {
-    let owner;
-    try {
-      owner = captureOwner();
-    } catch (error) {
-      return res.status(ledgerFailureStatus(error)).json(ledgerFailurePayload(error));
-    }
-    /* Serialised per job: two overlapping refreshes must not both observe
-       `!ingestedAt` and ingest the same paid result twice. */
-    return guardRoute(res, serializeJobOperation(owner, req.params.id, async () => {
-      let job;
-      try {
-        job = readJobs(owner).find((item) => item.id === req.params.id);
-      } catch (error) {
-        return res.status(ledgerFailureStatus(error)).json(ledgerFailurePayload(error));
-      }
-      if (!job) return res.status(404).json({ error: "Generation job not found." });
+  /* ---- THE ONE COLLECTION PATH ------------------------------------------------
+   *
+   * Ask the provider what happened to a request that has ALREADY been submitted, and
+   * take delivery of the result if there is one. This is the body POST .../refresh has
+   * always run; it is a function now because the server-side ingest reaper
+   * (generation-poller.js) has to run the SAME path rather than a second one that
+   * would drift from it. Nothing here can create provider work: it reaches the network
+   * only through refresh(), which fetches `statusUrl`, fetches `responseUrl`, and
+   * downloads the assets those name.
+   *
+   * Still serialised per job, for the reason it always was: two overlapping
+   * collections must not both observe `!ingestedAt` and ingest the same paid result
+   * twice. The job is re-read INSIDE the turn, so the second one observes the first's
+   * durable outcome instead of the snapshot it queued with. That is also what makes a
+   * browser tab and this server polling the same job at the same time safe.
+   *
+   * `markFailureOnError` is the one difference between the two callers, and it is a
+   * difference about who asked. A person pressing Refresh has established that they
+   * want an answer now, and a failed round-trip is an answer they should see on the
+   * job. A background sweep has established nothing: writing FAILED because a network
+   * blip lost one status request would mark a live, paid, in-queue render as finished
+   * and — because FAILED does not block resubmission — invite a second one. The reaper
+   * therefore commits NOTHING when it cannot ask, and tries again later. */
+  async function collectJob(owner, jobId, options = {}) {
+    const markFailureOnError = options.markFailureOnError !== false;
+    const unattended = options.unattended === true;
+    return serializeJobOperation(owner, jobId, async () => {
+      const job = readJobs(owner).find((item) => item.id === jobId);
+      if (!job) return { ok: false, outcome: "not-found", error: "Generation job not found." };
       /* An unresolved job with no request id has nothing to poll. Pretending otherwise
          would fetch an empty URL and report the resulting error as though the provider
          had answered — inventing a status out of a failure. */
       if (Lifecycle.isUnresolved(job) && !job.externalId)
-        return res.status(409).json({
-          error: "CineBraid never received a request id for this submission, so there is nothing it can check. Look for it at the provider and record what you find.",
+        return {
+          ok: false,
+          outcome: "no-handle",
           code: "GENERATION_UNRESOLVED_NO_HANDLE",
-          job: publicJob(job),
-        });
+          job,
+          error: "CineBraid never received a request id for this submission, so there is nothing it can check. Look for it at the provider and record what you find.",
+        };
+      const deliveredBefore = !!job.ingestedAt;
       try {
         await refresh(owner, job);
         await commit(owner, (current) => {
@@ -2003,26 +2161,48 @@ function registerFalGeneration(app, context) {
           if (row) Object.assign(job, mergeJobOutcome(row, job, { authoritative: true }));
           else current.push(job); // the row vanished underneath us; do not lose it
         });
-        res.json({ ok: true, job: publicJob(job) });
+        /* COLLECTED means THIS call took delivery — it went in without an ingest stamp
+           and came out with one. A job that was already delivered is not counted again,
+           which is what keeps a duplicate tick, a duplicate tab, or a tab and the reaper
+           together from reporting the same result twice. */
+        const collected = !deliveredBefore && !!job.ingestedAt;
+        if (collected && unattended) recordUnattendedCollection(owner, job);
+        return { ok: true, outcome: "polled", job, collected, outputs: collected ? (job.outputs || []).length : 0 };
       } catch (error) {
-        await commit(owner, (current) => {
-          const row = current.find((item) => item.id === job.id);
-          if (row) {
-            /* A poll that FAILED is not a provider answer, so it is never authoritative:
-               an unresolved job stays unresolved. Not being able to ask is not an answer,
-               and every other status keeps its existing behaviour. */
-            row.status = Lifecycle.nextStatus(row.status, "FAILED", {
-              ingested: !!row.ingestedAt,
-              authoritative: false,
-            });
-            row.error = error.message;
-            row.updatedAt = now();
-            Object.assign(job, row);
-          }
-        }).catch(() => {});
-        updateEntityCoverageRun(owner, job, "needs-attention", error.message);
-        res.status(502).json({ error: error.message, job: publicJob(job) });
+        if (markFailureOnError)
+          await commit(owner, (current) => {
+            const row = current.find((item) => item.id === job.id);
+            if (row) {
+              /* A poll that FAILED is not a provider answer, so it is never authoritative:
+                 an unresolved job stays unresolved. Not being able to ask is not an answer,
+                 and every other status keeps its existing behaviour. */
+              row.status = Lifecycle.nextStatus(row.status, "FAILED", {
+                ingested: !!row.ingestedAt,
+                authoritative: false,
+              });
+              row.error = error.message;
+              row.updatedAt = now();
+              Object.assign(job, row);
+            }
+          }).catch(() => {});
+        return { ok: false, outcome: "provider-error", job, error: error.message };
       }
+    });
+  }
+  app.post("/api/generation/fal/jobs/:id/refresh", async (req, res) => {
+    let owner;
+    try {
+      owner = captureOwner();
+    } catch (error) {
+      return res.status(ledgerFailureStatus(error)).json(ledgerFailurePayload(error));
+    }
+    return guardRoute(res, collectJob(owner, req.params.id).then(async (result) => {
+      if (result.ok) return res.json({ ok: true, job: publicJob(result.job) });
+      if (result.outcome === "not-found") return res.status(404).json({ error: result.error });
+      if (result.outcome === "no-handle")
+        return res.status(409).json({ error: result.error, code: result.code, job: publicJob(result.job) });
+      await updateEntityCoverageRun(owner, result.job, "needs-attention", result.error);
+      res.status(502).json({ error: result.error, job: publicJob(result.job) });
     }));
   });
   app.post("/api/generation/fal/jobs/:id/cancel", async (req, res) => {
@@ -2067,15 +2247,39 @@ function registerFalGeneration(app, context) {
       } catch (error) {
         return res.status(ledgerFailureStatus(error)).json(ledgerFailurePayload(error));
       }
-      updateEntityCoverageRun(owner, job, "cancelled", "Provider job cancelled by user.");
+      await updateEntityCoverageRun(owner, job, "cancelled", "Provider job cancelled by user.");
       res.json({ ok: true, job: publicJob(job) });
     }));
   });
 
-  /* The one thing this module exposes to a caller that is not a route: the
-     P4-SEM-C4 repair, so POST /api/media/rename can keep the generation ledger
-     truthful without becoming a second writer of it. */
-  return { repairJobMediaIdentity };
+  /* What this module exposes to callers that are not routes.
+   *
+   * `repairJobMediaIdentity` is the P4-SEM-C4 repair, so POST /api/media/rename can
+   * keep the generation ledger truthful without becoming a second writer of it.
+   *
+   * `recovery` is the ingest reaper's whole surface, and its shape is the guarantee.
+   * It can read the durable ledger, and it can COLLECT — ask about a request the
+   * provider was already given and take delivery of what came back. There is no
+   * submit, no retry, no repair-and-retry, no job constructor and no route handle in
+   * it, so a poller holding this object has nothing that could start paid work even if
+   * it tried. Everything it does goes through the same serialised turn, the same
+   * lifecycle rules and the same commit chain as the browser's own Refresh. */
+  return {
+    repairJobMediaIdentity,
+    recovery: {
+      /* Whether asking the provider anything is possible at all. Not configured is not
+         a job failure and must never be recorded as one — it is a reason to do nothing. */
+      providerReady() {
+        const cfg = config();
+        return cfg.enabled === true && Boolean(cfg.apiKey);
+      },
+      ownerFor: ownerForSlug,
+      /* Throws JobLedgerUnreadableError on a corrupt ledger, exactly as every other
+         reader does. A sweep must skip that project, never rewrite it. */
+      jobsFor: readJobs,
+      collect: collectJob,
+    },
+  };
 }
 
-module.exports = { registerFalGeneration };
+module.exports = { registerFalGeneration, CLAIM_RECOVERY_HEADER };

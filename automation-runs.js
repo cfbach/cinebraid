@@ -24,6 +24,49 @@ function leaseExpired(run, at = Date.now()) {
   const expiry = Date.parse(run?.leaseExpiresAt || "");
   return !run?.runnerId || !Number.isFinite(expiry) || expiry <= at;
 }
+/* One missed heartbeat BEYOND the lease before a run is declared abandoned. The lease is
+   already five heartbeats long, so this only absorbs clock skew between the window that
+   wrote the record and the process reading it. */
+const ABANDON_GRACE_MS = HEARTBEAT_MS;
+/* The lease was released because it expired with no heartbeat, not because the run
+   stopped for a reason of its own. Written into leaseDiagnostics and read by the
+   activity surfaces, which have to keep saying "waiting for you · choose Resume Run"
+   about a run in this state rather than filing it under previous failures. */
+const RELEASE_CODE_LEASE_EXPIRED = "lease-expired";
+/* HAS THIS RUN LOST ITS ACTIVE RUNNER FOR GOOD?
+ *
+ * Answered from the lease and the heartbeat, which are the only things recorded. Why the
+ * runner stopped renewing is NOT knowable here and is not asked: a closed tab, a
+ * suspended one, a sleeping machine and a lost network all reach this predicate the same
+ * way, and nothing downstream may claim to know which.
+ *
+ * Deliberately narrower than leaseExpired(). That predicate answers "may I take this
+ * lease", which is true for a run nobody has ever claimed; this one answers "is the
+ * durable record now a lie", which a brand-new run is not. The three differences:
+ *
+ *   no runnerId       nothing has claimed it yet. v627AcquireAutomationLease adds the run
+ *                     to the active set and stores its lease in the same step, so the gap
+ *                     is real and momentary. Treating it as abandoned would interrupt a
+ *                     run at the instant it starts.
+ *   grace             a lease that expired one second ago is indistinguishable from a
+ *                     clock a second out of step. ABANDON_GRACE_MS is the margin.
+ *   heartbeat too     the lease is DERIVED from the last heartbeat, so the two normally
+ *                     agree; where a hand-edited or partially written record makes them
+ *                     disagree, BOTH have to say the runner is gone. Interrupting a run
+ *                     that is still beating is the expensive direction.
+ *
+ * Only `running` is considered. Every other status already describes a stopped run. */
+function runnerAbandoned(run, at = Date.now()) {
+  if (String(run?.status || "") !== "running") return false;
+  if (!String(run?.runnerId || "")) return false;
+  const expiry = Date.parse(run?.leaseExpiresAt || "");
+  /* A runner is recorded and its lease is unreadable: it owns nothing that can be checked. */
+  if (!Number.isFinite(expiry)) return true;
+  if (expiry + ABANDON_GRACE_MS > at) return false;
+  const beat = Date.parse(run?.heartbeatAt || "");
+  if (Number.isFinite(beat) && beat + LEASE_MS + ABANDON_GRACE_MS > at) return false;
+  return true;
+}
 function sanitizeLeaseDiagnostics(value, base = {}) {
   const source = plainObject(value);
   const prior = plainObject(base);
@@ -36,6 +79,12 @@ function sanitizeLeaseDiagnostics(value, base = {}) {
     lastPaidStepKey: cleanText(source.lastPaidStepKey || prior.lastPaidStepKey, 240),
     lastReleasedAt: cleanText(source.lastReleasedAt || prior.lastReleasedAt, 80),
     lastReleaseReason: cleanText(source.lastReleaseReason || prior.lastReleaseReason, 240),
+    /* WHY the lease was released, as a stable code rather than the sentence beside it.
+       `interrupted` means two things — a runner that stopped safely and a run whose
+       lease lapsed — and every surface that has to tell them apart reads this.
+       Matching on lastReleaseReason instead would make a wording change a behaviour
+       change. See RELEASE_CODE_LEASE_EXPIRED. */
+    lastReleaseCode: cleanText(source.lastReleaseCode || prior.lastReleaseCode, 80),
     lastFailureAt: cleanText(source.lastFailureAt || prior.lastFailureAt, 80),
     lastFailureCode: cleanText(source.lastFailureCode || prior.lastFailureCode, 120),
     lastFailureMessage: cleanText(source.lastFailureMessage || prior.lastFailureMessage, 1000),
@@ -333,14 +382,98 @@ function registerAutomationRuns(app, deps) {
     }
     return changed;
   }
+  /* ==========================================================================
+     STALE-LEASE RECONCILIATION — a run nothing owns must stop saying `running`.
+
+     A runner holds a lease and renews it every HEARTBEAT_MS. Close the tab, suspend it,
+     sleep the laptop, lose the network — the lease stops being renewed and the durable
+     record keeps its last word: status `running`, a stage that names the step it was on,
+     a runnerId nothing is answering for. Nothing ever wrote the ending.
+
+     THOSE CAUSES ARE INDISTINGUISHABLE HERE, and that is why the correction below names
+     the lease rather than the browser. CineBraid observes a lease and a heartbeat; it
+     never observes a window. A message that says the window closed would be asserting
+     the one thing this record cannot establish.
+
+     Every activity surface already KNEW this — v670WaitingForHumanRun reads the lapsed
+     lease and says "orchestration stopped, choose Resume Run" — but it knew it only
+     while a browser was open to ask. The durable record, which is what Reports read,
+     what a diagnostic export carries and what the next window loads, still claimed live
+     machine work. This writes the ending the runner never got to write.
+
+     `interrupted` is not a new status: it is what v628FinishRunAfterError already
+     records when a run stops safely, and what v626RunActions already offers RESUME RUN
+     for. Choosing it means a reconciled run behaves exactly like one the browser
+     interrupted itself, because it IS one.
+
+     THIS IS A STATE CORRECTION, NOT A RESUME. No step advances, no gate opens, no
+     request is prepared or sent, and `usage` is untouched. The lease fields are cleared
+     so a returning runner reacquires cleanly rather than being told the lease belongs
+     to a runner that no longer exists — and what was cleared is preserved in
+     leaseDiagnostics, which is what that record is for. */
+  function reconcileStaleLeases(runs, at = Date.now()) {
+    const reconciled = [];
+    for (let index = 0; index < runs.length; index++) {
+      const run = runs[index];
+      if (!runnerAbandoned(run, at)) continue;
+      const stamp = now();
+      /* WHAT THIS SENTENCE IS ALLOWED TO SAY. The durable record establishes exactly two
+         things: the lease expired, and no heartbeat renewed it. It does NOT establish
+         that a browser closed, a tab went away or that nobody was watching — a suspended
+         tab, a sleeping machine and a network partition all produce this same record with
+         the window still open. The message therefore names the lease and the runner,
+         which are observed, and never the browser, which is not. */
+      const message = "This run lost its active runner: its lease expired with no heartbeat. "
+        + "CineBraid recorded the run as interrupted. Nothing was cancelled and no new work was started.";
+      runs[index] = bump({}, run, {
+        status: "interrupted",
+        stage: "Interrupted — resume required",
+        summary: `${message} Choose Resume Run to continue from the last unfinished step.`,
+        cancelRequested: false,
+        runnerId: "", leaseAcquiredAt: "", heartbeatAt: "", leaseExpiresAt: "",
+        leaseDiagnostics: sanitizeLeaseDiagnostics({
+          lastRunnerId: run.runnerId,
+          lastAcquiredAt: run.leaseAcquiredAt,
+          lastHeartbeatAt: run.heartbeatAt,
+          lastExpiresAt: run.leaseExpiresAt,
+          lastReleasedAt: stamp,
+          lastReleaseReason: "Lease expired with no heartbeat; CineBraid recorded the run as interrupted.",
+          /* THE HALF OF `interrupted` THIS ONE IS. Without it the drawer cannot tell a
+             run whose lease lapsed from a run that stopped for its own reason, and an
+             abandoned run would leave WAITING FOR YOU for PREVIOUS FAILURES — which is a
+             downgrade in truth, not an upgrade: nothing failed, and the creator's next
+             move is still Resume Run. */
+          lastReleaseCode: RELEASE_CODE_LEASE_EXPIRED,
+        }, run.leaseDiagnostics),
+        logs: [...(Array.isArray(run.logs) ? run.logs : []), { at: stamp, tone: "warn", message }].slice(-MAX_LOGS),
+      });
+      reconciled.push(String(run.id));
+    }
+    return reconciled;
+  }
   function readReconciled() {
     const runs = read();
+    /* Ordered deliberately: a run that has just been recorded as interrupted becomes
+       reconcilable by the gate pass below in the same read, rather than on the next one. */
+    let changed = reconcileStaleLeases(runs).length > 0;
     let project;
-    try { project = readProjectSafe(); } catch { return runs; }
-    if (reconcileParkedGates(runs, project)) {
+    try { project = readProjectSafe(); } catch { project = null; }
+    if (project && reconcileParkedGates(runs, project)) changed = true;
+    if (changed) {
       try { write(runs); } catch { /* the answer is still reconciled; the ledger catches up on the next writable read */ }
     }
     return runs;
+  }
+  /* The same correction, entered on purpose rather than as a side effect of a read.
+     This is the entry point the server-side ingest reaper uses, so a run whose lease has
+     lapsed stops claiming to be running even if nothing ever asks for it again.
+     It reconciles state and nothing else — see reconcileStaleLeases. */
+  function reconcileStaleRuns(at = Date.now()) {
+    const runs = read();
+    const reconciled = reconcileStaleLeases(runs, at);
+    if (!reconciled.length) return [];
+    try { write(runs); } catch { return []; }
+    return reconciled;
   }
   function generationJobsFile() { return path.join(projectDir(), "generation-jobs.json"); }
   function readGenerationJobs() {
@@ -984,7 +1117,14 @@ function registerAutomationRuns(app, deps) {
     res.json({ run: publicRun(runs[index]) });
   });
 
-  return { readRuns: read, writeRuns: write, sanitizeRun, leaseExpired };
+  return { readRuns: read, writeRuns: write, sanitizeRun, leaseExpired, reconcileStaleRuns };
 }
 
-module.exports = { registerAutomationRuns };
+module.exports = {
+  registerAutomationRuns,
+  runnerAbandoned,
+  ABANDON_GRACE_MS,
+  HEARTBEAT_MS,
+  LEASE_MS,
+  RELEASE_CODE_LEASE_EXPIRED,
+};

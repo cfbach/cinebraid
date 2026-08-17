@@ -87,6 +87,8 @@ const nodeSuites = [
   "check:generation-binding-negative",
   "check:generation-unresolved",
   "check:generation-unresolved-negative",
+  "check:ingest-reaper",
+  "check:ingest-reaper-negative",
   "check:model-intelligence",
   "check:model-intelligence-negative",
   "check:gpt-image-2",
