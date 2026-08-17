@@ -234,14 +234,22 @@ function registerFalGeneration(app, context) {
     jobOperationChains.set(key, next.catch(() => {}));
     return next;
   }
-  /* ---- what CineBraid collected with nobody watching -------------------------
+  /* ---- what the SERVER took delivery of ---------------------------------------
    *
-   * A result the SERVER took delivery of, because the ingest reaper asked while no
-   * browser was driving the job. Kept per project and only for the life of this
-   * process: it is a notice, not a record. What actually happened is durable on the
-   * job row and in the project — the outputs, the ingest stamp, the candidate files —
-   * and this exists so the next window that opens is TOLD, instead of the work
-   * appearing in a list with no explanation of when it arrived.
+   * A result collected by the ingest reaper's sweep rather than by a browser refresh.
+   * Kept per project and only for the life of this process: it is a notice, not a
+   * record. What actually happened is durable on the job row and in the project — the
+   * outputs, the ingest stamp, the candidate files — and this exists so the next window
+   * that opens is TOLD, instead of the work appearing in a list with no explanation of
+   * when it arrived.
+   *
+   * WHAT THIS KNOWS, AND WHAT IT MUST NOT CLAIM. It knows exactly one thing: the sweep
+   * won the turn for this job. Nothing on the server observes browsers. `pollEligibility`
+   * is derived from durable job fields alone — ingest stamp, reconciliation, status,
+   * provider handle, age — and never from whether a window is open, so a sweep that
+   * wins a race against three live refreshes is indistinguishable here from a sweep on
+   * a machine with no browser running at all. The notice therefore says HOW the result
+   * was collected and never asserts what the user was or was not doing.
    *
    * Claimed once, by the browser's initial ledger load. The activity drawer re-reads
    * the same route every 3.5 seconds and must not consume the notice or announce it
@@ -271,7 +279,7 @@ function registerFalGeneration(app, context) {
       jobs: rows.length,
       results,
       collections: rows,
-      message: `Collected ${results} result${results === 1 ? "" : "s"} while no CineBraid window was open.`,
+      message: `Collected ${results} result${results === 1 ? "" : "s"} through background recovery.`,
     };
   }
   /* Express 4 does not catch a rejected async handler, and an unanswered request
@@ -1243,8 +1251,8 @@ function registerFalGeneration(app, context) {
   /* CLAIM_RECOVERY_HEADER is sent by ONE caller — the browser's initial ledger load —
      and it is what takes delivery of the background-recovery notice. Every other reader
      of this route, including the activity drawer's 3.5-second refresh, leaves the notice
-     where it is, so a result collected while nobody was watching is announced once to
-     the next window that opens rather than on every poll.
+     where it is, so a result the sweep collected is announced once to the next window
+     that opens rather than on every poll.
 
      A HEADER RATHER THAN A QUERY PARAMETER, deliberately. Which request claims the
      notice is a property of the requester, not of the resource, and the URL of this

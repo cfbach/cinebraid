@@ -258,6 +258,37 @@ async function guardTheRecoveryNoticeIsToldOnce(modules) {
   } finally { h.close(); }
 }
 
+/* THE NOTICE SAYS HOW IT WAS COLLECTED, NEVER WHO WAS WATCHING.
+ *
+ * Run the reproduced concurrency case — one sweep against three simultaneous browser
+ * refreshes — and read the notice the next window is handed. The sweep takes delivery,
+ * so a notice exists; three CineBraid windows demonstrably existed too, so a sentence
+ * claiming none was open is false at the moment it is written.
+ *
+ * The server cannot know either way: pollEligibility is derived from durable job fields
+ * alone and nothing on the server observes browsers. So this guard forbids the whole
+ * SHAPE of the claim rather than one exact string — a reworded version of the same
+ * falsehood must not pass it. */
+async function guardTheNoticeClaimsOnlyBackgroundRecovery(modules) {
+  const h = await scenario(modules);
+  try {
+    h.statusFor.set("req-notice-race", "COMPLETED");
+    h.behaviour.stallMs = 120;
+    h.writeLedger([queued("job-notice-race", "req-notice-race", h.origin)]);
+    const browser = () => fetch(`${h.base}/api/generation/fal/jobs/job-notice-race/refresh`, { method: "POST" }).then((r) => r.json());
+    const [sweep] = await Promise.all([h.poller.runOnce(), browser(), browser(), browser()]);
+    assert.strictEqual(sweep.collected, 1, "precondition: the sweep must be the collector, or there is no notice to judge");
+    assert.deepStrictEqual(h.calls.submissions, [], "precondition: no observer may submit");
+
+    const claimed = await fetch(`${h.base}/api/generation/fal/jobs`, { headers: { "x-cinebraid-claim-recovery": "1" } }).then((r) => r.json());
+    assert(claimed.backgroundRecovery, "precondition: the sweep collected, so a notice must exist to judge");
+    assert.strictEqual(claimed.backgroundRecovery.message, "Collected 1 result through background recovery.",
+      `the notice must say how the result was collected: ${claimed.backgroundRecovery.message}`);
+    assert(!/window|windows|tab|nobody|unattended|no one|closed/i.test(claimed.backgroundRecovery.message),
+      `the notice must make no claim about what was open or who was watching: ${claimed.backgroundRecovery.message}`);
+  } finally { h.close(); }
+}
+
 /* The reconciled run as the activity surfaces read it, against the real
    public/live-activity.js under the render harness. Its `modules` parameter is the
    RELEASE CODE the reconciliation stamps: drop it and the surfaces lose the only thing
@@ -461,7 +492,22 @@ async function main() {
     () => guardTheReconciledRunStillReadsAsWaiting(""),
   );
 
-  /* 9. The sweep not running at all — what dropping the wiring in server.js looks like
+  /* 9. The false wording put back: a notice telling the filmmaker no CineBraid window
+        was open, asserted at the exact moment three of them had just raced the server
+        for this job. The server has no browser observation of any kind, so this is a
+        claim it is not entitled to make — and the shipped defect it actually made. */
+  await control(
+    "a recovery notice that claims no CineBraid window was open",
+    "the notice names background recovery and claims nothing about what was open",
+    () => guardTheNoticeClaimsOnlyBackgroundRecovery({
+      falGeneration: loadModified("fal-generation.js", [[
+        '      message: `Collected ${results} result${results === 1 ? "" : "s"} through background recovery.`,',
+        '      message: `Collected ${results} result${results === 1 ? "" : "s"} while no CineBraid window was open.`,',
+      ]]),
+    }),
+  );
+
+  /* 10. The sweep not running at all — what dropping the wiring in server.js looks like
         from outside. Without this control, the boot test could be passing on something
         other than the reaper. */
   await control(

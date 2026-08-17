@@ -1329,8 +1329,10 @@ async function load() {
   if (!location.hash) location.hash = "#/production";
   route();
   if ((P.meta?.dataIntegrityWarnings || []).length) setTimeout(() => toast(`${P.meta.dataIntegrityWarnings.length} project data-integrity warning${P.meta.dataIntegrityWarnings.length === 1 ? "" : "s"} found. Review Settings or Reports before relying on ambiguous IDs.`), 120);
-  /* Work that arrived while nobody was watching. The results are already in the
-     workspace; this is what says WHEN they got there. */
+  /* Work the server collected through background recovery rather than through a
+     browser refresh. The results are already in the workspace; this is what says HOW
+     they got there. The sentence is the server's — it is the only side that knows
+     which collector won — and it deliberately makes no claim about what was open. */
   if (backgroundRecovery?.message) setTimeout(() => toast(backgroundRecovery.message), 200);
   if (schemaWasOlder && migratedV5) setTimeout(() => dirty(), 50);
   if (

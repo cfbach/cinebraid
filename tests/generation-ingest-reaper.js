@@ -363,8 +363,42 @@ async function coexistenceChecks() {
     /* Exactly one of the four observers took delivery, and the reaper knows whether it
        was the one — which is what stops the recovery notice counting a browser's work. */
     assert(sweep.collected <= 1, "the sweep may take delivery at most once");
+    /* THE REPRODUCED CASE. The sweep enters the per-job turn in-process while the three
+       refreshes are still crossing a socket, so it takes delivery. Structural rather
+       than lucky — but if this ever flips, the assertions below describe a browser
+       collection and the failure is a race outcome, not a wording regression. */
+    assert.strictEqual(sweep.collected, 1,
+      "the sweep is expected to win this race; the notice assertions below describe the case where it did");
 
-    note(`coexistence: 1 sweep + 3 browser refreshes on one job -> ${h.calls.download.length} download, 1 file, 1 candidate row`);
+    /* ---- AND WHAT THE NEXT WINDOW IS TOLD ABOUT IT ------------------------------
+     *
+     * THIS IS WHERE THE FALSE CLAIM WAS PROVABLY FALSE. The notice used to read
+     * "Collected 1 result while no CineBraid window was open." — asserted at the exact
+     * moment three CineBraid windows had just refreshed this job hard enough to race
+     * the server for it. The server cannot know either way: pollEligibility is derived
+     * from durable job fields alone and nothing on the server observes browsers, so
+     * "no window was open" was never a fact it was entitled to state.
+     *
+     * The boot section asserts the same wording with no browser at all. Together they
+     * pin the sentence as a statement about the COLLECTOR, which the server does know,
+     * and never about the user, which it does not. */
+    const claimed = await fetch(`${h.base}/api/generation/fal/jobs`, { headers: { [CLAIM_RECOVERY_HEADER]: "1" } })
+      .then((response) => response.json());
+    assert(claimed.backgroundRecovery, "the sweep took delivery, so the next window must be told how the result arrived");
+    assert.strictEqual(claimed.backgroundRecovery.results, 1, "one result, counted once — the three browsers collected nothing to count");
+    assert.strictEqual(claimed.backgroundRecovery.jobs, 1, "from one job");
+    assert.strictEqual(claimed.backgroundRecovery.message, "Collected 1 result through background recovery.",
+      `the notice must say how the result was collected: ${claimed.backgroundRecovery.message}`);
+    /* The claim the server is not entitled to make, forbidden by shape rather than by
+       exact string, so a reworded version of the same falsehood cannot slip back. */
+    assert(!/window|windows|tab|nobody|unattended|no one|closed/i.test(claimed.backgroundRecovery.message),
+      `the notice must make no claim about what was open or who was watching: ${claimed.backgroundRecovery.message}`);
+    /* Everything above happened with no provider submission, which is the boundary the
+       reaper is built on and the one a recovery notice must never imply was crossed. */
+    assert.deepStrictEqual(h.calls.submissions, [], "and still no observer submitted anything");
+
+    note(`coexistence: 1 sweep + 3 browser refreshes on one job -> ${h.calls.download.length} download, 1 file, 1 candidate row, `
+      + `0 submissions, and a notice that names background recovery while three windows were demonstrably open`);
   } finally { h.close(); }
 }
 
@@ -758,8 +792,13 @@ async function bootRecoveryChecks() {
     const claimed = await fetch(`${base}/api/generation/fal/jobs`, claim).then((response) => response.json());
     assert(claimed.backgroundRecovery, "the first window must be told what arrived while it was closed");
     assert.strictEqual(claimed.backgroundRecovery.results, 1, "one result");
-    assert.strictEqual(claimed.backgroundRecovery.message, "Collected 1 result while no CineBraid window was open.",
+    assert.strictEqual(claimed.backgroundRecovery.message, "Collected 1 result through background recovery.",
       `unexpected notice: ${claimed.backgroundRecovery.message}`);
+    /* The same sentence with no browser in existence as with three of them racing the
+       sweep (see the coexistence section). That is the point: it describes the
+       collector, which the server knows, and not the user, which it does not. */
+    assert(!/window|windows|tab|nobody|unattended|no one|closed/i.test(claimed.backgroundRecovery.message),
+      `even here, with no browser at all, the server may not claim one was absent: ${claimed.backgroundRecovery.message}`);
     const again = await fetch(`${base}/api/generation/fal/jobs`, claim).then((response) => response.json());
     assert(!again.backgroundRecovery, "and told once — a claimed notice must not repeat");
     /* The drawer re-reads this route every 3.5 seconds and must never have consumed it. */

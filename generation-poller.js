@@ -241,8 +241,10 @@ function createGenerationPoller(deps = {}) {
           }
           let result;
           try {
-            /* markFailureOnError:false — see the header. unattended:true is what makes
-               the result countable as work collected with nobody watching. */
+            /* markFailureOnError:false — see the header. unattended:true says only that
+               THIS sweep is the collector, which is what makes the result countable as
+               background recovery. It is not, and cannot be, a statement about whether
+               a window is open: nothing on the server observes browsers. */
             result = await recovery.collect(owner, job.id, { markFailureOnError: false, unattended: true });
           } catch (error) {
             summary.failed += 1;
@@ -271,7 +273,7 @@ function createGenerationPoller(deps = {}) {
          become ineligible without this sweep ever touching it. */
       for (const key of [...backoff.keys()]) if (!live.has(key)) backoff.delete(key);
       if (summary.collected)
-        log(`  CineBraid collected ${summary.results} generation result${summary.results === 1 ? "" : "s"} from ${summary.collected} request${summary.collected === 1 ? "" : "s"} that finished while no window was open.`);
+        log(`  CineBraid collected ${summary.results} generation result${summary.results === 1 ? "" : "s"} from ${summary.collected} request${summary.collected === 1 ? "" : "s"} through background recovery.`);
       return summary;
     } finally {
       running = false;
