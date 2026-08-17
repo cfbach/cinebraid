@@ -1,0 +1,252 @@
+#!/usr/bin/env python3
+"""Shot readiness and Historic confirmation, read off a real Chromium.
+
+WHY A BROWSER IS NEEDED AT ALL. Everything semantic about the derivation is proven
+in Node by tests/shot-readiness.js and its negative controls. Three claims cannot
+be, and each has cost this repository a defect before:
+
+  1. THE MODULE ACTUALLY LOADS. Every public/*.js shares one lexical scope, so a
+     duplicate top-level `const` between two of them is a SyntaxError that blanks
+     the WHOLE product - and no Node suite can see it, because Node has no shared
+     scope. shared-shot-readiness.js is a new file in that scope and app.js gained
+     new top-level declarations beside it.
+
+  2. THE CONFIRMATION IS A REAL HUMAN GESTURE. The authority kernel scopes Canon to
+     the EVENT CURRENTLY BEING DISPATCHED - not to a span of time - and refuses
+     anything whose `event.isTrusted !== true`. A Node harness supplies its own
+     event target, so it can only prove the rule is obeyed by a composition it
+     controls. Only a real user agent can prove a real click writes a receipt.
+
+  3. THE REFUSAL IS REAL TOO. This suite carries its own NEGATIVE CONTROL: the same
+     kernel command, called from page script outside any trusted event, must be
+     refused. Without it, "the button worked" could pass on a build where the
+     gesture check had stopped working entirely.
+
+It also proves the fourth thing a surface must do: after a confirmation, readiness
+RECALCULATES FROM CURRENT TRUTH rather than from whatever it rendered a moment ago.
+
+NOTHING HERE IS PAID. Config and projects live in a temporary directory reached
+through CINEBRAID_CONFIG_PATH and CINEBRAID_PROJECTS_ROOT, so data/ and the shipped
+sample are never touched; the route guard aborts the paid route and anything
+off-loopback.
+"""
+
+import os, pathlib, socket, subprocess, sys, tempfile, time
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "tests"))
+from browser_runtime import require_browser, launch_chromium
+
+LABEL = "Shot readiness real-browser audit"
+sync_playwright = require_browser(LABEL)
+
+PAID_ROUTE = "/api/generation/fal/jobs"
+
+page_errors, offsite, paid_calls = [], [], []
+findings = []
+
+
+def free_port():
+    sock = socket.socket(); sock.bind(("127.0.0.1", 0)); port = sock.getsockname()[1]; sock.close(); return port
+
+
+sandbox = pathlib.Path(tempfile.mkdtemp(prefix="cinebraid-shot-readiness-"))
+subprocess.run(["node", "scripts/qa-sandbox.js", "--out", str(sandbox / "env"), "--demo", "--force"],
+               cwd=ROOT, check=True, stdout=subprocess.DEVNULL)
+config_path = sandbox / "env" / "config.json"
+projects_root = sandbox / "env" / "projects"
+
+port = free_port()
+server = subprocess.Popen(
+    ["node", "server.js"], cwd=ROOT,
+    env={**os.environ, "PORT": str(port), "CINEBRAID_CONFIG_PATH": str(config_path),
+         "CINEBRAID_PROJECTS_ROOT": str(projects_root)},
+    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+try:
+    deadline = time.time() + 25
+    while time.time() < deadline:
+        try:
+            with socket.create_connection(("127.0.0.1", port), .25): break
+        except OSError: time.sleep(.1)
+    else:
+        raise RuntimeError("CineBraid server did not start")
+
+    base = f"http://127.0.0.1:{port}"
+    with sync_playwright() as pw:
+        browser = launch_chromium(pw, label=LABEL)
+        page = browser.new_page(viewport={"width": 1600, "height": 1000})
+        page.on("pageerror", lambda e: page_errors.append(str(e)))
+
+        def guard(route):
+            """No request leaves this machine, and the paid route is never called."""
+            url = route.request.url
+            if PAID_ROUTE in url and route.request.method == "POST":
+                paid_calls.append(f"{route.request.method} {url}")
+                return route.abort("failed")
+            if url.startswith(base) or url.startswith("data:") or url.startswith("blob:"):
+                return route.continue_()
+            if url.startswith("https://fonts."):
+                return route.fulfill(status=200, content_type="text/css", body="")
+            offsite.append(f"{route.request.method} {url}")
+            return route.abort("failed")
+
+        page.route("**/*", guard)
+        page.goto(f"{base}/#/production", wait_until="domcontentloaded")
+        page.wait_for_selector(".production-readiness", timeout=20000)
+        page.wait_for_timeout(500)
+        assert not page_errors, f"the production view raised uncaught errors: {page_errors}"
+
+        # ---- 1. THE MODULE IS LOADED, AND THE SHARED SCOPE SURVIVED IT ---------------
+        loaded = page.evaluate("""() => ({
+            evaluate: typeof window.evaluateProjectReadiness,
+            queue: typeof window.historicConfirmationQueue,
+            predicate: typeof window.productionInputSatisfaction,
+            statuses: (window.SHOT_READINESS_STATUSES || []).slice(),
+            methods: (window.ANIMATE_METHODS || []).slice(),
+            app: typeof window.route,
+            kernel: typeof (window.CineBraidAuthorityKernel || {}).approveEntityStateCanon,
+        })""")
+        assert loaded["evaluate"] == "function", "shared-shot-readiness.js did not load in the browser"
+        assert loaded["queue"] == "function" and loaded["predicate"] == "function", \
+            f"the readiness exports are incomplete in the page: {loaded}"
+        assert loaded["app"] == "function", \
+            "the app itself did not load - a duplicate top-level declaration would blank the shared scope"
+        assert loaded["statuses"] == ["READY", "BLOCKED", "NEEDS_DECISION"], \
+            f"the browser received an unexpected status vocabulary: {loaded['statuses']}"
+        assert loaded["methods"], "the method probe set is empty in the browser, so resolveTaskModes did not load first"
+        findings.append(f"1. module loaded in Chromium; methods={'/'.join(loaded['methods'])}")
+
+        # ---- 2. THE FEED AND THE DEDUPLICATED QUEUE RENDER ----------------------------
+        before = page.evaluate("""() => {
+            const feed = evaluateProjectReadiness(P, {
+                mediaListing: (list) => entityMediaPool(list),
+                shotMediaListing: (id) => takesFor(id),
+            });
+            return {
+              counts: feed.counts,
+              unique: feed.historic.uniqueTargets,
+              occurrences: feed.historic.occurrences,
+              statuses: feed.shots.map(s => s.status),
+              rows: [...document.querySelectorAll('.historic-confirm-list > li')].length,
+              feedRows: [...document.querySelectorAll('.shot-readiness-list > a')].length,
+              firstStatus: document.querySelector('.shot-readiness-list .readiness-status')?.textContent || '',
+            };
+        }""")
+        assert before["unique"] > 0, "the demo project should have unconfirmed Historic selections"
+        assert before["occurrences"] > before["unique"], \
+            f"deduplication should collapse occurrences: {before['occurrences']} -> {before['unique']}"
+        assert before["rows"] == before["unique"], \
+            f"the surface must render one row per unique authority target: {before['rows']} vs {before['unique']}"
+        assert before["feedRows"] == len(before["statuses"]), "every shot appears in the readiness feed"
+        assert "·" in before["firstStatus"], \
+            f"a status must never render without the action it is the status of: {before['firstStatus']!r}"
+        findings.append(
+            f"2. feed rendered: {before['occurrences']} requirements -> {before['unique']} confirmations, "
+            f"counts={before['counts']['ready']}R/{before['counts']['blocked']}B/{before['counts']['needsDecision']}D")
+
+        # ---- 3. NEGATIVE CONTROL: THE SAME COMMAND OUTSIDE A TRUSTED EVENT IS REFUSED -
+        # Run FIRST, so a build whose gesture check had stopped working could not pass
+        # step 4 by accident.
+        refusal = page.evaluate("""() => {
+            const feed = evaluateProjectReadiness(P, { mediaListing: (l) => entityMediaPool(l), shotMediaListing: (i) => takesFor(i) });
+            const item = feed.historic.items.find(row => row.target.kind === 'entity-state' && !row.ownership.wouldRefuse);
+            if (!item) return { skipped: true };
+            try {
+                CineBraidAuthorityKernel.approveEntityStateCanon(P, {
+                    list: item.target.list, entityId: item.target.entityId, stateId: item.target.stateId,
+                    value: item.value, assetId: item.assetId || "", at: new Date().toISOString(), via: "page-script",
+                });
+                return { refused: false, key: item.key };
+            } catch (error) {
+                return { refused: true, code: error.code || "", key: item.key };
+            }
+        }""")
+        assert not refusal.get("skipped"), "no confirmable entity-state row was offered"
+        assert refusal["refused"] is True, \
+            "page script wrote Canon with no user gesture at all - the trusted-event boundary is not in force"
+        assert refusal["code"] == "MANUAL_ACTION_REQUIRED", \
+            f"refused for the wrong reason: {refusal.get('code')!r}"
+        findings.append(f"3. NEGATIVE CONTROL: the same command from page script was refused ({refusal['code']})")
+
+        # ---- 4. A REAL CLICK WRITES A REAL RECEIPT ------------------------------------
+        target_key = page.evaluate("""() => {
+            const feed = evaluateProjectReadiness(P, { mediaListing: (l) => entityMediaPool(l), shotMediaListing: (i) => takesFor(i) });
+            const item = feed.historic.items.find(row => !row.ownership.wouldRefuse);
+            return item ? item.key : "";
+        }""")
+        assert target_key, "no confirmable row to click"
+        button = page.query_selector(f".historic-confirm-list button[onclick*=\"{target_key}\"]")
+        assert button, f"the confirmation button for {target_key} is not in the page"
+        button.click()
+        page.wait_for_timeout(600)
+        assert not page_errors, f"confirming raised uncaught errors: {page_errors}"
+
+        after = page.evaluate("""(key) => {
+            const receipts = (P.productionAuthority || {}).receipts || [];
+            const feed = evaluateProjectReadiness(P, {
+                mediaListing: (list) => entityMediaPool(list),
+                shotMediaListing: (id) => takesFor(id),
+            });
+            const receipt = receipts.find(row => row.targetKey === key) || null;
+            return {
+              receipts: receipts.length,
+              receipt: receipt ? { actor: receipt.actor, act: receipt.act, status: receipt.status, command: receipt.command } : null,
+              unique: feed.historic.uniqueTargets,
+              stillListed: feed.historic.items.some(row => row.key === key),
+              rows: [...document.querySelectorAll('.historic-confirm-list > li')].length,
+            };
+        }""", target_key)
+        assert after["receipts"] == 1, f"one click must write exactly one receipt, got {after['receipts']}"
+        assert after["receipt"], f"no receipt was written for {target_key}"
+        assert after["receipt"]["actor"] == "human" and after["receipt"]["act"] == "explicit-approval", \
+            f"the receipt does not record a human explicit approval: {after['receipt']}"
+        assert after["receipt"]["status"] == "current", f"the receipt is not current: {after['receipt']}"
+        findings.append(f"4. a real trusted click wrote one {after['receipt']['command']} receipt for {target_key}")
+
+        # ---- 5. READINESS RECALCULATES FROM CURRENT TRUTH -----------------------------
+        assert after["unique"] == before["unique"] - 1, \
+            f"the confirmed target must leave the queue: {before['unique']} -> {after['unique']}"
+        assert not after["stillListed"], "the confirmed target is still offered for confirmation"
+        assert after["rows"] == after["unique"], \
+            f"the re-rendered surface must show the new truth: {after['rows']} vs {after['unique']}"
+        findings.append(f"5. readiness recalculated: {before['unique']} -> {after['unique']} confirmations outstanding")
+
+        # ---- 6. THE SERVER ANSWERS THE SAME QUESTION THROUGH THE SAME MODULE ----------
+        api = page.evaluate("""async () => {
+            const response = await fetch('/api/project/readiness', { cache: 'no-store' });
+            const data = await response.json();
+            return {
+              status: response.status,
+              contract: data.readiness ? data.readiness.contract : "",
+              issues: Array.isArray(data.issues),
+              shots: data.readiness ? data.readiness.shots.length : -1,
+              mediaCheck: data.readiness ? data.readiness.mediaCheck : "",
+              unique: data.readiness ? data.readiness.historic.uniqueTargets : -1,
+            };
+        }""")
+        assert api["status"] == 200, f"/api/project/readiness answered {api['status']}"
+        assert api["issues"], "the existing issue list is still returned"
+        assert api["contract"] == "cinebraid.shot-readiness/1", f"unexpected contract {api['contract']!r}"
+        assert api["shots"] == len(before["statuses"]), "the server projection covers every shot"
+        assert api["mediaCheck"] == "resolveApprovalMedia", \
+            f"the server must resolve media through the canonical resolver, got {api['mediaCheck']!r}"
+        findings.append(f"6. GET /api/project/readiness: {api['shots']} shots, mediaCheck={api['mediaCheck']}")
+
+        assert not paid_calls, f"a paid route was called: {paid_calls}"
+        assert not offsite, f"a request left this machine: {offsite}"
+        assert not page_errors, f"uncaught page errors: {page_errors}"
+
+        browser.close()
+finally:
+    server.terminate()
+    try: server.wait(timeout=10)
+    except Exception: server.kill()
+
+for line in findings:
+    print(f"[browser] {line}")
+print("Shot readiness real-browser suite passed: the shared derivation loads in the page, the "
+      "deduplicated confirmation surface renders one row per authority target, a real trusted click "
+      "writes exactly one human receipt while the same command from page script is refused, readiness "
+      "recalculates from current truth, and the server answers the same question through the same module. "
+      "Paid calls: 0. Offsite requests: 0.")

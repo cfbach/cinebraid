@@ -50,6 +50,7 @@ const SUITES = [
   "check:entity-truth-browser",
   "check:state-binding-browser",
   "check:alpha-loop-browser",
+  "check:shot-readiness-browser",
 ];
 
 /* Suites that launch a browser and are known to fail, pinned to the reason.

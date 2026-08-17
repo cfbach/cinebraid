@@ -15,6 +15,8 @@ const nodeSuites = [
   "check:h3",
   "check:shot-execution-tier0",
   "check:shot-execution-tier0-negative",
+  "check:shot-readiness",
+  "check:shot-readiness-negative",
   "check:preview-ux",
   "check:api",
   "check:diagnostics",
@@ -191,7 +193,8 @@ const serialSuites = ["check:windows-shutdown"];
    these also belongs to. See docs/qa/BROWSER_TESTS.md. */
 const browserSuites = ["check:manual-browser", "check:browser-real", "check:h3-browser", "check:preview-layout",
   "check:ui-state", "check:c2b-browser", "check:brand-logo-browser", "check:lan-passcode-browser",
-  "check:focused-browser", "check:alpha-loop-browser", "check:entity-truth-browser"];
+  "check:focused-browser", "check:alpha-loop-browser", "check:entity-truth-browser",
+  "check:shot-readiness-browser"];
 const releaseSuites = ["check:environment", "check:package"];
 /* How a suite is launched, without a shell.
 
