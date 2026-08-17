@@ -2994,7 +2994,25 @@ function guidedMotionPromptResult(s, build) {
      genuinely useful somewhere else, so it is kept and the refusal is stated beside
      it, naming a target that is wired. */
   const unsupported = guidedVideoProfileRefusalMarkup(profile);
-  return `<article class="guided-prompt-result motion ${profile?.family === "minimax-h3" ? "h3" : ""}"><header><div><span>READY-TO-USE MOTION PROMPT</span><b>${esc(build.profileName || build.profileId)}</b><small>${esc(inputSummary)}${build.durationSeconds ? ` · ${build.durationSeconds}s` : ""}${build.packageId ? ` · ${esc(build.packageId)}` : ""}${build.manualEdited ? " · MANUAL REVISION" : ""}</small></div><div>${h3Action}<button class="ghost-btn motion-prompt-edit-btn" onclick="openGuidedMotionPromptEditor('${s.id}','${build.id}')">EDIT PROMPT</button><button class="copy-btn" onclick="copyText(${JSON.stringify(build.prompt || "").replace(/"/g, "&quot;")})">COPY</button><button class="chip" onclick="downloadGuidedMotionPrompt('${s.id}','${build.id}')">Download</button></div></header>${unsupported}${h3Job}<pre class="guided-ready-motion-prompt">${esc(build.prompt || "")}</pre>${revision}${guidedPromptWarningsMarkup(build.warnings)}${guidedProductionRisksMarkup(build.productionRisks)}</article>`;
+  /* IS THIS PROMPT STILL ABOUT THIS SHOT?
+   *
+   * A compiled package is a frozen sentence about inputs that keep moving. Its
+   * staleness was already derived — and was only ever reported in the project
+   * health list, several screens from the prompt it is about, so the founder smoke
+   * read an 8-second FLF contract as current after changing the shot to 6 seconds.
+   * The verdict is stated HERE, on the package, with the exact reason, and it names
+   * rebuilding rather than editing: an out-of-date prompt is not a wording problem.
+   *
+   * "Not recorded" is its own answer. A package compiled before dependencies were
+   * captured cannot be checked, and saying so is the truth; saying "current" would
+   * not be. */
+  const freshness = typeof packageFreshness === "function" ? packageFreshness(s, build) : { current: true, recorded: true, reasons: [] };
+  const freshnessMarkup = !freshness.recorded
+    ? `<div class="package-stale" data-package-freshness="unknown"><b>NOT CHECKED</b><span>This prompt was compiled before CineBraid recorded what it was built from, so it cannot be checked against the shot as it stands now. Rebuild it to make it verifiable.</span></div>`
+    : freshness.current
+      ? `<div class="package-current" data-package-freshness="current"><b>CURRENT</b><span>Every input this prompt was compiled from still matches the shot.</span></div>`
+      : `<div class="package-stale" data-package-freshness="stale"><b>OUT OF DATE — REBUILD BEFORE GENERATING</b><span>${esc(freshness.reasons.join("; "))}.</span><button class="ghost-btn" onclick="buildGuidedMotionPrompt('${attr(s.id)}',false)">REBUILD MOTION PROMPT</button></div>`;
+  return `<article class="guided-prompt-result motion ${profile?.family === "minimax-h3" ? "h3" : ""}${freshness.recorded && !freshness.current ? " is-stale" : ""}"><header><div><span>READY-TO-USE MOTION PROMPT</span><b>${esc(build.profileName || build.profileId)}</b><small>${esc(inputSummary)}${build.durationSeconds ? ` · ${build.durationSeconds}s` : ""}${build.packageId ? ` · ${esc(build.packageId)}` : ""}${build.manualEdited ? " · MANUAL REVISION" : ""}</small></div><div>${h3Action}<button class="ghost-btn motion-prompt-edit-btn" onclick="openGuidedMotionPromptEditor('${s.id}','${build.id}')">EDIT PROMPT</button><button class="copy-btn" onclick="copyText(${JSON.stringify(build.prompt || "").replace(/"/g, "&quot;")})">COPY</button><button class="chip" onclick="downloadGuidedMotionPrompt('${s.id}','${build.id}')">Download</button></div></header>${freshnessMarkup}${unsupported}${h3Job}<pre class="guided-ready-motion-prompt">${esc(build.prompt || "")}</pre>${revision}${guidedPromptWarningsMarkup(build.warnings)}${guidedProductionRisksMarkup(build.productionRisks)}</article>`;
 }
 function guidedMotionCandidatePanel(s, takes, approved) {
   const videos = takes.filter((take) => isVideo(take.name));
@@ -3507,7 +3525,19 @@ window.buildGuidedMotionPrompt = async (id, useLLM = false) => {
   // Structured controls are the primary motion brief. Free text supplements
   // them instead of replacing them.
   const h3SequenceDirection = String(c.h3SequenceNote || "").trim();
-  const directiveForRequest = useLLM ? [structuredDirection, writtenDirection, h3SequenceDirection].filter(Boolean).join("\n") : [writtenDirection, h3SequenceDirection].filter(Boolean).join("\n");
+  /* Deduplicated before it leaves. These are three separate fields a filmmaker can
+     fill in — and Improve writes its result back into `motionDirection`, so the
+     structured summary it was built from arrives a second time on the next pass.
+     Sending the same sentence twice compiles it twice; the H3 compiler refuses the
+     duplicate as well, and this stops it being created in the first place. */
+  const directiveParts = (useLLM ? [structuredDirection, writtenDirection, h3SequenceDirection] : [writtenDirection, h3SequenceDirection]).filter(Boolean);
+  const directiveSeen = new Set();
+  const directiveForRequest = directiveParts.filter((part) => {
+    const key = String(part).replace(/\s+/g, " ").trim().toLowerCase();
+    if (!key || directiveSeen.has(key)) return false;
+    directiveSeen.add(key);
+    return true;
+  }).join("\n");
   if (!structuredDirection && !writtenDirection) return toast("Choose at least one motion direction");
   if (useLLM && !capabilityState("text").ready) return toast(capabilityState("text").message);
   const progress = guidedFrameProgress(s, takesFor(id));
@@ -3607,9 +3637,23 @@ window.buildGuidedMotionPrompt = async (id, useLLM = false) => {
       motionPlan: JSON.parse(JSON.stringify(c.motionPlan)),
       composition: JSON.parse(JSON.stringify(c.composition)),
       durationSeconds: duration,
+      /* WHAT THIS PROMPT WAS COMPILED FOR, recorded on the package itself. The
+         execution method and the motion unit are printed into the compiled text
+         (`MINIMAX H3 FIRST / LAST FRAME — 8 SECONDS`), so a package that does not
+         carry them cannot be checked against a shot that has since changed. */
+      mode: profile.mode || "",
+      segmentId: unitKey(unit),
       revision: (unit.generationPackages || []).length + 1,
       kind: "guided-motion",
     };
+    /* THE DEPENDENCY SNAPSHOT, ACTUALLY WRITTEN.
+       packageStaleReasons() has always compared `pack.dependencySnapshot` against
+       the shot as it stands — and nothing ever wrote one, so it returned "no
+       reasons" for every package in every project and the freshness check could not
+       fire at all. Recording it here is what makes the whole mechanism live. */
+    build.dependencySnapshot = typeof packageInputSnapshot === "function"
+      ? packageInputSnapshot(s, build, build.references, currentDirectionForPackage(s, build))
+      : null;
     const buildId = registerPromptBuild(P, build);
     c.motionPromptBuilds.push(promptBuildRef(buildId, { kind: "guided-motion" }));
     c.lastMotionPackageId = packageId;
@@ -4036,6 +4080,11 @@ window.buildGuidedFramePrompt = async (id, frameId, useLLM = false) => {
       kind: "guided-frame",
       revision: sequence,
     };
+    /* Same reason as the motion builder: a package with no recorded dependencies
+       can never be reported stale, so every freshness answer about it was "fine". */
+    build.dependencySnapshot = typeof packageInputSnapshot === "function"
+      ? packageInputSnapshot(s, build, build.references, currentDirectionForPackage(s, build))
+      : null;
     const buildId = registerPromptBuild(P, build);
     state.promptBuilds.push(promptBuildRef(buildId, { kind: "guided-frame" }));
     if (index === 0) {
@@ -4149,8 +4198,28 @@ function creationManualWorkspace() {
     <button onclick="addEntity('props')"><span>OPTIONAL</span><b>Create a prop reference</b><small>Lock an object's shape, materials, scale, and wear when continuity matters.</small></button>
     <button onclick="addShot()"><span>STEP 4</span><b>Create the first shot</b><small>Add a scene automatically if needed, then describe the visible action and staging.</small></button>
   </div>
-  <section class="creation-progress"><header><div><span class="creation-kicker">PROJECT AT A GLANCE</span><h3>${esc(P.meta.title)}</h3></div><a class="ghost-btn" href="#/production/scenes">Open scenes & shots →</a></header><div class="creation-metrics"><div><b>${sceneCount}</b><span>scenes</span></div><div><b>${shotCount}</b><span>shots</span></div><div><b>${approvedCount("locations")}/${P.locations.length}</b><span>approved locations</span></div><div><b>${approvedCount("characters")}/${P.characters.length}</b><span>approved characters</span></div><div><b>${approvedCount("props")}/${P.props.length}</b><span>approved props</span></div><div><b>${approvedCount("vehicles")}/${(P.vehicles || []).length}</b><span>approved vehicles</span></div></div>${!sceneCount ? `<div class="creation-empty-project"><h3>Your project is ready for its first scene</h3><p>Create a scene and shot now, or create the location and character references first.</p><button class="add-btn" onclick="addShot()">Create scene + first shot</button><button class="ghost-btn" onclick="addEntity('locations')">Create first location</button></div>` : `<div class="creation-project-actions"><article><span>RECOMMENDED</span><b>${esc(nextProductionShot()?.next?.label || "Continue production")}</b><small>${nextProductionShot() ? `${esc(nextProductionShot().shot.id)} · ${esc(nextProductionShot().shot.title)}` : "All current shots are final"}</small><button class="assemble-btn" onclick="continueProduction()">CONTINUE PRODUCTION →</button></article><article><span>PROJECT STRUCTURE</span><b>${sceneCount} scenes · ${shotCount} shots</b><small>Scene beats and the complete shot list now live in Production, where they can be filtered and paginated.</small><a class="ghost-btn" href="#/shots/board">OPEN SHOTS</a></article></div>`}</section>
+  <section class="creation-progress"><header><div><span class="creation-kicker">PROJECT AT A GLANCE</span><h3>${esc(P.meta.title)}</h3></div><a class="ghost-btn" href="#/production/scenes">Open scenes & shots →</a></header><div class="creation-metrics"><div><b>${sceneCount}</b><span>scenes</span></div><div><b>${shotCount}</b><span>shots</span></div><div><b>${approvedCount("locations")}/${P.locations.length}</b><span>approved locations</span></div><div><b>${approvedCount("characters")}/${P.characters.length}</b><span>approved characters</span></div><div><b>${approvedCount("props")}/${P.props.length}</b><span>approved props</span></div><div><b>${approvedCount("vehicles")}/${(P.vehicles || []).length}</b><span>approved vehicles</span></div></div>${!sceneCount ? `<div class="creation-empty-project"><h3>Your project is ready for its first scene</h3><p>Create a scene and shot now, or create the location and character references first.</p><button class="add-btn" onclick="addShot()">Create scene + first shot</button><button class="ghost-btn" onclick="addEntity('locations')">Create first location</button></div>` : `<div class="creation-project-actions">${creationRecommendedActionMarkup()}<article><span>PROJECT STRUCTURE</span><b>${sceneCount} scenes · ${shotCount} shots</b><small>Scene beats and the complete shot list now live in Production, where they can be filtered and paginated.</small><a class="ghost-btn" href="#/shots/board">OPEN SHOTS</a></article></div>`}</section>
   </div>`;
+}
+/* THE RECOMMENDED CARD, FROM THE ONE ANSWER.
+ *
+ * This card used to render `nextProductionShot()` — the media-presence derivation —
+ * beside a button that calls `continueProduction()`, which reads canonical
+ * readiness. Independent review found the two disagreeing ON THE SAME CARD: the
+ * headline said "Animate · L1-01 · Hull check" while its own button routed to the
+ * Kai reference that was actually blocking every shot. A recommendation and the
+ * action it labels cannot come from different derivations.
+ *
+ * Both halves now come from projectNextProductionAction(), so the words, the
+ * destination and the button are one answer. `typeof` because this file is also
+ * evaluated in suite realms that load it without public/app.js.
+ */
+function creationRecommendedActionMarkup() {
+  const next = typeof projectNextProductionAction === "function" ? projectNextProductionAction() : null;
+  if (!next) {
+    return `<article><span>RECOMMENDED</span><b>Nothing outstanding</b><small>Readiness has nothing left to ask for on the current shots.</small><a class="ghost-btn" href="#/shots/board">OPEN SHOTS</a></article>`;
+  }
+  return `<article data-recommended-kind="${attr(next.kind)}"${next.shotId ? ` data-recommended-shot="${attr(next.shotId)}"` : ""}><span>RECOMMENDED</span><b>${esc(next.title)}</b><small>${esc(next.message || next.actionLabel)}</small><button class="assemble-btn" onclick="continueProduction()">${esc(next.actionLabel)} →</button></article>`;
 }
 function creationStudioView() {
   const path = creationStartPath();

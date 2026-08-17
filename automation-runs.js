@@ -131,6 +131,13 @@ function registerAutomationRuns(app, deps) {
     fs.writeFileSync(temp, JSON.stringify({ schemaVersion: 2, updatedAt: now(), runs: retainedRuns(runs) }, null, 2));
     fs.renameSync(temp, target);
   }
+  /* WHICH PROJECT THESE RUNS ARE. The ledger lives in projectDir(), which is derived
+     from the server's active project — one value for the whole machine. A window that
+     polls this route while the active project was switched somewhere else (a second
+     tab, another creator on the LAN) otherwise receives a different project's runs with
+     nothing in the payload to say so, and presents them as its own. Stating the owner
+     is what lets the caller refuse them. */
+  function runsOwnerSlug() { return typeof activeSlug === "function" ? activeSlug() || "" : ""; }
   function testFeedbackFile() { return path.join(projectDir(), "test-feedback.json"); }
   function readTestFeedback() {
     try {
@@ -860,15 +867,15 @@ function registerAutomationRuns(app, deps) {
           usage: run.usage || {}, feedback: run.feedback || {}, createdAt: run.createdAt, updatedAt: run.updatedAt,
           completedAt: run.completedAt, archivedAt: run.archivedAt,
         })),
-        page, pages, pageSize, total: filtered.length, targetOptions, warning: lastReadWarning,
+        page, pages, pageSize, total: filtered.length, targetOptions, projectSlug: runsOwnerSlug(), warning: lastReadWarning,
       });
     }
-    res.json({ runs: runs.map(publicRun), warning: lastReadWarning });
+    res.json({ runs: runs.map(publicRun), projectSlug: runsOwnerSlug(), warning: lastReadWarning });
   });
   app.get("/api/automation/runs/:id", (req, res) => {
     const run = readReconciled().find((item) => item.id === req.params.id);
     if (!run) return res.status(404).json({ error: "automation run not found" });
-    res.json({ run: publicRun(run), warning: lastReadWarning });
+    res.json({ run: publicRun(run), projectSlug: runsOwnerSlug(), warning: lastReadWarning });
   });
   /* MANUAL RECHECK STATUS. Same boundary, entered on purpose rather than as a
      side effect of reading, and it reports WHAT it found so the creator sees the
@@ -882,6 +889,7 @@ function registerAutomationRuns(app, deps) {
       runs: runs.map(publicRun),
       resolvedRunIds: resolved,
       checked: before.length,
+      projectSlug: runsOwnerSlug(),
       warning: lastReadWarning,
     });
   });

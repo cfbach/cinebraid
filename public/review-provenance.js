@@ -174,6 +174,51 @@ function packageInputSnapshot(s, pack, refs = [], direction = "") {
     references: (refs || [])
       .map((x) => [x.key || "", x.url || "", x.role || "", x.mediaType || "", x.instruction || ""])
       .sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+    /* ==========================================================================
+       THE INPUTS THE COMPILED TEXT ACTUALLY STATES.
+
+       The snapshot recorded what a package was made FROM and not what it was made
+       FOR, so the three things printed inside the prompt itself could all change
+       without the package ever reading stale:
+
+         - DURATION. `MINIMAX H3 FIRST / LAST FRAME — 8 SECONDS` and every timed
+           beat are compiled from it. Changing the shot's duration to 6 left an
+           8-second contract sitting there labelled current. This is the founder
+           smoke's "stale timing semantics after user-facing duration changes".
+         - EXECUTION METHOD. FLF, I2V, R2V and T2V compile through different
+           branches with different endpoint contracts. Switching method left an
+           FLF endpoint contract on a shot that no longer has two anchors.
+         - THE TARGET. A different H3 profile is a different compiler.
+
+       Recorded here from the package being compiled, which at that moment IS the
+       truth. currentSnapshotForPackage() overrides these three with what the shot
+       says NOW — that is the whole comparison, and reading the package for both
+       halves would compare a value with itself.
+
+       A package written before this existed carries none of these keys, and
+       packageStaleReasons() skips a key the saved snapshot does not have rather
+       than declaring every historic package stale on sight. */
+    durationSeconds: Number(pack.durationSeconds || 0) || 0,
+    profileId: String(pack.profileId || ""),
+    mode: String(pack.mode || ""),
+  };
+}
+/* What the shot says about a motion package's compiled inputs RIGHT NOW. Motion
+   only: duration, execution method and target are printed into a motion prompt and
+   into nothing else, so asking them of a frame package would invent a comparison
+   with no text behind it. */
+function currentMotionInputs(s, pack) {
+  if (!pack || !pack.segmentId) return null;
+  const c = s?.creationBrief || {};
+  const unit = (s?.clips || []).find((x) => unitKey(x) === String(pack.segmentId)) || null;
+  const profileId = String(c.motionProfileId || pack.profileId || "");
+  const profile = typeof guidedVideoProfiles === "function"
+    ? guidedVideoProfiles().find((item) => item.id === profileId)
+    : null;
+  return {
+    durationSeconds: Number(c.motionDuration || unit?.dur || 0) || 0,
+    profileId,
+    mode: String(profile?.mode || pack.mode || ""),
   };
 }
 function appendPackageRevision(list, pack, reason = "compiled", parent = null) {
@@ -199,19 +244,49 @@ function currentDirectionForPackage(s, pack) {
   } else base = s.motionPrompt || "";
   return [base, directive].filter(Boolean).join("\n").trim();
 }
+/* WHAT THE PACKAGE CONSUMED THAT THIS PRODUCTION CAN NO LONGER PROVIDE.
+ *
+ * Freshness compares what a package was compiled from against what the production
+ * would supply now. The comparison used to be built by mapping each SAVED reference
+ * onto its current option and, when there was no current option, KEEPING THE SAVED
+ * ONE — so the "now" row and the "saved" row were identical by construction and a
+ * removed input produced no difference to report. Independent review reproduced it:
+ * a package that consumed `character:KAI` stayed CURRENT after Kai was removed from
+ * the shot entirely.
+ *
+ * A substitution that fills a gap with the value being tested cannot detect the gap.
+ * The disappearance IS the drift, and every way an option can vanish is real:
+ * the entity was unlinked from the shot, deleted, or lost the approved image
+ * promptReferenceOptions() requires before it offers one; a take's file is gone.
+ * Each of those changes what a rebuild would compile, so each must stale the
+ * package that consumed it. */
+function missingConsumedReferences(s, pack) {
+  if (typeof promptReferenceOptions !== "function") return [];
+  const available = new Set(promptReferenceOptions(s).map((row) => row.key));
+  return (pack.references || [])
+    .filter((saved) => saved && saved.key && !available.has(saved.key))
+    .map((saved) => saved.label || saved.key);
+}
 function currentSnapshotForPackage(s, pack) {
   const available =
       typeof promptReferenceOptions === "function" ? promptReferenceOptions(s) : [],
-    refs = (pack.references || []).map((saved) => {
-      const current = available.find((x) => x.key === saved.key);
-      return current ? { ...saved, url: current.url, label: current.label } : saved;
-    });
-  return packageInputSnapshot(
+    /* Dropped, not substituted — see missingConsumedReferences above. A reference
+       the production can no longer provide is absent from what it would compile
+       now, so the reference arrays differ and the named reason below says which. */
+    refs = (pack.references || [])
+      .map((saved) => {
+        const current = available.find((x) => x.key === saved.key);
+        return current ? { ...saved, url: current.url, label: current.label } : null;
+      })
+      .filter(Boolean);
+  const snapshot = packageInputSnapshot(
     s,
     pack,
     refs,
     currentDirectionForPackage(s, pack),
   );
+  const motion = currentMotionInputs(s, pack);
+  return motion ? { ...snapshot, ...motion } : snapshot;
 }
 function packageStaleReasons(s, pack) {
   const saved = pack?.dependencySnapshot;
@@ -235,10 +310,31 @@ function packageStaleReasons(s, pack) {
     JSON.stringify(now.generationMedia || [])
   )
     reasons.push("approved generation media changed");
-  if (JSON.stringify(saved.references || []) !== JSON.stringify(now.references || []))
+  /* Named before the generic array comparison, because "an input is gone" is a
+     different fact from "an input changed" and sends the filmmaker somewhere else. */
+  const missing = missingConsumedReferences(s, pack);
+  if (missing.length)
+    reasons.push(`${missing.length === 1 ? "an input" : `${missing.length} inputs`} this prompt was compiled from can no longer be supplied by this shot: ${missing.join(", ")}`);
+  if (!missing.length && JSON.stringify(saved.references || []) !== JSON.stringify(now.references || []))
     reasons.push("approved reference file changed");
+  /* Only compared when the saved snapshot actually recorded the field. A package
+     compiled before these were captured genuinely does not know what its duration
+     or method was, and reporting "changed" from an absence would be a guess in the
+     other direction. */
+  if (saved.durationSeconds !== undefined && Number(saved.durationSeconds || 0) !== Number(now.durationSeconds || 0))
+    reasons.push(`duration changed to ${Number(now.durationSeconds || 0)}s — the compiled prompt still states ${Number(saved.durationSeconds || 0)}s`);
+  if (saved.mode !== undefined && String(saved.mode || "") !== String(now.mode || ""))
+    reasons.push(`execution method changed to ${String(now.mode || "none").toUpperCase()} — the compiled prompt is ${String(saved.mode || "none").toUpperCase()}`);
+  if (saved.profileId !== undefined && String(saved.profileId || "") !== String(now.profileId || ""))
+    reasons.push(`target model changed to ${String(now.profileId || "none")} — the compiled prompt targets ${String(saved.profileId || "none")}`);
   return [...new Set(reasons)];
 }
+/* THE COMPILED PACKAGE'S OWN FRESHNESS, for the surface that shows it. Same
+   derivation as the project-health list above — one answer, two readers. */
+window.packageFreshness = (s, pack) => {
+  const reasons = typeof packageStaleReasons === "function" ? packageStaleReasons(s, pack) : [];
+  return { current: !reasons.length, recorded: !!pack?.dependencySnapshot, reasons };
+};
 function shotPackageStaleReasons(s) {
   return allShotPackages(s).flatMap(({ pack, label }) =>
     packageStaleReasons(s, pack).map(

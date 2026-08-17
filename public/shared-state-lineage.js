@@ -370,11 +370,76 @@ function applyStateDeletion(states, stateId, options = {}) {
   return { ...decision, applied: true };
 }
 
+/* ---------- recording a derivation that was never recorded ---------------- */
+
+/* THE THIRD WRITE, AND THE NARROWEST ONE.
+ *
+ * `state-derivation-unrecorded` was reported and then left alone — correctly, in
+ * that 1D-06 forbids CineBraid deciding on the filmmaker's behalf what a state
+ * derives from. What it left behind was a dead end: an imported state that says
+ * "heavy soot over every surface" and records no source cannot be generated
+ * (`no valid parent state`), and every write that could give it one refused,
+ * because the only writes were create and delete. The founder smoke walked into
+ * exactly that and had nowhere to go.
+ *
+ * RECORDING A DERIVATION IS NOT REPARENTING. Rule 1 protects an ancestry the
+ * filmmaker AUTHORED from being rewritten by navigation. A state with no recorded
+ * parent has no authored ancestry to protect; stating one for the first time is
+ * the human decision 1D-06 says must be surfaced, not the substitution it says
+ * must not happen. So this refuses the instant a parent already exists — that
+ * case is still `reparentingUnsupported()` and always will be.
+ *
+ * The cycle argument that makes creation safe does NOT hold here: this state
+ * already exists and may already have descendants, so a source below it would
+ * close a loop. Descendants are excluded by name, and the exact resulting
+ * collection is validated anyway. */
+function eligibleDerivationSourceIds(states, stateId) {
+  const id = lineageText(stateId);
+  const node = lineageNode(states, id);
+  if (!node || node.isDefault || node.parentStateId) return [];
+  const excluded = new Set([id, ...stateDescendantIds(states, id)]);
+  return lineageNodes(states).filter((state) => !excluded.has(state.id)).map((state) => state.id);
+}
+function planDerivationRecord(states, stateId, sourceStateId) {
+  const rows = lineageList(states).map(lineageObject);
+  const id = lineageText(stateId);
+  const sourceId = lineageText(sourceStateId);
+  const node = lineageNode(rows, id);
+  if (!node) return { record: false, reason: "unknown-state" };
+  if (node.isDefault) return { record: false, reason: "default-state-is-the-root" };
+  /* The one case this function exists to refuse. */
+  if (node.parentStateId) return { record: false, reason: "reparenting-unsupported", parentStateId: node.parentStateId };
+  if (!sourceId) return { record: false, reason: "source-required" };
+  if (sourceId === id) return { record: false, reason: "parent-is-self" };
+  if (!rows.some((row) => lineageText(row.id) === sourceId)) return { record: false, reason: "parent-missing" };
+  if (stateDescendantIds(rows, id).includes(sourceId)) return { record: false, reason: "source-is-descendant" };
+  const next = rows.map((row) => (lineageText(row.id) === id ? { ...row, parentStateId: sourceId } : row));
+  const integrity = validateStateCollection(next);
+  if (!integrity.ok) return { record: false, reason: "collection-invalid", problems: integrity.problems };
+  return { record: true, reason: "derivation-recorded", id, parentStateId: sourceId };
+}
+function applyDerivationRecord(states, stateId, sourceStateId, options = {}) {
+  const decision = planDerivationRecord(states, stateId, sourceStateId);
+  if (!decision.record) return { ...decision, applied: false };
+  const opts = lineageObject(options);
+  const target = lineageList(states).map(lineageObject).find((row) => lineageText(row.id) === decision.id);
+  /* The live record, not a copy — this is the write. Nothing else on it is
+     touched: recording where a state comes from is not an approval, not a
+     generation-mode choice, and not a change to its delta. */
+  target.parentStateId = decision.parentStateId;
+  if (typeof opts.dirty === "function") opts.dirty();
+  return { ...decision, applied: true };
+}
+
 /* ---------- what a caller asks instead of reparenting --------------------- */
 
 /* REPARENTING IS NOT A SUPPORTED OPERATION. This exists so a call site that
    used to reparent gets a clear, greppable refusal instead of silently doing
-   nothing, and so the reason travels to the surface that has to explain it. */
+   nothing, and so the reason travels to the surface that has to explain it.
+
+   "Reparent" means REPLACING a parent the filmmaker already chose. Recording one
+   for a state that has none is `applyDerivationRecord` above, and it refuses the
+   moment a parent exists — so the two never overlap. */
 function reparentingUnsupported(reason = "") {
   return {
     write: false,
@@ -491,6 +556,9 @@ const STATE_LINEAGE_EXPORTS = {
   applyStateCreation,
   planStateDeletion,
   applyStateDeletion,
+  eligibleDerivationSourceIds,
+  planDerivationRecord,
+  applyDerivationRecord,
   reparentingUnsupported,
   eligibleCreationParentIds,
   continuationCandidates,

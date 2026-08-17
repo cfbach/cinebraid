@@ -949,6 +949,99 @@ const CONTINUITY_OUTCOME_LABELS = {
   review: "REVIEW",
 };
 
+/* ==========================================================================
+   DID THE CORRECTION ACTUALLY MAKE IT BETTER?
+
+   The founder smoke ran Fix Continuity on an already-approved Frame B, got back
+   a replacement that was visibly worse AND still failed continuity, and CineBraid
+   presented it as APPROVE SUGGESTED — because `winner` was "highest score in this
+   pass", a ranking among the correction's own candidates that never once looked at
+   the thing it was supposed to improve.
+
+   A correction is a CLAIM ABOUT A COMPARISON, so it is judged as one. The approved
+   original is scored by the SAME reviewer, against the SAME stated failure and
+   required repair, with the SAME adjacent shots in frame — so the baseline means
+   "what this exact question scores when nothing was changed". A candidate above it
+   improved; a candidate below it damaged something the repair was not asked to
+   touch; a candidate level with it did nothing.
+
+   THREE RULES THIS ENCODES:
+     - Worse than the original is a REGRESSION even if the reviewer passed it.
+     - Passing the review is necessary for improvement and not sufficient: a repair
+       that scores no better than the untouched original has not improved it, and
+       resolving that contradiction in the correction's favour is what shipped a
+       worse frame as the fix.
+     - No baseline means NOT COMPARABLE, never "fine". Fail closed.
+
+   `recommendableCorrection` is the only clause that matters at the gate: nothing
+   but a proven improvement may ever be offered as the fix. This decides nothing
+   about approval — a person still approves, and may still choose a candidate this
+   function calls a regression, knowing that is what it is. */
+const CORRECTION_OUTCOMES = ["improvement", "no-improvement", "regression", "unknown"];
+const CORRECTION_OUTCOME_LABELS = {
+  improvement: "IMPROVEMENT",
+  "no-improvement": "NO IMPROVEMENT",
+  regression: "REGRESSION",
+  unknown: "NOT COMPARABLE",
+};
+/* Scores come from a vision model, so a point or two is noise rather than a
+   finding. Three is the band inside which the two images are called equal. */
+const CORRECTION_SCORE_MARGIN = 3;
+/* A SCORE, OR NOTHING. NEVER A COERCION.
+ *
+ * This was `Number(row.score)` behind a `Number.isFinite` check, which reads as
+ * strict and is not: `Number(null)`, `Number("")`, `Number("  ")` and `Number([])`
+ * are all 0, and 0 is finite. Independent review reproduced the consequence — an
+ * approved original recorded as `{ available: true, score: null }` became a
+ * baseline of ZERO, and an 80-point challenger against it was classified a
+ * demonstrated improvement and offered as the fix. The exact fail-open this
+ * classifier exists to prevent, arriving through the arithmetic instead of the
+ * logic.
+ *
+ * Two conditions now, and both are about whether a number was actually STATED:
+ *
+ *   1. the value is a finite `number` primitive. Not a numeric string, not an
+ *      empty array, not null — those are absences wearing a number's clothes.
+ *   2. the row does not say it was unscored. server.js's normalizeReviewItems
+ *      clamps a missing score to 0 and records `explicitScore: false` beside it,
+ *      so a reviewer that returned no score produces a perfectly finite ZERO. That
+ *      zero is not a baseline and not a result; reading it as one is the same
+ *      defect one layer up.
+ *
+ * Returning null puts the pair in NOT COMPARABLE, which fails closed: it can never
+ * be recommended and never becomes SUGGESTED. */
+function correctionScore(row) {
+  if (!row || typeof row !== "object") return null;
+  if (row.explicitScore === false) return null;
+  return typeof row.score === "number" && Number.isFinite(row.score) ? row.score : null;
+}
+function classifyCorrectionOutcome(baseline, candidate) {
+  const before = correctionScore(baseline);
+  const after = correctionScore(candidate);
+  if (before === null || after === null || !baseline || baseline.available === false) {
+    return { outcome: "unknown", delta: null, baselineScore: before, candidateScore: after };
+  }
+  const delta = Math.round(after - before);
+  if (delta < -CORRECTION_SCORE_MARGIN) return { outcome: "regression", delta, baselineScore: before, candidateScore: after };
+  const passed = candidate && candidate.pass === true;
+  if (passed && delta > CORRECTION_SCORE_MARGIN) return { outcome: "improvement", delta, baselineScore: before, candidateScore: after };
+  return { outcome: "no-improvement", delta, baselineScore: before, candidateScore: after };
+}
+function recommendableCorrection(verdict) {
+  return !!verdict && verdict.outcome === "improvement";
+}
+/* One sentence, in production English, for whichever surface has to say it. */
+function describeCorrectionOutcome(verdict) {
+  if (!verdict || verdict.outcome === "unknown") {
+    return "The approved original could not be scored by the same reviewer, so CineBraid cannot say whether this is better or worse than what you already approved.";
+  }
+  const delta = Number(verdict.delta);
+  const size = Math.abs(delta);
+  if (verdict.outcome === "regression") return `Scored ${size} lower than the approved original on the same review. This is worse than what you already approved.`;
+  if (verdict.outcome === "improvement") return `Scored ${size} higher than the approved original on the same review, and the reviewer accepts the repair.`;
+  return `Scored within ${CORRECTION_SCORE_MARGIN} of the approved original on the same review. It is not a measurable improvement on what you already approved.`;
+}
+
 const ATTRIBUTE_WORDS = { color: "Colour", state: "State", markings: "Markings", centre_displacement: "Position" };
 function attributeWord(attribute) {
   return ATTRIBUTE_WORDS[attribute] || "Attribute";
@@ -1179,6 +1272,8 @@ const CONTINUITY_EXPORTS = {
   compareObservations, buildIntentDescriptors, matchesDescriptor, applyIntent,
   normalizeIntentText,
   CONTINUITY_OUTCOMES, CONTINUITY_OUTCOME_LABELS,
+  CORRECTION_OUTCOMES, CORRECTION_OUTCOME_LABELS, CORRECTION_SCORE_MARGIN,
+  correctionScore, classifyCorrectionOutcome, recommendableCorrection, describeCorrectionOutcome,
   expectedActionFor, describeFinding, describeComparison,
 };
 

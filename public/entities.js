@@ -564,8 +564,64 @@ function continuityStateValidationCurrent(entity, state) {
   const delta = String(state.notes || "").trim();
   return validation.targetFile === targetFile && validation.parentFile === parentFile && validation.stateDelta === delta ? validation : null;
 }
+/* THE WAY OUT OF THE LINEAGE DEAD END.
+ *
+ * An imported state that describes a delta and records no source is a state
+ * CineBraid can neither generate nor validate — "Heavy soot has no valid parent
+ * state" — and until now there was no surface that could give it one, because
+ * every ancestry write was create or delete. This is the human decision
+ * shared-state-lineage.js's 1D-06 note says must be SURFACED rather than guessed.
+ *
+ * It offers, it never picks. No default is preselected, the sources are the
+ * module's own eligible list (self and descendants excluded), and recording a
+ * source approves nothing — the derived variant remains a candidate exactly as
+ * before. A state that already records a source never reaches here. */
+function continuityStateDerivationMarkup(list, entity, state) {
+  if (!state || state.isDefault || String(state.parentStateId || "")) return "";
+  if (typeof eligibleDerivationSourceIds !== "function") return "";
+  const states = entityStateListRead(entity, true);
+  const ids = eligibleDerivationSourceIds(states, state.id);
+  const byId = new Map(states.map((row) => [row.id, row]));
+  const truth = entityStateTruth(list, entity);
+  const options = ids.map((id) => {
+    const row = byId.get(id);
+    const standing = truth.of(row);
+    const note = standing.standing === "canon" ? "approved" : standing.standing === "historic" ? "not approved" : "no image";
+    return `<option value="${attr(id)}">${esc(row?.name || id)} — ${esc(note)}</option>`;
+  }).join("");
+  const selectId = `derivation-source-${attr(list)}-${attr(entity.id)}-${attr(state.id)}`;
+  const body = options
+    ? `<label>Derives from<select id="${selectId}"><option value="">Choose the state this one comes from…</option>${options}</select></label><button class="add-btn" onclick="recordContinuityStateDerivation('${attr(list)}','${attr(entity.id)}','${attr(state.id)}',document.getElementById('${selectId}').value)">RECORD SOURCE STATE</button>`
+    : `<p>There is no other state this one could derive from yet.</p>`;
+  return `<section class="state-derivation-missing" data-derivation-unrecorded="${attr(state.id)}"><header><div><span>SOURCE STATE NOT RECORDED</span><b>${esc(state.name || "This state")} does not record what it derives from</b><small>CineBraid will not guess. Generation and parent-to-state validation stay blocked until you say which approved state this one comes from. Recording it approves nothing.</small></div></header>${body}</section>`;
+}
+window.recordContinuityStateDerivation = (list, entityId, stateId, sourceStateId) => {
+  const entity = P[list]?.find((item) => item.id === entityId);
+  const states = entity && entityStateListRead(entity, true);
+  if (!states) return toast("That reference no longer exists");
+  if (!String(sourceStateId || "")) return toast("Choose the state this one derives from");
+  const outcome = applyDerivationRecord(entity.continuityStates, stateId, sourceStateId, { dirty });
+  if (!outcome.applied) {
+    return toast(outcome.reason === "reparenting-unsupported"
+      ? reparentingUnsupported().detail
+      : outcome.reason === "source-is-descendant"
+        ? "That state derives from this one. Choosing it would make the chain point at itself."
+        : outcome.reason === "parent-missing"
+          ? "That state no longer exists. Choose one that does."
+          : outcome.reason === "collection-invalid"
+            ? "This reference's continuity states need repair before a source can be recorded."
+            : "The source state could not be recorded.");
+  }
+  route();
+  const source = states.find((row) => row.id === sourceStateId);
+  toast(`Recorded: this state derives from ${source?.name || sourceStateId}. Nothing was approved.`);
+};
 function continuityStateValidationMarkup(list, entity, state, media = []) {
   if (!state || state.isDefault) return "";
+  /* Before anything else the card can say about validation: with no recorded
+     source there is nothing to validate against, and the chooser is the action. */
+  const unrecorded = continuityStateDerivationMarkup(list, entity, state);
+  if (unrecorded) return unrecorded;
   const parentInfo = entityStateParentSummary(entity, state);
   /* VALIDATION ASSERTS APPROVAL ON BOTH SIDES, so readiness is canon on both
      sides. `!!(targetMedia && parentMedia)` made two historic pointers look

@@ -6,6 +6,106 @@ let V641_ACTIVITY_TIMER = null;
 let V641_ACTIVITY_TRIGGER = null;
 const V641_MANUAL_ACTIVITIES = new Map();
 
+/* ==========================================================================
+   WHICH PROJECT THIS ACTIVITY STATE DESCRIBES.
+
+   AUTOMATION_RUNS and FAL_GENERATION_JOBS are re-read from the server on every
+   project open, so they follow the project by construction. V641_MANUAL_ACTIVITIES
+   did not: it is a module-level Map that outlives load(), and a finished row is
+   retained for ten minutes on purpose. Switching projects therefore left the
+   previous project's rows — "Review scene SC-01", "Review ROOFTOP_STATE.png",
+   every vision review behind a continuity or reference approval — sitting in the
+   new project's drawer under RECENT COMPLETED and PREVIOUS FAILURES / NEEDS
+   ATTENTION, and counted by the Activity button, as if they were its own work.
+
+   Two mechanisms, because they answer two different questions:
+
+   - Every row records the project it was started for. Readers present only rows
+     whose stamp matches the project on screen, so a row can never be re-attributed
+     — including in the window between the switch route returning and load()
+     finishing, where ACTIVE_PROJECT_SLUG has already moved.
+   - load() calls v670ScopeActivityToProject(), which DROPS the rows when the slug
+     actually changes. It is deliberately a no-op when the slug is unchanged:
+     load() is also the same-project refresh that automation.js, fal-generation.js
+     and creation-studio.js call when work completes, and purging there would
+     delete the live rows describing that very work.
+
+   Nothing here is a second opinion about which project is open. The slug comes
+   from ACTIVE_PROJECT_SLUG, which load() sets from the server's own
+   x-cinebraid-project-slug header, read through typeof because this file is also
+   evaluated in suites where app.js is absent. */
+let V641_ACTIVITY_PROJECT_SLUG = "";
+function v670ActiveProjectSlug() {
+  if (typeof ACTIVE_PROJECT_SLUG !== "undefined" && ACTIVE_PROJECT_SLUG) return String(ACTIVE_PROJECT_SLUG);
+  if (typeof window !== "undefined" && window.ACTIVE_PROJECT_SLUG) return String(window.ACTIVE_PROJECT_SLUG);
+  return "";
+}
+/* Every manual-activity reader goes through here. A row with no stamp belongs to
+   no project and is shown only when no project is open, which is the state it was
+   started in — an unstamped row that followed the reader's slug would be the leak
+   again, wearing a different name. */
+function v670ManualActivityRows() {
+  const slug = v670ActiveProjectSlug();
+  return [...V641_MANUAL_ACTIVITIES.values()].filter((row) => String(row.projectSlug || "") === slug);
+}
+window.v670ScopeActivityToProject = (slug = v670ActiveProjectSlug()) => {
+  const next = String(slug || "");
+  if (next === V641_ACTIVITY_PROJECT_SLUG) return false;
+  V641_ACTIVITY_PROJECT_SLUG = next;
+  for (const id of [...V641_MANUAL_ACTIVITIES.keys()]) v641ClearManualRetention(id);
+  V641_MANUAL_ACTIVITIES.clear();
+  V641_ACTIVITY_FOREIGN_PROJECT = "";
+  v641UpdateActivityButton();
+  if (V641_ACTIVITY_DRAWER_OPEN) v641RenderActivityDrawer();
+  return true;
+};
+/* Set when a ledger the server answers with belongs to a different project than
+   the one this window has open — which happens when the active project is switched
+   somewhere else (a second tab, another machine on the LAN). The rows are not
+   adopted; the drawer says so instead of quietly presenting them as this project's,
+   and offers the one action that makes the window current again. */
+let V641_ACTIVITY_FOREIGN_PROJECT = "";
+/* ==========================================================================
+   EVERY ACTIVITY PAYLOAD PROVES ITS OWN OWNER.
+
+   The first repair tied BOTH ledgers to one ownership answer — the automation-run
+   payload's — and then adopted the FAL payload on the strength of it. Independent
+   review reproduced the hole that leaves: a FAL response for project A, arriving
+   beside a run response that agrees with project B, was adopted, rendered in the
+   drawer and counted by the Activity button. One payload cannot vouch for another;
+   they are separate routes over separate ledgers and each can be answered for a
+   different project.
+
+   So admission is asked once per payload, of that payload:
+
+     - a payload whose stated owner disagrees with the project on screen is
+       REFUSED, and the drawer names the project it belongs to.
+     - a payload that states an owner that agrees is ADMITTED. This is the ordinary
+       same-project poll and it must keep working.
+     - a payload that states NO owner is admitted only when it carries NO ROWS.
+       Rows that cannot prove where they came from must not be presented as this
+       project's work, and an empty list has nothing to attribute either way — which
+       is what keeps every route stub and any older server answering harmlessly
+       instead of being silently trusted.
+
+   Returns the rows to adopt, or null to leave the current ones alone. */
+function v670AdmitActivityRows(payload, key) {
+  const here = v670ActiveProjectSlug();
+  const rows = payload && Array.isArray(payload[key]) ? payload[key] : null;
+  const owner = String((payload && payload.projectSlug) || "");
+  if (owner && here && owner !== here) return { rows: null, foreign: owner };
+  if (!owner && rows && rows.length) return { rows: null, foreign: "" };
+  return { rows, foreign: "" };
+}
+window.v670AdmitActivityRows = v670AdmitActivityRows;
+
+/* Is a dialog currently on top of the drawer? The shipped modal host is a single
+   `#modal` element that carries `hidden` when closed, so this is a read of the
+   product's own state rather than a second flag to keep in step. */
+function v670DialogIsOpen() {
+  const modal = typeof document !== "undefined" ? document.getElementById("modal") : null;
+  return !!(modal && modal.classList && !modal.classList.contains("hidden"));
+}
 function v641SelectorValue(value) { return String(value || "").replace(/["\\]/g, "\\$&"); }
 function v641RunById(id) {
   return (Array.isArray(AUTOMATION_RUNS) ? AUTOMATION_RUNS : []).find((run) => run.id === id) || null;
@@ -302,7 +402,7 @@ window.v641LiveActivityMarkup = (run) => {
 };
 window.v641StartManualActivity = (system, title, detail = "", meta = {}) => {
   const id = `manual-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-  V641_MANUAL_ACTIVITIES.set(id, { id, system, title, detail, meta, status: "running", startedAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+  V641_MANUAL_ACTIVITIES.set(id, { id, system, title, detail, meta, projectSlug: v670ActiveProjectSlug(), status: "running", startedAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
   v641UpdateActivityButton(); if (V641_ACTIVITY_DRAWER_OPEN) v641RenderActivityDrawer();
   return id;
 };
@@ -429,7 +529,7 @@ function v6602ActivityStatus() {
   const runs = Array.isArray(AUTOMATION_RUNS) ? AUTOMATION_RUNS : [];
   const activeRuns = runs.filter(v670MachineActiveRun);
   const waitingRuns = runs.filter(v670WaitingForHumanRun);
-  const activeManual = [...V641_MANUAL_ACTIVITIES.values()].filter((row) => row.status === "running");
+  const activeManual = v670ManualActivityRows().filter((row) => row.status === "running");
   const activeFal = v641StandaloneFalJobs();
   const attention = runs.filter(v670AttentionRun);
   const count = activeRuns.length + activeManual.length + activeFal.length;
@@ -646,7 +746,7 @@ function v641RenderActivityDrawer(focusRunId = "") {
   const drawer = document.getElementById("automation-activity-drawer");
   if (!drawer) return;
   const runs = v641ActiveAndRecentRuns();
-  const manual = [...V641_MANUAL_ACTIVITIES.values()].sort((a, b) => String(b.startedAt).localeCompare(String(a.startedAt)));
+  const manual = v670ManualActivityRows().sort((a, b) => String(b.startedAt).localeCompare(String(a.startedAt)));
   const standaloneFal = v641StandaloneFalJobs();
   const activeRuns = runs.filter(v670MachineActiveRun);
   const waitingRuns = runs.filter(v670WaitingForHumanRun);
@@ -673,7 +773,12 @@ function v641RenderActivityDrawer(focusRunId = "") {
       : attentionRuns.length
         ? `${attentionRuns.length} previous attempt${attentionRuns.length === 1 ? "" : "s"} need attention`
         : "No active operation";
-  const shell = `<div class="automation-drawer-shell"><header><div><span>GLOBAL ACTIVITY</span><h2>${heading}</h2><p>Every live local-AI call, paid request, review, retry, approval, and recovery action remains visible from any workspace. Detailed diagnostics live in Reports.</p></div><div class="automation-drawer-header-actions">${waitingRuns.length ? `<button class="ghost-btn" onclick="recheckAutomationGateStatus()" title="Re-derive every parked approval gate against current project truth">RECHECK STATUS</button>` : ""}${attentionRuns.length ? `<button class="ghost-btn" onclick="archivePreviousAutomationFailures()">DISMISS PREVIOUS ALERTS</button>` : ""}<button class="cancel" onclick="closeGlobalAutomationActivity()">Close</button></div></header><div class="automation-drawer-list">${content}</div></div>`;
+  /* Named, not hidden: the window cannot show the other project's work here without
+     re-attributing it, and it must not pretend its own list is still current. */
+  const foreign = V641_ACTIVITY_FOREIGN_PROJECT
+    ? `<div class="automation-drawer-foreign" role="status"><b>Activity below is not current.</b><span>CineBraid’s active project was switched to <em>${esc(V641_ACTIVITY_FOREIGN_PROJECT)}</em> somewhere else, so this window has stopped taking that project’s activity. Nothing here belongs to it.</span><button class="ghost-btn" onclick="location.reload()">RELOAD THIS WINDOW</button></div>`
+    : "";
+  const shell = `<div class="automation-drawer-shell"><header><div><span>GLOBAL ACTIVITY</span><h2>${heading}</h2><p>Every live local-AI call, paid request, review, retry, approval, and recovery action remains visible from any workspace. Detailed diagnostics live in Reports.</p>${foreign}</div><div class="automation-drawer-header-actions">${waitingRuns.length ? `<button class="ghost-btn" onclick="recheckAutomationGateStatus()" title="Re-derive every parked approval gate against current project truth">RECHECK STATUS</button>` : ""}${attentionRuns.length ? `<button class="ghost-btn" onclick="archivePreviousAutomationFailures()">DISMISS PREVIOUS ALERTS</button>` : ""}<button class="cancel" onclick="closeGlobalAutomationActivity()">Close</button></div></header><div class="automation-drawer-list">${content}</div></div>`;
   v670PaintDrawer(drawer, shell);
   drawer.classList.toggle("open", V641_ACTIVITY_DRAWER_OPEN);
   drawer.setAttribute("aria-hidden", V641_ACTIVITY_DRAWER_OPEN ? "false" : "true");
@@ -732,7 +837,7 @@ function v641UpdateActivityButton() {
   const button = document.getElementById("automation-activity-toggle");
   if (!button) return;
   const activeRuns = (AUTOMATION_RUNS || []).filter(v670MachineActiveRun);
-  const activeManual = [...V641_MANUAL_ACTIVITIES.values()].filter((row) => row.status === "running");
+  const activeManual = v670ManualActivityRows().filter((row) => row.status === "running");
   const activeFal = v641StandaloneFalJobs();
   const count = activeRuns.length + activeManual.length + activeFal.length;
   const activeStep = activeRuns.map((run) => v641DisplayedRunAndStep(run).step).find(Boolean);
@@ -775,8 +880,17 @@ window.refreshGlobalAutomationActivity = async (force = false) => {
       fetch("/api/automation/runs").then((response) => response.ok ? response.json() : { runs: AUTOMATION_RUNS || [] }),
       fetch("/api/generation/fal/jobs").then((response) => response.ok ? response.json() : { jobs: FAL_GENERATION_JOBS || [] }),
     ]);
-    AUTOMATION_RUNS = runData.runs || AUTOMATION_RUNS || [];
-    FAL_GENERATION_JOBS = falData.jobs || FAL_GENERATION_JOBS || [];
+    /* EACH LEDGER IS ADMITTED ON ITS OWN OWNERSHIP — see v670AdmitActivityRows.
+       Both routes answer for the server's active project, which is one value for the
+       whole machine, so a second tab or another creator on the LAN switching projects
+       makes this 3.5-second poll return a DIFFERENT project's rows to a window still
+       showing this one. Adopting them is the leak in its most dangerous form, because
+       those rows carry working actions. */
+    const runs = v670AdmitActivityRows(runData, "runs");
+    const jobs = v670AdmitActivityRows(falData, "jobs");
+    if (runs.rows) AUTOMATION_RUNS = runs.rows;
+    if (jobs.rows) FAL_GENERATION_JOBS = jobs.rows;
+    V641_ACTIVITY_FOREIGN_PROJECT = runs.foreign || jobs.foreign || "";
   } catch {}
   finally {
     V641_ACTIVITY_REFRESHING = false;
@@ -855,7 +969,7 @@ function v642InstallUniversalActivityFetch() {
     const descriptor = options?.cinebraidActivity === false ? null : v642ActivityDescriptor(url, options);
     let activityId = "";
     if (descriptor) {
-      const recent = [...V641_MANUAL_ACTIVITIES.values()].find((row) => row.status === "running" && row.system === descriptor.system && Date.now() - Date.parse(row.startedAt || 0) < 1500);
+      const recent = v670ManualActivityRows().find((row) => row.status === "running" && row.system === descriptor.system && Date.now() - Date.parse(row.startedAt || 0) < 1500);
       if (!recent) activityId = v641StartManualActivity(descriptor.system, descriptor.title, descriptor.detail, { url: String(url), route: location.hash });
     }
     try {
@@ -885,12 +999,25 @@ function v641InitActivity() {
   if (toggle) toggle.onclick = () => V641_ACTIVITY_DRAWER_OPEN ? closeGlobalAutomationActivity() : openGlobalAutomationActivity();
   if (!window.__cinebraidActivityEscapeInstalled) {
     window.__cinebraidActivityEscapeInstalled = true;
+    /* ESCAPE CLOSES THE TOP OF THE STACK, NOT EVERYTHING IN IT.
+     *
+     * A dialog opened from inside this drawer paints above it (--z-dialog in
+     * styles.css), and public/review.js already closes the modal on Escape. Both
+     * handlers used to fire for one keypress, so dismissing a confirmation also
+     * dismissed the drawer that asked for it.
+     *
+     * CAPTURE PHASE, and that is the whole of the fix. review.js's listener is on
+     * the same target and was registered first, so in the bubble phase it had
+     * already closed the modal by the time this ran — the check would read "no
+     * dialog" and close the drawer anyway. A capture-phase listener on `document`
+     * runs before every bubble-phase one, which is where the stack can still be
+     * observed as the user left it. */
     document.addEventListener("keydown", (event) => {
-      if (event.key === "Escape" && V641_ACTIVITY_DRAWER_OPEN) {
+      if (event.key === "Escape" && V641_ACTIVITY_DRAWER_OPEN && !v670DialogIsOpen()) {
         event.preventDefault();
         closeGlobalAutomationActivity();
       }
-    });
+    }, true);
   }
   v641UpdateActivityButton();
   v641RenderActivityDrawer();

@@ -1227,6 +1227,12 @@ async function load() {
         projectResponse.headers?.get?.("x-cinebraid-project-slug") ||
         ACTIVE_PROJECT_SLUG ||
         "fixture";
+      /* Session-scoped activity state follows the project the same way the
+         continuity map above does. It is scoped HERE rather than beside that call
+         because the slug is only known now, and it drops rows only when the slug
+         genuinely changes — load() is also the same-project refresh that runs when
+         a generation completes, and those rows describe that work. */
+      if (typeof v670ScopeActivityToProject === "function") v670ScopeActivityToProject(ACTIVE_PROJECT_SLUG);
       /* The revision of the exact document this view was built from. Every save
          echoes it, so a save from a view that has fallen behind is refused
          rather than silently overwriting the newer project. */
@@ -1286,7 +1292,17 @@ async function load() {
       .then((data) => {
         FAL_GENERATION_LEDGER_LOADED = Array.isArray(data.jobs);
         backgroundRecovery = data.backgroundRecovery || null;
-        return data.jobs || [];
+        /* Admitted on the payload's own stated owner, exactly as the 3.5-second
+           poll admits it. This is the FIRST read of the ledger and it had no check
+           at all: the project header and the ledger are two requests, and a switch
+           between them lands another project's jobs in the opening view. Refused
+           rows leave the ledger EMPTY and unloaded rather than foreign — a surface
+           reading provenance then says the record is unavailable, which is true. */
+        const admitted = typeof v670AdmitActivityRows === "function"
+          ? v670AdmitActivityRows(data, "jobs")
+          : { rows: data.jobs || [] };
+        if (!admitted.rows) FAL_GENERATION_LEDGER_LOADED = false;
+        return admitted.rows || [];
       })
       .catch(() => []);
   }
@@ -2668,13 +2684,128 @@ function shotProductionNextAction(s, takes = takesFor(s.id)) {
   if (images.length) return { key: "review-still", label: "Review still", detail: `${images.length} returned` };
   return { key: "create", label: "Add still", detail: "No image yet" };
 }
-function nextProductionShot() {
-  return P.shots.map((shot) => ({ shot, next: shotProductionNextAction(shot) })).find((row) => row.next.key !== "final") || null;
+/* `nextProductionShot()` WAS HERE, AND IS DELETED RATHER THAN LEFT UNUSED.
+ *
+ * It answered "the first shot that is not final" from media presence alone, and
+ * it was the project's recommended-next-action owner on two screens. Independent
+ * review found it still driving the visible RECOMMENDED card in #/create beside a
+ * button that routed from canonical readiness — two answers on one card.
+ *
+ * A dormant second readiness owner is a reachable one, so it is gone. The project
+ * next action has exactly one derivation: projectNextProductionAction() below.
+ * shotProductionNextAction() above remains and is NOT that derivation — it labels
+ * ONE shot's media chip on the board and cannot see whether that shot's inputs
+ * exist, which is precisely why it may never speak for the project. */
+/* ==========================================================================
+   THE PROJECT'S NEXT ACTION — READ OFF CANONICAL READINESS, NOT DERIVED BESIDE IT.
+
+   shotProductionNextAction() above answers ONE question: what media does this shot
+   already hold? It is the right answer for a board card, and it is the wrong answer
+   for "what should I do next", because it cannot see inputs. A shot whose reference
+   nobody has approved still has a still on disk, so it reported "Animate — Still
+   approved" while the canonical derivation said the same shot was BLOCKED and the
+   headline directly above said 0 shots have work that can start now. The founder
+   smoke reproduced exactly that, and Continue Production sent them into the shot.
+
+   THIS IS NOT A SECOND READINESS PREDICATE. It asks evaluateProjectReadiness() —
+   the same module the server answers from — and does two things with the answer it
+   already emits:
+
+     1. Prefers a shot the model itself calls READY.
+     2. When none is, aggregates the model's own outstanding requirement rows by
+        authority target and names the one blocking the most shots. Shared
+        reference and setup work is what actually blocks a project, and telling a
+        filmmaker to approve one reference that unblocks six shots is the highest
+        leverage TRUE statement available — not a new judgement, a count.
+
+   No status, no threshold and no ordering is invented here. Every code, message and
+   target comes out of the readiness payload. */
+const NEXT_ACTION_TARGET_ROUTES = {
+  "shot-frame": (target) => `#/shot/${target.shotId}`,
+  "shot-motion": (target) => `#/shot/${target.shotId}`,
+  "shot-delivery": (target) => `#/shot/${target.shotId}`,
+  "entity-state": (target) => (ENTITY_ROUTE[target.list] ? `#/${ENTITY_ROUTE[target.list]}/${encodeURIComponent(target.entityId || "")}` : "#/library"),
+};
+function nextActionTargetHref(target) {
+  const build = target && NEXT_ACTION_TARGET_ROUTES[target.kind];
+  return build ? build(target) : "";
+}
+/* Outstanding requirement rows from every shot, grouped by the authority target
+   that would satisfy them. `shotIds` is the leverage: one entity state named by six
+   shots is one approval that unblocks six. Shot-scoped targets group too — a parent
+   frame blocks only its own shot, so it simply never wins the count. */
+function projectSharedBlockers(feed) {
+  const groups = new Map();
+  for (const shot of feed?.shots || []) {
+    const rows = [...(shot.requirements || []), ...(shot.units || []).flatMap((unit) => unit.requirements || [])];
+    for (const row of rows) {
+      if (row.state !== "missing" && row.state !== "needs-decision") continue;
+      const key = row.targetKey || `${row.kind}:${row.label}`;
+      const group = groups.get(key) || { key, row, shotIds: [], occurrences: 0 };
+      group.occurrences += 1;
+      if (!group.shotIds.includes(shot.shotId)) group.shotIds.push(shot.shotId);
+      groups.set(key, group);
+    }
+  }
+  return [...groups.values()].sort((a, b) => b.shotIds.length - a.shotIds.length || b.occurrences - a.occurrences);
+}
+/* `feed` is optional so a caller that has already derived readiness — the
+   production view renders both from one answer — does not evaluate the whole
+   project a second time. */
+function projectNextProductionAction(feed = projectShotReadiness()) {
+  /* Readiness could not be derived at all. Saying nothing would be worse than saying
+     that, and routing anywhere on the strength of it would be a guess. */
+  if (!feed || feed.error) {
+    return { kind: "unavailable", href: "#/production", title: "Readiness could not be derived", message: feed?.error || "CineBraid could not derive what to do next.", actionLabel: "OPEN PRODUCTION" };
+  }
+  if (feed.truthProblem) {
+    /* ONE PROJECT PROBLEM IS ONE REPAIR ACTION, and the readiness panel directly
+       above already states it. This points AT that action rather than restating it:
+       repeating the words here would be the same lie of aggregation the readiness
+       module removed when one corrupt ledger produced one repair per shot. */
+    return { kind: "repair", href: "#/production", title: "Readiness cannot be answered yet", message: feed.truthProblem.message, actionLabel: "SEE PRODUCTION READINESS ABOVE" };
+  }
+  const ready = (feed.shots || []).find((shot) => shot.status === "READY");
+  if (ready) {
+    const shot = shotById(ready.shotId);
+    return {
+      kind: "shot", shotId: ready.shotId, href: `#/shot/${ready.shotId}`,
+      title: `${ready.shotId}${shot?.title ? ` · ${shot.title}` : ""}`,
+      message: ready.nextAction?.message || "",
+      actionLabel: readinessActionWords(ready.nextAction).toUpperCase(),
+    };
+  }
+  const outstanding = (feed.shots || []).filter((shot) => shot.status !== "COMPLETE");
+  if (!outstanding.length) return null;
+  const blockers = projectSharedBlockers(feed);
+  const top = blockers[0];
+  if (top) {
+    const shots = top.shotIds.length;
+    const href = nextActionTargetHref(top.row.target) || `#/shot/${top.shotIds[0]}`;
+    return {
+      kind: "blocker", href, unblocks: shots, targetKey: top.key,
+      title: top.row.label || "Required production input",
+      /* The canonical shot message, then what resolving it buys — never a rewritten
+         verdict. The leverage sentence is only added when it is genuinely shared. */
+      message: `${outstanding.find((shot) => shot.shotId === top.shotIds[0])?.nextAction?.message || ""}${shots > 1 ? ` This is required by ${plural(shots, "shot")}.` : ""}`.trim(),
+      actionLabel: shots > 1 ? `UNBLOCK ${shots} SHOTS` : "RESOLVE THIS INPUT",
+    };
+  }
+  /* Outstanding shots with no requirement rows at all — a shot that declares nothing
+     producible, for instance. Its own canonical action is the truthful answer. */
+  const first = outstanding[0];
+  const shot = shotById(first.shotId);
+  return {
+    kind: "shot", shotId: first.shotId, href: `#/shot/${first.shotId}`,
+    title: `${first.shotId}${shot?.title ? ` · ${shot.title}` : ""}`,
+    message: first.nextAction?.message || "",
+    actionLabel: readinessActionWords(first.nextAction).toUpperCase(),
+  };
 }
 window.continueProduction = () => {
-  const row = nextProductionShot();
-  if (!row) return toast("Every shot is marked final");
-  location.hash = `#/shot/${row.shot.id}`;
+  const next = projectNextProductionAction();
+  if (!next) return toast("Every shot is complete");
+  location.hash = next.href;
 };
 function slate(s, sceneId) {
   const takes = takesFor(s.id);
@@ -3291,7 +3422,16 @@ async function productionHomeView() {
     const data = await response.json().catch(() => ({}));
     if (response.ok && data.setup) setup = data.setup;
   } catch {}
-  const next = nextProductionShot();
+  /* Derived here rather than read off the fetched payload, so the feed is correct
+     the instant a confirmation is written instead of one request later. The server
+     answers the same question through the same module for its own callers.
+
+     Derived ONCE and handed to both readers: the readiness panel and the NEXT
+     ACTION card are two renderings of one answer, and evaluating the whole project
+     twice per paint would be the cost of pretending otherwise. */
+  const shotReadiness = projectShotReadiness();
+  /* THE SAME ANSWER #/create SHOWS. One derivation, two screens. */
+  const next = projectNextProductionAction(shotReadiness);
   const decisions = projectDecisionItems();
   const hasShots = P.shots.length > 0;
   /* Three different states of a shot, counted three different ways, so each tile is
@@ -3302,16 +3442,12 @@ async function productionHomeView() {
   const deliveredCount = P.shots.filter(shotIsDelivered).length;
   const approvedCount = P.shots.filter(shotIsApproved).length;
   const activeRows = P.shots.map((shot) => ({ shot, next: shotProductionNextAction(shot) })).filter((row) => !shotIsDelivered(row.shot)).slice(0, 8);
-  /* Derived here rather than read off the fetched payload, so the feed is correct
-     the instant a confirmation is written instead of one request later. The server
-     answers the same question through the same module for its own callers. */
-  const shotReadiness = projectShotReadiness();
-  return `<div class="view-head production-home-head"><div><div class="eyebrow">Production</div><span class="view-title">${esc(P.meta.title)}</span><div class="view-sub">Continue the film from the next unfinished decision. Detailed tools stay inside each shot.</div></div><div class="production-home-actions"><button class="assemble-btn" onclick="continueProduction()">${next ? "CONTINUE PRODUCTION" : hasShots ? "ALL SHOTS DELIVERED" : "ADD THE FIRST SHOT"}</button><button class="add-btn" onclick="openGlobalAdd('shot')">＋ Add shot</button></div></div>
+  return `<div class="view-head production-home-head"><div><div class="eyebrow">Production</div><span class="view-title">${esc(P.meta.title)}</span><div class="view-sub">Continue the film from the next unfinished decision. Detailed tools stay inside each shot.</div></div><div class="production-home-actions"><button class="assemble-btn" onclick="continueProduction()">${next ? "CONTINUE PRODUCTION" : hasShots ? "NOTHING OUTSTANDING" : "ADD THE FIRST SHOT"}</button><button class="add-btn" onclick="openGlobalAdd('shot')">＋ Add shot</button></div></div>
   <div class="production-summary"><article title="A shot is delivered once a final still or video file is recorded on it."><b>${deliveredCount}/${P.shots.length}</b><span>${pluralWord(P.shots.length, "shot")} delivered</span></article><article title="A shot is approved once its workflow status is Approved. Approving a shot does not deliver it."><b>${approvedCount}/${P.shots.length}</b><span>${pluralWord(P.shots.length, "shot")} approved</span></article><article class="review" title="Returned results that are waiting for you to choose or approve."><b>${decisions.length}</b><span>${pluralWord(decisions.length, "decision")} waiting</span></article><article><b>${mmss(P.shots.reduce((sum, shot) => sum + shotDur(shot), 0))}</b><span>planned runtime across ${plural(P.scenes.length, "scene")}</span></article></div>
   ${shotReadinessFeedMarkup(shotReadiness)}
   ${historicConfirmationMarkup(shotReadiness)}
   ${projectSetupIssuesMarkup(setup)}
-  ${next ? `<section class="production-next"><div><span>NEXT ACTION</span><h2>${esc(next.shot.id)} · ${esc(next.shot.title)}</h2><p>${esc(next.next.label)} — ${esc(next.next.detail)}</p></div><a class="assemble-btn" href="#/shot/${next.shot.id}">${esc(next.next.label.toUpperCase())} →</a></section>` : hasShots ? `<section class="production-next complete"><div><span>EVERY SHOT DELIVERED</span><h2>All ${plural(P.shots.length, "shot")} have a final file</h2><p>Open Shots to inspect delivery media or add another shot.</p></div><a class="ghost-btn" href="#/shots/board">Open Shots →</a></section>` : `<section class="production-next"><div><span>NO SHOTS YET</span><h2>This project has no shots</h2><p>Add the first shot to start tracking scenes, frames and deliveries.</p></div><a class="assemble-btn" href="#/shots/board">Open Shots →</a></section>`}
+  ${next ? `<section class="production-next" data-next-action-kind="${attr(next.kind)}"${next.shotId ? ` data-next-action-shot="${attr(next.shotId)}"` : ""}${next.unblocks ? ` data-next-action-unblocks="${attr(String(next.unblocks))}"` : ""}><div><span>NEXT ACTION</span><h2>${esc(next.title)}</h2><p>${esc(next.message)}</p></div><a class="assemble-btn" href="${attr(next.href)}">${esc(next.actionLabel)} →</a></section>` : hasShots ? `<section class="production-next complete"><div><span>NOTHING OUTSTANDING</span><h2>Every declared unit of all ${plural(P.shots.length, "shot")} holds approved authority</h2><p>Readiness has nothing left to ask for. Open Shots to inspect or deliver the approved media, or add another shot.</p></div><a class="ghost-btn" href="#/shots/board">Open Shots →</a></section>` : `<section class="production-next"><div><span>NO SHOTS YET</span><h2>This project has no shots</h2><p>Add the first shot to start tracking scenes, frames and deliveries.</p></div><a class="assemble-btn" href="#/shots/board">Open Shots →</a></section>`}
   ${productionResultInbox()}
   <section class="production-active"><header><div><span>NOT YET DELIVERED</span><h2>Shots and their next action</h2></div><a href="#/shots/board">View all shots →</a></header>${activeRows.length ? `<div class="production-active-list">${activeRows.map(({shot,next}) => `<a href="#/shot/${shot.id}"><span class="next-${next.key}" title="Next action for this shot">${esc(next.label)}</span><div><b>${esc(shot.id)} · ${esc(shot.title)}</b><small>${esc(sceneById(shot.scene)?.title || shot.scene)} · ${esc(next.detail)}</small></div><i>→</i></a>`).join("")}</div>` : `<div class="production-inbox-empty">${hasShots ? "Every shot has been delivered." : "No shots have been added yet."}</div>`}</section>
   <section class="production-scenes"><header><div><span>SCENES</span><h2>Production progress</h2></div><a href="#/shots/scenes">Manage scenes →</a></header>${P.scenes.length ? `<div class="scene-progress-grid">${P.scenes.map((scene) => {

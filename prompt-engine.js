@@ -2298,8 +2298,34 @@ function minimaxH3TrimBody(title, body, limit) {
   }
   return compactCharacters(body, limit);
 }
+/* ONE INSTRUCTION, EMITTED ONCE.
+ *
+ * The founder smoke reported the H3 motion/transition instruction appearing twice
+ * in one compiled prompt. It can: the shot's written motion direction and the H3
+ * sequence/transition note are separate fields that a filmmaker reasonably fills in
+ * with the same sentence, and they are concatenated into one directive before
+ * compilation — after which a section body can repeat an earlier one verbatim.
+ *
+ * Duplicate instruction emission is a defect, so it is refused at the compiler,
+ * which is the one place every H3 mode passes through. Comparison is on the
+ * normalised body: an identical body under a different heading is still the model
+ * being told the same thing twice, and it costs prompt budget that the character
+ * allocation below then has to take from something that was said only once.
+ *
+ * A heading with no body is never dropped — those are contracts, not instructions,
+ * and two of them are never the same string anyway. */
+function minimaxH3DedupeSections(sections) {
+  const seen = new Set();
+  return sections.filter((section) => {
+    const body = String(section.body || "").replace(/\s+/g, " ").trim().toLowerCase();
+    if (!body) return true;
+    if (seen.has(body)) return false;
+    seen.add(body);
+    return true;
+  });
+}
 function finalizeMinimaxH3Prompt(chunks, maxCharacters = 2000) {
-  const sections = (chunks || []).filter(Boolean).map(minimaxH3SectionParts);
+  const sections = minimaxH3DedupeSections((chunks || []).filter(Boolean).map(minimaxH3SectionParts));
   const direct = sections.map(({ title, body }) => body ? `${title}\n${body}` : title).join("\n\n");
   if (direct.length <= maxCharacters) return direct;
 
