@@ -59,12 +59,45 @@ window.v670ScopeActivityToProject = (slug = v670ActiveProjectSlug()) => {
   if (V641_ACTIVITY_DRAWER_OPEN) v641RenderActivityDrawer();
   return true;
 };
-/* Set when the run ledger the server answers with belongs to a different project
-   than the one this window has open — which happens when the active project is
-   switched somewhere else (a second tab, another machine on the LAN). The runs are
-   not adopted; the drawer says so instead of quietly presenting them as this
-   project's, and offers the one action that makes the window current again. */
+/* Set when a ledger the server answers with belongs to a different project than
+   the one this window has open — which happens when the active project is switched
+   somewhere else (a second tab, another machine on the LAN). The rows are not
+   adopted; the drawer says so instead of quietly presenting them as this project's,
+   and offers the one action that makes the window current again. */
 let V641_ACTIVITY_FOREIGN_PROJECT = "";
+/* ==========================================================================
+   EVERY ACTIVITY PAYLOAD PROVES ITS OWN OWNER.
+
+   The first repair tied BOTH ledgers to one ownership answer — the automation-run
+   payload's — and then adopted the FAL payload on the strength of it. Independent
+   review reproduced the hole that leaves: a FAL response for project A, arriving
+   beside a run response that agrees with project B, was adopted, rendered in the
+   drawer and counted by the Activity button. One payload cannot vouch for another;
+   they are separate routes over separate ledgers and each can be answered for a
+   different project.
+
+   So admission is asked once per payload, of that payload:
+
+     - a payload whose stated owner disagrees with the project on screen is
+       REFUSED, and the drawer names the project it belongs to.
+     - a payload that states an owner that agrees is ADMITTED. This is the ordinary
+       same-project poll and it must keep working.
+     - a payload that states NO owner is admitted only when it carries NO ROWS.
+       Rows that cannot prove where they came from must not be presented as this
+       project's work, and an empty list has nothing to attribute either way — which
+       is what keeps every route stub and any older server answering harmlessly
+       instead of being silently trusted.
+
+   Returns the rows to adopt, or null to leave the current ones alone. */
+function v670AdmitActivityRows(payload, key) {
+  const here = v670ActiveProjectSlug();
+  const rows = payload && Array.isArray(payload[key]) ? payload[key] : null;
+  const owner = String((payload && payload.projectSlug) || "");
+  if (owner && here && owner !== here) return { rows: null, foreign: owner };
+  if (!owner && rows && rows.length) return { rows: null, foreign: "" };
+  return { rows, foreign: "" };
+}
+window.v670AdmitActivityRows = v670AdmitActivityRows;
 
 /* Is a dialog currently on top of the drawer? The shipped modal host is a single
    `#modal` element that carries `hidden` when closed, so this is a read of the
@@ -847,23 +880,17 @@ window.refreshGlobalAutomationActivity = async (force = false) => {
       fetch("/api/automation/runs").then((response) => response.ok ? response.json() : { runs: AUTOMATION_RUNS || [] }),
       fetch("/api/generation/fal/jobs").then((response) => response.ok ? response.json() : { jobs: FAL_GENERATION_JOBS || [] }),
     ]);
-    /* THE LEDGER NAMES ITS OWNER, AND THIS WINDOW CHECKS IT.
+    /* EACH LEDGER IS ADMITTED ON ITS OWN OWNERSHIP — see v670AdmitActivityRows.
        Both routes answer for the server's active project, which is one value for the
-       whole machine — so a second tab, or another creator on the LAN, switching
-       projects makes this 3.5-second poll return a DIFFERENT project's runs to a
-       window still showing this one. Adopting them is the leak in its most dangerous
-       form, because those rows carry working actions. A payload from an older build
-       that names no project is adopted unchanged; only a stated disagreement is
-       refused. */
-    const owner = String(runData.projectSlug || "");
-    const here = v670ActiveProjectSlug();
-    if (owner && here && owner !== here) {
-      V641_ACTIVITY_FOREIGN_PROJECT = owner;
-    } else {
-      V641_ACTIVITY_FOREIGN_PROJECT = "";
-      AUTOMATION_RUNS = runData.runs || AUTOMATION_RUNS || [];
-      FAL_GENERATION_JOBS = falData.jobs || FAL_GENERATION_JOBS || [];
-    }
+       whole machine, so a second tab or another creator on the LAN switching projects
+       makes this 3.5-second poll return a DIFFERENT project's rows to a window still
+       showing this one. Adopting them is the leak in its most dangerous form, because
+       those rows carry working actions. */
+    const runs = v670AdmitActivityRows(runData, "runs");
+    const jobs = v670AdmitActivityRows(falData, "jobs");
+    if (runs.rows) AUTOMATION_RUNS = runs.rows;
+    if (jobs.rows) FAL_GENERATION_JOBS = jobs.rows;
+    V641_ACTIVITY_FOREIGN_PROJECT = runs.foreign || jobs.foreign || "";
   } catch {}
   finally {
     V641_ACTIVITY_REFRESHING = false;

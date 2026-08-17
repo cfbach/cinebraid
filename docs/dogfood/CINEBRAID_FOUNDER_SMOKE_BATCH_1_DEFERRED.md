@@ -3,6 +3,21 @@
 **Source:** `CINEBRAID_FOUNDER_SMOKE_FREEZE_2026-08-17.md`
 **Branch:** `fix/founder-smoke-p0-trust`, from `5207da1c18077cf54fc3376906d2282fc58a91bd`
 
+> **Correction pass, after the first independent HOLD.** Nothing below changed.
+> The corrections were confined to the five named findings — FAL activity
+> ownership, the `#/create` competing recommendation, the null-score comparison,
+> the removed-consumed-reference freshness gap, and the mutation-control harness.
+> Two rules that pass established, worth reading before touching either area:
+>
+> - **`nextProductionShot()` is deleted, not deprecated.** It was the media-presence
+>   project-level answer, and leaving it dormant is what let it keep owning a
+>   visible recommendation. The project has exactly one next-action derivation:
+>   `projectNextProductionAction()`. `shotProductionNextAction()` remains and labels
+>   ONE shot's board chip; it may never speak for the project.
+> - **A mutation control is armed, executed and detected in three separate phases**,
+>   and a setup failure can never be counted as a detection. See the header of
+>   `tests/founder-smoke-p0-trust-negative-controls.js`.
+
 Batch 1 was bounded to the reproduced P0 trust/correctness blockers. Two items
 inside P0-7 were deliberately left alone, and this file is the record of why, so
 neither is rediscovered as an oversight.

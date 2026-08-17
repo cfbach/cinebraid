@@ -1343,7 +1343,15 @@ function registerFalGeneration(app, context) {
       const shotId = String(req.query.shotId || ""), entityId = String(req.query.entityId || ""), entityList = String(req.query.entityList || "");
       const jobs = readJobs(owner).filter((job) => (!shotId || String(job.shotId) === shotId) && (!entityId || String(job.entityId) === entityId) && (!entityList || String(job.entityList) === entityList));
       const recovery = unattendedRecoveryNotice(owner.slug, { claim: String(req.headers?.[CLAIM_RECOVERY_HEADER] || "") === "1" });
-      res.json({ jobs: jobs.map(publicJob), ...(recovery ? { backgroundRecovery: recovery } : {}) });
+      /* WHICH PROJECT THIS LEDGER IS. `captureOwner()` resolved it from the server's
+         ACTIVE project, which is one value for the whole machine — so a window that
+         polls this route while the active project was switched somewhere else (a
+         second tab, another creator on the LAN) receives a different project's jobs
+         with nothing in the payload to say so, and its Activity drawer, its counts
+         and its rail present them as its own. The reviewer reproduced exactly that.
+         Stating the owner is what lets the caller refuse them; the automation-run
+         route states it for the same reason. */
+      res.json({ jobs: jobs.map(publicJob), projectSlug: owner.slug, ...(recovery ? { backgroundRecovery: recovery } : {}) });
     } catch (error) {
       res.status(ledgerFailureStatus(error)).json(ledgerFailurePayload(error));
     }

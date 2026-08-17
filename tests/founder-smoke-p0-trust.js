@@ -128,6 +128,75 @@ async function testCrossProjectActivityIsolation() {
 }
 
 /* ---------------------------------------------------------------------------
+   P0-1 (correction) — THE GENERATION LEDGER PROVES ITS OWN OWNER TOO.
+
+   The first repair tied both ledgers to the automation-run payload's ownership
+   answer and adopted the FAL payload on the strength of it. Independent review
+   reproduced the hole: a FAL response for project A, arriving beside a run
+   response that agrees with project B, was adopted, drawn in the drawer and
+   counted by the Activity button. Two routes, two ledgers, two owners. */
+async function testFalLedgerOwnership() {
+  const projects = { "project-a": buildFixture(), "project-b": buildFixture() };
+  const active = "project-b";
+  const foreignJob = { id: "a-job", status: "IN_QUEUE", purpose: "Project A reference render", outputCount: 0, model: "gpt-image-2", createdAt: "2026-08-17T09:00:00Z" };
+  const ownJob = { id: "b-job", status: "IN_QUEUE", purpose: "Project B reference render", outputCount: 0, model: "gpt-image-2", createdAt: "2026-08-17T09:30:00Z" };
+  let falOwner = active, falJobs = [ownJob], falStatesOwner = true;
+  const app = await render("#/production", projects[active], {
+    fetch: async (url, _options, response) => {
+      if (url === "/api/project") return response(projects[active], 200, { "x-cinebraid-project-slug": active });
+      /* The RUN ledger always agrees. Only the FAL ledger moves — which is exactly
+         the case a single shared ownership answer cannot see. */
+      if (url === "/api/automation/runs") return response({ runs: [], projectSlug: active });
+      if (url === "/api/generation/fal/jobs") return response(falStatesOwner ? { jobs: falJobs, projectSlug: falOwner } : { jobs: falJobs });
+      return null;
+    },
+  });
+
+  /* Same-project polling must keep working — the guard must not be a blanket refusal. */
+  await app.context.refreshGlobalAutomationActivity(true);
+  assert.strictEqual(vm.runInContext("JSON.stringify(FAL_GENERATION_JOBS.map((job) => job.id))", app.context), '["b-job"]',
+    "this project's own generation ledger must still be adopted on every poll");
+  vm.runInContext("V641_ACTIVITY_DRAWER_OPEN = true; v641RenderActivityDrawer();", app.context);
+  assert(app.context.document.getElementById("automation-activity-drawer").innerHTML.includes("Project B reference render"),
+    "this project's own live render must appear, or the refusal below proves nothing");
+
+  /* Now the machine's active project moves under this window. */
+  falOwner = "project-a"; falJobs = [foreignJob];
+  await app.context.refreshGlobalAutomationActivity(true);
+  assert.strictEqual(vm.runInContext("JSON.stringify(FAL_GENERATION_JOBS.map((job) => job.id))", app.context), '["b-job"]',
+    "a generation ledger belonging to another project must not be adopted");
+  vm.runInContext("v641RenderActivityDrawer();", app.context);
+  const drawer = app.context.document.getElementById("automation-activity-drawer").innerHTML;
+  assert(!drawer.includes("Project A reference render"), "another project's render must not appear in this project's drawer");
+  assert(drawer.includes("project-a"), "the drawer must name the project the server switched to");
+  const button = app.context.document.getElementById("automation-activity-toggle").innerHTML;
+  assert(!/Project A/.test(button), "another project's render must not reach the Activity button");
+  /* The rail and the Terminal read the same ledger, so they cannot disagree. */
+  assert.strictEqual(vm.runInContext("JSON.stringify(FAL_GENERATION_JOBS.map((job) => job.purpose))", app.context), '["Project B reference render"]',
+    "every surface reads one ledger, and it is this project's");
+
+  /* A payload that states NO owner: rows are refused, an empty list is harmless. */
+  falStatesOwner = false; falJobs = [foreignJob];
+  await app.context.refreshGlobalAutomationActivity(true);
+  assert.strictEqual(vm.runInContext("JSON.stringify(FAL_GENERATION_JOBS.map((job) => job.id))", app.context), '["b-job"]',
+    "rows that cannot prove where they came from must not be presented as this project's");
+  falJobs = [];
+  await app.context.refreshGlobalAutomationActivity(true);
+  assert.strictEqual(vm.runInContext("JSON.stringify(FAL_GENERATION_JOBS)", app.context), "[]",
+    "an empty payload has nothing to attribute and must still be admitted");
+
+  /* And the route states it, so the browser has something to check. */
+  const falSource = fs.readFileSync(path.join(ROOT, "fal-generation.js"), "utf8");
+  assert(/jobs: jobs\.map\(publicJob\), projectSlug: owner\.slug/.test(falSource),
+    "GET /api/generation/fal/jobs must state which project its ledger belongs to");
+  /* The first read of the ledger is admitted the same way; it had no check at all. */
+  const appSource = fs.readFileSync(path.join(ROOT, "public", "app.js"), "utf8");
+  assert(/v670AdmitActivityRows\(data, "jobs"\)/.test(appSource),
+    "load()'s first ledger read must be admitted on the payload's own owner too");
+  record("P0-1b", "the generation ledger proves its own owner; same-project polling is unaffected; unprovable rows are refused");
+}
+
+/* ---------------------------------------------------------------------------
    P0-2 — NEXT ACTION AGREES WITH CANONICAL READINESS.
 
    Reproduction: PRODUCTION READINESS said "0 shots have work that can start now"
@@ -142,10 +211,20 @@ async function testNextActionAgreesWithReadiness() {
   assert.strictEqual(feed.counts.ready, 0, "the fixture must have no READY shot, or this test proves nothing");
   assert.strictEqual(feed.shots[0].status, "NEEDS_DECISION");
 
-  /* The defect, stated as the fact that made it possible: the media-presence
-     answer still says the shot can be animated. */
-  const mediaAnswer = vm.runInContext("nextProductionShot()", app.context);
-  assert.strictEqual(mediaAnswer.next.key, "animate", "the media-presence derivation must still be the thing it always was");
+  /* THERE IS ONE PROJECT-LEVEL ANSWER, AND ONLY ONE.
+     `nextProductionShot()` answered "the first shot that is not final" from media
+     presence alone and owned the recommendation on two screens. Independent review
+     found it still driving the visible RECOMMENDED card in #/create beside a button
+     that routed from readiness, so it is deleted rather than left dormant — a
+     second readiness owner that nothing calls today is one a caller finds tomorrow.
+     `shotProductionNextAction()` remains and is explicitly NOT that answer: it
+     labels one shot's media chip on the board. */
+  assert.strictEqual(vm.runInContext("typeof nextProductionShot", app.context), "undefined",
+    "the media-presence project-level answer must not exist alongside the canonical one");
+  assert.strictEqual(vm.runInContext(`shotProductionNextAction(shotById("L1-01")).key`, app.context), "animate",
+    "the per-shot media chip must still be the thing it always was");
+  assert.strictEqual((fs.readFileSync(path.join(ROOT, "public", "app.js"), "utf8").match(/function nextProductionShot\(/g) || []).length, 0,
+    "nextProductionShot must be gone from the source, not merely unexported");
 
   const next = vm.runInContext("projectNextProductionAction()", app.context);
   assert.strictEqual(next.kind, "blocker", `Next Action must name the blocker, not the blocked shot (got ${next.kind})`);
@@ -186,6 +265,50 @@ async function testNextActionAgreesWithReadiness() {
   assert.strictEqual(readyNext.kind, "shot", "a READY shot must be preferred over a blocker");
   assert.strictEqual(readyNext.href, "#/shot/L1-01");
   record("P0-2", "blocked project routes to its highest-leverage unblocker; a READY shot still wins; the words come from readiness");
+}
+
+/* ---------------------------------------------------------------------------
+   P0-2 (correction) — THE VISIBLE RECOMMENDATION IS THE SAME ANSWER.
+
+   Independent review found that fixing Continue Production was not enough: the
+   RECOMMENDED card on #/create still rendered `nextProductionShot()`, so the
+   screen showed "Animate · L1-01 · Hull check" with a button beside it that routed
+   to the Kai reference actually blocking every shot. Two answers on one card. */
+async function testCreateViewRecommendationAgrees() {
+  const app = await render("#/create", buildFixture());
+  const feed = vm.runInContext("projectShotReadiness()", app.context);
+  assert.strictEqual(feed.counts.ready, 0, "the fixture must have no startable shot, or this test is vacuous");
+  const canonical = vm.runInContext("projectNextProductionAction()", app.context);
+
+  const html = app.context.document.getElementById("main").innerHTML;
+  const card = (html.match(/<article data-recommended-kind[\s\S]*?<\/article>/) || [""])[0];
+  assert(card, "the create view must render a recommendation card");
+  const headline = (card.match(/<b>([\s\S]*?)<\/b>/) || ["", ""])[1];
+  const detail = (card.match(/<small>([\s\S]*?)<\/small>/) || ["", ""])[1];
+
+  /* THE THREE THINGS THAT MUST AGREE: the words, the destination, and the button. */
+  assert.strictEqual(headline, canonical.title, `the recommendation headline must be the canonical answer, got "${headline}"`);
+  assert.strictEqual(detail, canonical.message, "the recommendation detail must be readiness's own message");
+  assert(!/Animate/.test(card), `the recommendation must not restate the media-presence answer: ${card}`);
+  assert.strictEqual((card.match(/data-recommended-kind="blocker"/g) || []).length, 1,
+    "the card must declare which kind of action it is showing");
+  vm.runInContext("continueProduction()", app.context);
+  assert.strictEqual(app.context.location.hash, canonical.href,
+    "the button beside the recommendation must route where the recommendation points");
+  assert.strictEqual(app.context.location.hash, "#/character/KAI");
+
+  /* A READY shot still produces a shot recommendation on this screen. */
+  const readyApp = await render("#/create", buildFixture());
+  vm.runInContext(`
+    const feed = projectShotReadiness();
+    __forced = { ...feed, shots: [{ ...feed.shots[0], status: "READY", nextAction: { code: "produce-frame", message: "Produce Frame A using i2v.", count: 1 } }], counts: { ...feed.counts, ready: 1 } };
+    projectShotReadiness = () => __forced;
+  `, readyApp.context);
+  await readyApp.context.route();
+  const readyCard = (readyApp.context.document.getElementById("main").innerHTML.match(/<article data-recommended-kind[\s\S]*?<\/article>/) || [""])[0];
+  assert(/data-recommended-kind="shot"/.test(readyCard), "a READY shot must still be recommended as a shot");
+  assert(/Produce Frame A using i2v\./.test(readyCard), "and must carry readiness's own words");
+  record("P0-2b", "the visible #/create recommendation, its detail and its button are one readiness-derived answer");
 }
 
 /* ---------------------------------------------------------------------------
@@ -405,6 +528,36 @@ function testCorrectionClassification() {
     assert(Continuity.describeCorrectionOutcome(verdict).length > 20, "every outcome must have a sentence a person can read");
   }
   assert.strictEqual(Continuity.CORRECTION_SCORE_MARGIN, 3, "the equality band must be explicit and stable");
+
+  /* P0-5 (correction) — AN UNSCORABLE COMPARISON FAILS CLOSED.
+   *
+   * `Number(row.score)` behind a `Number.isFinite` check reads as strict and is
+   * not: null, "", "  " and [] are all 0, and 0 is finite. Independent review
+   * reproduced the consequence — a baseline recorded as { available: true,
+   * score: null } became ZERO, and an 80-point challenger against it was called a
+   * demonstrated improvement and offered as the fix. */
+  const unscorable = [null, undefined, "", "   ", [], {}, true, false, NaN, "80", { valueOf: () => 80 }];
+  for (const score of unscorable) {
+    const asBaseline = Continuity.classifyCorrectionOutcome({ available: true, score }, { score: 80, pass: true });
+    assert.strictEqual(asBaseline.outcome, "unknown",
+      `an unscorable baseline (${JSON.stringify(score) ?? String(score)}) produced "${asBaseline.outcome}"`);
+    assert.strictEqual(asBaseline.baselineScore, null, "an unscorable value must never surface as a number");
+    assert.strictEqual(Continuity.recommendableCorrection(asBaseline), false, "and must never be recommendable");
+    const asCandidate = Continuity.classifyCorrectionOutcome({ available: true, score: 72 }, { score, pass: true });
+    assert.strictEqual(asCandidate.outcome, "unknown",
+      `an unscorable challenger (${JSON.stringify(score) ?? String(score)}) produced "${asCandidate.outcome}"`);
+  }
+  /* server.js clamps an unstated score to 0 and flags it. That zero is not a score. */
+  const unscored = Continuity.classifyCorrectionOutcome({ available: true, score: 0, explicitScore: false }, { score: 80, pass: true });
+  assert.strictEqual(unscored.outcome, "unknown", "a review that stated no score must not be read as a real zero");
+  assert.strictEqual(Continuity.correctionScore({ score: 0, explicitScore: true }), 0,
+    "a genuine zero the reviewer actually stated is still a score");
+  assert.strictEqual(Continuity.correctionScore({ score: 41 }), 41, "an ordinary score is unaffected");
+
+  /* The already-working outcomes must be untouched by the strictness. */
+  assert.strictEqual(Continuity.classifyCorrectionOutcome({ available: true, score: 72 }, { score: 88, pass: true }).outcome, "improvement");
+  assert.strictEqual(Continuity.classifyCorrectionOutcome({ available: true, score: 72 }, { score: 41, pass: true }).outcome, "regression");
+  assert.strictEqual(Continuity.classifyCorrectionOutcome({ available: true, score: 72 }, { score: 73, pass: true }).outcome, "no-improvement");
 }
 
 async function testCorrectionGateNeverRecommendsARegression() {
@@ -605,6 +758,80 @@ async function testCompiledPackageGoesStale() {
   record("P0-7", "duration, method and target changes invalidate a compiled package and say so on it; one instruction is emitted once");
 }
 
+/* ---------------------------------------------------------------------------
+   P0-7 (correction) — AN INPUT THE PRODUCTION CAN NO LONGER SUPPLY IS DRIFT.
+
+   Freshness compares what a package was compiled from against what the production
+   would supply now. The comparison built the "now" side by mapping each SAVED
+   reference onto its current option and KEEPING THE SAVED ONE when there was no
+   current option — so the two sides were identical by construction and a removed
+   input produced nothing to report. Independent review reproduced it: a package
+   that consumed `character:KAI` stayed CURRENT after Kai was removed. */
+async function testRemovedConsumedReferenceStalesThePackage() {
+  const project = buildFixture();
+  const shot = project.shots[0];
+  shot.clips = [{ id: "unit-a", suffix: "A", label: "A", dur: 8, motionPrompt: "Kai crosses.", generationPackages: [] }];
+  shot.creationBrief = { ...(shot.creationBrief || {}), motionDuration: 8, motionProfileId: "minimax-h3/flf", motionDirection: "Kai crosses." };
+  const app = await render("#/shot/L1-01", project);
+
+  const built = JSON.parse(vm.runInContext(`
+    (() => {
+      const s = shotById("L1-01"), unit = s.clips[0];
+      const build = { id: "pkg-1", packageId: "L1-01-MOTION-R01", date: "2026-08-17T10:00:00Z",
+        profileId: "minimax-h3/flf", profileName: "H3 FLF", mode: "flf", segmentId: unitKey(unit),
+        durationSeconds: 8, kind: "guided-motion", revision: 1, prompt: "x",
+        references: promptReferenceOptions(s).filter((r) => r.url), warnings: [], confirmations: [] };
+      build.dependencySnapshot = packageInputSnapshot(s, build, build.references, currentDirectionForPackage(s, build));
+      const id = registerPromptBuild(P, build);
+      unit.generationPackages = [promptBuildRef(id, { kind: "guided-motion", scope: "segment:" + unitKey(unit) })];
+      return JSON.stringify({ consumed: build.references.map((r) => r.key), fresh: packageStaleReasons(s, resolvePromptBuildList(P, unit.generationPackages)[0]) });
+    })()
+  `, app.context));
+  assert(built.consumed.includes("character:KAI"), "the package must actually consume the reference this test removes");
+  assert.strictEqual(built.fresh.length, 0, "a freshly compiled package must read current");
+
+  /* Remove the character the compiled package consumed. */
+  const after = JSON.parse(vm.runInContext(`
+    (() => {
+      const s = shotById("L1-01");
+      s.characters = []; P.characters = [];
+      return JSON.stringify({
+        now: promptReferenceOptions(s).map((r) => r.key),
+        reasons: packageStaleReasons(s, resolvePromptBuildList(P, s.clips[0].generationPackages)[0]),
+      });
+    })()
+  `, app.context));
+  assert(!after.now.includes("character:KAI"), "the production must genuinely no longer offer it");
+  assert(after.reasons.length > 0, "removing a consumed reference must stale the package");
+  assert(after.reasons.some((row) => /can no longer be supplied by this shot/.test(row)),
+    `the reason must name the disappearance rather than a generic change: ${JSON.stringify(after.reasons)}`);
+  assert(after.reasons.some((row) => /Kai/.test(row)), "and must name which input");
+
+  /* The surface says so, and so does the paid dialog's source of truth. */
+  const markup = vm.runInContext(`guidedMotionPromptResult(shotById("L1-01"), resolvePromptBuildList(P, shotById("L1-01").clips[0].generationPackages)[0])`, app.context);
+  assert(/data-package-freshness="stale"/.test(markup), "the compiled prompt surface must mark itself out of date");
+  assert(/can no longer be supplied/.test(markup), "and must state which input went away");
+
+  /* A reference whose FILE changed while the option still exists is still the
+     ordinary "changed" reason — the disappearance case must not swallow it. */
+  const changed = JSON.parse(vm.runInContext(`
+    (() => {
+      const s = shotById("L1-01");
+      const pack = resolvePromptBuildList(P, s.clips[0].generationPackages)[0];
+      /* Restore the consumed entity, then move the take the package pointed at. */
+      P.characters = ${JSON.stringify(project.characters)};
+      s.characters = P.characters.map((c) => c.id);
+      const missing = packageStaleReasons(s, pack);
+      SCAN.shots["L1-01"].takes = (SCAN.shots["L1-01"].takes || []).map((t) => t.name === "FRAME_A.png" ? { ...t, url: "/moved/FRAME_A.png" } : t);
+      return JSON.stringify({ restored: missing, changed: packageStaleReasons(s, pack) });
+    })()
+  `, app.context));
+  assert.strictEqual(changed.restored.length, 0, "restoring the consumed reference must clear the disappearance reason");
+  assert(changed.changed.some((row) => /approved reference file changed/.test(row)),
+    `an input that changed rather than vanished must still report as changed: ${JSON.stringify(changed.changed)}`);
+  record("P0-7c", "an input the shot can no longer supply stales the package and is named; a changed one still reports as changed");
+}
+
 /* The paid submission is the last screen before money is spent, so a stale package
    must not reach it silently either. It is not refused — sending an older package is
    a legitimate choice — but it is named, beside the duration banner that exists for
@@ -659,7 +886,9 @@ async function testStalePackageIsNamedBeforeAPaidSubmission() {
 
 async function main() {
   await testCrossProjectActivityIsolation();
+  await testFalLedgerOwnership();
   await testNextActionAgreesWithReadiness();
+  await testCreateViewRecommendationAgrees();
   testLineagePureRules();
   await testLineageRuntimeSurfaces();
   await testUnrenderableMediaCannotBeApproved();
@@ -669,6 +898,7 @@ async function main() {
   record("P0-5", "improvement/no-improvement/regression is classified against the approved original; a regression is never suggested; the repair package is the smallest truthful one");
   testCompiledPromptEmitsOneInstructionOnce();
   await testCompiledPackageGoesStale();
+  await testRemovedConsumedReferenceStalesThePackage();
   await testStalePackageIsNamedBeforeAPaidSubmission();
 
   for (const line of results) console.log(line);

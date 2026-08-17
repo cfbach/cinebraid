@@ -1292,7 +1292,17 @@ async function load() {
       .then((data) => {
         FAL_GENERATION_LEDGER_LOADED = Array.isArray(data.jobs);
         backgroundRecovery = data.backgroundRecovery || null;
-        return data.jobs || [];
+        /* Admitted on the payload's own stated owner, exactly as the 3.5-second
+           poll admits it. This is the FIRST read of the ledger and it had no check
+           at all: the project header and the ledger are two requests, and a switch
+           between them lands another project's jobs in the opening view. Refused
+           rows leave the ledger EMPTY and unloaded rather than foreign — a surface
+           reading provenance then says the record is unavailable, which is true. */
+        const admitted = typeof v670AdmitActivityRows === "function"
+          ? v670AdmitActivityRows(data, "jobs")
+          : { rows: data.jobs || [] };
+        if (!admitted.rows) FAL_GENERATION_LEDGER_LOADED = false;
+        return admitted.rows || [];
       })
       .catch(() => []);
   }
@@ -2674,9 +2684,18 @@ function shotProductionNextAction(s, takes = takesFor(s.id)) {
   if (images.length) return { key: "review-still", label: "Review still", detail: `${images.length} returned` };
   return { key: "create", label: "Add still", detail: "No image yet" };
 }
-function nextProductionShot() {
-  return P.shots.map((shot) => ({ shot, next: shotProductionNextAction(shot) })).find((row) => row.next.key !== "final") || null;
-}
+/* `nextProductionShot()` WAS HERE, AND IS DELETED RATHER THAN LEFT UNUSED.
+ *
+ * It answered "the first shot that is not final" from media presence alone, and
+ * it was the project's recommended-next-action owner on two screens. Independent
+ * review found it still driving the visible RECOMMENDED card in #/create beside a
+ * button that routed from canonical readiness — two answers on one card.
+ *
+ * A dormant second readiness owner is a reachable one, so it is gone. The project
+ * next action has exactly one derivation: projectNextProductionAction() below.
+ * shotProductionNextAction() above remains and is NOT that derivation — it labels
+ * ONE shot's media chip on the board and cannot see whether that shot's inputs
+ * exist, which is precisely why it may never speak for the project. */
 /* ==========================================================================
    THE PROJECT'S NEXT ACTION — READ OFF CANONICAL READINESS, NOT DERIVED BESIDE IT.
 
@@ -3411,9 +3430,7 @@ async function productionHomeView() {
      ACTION card are two renderings of one answer, and evaluating the whole project
      twice per paint would be the cost of pretending otherwise. */
   const shotReadiness = projectShotReadiness();
-  /* THE SAME ANSWER THE READINESS PANEL GIVES. `nextProductionShot()` still drives
-     the board's per-shot media chips below; it no longer decides what the project
-     should do next, because it cannot see whether a shot's inputs exist. */
+  /* THE SAME ANSWER #/create SHOWS. One derivation, two screens. */
   const next = projectNextProductionAction(shotReadiness);
   const decisions = projectDecisionItems();
   const hasShots = P.shots.length > 0;

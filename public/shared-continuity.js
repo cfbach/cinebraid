@@ -987,9 +987,33 @@ const CORRECTION_OUTCOME_LABELS = {
 /* Scores come from a vision model, so a point or two is noise rather than a
    finding. Three is the band inside which the two images are called equal. */
 const CORRECTION_SCORE_MARGIN = 3;
+/* A SCORE, OR NOTHING. NEVER A COERCION.
+ *
+ * This was `Number(row.score)` behind a `Number.isFinite` check, which reads as
+ * strict and is not: `Number(null)`, `Number("")`, `Number("  ")` and `Number([])`
+ * are all 0, and 0 is finite. Independent review reproduced the consequence — an
+ * approved original recorded as `{ available: true, score: null }` became a
+ * baseline of ZERO, and an 80-point challenger against it was classified a
+ * demonstrated improvement and offered as the fix. The exact fail-open this
+ * classifier exists to prevent, arriving through the arithmetic instead of the
+ * logic.
+ *
+ * Two conditions now, and both are about whether a number was actually STATED:
+ *
+ *   1. the value is a finite `number` primitive. Not a numeric string, not an
+ *      empty array, not null — those are absences wearing a number's clothes.
+ *   2. the row does not say it was unscored. server.js's normalizeReviewItems
+ *      clamps a missing score to 0 and records `explicitScore: false` beside it,
+ *      so a reviewer that returned no score produces a perfectly finite ZERO. That
+ *      zero is not a baseline and not a result; reading it as one is the same
+ *      defect one layer up.
+ *
+ * Returning null puts the pair in NOT COMPARABLE, which fails closed: it can never
+ * be recommended and never becomes SUGGESTED. */
 function correctionScore(row) {
-  const value = Number(row && row.score);
-  return Number.isFinite(value) ? value : null;
+  if (!row || typeof row !== "object") return null;
+  if (row.explicitScore === false) return null;
+  return typeof row.score === "number" && Number.isFinite(row.score) ? row.score : null;
 }
 function classifyCorrectionOutcome(baseline, candidate) {
   const before = correctionScore(baseline);
@@ -1249,7 +1273,7 @@ const CONTINUITY_EXPORTS = {
   normalizeIntentText,
   CONTINUITY_OUTCOMES, CONTINUITY_OUTCOME_LABELS,
   CORRECTION_OUTCOMES, CORRECTION_OUTCOME_LABELS, CORRECTION_SCORE_MARGIN,
-  classifyCorrectionOutcome, recommendableCorrection, describeCorrectionOutcome,
+  correctionScore, classifyCorrectionOutcome, recommendableCorrection, describeCorrectionOutcome,
   expectedActionFor, describeFinding, describeComparison,
 };
 

@@ -4198,8 +4198,28 @@ function creationManualWorkspace() {
     <button onclick="addEntity('props')"><span>OPTIONAL</span><b>Create a prop reference</b><small>Lock an object's shape, materials, scale, and wear when continuity matters.</small></button>
     <button onclick="addShot()"><span>STEP 4</span><b>Create the first shot</b><small>Add a scene automatically if needed, then describe the visible action and staging.</small></button>
   </div>
-  <section class="creation-progress"><header><div><span class="creation-kicker">PROJECT AT A GLANCE</span><h3>${esc(P.meta.title)}</h3></div><a class="ghost-btn" href="#/production/scenes">Open scenes & shots →</a></header><div class="creation-metrics"><div><b>${sceneCount}</b><span>scenes</span></div><div><b>${shotCount}</b><span>shots</span></div><div><b>${approvedCount("locations")}/${P.locations.length}</b><span>approved locations</span></div><div><b>${approvedCount("characters")}/${P.characters.length}</b><span>approved characters</span></div><div><b>${approvedCount("props")}/${P.props.length}</b><span>approved props</span></div><div><b>${approvedCount("vehicles")}/${(P.vehicles || []).length}</b><span>approved vehicles</span></div></div>${!sceneCount ? `<div class="creation-empty-project"><h3>Your project is ready for its first scene</h3><p>Create a scene and shot now, or create the location and character references first.</p><button class="add-btn" onclick="addShot()">Create scene + first shot</button><button class="ghost-btn" onclick="addEntity('locations')">Create first location</button></div>` : `<div class="creation-project-actions"><article><span>RECOMMENDED</span><b>${esc(nextProductionShot()?.next?.label || "Continue production")}</b><small>${nextProductionShot() ? `${esc(nextProductionShot().shot.id)} · ${esc(nextProductionShot().shot.title)}` : "All current shots are final"}</small><button class="assemble-btn" onclick="continueProduction()">CONTINUE PRODUCTION →</button></article><article><span>PROJECT STRUCTURE</span><b>${sceneCount} scenes · ${shotCount} shots</b><small>Scene beats and the complete shot list now live in Production, where they can be filtered and paginated.</small><a class="ghost-btn" href="#/shots/board">OPEN SHOTS</a></article></div>`}</section>
+  <section class="creation-progress"><header><div><span class="creation-kicker">PROJECT AT A GLANCE</span><h3>${esc(P.meta.title)}</h3></div><a class="ghost-btn" href="#/production/scenes">Open scenes & shots →</a></header><div class="creation-metrics"><div><b>${sceneCount}</b><span>scenes</span></div><div><b>${shotCount}</b><span>shots</span></div><div><b>${approvedCount("locations")}/${P.locations.length}</b><span>approved locations</span></div><div><b>${approvedCount("characters")}/${P.characters.length}</b><span>approved characters</span></div><div><b>${approvedCount("props")}/${P.props.length}</b><span>approved props</span></div><div><b>${approvedCount("vehicles")}/${(P.vehicles || []).length}</b><span>approved vehicles</span></div></div>${!sceneCount ? `<div class="creation-empty-project"><h3>Your project is ready for its first scene</h3><p>Create a scene and shot now, or create the location and character references first.</p><button class="add-btn" onclick="addShot()">Create scene + first shot</button><button class="ghost-btn" onclick="addEntity('locations')">Create first location</button></div>` : `<div class="creation-project-actions">${creationRecommendedActionMarkup()}<article><span>PROJECT STRUCTURE</span><b>${sceneCount} scenes · ${shotCount} shots</b><small>Scene beats and the complete shot list now live in Production, where they can be filtered and paginated.</small><a class="ghost-btn" href="#/shots/board">OPEN SHOTS</a></article></div>`}</section>
   </div>`;
+}
+/* THE RECOMMENDED CARD, FROM THE ONE ANSWER.
+ *
+ * This card used to render `nextProductionShot()` — the media-presence derivation —
+ * beside a button that calls `continueProduction()`, which reads canonical
+ * readiness. Independent review found the two disagreeing ON THE SAME CARD: the
+ * headline said "Animate · L1-01 · Hull check" while its own button routed to the
+ * Kai reference that was actually blocking every shot. A recommendation and the
+ * action it labels cannot come from different derivations.
+ *
+ * Both halves now come from projectNextProductionAction(), so the words, the
+ * destination and the button are one answer. `typeof` because this file is also
+ * evaluated in suite realms that load it without public/app.js.
+ */
+function creationRecommendedActionMarkup() {
+  const next = typeof projectNextProductionAction === "function" ? projectNextProductionAction() : null;
+  if (!next) {
+    return `<article><span>RECOMMENDED</span><b>Nothing outstanding</b><small>Readiness has nothing left to ask for on the current shots.</small><a class="ghost-btn" href="#/shots/board">OPEN SHOTS</a></article>`;
+  }
+  return `<article data-recommended-kind="${attr(next.kind)}"${next.shotId ? ` data-recommended-shot="${attr(next.shotId)}"` : ""}><span>RECOMMENDED</span><b>${esc(next.title)}</b><small>${esc(next.message || next.actionLabel)}</small><button class="assemble-btn" onclick="continueProduction()">${esc(next.actionLabel)} →</button></article>`;
 }
 function creationStudioView() {
   const path = creationStartPath();

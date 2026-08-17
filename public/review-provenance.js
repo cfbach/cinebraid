@@ -244,13 +244,41 @@ function currentDirectionForPackage(s, pack) {
   } else base = s.motionPrompt || "";
   return [base, directive].filter(Boolean).join("\n").trim();
 }
+/* WHAT THE PACKAGE CONSUMED THAT THIS PRODUCTION CAN NO LONGER PROVIDE.
+ *
+ * Freshness compares what a package was compiled from against what the production
+ * would supply now. The comparison used to be built by mapping each SAVED reference
+ * onto its current option and, when there was no current option, KEEPING THE SAVED
+ * ONE — so the "now" row and the "saved" row were identical by construction and a
+ * removed input produced no difference to report. Independent review reproduced it:
+ * a package that consumed `character:KAI` stayed CURRENT after Kai was removed from
+ * the shot entirely.
+ *
+ * A substitution that fills a gap with the value being tested cannot detect the gap.
+ * The disappearance IS the drift, and every way an option can vanish is real:
+ * the entity was unlinked from the shot, deleted, or lost the approved image
+ * promptReferenceOptions() requires before it offers one; a take's file is gone.
+ * Each of those changes what a rebuild would compile, so each must stale the
+ * package that consumed it. */
+function missingConsumedReferences(s, pack) {
+  if (typeof promptReferenceOptions !== "function") return [];
+  const available = new Set(promptReferenceOptions(s).map((row) => row.key));
+  return (pack.references || [])
+    .filter((saved) => saved && saved.key && !available.has(saved.key))
+    .map((saved) => saved.label || saved.key);
+}
 function currentSnapshotForPackage(s, pack) {
   const available =
       typeof promptReferenceOptions === "function" ? promptReferenceOptions(s) : [],
-    refs = (pack.references || []).map((saved) => {
-      const current = available.find((x) => x.key === saved.key);
-      return current ? { ...saved, url: current.url, label: current.label } : saved;
-    });
+    /* Dropped, not substituted — see missingConsumedReferences above. A reference
+       the production can no longer provide is absent from what it would compile
+       now, so the reference arrays differ and the named reason below says which. */
+    refs = (pack.references || [])
+      .map((saved) => {
+        const current = available.find((x) => x.key === saved.key);
+        return current ? { ...saved, url: current.url, label: current.label } : null;
+      })
+      .filter(Boolean);
   const snapshot = packageInputSnapshot(
     s,
     pack,
@@ -282,7 +310,12 @@ function packageStaleReasons(s, pack) {
     JSON.stringify(now.generationMedia || [])
   )
     reasons.push("approved generation media changed");
-  if (JSON.stringify(saved.references || []) !== JSON.stringify(now.references || []))
+  /* Named before the generic array comparison, because "an input is gone" is a
+     different fact from "an input changed" and sends the filmmaker somewhere else. */
+  const missing = missingConsumedReferences(s, pack);
+  if (missing.length)
+    reasons.push(`${missing.length === 1 ? "an input" : `${missing.length} inputs`} this prompt was compiled from can no longer be supplied by this shot: ${missing.join(", ")}`);
+  if (!missing.length && JSON.stringify(saved.references || []) !== JSON.stringify(now.references || []))
     reasons.push("approved reference file changed");
   /* Only compared when the saved snapshot actually recorded the field. A package
      compiled before these were captured genuinely does not know what its duration

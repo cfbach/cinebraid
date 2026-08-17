@@ -704,10 +704,14 @@ async function v670EstablishCorrectionBaseline(run, pkg) {
     await v626BeginStep(run, key, "scene-correction-baseline", `Score the approved ${pkg.targetShotId} still for comparison`, { shotId: pkg.targetShotId, packageId: pkg.id });
     const data = await v641ReviewSceneCorrectionIncremental(run, v626Step(run, key), { sceneId: run.targetId, targetShotId: pkg.targetShotId, fileNames: [file], package: pkg });
     const row = (data.review?.reviews || [])[0] || {};
+    /* SCORED, OR NOT AVAILABLE. Asked of shared-continuity.js so the baseline is
+       admitted by exactly the rule that later compares it — `Number.isFinite(Number(...))`
+       here was the same coercion that let a null score become a zero baseline. */
+    const scored = correctionScore({ score: row.score, explicitScore: row.explicitScore });
     pkg.baseline = {
-      available: Number.isFinite(Number(row.score)),
-      reason: Number.isFinite(Number(row.score)) ? "" : "reviewer-returned-no-score",
-      file, score: Number.isFinite(Number(row.score)) ? Math.round(Number(row.score)) : null,
+      available: scored !== null,
+      reason: scored !== null ? "" : "reviewer-returned-no-score",
+      file, score: scored === null ? null : Math.round(scored),
       pass: row.pass === true, notes: String(row.notes || ""), at: v626Now(),
     };
     await v626CompleteStep(run, key, { kind: "scene-correction-baseline", shotId: pkg.targetShotId, files: [file], result: { baseline: pkg.baseline, targetShotId: pkg.targetShotId, packageId: pkg.id } });
@@ -729,7 +733,10 @@ function v670ClassifyCorrectionCandidates(pkg, reviewStep) {
   const verdicts = {};
   for (let index = 0; index < files.length; index++) {
     const row = rows.find((item) => Number(item.n) === index + 1) || {};
-    verdicts[files[index]] = classifyCorrectionOutcome(baseline, { score: row.score, pass: row.pass === true });
+    /* `explicitScore` travels with the score. The server clamps an unstated score
+       to 0 and flags it here; without the flag a reviewer that returned nothing
+       would look like a candidate that genuinely scored zero. */
+    verdicts[files[index]] = classifyCorrectionOutcome(baseline, { score: row.score, pass: row.pass === true, explicitScore: row.explicitScore });
   }
   return { baseline, verdicts };
 }
