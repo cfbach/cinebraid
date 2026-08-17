@@ -786,6 +786,12 @@ async function differentJobOverlapChecks() {
     const commitBody = source.slice(source.indexOf("function commitProject("), source.indexOf("function commitProject(") + 400);
     assert(commitBody.includes("saveOwnerProject(owner, project)"),
       "and that writer must be commitProject, which re-reads the document inside its own turn");
+    assert(commitBody.includes("const project = ownerProject(owner);"),
+      "re-reading inside the turn is the whole mechanism: a turn that trusted the caller's copy would be the snapshot write again");
+    /* THE KEY IS THE NARROWEST ONE THAT PROTECTS THE RECORD. Per project, so a slow
+       background collection in one project can never be why a save in another waits. */
+    assert(/function commitProject\(owner, mutate\) \{\s*const key = owner\.dir;/.test(source),
+      "the project turn must be keyed on owner.dir, so unrelated projects never block each other");
     note("overlap: a held sweep of job A and a live refresh of job B in one project — both candidates survive, ledger and project agree, 0 submissions, and the project has exactly one writer");
   } finally { h.close(); }
 }
