@@ -550,11 +550,35 @@ const FRAME_PRESENCE_MALFORMED_CODE = "FRAME_PRESENCE_DECLARATION_MALFORMED";
 
 /* Does this shot declare presence for ANY frame. When it does not, the contract
    is opt-in and absent, and a request without a frame id is the ordinary
-   pre-contract case rather than a policy hole. */
+   pre-contract case rather than a policy hole.
+
+   C0 — A DECLARATION CINEBRAID CANNOT READ IS STILL A DECLARATION.
+
+   This asked `framePresenceDeclarations`, which is the PARSED view: every value
+   goes through `normalizeFramePresence` and anything unrecognised is dropped on
+   the floor. So a shot whose ONLY presence declaration is malformed — the
+   `{ state: "absent" }` shape Batch 1C already identified, on the single frame
+   that declares anything — produced zero parsed declarations, this answered
+   false, and `finalDispatchPresenceGate` returned `shot-declares-no-presence`
+   and let the paid request through.
+
+   The malformed refusal Batch 1C added sits BELOW that early return, so it was
+   only ever reachable when some OTHER frame of the same shot happened to carry
+   a well-formed declaration. With one authored frame and one typo, the gate
+   fails open on the paid boundary.
+
+   That is absence of evidence read as evidence of absence again, one layer
+   above the layer Batch 1C repaired. Governance is therefore asked of the RAW
+   record as well as the parsed one: an unreadable presence record GOVERNS its
+   shot, and the gate refuses on it — truthfully, as malformed — rather than
+   stepping around it and calling the silence consent. */
 function shotDeclaresFramePresence(shot) {
   const creation = presenceObject(presenceObject(shot).creationBrief);
   const workflows = presenceObject(creation.frameWorkflows);
-  for (const frameId of Object.keys(workflows)) if (framePresenceDeclarations(shot, frameId).length) return true;
+  for (const frameId of Object.keys(workflows)) {
+    if (framePresenceDeclarations(shot, frameId).length) return true;
+    if (framePresenceRecordStatus(shot, frameId).malformed) return true;
+  }
   return false;
 }
 

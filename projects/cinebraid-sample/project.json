@@ -60,7 +60,7 @@
         "LOC-PLATFORM",
         "PROP-PARCEL"
       ],
-      "continuitySelections": {
+      "continuityStateSelections": {
         "PROP-PARCEL": "state-closed"
       },
       "risks": [],
@@ -122,7 +122,7 @@
         "LOC-PLATFORM",
         "PROP-PARCEL"
       ],
-      "continuitySelections": {
+      "continuityStateSelections": {
         "PROP-PARCEL": "state-closed"
       },
       "risks": [],
@@ -184,7 +184,7 @@
         "LOC-PLATFORM",
         "PROP-PARCEL"
       ],
-      "continuitySelections": {
+      "continuityStateSelections": {
         "PROP-PARCEL": "state-open"
       },
       "risks": [],

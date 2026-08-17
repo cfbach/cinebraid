@@ -273,9 +273,140 @@ ok(/frameId,\s*\n\s*\/\* WHICH FRAME|frameId,/.test(studio), "the browser sends 
 ok(/setFramePresence/.test(studio), "and a writer exists, so the contract is reachable rather than theoretical");
 ok(/guidedFramePresencePanel/.test(studio), "with a control on the frame card itself");
 
+/* ===========================================================================
+   5. C0-1 — A DECLARATION CINEBRAID CANNOT READ IS STILL A DECLARATION.
+
+   Batch 1C added `FRAME_PRESENCE_DECLARATION_MALFORMED` for exactly the
+   `{ state: "absent" }` shape below. The Automation Lab research then drove the
+   paid route with that value as a shot's ONLY presence declaration and reached
+   the provider anyway.
+
+   The refusal was never wrong; it was unreachable. `finalDispatchPresenceGate`
+   gates everything below it on `shotDeclaresFramePresence`, and that predicate
+   was computed from the PARSED view — `framePresenceDeclarations`, which runs
+   every value through `normalizeFramePresence` and silently drops what it does
+   not recognise. One authored frame plus one typo therefore produced zero
+   parsed declarations, the shot read as ungoverned, and the gate returned
+   `shot-declares-no-presence` and cleared the request before the malformed
+   check could run at all. A sibling frame with a well-formed declaration was
+   what made the Batch 1C refusal fire — so the test that proved it worked and
+   the case that fails open were never the same case.
+
+   THE INVARIANT: an authored presence declaration that cannot be truthfully
+   interpreted must not be read as the absence of a constraint. Unknown stays
+   unknown, and the paid boundary refuses rather than guessing what the
+   filmmaker meant.
+
+   The route-level half of this — 409, zero provider contact, no durable job row
+   — is in tests/fal-generation.js, where a real provider mock can count. */
+
+const CONTRADICTING = "A tiny figure of the Chimbley Sweep stands among the chimney stacks.";
+
+/* The fixture builder above only writes well-formed values, and it must keep
+   doing so. Malformed records are constructed here, deliberately, by hand. */
+function rawPresenceProject(frameWorkflows) {
+  const source = fixture();
+  source.shots[0].creationBrief.frameWorkflows = frameWorkflows;
+  return source;
+}
+function gate(frameWorkflows, frameId = "fr-a", overrides = {}) {
+  return Presence.finalDispatchPresenceGate({
+    project: rawPresenceProject(frameWorkflows),
+    purpose: "frame",
+    shotId: "S01-01",
+    frameId,
+    prompt: CONTRADICTING,
+    references: [],
+    assertedEntityIds: [],
+    ...overrides,
+  });
+}
+const MALFORMED_SHAPES = [
+  ["an object where a token belongs, which is the shape the research drove", { [SWEEP]: { state: "absent" } }],
+  ["a word outside the closed vocabulary", { [SWEEP]: "gone" }],
+  ["a boolean", { [SWEEP]: true }],
+  ["the whole map replaced by an array", [SWEEP]],
+  ["the whole map replaced by a string", "absent"],
+];
+
+for (const [label, entityPresence] of MALFORMED_SHAPES) {
+  const workflows = { "fr-a": { [Presence.RUNTIME_FRAME_PRESENCE_KEY]: entityPresence } };
+  const shot = rawPresenceProject(workflows).shots[0];
+
+  /* THE PREDICATE THAT WAS WRONG, asserted directly. */
+  ok(Presence.shotDeclaresFramePresence(shot),
+    `a shot whose ONLY declaration is ${label} is GOVERNED — it has authored a presence contract, it just authored one nobody can read`);
+  ok(Presence.framePresenceRecordStatus(shot, "fr-a").malformed,
+    `and the record status says so: ${label}`);
+  eq(Presence.framePresenceDeclarations(shot, "fr-a"), [],
+    `while the PARSED view still reports nothing for ${label} — which is correct, and is exactly why governance may not be asked of it`);
+
+  /* THE REFUSAL. */
+  const refused = gate(workflows);
+  eq(refused.ok, false, `final paid dispatch must refuse when the only presence declaration is ${label}`);
+  eq(refused.code, Presence.FRAME_PRESENCE_MALFORMED_CODE,
+    `and refuse AS malformed, not as a contradiction and not as an absence: ${label}`);
+  eq(refused.classification, "local-preflight", `refused locally, before anything leaves the machine: ${label}`);
+  eq(refused.contradictions, [],
+    `no contradiction is manufactured — CineBraid could not read the declaration, so it may not claim to have found the Sweep in the picture: ${label}`);
+  ok(/cannot be read/i.test(refused.message),
+    `the reason names the real problem — an unreadable declaration: ${label}`);
+  ok(/No paid request was submitted/i.test(refused.message),
+    `and tells the filmmaker nothing was charged: ${label}`);
+  ok(!/\babsent\b/i.test(refused.message.replace(/state:\s*absent/gi, "")),
+    `and never says the entity is absent, because that is the one thing this declaration failed to establish: ${label}`);
+}
+
+/* The invalid value is REPORTED, so the person who has to fix the project is
+   told which entity and which value rather than to go looking. */
+const named = gate({ "fr-a": { [Presence.RUNTIME_FRAME_PRESENCE_KEY]: { [SWEEP]: { state: "absent" } } } });
+eq((named.malformed || []).map((row) => row.entityId), [SWEEP], "the refusal names the entity whose declaration could not be read");
+ok(named.message.includes(SWEEP), "and names it in the sentence the creator sees");
+
+/* NOT OVER-BLOCKING, which is the other half of the correction. */
+eq(gate({}).ok, true, "a shot that declares nothing at all is still ungoverned and still dispatches, exactly as before the contract existed");
+eq(gate({}).reason, "shot-declares-no-presence", "and says so in the same words");
+eq(gate({ "fr-a": { [Presence.RUNTIME_FRAME_PRESENCE_KEY]: {} } }).ok, true,
+  "an EMPTY presence map is not a malformed one — it declares nothing and must not fail closed");
+eq(gate({ "fr-a": { [Presence.RUNTIME_FRAME_PRESENCE_KEY]: { [SWEEP]: "" } } }).ok, true,
+  "and neither is a cleared value: '' is how a creator un-declares presence for one entity");
+eq(gate({ "fr-a": { [Presence.RUNTIME_FRAME_PRESENCE_KEY]: { [SWEEP]: "present" } } }).ok, true,
+  "a well-formed declaration that forbids nothing still dispatches its contradicting-looking prompt, because nothing is contradicted");
+
+/* A frame that is CLEAN is judged on its own terms even when a sibling frame of
+   the same shot is malformed. The correction makes the SHOT governed; it does
+   not make every frame of it unusable. */
+const mixedFrames = {
+  "fr-a": { [Presence.RUNTIME_FRAME_PRESENCE_KEY]: { [SWEEP]: { state: "absent" } } },
+  "fr-b": { [Presence.RUNTIME_FRAME_PRESENCE_KEY]: { [SWEEP]: "present" } },
+};
+eq(gate(mixedFrames, "fr-a").code, Presence.FRAME_PRESENCE_MALFORMED_CODE, "the malformed frame refuses");
+eq(gate(mixedFrames, "fr-b").ok, true, "and its well-formed sibling still dispatches — this is a per-frame contract and stays one");
+
+/* The paths Batch 1C already closed must still be closed, spelled here because
+   the governance predicate now reaches them differently. */
+const soleMalformed = { "fr-a": { [Presence.RUNTIME_FRAME_PRESENCE_KEY]: { [SWEEP]: { state: "absent" } } } };
+eq(gate(soleMalformed, "").code, Presence.FRAME_IDENTITY_REFUSAL_CODE,
+  "a governed shot with no frame id refuses as unresolved — a malformed declaration makes the shot governed, so this hole closes with it");
+eq(gate(soleMalformed, "not-a-frame").code, Presence.FRAME_IDENTITY_REFUSAL_CODE,
+  "and a frame id the shot does not have is still an unresolved target, not an empty declaration");
+
+/* A well-formed absence still refuses for the RIGHT reason — the correction
+   must not have turned every governed shot into a malformed one. */
+const wellFormed = gate({ "fr-a": { [Presence.RUNTIME_FRAME_PRESENCE_KEY]: { [SWEEP]: "absent" } } });
+eq(wellFormed.code, Presence.FRAME_PRESENCE_REFUSAL_CODE, "a readable absence contradicted by the prompt is still a CONTRADICTION");
+eq(wellFormed.contradictions.length, 1, "with the offending fragment attached, as before");
+
+/* Purposes that carry no frame contract are untouched by any of this. */
+for (const purpose of ["entity-reference", "motion-h3"]) {
+  eq(Presence.finalDispatchPresenceGate({
+    project: rawPresenceProject(soleMalformed), purpose, shotId: "S01-01", frameId: "", prompt: CONTRADICTING,
+  }).ok, true, `${purpose} has no frame presence contract and a malformed declaration elsewhere must not block it`);
+}
+
 /* The declaration is production truth: an assistant rewrite may not soften it. */
 const engine = read("prompt-engine.js");
 ok(/out\.framePresence = fallback\.framePresence/.test(engine),
   "validateSpec takes the declaration from the deterministic fallback only — a supplied or assistant-rewritten spec may not drop, soften or invent one");
 
-console.log(`Frame-presence suite passed ${checks} checks: the declaration and its inherit-by-silence rule, absent/enters/present compiling differently, positive facts and naming narrative withheld for a declared-absent entity, the explicit absence requirement, reference attachment preserved, the negation-aware contradiction detector, and the refusal that stops a contradicting frame before any provider request.`);
+console.log(`Frame-presence suite passed ${checks} checks: the declaration and its inherit-by-silence rule, absent/enters/present compiling differently, positive facts and naming narrative withheld for a declared-absent entity, the explicit absence requirement, reference attachment preserved, the negation-aware contradiction detector, the refusal that stops a contradicting frame before any provider request, and C0-1 — a shot whose ONLY presence declaration is unreadable is GOVERNED, so final paid dispatch refuses it as malformed instead of reading the silence as consent.`);

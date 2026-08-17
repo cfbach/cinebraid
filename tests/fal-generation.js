@@ -578,12 +578,140 @@ async function main() {
       );
     }
 
+    /* ======================================================================
+       C0-1 — A MALFORMED FRAME-PRESENCE DECLARATION MUST NOT REACH THE PROVIDER.
+
+       The Automation Lab research reproduced `finalDispatchPresenceGate` failing
+       OPEN when a shot's only presence declaration is malformed. Batch 1C's
+       malformed refusal existed but sat below an early return gated on
+       `shotDeclaresFramePresence`, which was computed from the PARSED view — so
+       an unrecognised value produced zero parsed declarations, the shot read as
+       ungoverned, and the paid request went out.
+
+       THIS IS THE HALF THAT NEEDS A REAL ROUTE. The unit assertions live in
+       tests/frame-presence-authority.js; what only a real dispatch can prove is
+       that nothing was spent. Every provider request in this file lands in
+       `providerCalls`, so "the provider was not contacted" is a counted fact
+       rather than a claim, and the durable ledger is read back to prove no job
+       row was minted either.
+
+       A separate shot is used so the sole malformed declaration cannot make the
+       rest of this suite's requests governed. */
+    const PRESENCE_SHOT = "S-PRESENCE";
+    const presenceProject = JSON.parse(fs.readFileSync(projectFile, "utf8"));
+    presenceProject.characters.push({ id: "CHAR-ABSENT", name: "Rooftop Sweep", status: "NOT STARTED", workflowStatus: "DRAFT", candidateFiles: [] });
+    presenceProject.shots.push({
+      id: PRESENCE_SHOT,
+      candidateFiles: [],
+      keyframes: [{ id: "frame-a", label: "A", required: true }],
+      /* THE DEFECT, EXACTLY. One frame, one declaration, and that declaration
+         unreadable: `{ state: "absent" }` where a token belongs. This is the
+         shot's ONLY presence declaration, which is the condition that made the
+         Batch 1C refusal unreachable. */
+      creationBrief: { frameWorkflows: { "frame-a": { entityPresence: { "CHAR-ABSENT": { state: "absent" } } } } },
+    });
+    fs.writeFileSync(projectFile, JSON.stringify(presenceProject, null, 2));
+
+    const callsBeforePresence = providerCalls.length;
+    const jobsBeforePresence = (await json(`${appOrigin}/api/generation/fal/jobs?shotId=${PRESENCE_SHOT}`)).data.jobs.length;
+    assert.strictEqual(jobsBeforePresence, 0, "precondition: the presence fixture shot has no durable job history");
+
+    const malformedPresence = await json(`${appOrigin}/api/generation/fal/jobs`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        purpose: "frame",
+        shotId: PRESENCE_SHOT,
+        frameId: "frame-a",
+        frameLabel: "A",
+        prompt: "The Rooftop Sweep stands among the chimney stacks, brush raised.",
+        outputCount: 1,
+        quality: "high",
+        aspectRatio: "16:9",
+        sourceBuildId: "presence-build-1",
+      }),
+    });
+    assert.strictEqual(malformedPresence.response.status, 409,
+      `a sole malformed presence declaration must refuse the paid request: ${JSON.stringify(malformedPresence.data)}`);
+    assert.strictEqual(malformedPresence.data.code, "FRAME_PRESENCE_DECLARATION_MALFORMED",
+      "and refuse AS malformed — not as a contradiction, and not by pretending the entity is simply absent");
+    assert.strictEqual(malformedPresence.data.classification, "local-preflight",
+      "refused locally, before anything left the machine");
+    assert.strictEqual(malformedPresence.data.providerContacted, false, "the response must state that no provider was contacted");
+    assert.strictEqual(malformedPresence.data.paidRequestSubmitted, false, "and that no paid request was submitted");
+    assert.deepStrictEqual(malformedPresence.data.contradictions, [],
+      "no contradiction may be manufactured: CineBraid could not read the declaration, so it cannot claim to have found the entity in the picture");
+    assert(/cannot be read/i.test(malformedPresence.data.error || ""),
+      `the error must name the unreadable declaration: ${malformedPresence.data.error}`);
+    assert((malformedPresence.data.error || "").includes("CHAR-ABSENT"),
+      "and name the entity whose declaration could not be read, so the project fault is findable");
+
+    /* THE TWO FACTS THE ROUTE EXISTS TO PROVE. */
+    assert.strictEqual(providerCalls.length, callsBeforePresence,
+      `a malformed presence declaration must contact NO provider — ${providerCalls.length - callsBeforePresence} request(s) escaped`);
+    const jobsAfterPresence = (await json(`${appOrigin}/api/generation/fal/jobs?shotId=${PRESENCE_SHOT}`)).data.jobs;
+    assert.strictEqual(jobsAfterPresence.length, 0,
+      "and mint NO durable job row — a row here would claim a paid submission that never happened, and would consume retry budget");
+    assert(!fs.readFileSync(path.join(projectDir, "generation-jobs.json"), "utf8").includes(PRESENCE_SHOT),
+      "the durable ledger must carry no trace of the refused shot at all");
+
+    /* NOT A BLANKET BLOCK. The same shot, the same route, the same frame — with
+       the declaration written in the shape the contract defines — dispatches,
+       and dispatches for real. Without this the assertions above would pass just
+       as well against a gate that refused everything. */
+    const repaired = JSON.parse(fs.readFileSync(projectFile, "utf8"));
+    repaired.shots.find((shot) => shot.id === PRESENCE_SHOT).creationBrief.frameWorkflows["frame-a"].entityPresence = { "CHAR-ABSENT": "absent" };
+    fs.writeFileSync(projectFile, JSON.stringify(repaired, null, 2));
+
+    const wellFormed = await json(`${appOrigin}/api/generation/fal/jobs`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        purpose: "frame",
+        shotId: PRESENCE_SHOT,
+        frameId: "frame-a",
+        frameLabel: "A",
+        /* Says nothing about the declared-absent character, so there is nothing
+           to contradict. */
+        prompt: "Empty rooftops under low cloud, slate and smoke.",
+        outputCount: 1,
+        quality: "high",
+        aspectRatio: "16:9",
+        sourceBuildId: "presence-build-2",
+      }),
+    });
+    assert(wellFormed.response.ok, `a readable declaration with no contradiction must still dispatch: ${JSON.stringify(wellFormed.data)}`);
+    assert.strictEqual(providerCalls.length, callsBeforePresence + 1, "and must reach the provider exactly once");
+    await json(`${appOrigin}/api/generation/fal/jobs/${wellFormed.data.job.id}/refresh`, { method: "POST" });
+
+    /* And the readable declaration still refuses when the text DOES contradict
+       it — the correction did not trade one failure mode for another. */
+    const callsBeforeContradiction = providerCalls.length;
+    const contradicted = await json(`${appOrigin}/api/generation/fal/jobs`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        purpose: "frame",
+        shotId: PRESENCE_SHOT,
+        frameId: "frame-a",
+        frameLabel: "A",
+        prompt: "The Rooftop Sweep stands among the chimney stacks, brush raised.",
+        outputCount: 1,
+        quality: "high",
+        aspectRatio: "16:9",
+        sourceBuildId: "presence-build-3",
+      }),
+    });
+    assert.strictEqual(contradicted.response.status, 409, "a readable absence contradicted by the prompt still refuses");
+    assert.strictEqual(contradicted.data.code, "FRAME_PRESENCE_CONTRADICTION", "as a CONTRADICTION, which is a different truth from an unreadable declaration");
+    assert.strictEqual(providerCalls.length, callsBeforeContradiction, "and still contacts no provider");
+
     const jobsFile = fs.readFileSync(path.join(projectDir, "generation-jobs.json"), "utf8");
     const projectText = fs.readFileSync(projectFile, "utf8");
     assert(!jobsFile.includes("fal-secret-test-key"), "job persistence must not contain the API key");
     assert(!projectText.includes("fal-secret-test-key"), "project data must not contain the API key");
 
-    console.log("FAL generation suite passed server-side secrets, blocking, frame edits, executable corrections, character/location/prop/vehicle reference generation, coverage-sheet provenance and idempotency, parent-derived continuity-state edits, candidate-only ingestion, job persistence, and provenance.");
+    console.log("FAL generation suite passed server-side secrets, blocking, frame edits, executable corrections, character/location/prop/vehicle reference generation, coverage-sheet provenance and idempotency, parent-derived continuity-state edits, candidate-only ingestion, job persistence, provenance, and C0-1 — a sole malformed frame-presence declaration refuses at the paid boundary with zero provider contact and no durable job row, while a readable declaration still dispatches.");
   } finally {
     await new Promise((resolve) => appServer.close(resolve));
     await new Promise((resolve) => mockServer.close(resolve));
