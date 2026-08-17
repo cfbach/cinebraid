@@ -30,6 +30,7 @@ const Authority = require(path.join(PUBLIC, "shared-production-authority.js"));
 const Readiness = require(path.join(PUBLIC, "shared-shot-readiness.js"));
 const { resolveTaskModes } = require(path.join(PUBLIC, "shared-generation-options.js"));
 const { installTestManualActionSource } = require("./authority-test-gesture.js");
+const { render } = require("./render-harness.js");
 
 const GESTURE = installTestManualActionSource(Kernel);
 const AT = "2026-08-16T10:00:00.000Z";
@@ -382,11 +383,17 @@ function requirementOf(row, needle) {
   equal(requirementOf(degraded, "CHAR-KAI").reason, "approved-bytes-missing",
     "and a filename-only check genuinely cannot see the rename, which is why it must be reported rather than implied");
 
-  /* NO ORACLE AT ALL. Not silently passing, and not silently failing. */
+  /* NO ORACLE AT ALL — UNKNOWN STAYS UNKNOWN.
+     This block previously asserted `satisfied` here, with `mediaCheck: "not-checked"`
+     beside it as the only hint. That assertion was true of the code and wrong about
+     the product: a field describing the evidence does not undo a claim made without
+     it, and the acceptance audit reproduced a READY shot from it. */
   const unchecked = Readiness.evaluateShotReadiness(renamed, renamed.shots[0], {});
   equal(unchecked.mediaCheck, "not-checked", "no oracle is a real answer and the result says so");
-  equal(requirementOf(unchecked, "CHAR-KAI").state, "satisfied", "authority alone still satisfies");
+  equal(requirementOf(unchecked, "CHAR-KAI").state, "needs-decision", "authority alone must NOT satisfy a requirement whose media nobody has looked for");
+  equal(requirementOf(unchecked, "CHAR-KAI").reason, "media-availability-unknown", "the exact reason token");
   equal(requirementOf(unchecked, "CHAR-KAI").mediaCheck, "not-checked", "with the evidence stated honestly on the row");
+  equal(unchecked.status, "NEEDS_DECISION", "and the shot is not READY");
 
   /* STRUCTURALLY INCAPABLE OF A BYTE READ. Asserted against the shipped source,
      because "we did not call it in this test" proves nothing about the next one. */
@@ -590,12 +597,125 @@ function requirementOf(row, needle) {
     "carrying the kernel's own diagnostic code");
   equal(feed.counts.needsDecision, 2, "every shot is a decision");
 
+  /* THE REPAIR IS THE PROJECT'S ACTION, AND IT IS EMITTED EXACTLY ONCE. */
+  equal(feed.nextAction.code, "repair-authority-ledger", "the project carries the repair action");
+  equal(feed.nextAction.count, 1, "once");
+
   const row = feed.shots[0];
   equal(row.status, "NEEDS_DECISION", "the shot reports the decision");
-  equal(row.nextAction.code, "repair-authority-ledger", "with the repair as its action");
+  equal(row.nextAction.code, "awaiting-project-repair", "but the shot does not repeat the repair");
+  ok(row.truthProblem === feed.truthProblem, "it cites the same frozen project problem rather than a copy of it");
   equal(row.units.length, 0, "and NO per-unit blockers are manufactured");
   equal(row.requirements.length, 0, "and no missing-reference rows either");
   equal(row.counts.missing, 0, "a lie of aggregation would send a filmmaker to prepare references that are already approved");
+}
+
+/* ===========================================================================
+   BLOCKER 2 REGRESSION — ONE CORRUPT LEDGER, THREE SHOTS, ONE REPAIR.
+
+   The reviewed implementation returned `repair-authority-ledger` from every shot,
+   so three shots produced three identical repair actions and the surface rendered
+   all three. The existing control above has a single shot and therefore could not
+   see it. This one has three, and counts.
+   =========================================================================== */
+{
+  const P = castProject({ shots: [castShot("SH-1"), castShot("SH-2"), castShot("SH-3")] });
+  approveWholeCast(P);
+  P.productionAuthority.version = 99;
+  const feed = Readiness.evaluateProjectReadiness(P, oracleFor());
+
+  equal(feed.shots.length, 3, "three shots");
+  equal(feed.counts.needsDecision, 3, "each of which is unanswerable");
+
+  /* THE COUNT IS THE PROPERTY. Not "a repair exists somewhere" — exactly one, in
+     the whole payload, at the project level. */
+  const occurrences = (JSON.stringify(feed).match(/repair-authority-ledger/g) || []).length;
+  equal(occurrences, 1, "the repair action appears exactly once in the entire payload");
+  equal(feed.nextAction.code, "repair-authority-ledger", "and that one occurrence is the project's own action");
+  deepEqual(feed.shots.map((row) => row.nextAction.code),
+    ["awaiting-project-repair", "awaiting-project-repair", "awaiting-project-repair"],
+    "no shot asks for the repair; each says its readiness is waiting on the project");
+  equal(feed.shots.filter((row) => row.nextAction.code === "repair-authority-ledger").length, 0,
+    "one project truth failure must not become N identical human actions");
+
+  /* THE PROBLEM ITSELF IS ONE OBJECT, not one per shot. */
+  ok(feed.truthProblem, "the project carries the problem");
+  ok(feed.shots.every((row) => row.truthProblem === feed.truthProblem),
+    "every shot cites the identical frozen object, so the ledger was validated once");
+  deepEqual([...new Set(feed.shots.map((row) => row.truthProblem.reason))], ["authority-ledger-unreadable"],
+    "and they all name the same reason");
+
+  /* A TRUSTWORTHY LEDGER CARRIES NO PROJECT ACTION AT ALL — readiness is a per-shot
+     question, and a project-level verdict would be a second thing able to declare
+     the production ready. */
+  const healthy = castProject({ shots: [castShot("SH-OK")] });
+  approveWholeCast(healthy);
+  const healthyFeed = Readiness.evaluateProjectReadiness(healthy, oracleFor());
+  equal(healthyFeed.truthProblem, null, "no truth problem");
+  equal(healthyFeed.nextAction, null, "and no project-level action invented in its place");
+}
+
+/* ===========================================================================
+   BLOCKER 3 REGRESSION — UNKNOWN MEDIA IS NEVER PROMOTED.
+
+   The reviewed implementation rejected only `unavailable`, so every other answer —
+   including "nobody looked" — fell through to satisfied. Calling the canonical
+   predicate with no oracle returned satisfied / READY for an approval whose media
+   availability was genuinely unknown.
+   =========================================================================== */
+{
+  const P = castProject({ shots: [castShot("SH-UNKNOWN")] });
+  approveWholeCast(P);
+
+  /* THE PREDICATE ITSELF, called exactly as the audit called it. */
+  const row = Readiness.productionInputSatisfaction(P, {
+    id: "probe",
+    kind: "entity-state",
+    label: "Kai",
+    target: { kind: "entity-state", list: "characters", entityId: "CHAR-KAI", stateId: "state-default" },
+  }, {});
+  assert.notStrictEqual(row.state, "satisfied", "unknown media availability must never be satisfied");
+  checks += 1;
+  equal(row.state, "needs-decision", "it is a decision: establishing the fact costs a byte read a person must authorise");
+  equal(row.reason, "media-availability-unknown", "the exact reason token");
+  equal(row.mediaCheck, "not-checked", "and the uncertainty stays explicit on the row");
+  equal(row.producible, false, "generating something new does not answer a question about existing bytes");
+  ok(row.satisfiedBy.length > 0, "the receipt is still cited — the human decision is intact and is not what is in doubt");
+
+  /* AND THE SHOT IS NOT EXECUTABLE. */
+  const unknown = shotOf(P, "SH-UNKNOWN", {});
+  assert.notStrictEqual(unknown.status, "READY", "a shot whose media nobody has looked for must not be READY");
+  checks += 1;
+  equal(unknown.status, "NEEDS_DECISION", "it needs a decision");
+  equal(unknown.nextAction.code, "establish-media-availability", "and the action is to establish the fact");
+  equal(unknown.counts.satisfied, 0, "nothing is counted as satisfied");
+  equal(unknown.counts.needsDecision, 3, "all three references are uncertain");
+  equal(unknown.mediaCheck, "not-checked", "and the shot states which oracle answered");
+
+  /* THE DEGRADED ORACLE IS AN ANSWER, SO IT IS NOT UNKNOWN. */
+  const named = shotOf(P, "SH-UNKNOWN", { fileExists: (name) => [KAI_FILE, DOCK_FILE, CRATE_FILE].includes(name) });
+  equal(named.status, "READY", "a filename oracle that answers yes is an answer, and satisfies");
+  equal(named.mediaCheck, "file-name-only", "reported as the weaker evidence it is");
+
+  /* THE TWO KNOWN PATHS ARE UNCHANGED — the fix must not have swallowed them. */
+  const available = shotOf(P, "SH-UNKNOWN", oracleFor());
+  equal(available.status, "READY", "known-available stays READY");
+  equal(requirementOf(available, "CHAR-KAI").state, "satisfied", "and satisfied");
+  equal(requirementOf(available, "CHAR-KAI").mediaCheck, "resolveApprovalMedia", "through the canonical resolver");
+
+  const gone = shotOf(P, "SH-UNKNOWN", oracleFor([DOCK_FILE, CRATE_FILE]));
+  equal(gone.status, "BLOCKED", "known-unavailable stays BLOCKED");
+  equal(requirementOf(gone, "CHAR-KAI").reason, "approved-bytes-missing", "with its own distinct reason");
+  equal(gone.nextAction.code, "supply-approved-media", "and its own supply action");
+
+  /* THE THREE ANSWERS ARE THREE DIFFERENT REASONS, never collapsed. */
+  deepEqual(
+    [requirementOf(available, "CHAR-KAI").reason, requirementOf(gone, "CHAR-KAI").reason, row.reason],
+    ["", "approved-bytes-missing", "media-availability-unknown"],
+    "available / unavailable / unknown are three distinct answers",
+  );
+  ok(Readiness.READINESS_DECISION_REASONS.includes("media-availability-unknown"), "the reason is declared");
+  ok(Readiness.READINESS_NEXT_ACTIONS.includes("establish-media-availability"), "and so is its action");
 }
 
 /* ===========================================================================
@@ -883,4 +1003,113 @@ function requirementOf(row, needle) {
     "the existing entity-reference issue kind is still emitted, unchanged");
 }
 
-console.log(`shot-readiness: ${checks} assertions passed`);
+/* ===========================================================================
+   BLOCKER 1 REGRESSION — ONE READINESS VERDICT, ON THE RENDERED SURFACE.
+
+   The independent audit opened the live Production screen and saw, at the same
+   moment, for the same unconfirmed reference:
+
+       PROJECT READINESS  —  READY
+       SHOT READINESS     —  NEEDS DECISION
+
+   and the API answering `issues: []` beside `readiness.status: "NEEDS_DECISION"`.
+
+   The legacy projection is not wrong about what it answers; it was wrong to be
+   READABLE AS A READINESS VERDICT. This asserts the contradiction is gone from the
+   rendered document and from the route's shape — not merely restyled, since a
+   machine consumer reads neither the CSS nor the eyebrow.
+   =========================================================================== */
+async function renderedSurfaceSection() {
+  const P = castProject({ shots: [castShot("SH-1")] });
+  /* Everything the LEGACY projection asks about is present: canon text, a
+     description, an explicit duration, resolved relationships, pointers on disk. So
+     it has nothing to report. The pointers are still unconfirmed, so the canonical
+     derivation says NEEDS_DECISION. This is the exact divergence the audit hit. */
+  P.characters[0].block = "Kai, a courier in a soaked coat.";
+  P.locations[0].block = "A cargo dock at night.";
+  P.props[0].block = "A sealed cargo crate.";
+  P.shots[0].desc = "Kai crosses the dock in the rain, hurrying.";
+  P.shots[0].sec = 4;
+
+  const feed = Readiness.evaluateProjectReadiness(P, oracleFor());
+  equal(feed.shots[0].status, "NEEDS_DECISION", "precondition: the canonical derivation says a decision is needed");
+
+  const rendered = await render("#/production", P, {
+    scan: {
+      anchors: [{ name: KAI_FILE, url: `/assets/anchors/${KAI_FILE}` }],
+      plates: [{ name: DOCK_FILE, url: `/assets/plates/${DOCK_FILE}` }],
+      props: [{ name: CRATE_FILE, url: `/assets/props/${CRATE_FILE}` }],
+      vehicles: [], audio: [], media: [], shots: { "SH-1": { takes: [], locked: [] } },
+    },
+    /* The legacy list arrives EMPTY — the condition under which it used to render
+       "Ready for production work" and the pill "READY". */
+    fetch: (url, _options, response) =>
+      (url === "/api/project/readiness"
+        ? response({ checkedAt: "2026-08-16T10:00:00.000Z", setup: { answers: "project-setup-completeness", isReadinessVerdict: false, issues: [] } })
+        : null),
+  });
+  const html = rendered.html;
+
+  /* EXACTLY ONE THING ON THIS PAGE DECLARES READINESS. */
+  equal((html.match(/data-readiness-verdict="1"/g) || []).length, 1, "exactly one readiness verdict block is rendered");
+  equal((html.match(/data-project-setup="1"/g) || []).length, 1, "and exactly one setup block beside it");
+  ok(html.includes("PRODUCTION READINESS"), "the verdict block is labelled as the readiness verdict");
+  ok(html.includes("PROJECT SETUP"), "and the legacy block is labelled as setup");
+  ok(!html.includes("PROJECT READINESS"), "the legacy block no longer calls itself readiness");
+
+  /* AND THE EMPTY LEGACY LIST NO LONGER SAYS READY. */
+  ok(!html.includes("Ready for production work"), "an empty setup list must not claim the project is ready for production");
+  ok(!html.includes("NEEDS ATTENTION"), "nor render a rival attention verdict");
+  const setupBlock = html.slice(html.indexOf('data-project-setup="1"'));
+  ok(!/>READY</.test(setupBlock), "the word READY does not appear as a status anywhere in the setup block");
+  ok(setupBlock.includes("No setup items found"), "it reports what it actually found");
+  ok(setupBlock.includes("says nothing about whether a shot can be produced"),
+    "and says plainly that it is not a readiness verdict");
+
+  /* THE VERDICT ON THE PAGE IS THE CANONICAL ONE. */
+  const verdictBlock = html.slice(html.indexOf('data-readiness-verdict="1"'), html.indexOf('data-project-setup="1"'));
+  ok(verdictBlock.includes("NEEDS DECISION"), "the rendered verdict is the canonical NEEDS_DECISION");
+  ok(verdictBlock.includes("Confirm existing reference"), "with the canonical next action beside it");
+  ok(!/READY\s*·/.test(verdictBlock), "and nothing on the surface reads READY for this shot");
+
+  /* THE MULTI-SHOT LEDGER FAN-OUT, ON THE RENDERED SURFACE. Three shots, one
+     corrupt ledger, and the repair must be drawn once. */
+  const corrupt = castProject({ shots: [castShot("SH-1"), castShot("SH-2"), castShot("SH-3")] });
+  approveWholeCast(corrupt);
+  corrupt.productionAuthority.version = 99;
+  const corruptRender = await render("#/production", corrupt, {
+    scan: {
+      anchors: [{ name: KAI_FILE, url: `/assets/anchors/${KAI_FILE}` }],
+      plates: [{ name: DOCK_FILE, url: `/assets/plates/${DOCK_FILE}` }],
+      props: [{ name: CRATE_FILE, url: `/assets/props/${CRATE_FILE}` }],
+      vehicles: [], audio: [], media: [],
+      shots: { "SH-1": { takes: [], locked: [] }, "SH-2": { takes: [], locked: [] }, "SH-3": { takes: [], locked: [] } },
+    },
+    fetch: (url, _options, response) =>
+      (url === "/api/project/readiness" ? response({ setup: { issues: [] } }) : null),
+  });
+  const corruptHtml = corruptRender.html;
+  equal((corruptHtml.match(/data-readiness-truth-problem="authority-ledger-unreadable"/g) || []).length, 1,
+    "one corrupt ledger renders ONE project-level truth problem, not one per shot");
+  equal((corruptHtml.match(/Repair the approval records/g) || []).length, 1,
+    "and the repair action is drawn exactly once for three shots");
+  equal((corruptHtml.match(/readiness-needs_decision/g) || []).length, 3,
+    "while each shot still reports that its own readiness cannot be answered");
+
+  /* THE ROUTE'S SHAPE, ASSERTED AGAINST THE SHIPPED SOURCE. A machine consumer must
+     not be able to read an all-clear out of the legacy projection. */
+  const server = fs.readFileSync(path.join(ROOT, "server.js"), "utf8").replace(/\r\n/g, "\n");
+  const route = server.slice(server.indexOf('app.get("/api/project/readiness"'), server.indexOf('app.put("/api/projects/:slug/project"'));
+  ok(route.includes("readiness: shotReadinessProjection(project),"), "the route returns the canonical verdict");
+  ok(route.includes("isReadinessVerdict: false,"), "and marks the legacy projection as not one, in the payload");
+  ok(route.includes("issues: projectReadinessIssues(project),"), "the legacy rows are still served, unchanged");
+  ok(!/\n      issues: projectReadinessIssues/.test(route),
+    "but never as a top-level sibling of the verdict, where an empty array reads as an all-clear");
+  ok(route.indexOf("setup: {") < route.indexOf("issues: projectReadinessIssues"),
+    "they are nested inside the setup envelope");
+}
+
+renderedSurfaceSection().then(
+  () => console.log(`shot-readiness: ${checks} assertions passed`),
+  (error) => { console.error(error.stack || error.message || error); process.exit(1); },
+);

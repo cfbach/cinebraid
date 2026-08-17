@@ -26,6 +26,7 @@ const PUBLIC = path.join(ROOT, "public");
 const READINESS_FILE = path.join(PUBLIC, "shared-shot-readiness.js");
 
 const Kernel = require(path.join(PUBLIC, "shared-authority-kernel.js"));
+const { render } = require("./render-harness.js");
 const { installTestManualActionSource } = require("./authority-test-gesture.js");
 const GESTURE = installTestManualActionSource(Kernel);
 const AT = "2026-08-16T10:00:00.000Z";
@@ -54,13 +55,33 @@ function compile(source) {
   return compiled.exports;
 }
 
-function mustFail(label, because, body) {
-  let failure = null;
-  try { body(); } catch (error) { failure = error; }
+function report(label, because, failure) {
   assert(failure, `NEGATIVE CONTROL DID NOT FIRE: ${label}. The guarantee is not actually being tested.`);
   assert(String(failure.message).includes(because),
     `NEGATIVE CONTROL FIRED FOR THE WRONG REASON: ${label}\n  expected a failure mentioning: ${because}\n  got: ${failure.message}`);
   notes.push(`  ${label} — failed as required`);
+}
+function mustFail(label, because, body) {
+  let failure = null;
+  try { body(); } catch (error) { failure = error; }
+  report(label, because, failure);
+}
+/* The rendered-surface control needs a page, and rendering one is asynchronous. Kept
+   separate rather than making every control async, so a sync control that forgets to
+   throw still fails loudly instead of resolving. */
+async function mustFailAsync(label, because, body) {
+  let failure = null;
+  try { await body(); } catch (error) { failure = error; }
+  report(label, because, failure);
+}
+/* A mutation over arbitrary source text, with the same probe receipt as mutate().
+   Used where the source being broken is not this module's own. */
+function mutateIn(source, needle, replacement, label, expected = 1) {
+  const hits = source.split(needle).length - 1;
+  assert.strictEqual(hits, expected,
+    `probe receipt: ${label} expected ${expected} occurrence(s) of its anchor in the target file, found ${hits}. `
+    + "The control is no longer mutating the live path and must be rewritten.");
+  return source.split(needle).join(replacement);
 }
 
 /* ---------------------------------------------------------------------------
@@ -140,7 +161,7 @@ mustFail("C2 Historic rounded up to satisfied", "Historic is a decision, never s
 
    READY must not be claimed because an approval points at a path the project no
    longer has. */
-mustFail("C3 missing bytes ignored", "a receipt whose media is gone must not be READY", () => {
+mustFail("C3 missing bytes ignored", "a listing that was consulted and did not hold the file is approved-bytes-missing", () => {
   const broken = compile(mutate(
     "      if (media.state === \"unavailable\") {",
     "      if (false) {",
@@ -150,6 +171,18 @@ mustFail("C3 missing bytes ignored", "a receipt whose media is gone must not be 
   approve(P);
   const row = evaluate(broken, P, EMPTY_ORACLE);
   assert.notStrictEqual(row.status, "READY", "a receipt whose media is gone must not be READY");
+  /* THE REASON IS THE PROPERTY HERE, NOT MERELY THE STATUS.
+   *
+   * When this control was written, disabling this branch produced a READY shot, so
+   * "not READY" was enough to catch it. The unknown-media correction now also catches
+   * the case, and the status alone can no longer tell the two apart — while the
+   * difference is exactly what a filmmaker acts on: "we looked and it is gone,
+   * supply it" against "nobody has looked yet". A control that could no longer
+   * distinguish them had stopped testing what it was written for. */
+  const requirement = row.units[0].requirements.find((item) => item.kind === "entity-state");
+  assert.strictEqual(requirement.reason, "approved-bytes-missing",
+    "a listing that was consulted and did not hold the file is approved-bytes-missing");
+  assert.strictEqual(row.nextAction.code, "supply-approved-media", "with a supply action, never a check-it-first action");
 });
 
 /* ---------------------------------------------------------------------------
@@ -280,9 +313,12 @@ mustFail("C9 queue keyed by filename", "two authority targets are two decisions"
    A lie of aggregation: it would send a filmmaker to prepare references that are
    already approved, and it would do it once per shot. */
 mustFail("C10 unreadable ledger reported as N missing references", "an unreadable ledger is one problem, not N blockers", () => {
+  /* The anchor moved when the truth problem was hoisted into one project-level
+     derivation, and this control's probe receipt is what said so rather than letting
+     it pass against nothing. */
   const broken = compile(mutate(
-    "      truthProblem: ledger.trusted === false\n        ? deepFreeze({",
-    "      truthProblem: false\n        ? deepFreeze({",
+    "    if (ledger.trusted !== false) return null;",
+    "    return null;",
     "C10",
   ));
   const P = baseProject();
@@ -317,8 +353,8 @@ mustFail("C11 filesystem reached for media presence", "readiness must never touc
    becomes a write nobody asked for. */
 mustFail("C12 derivation mutates the project", "readiness must not modify the project", () => {
   const broken = compile(mutate(
-    "  function buildContext(project, shot, options) {",
-    "  function buildContext(project, shot, options) {\n    shot.readinessTouched = true;",
+    "  function buildContext(project, shot, options, projectTruth) {",
+    "  function buildContext(project, shot, options, projectTruth) {\n    shot.readinessTouched = true;",
     "C12",
   ));
   const P = baseProject();
@@ -386,5 +422,114 @@ mustFail("C15 only one deliveryIntent spelling read", "both deliveryIntent diale
     "both deliveryIntent dialects declare a motion unit");
 });
 
-console.log(notes.join("\n"));
-console.log(`shot-readiness-negative-controls: ${notes.length - 1} controls fired`);
+/* ---------------------------------------------------------------------------
+   C16 — REVERT THE UNKNOWN-MEDIA FIX.
+
+   The shape the acceptance audit reproduced: reject only `unavailable`, and let
+   "nobody looked" fall through to satisfied. This control is the audit's own call,
+   so if the fix is ever loosened again the same failure comes back visibly. */
+mustFail("C16 unknown media promoted to satisfied", "unknown media availability must never be satisfied", () => {
+  const broken = compile(mutate(
+    "      if (media.state !== \"available\") {",
+    "      if (media.state === \"unavailable\") {",
+    "C16",
+  ));
+  const P = baseProject();
+  approve(P);
+  const row = broken.productionInputSatisfaction(P, {
+    id: "probe", kind: "entity-state", label: "Kai",
+    target: { kind: "entity-state", list: "characters", entityId: "CHAR-KAI", stateId: "state-default" },
+  }, {});
+  assert.notStrictEqual(row.state, "satisfied", "unknown media availability must never be satisfied");
+  assert.notStrictEqual(broken.evaluateShotReadiness(P, P.shots[0], {}).status, "READY",
+    "unknown media availability must never be READY");
+});
+
+/* ---------------------------------------------------------------------------
+   C17 — REVERT THE LEDGER FAN-OUT FIX, AT THREE SHOTS.
+
+   The reviewed implementation returned the repair from every shot. The existing C10
+   has one shot and cannot see it; this one has three and counts occurrences in the
+   whole payload. */
+mustFail("C17 ledger repair fanned out per shot", "the repair action appears exactly once", () => {
+  const broken = compile(mutate(
+    "      nextAction: action(\"awaiting-project-repair\", \"This shot's readiness cannot be answered until the project's approval records are repaired.\", 0),",
+    "      nextAction: action(\"repair-authority-ledger\", context.truthProblem.message, 1),",
+    "C17",
+  ));
+  const P = baseProject();
+  approve(P);
+  for (const id of ["SH-2", "SH-3"]) {
+    P.shots.push({ id, title: id, scene: "SC-1", characters: ["CHAR-KAI"], codes: [],
+      keyframes: [{ id: "frame-a", label: "A", required: true }], creationBrief: { propIds: [] } });
+  }
+  P.productionAuthority.version = 99;
+  const feed = broken.evaluateProjectReadiness(P, ORACLE);
+  assert.strictEqual(feed.shots.length, 3, "the fixture must have three shots or it cannot detect fan-out");
+  const occurrences = (JSON.stringify(feed).match(/repair-authority-ledger/g) || []).length;
+  assert.strictEqual(occurrences, 1, "the repair action appears exactly once");
+});
+
+/* ---------------------------------------------------------------------------
+   C18 — DROP THE PROJECT-LEVEL REPAIR ACTION.
+
+   Moving the repair off the shots is only half the fix. If the project does not
+   carry it, one corrupt ledger surfaces ZERO repair actions and the human is told
+   nothing is wrong with anything except three unanswerable shots. */
+mustFail("C18 project-level repair action removed", "the project carries the repair action", () => {
+  const broken = compile(mutate(
+    "      nextAction: truthProblem ? action(\"repair-authority-ledger\", truthProblem.message, 1) : null,",
+    "      nextAction: null,",
+    "C18",
+  ));
+  const P = baseProject();
+  approve(P);
+  P.productionAuthority.version = 99;
+  const feed = broken.evaluateProjectReadiness(P, ORACLE);
+  assert.ok(feed.nextAction && feed.nextAction.code === "repair-authority-ledger",
+    "the project carries the repair action");
+});
+
+/* ---------------------------------------------------------------------------
+   C19 — THE LEGACY PROJECTION CLAIMS READINESS AGAIN, ON THE RENDERED SURFACE.
+
+   The audit's first blocker, reintroduced through the render harness's in-memory
+   mutation hook: give the setup block back its READY pill and its
+   "Ready for production work" headline, and require the rendered document to be
+   caught contradicting the canonical verdict.
+
+   This control is why the Blocker 1 regression is not a CSS assertion. */
+const C19 = () => mustFailAsync("C19 legacy projection renders a rival READY verdict", "must not claim the project is ready", async () => {
+  const P = baseProject();
+  P.characters[0].block = "Kai, a courier.";
+  P.shots[0].desc = "Kai crosses the dock in the rain, hurrying.";
+  P.shots[0].sec = 4;
+  const rendered = await render("#/production", P, {
+    scan: {
+      anchors: [{ name: KAI_FILE, url: `/assets/anchors/${KAI_FILE}` }],
+      plates: [], props: [], vehicles: [], audio: [], media: [],
+      shots: { "SH-1": { takes: [], locked: [] } },
+    },
+    fetch: (url, _options, response) =>
+      (url === "/api/project/readiness" ? response({ setup: { issues: [] } }) : null),
+    mutateSource: (file, contents) => {
+      if (file !== "app.js") return contents;
+      return mutateIn(
+        String(contents).replace(/\r\n/g, "\n"),
+        '<b>${issues.length ? `${plural(issues.length, "setup item")} to resolve` : "No setup items found"}</b></div><span>${issues.length} ITEM${issues.length === 1 ? "" : "S"}</span>',
+        '<b>${issues.length ? `${plural(issues.length, "item")} to resolve` : "Ready for production work"}</b></div><span>${issues.length ? "NEEDS ATTENTION" : "READY"}</span>',
+        "C19",
+      );
+    },
+  });
+  assert.ok(!rendered.html.includes("Ready for production work"),
+    "an empty setup list must not claim the project is ready for production");
+});
+
+C19().then(
+  () => {
+    console.log(notes.join("\n"));
+    console.log(`shot-readiness-negative-controls: ${notes.length - 1} controls fired`);
+  },
+  (error) => { console.error(error.stack || error.message || error); process.exit(1); },
+);

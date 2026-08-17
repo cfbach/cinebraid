@@ -846,7 +846,16 @@ async function main() {
     assert.deepStrictEqual(inaccessibleButtonLabels(rendered.html), [], `${hash} rendered a glyph-only or empty button`);
   }
   const productionRender = await render("#/production", fixture);
-  assert(productionRender.html.includes("PROJECT READINESS"), "Production must expose the shared read-only readiness roll-up");
+  /* The roll-up used to be found by the eyebrow "PROJECT READINESS", which was also
+     the legacy setup projection's own heading — and while both existed, an empty
+     setup list rendered "READY" beside the derived verdict's NEEDS_DECISION for the
+     same reference. The verdict now carries a marker, so this asserts the roll-up is
+     present AND that it is the only thing on the page declaring readiness. */
+  assert.strictEqual((productionRender.html.match(/data-readiness-verdict="1"/g) || []).length, 1,
+    "Production must expose exactly one shared read-only readiness roll-up");
+  assert(productionRender.html.includes("PRODUCTION READINESS"), "and it must be labelled as the readiness verdict");
+  assert(!productionRender.html.includes("Ready for production work"),
+    "no other block on Production may declare the project ready");
   const reportsRender = await render("#/reports", fixture);
   assert(reportsRender.html.includes("Export production summary"), "Reports must expose the production summary export action");
   assert(labels.size <= 80, `distinct rendered button labels: ${labels.size}`);

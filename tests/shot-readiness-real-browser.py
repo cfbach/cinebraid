@@ -213,25 +213,61 @@ try:
         findings.append(f"5. readiness recalculated: {before['unique']} -> {after['unique']} confirmations outstanding")
 
         # ---- 6. THE SERVER ANSWERS THE SAME QUESTION THROUGH THE SAME MODULE ----------
+        # And it answers it ONCE. The audit found `issues: []` sitting beside
+        # `readiness.status: "NEEDS_DECISION"`, so the shape is asserted here too:
+        # nothing in this payload except `readiness` may be read as a verdict.
         api = page.evaluate("""async () => {
             const response = await fetch('/api/project/readiness', { cache: 'no-store' });
             const data = await response.json();
             return {
               status: response.status,
               contract: data.readiness ? data.readiness.contract : "",
-              issues: Array.isArray(data.issues),
+              topLevelIssues: Object.prototype.hasOwnProperty.call(data, 'issues'),
+              setupIssues: Array.isArray(data.setup && data.setup.issues),
+              setupAnswers: data.setup ? data.setup.answers : "",
+              setupIsVerdict: data.setup ? data.setup.isReadinessVerdict : null,
               shots: data.readiness ? data.readiness.shots.length : -1,
               mediaCheck: data.readiness ? data.readiness.mediaCheck : "",
-              unique: data.readiness ? data.readiness.historic.uniqueTargets : -1,
+              projectAction: data.readiness && data.readiness.nextAction ? data.readiness.nextAction.code : null,
             };
         }""")
         assert api["status"] == 200, f"/api/project/readiness answered {api['status']}"
-        assert api["issues"], "the existing issue list is still returned"
         assert api["contract"] == "cinebraid.shot-readiness/1", f"unexpected contract {api['contract']!r}"
+        assert api["setupIssues"], "the legacy rows are still served, under the setup envelope"
+        assert api["setupAnswers"] == "project-setup-completeness", \
+            f"the setup envelope must name what it answers, got {api['setupAnswers']!r}"
+        assert api["setupIsVerdict"] is False, "and must state in the payload that it is not a readiness verdict"
+        assert not api["topLevelIssues"], \
+            "a top-level `issues` array is a second readiness truth: an empty one reads as an all-clear"
         assert api["shots"] == len(before["statuses"]), "the server projection covers every shot"
         assert api["mediaCheck"] == "resolveApprovalMedia", \
             f"the server must resolve media through the canonical resolver, got {api['mediaCheck']!r}"
-        findings.append(f"6. GET /api/project/readiness: {api['shots']} shots, mediaCheck={api['mediaCheck']}")
+        assert api["projectAction"] is None, \
+            "a healthy ledger carries no project-level action, so nothing else can declare the project ready"
+        findings.append(f"6. GET /api/project/readiness: one verdict, {api['shots']} shots, "
+                        f"mediaCheck={api['mediaCheck']}, setup nested and marked non-verdict")
+
+        # ---- 7. THE RENDERED SURFACE SHOWS ONE READINESS VERDICT ----------------------
+        surface = page.evaluate("""() => ({
+            verdicts: document.querySelectorAll('[data-readiness-verdict="1"]').length,
+            setups: document.querySelectorAll('[data-project-setup="1"]').length,
+            saysProjectReadiness: document.body.innerHTML.includes('PROJECT READINESS'),
+            saysReadyForProduction: document.body.innerHTML.includes('Ready for production work'),
+            setupText: (document.querySelector('[data-project-setup="1"]') || {}).textContent || '',
+        })""")
+        # `NEEDS ATTENTION` is checked inside the setup block only, not page-wide: the
+        # creator shell uses the same words for its own unrelated activity state, and a
+        # page-wide ban would fail on a surface this change never touched.
+        assert surface["verdicts"] == 1, \
+            f"exactly one readiness verdict may be on the page, found {surface['verdicts']}"
+        assert surface["setups"] == 1, f"and exactly one setup block, found {surface['setups']}"
+        assert not surface["saysProjectReadiness"], "the legacy block must not call itself readiness"
+        assert not surface["saysReadyForProduction"], \
+            "the legacy block must never claim the project is ready for production"
+        for banned in ("READY", "NEEDS ATTENTION"):
+            assert banned not in surface["setupText"], \
+                f"{banned!r} must not appear in the setup block: {surface['setupText'][:160]!r}"
+        findings.append("7. rendered surface carries ONE readiness verdict; setup block declares no verdict")
 
         assert not paid_calls, f"a paid route was called: {paid_calls}"
         assert not offsite, f"a request left this machine: {offsite}"

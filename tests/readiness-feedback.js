@@ -147,20 +147,20 @@ async function main() {
        P-1 repaired both readers, so the sample now opens ready — which is what
        a shipped sample should do. Anything appearing here again is a real
        regression, not a lesson. See tests/intent-loss-safety.js. */
-    assert.deepStrictEqual(response.data.issues, [], `the shipped sample must open with no readiness issues, got ${JSON.stringify(response.data.issues.map((row) => row.kind))}`);
+    assert.deepStrictEqual(response.data.setup.issues, [], `the shipped sample must open with no readiness issues, got ${JSON.stringify(response.data.setup.issues.map((row) => row.kind))}`);
 
     response = await request(port, "/api/projects/switch", { method: "POST", body: { slug: "scale-test" } });
     assert.strictEqual(response.status, 200);
     response = await request(port, "/api/project/readiness");
     assert.strictEqual(response.status, 200);
-    const canonRows = response.data.issues.filter((row) => row.kind === "entity-canon" && row.entityId === "LOC-SHARED");
+    const canonRows = response.data.setup.issues.filter((row) => row.kind === "entity-canon" && row.entityId === "LOC-SHARED");
     assert.strictEqual(canonRows.length, 1, "a shared entity problem must be emitted once, not once per shot");
     assert.strictEqual(canonRows[0].shotId, "S01", "the legacy shotId field must retain the first affected shot");
     assert.strictEqual(canonRows[0].shotIds.length, 22, "the deduplicated entity issue must carry every affected shot ID");
     assert.match(canonRows[0].message, /Affects 22 shots\./);
-    const unresolvedRows = response.data.issues.filter((row) => row.kind === "unresolved-reference" && row.entityId === "PROP-MISSING");
+    const unresolvedRows = response.data.setup.issues.filter((row) => row.kind === "unresolved-reference" && row.entityId === "PROP-MISSING");
     assert.strictEqual(unresolvedRows.length, 2, "shot-scoped unresolved references must remain one row per shot");
-    assert.strictEqual(response.data.issues.length, 3, "the 22-shot scale fixture must contain one shared entity issue plus two shot-scoped issues");
+    assert.strictEqual(response.data.setup.issues.length, 3, "the 22-shot scale fixture must contain one shared entity issue plus two shot-scoped issues");
 
     const secret = "sk-abcdefghijklmnopqrstuvwxyz1234567890";
     const localPath = "/home/tester/private/project.mov";

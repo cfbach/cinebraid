@@ -1064,26 +1064,47 @@ function readinessMediaOracle() {
   };
 }
 
-/* THE SHOT-SCOPED PROJECTION, BESIDE THE EXISTING ISSUE LIST AND NEVER INSTEAD OF IT.
+/* ONE READINESS VERDICT IN THIS PAYLOAD, AND IT IS `readiness`.
  *
- * `issues` keeps every kind it has always emitted and every meaning it has always
- * had. In particular the `entity-reference` issue stays POINTER-BASED: its comment
- * says explicitly that it reports the ABSENCE of an image and makes no claim that a
- * present image was approved, and that reading is correct for what it answers.
+ * THE CORRECTION THE ACCEPTANCE AUDIT REQUIRED. This route used to return the
+ * legacy list as a top-level `issues` array beside the new derivation, and the two
+ * competed: a project whose only problem was an unconfirmed pointer answered
+ * `issues: []` — which every consumer reads as "nothing to resolve, this is ready"
+ * — next to `readiness.status: "NEEDS_DECISION"` for the same reference. Two
+ * truths, and the older one was the one that looked like an all-clear.
  *
- * `readiness` is the different question — is this shot's next unit executable, by
- * the receipt — and it is the projection that makes the approval claim. Two
- * answers, two names, one route, and neither one silently becomes the other. */
+ * The legacy projection is KEPT, because it answers a genuinely useful and
+ * genuinely different question: is the project SET UP — descriptions, durations,
+ * canon text, relinked references, files on disk. In particular its
+ * `entity-reference` issue stays POINTER-BASED, exactly as its own comment says:
+ * it reports the ABSENCE of an image and makes no claim that a present image was
+ * approved. That reading is correct for what it answers.
+ *
+ * What changed is that it can no longer be MISTAKEN for the verdict. It moves
+ * inside a `setup` envelope that names what it answers and states plainly that it
+ * is not a readiness verdict, and the top-level `issues` key is gone rather than
+ * kept as an alias — an alias would leave the ambiguity in place while adding a
+ * second spelling of it. A consumer reading `data.issues` now gets `undefined`,
+ * which is a loud break rather than a silent wrong answer. */
 function shotReadinessProjection(P) {
   return ShotReadiness.evaluateProjectReadiness(P, readinessMediaOracle());
 }
+const PROJECT_SETUP_ANSWERS = "project-setup-completeness";
 app.get("/api/project/readiness", (req, res) => {
   try {
     const project = readProject();
     res.json({
       checkedAt: new Date().toISOString(),
-      issues: projectReadinessIssues(project),
+      /* The verdict. READY / BLOCKED / NEEDS_DECISION belong to this and to
+         nothing else in the response. */
       readiness: shotReadinessProjection(project),
+      setup: {
+        answers: PROJECT_SETUP_ANSWERS,
+        /* Stated in the payload rather than only in a comment, so a machine
+           consumer can see that an empty list is not an all-clear. */
+        isReadinessVerdict: false,
+        issues: projectReadinessIssues(project),
+      },
     });
   } catch (error) {
     res.status(httpStatusForError(error)).json({ error: error.message || "Could not check project readiness" });

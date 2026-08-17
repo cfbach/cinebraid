@@ -103,12 +103,21 @@
                         mediaCheck: "resolveApprovalMedia"
      fileExists(name)   degraded filename-only fallback. CANNOT see a rename.
                         mediaCheck: "file-name-only"
-     neither            no media check is performed, and the result SAYS SO
-                        rather than silently passing. mediaCheck: "not-checked"
+     neither            NOTHING IS KNOWN, and nothing is assumed. The requirement
+                        becomes `media-availability-unknown` — a decision, not a
+                        satisfaction — so the unit cannot be executable on an
+                        approval whose bytes nobody has looked for.
+                        mediaCheck: "not-checked"
 
-   Reporting `mediaCheck` is not decoration. A surface must be able to say
-   "readiness has not checked whether these files are present" instead of implying
-   that it has.
+   UNKNOWN STAYS UNKNOWN. An earlier version of this module rejected only
+   `unavailable` and let every other answer fall through to satisfied, so a caller
+   that supplied no oracle got a READY shot with `mediaCheck: "not-checked"` sitting
+   beside it as the only hint. That is promoting unknown to READY: a field
+   describing the evidence does not undo a claim made without it.
+
+   Reporting `mediaCheck` is still not decoration — a surface must be able to say
+   WHICH oracle answered — but it is no longer the only thing standing between an
+   unchecked approval and an executable unit.
 
    ---------------------------------------------------------------------------
    THE BOUNDARY WITH generationBinding, AND IT IS ABSOLUTE.
@@ -264,6 +273,12 @@
     "presence-declaration-malformed",
     /* two references durably claim the same bytes. */
     "contested-media-ownership",
+    /* THE APPROVAL IS INTACT AND WHETHER ITS BYTES ARE THERE IS NOT KNOWN.
+       Distinct from `approved-bytes-missing`, which is the answer when a listing
+       was consulted and the file was not in it. Here nothing was consulted, so
+       CineBraid has no answer — and the one thing it must not do is supply one.
+       See the UNKNOWN STAYS UNKNOWN note on productionInputSatisfaction. */
+    "media-availability-unknown",
     /* project-level, reported ONCE at the top and never as N missing references. */
     "authority-ledger-unreadable",
     /* SLICE 1 ADDITION, and stated as one rather than smuggled in. The research's
@@ -289,7 +304,13 @@
   /* Decisions first, then inputs that must be supplied, then inputs CineBraid can
      prepare, then the work itself. */
   const READINESS_NEXT_ACTIONS = deepFreeze([
+    /* PROJECT-LEVEL ONLY. One corrupt ledger is one repair, however many shots it
+       makes unanswerable, so no shot ever carries this code. */
     "repair-authority-ledger",
+    /* What a shot says instead, so a surface can show the shot as unanswerable
+       without turning one project failure into N identical human actions. */
+    "awaiting-project-repair",
+    "establish-media-availability",
     "confirm-existing-reference",
     "reapprove-revoked-reference",
     "resolve-relationship",
@@ -477,6 +498,41 @@
           ...base,
           state: "missing",
           reason: "approved-bytes-missing",
+          producible: false,
+          value,
+          assetId,
+          satisfiedBy: text(receipt.id),
+          mediaCheck: media.mediaCheck,
+          detail: value,
+        });
+      }
+      /* UNKNOWN STAYS UNKNOWN — THE CORRECTION THE ACCEPTANCE AUDIT REQUIRED.
+       *
+       * This used to reject only `unavailable` and let every other answer fall
+       * through to satisfied. So a caller that supplied no media oracle got
+       * `satisfied` and a READY shot for an approval whose bytes nobody had
+       * looked for, with `mediaCheck: "not-checked"` sitting beside it as the
+       * only hint. The audit called that promoting unknown to READY, and it was
+       * right: a field describing the evidence does not undo a claim made
+       * without it.
+       *
+       * IT IS A DECISION, NOT A BLOCKER, and the distinction is exact. BLOCKED
+       * means CineBraid can name what would satisfy the requirement; here it
+       * cannot name anything, because it does not know whether anything is
+       * wrong. What it knows is that establishing the fact COSTS SOMETHING —
+       * media-asset-verify.js is explicit that reading bytes is "a deliberate
+       * act with a visible cost, never a side effect", since a cloud-backed
+       * project downloads the file. A cost a person must authorise is a
+       * decision, and that is the honest bucket.
+       *
+       * The receipt is still cited: the human decision is intact and is not
+       * what is in doubt. `producible: false`, because generating something new
+       * does not answer a question about existing bytes. */
+      if (media.state !== "available") {
+        return deepFreeze({
+          ...base,
+          state: "needs-decision",
+          reason: "media-availability-unknown",
           producible: false,
           value,
           assetId,
@@ -955,6 +1011,7 @@
     "declared-state-not-on-entity": "resolve-state-declaration",
     "presence-declaration-malformed": "repair-presence-declaration",
     "contested-media-ownership": "resolve-media-ownership",
+    "media-availability-unknown": "establish-media-availability",
   });
 
   function action(code, message, count = 0) {
@@ -1020,22 +1077,41 @@
     if (row.reason === "code-names-nothing") {
       return `${row.label} names no known entity. Relink or remove it.${more}`;
     }
+    if (row.reason === "media-availability-unknown") {
+      return `${row.label} is approved, but CineBraid has not been told whether ${row.value || "its file"} is still present. Checking reads the file, so it is not done automatically — check it to make this executable.${more}`;
+    }
     return `${row.label} cannot be resolved without a decision.${more}`;
   }
 
   /* ==========================================================================
      ONE SHOT. */
 
-  function evaluateShotReadiness(project, shot, options = {}) {
+  /* `projectTruth` is an INTERNAL pass-down, and evaluateProjectReadiness() is its
+     only caller: the ledger is a whole-project read, so validating it once per feed
+     rather than once per shot is the difference the research measured. It cannot
+     change the answer — omit it and the same value is derived here. */
+  function evaluateShotReadiness(project, shot, options = {}, projectTruth = undefined) {
     const P = record(project);
     const s = record(shot);
-    const context = buildContext(P, s, options);
+    const context = buildContext(P, s, options, projectTruth);
     if (context.truthProblem) {
+      /* ONE CORRUPT LEDGER IS ONE REPAIR, NOT ONE PER SHOT.
+       *
+       * This used to return `repair-authority-ledger` here, so a three-shot
+       * project produced three identical repair actions and the surface rendered
+       * all three — the exact fan-out the acceptance audit reproduced, and the
+       * lie of aggregation this branch exists to prevent, reappearing as
+       * duplicated human work instead of as duplicated blockers.
+       *
+       * The shot still reports what is true of IT: its readiness cannot be
+       * answered, and it carries the project problem so a surface can explain
+       * why. The repair itself is the PROJECT's action, emitted once by
+       * evaluateProjectReadiness(). */
       return deepFreeze({
         shotId: text(s.id),
         status: "NEEDS_DECISION",
         nextUnitId: "",
-        nextAction: action("repair-authority-ledger", context.truthProblem.message, 1),
+        nextAction: action("awaiting-project-repair", "This shot's readiness cannot be answered until the project's approval records are repaired.", 0),
         units: deepFreeze([]),
         requirements: deepFreeze([]),
         optionalOutstanding: deepFreeze([]),
@@ -1104,26 +1180,36 @@
     return deepFreeze(out);
   }
 
-  function buildContext(project, shot, options) {
-    const oracle = record(options);
+  /* THE ONE PROJECT-LEVEL TRUTH PROBLEM, DERIVED IN ONE PLACE.
+   *
+   * A ledger nobody can read makes every approval in the project unrecognisable.
+   * Answering that as N missing references per shot would be a lie of aggregation —
+   * it would send a filmmaker to prepare references that are already approved — and
+   * answering it as N repair actions is the same mistake wearing the other hat: one
+   * broken file becoming one job per shot.
+   *
+   * So it is derived HERE, once, and both the project feed and every shot read the
+   * same frozen object. It used to be constructed in two places, which is how the
+   * feed came to hoist one shot's copy while each shot also carried its own action. */
+  function projectTruthProblem(project) {
     const ledger = record(validateAuthorityLedger(project));
+    if (ledger.trusted !== false) return null;
+    return deepFreeze({
+      reason: "authority-ledger-unreadable",
+      diagnostics: deepFreeze(list(ledger.diagnostics).map((row) => ({ ...record(row) }))),
+      message: "This project's approval records cannot be read, so no approval in it can be recognised. Repair them before production continues.",
+    });
+  }
+
+  function buildContext(project, shot, options, projectTruth) {
+    const oracle = record(options);
     const mediaCheck = typeof oracle.mediaListing === "function"
       ? "resolveApprovalMedia"
       : typeof oracle.fileExists === "function" ? "file-name-only" : "not-checked";
     return {
       oracle,
       mediaCheck,
-      /* REPORTED ONCE, AT THE TOP. A ledger nobody can read makes every approval in
-         the project unreadable, and answering that as N missing references would be
-         a lie of aggregation — it would send a filmmaker to prepare references that
-         are already approved. */
-      truthProblem: ledger.trusted === false
-        ? deepFreeze({
-          reason: "authority-ledger-unreadable",
-          diagnostics: deepFreeze(list(ledger.diagnostics).map((row) => ({ ...record(row) }))),
-          message: "This project's approval records cannot be read, so no approval in it can be recognised. Repair them before production continues.",
-        })
-        : null,
+      truthProblem: projectTruth === undefined ? projectTruthProblem(project) : projectTruth,
       dependencies: list(shotDependencyRecordsOwner(project, shot)),
       units: declaredUnits(shot),
       ownerIndexes: {},
@@ -1136,8 +1222,11 @@
   function evaluateProjectReadiness(project, options = {}) {
     const P = record(project);
     const ledger = record(validateAuthorityLedger(P));
+    /* Derived once and handed down, so every shot cites the same problem and the
+       ledger is validated once per feed rather than once per shot. */
+    const truthProblem = projectTruthProblem(P);
     const shots = list(P.shots).map(record).filter((shot) => text(shot.id));
-    const rows = shots.map((shot) => evaluateShotReadiness(P, shot, options));
+    const rows = shots.map((shot) => evaluateShotReadiness(P, shot, options, truthProblem));
     const counts = { total: rows.length, ready: 0, blocked: 0, needsDecision: 0, complete: 0 };
     for (const row of rows) {
       if (row.status === "READY") counts.ready += 1;
@@ -1152,11 +1241,12 @@
         trusted: ledger.trusted !== false,
         receiptCount: list(ledger.receipts).length,
       }),
-      truthProblem: rows.length ? rows[0].truthProblem : (ledger.trusted === false ? deepFreeze({
-        reason: "authority-ledger-unreadable",
-        diagnostics: deepFreeze(list(ledger.diagnostics).map((row) => ({ ...record(row) }))),
-        message: "This project's approval records cannot be read, so no approval in it can be recognised. Repair them before production continues.",
-      }) : null),
+      truthProblem,
+      /* THE PROJECT'S OWN ACTION, AND THE ONLY PLACE `repair-authority-ledger`
+         APPEARS IN THIS PAYLOAD. `null` when there is no project-level problem:
+         readiness is a per-shot question, and inventing a project verdict here
+         would be a second thing capable of declaring the production ready. */
+      nextAction: truthProblem ? action("repair-authority-ledger", truthProblem.message, 1) : null,
       mediaCheck: rows.length ? rows[0].mediaCheck : "not-checked",
       counts: deepFreeze(counts),
       shots: deepFreeze(rows),
