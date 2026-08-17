@@ -714,6 +714,106 @@ function motionGateSection() {
 }
 
 /* ===========================================================================
+   C0-2 — THE SHIPPED SAMPLE'S OWN STATE INTENT, READ THE WAY THE PRODUCT READS.
+
+   The Automation Lab research reproduced a state-intent mismatch in the project
+   every outsider tester opens first. The sample's three shots each declared a
+   Blue parcel state, and each declared it under `continuitySelections` — a key
+   ofp-migrate-rules.js already describes as "a legacy sibling nothing reads",
+   and which `RUNTIME_SHOT_SELECTION_KEY` is not.
+
+   SAMPLE-01 and SAMPLE-02 LOOKED CORRECT, and that is what kept this alive.
+   Both intend the Closed parcel, `state-closed` is the prop's default, and an
+   unread declaration falls through to the default — so two thirds of the sample
+   resolved to the authored answer for a reason that had nothing to do with the
+   authoring. SAMPLE-03 intends Opened, has no default to hide behind, and
+   resolved Closed: the same silent parcel in a shot whose entire subject is
+   that the parcel is open.
+
+   SO THIS SECTION ASSERTS THE MECHANISM, NOT JUST THE OUTCOME. Every shot is
+   asked for its resolved state ID as well as its state NAME, because "Closed"
+   is what a defaulting SAMPLE-01 and a declaring SAMPLE-01 both answer, and
+   only the ID distinguishes them. The default-fallback path is exercised
+   directly at the end so the difference is visible rather than argued.
+
+   THE REAL RESOLVER, AND NOTHING SAMPLE-SHAPED. `Continuity.resolveDeclaredStateId`
+   is the runtime entry point the continuity manifest, the frame's design
+   authority and the OFP profile all go through; it throws rather than returning
+   "" if the shared binding contract did not load. Nothing here reads a key by
+   hand and nothing here special-cases the sample.
+
+   AUTHORITY IS NOT TOUCHED. This corrects which state a shot declares. It does
+   not, and must not, make anything Canon — asserted below against the real
+   authority kernel. */
+
+function sampleStateIntentSection() {
+  const Kernel = require("../public/shared-authority-kernel");
+  const sample = JSON.parse(readText(path.join(ROOT, "projects", "cinebraid-sample", "project.json")));
+  const parcel = (sample.props || []).find((row) => row.id === "PROP-PARCEL");
+  ok(parcel, "C0-2: the sample must still ship the Blue parcel");
+  eq(parcel.name, "Blue parcel", "C0-2: under the name the research names it by");
+  eq((parcel.continuityStates || []).map((state) => `${state.id}:${state.name}:${state.isDefault === true}`),
+    ["state-closed:Closed:true", "state-open:Opened:false"],
+    "C0-2: with Closed as the DEFAULT and Opened as the declared alternative — the arrangement that let two shots look right by accident");
+
+  /* PRECONDITION. If the stale key ever returns, this section must fail here
+     rather than quietly re-testing the default-fallback path. */
+  for (const shot of sample.shots || []) {
+    ok(!Object.prototype.hasOwnProperty.call(shot, "continuitySelections"),
+      `C0-2: ${shot.id} must not carry the stale continuitySelections key that nothing reads`);
+  }
+
+  /* THE THREE ANSWERS, through the real resolver. `stateId` proves the shot's
+     own declaration was read; `name` proves it resolved to the right record of
+     this entity's own catalogue. */
+  const expected = [
+    ["SAMPLE-01", "state-closed", "Closed"],
+    ["SAMPLE-02", "state-closed", "Closed"],
+    ["SAMPLE-03", "state-open", "Opened"],
+  ];
+  for (const [shotId, stateId, stateName] of expected) {
+    const shot = (sample.shots || []).find((row) => row.id === shotId);
+    ok(shot, `C0-2: the sample must still contain ${shotId}`);
+    ok(Binding.stateIdBelongsToEntity(parcel.continuityStates, stateId),
+      `C0-2: ${stateId} must be one of the Blue parcel's OWN states — state ids are owner-scoped`);
+    const resolved = Continuity.resolveDeclaredStateId(shot, "", "prop", "PROP-PARCEL");
+    eq(resolved, stateId,
+      `C0-2: ${shotId} must DECLARE ${stateId} where the canonical resolver reads — "" here would mean the shot declares nothing and the answer below came from the entity default`);
+    eq(Continuity.resolveStateRecord(parcel, resolved).name, stateName,
+      `C0-2: so ${shotId} resolves ${parcel.name} — ${stateName}`);
+  }
+
+  /* AND THE ANSWER FOLLOWS THROUGH TO THE IMAGE. A resolved state that does not
+     change which approved reference the frame is built against would be a
+     correction to a field nobody consumes. */
+  eq(Continuity.stateApprovedFile(parcel, Continuity.resolveStateRecord(parcel, "state-closed")), "PROP-PARCEL-CLOSED.png",
+    "C0-2: the Closed state answers with the closed parcel");
+  eq(Continuity.stateApprovedFile(parcel, Continuity.resolveStateRecord(parcel, "state-open")), "PROP-PARCEL-OPEN.png",
+    "C0-2: and SAMPLE-03's Opened state answers with the OPEN parcel, which is the whole point of declaring it");
+
+  /* THE CONTROL THAT MAKES THE THREE ASSERTIONS ABOVE NON-VACUOUS. Strip the
+     declaration and the same resolver says "nothing is declared here" — which
+     is exactly what all three shots said before this correction, and exactly
+     why SAMPLE-01 and SAMPLE-02 looked healthy while SAMPLE-03 did not. */
+  const undeclared = JSON.parse(JSON.stringify(sample.shots.find((row) => row.id === "SAMPLE-03")));
+  delete undeclared[Binding.RUNTIME_SHOT_SELECTION_KEY];
+  eq(Continuity.resolveDeclaredStateId(undeclared, "", "prop", "PROP-PARCEL"), "",
+    "C0-2 control: with no canonical declaration the resolver declares nothing");
+  eq(Continuity.resolveStateRecord(parcel, "").name, "Closed",
+    "C0-2 control: and the caller falls through to the DEFAULT — Closed — which is the wrong parcel for SAMPLE-03 and the reason this was invisible in the other two shots");
+
+  /* AUTHORITY IS UNCHANGED. The sample carries pointers and no receipts, so the
+     parcel's states are Historic and nothing about declaring a state may
+     promote one. This is the boundary the correction must not cross. */
+  const truth = Kernel.entityProductionTruth(sample, "props", "PROP-PARCEL");
+  eq(truth.canon, [], "C0-2: declaring a state must not create Canon — the sample holds no human approval receipt for either parcel state");
+  eq(truth.historic.map((row) => `${row.stateId}:${row.value}:${row.basis}`).sort(),
+    ["state-closed:PROP-PARCEL-CLOSED.png:no-human-receipt", "state-open:PROP-PARCEL-OPEN.png:no-human-receipt"],
+    "C0-2: both parcel pointers remain HISTORIC on the same basis — no human receipt — awaiting a confirmation this correction does not supply");
+  eq((sample.decisions || []).length, 0, "C0-2: and no decision record was invented to make the sample look approved");
+}
+
+/* ===========================================================================
    6. Case 12 — save, reload, and open-without-write, through a real server. */
 
 function freePort() {
@@ -835,13 +935,14 @@ async function main() {
   ofpSection();
   authoritySection();
   motionGateSection();
+  sampleStateIntentSection();
   await serverSection();
-  console.log(`P4-SEM-B continuity state binding passed ${checks} checks: one precedence contract shared by the runtime and the continuity profile, owner-scoped state resolution across three entities that all declare state-default, a modelled profile interior with five validated invariants, deterministic migration that re-homes rather than buries, the real authority-image selection following the resolved state, a real save/reload, and the FLF motion gate exactly where it was. Provider calls made: 0.`);
+  console.log(`P4-SEM-B continuity state binding passed ${checks} checks: one precedence contract shared by the runtime and the continuity profile, owner-scoped state resolution across three entities that all declare state-default, a modelled profile interior with five validated invariants, deterministic migration that re-homes rather than buries, the real authority-image selection following the resolved state, the shipped sample's own three shots resolving Closed/Closed/Opened from declarations the canonical resolver actually reads while both parcel pointers stay Historic, a real save/reload, and the FLF motion gate exactly where it was. Provider calls made: 0.`);
 }
 
 module.exports = {
   runtimeProject, setShotState, setFrameState, extractFunction,
-  contractSection, driftSection, ofpSection, authoritySection, motionGateSection, serverSection, main,
+  contractSection, driftSection, ofpSection, authoritySection, motionGateSection, sampleStateIntentSection, serverSection, main,
   CLEAN, WET, AT, LEGACY_FIXTURE, OFP_FIXTURE, BROKEN_FIXTURE,
 };
 if (require.main === module) main().catch((error) => {
