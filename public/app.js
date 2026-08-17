@@ -3074,6 +3074,168 @@ function productionResultInbox(limit = 6) {
     return `<a href="#/${item.route}/${item.entity.id}" class="production-inbox-item"><div><span>REF</span></div><section><b>${esc(item.entity.name || item.entity.id)}</b><small>${esc(item.label)}</small></section><i>Review →</i></a>`;
   }).join("")}</div>` : `<div class="production-inbox-empty">Newly returned images, videos, upscales, and reference candidates will collect here.</div>`}</section>`;
 }
+/* ---------------------------------------------------------------------------
+   SHOT READINESS — THE BROWSER'S OWN CALL INTO THE SHARED DERIVATION.
+
+   public/shared-shot-readiness.js is the single answer, and both callers ask it
+   the same question with their own media oracle: the server hands it a directory
+   listing built from readdir, this hands it the listing the app already holds. The
+   semantics are not restated here, because a second statement of them is how three
+   satisfaction predicates came to disagree in the first place.
+
+   THE POOL IS THE UNFILTERED ONE, DELIBERATELY. entityMedia() applies the ownership
+   filter and is the APPROVAL-CAPABLE pool; readiness is asking the different
+   question "does this project still have the exact bytes this receipt names", and
+   answering it through the ownership filter would report a present-but-unowned file
+   as `approved-bytes-missing` — the wrong problem, with the wrong next action.
+   Ownership is reported separately, as `contested-media-ownership` and as the
+   per-row confirmation veto. */
+function readinessOracleForBrowser() {
+  return {
+    mediaListing: (list) => (typeof entityMediaPool === "function" ? entityMediaPool(list) : []),
+    shotMediaListing: (shotId) => takesFor(shotId),
+  };
+}
+function projectShotReadiness() {
+  if (typeof evaluateProjectReadiness !== "function") return null;
+  try {
+    return evaluateProjectReadiness(P, readinessOracleForBrowser());
+  } catch (error) {
+    /* A derivation that cannot run must not blank the production view. It says so
+       instead, which is also how a missing shared module becomes visible rather
+       than becoming a silently empty feed. */
+    return { error: error.message || "Readiness could not be derived", counts: null, shots: [], historic: { items: [], uniqueTargets: 0, occurrences: 0 } };
+  }
+}
+/* THE WORDS. A bare READY badge implies the shot will finish; it will not — it will
+   run to its next human gate. So the status never appears without the action it is
+   the status OF. The tokens come from the shared module; only the wording is here,
+   for the same reason shared-stage-model.js leaves STAGE_STATUS in the UI layer. */
+const READINESS_STATUS_WORDS = {
+  READY: "READY",
+  BLOCKED: "BLOCKED",
+  NEEDS_DECISION: "NEEDS DECISION",
+  COMPLETE: "COMPLETE",
+};
+const READINESS_ACTION_WORDS = {
+  "repair-authority-ledger": "Repair the approval records",
+  "confirm-existing-reference": "Confirm existing reference",
+  "reapprove-revoked-reference": "Re-approve withdrawn reference",
+  "resolve-relationship": "Resolve a shot input",
+  "resolve-state-declaration": "Resolve the declared state",
+  "repair-presence-declaration": "Repair the frame presence",
+  "resolve-media-ownership": "Resolve the media claim",
+  "declare-producible-unit": "Declare what this shot produces",
+  "supply-approved-media": "Supply approved media",
+  "prepare-references": "Prepare required references",
+  "approve-parent-frame": "Approve the previous frame",
+  "approve-required-frames": "Approve required frames",
+  "produce-frame": "Produce the frame",
+  "produce-motion": "Produce the motion",
+  "nothing-outstanding": "Nothing outstanding",
+};
+function readinessActionWords(action) {
+  const label = READINESS_ACTION_WORDS[action?.code] || "Next action";
+  const count = Number(action?.count) || 0;
+  /* Count-aware here rather than in the model, so "1 reference" never renders as
+     "1 references" and the model keeps returning a token plus a number. */
+  if (count > 1 && action?.code === "prepare-references") return `Prepare ${count} required references`;
+  if (count > 1 && action?.code === "approve-required-frames") return `Approve ${count} required frames`;
+  if (count > 1 && action?.code === "supply-approved-media") return `Supply ${count} approved files`;
+  return label;
+}
+function historicConfirmationMarkup(feed) {
+  const queue = feed?.historic;
+  if (!queue?.items?.length) return "";
+  const rows = queue.items.map((item) => {
+    const shots = item.shotIds.length;
+    const refused = item.ownership.wouldRefuse;
+    const action = refused
+      ? `<span class="prompt-check warn" title="${attr(`CineBraid will not approve this file for this reference: ${item.ownership.reason}`)}">Cannot confirm — ${esc(item.ownership.reason || "not owned")}</span>`
+      : `<button class="approve-btn" onclick="confirmHistoricSelection('${attr(item.key)}')">Confirm</button>`;
+    return `<li><div><b>${esc(item.label)}</b><small>${esc(item.value || "no file recorded")} · ${esc(item.key)}</small><em>Satisfies ${plural(item.requirementCount, "shot requirement")} across ${plural(shots, "shot")}</em></div>${action}</li>`;
+  }).join("");
+  const confirmable = queue.items.filter((item) => !item.ownership.wouldRefuse).length;
+  /* THE BULK ACTION IS NOT A BLIND SHORTCUT. Every row it would write is listed
+     directly above it, with its authority target, its file and what it unblocks, and
+     the button names the exact count. It confirms only what is shown. */
+  const bulk = confirmable > 1
+    ? `<div class="historic-confirm-bulk"><button class="assemble-btn" onclick="confirmAllListedHistoricSelections()">Confirm the ${confirmable} listed above</button><small>Confirming is approving. Each one writes a production approval you can withdraw later.</small></div>`
+    : "";
+  return `<details class="production-readiness historic-confirm" open><summary><div><span>EXISTING SELECTIONS</span><b>${plural(queue.uniqueTargets, "existing selection")} need${queue.uniqueTargets === 1 ? "s" : ""} your confirmation</b></div><span>${queue.occurrences} REQUIREMENT${queue.occurrences === 1 ? "" : "S"}</span></summary><div class="historic-confirm-body"><p>These references are already in the project and nobody has approved them. Confirming one approves it everywhere it is used.</p><ul class="historic-confirm-list">${rows}</ul>${bulk}</div></details>`;
+}
+function shotReadinessFeedMarkup(feed) {
+  if (!feed) return "";
+  if (feed.error) return `<details class="production-readiness"><summary><div><span>SHOT READINESS</span><b>Readiness could not be derived</b></div><span>UNAVAILABLE</span></summary><div class="production-readiness-list"><p>${esc(feed.error)}</p></div></details>`;
+  const counts = feed.counts || { ready: 0, blocked: 0, needsDecision: 0, complete: 0 };
+  const rows = (feed.shots || []).map((shot) => {
+    const status = READINESS_STATUS_WORDS[shot.status] || shot.status;
+    return `<a href="#/shot/${attr(shot.shotId)}"><b>${esc(shot.shotId)}</b><span class="readiness-status readiness-${attr(String(shot.status).toLowerCase())}">${esc(status)} · ${esc(readinessActionWords(shot.nextAction))}</span><small>${esc(shot.nextAction?.message || "")}</small><i>Open →</i></a>`;
+  }).join("");
+  /* The headline says what READY MEANS. "12 shots have work that can start now" is
+     the claim this model supports; "12 shots will finish" is not. */
+  return `<details class="production-readiness shot-readiness" ${counts.ready ? "open" : ""}><summary><div><span>SHOT READINESS</span><b>${plural(counts.ready, "shot")} ${counts.ready === 1 ? "has" : "have"} work that can start now</b></div><span>${counts.needsDecision} DECISION${counts.needsDecision === 1 ? "" : "S"} · ${counts.blocked} BLOCKED</span></summary><div class="production-readiness-list shot-readiness-list">${rows || "<p>This project has no shots yet.</p>"}</div>${feed.mediaCheck === "not-checked" ? `<p class="readiness-media-note">Readiness has not checked whether the approved files are present.</p>` : ""}</details>`;
+}
+/* CONFIRMATION IS APPROVAL, AND IT GOES THROUGH THE SHIPPED COMMAND.
+ *
+ * There is no second approval system here and no bypass: each row calls the same
+ * kernel command the approval modal calls, synchronously, inside the click that is
+ * the human's decision. The kernel applies its own ownership veto, its own ledger
+ * validation and its own receipt schema, so a row this surface offered but the
+ * kernel refuses is REPORTED — never silently skipped and never forced. */
+function commitHistoricConfirmation(item, at) {
+  const target = item.target || {};
+  if (target.kind === "entity-state") {
+    approveEntityStateCanon(P, {
+      list: target.list, entityId: target.entityId, stateId: target.stateId,
+      value: item.value, assetId: item.assetId || "", at, via: "readiness-historic-confirmation",
+    });
+    return;
+  }
+  if (target.kind === "shot-frame") {
+    approveFrameCanon(P, {
+      shotId: target.shotId, frameId: target.frameId,
+      value: item.value, assetId: item.assetId || "", at, via: "readiness-historic-confirmation",
+    });
+    return;
+  }
+  throw new Error(`CineBraid cannot confirm a ${target.kind || "unknown"} selection from this surface.`);
+}
+window.confirmHistoricSelection = (key) => {
+  const feed = projectShotReadiness();
+  const item = (feed?.historic?.items || []).find((row) => row.key === key);
+  if (!item) return toast("That selection is no longer waiting for confirmation");
+  try {
+    commitHistoricConfirmation(item, new Date().toISOString());
+  } catch (error) {
+    return toast(error.message || "That selection could not be confirmed");
+  }
+  dirty();
+  route();
+  toast(`Confirmed ${item.label}`);
+};
+window.confirmAllListedHistoricSelections = () => {
+  const feed = projectShotReadiness();
+  const items = (feed?.historic?.items || []).filter((row) => !row.ownership.wouldRefuse);
+  if (!items.length) return toast("Nothing listed can be confirmed");
+  /* ONE TIMESTAMP FOR ONE DECISION, and no `await` anywhere in this loop — the
+     trusted gesture is the event currently being dispatched, and a suspension
+     between two of these would end it partway through. */
+  const at = new Date().toISOString();
+  const confirmed = [], refused = [];
+  for (const item of items) {
+    try {
+      commitHistoricConfirmation(item, at);
+      confirmed.push(item.label);
+    } catch (error) {
+      refused.push(`${item.label}: ${error.message || "refused"}`);
+    }
+  }
+  if (confirmed.length) { dirty(); route(); }
+  toast(refused.length
+    ? `Confirmed ${confirmed.length}; ${refused.length} refused — ${refused[0]}`
+    : `Confirmed ${plural(confirmed.length, "existing selection")}`);
+};
 async function productionHomeView() {
   let readiness = { issues: [] };
   try {
@@ -3092,9 +3254,15 @@ async function productionHomeView() {
   const deliveredCount = P.shots.filter(shotIsDelivered).length;
   const approvedCount = P.shots.filter(shotIsApproved).length;
   const activeRows = P.shots.map((shot) => ({ shot, next: shotProductionNextAction(shot) })).filter((row) => !shotIsDelivered(row.shot)).slice(0, 8);
+  /* Derived here rather than read off the fetched payload, so the feed is correct
+     the instant a confirmation is written instead of one request later. The server
+     answers the same question through the same module for its own callers. */
+  const shotReadiness = projectShotReadiness();
   return `<div class="view-head production-home-head"><div><div class="eyebrow">Production</div><span class="view-title">${esc(P.meta.title)}</span><div class="view-sub">Continue the film from the next unfinished decision. Detailed tools stay inside each shot.</div></div><div class="production-home-actions"><button class="assemble-btn" onclick="continueProduction()">${next ? "CONTINUE PRODUCTION" : hasShots ? "ALL SHOTS DELIVERED" : "ADD THE FIRST SHOT"}</button><button class="add-btn" onclick="openGlobalAdd('shot')">＋ Add shot</button></div></div>
   <div class="production-summary"><article title="A shot is delivered once a final still or video file is recorded on it."><b>${deliveredCount}/${P.shots.length}</b><span>${pluralWord(P.shots.length, "shot")} delivered</span></article><article title="A shot is approved once its workflow status is Approved. Approving a shot does not deliver it."><b>${approvedCount}/${P.shots.length}</b><span>${pluralWord(P.shots.length, "shot")} approved</span></article><article class="review" title="Returned results that are waiting for you to choose or approve."><b>${decisions.length}</b><span>${pluralWord(decisions.length, "decision")} waiting</span></article><article><b>${mmss(P.shots.reduce((sum, shot) => sum + shotDur(shot), 0))}</b><span>planned runtime across ${plural(P.scenes.length, "scene")}</span></article></div>
   <details class="production-readiness" ${readiness.issues?.length ? "" : "open"}><summary><div><span>PROJECT READINESS</span><b>${readiness.issues?.length ? `${plural(readiness.issues.length, "item")} to resolve` : "Ready for production work"}</b></div><span>${readiness.issues?.length ? "NEEDS ATTENTION" : "READY"}</span></summary><div class="production-readiness-list">${(readiness.issues || []).map((issue) => `<a href="${attr(issue.href || "#/production")}"${issue.kind === "unresolved-reference" && issue.targetId ? ` onclick="boundedWriteFocusedTask('${SHOT_STAGE_SCOPE}','${attr(issue.targetId)}','inputs')"` : ""}><b>${esc(String(issue.kind || "readiness").replace(/-/g," "))}</b><span>${esc(issue.message || "Readiness issue")}</span><i>Open →</i></a>`).join("") || `<p>No missing descriptions, durations, canon text, approved references, or approved files were found.</p>`}</div></details>
+  ${historicConfirmationMarkup(shotReadiness)}
+  ${shotReadinessFeedMarkup(shotReadiness)}
   ${next ? `<section class="production-next"><div><span>NEXT ACTION</span><h2>${esc(next.shot.id)} · ${esc(next.shot.title)}</h2><p>${esc(next.next.label)} — ${esc(next.next.detail)}</p></div><a class="assemble-btn" href="#/shot/${next.shot.id}">${esc(next.next.label.toUpperCase())} →</a></section>` : hasShots ? `<section class="production-next complete"><div><span>EVERY SHOT DELIVERED</span><h2>All ${plural(P.shots.length, "shot")} have a final file</h2><p>Open Shots to inspect delivery media or add another shot.</p></div><a class="ghost-btn" href="#/shots/board">Open Shots →</a></section>` : `<section class="production-next"><div><span>NO SHOTS YET</span><h2>This project has no shots</h2><p>Add the first shot to start tracking scenes, frames and deliveries.</p></div><a class="assemble-btn" href="#/shots/board">Open Shots →</a></section>`}
   ${productionResultInbox()}
   <section class="production-active"><header><div><span>NOT YET DELIVERED</span><h2>Shots and their next action</h2></div><a href="#/shots/board">View all shots →</a></header>${activeRows.length ? `<div class="production-active-list">${activeRows.map(({shot,next}) => `<a href="#/shot/${shot.id}"><span class="next-${next.key}" title="Next action for this shot">${esc(next.label)}</span><div><b>${esc(shot.id)} · ${esc(shot.title)}</b><small>${esc(sceneById(shot.scene)?.title || shot.scene)} · ${esc(next.detail)}</small></div><i>→</i></a>`).join("")}</div>` : `<div class="production-inbox-empty">${hasShots ? "Every shot has been delivered." : "No shots have been added yet."}</div>`}</section>
