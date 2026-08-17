@@ -587,6 +587,58 @@ async function testCompiledPackageGoesStale() {
   record("P0-7", "duration, method and target changes invalidate a compiled package and say so on it; one instruction is emitted once");
 }
 
+/* The paid submission is the last screen before money is spent, so a stale package
+   must not reach it silently either. It is not refused — sending an older package is
+   a legitimate choice — but it is named, beside the duration banner that exists for
+   the same reason. */
+async function testStalePackageIsNamedBeforeAPaidSubmission() {
+  const project = buildFixture();
+  const shot = project.shots[0];
+  shot.clips = [{ id: "unit-a", suffix: "A", label: "A", dur: 8, motionPrompt: "Kai crosses to the ledge.", generationPackages: [] }];
+  shot.creationBrief = { ...(shot.creationBrief || {}), motionDuration: 8, motionProfileId: "minimax-h3/flf", motionDirection: "Kai crosses to the ledge." };
+  const plan = {
+    compiledPrompt: "MINIMAX H3 FIRST / LAST FRAME — 8 SECONDS\n\nTRANSITION\nKai crosses to the ledge.",
+    profile: { id: "minimax-h3/flf", name: "MiniMax H3 — First / Last Frame" }, mode: "flf",
+    references: [], durationSeconds: 8, durationRequested: 8, durationRange: [5, 15],
+    resolutions: ["2K", "768P"], resolution: "2K", carriesAspectRatio: false,
+    maxPromptCharacters: 2000, modelMaxPromptCharacters: 2000, modelDurationRange: [5, 15],
+    dispatch: { model: "minimax/h3" }, compiler: { packId: "minimax-h3", packVersion: "1" },
+  };
+  const app = await render("#/shot/L1-01", project, {
+    fetch: async (url, options, response) => {
+      if (url === "/api/config") return response({ generation: { fal: { enabled: true, apiKey: "test-key", keySource: "config" } } });
+      if (url === "/api/generation/fal/h3/plan") return response(plan);
+      if (String(url).startsWith("/api/generation/options")) return response({ options: [] });
+      return null;
+    },
+  });
+  vm.runInContext(`
+    const s = shotById("L1-01"), c = ensureShotCreation(s), unit = s.clips[0];
+    const build = { id: "pkg-1", packageId: "L1-01-MOTION-R01", date: "2026-08-17T10:00:00Z",
+      profileId: "minimax-h3/flf", profileName: "MiniMax H3 — First / Last Frame", mode: "flf",
+      segmentId: unitKey(unit), durationSeconds: 8, kind: "guided-motion", revision: 1,
+      prompt: "MINIMAX H3 FIRST / LAST FRAME — 8 SECONDS", references: [], warnings: [], confirmations: [] };
+    build.dependencySnapshot = packageInputSnapshot(s, build, build.references, currentDirectionForPackage(s, build));
+    const id = registerPromptBuild(P, build);
+    c.motionPromptBuilds = [promptBuildRef(id, { kind: "guided-motion" })];
+    unit.generationPackages = [promptBuildRef(id, { kind: "guided-motion", scope: "segment:" + unitKey(unit) })];
+  `, app.context);
+
+  await app.context.openFalH3MotionModal("L1-01", "pkg-1");
+  const fresh = app.context.document.getElementById("modal").innerHTML;
+  assert(/MINIMAX H3 · PAID GENERATION/.test(fresh), "the paid dialog must open, or this check is vacuous");
+  assert(!/This compiled package is out of date/.test(fresh), "a current package must not be marked stale before submission");
+
+  vm.runInContext(`shotById("L1-01").creationBrief.motionDuration = 6;`, app.context);
+  await app.context.openFalH3MotionModal("L1-01", "pkg-1");
+  const stale = app.context.document.getElementById("modal").innerHTML;
+  assert(/This compiled package is out of date/.test(stale), "a stale package must be named before a paid submission");
+  assert(/duration changed to 6s/.test(stale), "the paid dialog must say exactly what changed");
+  assert(/id="fal-h3-submit"/.test(stale) && !/id="fal-h3-submit"[^>]*disabled/.test(stale),
+    "a stale package is named, not refused — sending it stays the filmmaker's choice");
+  record("P0-7b", "the paid H3 dialog names a stale compiled package before submission and still lets the filmmaker send it");
+}
+
 async function main() {
   await testCrossProjectActivityIsolation();
   await testNextActionAgreesWithReadiness();
@@ -599,6 +651,7 @@ async function main() {
   record("P0-5", "improvement/no-improvement/regression is classified against the approved original; a regression is never suggested; the repair package is the smallest truthful one");
   testCompiledPromptEmitsOneInstructionOnce();
   await testCompiledPackageGoesStale();
+  await testStalePackageIsNamedBeforeAPaidSubmission();
 
   for (const line of results) console.log(line);
   console.log("\nFounder smoke P0 trust suite passed. P0-6 is tests/founder-smoke-overlay-real-browser.py. "

@@ -31,10 +31,12 @@
          stamp  >  toast  >  lightbox  >  dialog  >  drawer  >  backdrop  >
          strip  >  page chrome  >  page
 
-     Every fixed overlay in this sheet takes its number from here. A new overlay
-     adds a token to this ladder rather than picking a literal, because picking a
-     literal is exactly how the ladder came apart. */
-  --z-page-chrome:50;      /* #rail, #topbar, #cb-shell-* — in the page, not over it */
+     Every OVERLAY takes its number from here. A new overlay adds a token to this
+     ladder rather than picking a literal, because picking a literal is exactly how
+     the ladder came apart. Page chrome keeps its own literals — #cb-shell-bar 38,
+     #topbar 40, #cb-shell-dock 45, #rail 50 — because those four are ordered
+     against each other inside the layout, not against the overlays; every token
+     below sits above all of them. */
   --z-side-drawer:60;      /* the legacy .drawer panel */
   --z-live-strip:150;      /* the docked activity strip: a signal, never a blocker */
   --z-activity-backdrop:185;

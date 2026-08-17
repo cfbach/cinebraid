@@ -352,6 +352,54 @@ const CONTROLS = [
     },
   },
   {
+    id: "N16",
+    title: "P0-7 — a stale package reaches the paid dialog silently again",
+    defect: fileMutation("fal-generation.js",
+      `<section id="fal-h3-sequence" class="h3-submit-sequence" hidden></section>\${freshnessBanner}\${durationBanner}`,
+      `<section id="fal-h3-sequence" class="h3-submit-sequence" hidden></section>\${durationBanner}`,
+      "N16"),
+    async guard(mutateSource) {
+      const project = buildFixture();
+      const shot = project.shots[0];
+      shot.clips = [{ id: "unit-a", suffix: "A", label: "A", dur: 8, motionPrompt: "Kai crosses.", generationPackages: [] }];
+      shot.creationBrief = { ...(shot.creationBrief || {}), motionDuration: 8, motionProfileId: "minimax-h3/flf", motionDirection: "Kai crosses." };
+      const plan = {
+        compiledPrompt: "MINIMAX H3 FIRST / LAST FRAME — 8 SECONDS",
+        profile: { id: "minimax-h3/flf", name: "H3 FLF" }, mode: "flf", references: [],
+        durationSeconds: 8, durationRequested: 8, durationRange: [5, 15], resolutions: ["2K"],
+        resolution: "2K", carriesAspectRatio: false, maxPromptCharacters: 2000,
+        modelMaxPromptCharacters: 2000, modelDurationRange: [5, 15],
+        dispatch: { model: "minimax/h3" }, compiler: { packId: "minimax-h3", packVersion: "1" },
+      };
+      const options = {
+        fetch: async (url, _options, response) => {
+          if (url === "/api/config") return response({ generation: { fal: { enabled: true, apiKey: "test-key", keySource: "config" } } });
+          if (url === "/api/generation/fal/h3/plan") return response(plan);
+          if (String(url).startsWith("/api/generation/options")) return response({ options: [] });
+          return null;
+        },
+      };
+      if (mutateSource) options.mutateSource = mutateSource;
+      const app = await render("#/shot/L1-01", project, options);
+      vm.runInContext(`
+        const s = shotById("L1-01"), c = ensureShotCreation(s), unit = s.clips[0];
+        const build = { id: "pkg-1", packageId: "L1-01-MOTION-R01", date: "2026-08-17T10:00:00Z",
+          profileId: "minimax-h3/flf", profileName: "H3 FLF", mode: "flf", segmentId: unitKey(unit),
+          durationSeconds: 8, kind: "guided-motion", revision: 1, prompt: "x", references: [], warnings: [], confirmations: [] };
+        build.dependencySnapshot = packageInputSnapshot(s, build, build.references, currentDirectionForPackage(s, build));
+        const id = registerPromptBuild(P, build);
+        c.motionPromptBuilds = [promptBuildRef(id, { kind: "guided-motion" })];
+        unit.generationPackages = [promptBuildRef(id, { kind: "guided-motion", scope: "segment:" + unitKey(unit) })];
+        s.creationBrief.motionDuration = 6;
+      `, app.context);
+      await app.context.openFalH3MotionModal("L1-01", "pkg-1");
+      const html = app.context.document.getElementById("modal").innerHTML;
+      assert(/MINIMAX H3 · PAID GENERATION/.test(html), "the paid dialog must open, or this control is vacuous");
+      assert(/This compiled package is out of date/.test(html),
+        "a stale package reached the paid submission dialog with nothing saying so");
+    },
+  },
+  {
     id: "N15",
     title: "P0-5 — the correction package takes the whole creation reference set again",
     defect: fileMutation("scene-automation.js",
