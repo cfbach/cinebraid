@@ -505,6 +505,94 @@ async function bareEntityPage(mutateSource) {
 }
 
 /* ===========================================================================
+   C10 — AN UNREADABLE PRESENCE DECLARATION IS NOT AN ABSENT ONE.
+
+   Restore the governance predicate to the PARSED view and the paid dispatch
+   gate fails open on the exact case the Automation Lab research reproduced: a
+   shot whose only frame-presence declaration is malformed.
+
+   WHY THIS IS THE MUTATION THAT MATTERS. Batch 1C already added the malformed
+   refusal, and it already worked — when a sibling frame of the same shot
+   carried a well-formed declaration. `finalDispatchPresenceGate` gates
+   everything below it on `shotDeclaresFramePresence`, and that predicate ran
+   every value through `normalizeFramePresence`, which drops what it does not
+   recognise. One authored frame plus one typo therefore produced zero parsed
+   declarations, the shot read as ungoverned, and the request cleared the gate
+   before the malformed check could run. Absence of evidence read as evidence of
+   absence, one layer above the layer Batch 1C repaired.
+
+   The mutation is that early return exactly as it shipped, so what fails here is
+   the ordering and nothing else. */
+const PRESENCE_FILE = "public/shared-frame-presence.js";
+const SWEEP_ID = "CHAR-NC-SWEEP";
+const presenceProject = (entityPresence) => ({
+  characters: [{ id: SWEEP_ID, name: "Chimbley Sweep", aliases: [] }],
+  locations: [], props: [], vehicles: [],
+  shots: [{
+    id: "SH-NC",
+    keyframes: [{ id: "fr-a" }],
+    creationBrief: { frameWorkflows: { "fr-a": { entityPresence } } },
+  }],
+});
+/* Names the declared-absent character positively, so a gate that reads the
+   declaration has something to refuse. */
+const PRESENCE_PROMPT = "A tiny figure of the Chimbley Sweep stands among the chimney stacks.";
+const presenceDispatch = (presence, entityPresence) => presence.finalDispatchPresenceGate({
+  project: presenceProject(entityPresence),
+  purpose: "frame",
+  shotId: "SH-NC",
+  frameId: "fr-a",
+  prompt: PRESENCE_PROMPT,
+  references: [],
+  assertedEntityIds: [],
+});
+
+control({
+  label: "C10 malformed presence at the paid boundary",
+  file: PRESENCE_FILE,
+  anchor: [
+    "  for (const frameId of Object.keys(workflows)) {",
+    "    if (framePresenceDeclarations(shot, frameId).length) return true;",
+    "    if (framePresenceRecordStatus(shot, frameId).malformed) return true;",
+    "  }",
+    "  return false;",
+  ].join("\n"),
+  replacement: [
+    "  for (const frameId of Object.keys(workflows)) if (framePresenceDeclarations(shot, frameId).length) return true;",
+    "  return false;",
+  ].join("\n"),
+  baseline: (presence) => {
+    /* A WELL-FORMED declaration must still refuse, and refuse as a
+       CONTRADICTION. Without this the control could be satisfied by a module
+       that refuses everything, which would prove nothing about malformed
+       values specifically. */
+    const readable = presenceDispatch(presence, { [SWEEP_ID]: "absent" });
+    assert.strictEqual(readable.ok, false, "baseline: a readable absence contradicted by the prompt must refuse, or this control measures nothing");
+    assert.strictEqual(readable.code, presence.FRAME_PRESENCE_REFUSAL_CODE, "baseline: and refuse as a contradiction");
+    /* And an UNGOVERNED shot must still dispatch, so the control cannot be
+       satisfied by a module that has simply stopped letting anything through. */
+    assert.strictEqual(presence.finalDispatchPresenceGate({
+      project: { characters: [], shots: [{ id: "SH-NC", keyframes: [{ id: "fr-a" }], creationBrief: {} }] },
+      purpose: "frame", shotId: "SH-NC", frameId: "fr-a", prompt: PRESENCE_PROMPT,
+    }).ok, true, "baseline: a shot that declares nothing must still dispatch");
+  },
+  probe: (presence) => {
+    /* THE DEFECT SHAPE. `{ state: "absent" }` where a token belongs, and it is
+       this shot's ONLY presence declaration. */
+    const gate = presenceDispatch(presence, { [SWEEP_ID]: { state: "absent" } });
+    const refused = gate && gate.ok === false;
+    const asMalformed = refused && gate.code === presence.FRAME_PRESENCE_MALFORMED_CODE;
+    return {
+      reached: true,
+      held: asMalformed,
+      reason: !refused ? "malformed-presence-dispatched" : asMalformed ? "refused-as-malformed" : `refused-as-${String(gate.code)}`,
+    };
+  },
+  reason: "malformed-presence-dispatched",
+  explain: "A declaration CineBraid cannot read was treated as the absence of a constraint, and a paid frame request naming a declared-absent character cleared the final gate.",
+});
+
+/* ===========================================================================
    THE HARNESS ITSELF.
    =========================================================================== */
 
