@@ -305,6 +305,24 @@ async function testLineageRuntimeSurfaces() {
     `missing lineage must be reported at import: ${JSON.stringify(warnings)}`);
   assert(warnings.some((row) => /will not choose one for you/.test(row)), "the import warning must say CineBraid does not guess");
   assert.strictEqual(Lineage.validateStateCollection(imported).ok, true, "the imported collection must be intact");
+
+  /* AMBIGUOUS IS NOT RESOLVED. A source given as a name that two states share
+     could mean either, so it means neither — the same rule as an unresolvable id,
+     and the case that would tempt a "closest match". */
+  const ambiguousWarnings = [];
+  const ambiguous = normalize({ id: "LOC-ROOF", continuityStates: [
+    { id: "state-default", name: "Working", isDefault: true },
+    { id: "state-b", name: "Working", parentStateId: "state-default" },
+    { id: "state-soot", name: "Heavy soot", derivesFrom: "Working" },
+  ] }, "location", ambiguousWarnings);
+  assert.strictEqual(ambiguous[2].parentStateId, "",
+    `a source named by a name two states share must not resolve, got ${JSON.stringify(ambiguous[2].parentStateId)}`);
+  assert(ambiguousWarnings.some((row) => /says it derives from "Working"/.test(row)),
+    `the ambiguity must be named: ${JSON.stringify(ambiguousWarnings)}`);
+  assert(ambiguousWarnings.some((row) => /do not record what they derive from \(Heavy soot\)/.test(row)),
+    "and the state must be listed as still needing a decision");
+  assert.strictEqual(Lineage.validateStateCollection(ambiguous).ok, true,
+    "refusing an ambiguous source must leave the collection intact");
   record("P0-3", "an unrecorded source can be recorded once, never changed, never guessed; import preserves, drops and reports");
 }
 

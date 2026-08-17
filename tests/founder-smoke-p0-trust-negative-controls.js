@@ -532,6 +532,14 @@ async function main() {
     assert.strictEqual(states[1].parentStateId, "", "import chose a source state on the filmmaker's behalf");
     assert(warnings.some((row) => /do not record what they derive from/.test(row)),
       "import did not report the missing lineage");
+    /* And the ambiguous case, which is where a "closest match" would creep back in. */
+    const ambiguous = normalize({ id: "LOC-ROOF", continuityStates: [
+      { id: "state-default", name: "Working", isDefault: true },
+      { id: "state-b", name: "Working", parentStateId: "state-default" },
+      { id: "state-soot", name: "Heavy soot", derivesFrom: "Working" },
+    ] }, "location", []);
+    assert.strictEqual(ambiguous[2].parentStateId, "",
+      "import resolved a source named by a name two states share");
   };
   try {
     importGuard(importNormalizer(serverSource));
@@ -544,6 +552,16 @@ async function main() {
     `      state.parentStateId = states.find((row) => row.isDefault) ? states.find((row) => row.isDefault).id : "";\n      continue;\n    }\n    const named = byName.get(declared.toLowerCase());`,
     "N6");
   await record({ id: "N6", title: CONTROLS.find((row) => row.id === "N6").title }, () => importGuard(importNormalizer(mutatedServer)));
+
+  /* N17 — the other half of "do not guess": an ambiguous name resolving to the
+     first state that happens to carry it. This is the mistake a "closest match"
+     would be, expressed as the smallest possible change to the name index. */
+  const ambiguousServer = mutate(serverSource,
+    `    byName.set(name, byName.has(name) ? null : state); /* null marks an ambiguous name */`,
+    `    if (!byName.has(name)) byName.set(name, state);`,
+    "N17");
+  await record({ id: "N17", title: "P0-3 — an ambiguous source name resolves to the first state carrying it" },
+    () => importGuard(importNormalizer(ambiguousServer)));
 
   for (const result of results) console.log(`  ${result.id.padEnd(4)} ${result.status.padEnd(9)} ${result.detail}`);
 
