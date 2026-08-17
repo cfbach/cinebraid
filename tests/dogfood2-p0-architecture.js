@@ -511,8 +511,19 @@ async function main() {
     ].join("\n"), rendered.context));
     eq(probe.storedParent, "ghost", "the durable record names a parent that does not exist");
     eq(probe.resolved, "", "and it resolves to NOTHING — no default, no other state, no substitute");
-    ok(probe.preflight.some((line) => /no valid parent/i.test(line)),
-      `preflight must block on the broken lineage — got ${JSON.stringify(probe.preflight)}`);
+    /* The guarantee is unchanged: a dangling parent BLOCKS the run and is never
+       substituted. The wording is not — the founder-smoke P0-3 repair split the one
+       "has no valid parent state" message into the two different situations it used
+       to cover. A state that records NOTHING is a missing human decision and the run
+       preflight now offers the source-state chooser inline; a state that records a
+       parent which no longer exists is DAMAGE, and choosing a different source there
+       would be the reparent this build refuses. This case is the second one, so it
+       must still refuse and must name the missing id — it must NOT be offered a
+       chooser. */
+    ok(probe.preflight.some((line) => /records a source state that no longer exists \(ghost\)/i.test(line)),
+      `preflight must block on the broken lineage and name it as damage — got ${JSON.stringify(probe.preflight)}`);
+    ok(!probe.preflight.some((line) => /does not record what it derives from/i.test(line)),
+      `a state with a dangling parent must not be offered the source chooser — got ${JSON.stringify(probe.preflight)}`);
   }
 
 

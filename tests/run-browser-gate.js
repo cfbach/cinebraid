@@ -51,6 +51,7 @@ const SUITES = [
   "check:state-binding-browser",
   "check:alpha-loop-browser",
   "check:shot-readiness-browser",
+  "check:founder-p0-browser",
 ];
 
 /* Suites that launch a browser and are known to fail, pinned to the reason.

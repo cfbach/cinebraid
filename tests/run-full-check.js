@@ -61,6 +61,8 @@ const nodeSuites = [
   "check:recovery",
   "check:bounded",
   "check:clarity",
+  "check:founder-p0",
+  "check:founder-p0-negative",
   "check:integrity",
   "check:manual-first",
   "check:manual-parity",
@@ -196,7 +198,7 @@ const serialSuites = ["check:windows-shutdown"];
 const browserSuites = ["check:manual-browser", "check:browser-real", "check:h3-browser", "check:preview-layout",
   "check:ui-state", "check:c2b-browser", "check:brand-logo-browser", "check:lan-passcode-browser",
   "check:focused-browser", "check:alpha-loop-browser", "check:entity-truth-browser",
-  "check:shot-readiness-browser"];
+  "check:shot-readiness-browser", "check:founder-p0-browser"];
 const releaseSuites = ["check:environment", "check:package"];
 /* How a suite is launched, without a shell.
 

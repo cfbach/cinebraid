@@ -2136,6 +2136,14 @@ function normalizeBuilderContinuityStates(entity, kind, warnings) {
         approvedFile: String(source.approvedFile || ""),
         notes,
         isDefault: source.isDefault === true,
+        /* THE SOURCE LINEAGE THE IMPORT ACTUALLY STATED, under any of the names
+           it is written with — `derivesFrom` is OFP's, and ofp-migrate-rules.js
+           maps CineBraid's `parentStateId` onto it, so a round trip has to read
+           both. Resolved below; unresolvable values are dropped rather than
+           written as a dangling parent. */
+        __declaredSource: String(
+          source.parentStateId || source.derivesFrom || source.parentState || source.derivedFrom || "",
+        ).trim(),
       };
     });
   if (!states.length) {
@@ -2179,6 +2187,65 @@ function normalizeBuilderContinuityStates(entity, kind, warnings) {
     );
     warnings.push(
       `${kind} ${id} had multiple default continuity states; CineBraid kept the first one.`,
+    );
+  }
+  return resolveBuilderStateLineage(states, kind, id, warnings);
+}
+
+/* SOURCE LINEAGE, SETTLED AT IMPORT — WHERE IT IS STILL CHEAP TO ANSWER.
+ *
+ * A derived continuity state that records no source cannot be generated
+ * ("Heavy soot has no valid parent state") and cannot be validated against its
+ * parent. That used to be discovered only when the filmmaker pressed START on a
+ * run, with nothing on that screen able to fix it. It is discovered here now.
+ *
+ * THREE RULES, AND NONE OF THEM GUESSES:
+ *   - An EXPLICIT source is preserved. It may be written as an id or as the exact
+ *     name of exactly one state; anything else does not resolve.
+ *   - An UNRESOLVABLE source is dropped and named in a warning. Writing it through
+ *     would make the whole collection invalid (`parent-missing`) and block adding
+ *     any state at all.
+ *   - A MISSING source is left missing and named in a warning. CineBraid does not
+ *     pick one — that is the human decision the state card and the run preflight
+ *     now offer. The old normaliser that filled it in with the default state is
+ *     exactly what 1D-06 removed.
+ * The default state is the root and never carries one. */
+function resolveBuilderStateLineage(states, kind, id, warnings) {
+  const byId = new Map(states.filter((state) => state.id).map((state) => [state.id, state]));
+  const byName = new Map();
+  for (const state of states) {
+    const name = String(state.name || "").trim().toLowerCase();
+    if (!name) continue;
+    byName.set(name, byName.has(name) ? null : state); /* null marks an ambiguous name */
+  }
+  const missing = [];
+  for (const state of states) {
+    const declared = state.__declaredSource;
+    delete state.__declaredSource;
+    if (state.isDefault) {
+      state.parentStateId = "";
+      continue;
+    }
+    if (!declared) {
+      state.parentStateId = "";
+      missing.push(state.name || state.id || "(unnamed state)");
+      continue;
+    }
+    const named = byName.get(declared.toLowerCase());
+    const resolved = byId.get(declared) || named || null;
+    if (!resolved || resolved === state) {
+      state.parentStateId = "";
+      missing.push(state.name || state.id || "(unnamed state)");
+      warnings.push(
+        `${kind} ${id} state "${state.name || state.id}" says it derives from "${declared}", which is not a state on this reference. CineBraid did not choose a replacement.`,
+      );
+      continue;
+    }
+    state.parentStateId = resolved.id;
+  }
+  if (missing.length) {
+    warnings.push(
+      `${kind} ${id} has ${missing.length} continuity state${missing.length === 1 ? "" : "s"} that do not record what they derive from (${missing.join(", ")}). Choose a source state for each before generating them; CineBraid will not choose one for you.`,
     );
   }
   return states;

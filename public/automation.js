@@ -551,10 +551,69 @@ function v627CandidateUrl(run, step, file) {
   const entity = P[list]?.find((item) => item.id === entityId);
   return entity ? entityMedia(list, entity).find((item) => item.name === file)?.url || "" : "";
 }
+/* ==========================================================================
+   APPROVAL REQUIRES SOMETHING TO LOOK AT.
+
+   The founder smoke found a candidate reading 90/100 · APPROVE SUGGESTED whose
+   thumbnail was blank: the markup rendered a placeholder reading "IMAGE" when
+   v627CandidateUrl() came back empty, and rendered the approve button anyway. A
+   human approval is a statement that a person INSPECTED these bytes and accepts
+   them as production truth. Media the page cannot resolve was never inspected, so
+   that statement cannot honestly be made.
+
+   REVIEW SUCCESS AND DISPLAY SUCCESS ARE DIFFERENT FACTS, and both are kept. The
+   AI score, the pass flag and the note stay exactly as they are — the review did
+   run, and discarding its result because a file went missing would throw away
+   real work. What is withdrawn is the OFFER to approve, and the candidate stays
+   in the gate with a recovery action rather than disappearing from it.
+
+   The refusal lives in the command as well as the markup, so a surface that
+   regresses cannot mint an approval this rule exists to prevent — the same
+   reason the ownership veto sits in the kernel and not in its callers. */
+function v670CandidateInspectable(run, step, file) {
+  return !!v627CandidateUrl(run, step, file);
+}
+function v670UnresolvedCandidateMarkup(file) {
+  return `<div class="automation-review-unavailable" data-candidate-unresolved="${attr(file)}"><b>Image unavailable</b><span>CineBraid cannot resolve ${esc(file)} in this project's media, so it cannot be shown for inspection. It has not been discarded, and its review result is kept.</span><button class="ghost-btn" onclick="document.getElementById('rescan')?.click()">SYNC LOCAL FOLDERS &amp; RETRY</button></div>`;
+}
+/* ==========================================================================
+   THE CORRECTION VERDICT, RENDERED AND NEVER DERIVED.
+
+   `winner` means "highest score among this pass's own candidates". For a
+   continuity correction that is not the question — the question is whether it beat
+   the frame the filmmaker already approved — so a correction step carries a verdict
+   per candidate, computed by shared-continuity.js against a baseline score for the
+   approved original. This file looks the verdict up and prints its words.
+
+   A step with no verdicts is any other kind of review (an entity or frame gate) and
+   behaves exactly as before. */
+function v670CorrectionVerdictFor(step, file) {
+  const verdicts = step?.result?.correctionVerdicts;
+  return verdicts && verdicts[file] ? verdicts[file] : null;
+}
+/* SUGGESTED IS A RECOMMENDATION, SO IT NEEDS ONE. A correction candidate is only
+   the suggestion if the run recommended it AND it is a demonstrated improvement.
+   The founder smoke approved-suggested a frame that failed continuity and was worse
+   than the original, because this was `file === step.winner` and nothing else. */
+function v670CandidateIsSuggested(step, candidate) {
+  if (candidate.file !== step.winner) return false;
+  const verdict = v670CorrectionVerdictFor(step, candidate.file);
+  if (!verdict) return true;
+  return step.result?.recommend === true && recommendableCorrection(verdict);
+}
+function v670CorrectionVerdictMarkup(step, file) {
+  const verdict = v670CorrectionVerdictFor(step, file);
+  if (!verdict) return "";
+  const label = CORRECTION_OUTCOME_LABELS[verdict.outcome] || String(verdict.outcome || "").toUpperCase();
+  return `<div class="correction-verdict tone-${attr(verdict.outcome)}" data-correction-outcome="${attr(verdict.outcome)}" data-correction-file="${attr(file)}"><b>${esc(label)}</b><span>${esc(describeCorrectionOutcome(verdict))}</span></div>`;
+}
 function v627HumanReviewMarkup(run) {
   const step = v627AwaitingReviewStep(run);
   if (!step) return "";
   const candidates = v627ReviewCandidates(run, step);
+  /* Whether ANY candidate at this gate may honestly be called the fix. */
+  const correctionGate = !!step.result?.correctionVerdicts;
+  const anySuggested = candidates.some((candidate) => v670CandidateIsSuggested(step, candidate));
   /* Two separate facts: another pass is inside the confirmed pass count, AND the
      confirmed image cap still has room for it. Offering a continuation the credit
      guard would refuse is how a bounded run starts feeling unbounded. */
@@ -575,10 +634,24 @@ function v627HumanReviewMarkup(run) {
     .filter((row) => row && row.file && row.stepKey)
     .sort((a, b) => Number(b.score || 0) - Number(a.score || 0))[0] || null;
   const championElsewhere = champion && !currentFiles.has(String(champion.file));
+  const championInspectable = champion && v670CandidateInspectable(run, run.steps?.[champion.stepKey] || step, champion.file);
   const championMarkup = championElsewhere
-    ? `<div class="automation-review-champion"><div><span>BEST CANDIDATE OF THE WHOLE RUN</span><b>${esc(champion.file)} · ${Number(champion.score || 0)}/100</b><small>From pass ${Number(champion.passNumber || 1)}. A later pass scored lower; this one was kept and is still approvable.</small></div><button class="approve-btn" onclick="approveAutomationCandidate('${run.id}','${attr(champion.stepKey)}','${attr(champion.file)}')">APPROVE PASS ${Number(champion.passNumber || 1)} BEST</button></div>`
+    ? `<div class="automation-review-champion"><div><span>BEST CANDIDATE OF THE WHOLE RUN</span><b>${esc(champion.file)} · ${Number(champion.score || 0)}/100</b><small>From pass ${Number(champion.passNumber || 1)}. A later pass scored lower; this one was kept${championInspectable ? " and is still approvable" : ""}.</small></div>${championInspectable ? `<button class="approve-btn" onclick="approveAutomationCandidate('${run.id}','${attr(champion.stepKey)}','${attr(champion.file)}')">APPROVE PASS ${Number(champion.passNumber || 1)} BEST</button>` : v670UnresolvedCandidateMarkup(champion.file)}</div>`
     : "";
-  return `<section class="automation-human-review"><header><div><span>HUMAN REVIEW GATE</span><b>${esc(step.label || "Candidate approval required")}</b><small>The assistant suggestion is not canon until you approve it. CineBraid never approves a reference on its own.</small></div><span>${Math.round(Number(step.score || 0))}/100 suggested</span></header>${championMarkup}<div class="automation-review-grid">${candidates.map((candidate) => { const url = v627CandidateUrl(run, step, candidate.file); const suggested = candidate.file === step.winner; return `<article class="${suggested ? "suggested" : ""}">${url ? `<img src="${attr(url)}" alt="${attr(candidate.file)}">` : `<div class="automation-review-placeholder">IMAGE</div>`}<div><b>${esc(candidate.file)}</b><small>${candidate.score}/100 · ${candidate.pass ? "assistant pass" : "flagged"}</small>${candidate.note ? `<p>${esc(candidate.note)}</p>` : ""}</div><button class="${suggested ? "approve-btn" : "ghost-btn"}" onclick="approveAutomationCandidate('${run.id}','${attr(step.key)}','${attr(candidate.file)}')">${suggested ? "APPROVE SUGGESTED" : "APPROVE THIS"}</button></article>`; }).join("")}</div><footer>${continuation}<button class="ghost-btn" onclick="archiveAutomationRun('${run.id}')">STOP AND ARCHIVE</button>${budgetNote}</footer></section>`;
+  /* WHAT THE HEADER MAY CLAIM. On a correction gate with nothing recommendable,
+     "N/100 suggested" is the lie the founder smoke read as an endorsement of a
+     worse frame. It says what is actually true instead, and the approved original
+     stays protected either way — approving a challenger is still the person's
+     explicit act. */
+  const headerNote = correctionGate && !anySuggested
+    ? `<span class="automation-review-none">NO CANDIDATE IMPROVED ON THE APPROVED FRAME</span>`
+    : `<span>${Math.round(Number(step.score || 0))}/100 suggested</span>`;
+  const correctionIntro = correctionGate
+    ? `<p class="automation-correction-intro">${step.result?.baseline?.available === false
+      ? "The approved original could not be scored by the same reviewer, so none of these can be shown to be better than it. Your approved frame is unchanged."
+      : `Each candidate is scored against the approved ${esc(step.result?.baseline?.file || "original")} (${Number(step.result?.baseline?.score ?? 0)}/100) on the same review. Your approved frame stays in place unless you approve a replacement.`}</p>`
+    : "";
+  return `<section class="automation-human-review"><header><div><span>HUMAN REVIEW GATE</span><b>${esc(step.label || "Candidate approval required")}</b><small>The assistant suggestion is not canon until you approve it. CineBraid never approves a reference on its own.</small></div>${headerNote}</header>${correctionIntro}${championMarkup}<div class="automation-review-grid">${candidates.map((candidate) => { const url = v627CandidateUrl(run, step, candidate.file); const suggested = v670CandidateIsSuggested(step, candidate); const verdict = v670CorrectionVerdictFor(step, candidate.file); return `<article class="${url && suggested ? "suggested" : ""}${url ? "" : " unresolved"}${verdict ? ` verdict-${attr(verdict.outcome)}` : ""}">${url ? `<img src="${attr(url)}" alt="${attr(candidate.file)}">` : `<div class="automation-review-placeholder">NO IMAGE</div>`}<div><b>${esc(candidate.file)}</b><small>${candidate.score}/100 · ${candidate.pass ? "assistant pass" : "flagged"}</small>${candidate.note ? `<p>${esc(candidate.note)}</p>` : ""}</div>${v670CorrectionVerdictMarkup(step, candidate.file)}${url ? `<button class="${suggested ? "approve-btn" : "ghost-btn"}" onclick="approveAutomationCandidate('${run.id}','${attr(step.key)}','${attr(candidate.file)}')">${suggested ? "APPROVE SUGGESTED" : verdict && verdict.outcome === "regression" ? "APPROVE ANYWAY" : "APPROVE THIS"}</button>` : v670UnresolvedCandidateMarkup(candidate.file)}</article>`; }).join("")}</div><footer>${continuation}<button class="ghost-btn" onclick="archiveAutomationRun('${run.id}')">STOP AND ARCHIVE</button>${budgetNote}</footer></section>`;
 }
 /* How many candidate generations the confirmed authorization still allows. The
    cap is run.config.maxImages and it is the same number v626WaitFalJob refuses
@@ -1119,7 +1192,7 @@ window.startPlannedShotAutomation = async () => {
    syncs the entity's approved file. Opening the planner edited the project.
    `entityStateListRead` answers the same question and writes nothing. */
 function v627EntityPreflight(list, entity, stateIds) {
-  const errors = [], warnings = [], selected = new Set(stateIds || []), states = entityStateListRead(entity, true), byId = new Map(states.map((state) => [state.id, state]));
+  const errors = [], warnings = [], lineageGaps = [], selected = new Set(stateIds || []), states = entityStateListRead(entity, true), byId = new Map(states.map((state) => [state.id, state]));
   if (!falGenerationReady()) errors.push("FAL GPT Image 2 generation is not enabled.");
   if (!capabilityState("text").ready) errors.push(capabilityState("text").message || "The text assistant is unavailable.");
   if (!capabilityState("vision").ready) errors.push(capabilityState("vision").message || "The vision assistant is unavailable.");
@@ -1132,7 +1205,20 @@ function v627EntityPreflight(list, entity, stateIds) {
     const seen = new Set([state.id]); let current = state;
     while (current && !current.isDefault) {
       const parent = assetStateParent(entity, current);
-      if (!parent) { errors.push(`${current.name || "State"} has no valid parent state.`); break; }
+      if (!parent) {
+        /* TWO DIFFERENT DEAD ENDS, AND ONLY ONE OF THEM IS FIXABLE FROM HERE.
+           A state that records NOTHING is missing a human decision, and this run
+           is exactly where the filmmaker is standing when they need to make it —
+           so the gap travels to the markup and the chooser is offered inline. A
+           state that records a parent which no longer exists is damage, and
+           choosing a different source would be the reparent this build refuses. */
+        if (String(current.parentStateId || "")) errors.push(`${current.name || "State"} records a source state that no longer exists (${current.parentStateId}). Repair its lineage before generating from it.`);
+        else {
+          lineageGaps.push(current.id);
+          errors.push(`${current.name || "State"} does not record what it derives from. Choose its source state below.`);
+        }
+        break;
+      }
       if (seen.has(parent.id)) { errors.push(`${state.name || "State"} has a circular parent chain.`); break; }
       seen.add(parent.id);
       const parentFile = v626StateApprovedFile(entity, parent);
@@ -1142,10 +1228,17 @@ function v627EntityPreflight(list, entity, stateIds) {
     }
   }
   if (states.length > 1 && !states.some((state) => !state.isDefault)) warnings.push("This entity currently has only its default state.");
-  return { errors: [...new Set(errors)], warnings: [...new Set(warnings)] };
+  return { errors: [...new Set(errors)], warnings: [...new Set(warnings)], lineageGaps: [...new Set(lineageGaps)] };
 }
-function v627PreflightMarkup(preflight) {
-  return `${preflight.errors.length ? `<div class="guided-prompt-error"><b>Cannot start yet</b><span>${esc(preflight.errors.join(" "))}</span></div>` : `<div class="prompt-check ok">Automation preflight passed.</div>`}${preflight.warnings.length ? `<div class="prompt-check warn">${esc(preflight.warnings.join(" "))}</div>` : ""}`;
+/* `list` and `entity` are optional so the scene planner, which has neither, keeps
+   working unchanged. When they are supplied, a blocked run offers the source-state
+   decision here instead of sending the filmmaker away to find it. */
+function v627PreflightMarkup(preflight, list = "", entity = null) {
+  const gaps = (preflight.lineageGaps || []);
+  const chooser = list && entity && gaps.length && typeof continuityStateDerivationMarkup === "function"
+    ? gaps.map((stateId) => continuityStateDerivationMarkup(list, entity, entityStateById(entity, stateId))).join("")
+    : "";
+  return `${preflight.errors.length ? `<div class="guided-prompt-error"><b>Cannot start yet</b><span>${esc(preflight.errors.join(" "))}</span></div>` : `<div class="prompt-check ok">Automation preflight passed.</div>`}${chooser}${preflight.warnings.length ? `<div class="prompt-check warn">${esc(preflight.warnings.join(" "))}</div>` : ""}`;
 }
 /* S12 — OPENING A PLANNER READS. IT DOES NOT BUILD.
  *
@@ -1166,7 +1259,7 @@ window.openAssetAutomationModal = (list, id) => {
   const stateIds = [state?.id || "state-default"], preflight = v627EntityPreflight(list, entity, stateIds);
   const generationSettings = v6211AutomationGenerationSettings();
   window._v626EntityAutomationDraft = { list, id, stateIds, scope: "default-only", generationSettings };
-  openModal(`<div class="automation-plan-modal compact"><h3>Automate default reference — ${esc(entity.name || id)}</h3><div class="modal-sub">DURABLE STILL AUTOMATION · THREE PASSES MAXIMUM${v628CostEstimateText(9)}</div>${v6211GenerationControlsMarkup(generationSettings,"entity",{includeBlocking:false,outputs:3})}<p class="hint">CineBraid builds and improves the reference prompt, generates the selected number of candidates per pass, and reviews each against canon. When a pass produces nothing approvable it aggregates why every candidate failed, corrects the prompt, and runs the next authorized pass. It stops as soon as a candidate earns a strong pass — and always waits for your approval before anything becomes canon.</p><label class="checkline"><input id="v626-reuse-approved-states" type="checkbox" checked> Reuse the existing approved default instead of spending credits again</label><div>${v627PreflightMarkup(preflight)}</div><div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button class="approve-btn" ${preflight.errors.length ? "disabled" : ""} onclick="startPlannedEntityAutomation()">START</button></div></div>`);
+  openModal(`<div class="automation-plan-modal compact"><h3>Automate default reference — ${esc(entity.name || id)}</h3><div class="modal-sub">DURABLE STILL AUTOMATION · THREE PASSES MAXIMUM${v628CostEstimateText(9)}</div>${v6211GenerationControlsMarkup(generationSettings,"entity",{includeBlocking:false,outputs:3})}<p class="hint">CineBraid builds and improves the reference prompt, generates the selected number of candidates per pass, and reviews each against canon. When a pass produces nothing approvable it aggregates why every candidate failed, corrects the prompt, and runs the next authorized pass. It stops as soon as a candidate earns a strong pass — and always waits for your approval before anything becomes canon.</p><label class="checkline"><input id="v626-reuse-approved-states" type="checkbox" checked> Reuse the existing approved default instead of spending credits again</label><div>${v627PreflightMarkup(preflight, list, entity)}</div><div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button class="approve-btn" ${preflight.errors.length ? "disabled" : ""} onclick="startPlannedEntityAutomation()">START</button></div></div>`);
 };
 window.openEntityStateAutomationModal = (list, id, stateId) => {
   const entity = P[list]?.find((item) => item.id === id), state = entityStateById(entity, stateId);
@@ -1175,7 +1268,7 @@ window.openEntityStateAutomationModal = (list, id, stateId) => {
   const generationSettings = v6211AutomationGenerationSettings();
   window._v626EntityAutomationDraft = { list, id, stateIds, scope: `state:${state.id}`, generationSettings };
   const parent = assetStateParent(entity, state);
-  openModal(`<div class="automation-plan-modal compact"><h3>Automate ${esc(state.name || "state")} — ${esc(entity.name || id)}</h3><div class="modal-sub">DERIVED REFERENCE · THREE PASSES MAXIMUM${v628CostEstimateText(9)}</div>${v6211GenerationControlsMarkup(generationSettings,"entity",{includeBlocking:false,outputs:3})}<p class="hint">The approved ${esc(parent?.name || "base")} reference becomes the editable input. Review checks identity preservation and only the requested visible state delta. If no candidate passes, automation aggregates why they failed, corrects the prompt, and retries within the confirmed cap. Approval always stays with you.</p><label class="checkline"><input id="v626-reuse-approved-states" type="checkbox" checked> Reuse this state when it is already approved</label><div>${v627PreflightMarkup(preflight)}</div><div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button class="approve-btn" ${preflight.errors.length ? "disabled" : ""} onclick="startPlannedEntityAutomation()">START</button></div></div>`);
+  openModal(`<div class="automation-plan-modal compact"><h3>Automate ${esc(state.name || "state")} — ${esc(entity.name || id)}</h3><div class="modal-sub">DERIVED REFERENCE · THREE PASSES MAXIMUM${v628CostEstimateText(9)}</div>${v6211GenerationControlsMarkup(generationSettings,"entity",{includeBlocking:false,outputs:3})}<p class="hint">The approved ${esc(parent?.name || "base")} reference becomes the editable input. Review checks identity preservation and only the requested visible state delta. If no candidate passes, automation aggregates why they failed, corrects the prompt, and retries within the confirmed cap. Approval always stays with you.</p><label class="checkline"><input id="v626-reuse-approved-states" type="checkbox" checked> Reuse this state when it is already approved</label><div>${v627PreflightMarkup(preflight, list, entity)}</div><div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button class="approve-btn" ${preflight.errors.length ? "disabled" : ""} onclick="startPlannedEntityAutomation()">START</button></div></div>`);
 };
 window.openEntityChainAutomationModal = (list, id) => {
   const entity = P[list]?.find((item) => item.id === id);
@@ -1237,7 +1330,7 @@ window.updateEntityChainEstimate = () => {
   if (note) note.innerHTML = `<b>Up to ${maxImages} generated images${v628CostEstimateText(maxImages)}</b><span>${expanded.length} state${expanded.length === 1 ? "" : "s"} · ${outputsPerRequest} image${outputsPerRequest === 1 ? "" : "s"} per pass · three rounds maximum per state</span>`;
   const preflight = entity ? v627EntityPreflight(draft.list, entity, expanded) : { errors: ["Entity unavailable."], warnings: [] };
   const preflightEl = document.getElementById("v627-entity-chain-preflight");
-  if (preflightEl) preflightEl.innerHTML = v627PreflightMarkup(preflight);
+  if (preflightEl) preflightEl.innerHTML = v627PreflightMarkup(preflight, draft.list, entity);
   const button = document.getElementById("v626-start-entity-chain");
   if (button) button.disabled = !expanded.length || !!preflight.errors.length;
   window._v626EntityAutomationDraft = { ...draft, stateIds: expanded, outputsPerRequest, maxImages, generationSettings: settings };
@@ -2776,6 +2869,12 @@ window.approveAutomationCandidate = async (runId, stepKey, fileName) => {
   const cachedStep = cachedRun?.steps?.[stepKey] || null;
   if (!cachedStep || cachedStep.status !== "needs-review") return toast("This review gate is no longer active");
   if (!fileName) return toast("Candidate is unavailable");
+  /* THE GUARD, NOT A SECOND OPINION ABOUT THE MARKUP. Approving is a statement
+     that a person looked at these bytes; if the page cannot resolve them there
+     was nothing to look at. Nothing is discarded — the candidate and its review
+     stay in the gate, and the recovery action is offered beside it. */
+  if (!v670CandidateInspectable(cachedRun, cachedStep, fileName))
+    return toast(`${fileName} cannot be displayed for inspection, so it cannot be approved. Sync local folders and try again.`);
   const cachedShotId = cachedRun.type === "scene-chain"
     ? (cachedStep.shotId || cachedStep.result?.targetShotId || "")
     : cachedRun.targetId;

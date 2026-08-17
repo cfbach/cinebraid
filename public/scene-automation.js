@@ -534,10 +534,54 @@ function v640SceneCorrectionReferences(pkg) {
   if (pkg.nextShotId) addStill(pkg.nextShotId, "continuity", `Next shot ${pkg.nextShotId}`);
   else omitted.push({ role: "continuity", shotId: "", reason: "scene-boundary", position: "next" });
   pkg.omittedAnchors = omitted;
+  /* ==========================================================================
+     THE SMALLEST TRUTHFUL INPUT PACKAGE FOR A TARGETED REPAIR.
+
+     This used to append EVERY reference the shot's creation flow would use to
+     build a frame from nothing — the location plate plus each of its coverage
+     angles, every character's identity plus their coverage slots and supplemental
+     media, and the shot's blocking and planning images — up to sixteen ordered
+     inputs for what is a small edit to one already-approved image. The founder
+     smoke reported exactly that.
+
+     A correction is not a build. Composition, framing, lighting and staging are
+     already settled BY THE BASE IMAGE, which is the editable target. What the
+     repair still needs is identity that must not drift while the edit is made:
+     the primary approved reference for the location, each declared character, and
+     each declared prop or vehicle, plus any continuity state those declarations
+     resolve to. That is the whole of it.
+
+     WHAT IS DROPPED AND WHY:
+       - `supplemental` references (coverage angles, extra media links). They exist
+         to give a NEW composition alternative views. The composition is not being
+         chosen here.
+       - blocking / animatic / planning images. They are greyscale composition
+         scaffolds for building a frame; handing one to a photographic repair of an
+         approved still is an instruction to redesign the shot.
+
+     NOTHING IS GUESSED AND NO PROVENANCE IS LOST. The filter uses the markers the
+     reference builders already set — `supplemental`, `blocking`, and the role — and
+     every dropped reference is recorded on the package with its role and the reason,
+     so the run report can say what was not sent and why. `referenceManifest` remains
+     the exact record of what WAS sent. */
+  const CORRECTION_PRIMARY_ROLES = ["base", "location", "identity", "prop", "continuity-state"];
+  const omittedReferences = [];
   if (target && typeof shotCreationReferences === "function") {
-    for (const ref of shotCreationReferences(target).filter((item) => item.url)) refs.push({ ...ref, role: ref.role === "base" ? "location" : ref.role });
+    for (const ref of shotCreationReferences(target).filter((item) => item.url)) {
+      const role = ref.role === "base" ? "location" : ref.role;
+      if (ref.supplemental === true || ref.blocking === true) {
+        omittedReferences.push({ key: ref.key, label: ref.label || "", role, reason: ref.blocking === true ? "blocking-guide-not-consumed-by-a-repair" : "supplemental-view-not-needed-to-edit-an-approved-still" });
+        continue;
+      }
+      if (!CORRECTION_PRIMARY_ROLES.includes(role)) {
+        omittedReferences.push({ key: ref.key, label: ref.label || "", role, reason: "planning-input-not-consumed-by-a-repair" });
+        continue;
+      }
+      refs.push({ ...ref, role });
+    }
   }
   const seen = new Set(), finalRefs = refs.filter((ref) => ref.url && !seen.has(ref.key) && seen.add(ref.key)).slice(0, 16);
+  pkg.omittedReferences = omittedReferences;
   pkg.referenceManifest = finalRefs.map((ref, index) => ({ order: index + 1, key: ref.key, label: ref.label, role: ref.role, instruction: ref.instruction || "", url: ref.url }));
   return finalRefs;
 }
@@ -625,6 +669,70 @@ function v640ClassifyCorrectionNeighbours(identity) {
   }
   return omissions;
 }
+/* ==========================================================================
+   SCORING WHAT THE FILMMAKER ALREADY APPROVED.
+
+   The correction reviewer's question is "does image 1 fix the stated break while
+   preserving everything else". Asked of the APPROVED ORIGINAL it answers what that
+   question scores when nothing was changed — which is exactly the number a
+   correction has to beat to be called an improvement. Same route, same rubric,
+   same adjacent shots, so the two scores are comparable by construction.
+
+   ONE LOCAL VISION CALL PER PACKAGE. No provider request, no credits, no
+   generation: the file already exists and is already approved. It is recorded as a
+   run step so the creator can see the comparison was made and what it cost.
+
+   IT FAILS CLOSED AND NEVER FAILS THE RUN. If the approved still cannot be scored
+   — it is not on disk where the reviewer looks, or the reviewer errored — the
+   baseline is recorded as unavailable, every candidate classifies as NOT
+   COMPARABLE, and nothing may be recommended. A correction whose improvement
+   cannot be demonstrated is not offered as the fix. */
+async function v670EstablishCorrectionBaseline(run, pkg) {
+  if (pkg.baseline && pkg.baseline.at) return pkg.baseline;
+  const file = String(pkg.approvedTargetFilename || pkg.sourceCandidate || "");
+  const key = `scene-correction:${pkg.id}:baseline`;
+  if (!file) {
+    pkg.baseline = { available: false, reason: "no-approved-original", file: "", score: null, pass: false, at: v626Now() };
+    return pkg.baseline;
+  }
+  const existing = v626Step(run, key);
+  if (existing?.status === "completed" && existing.result?.baseline) {
+    pkg.baseline = existing.result.baseline;
+    return pkg.baseline;
+  }
+  try {
+    await v626BeginStep(run, key, "scene-correction-baseline", `Score the approved ${pkg.targetShotId} still for comparison`, { shotId: pkg.targetShotId, packageId: pkg.id });
+    const data = await v641ReviewSceneCorrectionIncremental(run, v626Step(run, key), { sceneId: run.targetId, targetShotId: pkg.targetShotId, fileNames: [file], package: pkg });
+    const row = (data.review?.reviews || [])[0] || {};
+    pkg.baseline = {
+      available: Number.isFinite(Number(row.score)),
+      reason: Number.isFinite(Number(row.score)) ? "" : "reviewer-returned-no-score",
+      file, score: Number.isFinite(Number(row.score)) ? Math.round(Number(row.score)) : null,
+      pass: row.pass === true, notes: String(row.notes || ""), at: v626Now(),
+    };
+    await v626CompleteStep(run, key, { kind: "scene-correction-baseline", shotId: pkg.targetShotId, files: [file], result: { baseline: pkg.baseline, targetShotId: pkg.targetShotId, packageId: pkg.id } });
+    await v626Log(run, `Approved ${pkg.targetShotId} still scored ${pkg.baseline.score}/100 on the correction review. Every candidate is compared against that.`, "info");
+  } catch (error) {
+    pkg.baseline = { available: false, reason: "baseline-review-failed", detail: error?.message || "", file, score: null, pass: false, at: v626Now() };
+    await v626CompleteStep(run, key, { kind: "scene-correction-baseline", shotId: pkg.targetShotId, files: [file], result: { baseline: pkg.baseline, targetShotId: pkg.targetShotId, packageId: pkg.id } });
+    await v626Log(run, `The approved ${pkg.targetShotId} still could not be scored for comparison (${error?.message || "review failed"}). No correction candidate can be recommended without it.`, "warn");
+  }
+  dirty();
+  return pkg.baseline;
+}
+/* Every reviewed candidate against the baseline, as data on the step. The gate
+   renders these words; it does not derive them. */
+function v670ClassifyCorrectionCandidates(pkg, reviewStep) {
+  const baseline = pkg.baseline || null;
+  const files = reviewStep.files || [];
+  const rows = Array.isArray(reviewStep.review?.reviews) ? reviewStep.review.reviews : [];
+  const verdicts = {};
+  for (let index = 0; index < files.length; index++) {
+    const row = rows.find((item) => Number(item.n) === index + 1) || {};
+    verdicts[files[index]] = classifyCorrectionOutcome(baseline, { score: row.score, pass: row.pass === true });
+  }
+  return { baseline, verdicts };
+}
 async function v640AutomateSceneCorrection(run, pkg) {
   /* THE ORDER, and it is the whole repair.
 
@@ -673,6 +781,9 @@ async function v640AutomateSceneCorrection(run, pkg) {
     );
   }
   const shot = hydratedPreflight.shot, frame = hydratedPreflight.frame;
+  /* THE BASELINE. Scored once per package, before any candidate exists, so every
+     round of this correction is measured against the same number. */
+  await v670EstablishCorrectionBaseline(run, pkg);
   let revision = "";
   for (let round = 1; round <= Number(run.config.correctionPasses || 3); round++) {
     const baseKey = `scene-correction:${pkg.id}:round-${round}`, genKey = `${baseKey}:generate`, reviewKey = `${baseKey}:review`;
@@ -691,7 +802,17 @@ async function v640AutomateSceneCorrection(run, pkg) {
       await v626BeginStep(run, reviewKey, "scene-correction-review", `Review ${pkg.targetShotId} correction in scene context · round ${round}`, { shotId: pkg.targetShotId, frameId: frame.id, attempt: round, maxAttempts: run.config.correctionPasses });
       const data = await v641ReviewSceneCorrectionIncremental(run, reviewStep, { sceneId: run.targetId, targetShotId: pkg.targetShotId, fileNames: files, package: pkg });
       const picked = v626Pick(data, run);
-      await v626CompleteStep(run, reviewKey, { kind: "scene-correction-review", shotId: pkg.targetShotId, frameId: frame.id, pass: picked.pass, score: picked.score, winner: picked.file, files, review: data.review, revision: picked.pass ? "" : picked.note || picked.rationale, result: { targetShotId: pkg.targetShotId, rationale: picked.rationale, recommend: picked.recommend, explicitPass: picked.explicitPass, explicitScore: picked.explicitScore, threshold: v640RecommendationScore(run) } });
+      /* THE COMPARISON, RECORDED BEFORE THE STEP CLOSES. `recommend` now requires
+         the picked candidate to be a demonstrated improvement on the approved
+         original, not merely the best of this pass. A pass that only produced
+         regressions recommends nothing at all. */
+      const comparison = v670ClassifyCorrectionCandidates(pkg, { files, review: data.review });
+      const pickedVerdict = comparison.verdicts[picked.file] || { outcome: "unknown", delta: null };
+      const recommend = picked.recommend && recommendableCorrection(pickedVerdict);
+      await v626CompleteStep(run, reviewKey, { kind: "scene-correction-review", shotId: pkg.targetShotId, frameId: frame.id, pass: picked.pass, score: picked.score, winner: picked.file, files, review: data.review, revision: picked.pass ? "" : picked.note || picked.rationale, result: { targetShotId: pkg.targetShotId, rationale: picked.rationale, recommend, explicitPass: picked.explicitPass, explicitScore: picked.explicitScore, threshold: v640RecommendationScore(run), baseline: comparison.baseline, correctionVerdicts: comparison.verdicts, winnerOutcome: pickedVerdict.outcome } });
+      if (!recommend && picked.recommend) {
+        await v626Log(run, `${picked.file} scored ${picked.score}/100 but is not an improvement on the approved ${pkg.targetShotId} still (${pickedVerdict.outcome}). It is not offered as the fix.`, "warn");
+      }
     }
     const reviewed = v626Step(run, reviewKey);
     /* CORRECTION AUTOMATION IS SUBJECT TO THE SAME INVARIANT. This branch used to

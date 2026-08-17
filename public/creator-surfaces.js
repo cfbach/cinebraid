@@ -112,7 +112,14 @@
     const rows = typeof FAL_GENERATION_JOBS === "undefined" ? null : FAL_GENERATION_JOBS;
     return Array.isArray(rows) ? rows : [];
   }
+  /* Through live-activity.js's own project-scoped reader, so the rail and the Terminal
+     cannot present another project's rows after a switch — the same answer the drawer
+     gives, not a second one. The direct Map read stays as the fallback for a suite realm
+     that loads this file without live-activity.js. */
   function manualActivities() {
+    if (typeof v670ManualActivityRows === "function") {
+      try { return v670ManualActivityRows(); } catch { return []; }
+    }
     if (typeof V641_MANUAL_ACTIVITIES === "undefined" || !V641_MANUAL_ACTIVITIES) return [];
     try { return [...V641_MANUAL_ACTIVITIES.values()]; } catch { return []; }
   }
