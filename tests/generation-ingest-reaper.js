@@ -123,7 +123,11 @@ async function harness({ enabled = true, apiKey = "fal-test-key" } = {}) {
   /* ---- the provider ---- */
   const calls = { submissions: [], status: [], result: [], download: [], cancel: [] };
   const statusFor = new Map();          // request id -> the status the provider reports
-  const behaviour = { statusHttp: new Map(), stallMs: 0 };
+  /* `outputs` lets one request answer with more than one asset, which is what a job that
+     returns several candidates looks like. `holds` lets a single asset download be held
+     open, so a collection can be observed mid-flight rather than only before or after —
+     the only way to assert what a shutdown or an overlapping collection actually sees. */
+  const behaviour = { statusHttp: new Map(), stallMs: 0, outputs: new Map(), holds: new Map() };
   const mock = express();
   mock.use(express.json({ limit: "25mb" }));
   let origin = "";
@@ -136,10 +140,21 @@ async function harness({ enabled = true, apiKey = "fal-test-key" } = {}) {
   });
   mock.get("/result/:id", (req, res) => {
     calls.result.push(req.params.id);
-    res.json({ images: [{ url: `${origin}/file/${req.params.id}.png`, content_type: "image/png", file_name: `${req.params.id}.png` }] });
+    const count = behaviour.outputs.get(req.params.id) || 1;
+    res.json({
+      images: Array.from({ length: count }, (_, index) => {
+        const name = count === 1 ? `${req.params.id}.png` : `${req.params.id}-${index + 1}.png`;
+        return { url: `${origin}/file/${name}`, content_type: "image/png", file_name: name };
+      }),
+    });
   });
-  mock.get("/file/:name", (req, res) => {
+  mock.get("/file/:name", async (req, res) => {
     calls.download.push(req.params.name);
+    const hold = behaviour.holds.get(req.params.name);
+    /* One-shot: a LATER process asking for the same asset is not held, which is what
+       makes "the first attempt died mid-download and the next one started clean"
+       expressible. */
+    if (hold) { behaviour.holds.delete(req.params.name); hold.reached(); await hold.released; }
     res.set("content-type", "image/png").send(PNG);
   });
   mock.put("/cancel/:id", (req, res) => { calls.cancel.push(req.params.id); res.json({ ok: true }); });
@@ -202,13 +217,38 @@ async function harness({ enabled = true, apiKey = "fal-test-key" } = {}) {
     options: { bootDelayMs: 5, intervalMs: 5_000 },
   });
 
+  /* Hold one asset download open. Returns { reached, release } — `reached` resolves when
+     the collection has actually asked for those bytes, so a test can act at a precise
+     point inside an in-flight collection instead of guessing with a timer. */
+  const hold = (name) => {
+    let reached, released;
+    const reachedPromise = new Promise((resolve) => { reached = resolve; });
+    const releasedPromise = new Promise((resolve) => { released = resolve; });
+    behaviour.holds.set(name, { reached, released: releasedPromise });
+    return { reached: reachedPromise, release: released };
+  };
+
   return {
-    tmp, dir, origin, calls, statusFor, behaviour, config, poller, ledgerFile, writeLedger, readLedger, runsFile,
+    tmp, dir, origin, calls, statusFor, behaviour, config, poller, ledgerFile, writeLedger, readLedger, runsFile, hold,
     recovery: FalGeneration.recovery,
+    reconcileStaleRuns: AutomationRuns.reconcileStaleRuns,
+    /* A second registration against the same directories: what the NEXT process sees. */
+    restart: () => registerFalGeneration(express(), context),
     base: originOf(cinebraid),
     project: () => JSON.parse(fs.readFileSync(path.join(dir, "project.json"), "utf8")),
-    takes: () => fs.readdirSync(path.join(dir, "shots", "SH-1", "takes")),
-    close: () => { poller.stop(); provider.close(); cinebraid.close(); },
+    takes: () => (fs.existsSync(path.join(dir, "shots", "SH-1", "takes")) ? fs.readdirSync(path.join(dir, "shots", "SH-1", "takes")).sort() : []),
+    /* Connections are destroyed, not merely refused. A download this suite deliberately
+       held open would otherwise keep its socket — and so the whole process — alive after
+       the last assertion. Destroying it is also the truthful ending for a held request:
+       the collection that was fetching it is gone, which is exactly what the shutdown
+       case is describing. */
+    close: () => {
+      poller.stop();
+      provider.closeAllConnections?.();
+      cinebraid.closeAllConnections?.();
+      provider.close();
+      cinebraid.close();
+    },
   };
 }
 
@@ -473,9 +513,9 @@ function staleRunFixtures() {
   });
   return [
     {
-      id: "run-orphan", type: "shot-chain", targetId: "SH-1", scope: "stills", label: "Abandoned by a closed tab",
+      id: "run-orphan", type: "shot-chain", targetId: "SH-1", scope: "stills", label: "Lease lapsed mid-run",
       status: "running", stage: "Generating Frame A", summary: "", revision: 4,
-      runnerId: "runner-that-went-away", leaseAcquiredAt: ago(1200), heartbeatAt: ago(900), leaseExpiresAt: ago(600),
+      runnerId: "runner-that-stopped-renewing", leaseAcquiredAt: ago(1200), heartbeatAt: ago(900), leaseExpiresAt: ago(600),
       current: { stepKey: "frame:frame-a:round-1:generate" }, config: { maxImages: 21 },
       usage: { imagesGenerated: 3 }, steps: step("running"), logs: [],
       createdAt: ago(1200), updatedAt: ago(900), completedAt: "",
@@ -551,7 +591,7 @@ async function staleRunChecks() {
     assert(/Resume Run/.test(byId["run-orphan"].summary), "in the product's own words");
     assert.strictEqual(byId["run-orphan"].runnerId, "", "the dead runner's claim is released");
     assert.strictEqual(byId["run-orphan"].leaseExpiresAt, "", "along with its lease");
-    assert.strictEqual(byId["run-orphan"].leaseDiagnostics.lastRunnerId, "runner-that-went-away",
+    assert.strictEqual(byId["run-orphan"].leaseDiagnostics.lastRunnerId, "runner-that-stopped-renewing",
       "and what was released is preserved for diagnosis");
     assert(byId["run-orphan"].revision > before[0].revision, "the record moved, so its revision moved");
 
@@ -616,11 +656,15 @@ async function reconciledRunSurfaceChecks() {
   const runs = [
     /* What reconcileStaleLeases actually writes, including the diagnostics it preserves. */
     {
-      id: "run-abandoned", type: "shot-chain", targetId: "L1-01", scope: "stills", label: "Window went away",
+      id: "run-abandoned", type: "shot-chain", targetId: "L1-01", scope: "stills", label: "Lease lapsed",
       status: "interrupted", stage: "Interrupted — resume required",
-      summary: "The window driving this run stopped and its lease expired with no heartbeat.",
+      /* The sentence reconcileStaleLeases actually writes. It names the lease and the
+         heartbeat, which the record establishes, and never a window — see
+         unobservableClaimChecks, which is what forbids the older wording rather than
+         this fixture, which merely has to match it. */
+      summary: "This run lost its active runner: its lease expired with no heartbeat.",
       runnerId: "", leaseAcquiredAt: "", heartbeatAt: "", leaseExpiresAt: "",
-      leaseDiagnostics: { lastRunnerId: "runner-that-went-away", lastReleasedAt: ago(60), lastReleaseCode: "lease-expired" },
+      leaseDiagnostics: { lastRunnerId: "runner-that-stopped-renewing", lastReleasedAt: ago(60), lastReleaseCode: "lease-expired" },
       current: { stepKey: "" }, config: {}, usage: {}, steps: {}, logs: [],
       createdAt: ago(1200), updatedAt: ago(60), completedAt: "",
     },
@@ -645,7 +689,7 @@ async function reconciledRunSurfaceChecks() {
   assert.deepStrictEqual(Array.from(partition.active).map(String), [],
     "a reconciled run is not machine work — nothing is driving it");
   assert.deepStrictEqual(Array.from(partition.waiting).map(String), ["run-abandoned"],
-    "a run whose window went away still reads as waiting for the director");
+    "a run whose lease lapsed still reads as waiting for the director");
   assert.deepStrictEqual(Array.from(partition.attention).map(String), ["run-stopped"],
     "and is NOT filed as a previous failure — nothing about it failed");
   assert.deepStrictEqual(Array.from(partition.unsettled).map(String), ["run-abandoned"],
@@ -653,6 +697,236 @@ async function reconciledRunSurfaceChecks() {
   const detail = vm.runInContext(`v670WaitingDetail(AUTOMATION_RUNS[0], null)`, view.context);
   assert(/Resume Run/.test(detail), `the drawer must offer the resume, got ${JSON.stringify(detail)}`);
   note("surfaces: a reconciled run reads as waiting-for-you with a Resume Run, never as a previous failure");
+}
+
+/* ---------------------------------------------------------------------------
+   ACCEPTANCE BLOCKER 1 — TWO DIFFERENT JOBS, ONE PROJECT.
+
+   Per-job serialisation is keyed on the JOB, so it orders two collections of the SAME
+   job and does nothing for two collections of different jobs in the same project. Both
+   ingests used to read the whole project document, await their downloads for seconds,
+   mutate their own copy and write it back whole — so whichever saved last silently
+   dropped the other's candidate row, while both ledger rows still recorded `ingestedAt`
+   and their outputs. A paid result became an unreferenced file that the record claimed
+   had been delivered.
+
+   THE SCHEDULE IS FORCED, NOT HOPED FOR. Job A's asset download is held open, so A is
+   demonstrably holding project state it read before B existed. B is then collected end
+   to end THROUGH THE REAL HTTP ROUTE, and only then is A released. Without the project
+   turn, A's stale write lands last and B disappears. */
+async function differentJobOverlapChecks() {
+  const h = await harness();
+  try {
+    h.statusFor.set("req-A", "COMPLETED");
+    h.statusFor.set("req-B", "COMPLETED");
+    h.writeLedger([queued("job-A", "req-A", h.origin), queued("job-B", "req-B", h.origin)]);
+    const owner = h.recovery.ownerFor("reaper-project");
+
+    const gate = h.hold("req-A.png");
+    /* A: collected by background recovery. */
+    const collectingA = h.recovery.collect(owner, "job-A", { markFailureOnError: false, unattended: true });
+    await gate.reached;
+    assert.deepStrictEqual(h.project().shots[0].candidateFiles, [],
+      "precondition: A is mid-download and has committed nothing, so its snapshot predates B entirely");
+
+    /* B: collected by an explicit refresh, entirely inside A's window. */
+    const refreshed = await fetch(`${h.base}/api/generation/fal/jobs/job-B/refresh`, { method: "POST" }).then((r) => r.json());
+    assert(refreshed.ok, `the explicit refresh of B must succeed: ${JSON.stringify(refreshed)}`);
+    const afterB = h.project().shots[0].candidateFiles.map((row) => row.stored);
+    assert.strictEqual(afterB.length, 1, "B must be in the project before A's write lands — otherwise this schedule proves nothing");
+
+    gate.release();
+    const collectedA = await collectingA;
+    assert(collectedA.ok && collectedA.collected, `A must have collected: ${JSON.stringify(collectedA)}`);
+
+    /* --- THE PROPERTY --- */
+    const stored = h.project().shots[0].candidateFiles.map((row) => row.stored);
+    assert.strictEqual(stored.length, 2,
+      `both candidate rows must survive; ${stored.length} did: ${JSON.stringify(stored)}`);
+    assert.strictEqual(new Set(stored).size, 2, `and be distinct rows, not one row twice: ${JSON.stringify(stored)}`);
+
+    /* --- ledger and project must agree, in both directions --- */
+    const files = h.takes();
+    assert.deepStrictEqual(files, [...stored].sort(), `every candidate row must name a file that exists, and no file may be unreferenced: rows=${JSON.stringify(stored)} files=${JSON.stringify(files)}`);
+    const ledger = h.readLedger();
+    for (const id of ["job-A", "job-B"]) {
+      const row = ledger.find((item) => item.id === id);
+      assert(row.ingestedAt, `${id} must record that it delivered`);
+      assert.strictEqual((row.outputs || []).length, 1, `${id} must record exactly one output`);
+      const named = row.outputs[0].name;
+      assert(stored.includes(named), `${id} claims it delivered ${named}, which the project does not reference — the exact defect`);
+    }
+
+    /* --- repeated recovery stays idempotent, and nothing was submitted --- */
+    const again = await h.poller.runOnce();
+    assert.strictEqual(again.collected, 0, "a delivered result must not be collected twice");
+    assert.deepStrictEqual(h.takes(), files, "and a second sweep must not add a file");
+    assert.deepStrictEqual(h.project().shots[0].candidateFiles.map((row) => row.stored), stored, "nor a candidate row");
+    assert.deepStrictEqual(h.calls.submissions, [],
+      `the reaper submitted ${h.calls.submissions.length} provider request(s): ${JSON.stringify(h.calls.submissions)}`);
+
+    /* --- THE STRUCTURAL HALF ---
+       The schedule above proves ONE race is closed. This proves there is no second way
+       to write the project document at all: `commitProject` is the only caller of
+       `saveOwnerProject`, so a future ingest, repair or error path cannot reintroduce a
+       snapshot write without deleting this assertion. Asserted against the source
+       because it is a statement about the module's shape, not about one execution. */
+    const source = fs.readFileSync(path.join(ROOT, "fal-generation.js"), "utf8").replace(/\r\n/g, "\n");
+    /* Comments are stripped first, deliberately: commitProject's own header quotes the
+       defective snapshot-write it replaced, and a scan that counted prose would be
+       measuring the documentation rather than the code. */
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/[^\n]*/g, "$1");
+    const writers = code
+      .split("\n")
+      .map((line, index) => ({ line: line.trim(), number: index + 1 }))
+      .filter((row) => /(^|[^\w.])saveOwnerProject\(/.test(row.line))
+      .filter((row) => !row.line.startsWith("function saveOwnerProject"));
+    assert.strictEqual(writers.length, 1,
+      `the project document must have exactly one writer; found ${writers.length}: ${JSON.stringify(writers.map((row) => row.line))}`);
+    const commitBody = source.slice(source.indexOf("function commitProject("), source.indexOf("function commitProject(") + 400);
+    assert(commitBody.includes("saveOwnerProject(owner, project)"),
+      "and that writer must be commitProject, which re-reads the document inside its own turn");
+    note("overlap: a held sweep of job A and a live refresh of job B in one project — both candidates survive, ledger and project agree, 0 submissions, and the project has exactly one writer");
+  } finally { h.close(); }
+}
+
+/* ---------------------------------------------------------------------------
+   ACCEPTANCE BLOCKER 2 — SHUTDOWN UNDER AN IN-FLIGHT COLLECTION.
+
+   Two things were wrong and both are asserted here.
+
+   THE FILES. Ingest used to write each asset to disk as it arrived, so a collection
+   interrupted between two outputs left the first file on disk with no candidate row and
+   no ingest stamp. The next boot collected the same paid result again, `nextFile` renamed
+   around the orphan, and the project ended up referencing a duplicate while the original
+   sat unreferenced forever. Downloads now complete before anything is written, so an
+   interrupted collection leaves nothing at all.
+
+   THE LIFECYCLE. `stop()` cleared timers and returned, so the process could exit while a
+   collection was between its project write and its ledger stamp. It now waits for the
+   sweep in flight, bounded. */
+async function shutdownCoordinationChecks() {
+  /* --- (a) shutdown with NO active sweep must not wait --- */
+  const idle = await harness();
+  try {
+    const outcome = await idle.poller.stop();
+    assert.deepStrictEqual(outcome, { waited: false, timedOut: false }, "stopping an idle poller must not wait for anything");
+  } finally { idle.close(); }
+
+  /* --- (b) shutdown with a sweep that completes normally --- */
+  const normal = await harness();
+  try {
+    normal.statusFor.set("req-n", "COMPLETED");
+    normal.writeLedger([queued("job-n", "req-n", normal.origin)]);
+    const sweeping = normal.poller.runOnce();
+    const stopped = await normal.poller.stop();
+    await sweeping;
+    assert.strictEqual(stopped.timedOut, false, "a sweep that finishes inside the grace window must not report a timeout");
+    assert.strictEqual(normal.readLedger()[0].ingestedAt ? true : false, true,
+      "and the collection it was running must be durably recorded before the process could exit");
+    assert.deepStrictEqual(normal.calls.submissions, [], "shutdown must not submit anything");
+  } finally { normal.close(); }
+
+  /* --- (c) the reproduction: interrupted between two outputs of one paid job --- */
+  const h = await harness();
+  try {
+    h.statusFor.set("req-two", "COMPLETED");
+    h.behaviour.outputs.set("req-two", 2);
+    h.writeLedger([queued("job-two", "req-two", h.origin, { outputCount: 2 })]);
+    const owner = h.recovery.ownerFor("reaper-project");
+
+    const gate = h.hold("req-two-2.png");     // hold the SECOND asset
+    const collecting = h.recovery.collect(owner, "job-two", { markFailureOnError: false, unattended: true });
+    collecting.catch(() => {});
+    await gate.reached;
+
+    /* THE STATE A SHUTDOWN WOULD FIND. The first asset has been fetched; nothing about
+       it may be on disk, because nothing references it yet. */
+    assert.deepStrictEqual(h.takes(), [],
+      `an interrupted collection must leave no file to orphan; found ${JSON.stringify(h.takes())}`);
+    assert.deepStrictEqual(h.project().shots[0].candidateFiles, [], "and no candidate row");
+    assert(!h.readLedger()[0].ingestedAt, "and no ingest stamp");
+
+    /* The process dies here: the held download is never released, exactly as a killed
+       process never resumes one. The NEXT process starts clean. */
+    const next = h.restart();
+    const recollected = await next.recovery.collect(next.recovery.ownerFor("reaper-project"), "job-two", { markFailureOnError: false, unattended: true });
+    assert(recollected.ok && recollected.collected, `the next process must collect the paid result: ${JSON.stringify(recollected)}`);
+
+    const stored = h.project().shots[0].candidateFiles.map((row) => row.stored);
+    const files = h.takes();
+    assert.strictEqual(stored.length, 2, `exactly the two intended candidates must exist; got ${JSON.stringify(stored)}`);
+    assert.deepStrictEqual(files, [...stored].sort(),
+      `no unreferenced file may remain: rows=${JSON.stringify(stored)} files=${JSON.stringify(files)}`);
+    assert.strictEqual(h.readLedger()[0].outputs.length, 2, "and the ledger must record both");
+    assert.deepStrictEqual(h.calls.submissions, [], "and nothing was submitted");
+
+    /* --- (d) a collection already committed is not fetched again --- */
+    const downloadsBefore = h.calls.download.length;
+    const third = await next.recovery.collect(next.recovery.ownerFor("reaper-project"), "job-two", { markFailureOnError: false, unattended: true });
+    assert.strictEqual(third.collected, false, "an already-delivered job must not be collected a second time");
+    assert.strictEqual(h.calls.download.length, downloadsBefore, "and must not be downloaded again");
+    note("shutdown: idle stop waits for nothing; a normal sweep is awaited; an interrupted two-output collection leaves no orphan and the next process delivers exactly two");
+  } finally { h.close(); }
+}
+
+/* ---------------------------------------------------------------------------
+   ACCEPTANCE BLOCKER 3 — WHAT THE SERVER MAY SAY ABOUT WHY A RUN STOPPED.
+
+   A lapsed lease establishes that the lease expired and no heartbeat renewed it. It does
+   NOT establish that a browser closed, a tab went away, or that nobody was watching: a
+   suspended tab, a sleeping machine and a lost network all produce the identical record
+   with the window still open. Every surface the correction writes — the durable summary,
+   the run log, the diagnostics sentence and the server console line — is checked here
+   against one rule, so the ban cannot be satisfied on one surface and violated on
+   another. */
+const BROWSER_STATE_CLAIM = /\b(window|windows|tab|tabs|browser|nobody|no one|watching|onscreen|on-screen)\b/i;
+
+async function unobservableClaimChecks() {
+  const h = await harness();
+  try {
+    /* One run whose lease lapsed, reconciled through the real entry point. */
+    const stale = staleRunFixtures().find((run) => run.id === "run-orphan");
+    assert(stale, "the stale-lease fixture must exist");
+    fs.writeFileSync(h.runsFile, JSON.stringify({ schemaVersion: 2, updatedAt: ago(0), runs: [stale] }, null, 2));
+
+    const logged = [];
+    const poller = createGenerationPoller({
+      listProjectSlugs: () => [],
+      recovery: h.recovery,
+      reconcileStaleRuns: h.reconcileStaleRuns,
+      log: (line) => logged.push(line),
+      options: { bootDelayMs: 5, intervalMs: 5_000 },
+    });
+    await poller.runOnce();
+    await poller.stop();
+
+    const runs = JSON.parse(fs.readFileSync(h.runsFile, "utf8")).runs;
+    const run = runs.find((item) => item.id === "run-orphan");
+    assert(run, `the reconciled run must still be in the ledger: ${JSON.stringify(runs.map((r) => r.id))}`);
+    assert.strictEqual(run.status, "interrupted", "the lapsed run must be recorded as interrupted");
+
+    /* EVERY durable surface the correction writes. */
+    const surfaces = {
+      summary: run.summary,
+      stage: run.stage,
+      "leaseDiagnostics.lastReleaseReason": run.leaseDiagnostics?.lastReleaseReason,
+      ...Object.fromEntries((run.logs || []).map((entry, index) => [`logs[${index}].message`, entry.message])),
+      ...Object.fromEntries(logged.map((line, index) => [`console[${index}]`, line])),
+    };
+    for (const [where, text] of Object.entries(surfaces)) {
+      const match = BROWSER_STATE_CLAIM.exec(String(text || ""));
+      assert(!match, `${where} claims unobservable browser state ("${match?.[0]}"): ${text}`);
+    }
+
+    /* NON-VACUOUS: the surfaces must actually say something, and say the observable
+       thing, rather than passing by being empty. */
+    assert(/lease/i.test(run.summary), `the summary must name the lease: ${run.summary}`);
+    assert(/heartbeat/i.test(run.summary), `and the missing heartbeat: ${run.summary}`);
+    assert(logged.some((line) => /lease/i.test(line)), `the console line must name the lease: ${JSON.stringify(logged)}`);
+    assert(Object.keys(surfaces).length >= 5, `all four surface kinds must have been examined: ${JSON.stringify(Object.keys(surfaces))}`);
+    note(`wording: ${Object.keys(surfaces).length} durable/console surfaces carry lease-and-heartbeat language and none claims a window, tab, browser or watcher`);
+  } finally { h.close(); }
 }
 
 /* ---------------------------------------------------------------------------
@@ -818,6 +1092,9 @@ async function main() {
   abandonmentPredicateChecks();
   await sweepChecks();
   await coexistenceChecks();
+  await differentJobOverlapChecks();
+  await shutdownCoordinationChecks();
+  await unobservableClaimChecks();
   await transientFailureChecks();
   await unconfiguredChecks();
   await staleRunChecks();

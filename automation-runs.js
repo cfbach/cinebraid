@@ -28,12 +28,17 @@ function leaseExpired(run, at = Date.now()) {
    already five heartbeats long, so this only absorbs clock skew between the window that
    wrote the record and the process reading it. */
 const ABANDON_GRACE_MS = HEARTBEAT_MS;
-/* The lease was released because the window driving the run went away, not because the
-   run stopped for a reason of its own. Written into leaseDiagnostics and read by the
+/* The lease was released because it expired with no heartbeat, not because the run
+   stopped for a reason of its own. Written into leaseDiagnostics and read by the
    activity surfaces, which have to keep saying "waiting for you · choose Resume Run"
    about a run in this state rather than filing it under previous failures. */
 const RELEASE_CODE_LEASE_EXPIRED = "lease-expired";
-/* HAS THE WINDOW DRIVING THIS RUN GONE AWAY FOR GOOD?
+/* HAS THIS RUN LOST ITS ACTIVE RUNNER FOR GOOD?
+ *
+ * Answered from the lease and the heartbeat, which are the only things recorded. Why the
+ * runner stopped renewing is NOT knowable here and is not asked: a closed tab, a
+ * suspended one, a sleeping machine and a lost network all reach this predicate the same
+ * way, and nothing downstream may claim to know which.
  *
  * Deliberately narrower than leaseExpired(). That predicate answers "may I take this
  * lease", which is true for a run nobody has ever claimed; this one answers "is the
@@ -76,7 +81,7 @@ function sanitizeLeaseDiagnostics(value, base = {}) {
     lastReleaseReason: cleanText(source.lastReleaseReason || prior.lastReleaseReason, 240),
     /* WHY the lease was released, as a stable code rather than the sentence beside it.
        `interrupted` means two things — a runner that stopped safely and a run whose
-       window went away — and every surface that has to tell them apart reads this.
+       lease lapsed — and every surface that has to tell them apart reads this.
        Matching on lastReleaseReason instead would make a wording change a behaviour
        change. See RELEASE_CODE_LEASE_EXPIRED. */
     lastReleaseCode: cleanText(source.lastReleaseCode || prior.lastReleaseCode, 80),
@@ -380,10 +385,15 @@ function registerAutomationRuns(app, deps) {
   /* ==========================================================================
      STALE-LEASE RECONCILIATION — a run nothing owns must stop saying `running`.
 
-     A window driving a run holds a lease and renews it every HEARTBEAT_MS. Close the
-     tab, sleep the laptop, kill the browser, and the durable record keeps its last
-     word: status `running`, a stage that names the step it was on, a runnerId whose
-     process no longer exists. Nothing ever wrote the ending.
+     A runner holds a lease and renews it every HEARTBEAT_MS. Close the tab, suspend it,
+     sleep the laptop, lose the network — the lease stops being renewed and the durable
+     record keeps its last word: status `running`, a stage that names the step it was on,
+     a runnerId nothing is answering for. Nothing ever wrote the ending.
+
+     THOSE CAUSES ARE INDISTINGUISHABLE HERE, and that is why the correction below names
+     the lease rather than the browser. CineBraid observes a lease and a heartbeat; it
+     never observes a window. A message that says the window closed would be asserting
+     the one thing this record cannot establish.
 
      Every activity surface already KNEW this — v670WaitingForHumanRun reads the lapsed
      lease and says "orchestration stopped, choose Resume Run" — but it knew it only
@@ -407,7 +417,13 @@ function registerAutomationRuns(app, deps) {
       const run = runs[index];
       if (!runnerAbandoned(run, at)) continue;
       const stamp = now();
-      const message = "The window driving this run stopped and its lease expired with no heartbeat. "
+      /* WHAT THIS SENTENCE IS ALLOWED TO SAY. The durable record establishes exactly two
+         things: the lease expired, and no heartbeat renewed it. It does NOT establish
+         that a browser closed, a tab went away or that nobody was watching — a suspended
+         tab, a sleeping machine and a network partition all produce this same record with
+         the window still open. The message therefore names the lease and the runner,
+         which are observed, and never the browser, which is not. */
+      const message = "This run lost its active runner: its lease expired with no heartbeat. "
         + "CineBraid recorded the run as interrupted. Nothing was cancelled and no new work was started.";
       runs[index] = bump({}, run, {
         status: "interrupted",
@@ -423,10 +439,10 @@ function registerAutomationRuns(app, deps) {
           lastReleasedAt: stamp,
           lastReleaseReason: "Lease expired with no heartbeat; CineBraid recorded the run as interrupted.",
           /* THE HALF OF `interrupted` THIS ONE IS. Without it the drawer cannot tell a
-             run whose window went away from a run that stopped for its own reason, and
-             an abandoned run would leave WAITING FOR YOU for PREVIOUS FAILURES — which
-             is a downgrade in truth, not an upgrade: nothing failed, and the creator's
-             next move is still Resume Run. */
+             run whose lease lapsed from a run that stopped for its own reason, and an
+             abandoned run would leave WAITING FOR YOU for PREVIOUS FAILURES — which is a
+             downgrade in truth, not an upgrade: nothing failed, and the creator's next
+             move is still Resume Run. */
           lastReleaseCode: RELEASE_CODE_LEASE_EXPIRED,
         }, run.leaseDiagnostics),
         logs: [...(Array.isArray(run.logs) ? run.logs : []), { at: stamp, tone: "warn", message }].slice(-MAX_LOGS),
@@ -449,8 +465,8 @@ function registerAutomationRuns(app, deps) {
     return runs;
   }
   /* The same correction, entered on purpose rather than as a side effect of a read.
-     This is the entry point the server-side ingest reaper uses, so a run abandoned by a
-     closed tab stops claiming to be running even when no window ever opens again.
+     This is the entry point the server-side ingest reaper uses, so a run whose lease has
+     lapsed stops claiming to be running even if nothing ever asks for it again.
      It reconciles state and nothing else — see reconcileStaleLeases. */
   function reconcileStaleRuns(at = Date.now()) {
     const runs = read();

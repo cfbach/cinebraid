@@ -42,9 +42,10 @@
 
 const Lifecycle = require("./generation-lifecycle");
 
-/* Deliberately slower than the browser's 3.5 seconds. A tab polls because somebody is
-   watching a progress bar; this sweeps because nobody is. Twenty seconds is far below
-   any provider's queue latency and costs one status request per unfinished job. */
+/* Deliberately slower than the browser's 3.5 seconds. A tab polls to keep a progress bar
+   moving; this sweep answers to nothing on screen and has no reason to be that eager.
+   Twenty seconds is far below any provider's queue latency and costs one status request
+   per unfinished job. */
 const DEFAULTS = {
   intervalMs: 20_000,
   /* Long enough that a boot sweep never competes with the first page load. */
@@ -57,6 +58,10 @@ const DEFAULTS = {
   /* Bounded backoff for a job whose status request keeps failing. */
   backoffStartMs: 60_000,
   backoffMaxMs: 15 * 60_000,
+  /* How long shutdown may wait for a collection already in flight. Deliberately inside
+     server.js's existing 5s force-exit envelope, so waiting for recovery can never be
+     what makes CineBraid fail to exit. See stop(). */
+  stopGraceMs: 4_000,
 };
 
 /* Statuses that describe a request whose RESULT may still be owed to CineBraid.
@@ -139,6 +144,7 @@ function resolveOptions(options = {}) {
     abandonAfterMs: positiveNumber(options.abandonAfterMs, DEFAULTS.abandonAfterMs),
     backoffStartMs: positiveNumber(options.backoffStartMs, DEFAULTS.backoffStartMs),
     backoffMaxMs: positiveNumber(options.backoffMaxMs, DEFAULTS.backoffMaxMs),
+    stopGraceMs: positiveNumber(options.stopGraceMs, DEFAULTS.stopGraceMs),
   };
 }
 /* CINEBRAID_GENERATION_POLL=off switches the sweep off entirely. It exists for suites
@@ -176,6 +182,9 @@ function createGenerationPoller(deps = {}) {
   let tickTimer = null;
   let running = false;
   let stopped = false;
+  /* The sweep in flight, or null when idle. This is what stop() waits on, and it is the
+     only reason the tick is split into `sweep` and `runOnce` below. */
+  let active = null;
 
   function backoffKey(slug, jobId) { return `${slug}::${jobId}`; }
   function recordFailure(key, at) {
@@ -185,24 +194,25 @@ function createGenerationPoller(deps = {}) {
     backoff.set(key, { failures, until: at + delay });
   }
 
-  async function runOnce() {
-    if (running) return { ran: false, reason: "already-running" };
-    running = true;
+  async function sweep() {
     const at = Date.now();
     const summary = {
       ran: true, at, projects: 0, examined: 0, polled: 0, collected: 0, results: 0,
       failed: 0, skipped: 0, staleRuns: [], providerReady: true, unreadable: [],
     };
     try {
-      /* STATE TRUTH FIRST, and independently of the provider. A run abandoned by a
-         closed tab is a lie in the ledger whether or not generation is configured, and
+      /* STATE TRUTH FIRST, and independently of the provider. A run whose lease has
+         lapsed is a lie in the ledger whether or not generation is configured, and
          correcting it neither starts nor resumes anything. */
       if (reconcileStaleRuns) {
         try {
           const reconciled = reconcileStaleRuns(at) || [];
           summary.staleRuns = reconciled;
           if (reconciled.length)
-            log(`  CineBraid recorded ${reconciled.length} automation run${reconciled.length === 1 ? "" : "s"} as interrupted: the window driving ${reconciled.length === 1 ? "it" : "them"} stopped and the lease expired. Nothing was resumed.`);
+            /* Lease language, not browser language: the server observes an expired lease
+               and a missing heartbeat, and never whether a window is open. See
+               automation-runs.js reconcileStaleLeases. */
+            log(`  CineBraid recorded ${reconciled.length} automation run${reconciled.length === 1 ? "" : "s"} as interrupted: ${reconciled.length === 1 ? "its lease" : "their leases"} expired with no heartbeat. Nothing was resumed.`);
         } catch { /* a run ledger that cannot be read is not a reason to skip generation */ }
       }
       /* Generation switched off, or no key: there is nothing this can ask, and nothing
@@ -277,7 +287,19 @@ function createGenerationPoller(deps = {}) {
       return summary;
     } finally {
       running = false;
+      active = null;
     }
+  }
+
+  /* ONE TICK. Ticks do not overlap: a sweep already in flight is reported rather than a
+     second one started. Split from `sweep` only so the in-flight promise is reachable —
+     `active` is what stop() waits on, and without a handle on it a shutdown could exit
+     underneath a collection that had already begun. */
+  function runOnce() {
+    if (running) return Promise.resolve({ ran: false, reason: "already-running" });
+    running = true;
+    active = sweep();
+    return active;
   }
 
   function schedule() {
@@ -300,10 +322,46 @@ function createGenerationPoller(deps = {}) {
     if (typeof bootTimer.unref === "function") bootTimer.unref();
     return true;
   }
-  function stop() {
+  /* STOP SCHEDULING, AND WAIT FOR A COLLECTION ALREADY UNDER WAY.
+   *
+   * Clearing the timers stops the NEXT sweep; it does nothing to the one already
+   * running. A sweep in flight can be between the project write and the ledger's ingest
+   * stamp — a moment where the candidate rows and their files exist and the job row does
+   * not yet record that it delivered them. A process that exits there leaves the next
+   * boot to collect the same already-paid result a second time.
+   *
+   * WHAT IT WAITS FOR: exactly the sweep in flight, and nothing more. `stopped` is set
+   * before the wait and the sweep checks it between jobs, so at most the ONE collection
+   * already in progress runs to its boundary; every other eligible row is left for the
+   * next process, which is the correct answer for work nobody has started.
+   *
+   * BOUNDED, AND SAFE WHEN THE BOUND IS HIT. `stopGraceMs` caps the wait so a provider
+   * that never answers cannot hold CineBraid open. Exceeding it is safe rather than
+   * merely tolerated: the download phase in fal-generation.js writes nothing to disk and
+   * holds no project state, so an abandoned download leaves no file to orphan and no
+   * half-applied project mutation — the collection simply did not happen.
+   *
+   * A SWEEP THAT REJECTS IS NOT A REASON TO REFUSE TO SHUT DOWN. A rejection is absorbed
+   * here and reported as settled; the shutdown path has no use for the distinction and
+   * an unhandled rejection during exit would be worse than the error it names.
+   *
+   * Timers are cleared BEFORE the first await, so a caller that never awaits the result
+   * still gets the whole of the old synchronous behaviour. */
+  async function stop({ graceMs } = {}) {
+    const grace = positiveNumber(graceMs, options.stopGraceMs);
     stopped = true;
     if (bootTimer) { clearTimeout(bootTimer); bootTimer = null; }
     if (tickTimer) { clearInterval(tickTimer); tickTimer = null; }
+    const inFlight = active;
+    if (!inFlight) return { waited: false, timedOut: false };
+    let timer = null;
+    const deadline = new Promise((resolve) => {
+      timer = setTimeout(() => resolve("timed-out"), grace);
+      if (typeof timer.unref === "function") timer.unref();
+    });
+    const outcome = await Promise.race([inFlight.then(() => "settled", () => "settled"), deadline]);
+    if (timer) clearTimeout(timer);
+    return { waited: true, timedOut: outcome === "timed-out" };
   }
 
   return { start, stop, runOnce, options, isRunning: () => running };

@@ -1269,7 +1269,8 @@ async function load() {
   FAL_GENERATION_JOBS = [];
   FAL_GENERATION_LEDGER_LOADED = false;
   const falConfig = CONFIG.generation?.fal || {};
-  /* What the server collected while this window was closed. The header marks THIS
+  /* What the server collected through its own background recovery rather than through a
+     refresh from here — which is all the server can know, and all it says. The header marks THIS
      request — the initial ledger load — as the one that takes delivery of the notice,
      so the activity drawer's 3.5-second refresh of the same route neither consumes it
      nor repeats it. The URL is unchanged on purpose: it is matched exactly by route

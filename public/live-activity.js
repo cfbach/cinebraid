@@ -141,10 +141,15 @@ function v670RunGateOutstanding(run) {
   if (!requirements.length) return true;
   return requirements.some((requirement) => !gateSatisfied(requirement, project));
 }
-/* DID THE WINDOW DRIVING THIS RUN GO AWAY?
+/* DID THIS RUN LOSE ITS ACTIVE RUNNER?
+ *
+ * Answered from the release code alone, which records that the lease expired with no
+ * heartbeat. WHY the runner stopped renewing is not knowable - a closed tab, a suspended
+ * one, a sleeping machine and a lost network are the same record - so nothing here may
+ * say a window closed or that nobody was watching.
  *
  * `interrupted` has always meant two things - a run that stopped for a reason of its
- * own, and a run whose runner vanished - and until the server started reconciling stale
+ * own, and a run that lost its runner - and until the server started reconciling stale
  * leases, only the second one existed as `running` with a lapsed lease, which
  * v670WaitingForHumanRun read below. Now that the durable record says `interrupted`
  * (automation-runs.js reconcileStaleLeases), the two halves arrive wearing the same
@@ -187,10 +192,11 @@ function v670WaitingForHumanRun(run) {
    rather than split, because splitting them touches the dispatch path and is a different
    piece of work.
 
-   THE ONE EXCLUSION is the half the server can now name: a run whose window went away.
-   Nothing went wrong with it, so calling it a previous failure is false, and it is
-   already counted where it belongs - waiting for a person to press Resume Run. Without
-   this it would sit in BOTH sections at once, which is how it would have arrived. */
+   THE ONE EXCLUSION is the half the server can now name: a run whose lease lapsed with
+   no heartbeat. Nothing went wrong with it, so calling it a previous failure is false,
+   and it is already counted where it belongs - waiting for a person to press Resume Run.
+   Without this it would sit in BOTH sections at once, which is how it would have
+   arrived. */
 function v670AttentionRun(run) {
   return ["failed", "interrupted", "cancelled"].includes(run?.status) && !v670RunnerWentAway(run);
 }

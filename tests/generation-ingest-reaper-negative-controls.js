@@ -99,7 +99,7 @@ function staleRuns() {
     {
       id: "run-orphan", type: "shot-chain", targetId: "SH-1", scope: "stills", label: "Abandoned",
       status: "running", stage: "Generating Frame A", summary: "", revision: 4,
-      runnerId: "runner-that-went-away", leaseAcquiredAt: ago(1200), heartbeatAt: ago(900), leaseExpiresAt: ago(600),
+      runnerId: "runner-that-stopped-renewing", leaseAcquiredAt: ago(1200), heartbeatAt: ago(900), leaseExpiresAt: ago(600),
       current: { stepKey: "" }, config: { maxImages: 21 }, usage: { imagesGenerated: 3 }, steps: {}, logs: [],
       createdAt: ago(1200), updatedAt: ago(900), completedAt: "",
     },
@@ -125,7 +125,7 @@ async function scenario(modules = {}) {
 
   const calls = { submissions: [], status: [], result: [], download: [] };
   const statusFor = new Map();
-  const behaviour = { statusHttp: new Map(), stallMs: 0 };
+  const behaviour = { statusHttp: new Map(), stallMs: 0, holds: new Map() };
   const mock = express();
   mock.use(express.json({ limit: "25mb" }));
   let origin = "";
@@ -140,7 +140,14 @@ async function scenario(modules = {}) {
     calls.result.push(req.params.id);
     res.json({ images: [{ url: `${origin}/file/${req.params.id}.png`, content_type: "image/png" }] });
   });
-  mock.get("/file/:name", (req, res) => { calls.download.push(req.params.name); res.set("content-type", "image/png").send(PNG); });
+  /* A holdable download, so a collection can be observed mid-flight — the only way to
+     express "a shutdown began here" or "another job wrote while this one was fetching". */
+  mock.get("/file/:name", async (req, res) => {
+    calls.download.push(req.params.name);
+    const hold = behaviour.holds.get(req.params.name);
+    if (hold) { behaviour.holds.delete(req.params.name); hold.reached(); await hold.released; }
+    res.set("content-type", "image/png").send(PNG);
+  });
   mock.put("/cancel/:id", (req, res) => res.json({ ok: true }));
   mock.post("*", (req, res) => {
     calls.submissions.push({ path: req.path });
@@ -175,16 +182,120 @@ async function scenario(modules = {}) {
     options: { bootDelayMs: 5, intervalMs: 5_000 },
   });
 
+  const hold = (name) => {
+    let reached, released;
+    const reachedPromise = new Promise((resolve) => { reached = resolve; });
+    const releasedPromise = new Promise((resolve) => { released = resolve; });
+    behaviour.holds.set(name, { reached, released: releasedPromise });
+    return { reached: reachedPromise, release: released };
+  };
+
   return {
-    dir, origin, calls, statusFor, behaviour, poller,
+    dir, origin, calls, statusFor, behaviour, poller, hold,
+    recovery: FalGeneration.recovery,
+    makePoller: ({ log, ...options } = {}) => createGenerationPoller({
+      listProjectSlugs: () => ["reaper-project"],
+      recovery: FalGeneration.recovery,
+      reconcileStaleRuns: AutomationRuns.reconcileStaleRuns,
+      log: typeof log === "function" ? log : () => {},
+      options: { bootDelayMs: 5, intervalMs: 5_000, ...options },
+    }),
     base: originOf(cinebraid),
     writeLedger: (jobs) => fs.writeFileSync(path.join(dir, "generation-jobs.json"), JSON.stringify(jobs, null, 2)),
     readLedger: () => JSON.parse(fs.readFileSync(path.join(dir, "generation-jobs.json"), "utf8")),
     writeRuns: (runs) => fs.writeFileSync(path.join(dir, "automation-runs.json"), JSON.stringify({ schemaVersion: 2, updatedAt: ago(0), runs }, null, 2)),
     readRuns: () => JSON.parse(fs.readFileSync(path.join(dir, "automation-runs.json"), "utf8")).runs,
-    takes: () => fs.readdirSync(path.join(dir, "shots", "SH-1", "takes")),
-    close: () => { poller.stop(); provider.close(); cinebraid.close(); },
+    project: () => JSON.parse(fs.readFileSync(path.join(dir, "project.json"), "utf8")),
+    takes: () => fs.readdirSync(path.join(dir, "shots", "SH-1", "takes")).sort(),
+    /* Connections are destroyed: a download held open by a control would otherwise keep
+       its socket, and the process, alive after the last assertion. */
+    close: () => {
+      poller.stop();
+      provider.closeAllConnections?.();
+      cinebraid.closeAllConnections?.();
+      provider.close();
+      cinebraid.close();
+    },
   };
+}
+
+/* Two DIFFERENT jobs of one project, collected across each other. Job A is held
+   mid-download while job B is collected end to end through the real refresh route; only
+   then is A released. Without a per-project write turn, A's stale whole-project write
+   lands last and B's candidate row disappears while B's ledger row still claims it was
+   delivered. */
+async function guardDifferentJobsBothSurvive(modules) {
+  const h = await scenario(modules);
+  try {
+    h.statusFor.set("req-A", "COMPLETED");
+    h.statusFor.set("req-B", "COMPLETED");
+    h.writeLedger([queued("job-A", "req-A", h.origin), queued("job-B", "req-B", h.origin)]);
+    const owner = h.recovery.ownerFor("reaper-project");
+    const gate = h.hold("req-A.png");
+    const collectingA = h.recovery.collect(owner, "job-A", { markFailureOnError: false, unattended: true });
+    collectingA.catch(() => {});
+    await gate.reached;
+    await fetch(`${h.base}/api/generation/fal/jobs/job-B/refresh`, { method: "POST" }).then((r) => r.json());
+    gate.release();
+    await collectingA;
+    const stored = h.project().shots[0].candidateFiles.map((row) => row.stored);
+    assert.strictEqual(stored.length, 2,
+      `both candidate rows must survive; ${stored.length} did: ${JSON.stringify(stored)}`);
+    assert.deepStrictEqual(h.takes(), [...stored].sort(), "and no file may be left unreferenced");
+  } finally { h.close(); }
+}
+
+/* Shutdown while a collection is in flight. `stop()` must report that it waited; a stop
+   that only clears timers lets the process exit out from under a collection that is
+   between its project write and its ledger stamp. The held download is never released,
+   so the grace window is what ends the wait — deterministically, and without the test
+   depending on how fast a download happens to be. */
+async function guardShutdownWaitsForCollection(modules) {
+  const h = await scenario(modules);
+  try {
+    h.statusFor.set("req-hold", "COMPLETED");
+    h.writeLedger([queued("job-hold", "req-hold", h.origin)]);
+    const poller = h.makePoller({ stopGraceMs: 250 });
+    const gate = h.hold("req-hold.png");
+    const sweeping = poller.runOnce();
+    sweeping.catch(() => {});
+    await gate.reached;
+    const outcome = await poller.stop();
+    assert.strictEqual(outcome?.waited, true,
+      `shutdown must wait for a collection already in flight; stop() reported ${JSON.stringify(outcome)}`);
+    gate.release();
+    await sweeping.catch(() => {});
+  } finally { h.close(); }
+}
+
+/* Every durable and console surface the stale-lease correction writes, against one rule:
+   it may name the lease, the heartbeat and the runner, and may not claim a window, tab,
+   browser or watcher — none of which the server observes. */
+const BROWSER_STATE_CLAIM = /\b(window|windows|tab|tabs|browser|nobody|no one|watching)\b/i;
+async function guardNoUnobservableBrowserClaim(modules) {
+  const h = await scenario(modules);
+  try {
+    h.writeRuns(staleRuns());
+    /* The console line is part of the surface under test, so it is captured rather than
+       discarded the way the default scenario poller discards it. */
+    const logged = [];
+    const poller = h.makePoller({ log: (line) => logged.push(line) });
+    await poller.runOnce();
+    await poller.stop();
+    const run = h.readRuns().find((item) => item.id === "run-orphan");
+    assert(run, "the reconciled run must still be present");
+    const surfaces = {
+      summary: run.summary,
+      stage: run.stage,
+      "leaseDiagnostics.lastReleaseReason": run.leaseDiagnostics?.lastReleaseReason,
+      ...Object.fromEntries((run.logs || []).map((entry, index) => [`logs[${index}].message`, entry.message])),
+      ...Object.fromEntries(logged.map((line, index) => [`console[${index}]`, line])),
+    };
+    for (const [where, text] of Object.entries(surfaces)) {
+      const match = BROWSER_STATE_CLAIM.exec(String(text || ""));
+      assert(!match, `${where} claims unobservable browser state ("${match?.[0]}"): ${text}`);
+    }
+  } finally { h.close(); }
 }
 
 /* The guarded assertions, lifted verbatim in meaning from the positive suite so a
@@ -292,7 +403,7 @@ async function guardTheNoticeClaimsOnlyBackgroundRecovery(modules) {
 /* The reconciled run as the activity surfaces read it, against the real
    public/live-activity.js under the render harness. Its `modules` parameter is the
    RELEASE CODE the reconciliation stamps: drop it and the surfaces lose the only thing
-   that tells a run whose window went away from a run that stopped on its own. */
+   that tells a run whose lease lapsed from a run that stopped on its own. */
 async function guardTheReconciledRunStillReadsAsWaiting(releaseCode = "lease-expired") {
   const { render, buildFixture } = require("./render-harness");
   const view = await render("#/production", buildFixture());
@@ -300,7 +411,7 @@ async function guardTheReconciledRunStillReadsAsWaiting(releaseCode = "lease-exp
     id: "run-abandoned", type: "shot-chain", targetId: "L1-01", scope: "stills", label: "Window went away",
     status: "interrupted", stage: "Interrupted — resume required", summary: "The lease expired with no heartbeat.",
     runnerId: "", leaseAcquiredAt: "", heartbeatAt: "", leaseExpiresAt: "",
-    leaseDiagnostics: { lastRunnerId: "runner-that-went-away", lastReleasedAt: ago(60), lastReleaseCode: releaseCode },
+    leaseDiagnostics: { lastRunnerId: "runner-that-stopped-renewing", lastReleasedAt: ago(60), lastReleaseCode: releaseCode },
     current: { stepKey: "" }, config: {}, usage: {}, steps: {}, logs: [],
     createdAt: ago(1200), updatedAt: ago(60), completedAt: "",
   }];
@@ -310,7 +421,7 @@ async function guardTheReconciledRunStillReadsAsWaiting(releaseCode = "lease-exp
     attention: AUTOMATION_RUNS.filter(v670AttentionRun).map((run) => run.id),
   }))()`, view.context);
   assert.deepStrictEqual(Array.from(partition.waiting).map(String), ["run-abandoned"],
-    "a run whose window went away still reads as waiting for the director");
+    "a run whose lease lapsed still reads as waiting for the director");
   assert.deepStrictEqual(Array.from(partition.attention).map(String), [],
     "and is NOT filed as a previous failure — nothing about it failed");
 }
@@ -514,6 +625,59 @@ async function main() {
     "a server whose sweep never runs",
     "a spawned server collects a finished render with no browser open",
     () => guardTheServerCollectsOnBoot({ CINEBRAID_GENERATION_POLL: "off" }),
+  );
+
+  /* 11. ACCEPTANCE BLOCKER 1 put back: the project written from a snapshot taken before
+        the downloads, instead of inside a turn that re-reads it. Per-job serialisation is
+        untouched — which is the point, because it never protected two DIFFERENT jobs of
+        one project from each other. */
+  await control(
+    "a project write taken from a snapshot instead of a re-reading turn",
+    "two different jobs of one project both keep their candidate rows",
+    () => guardDifferentJobsBothSurvive({
+      falGeneration: loadModified("fal-generation.js", [[
+        "    if (!(ownerProject(owner).shots || []).some((item) => String(item.id) === String(job.shotId)))\n"
+        + '      throw new Error("Shot no longer exists.");\n'
+        + "    /* DOWNLOAD PHASE — see ingestEntity. */\n"
+        + "    const downloads = [];\n"
+        + "    for (let index = 0; index < images.length; index++) downloads.push(await downloadImage(images[index]));\n"
+        + "    /* COMMIT PHASE — one indivisible turn against freshly read state. */\n"
+        + "    const outputs = await commitProject(owner, (P) => {",
+        "    const stale = ownerProject(owner);\n"
+        + "    if (!(stale.shots || []).some((item) => String(item.id) === String(job.shotId)))\n"
+        + '      throw new Error("Shot no longer exists.");\n'
+        + "    const downloads = [];\n"
+        + "    for (let index = 0; index < images.length; index++) downloads.push(await downloadImage(images[index]));\n"
+        + "    const outputs = await (async (mutate) => { const value = mutate(stale); saveOwnerProject(owner, stale); return value; })((P) => {",
+      ]]),
+    }),
+  );
+
+  /* 12. ACCEPTANCE BLOCKER 2 put back: stop() clears its timers and returns without
+        waiting, so the process may exit out from under a collection already in flight. */
+  await control(
+    "a shutdown that abandons a collection already in flight",
+    "shutdown waits for a collection that has already begun",
+    () => guardShutdownWaitsForCollection({
+      poller: loadModified("generation-poller.js", [[
+        "    const inFlight = active;\n    if (!inFlight) return { waited: false, timedOut: false };",
+        "    const inFlight = null;\n    if (!inFlight) return { waited: false, timedOut: false };",
+      ]]),
+    }),
+  );
+
+  /* 13. ACCEPTANCE BLOCKER 3 put back: the durable summary claiming the window stopped,
+        which a lapsed lease does not establish. A suspended tab, a sleeping machine and a
+        lost network produce the identical record with the window still open. */
+  await control(
+    "a stale-lease correction that claims the browser window stopped",
+    "no durable or console surface claims unobservable browser state",
+    () => guardNoUnobservableBrowserClaim({
+      automation: loadModified("automation-runs.js", [[
+        '      const message = "This run lost its active runner: its lease expired with no heartbeat. "',
+        '      const message = "The window driving this run stopped and its lease expired with no heartbeat. "',
+      ]]),
+    }),
   );
 
   console.log(
