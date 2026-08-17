@@ -33,6 +33,7 @@ const Continuity = require("./public/shared-continuity");
 const EntityOwnership = require("./public/shared-entity-ownership");
 const FramePresence = require("./public/shared-frame-presence");
 const ProductionAuthority = require("./public/shared-production-authority");
+const ShotReadiness = require("./public/shared-shot-readiness");
 /* There is nothing to wire. The Canon kernel depends on
    public/shared-entity-ownership.js directly — by `require` in Node, by name in
    the browser's shared scope — so the ownership veto cannot be handed over,
@@ -1009,9 +1010,102 @@ function projectReadinessIssues(P) {
   }
   return issues;
 }
+/* Where each entity list keeps its media on disk, for the readiness oracle below.
+   entityApprovedDiskPath() carries the same map as a literal and explains at its
+   own declaration why it cannot read this one; tests/shot-readiness.js asserts the
+   two agree, so the duplication is checked rather than hoped. */
+const ENTITY_MEDIA_DIR = { characters: "anchors", locations: "plates", props: "props", vehicles: "vehicles" };
+
+/* THE MEDIA ORACLE READINESS IS ALLOWED TO HAVE.
+ *
+ * public/shared-shot-readiness.js cannot reach a filesystem by construction, so the
+ * caller supplies the listing it resolves approvals against. This is that listing,
+ * and every part of how it is built is a constraint rather than an implementation
+ * detail:
+ *
+ *   IT DOES NOT CALL scanProject(). That function syncs a configured media root
+ *   (which COPIES FILES) and schedules a MediaAsset activation pass. Both are real
+ *   work with real side effects, and readiness is answered on every render of the
+ *   production home view. Asking "what can I work on" must not move bytes around.
+ *
+ *   IT READS NO BYTES. `listMedia` is readdir plus an extension filter, and
+ *   `identityIndex` reads the ledger sidecar that is already on disk. Neither opens
+ *   a media file, so a project sitting in OneDrive/Dropbox/Drive is not hydrated by
+ *   being asked whether it is ready. media-asset-verify.js owns byte reads and says
+ *   why: hashing is a deliberate act with a visible cost, never a side effect.
+ *
+ *   IT IS CACHED PER CALL, NOT ACROSS CALLS. One directory is listed at most once
+ *   per readiness answer, and the cache dies with the request — a cached listing
+ *   that outlived the request would make a deleted file keep reading as present.
+ *
+ * The identity index is what makes the answer rename-proof: with it, an approval
+ * whose file was renamed still resolves through resolveApprovalMedia(), which is
+ * identity-first. Without it the resolver falls back to the filename and behaves
+ * exactly as it did before media identity existed. */
+function readinessMediaOracle() {
+  const directories = new Map();
+  let identity = null;
+  const listing = (rel) => {
+    if (!directories.has(rel)) {
+      if (identity === null) identity = mediaIdentityIndex();
+      directories.set(rel, listMedia(rel, identity));
+    }
+    return directories.get(rel);
+  };
+  return {
+    mediaListing: (list, entityId) => {
+      const folder = ENTITY_MEDIA_DIR[String(list || "")];
+      return folder && entityId ? listing(folder) : [];
+    },
+    shotMediaListing: (shotId) => {
+      const id = path.basename(String(shotId || ""));
+      return id ? listing(path.join("shots", id, "takes")) : [];
+    },
+  };
+}
+
+/* ONE READINESS VERDICT IN THIS PAYLOAD, AND IT IS `readiness`.
+ *
+ * THE CORRECTION THE ACCEPTANCE AUDIT REQUIRED. This route used to return the
+ * legacy list as a top-level `issues` array beside the new derivation, and the two
+ * competed: a project whose only problem was an unconfirmed pointer answered
+ * `issues: []` — which every consumer reads as "nothing to resolve, this is ready"
+ * — next to `readiness.status: "NEEDS_DECISION"` for the same reference. Two
+ * truths, and the older one was the one that looked like an all-clear.
+ *
+ * The legacy projection is KEPT, because it answers a genuinely useful and
+ * genuinely different question: is the project SET UP — descriptions, durations,
+ * canon text, relinked references, files on disk. In particular its
+ * `entity-reference` issue stays POINTER-BASED, exactly as its own comment says:
+ * it reports the ABSENCE of an image and makes no claim that a present image was
+ * approved. That reading is correct for what it answers.
+ *
+ * What changed is that it can no longer be MISTAKEN for the verdict. It moves
+ * inside a `setup` envelope that names what it answers and states plainly that it
+ * is not a readiness verdict, and the top-level `issues` key is gone rather than
+ * kept as an alias — an alias would leave the ambiguity in place while adding a
+ * second spelling of it. A consumer reading `data.issues` now gets `undefined`,
+ * which is a loud break rather than a silent wrong answer. */
+function shotReadinessProjection(P) {
+  return ShotReadiness.evaluateProjectReadiness(P, readinessMediaOracle());
+}
+const PROJECT_SETUP_ANSWERS = "project-setup-completeness";
 app.get("/api/project/readiness", (req, res) => {
   try {
-    res.json({ checkedAt: new Date().toISOString(), issues: projectReadinessIssues(readProject()) });
+    const project = readProject();
+    res.json({
+      checkedAt: new Date().toISOString(),
+      /* The verdict. READY / BLOCKED / NEEDS_DECISION belong to this and to
+         nothing else in the response. */
+      readiness: shotReadinessProjection(project),
+      setup: {
+        answers: PROJECT_SETUP_ANSWERS,
+        /* Stated in the payload rather than only in a comment, so a machine
+           consumer can see that an empty list is not an all-clear. */
+        isReadinessVerdict: false,
+        issues: projectReadinessIssues(project),
+      },
+    });
   } catch (error) {
     res.status(httpStatusForError(error)).json({ error: error.message || "Could not check project readiness" });
   }
@@ -5454,6 +5548,15 @@ const DERIVED_FRAME_REVIEW_SYSTEM = `You are reviewing dependent still frames fo
    to report, not this function's to enforce — and the automation preflight
    reads it the same way. A declared non-default state that simply has no
    approved file is a different thing entirely, and that one answers "". */
+/* THE LITERAL STAYS INLINE, AND THAT IS NOT AN OVERSIGHT. Three suites lift this
+   declaration out of server.js and evaluate it in a sandbox, on purpose, so that
+   they exercise the shipped rule rather than a copy of it. A module-level constant
+   referenced here is not in that sandbox's scope, and hoisting it turns every one
+   of those proofs into a ReferenceError — a control that fails for the wrong
+   reason is a control that has stopped testing anything.
+
+   It must agree with ENTITY_MEDIA_DIR, and tests/shot-readiness.js asserts that
+   the two say the same thing rather than leaving it to be noticed later. */
 function entityApprovedDiskPath(list, entity, stateId = "") {
   const folder = { characters: "anchors", locations: "plates", props: "props", vehicles: "vehicles" }[list];
   if (!folder || !entity) return "";

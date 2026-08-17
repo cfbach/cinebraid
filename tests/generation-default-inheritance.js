@@ -360,11 +360,18 @@ async function serverSection() {
    The server can be right and the screen still wrong, so the initial value is read off
    the rendered control rather than inferred from the payload. */
 
-/* render-harness evaluates the shipped scripts in SCRIPT_ORDER, which does not yet
-   include the picker scripts index.html loads. They are evaluated into the SAME context
-   here rather than added to the shared order, because that order is what every other
-   suite renders through and widening it is not this change's business. */
-const PICKER_SCRIPTS = ["shared-model-intelligence.js", "shared-generation-options.js", "generation-picker.js"];
+/* render-harness evaluates the shipped scripts in SCRIPT_ORDER, which still does not
+   include every picker script index.html loads. The remainder are evaluated into the
+   SAME context here rather than added to the shared order, because that order is what
+   every other suite renders through and widening it is not this change's business.
+
+   shared-generation-options.js LEFT THIS LIST when the readiness derivation landed:
+   the harness loads it now, because public/shared-shot-readiness.js derives its method
+   truth by asking resolveTaskModes() at load. Evaluating it a second time here is not
+   a harmless duplicate — every one of these scripts declares top-level `const`s in one
+   shared scope, so a second evaluation is a SyntaxError on the first repeated
+   identifier and takes the whole context with it. */
+const PICKER_SCRIPTS = ["shared-model-intelligence.js", "generation-picker.js"];
 function withPickerScripts(view) {
   for (const file of PICKER_SCRIPTS)
     vm.runInContext(readLF(path.join(ROOT, "public", file)), view.context, { filename: file });

@@ -2369,6 +2369,35 @@ body.automation-activity-open{overflow:hidden}
 .production-readiness>summary::-webkit-details-marker{display:none}.production-readiness>summary div{display:grid;gap:3px}.production-readiness>summary div>span{font:700 9px var(--mono);letter-spacing:.12em;color:var(--muted)}.production-readiness>summary b{font-size:14px}.production-readiness>summary>span{font:700 9px var(--mono);color:var(--acc)}
 .production-readiness-list{display:grid;border-top:1px solid var(--line)}.production-readiness-list>a{display:grid;grid-template-columns:minmax(110px,.35fr) minmax(0,1fr) auto;gap:12px;align-items:center;padding:10px 15px;border-bottom:1px solid var(--line);text-decoration:none;color:var(--text)}.production-readiness-list>a:last-child{border-bottom:0}.production-readiness-list>a b{font:700 10px var(--mono);text-transform:capitalize;color:var(--amber)}.production-readiness-list>a span{font-size:12px;color:var(--muted)}.production-readiness-list>a i{font-style:normal;font:700 10px var(--mono);color:var(--acc)}.production-readiness-list>p{margin:0;padding:13px 15px;color:var(--muted);font-size:12px}
 @media(max-width:720px){.production-readiness-list>a{grid-template-columns:1fr auto}.production-readiness-list>a b{grid-column:1/-1}.production-readiness-list>a span{min-width:0}}
+/* Shot readiness and existing-selection confirmation. Deliberately reuses the
+   .production-readiness shell above rather than introducing a second panel style —
+   this is one more block on the production home view, not a new destination. */
+.shot-readiness-list>a{grid-template-columns:minmax(90px,.2fr) minmax(0,auto) minmax(0,1fr) auto}
+.shot-readiness-list>a b{color:var(--text);text-transform:none}
+.shot-readiness-list>a small{font-size:11px;color:var(--muted);min-width:0}
+.readiness-status{font:700 10px var(--mono);letter-spacing:.06em;white-space:nowrap}
+.readiness-status.readiness-ready{color:var(--ok,var(--acc))}
+.readiness-status.readiness-blocked{color:var(--amber)}
+.readiness-status.readiness-needs_decision{color:var(--acc)}
+.readiness-status.readiness-complete{color:var(--muted)}
+.readiness-media-note{margin:0;padding:10px 15px;border-top:1px solid var(--line);color:var(--muted);font-size:11px}
+/* One project-level truth problem, rendered once above the shot rows rather than
+   repeated into each of them. */
+.readiness-truth-problem{display:grid;gap:3px;padding:11px 15px;border-top:1px solid var(--line);background:var(--panel)}
+.readiness-truth-problem b{font:700 11px var(--mono);letter-spacing:.06em;color:var(--amber)}
+.readiness-truth-problem span{font-size:12px;color:var(--text)}
+.readiness-truth-problem small{font:600 10px var(--mono);color:var(--muted);overflow-wrap:anywhere}
+.historic-confirm-body{border-top:1px solid var(--line);padding:12px 15px;display:grid;gap:10px}
+.historic-confirm-body>p{margin:0;font-size:12px;color:var(--muted)}
+.historic-confirm-list{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.historic-confirm-list>li{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 11px;border:1px solid var(--line);border-radius:var(--r-panel)}
+.historic-confirm-list>li div{display:grid;gap:2px;min-width:0}
+.historic-confirm-list>li b{font-size:13px}
+.historic-confirm-list>li small{font:600 10px var(--mono);color:var(--muted);overflow-wrap:anywhere}
+.historic-confirm-list>li em{font-style:normal;font-size:11px;color:var(--acc)}
+.historic-confirm-bulk{display:grid;gap:4px;justify-items:start}
+.historic-confirm-bulk small{font-size:11px;color:var(--muted)}
+@media(max-width:720px){.shot-readiness-list>a{grid-template-columns:1fr auto}.shot-readiness-list>a small{grid-column:1/-1}.historic-confirm-list>li{flex-direction:column;align-items:stretch}}
 /* v6.6.2.1 clarity, error semantics, and interface polish */
 
 /* v6.6.2.2 integrity and mobile usability */

@@ -30,7 +30,14 @@ const SCRIPT_ORDER = [
   "shared-production-media.js",
   "shared-build-history.js",
   "shared-generation-capability.js",
+  /* Added with shared-shot-readiness.js, which derives its method truth by asking
+     resolveTaskModes() rather than tabulating it — so the harness has to load the
+     resolver the real page has always loaded here. It is a pure resolver with no
+     dependencies of its own, which is why this closes one gap in this list rather
+     than opening the whole of it. */
+  "shared-generation-options.js",
   "shared-stage-model.js",
+  "shared-shot-readiness.js",
   "bounded-rendering.js",
   "app.js",
   "media.js",

@@ -328,7 +328,7 @@ async function testReadinessSurfacesLossyAndUnknownCodes() {
 
     const response = await request(port, "/api/project/readiness");
     assert.strictEqual(response.status, 200);
-    const issues = response.data.issues || [];
+    const issues = response.data.setup.issues || [];
     const kinds = issues.map((row) => row.kind);
 
     const reinterpreted = issues.filter((row) => row.kind === "code-reinterpreted");

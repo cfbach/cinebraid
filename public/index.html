@@ -105,6 +105,9 @@
 <script src="shared-model-intelligence.js?v=6.7.0-private.1"></script>
 <script src="shared-generation-options.js?v=6.7.0-private.1"></script>
 <script src="shared-stage-model.js?v=6.7.0-private.1"></script>
+<!-- After shared-generation-options.js, because readiness derives its method truth
+     by asking resolveTaskModes() at load rather than tabulating it. -->
+<script src="shared-shot-readiness.js?v=6.7.0-private.1"></script>
 <script src="shared-workspace-shell.js?v=6.7.0-private.1"></script>
 <script src="shared-creator-state.js?v=6.7.0-private.1"></script>
 <script src="shared-stage-actions.js?v=6.7.0-private.1"></script>

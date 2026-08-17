@@ -541,7 +541,7 @@ async function main() {
     }
     result = await request("/api/project/readiness");
     assert.strictEqual(result.response.status, 200);
-    assert(Array.isArray(result.body.issues), "project readiness must return a read-only issue list");
+    assert(Array.isArray(result.body.setup.issues), "project readiness must return a read-only issue list");
     const readinessProjectSource = fs.readFileSync(path.join(PROJECT_DIR, "project.json"), "utf8");
     const readinessProject = JSON.parse(readinessProjectSource);
     readinessProject.shots[0].characters = ["MISSING-CHAR"];
@@ -550,7 +550,7 @@ async function main() {
     result = await request("/api/project/readiness");
     assert.strictEqual(result.response.status, 200);
     for (const id of ["MISSING-CHAR", "MISSING-LOC", "MISSING-PROP"]) {
-      const issue = result.body.issues.find((row) => row.kind === "unresolved-reference" && String(row.message || "").includes(id));
+      const issue = result.body.setup.issues.find((row) => row.kind === "unresolved-reference" && String(row.message || "").includes(id));
       assert(issue, `project readiness must expose unresolved relationship ${id}`);
       assert.strictEqual(issue.href, "#/shot/S-01", "unresolved relationship must link back to its shot Inputs workspace");
     }
