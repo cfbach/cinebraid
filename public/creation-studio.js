@@ -2461,8 +2461,26 @@ function guidedFrameWorkflowPanel(s, takes) {
   const legacyReviewMarkup = sequenceReviewMarkup
     ? `<details class="fold legacy-continuity-review" ${workspaceSectionOpen(`${s.id}:legacy-sequence-review`, false) ? "open" : ""} ontoggle="rememberWorkspaceSection('${attr(s.id)}:legacy-sequence-review',this.open)"><summary>Pair continuity review (v6.6) <span>${sequenceReview ? (sequenceReview.pass ? "passed" : sequenceReview.status === "working" ? "running" : "failed") : "not run"}</span></summary><p class="hint">The earlier whole-image review, kept for its stored results and for motion readiness. Continuity findings above come from the declared-entity check and do not use these scores.</p>${sequenceReviewMarkup}</details>`
     : "";
-  const continuityMarkup = typeof guidedContinuityPanel === "function" ? guidedContinuityPanel(s, takes) : "";
-  return `<details class="guided-frame-workflow compact-work-section ${complete ? "is-complete" : ""}" ${workspaceSectionOpen(`${s.id}:frames-workflow`, openDefault) ? "open" : ""} ontoggle="rememberWorkspaceSection('${attr(s.id)}:frames-workflow',this.open)"><summary class="guided-workflow-title"><div><span>FRAMES</span><h2>Import, choose, and approve images</h2><span class="sr-only">Create and choose the images</span><p>Edit one frame at a time. Use the compact frame strip to move between start, end, and additional compositions.</p></div>${workspaceStatusPill(label, tone)}<i class="compact-chevron">⌄</i></summary><div class="guided-frame-workflow-body">${guidedFrameRailMarkup(s,progress.frames,takes,selectedId)}${motionCta}${continuityMarkup}${legacyReviewMarkup}${selectedFrame ? guidedFrameCard(s, selectedFrame, selectedIndex, takes) : ""}<button class="guided-add-frame" onclick="addGuidedFrame('${s.id}')"><b>＋ Add frame</b><span>Add an end frame or another required composition only when the motion needs it.</span></button></div></details>`;
+  const continuityPanel = typeof guidedContinuityPanel === "function" ? guidedContinuityPanel(s, takes) : "";
+  /* CONTINUITY IS NO LONGER IN THE WAY OF FRAME REVIEW. Batch 2, Slice 1.
+
+     The workflow body used to read strip -> continuity -> legacy pair review -> frame
+     card, which put two panels of checking machinery between the control that chooses
+     a frame and the panel that shows it. The founder smoke reproduced exactly that.
+
+     PLACEMENT ONLY. The panel is the same panel: guidedContinuityPanel builds it,
+     shared-continuity.js still owns every outcome word in it, and nothing here reads
+     or restates a continuity result. The summary is deliberately a NOUN - "Continuity
+     check" - and not a verdict, because a verdict in a summary would be this file
+     forming an opinion about continuity, which is the one thing it must never do.
+
+     It expands on demand and remembers that it was expanded, through the same
+     workspaceSectionOpen/rememberWorkspaceSection pair the legacy fold beside it
+     already uses. */
+  const continuityMarkup = continuityPanel
+    ? `<details class="fold shot-continuity-fold" ${workspaceSectionOpen(`${s.id}:continuity-check`, false) ? "open" : ""} ontoggle="rememberWorkspaceSection('${attr(s.id)}:continuity-check',this.open)"><summary>Continuity check</summary><p class="hint">Compare two approved frames against this shot's declared references. Open this when you are checking continuity; it stays out of the way while you are choosing and approving frames.</p>${continuityPanel}</details>`
+    : "";
+  return `<details class="guided-frame-workflow compact-work-section ${complete ? "is-complete" : ""}" ${workspaceSectionOpen(`${s.id}:frames-workflow`, openDefault) ? "open" : ""} ontoggle="rememberWorkspaceSection('${attr(s.id)}:frames-workflow',this.open)"><summary class="guided-workflow-title"><div><span>FRAMES</span><h2>Import, choose, and approve images</h2><span class="sr-only">Create and choose the images</span><p>Edit one frame at a time. Use the compact frame strip to move between start, end, and additional compositions.</p></div>${workspaceStatusPill(label, tone)}<i class="compact-chevron">⌄</i></summary><div class="guided-frame-workflow-body">${guidedFrameRailMarkup(s,progress.frames,takes,selectedId)}${motionCta}${selectedFrame ? guidedFrameCard(s, selectedFrame, selectedIndex, takes) : ""}${continuityMarkup}${legacyReviewMarkup}<button class="guided-add-frame" onclick="addGuidedFrame('${s.id}')"><b>＋ Add frame</b><span>Add an end frame or another required composition only when the motion needs it.</span></button></div></details>`;
 }
 function profileSupportsGuidedAudio(profile) {
   return !!(profile && (profile.mode === "audio-video" || profile.mode === "r2v" && (profile.limits?.maxAudio || profile.family === "happy-horse-1.1")));

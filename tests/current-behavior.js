@@ -808,16 +808,22 @@ async function main() {
 
   const activityRender = await render("#/shot/L1-01", fixture);
   vm.runInContext(`AUTOMATION_RUNS=[{id:'budget-run',revision:1,type:'shot-chain',targetId:'L1-01',scope:'stills',label:'Budget run',status:'running',stage:'Generating',summary:'Working',createdAt:'2026-07-29T10:00:00Z',updatedAt:'2026-07-29T10:00:10Z',config:{maxImages:9},usage:{imagesGenerated:0,imageRequests:0,reviewCalls:0},current:{stepKey:'frame:a:generate'},steps:{'frame:a:generate':{key:'frame:a:generate',kind:'generation',status:'running',label:'Generate Frame A',attempt:1,maxAttempts:3,startedAt:'2026-07-29T10:00:00Z',updatedAt:'2026-07-29T10:00:10Z',activity:{system:'FAL · GPT IMAGE 2',state:'preparing'}}},logs:[]}]; V641_ACTIVITY_DRAWER_OPEN=true; v641RenderActivityDrawer();`, activityRender.context);
-  const strip = activityRender.context.v642EnsureGlobalActivityStrip();
-  activityRender.context.v642UpdateGlobalActivityStrip();
-  const globalChromeMarkup = `<button>${strip.innerHTML}</button>${activityRender.context.document.getElementById("automation-activity-drawer").innerHTML}`;
+  /* The floating live strip was retired in Batch 2 Slice 1, so the globally injected
+     chrome is now the drawer alone. The budget is unchanged, which is the point: one
+     persistent global indicator did not cost the drawer any controls. */
+  const globalChromeMarkup = activityRender.context.document.getElementById("automation-activity-drawer").innerHTML;
   const globalControls = shotControlCounts(globalChromeMarkup);
   assert(globalControls.visible <= 4, `globally injected activity controls: ${globalControls.visible}`);
   assert(globalControls.total <= 4, `globally injected activity controls total: ${globalControls.total}`);
   const budgetRun = vm.runInContext(`AUTOMATION_RUNS[0]`, activityRender.context);
-  const consoleControls = shotControlCounts(activityRender.context.v641LiveActivityMarkup(budgetRun));
+  /* What a WORKING PAGE now shows for a run. The embedded timeline it replaced was
+     already budgeted at one control; the compact status keeps that budget, and the one
+     control it has still only opens the drawer. */
+  const consoleControls = shotControlCounts(activityRender.context.v670CompactRunStatusMarkup(budgetRun));
   assert(consoleControls.visible <= 1, `default automation console controls: ${consoleControls.visible}`);
   assert(consoleControls.total <= 1, `default automation console controls total: ${consoleControls.total}`);
+  const legacyTimelineControls = shotControlCounts(activityRender.context.v641LiveActivityMarkup(budgetRun));
+  assert(legacyTimelineControls.total <= 1, `retained timeline renderer controls: ${legacyTimelineControls.total}`);
   /* THE STAGE NAVIGATOR LEFT `#main` IN O4. It is built by public/stage-surfaces.js into
      the shell's persistent bar, because `#main` is replaced wholesale on every render and
      a workflow navigator destroyed by moving through the workflow is not one. This harness

@@ -363,8 +363,12 @@ try:
 
         checkpoint("activity drawer keyboard complete")
         def activity_overlap_count():
+            # THE ONE PERSISTENT GLOBAL INDICATOR. The floating strip was retired in Batch
+            # 2 Slice 1; the topbar chip is what remains, and the property this measured -
+            # the persistent activity indicator must never cover the filmmaker's work - is
+            # asserted of the chip instead, at the same three widths and five routes.
             return page.evaluate("""() => {
-              const strip=document.getElementById('automation-global-live-strip');
+              const strip=document.getElementById('automation-activity-toggle');
               if(!strip || strip.hidden) return 0;
               const a=strip.getBoundingClientRect();
               const nodes=[...document.querySelectorAll('#main button,#main a,#main input,#main textarea,#main select,#main summary,#main p,#main span,#main b,#main small,#main h1,#main h2,#main h3')]
@@ -384,20 +388,24 @@ try:
             page.set_viewport_size({"width": width, "height": 900})
             for route_label, route_hash in responsive_routes:
                 open_hash(route_hash)
-                page.evaluate("() => { AUTOMATION_RUNS=[]; FAL_GENERATION_JOBS=[]; v642UpdateGlobalActivityStrip(); }")
-                idle_hidden = page.locator("#automation-global-live-strip").evaluate("node => node.hidden")
-                assert idle_hidden, f"idle Activity strip remained visible on {route_label} at {width}px"
+                page.evaluate("() => { AUTOMATION_RUNS=[]; FAL_GENERATION_JOBS=[]; v641UpdateActivityButton(); }")
+                idle_text = page.locator("#automation-activity-toggle").inner_text()
+                assert "Idle" in idle_text, f"the idle Activity chip must say so on {route_label} at {width}px, got {idle_text!r}"
+                assert page.locator("#automation-global-live-strip").count() == 0, \
+                    f"the retired floating Activity strip must not exist on {route_label} at {width}px"
                 manual_id = page.evaluate("() => v641StartManualActivity('LOCAL AI','Acceptance activity','Preparing a prompt')")
                 page.wait_for_timeout(75)
-                assert not page.locator("#automation-global-live-strip").evaluate("node => node.hidden"), f"active Activity strip was hidden on {route_label} at {width}px"
-                assert activity_overlap_count() == 0, f"active Activity strip overlapped {route_label} controls or text at {width}px"
+                active_text = page.locator("#automation-activity-toggle").inner_text()
+                assert "Idle" not in active_text, f"the active Activity chip still read idle on {route_label} at {width}px"
+                assert activity_overlap_count() == 0, f"the Activity chip overlapped {route_label} controls or text at {width}px"
                 if SCREENSHOT_DIR and width == 390 and route_label == "Production":
                     page.evaluate("() => { document.body.classList.remove('rail-open'); const toast=document.getElementById('toast'); if(toast) toast.style.display='none'; }")
                     page.screenshot(path=str(SCREENSHOT_DIR / "activity-docked-production-mobile.png"), full_page=False)
                 overflow = page.evaluate("document.documentElement.scrollWidth - document.documentElement.clientWidth")
                 assert overflow <= 2, f"{route_label} at {width}px overflowed by {overflow}px"
                 page.evaluate("id => { const old=setTimeout; window.setTimeout=()=>0; v641FinishManualActivity(id,'completed','Done'); window.setTimeout=old; }", manual_id)
-                assert page.locator("#automation-global-live-strip").evaluate("node => node.hidden"), f"completed Activity strip did not hide on {route_label} at {width}px"
+                assert "Idle" in page.locator("#automation-activity-toggle").inner_text(), \
+                    f"the Activity chip did not return to idle on {route_label} at {width}px"
 
         page.set_viewport_size({"width": 390, "height": 900})
         open_hash("#/settings")

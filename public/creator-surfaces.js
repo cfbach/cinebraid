@@ -37,9 +37,17 @@
      deterministic and is fully useful with no assistant model configured — which is
      the state most installs are in, and the state every test below runs in.
 
-   * IT WRITES NOTHING TO A PROJECT. The only thing persisted anywhere is whether the
-     Terminal is collapsed, in localStorage, which is a preference about a panel and
-     not a fact about a production.
+   * IT WRITES NOTHING TO A PROJECT. The only things persisted anywhere are whether
+     the Terminal is collapsed and whether the Assistant rail is open, both in
+     localStorage. Each is a preference about a panel and not a fact about a
+     production, and neither is read by anything that derives truth.
+
+   * BOTH PANELS ARE QUIET UNTIL ASKED FOR. Batch 2, Slice 1. The rail is NOT mounted
+     and the Terminal is collapsed until the filmmaker opens them, because the shipped
+     defaults gave a working surface roughly 340px of permanent Assistant and an
+     expanded dock before any work had been done in it. Only the DEFAULT changed: an
+     explicit stored preference in either direction is honoured exactly as before, and
+     everything the two surfaces render is derived from the same projection as always.
 
    * IT NEVER APPROVES. No control here approves media, establishes canon, or triggers
      a paid generation or a paid retry. The Assistant renders no AI review verdict at
@@ -79,6 +87,12 @@
   const RAIL_ROOT_ID = "cb-assistant-mount";
   const DOCK_ROOT_ID = "cb-terminal-mount";
   const TERMINAL_COLLAPSED_KEY = "cinebraid-creator-terminal-collapsed";
+  /* Opt-IN, unlike the Terminal's opt-OUT. Absent means closed, "1" means the
+     filmmaker opened it. Stored rather than held for the session so opening the
+     Assistant is a decision that survives a reload, the way collapsing the Terminal
+     always has. */
+  const RAIL_OPEN_KEY = "cinebraid-creator-rail-open";
+  const RAIL_TOGGLE_ID = "creator-rail-toggle";
 
   /* The generation ledger holds every job a project has ever dispatched, and the
      Terminal shows at most a couple of dozen settled rows. Scanning the whole ledger
@@ -700,14 +714,47 @@
     v670PatchElement(node.firstElementChild, next);
   }
 
+  /* COLLAPSED UNLESS EXPLICITLY EXPANDED. The stored value is unchanged and still
+     means what it always did - "1" collapsed, "0" expanded - so a filmmaker who had
+     expanded the Terminal keeps it expanded and one who had collapsed it keeps it
+     collapsed. What changed is the answer for NO stored value, which used to be
+     expanded. Reading the raw item rather than comparing it to "1" is what makes the
+     three cases distinguishable at all. */
   function terminalCollapsed() {
-    try { return localStorage.getItem(TERMINAL_COLLAPSED_KEY) === "1"; } catch { return false; }
+    try {
+      const stored = localStorage.getItem(TERMINAL_COLLAPSED_KEY);
+      return stored === null ? true : stored !== "0";
+    } catch { return true; }
+  }
+
+  /* CLOSED UNTIL OPENED. Absent is closed; only an explicit "1" opens the rail. */
+  function railOpen() {
+    try { return localStorage.getItem(RAIL_OPEN_KEY) === "1"; } catch { return false; }
+  }
+
+  /* Takes the rail slot back, and ONLY when this file is the thing occupying it.
+
+     clearSlot() empties whatever is in the slot, so an unconditional call on every
+     paint would evict content another consumer mounted - which is not hypothetical:
+     tests/workspace-shell-real-browser.py mounts its own fixture there to prove the
+     slot contract. Closing the Assistant must mean "take mine out", never "empty the
+     slot". */
+  function closeRailMount() {
+    const shell = window.CineBraidShell;
+    if (RAIL_NODE && RAIL_NODE.isConnected && shell && typeof shell.clearSlot === "function") shell.clearSlot("rail");
+    RAIL_NODE = null;
   }
 
   function ensureMounted() {
     const shell = window.CineBraidShell;
     if (!shell || typeof shell.mountSlot !== "function") return false;
-    if (!RAIL_NODE || !RAIL_NODE.isConnected) {
+    /* The rail is mounted only when it is open. An unoccupied slot already collapses -
+       shared-workspace-shell.js declares collapsesWhenEmpty and styles.css grants the
+       340px track only under [data-occupied] - so NOT MOUNTING is the whole mechanism
+       by which the centre reclaims the width. There is no new layout rule here and no
+       second notion of "closed". */
+    if (!railOpen()) closeRailMount();
+    else if (!RAIL_NODE || !RAIL_NODE.isConnected) {
       RAIL_NODE = document.createElement("div");
       RAIL_NODE.id = RAIL_ROOT_ID;
       RAIL_NODE.className = "cb-assistant-mount";
@@ -735,12 +782,16 @@
        a Terminal describing a production that is not open is a stale claim, and there
        is no conversation or scroll position worth keeping when there is nothing to
        have been talking about. */
-    if (!context.hasProject) { unmount(); STALE = false; return null; }
+    if (!context.hasProject) { unmount(); syncRailToggle(false); STALE = false; return null; }
+    syncRailToggle(context.shellPresent);
     if (!ensureMounted()) return null;
     /* Retained, subscribed, not painted. See the lifecycle note at the top. */
     if (!context.shellPresent) { STALE = true; return null; }
     STALE = false;
     const state = projection();
+    /* applyMarkup already no-ops on a null node, so a closed rail is simply not
+       painted. It is not painted into a hidden container either - there is no
+       container. */
     applyMarkup(RAIL_NODE, assistantMarkup(state));
     applyMarkup(DOCK_NODE, terminalMarkup(state, terminalCollapsed()));
     /* TELL THE SHELL ITS DOCK CHANGED HEIGHT, rather than waiting to be noticed.
@@ -786,6 +837,37 @@
     paint();
   }
 
+  /* THE OPEN CONTROL, in the topbar beside the Activity chip.
+
+     It is declared in public/index.html rather than created here, for the reason the
+     shell regions are: a control built by JavaScript is a control that can be built
+     twice. This only reflects state onto it; index.html binds the click. */
+  function syncRailToggle(enabled) {
+    const button = document.getElementById(RAIL_TOGGLE_ID);
+    if (!button) return;
+    const open = railOpen();
+    button.hidden = !enabled;
+    button.disabled = !enabled;
+    button.setAttribute("aria-expanded", open ? "true" : "false");
+    button.classList.toggle("open", open);
+    button.title = open ? "Close the Assistant rail" : "Open the Assistant rail";
+  }
+
+  function setRail(open) {
+    try { localStorage.setItem(RAIL_OPEN_KEY, open ? "1" : "0"); } catch {}
+    if (!open) closeRailMount();
+    paint();
+    /* Opening takes width from the centre and closing gives it back, and the shell's
+       own measurement is what the dock reservation and the bar both depend on. Ask it
+       to re-measure rather than leaving that to the next unrelated event. */
+    remeasureShell();
+    return railOpen();
+  }
+
+  function toggleRail() {
+    return setRail(!railOpen());
+  }
+
   /* ==========================================================================
      WIRING.
 
@@ -803,6 +885,11 @@
   window.CineBraidCreatorSurfaces = {
     paint,
     toggleTerminal,
+    toggleRail,
+    openRail: () => setRail(true),
+    closeRail: () => setRail(false),
+    railOpen,
+    terminalCollapsed,
     projection,
     assistantMarkup,
     terminalMarkup,

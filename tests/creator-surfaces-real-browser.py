@@ -325,6 +325,26 @@ try:
         page.wait_for_timeout(400)
         assert not page_errors, f"the shot workspace raised uncaught errors: {page_errors}"
 
+        # THE RAIL NOW SHIPS CLOSED. Batch 2, Slice 1 stopped mounting the Assistant
+        # until the filmmaker asks for it, because a permanently mounted 340px rail was
+        # one of the founder smoke's clearest complaints. That new default is asserted
+        # here and then set aside: everything below this line is about the SHELL and the
+        # SURFACES, which need the rail occupied to say anything at all.
+        assert page.evaluate("() => !window.CineBraidCreatorSurfaces.railOpen()"), \
+            "the Assistant rail must ship CLOSED with no stored preference"
+        assert page.evaluate("() => !document.getElementById('cb-shell-rail').hasAttribute('data-occupied')"), \
+            "a closed rail must leave its slot unoccupied, so the centre reclaims the width"
+        assert page.locator("#creator-rail-toggle").count() == 1, \
+            "the topbar must offer the control that opens the rail"
+        page.evaluate("() => window.CineBraidCreatorSurfaces.openRail()")
+        page.wait_for_selector("#cb-shell-rail[data-occupied]", timeout=10000)
+        # And the Activity Terminal now ships COLLAPSED. Same reasoning: assert the new
+        # default, then expand it, because every Terminal section below reads its rows.
+        assert page.evaluate("() => window.CineBraidCreatorSurfaces.terminalCollapsed()"), \
+            "the Activity Terminal must ship COLLAPSED with no stored preference"
+        page.evaluate("() => window.CineBraidCreatorSurfaces.toggleTerminal()")
+        page.wait_for_selector('.cb-terminal[data-collapsed="0"]', timeout=10000)
+
         # ---- 1. both surfaces mount and describe the seeded production -----------------
         view = page.evaluate(SURFACES)
         assert view["mounted"], "1. the Assistant and the Terminal must both mount into the O2 slots"

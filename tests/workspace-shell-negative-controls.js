@@ -279,21 +279,18 @@ function structuralControls() {
         "C23") },
     "The shell must react to the render, not be driven by it; a renderer that knows the shell is a renderer the next shell change has to edit.");
 
-  control("C24 the live strip goes back to naming #workspace as the parent", "checkRuntimeOwnership",
+  /* C24 and C24b drove the anchoring of the floating activity strip, which Batch 2
+     Slice 1 retired in favour of the single topbar chip. The rule they enforced
+     survives in a stronger, absence-shaped form — live-activity.js must not insert a
+     persistent banner beside the Main region at all — so the control brings the strip
+     BACK and requires checkRuntimeOwnership to catch it. A rule stated as "never
+     again" needs a control that tries it again. */
+  control("C24 a persistent live banner is inserted beside the Main region again", "checkRuntimeOwnership",
     { activity: mutate(SOURCES.activity,
-        "    const parent = anchor?.parentNode || document.getElementById(\"workspace\");\n    if (anchor && parent && typeof parent.insertBefore === \"function\") parent.insertBefore(strip, anchor);",
-        "    const workspace = document.getElementById(\"workspace\");\n    if (workspace && typeof workspace.insertBefore === \"function\") workspace.insertBefore(strip, document.getElementById(\"main\"));",
+        "function v641UpdateActivityButton() {",
+        "function v642RebuildGlobalActivityStrip() {\n  const strip = document.createElement(\"button\");\n  strip.id = \"automation-global-live-strip\";\n  const anchor = document.getElementById(\"cb-shell-main\");\n  const parent = anchor?.parentNode;\n  if (anchor && parent) parent.insertBefore(strip, anchor);\n}\nfunction v641UpdateActivityButton() {",
         "C24") },
-    "insertBefore throws NotFoundError when the reference node is not a child of the parent, and #main is now inside the Main region — this would break the global activity strip on every route.");
-
-  /* Added in O3, when the strip turned out to be in flow rather than fixed. C24 guards
-     the crash; this guards the layout the crash-fix accidentally created. */
-  control("C24b the live strip is anchored inside the Main region", "checkRuntimeOwnership",
-    { activity: mutate(SOURCES.activity,
-        "    const region = document.getElementById(\"cb-shell-main\");\n    const anchor = region || document.getElementById(\"main\");",
-        "    const anchor = document.getElementById(\"main\");",
-        "C24b") },
-    "The strip is position:relative, so an anchor inside the Main region makes it a third item in a two-track grid: it takes the centre's track and the workspace renders at the rail's 340px.");
+    "Two persistent global indicators for one derivation is two places to look for one sentence, and an in-flow banner beside the two-track Main region is how the workspace came to render at 340px.");
 
   note("The region declaration and the mount contract:");
 

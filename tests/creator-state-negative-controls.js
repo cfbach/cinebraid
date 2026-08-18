@@ -249,12 +249,17 @@ function isolationControls() {
         "C18") },
     "Two writers for one measurement is how the dock and the space it reserves come to disagree, and the symptom — a dead band or a hidden control — appears nowhere near the cause.");
 
-  control("C19 the activity strip is anchored inside the Main region's grid", "checkActivityStripStaysOutOfTheGrid",
-    { activity: mutate(SOURCES.activity,
-        `    const region = document.getElementById("cb-shell-main");\n    const anchor = region || document.getElementById("main");`,
-        `    const anchor = document.getElementById("main");`,
+  /* C19 drove checkActivityStripStaysOutOfTheGrid, which went with the floating
+     activity strip in Batch 2 Slice 1. Its replacement guards the rule that changed
+     in its place: the runtime may persist the two PANEL preferences and nothing
+     else. Relaxing a count from one to two without a control is how a third value
+     arrives unnoticed. */
+  control("C19 the runtime persists a third value beside the two panel preferences", "checkNoPersistenceNoNetworkNoPaid",
+    { surfaces: mutate(SOURCES.surfaces,
+        `    try { localStorage.setItem(TERMINAL_COLLAPSED_KEY, next); } catch {}`,
+        `    try { localStorage.setItem(TERMINAL_COLLAPSED_KEY, next); } catch {}\n    try { localStorage.setItem("cinebraid-creator-last-seen-run", "run-1"); } catch {}`,
         "C19") },
-    "An in-flow banner inside the two-track Main region takes the centre's track, so at 1920px the filmmaker's work renders at the rail's 340px — the defect this batch found at HEAD.");
+    "A panel preference is not production state, but a remembered run id is: the moment the rail persists what it saw, two readers of the same activity can disagree about what is new.");
 
   control("C20 a generation job is given an attempt number it never recorded", "checkDeclaredLimitations",
     { projection: mutate(SOURCES.projection,

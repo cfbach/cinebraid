@@ -31,8 +31,9 @@ assert(focused.includes('aria-pressed'), 'coverage slot rail must expose selecti
 assert(css.includes('.coverage-slot-card[hidden]'), 'hidden coverage cards must stay hidden under author CSS');
 assert(css.includes('.reference-creation-hub'));
 assert(css.includes('.automation-activity-backdrop'));
-assert(css.includes('#automation-global-live-strip[hidden]{display:none!important}'));
-assert(css.includes('position:relative!important'), 'active Activity strip must be docked in normal layout flow');
+/* The floating global live strip was retired in Batch 2, Slice 1 — the topbar chip is
+   the single persistent global activity indicator now. */
+assert(!css.includes('#automation-global-live-strip'), 'the retired global live strip must leave no styling behind');
 assert(activity.includes('Activity · Idle'));
 assert(activity.includes('event.key === "Escape"'));
 assert(activity.includes('backdrop.onclick = () => closeGlobalAutomationActivity()'));

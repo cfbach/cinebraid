@@ -5,6 +5,13 @@ const RELEASE_VERSION = require("../package.json").version;
 const root = path.resolve(__dirname, "..");
 const read = (file) => fs.readFileSync(path.join(root, file), "utf8");
 
+/* Comments are stripped wherever this file asks "is that gone?". live-activity.js
+   carries a retirement note that names the strip it retired, which is what a reader
+   needs and exactly what an absence grep must not trip over. */
+const codeOnly = (source) => String(source)
+  .replace(/\/\*[\s\S]*?\*\//g, "")
+  .replace(/(^|[^:'"\\])\/\/[^\n]*/g, "$1");
+
 const index = read("public/index.html");
 const automation = read("public/automation.js");
 const scene = read("public/scene-automation.js");
@@ -25,7 +32,13 @@ assert(automation.includes("v641SetStepActivity"), "durable automation must pers
 assert(automation.includes("No paid request has been submitted yet"), "FAL preparation must distinguish pre-paid work");
 assert(automation.includes("providerAccepted: true"), "accepted FAL requests must be visible");
 assert(automation.includes("reviewProgress"), "review progress must be persisted");
-assert(automation.includes('typeof v641LiveActivityMarkup === "function" ? v641LiveActivityMarkup(run)'), "automation panels must render the live timeline");
+/* BATCH 2, SLICE 1 — WORKING PAGES SHOW A COMPACT RUN STATE, NOT A TIMELINE.
+   v626AutomationPanel is the single source the six automation panels share, so this
+   one assertion covers all six: shot, blocking, asset, entity-state, entity-chain and
+   scene. The drawer still owns the detail. */
+assert(automation.includes('typeof v670CompactRunStatusMarkup === "function" ? v670CompactRunStatusMarkup(run)'), "automation panels must render the compact run status");
+assert(!codeOnly(automation).includes("v641LiveActivityMarkup"), "no automation panel may embed the full live timeline in a working page");
+assert(!codeOnly(scene).includes("v641LiveActivityMarkup"), "the scene automation panel must not embed the full live timeline either");
 assert(scene.includes("v641ReviewSceneCorrectionIncremental"), "scene correction reviews must update candidate-by-candidate");
 assert(scene.includes("child run active"), "scene parent runs must expose their child-shot activity");
 assert(activity.includes("LIVE AUTOMATION ACTIVITY"), "activity module must render current operation detail");
@@ -39,23 +52,60 @@ assert(review.includes("v641StartManualActivity"), "manual vision review must re
 assert(provenance.includes("v641StartManualActivity"), "manual candidate review must register global activity");
 assert(sceneReview.includes("v641StartManualActivity"), "manual scene review must register global activity");
 assert(activity.includes("v642InstallUniversalActivityFetch"), "unwrapped AI and FAL calls must be captured by universal activity visibility");
-assert(activity.includes("automation-global-live-strip"), "active work must remain visible through the global live strip");
-assert(activity.includes("strip.hidden = !visible"), "the global live strip must disappear while idle");
-/* The strip is inserted into the workspace ahead of the content rather than appended to
-   the end of <body>. It used to name #workspace as the parent directly; the creator
-   workspace shell put #main inside the Main region, and insertBefore throws NotFoundError
-   when the reference node is not a child of the parent it is given.
+/* ===========================================================================
+   BATCH 2, SLICE 1 — EXACTLY ONE PERSISTENT GLOBAL ACTIVITY INDICATOR.
 
-   O2 fixed that crash by anchoring on #main's own parent. O3 found the fix incomplete:
-   the strip is NOT position:fixed — the v6.6.2.2 pass overrode it to
-   `position:relative!important` — so it is an in-flow banner, and #main's parent is a
-   two-track grid holding the centre and the Assistant rail. An in-flow third child took
-   the centre's track and rendered the workspace at the rail's 340px. So the anchor is the
-   REGION, which puts the strip back in #workspace exactly where it sat before O2, and
-   #main remains the fallback for a document with no shell region. */
-assert(activity.includes('getElementById("cb-shell-main")'), "the live strip must anchor on the Main region so an in-flow banner lands beside it in #workspace, not inside its two-track grid");
-assert(activity.includes("anchor?.parentNode"), "the live strip must be inserted into its anchor's own parent rather than assuming its depth");
-assert(activity.includes("parent.insertBefore(strip, anchor)"), "the live strip must be placed ahead of the workspace content, not appended to the document");
+   #automation-activity-toggle (the topbar chip) and #automation-global-live-strip (a
+   floating pill) rendered the IDENTICAL v6602ActivityStatus() answer. Two persistent
+   global indicators for one derivation is two places to look for one sentence, and
+   the strip shared the bottom of the screen with the Activity Terminal.
+
+   The strip is retired. These assertions are written as an ABSENCE plus a COUNT so
+   that neither bringing the strip back nor adding a third indicator can pass. */
+const activityCode = codeOnly(activity);
+assert(!activityCode.includes("automation-global-live-strip"), "the floating global live strip must not be rebuilt");
+assert(!activityCode.includes("v642EnsureGlobalActivityStrip"), "the retired strip's factory must be gone");
+assert(!activityCode.includes("v642UpdateGlobalActivityStrip"), "the retired strip's updater must be gone");
+assert(!/insertBefore\(\s*strip/.test(activityCode), "live-activity.js must not insert a persistent banner into the workspace");
+assert(!read("public/styles.css").includes("automation-global-live-strip"), "the retired strip must leave no styling behind");
+
+/* THE COUNT. A persistent global indicator is a control that lives in the shipped
+   chrome and reads v6602ActivityStatus(). There is one, and it is the topbar chip. */
+const persistentIndicators = (activityCode.match(/v6602ActivityStatus\(\)/g) || []).length;
+assert.strictEqual(persistentIndicators, 2,
+  `v6602ActivityStatus() has ${persistentIndicators} readers; expected exactly two — its own definition and the single topbar chip that renders it`);
+assert(activityCode.includes('document.getElementById("automation-activity-toggle")'), "the topbar chip must remain the one persistent global indicator");
+
+/* THE ARIA-LIVE ANNOUNCEMENT SURVIVED THE STRIP. It was a separate mechanism that
+   happened to sit beside it, and it is what the persistent creator surfaces repaint
+   from — removing it would take away the app's only spoken notice that work changed. */
+assert(activityCode.includes("function v670AnnounceActivityUpdate"), "the aria-live activity announcement must survive the strip's removal");
+assert(activityCode.includes('new CustomEvent("cinebraid:activity-updated")'), "the activity announcement must still be dispatched");
+assert(/v641UpdateActivityButton[\s\S]{0,1400}?v670AnnounceActivityUpdate\(\);/.test(activityCode),
+  "every activity update must still end by announcing itself");
+
+/* THE COMPACT STATE BORROWS ITS CLASSIFICATION AND DECIDES NOTHING. */
+const compact = activityCode.slice(activityCode.indexOf("window.v670CompactRunStatusMarkup"));
+const compactBody = compact.slice(0, compact.indexOf("\n};"));
+assert(/v670RunTone\(run\)/.test(compactBody), "the compact run state must take its tone from the drawer row's own tone function");
+assert(/v670MachineActiveRun\(run\)/.test(compactBody) && /v670WaitingForHumanRun\(run\)/.test(compactBody),
+  "the compact run state must read the shipped activity predicates");
+assert(/v670RunHeadline\(run\)/.test(compactBody), "the compact run state must print the same sentence the drawer row prints");
+assert(!/run\.status/.test(compactBody),
+  "the compact run state must never read run.status: a second reading of a raw status is a second classifier");
+assert(!/approve|Approve|APPROVE|retryFailedAutomationStep|resumeAutomationRun|openFalGenerationModal/.test(compactBody),
+  "no approval, recovery or paid control may move into the compact working-page status");
+
+/* AND IT IS THE DRAWER ROW'S OWN SENTENCE, not a copy of it. */
+assert(activityCode.includes("esc(v670RunHeadline(run))"), "the drawer row must print the shared headline");
+assert.strictEqual((activityCode.match(/function v670RunHeadline/g) || []).length, 1, "there must be exactly one headline function");
+
+/* RESULT HAND-OFF. Built from the declared stage model's own panel vocabulary. */
+assert(activityCode.includes("shotStageForPanel(panel)"), "result routing must ask the declared stage model which stage owns a panel");
+assert(activityCode.includes("shotStagePanelView(panel)"), "result routing must use the declared panel sub-view vocabulary");
+assert(activityCode.includes("window.v670RunResultTarget"), "a completed run must be able to resolve a panel/stage-qualified result target");
+assert(activityCode.includes("resolved: false"), "result routing must fall back to the workspace route rather than guessing");
+assert(activityCode.includes("openRunResult"), "the drawer must hand off through the result opener");
 assert(scene.includes("Continue from current scene"), "scene planning must support resume-aware continuation");
 assert(scene.includes("reviewOnly"), "scene planning must support review-only continuation");
 assert(audioBuilder.includes("buildSceneAudioPrompts"), "scene audio prompts must have a visible AI build workflow");
@@ -71,4 +121,4 @@ assert(activity.includes("REPAIR & RETRY"), "scene correction failures must expo
 assert(index.includes('data-view="reports"'), "the primary navigation must expose Reports");
 assert(index.includes(`reports.js?v=${RELEASE_VERSION}`), "the Reports module must be loaded and cache-busted");
 
-console.log("Live automation activity suite passed global drawer, universal AI/FAL capture, active-only docked live strip, resume-aware scene planning, audio prompt activity, nested child runs, incremental correction review progress, recovery actions, and work/report separation.");
+console.log("Live automation activity suite passed global drawer, universal AI/FAL capture, ONE persistent global activity indicator with the aria-live announcement intact, compact working-page run state with no embedded timeline, panel/stage-qualified result hand-off, resume-aware scene planning, audio prompt activity, nested child runs, incremental correction review progress, recovery actions, and work/report separation.");

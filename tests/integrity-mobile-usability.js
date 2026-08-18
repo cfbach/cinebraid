@@ -63,14 +63,18 @@ async function main() {
   assert(!Object.prototype.hasOwnProperty.call(afterDeletion.continuityStateSelections, "KAI"), "entity deletion must clear continuity-state relationship keys");
 
   const activityRender = await render("#/shot/L1-01", buildFixture());
-  activityRender.context.v642UpdateGlobalActivityStrip();
-  const strip = activityRender.context.document.getElementById("automation-global-live-strip");
-  assert(strip && strip.hidden === true, "idle Activity strip must be hidden");
-  assert.strictEqual(strip.innerHTML, "", "idle Activity strip must not retain obstructive content");
+  /* The floating strip was retired in Batch 2 Slice 1. The property it was asserted
+     for — the persistent global indicator is quiet when nothing is happening and
+     describes the work when something is — now belongs to the topbar chip, which is
+     the only persistent global indicator left. Asserted on the chip, unchanged in
+     substance. */
+  activityRender.context.v641UpdateActivityButton();
+  const chip = activityRender.context.document.getElementById("automation-activity-toggle");
+  assert(chip, "the topbar activity chip must exist");
+  assert(chip.innerHTML.includes("Idle"), "the idle activity chip must say so rather than imply work");
   const activityId = activityRender.context.v641StartManualActivity("LOCAL AI", "Build prompt", "Preparing deterministic prompt");
   assert(activityId, "manual activity should start");
-  assert.strictEqual(strip.hidden, false, "active Activity strip must be visible");
-  assert(strip.innerHTML.includes("Build prompt") || strip.innerHTML.includes("Activity"), "active strip must describe current work");
+  assert(chip.innerHTML.includes("Build prompt") || chip.innerHTML.includes("active"), "the active chip must describe current work");
   activityRender.context.setTimeout = () => 0;
   activityRender.context.v641FinishManualActivity(activityId, "completed", "Done");
   assert.strictEqual(strip.hidden, true, "completed Activity strip must return to hidden idle state");
@@ -103,8 +107,8 @@ async function main() {
   assert(!authority.html.includes("APPROVED AUTHORITY1/"), "authority label and count must not concatenate");
 
   const css = read("public/styles.css");
-  assert(css.includes("#automation-global-live-strip[hidden]{display:none!important}"), "idle strip must be forcibly removed from layout");
-  assert(css.includes("position:relative!important"), "active Activity strip must participate in layout rather than overlay it");
+  assert(!css.includes("#automation-global-live-strip"), "the retired global live strip must leave no styling behind");
+  assert(css.includes(".automation-compact-status"), "the compact run status a working page shows must be styled");
   assert(css.includes("min-height:40px"), "mobile controls must receive a minimum hit-area floor");
 
   const app = read("public/app.js");

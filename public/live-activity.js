@@ -462,6 +462,147 @@ function v641RunRoute(run) {
   }
   return "#/production";
 }
+/* THE ONE SENTENCE A RUN IS DESCRIBED BY, wherever it is described.
+
+   Lifted verbatim out of v641DrawerRunMarkup so that the drawer row and the compact
+   status a working page now shows are not two renderings of the same idea but two
+   callers of one function. That is the whole answer to "does the compact status use
+   the same classification as the drawer": there is nothing left to disagree with.
+
+   It asks v670WaitingForHumanRun and nothing else. It does not read run.status - the
+   fallback chain at the end is the run's OWN recorded prose (stage, summary) and
+   v626StatusLabel, which is the shipped label function, not a classification made
+   here. */
+function v670RunHeadline(run) {
+  const { displayRun, step } = v641DisplayedRunAndStep(run);
+  if (v670WaitingForHumanRun(run)) return v670WaitingDetail(run, step);
+  if (step) return `${v641StepSystem(step)} · ${step.label || displayRun.stage}`;
+  return run?.stage || run?.summary || v626StatusLabel(run);
+}
+
+/* WHAT A WORKING PAGE SAYS ABOUT A RUN. Batch 2, Slice 1.
+
+   Replaces the full LIVE AUTOMATION ACTIVITY timeline that v626AutomationPanel used to
+   embed in six task pages and v642RelatedShotActivityMarkup embedded in a seventh. The
+   drawer owns the detail; a task page owns the task.
+
+   EVERY WORD AND EVERY TONE HERE IS BORROWED, none is decided:
+
+     v670RunTone            - the drawer row's own tone function
+     v670MachineActiveRun   - the shipped active predicate
+     v670WaitingForHumanRun - the shipped waiting predicate
+     v670AttentionRun       - the shipped attention predicate
+     v670RunHeadline        - the sentence the drawer row prints
+
+   There is no `run.status` test in this function, deliberately: a second reading of a
+   raw status is exactly how a working page and the drawer come to claim different
+   things about one run.
+
+   It carries ONE control, and that control only opens the drawer. No approval, no
+   retry, no resume, no paid submission - those live in v626RunActions, which
+   v626AutomationPanel still renders, untouched, right where it always did. */
+window.v670CompactRunStatusMarkup = (run) => {
+  if (!run) return "";
+  const tone = v670RunTone(run);
+  const active = v670MachineActiveRun(run);
+  const waiting = v670WaitingForHumanRun(run);
+  const attention = v670AttentionRun(run);
+  const glyph = active ? '<span class="spin">◌</span>' : waiting || attention ? "!" : tone === "done" ? "✓" : "○";
+  return `<div class="automation-compact-status state-${attr(tone)}" data-automation-compact-run="${attr(run.id)}" data-compact-tone="${attr(tone)}"><i aria-hidden="true">${glyph}</i><p>${esc(v670RunHeadline(run))}</p><button type="button" class="chip automation-compact-open" onclick="openGlobalAutomationActivity('${attr(run.id)}')">OPEN ACTIVITY →</button></div>`;
+};
+
+/* Repainted from the SAME tick that repaints the drawer, so a task page and the drawer
+   never show two ages of one run.
+
+   PATCHED, NOT REPLACED, where the DOM can be reconciled: swapping outerHTML every 3.5
+   seconds detaches OPEN ACTIVITY from under the pointer, which is precisely the defect
+   the drawer was repaired for and which still shows up as a flake in
+   check:browser-real. The wholesale swap stays as the fallback for a DOM that cannot
+   parse innerHTML, probed with the shipped v670DomCanReconcile rather than by sniffing
+   for a test environment. */
+function v670RepaintCompactRunStatuses(only = "") {
+  if (typeof document === "undefined" || typeof document.querySelectorAll !== "function") return;
+  document.querySelectorAll("[data-automation-compact-run]").forEach((node) => {
+    const id = node.dataset?.automationCompactRun || node.getAttribute?.("data-automation-compact-run") || "";
+    if (!id || (only && id !== only)) return;
+    const run = v641RunById(id);
+    if (!run) return;
+    const markup = v670CompactRunStatusMarkup(run);
+    if (typeof v670DomCanReconcile === "function" && typeof v670PatchElement === "function" && v670DomCanReconcile(document)) {
+      const staging = document.createElement("div");
+      staging.innerHTML = markup;
+      const next = staging.firstElementChild;
+      if (next) { v670PatchElement(node, next); return; }
+    }
+    node.outerHTML = markup;
+  });
+}
+
+/* WHERE A COMPLETED RUN'S RESULT ACTUALLY IS. Batch 2, Slice 1.
+
+   v641RunRoute answers "which workspace owns this run" and is unchanged. It is not a
+   wrong answer, it is an incomplete one: it lands the filmmaker at the top of a shot
+   and leaves them to find what finished.
+
+   This adds the missing half WITHOUT inventing a panel map. The run records its own
+   scope; the scope names a shipped `data-guided-panel` key; and which stage owns that
+   panel is a question asked of shared-stage-model.js, which is the module that owns
+   the answer. Two of CineBraid's five stages are reachable this way because two are
+   the ones automation runs actually produce results in.
+
+   WHY THE HASH IS NOT QUALIFIED. public/app.js's route() reads the id as
+   `location.hash.split("/")[2]`, so `#/shot/L1-01?panel=still` would make the shot id
+   `L1-01?panel=still` and resolve to no shot at all. The stage selection therefore
+   travels the way every other cross-panel action in CineBraid sends it - written
+   through the canonical selector before the hash changes - and the hash stays exactly
+   the string it has always been.
+
+   IT FAILS CLOSED. Anything this cannot resolve to a declared stage returns the
+   existing workspace route with resolved:false, which is the shipped behaviour
+   unchanged. Guessing a stage is worse than landing at the top of one. */
+const V670_RUN_SCOPE_PANELS = { stills: "still", "blocking-only": "blocking" };
+
+window.v670RunResultTarget = (run) => {
+  const base = { route: v641RunRoute(run), panel: "", stage: "", view: "", resolved: false };
+  /* SETTLED, AND NOT ASKING FOR ATTENTION. The shipped predicates already partition
+     runs exactly this way, so this asks them instead of re-reading run.status and
+     becoming a second opinion about what "finished" means. A run still working, still
+     waiting on the director, or sitting in needs-attention has no result to hand
+     over. */
+  if (!run || v670RunUnsettled(run) || v670AttentionRun(run)) return base;
+  if (run.type !== "shot-chain") return base;
+  const panel = V670_RUN_SCOPE_PANELS[String(run.scope || "")] || "";
+  if (!panel || typeof shotStageForPanel !== "function") return base;
+  const stage = shotStageForPanel(panel);
+  if (!stage) return base;
+  const view = typeof shotStagePanelView === "function" ? shotStagePanelView(panel) || "" : "";
+  return { route: base.route, panel, stage: stage.id, view, resolved: true };
+};
+
+/* The drawer's hand-off. Selects the stage that owns the result through
+   selectGuidedPanelTask - the SAME writer every in-app cross-panel action uses, which
+   goes through boundedWriteFocusedTask rather than boundedWriteState, because task
+   selection written through the latter is silent and does nothing - and then navigates
+   to the route v641RunRoute already returned. */
+window.openRunResult = (runId) => {
+  const run = v641RunById(runId);
+  const target = v670RunResultTarget(run);
+  closeGlobalAutomationActivity();
+  if (target.resolved && typeof selectGuidedPanelTask === "function" && typeof shotById === "function") {
+    const shot = shotById(run.targetId);
+    if (shot) selectGuidedPanelTask(shot, target.panel);
+  }
+  /* NAVIGATE WHEN THE ROUTE CHANGES, RENDER WHEN IT DOES NOT.
+
+     Assigning location.hash the value it already holds fires no hashchange, and
+     selectGuidedPanelTask writes the selection without redrawing - deliberately, because
+     its in-app callers redraw themselves. A filmmaker already standing in the shot the
+     run belongs to would therefore have the right stage selected and be left looking at
+     the old one, which is the exact "hunt for what finished" this item exists to end. */
+  if (location.hash !== target.route) location.hash = target.route;
+  else if (typeof route === "function") route();
+};
+
 function v641DrawerRunMarkup(run, duplicateCount = 1) {
   const { displayRun, step, child } = v641DisplayedRunAndStep(run);
   const active = v670MachineActiveRun(run);
@@ -472,8 +613,8 @@ function v641DrawerRunMarkup(run, duplicateCount = 1) {
     ? `<button class="approve-btn" onclick="retryFailedAutomationStep('${attr(run.id)}','${attr(failed.key)}')">REPAIR & RETRY</button>`
     : run.status === "failed" && failed
       ? `<button onclick="retryFailedAutomationStep('${attr(run.id)}','${attr(failed.key)}')">RETRY</button>`
-      : `<button onclick="closeGlobalAutomationActivity();location.hash='${attr(v641RunRoute(run))}'">OPEN WORKSPACE</button>`;
-  return `<article class="automation-drawer-run state-${attr(v670RunTone(run))}" data-run-id="${attr(run.id)}" data-activity-key="run:${attr(run.id)}"><header><div><span>${esc(run.type.replace(/-/g, " ").toUpperCase())}</span><b>${esc(run.label || run.targetId)}${duplicateCount > 1 ? ` <em class="automation-duplicate-count">×${duplicateCount}</em>` : ""}</b></div><i>${active ? '<span class="spin">◌</span>' : waiting ? "!" : run.status === "completed" ? "✓" : run.status === "failed" ? "!" : "○"}</i></header><p>${esc(waiting ? v670WaitingDetail(run, step) : step ? `${v641StepSystem(step)} · ${step.label || displayRun.stage}` : run.stage || run.summary || v626StatusLabel(run))}</p>${failed?.error ? `<small class="automation-drawer-error">${esc(failed.error)}</small>` : child ? `<small>Child run: ${esc(child.label || child.targetId)}</small>` : ""}<footer>${primary}<button onclick="closeGlobalAutomationActivity();openAutomationReport('${attr(run.id)}')">VIEW REPORT</button>${v670AttentionRun(run) ? `<button class="ghost-btn" onclick="dismissAutomationActivityRun('${attr(run.id)}')">DISMISS</button>` : ""}</footer></article>`;
+      : `<button onclick="openRunResult('${attr(run.id)}')">${v670RunResultTarget(run).resolved ? "OPEN RESULT" : "OPEN WORKSPACE"}</button>`;
+  return `<article class="automation-drawer-run state-${attr(v670RunTone(run))}" data-run-id="${attr(run.id)}" data-activity-key="run:${attr(run.id)}"><header><div><span>${esc(run.type.replace(/-/g, " ").toUpperCase())}</span><b>${esc(run.label || run.targetId)}${duplicateCount > 1 ? ` <em class="automation-duplicate-count">×${duplicateCount}</em>` : ""}</b></div><i>${active ? '<span class="spin">◌</span>' : waiting ? "!" : run.status === "completed" ? "✓" : run.status === "failed" ? "!" : "○"}</i></header><p>${esc(v670RunHeadline(run))}</p>${failed?.error ? `<small class="automation-drawer-error">${esc(failed.error)}</small>` : child ? `<small>Child run: ${esc(child.label || child.targetId)}</small>` : ""}<footer>${primary}<button onclick="closeGlobalAutomationActivity();openAutomationReport('${attr(run.id)}')">VIEW REPORT</button>${v670AttentionRun(run) ? `<button class="ghost-btn" onclick="dismissAutomationActivityRun('${attr(run.id)}')">DISMISS</button>` : ""}</footer></article>`;
 }
 /* WAITING FOR YOU, said in the run's own terms. A run parked at an approval gate and
    a run whose runner went away need different things from the director, and the
@@ -787,51 +928,23 @@ function v641RenderActivityDrawer(focusRunId = "") {
   v6602EnsureActivityBackdrop();
   if (focusRunId) setTimeout(() => drawer.querySelector(`[data-run-id="${v641SelectorValue(focusRunId)}"]`)?.scrollIntoView({ block: "center" }), 20);
 }
-function v642EnsureGlobalActivityStrip() {
-  let strip = document.getElementById("automation-global-live-strip");
-  if (!strip) {
-    strip = document.createElement("button");
-    strip.id = "automation-global-live-strip";
-    strip.type = "button";
-    strip.onclick = () => openGlobalAutomationActivity();
-    strip.setAttribute("aria-label", "Open live activity");
-    strip.setAttribute("aria-live", "polite");
-    /* ABOVE the workspace content, and OUTSIDE the Main region.
+/* THE FLOATING GLOBAL ACTIVITY STRIP IS RETIRED. Batch 2, Slice 1.
 
-       The strip is NOT position:fixed. It was, until the v6.6.2.2 integrity pass
-       overrode it to `position:relative!important` (public/styles.css) and made it an
-       in-flow banner between the topbar and the work. That makes its parent
-       presentationally load-bearing, which the previous version of this function
-       assumed it was not.
+   `#automation-global-live-strip` and the topbar chip `#automation-activity-toggle`
+   rendered the IDENTICAL v6602ActivityStatus() answer. Two persistent global
+   indicators for one derivation is not redundancy, it is a second place to look
+   for the same sentence — and the strip sat at the bottom of the screen, where the
+   Activity Terminal already lives.
 
-       Anchoring on #main was therefore wrong once O2 put #main inside `#cb-shell-main`:
-       that region is a GRID with two declared tracks, one for the centre and one for
-       the rail. An in-flow strip inserted there becomes a third grid item, takes the
-       centre's `1fr` track, and pushes the workspace into the rail's 340px column — so
-       at 1920px the filmmaker's work rendered 340px wide. It was invisible until now
-       only because the strip hides itself when nothing is happening, and O2 shipped
-       both slots empty.
+   The chip is now the single persistent global indicator and the single gateway to
+   the drawer. Nothing was learned or unlearned by this: v6602ActivityStatus() is
+   unchanged and still the only classifier, and v641UpdateActivityButton() still
+   renders exactly what it says.
 
-       Anchoring on the REGION restores exactly where the strip sat before O2: a flow
-       child of #workspace, spanning it, above the content. #main is kept as the
-       fallback for a document that has no region (the render harness). */
-    const region = document.getElementById("cb-shell-main");
-    const anchor = region || document.getElementById("main");
-    const parent = anchor?.parentNode || document.getElementById("workspace");
-    if (anchor && parent && typeof parent.insertBefore === "function") parent.insertBefore(strip, anchor);
-    else document.body.appendChild(strip);
-  }
-  return strip;
-}
-function v642UpdateGlobalActivityStrip() {
-  const strip = v642EnsureGlobalActivityStrip();
-  const status = v6602ActivityStatus();
-  const visible = status.tone !== "idle";
-  strip.hidden = !visible;
-  strip.className = `state-${status.tone}`;
-  strip.innerHTML = visible ? `${status.tone === "active" ? '<i class="spin">◌</i>' : '<i>!</i>'}<span><b>${esc(status.label)}</b><small>${esc(status.detail)}</small></span><em>OPEN</em>` : "";
-  strip.setAttribute("aria-label", visible ? status.label : "No active operation");
-}
+   WHAT DID NOT GO WITH IT: v670AnnounceActivityUpdate(), immediately below. The
+   strip carried aria-live="polite"; the announcement is a separate mechanism that
+   the persistent creator surfaces repaint from, and removing the strip must not
+   remove the app's only spoken notice that activity changed. */
 
 function v641UpdateActivityButton() {
   const button = document.getElementById("automation-activity-toggle");
@@ -850,7 +963,6 @@ function v641UpdateActivityButton() {
   button.classList.toggle("waiting", status.tone === "waiting");
   button.innerHTML = `<span>${count ? '<i class="spin">◌</i>' : status.tone === "waiting" ? "<i>!</i>" : "◉"}</span><b>${esc(status.label.replace("Activity · ", ""))}</b>${detail ? `<small>${esc(detail)}</small>` : ""}`;
   button.title = status.label;
-  v642UpdateGlobalActivityStrip();
   v670AnnounceActivityUpdate();
 }
 /* THE ONE SIGNAL O3 REPAINTS FROM.
@@ -900,6 +1012,7 @@ window.refreshGlobalAutomationActivity = async (force = false) => {
       const run = v641RunById(node.dataset.automationLiveRun);
       if (run) node.outerHTML = v641LiveActivityMarkup(run);
     });
+    v670RepaintCompactRunStatuses();
   }
 };
 /* EVENT-DRIVEN RECONCILIATION. Called by every human approval or rejection that
@@ -921,6 +1034,7 @@ window.v641NotifyAutomationActivity = (run) => {
   if (run) {
     const node = document.querySelector(`[data-automation-live-run="${v641SelectorValue(run.id)}"]`);
     if (node) node.outerHTML = v641LiveActivityMarkup(run);
+    v670RepaintCompactRunStatuses(run.id);
   }
   v641UpdateActivityButton();
   if (V641_ACTIVITY_DRAWER_OPEN) v641RenderActivityDrawer();
@@ -1038,5 +1152,5 @@ window.v642RelatedShotActivityMarkup = (shotId) => {
     .sort((a, b) => String(b.updatedAt || b.createdAt || "").localeCompare(String(a.updatedAt || a.createdAt || "")));
   const run = runs[0];
   if (!run) return "";
-  return `<section class="shot-related-activity"><header><div><span>RELATED SCENE AUTOMATION</span><b>${esc(run.label || "Scene correction")}</b><small>This work was launched from the scene but targets ${esc(shotId)}. Progress stays visible here.</small></div><button class="chip" onclick="openGlobalAutomationActivity('${attr(run.id)}')">OPEN GLOBAL ACTIVITY</button></header>${typeof v641LiveActivityMarkup === "function" ? v641LiveActivityMarkup(run) : ""}</section>`;
+  return `<section class="shot-related-activity"><header><div><span>RELATED SCENE AUTOMATION</span><b>${esc(run.label || "Scene correction")}</b><small>This work was launched from the scene but targets ${esc(shotId)}. Progress stays visible here.</small></div><button class="chip" onclick="openGlobalAutomationActivity('${attr(run.id)}')">OPEN GLOBAL ACTIVITY</button></header>${typeof v670CompactRunStatusMarkup === "function" ? v670CompactRunStatusMarkup(run) : ""}</section>`;
 };

@@ -691,19 +691,24 @@ function checkRuntimeOwnership(sources = SOURCES) {
      because the strip hides itself when nothing is happening and O2 shipped both slots
      empty.
 
-     So the requirement is stronger than "survives the nesting": the strip must land
-     OUTSIDE the Main region. tests/creator-state.js
-     checkActivityStripStaysOutOfTheGrid holds the full reasoning and its negative
-     control; this keeps O2's own file honest about the line it changed. */
-  const activity = sources.activity;
-  assert.ok(!/workspace\.insertBefore\(strip,\s*main\)/.test(activity),
-    "live-activity.js must not assume #main is a direct child of #workspace — it is now inside the Main region, and insertBefore would throw NotFoundError on a node that is not the parent's child");
-  assert.ok(/getElementById\(["']cb-shell-main["']\)/.test(activity),
-    "the live strip is in flow, so it must anchor on the Main REGION and land beside it in #workspace — anchoring on #main puts it inside the region's two-track grid, where it takes the centre's track");
-  assert.ok(/anchor\?\.parentNode/.test(activity),
-    "the strip must still be inserted into its anchor's real parent so it survives any future nesting");
+     Batch 2, Slice 1 RETIRED the strip. The chip in the topbar and the strip rendered
+     the identical v6602ActivityStatus() answer, so one of the two persistent global
+     indicators was removed and the chip kept. What survives here is the general form
+     of the rule: live-activity.js must not reach into the Main region's grid at all.
+     An element inserted there is a third child of a two-track grid whoever creates
+     it, which is why this is asserted as an absence rather than as a correct anchor. */
+  /* Comments stripped: the retirement note in live-activity.js names the element it
+     retired, which is exactly what a reader needs and exactly what a source grep for
+     "is it gone" must not trip over. */
+  const activity = codeOnly(sources.activity);
+  assert.ok(!/insertBefore\(\s*strip/.test(activity),
+    "the floating activity strip is retired; live-activity.js must not insert a persistent banner into the workspace again — the topbar chip is the one persistent global indicator");
+  assert.ok(!/automation-global-live-strip/.test(activity),
+    "live-activity.js must not rebuild the retired global live strip");
+  assert.ok(!/getElementById\(["']cb-shell-main["']\)\s*;?[^\n]*insertBefore/.test(activity),
+    "live-activity.js must not mount anything into the Main region: it is a two-track grid and a third in-flow child takes the centre's track");
 
-  note("Ownership: the runtime creates no region and public/app.js never names the shell; the one dependent call in live-activity.js anchors OUTSIDE the Main region, because the strip is in flow and the region is a two-track grid");
+  note("Ownership: the runtime creates no region and public/app.js never names the shell; live-activity.js no longer inserts anything beside the Main region, because the strip that used to be inserted there is retired");
 }
 
 /* ===========================================================================
