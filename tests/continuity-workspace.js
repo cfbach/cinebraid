@@ -242,10 +242,34 @@ async function renderCheck(payload, options = {}) {
   assert(rendered.html.includes("CONTINUITY"), "the continuity section must be named");
   assert(rendered.html.includes("CHECK CONTINUITY"), "the continuity section must expose its primary action");
   assert(rendered.html.includes("Frame A → Frame B"), "the default comparison must be Frame A against Frame B");
+  /* PLACEMENT INVERTED, DELIBERATELY, IN BATCH 2 SLICE 1.
+
+     This assertion used to require continuity ABOVE the frame card, on the reasoning
+     that it belongs with the frame rail rather than under one frame's candidate tray.
+     The founder smoke reproduced what that actually produced: the frame strip chooses a
+     frame, and two panels of checking machinery then sat between that choice and the
+     panel showing the frame. Frame navigation and frame review were not adjacent.
+
+     So the requirement is now the other one, and it is stated as three facts rather
+     than as one index comparison, because "below the card" is only right if it is also
+     COLLAPSED and still INSIDE the Frames stage. Continuity itself is untouched: same
+     panel, same actions, same words — the assertions above and below this block are
+     unchanged and still pass against it. */
   const continuityIndex = rendered.html.indexOf('class="shot-continuity"');
   const frameCardIndex = rendered.html.indexOf("guided-frame-card");
-  assert(continuityIndex > 0 && (frameCardIndex < 0 || continuityIndex < frameCardIndex), "continuity must sit with the frame rail, not below one frame's candidate tray");
-  pass("the continuity card renders inside the Frames stage, defaulting to Frame A → Frame B");
+  const frameRailIndex = rendered.html.indexOf("guided-frame-rail");
+  assert(continuityIndex > 0, "the Frames stage must still carry the continuity section");
+  assert(frameRailIndex > 0 && frameCardIndex > frameRailIndex,
+    "the frame strip must still precede the frame card");
+  assert(continuityIndex > frameCardIndex,
+    "continuity must render BELOW the frame card so frame navigation sits adjacent to frame review");
+  const foldIndex = rendered.html.indexOf("shot-continuity-fold");
+  assert(foldIndex > 0 && foldIndex < continuityIndex,
+    "the continuity section must be wrapped in its collapsible fold");
+  const foldTag = rendered.html.slice(rendered.html.lastIndexOf("<details", foldIndex), rendered.html.indexOf(">", foldIndex) + 1);
+  assert(!/\bopen\b/.test(foldTag.replace(/="[^"]*"/g, '=""')),
+    `the continuity fold must be collapsed by default, got: ${foldTag}`);
+  pass("the continuity card renders inside the Frames stage, defaulting to Frame A → Frame B, collapsed and below the frame card");
 
   /* Exactly one prominent continuity action: the superseded v6.6 pair review
      is retained, labelled by version, and folded away. */

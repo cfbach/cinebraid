@@ -452,16 +452,253 @@ function v641StandaloneFalJobs() {
 function v641StandaloneFalMarkup(job) {
   return `<article class="automation-drawer-run state-active" data-activity-key="fal:${attr(job.id)}"><header><div><span>FAL · GPT IMAGE 2</span><b>${esc(job.purpose || "Manual image generation")}</b></div><i><span class="spin">◌</span></i></header><p>${esc(String(job.status || "working").replace(/_/g, " "))}${job.queuePosition != null ? ` · queue ${job.queuePosition}` : ""}</p><small>${esc(job.model || "GPT Image 2")} · ${Number(job.outputCount || 0)} candidate${Number(job.outputCount || 0) === 1 ? "" : "s"}</small></article>`;
 }
+/* The four reference collections an entity-chain run can target, and the route each
+   one is read at. Hoisted out of v641RunRoute so that "which collections exist" has ONE
+   statement: the router reads it to build a hash, and v670RunResultTarget reads the same
+   keys to refuse a collection that does not exist. */
+const V641_ENTITY_ROUTES = { characters: "character", locations: "location", props: "prop", vehicles: "vehicle" };
+
 function v641RunRoute(run) {
   if (run?.type === "scene-chain") return `#/scene/${run.targetId}`;
   if (run?.type === "shot-chain") return `#/shot/${run.targetId}`;
   if (run?.type === "entity-chain") {
     const [list, id] = String(run.targetId || "").split(":");
-    const route = { characters: "character", locations: "location", props: "prop", vehicles: "vehicle" }[list] || "library";
+    const route = V641_ENTITY_ROUTES[list] || "library";
     return `#/${route}/${id || ""}`;
   }
   return "#/production";
 }
+/* THE ONE SENTENCE A RUN IS DESCRIBED BY, wherever it is described.
+
+   Lifted verbatim out of v641DrawerRunMarkup so that the drawer row and the compact
+   status a working page now shows are not two renderings of the same idea but two
+   callers of one function. That is the whole answer to "does the compact status use
+   the same classification as the drawer": there is nothing left to disagree with.
+
+   It asks v670WaitingForHumanRun and nothing else. It does not read run.status - the
+   fallback chain at the end is the run's OWN recorded prose (stage, summary) and
+   v626StatusLabel, which is the shipped label function, not a classification made
+   here. */
+function v670RunHeadline(run) {
+  const { displayRun, step } = v641DisplayedRunAndStep(run);
+  if (v670WaitingForHumanRun(run)) return v670WaitingDetail(run, step);
+  if (step) return `${v641StepSystem(step)} · ${step.label || displayRun.stage}`;
+  return run?.stage || run?.summary || v626StatusLabel(run);
+}
+
+/* WHAT A WORKING PAGE SAYS ABOUT A RUN. Batch 2, Slice 1.
+
+   Replaces the full LIVE AUTOMATION ACTIVITY timeline that v626AutomationPanel used to
+   embed in six task pages and v642RelatedShotActivityMarkup embedded in a seventh. The
+   drawer owns the detail; a task page owns the task.
+
+   EVERY WORD AND EVERY TONE HERE IS BORROWED, none is decided:
+
+     v670RunTone            - the drawer row's own tone function
+     v670MachineActiveRun   - the shipped active predicate
+     v670WaitingForHumanRun - the shipped waiting predicate
+     v670AttentionRun       - the shipped attention predicate
+     v670RunHeadline        - the sentence the drawer row prints
+
+   There is no `run.status` test in this function, deliberately: a second reading of a
+   raw status is exactly how a working page and the drawer come to claim different
+   things about one run.
+
+   It carries ONE control, and that control only opens the drawer. No approval, no
+   retry, no resume, no paid submission - those live in v626RunActions, which
+   v626AutomationPanel still renders, untouched, right where it always did. */
+window.v670CompactRunStatusMarkup = (run) => {
+  if (!run) return "";
+  const tone = v670RunTone(run);
+  const active = v670MachineActiveRun(run);
+  const waiting = v670WaitingForHumanRun(run);
+  const attention = v670AttentionRun(run);
+  const glyph = active ? '<span class="spin">◌</span>' : waiting || attention ? "!" : tone === "done" ? "✓" : "○";
+  return `<div class="automation-compact-status state-${attr(tone)}" data-automation-compact-run="${attr(run.id)}" data-compact-tone="${attr(tone)}"><i aria-hidden="true">${glyph}</i><p>${esc(v670RunHeadline(run))}</p><button type="button" class="chip automation-compact-open" onclick="openGlobalAutomationActivity('${attr(run.id)}')">OPEN ACTIVITY →</button></div>`;
+};
+
+/* Repainted from the SAME tick that repaints the drawer, so a task page and the drawer
+   never show two ages of one run.
+
+   PATCHED, NOT REPLACED, where the DOM can be reconciled: swapping outerHTML every 3.5
+   seconds detaches OPEN ACTIVITY from under the pointer, which is precisely the defect
+   the drawer was repaired for and which still shows up as a flake in
+   check:browser-real. The wholesale swap stays as the fallback for a DOM that cannot
+   parse innerHTML, probed with the shipped v670DomCanReconcile rather than by sniffing
+   for a test environment. */
+function v670RepaintCompactRunStatuses(only = "") {
+  if (typeof document === "undefined" || typeof document.querySelectorAll !== "function") return;
+  document.querySelectorAll("[data-automation-compact-run]").forEach((node) => {
+    const id = node.dataset?.automationCompactRun || node.getAttribute?.("data-automation-compact-run") || "";
+    if (!id || (only && id !== only)) return;
+    const run = v641RunById(id);
+    if (!run) return;
+    const markup = v670CompactRunStatusMarkup(run);
+    if (typeof v670DomCanReconcile === "function" && typeof v670PatchElement === "function" && v670DomCanReconcile(document)) {
+      const staging = document.createElement("div");
+      staging.innerHTML = markup;
+      const next = staging.firstElementChild;
+      if (next) { v670PatchElement(node, next); return; }
+    }
+    node.outerHTML = markup;
+  });
+}
+
+/* WHERE A COMPLETED RUN'S RESULT ACTUALLY IS. Batch 2, Slice 1.
+
+   v641RunRoute answers "which workspace owns this run" and is unchanged. It is not a
+   wrong answer, it is an incomplete one: it lands the filmmaker at the top of a shot
+   and leaves them to find what finished.
+
+   This adds the missing half WITHOUT inventing a panel map. The run records its own
+   scope; the scope names a shipped `data-guided-panel` key; and which stage owns that
+   panel is a question asked of shared-stage-model.js, which is the module that owns
+   the answer. Two of CineBraid's five stages are reachable this way because two are
+   the ones automation runs actually produce results in.
+
+   WHY THE HASH IS NOT QUALIFIED. public/app.js's route() reads the id as
+   `location.hash.split("/")[2]`, so `#/shot/L1-01?panel=still` would make the shot id
+   `L1-01?panel=still` and resolve to no shot at all. The stage selection therefore
+   travels the way every other cross-panel action in CineBraid sends it - written
+   through the canonical selector before the hash changes - and the hash stays exactly
+   the string it has always been.
+
+   IT FAILS CLOSED. Anything this cannot resolve to a declared stage returns the
+   existing workspace route with resolved:false, which is the shipped behaviour
+   unchanged. Guessing a stage is worse than landing at the top of one. */
+/* A RUN SCOPE THAT IS NOT ALREADY A PANEL KEY, translated to one.
+
+   Only two entries, and neither is a stage list: `stills` and `blocking-only` are the
+   two shot-chain scopes the shipped automation actually writes, and each names the
+   panel its result lands in. Every OTHER scope is resolved by asking the declared stage
+   model whether the scope IS a panel it owns — see below — so this table never has to
+   grow to keep pace with the model. */
+const V670_RUN_SCOPE_PANELS = { stills: "still", "blocking-only": "blocking" };
+
+/* The entity workspace's four declared tasks, addressed by the scopes the entity-chain
+   automation writes. These are the same task ids entities.js declares in its `specs`
+   array and the same sub-view keys its coverage control writes; nothing here is a new
+   name for anything.
+
+     default-only   the run built and approved the BASE reference, so the result is a
+                    candidate decision -> Choose & approve.
+     state:<id>     the run derived ONE continuity state, so the result is that state ->
+                    Coverage & states, states view, that state selected.
+     state-chain    the run derived SEVERAL states and names none of them, so the result
+                    surface is the states view with no state singled out. Choosing one
+                    would be a guess about which of them the director wants. */
+const V670_ENTITY_SCOPE_TASKS = {
+  "default-only": { task: "review" },
+  "state-chain": { task: "coverage", view: "states" },
+};
+
+window.v670RunResultTarget = (run) => {
+  const base = { route: v641RunRoute(run), kind: "", panel: "", stage: "", view: "", task: "", state: "", resolved: false };
+  /* SETTLED, AND NOT ASKING FOR ATTENTION. The shipped predicates already partition
+     runs exactly this way, so this asks them instead of re-reading run.status and
+     becoming a second opinion about what "finished" means. A run still working, still
+     waiting on the director, or sitting in needs-attention has no result to hand
+     over. */
+  if (!run || v670RunUnsettled(run) || v670AttentionRun(run)) return base;
+
+  if (run.type === "shot-chain") {
+    if (typeof shotStageForPanel !== "function") return base;
+    const scope = String(run.scope || "");
+    /* TWO WAYS IN, ONE VOCABULARY. Either the scope is one of the two shipped scopes
+       above, or the scope IS a panel key the declared stage model already owns — which
+       is how a motion-scoped run reaches Motion & sound without a second map and
+       without this file learning that a stage called "motion" exists. `motion`,
+       `motionCreate`, `motionAudio` and `finish` are all declared panels, so all four
+       resolve the moment a run carries one; asking shotStageForPanel is what makes that
+       the MODEL's answer rather than this file's. */
+    const panel = V670_RUN_SCOPE_PANELS[scope] || (shotStageForPanel(scope) ? scope : "");
+    if (!panel) return base;
+    const stage = shotStageForPanel(panel);
+    if (!stage) return base;
+    const view = typeof shotStagePanelView === "function" ? shotStagePanelView(panel) || "" : "";
+    return { ...base, kind: "shot-stage", panel, stage: stage.id, view, resolved: true };
+  }
+
+  if (run.type === "entity-chain") {
+    /* RESOLVED MEANS THE REQUESTED IDENTITY EXISTS, not that it parsed.
+
+       The first version of this checked the shape of `list:id` and stopped there, so a
+       target naming a collection CineBraid does not have, a reference that was deleted,
+       or a continuity state that was never declared all came back resolved:true — and
+       the workspace then rendered the state closed, because the thing the run asked for
+       was not there. A hand-off that claims to know where a result is, and is wrong, is
+       worse than one that admits it does not: the filmmaker stops trusting the button.
+
+       So every half of the identity is verified against the project before this says
+       yes, and anything it cannot verify — including a project it cannot read — falls
+       back to the workspace route with resolved:false. That is the same fallback a
+       scene-chain run gets, and it is honest rather than empty-handed: the route is
+       still the right workspace, it simply makes no claim about where inside it. */
+    const parts = String(run.targetId || "").split(":");
+    /* EXACTLY two segments. `characters:KAI:extra` is not a target with a stray
+       suffix — it is a target this build does not understand, and quietly using its
+       first two segments is guessing. */
+    if (parts.length !== 2) return base;
+    const [list, id] = parts;
+    if (!list || !id) return base;
+    if (!Object.prototype.hasOwnProperty.call(V641_ENTITY_ROUTES, list)) return base;
+
+    const project = typeof P !== "undefined" ? P : null;
+    const rows = project && Array.isArray(project[list]) ? project[list] : null;
+    if (!rows) return base;
+    const entity = rows.find((row) => row && String(row.id) === id) || null;
+    if (!entity) return base;
+
+    const scope = String(run.scope || "");
+    const perState = /^state:(.+)$/.exec(scope);
+    let target = null;
+    if (perState) {
+      /* The DECLARED states, read without materialising anything. ensureEntityStateList
+         would create a default as a side effect of being asked, which would make this
+         check able to invent the very state it is verifying. */
+      const stateId = perState[1];
+      const states = Array.isArray(entity.continuityStates) ? entity.continuityStates : [];
+      if (!states.some((state) => state && String(state.id) === stateId)) return base;
+      target = { task: "coverage", view: "states", state: stateId };
+    } else {
+      target = V670_ENTITY_SCOPE_TASKS[scope] || null;
+    }
+    if (!target) return base;
+    return { ...base, kind: "entity-task", task: target.task, view: target.view || "", state: target.state || "", resolved: true };
+  }
+
+  /* A scene-chain run fans out across many shots and names no single result, and an
+     unknown type names nothing at all. Both keep the workspace route. */
+  return base;
+};
+
+/* The drawer's hand-off. Selects the stage that owns the result through
+   selectGuidedPanelTask - the SAME writer every in-app cross-panel action uses, which
+   goes through boundedWriteFocusedTask rather than boundedWriteState, because task
+   selection written through the latter is silent and does nothing - and then navigates
+   to the route v641RunRoute already returned. */
+window.openRunResult = (runId) => {
+  const run = v641RunById(runId);
+  const target = v670RunResultTarget(run);
+  closeGlobalAutomationActivity();
+  if (target.kind === "shot-stage" && typeof selectGuidedPanelTask === "function" && typeof shotById === "function") {
+    const shot = shotById(run.targetId);
+    if (shot) selectGuidedPanelTask(shot, target.panel);
+  } else if (target.kind === "entity-task" && typeof selectEntityResultTask === "function") {
+    const [list, id] = String(run.targetId || "").split(":");
+    selectEntityResultTask(list, id, target.task, target.view, target.state);
+  }
+  /* NAVIGATE WHEN THE ROUTE CHANGES, RENDER WHEN IT DOES NOT.
+
+     Assigning location.hash the value it already holds fires no hashchange, and
+     selectGuidedPanelTask writes the selection without redrawing - deliberately, because
+     its in-app callers redraw themselves. A filmmaker already standing in the shot the
+     run belongs to would therefore have the right stage selected and be left looking at
+     the old one, which is the exact "hunt for what finished" this item exists to end. */
+  if (location.hash !== target.route) location.hash = target.route;
+  else if (typeof route === "function") route();
+};
+
 function v641DrawerRunMarkup(run, duplicateCount = 1) {
   const { displayRun, step, child } = v641DisplayedRunAndStep(run);
   const active = v670MachineActiveRun(run);
@@ -472,8 +709,8 @@ function v641DrawerRunMarkup(run, duplicateCount = 1) {
     ? `<button class="approve-btn" onclick="retryFailedAutomationStep('${attr(run.id)}','${attr(failed.key)}')">REPAIR & RETRY</button>`
     : run.status === "failed" && failed
       ? `<button onclick="retryFailedAutomationStep('${attr(run.id)}','${attr(failed.key)}')">RETRY</button>`
-      : `<button onclick="closeGlobalAutomationActivity();location.hash='${attr(v641RunRoute(run))}'">OPEN WORKSPACE</button>`;
-  return `<article class="automation-drawer-run state-${attr(v670RunTone(run))}" data-run-id="${attr(run.id)}" data-activity-key="run:${attr(run.id)}"><header><div><span>${esc(run.type.replace(/-/g, " ").toUpperCase())}</span><b>${esc(run.label || run.targetId)}${duplicateCount > 1 ? ` <em class="automation-duplicate-count">×${duplicateCount}</em>` : ""}</b></div><i>${active ? '<span class="spin">◌</span>' : waiting ? "!" : run.status === "completed" ? "✓" : run.status === "failed" ? "!" : "○"}</i></header><p>${esc(waiting ? v670WaitingDetail(run, step) : step ? `${v641StepSystem(step)} · ${step.label || displayRun.stage}` : run.stage || run.summary || v626StatusLabel(run))}</p>${failed?.error ? `<small class="automation-drawer-error">${esc(failed.error)}</small>` : child ? `<small>Child run: ${esc(child.label || child.targetId)}</small>` : ""}<footer>${primary}<button onclick="closeGlobalAutomationActivity();openAutomationReport('${attr(run.id)}')">VIEW REPORT</button>${v670AttentionRun(run) ? `<button class="ghost-btn" onclick="dismissAutomationActivityRun('${attr(run.id)}')">DISMISS</button>` : ""}</footer></article>`;
+      : `<button onclick="openRunResult('${attr(run.id)}')">${v670RunResultTarget(run).resolved ? "OPEN RESULT" : "OPEN WORKSPACE"}</button>`;
+  return `<article class="automation-drawer-run state-${attr(v670RunTone(run))}" data-run-id="${attr(run.id)}" data-activity-key="run:${attr(run.id)}"><header><div><span>${esc(run.type.replace(/-/g, " ").toUpperCase())}</span><b>${esc(run.label || run.targetId)}${duplicateCount > 1 ? ` <em class="automation-duplicate-count">×${duplicateCount}</em>` : ""}</b></div><i>${active ? '<span class="spin">◌</span>' : waiting ? "!" : run.status === "completed" ? "✓" : run.status === "failed" ? "!" : "○"}</i></header><p>${esc(v670RunHeadline(run))}</p>${failed?.error ? `<small class="automation-drawer-error">${esc(failed.error)}</small>` : child ? `<small>Child run: ${esc(child.label || child.targetId)}</small>` : ""}<footer>${primary}<button onclick="closeGlobalAutomationActivity();openAutomationReport('${attr(run.id)}')">VIEW REPORT</button>${v670AttentionRun(run) ? `<button class="ghost-btn" onclick="dismissAutomationActivityRun('${attr(run.id)}')">DISMISS</button>` : ""}</footer></article>`;
 }
 /* WAITING FOR YOU, said in the run's own terms. A run parked at an approval gate and
    a run whose runner went away need different things from the director, and the
@@ -787,51 +1024,23 @@ function v641RenderActivityDrawer(focusRunId = "") {
   v6602EnsureActivityBackdrop();
   if (focusRunId) setTimeout(() => drawer.querySelector(`[data-run-id="${v641SelectorValue(focusRunId)}"]`)?.scrollIntoView({ block: "center" }), 20);
 }
-function v642EnsureGlobalActivityStrip() {
-  let strip = document.getElementById("automation-global-live-strip");
-  if (!strip) {
-    strip = document.createElement("button");
-    strip.id = "automation-global-live-strip";
-    strip.type = "button";
-    strip.onclick = () => openGlobalAutomationActivity();
-    strip.setAttribute("aria-label", "Open live activity");
-    strip.setAttribute("aria-live", "polite");
-    /* ABOVE the workspace content, and OUTSIDE the Main region.
+/* THE FLOATING GLOBAL ACTIVITY STRIP IS RETIRED. Batch 2, Slice 1.
 
-       The strip is NOT position:fixed. It was, until the v6.6.2.2 integrity pass
-       overrode it to `position:relative!important` (public/styles.css) and made it an
-       in-flow banner between the topbar and the work. That makes its parent
-       presentationally load-bearing, which the previous version of this function
-       assumed it was not.
+   `#automation-global-live-strip` and the topbar chip `#automation-activity-toggle`
+   rendered the IDENTICAL v6602ActivityStatus() answer. Two persistent global
+   indicators for one derivation is not redundancy, it is a second place to look
+   for the same sentence — and the strip sat at the bottom of the screen, where the
+   Activity Terminal already lives.
 
-       Anchoring on #main was therefore wrong once O2 put #main inside `#cb-shell-main`:
-       that region is a GRID with two declared tracks, one for the centre and one for
-       the rail. An in-flow strip inserted there becomes a third grid item, takes the
-       centre's `1fr` track, and pushes the workspace into the rail's 340px column — so
-       at 1920px the filmmaker's work rendered 340px wide. It was invisible until now
-       only because the strip hides itself when nothing is happening, and O2 shipped
-       both slots empty.
+   The chip is now the single persistent global indicator and the single gateway to
+   the drawer. Nothing was learned or unlearned by this: v6602ActivityStatus() is
+   unchanged and still the only classifier, and v641UpdateActivityButton() still
+   renders exactly what it says.
 
-       Anchoring on the REGION restores exactly where the strip sat before O2: a flow
-       child of #workspace, spanning it, above the content. #main is kept as the
-       fallback for a document that has no region (the render harness). */
-    const region = document.getElementById("cb-shell-main");
-    const anchor = region || document.getElementById("main");
-    const parent = anchor?.parentNode || document.getElementById("workspace");
-    if (anchor && parent && typeof parent.insertBefore === "function") parent.insertBefore(strip, anchor);
-    else document.body.appendChild(strip);
-  }
-  return strip;
-}
-function v642UpdateGlobalActivityStrip() {
-  const strip = v642EnsureGlobalActivityStrip();
-  const status = v6602ActivityStatus();
-  const visible = status.tone !== "idle";
-  strip.hidden = !visible;
-  strip.className = `state-${status.tone}`;
-  strip.innerHTML = visible ? `${status.tone === "active" ? '<i class="spin">◌</i>' : '<i>!</i>'}<span><b>${esc(status.label)}</b><small>${esc(status.detail)}</small></span><em>OPEN</em>` : "";
-  strip.setAttribute("aria-label", visible ? status.label : "No active operation");
-}
+   WHAT DID NOT GO WITH IT: v670AnnounceActivityUpdate(), immediately below. The
+   strip carried aria-live="polite"; the announcement is a separate mechanism that
+   the persistent creator surfaces repaint from, and removing the strip must not
+   remove the app's only spoken notice that activity changed. */
 
 function v641UpdateActivityButton() {
   const button = document.getElementById("automation-activity-toggle");
@@ -850,24 +1059,61 @@ function v641UpdateActivityButton() {
   button.classList.toggle("waiting", status.tone === "waiting");
   button.innerHTML = `<span>${count ? '<i class="spin">◌</i>' : status.tone === "waiting" ? "<i>!</i>" : "◉"}</span><b>${esc(status.label.replace("Activity · ", ""))}</b>${detail ? `<small>${esc(detail)}</small>` : ""}`;
   button.title = status.label;
-  v642UpdateGlobalActivityStrip();
   v670AnnounceActivityUpdate();
 }
-/* THE ONE SIGNAL O3 REPAINTS FROM.
+/* WHAT A SCREEN READER IS TOLD, in the classification vocabulary everything else uses.
+
+   v6602ActivityStatus() is the single derivation the topbar chip renders. This turns
+   the same answer into one sentence, so an announcement and the chip can never describe
+   different states - they are the same object read twice. */
+function v670ActivityAnnouncement() {
+  const status = v6602ActivityStatus();
+  return status.tone === "idle" || !status.detail ? status.label : `${status.label} · ${status.detail}`;
+}
+
+/* The last sentence SPOKEN, not the last state seen.
+
+   Activity is recomputed on every 3.5s poll and on every manual row that starts,
+   updates or finishes, and most of those recomputations produce the identical sentence.
+   Writing an unchanged string into a live region makes a screen reader say it again,
+   which turns a useful announcement into a metronome. So the region is written only
+   when the sentence itself changes. */
+let V670_LAST_ANNOUNCEMENT = null;
+
+/* THE ONE SIGNAL O3 REPAINTS FROM, AND THE ONE THING ASSISTIVE TECHNOLOGY HEARS.
 
    Every path that changes activity already ends here - the 3.5s refresh, a manual
-   activity starting, updating or finishing, a run notification, and init. Announcing
-   it means the persistent creator surfaces react to work this file already did
-   instead of running a second timer over the same data, which is the difference
-   between one poll and two.
+   activity starting, updating or finishing, a run notification, and init. It does two
+   separate things, and the separation is the point:
 
-   Deliberately an event rather than a direct call: this file must not learn what the
-   Assistant or the Terminal are, for the same reason public/app.js's route() must not
-   learn what the shell is. */
+   1. IT SPEAKS. `#activity-live-region` is a visually-hidden role="status" element
+      declared in public/index.html. It is NOT a second visual indicator and carries no
+      control: the topbar chip remains the only persistent visual surface for activity.
+      The retired floating strip used to carry aria-live="polite" as a side effect of
+      being visible, which meant deleting the visible thing silently deleted the spoken
+      one. They are now independent, and only one of them has pixels.
+
+   2. IT ANNOUNCES TO THE APP. The event is what the persistent creator surfaces repaint
+      from, instead of running a second timer over the same data.
+
+   The DOM write happens FIRST and is not guarded by the CustomEvent probe: a host
+   without CustomEvent must still be able to speak. */
 function v670AnnounceActivityUpdate() {
+  if (typeof document !== "undefined" && typeof document.getElementById === "function") {
+    const region = document.getElementById("activity-live-region");
+    if (region) {
+      let sentence = "";
+      try { sentence = v670ActivityAnnouncement(); } catch { sentence = ""; }
+      if (sentence && sentence !== V670_LAST_ANNOUNCEMENT) {
+        V670_LAST_ANNOUNCEMENT = sentence;
+        region.textContent = sentence;
+      }
+    }
+  }
   if (typeof window === "undefined" || typeof CustomEvent !== "function") return;
   try { window.dispatchEvent(new CustomEvent("cinebraid:activity-updated")); } catch {}
 }
+window.v670ActivityAnnouncement = v670ActivityAnnouncement;
 window.refreshGlobalAutomationActivity = async (force = false) => {
   if (V641_ACTIVITY_REFRESHING) return;
   /* Unsettled, not active: a run parked at an approval gate must keep being polled so
@@ -900,6 +1146,7 @@ window.refreshGlobalAutomationActivity = async (force = false) => {
       const run = v641RunById(node.dataset.automationLiveRun);
       if (run) node.outerHTML = v641LiveActivityMarkup(run);
     });
+    v670RepaintCompactRunStatuses();
   }
 };
 /* EVENT-DRIVEN RECONCILIATION. Called by every human approval or rejection that
@@ -921,6 +1168,7 @@ window.v641NotifyAutomationActivity = (run) => {
   if (run) {
     const node = document.querySelector(`[data-automation-live-run="${v641SelectorValue(run.id)}"]`);
     if (node) node.outerHTML = v641LiveActivityMarkup(run);
+    v670RepaintCompactRunStatuses(run.id);
   }
   v641UpdateActivityButton();
   if (V641_ACTIVITY_DRAWER_OPEN) v641RenderActivityDrawer();
@@ -1038,5 +1286,5 @@ window.v642RelatedShotActivityMarkup = (shotId) => {
     .sort((a, b) => String(b.updatedAt || b.createdAt || "").localeCompare(String(a.updatedAt || a.createdAt || "")));
   const run = runs[0];
   if (!run) return "";
-  return `<section class="shot-related-activity"><header><div><span>RELATED SCENE AUTOMATION</span><b>${esc(run.label || "Scene correction")}</b><small>This work was launched from the scene but targets ${esc(shotId)}. Progress stays visible here.</small></div><button class="chip" onclick="openGlobalAutomationActivity('${attr(run.id)}')">OPEN GLOBAL ACTIVITY</button></header>${typeof v641LiveActivityMarkup === "function" ? v641LiveActivityMarkup(run) : ""}</section>`;
+  return `<section class="shot-related-activity"><header><div><span>RELATED SCENE AUTOMATION</span><b>${esc(run.label || "Scene correction")}</b><small>This work was launched from the scene but targets ${esc(shotId)}. Progress stays visible here.</small></div><button class="chip" onclick="openGlobalAutomationActivity('${attr(run.id)}')">OPEN GLOBAL ACTIVITY</button></header>${typeof v670CompactRunStatusMarkup === "function" ? v670CompactRunStatusMarkup(run) : ""}</section>`;
 };

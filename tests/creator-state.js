@@ -791,10 +791,19 @@ function checkNoPersistenceNoNetworkNoPaid(sources = SOURCES) {
   assert.ok(!/Date\.now|new Date\(/.test(projection),
     "the projection must have no clock: an ordering that depends on the moment it ran is not a projection of state");
 
-  /* The runtime persists exactly one thing, and it is a panel preference. */
+  /* The runtime persists exactly two things, and BOTH are panel preferences.
+
+     It was one until Batch 2 Slice 1 gave the Assistant rail a default-closed state
+     and therefore something to remember. The check is relaxed by exactly that: the
+     count is pinned, and each key is pinned by name, so a third value — or a second
+     value that is not the rail — still fails here. A panel preference is not
+     production state; the assertion below that nothing reaches the project is what
+     keeps that line, and it is unchanged. */
   const stored = surfaces.match(/localStorage\.setItem\(([^,]+),/g) || [];
-  assert.strictEqual(stored.length, 1, `the runtime writes ${stored.length} stored values; only the Terminal's collapsed state may be persisted`);
-  assert.ok(/TERMINAL_COLLAPSED_KEY/.test(stored[0]), "the one persisted value must be the Terminal's collapsed state");
+  assert.strictEqual(stored.length, 2, `the runtime writes ${stored.length} stored values; only the two panel preferences may be persisted`);
+  const storedKeys = stored.map((row) => row.replace(/^localStorage\.setItem\(\s*/, "").replace(/,$/, "").trim()).sort();
+  assert.deepStrictEqual(storedKeys, ["RAIL_OPEN_KEY", "TERMINAL_COLLAPSED_KEY"],
+    `the persisted values must be exactly the two panel preferences, got ${storedKeys.join(", ")}`);
   /* And nothing reaches a project. */
   assert.ok(!/\bdirty\(|saveProject|setVal\(|\bP\.\w+\s*=/.test(surfaces),
     "no creator surface may write to the project; the Assistant interprets production state and never becomes it");
@@ -859,56 +868,20 @@ function checkShellIntegration(sources = SOURCES) {
 }
 
 /* ===========================================================================
-   12. THE LIVE ACTIVITY STRIP IS NOT A GRID ITEM OF THE MAIN REGION
+   12. RETIRED - THE LIVE ACTIVITY STRIP
 
-   A defect this batch found rather than introduced, guarded here because it was
-   invisible for exactly the reason it was dangerous.
+   This slot held checkActivityStripStaysOutOfTheGrid, which proved that the
+   floating global activity strip was not an in-flow third child of the Main
+   region's two-track grid. Its own opening note said the check should be DELETED
+   rather than kept passing for the wrong reason once its premise stopped holding.
 
-   The global activity strip LOOKS position:fixed — its base rule says so — but the
-   v6.6.2.2 integrity pass overrode it to `position:relative!important`, making it an
-   in-flow banner. O2 then re-anchored its insertion on #main, which by then lived
-   inside `#cb-shell-main`: a grid with exactly two declared tracks, one for the centre
-   and one for the rail. An in-flow third child takes the centre's track and pushes the
-   workspace into the rail's 340px column.
-
-   Nothing showed it, because the strip hides itself when nothing is happening and O2
-   shipped both slots empty. O3 is the first build where a filmmaker sees activity on a
-   creator surface, and at 1920px the work rendered 340px wide.
+   Batch 2, Slice 1 retired the strip itself: the topbar chip and the strip
+   rendered the identical v6602ActivityStatus() answer, and one persistent global
+   indicator is the point. With no strip there is no element to mis-anchor, so the
+   defect the check guarded is now structurally impossible rather than merely
+   guarded. tests/quiet-shell.js asserts the stronger property that replaced it -
+   that exactly one persistent global activity indicator exists at all.
    =========================================================================== */
-
-function checkActivityStripStaysOutOfTheGrid(sources = SOURCES) {
-  const flat = String(sources.styles).replace(/\/\*[\s\S]*?\*\//g, "").replace(/\s+/g, "");
-
-  /* (a) The strip really is in flow — this is what makes its parent load-bearing. A
-     future pass that returns it to position:fixed makes the rest of this check moot,
-     and should delete it rather than let it pass for the wrong reason. */
-  assert.ok(/#automation-global-live-strip\{[^}]*position:relative!important/.test(flat),
-    "this check assumes the activity strip is in flow (position:relative!important, from the v6.6.2.2 pass). "
-    + "If it has returned to position:fixed, its parent no longer matters and this check should be removed rather than kept passing.");
-
-  /* (b) The Main region has exactly two tracks, so a third in-flow child cannot fit
-     without displacing one of them. */
-  const region = flat.match(/\.cb-shell-main:has\(>#cb-shell-rail\[data-occupied\]\)\{grid-template-columns:([^}]*)\}/);
-  assert.ok(region, "the Main region must declare its two-track occupied layout");
-  assert.strictEqual(region[1].split(")").join(") ").trim().split(/\s+/).length, 2,
-    `the Main region declares ${region[1]} — two tracks are expected, one for the centre and one for the rail`);
-
-  /* (c) So the strip is anchored on the REGION, not on the centre inside it. */
-  const code = codeOnly(sources.activity);
-  const fn = code.slice(code.indexOf("function v642EnsureGlobalActivityStrip"));
-  const body = fn.slice(0, fn.indexOf("\n}"));
-  assert.ok(/getElementById\(["']cb-shell-main["']\)/.test(body),
-    "the activity strip must anchor on the Main region; anchoring on #main puts an in-flow banner inside the "
-    + "two-track grid, where it takes the centre's track and renders the workspace at the rail's width");
-  const insert = body.match(/insertBefore\(strip,\s*(\w+)\)/);
-  assert.ok(insert, "the strip must be inserted before its anchor");
-  assert.strictEqual(insert[1], "anchor",
-    `the strip is inserted before \`${insert[1]}\`; it must go before the region anchor so it lands in #workspace`);
-  assert.ok(/region \|\| document\.getElementById\(["']main["']\)/.test(body),
-    "#main must remain the fallback anchor for a document with no shell region, such as the render harness");
-
-  note("Activity strip: in flow since v6.6.2.2, anchored on the Main region rather than inside its two-track grid — the 340px workspace this batch found");
-}
 
 /* ===========================================================================
    13. THE DECLARED LIMITATIONS
@@ -957,7 +930,6 @@ function runAll(sources = SOURCES) {
   checkTerminalRendering(sources);
   checkNoPersistenceNoNetworkNoPaid(sources);
   checkShellIntegration(sources);
-  checkActivityStripStaysOutOfTheGrid(sources);
   checkDeclaredLimitations(sources);
 }
 
@@ -995,6 +967,5 @@ module.exports = {
   checkTerminalRendering,
   checkNoPersistenceNoNetworkNoPaid,
   checkShellIntegration,
-  checkActivityStripStaysOutOfTheGrid,
   checkDeclaredLimitations,
 };

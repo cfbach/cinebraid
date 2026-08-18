@@ -486,55 +486,126 @@ function checkOverflowOwnership(sources = SOURCES) {
 
 const CENTRE_FLOOR = 900;
 
+/* Every @media block in the stylesheet, extracted by COUNTING BRACES rather than by
+   regex: a media block contains nested rules and a lazy match silently stops at the
+   first `}`, which is how a band check comes to read half a block and pass. */
+function mediaBlocks(css) {
+  const blocks = [];
+  const query = /@media\(([^)]*)\)\{/g;
+  let match;
+  while ((match = query.exec(css))) {
+    let depth = 1;
+    let index = query.lastIndex;
+    while (index < css.length && depth > 0) {
+      if (css[index] === "{") depth += 1;
+      else if (css[index] === "}") depth -= 1;
+      index += 1;
+    }
+    blocks.push({ condition: match[1], body: css.slice(query.lastIndex, index - 1) });
+  }
+  return blocks;
+}
+
 function checkRailWidthBands(sources = SOURCES) {
   const flat = flattenCss(sources.styles);
 
-  const navMatch = flat.match(/#app\{--cb-nav-width:(\d+)px/);
-  assert.ok(navMatch, "the navigation width must be declared on #app");
-  const nav = Number(navMatch[1]);
+  /* THE RAIL PERMIT IS NOT A WIDTH BAND ANY MORE, AND THAT IS THE REPAIR.
 
-  const fullMatch = flat.match(/#app\{--cb-shell-rail-width:(\d+)px\}/);
-  assert.ok(fullMatch, "the rail's full width must be declared rather than left to the var() fallback");
-  const fullRail = Number(fullMatch[1]);
+     It was a max-width exclusion, then a min-width permit when acceptance found a
+     fractional gap between two integers. Headed Windows Chromium then found the fault
+     underneath both: a media query answers to the VIEWPORT, and a classic vertical
+     scrollbar consumes layout width the viewport still counts. At a nominal 1360px
+     viewport `min-width:1360px` matched, the rail took 240px, and the centre rendered
+     884.8px — below the floor the whole arithmetic exists to protect. Headless Chromium
+     overlays its scrollbars, so nothing here and no headless suite could see it.
 
-  const compactMatch = flat.match(/@media\(max-width:(\d+)px\)\{#app\{--cb-shell-rail-width:(\d+)px\}\}/);
-  assert.ok(compactMatch, "there must be a compact rail band — a surface that vanishes on a 1440px laptop is not a persistent surface");
-  const compactAt = Number(compactMatch[1]);
-  const compactRail = Number(compactMatch[2]);
-
-  const hideMatch = flat.match(/@media\(max-width:(\d+)px\)\{[^@]*#workspace\[data-creator-shell="1"\]#cb-shell-rail\[data-occupied\]\{display:none\}/);
-  assert.ok(hideMatch, "there must be a width below which the rail yields entirely");
-  const hideAt = Number(hideMatch[1]);
-
-  assert.ok(compactRail < fullRail,
-    `the compact rail (${compactRail}px) must be narrower than the full one (${fullRail}px)`);
-
-  /* THE RELATION, twice. Each band's threshold is the smallest viewport at which that
-     band's rail can be present and the centre still clear the floor. */
-  assert.ok(compactAt + 1 >= CENTRE_FLOOR + nav + fullRail,
-    `the full rail needs viewport >= ${CENTRE_FLOOR + nav + fullRail}px to leave a ${CENTRE_FLOOR}px centre, `
-    + `but it is kept down to ${compactAt + 1}px`);
-  assert.ok(hideAt + 1 >= CENTRE_FLOOR + nav + compactRail,
-    `the compact rail needs viewport >= ${CENTRE_FLOOR + nav + compactRail}px to leave a ${CENTRE_FLOOR}px centre, `
-    + `but it is kept down to ${hideAt + 1}px`);
-
-  /* The bands must meet exactly: a gap leaves a width with no declared rail state, and
-     an overlap leaves two rules disagreeing about the same viewport. */
-  assert.ok(hideAt < compactAt,
-    `the hide threshold (${hideAt}) must sit below the compact threshold (${compactAt})`);
-
-  /* And the compact band must actually be reachable, or it is decoration: 1366 and 1440
-     are the widths it exists for. */
-  for (const width of [1366, 1440]) {
-    assert.ok(width > hideAt && width <= compactAt,
-      `${width}px — an ordinary laptop — must fall in the compact rail band (${hideAt + 1}-${compactAt})`);
-    assert.strictEqual(width - nav - compactRail >= CENTRE_FLOOR, true,
-      `at ${width}px the compact rail would leave a ${width - nav - compactRail}px centre, below the ${CENTRE_FLOOR}px floor`);
+     Adding 15px would be a magic number, wrong wherever scrollbars overlay and wrong
+     again wherever they are a different width. So the quantity changed: the runtime
+     measures the Main region — what the centre and the rail actually share, already net
+     of the navigation and of whatever the scrollbar took — and publishes ONE answer.
+     This checks that CSS consumes that answer and derives nothing, and that the
+     arithmetic behind it holds. */
+  for (const [what, rule] of [
+    ["the rail's own display", '#workspace[data-rail-width][data-creator-shell="1"]#cb-shell-rail[data-occupied]{display:block}'],
+    ["the rail's grid track", '#workspace[data-rail-width].cb-shell-main:has(>#cb-shell-rail[data-occupied]){grid-template-columns:'],
+    ["the open control", '#workspace[data-rail-width].creator-rail-toggle{display:inline-flex}'],
+  ]) {
+    assert.ok(flat.includes(rule),
+      `${what} must be granted by the measured #workspace[data-rail-width], not by a width band`);
   }
 
-  note(`Rail bands: ${fullRail}px above ${compactAt}, ${compactRail}px down to ${hideAt + 1}, then hidden — `
-    + `every threshold is ${CENTRE_FLOOR} + ${nav} + its own rail width, and 1366/1440 keep an Assistant`);
+  /* No media query may decide any of the three, and none may state a rail width. */
+  const media = /@media\(([^)]*)\)\{/g;
+  let match;
+  while ((match = media.exec(flat))) {
+    let depth = 1;
+    let index = media.lastIndex;
+    while (index < flat.length && depth > 0) {
+      if (flat[index] === "{") depth += 1;
+      else if (flat[index] === "}") depth -= 1;
+      index += 1;
+    }
+    const body = flat.slice(media.lastIndex, index - 1);
+    assert.ok(!/#cb-shell-rail\[data-occupied\]\{display:/.test(body),
+      `a media block (${match[1]}) still decides whether the rail paints; a width band cannot see the scrollbar`);
+    assert.ok(!/\.creator-rail-toggle\{display:/.test(body),
+      `a media block (${match[1]}) still decides whether the rail's control is offered`);
+    assert.ok(!/--cb-shell-rail-width:/.test(body),
+      `a media block (${match[1]}) still states a rail width; the runtime publishes it from measurement`);
+  }
+  assert.ok(!/#app\{--cb-shell-rail-width:\d/.test(flat),
+    "the stylesheet must not declare a rail width; a value here is a second opinion about a measured quantity");
+
+  /* THE ARITHMETIC ITSELF, driven over fractional region widths and real scrollbar
+     widths. It is pure and it lives in the module that declares the shell, so this can
+     visit far more cases than a browser could. */
+  /* Loaded from the SOURCE RECORD, not required from disk: a negative control mutates
+     this string in memory, and a check that reached past it to the real file could not
+     be driven to failure. */
+  const api = loadDeclaration(sources.declaration);
+  assert.strictEqual(typeof api.railWidthForRegion, "function",
+    "the shell declaration must own the rail arithmetic");
+  assert.strictEqual(api.SHELL_CENTRE_FLOOR, CENTRE_FLOOR,
+    `the declared centre floor must be ${CENTRE_FLOOR}px`);
+  const widths = [...api.SHELL_RAIL_WIDTHS];
+  assert.ok(widths.length >= 2 && widths.every((w, i) => i === 0 || w > widths[i - 1]),
+    `the rail widths must be declared ascending, got ${widths.join(", ")}`);
+
+  let shown = 0;
+  for (const allowance of [0, 15, 15.2, 17]) {
+    for (let region = 700; region <= 1700; region += 0.5) {
+      for (const held of [0, ...widths]) {
+        const width = api.railWidthForRegion(region, allowance, held);
+        if (!width) continue;
+        shown += 1;
+        assert.ok(region - width >= CENTRE_FLOOR,
+          `region ${region.toFixed(1)}px with a ${width}px rail leaves ${(region - width).toFixed(1)}px, `
+          + `below the ${CENTRE_FLOOR}px floor`);
+        if (held !== width) {
+          assert.ok(region - width >= CENTRE_FLOOR + allowance,
+            `a ${width}px rail was newly permitted at region ${region.toFixed(1)}px without room for a `
+            + `${allowance}px scrollbar`);
+        }
+      }
+    }
+  }
+  assert.ok(shown > 500, `the sweep must exercise the rail being permitted, got ${shown} cases`);
+
+  /* The ordinary laptop widths still keep an Assistant — measured as a REGION now, so
+     the navigation is already out of the number. */
+  for (const region = 1140, once = [region]; once.length; once.pop()) {
+    assert.ok(api.railWidthForRegion(region, 0, 0) === widths[0],
+      `a ${region}px region is exactly the floor plus the compact rail and must permit it`);
+  }
+  assert.strictEqual(api.railWidthForRegion(1139.9, 0, 0), 0,
+    "half a pixel under the floor must refuse the rail, which is what a width band could not do");
+
+  note(`Rail permit: decided from the MEASURED Main region by shared-workspace-shell's `
+    + `railWidthForRegion (floor ${CENTRE_FLOOR}, widths ${widths.join("/")}), published as one attribute and one `
+    + `custom property; no media query decides the rail, its control or its width, because a viewport band `
+    + `cannot see a consuming scrollbar`);
 }
+
 
 /* ===========================================================================
    7. THE NAVIGATION WIDTH HAS ONE SOURCE
@@ -691,19 +762,24 @@ function checkRuntimeOwnership(sources = SOURCES) {
      because the strip hides itself when nothing is happening and O2 shipped both slots
      empty.
 
-     So the requirement is stronger than "survives the nesting": the strip must land
-     OUTSIDE the Main region. tests/creator-state.js
-     checkActivityStripStaysOutOfTheGrid holds the full reasoning and its negative
-     control; this keeps O2's own file honest about the line it changed. */
-  const activity = sources.activity;
-  assert.ok(!/workspace\.insertBefore\(strip,\s*main\)/.test(activity),
-    "live-activity.js must not assume #main is a direct child of #workspace — it is now inside the Main region, and insertBefore would throw NotFoundError on a node that is not the parent's child");
-  assert.ok(/getElementById\(["']cb-shell-main["']\)/.test(activity),
-    "the live strip is in flow, so it must anchor on the Main REGION and land beside it in #workspace — anchoring on #main puts it inside the region's two-track grid, where it takes the centre's track");
-  assert.ok(/anchor\?\.parentNode/.test(activity),
-    "the strip must still be inserted into its anchor's real parent so it survives any future nesting");
+     Batch 2, Slice 1 RETIRED the strip. The chip in the topbar and the strip rendered
+     the identical v6602ActivityStatus() answer, so one of the two persistent global
+     indicators was removed and the chip kept. What survives here is the general form
+     of the rule: live-activity.js must not reach into the Main region's grid at all.
+     An element inserted there is a third child of a two-track grid whoever creates
+     it, which is why this is asserted as an absence rather than as a correct anchor. */
+  /* Comments stripped: the retirement note in live-activity.js names the element it
+     retired, which is exactly what a reader needs and exactly what a source grep for
+     "is it gone" must not trip over. */
+  const activity = codeOnly(sources.activity);
+  assert.ok(!/insertBefore\(\s*strip/.test(activity),
+    "the floating activity strip is retired; live-activity.js must not insert a persistent banner into the workspace again — the topbar chip is the one persistent global indicator");
+  assert.ok(!/automation-global-live-strip/.test(activity),
+    "live-activity.js must not rebuild the retired global live strip");
+  assert.ok(!/getElementById\(["']cb-shell-main["']\)\s*;?[^\n]*insertBefore/.test(activity),
+    "live-activity.js must not mount anything into the Main region: it is a two-track grid and a third in-flow child takes the centre's track");
 
-  note("Ownership: the runtime creates no region and public/app.js never names the shell; the one dependent call in live-activity.js anchors OUTSIDE the Main region, because the strip is in flow and the region is a two-track grid");
+  note("Ownership: the runtime creates no region and public/app.js never names the shell; live-activity.js no longer inserts anything beside the Main region, because the strip that used to be inserted there is retired");
 }
 
 /* ===========================================================================

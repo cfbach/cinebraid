@@ -1386,6 +1386,33 @@ function boundedEntityTaskStatus(list, entity, taskId, activeCandidates, states)
   }
   return {tone:"pending",label:STAGE_STATUS.notStarted};
 }
+/* THE ENTITY EQUIVALENT OF selectGuidedPanelTask, and it exists for the same reason.
+
+   A cross-workspace action has to change which of the four declared entity tasks the
+   bounded workspace renders, and it must do that through the SAME keys the taskbar
+   reads: `boundedFocusedTask("entity-task", `${list}:${id}`, ...)` for the task, and
+   `boundedWriteState` for the coverage sub-view and the selected continuity state.
+   Those three writes are exactly what the shipped "open this state" control at
+   entityCoverageStatesMarkup already performs; this is that incantation, named.
+
+   It WRITES AND DOES NOT RENDER, unlike selectBoundedTask. The caller decides whether a
+   navigation or a re-render follows, because assigning an unchanged hash fires no
+   hashchange and would otherwise leave the selection written and the page unmoved.
+
+   Task selection goes through boundedWriteFocusedTask, never boundedWriteState: they
+   are different key namespaces and a task written through the latter is silent. */
+function selectEntityResultTask(list, id, taskId, view = "", stateId = "") {
+  if (!list || !id || !taskId || typeof boundedWriteFocusedTask !== "function") return "";
+  const context = `${list}:${id}`;
+  boundedWriteFocusedTask("entity-task", context, taskId);
+  if (typeof boundedWriteState === "function") {
+    if (view) boundedWriteState("selected:entity-coverage-view", context, view);
+    if (stateId) boundedWriteState("selected:continuity-state", context, stateId);
+  }
+  return taskId;
+}
+window.selectEntityResultTask = selectEntityResultTask;
+
 function boundedEntityTaskbarMarkup(list, entity, specs, selectedId, activeCandidates, states) {
   const context=`${list}:${entity.id}`;
   return `<nav class="focused-taskbar bounded-entity-taskbar clarity-taskbar" aria-label="Reference workspaces">${specs.map((spec)=>{const status=boundedEntityTaskStatus(list,entity,spec.id,activeCandidates,states);return `<button type="button" class="focused-task-button tone-${status.tone} ${spec.id===selectedId?"selected":""}" onclick="selectBoundedTask('entity-task','${attr(context)}','${attr(spec.id)}')" title="${attr(spec.label + " — " + status.label)}"><i></i><span><b>${esc(spec.label)}</b><small>${esc(status.note ? `${spec.detail || ""} · ${status.note}` : spec.detail || "")}</small></span><em>${esc(status.label)}</em></button>`;}).join("")}</nav>`;

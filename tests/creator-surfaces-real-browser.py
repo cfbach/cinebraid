@@ -314,6 +314,31 @@ try:
         page.route("**/*", guard)
         page.goto(f"{base}/#/shot/{SHOT}", wait_until="domcontentloaded")
         page.wait_for_selector(".bounded-shot-taskbar", timeout=20000)
+
+        # BOTH PANELS NOW SHIP QUIET, and that has to be handled BEFORE anything waits on
+        # what they render. Batch 2, Slice 1 stopped mounting the Assistant until it is
+        # asked for and made the Activity Terminal start collapsed, because a permanent
+        # 340px rail and an expanded dock were among the founder smoke's clearest
+        # complaints. A collapsed Terminal renders NO ROWS AT ALL, so the job-ledger wait
+        # below would sit for its full timeout against a panel that is working correctly.
+        #
+        # The new defaults are asserted here and then set aside: everything after this
+        # point is about the SHELL and the SURFACES, which need both panels open to say
+        # anything at all. tests/quiet-shell-real-browser.py owns the defaults themselves.
+        page.wait_for_selector(".cb-terminal", timeout=20000)
+        assert page.evaluate("() => !window.CineBraidCreatorSurfaces.railOpen()"), \
+            "the Assistant rail must ship CLOSED with no stored preference"
+        assert page.evaluate("() => !document.getElementById('cb-shell-rail').hasAttribute('data-occupied')"), \
+            "a closed rail must leave its slot unoccupied, so the centre reclaims the width"
+        assert page.locator("#creator-rail-toggle").count() == 1, \
+            "the topbar must offer the control that opens the rail"
+        assert page.evaluate("() => window.CineBraidCreatorSurfaces.terminalCollapsed()"), \
+            "the Activity Terminal must ship COLLAPSED with no stored preference"
+        page.evaluate("() => window.CineBraidCreatorSurfaces.openRail()")
+        page.wait_for_selector("#cb-shell-rail[data-occupied]", timeout=10000)
+        page.evaluate("() => window.CineBraidCreatorSurfaces.toggleTerminal()")
+        page.wait_for_selector('.cb-terminal[data-collapsed="0"]', timeout=10000)
+
         # Runs arrive with load(); GENERATION JOBS DO NOT. public/app.js only fetches the
         # job ledger at boot when fal generation is enabled with a key source, and this
         # sandbox has neither — so the durable ledger reaches the page on the FIRST

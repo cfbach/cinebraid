@@ -19,7 +19,9 @@ WHAT IS CHECKED
   3. the dialog is not visually degraded by the drawer's backdrop filter
   4. Escape closes the DIALOG only; the drawer that asked the question stays open
   5. a second Escape then closes the drawer
-  6. the docked activity strip no longer paints over a dialog
+  6. the docked activity strip no longer paints over a dialog (retired in Batch 2
+     Slice 1 - the assertion is kept, guarded, so a strip that ever returns is
+     still held to the ladder)
 
 NO PAID REQUEST IS POSSIBLE. Every generation and assistant route is intercepted
 and answered locally; the only network is the loopback CineBraid server.

@@ -583,6 +583,16 @@ try:
         # ---- 1. one stable destination, all three dispositions present ----------
         goto("#/results")
         wait_results("current")
+
+        # THE ASSISTANT RAIL SHIPS CLOSED since Batch 2, Slice 1, so nothing mounts into
+        # it until it is asked for. The retention property below is about a mounted
+        # surface keeping its node, so the default is asserted here and the rail is then
+        # opened; tests/quiet-shell-real-browser.py owns the default itself.
+        assert page.evaluate("() => !window.CineBraidCreatorSurfaces.railOpen()"), \
+            "the Assistant rail must ship CLOSED with no stored preference"
+        page.evaluate("() => window.CineBraidCreatorSurfaces.openRail()")
+        page.wait_for_selector("#cb-assistant-mount", timeout=10000)
+
         results = page.evaluate(READ_RESULTS)
         assert results["present"], "Generated Media did not render a grid"
         assert results["count"] > 0, "Generated Media rendered no media"

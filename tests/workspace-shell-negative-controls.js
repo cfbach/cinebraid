@@ -124,24 +124,39 @@ function overflowControls() {
 
   /* The rail's width and its two thresholds are one piece of arithmetic, added in O3
      when the rail acquired content. Each control breaks the relation a different way. */
-  control("C6a the compact band is removed, so the rail vanishes on ordinary laptops", "checkRailWidthBands",
+  /* THE CONTROL THIS BATCH MOST NEEDED, twice over. Acceptance first reproduced a
+     fractional gap between two max-width integers, then — in HEADED Windows Chromium,
+     where scrollbars consume layout width — a viewport band permitting a rail the
+     centre could not afford. Both faults are the same mistake: deciding from the
+     viewport instead of from the space the centre and the rail actually share. This
+     puts a width band back in charge and requires the check to catch it. */
+  control("C6a the rail permit goes back to a viewport width band", "checkRailWidthBands",
     { styles: mutate(SOURCES.styles,
-        "  #app{--cb-shell-rail-width:240px}\n}",
-        "}",
+        '#workspace[data-rail-width][data-creator-shell="1"] #cb-shell-rail[data-occupied]{display:block}',
+        '@media(min-width:1360px){#workspace[data-creator-shell="1"] #cb-shell-rail[data-occupied]{display:block}}',
         "C6a") },
-    "Without a compact band the rail is 340px or nothing, and nothing is what 1366px and 1440px get — the two most common laptop widths, and the ones O3's primary surface most needs to survive.");
+    "A media query answers to the viewport, and a classic vertical scrollbar consumes layout width the viewport still counts: at a nominal 1360px viewport the rail was permitted and the centre rendered 884.8px, below its floor. Headless Chromium overlays its scrollbars and never showed it.");
 
-  control("C6b the rail stays 340px into the compact band", "checkRailWidthBands",
-    { styles: mutate(SOURCES.styles, "#app{--cb-shell-rail-width:240px}", "#app{--cb-shell-rail-width:340px}", "C6b") },
-    "A 340px rail below 1460px leaves the centre under 900px, which is the band no component rule in this stylesheet was written for.");
+  control("C6b the stylesheet states a rail width of its own", "checkRailWidthBands",
+    { styles: mutate(SOURCES.styles,
+        '#workspace[data-rail-width] .creator-rail-toggle{display:inline-flex}',
+        '#workspace[data-rail-width] .creator-rail-toggle{display:inline-flex}\n#app{--cb-shell-rail-width:340px}',
+        "C6b") },
+    "A width declared here is a second opinion about a measured quantity: the grid would use one number while the decision to show a rail at all used another.");
 
-  control("C6c the hide threshold drops below what the compact rail can afford", "checkRailWidthBands",
-    { styles: mutate(SOURCES.styles, "@media(max-width:1359px){", "@media(max-width:1179px){", "C6c") },
-    "Keeping a 240px rail down to 1180px leaves an 760px centre; the threshold has to move with the rail's width, not stay where an empty rail left it.");
+  control("C6c the arithmetic stops leaving the centre its floor", "checkRailWidthBands",
+    { declaration: mutate(SOURCES.declaration,
+        "  const SHELL_CENTRE_FLOOR = 900;",
+        "  const SHELL_CENTRE_FLOOR = 700;",
+        "C6c") },
+    "The floor is the viewport width the component rules stack at; lowering it does not widen anything, it just stops reporting that the centre has entered a band nothing was laid out for.");
 
-  control("C6d the full-width declaration is dropped back to a var() fallback", "checkRailWidthBands",
-    { styles: mutate(SOURCES.styles, "#app{--cb-shell-rail-width:340px}\n\n/* Slot defaults", "\n/* Slot defaults", "C6d") },
-    "With the width living only in a var() fallback there is no declaration for the compact band to override or for this arithmetic to read, and the two numbers drift apart unnoticed.");
+  control("C6d turning the rail on stops reserving room for a scrollbar", "checkRailWidthBands",
+    { declaration: mutate(SOURCES.declaration,
+        "      const required = SHELL_CENTRE_FLOOR + width + (held === width ? 0 : band);",
+        "      const required = SHELL_CENTRE_FLOOR + width;",
+        "C6d") },
+    "Without the band a rail can be granted at exactly the floor, reflow the narrower centre into a scrollbar, fall under the floor, disappear, release the scrollbar and be granted again — which is a flicker, not a layout.");
 }
 
 /* ===========================================================================
@@ -251,10 +266,13 @@ function structuralControls() {
     { styles: mutate(SOURCES.styles, ".cb-shell-slot{display:none;", ".cb-shell-slot{display:block;", "C19") },
     "An empty region that occupies space is the dead chrome O2 is required not to ship.");
 
+  /* The anchor gained `[data-rail-width]` when the rail permit stopped being a width
+     band and became a measured attribute. The control is unchanged in meaning: it drops
+     the shell-PRESENCE condition and nothing else. */
   control("C20 retained content paints on an excluded surface", "checkEmptyAndPresence",
     { styles: mutate(SOURCES.styles,
-        '#workspace[data-creator-shell="1"] #cb-shell-rail[data-occupied]{display:block}',
-        "#cb-shell-rail[data-occupied]{display:block}",
+        '#workspace[data-rail-width][data-creator-shell="1"] #cb-shell-rail[data-occupied]{display:block}',
+        '#workspace[data-rail-width] #cb-shell-rail[data-occupied]{display:block}',
         "C20") },
     "Mounted content is retained across navigation so an Assistant conversation survives a visit to Settings; without the presence condition it would also be VISIBLE there.");
 
@@ -279,21 +297,18 @@ function structuralControls() {
         "C23") },
     "The shell must react to the render, not be driven by it; a renderer that knows the shell is a renderer the next shell change has to edit.");
 
-  control("C24 the live strip goes back to naming #workspace as the parent", "checkRuntimeOwnership",
+  /* C24 and C24b drove the anchoring of the floating activity strip, which Batch 2
+     Slice 1 retired in favour of the single topbar chip. The rule they enforced
+     survives in a stronger, absence-shaped form — live-activity.js must not insert a
+     persistent banner beside the Main region at all — so the control brings the strip
+     BACK and requires checkRuntimeOwnership to catch it. A rule stated as "never
+     again" needs a control that tries it again. */
+  control("C24 a persistent live banner is inserted beside the Main region again", "checkRuntimeOwnership",
     { activity: mutate(SOURCES.activity,
-        "    const parent = anchor?.parentNode || document.getElementById(\"workspace\");\n    if (anchor && parent && typeof parent.insertBefore === \"function\") parent.insertBefore(strip, anchor);",
-        "    const workspace = document.getElementById(\"workspace\");\n    if (workspace && typeof workspace.insertBefore === \"function\") workspace.insertBefore(strip, document.getElementById(\"main\"));",
+        "function v641UpdateActivityButton() {",
+        "function v642RebuildGlobalActivityStrip() {\n  const strip = document.createElement(\"button\");\n  strip.id = \"automation-global-live-strip\";\n  const anchor = document.getElementById(\"cb-shell-main\");\n  const parent = anchor?.parentNode;\n  if (anchor && parent) parent.insertBefore(strip, anchor);\n}\nfunction v641UpdateActivityButton() {",
         "C24") },
-    "insertBefore throws NotFoundError when the reference node is not a child of the parent, and #main is now inside the Main region — this would break the global activity strip on every route.");
-
-  /* Added in O3, when the strip turned out to be in flow rather than fixed. C24 guards
-     the crash; this guards the layout the crash-fix accidentally created. */
-  control("C24b the live strip is anchored inside the Main region", "checkRuntimeOwnership",
-    { activity: mutate(SOURCES.activity,
-        "    const region = document.getElementById(\"cb-shell-main\");\n    const anchor = region || document.getElementById(\"main\");",
-        "    const anchor = document.getElementById(\"main\");",
-        "C24b") },
-    "The strip is position:relative, so an anchor inside the Main region makes it a third item in a two-track grid: it takes the centre's track and the workspace renders at the rail's 340px.");
+    "Two persistent global indicators for one derivation is two places to look for one sentence, and an in-flow banner beside the two-track Main region is how the workspace came to render at 340px.");
 
   note("The region declaration and the mount contract:");
 
