@@ -77,7 +77,7 @@ async function main() {
   assert(chip.innerHTML.includes("Build prompt") || chip.innerHTML.includes("active"), "the active chip must describe current work");
   activityRender.context.setTimeout = () => 0;
   activityRender.context.v641FinishManualActivity(activityId, "completed", "Done");
-  assert.strictEqual(strip.hidden, true, "completed Activity strip must return to hidden idle state");
+  assert(chip.innerHTML.includes("Idle"), "the completed activity chip must return to idle");
 
   const settings = await render("#/settings", buildFixture(), { storage: { "cinebraid-focused:fixture:settings-task:settings": "project" } });
   const globalStyle = settings.html.match(/<textarea[^>]*onchange="setGlobalCreationField\('globalStylePrompt',this\.value\)"[^>]*>/)?.[0] || "";
@@ -121,7 +121,7 @@ async function main() {
   assert(app.includes('storedValue("cinebraid-library-tab", "all")'), "Reference Library category must restore from local storage");
   assert(app.includes('localStorage.setItem("cinebraid-library-tab", tab)'), "Reference Library category must persist after selection");
 
-  console.log("Integrity and mobile usability suite passed unresolved-reference preservation/repair, readiness ownership, idle Activity hiding, active strip visibility, accessible field/navigation labels, authority typography structure, mobile hit-area CSS, and persisted Library category.");
+  console.log("Integrity and mobile usability suite passed unresolved-reference preservation/repair, readiness ownership, the one persistent activity indicator going idle -> active -> idle, accessible field/navigation labels, authority typography structure, mobile hit-area CSS, and persisted Library category.");
 }
 
 main().catch((error) => {
