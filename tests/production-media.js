@@ -930,9 +930,16 @@ function checkDestination({ sources }) {
     "...and not before a project is open");
 
   /* THE O4 STRIP MUST NOT FOLLOW IT. Proven at the source: the bar mounts on the shot
-     route only, so no `results` entry can exist there to remove later. */
-  assert(/view === "shot" \? currentTargetId\(\)/.test(sources.stageSurfaces),
+     route only, so no `results` entry can exist there to remove later.
+
+     Batch 2 Slice 2 narrowed the condition rather than widening it — the strip now also
+     waits for that shot's workspace to have RENDERED, because a strip painted from the
+     hash was describing a workspace that did not exist yet. `shot` is still the only
+     view that can produce a shot id, which is what this check is about. */
+  assert(/view === "shot" && renderedRouteIsCurrent\(\) \? currentTargetId\(\)/.test(sources.stageSurfaces),
     "the stage bar must still key on the shot route alone");
+  assert((sources.stageSurfaces.match(/(?<!function )currentTargetId\(\)/g) || []).length === 1,
+    "and no other view may produce a shot id for it");
   assert(!/\bresults\b/.test(sources.stageSurfaces),
     "public/stage-surfaces.js must not name the Generated Media route at all -- its absence is what collapses the bar there");
 

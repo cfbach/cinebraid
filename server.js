@@ -2105,13 +2105,95 @@ function builderLabel(index) {
   return label;
 }
 
-function addBuilderMarker(text, marker, message) {
-  const value = String(text || "").trim();
-  if (value.includes(marker)) return value;
-  return [value, `${marker} ${message}`].filter(Boolean).join("\n");
+/* ==========================================================================
+   CINEBRAID'S PLANNING INFERENCES ARE RECORDED, NOT WRITTEN INTO THE PROJECT.
+
+   `addBuilderMarker()` used to APPEND `[INFERRED FOR PLANNING] <what CineBraid
+   decided>` to a `notes` field so the import review could report the decision
+   against a real JSON path. `notes` on a continuity state IS the state delta — the
+   sentence public/entities.js renders into the "State change / delta" textarea and
+   hands to the continuity contract as `stateDelta` — so CineBraid's bookkeeping
+   arrived as though the filmmaker had written it.
+
+   The first correction removed it again afterwards by scanning every string in the
+   project for the marker. Independent review found what that destroys: a filmmaker
+   writing ABOUT the convention —
+
+       Literal discussion: [INFERRED FOR PLANNING] is a bracketed phrase…
+
+   — had their sentence truncated to "Literal discussion:". A textual scan has no way
+   to tell CineBraid's own annotation from a human writing the same words, because at
+   the point of the scan the provenance is gone.
+
+   So the annotation is never written into the field at all. Each inference is
+   recorded against THE OBJECT CineBraid was normalising and the field it concerns,
+   and the paths are resolved from those object identities before anything is cloned.
+   Nothing scans user text, nothing is removed from user text, and a filmmaker may
+   type the marker as often as they like: it is their prose, it is reported as an
+   inferred value the same as an assistant's would be, and it is preserved exactly.
+
+   `[SOURCE CONFLICT]` is untouched by any of this — it always was, and it stays
+   that way: it flags a contradiction only a human can settle, and
+   tests/import-benchmark.js scores an import UP for carrying it. */
+const PLANNING_MARKER = "[INFERRED FOR PLANNING]";
+const PLANNING_MARKER_PATTERN = /\[INFERRED FOR PLANNING\]/i;
+
+/* `owner` must be the object that ends up in the normalized project — every
+   normalizer here either mutates in place or records against the literal it
+   returns, which is what makes the identity walk below exact. */
+function recordPlanningInference(record, owner, field, message) {
+  if (!Array.isArray(record) || !owner || typeof owner !== "object") return;
+  record.push({ owner, field: String(field), annotation: `${PLANNING_MARKER} ${message}` });
 }
 
-function normalizeBuilderContinuityStates(entity, kind, warnings) {
+/* Recorded owners → JSON paths, by object identity, against the project BEFORE any
+   structuredClone. This is the provenance: CineBraid knows which object it decided
+   something about, so it can name the field without reading anybody's prose. */
+function resolvePlanningInferences(project, record) {
+  if (!Array.isArray(record) || !record.length) return [];
+  const wanted = new Map();
+  for (const entry of record) {
+    if (!entry || !entry.owner) continue;
+    const fields = wanted.get(entry.owner) || new Map();
+    fields.set(entry.field, entry.annotation);
+    wanted.set(entry.owner, fields);
+  }
+  const found = [];
+  const seen = new Set();
+  const walk = (value, at) => {
+    if (!value || typeof value !== "object" || seen.has(value)) return;
+    seen.add(value);
+    const fields = wanted.get(value);
+    if (fields)
+      for (const [field, annotation] of fields) {
+        found.push({ path: at ? `${at}.${field}` : field, value: shortReviewValue(annotation), origin: "cinebraid" });
+        wanted.delete(value);
+      }
+    if (Array.isArray(value)) value.forEach((item, index) => walk(item, `${at}[${index}]`));
+    else for (const [key, item] of Object.entries(value)) walk(item, at ? `${at}.${key}` : key);
+  };
+  walk(project, "");
+  return found;
+}
+
+/* Planning markers the SOURCE arrived with — an assistant's, or a filmmaker's own
+   prose about the convention. Reported so the review stays complete, and never
+   touched: this list exists to be read, not acted on. */
+function collectSourcePlanningMarkers(project) {
+  const found = [];
+  const walk = (value, at) => {
+    if (typeof value === "string") {
+      if (PLANNING_MARKER_PATTERN.test(value))
+        found.push({ path: at, value: shortReviewValue(value), origin: "source" });
+    } else if (Array.isArray(value)) value.forEach((item, index) => walk(item, `${at}[${index}]`));
+    else if (value && typeof value === "object")
+      Object.entries(value).forEach(([key, item]) => walk(item, at ? `${at}.${key}` : key));
+  };
+  walk(project, "");
+  return found;
+}
+
+function normalizeBuilderContinuityStates(entity, kind, warnings, inferences) {
   const id = String(entity?.id || "(missing id)"),
     states = builderArray(entity?.continuityStates).map((state) => {
       const source = builderObject(state);
@@ -2150,28 +2232,28 @@ function normalizeBuilderContinuityStates(entity, kind, warnings) {
     warnings.push(
       `${kind} ${id} had no continuity states; CineBraid added a structural default state.`,
     );
-    return [
-      {
-        id: "state-default",
-        name: "Default",
-        appliesTo: "",
-        approvedFile: "",
-        notes:
-          "[INFERRED FOR PLANNING] CineBraid added the required baseline continuity state during import.",
-        isDefault: true,
-      },
-    ];
+    /* The invented state's delta is EMPTY, not a sentence about the invention. A
+       filmmaker opening it sees a blank field asking to be written, which is the
+       truth, instead of CineBraid's bookkeeping presented as their own note. */
+    const structural = {
+      id: "state-default",
+      name: "Default",
+      appliesTo: "",
+      approvedFile: "",
+      notes: "",
+      isDefault: true,
+    };
+    recordPlanningInference(inferences, structural, "notes",
+      "CineBraid added the required baseline continuity state during import.");
+    return [structural];
   }
   const defaults = states
     .map((state, index) => (state.isDefault ? index : -1))
     .filter((index) => index >= 0);
   if (!defaults.length) {
     states[0].isDefault = true;
-    states[0].notes = addBuilderMarker(
-      states[0].notes,
-      "[INFERRED FOR PLANNING]",
-      "CineBraid selected this as the default continuity state during import.",
-    );
+    recordPlanningInference(inferences, states[0], "notes",
+      "CineBraid selected this as the default continuity state during import.");
     warnings.push(
       `${kind} ${id} had no default continuity state; CineBraid selected the first state.`,
     );
@@ -2180,11 +2262,8 @@ function normalizeBuilderContinuityStates(entity, kind, warnings) {
     states.forEach((state, index) => {
       state.isDefault = index === keep;
     });
-    states[keep].notes = addBuilderMarker(
-      states[keep].notes,
-      "[INFERRED FOR PLANNING]",
-      "CineBraid kept this as the only default continuity state during import.",
-    );
+    recordPlanningInference(inferences, states[keep], "notes",
+      "CineBraid kept this as the only default continuity state during import.");
     warnings.push(
       `${kind} ${id} had multiple default continuity states; CineBraid kept the first one.`,
     );
@@ -2365,7 +2444,7 @@ function normalizeBuilderCoverage(source, kind) {
   return slots;
 }
 
-function normalizeBuilderEntity(entity, kind, index, warnings) {
+function normalizeBuilderEntity(entity, kind, index, warnings, inferences) {
   const source = builderObject(entity),
     id = String(source.id || "").trim(),
     normalized = {
@@ -2404,27 +2483,17 @@ function normalizeBuilderEntity(entity, kind, index, warnings) {
     normalized,
     kind,
     warnings,
+    inferences,
   );
   return normalized;
 }
 
-function normalizeBuilderScene(scene, index, warnings) {
+function normalizeBuilderScene(scene, index, warnings, inferences) {
   const source = builderObject(scene),
     tier = ["A", "B"].includes(String(source.tier || "").toUpperCase())
       ? String(source.tier).toUpperCase()
       : "B";
-  let notes = String(source.notes || "");
-  if (!source.tier) {
-    notes = addBuilderMarker(
-      notes,
-      "[INFERRED FOR PLANNING]",
-      "CineBraid assigned supporting tier B during import.",
-    );
-    warnings.push(
-      `Scene ${source.id || index + 1} had no tier; CineBraid assigned tier B.`,
-    );
-  }
-  return {
+  const normalized = {
     ...source,
     id: String(source.id || "").trim(),
     title: String(source.title || "").trim(),
@@ -2433,31 +2502,39 @@ function normalizeBuilderScene(scene, index, warnings) {
     characters: builderArray(source.characters).map(String),
     whatHappens: String(source.whatHappens || ""),
     howItFeels: String(source.howItFeels || ""),
-    notes,
+    notes: String(source.notes || ""),
     audio: builderObject(source.audio),
   };
+  if (!source.tier) {
+    recordPlanningInference(inferences, normalized, "tier",
+      "CineBraid assigned supporting tier B during import.");
+    warnings.push(
+      `Scene ${source.id || index + 1} had no tier; CineBraid assigned tier B.`,
+    );
+  }
+  return normalized;
 }
 
-function normalizeBuilderKeyframes(shot, warnings) {
+function normalizeBuilderKeyframes(shot, warnings, inferences) {
   const shotId = String(shot.id || "SHOT"),
     supplied = builderArray(shot.keyframes);
   if (!supplied.length) {
     warnings.push(
       `Shot ${shotId} had no keyframes; CineBraid created an opening planning frame from the shot description.`,
     );
-    return [
-      {
-        id: `${shotId}-A`,
-        label: "A",
-        title: "Opening frame",
-        winner: null,
-        description: [shot.desc, shot.positioning].filter(Boolean).join(" — "),
-        notes:
-          "[INFERRED FOR PLANNING] CineBraid created the required opening frame during import; review its composition before generation.",
-        required: true,
-        generationPackages: [],
-      },
-    ];
+    const opening = {
+      id: `${shotId}-A`,
+      label: "A",
+      title: "Opening frame",
+      winner: null,
+      description: [shot.desc, shot.positioning].filter(Boolean).join(" — "),
+      notes: "",
+      required: true,
+      generationPackages: [],
+    };
+    recordPlanningInference(inferences, opening, "notes",
+      "CineBraid created the required opening frame during import; review its composition before generation.");
+    return [opening];
   }
   return supplied.map((frame, index) => {
     const source = builderObject(frame),
@@ -2641,7 +2718,7 @@ function normalizeBuilderClips(shot, frames, warnings) {
   });
 }
 
-function normalizeBuilderShot(shot, index, warnings) {
+function normalizeBuilderShot(shot, index, warnings, inferences) {
   const source = builderObject(shot),
     normalized = {
       ...source,
@@ -2691,7 +2768,7 @@ function normalizeBuilderShot(shot, index, warnings) {
       referenceRoles: builderObject(source.referenceRoles),
       referenceSelection: builderObject(source.referenceSelection),
     };
-  normalized.keyframes = normalizeBuilderKeyframes(normalized, warnings);
+  normalized.keyframes = normalizeBuilderKeyframes(normalized, warnings, inferences);
   normalized.clips = normalizeBuilderClips(
     { ...normalized, clips: source.clips },
     normalized.keyframes,
@@ -2704,11 +2781,8 @@ function normalizeBuilderShot(shot, index, warnings) {
     );
     if (planned > 0) {
       normalized.dur = planned;
-      normalized.notes = addBuilderMarker(
-        normalized.notes,
-        "[INFERRED FOR PLANNING]",
-        "CineBraid set shot duration from the imported motion-unit durations.",
-      );
+      recordPlanningInference(inferences, normalized, "dur",
+        "CineBraid set shot duration from the imported motion-unit durations.");
       warnings.push(
         `Shot ${normalized.id || index + 1} had no duration; CineBraid used the ${planned}-second motion total.`,
       );
@@ -2719,6 +2793,9 @@ function normalizeBuilderShot(shot, index, warnings) {
 
 function normalizeImportedProject(raw) {
   const warnings = [],
+    /* Every planning inference CineBraid makes while normalising, recorded against
+       the object it was made about. Nothing is written into the project. */
+    inferences = [],
     source = JSON.parse(JSON.stringify(raw)),
     blank = BLANK(),
     project = {
@@ -2752,22 +2829,22 @@ function normalizeImportedProject(raw) {
     );
   }
   project.characters = builderArray(source.characters).map((item, index) =>
-    normalizeBuilderEntity(item, "character", index, warnings),
+    normalizeBuilderEntity(item, "character", index, warnings, inferences),
   );
   project.locations = builderArray(source.locations).map((item, index) =>
-    normalizeBuilderEntity(item, "location", index, warnings),
+    normalizeBuilderEntity(item, "location", index, warnings, inferences),
   );
   project.props = builderArray(source.props).map((item, index) =>
-    normalizeBuilderEntity(item, "prop", index, warnings),
+    normalizeBuilderEntity(item, "prop", index, warnings, inferences),
   );
   project.vehicles = builderArray(source.vehicles).map((item, index) =>
-    normalizeBuilderEntity(item, "vehicle", index, warnings),
+    normalizeBuilderEntity(item, "vehicle", index, warnings, inferences),
   );
   project.scenes = builderArray(source.scenes).map((item, index) =>
-    normalizeBuilderScene(item, index, warnings),
+    normalizeBuilderScene(item, index, warnings, inferences),
   );
   project.shots = builderArray(source.shots).map((item, index) =>
-    normalizeBuilderShot(item, index, warnings),
+    normalizeBuilderShot(item, index, warnings, inferences),
   );
   project.audio = builderArray(source.audio).map((item, index) => {
     const audio = builderObject(item);
@@ -2793,7 +2870,7 @@ function normalizeImportedProject(raw) {
     "agentRuns",
   ])
     project[key] = builderArray(source[key]);
-  return { project, warnings };
+  return { project, warnings, inferences };
 }
 
 function validateImportedProject(raw) {
@@ -3059,7 +3136,19 @@ function importedProjectShape(raw) {
     );
   const warnings = [...normalized.warnings, ...validation.warnings];
   clearUnsupportedBuilderClaims(normalized.project, warnings);
-  return { project: normalized.project, warnings: [...new Set(warnings)] };
+  /* Resolved HERE, while the objects CineBraid annotated are still the objects in
+     this project — before any caller clones it and destroys those identities. */
+  const inferred = [
+    ...resolvePlanningInferences(normalized.project, normalized.inferences),
+    ...collectSourcePlanningMarkers(normalized.project),
+  ];
+  return {
+    project: normalized.project,
+    warnings: [...new Set(warnings)],
+    inferred: inferred
+      .filter((item, index, list) => list.findIndex((other) => other.path === item.path && other.value === item.value) === index)
+      .slice(0, 100),
+  };
 }
 
 function projectBuilderCounts(project) {
@@ -3117,97 +3206,12 @@ function shortReviewValue(value, limit = 360) {
   return text.length > limit ? text.slice(0, limit - 1) + "…" : text;
 }
 
-/* ==========================================================================
-   THE PLANNING ANNOTATION IS INTERNAL, AND IT STOPS BEING PART OF THE PROJECT HERE.
-
-   `addBuilderMarker()` and the two literal notes above append
-   `[INFERRED FOR PLANNING] <what CineBraid decided>` to a `notes` field so the import
-   review can report the decision against a real JSON path. That was right as a report
-   and wrong as a value: `notes` on a continuity state IS the state delta — the sentence
-   public/entities.js renders into the "State change / delta" textarea and hands to the
-   continuity validation contract as `stateDelta`. A filmmaker importing a project found
-   CineBraid's own bookkeeping inside their prose as though they had written it, and on
-   its way into generation.
-
-   So the annotation is transient now. It is collected — with its path, off the marked
-   project — and then removed from every value before the project is hashed, previewed,
-   downloaded or written to disk. The report keeps all of it; the creative field keeps
-   only what a human wrote.
-
-   THE CUT IS DELIBERATELY NARROW. The annotation runs from the marker to the end of its
-   own line, which is exactly how addBuilderMarker() writes it and how the prompt kit
-   instructs an assistant to write it, so prose in front of it survives byte for byte.
-   `[SOURCE CONFLICT]` is NOT touched: it flags a contradiction only a human can settle,
-   tests/import-benchmark.js scores an import UP for carrying it, and removing it would
-   delete the warning rather than the annotation. */
-const PLANNING_MARKER = "[INFERRED FOR PLANNING]";
-const PLANNING_MARKER_PATTERN = /\[INFERRED FOR PLANNING\]/i;
-
-function stripPlanningAnnotation(value) {
-  const text = String(value == null ? "" : value);
-  if (!PLANNING_MARKER_PATTERN.test(text)) return text;
-  return text
-    .split(/\r?\n/)
-    .map((line) => {
-      const at = line.toUpperCase().indexOf(PLANNING_MARKER);
-      if (at < 0) return { line, cut: false };
-      return { line: line.slice(0, at).replace(/\s+$/, ""), cut: true };
-    })
-    /* A line that held nothing but the annotation goes with it; a line that carried
-       prose in front of it keeps the prose. */
-    .filter((entry) => !(entry.cut && !entry.line))
-    .map((entry) => entry.line)
-    .join("\n")
-    .trim();
-}
-
-/* In place, on an already-cloned project, so key order — and with it the preview hash
-   and the OFP key-order contract — is exactly what it was. */
-function stripPlanningAnnotations(node) {
-  if (Array.isArray(node)) {
-    node.forEach((item, index) => {
-      if (typeof item === "string") node[index] = stripPlanningAnnotation(item);
-      else stripPlanningAnnotations(item);
-    });
-    return node;
-  }
-  if (node && typeof node === "object")
-    for (const [key, item] of Object.entries(node)) {
-      if (typeof item === "string") node[key] = stripPlanningAnnotation(item);
-      else stripPlanningAnnotations(item);
-    }
-  return node;
-}
-
-/* Read off the MARKED project, before the strip, so the review still names the exact
-   field CineBraid inferred and quotes what it decided there. */
-function collectPlanningAnnotations(project) {
-  const found = [];
-  const walk = (value, pathName) => {
-    if (typeof value === "string") {
-      if (PLANNING_MARKER_PATTERN.test(value))
-        found.push({ path: pathName, value: shortReviewValue(value) });
-    } else if (Array.isArray(value))
-      value.forEach((item, index) => walk(item, `${pathName}[${index}]`));
-    else if (value && typeof value === "object")
-      Object.entries(value).forEach(([key, item]) =>
-        walk(item, pathName ? `${pathName}.${key}` : key),
-      );
-  };
-  walk(project, "");
-  return found
-    .filter(
-      (item, index, list) =>
-        list.findIndex(
-          (other) => other.path === item.path && other.value === item.value,
-        ) === index,
-    )
-    .slice(0, 100);
-}
-
-/* `inferred` arrives already collected, from the MARKED project, because the marker no
-   longer survives into the value this function is given. `[SOURCE CONFLICT]` is still
-   walked for here: it stays in the project, so it can still be found in it. */
+/* `inferred` arrives already resolved. It carries two kinds of row, both reported and
+   distinguished by `origin`: what CineBraid itself decided (`cinebraid`, resolved from
+   the objects it normalised, never written into the project) and what the source
+   already said (`source`, found in the imported text and left exactly where it was).
+   `[SOURCE CONFLICT]` is still walked for here, because it stays in the project and so
+   can still be found in it. */
 function projectBuilderReview(project, warnings = [], sourceCounts = {}, inferred = []) {
   const conflicts = [],
     missing = [],
@@ -3367,17 +3371,15 @@ app.post("/api/projects/preview-import-json", (req, res) => {
     pruneImportPreviews();
     const source = req.body?.project,
       imported = importedProjectShape(source),
-      /* Collected while the annotations are still attached, then removed. Everything
-         after this line — the hash, the preview the browser renders, the normalized
-         JSON it can download, and the file the commit writes — sees the same project
-         with no planning annotation in it. */
-      marked = prepareImportedProjectForPreview(imported.project),
-      inferred = collectPlanningAnnotations(marked),
-      project = stripPlanningAnnotations(marked),
+      /* `imported.inferred` was resolved before this clone, from object identity.
+         Nothing here scans the project's prose and nothing removes anything from it:
+         the hash, the preview, the downloadable JSON and the committed file are all
+         the same project the normalizer produced. */
+      project = prepareImportedProjectForPreview(imported.project),
       previewHash = importPreviewHash(project),
       previewToken = crypto.randomBytes(24).toString("base64url"),
       sourceCounts = projectBuilderCounts(source),
-      review = projectBuilderReview(project, imported.warnings, sourceCounts, inferred);
+      review = projectBuilderReview(project, imported.warnings, sourceCounts, imported.inferred);
     IMPORT_PREVIEWS.set(previewToken, {
       createdAt: Date.now(),
       hash: previewHash,

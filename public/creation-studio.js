@@ -4276,6 +4276,44 @@ function creationDraftKeys(path) {
 }
 
 /* ==========================================================================
+   AN IN-FLIGHT FILE READ BELONGS TO THE INTENT THAT STARTED IT.
+
+   `readProjectBuilderFile` used to decide where the bytes went inside
+   `reader.onload` — that is, from whichever intent happened to be selected when the
+   read FINISHED. Independent review reproduced the consequence: choose an ~8 MiB
+   CineBraid project, switch to the assisted path while the read is running, and all
+   8,388,667 bytes land in `assisted:json` while `cinebraid:json` stays empty. The
+   filmmaker's CineBraid document silently became the assistant's output, and the box
+   they were actually looking at was overwritten by a file they had chosen for a
+   different purpose.
+
+   This is an ownership bug, not a timing bug, so it is fixed at the ownership
+   boundary: the destination buffer is resolved and captured when the read STARTS,
+   and nothing that happens afterwards can move it. Switching intents mid-read is
+   fine and changes nothing about where the bytes are going.
+
+   STALE READS ARE DETERMINISTIC. Every read takes the next number in a global
+   sequence and registers it as its owner buffer's current read. A completing read
+   writes only if it is still the registered one, so two selections on the same
+   buffer resolve last-selection-wins regardless of which finishes first — an older,
+   larger file finishing after a newer, smaller one cannot resurrect itself. A failed
+   or superseded read clears nothing it does not own. */
+const CREATION_FILE_READS = window.__cinebraidCreationFileReads || (window.__cinebraidCreationFileReads = new Map());
+let CREATION_FILE_READ_SEQUENCE = 0;
+function beginCreationFileRead(ownerKey) {
+  const ticket = ++CREATION_FILE_READ_SEQUENCE;
+  CREATION_FILE_READS.set(ownerKey, ticket);
+  return ticket;
+}
+/* True only for the read that is still the newest one for its buffer. Retiring the
+   ticket here is what makes a second completion of the same read a no-op. */
+function settleCreationFileRead(ownerKey, ticket) {
+  if (CREATION_FILE_READS.get(ownerKey) !== ticket) return false;
+  CREATION_FILE_READS.delete(ownerKey);
+  return true;
+}
+
+/* ==========================================================================
    READY / NEEDS REVIEW / BLOCKED — PRESENTATION, NOT A READINESS AUTHORITY.
 
    These three words describe ONE THING: what the server's import review already
@@ -4416,7 +4454,18 @@ function creationOptionalStyleCard() {
 function creationRecommendedActionMarkup() {
   const next = typeof projectNextProductionAction === "function" ? projectNextProductionAction() : null;
   if (!next) {
-    return `<article><span>RECOMMENDED</span><b>Nothing outstanding</b><small>Readiness has nothing left to ask for on the current shots.</small><a class="ghost-btn" href="#/shots/board">OPEN SHOTS</a></article>`;
+    /* NO ANSWER IS AN ANSWER, AND IT IS NOT A LICENCE TO PICK ONE.
+     *
+     * This branch used to render "Nothing outstanding" with an OPEN SHOTS button —
+     * which reads as a recommendation, is a production destination, and was chosen
+     * here rather than by the authority. Independent review named it correctly: a
+     * second next-action derivation, reachable exactly when the first one declines
+     * to speak, which is the worst possible moment to start guessing.
+     *
+     * So this states the absence and offers nothing. Anything a filmmaker might want
+     * to do next from this screen is ordinary navigation that is present whatever
+     * the authority says, and is labelled as such — never as the next action. */
+    return `<article data-recommended-kind="none" data-no-production-action="1"><span>NEXT PRODUCTION ACTION</span><b>None right now</b><small>Nothing is being recommended. CineBraid does not choose a production task when its readiness derivation names none.</small></article>`;
   }
   return `<article data-recommended-kind="${attr(next.kind)}"${next.shotId ? ` data-recommended-shot="${attr(next.shotId)}"` : ""}><span>RECOMMENDED</span><b>${esc(next.title)}</b><small>${esc(next.message || next.actionLabel)}</small><button class="assemble-btn" onclick="continueProduction()">${esc(next.actionLabel)} →</button></article>`;
 }
@@ -4515,14 +4564,32 @@ window.copyProjectBuilderRequest = async () => {
 window.readProjectBuilderFile = (input) => {
   const file = input.files?.[0];
   if (!file) return;
+  /* CAPTURED HERE, at the moment the filmmaker chose the file, and never read
+     again. `ownerPath` is kept alongside the key so the completion can ask "is that
+     intent still on screen?" without re-deriving where the bytes belong. */
+  const ownerPath = creationStartPath();
+  const ownerKey = creationDraftKeys(ownerPath).json;
+  const ticket = beginCreationFileRead(ownerKey);
   const reader = new FileReader();
   reader.onload = () => {
-    const box = document.getElementById("project-builder-json");
-    if (box) box.value = reader.result;
+    if (!settleCreationFileRead(ownerKey, ticket)) return;
+    const text = String(reader.result == null ? "" : reader.result);
     /* A chosen file is entered source material like any other, so it goes into the
-       buffer that survives a path switch. Without this line the file the filmmaker
-       picked would be the one thing the new retention did not cover. */
-    setCreationDraft(creationDraftKeys(creationStartPath()).json, reader.result);
+       buffer that survives a path switch. */
+    setCreationDraft(ownerKey, text);
+    /* The visible box is written only while its owner is the intent on screen. If
+       the filmmaker has moved on, the buffer alone is correct: switching back
+       renders it, and whatever they are looking at now is left alone. */
+    if (creationStartPath() !== ownerPath) return;
+    const box = document.getElementById("project-builder-json");
+    if (box) box.value = text;
+  };
+  reader.onerror = () => {
+    /* A failed read retires its own ticket and nothing else. Any buffer content the
+       filmmaker already had is theirs and is not cleared by CineBraid failing to
+       read a file. */
+    if (!settleCreationFileRead(ownerKey, ticket)) return;
+    if (typeof toast === "function") toast("That file could not be read");
   };
   reader.readAsText(file);
 };

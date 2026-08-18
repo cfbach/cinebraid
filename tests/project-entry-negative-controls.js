@@ -19,6 +19,10 @@
  *   N6  a landing that renders the chooser again is caught
  *   N7  Slice 3-5 vocabulary appearing on the entry is caught
  *   N8  the standing detector distinguishes Blocked from Needs review
+ *   N9  completion-time file ownership — the reproduced defect — is caught
+ *   N10 a null authority that still chooses a production action is caught
+ *   N11 a textual planning-marker strip destroying authored prose is caught
+ *   N12 a stage strip painted from the hash before the workspace renders is caught
  *
  * Nothing here contacts a provider, spends anything, or writes to a project.
  */
@@ -202,14 +206,18 @@ function n3MarkerReintroductionIsCaught() {
   assert.notStrictEqual(overCut.characters[0].continuityStates[0].notes, clean.characters[0].continuityStates[0].notes,
     "N3. and an equality assertion on that sentence is what distinguishes the two");
 
-  /* The server-side write is real: if the strip were removed, these are the call
-     sites that would put it back. */
-  const server = read("server.js");
-  assert(server.includes("stripPlanningAnnotations(marked)"), "N3. the strip must be wired into the preview pipeline");
-  assert(server.includes("collectPlanningAnnotations(marked)"), "N3. and the collection must happen before it");
-  assert(server.indexOf("collectPlanningAnnotations(marked)") < server.indexOf("stripPlanningAnnotations(marked)"),
-    "N3. collecting AFTER the strip would report nothing and pass silently");
-  note("N3. a marker appended back into a state delta is caught and named; an over-eager strip is caught by the surviving-sentence assertion instead; and collection is pinned to happen before the strip");
+  /* The correction that made this control's subject impossible is wired in: the
+     annotation is recorded against the object it was made about and never written, so
+     there is no appended text for anything to have to remove. N11 covers the strip
+     that used to do the removing, and why it had to go. */
+  const server = codeOnly(read("server.js"));
+  assert(server.includes("recordPlanningInference(inferences,"),
+    "N3. the normalizer must record its inferences rather than append them");
+  assert(!server.includes("addBuilderMarker("),
+    "N3. and the appending helper must not exist to be called again");
+  assert(!/\[INFERRED FOR PLANNING\] CineBraid/.test(server),
+    "N3. no literal annotation may be written into a normalized value either");
+  note("N3. a marker appended back into a state delta is caught and named; an over-eager strip is caught by the surviving-sentence assertion instead; and the shipped normalizer appends nothing at all");
 }
 
 /* =========================================================================
@@ -329,6 +337,146 @@ async function n8StandingDiscriminates() {
   note(`N8. the standing returns three distinct answers for the three payload shapes (${[...answers].join(" / ")}), and a projection unable to say Blocked is caught`);
 }
 
+/* =========================================================================
+   N9. COMPLETION-TIME FILE OWNERSHIP IS CAUGHT.
+
+   Reconstructs the reproduced defect exactly — the destination resolved inside
+   `onload` instead of at the moment the file was chosen — and requires the ownership
+   assertion to catch it.
+   ========================================================================= */
+async function n9CompletionTimeOwnershipIsCaught() {
+  const { context } = await render("#/create", buildFixture(), { storage: { "cinebraid-creation-start-path": "cinebraid" } });
+  vm.runInContext(`
+    globalThis.__reads = [];
+    globalThis.FileReader = class { readAsText() { globalThis.__reads.push(this); } };
+    globalThis.__finish = (i, text) => { globalThis.__reads[i].result = text; globalThis.__reads[i].onload(); };
+  `, context);
+  const draft = (key) => vm.runInContext(`creationDraft(${JSON.stringify(key)})`, context);
+
+  /* The shipped handler, with the switch happening mid-read. */
+  vm.runInContext(`readProjectBuilderFile({ files: [{ name: "project.json" }] })`, context);
+  vm.runInContext("setCreationStartPath('assisted')", context);
+  await vm.runInContext("route()", context);
+  vm.runInContext(`__finish(0, "EIGHT-MEBIBYTES")`, context);
+  assert.strictEqual(draft("cinebraid:json"), "EIGHT-MEBIBYTES", "N9. precondition: the shipped handler keeps ownership");
+  assert.strictEqual(draft("assisted:json"), "", "N9. precondition: and does not transfer it");
+
+  /* THE BREAK: the pre-correction handler, restored verbatim in this realm. */
+  vm.runInContext(`
+    globalThis.__legacyReadProjectBuilderFile = (input) => {
+      const file = input.files?.[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        setCreationDraft(creationDraftKeys(creationStartPath()).json, reader.result);
+      };
+      reader.readAsText(file);
+    };
+    setCreationDraft("cinebraid:json", "");
+    setCreationDraft("assisted:json", "");
+    setCreationStartPath('cinebraid');
+  `, context);
+  await vm.runInContext("route()", context);
+  vm.runInContext(`__legacyReadProjectBuilderFile({ files: [{ name: "project.json" }] })`, context);
+  vm.runInContext("setCreationStartPath('assisted')", context);
+  await vm.runInContext("route()", context);
+  vm.runInContext(`__finish(1, "EIGHT-MEBIBYTES")`, context);
+
+  assert.strictEqual(draft("assisted:json"), "EIGHT-MEBIBYTES",
+    "N9. the break must land — the old handler really does deliver to whichever intent is selected at completion");
+  assert.strictEqual(draft("cinebraid:json"), "",
+    "N9. and really does leave the buffer that owned the file empty — which is what the ownership assertion catches");
+  note("N9. the pre-correction handler, restored in-realm, delivers 'EIGHT-MEBIBYTES' to assisted:json and leaves cinebraid:json empty; the shipped one does neither");
+}
+
+/* =========================================================================
+   N10. A NULL AUTHORITY THAT STILL CHOOSES AN ACTION IS CAUGHT.
+   ========================================================================= */
+async function n10NullFallbackIsCaught() {
+  const { context } = await landedRender();
+  vm.runInContext("globalThis.projectNextProductionAction = () => null;", context);
+  await vm.runInContext("route()", context);
+  const shipped = vm.runInContext("document.getElementById('main').innerHTML", context);
+  const card = (source) => (source.match(/<article[^>]*data-recommended-kind[\s\S]*?<\/article>/) || [""])[0];
+
+  assert(card(shipped).includes('data-recommended-kind="none"'), "N10. precondition: the shipped no-action card declares itself");
+  assert(!/OPEN SHOTS|continueProduction/.test(card(shipped)), "N10. precondition: and offers nothing");
+
+  /* THE BREAK: the retired fallback, restored verbatim. */
+  const regressed = shipped.replace(card(shipped),
+    `<article><span>RECOMMENDED</span><b>Nothing outstanding</b><small>Readiness has nothing left to ask for on the current shots.</small><a class="ghost-btn" href="#/shots/board">OPEN SHOTS</a></article>`);
+  assert(regressed !== shipped, "N10. the break must land");
+  const regressedCard = (regressed.match(/<article><span>RECOMMENDED<\/span>[\s\S]*?<\/article>/) || [""])[0];
+  assert(regressedCard, "N10. the restored fallback must be findable");
+  assert(/OPEN SHOTS/.test(regressedCard) && !/data-recommended-kind/.test(regressedCard),
+    "N10. a card with no declared kind that names a production destination is exactly the defect, and is caught");
+
+  /* And a fallback hidden as a "kind" is caught too. */
+  const disguised = `<article data-recommended-kind="none"><span>NEXT PRODUCTION ACTION</span><b>None right now</b><small>…</small><button onclick="continueProduction()">OPEN SHOTS →</button></article>`;
+  assert(/continueProduction|OPEN SHOTS/.test(disguised),
+    "N10. and the shipped assertion forbids exactly these two strings inside the no-action card");
+  vm.runInContext("globalThis.projectNextProductionAction = globalThis.__realNextAction || projectNextProductionAction;", context);
+  note("N10. restoring the retired 'Nothing outstanding / OPEN SHOTS' fallback is caught, and so is a disguised one that keeps the kind but adds a production control");
+}
+
+/* =========================================================================
+   N11. A TEXTUAL MARKER STRIP IS CAUGHT.
+
+   This is the correction's own predecessor, which independently reviewed as a
+   defect: removing by pattern truncates a filmmaker writing about the convention.
+   ========================================================================= */
+function n11TextualStripIsCaught() {
+  const AUTHORED = "Literal discussion: [INFERRED FOR PLANNING] is a bracketed phrase the prompt kit asks assistants to use.";
+  /* The first correction's own cut, reproduced: marker to end of line. */
+  const textualStrip = (value) => String(value)
+    .split(/\r?\n/)
+    .map((line) => {
+      const at = line.toUpperCase().indexOf("[INFERRED FOR PLANNING]");
+      return at < 0 ? { line, cut: false } : { line: line.slice(0, at).replace(/\s+$/, ""), cut: true };
+    })
+    .filter((entry) => !(entry.cut && !entry.line))
+    .map((entry) => entry.line).join("\n").trim();
+
+  assert.strictEqual(textualStrip(AUTHORED), "Literal discussion:",
+    "N11. the break must land — a textual strip really does truncate the filmmaker's sentence");
+  assert.notStrictEqual(textualStrip(AUTHORED), AUTHORED,
+    "N11. and the byte-for-byte assertion in tests/project-entry.js is what catches it");
+
+  /* The shipped server carries no such strip, and its removal decision is recorded
+     rather than pattern-matched. */
+  const server = codeOnly(read("server.js"));
+  for (const gone of ["stripPlanningAnnotation", "stripPlanningAnnotations", "collectPlanningAnnotations"])
+    assert(!server.includes(gone), `N11. the shipped server must not carry ${gone}`);
+  assert(server.includes("recordPlanningInference("), "N11. inferences are recorded");
+  assert(server.includes("resolvePlanningInferences("), "N11. and resolved from those records");
+  assert(server.indexOf("resolvePlanningInferences(normalized.project") < server.indexOf("prepareImportedProjectForPreview(imported.project"),
+    "N11. resolved while the annotated objects are still the project's own — after a structuredClone their identities are gone");
+  note("N11. the superseded textual strip truncates the authored sentence to 'Literal discussion:' and is caught; the shipped server carries no strip at all and resolves provenance before any clone");
+}
+
+/* =========================================================================
+   N12. A STRIP PAINTED BEFORE ITS WORKSPACE IS CAUGHT.
+   ========================================================================= */
+function n12StripAheadOfRenderIsCaught() {
+  const source = codeOnly(read("public/stage-surfaces.js"));
+  assert(/shotId: view === "shot" && renderedRouteIsCurrent\(\)/.test(source),
+    "N12. precondition: the shipped strip waits for the rendered route");
+
+  /* THE BREAK: the pre-correction context, which reads the hash alone. */
+  const regressed = source.replace('shotId: view === "shot" && renderedRouteIsCurrent() ? currentTargetId() : ""',
+    'shotId: view === "shot" ? currentTargetId() : ""');
+  assert(regressed !== source, "N12. the break must land");
+  assert(!/renderedRouteIsCurrent\(\) \? currentTargetId/.test(regressed),
+    "N12. a context that consults only the hash mounts a navigator for a workspace that has not rendered, and is caught");
+
+  /* The mechanism that made it visible: the shot route awaits the network before it
+     writes #main, so a hash-driven paint is always ahead of it. */
+  const views = read("public/views.js");
+  assert(/async shot\(id\)[\s\S]{0,400}await fetch\("\/api\/shots\/"/.test(views),
+    "N12. the shot route still awaits the server before rendering — the window this correction closes");
+  note("N12. reverting the strip's context to the hash alone is caught, and the shot route still awaits the network before writing #main, which is the window that made it visible");
+}
+
 async function main() {
   await n1ParallelDerivationIsCaught();
   await n2LandingFollowsTheAuthority();
@@ -338,6 +486,10 @@ async function main() {
   await n6ChooserOnLandingIsCaught();
   await n7LaterSliceLeakageIsCaught();
   await n8StandingDiscriminates();
+  await n9CompletionTimeOwnershipIsCaught();
+  await n10NullFallbackIsCaught();
+  n11TextualStripIsCaught();
+  n12StripAheadOfRenderIsCaught();
   console.log(notes.join("\n"));
   console.log("Project entry negative controls passed: every Slice 2 assertion was made to fail against a deliberate break, and to pass again once it was undone.");
 }

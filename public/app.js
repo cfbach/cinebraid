@@ -2144,9 +2144,36 @@ function restoreRouteViewState(state) {
     requestAnimationFrame(() => requestAnimationFrame(finish));
   else setTimeout(finish, 0);
 }
+/* `body[data-render-ready]` — THE FLAG THAT SAID YES WHILE IT WAS STILL RENDERING.
+ *
+ * public/bootstrap.js sets `renderReady` once, after the first `load()` resolves, and
+ * nothing has ever cleared it again. It therefore answered "ready" for the rest of the
+ * session, including in the middle of a route change — and eight real-browser suites
+ * wait on exactly that flag before reading the page.
+ *
+ * tests/production-media-real-browser.py section 11 is where that became a failure the
+ * founder would recognise: it navigates to a shot, waits for the flag, and asks for the
+ * stage-local media handoff. Because the flag was already "1" from boot and a hash-only
+ * `page.goto` does not reload the document, the wait returned instantly against the
+ * PREVIOUS view's DOM and the handoff was reported missing on a build that renders it.
+ * Measured on this machine: the handoff exists ~18ms after the hash changes on the
+ * accepted baseline and on this branch alike, and the suite was reading before that.
+ *
+ * So the flag is armed per render now, which is what every suite already believes it
+ * means. It is cleared when a render starts and restored when that render settles —
+ * including on the failure path, because a workspace that failed to render has still
+ * finished rendering and a suite must never be left waiting forever on it.
+ *
+ * The token guard is what keeps a superseded render from declaring the page ready
+ * while the render that replaced it is still working. */
+function markRouteRenderSettled(requestToken) {
+  if (requestToken !== ROUTE_REQUEST_TOKEN) return;
+  if (document.body?.dataset) document.body.dataset.renderReady = "1";
+}
 async function route(recoveryAttempt = false) {
   if (!P) return;
   const requestToken = ++ROUTE_REQUEST_TOKEN;
+  if (document.body?.dataset) delete document.body.dataset.renderReady;
   try {
     const targetRouteKey = currentRouteKey();
     const routeParts = location.hash.split("/");
@@ -2187,7 +2214,12 @@ async function route(recoveryAttempt = false) {
     const fn = ROUTES[view] || ROUTES.production;
     const out = fn(decodeURIComponent(id || ""));
     const rendered = out instanceof Promise ? await out : out;
-    if (requestToken !== ROUTE_REQUEST_TOKEN || targetRouteKey !== currentRouteKey()) return;
+    if (requestToken !== ROUTE_REQUEST_TOKEN || targetRouteKey !== currentRouteKey()) {
+      /* Superseded, or the hash moved under us. The render that replaced this one owns
+         the flag; the guard inside makes this a no-op unless nothing replaced it. */
+      markRouteRenderSettled(requestToken);
+      return;
+    }
     ROUTE_RENDER_IN_PROGRESS = true;
     $("#main").innerHTML = rendered;
     delete document.body.dataset.routeError;
@@ -2221,6 +2253,7 @@ async function route(recoveryAttempt = false) {
       }
       if (typeof window.scrollTo === "function") window.scrollTo(0, 0);
     }
+    markRouteRenderSettled(requestToken);
     if (typeof CustomEvent === "function") window.dispatchEvent(new CustomEvent("cinebraid:route-rendered", { detail: { view, id: decodeURIComponent(id || "") } }));
   } catch (error) {
     ROUTE_RENDER_IN_PROGRESS = false;
@@ -2233,6 +2266,7 @@ async function route(recoveryAttempt = false) {
     ) {
       window.disableComposerEnhancements(error, false);
       toast("Composer recovery mode enabled — restoring the stable workspace");
+      /* The recovery render arms and settles the flag itself. */
       return route(true);
     }
     const message = esc(error?.message || String(error));
@@ -2240,6 +2274,9 @@ async function route(recoveryAttempt = false) {
     if (main) {
       main.innerHTML = `<section class="empty-state route-recovery"><h2>This workspace could not render</h2><p>${message}</p><div class="modal-actions"><button class="add-btn" onclick="route()">Retry</button>${typeof window.reloadCineBraidSafe === "function" ? '<button class="ghost-btn" onclick="reloadCineBraidSafe()">Reload stable workspace</button>' : ""}</div><small>Your project data has not been deleted or replaced. The error is limited to the browser workspace.</small></section>`;
     }
+    /* A failed render is a finished render. `data-route-error` says what happened;
+       leaving the page permanently "not ready" would hang every waiter instead. */
+    markRouteRenderSettled(requestToken);
   }
 }
 

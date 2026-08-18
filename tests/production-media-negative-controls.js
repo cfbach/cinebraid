@@ -252,8 +252,8 @@ control("C21 the Generated Media route loses the creator shell", "checkDestinati
 
 control("C22 the stage strip learns about the project-level route", "checkDestination",
   { stageSurfaces: mutate(SOURCES.stageSurfaces,
-      '      shotId: view === "shot" ? currentTargetId() : "",',
-      '      shotId: view === "shot" || view === "results" ? currentTargetId() : "",',
+      '      shotId: view === "shot" && renderedRouteIsCurrent() ? currentTargetId() : "",',
+      '      shotId: (view === "shot" || view === "results") && renderedRouteIsCurrent() ? currentTargetId() : "",',
       "C22") },
   "The O4 strip describes ONE shot's workflow. Mounting it on a project-level destination would make Generated Media look like a sixth stage, which is precisely what the brief forbids.");
 

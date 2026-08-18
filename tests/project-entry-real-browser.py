@@ -17,6 +17,12 @@ actually notice:
     validate -> review -> commit buttons and the shipped project reload.
   * THE MARKER REALLY IS ABSENT FROM THE PROJECT THE BROWSER THEN HOLDS, which is the
     document every editor on every other screen is bound to.
+  * A GENUINELY IN-FLIGHT FILE READ KEEPS THE INTENT THAT STARTED IT. This is the one
+    claim that cannot be made anywhere else at all: a real multi-megabyte file, read by
+    a real FileReader, with a real intent switch happening while the bytes are still
+    being decoded. The Node suite can only hold a stub read open.
+  * THE LANDING FOLLOWS THE AUTHORITY IN A LIVE DOCUMENT, including when that authority
+    names nothing - the case in which a locally chosen fallback would appear.
 
 IT CARRIES ITS OWN NEGATIVE CONTROLS, because a retention assertion that cannot fail is
 worth nothing:
@@ -327,6 +333,147 @@ try:
             "6. and no editable field on the reference workspace may show CineBraid's planning annotation as authored text"
         findings.append("6. the imported project holds zero planning annotations, every authored sentence survived "
                         "byte for byte, and no editable field on the reference workspace shows one")
+
+        # Section 4 left a landing in place, and a landing is what #/create renders while
+        # one exists. Dismissing it through the shipped control is also a check that the
+        # control works.
+        page.goto(f"{base}/#/create", wait_until="domcontentloaded")
+        page.wait_for_selector("[data-project-entry-landing]", timeout=20000)
+        page.evaluate("() => dismissProjectEntryLanding()")
+        page.wait_for_selector(".creation-start-choice", timeout=20000)
+        page.click('[data-creation-intent="cinebraid"]')
+        page.wait_for_selector("#creation-cinebraid", timeout=10000)
+        findings.append("6b. 'Start another project' dismisses the landing and returns the chooser")
+
+        # ---- 7. an in-flight file read belongs to the intent that started it ------------
+        # 7a. THE REAL INPUT ELEMENT, with a real 16 MiB file on disk, chosen the way a
+        # filmmaker chooses one. This proves the shipped wiring; 7b then proves the
+        # ownership rule across a read that is provably still running.
+        big_path = sandbox / "big-project.json"
+        filler = "x" * (1 << 20)
+        big_path.write_text('{"meta":{"title":"Sixteen Mebibytes"},"filler":"' + filler * 16 + '"}', encoding="utf-8")
+        big_size = big_path.stat().st_size
+        page.evaluate("() => { setCreationDraft('cinebraid:json', ''); setCreationDraft('assisted:json', ''); }")
+        page.set_input_files("#project-builder-file", str(big_path))
+        page.wait_for_function("() => creationDraft('cinebraid:json').length > 0", timeout=30000)
+        chosen = page.evaluate("() => ({ cine: creationDraft('cinebraid:json').length, visible: (document.getElementById('project-builder-json') || {}).value.length })")
+        assert chosen["cine"] == big_size, f"7a. the chosen file must reach its buffer, got {chosen['cine']} of {big_size}"
+        assert chosen["visible"] == big_size, "7a. and the box the filmmaker is looking at, because they are still on that intent"
+        findings.append(f"7a. a real {big_size}-byte file chosen through the shipped input reaches cinebraid:json and the visible box")
+
+        # 7b. THE OWNERSHIP RULE, ACROSS A READ THAT IS PROVABLY STILL RUNNING.
+        # The read is started and the intent switched inside ONE synchronous task, so the
+        # FileReader cannot possibly have finished: the assertion below states that as a
+        # measured fact rather than hoping for it. The bytes and the reader are real - a
+        # real File of real length decoded by the browser's own FileReader.
+        OWNERSHIP = (
+            "async () => {"
+            "  setCreationDraft('cinebraid:json', ''); setCreationDraft('assisted:json', '');"
+            "  const bytes = 'y'.repeat(1 << 24);"
+            "  const file = new File([bytes], 'owned.json', { type: 'application/json' });"
+            "  readProjectBuilderFile({ files: [file] });"
+            "  setCreationStartPath('assisted');"
+            "  const atSwitch = { cine: creationDraft('cinebraid:json').length, assisted: creationDraft('assisted:json').length };"
+            "  await new Promise((r) => setTimeout(r, 60));"
+            "  return { size: file.size, atSwitch };"
+            "}"
+        )
+        ownership = page.evaluate(OWNERSHIP)
+        assert ownership["atSwitch"] == {"cine": 0, "assisted": 0}, \
+            f"7b. the read must still be in flight when the intent changes, got {ownership['atSwitch']}"
+        page.wait_for_selector("#creation-assisted", timeout=10000)
+        page.wait_for_function("() => creationDraft('cinebraid:json').length > 0", timeout=30000)
+        delivered = page.evaluate("() => ({ cine: creationDraft('cinebraid:json').length, assisted: creationDraft('assisted:json').length, visible: (document.getElementById('project-builder-json') || {}).value, path: creationStartPath() })")
+        assert delivered["path"] == "assisted", "7b. the filmmaker must still be on the intent they switched to"
+        assert delivered["cine"] == ownership["size"], \
+            f"7b. all {ownership['size']} bytes must land in the buffer that owned the file, got {delivered['cine']}"
+        assert delivered["assisted"] == 0, \
+            f"7b. and none in the intent that merely happened to be selected, got {delivered['assisted']}"
+        assert delivered["visible"] == "", "7b. nor may they overwrite the box the filmmaker is now looking at"
+        findings.append(f"7b. a {ownership['size']}-byte read started on the CineBraid intent, with both buffers measured empty at "
+                        f"the moment of the switch, delivered every byte to cinebraid:json, none to assisted:json, and left the "
+                        f"visible assisted box untouched")
+
+        # 7c. rapid switching during the read, and a stale older read.
+        SWITCHING = (
+            "async () => {"
+            "  setCreationStartPath('cinebraid');"
+            "  await new Promise((r) => setTimeout(r, 30));"
+            "  setCreationDraft('cinebraid:json', '');"
+            "  const older = new File(['z'.repeat(1 << 24)], 'older.json');"
+            "  const newer = new File(['{\"meta\":{\"title\":\"Newer\"}}'], 'newer.json');"
+            "  readProjectBuilderFile({ files: [older] });"
+            "  readProjectBuilderFile({ files: [newer] });"
+            "  for (const p of ['assisted', 'scratch', 'cinebraid']) setCreationStartPath(p);"
+            "  await new Promise((r) => setTimeout(r, 1500));"
+            "  return { held: creationDraft('cinebraid:json'), assisted: creationDraft('assisted:json').length, olderSize: older.size };"
+            "}"
+        )
+        switching = page.evaluate(SWITCHING)
+        assert "Newer" in switching["held"] and len(switching["held"]) < 1000, \
+            (f"7c. the newer selection must win and the older {switching['olderSize']}-byte read must not resurrect itself, "
+             f"got {len(switching['held'])} bytes")
+        assert switching["assisted"] == 0, "7c. and three switches during the reads moved nothing into another intent"
+        findings.append(f"7c. an older {switching['olderSize']}-byte read and a newer small one on the same buffer, with three "
+                        f"intent switches in between, leave exactly the newer selection ({len(switching['held'])} bytes)")
+
+        # ---- 8. the landing follows the authority, including when it names nothing -------
+        page.goto(f"{base}/#/create", wait_until="domcontentloaded")
+        page.wait_for_selector(".creation-start-choice, [data-project-entry-landing]", timeout=20000)
+        if page.locator("[data-project-entry-landing]").count():
+            page.evaluate("() => dismissProjectEntryLanding()")
+        page.wait_for_selector(".creation-start-choice", timeout=20000)
+        page.click('[data-creation-intent="cinebraid"]')
+        page.wait_for_selector("#creation-cinebraid", timeout=10000)
+        authority_source = dict(IMPORT_SOURCE)
+        authority_source["meta"] = {"title": "Authority Landing", "format": "Short film"}
+        page.fill("#project-builder-json", json.dumps(authority_source))
+        page.click("#creation-cinebraid button.assemble-btn")
+        page.wait_for_selector(".project-builder-review", timeout=25000)
+        page.click(".creation-next-step button.assemble-btn")
+        page.wait_for_selector("[data-project-entry-landing]", timeout=30000)
+
+        SENTINEL = (
+            "async () => {"
+            "  window.__realNext = projectNextProductionAction;"
+            "  window.projectNextProductionAction = () => ({ kind: 'control', href: '#/production',"
+            "    title: 'MOVED THE AUTHORITY', message: 'This came from the one derivation.', actionLabel: 'PROVE IT' });"
+            "  await route();"
+            "  const card = document.querySelector('[data-recommended-kind]');"
+            "  return { kind: card && card.dataset.recommendedKind, html: card ? card.outerHTML : '' };"
+            "}"
+        )
+        sentinel = page.evaluate(SENTINEL)
+        assert sentinel["kind"] == "control" and "MOVED THE AUTHORITY" in sentinel["html"] and "PROVE IT" in sentinel["html"], \
+            f"8. a sentinel authority must control every part of the landing's card, got {sentinel}"
+
+        NULLED = (
+            "async () => {"
+            "  window.projectNextProductionAction = () => null;"
+            "  await route();"
+            "  const card = document.querySelector('[data-recommended-kind]');"
+            "  const landing = document.querySelector('.project-entry-landing');"
+            "  return {"
+            "    kind: card && card.dataset.recommendedKind,"
+            "    html: card ? card.outerHTML : '',"
+            "    controlsInCard: card ? card.querySelectorAll('button, a').length : -1,"
+            "    openShotsInCard: card ? /OPEN SHOTS/i.test(card.textContent) : true,"
+            "    landingHasNavigation: !!landing && /OR LOOK AROUND/.test(landing.textContent),"
+            "  };"
+            "}"
+        )
+        nulled = page.evaluate(NULLED)
+        assert nulled["kind"] == "none", f"8. a null authority must render the declared no-action state, got {nulled}"
+        assert nulled["controlsInCard"] == 0, \
+            f"8. and that card must offer no control at all, found {nulled['controlsInCard']}"
+        assert not nulled["openShotsInCard"], "8. and must not name a production destination"
+        assert "Nothing outstanding" not in nulled["html"], "8. nor restate the retired locally-chosen verdict"
+        assert nulled["landingHasNavigation"], \
+            "8. while the landing's ordinary navigation, which is not the next action, is still there"
+        page.evaluate("() => { window.projectNextProductionAction = window.__realNext; }")
+        findings.append("8. a sentinel next action drives the landing's kind, headline and label; a null one renders a "
+                        "no-action card with zero controls, no OPEN SHOTS and no production hand-off, while the landing's "
+                        "separate navigation block is unaffected")
 
         assert not page_errors, f"the page raised uncaught errors: {page_errors}"
         browser.close()

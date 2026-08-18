@@ -37,6 +37,10 @@
  *      the one markup function that already owned it
  *   L  Slice 1's shell decisions are untouched
  *   M  nothing from Slice 3, 4 or 5 leaked into this surface
+ *   N  an in-flight file read belongs to the intent that started it
+ *   O  an authored planning marker is preserved while a generated one never appears
+ *   P  a null next action produces no locally chosen production action
+ *   Q  the stage strip describes the rendered workspace, not the requested URL
  *
  * Section I runs the real server, because the leak was in the real normalizer and a
  * source-level claim about it would prove nothing. Everything else runs in the render
@@ -52,6 +56,7 @@ const net = require("net");
 const { spawn } = require("child_process");
 
 const ROOT = path.resolve(__dirname, "..");
+const PLANNING_MARKER_IN = /\[INFERRED FOR PLANNING\]/i;
 const read = (file) => fs.readFileSync(path.join(ROOT, file), "utf8");
 const { render, buildFixture } = require("./render-harness");
 
@@ -366,6 +371,68 @@ async function sectionReviewStanding() {
 
    Against the real server, because the leak was in the real normalizer.
    ========================================================================= */
+/* Every adversarial authored shape independent review named, written by a filmmaker
+   rather than produced by CineBraid. None of it may be altered by an import. */
+const AUTHORED = {
+  exact: "[INFERRED FOR PLANNING]",
+  sentence: "Literal discussion: [INFERRED FOR PLANNING] is a bracketed phrase the prompt kit asks assistants to use.",
+  lower: "we use [inferred for planning] in our own notes too",
+  mixed: "House style: [Inferred For Planning] then a reason.",
+  leading: "[INFERRED FOR PLANNING] at the very start of the note, written by me.",
+  trailing: "Written by me, ending with [INFERRED FOR PLANNING]",
+  multiple: "First [INFERRED FOR PLANNING] then more, then [INFERRED FOR PLANNING] again.",
+  newlines: "Line one.\n[INFERRED FOR PLANNING] line two, mine.\nLine three.",
+  punctuation: "See ([INFERRED FOR PLANNING]) — and also, [INFERRED FOR PLANNING]; yes.",
+  conflict: "[SOURCE CONFLICT] Earlier draft says a blue coat.",
+};
+const AUTHORED_SOURCE = {
+  meta: { title: "Marker Matrix", format: "Short film", notes: AUTHORED.sentence },
+  characters: [{
+    id: "CHAR-ADA", name: "Ada", description: AUTHORED.leading, notes: AUTHORED.conflict,
+    driftNotes: AUTHORED.newlines,
+    /* THE CASE A TEXTUAL STRIP CANNOT GET RIGHT: CineBraid makes an inference about
+       THIS state (it has no default, so this one is chosen) while the filmmaker's own
+       sentence about the marker is sitting in the very field the annotation used to be
+       appended to. */
+    continuityStates: [
+      { id: "state-clean", name: "Clean coat", notes: AUTHORED.sentence },
+      { id: "state-soaked", name: "Soaked coat", parentStateId: "state-clean", notes: AUTHORED.multiple },
+    ],
+  }],
+  locations: [{ id: "LOC-DOCK", name: "Dock", description: AUTHORED.punctuation, continuityStates: [] }],
+  props: [{ id: "PR-LAMP", name: "Lamp", description: AUTHORED.lower, continuityStates: [{ id: "s1", name: "Lit", isDefault: true, notes: AUTHORED.mixed }] }],
+  vehicles: [],
+  scenes: [{ id: "SC-01", title: "Arrival", whatHappens: AUTHORED.trailing, howItFeels: "Cold.", notes: AUTHORED.exact }],
+  shots: [{
+    id: "L1-01", scene: "SC-01", title: "Dock walk", desc: "Ada walks the length of the dock.",
+    positioning: "Locked wide.", characters: ["CHAR-ADA"], codes: ["LOC-DOCK"],
+    notes: AUTHORED.newlines, risks: [AUTHORED.exact, "ordinary risk"],
+    clips: [{ kind: "i2v", dur: 6, motionPrompt: AUTHORED.sentence }],
+  }],
+};
+const AUTHORED_CHECKS = [
+  ["meta.notes", "sentence", "an authored sentence about the convention"],
+  ["characters[0].description", "leading", "marker at the very start"],
+  ["characters[0].notes", "conflict", "[SOURCE CONFLICT] left exactly alone"],
+  ["characters[0].continuityStates[0].notes", "sentence", "the field CineBraid ALSO made an inference about"],
+  ["characters[0].continuityStates[1].notes", "multiple", "two markers in one delta"],
+  ["characters[0].driftNotes", "newlines", "a marker alone on its own line"],
+  ["locations[0].description", "punctuation", "markers wrapped in punctuation"],
+  ["props[0].description", "lower", "lower case"],
+  ["props[0].continuityStates[0].notes", "mixed", "mixed case"],
+  ["scenes[0].whatHappens", "trailing", "marker at the end"],
+  ["scenes[0].notes", "exact", "the marker and nothing else"],
+  ["shots[0].notes", "newlines", "a shot note CineBraid also inferred a duration for"],
+  ["shots[0].risks[0]", "exact", "inside an array"],
+  ["shots[0].clips[0].motionPrompt", "sentence", "inside a nested object"],
+];
+function valueAt(project, dotted) {
+  return dotted.split(".").reduce((node, key) => {
+    const indexed = key.match(/^(\w+)\[(\d+)\]$/);
+    return indexed ? node?.[indexed[1]]?.[Number(indexed[2])] : node?.[key];
+  }, project);
+}
+
 const LEAK_SOURCE = {
   meta: { title: "Marker Boundary", format: "Short film" },
   characters: [{
@@ -505,6 +572,65 @@ async function sectionPlanningMarkerBoundary() {
     assert(conflictPreview.review.conflicts.length >= 1, "I. and must still be reported");
 
     note(`I. the import made ${preview.review.inferred.length} planning inferences, reported all of them with paths, and wrote zero planning markers into the project — while every authored sentence, and the [SOURCE CONFLICT] marker, survived intact`);
+
+    /* ---------------------------------------------------------------------
+       O. AUTHORED vs GENERATED.
+
+       The first correction removed the annotation by scanning every string for the
+       marker, which truncated "Literal discussion: [INFERRED FOR PLANNING] is a
+       bracketed phrase…" to "Literal discussion:". A textual scan cannot tell
+       CineBraid's annotation from a human writing the same words, because by the time
+       it runs the provenance is gone. So nothing is scanned and nothing is removed:
+       the inference is recorded against the object it was made about, and the project
+       never carries it in the first place.
+       --------------------------------------------------------------------- */
+    const authored = await (await fetch(`${base}/api/projects/preview-import-json`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ project: AUTHORED_SOURCE }),
+    })).json();
+    assert(authored.normalizedProject, `O. the adversarial import must succeed: ${JSON.stringify(authored).slice(0, 300)}`);
+
+    for (const [path, key, why] of AUTHORED_CHECKS)
+      assert.strictEqual(valueAt(authored.normalizedProject, path), AUTHORED[key],
+        `O. authored text must survive byte for byte — ${path} (${why})`);
+
+    const generated = authored.review.inferred.filter((row) => row.origin === "cinebraid");
+    const fromSource = authored.review.inferred.filter((row) => row.origin === "source");
+    assert(generated.length >= 4, `O. this source must provoke CineBraid's own inferences, got ${generated.length}`);
+    assert(fromSource.length >= AUTHORED_CHECKS.length - 2,
+      `O. and every authored marker must still be REPORTED as an inferred value, got ${fromSource.length}`);
+    /* The test is whether CINEBRAID'S OWN SENTENCE is in the project — not whether the
+       marker is, because on the shared field the marker is the filmmaker's. */
+    const projectText = JSON.stringify(authored.normalizedProject);
+    for (const row of generated) {
+      const sentence = row.value.replace(/^\[INFERRED FOR PLANNING\]\s*/i, "").replace(/…$/, "");
+      assert(sentence.length > 20, `O. the control needs a real sentence to look for, got ${JSON.stringify(sentence)}`);
+      assert(!projectText.includes(sentence),
+        `O. CineBraid's own annotation must appear nowhere in the project — found "${sentence.slice(0, 60)}" for ${row.path}`);
+    }
+    assert(!/CineBraid (selected|added|assigned|created|kept|set) /.test(projectText),
+      "O. and no import-bookkeeping sentence of any shape may be inside the project");
+    /* The decisive pair: one path carries BOTH a generated inference and the
+       filmmaker's own literal marker. The inference is reported there; the sentence is
+       untouched. Nothing that reads prose could separate those two. */
+    const sharedPath = "characters[0].continuityStates[0].notes";
+    assert(generated.some((row) => row.path === sharedPath),
+      "O. the shared-field case must actually provoke a generated inference on that field");
+    assert.strictEqual(valueAt(authored.normalizedProject, sharedPath), AUTHORED.sentence,
+      "O. and the filmmaker's sentence in that same field must be exactly as they wrote it");
+
+    const authoredCommit = await (await fetch(`${base}/api/projects/import-json`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ previewToken: authored.previewToken, previewHash: authored.previewHash }),
+    })).json();
+    const authoredOnDisk = JSON.parse(fs.readFileSync(path.join(projectsRoot, authoredCommit.slug, "project.json"), "utf8"));
+    for (const [dotted, key] of AUTHORED_CHECKS)
+      assert.strictEqual(valueAt(authoredOnDisk, dotted), AUTHORED[key],
+        `O. and it must reach disk unchanged — ${dotted}`);
+    const diskText = JSON.stringify(authoredOnDisk);
+    assert(!/CineBraid (selected|added|assigned|created|kept|set) /.test(diskText),
+      "O. and none of it may reach disk either");
+    note(`O. ${AUTHORED_CHECKS.length} adversarial authored markers — exact, lower, mixed, leading, trailing, repeated, newline-separated, punctuated, in arrays and nested objects — all survived byte for byte through preview and onto disk, while ${generated.length} generated inferences were reported and none was written; one field carried both at once`);
   } finally {
     child.kill();
   }
@@ -665,6 +791,140 @@ async function sectionNoLaterSliceLeakage() {
   note("M. none of Reference Reframe, demand-driven coverage, Simple/Advanced generation, price, shot intent, Analytics or collaboration appears on any entry surface, and no generation-model control was pulled forward");
 }
 
+/* =========================================================================
+   N. AN IN-FLIGHT FILE READ BELONGS TO THE INTENT THAT STARTED IT.
+
+   The read used to resolve its destination inside `onload`, so an ~8 MiB CineBraid
+   project chosen on the CineBraid path and switched away from mid-read landed in
+   `assisted:json` instead. This drives the shipped handler with a FileReader whose
+   completion this suite controls, which is the only way to hold a read open across a
+   path switch deterministically. The genuinely asynchronous evidence — a real
+   multi-megabyte file, a real Chromium, a real switch while the bytes are still
+   being read — is section 7 of tests/project-entry-real-browser.py.
+   ========================================================================= */
+function installControllableFileReader(context) {
+  vm.runInContext(`
+    globalThis.__reads = [];
+    globalThis.FileReader = class {
+      readAsText(file) { globalThis.__reads.push({ file, reader: this }); }
+    };
+    globalThis.__chooseFile = (name) => { readProjectBuilderFile({ files: [{ name }] }); return globalThis.__reads.length - 1; };
+    globalThis.__finish = (index, text) => { const r = globalThis.__reads[index]; r.reader.result = text; r.reader.onload(); };
+    globalThis.__fail = (index) => { const r = globalThis.__reads[index]; if (r.reader.onerror) r.reader.onerror(); };
+  `, context);
+}
+async function sectionFileReadOwnership() {
+  const { context } = await createRender({ storage: { "cinebraid-creation-start-path": "cinebraid" } });
+  installControllableFileReader(context);
+  const draft = (key) => vm.runInContext(`creationDraft(${JSON.stringify(key)})`, context);
+
+  /* 1. the read is started on the CineBraid path and finishes on the assisted one. */
+  const first = vm.runInContext(`__chooseFile("project.json")`, context);
+  vm.runInContext("setCreationStartPath('assisted')", context);
+  await vm.runInContext("route()", context);
+  vm.runInContext(`__finish(${first}, "CINEBRAID-DOCUMENT")`, context);
+  assert.strictEqual(draft("cinebraid:json"), "CINEBRAID-DOCUMENT",
+    "N. a file chosen on the CineBraid path must land there however long the read takes");
+  assert.strictEqual(draft("assisted:json"), "",
+    "N. and must never be transferred to the intent that happened to be selected when it finished");
+
+  /* 2. rapid A -> B -> C switching during a read changes nothing about ownership. */
+  vm.runInContext("setCreationStartPath('assisted')", context);
+  await vm.runInContext("route()", context);
+  const second = vm.runInContext(`__chooseFile("assistant-output.json")`, context);
+  for (const path of ["scratch", "cinebraid", "assisted", "scratch"]) {
+    vm.runInContext(`setCreationStartPath('${path}')`, context);
+    await vm.runInContext("route()", context);
+  }
+  vm.runInContext(`__finish(${second}, "ASSISTANT-OUTPUT")`, context);
+  assert.strictEqual(draft("assisted:json"), "ASSISTANT-OUTPUT", "N. four switches mid-read do not move the bytes");
+  assert.strictEqual(draft("cinebraid:json"), "CINEBRAID-DOCUMENT", "N. and the other buffer is untouched by any of it");
+
+  /* 3. two selections on one buffer: last selection wins, whichever finishes first.
+        The older, larger read completing afterwards must not resurrect itself. */
+  vm.runInContext("setCreationStartPath('cinebraid')", context);
+  await vm.runInContext("route()", context);
+  const older = vm.runInContext(`__chooseFile("big.json")`, context);
+  const newer = vm.runInContext(`__chooseFile("small.json")`, context);
+  vm.runInContext(`__finish(${newer}, "NEWER")`, context);
+  assert.strictEqual(draft("cinebraid:json"), "NEWER", "N. the newer selection lands");
+  vm.runInContext(`__finish(${older}, "STALE-OLDER")`, context);
+  assert.strictEqual(draft("cinebraid:json"), "NEWER",
+    "N. and a stale read completing later must not overwrite it");
+
+  /* 4. a failed read clears nothing and leaves the buffer the filmmaker's. */
+  const failing = vm.runInContext(`__chooseFile("unreadable.json")`, context);
+  vm.runInContext(`__fail(${failing})`, context);
+  assert.strictEqual(draft("cinebraid:json"), "NEWER", "N. a failed read must not empty what was already there");
+  const afterFailure = vm.runInContext(`__chooseFile("recovered.json")`, context);
+  vm.runInContext(`__finish(${afterFailure}, "RECOVERED")`, context);
+  assert.strictEqual(draft("cinebraid:json"), "RECOVERED", "N. and a later read still works after a failure");
+
+  /* 5. the same completion delivered twice writes once. */
+  vm.runInContext(`__finish(${afterFailure}, "REPLAYED")`, context);
+  assert.strictEqual(draft("cinebraid:json"), "RECOVERED", "N. a replayed completion is a no-op");
+  note("N. an in-flight file read keeps the intent that started it across four switches; last selection wins; a stale completion, a replay and a read failure all write nothing");
+}
+
+/* =========================================================================
+   P. A NULL NEXT ACTION IS NOT A LICENCE TO CHOOSE ONE.
+   ========================================================================= */
+async function sectionNullAuthorityChoosesNothing() {
+  const { context } = await landedRender();
+  const shipped = vm.runInContext("creationRecommendedActionMarkup()", context);
+  assert(shipped.includes("data-recommended-kind="), "P. precondition: the fixture produces a real next action");
+
+  vm.runInContext(`
+    globalThis.__realNextAction = projectNextProductionAction;
+    globalThis.projectNextProductionAction = () => null;
+  `, context);
+  await vm.runInContext("route()", context);
+  const html = vm.runInContext("document.getElementById('main').innerHTML", context);
+  const card = (html.match(/<article[^>]*data-recommended-kind[\s\S]*?<\/article>/) || [""])[0];
+  assert(card, "P. the landing must still say something when the authority names nothing");
+  assert(card.includes('data-recommended-kind="none"'), `P. and must declare that it has no action, got ${card.slice(0, 160)}`);
+  assert(card.includes("data-no-production-action"), "P. explicitly");
+  assert(!/OPEN SHOTS/i.test(card), "P. the no-action card must not offer a production destination");
+  assert(!/Nothing outstanding/i.test(card), "P. nor the retired locally-chosen verdict");
+  assert(!/continueProduction\(\)/.test(card), "P. nor the hand-off that routes into production");
+  assert(!/<button|<a /.test(card), "P. it offers no control at all — a control here would be a choice");
+
+  /* The landing's ordinary navigation is INVARIANT: byte-identical whether or not the
+     authority named an action, which is what makes it navigation rather than a
+     fallback recommendation. */
+  const lookAround = (source) => (source.match(/<article><span>OR LOOK AROUND<\/span>[\s\S]*?<\/article>/) || [""])[0];
+  vm.runInContext("globalThis.projectNextProductionAction = globalThis.__realNextAction;", context);
+  await vm.runInContext("route()", context);
+  const withAction = vm.runInContext("document.getElementById('main').innerHTML", context);
+  assert(lookAround(html) && lookAround(html) === lookAround(withAction),
+    "P. the generic navigation block must be identical in both cases — a block that appeared only when the authority was silent would be a fallback");
+  note("P. a null authority renders a no-action card carrying no control, no OPEN SHOTS and no production hand-off, while the landing's ordinary navigation is byte-identical either way");
+}
+
+/* =========================================================================
+   Q. THE STAGE STRIP DESCRIBES THE RENDERED WORKSPACE.
+   ========================================================================= */
+function sectionStripFollowsRenderedRoute() {
+  const source = codeOnly(read("public/stage-surfaces.js"));
+  assert(source.includes("renderedRouteIsCurrent()"),
+    "Q. the strip's context must consult the rendered route");
+  assert(/shotId: view === "shot" && renderedRouteIsCurrent\(\)/.test(source),
+    "Q. and must resolve no shot until the workspace it navigates has rendered");
+  /* The guard has to survive a realm that never loaded public/app.js — every O4 suite
+     evaluates this module on its own. */
+  assert(source.includes('typeof CURRENT_RENDER_ROUTE_KEY === "undefined"'),
+    "Q. with a typeof guard, or the O4 suites throw on an undeclared identifier");
+  const app = codeOnly(read("public/app.js"));
+  assert(app.includes("CURRENT_RENDER_ROUTE_KEY = targetRouteKey;"),
+    "Q. app.js must still publish the rendered route key the strip reads");
+  assert(app.includes("markRouteRenderSettled(requestToken)"),
+    "Q. and must arm its render-ready flag per render rather than once at boot");
+  const bootstrap = read("public/bootstrap.js");
+  assert(bootstrap.includes('document.body.dataset.renderReady = "1"'),
+    "Q. bootstrap still sets it after the first load, so nothing that waited on boot regressed");
+  note("Q. the stage strip resolves its shot from the rendered route, guarded for realms without app.js, and renderReady is armed per render instead of once at boot");
+}
+
 async function main() {
   await sectionEntryIsIntentFirst();
   await sectionAssistedFraming();
@@ -678,6 +938,9 @@ async function main() {
   await sectionSuccessfulImportLands();
   await sectionLandingStandingFollowsReview();
   sectionSingleNextActionAuthority();
+  await sectionFileReadOwnership();
+  await sectionNullAuthorityChoosesNothing();
+  sectionStripFollowsRenderedRoute();
   await sectionSliceOnePreserved();
   await sectionNoLaterSliceLeakage();
   console.log(notes.join("\n"));
