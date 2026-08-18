@@ -135,8 +135,15 @@ function overflowControls() {
     { styles: mutate(SOURCES.styles, "#app{--cb-shell-rail-width:240px}", "#app{--cb-shell-rail-width:340px}", "C6b") },
     "A 340px rail below 1460px leaves the centre under 900px, which is the band no component rule in this stylesheet was written for.");
 
+  /* The anchor names the RAIL's own hide rule, not the bare media query. Batch 2
+     Slice 1 added a second `@media(max-width:1359px){` for the rail's open control —
+     deliberately the same number, so the control cannot outlive the rail it opens — and
+     a bare-query anchor stopped being unique the moment it landed. */
   control("C6c the hide threshold drops below what the compact rail can afford", "checkRailWidthBands",
-    { styles: mutate(SOURCES.styles, "@media(max-width:1359px){", "@media(max-width:1179px){", "C6c") },
+    { styles: mutate(SOURCES.styles,
+        '@media(max-width:1359px){\n  .cb-shell-main:has(>#cb-shell-rail[data-occupied])',
+        '@media(max-width:1179px){\n  .cb-shell-main:has(>#cb-shell-rail[data-occupied])',
+        "C6c") },
     "Keeping a 240px rail down to 1180px leaves an 760px centre; the threshold has to move with the rail's width, not stay where an empty rail left it.");
 
   control("C6d the full-width declaration is dropped back to a var() fallback", "checkRailWidthBands",
