@@ -3117,15 +3117,104 @@ function shortReviewValue(value, limit = 360) {
   return text.length > limit ? text.slice(0, limit - 1) + "…" : text;
 }
 
-function projectBuilderReview(project, warnings = [], sourceCounts = {}) {
-  const inferred = [],
-    conflicts = [],
-    missing = [],
-    review = [];
+/* ==========================================================================
+   THE PLANNING ANNOTATION IS INTERNAL, AND IT STOPS BEING PART OF THE PROJECT HERE.
+
+   `addBuilderMarker()` and the two literal notes above append
+   `[INFERRED FOR PLANNING] <what CineBraid decided>` to a `notes` field so the import
+   review can report the decision against a real JSON path. That was right as a report
+   and wrong as a value: `notes` on a continuity state IS the state delta — the sentence
+   public/entities.js renders into the "State change / delta" textarea and hands to the
+   continuity validation contract as `stateDelta`. A filmmaker importing a project found
+   CineBraid's own bookkeeping inside their prose as though they had written it, and on
+   its way into generation.
+
+   So the annotation is transient now. It is collected — with its path, off the marked
+   project — and then removed from every value before the project is hashed, previewed,
+   downloaded or written to disk. The report keeps all of it; the creative field keeps
+   only what a human wrote.
+
+   THE CUT IS DELIBERATELY NARROW. The annotation runs from the marker to the end of its
+   own line, which is exactly how addBuilderMarker() writes it and how the prompt kit
+   instructs an assistant to write it, so prose in front of it survives byte for byte.
+   `[SOURCE CONFLICT]` is NOT touched: it flags a contradiction only a human can settle,
+   tests/import-benchmark.js scores an import UP for carrying it, and removing it would
+   delete the warning rather than the annotation. */
+const PLANNING_MARKER = "[INFERRED FOR PLANNING]";
+const PLANNING_MARKER_PATTERN = /\[INFERRED FOR PLANNING\]/i;
+
+function stripPlanningAnnotation(value) {
+  const text = String(value == null ? "" : value);
+  if (!PLANNING_MARKER_PATTERN.test(text)) return text;
+  return text
+    .split(/\r?\n/)
+    .map((line) => {
+      const at = line.toUpperCase().indexOf(PLANNING_MARKER);
+      if (at < 0) return { line, cut: false };
+      return { line: line.slice(0, at).replace(/\s+$/, ""), cut: true };
+    })
+    /* A line that held nothing but the annotation goes with it; a line that carried
+       prose in front of it keeps the prose. */
+    .filter((entry) => !(entry.cut && !entry.line))
+    .map((entry) => entry.line)
+    .join("\n")
+    .trim();
+}
+
+/* In place, on an already-cloned project, so key order — and with it the preview hash
+   and the OFP key-order contract — is exactly what it was. */
+function stripPlanningAnnotations(node) {
+  if (Array.isArray(node)) {
+    node.forEach((item, index) => {
+      if (typeof item === "string") node[index] = stripPlanningAnnotation(item);
+      else stripPlanningAnnotations(item);
+    });
+    return node;
+  }
+  if (node && typeof node === "object")
+    for (const [key, item] of Object.entries(node)) {
+      if (typeof item === "string") node[key] = stripPlanningAnnotation(item);
+      else stripPlanningAnnotations(item);
+    }
+  return node;
+}
+
+/* Read off the MARKED project, before the strip, so the review still names the exact
+   field CineBraid inferred and quotes what it decided there. */
+function collectPlanningAnnotations(project) {
+  const found = [];
   const walk = (value, pathName) => {
     if (typeof value === "string") {
-      if (/\[INFERRED FOR PLANNING\]/i.test(value))
-        inferred.push({ path: pathName, value: shortReviewValue(value) });
+      if (PLANNING_MARKER_PATTERN.test(value))
+        found.push({ path: pathName, value: shortReviewValue(value) });
+    } else if (Array.isArray(value))
+      value.forEach((item, index) => walk(item, `${pathName}[${index}]`));
+    else if (value && typeof value === "object")
+      Object.entries(value).forEach(([key, item]) =>
+        walk(item, pathName ? `${pathName}.${key}` : key),
+      );
+  };
+  walk(project, "");
+  return found
+    .filter(
+      (item, index, list) =>
+        list.findIndex(
+          (other) => other.path === item.path && other.value === item.value,
+        ) === index,
+    )
+    .slice(0, 100);
+}
+
+/* `inferred` arrives already collected, from the MARKED project, because the marker no
+   longer survives into the value this function is given. `[SOURCE CONFLICT]` is still
+   walked for here: it stays in the project, so it can still be found in it. */
+function projectBuilderReview(project, warnings = [], sourceCounts = {}, inferred = []) {
+  const conflicts = [],
+    missing = [],
+    review = [];
+  const inferredPaths = new Set(inferred.map((item) => item.path));
+  const walk = (value, pathName) => {
+    if (typeof value === "string") {
       if (/\[SOURCE CONFLICT\]/i.test(value))
         conflicts.push({ path: pathName, value: shortReviewValue(value) });
     } else if (Array.isArray(value))
@@ -3189,14 +3278,7 @@ function projectBuilderReview(project, warnings = [], sourceCounts = {}) {
   return {
     counts: projectBuilderCounts(project),
     sourceCounts,
-    inferred: inferred
-      .filter(
-        (item, index, list) =>
-          list.findIndex(
-            (other) => other.path === item.path && other.value === item.value,
-          ) === index,
-      )
-      .slice(0, 100),
+    inferred,
     conflicts: conflicts
       .filter(
         (item, index, list) =>
@@ -3209,13 +3291,16 @@ function projectBuilderReview(project, warnings = [], sourceCounts = {}) {
     removed: [...new Set(removed)].slice(0, 100),
     review: [...new Set([...review, ...otherWarnings])].slice(0, 100),
     continuity: [
-      ...project.characters.map((entity) => ({ kind: "Character", entity })),
-      ...project.locations.map((entity) => ({ kind: "Location", entity })),
-      ...project.props.map((entity) => ({ kind: "Prop", entity })),
-      ...(project.vehicles || []).map((entity) => ({ kind: "Vehicle", entity })),
+      ["characters", "Character"],
+      ["locations", "Location"],
+      ["props", "Prop"],
+      ["vehicles", "Vehicle"],
     ]
-      .flatMap(({ kind, entity }) =>
-        (entity.continuityStates || []).map((state) => ({
+      .flatMap(([listKey, kind]) =>
+        (project[listKey] || []).map((entity, entityIndex) => ({ kind, listKey, entityIndex, entity })),
+      )
+      .flatMap(({ kind, listKey, entityIndex, entity }) =>
+        (entity.continuityStates || []).map((state, stateIndex) => ({
           kind,
           entityId: entity.id,
           entityName: entity.name,
@@ -3223,7 +3308,12 @@ function projectBuilderReview(project, warnings = [], sourceCounts = {}) {
           stateName: state.name,
           isDefault: state.isDefault === true,
           notes: shortReviewValue(state.notes),
-          inferred: /\[INFERRED FOR PLANNING\]/i.test(state.notes || ""),
+          /* `notes` no longer carries the marker, so the flag is read off the path
+             the annotation was collected against. `notes` is the only field the
+             import ever marked on a state, which is what makes the path exact. */
+          inferred: inferredPaths.has(
+            `${listKey}[${entityIndex}].continuityStates[${stateIndex}].notes`,
+          ),
         })),
       )
       .filter((state) => state.inferred || state.isDefault)
@@ -3277,11 +3367,17 @@ app.post("/api/projects/preview-import-json", (req, res) => {
     pruneImportPreviews();
     const source = req.body?.project,
       imported = importedProjectShape(source),
-      project = prepareImportedProjectForPreview(imported.project),
+      /* Collected while the annotations are still attached, then removed. Everything
+         after this line — the hash, the preview the browser renders, the normalized
+         JSON it can download, and the file the commit writes — sees the same project
+         with no planning annotation in it. */
+      marked = prepareImportedProjectForPreview(imported.project),
+      inferred = collectPlanningAnnotations(marked),
+      project = stripPlanningAnnotations(marked),
       previewHash = importPreviewHash(project),
       previewToken = crypto.randomBytes(24).toString("base64url"),
       sourceCounts = projectBuilderCounts(source),
-      review = projectBuilderReview(project, imported.warnings, sourceCounts);
+      review = projectBuilderReview(project, imported.warnings, sourceCounts, inferred);
     IMPORT_PREVIEWS.set(previewToken, {
       createdAt: Date.now(),
       hash: previewHash,

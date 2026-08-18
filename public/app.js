@@ -1692,27 +1692,62 @@ async function rollbackProjectSwitch(previousSlug) {
     renderProjectFailureScreen(error.projectFailure, error.message);
   }
 }
+/* THE DELIVERY SHAPES A PROJECT IS ACTUALLY MADE IN. Suggestions with a free-text
+   escape, exactly like the aspect presets beside them: the value is still the same
+   `meta.format` string the record has always carried and shared-aspect.js still
+   parses, so nothing new is persisted to make the control readable. */
+const PROJECT_FORMAT_PRESETS = Object.freeze([
+  ["", "Not decided yet"],
+  ["Short film", "Short film"],
+  ["Feature film", "Feature film"],
+  ["Series episode", "Series episode"],
+  ["Commercial", "Commercial"],
+  ["Music video", "Music video"],
+  ["Documentary", "Documentary"],
+  ["Social / vertical", "Social / vertical"],
+]);
+/* THE THREE STARTING INTENTS, in the words the create screen uses. The stored value
+   is the intent key the creation studio reads, so the modal and the chooser cannot
+   drift into describing different paths. */
+const PROJECT_START_INTENTS = Object.freeze([
+  ["assisted", "Build from a script/story with AI — Recommended"],
+  ["cinebraid", "Import a CineBraid project"],
+  ["scratch", "Start from scratch"],
+]);
 window.newProject = () =>
   formModal(
     "New CineBraid project",
     [
       { k: "title", label: "Project title", ph: "The Black Lantern" },
-      { k: "format", label: "Format", ph: "Short film / commercial / series" },
-      { k: "aspectRatio", label: "Default aspect ratio", ph: "2.39:1" },
       {
         k: "startMode",
         label: "How do you want to begin?",
         type: "select",
-        options: ["Start manually", "Import with an LLM"],
-        value: "Start manually",
+        options: PROJECT_START_INTENTS,
+        value: "assisted",
       },
       {
-        k: "globalStyle",
-        label: "Global visual style (optional for now)",
-        type: "textarea",
-        ph: "Cinematic naturalism, muted earth palette, practical grime, smoke-softened torchlight…",
+        k: "format",
+        label: "Format",
+        type: "select",
+        options: PROJECT_FORMAT_PRESETS,
+        value: "",
+        hint: "What this project is being made as. Change it any time in Settings → Project.",
+      },
+      {
+        k: "aspectRatio",
+        label: "Default aspect ratio",
+        type: "select",
+        options: [["", "Decide later — CineBraid shows 16:9"], ...CINEBRAID_ASPECT_PRESETS],
+        value: "",
+        hint: "The shape every shot is judged and generated in unless a shot overrides it.",
       },
     ],
+    /* The global visual style is NOT asked for here any more. It shapes prompts that
+       do not exist yet on a project with no references and no shots, so demanding it
+       at creation asked the filmmaker to decide the look of a film before its first
+       scene. It is offered on the create screen and editable in Settings → Project;
+       the endpoint still accepts it, so nothing about the capability changed. */
     async (v) => {
       try {
         await flushPendingProjectSave();
@@ -1726,22 +1761,18 @@ window.newProject = () =>
           title: v.title || "New Project",
           format: v.format || "",
           aspectRatio: v.aspectRatio || "",
-          globalStylePrompt: v.globalStyle || "",
         }),
       });
       const d = await r.json();
       if (!r.ok) return toast(d.error || "Could not create project");
-      localStorage.setItem(
-        "cinebraid-creation-start-path",
-        v.startMode === "Import with an LLM" ? "import" : "manual",
-      );
+      const intent = PROJECT_START_INTENTS.some(([key]) => key === v.startMode) ? v.startMode : "assisted";
+      localStorage.setItem("cinebraid-creation-start-path", intent);
+      /* A new project has no import behind it, so it gets no import landing — and a
+         landing left over from the last one must not sit on top of it. */
+      window.__cinebraidProjectEntryLanding = null;
       location.hash = "#/create";
       await load();
-      toast(
-        v.startMode === "Import with an LLM"
-          ? "Project created — use the Project Builder import path"
-          : "Project created — CineBraid will guide you to the first usable shot",
-      );
+      toast("Project created");
     },
   );
 
@@ -1892,6 +1923,18 @@ window.downloadSavedTestNote = () => {
   setTimeout(() => URL.revokeObjectURL(link.href), 1000);
 };
 
+/* A `select` option is either a bare string — every caller that existed before
+   Batch 2 Slice 2 — or a [value, label] pair, where the value is what gets stored and
+   the label is what the filmmaker reads. The pair form is what lets a control be
+   TYPED without inventing somewhere new to keep the answer: "16:9 — widescreen" on
+   screen, `16:9` into the same `meta.aspectRatio` string the product already parses.
+   `hint` renders the one sentence a typed control needs to stay honest about what it
+   does, and is absent on every field that had none. */
+function formModalOption(option, selected) {
+  const value = Array.isArray(option) ? String(option[0]) : String(option);
+  const label = Array.isArray(option) ? String(option[1]) : String(option);
+  return `<option value="${attr(value)}" ${value === String(selected == null ? "" : selected) ? "selected" : ""}>${esc(label)}</option>`;
+}
 function formModal(title, fields, onSubmit) {
   window._formSubmit = () => {
     const vals = {};
@@ -1902,14 +1945,14 @@ function formModal(title, fields, onSubmit) {
   openModal(`<h3>${esc(title)}</h3>
     ${fields
       .map(
-        (f) => `<div class="form-field"><label>${esc(f.label)}</label>
+        (f) => `<div class="form-field"><label for="ff-${attr(f.k)}">${esc(f.label)}</label>
       ${
         f.type === "textarea"
           ? `<textarea id="ff-${f.k}" ${f.ph ? `placeholder="${attr(f.ph)}"` : ""}>${esc(f.value || "")}</textarea>`
           : f.type === "select"
-            ? `<select id="ff-${f.k}">${f.options.map((o) => `<option ${o === f.value ? "selected" : ""}>${esc(o)}</option>`).join("")}</select>`
+            ? `<select id="ff-${f.k}">${f.options.map((o) => formModalOption(o, f.value)).join("")}</select>`
             : `<input id="ff-${f.k}" value="${attr(f.value || "")}" ${f.ph ? `placeholder="${attr(f.ph)}"` : ""}>`
-      }</div>`,
+      }${f.hint ? `<span class="hint">${esc(f.hint)}</span>` : ""}</div>`,
       )
       .join("")}
     <div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button>

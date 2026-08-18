@@ -274,8 +274,15 @@ async function testNextActionAgreesWithReadiness() {
    RECOMMENDED card on #/create still rendered `nextProductionShot()`, so the
    screen showed "Animate · L1-01 · Hull check" with a button beside it that routed
    to the Kai reference actually blocking every shot. Two answers on one card. */
+/* Batch 2 Slice 2 moved this card without changing what it says. #/create now opens
+   on the three-intent chooser, and the RECOMMENDED card belongs to the project
+   workspace — which is what the scratch intent renders. The stored preference puts
+   this test back in front of the card it has always been about. The post-import
+   landing renders the same card, from the same function, and is covered in
+   tests/project-entry.js. */
+const CREATE_WORKSPACE = { storage: { "cinebraid-creation-start-path": "scratch" } };
 async function testCreateViewRecommendationAgrees() {
-  const app = await render("#/create", buildFixture());
+  const app = await render("#/create", buildFixture(), CREATE_WORKSPACE);
   const feed = vm.runInContext("projectShotReadiness()", app.context);
   assert.strictEqual(feed.counts.ready, 0, "the fixture must have no startable shot, or this test is vacuous");
   const canonical = vm.runInContext("projectNextProductionAction()", app.context);
@@ -298,7 +305,7 @@ async function testCreateViewRecommendationAgrees() {
   assert.strictEqual(app.context.location.hash, "#/character/KAI");
 
   /* A READY shot still produces a shot recommendation on this screen. */
-  const readyApp = await render("#/create", buildFixture());
+  const readyApp = await render("#/create", buildFixture(), CREATE_WORKSPACE);
   vm.runInContext(`
     const feed = projectShotReadiness();
     __forced = { ...feed, shots: [{ ...feed.shots[0], status: "READY", nextAction: { code: "produce-frame", message: "Produce Frame A using i2v.", count: 1 } }], counts: { ...feed.counts, ready: 1 } };

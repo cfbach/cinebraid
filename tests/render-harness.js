@@ -771,7 +771,12 @@ async function main() {
   const fixture = buildFixture();
   const cases = [
     ["#/production", fixture, ["Production", "CONTINUE PRODUCTION", "RETURNED RESULTS"]],
-    ["#/create", fixture, ["Build the first usable shot", "Set the visual rules once", "Create the first shot"]],
+    /* Batch 2 Slice 2. #/create opens on the intent chooser, whose default intent is
+       the recommended assisted one; the manual workspace is what the scratch intent
+       renders, which is why it needs the stored preference below rather than a
+       second disclosure on the same page. */
+    ["#/create", fixture, ["Start a project", "Build from a script/story with AI", "Import a CineBraid project", "Start from scratch"]],
+    ["#/create", fixture, ["Set the visual rules once", "Create the first shot"], { storage: { "cinebraid-creation-start-path": "scratch" } }],
     ["#/shots/board", fixture, ["Shots", "Hull check", "CARD BADGES"]],
     /* The five stage labels used to be expected here because the shot workspace rendered
        the stage taskbar itself. Since O4 the navigator is built by public/stage-surfaces.js
@@ -788,8 +793,8 @@ async function main() {
     ["#/production", emptyFixture(), ["Production", "This project has no shots"]],
     ["#/shots/board", emptyFixture(), ["Shots"]],
   ];
-  for (const [hash, project, expected] of cases) {
-    const { html, context } = await render(hash, project);
+  for (const [hash, project, expected, options] of cases) {
+    const { html, context } = await render(hash, project, options || {});
     for (const text of expected) assert(html.includes(text), `${hash} did not render expected text: ${text}`);
     for (const fn of ["route","productionHomeView","productionView","creationStudioView","buildGuidedFramePrompt","guidedShotWorkspaceView","projectDecisionItems"]) {
       assert.strictEqual(typeof context[fn], "function", `${fn} is not available after script load`);
