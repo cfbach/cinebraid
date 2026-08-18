@@ -23,6 +23,10 @@ actually notice:
     being decoded. The Node suite can only hold a stub read open.
   * THE LANDING FOLLOWS THE AUTHORITY IN A LIVE DOCUMENT, including when that authority
     names nothing - the case in which a locally chosen fallback would appear.
+  * THE REVIEW KEEPS "WHO SAID IT" STRAIGHT in rendered columns, classes and labels.
+  * AN ASYNC VALIDATION OR IMPORT KEEPS THE INTENT THAT STARTED IT, across a real HTTP
+    round trip held open by the route guard, with the in-flight state asserted at the
+    moment of the switch so none of it can pass vacuously.
 
 IT CARRIES ITS OWN NEGATIVE CONTROLS, because a retention assertion that cannot fail is
 worth nothing:
@@ -79,6 +83,48 @@ IMPORT_SOURCE = {
                "notes": "Shoot this before the tide turns.",
                "clips": [{"kind": "i2v", "dur": 6, "motionPrompt": "She walks."}]}],
 }
+
+# Two authored markers and one field CineBraid will also decide about, so section 9
+# can prove the review keeps "who said it" straight.
+ORIGIN_SOURCE = {
+    "meta": {"title": "Origin Matrix", "format": "Short film"},
+    "characters": [{
+        "id": "CHAR-ADA", "name": "Ada", "description": "A dock engineer in a patched grey coat.",
+        "continuityStates": [
+            {"id": "state-clean", "name": "Clean coat",
+             "notes": "[INFERRED FOR PLANNING] my own note about the convention."},
+            {"id": "state-wet", "name": "Wet coat", "parentStateId": "state-clean",
+             "notes": "house style: [inferred for planning] then a reason"},
+        ],
+    }],
+    "locations": [{"id": "LOC-DOCK", "name": "Dock", "description": "A wet concrete dock.", "continuityStates": []}],
+    "props": [], "vehicles": [],
+    "scenes": [{"id": "SC-01", "title": "Arrival", "whatHappens": "Ada walks the dock.", "howItFeels": "Cold."}],
+    "shots": [{"id": "L1-01", "scene": "SC-01", "title": "Dock walk", "desc": "Ada walks the dock.",
+               "positioning": "Locked wide.", "characters": ["CHAR-ADA"], "codes": ["LOC-DOCK"],
+               "clips": [{"kind": "i2v", "dur": 6, "motionPrompt": "She walks."}]}],
+}
+
+# Section 10 holds the import routes open by delaying RESOLUTION inside the page, so
+# the product's own `await fetch(...)` is genuinely suspended while the filmmaker
+# switches intents. A sleep in the Playwright route handler cannot be used: the sync
+# driver serialises on it, so the response would always be delivered before the click
+# it is supposed to race.
+IMPORT_DELAY_HOOK = (
+    "() => {"
+    "  if (window.__importDelayInstalled) return;"
+    "  window.__importDelayInstalled = true;"
+    "  window.__importDelayMs = 0;"
+    "  const real = window.fetch;"
+    "  window.fetch = async (input, init) => {"
+    "    const url = String(input && input.url ? input.url : input);"
+    "    const response = await real(input, init);"
+    r"    if (window.__importDelayMs && /\/api\/projects\/(preview-)?import-json/.test(url))"
+    "      await new Promise((r) => setTimeout(r, window.__importDelayMs));"
+    "    return response;"
+    "  };"
+    "}"
+)
 
 MARKER_SCAN = """
 () => {
@@ -474,6 +520,213 @@ try:
         findings.append("8. a sentinel next action drives the landing's kind, headline and label; a null one renders a "
                         "no-action card with zero controls, no OPEN SHOTS and no production hand-off, while the landing's "
                         "separate navigation block is unaffected")
+
+        # ---- 9. the review never attributes the filmmaker's own prose to CineBraid ------
+        page.goto(f"{base}/#/create", wait_until="domcontentloaded")
+        page.wait_for_selector(".creation-start-choice, [data-project-entry-landing]", timeout=20000)
+        if page.locator("[data-project-entry-landing]").count():
+            page.evaluate("() => dismissProjectEntryLanding()")
+        page.wait_for_selector(".creation-start-choice", timeout=20000)
+        page.click('[data-creation-intent="cinebraid"]')
+        page.wait_for_selector("#creation-cinebraid", timeout=10000)
+        page.fill("#project-builder-json", json.dumps(ORIGIN_SOURCE))
+        page.click("#creation-cinebraid button.assemble-btn")
+        page.wait_for_selector(".project-builder-review", timeout=25000)
+        origins = page.evaluate(
+            "() => {"
+            "  const col = (title) => [...document.querySelectorAll('.import-review-column')]"
+            "    .find((n) => (n.querySelector('header span') || {}).textContent === title);"
+            "  const rows = (n) => n ? [...n.querySelectorAll('[data-origin]')].map((r) => r.dataset.origin) : null;"
+            "  const cards = [...document.querySelectorAll('[data-continuity-origin]')].map((c) => ({"
+            "    origin: c.dataset.continuityOrigin,"
+            "    id: (c.querySelector('strong') || {}).textContent || '',"
+            "    label: (c.querySelector('.continuity-origin') || {}).textContent || '',"
+            "    inferredClass: c.classList.contains('inferred'),"
+            "  }));"
+            "  return {"
+            "    cine: rows(col('CineBraid planning decisions')),"
+            "    source: rows(col('Marked in your source')),"
+            "    legacyHeading: [...document.querySelectorAll('.import-review-column header span')].some((n) => n.textContent === 'Inferred values'),"
+            "    cards,"
+            "  };"
+            "}")
+        assert origins["cine"] is not None and origins["source"] is not None, \
+            f"9. the review must offer both origin columns, got {origins}"
+        assert origins["cine"] and all(o == "cinebraid" for o in origins["cine"]), \
+            f"9. the CineBraid column may hold only CineBraid rows, got {origins['cine']}"
+        assert origins["source"] and all(o == "source" for o in origins["source"]), \
+            f"9. and the source column only the source's, got {origins['source']}"
+        assert not origins["legacyHeading"], \
+            "9. the undifferentiated 'Inferred values' heading must be gone"
+        by_id = {c["id"].split(" · ")[0]: c for c in origins["cards"]}
+        assert by_id["state-wet"]["origin"] == "source", \
+            f"9. a state marked only by the source must be labelled the source's, got {by_id['state-wet']}"
+        assert not by_id["state-wet"]["inferredClass"], \
+            "9. and must not carry the class that means a CineBraid inference"
+        assert "Marked in your source" in by_id["state-wet"]["label"], \
+            f"9. in words too, got {by_id['state-wet']['label']!r}"
+        assert by_id["state-clean"]["origin"] == "cinebraid+source", \
+            f"9. a state carrying both must say both, got {by_id['state-clean']}"
+        assert by_id["state-default"]["origin"] == "cinebraid", \
+            f"9. and one CineBraid really created is its own, got {by_id['state-default']}"
+        findings.append(f"9. {len(origins['cine'])} CineBraid rows and {len(origins['source'])} source-authored rows render in "
+                        f"separate columns with zero crossover; state-wet reads \"{by_id['state-wet']['label']}\", state-clean "
+                        f"declares both origins, and the old 'Inferred values' heading is gone")
+
+        # ---- 10. an async validation or import belongs to the intent that started it -----
+        # THE RESPONSES ARE GENUINELY DELAYED, by a route handler that sleeps before it
+        # lets the request through. Every attack below asserts the operation was still in
+        # flight at the moment of the switch, so none of them can pass vacuously.
+        page.goto(f"{base}/#/create", wait_until="domcontentloaded")
+        page.wait_for_selector(".creation-start-choice, [data-project-entry-landing]", timeout=20000)
+        if page.locator("[data-project-entry-landing]").count():
+            page.evaluate("() => dismissProjectEntryLanding()")
+        page.wait_for_selector(".creation-start-choice", timeout=20000)
+
+        OWNED = dict(IMPORT_SOURCE)
+        OWNED["meta"] = {"title": "Owned Import", "format": "Short film"}
+        STATE = ("() => ({"
+                 " cineJson: creationDraft('cinebraid:json'),"
+                 " assistedJson: creationDraft('assisted:json'),"
+                 " assistedStory: creationDraft('assisted:story'),"
+                 " visible: creationStartPath(),"
+                 " candidateOwners: [...window.__cinebraidCreationCandidates.keys()].sort(),"
+                 " resultOwners: [...window.__cinebraidCreationResults.keys()].sort(),"
+                 " visibleCandidate: !!window._projectBuilderCandidate,"
+                 "})")
+
+        def seed():
+            page.evaluate("(s) => { setCreationDraft('assisted:story', s); setCreationDraft('assisted:json', '{\"assisted\":true}');"
+                          " setCreationDraft('cinebraid:json', ''); window.__cinebraidCreationCandidates.clear();"
+                          " window.__cinebraidCreationResults.clear(); window.__cinebraidProjectEntryLanding = null; }", SCRIPT)
+
+        def start_on(intent):
+            page.click(f'[data-creation-intent="{intent}"]')
+            page.wait_for_selector(f"#creation-{intent}", timeout=10000)
+
+        page.evaluate(IMPORT_DELAY_HOOK)
+        page.evaluate("() => { window.__importDelayMs = 1200; }")
+        seed()
+
+        # 10a. CineBraid validation -> immediate switch to assisted -> SUCCESS.
+        start_on("cinebraid")
+        page.fill("#project-builder-json", json.dumps(OWNED))
+        page.evaluate("() => { window.__op = false; importProjectBuilderJSON().then(() => { window.__op = true; }); }")
+        page.wait_for_timeout(120)
+        page.click('[data-creation-intent="assisted"]')
+        page.wait_for_selector("#creation-assisted", timeout=10000)
+        assert page.evaluate("() => window.__op") is False, \
+            "10a. the validation must still be in flight when the intent changes, or this proves nothing"
+        page.wait_for_function("() => window.__op === true", timeout=30000)
+        page.wait_for_timeout(150)
+        a = page.evaluate(STATE)
+        assert a["candidateOwners"] == ["cinebraid"], f"10a. the candidate belongs to the initiating intent, got {a}"
+        assert a["resultOwners"] == ["cinebraid"], f"10a. and so does its result, got {a}"
+        assert a["visibleCandidate"] is False, "10a. the visible intent must not be handed another's candidate"
+        assert a["assistedStory"] == SCRIPT and a["assistedJson"] == '{"assisted":true}', \
+            f"10a. and the assisted material is byte-identical, got {a}"
+        assert page.evaluate("() => (document.getElementById('project-builder-result') || {}).innerHTML") == "", \
+            "10a. the assisted result region shows nothing, because nothing of its own has happened"
+
+        # 10f. returning to the initiating intent finds the review waiting.
+        start_on("cinebraid")
+        assert page.locator(".project-builder-review").count() == 1, \
+            "10f. returning to the intent that started the validation must show its review"
+        assert page.evaluate("() => !!window._projectBuilderCandidate"), "10f. and re-point the visible candidate"
+
+        # 10g. import -> switch away -> SUCCESS: only the initiating source is consumed.
+        before_import = page.evaluate(STATE)
+        page.evaluate("() => { window.__op = false; commitProjectBuilderImport().then(() => { window.__op = true; }); }")
+        page.wait_for_timeout(120)
+        page.evaluate("() => setCreationStartPath('assisted')")
+        assert page.evaluate("() => window.__op") is False, "10g. the import must still be in flight when the intent changes"
+        page.wait_for_function("() => window.__op === true", timeout=40000)
+        page.wait_for_selector("[data-project-entry-landing]", timeout=30000)
+        g = page.evaluate(STATE)
+        assert g["cineJson"] == "", "10g. the source that WAS consumed is cleared"
+        assert g["assistedStory"] == before_import["assistedStory"], \
+            f"10g. the assisted script is byte-identical, got {g['assistedStory']!r}"
+        assert g["assistedJson"] == before_import["assistedJson"], "10g. as is the assisted document"
+        assert page.evaluate("() => window.__cinebraidProjectEntryLanding.path") == "cinebraid", \
+            "10g. and the landing belongs to the intent that started the import"
+        findings.append("10a/f/g. a CineBraid validation and a CineBraid import each completed after a switch to assisted, kept "
+                        "their own candidate/result/landing, consumed only the CineBraid document, and left the assisted script "
+                        "and document byte-identical; returning to CineBraid showed the review waiting")
+
+        # 10b. CineBraid validation -> switch -> FAILURE. Nothing of anyone's is cleared.
+        page.evaluate("() => dismissProjectEntryLanding()")
+        page.wait_for_selector(".creation-start-choice", timeout=20000)
+        seed()
+        start_on("cinebraid")
+        # Typed the way a filmmaker types it: `fill` fires `input`, which is what writes
+        # the buffer. A JSON ARRAY parses locally and is refused by the server ("must be
+        # one JSON object"), so what fails is the request rather than the paste — which
+        # is the case this control is about.
+        page.fill("#project-builder-json", "[]")
+        page.evaluate("() => { window.__op = false; importProjectBuilderJSON().then(() => { window.__op = true; }); }")
+        page.wait_for_timeout(120)
+        page.click('[data-creation-intent="assisted"]')
+        page.wait_for_selector("#creation-assisted", timeout=10000)
+        assert page.evaluate("() => window.__op") is False, "10b. the failing validation must still be in flight at the switch"
+        page.wait_for_function("() => window.__op === true", timeout=30000)
+        page.wait_for_timeout(150)
+        b = page.evaluate(STATE)
+        assert b["cineJson"] == "[]", f"10b. a failed validation consumes nothing, got {b['cineJson']!r}"
+        assert b["assistedStory"] == SCRIPT and b["assistedJson"] == '{"assisted":true}', \
+            "10b. and touches no other intent's material"
+        assert b["candidateOwners"] == [], f"10b. it leaves no candidate anywhere, got {b['candidateOwners']}"
+        assert b["resultOwners"] == ["cinebraid"], f"10b. and its error belongs to the intent that asked, got {b}"
+        assert page.evaluate("() => (document.getElementById('project-builder-result') || {}).innerHTML") == "", \
+            "10b. the assisted region is not handed the CineBraid failure"
+
+        # 10c. an ASSISTED validation switched away from: the same rule, other direction.
+        seed()
+        start_on("assisted")
+        page.fill("#project-builder-json", json.dumps(OWNED))
+        page.evaluate("() => { window.__op = false; importProjectBuilderJSON().then(() => { window.__op = true; }); }")
+        page.wait_for_timeout(120)
+        page.click('[data-creation-intent="cinebraid"]')
+        page.wait_for_selector("#creation-cinebraid", timeout=10000)
+        assert page.evaluate("() => window.__op") is False, "10c. the assisted validation must still be in flight at the switch"
+        page.wait_for_function("() => window.__op === true", timeout=30000)
+        page.wait_for_timeout(150)
+        c = page.evaluate(STATE)
+        assert c["candidateOwners"] == ["assisted"], f"10c. an assisted-started validation belongs to assisted, got {c}"
+        assert c["visibleCandidate"] is False, "10c. and is not shown under the CineBraid heading"
+        assert c["cineJson"] == "", "10c. nor may it write into the CineBraid buffer"
+
+        # 10d. an older request followed by a newer one for the same intent.
+        seed()
+        start_on("cinebraid")
+        page.fill("#project-builder-json", json.dumps(OWNED))
+        page.evaluate("() => { window.__older = null; window.__newer = null;"
+                      " importProjectBuilderJSON().then(() => { window.__older = true; });"
+                      " setTimeout(() => importProjectBuilderJSON().then(() => { window.__newer = true; }), 300); }")
+        page.wait_for_function("() => window.__older === true && window.__newer === true", timeout=40000)
+        page.wait_for_timeout(150)
+        d = page.evaluate("() => ({ owners: [...window.__cinebraidCreationCandidates.keys()], token: (window.__cinebraidCreationCandidates.get('cinebraid') || {}).previewToken })")
+        assert d["owners"] == ["cinebraid"] and d["token"], f"10d. one candidate survives two overlapping validations, got {d}"
+
+        # 10e. A -> B -> C switching during an in-flight request.
+        seed()
+        start_on("cinebraid")
+        page.fill("#project-builder-json", json.dumps(OWNED))
+        page.evaluate("() => { window.__op = false; importProjectBuilderJSON().then(() => { window.__op = true; }); }")
+        page.wait_for_timeout(100)
+        for intent in ("assisted", "scratch", "assisted"):
+            page.evaluate("(i) => setCreationStartPath(i)", intent)
+            page.wait_for_timeout(60)
+        assert page.evaluate("() => window.__op") is False, "10e. the request must still be in flight after three switches"
+        page.wait_for_function("() => window.__op === true", timeout=30000)
+        page.wait_for_timeout(150)
+        e = page.evaluate(STATE)
+        assert e["candidateOwners"] == ["cinebraid"], f"10e. three switches mid-flight do not move ownership, got {e}"
+        assert e["assistedStory"] == SCRIPT and e["assistedJson"] == '{"assisted":true}', \
+            "10e. and nothing was touched on the way past"
+        page.evaluate("() => { window.__importDelayMs = 0; }")
+        findings.append("10b/c/d/e. a failed CineBraid validation consumed nothing and kept its error to itself; an "
+                        "assisted-started validation stayed assisted's; two overlapping validations left one candidate; and "
+                        "three switches during an in-flight request moved no ownership and touched no other intent's material")
 
         assert not page_errors, f"the page raised uncaught errors: {page_errors}"
         browser.close()

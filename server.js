@@ -3216,7 +3216,15 @@ function projectBuilderReview(project, warnings = [], sourceCounts = {}, inferre
   const conflicts = [],
     missing = [],
     review = [];
-  const inferredPaths = new Set(inferred.map((item) => item.path));
+  /* THE TWO ORIGINS ARE KEPT APART FROM HERE ON.
+
+     `inferred` carries both what CineBraid decided (`cinebraid`) and what the source
+     already said (`source`). Collapsing them into one set of paths was enough to mark
+     a continuity card "inferred" because the FILMMAKER had written the marker in their
+     own delta — CineBraid asserting authorship of a sentence it did not write. Two
+     sets, and nothing downstream may merge them again. */
+  const cinebraidPaths = new Set(inferred.filter((item) => item.origin === "cinebraid").map((item) => item.path));
+  const sourcePaths = new Set(inferred.filter((item) => item.origin !== "cinebraid").map((item) => item.path));
   const walk = (value, pathName) => {
     if (typeof value === "string") {
       if (/\[SOURCE CONFLICT\]/i.test(value))
@@ -3312,15 +3320,21 @@ function projectBuilderReview(project, warnings = [], sourceCounts = {}, inferre
           stateName: state.name,
           isDefault: state.isDefault === true,
           notes: shortReviewValue(state.notes),
-          /* `notes` no longer carries the marker, so the flag is read off the path
-             the annotation was collected against. `notes` is the only field the
-             import ever marked on a state, which is what makes the path exact. */
-          inferred: inferredPaths.has(
+          /* `notes` no longer carries a CineBraid marker, so the flag is read off the
+             path the annotation was collected against. `notes` is the only field the
+             import ever marked on a state, which is what makes the path exact.
+
+             `sourceMarked` is the separate, truthful answer for a marker the SOURCE
+             arrived with: worth showing, never CineBraid's. A state can carry both. */
+          inferred: cinebraidPaths.has(
+            `${listKey}[${entityIndex}].continuityStates[${stateIndex}].notes`,
+          ),
+          sourceMarked: sourcePaths.has(
             `${listKey}[${entityIndex}].continuityStates[${stateIndex}].notes`,
           ),
         })),
       )
-      .filter((state) => state.inferred || state.isDefault)
+      .filter((state) => state.inferred || state.sourceMarked || state.isDefault)
       .slice(0, 100),
     outline: project.scenes.map((scene) => ({
       id: scene.id,

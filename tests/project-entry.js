@@ -41,6 +41,8 @@
  *   O  an authored planning marker is preserved while a generated one never appears
  *   P  a null next action produces no locally chosen production action
  *   Q  the stage strip describes the rendered workspace, not the requested URL
+ *   R  the review never attributes the filmmaker's own prose to CineBraid
+ *   S  an async validation or import belongs to the intent that started it
  *
  * Section I runs the real server, because the leak was in the real normalizer and a
  * source-level claim about it would prove nothing. Everything else runs in the render
@@ -630,6 +632,7 @@ async function sectionPlanningMarkerBoundary() {
     const diskText = JSON.stringify(authoredOnDisk);
     assert(!/CineBraid (selected|added|assigned|created|kept|set) /.test(diskText),
       "O. and none of it may reach disk either");
+    await sectionRenderedOriginIsTruthful(base);
     note(`O. ${AUTHORED_CHECKS.length} adversarial authored markers — exact, lower, mixed, leading, trailing, repeated, newline-separated, punctuated, in arrays and nested objects — all survived byte for byte through preview and onto disk, while ${generated.length} generated inferences were reported and none was written; one field carried both at once`);
   } finally {
     child.kill();
@@ -925,6 +928,313 @@ function sectionStripFollowsRenderedRoute() {
   note("Q. the stage strip resolves its shot from the rendered route, guarded for realms without app.js, and renderReady is armed per render instead of once at boot");
 }
 
+/* =========================================================================
+   R. WHO SAID IT — THE REVIEW NEVER ATTRIBUTES THE FILMMAKER'S PROSE TO CINEBRAID.
+
+   The server reports `origin` on every inferred row. The renderer used to drop it and
+   file both kinds under "Inferred values", and mark the continuity card `inferred`,
+   so a filmmaker who had written `[INFERRED FOR PLANNING]` in their own state delta
+   was shown their own sentence as a CineBraid decision.
+   ========================================================================= */
+const ORIGIN_SOURCE = {
+  meta: { title: "Origin Matrix", format: "Short film" },
+  characters: [{
+    id: "CHAR-ADA", name: "Ada", description: "A dock engineer in a patched grey coat.",
+    continuityStates: [
+      /* Authored marker on a state CineBraid will ALSO decide about (no default is
+         declared, so it picks this one): both origins land on one path. */
+      { id: "state-clean", name: "Clean coat", notes: "[INFERRED FOR PLANNING] my own note about the convention." },
+      /* Authored, lower case, and CineBraid decides nothing about it. */
+      { id: "state-wet", name: "Wet coat", parentStateId: "state-clean", notes: "house style: [inferred for planning] then a reason" },
+    ],
+  }],
+  /* No states at all: a genuine CineBraid inference with no authored marker near it. */
+  locations: [{ id: "LOC-DOCK", name: "Dock", description: "A wet concrete dock.", continuityStates: [] }],
+  props: [], vehicles: [],
+  scenes: [{ id: "SC-01", title: "Arrival", whatHappens: "Ada walks the dock.", howItFeels: "Cold." }],
+  shots: [{ id: "L1-01", scene: "SC-01", title: "Dock walk", desc: "Ada walks the dock.", positioning: "Locked wide.", characters: ["CHAR-ADA"], codes: ["LOC-DOCK"], clips: [{ kind: "i2v", dur: 6, motionPrompt: "She walks." }] }],
+};
+async function sectionRenderedOriginIsTruthful(base) {
+  const preview = await (await fetch(`${base}/api/projects/preview-import-json`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ project: ORIGIN_SOURCE }),
+  })).json();
+  assert(preview.review, `R. the origin fixture must import: ${JSON.stringify(preview).slice(0, 300)}`);
+
+  const cinebraid = preview.review.inferred.filter((row) => row.origin === "cinebraid");
+  const fromSource = preview.review.inferred.filter((row) => row.origin === "source");
+  assert(cinebraid.length >= 3, `R. the fixture must provoke real CineBraid inferences, got ${cinebraid.length}`);
+  assert(fromSource.length >= 2, `R. and must carry authored markers, got ${fromSource.length}`);
+  for (const row of preview.review.inferred)
+    assert(row.origin === "cinebraid" || row.origin === "source", `R. every row must declare an origin, got ${row.origin}`);
+
+  /* The server keeps the two apart on the continuity rows too — including the state
+     that carries both. */
+  const byState = Object.fromEntries(preview.review.continuity.map((state) => [state.stateId, state]));
+  assert.strictEqual(byState["state-clean"].inferred, true, "R. CineBraid did choose state-clean as the default");
+  assert.strictEqual(byState["state-clean"].sourceMarked, true, "R. and the filmmaker's own marker is on it too");
+  assert.strictEqual(byState["state-wet"].inferred, false,
+    "R. a state CineBraid decided nothing about must NOT be marked as its inference");
+  assert.strictEqual(byState["state-wet"].sourceMarked, true, "R. it is marked in the source, and says so");
+  assert.strictEqual(byState["state-default"].inferred, true, "R. the state CineBraid created is its own");
+  assert.strictEqual(!!byState["state-default"].sourceMarked, false, "R. and carries no source marker");
+
+  /* THE RENDERED DOCUMENT, not just the payload. */
+  const { context } = await createRender();
+  const markup = vm.runInContext(`(() => {
+    const review = ${JSON.stringify(preview.review)};
+    return {
+      cine: projectBuilderReviewColumn("CineBraid planning decisions", "inferred", cinebraidInferences(review), "none"),
+      source: projectBuilderReviewColumn("Marked in your source", "source", sourceInferences(review), "none"),
+      continuity: projectBuilderContinuityReview(review.continuity),
+      full: renderProjectBuilderReview({ title: "Origin Matrix", previewHash: "d".repeat(64), review }),
+    };
+  })()`, context);
+
+  assert.strictEqual((markup.cine.match(/data-origin="source"/g) || []).length, 0,
+    "R. no source-authored row may appear in the CineBraid column");
+  assert.strictEqual((markup.source.match(/data-origin="cinebraid"/g) || []).length, 0,
+    "R. and no CineBraid row in the source column");
+  assert.strictEqual((markup.cine.match(/data-origin="cinebraid"/g) || []).length, cinebraid.length,
+    "R. every CineBraid row is rendered, in its own column");
+  assert.strictEqual((markup.source.match(/data-origin="source"/g) || []).length, fromSource.length,
+    "R. and every authored row in its own");
+  assert(/CineBraid planning decisions/.test(markup.full) && /Marked in your source/.test(markup.full),
+    "R. the review must offer both headings");
+  assert(!/>Inferred values</.test(markup.full),
+    "R. and must not offer the single undifferentiated heading that hid the difference");
+
+  const card = (id) => (markup.continuity.match(new RegExp(`<article[^>]*>(?:(?!</article>)[\\s\\S])*?${id}[\\s\\S]*?</article>`)) || [""])[0];
+  assert(/data-continuity-origin="source"/.test(card("state-wet")),
+    "R. a state marked only by the source must be labelled as the source's");
+  assert(/Marked in your source/.test(card("state-wet")), "R. in words as well as in an attribute");
+  assert(!/CineBraid decided this<\/em>/.test(card("state-wet")),
+    "R. and must never claim CineBraid decided it");
+  assert(!/class="inferred"/.test(card("state-wet")),
+    "R. nor carry the class that means a CineBraid inference");
+  assert(/data-continuity-origin="cinebraid\+source"/.test(card("state-clean")),
+    "R. a state carrying both must say both rather than the louder one");
+  assert(/your source also marked it/.test(card("state-clean")), "R. in words");
+  assert(/data-continuity-origin="cinebraid"/.test(card("state-default")),
+    "R. and a state CineBraid really created is its own");
+  note(`R. ${cinebraid.length} CineBraid decisions and ${fromSource.length} source-authored markers render in separate columns with zero crossover; a source-only state reads "Marked in your source", a state carrying both says both, and the undifferentiated "Inferred values" heading is gone`);
+}
+
+/* =========================================================================
+   S. AN ASYNC VALIDATION OR IMPORT BELONGS TO THE INTENT THAT STARTED IT.
+
+   Both handlers used to ask `creationStartPath()` after their response arrived.
+   Independent review reproduced the cost: start a CineBraid import, switch to the
+   assisted path before it lands, and the CineBraid document is imported while the
+   ASSISTANT'S material is cleared and the CineBraid source that really was consumed
+   survives. The response is gated here so the switch is provably mid-flight; the
+   genuinely networked version is section 10 of the real-browser suite.
+   ========================================================================= */
+function gatedImportRender(options = {}) {
+  const current = buildFixture();
+  const normalized = buildFixture();
+  normalized.meta.title = options.title || "Gated Import";
+  const gates = { preview: [], commit: [] };
+  /* `open` releases the OLDEST waiting request, `openNewest` the most recent one.
+      S4 needs the newer response to arrive first, which is the whole point of it. */
+  const open = (kind, value) => { const g = gates[kind].shift(); if (g) g(value); };
+  const openNewest = (kind, value) => { const g = gates[kind].pop(); if (g) g(value); };
+  let active = "current";
+  const fetchStub = async (url, requestOptions, respond) => {
+    if (url === "/api/project")
+      return respond(active === "current" ? current : normalized, 200, { "x-cinebraid-project-slug": active });
+    if (url === "/api/projects/preview-import-json" && requestOptions.method === "POST") {
+      const payload = await new Promise((resolve) => gates.preview.push(resolve));
+      if (payload === "FAIL") return respond({ error: "Validation failed on purpose" }, 400);
+      return respond({
+        ok: true, title: normalized.meta.title, previewToken: `token-${payload}`, previewHash: "e".repeat(64),
+        normalizedProject: normalized,
+        review: { counts: { scenes: 1, shots: 1 }, sourceCounts: {}, inferred: [], conflicts: [], missing: [], removed: [], review: [], continuity: [], outline: [] },
+      });
+    }
+    if (url === "/api/projects/import-json" && requestOptions.method === "POST") {
+      const payload = await new Promise((resolve) => gates.commit.push(resolve));
+      if (payload === "FAIL") return respond({ error: "Import refused on purpose" }, 400);
+      active = "gated-import";
+      return respond({ ok: true, slug: active, counts: { scenes: 1, shots: 1, characters: 1, locations: 1, props: 0, vehicles: 0 } });
+    }
+    return null;
+  };
+  return render("#/create", current, { fetch: fetchStub, storage: { "cinebraid-creation-start-path": "cinebraid" } })
+    .then((rendered) => ({ ...rendered, open, openNewest, gates }));
+}
+async function sectionAsyncOperationOwnership() {
+  const { context, open } = await gatedImportRender();
+  const run = (code) => vm.runInContext(code, context);
+  const draft = (key) => run(`creationDraft(${JSON.stringify(key)})`);
+  const owners = () => run("[...window.__cinebraidCreationCandidates.keys()].sort().join(',')");
+  const results = () => run("[...window.__cinebraidCreationResults.keys()].sort().join(',')");
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
+
+  /* Material on BOTH intents. The assisted pair is the control: it is never touched. */
+  run(`setCreationDraft("assisted:story", "INT. DOCK - NIGHT");`);
+  run(`setCreationDraft("assisted:json", '{"assisted":true}');`);
+  run(`setCreationDraft("cinebraid:json", '{"meta":{"title":"Mine"}}');`);
+  const assistedStoryBefore = draft("assisted:story");
+  const assistedJsonBefore = draft("assisted:json");
+
+  /* 1. CineBraid validation, switched away mid-flight, then succeeding. */
+  run(`document.getElementById("project-builder-json").value = '{"meta":{"title":"Mine"}}';`);
+  run(`window.__validating = importProjectBuilderJSON();`);
+  run("setCreationStartPath('assisted')");
+  await run("route()");
+  assert.strictEqual(owners(), "", "S1. precondition: nothing has landed while the request is still gated");
+  open("preview", "one");
+  await run("window.__validating");
+  await settle();
+  assert.strictEqual(owners(), "cinebraid",
+    `S1. the candidate must belong to the intent that started the validation, got "${owners()}"`);
+  assert.strictEqual(results(), "cinebraid", "S1. and so must the rendered result");
+  assert.strictEqual(run("window._projectBuilderCandidate"), null,
+    "S1. the visible intent must NOT be handed another intent's candidate");
+  assert.strictEqual(draft("assisted:story"), assistedStoryBefore, "S1. the assisted script is untouched");
+  assert.strictEqual(draft("assisted:json"), assistedJsonBefore, "S1. and so is the assisted document");
+
+  /* 6. returning to the initiating intent finds the result waiting. */
+  run("setCreationStartPath('cinebraid')");
+  const returned = await run("(async () => { await route(); return document.getElementById('main').innerHTML; })()");
+  assert(returned.includes("project-builder-review"),
+    "S6. returning to the intent that started the validation must show its review");
+  assert(run("!!window._projectBuilderCandidate"), "S6. and re-point the visible candidate at it");
+
+  /* 7. import, switched away mid-flight, succeeding: only the initiating source goes. */
+  run(`window.__importing = commitProjectBuilderImport();`);
+  run("setCreationStartPath('assisted')");
+  await run("route()");
+  assert.strictEqual(draft("cinebraid:json"), '{"meta":{"title":"Mine"}}',
+    "S7. precondition: nothing is consumed while the request is still gated");
+  open("commit", "one");
+  await run("window.__importing");
+  await settle();
+  assert.strictEqual(draft("cinebraid:json"), "", "S7. the source that WAS consumed is cleared");
+  assert.strictEqual(draft("assisted:story"), assistedStoryBefore,
+    "S7. and the assisted script — which this operation never touched — is byte-identical");
+  assert.strictEqual(draft("assisted:json"), assistedJsonBefore, "S7. as is the assisted document");
+  assert(run("!!window.__cinebraidProjectEntryLanding"), "S7. the import landed");
+  assert.strictEqual(run("window.__cinebraidProjectEntryLanding.path"), "cinebraid",
+    "S7. and the landing belongs to the intent that started it, not the visible one");
+  note("S. a validation and an import each kept the intent that started them across a mid-flight switch; the assisted script and document were byte-identical throughout, only the consumed CineBraid document was cleared, and the landing was recorded for the initiating intent");
+}
+
+/* 2, 3, 4, 5, 8: the remaining ownership attacks, on a fresh realm each time so one
+   failure cannot be mistaken for another's. */
+async function sectionAsyncOwnershipAttacks() {
+  /* 2. CineBraid validation -> switch -> FAILURE. Nothing of anyone's is cleared. */
+  {
+    const { context, open } = await gatedImportRender();
+    const run = (code) => vm.runInContext(code, context);
+    run(`setCreationDraft("assisted:story", "SCRIPT"); setCreationDraft("assisted:json", "ASSISTED");`);
+    run(`setCreationDraft("cinebraid:json", "CINEBRAID");`);
+    /* Valid JSON, so what fails is the SERVER's answer rather than JSON.parse — the
+       control is about a failed request, not a malformed paste. */
+    run(`document.getElementById("project-builder-json").value = '{"meta":{"title":"Mine"}}';`);
+    run(`window.__op = importProjectBuilderJSON();`);
+    run("setCreationStartPath('assisted')");
+    await run("route()");
+    open("preview", "FAIL");
+    await run("window.__op");
+    await new Promise((r) => setTimeout(r, 20));
+    assert.strictEqual(run(`creationDraft("cinebraid:json")`), "CINEBRAID", "S2. a failed validation consumes nothing");
+    assert.strictEqual(run(`creationDraft("assisted:story")`), "SCRIPT", "S2. and touches no other intent's script");
+    assert.strictEqual(run(`creationDraft("assisted:json")`), "ASSISTED", "S2. nor its document");
+    assert.strictEqual(run("[...window.__cinebraidCreationResults.keys()].join(',')"), "cinebraid",
+      "S2. the error belongs to the intent that asked for it");
+    assert(run("String(window.__cinebraidCreationResults.get('cinebraid')).includes('Validation failed on purpose')"),
+      `S2. and says what went wrong, got ${run("String(window.__cinebraidCreationResults.get('cinebraid'))")}`);
+    assert.strictEqual(run("window._projectBuilderCandidate"), null, "S2. the visible intent is handed nothing");
+  }
+
+  /* 3. an ASSISTED validation switched away from: same rule, other direction. */
+  {
+    const { context, open } = await gatedImportRender();
+    const run = (code) => vm.runInContext(code, context);
+    run("setCreationStartPath('assisted')");
+    await run("route()");
+    run(`setCreationDraft("cinebraid:json", "CINEBRAID");`);
+    run(`document.getElementById("project-builder-json").value = '{"meta":{"title":"Assisted"}}';`);
+    run(`window.__op = importProjectBuilderJSON();`);
+    run("setCreationStartPath('cinebraid')");
+    await run("route()");
+    open("preview", "two");
+    await run("window.__op");
+    await new Promise((r) => setTimeout(r, 20));
+    assert.strictEqual(run("[...window.__cinebraidCreationCandidates.keys()].join(',')"), "assisted",
+      "S3. an assisted-started validation belongs to assisted");
+    assert.strictEqual(run(`creationDraft("cinebraid:json")`), "CINEBRAID",
+      "S3. and cannot clear the CineBraid buffer");
+    assert.strictEqual(run("window._projectBuilderCandidate"), null,
+      "S3. nor be shown under the CineBraid heading");
+  }
+
+  /* 4. an older request followed by a newer one for the SAME intent. */
+  {
+    const { context, open, openNewest } = await gatedImportRender();
+    const run = (code) => vm.runInContext(code, context);
+    run(`document.getElementById("project-builder-json").value = '{"meta":{"title":"A"}}';`);
+    run(`window.__older = importProjectBuilderJSON();`);
+    run(`window.__newer = importProjectBuilderJSON();`);
+    openNewest("preview", "newer");
+    await run("window.__newer");
+    await new Promise((r) => setTimeout(r, 20));
+    assert.strictEqual(run("window.__cinebraidCreationCandidates.get('cinebraid').previewToken"), "token-newer",
+      "S4. the newer validation owns the slot");
+    open("preview", "older");
+    await run("window.__older");
+    await new Promise((r) => setTimeout(r, 20));
+    assert.strictEqual(run("window.__cinebraidCreationCandidates.get('cinebraid').previewToken"), "token-newer",
+      "S4. and a stale older response landing afterwards must not replace it");
+  }
+
+  /* 5. A -> B -> C switching while a request is in flight. */
+  {
+    const { context, open } = await gatedImportRender();
+    const run = (code) => vm.runInContext(code, context);
+    run(`setCreationDraft("assisted:json", "ASSISTED"); setCreationDraft("assisted:story", "SCRIPT");`);
+    run(`document.getElementById("project-builder-json").value = '{"meta":{"title":"C"}}';`);
+    run(`window.__op = importProjectBuilderJSON();`);
+    for (const path of ["assisted", "scratch", "assisted", "scratch"]) {
+      run(`setCreationStartPath('${path}')`);
+      await run("route()");
+    }
+    open("preview", "five");
+    await run("window.__op");
+    await new Promise((r) => setTimeout(r, 20));
+    assert.strictEqual(run("[...window.__cinebraidCreationCandidates.keys()].join(',')"), "cinebraid",
+      "S5. four switches mid-flight do not move ownership");
+    assert.strictEqual(run(`creationDraft("assisted:json")`), "ASSISTED", "S5. and touch nothing on the way past");
+    assert.strictEqual(run(`creationDraft("assisted:story")`), "SCRIPT", "S5. including the script");
+  }
+
+  /* 8. a blocked import leaves the initiating source exactly where it was. */
+  {
+    const { context, open } = await gatedImportRender();
+    const run = (code) => vm.runInContext(code, context);
+    run(`setCreationDraft("cinebraid:json", "CINEBRAID"); setCreationDraft("assisted:story", "SCRIPT");`);
+    run(`document.getElementById("project-builder-json").value = '{"meta":{"title":"Mine"}}';`);
+    run(`window.__v = importProjectBuilderJSON();`);
+    open("preview", "eight");
+    await run("window.__v");
+    run(`window.__c = commitProjectBuilderImport();`);
+    run("setCreationStartPath('assisted')");
+    await run("route()");
+    open("commit", "FAIL");
+    await run("window.__c");
+    await new Promise((r) => setTimeout(r, 20));
+    assert.strictEqual(run(`creationDraft("cinebraid:json")`), "CINEBRAID",
+      "S8. a blocked import must leave its own source exactly where it was");
+    assert.strictEqual(run(`creationDraft("assisted:story")`), "SCRIPT", "S8. and every other intent's");
+    assert(run("!window.__cinebraidProjectEntryLanding"), "S8. and must not land anywhere");
+    assert(run("String(window.__cinebraidCreationResults.get('cinebraid')).includes('Import refused on purpose')"),
+      "S8. the refusal is recorded for the intent that asked");
+  }
+  note("S. the remaining five attacks — failed validation, assisted-started validation, stale older response, four-switch churn, and a blocked import — each left every other intent's material byte-identical and every result with its own owner");
+}
+
 async function main() {
   await sectionEntryIsIntentFirst();
   await sectionAssistedFraming();
@@ -941,13 +1251,24 @@ async function main() {
   await sectionFileReadOwnership();
   await sectionNullAuthorityChoosesNothing();
   sectionStripFollowsRenderedRoute();
+  await sectionAsyncOperationOwnership();
+  await sectionAsyncOwnershipAttacks();
   await sectionSliceOnePreserved();
   await sectionNoLaterSliceLeakage();
   console.log(notes.join("\n"));
   console.log("Project entry & import landing suite passed: three intents, retained source material, typed format/aspect, deferred style, Ready/Needs review/Blocked, the planning-marker boundary, and a landing whose next action is the single projectNextProductionAction().");
 }
 
-main().catch((error) => {
+/* A HANG IS A FAILURE, NOT A PASS. Sections S gate their own responses; a gate this
+   suite forgets to open leaves main() awaiting forever, Node drains its loop and exits
+   0 having printed nothing. That is indistinguishable from success to npm, so it is
+   made loud here. */
+const watchdog = setTimeout(() => {
+  console.error("Project entry suite timed out — a gated response was never released, or a section never settled.");
+  process.exit(1);
+}, 120000);
+main().then(() => clearTimeout(watchdog)).catch((error) => {
+  clearTimeout(watchdog);
   console.error(error.stack || error.message || error);
   process.exitCode = 1;
 });

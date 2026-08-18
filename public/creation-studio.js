@@ -4234,6 +4234,10 @@ function creationStartPath() {
 window.setCreationStartPath = (path) => {
   const key = CREATION_INTENT_KEYS.includes(path) ? path : CREATION_LEGACY_PATHS[path] || "assisted";
   try { localStorage.setItem(CREATION_START_PATH_KEY, key); } catch {}
+  /* The Import control belongs to the review on screen, so the visible candidate
+     follows the intent. Nothing is destroyed: the other intent's candidate stays in
+     the map, waiting. */
+  syncVisibleCreationCandidate();
   route();
   setTimeout(() => document.getElementById(`creation-${key}`)?.scrollIntoView({ behavior: "smooth", block: "start" }), 30);
 };
@@ -4314,6 +4318,68 @@ function settleCreationFileRead(ownerKey, ticket) {
 }
 
 /* ==========================================================================
+   A VALIDATION OR AN IMPORT BELONGS TO THE INTENT THAT STARTED IT.
+
+   Exactly the rule above, one layer out. Both async handlers used to ask
+   `creationStartPath()` AFTER their response arrived, which meant the answer was
+   "whichever intent is on screen now". Independent review reproduced what that costs:
+   start a CineBraid import, switch to the assisted path before the response lands,
+   and the CineBraid document is imported while the ASSISTANT'S script and JSON are
+   cleared as though they had been consumed — and the CineBraid source that really was
+   consumed survives. Three wrong answers from one late question.
+
+   So an operation captures its own context at initiation — which intent, which
+   buffers, which result slot — and never asks again. A ticket per intent makes an
+   older response unable to overwrite a newer operation's state, and a completion that
+   arrives while its intent is off screen is KEPT FOR THAT INTENT rather than shown to
+   whoever happens to be looking. Nothing about ownership is ever inferred from the
+   visible path. */
+const CREATION_OPERATIONS = window.__cinebraidCreationOps || (window.__cinebraidCreationOps = new Map());
+let CREATION_OPERATION_SEQUENCE = 0;
+function beginCreationOperation(kind) {
+  const path = creationStartPath();
+  const ticket = ++CREATION_OPERATION_SEQUENCE;
+  CREATION_OPERATIONS.set(path, ticket);
+  return { kind, path, keys: creationDraftKeys(path), ticket };
+}
+function settleCreationOperation(operation) {
+  if (!operation || CREATION_OPERATIONS.get(operation.path) !== operation.ticket) return false;
+  CREATION_OPERATIONS.delete(operation.path);
+  return true;
+}
+/* Per-intent, because two intents can hold two different validated previews and
+   neither may be shown under the other's heading. */
+const CREATION_CANDIDATES = window.__cinebraidCreationCandidates || (window.__cinebraidCreationCandidates = new Map());
+const CREATION_RESULTS = window.__cinebraidCreationResults || (window.__cinebraidCreationResults = new Map());
+function creationCandidate(path) {
+  return CREATION_CANDIDATES.get(path) || null;
+}
+function creationResultMarkup(path) {
+  return String(CREATION_RESULTS.get(path) || "");
+}
+/* `window._projectBuilderCandidate` remains the candidate for the intent ON SCREEN.
+   It is a view of the map above, never the storage: the Import control the filmmaker
+   can press belongs to the review they can see. */
+function syncVisibleCreationCandidate() {
+  window._projectBuilderCandidate = creationCandidate(creationStartPath());
+}
+function setCreationCandidate(path, candidate) {
+  if (candidate) CREATION_CANDIDATES.set(path, candidate);
+  else CREATION_CANDIDATES.delete(path);
+  syncVisibleCreationCandidate();
+}
+/* The result markup is stored for its owner and painted only if that owner is on
+   screen. A filmmaker who walked away from a validation finds it waiting when they
+   come back, and the intent they walked TO is not handed somebody else's answer. */
+function setCreationResult(path, markup) {
+  if (markup) CREATION_RESULTS.set(path, markup);
+  else CREATION_RESULTS.delete(path);
+  if (creationStartPath() !== path) return;
+  const out = document.getElementById("project-builder-result");
+  if (out) out.innerHTML = String(markup || "");
+}
+
+/* ==========================================================================
    READY / NEEDS REVIEW / BLOCKED — PRESENTATION, NOT A READINESS AUTHORITY.
 
    These three words describe ONE THING: what the server's import review already
@@ -4371,8 +4437,9 @@ function creationStartChooser() {
 function creationImportPanel(path, options = {}) {
   const keys = creationDraftKeys(path);
   const draft = creationDraft(keys.json);
-  const candidate = window._projectBuilderCandidate;
-  const review = candidate && candidate.path === path ? candidate.renderedReview || "" : "";
+  /* This intent's own result — a review, or the error its own validation returned.
+     Looked up by path, so it can never be another intent's answer. */
+  const review = creationResultMarkup(path);
   return `<textarea id="project-builder-json" class="project-builder-json" spellcheck="false" placeholder="${attr(options.placeholder || '{"meta":{"title":"My Project"}, ...}')}" aria-label="${attr(options.label || "Project document")}" oninput="setCreationDraft('${attr(keys.json)}',this.value)">${esc(draft)}</textarea>
     <div class="creation-import-footer"><input type="file" accept=".json,application/json" id="project-builder-file" aria-label="Choose a project document" onchange="readProjectBuilderFile(this)"><div class="creation-import-footer-actions">${draft ? `<button type="button" class="ghost-btn" onclick="clearCreationDraft('${attr(keys.json)}')">Clear</button>` : ""}<button type="button" class="assemble-btn" onclick="importProjectBuilderJSON()">Validate + review</button></div></div>
     <div id="project-builder-result">${review}</div>`;
@@ -4594,9 +4661,13 @@ window.readProjectBuilderFile = (input) => {
   reader.readAsText(file);
 };
 function projectBuilderReviewColumn(title, css, items, emptyText) {
+  /* `data-origin` is not decoration. A row is either something CineBraid decided or
+     something the source already said, and the two must stay distinguishable in the
+     rendered document as well as in the payload — a reader looking at a badge, and a
+     test looking at the DOM, have to get the same answer. */
   const row = (item) =>
     item && typeof item === "object"
-      ? `<li class="import-review-value"><code>${esc(item.path || item.label || "Value")}</code><span>${esc(item.value || item.notes || "")}</span></li>`
+      ? `<li class="import-review-value"${item.origin ? ` data-origin="${attr(item.origin)}"` : ""}><code>${esc(item.path || item.label || "Value")}</code><span>${esc(item.value || item.notes || "")}</span></li>`
       : `<li>${esc(item)}</li>`;
   return `<section class="import-review-column ${css}"><header><span>${esc(title)}</span><b>${items.length}</b></header>${items.length ? `<ul>${items.slice(0, 18).map(row).join("")}</ul>${items.length > 18 ? `<small>+ ${items.length - 18} more</small>` : ""}` : `<p>${esc(emptyText)}</p>`}</section>`;
 }
@@ -4620,12 +4691,43 @@ function projectBuilderCountComparison(review) {
     })
     .join("")}</div>`;
 }
+/* ==========================================================================
+   WHO SAID IT. The server reports `origin` on every inferred row — "cinebraid" for a
+   decision CineBraid made while normalising, "source" for a marker that was already
+   in the document it was handed. The renderer used to drop that and file both under
+   "Inferred values", so a filmmaker who had written `[INFERRED FOR PLANNING]` in
+   their own state delta was shown their own sentence as a CineBraid inference.
+
+   These two splitters are the whole mechanism: no new provenance, no re-derivation,
+   and nothing about the project value changes to make the screen easier. A row whose
+   origin is missing is treated as the source's, because CineBraid's own rows are the
+   ones it can positively account for. */
+function cinebraidInferences(review) {
+  return (Array.isArray(review?.inferred) ? review.inferred : []).filter((row) => row?.origin === "cinebraid");
+}
+function sourceInferences(review) {
+  return (Array.isArray(review?.inferred) ? review.inferred : []).filter((row) => row?.origin !== "cinebraid");
+}
 function projectBuilderContinuityReview(states = []) {
   if (!states.length)
-    return `<p class="import-outline-empty">No default or inferred continuity states require special attention.</p>`;
+    return `<p class="import-outline-empty">No default or marked continuity states require special attention.</p>`;
+  /* A state can carry BOTH — CineBraid chose it as the default while the filmmaker's
+     own delta already contained the marker. Saying only the first would quietly drop
+     the second, so both are said, and the data attribute names both. */
+  const origin = (state) =>
+    state.inferred && state.sourceMarked ? "cinebraid+source" : state.inferred ? "cinebraid" : state.sourceMarked ? "source" : "none";
+  const ORIGIN_WORDS = {
+    "cinebraid+source": ["cinebraid", "CineBraid decided this · your source also marked it"],
+    cinebraid: ["cinebraid", "CineBraid decided this"],
+    source: ["source", "Marked in your source"],
+  };
+  const label = (state) => {
+    const words = ORIGIN_WORDS[origin(state)];
+    return words ? `<em class="continuity-origin ${words[0]}">${esc(words[1])}</em>` : "";
+  };
   return `<div class="import-continuity-list">${states
     .map(
-      (state) => `<article class="${state.inferred ? "inferred" : ""}"><header><b>${esc(state.entityId)} · ${esc(state.entityName || state.kind)}</b><span>${state.isDefault ? "DEFAULT" : "STATE"}</span></header><strong>${esc(state.stateId)} · ${esc(state.stateName)}</strong>${state.notes ? `<p>${esc(state.notes)}</p>` : ""}</article>`,
+      (state) => `<article class="${state.inferred ? "inferred" : state.sourceMarked ? "source-marked" : ""}" data-continuity-origin="${attr(origin(state))}"><header><b>${esc(state.entityId)} · ${esc(state.entityName || state.kind)}</b><span>${state.isDefault ? "DEFAULT" : "STATE"}</span></header><strong>${esc(state.stateId)} · ${esc(state.stateName)}</strong>${label(state)}${state.notes ? `<p>${esc(state.notes)}</p>` : ""}</article>`,
     )
     .join("")}</div>`;
 }
@@ -4650,12 +4752,16 @@ function renderProjectBuilderReview(data) {
      whether they can press the button. The standing says that in three words, off
      the same payload the columns are rendered from. */
   const standing = projectEntryStanding(review);
-  return `<div class="project-builder-review"><header><div><span class="creation-kicker">NORMALIZED IMPORT PREVIEW</span><h3>${esc(data.title)}</h3><p>${counts.scenes} scenes · ${counts.shots} shots · ${counts.characters} characters · ${counts.locations} locations · ${counts.props} props · ${counts.vehicles || 0} vehicles</p></div><span class="creation-state ready">Exact preview locked</span></header>${projectEntryStandingMarkup(standing, projectEntryStandingReasons(review))}${projectBuilderCountComparison(review)}<div class="import-preview-proof"><span>PREVIEW SHA-256</span><code>${esc(data.previewHash)}</code><button class="ghost-btn" onclick="downloadNormalizedProjectBuilderJSON()">Download normalized JSON</button></div><div class="import-review-legend"><span class="inferred">INFERRED</span><span class="missing">MISSING</span><span class="removed">REMOVED</span><span>REVIEW</span></div><div class="import-review-grid">${projectBuilderReviewColumn("Inferred values", "inferred", review.inferred, "No [INFERRED FOR PLANNING] values were found.")}${projectBuilderReviewColumn("Source conflicts", "review", review.conflicts || [], "No [SOURCE CONFLICT] values were found.")}${projectBuilderReviewColumn("Missing before production", "missing", review.missing, "No important descriptive gaps detected.")}${projectBuilderReviewColumn("Removed during import", "removed", review.removed, "No unsupported generated or approval claims detected.")}${projectBuilderReviewColumn("Needs human review", "review", review.review, "No additional warnings.")}</div><details class="import-normalized-section" open><summary>Normalized scene and shot plan</summary>${projectBuilderOutline(review.outline)}</details><details class="import-normalized-section"><summary>Continuity states CineBraid will import</summary>${projectBuilderContinuityReview(review.continuity)}</details><div class="creation-next-step"><div><span>SAFE EXACT IMPORT</span><b>The button imports this exact normalized preview into a separate project. Editing the source JSON requires a new validation.</b></div><button class="assemble-btn" onclick="commitProjectBuilderImport()">Import this exact preview →</button></div></div>`;
+  return `<div class="project-builder-review"><header><div><span class="creation-kicker">NORMALIZED IMPORT PREVIEW</span><h3>${esc(data.title)}</h3><p>${counts.scenes} scenes · ${counts.shots} shots · ${counts.characters} characters · ${counts.locations} locations · ${counts.props} props · ${counts.vehicles || 0} vehicles</p></div><span class="creation-state ready">Exact preview locked</span></header>${projectEntryStandingMarkup(standing, projectEntryStandingReasons(review))}${projectBuilderCountComparison(review)}<div class="import-preview-proof"><span>PREVIEW SHA-256</span><code>${esc(data.previewHash)}</code><button class="ghost-btn" onclick="downloadNormalizedProjectBuilderJSON()">Download normalized JSON</button></div><div class="import-review-legend"><span class="inferred">CINEBRAID</span><span class="source">FROM YOUR SOURCE</span><span class="missing">MISSING</span><span class="removed">REMOVED</span><span>REVIEW</span></div><div class="import-review-grid">${projectBuilderReviewColumn("CineBraid planning decisions", "inferred", cinebraidInferences(review), "CineBraid inferred nothing during this import.")}${projectBuilderReviewColumn("Marked in your source", "source", sourceInferences(review), "Your source marked nothing as inferred.")}${projectBuilderReviewColumn("Source conflicts", "review", review.conflicts || [], "No [SOURCE CONFLICT] values were found.")}${projectBuilderReviewColumn("Missing before production", "missing", review.missing, "No important descriptive gaps detected.")}${projectBuilderReviewColumn("Removed during import", "removed", review.removed, "No unsupported generated or approval claims detected.")}${projectBuilderReviewColumn("Needs human review", "review", review.review, "No additional warnings.")}</div><details class="import-normalized-section" open><summary>Normalized scene and shot plan</summary>${projectBuilderOutline(review.outline)}</details><details class="import-normalized-section"><summary>Continuity states CineBraid will import</summary>${projectBuilderContinuityReview(review.continuity)}</details><div class="creation-next-step"><div><span>SAFE EXACT IMPORT</span><b>The button imports this exact normalized preview into a separate project. Editing the source JSON requires a new validation.</b></div><button class="assemble-btn" onclick="commitProjectBuilderImport()">Import this exact preview →</button></div></div>`;
 }
 window.importProjectBuilderJSON = async () => {
-  const out = document.getElementById("project-builder-result");
+  /* EVERYTHING THIS OPERATION NEEDS TO KNOW, DECIDED NOW. After the await below the
+     filmmaker may be looking at another intent, and this operation must not care. */
+  const operation = beginCreationOperation("validate");
+  const box = document.getElementById("project-builder-json");
+  const entered = String(box?.value || "") || creationDraft(operation.keys.json);
   try {
-    const raw = document.getElementById("project-builder-json")?.value.trim();
+    const raw = entered.trim();
     if (!raw) throw new Error("Paste or choose a JSON file first.");
     const project = JSON.parse(raw.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, ""));
     const r = await fetch("/api/projects/preview-import-json", {
@@ -4664,24 +4770,29 @@ window.importProjectBuilderJSON = async () => {
       body: JSON.stringify({ project }),
     });
     const d = await r.json();
+    /* Superseded by a newer validation on the same intent: this answer is stale and
+       writes nothing, rather than replacing a review the filmmaker asked for later. */
+    if (!settleCreationOperation(operation)) return;
     if (!r.ok) throw new Error(d.error || "Validation failed");
     /* `path` and `renderedReview` are what let a validated preview survive a path
-       switch alongside the text that produced it. Without them, switching away and
-       back cleared the review from the screen while the candidate was still live in
-       memory — the Import button was gone and nothing said why. */
-    window._projectBuilderCandidate = {
+       switch alongside the text that produced it. `path` is the operation's, captured
+       before the request — never the intent that happens to be visible now. */
+    setCreationCandidate(operation.path, {
       previewToken: d.previewToken,
       previewHash: d.previewHash,
       normalizedProject: d.normalizedProject,
-      path: creationStartPath(),
+      path: operation.path,
       title: d.title,
       review: d.review,
       renderedReview: renderProjectBuilderReview(d),
-    };
-    if (out) out.innerHTML = window._projectBuilderCandidate.renderedReview;
+    });
+    setCreationResult(operation.path, creationCandidate(operation.path).renderedReview);
   } catch (error) {
-    window._projectBuilderCandidate = null;
-    if (out) out.innerHTML = `<div class="prompt-check warn">${esc(error.message)}</div>`;
+    /* A validation that failed clears ITS OWN candidate and nothing else — no other
+       intent's preview, and no source material anywhere. */
+    if (!settleCreationOperation(operation) && CREATION_OPERATIONS.has(operation.path)) return;
+    setCreationCandidate(operation.path, null);
+    setCreationResult(operation.path, `<div class="prompt-check warn">${esc(error.message)}</div>`);
   }
 };
 window.downloadNormalizedProjectBuilderJSON = () => {
@@ -4702,9 +4813,13 @@ window.downloadNormalizedProjectBuilderJSON = () => {
   URL.revokeObjectURL(link.href);
 };
 window.commitProjectBuilderImport = async () => {
-  const candidate = window._projectBuilderCandidate;
-  if (!candidate) return toast("Validate the Project Builder JSON first");
-  const out = document.getElementById("project-builder-result");
+  const operation = beginCreationOperation("import");
+  /* The candidate for the intent that started this, looked up by that intent. */
+  const candidate = creationCandidate(operation.path);
+  if (!candidate) {
+    settleCreationOperation(operation);
+    return toast("Validate the Project Builder JSON first");
+  }
   try {
     await flushPendingProjectSave();
     const r = await fetch("/api/projects/import-json", {
@@ -4716,16 +4831,18 @@ window.commitProjectBuilderImport = async () => {
       }),
     });
     const d = await r.json();
+    if (!settleCreationOperation(operation)) return;
     if (!r.ok) throw new Error(d.error || "Import failed");
-    if (out) out.innerHTML = `<div class="prompt-check ok">Imported ${esc(d.counts.scenes)} scenes, ${esc(d.counts.shots)} shots, and ${esc(d.counts.characters + d.counts.locations + d.counts.props)} reusable references as a separate project.</div>`;
-    const path = candidate.path || creationStartPath();
+    setCreationResult(operation.path, `<div class="prompt-check ok">Imported ${esc(d.counts.scenes)} scenes, ${esc(d.counts.shots)} shots, and ${esc(d.counts.characters + d.counts.locations + d.counts.props)} reusable references as a separate project.</div>`);
+    const path = operation.path;
     const standing = projectEntryStanding(candidate.review);
-    window._projectBuilderCandidate = null;
-    /* CONSUMED, NOT DISCARDED. The buffers are cleared here and only here: the
-       material became a project, so the reason to keep holding it is gone. Every
-       other way out of this screen leaves them alone. */
-    setCreationDraft(creationDraftKeys(path).json, "");
-    setCreationDraft(creationDraftKeys(path).story, "");
+    setCreationCandidate(path, null);
+    /* CONSUMED, NOT DISCARDED, AND ONLY WHAT WAS CONSUMED. The document that was
+       validated and imported is cleared; the script beside it is not, because the
+       import did not consume it and a filmmaker iterating on that script would lose
+       it. Scoped to the operation's own intent, so no other intent's material can be
+       reached from here at all. */
+    setCreationDraft(operation.keys.json, "");
     await load();
     /* The landing is recorded AFTER load(), because load() is what makes
        ACTIVE_PROJECT_SLUG the imported project, and the landing is scoped to it. */
@@ -4745,7 +4862,11 @@ window.commitProjectBuilderImport = async () => {
     else route();
     toast("Project imported");
   } catch (error) {
-    if (out) out.innerHTML += `<div class="prompt-check warn">${esc(error.message)}</div>`;
+    /* A failed or blocked import consumes nothing. Its own source material is exactly
+       where the filmmaker left it, and so is every other intent's. */
+    if (!settleCreationOperation(operation) && CREATION_OPERATIONS.has(operation.path)) return;
+    setCreationResult(operation.path,
+      `${creationResultMarkup(operation.path)}<div class="prompt-check warn">${esc(error.message)}</div>`);
   }
 };
 

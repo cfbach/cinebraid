@@ -23,6 +23,8 @@
  *   N10 a null authority that still chooses a production action is caught
  *   N11 a textual planning-marker strip destroying authored prose is caught
  *   N12 a stage strip painted from the hash before the workspace renders is caught
+ *   N13 a review that collapses the two inference origins is caught
+ *   N14 deciding async ownership after the await is caught
  *
  * Nothing here contacts a provider, spends anything, or writes to a project.
  */
@@ -477,6 +479,120 @@ function n12StripAheadOfRenderIsCaught() {
   note("N12. reverting the strip's context to the hash alone is caught, and the shot route still awaits the network before writing #main, which is the window that made it visible");
 }
 
+/* =========================================================================
+   N13. COLLAPSING THE TWO ORIGINS IS CAUGHT.
+
+   The defect was a renderer that discarded `origin`. This restores that renderer and
+   requires the grouping assertions to catch it.
+   ========================================================================= */
+async function n13CollapsedOriginIsCaught() {
+  const { context } = await render("#/create", buildFixture());
+  const review = {
+    inferred: [
+      { path: "scenes[0].tier", value: "[INFERRED FOR PLANNING] CineBraid assigned supporting tier B during import.", origin: "cinebraid" },
+      { path: "characters[0].continuityStates[0].notes", value: "[INFERRED FOR PLANNING] my own note", origin: "source" },
+    ],
+    continuity: [
+      { kind: "Character", entityId: "CHAR-ADA", entityName: "Ada", stateId: "state-wet", stateName: "Wet coat", isDefault: false, notes: "mine", inferred: false, sourceMarked: true },
+    ],
+  };
+  const shipped = vm.runInContext(`(() => {
+    const review = ${JSON.stringify(review)};
+    return {
+      cine: projectBuilderReviewColumn("CineBraid planning decisions", "inferred", cinebraidInferences(review), "none"),
+      source: projectBuilderReviewColumn("Marked in your source", "source", sourceInferences(review), "none"),
+      continuity: projectBuilderContinuityReview(review.continuity),
+    };
+  })()`, context);
+  assert.strictEqual((shipped.cine.match(/data-origin="source"/g) || []).length, 0,
+    "N13. precondition: the shipped columns do not mix origins");
+  assert(/data-continuity-origin="source"/.test(shipped.continuity),
+    "N13. precondition: and the shipped card names the source");
+
+  /* THE BREAK: the pre-correction renderer, restored verbatim — one column for both,
+     and `inferred` on any marked state. */
+  const collapsed = vm.runInContext(`(() => {
+    const review = ${JSON.stringify(review)};
+    const both = review.inferred;
+    const column = projectBuilderReviewColumn("Inferred values", "inferred", both, "none");
+    const card = review.continuity
+      .map((state) => \`<article class="\${(state.inferred || state.sourceMarked) ? "inferred" : ""}"><strong>\${esc(state.stateId)}</strong></article>\`)
+      .join("");
+    return { column, card };
+  })()`, context);
+  assert(collapsed.column.includes('data-origin="source"') && collapsed.column.includes('data-origin="cinebraid"'),
+    "N13. the break must land — one column really does carry both origins");
+  assert(/>Inferred values</.test(collapsed.column),
+    "N13. under the single heading the shipped review no longer offers, which is what the heading assertion catches");
+  assert(/class="inferred"/.test(collapsed.card),
+    "N13. and the collapsed card really does mark a source-authored state as a CineBraid inference");
+  assert(!/class="inferred"/.test(shipped.continuity),
+    "N13. while the shipped card does not — which is the assertion that separates them");
+  note("N13. the pre-correction renderer files both origins under one 'Inferred values' heading and marks a source-authored state `inferred`; the shipped one does neither, and both facts are asserted");
+}
+
+/* =========================================================================
+   N14. DECIDING OWNERSHIP AFTER THE AWAIT IS CAUGHT.
+
+   Restores the reproduced defect — `creationStartPath()` read at response time — and
+   requires the ownership assertions to catch every part of it.
+   ========================================================================= */
+async function n14PostAwaitOwnershipIsCaught() {
+  const { context } = await render("#/create", buildFixture(), { storage: { "cinebraid-creation-start-path": "cinebraid" } });
+  const run = (code) => vm.runInContext(code, context);
+  run(`setCreationDraft("cinebraid:json", "CINEBRAID"); setCreationDraft("assisted:json", "ASSISTED"); setCreationDraft("assisted:story", "SCRIPT");`);
+
+  /* THE BREAK: the pre-correction consumption, which asked which path was visible
+     AFTER the response rather than which one started the operation. */
+  run(`
+    globalThis.__legacyConsume = () => {
+      const path = creationStartPath();
+      setCreationDraft(creationDraftKeys(path).json, "");
+      setCreationDraft(creationDraftKeys(path).story, "");
+    };
+    setCreationStartPath('assisted');
+  `);
+  await run("route()");
+  run("__legacyConsume()");
+  assert.strictEqual(run(`creationDraft("assisted:json")`), "",
+    "N14. the break must land — the old consumption really does clear the visible intent");
+  assert.strictEqual(run(`creationDraft("assisted:story")`), "",
+    "N14. including a script the operation never touched");
+  assert.strictEqual(run(`creationDraft("cinebraid:json")`), "CINEBRAID",
+    "N14. and really does leave the source that was actually consumed in place");
+
+  /* The shipped consumption, given the same mid-flight switch, does none of it. */
+  run(`setCreationDraft("cinebraid:json", "CINEBRAID"); setCreationDraft("assisted:json", "ASSISTED"); setCreationDraft("assisted:story", "SCRIPT");`);
+  run(`
+    globalThis.__op = (() => { setCreationStartPath('cinebraid'); return beginCreationOperation("import"); })();
+    setCreationStartPath('assisted');
+  `);
+  await run("route()");
+  run(`settleCreationOperation(globalThis.__op); setCreationDraft(globalThis.__op.keys.json, "");`);
+  assert.strictEqual(run(`creationDraft("cinebraid:json")`), "",
+    "N14. the shipped operation consumes its OWN source");
+  assert.strictEqual(run(`creationDraft("assisted:json")`), "ASSISTED", "N14. and no other intent's document");
+  assert.strictEqual(run(`creationDraft("assisted:story")`), "SCRIPT", "N14. nor its script");
+
+  /* The structural detector: no handler may read the visible path after an await. */
+  const studio = codeOnly(read("public/creation-studio.js"));
+  for (const handler of ["window.importProjectBuilderJSON", "window.commitProjectBuilderImport", "window.readProjectBuilderFile"]) {
+    const start = studio.indexOf(handler);
+    assert(start >= 0, `N14. ${handler} must exist`);
+    const body = studio.slice(start, studio.indexOf("\n};", start));
+    const tail = body.split("await").slice(1).join("await");
+    assert(!/creationStartPath\(\)/.test(tail),
+      `N14. ${handler} must not ask which intent is visible after an await — that is the defect`);
+  }
+  /* And a re-introduction is caught by that same detector. */
+  const regressed = studio.replace("const path = operation.path;", "const path = creationStartPath();");
+  assert(regressed !== studio, "N14. the source break must land");
+  const regressedBody = regressed.slice(regressed.indexOf("window.commitProjectBuilderImport"), regressed.indexOf("\n};", regressed.indexOf("window.commitProjectBuilderImport")));
+  assert(/creationStartPath\(\)/.test(regressedBody.split("await").slice(1).join("await")),
+    "N14. and the detector sees it come back");
+  note("N14. the pre-correction consumption clears the visible intent's script and document and spares the one it consumed; the shipped operation does the opposite, and a re-introduced post-await read is caught structurally");
+}
+
 async function main() {
   await n1ParallelDerivationIsCaught();
   await n2LandingFollowsTheAuthority();
@@ -490,11 +606,19 @@ async function main() {
   await n10NullFallbackIsCaught();
   n11TextualStripIsCaught();
   n12StripAheadOfRenderIsCaught();
+  await n13CollapsedOriginIsCaught();
+  await n14PostAwaitOwnershipIsCaught();
   console.log(notes.join("\n"));
   console.log("Project entry negative controls passed: every Slice 2 assertion was made to fail against a deliberate break, and to pass again once it was undone.");
 }
 
-main().catch((error) => {
+/* A hang is a failure, not a pass — same reasoning as the positive suite. */
+const watchdog = setTimeout(() => {
+  console.error("Project entry negative controls timed out — a control never settled.");
+  process.exit(1);
+}, 120000);
+main().then(() => clearTimeout(watchdog)).catch((error) => {
+  clearTimeout(watchdog);
   console.error(error.stack || error.message || error);
   process.exitCode = 1;
 });
