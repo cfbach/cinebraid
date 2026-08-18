@@ -446,6 +446,11 @@ function createDocument() {
     "production-nav-count",
     "automation-activity-toggle",
     "automation-activity-drawer",
+    /* The visually-hidden activity live region. It is shipped chrome in
+       public/index.html, so the harness models it — without it the announcer
+       silently skips its DOM write here and a suite would report "no announcement"
+       for a build that announces correctly. */
+    "activity-live-region",
     "project-switcher-error",
   ];
   const map = new Map(ids.map((id) => [id, new FakeElement(id)]));

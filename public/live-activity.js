@@ -560,23 +560,76 @@ function v670RepaintCompactRunStatuses(only = "") {
    IT FAILS CLOSED. Anything this cannot resolve to a declared stage returns the
    existing workspace route with resolved:false, which is the shipped behaviour
    unchanged. Guessing a stage is worse than landing at the top of one. */
+/* A RUN SCOPE THAT IS NOT ALREADY A PANEL KEY, translated to one.
+
+   Only two entries, and neither is a stage list: `stills` and `blocking-only` are the
+   two shot-chain scopes the shipped automation actually writes, and each names the
+   panel its result lands in. Every OTHER scope is resolved by asking the declared stage
+   model whether the scope IS a panel it owns — see below — so this table never has to
+   grow to keep pace with the model. */
 const V670_RUN_SCOPE_PANELS = { stills: "still", "blocking-only": "blocking" };
 
+/* The entity workspace's four declared tasks, addressed by the scopes the entity-chain
+   automation writes. These are the same task ids entities.js declares in its `specs`
+   array and the same sub-view keys its coverage control writes; nothing here is a new
+   name for anything.
+
+     default-only   the run built and approved the BASE reference, so the result is a
+                    candidate decision -> Choose & approve.
+     state:<id>     the run derived ONE continuity state, so the result is that state ->
+                    Coverage & states, states view, that state selected.
+     state-chain    the run derived SEVERAL states and names none of them, so the result
+                    surface is the states view with no state singled out. Choosing one
+                    would be a guess about which of them the director wants. */
+const V670_ENTITY_SCOPE_TASKS = {
+  "default-only": { task: "review" },
+  "state-chain": { task: "coverage", view: "states" },
+};
+
 window.v670RunResultTarget = (run) => {
-  const base = { route: v641RunRoute(run), panel: "", stage: "", view: "", resolved: false };
+  const base = { route: v641RunRoute(run), kind: "", panel: "", stage: "", view: "", task: "", state: "", resolved: false };
   /* SETTLED, AND NOT ASKING FOR ATTENTION. The shipped predicates already partition
      runs exactly this way, so this asks them instead of re-reading run.status and
      becoming a second opinion about what "finished" means. A run still working, still
      waiting on the director, or sitting in needs-attention has no result to hand
      over. */
   if (!run || v670RunUnsettled(run) || v670AttentionRun(run)) return base;
-  if (run.type !== "shot-chain") return base;
-  const panel = V670_RUN_SCOPE_PANELS[String(run.scope || "")] || "";
-  if (!panel || typeof shotStageForPanel !== "function") return base;
-  const stage = shotStageForPanel(panel);
-  if (!stage) return base;
-  const view = typeof shotStagePanelView === "function" ? shotStagePanelView(panel) || "" : "";
-  return { route: base.route, panel, stage: stage.id, view, resolved: true };
+
+  if (run.type === "shot-chain") {
+    if (typeof shotStageForPanel !== "function") return base;
+    const scope = String(run.scope || "");
+    /* TWO WAYS IN, ONE VOCABULARY. Either the scope is one of the two shipped scopes
+       above, or the scope IS a panel key the declared stage model already owns — which
+       is how a motion-scoped run reaches Motion & sound without a second map and
+       without this file learning that a stage called "motion" exists. `motion`,
+       `motionCreate`, `motionAudio` and `finish` are all declared panels, so all four
+       resolve the moment a run carries one; asking shotStageForPanel is what makes that
+       the MODEL's answer rather than this file's. */
+    const panel = V670_RUN_SCOPE_PANELS[scope] || (shotStageForPanel(scope) ? scope : "");
+    if (!panel) return base;
+    const stage = shotStageForPanel(panel);
+    if (!stage) return base;
+    const view = typeof shotStagePanelView === "function" ? shotStagePanelView(panel) || "" : "";
+    return { ...base, kind: "shot-stage", panel, stage: stage.id, view, resolved: true };
+  }
+
+  if (run.type === "entity-chain") {
+    /* The entity-chain targetId is `list:id`, and both halves are needed: the list is
+       what the entity workspace keys its task selection on, and v641RunRoute has
+       already turned the same pair into the hash. A malformed target resolves nothing
+       rather than half of something. */
+    const [list, id] = String(run.targetId || "").split(":");
+    if (!list || !id) return base;
+    const scope = String(run.scope || "");
+    const perState = /^state:(.+)$/.exec(scope);
+    const target = perState ? { task: "coverage", view: "states", state: perState[1] } : V670_ENTITY_SCOPE_TASKS[scope] || null;
+    if (!target) return base;
+    return { ...base, kind: "entity-task", task: target.task, view: target.view || "", state: target.state || "", resolved: true };
+  }
+
+  /* A scene-chain run fans out across many shots and names no single result, and an
+     unknown type names nothing at all. Both keep the workspace route. */
+  return base;
 };
 
 /* The drawer's hand-off. Selects the stage that owns the result through
@@ -588,9 +641,12 @@ window.openRunResult = (runId) => {
   const run = v641RunById(runId);
   const target = v670RunResultTarget(run);
   closeGlobalAutomationActivity();
-  if (target.resolved && typeof selectGuidedPanelTask === "function" && typeof shotById === "function") {
+  if (target.kind === "shot-stage" && typeof selectGuidedPanelTask === "function" && typeof shotById === "function") {
     const shot = shotById(run.targetId);
     if (shot) selectGuidedPanelTask(shot, target.panel);
+  } else if (target.kind === "entity-task" && typeof selectEntityResultTask === "function") {
+    const [list, id] = String(run.targetId || "").split(":");
+    selectEntityResultTask(list, id, target.task, target.view, target.state);
   }
   /* NAVIGATE WHEN THE ROUTE CHANGES, RENDER WHEN IT DOES NOT.
 
@@ -965,21 +1021,59 @@ function v641UpdateActivityButton() {
   button.title = status.label;
   v670AnnounceActivityUpdate();
 }
-/* THE ONE SIGNAL O3 REPAINTS FROM.
+/* WHAT A SCREEN READER IS TOLD, in the classification vocabulary everything else uses.
+
+   v6602ActivityStatus() is the single derivation the topbar chip renders. This turns
+   the same answer into one sentence, so an announcement and the chip can never describe
+   different states - they are the same object read twice. */
+function v670ActivityAnnouncement() {
+  const status = v6602ActivityStatus();
+  return status.tone === "idle" || !status.detail ? status.label : `${status.label} · ${status.detail}`;
+}
+
+/* The last sentence SPOKEN, not the last state seen.
+
+   Activity is recomputed on every 3.5s poll and on every manual row that starts,
+   updates or finishes, and most of those recomputations produce the identical sentence.
+   Writing an unchanged string into a live region makes a screen reader say it again,
+   which turns a useful announcement into a metronome. So the region is written only
+   when the sentence itself changes. */
+let V670_LAST_ANNOUNCEMENT = null;
+
+/* THE ONE SIGNAL O3 REPAINTS FROM, AND THE ONE THING ASSISTIVE TECHNOLOGY HEARS.
 
    Every path that changes activity already ends here - the 3.5s refresh, a manual
-   activity starting, updating or finishing, a run notification, and init. Announcing
-   it means the persistent creator surfaces react to work this file already did
-   instead of running a second timer over the same data, which is the difference
-   between one poll and two.
+   activity starting, updating or finishing, a run notification, and init. It does two
+   separate things, and the separation is the point:
 
-   Deliberately an event rather than a direct call: this file must not learn what the
-   Assistant or the Terminal are, for the same reason public/app.js's route() must not
-   learn what the shell is. */
+   1. IT SPEAKS. `#activity-live-region` is a visually-hidden role="status" element
+      declared in public/index.html. It is NOT a second visual indicator and carries no
+      control: the topbar chip remains the only persistent visual surface for activity.
+      The retired floating strip used to carry aria-live="polite" as a side effect of
+      being visible, which meant deleting the visible thing silently deleted the spoken
+      one. They are now independent, and only one of them has pixels.
+
+   2. IT ANNOUNCES TO THE APP. The event is what the persistent creator surfaces repaint
+      from, instead of running a second timer over the same data.
+
+   The DOM write happens FIRST and is not guarded by the CustomEvent probe: a host
+   without CustomEvent must still be able to speak. */
 function v670AnnounceActivityUpdate() {
+  if (typeof document !== "undefined" && typeof document.getElementById === "function") {
+    const region = document.getElementById("activity-live-region");
+    if (region) {
+      let sentence = "";
+      try { sentence = v670ActivityAnnouncement(); } catch { sentence = ""; }
+      if (sentence && sentence !== V670_LAST_ANNOUNCEMENT) {
+        V670_LAST_ANNOUNCEMENT = sentence;
+        region.textContent = sentence;
+      }
+    }
+  }
   if (typeof window === "undefined" || typeof CustomEvent !== "function") return;
   try { window.dispatchEvent(new CustomEvent("cinebraid:activity-updated")); } catch {}
 }
+window.v670ActivityAnnouncement = v670ActivityAnnouncement;
 window.refreshGlobalAutomationActivity = async (force = false) => {
   if (V641_ACTIVITY_REFRESHING) return;
   /* Unsettled, not active: a run parked at an approval gate must keep being polled so

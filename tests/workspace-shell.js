@@ -486,6 +486,26 @@ function checkOverflowOwnership(sources = SOURCES) {
 
 const CENTRE_FLOOR = 900;
 
+/* Every @media block in the stylesheet, extracted by COUNTING BRACES rather than by
+   regex: a media block contains nested rules and a lazy match silently stops at the
+   first `}`, which is how a band check comes to read half a block and pass. */
+function mediaBlocks(css) {
+  const blocks = [];
+  const query = /@media\(([^)]*)\)\{/g;
+  let match;
+  while ((match = query.exec(css))) {
+    let depth = 1;
+    let index = query.lastIndex;
+    while (index < css.length && depth > 0) {
+      if (css[index] === "{") depth += 1;
+      else if (css[index] === "}") depth -= 1;
+      index += 1;
+    }
+    blocks.push({ condition: match[1], body: css.slice(query.lastIndex, index - 1) });
+  }
+  return blocks;
+}
+
 function checkRailWidthBands(sources = SOURCES) {
   const flat = flattenCss(sources.styles);
 
@@ -493,47 +513,91 @@ function checkRailWidthBands(sources = SOURCES) {
   assert.ok(navMatch, "the navigation width must be declared on #app");
   const nav = Number(navMatch[1]);
 
-  const fullMatch = flat.match(/#app\{--cb-shell-rail-width:(\d+)px\}/);
-  assert.ok(fullMatch, "the rail's full width must be declared rather than left to the var() fallback");
-  const fullRail = Number(fullMatch[1]);
+  /* THE BASE IS THE COMPACT RAIL, and that direction is load-bearing.
 
-  const compactMatch = flat.match(/@media\(max-width:(\d+)px\)\{#app\{--cb-shell-rail-width:(\d+)px\}\}/);
-  assert.ok(compactMatch, "there must be a compact rail band — a surface that vanishes on a 1440px laptop is not a persistent surface");
-  const compactAt = Number(compactMatch[1]);
-  const compactRail = Number(compactMatch[2]);
+     These bands used to be MAX-width exclusions, and independent acceptance reproduced
+     the consequence under real Chromium with Windows display scaling: at a fractional
+     viewport neither `max-width:1359px` nor anything else matched, the rail stayed
+     visible at a width it could not afford, and the centre fell to 884px. A max-width
+     exclusion cannot close that — the gap lives BETWEEN the two integers.
 
-  const hideMatch = flat.match(/@media\(max-width:(\d+)px\)\{[^@]*#workspace\[data-creator-shell="1"\]#cb-shell-rail\[data-occupied\]\{display:none\}/);
-  assert.ok(hideMatch, "there must be a width below which the rail yields entirely");
-  const hideAt = Number(hideMatch[1]);
+     Written as min-width PERMITS the gap cannot exist: every real width either
+     satisfies the permit or it does not, and the state it falls back to is the safe
+     one. So the base declaration is the NARROW rail, and each wider band is granted
+     rather than each narrower one excluded. */
+  const baseMatch = flat.match(/#app\{--cb-shell-rail-width:(\d+)px\}/);
+  assert.ok(baseMatch, "the rail's base width must be declared rather than left to the var() fallback");
+  const compactRail = Number(baseMatch[1]);
+
+  const blocks = mediaBlocks(flat);
+
+  /* ONE PERMIT GRANTS THE RAIL, and it grants the open control in the same breath. */
+  const permits = blocks.filter((block) => block.body.includes('#cb-shell-rail[data-occupied]{display:block}'));
+  assert.strictEqual(permits.length, 1,
+    `the rail must be granted by exactly one media block, found ${permits.length}`);
+  const permit = permits[0];
+  const permitAt = permit.condition.match(/^min-width:(\d+(?:\.\d+)?)px$/);
+  assert.ok(permitAt,
+    `the rail must be granted by a MIN-width permit rather than excluded by a max-width — got "${permit.condition}". `
+    + "A max-width exclusion leaves the fractional interval between two integers unclaimed, which is exactly the "
+    + "1359px failure: neither rule matched, the rail stayed, and the centre fell below its floor.");
+  const showAt = Number(permitAt[1]);
+  assert.ok(permit.body.includes('.creator-rail-toggle{display:inline-flex}'),
+    "the control that opens the rail must be granted by the SAME block that grants the rail, so the two cannot drift");
+  assert.ok(/\.cb-shell-main:has\(>#cb-shell-rail\[data-occupied\]\)\{grid-template-columns:/.test(permit.body),
+    "the rail's grid track must be granted by the same permit");
+
+  /* AND NOTHING EXCLUDES THEM, or the gap comes straight back. */
+  for (const block of blocks) {
+    if (!block.condition.startsWith("max-width")) continue;
+    assert.ok(!block.body.includes("#cb-shell-rail[data-occupied]{display:none}"),
+      `a max-width block (${block.condition}) still hides the rail; the permit must be the only rule that decides`);
+    assert.ok(!/\.creator-rail-toggle\{display:none/.test(block.body),
+      `a max-width block (${block.condition}) still hides the rail's open control`);
+  }
+
+  /* The full rail is a second permit, answering to the same arithmetic. */
+  const wide = blocks.find((block) => /#app\{--cb-shell-rail-width:(\d+)px\}/.test(block.body));
+  assert.ok(wide, "there must be a band that grants the full rail width");
+  const wideAt = wide.condition.match(/^min-width:(\d+(?:\.\d+)?)px$/);
+  assert.ok(wideAt, `the full-rail band must also be a min-width permit, got "${wide.condition}"`);
+  const fullAt = Number(wideAt[1]);
+  const fullRail = Number(wide.body.match(/#app\{--cb-shell-rail-width:(\d+)px\}/)[1]);
 
   assert.ok(compactRail < fullRail,
     `the compact rail (${compactRail}px) must be narrower than the full one (${fullRail}px)`);
 
-  /* THE RELATION, twice. Each band's threshold is the smallest viewport at which that
-     band's rail can be present and the centre still clear the floor. */
-  assert.ok(compactAt + 1 >= CENTRE_FLOOR + nav + fullRail,
-    `the full rail needs viewport >= ${CENTRE_FLOOR + nav + fullRail}px to leave a ${CENTRE_FLOOR}px centre, `
-    + `but it is kept down to ${compactAt + 1}px`);
-  assert.ok(hideAt + 1 >= CENTRE_FLOOR + nav + compactRail,
-    `the compact rail needs viewport >= ${CENTRE_FLOOR + nav + compactRail}px to leave a ${CENTRE_FLOOR}px centre, `
-    + `but it is kept down to ${hideAt + 1}px`);
+  /* THE RELATION, twice. Each permit's threshold is the smallest viewport at which that
+     band's rail can be present and the centre still clear the floor. No `+ 1` anywhere:
+     a min-width permit means the threshold IS the smallest permitted width, which is
+     what removed the integer assumption. */
+  assert.ok(showAt >= CENTRE_FLOOR + nav + compactRail,
+    `the compact rail is permitted from ${showAt}px, but it needs ${CENTRE_FLOOR + nav + compactRail}px `
+    + `to leave a ${CENTRE_FLOOR}px centre`);
+  assert.ok(fullAt >= CENTRE_FLOOR + nav + fullRail,
+    `the full rail is permitted from ${fullAt}px, but it needs ${CENTRE_FLOOR + nav + fullRail}px `
+    + `to leave a ${CENTRE_FLOOR}px centre`);
+  assert.ok(showAt < fullAt,
+    `the rail's own threshold (${showAt}) must sit below the full-width threshold (${fullAt})`);
 
-  /* The bands must meet exactly: a gap leaves a width with no declared rail state, and
-     an overlap leaves two rules disagreeing about the same viewport. */
-  assert.ok(hideAt < compactAt,
-    `the hide threshold (${hideAt}) must sit below the compact threshold (${compactAt})`);
+  /* GAPLESS, walked over the exact widths the failure was reproduced at — including the
+     fractional ones a max-width bound cannot see. */
+  for (const width of [1180, 1358, 1359, 1359.4, 1359.9, showAt, showAt + 0.5, 1366, 1440, fullAt - 0.5, fullAt, 1920]) {
+    const rail = width < showAt ? 0 : width >= fullAt ? fullRail : compactRail;
+    assert.ok(width - nav - rail >= CENTRE_FLOOR,
+      `at ${width}px the rail would leave a ${width - nav - rail}px centre, below the ${CENTRE_FLOOR}px floor`);
+  }
 
   /* And the compact band must actually be reachable, or it is decoration: 1366 and 1440
      are the widths it exists for. */
   for (const width of [1366, 1440]) {
-    assert.ok(width > hideAt && width <= compactAt,
-      `${width}px — an ordinary laptop — must fall in the compact rail band (${hideAt + 1}-${compactAt})`);
-    assert.strictEqual(width - nav - compactRail >= CENTRE_FLOOR, true,
-      `at ${width}px the compact rail would leave a ${width - nav - compactRail}px centre, below the ${CENTRE_FLOOR}px floor`);
+    assert.ok(width >= showAt && width < fullAt,
+      `${width}px — an ordinary laptop — must fall in the compact rail band (${showAt}-${fullAt - 1})`);
   }
 
-  note(`Rail bands: ${fullRail}px above ${compactAt}, ${compactRail}px down to ${hideAt + 1}, then hidden — `
-    + `every threshold is ${CENTRE_FLOOR} + ${nav} + its own rail width, and 1366/1440 keep an Assistant`);
+  note(`Rail bands: hidden below ${showAt}, ${compactRail}px from ${showAt}, ${fullRail}px from ${fullAt} — `
+    + `each threshold is ${CENTRE_FLOOR} + ${nav} + its own rail width, stated as a MIN-width permit so no `
+    + `fractional width falls between two rules, and one permit grants the rail, its track and its open control`);
 }
 
 /* ===========================================================================

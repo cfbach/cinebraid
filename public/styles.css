@@ -2454,17 +2454,15 @@ body.automation-activity-open{overflow:hidden}
    machinery, and it reads its own state from aria-expanded rather than from a second
    store. `hidden` is set by public/creator-surfaces.js wherever the creator shell is
    not present, so it never offers to open a rail that has nowhere to mount. */
-.creator-rail-toggle{display:inline-flex;align-items:center;gap:7px;padding:7px 11px;border:1px solid var(--line);border-radius:999px;background:var(--panel);color:var(--muted);cursor:pointer;font:700 10px var(--mono);letter-spacing:.08em}
+/* NOT OFFERED BY DEFAULT. The permit block in the shell section grants
+   `display:inline-flex` at exactly the width the rail itself is granted, so this control
+   can never outlive the surface it opens. */
+.creator-rail-toggle{display:none;align-items:center;gap:7px;padding:7px 11px;border:1px solid var(--line);border-radius:999px;background:var(--panel);color:var(--muted);cursor:pointer;font:700 10px var(--mono);letter-spacing:.08em}
 .creator-rail-toggle span{font-size:12px;line-height:1}
 .creator-rail-toggle b{font:inherit}
 .creator-rail-toggle:hover:not(:disabled){border-color:color-mix(in srgb,var(--acc) 45%,var(--line));color:var(--text)}
 .creator-rail-toggle.open{border-color:color-mix(in srgb,var(--acc) 55%,var(--line));background:var(--acc-soft);color:var(--text)}
 .creator-rail-toggle[hidden]{display:none!important}
-/* NOT OFFERED WHERE THE RAIL CANNOT PAINT. Below 1360px the rail is display:none
-   whatever its occupancy (see the shell responsive block), so a control that opens it
-   there would take topbar width to promise something the stylesheet refuses. The
-   breakpoint is the rail's own, deliberately, so the two cannot drift apart. */
-@media(max-width:1359px){.creator-rail-toggle{display:none!important}}
 /* THE COMPACT RUN STATUS a working page shows in place of the embedded timeline.
    One line: a state glyph, the run's own sentence, and the way into the drawer. */
 .automation-compact-status{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:10px;margin:10px 0;padding:9px 12px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
@@ -4525,12 +4523,12 @@ body[data-focused-workspace="1"] .guided-frame-body,
    the page, which is the failure mode this whole block exists to prevent. */
 .cb-shell-main{display:grid;grid-template-columns:minmax(0,1fr)}
 .cb-shell-main>#main{min-width:0}
-.cb-shell-main:has(>#cb-shell-rail[data-occupied]){grid-template-columns:minmax(0,1fr) var(--cb-shell-rail-width,340px)}
 
-/* THE RAIL'S WIDTH, declared rather than left to the fallback, because it is now two
-   numbers rather than one. See the responsive block at the foot of this section for why
-   240px exists and where each applies. */
-#app{--cb-shell-rail-width:340px}
+/* THE RAIL'S WIDTH. The BASE value is the COMPACT one, and that direction is the whole
+   correction: every rail rule is now a min-width PERMIT rather than a max-width
+   exclusion, so the narrow, safe state is what a width falls back to rather than what it
+   has to be caught by. See the permit block at the foot of this section. */
+#app{--cb-shell-rail-width:240px}
 
 /* Slot defaults: present in the document, occupying nothing, painting nothing. */
 .cb-shell-slot{display:none;min-width:0;min-height:0}
@@ -4539,7 +4537,9 @@ body[data-focused-workspace="1"] .guided-frame-body,
 /* A slot is shown only where the shell is present AND content is mounted. Both
    conditions are required: retained Assistant content must not paint itself onto
    Settings just because it survived the trip there. */
-#workspace[data-creator-shell="1"] #cb-shell-rail[data-occupied]{display:block}
+/* The rail's own display is NOT here: it is granted inside the min-width permit at the
+   foot of this section, together with its grid track and its open control, so all three
+   answer to one condition. The dock and the bar are unaffected by width and stay. */
 #workspace[data-creator-shell="1"] #cb-shell-dock[data-occupied]{display:flex}
 #workspace[data-creator-shell="1"] #cb-shell-bar[data-occupied]{display:block}
 
@@ -4609,15 +4609,27 @@ body[data-focused-workspace="1"] .guided-frame-body,
    Both thresholds are `900 + 220 + railWidth` with the rail width of the band above
    them, which is why they are 1460 and 1360 rather than round numbers. An overlay or
    toggled rail for the sub-1360 band is O4 work, not a number to fudge here. */
-@media(max-width:1459px){
-  /* Narrower, not gone. The Assistant is O3's whole visible point and 1366/1440 are
-     ordinary laptops; a surface that vanishes on the most common screen in use is not a
-     persistent surface. 240px is the measured floor, not a guess — see above. */
-  #app{--cb-shell-rail-width:240px}
+/* THE PERMIT, and there is exactly one of it.
+
+   Everything that lets the rail take width from the centre lives in this block: its
+   grid track, its own display, and the topbar control that opens it. A width either
+   satisfies this query or it does not, so "the rail may be shown" and "the control may
+   offer it" cannot drift apart into two numbers, and no fractional or device-scaled
+   width can fall between them.
+
+   1360 = 900 (centre floor) + 220 (navigation) + 240 (compact rail). It is the smallest
+   viewport at which a compact rail still leaves the centre its floor. */
+@media(min-width:1360px){
+  .cb-shell-main:has(>#cb-shell-rail[data-occupied]){grid-template-columns:minmax(0,1fr) var(--cb-shell-rail-width,240px)}
+  #workspace[data-creator-shell="1"] #cb-shell-rail[data-occupied]{display:block}
+  .creator-rail-toggle{display:inline-flex}
 }
-@media(max-width:1359px){
-  .cb-shell-main:has(>#cb-shell-rail[data-occupied]){grid-template-columns:minmax(0,1fr)}
-  #workspace[data-creator-shell="1"] #cb-shell-rail[data-occupied]{display:none}
+
+/* Wider, not different. 340px is the full rail; 1460 = 900 + 220 + 340 is the smallest
+   viewport that can afford it. Below this the base 240px stands, which is why 1366 and
+   1440 — the two most common laptop widths — keep their Assistant. */
+@media(min-width:1460px){
+  #app{--cb-shell-rail-width:340px}
 }
 @media(max-width:900px){
   #cb-shell-dock{max-height:min(42vh,260px)}

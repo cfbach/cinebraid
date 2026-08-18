@@ -94,6 +94,12 @@ const RUNS = {
   completedBlocking: () => run({ id: "run-blocking", status: "completed", scope: "blocking-only", stage: "Guide installed" }),
   completedEntity: () => run({ id: "run-entity", status: "completed", type: "entity-chain", targetId: "characters:KAI", scope: "default-only" }),
   completedScene: () => run({ id: "run-scene", status: "completed", type: "scene-chain", targetId: "L1", scope: "stills" }),
+  /* A run whose scope IS a declared panel key. `motion` is one of the three panels the
+     Motion & sound stage declares, so the stage model resolves it without this suite —
+     or the code under test — restating a stage list. */
+  completedMotion: () => run({ id: "run-motion", status: "completed", scope: "motion", stage: "Take approved" }),
+  completedEntityState: () => run({ id: "run-entity-state", status: "completed", type: "entity-chain", targetId: "characters:KAI", scope: "state:soot-heavy" }),
+  completedEntityChain: () => run({ id: "run-entity-chain", status: "completed", type: "entity-chain", targetId: "characters:KAI", scope: "state-chain" }),
 };
 
 /* ===========================================================================
@@ -113,9 +119,13 @@ async function checkOneGlobalIndicator() {
 
   /* The chip survives, and it is the ONE thing that renders the status. */
   assert.ok(index.includes('id="automation-activity-toggle"'), "the topbar activity chip must remain");
+  /* THREE OCCURRENCES, AND EXACTLY ONE OF THEM HAS PIXELS: the definition, the topbar
+     chip that renders it, and the live region that speaks it. A fourth would be a
+     second surface claiming to describe activity. */
   const statusReaders = (activity.match(/v6602ActivityStatus\(\)/g) || []).length;
-  assert.strictEqual(statusReaders, 2,
-    `v6602ActivityStatus() has ${statusReaders} readers; expected its own definition plus exactly one renderer`);
+  assert.strictEqual(statusReaders, 3,
+    `v6602ActivityStatus() has ${statusReaders} occurrences; expected its definition, the one visual chip, and the announcer`);
+  assert.ok(activity.includes("function v670ActivityAnnouncement"), "the announcer must read the shipped status derivation");
 
   /* And it still answers, in a running page, from the shipped derivation. */
   const page = await render("#/shot/L1-01", buildFixture());
@@ -131,54 +141,104 @@ async function checkOneGlobalIndicator() {
 }
 
 /* ===========================================================================
-   2. THE ARIA-LIVE ANNOUNCEMENT SURVIVED
+   2. ACTIVITY IS ACTUALLY ANNOUNCED TO ASSISTIVE TECHNOLOGY
 
-   It carried aria-live="polite" on the strip, but the ANNOUNCEMENT is a separate
-   mechanism: a `cinebraid:activity-updated` event the persistent creator surfaces
-   repaint from. Removing the strip must not have removed it.
+   The first version of this slice failed acceptance here, and the failure is worth
+   stating because the test was the thing that was wrong.
+
+   The retired floating strip carried aria-live="polite" as a side effect of being a
+   visible element. Deleting the visible thing deleted the spoken one, and this section
+   did not notice because it asserted that a JavaScript CustomEvent was dispatched. An
+   internal repaint event is not an announcement: no assistive technology can hear it,
+   and a real Chromium page contained zero aria-live nodes.
+
+   So the question is now asked of the DOM. A live region either exists, is hidden from
+   sight, and changes its text when the activity state changes — or it does not.
    =========================================================================== */
 
-async function checkAnnouncementSurvives() {
+async function checkActivityIsAnnounced() {
+  const index = read("public/index.html");
+
+  /* THE REGION IS SHIPPED CHROME, not built by JavaScript, for the reason the shell
+     regions are: an element built by script is one script can build twice. */
+  const region = index.match(/<div id="activity-live-region"[^>]*>/);
+  assert.ok(region, "public/index.html must declare a persistent activity live region");
+  const tag = region[0];
+  assert.ok(/role="status"/.test(tag), `the live region must carry role="status", got: ${tag}`);
+  assert.ok(/aria-live="polite"/.test(tag), `the live region must be polite, not assertive, got: ${tag}`);
+  assert.ok(/aria-atomic="true"/.test(tag), `the live region must be read whole, got: ${tag}`);
+  assert.ok(/class="sr-only"/.test(tag), `the live region must be visually hidden, got: ${tag}`);
+  assert.ok(!/<button|onclick=/.test(tag), "the live region must carry no control");
+
+  /* AND VISUALLY HIDDEN MEANS HIDDEN. sr-only is the shipped clip-rect helper. */
+  const srOnly = read("public/styles.css").match(/\.sr-only\{[^}]*\}/);
+  assert.ok(srOnly, "the sr-only helper must exist");
+  for (const property of ["position:absolute", "width:1px", "height:1px", "overflow:hidden"]) {
+    assert.ok(srOnly[0].includes(property), `sr-only must include ${property}, got ${srOnly[0]}`);
+  }
+
+  /* IT IS NOT A SECOND VISUAL INDICATOR. The chip stays the only one. */
+  assert.ok(!index.includes("automation-global-live-strip"), "no floating visual strip may return");
+
+  /* THE TEXT REALLY CHANGES, ON A REAL STATE TRANSITION, IN THE SHIPPED VOCABULARY. */
   const page = await render("#/shot/L1-01", buildFixture());
-  /* The render harness realm has no CustomEvent and no window.dispatchEvent, and
-     v670AnnounceActivityUpdate returns early without them — so the harness would
-     report "no announcement" for a build that announces perfectly well. Installing
-     the two is what turns this into a test of the product rather than of the harness. */
+  const spoken = () => page.context.document.getElementById("activity-live-region").textContent;
+
+  vm.runInContext(`AUTOMATION_RUNS = []; v641UpdateActivityButton();`, page.context);
+  const quiet = spoken();
+  assert.ok(/idle/i.test(quiet), `a quiet project must be announced as idle, got: ${quiet}`);
+
+  vm.runInContext(`AUTOMATION_RUNS = ${JSON.stringify([RUNS.active()])}; v641UpdateActivityButton();`, page.context);
+  const active = spoken();
+  assert.notStrictEqual(active, quiet, "starting work must change what is announced");
+  assert.ok(/active/i.test(active), `active work must be announced as active, got: ${active}`);
+
+  vm.runInContext(`AUTOMATION_RUNS = ${JSON.stringify([RUNS.waiting()])}; v641UpdateActivityButton();`, page.context);
+  const waiting = spoken();
+  assert.notStrictEqual(waiting, active, "moving to a pending approval must change what is announced");
+  assert.ok(/waiting for you/i.test(waiting), `a pending approval must be announced, got: ${waiting}`);
+
+  vm.runInContext(`AUTOMATION_RUNS = ${JSON.stringify([RUNS.failed()])}; v641UpdateActivityButton();`, page.context);
+  const attention = spoken();
+  assert.notStrictEqual(attention, waiting, "moving to needs-attention must change what is announced");
+  assert.ok(/attention/i.test(attention), `needs-attention must be announced, got: ${attention}`);
+
+  /* AND THE CHIP AGREES, because both read v6602ActivityStatus(). */
+  const chip = page.context.document.getElementById("automation-activity-toggle");
+  const chipLabel = vm.runInContext(`v6602ActivityStatus().label`, page.context);
+  assert.ok(attention.startsWith(chipLabel),
+    `the announcement must start with the same label the chip renders; chip said "${chipLabel}", region said "${attention}"`);
+  assert.ok(chip.innerHTML.length > 0, "the chip must still be the visible indicator");
+
+  /* NOT A METRONOME. Recomputing the same state must not rewrite the region — a live
+     region rewritten with an identical string is spoken again. */
+  const marker = "SENTINEL — the region was rewritten";
+  page.context.document.getElementById("activity-live-region").textContent = marker;
+  vm.runInContext(`v641UpdateActivityButton(); v641UpdateActivityButton(); v641UpdateActivityButton();`, page.context);
+  assert.strictEqual(spoken(), marker,
+    "an unchanged activity state must not rewrite the live region, or every 3.5s poll speaks again");
+
+  /* NEGATIVE CONTROL: the check above can only mean something if a real change does
+     still get through after a run of no-ops. */
+  vm.runInContext(`AUTOMATION_RUNS = []; v641UpdateActivityButton();`, page.context);
+  assert.notStrictEqual(spoken(), marker, "a real state change must still reach the region");
+
+  /* THE INTERNAL EVENT SURVIVED TOO — it is what the creator surfaces repaint from,
+     and it is a SEPARATE mechanism from the announcement rather than a substitute. */
   const heard = vm.runInContext(`
     (() => {
       const seen = [];
-      globalThis.CustomEvent = function CustomEvent(type, init) { this.type = type; this.detail = (init || {}).detail; };
+      globalThis.CustomEvent = function CustomEvent(type) { this.type = type; };
       window.CustomEvent = globalThis.CustomEvent;
       window.dispatchEvent = (event) => { seen.push(event.type); return true; };
-      AUTOMATION_RUNS = ${JSON.stringify([RUNS.active()])};
       v641UpdateActivityButton();
-      v641UpdateActivityButton();
-      /* Returned as JSON: an array built in the vm realm has a different Array
-         prototype, so deepStrictEqual fails against a host literal while printing
-         two identical-looking arrays. */
       return JSON.stringify(seen);
     })()
   `, page.context);
-  assert.strictEqual(heard, JSON.stringify(["cinebraid:activity-updated", "cinebraid:activity-updated"]),
-    `every activity update must announce itself; heard ${heard} from 2 updates`);
+  assert.strictEqual(heard, JSON.stringify(["cinebraid:activity-updated"]),
+    `the repaint event must still be dispatched alongside the announcement, got ${heard}`);
 
-  /* NEGATIVE CONTROL, inline: if the announcement stopped being emitted the check
-     above must be the thing that notices. Prove the observer can see zero. */
-  const silent = vm.runInContext(`
-    (() => {
-      const seen = [];
-      window.dispatchEvent = (event) => { seen.push(event.type); return true; };
-      v670AnnounceActivityUpdate.__silenced = true;
-      const original = globalThis.CustomEvent;
-      globalThis.CustomEvent = undefined;
-      try { v641UpdateActivityButton(); } finally { globalThis.CustomEvent = original; }
-      return JSON.stringify(seen);
-    })()
-  `, page.context);
-  assert.strictEqual(silent, "[]",
-    "the observer must be able to record silence, or the assertion above cannot fail");
-
-  note("2. v670AnnounceActivityUpdate still fires on every activity update — the strip's removal did not take the announcement with it");
+  note("2. a visually-hidden role=status region is announced on every activity transition (idle -> active -> waiting -> attention), agrees with the chip, and is not rewritten when nothing changed");
 }
 
 /* ===========================================================================
@@ -426,23 +486,108 @@ function checkPanelDefaults() {
   assert.ok(/creator-rail-toggle[^>]*aria-expanded="false"/.test(index),
     "the open control must ship reflecting a closed rail");
 
-  /* AND IT IS NOT OFFERED WHERE THE RAIL CANNOT PAINT.
+  /* ONE PERMIT, ONE NUMBER — and it is a MIN-width.
 
-     Below 1360px the shell hides the rail whatever its occupancy, so a control that
-     opens it there would take topbar width to promise something the stylesheet
-     refuses — and it really did cost width: it overflowed the 390px Production route
-     by 18px, which check:browser-real caught. The two breakpoints are asserted to be
-     the same number so they cannot drift apart. */
-  /* Flattened: both rules are written across several indented lines, and a whitespace
-     -sensitive match here would fail on reformatting rather than on drift. */
-  const styles = read("public/styles.css").replace(/\/\*[\s\S]*?\*\//g, "").replace(/\s+/g, "");
-  const railHiddenAt = styles.match(/@media\(max-width:(\d+)px\)\{[^@]*?#cb-shell-rail\[data-occupied\]\{display:none\}/);
-  assert.ok(railHiddenAt, "the shell must declare the width below which the rail cannot paint");
-  const toggleHiddenAt = styles.match(/@media\(max-width:(\d+)px\)\{\.creator-rail-toggle\{display:none!important\}\}/);
-  assert.ok(toggleHiddenAt, "the rail's open control must be hidden below some width");
-  assert.strictEqual(toggleHiddenAt[1], railHiddenAt[1],
-    `the open control hides at ${toggleHiddenAt[1]}px but the rail hides at ${railHiddenAt[1]}px; `
-    + "a control that opens a rail the stylesheet will not paint is topbar width spent on a promise that cannot be kept");
+     Independent acceptance reproduced, under real Chromium with Windows display
+     scaling, a viewport at which neither the "rail permitted" nor the "rail hidden"
+     rule matched: the rail stayed visible and the centre fell to 884px, below the
+     declared 900px floor.
+
+     The cause was that the bands were written as MAX-width exclusions.
+     `max-width:1359px` does not match a viewport of 1359.4 CSS px — which device
+     scaling produces routinely — so the rail was permitted at a width the floor
+     arithmetic forbids. Two adjacent hand-written numbers can never close that: the gap
+     lives BETWEEN the integers.
+
+     A min-width PERMIT has no such interval. Every real width either satisfies it or it
+     does not, and the un-permitted state is the safe one. And because the rail's grid
+     track, the rail's own display and the open control's display are granted by the
+     SAME block, "the rail may show" and "the control may offer it" are one condition
+     with one number rather than two that can drift. */
+  const flatStyles = read("public/styles.css").replace(/\/\*[\s\S]*?\*\//g, "").replace(/\s+/g, "");
+
+  /* Blocks are extracted by counting braces rather than by regex, because a media
+     block contains nested rules and a lazy match silently stops at the first `}`. */
+  function mediaBlocks(css) {
+    const blocks = [];
+    const query = /@media\(([^)]*)\)\{/g;
+    let match;
+    while ((match = query.exec(css))) {
+      let depth = 1;
+      let k = query.lastIndex;
+      while (k < css.length && depth > 0) {
+        if (css[k] === "{") depth += 1;
+        else if (css[k] === "}") depth -= 1;
+        k += 1;
+      }
+      blocks.push({ condition: match[1], body: css.slice(query.lastIndex, k - 1) });
+    }
+    return blocks;
+  }
+
+  const blocks = mediaBlocks(flatStyles);
+  const railPermits = blocks.filter((block) => block.body.includes('#cb-shell-rail[data-occupied]{display:block}'));
+  assert.strictEqual(railPermits.length, 1,
+    `the rail must be granted by exactly one media block, found ${railPermits.length}`);
+  const permit = railPermits[0];
+
+  const permitAt = permit.condition.match(/^min-width:(\d+(?:\.\d+)?)px$/);
+  assert.ok(permitAt,
+    `the rail must be granted by a MIN-width permit, not excluded by a max-width — got "${permit.condition}". `
+    + "A max-width exclusion leaves the fractional interval between two integers unclaimed, which is the "
+    + "1359px failure: at 1359.4 CSS px neither rule matched and the centre fell below its floor.");
+
+  assert.ok(permit.body.includes('.creator-rail-toggle{display:inline-flex}'),
+    "the rail's open control must be granted by the SAME block that grants the rail, or the two numbers can drift apart");
+  assert.ok(/\.cb-shell-main:has\(>#cb-shell-rail\[data-occupied\]\)\{grid-template-columns:/.test(permit.body),
+    "the rail's grid track must be granted by the same permit");
+
+  /* AND NOTHING EXCLUDES THEM ANY MORE. A leftover max-width rule would reintroduce
+     exactly the gap this replaced. */
+  for (const block of blocks) {
+    if (!block.condition.startsWith("max-width")) continue;
+    assert.ok(!block.body.includes("#cb-shell-rail[data-occupied]{display:none}"),
+      `a max-width block (${block.condition}) still hides the rail; the permit must be the only rule that decides`);
+    assert.ok(!/\.creator-rail-toggle\{display:none/.test(block.body),
+      `a max-width block (${block.condition}) still hides the rail's control`);
+  }
+
+  /* THE BOUNDARY IS THE FLOOR ARITHMETIC, not a round number. */
+  const CENTRE_FLOOR = 900;
+  const nav = Number((flatStyles.match(/#app\{--cb-nav-width:(\d+)px/) || [])[1]);
+  const compactRail = Number((flatStyles.match(/#app\{--cb-shell-rail-width:(\d+)px\}/) || [])[1]);
+  assert.ok(nav > 0 && compactRail > 0, `nav (${nav}) and base rail width (${compactRail}) must both be declared`);
+  assert.ok(Number(permitAt[1]) >= CENTRE_FLOOR + nav + compactRail,
+    `the rail is permitted from ${permitAt[1]}px, but ${CENTRE_FLOOR} + ${nav} + ${compactRail} = `
+    + `${CENTRE_FLOOR + nav + compactRail}px is the narrowest viewport that still leaves the centre its floor`);
+
+  /* The wider band answers to the same arithmetic with its own rail width. */
+  const wide = blocks.find((block) => /#app\{--cb-shell-rail-width:\d+px\}/.test(block.body));
+  assert.ok(wide, "there must be a band that grants the full rail width");
+  const wideAt = wide.condition.match(/^min-width:(\d+(?:\.\d+)?)px$/);
+  assert.ok(wideAt, `the full-rail band must also be a min-width permit, got "${wide.condition}"`);
+  const wideRail = Number(wide.body.match(/#app\{--cb-shell-rail-width:(\d+)px\}/)[1]);
+  assert.ok(wideRail > compactRail, `the wide band (${wideRail}px) must be wider than the base (${compactRail}px)`);
+  assert.ok(Number(wideAt[1]) >= CENTRE_FLOOR + nav + wideRail,
+    `the ${wideRail}px rail is permitted from ${wideAt[1]}px, below the ${CENTRE_FLOOR + nav + wideRail}px it needs`);
+
+  /* THE GAPLESS PROOF, walked over the exact widths the failure was reproduced at,
+     including the fractional ones a max-width bound cannot see. */
+  const permitWidth = Number(permitAt[1]);
+  const wideWidth = Number(wideAt[1]);
+  for (const width of [1180, 1358, 1359, 1359.4, 1359.9, permitWidth, permitWidth + 0.5, 1366, 1440,
+                       wideWidth - 0.5, wideWidth, 1920]) {
+    const permitted = width >= permitWidth;
+    const rail = !permitted ? 0 : width >= wideWidth ? wideRail : compactRail;
+    const centre = width - nav - rail;
+    assert.ok(centre >= CENTRE_FLOOR,
+      `at ${width}px the rail would leave a ${centre}px centre, below the ${CENTRE_FLOOR}px floor`);
+    /* And the two states are exhaustive: a width is permitted or it is not, and the
+       control follows the rail because it is in the same block. */
+    assert.strictEqual(typeof permitted, "boolean");
+  }
+  note(`   6b. rail permitted from ${permitWidth}px (= ${CENTRE_FLOOR} + ${nav} + ${compactRail}), full rail from `
+    + `${wideWidth}px; one min-width permit grants the track, the rail and its control, and no max-width rule excludes them`);
 
   /* THE RAIL IS NOT MOUNTED WHILE CLOSED, and closing takes back only OUR node. */
   const surfaces = codeOnly(read("public/creator-surfaces.js"));
@@ -464,47 +609,117 @@ function checkPanelDefaults() {
 async function checkResultHandoff() {
   const page = await render("#/shot/L1-01", buildFixture());
 
-  const target = (record) => vm.runInContext(`
+  const target = (record) => JSON.parse(vm.runInContext(`
     AUTOMATION_RUNS = ${JSON.stringify([record])};
     JSON.stringify(v670RunResultTarget(AUTOMATION_RUNS[0]));
-  `, page.context);
+  `, page.context));
 
-  /* RESOLVED: a completed still run lands on the stage that owns the frame result. */
-  const stills = JSON.parse(target(RUNS.completed()));
+  /* ---- SHOT STAGES, answered by the declared stage model ---------------------- */
+
+  const stills = target(RUNS.completed());
   assert.strictEqual(stills.resolved, true, "a completed shot still run must resolve a result target");
+  assert.strictEqual(stills.kind, "shot-stage", "a shot run must resolve a shot-stage target");
   assert.strictEqual(stills.panel, "still", "a completed still run must target the still panel");
   assert.strictEqual(stills.stage, "frames", "the still panel must resolve to the declared Frames stage");
   assert.strictEqual(stills.route, "#/shot/L1-01", "the hash must remain the shipped workspace route");
 
   /* RESOLVED, WITH A SUB-VIEW: blocking is one of the two tabs the Look stage has, so
      the target has to say which tab as well as which stage. */
-  const blocking = JSON.parse(target(RUNS.completedBlocking()));
+  const blocking = target(RUNS.completedBlocking());
   assert.strictEqual(blocking.resolved, true, "a completed blocking run must resolve a result target");
   assert.strictEqual(blocking.stage, "look", "the blocking panel must resolve to the declared Look stage");
   assert.strictEqual(blocking.view, "blocking", "the Look stage's blocking tab must be named");
 
-  /* Both answers came from the declared stage model, not from a second map. */
-  const declared = vm.runInContext(`JSON.stringify({
+  /* MOTION. Independent acceptance found this returning resolved:false while the
+     vocabulary to answer it already existed. It resolves because `motion` IS a panel
+     the stage model declares — the model answers, this file does not learn a stage
+     list, and no second map was added to make it work. */
+  const motion = target(RUNS.completedMotion());
+  assert.strictEqual(motion.resolved, true, "a completed motion run must resolve a result target");
+  assert.strictEqual(motion.kind, "shot-stage", "a motion run must resolve a shot-stage target");
+  assert.strictEqual(motion.stage, "motion", "a motion-scoped run must land on the declared Motion & sound stage");
+  assert.strictEqual(motion.route, "#/shot/L1-01", "the motion hand-off must keep the shot's own route and id");
+
+  /* Every one of those three came from shared-stage-model.js rather than from a table
+     here, which is what "do not invent a second stage map" means in practice. */
+  const declared = JSON.parse(vm.runInContext(`JSON.stringify({
     still: (shotStageForPanel("still") || {}).id,
     blocking: (shotStageForPanel("blocking") || {}).id,
     blockingView: shotStagePanelView("blocking"),
-  })`, page.context);
-  assert.deepStrictEqual(JSON.parse(declared), { still: "frames", blocking: "look", blockingView: "blocking" },
+    motion: (shotStageForPanel("motion") || {}).id,
+  })`, page.context));
+  assert.deepStrictEqual(declared, { still: "frames", blocking: "look", blockingView: "blocking", motion: "motion" },
     "the result targets must be the declared stage model's own answers");
 
-  /* FALLS BACK — and every one of these is a case where guessing would be worse. */
+  /* And the scope-that-is-a-panel path is general, not a motion special case: every
+     panel the model declares resolves to the stage that owns it. */
+  const declaredPanels = JSON.parse(vm.runInContext(
+    `JSON.stringify(SHOT_STAGES.flatMap((stage) => stage.panels))`, page.context));
+  for (const panelKey of declaredPanels) {
+    const answer = target(run({ id: `run-${panelKey}`, status: "completed", scope: panelKey }));
+    const owning = vm.runInContext(`(shotStageForPanel(${JSON.stringify(panelKey)}) || {}).id`, page.context);
+    assert.strictEqual(answer.resolved, true, `a run scoped "${panelKey}" must resolve — it is a declared panel`);
+    assert.strictEqual(answer.stage, owning, `"${panelKey}" must resolve to the stage the model says owns it`);
+  }
+
+  /* ---- ENTITY TASKS, answered by the entity workspace's own vocabulary --------- */
+
+  const entityDefault = target(RUNS.completedEntity());
+  assert.strictEqual(entityDefault.resolved, true, "a completed default-reference run must resolve a result target");
+  assert.strictEqual(entityDefault.kind, "entity-task", "an entity run must resolve an entity-task target");
+  assert.strictEqual(entityDefault.task, "review",
+    "a run that built and approved the base reference must land on Choose & approve, where the candidates are");
+  assert.strictEqual(entityDefault.route, "#/character/KAI", "the entity hand-off must keep the shipped entity route");
+
+  const entityState = target(RUNS.completedEntityState());
+  assert.strictEqual(entityState.resolved, true, "a completed per-state run must resolve a result target");
+  assert.strictEqual(entityState.task, "coverage", "a state result lives under Coverage & states");
+  assert.strictEqual(entityState.view, "states", "the coverage sub-view must be the states view");
+  assert.strictEqual(entityState.state, "soot-heavy",
+    "the state the run derived must be the state that gets selected");
+
+  const entityChain = target(RUNS.completedEntityChain());
+  assert.strictEqual(entityChain.resolved, true, "a completed state-chain run must resolve a result target");
+  assert.strictEqual(entityChain.task, "coverage", "a state chain lands under Coverage & states");
+  assert.strictEqual(entityChain.view, "states", "the states view is the surface a chain produced");
+  assert.strictEqual(entityChain.state, "",
+    "a chain derived several states and names none, so singling one out would be a guess");
+
+  /* Those task ids are the ones the entity workspace actually declares. */
+  /* The four task ids the entity workspace declares in its own `specs` array, read
+     out of entities.js rather than restated here. */
+  const specsBlock = read("public/entities.js");
+  const entityTasks = [...specsBlock.matchAll(/\{id:"(reference|review|coverage|details)",label:/g)].map((m) => m[1]);
+  assert.ok(entityTasks.length >= 4, `could not read the entity task ids from entities.js, got ${entityTasks.join(", ")}`);
+  for (const answer of [entityDefault, entityState, entityChain]) {
+    assert.ok(entityTasks.includes(answer.task),
+      `${answer.task} is not one of the entity workspace's declared tasks (${entityTasks.join(", ")})`);
+  }
+  /* And the writer they will be applied through is the entity workspace's own. */
+  const entitySource = read("public/entities.js");
+  assert.ok(entitySource.includes("function selectEntityResultTask"), "the entity result writer must exist");
+  assert.ok(/boundedWriteFocusedTask\("entity-task"/.test(entitySource),
+    "entity task selection must go through boundedWriteFocusedTask — boundedWriteState is a different namespace and is silent");
+  assert.ok(entitySource.includes('boundedWriteState("selected:entity-coverage-view"'), "the coverage sub-view must be written through the shipped key");
+  assert.ok(entitySource.includes('boundedWriteState("selected:continuity-state"'), "the selected state must be written through the shipped key");
+
+  /* ---- FALLS BACK — every one of these is a case where guessing would be worse --- */
   const fallbacks = [
     ["a run still working", RUNS.active(), "#/shot/L1-01"],
     ["a run waiting on the director", RUNS.waiting(), "#/shot/L1-01"],
     ["a run needing attention", RUNS.failed(), "#/shot/L1-01"],
-    ["a completed entity-chain run", RUNS.completedEntity(), "#/character/KAI"],
     ["a completed scene-chain run", RUNS.completedScene(), "#/scene/L1"],
-    ["a completed run with an unknown scope", run({ id: "odd", status: "completed", scope: "some-future-scope" }), "#/shot/L1-01"],
+    ["a completed shot run with an unknown scope", run({ id: "odd", status: "completed", scope: "some-future-scope" }), "#/shot/L1-01"],
+    ["a completed entity run with an unknown scope", run({ id: "odd-entity", status: "completed", type: "entity-chain", targetId: "characters:KAI", scope: "who-knows" }), "#/character/KAI"],
+    ["a completed entity run with a malformed target", run({ id: "bad-entity", status: "completed", type: "entity-chain", targetId: "characters", scope: "default-only" }), "#/character/"],
+    ["an empty per-state scope", run({ id: "empty-state", status: "completed", type: "entity-chain", targetId: "characters:KAI", scope: "state:" }), "#/character/KAI"],
   ];
   for (const [label, record, expectedRoute] of fallbacks) {
-    const answer = JSON.parse(target(record));
+    const answer = target(record);
     assert.strictEqual(answer.resolved, false, `${label} must not resolve a specific result target`);
+    assert.strictEqual(answer.kind, "", `${label} must name no target kind`);
     assert.strictEqual(answer.stage, "", `${label} must name no stage`);
+    assert.strictEqual(answer.task, "", `${label} must name no entity task`);
     assert.strictEqual(answer.route, expectedRoute,
       `${label} must keep the shipped workspace route, got ${answer.route}`);
   }
@@ -513,15 +728,29 @@ async function checkResultHandoff() {
      move anybody's workspace. */
   for (const factory of Object.values(RUNS)) {
     const record = factory();
-    const both = vm.runInContext(`
+    const both = JSON.parse(vm.runInContext(`
       AUTOMATION_RUNS = ${JSON.stringify([record])};
       JSON.stringify([v641RunRoute(AUTOMATION_RUNS[0]), v670RunResultTarget(AUTOMATION_RUNS[0]).route]);
-    `, page.context);
-    const [legacy, current] = JSON.parse(both);
-    assert.strictEqual(current, legacy, `${record.id}: the result target's route must be v641RunRoute's own answer`);
+    `, page.context));
+    assert.strictEqual(both[1], both[0], `${record.id}: the result target's route must be v641RunRoute's own answer`);
   }
 
-  note("7. completed still -> Frames stage, completed blocking -> Look/blocking tab, both from the declared stage model; six unresolvable cases keep the shipped route");
+  /* THE OPENER RENDERS WHEN THE HASH DOES NOT CHANGE. Assigning location.hash the value
+     it already holds fires no hashchange, and the selection writers deliberately do not
+     render, so without this the filmmaker gets the right stage selected and the old one
+     still on screen. */
+  const opener = codeOnly(read("public/live-activity.js"));
+  const openerBody = opener.slice(opener.indexOf("window.openRunResult"), opener.indexOf("};", opener.indexOf("window.openRunResult")));
+  assert.ok(/if \(location\.hash !== target\.route\) location\.hash = target\.route;/.test(openerBody),
+    "the opener must navigate when the route changes");
+  assert.ok(/else if \(typeof route === "function"\) route\(\);/.test(openerBody),
+    "the opener must render when the route is already current, or an unchanged hash leaves the page unmoved");
+  assert.ok(/selectGuidedPanelTask/.test(openerBody) && /selectEntityResultTask/.test(openerBody),
+    "the opener must apply the shot writer and the entity writer, each for its own target kind");
+
+  note("7. still -> Frames, blocking -> Look/blocking, motion -> Motion & sound, and every declared panel key resolves to "
+    + "its owning stage; entity default -> Choose & approve, state -> Coverage/states/that state, chain -> Coverage/states; "
+    + "eight unresolvable cases keep the shipped route");
 }
 
 /* ===========================================================================
@@ -647,7 +876,7 @@ function checkNoTruthMoved() {
 
 async function main() {
   await checkOneGlobalIndicator();
-  await checkAnnouncementSurvives();
+  await checkActivityIsAnnounced();
   await checkCompactAgreesWithDrawer();
   await checkNoEmbeddedTimelines();
   await checkCompactCarriesNoAuthority();

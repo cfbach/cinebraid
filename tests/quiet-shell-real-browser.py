@@ -98,6 +98,10 @@ GEOMETRY = """
       document.getElementById('automation-activity-toggle') ? 'topbar-chip' : null,
       document.getElementById('automation-global-live-strip') ? 'floating-strip' : null,
     ].filter(Boolean),
+    railToggleDisplay: document.getElementById('creator-rail-toggle')
+      ? getComputedStyle(document.getElementById('creator-rail-toggle')).display : 'MISSING',
+    liveRegions: [...document.querySelectorAll('[aria-live]')].map((n) => n.id || n.className || n.tagName),
+    liveText: (document.getElementById('activity-live-region') || {}).textContent,
     railPreference: (() => { try { return localStorage.getItem('cinebraid-creator-rail-open'); } catch { return 'THREW'; } })(),
     dockPreference: (() => { try { return localStorage.getItem('cinebraid-creator-terminal-collapsed'); } catch { return 'THREW'; } })(),
   };
@@ -120,6 +124,10 @@ COMPLETED_RUN = {
     }},
     "logs": [],
 }
+
+# A run parked at a human gate, used only to force an announced state transition.
+WAITING_RUN = dict(COMPLETED_RUN, id="quiet-shell-waiting", status="awaiting-review",
+                   stage="Approve Frame A")
 
 try:
     deadline = time.time() + 25
@@ -271,10 +279,8 @@ try:
         assert page.locator("#automation-global-live-strip").count() == 0, \
             "3. the retired floating activity strip must not exist in the document"
 
-        served_runs["payload"] = {
-            "projectSlug": page.evaluate("() => (typeof ACTIVE_PROJECT_SLUG !== 'undefined' && ACTIVE_PROJECT_SLUG) || ''"),
-            "runs": [COMPLETED_RUN],
-        }
+        slug = page.evaluate("() => (typeof ACTIVE_PROJECT_SLUG !== 'undefined' && ACTIVE_PROJECT_SLUG) || ''")
+        served_runs["payload"] = {"projectSlug": slug, "runs": [COMPLETED_RUN]}
         page.evaluate("() => refreshGlobalAutomationActivity(true)")
         page.wait_for_timeout(300)
 
@@ -409,6 +415,225 @@ try:
             f"7. the rail's explicit closed preference must survive a reload, got {reloaded['railPreference']!r}"
         findings.append("7. the Terminal starts collapsed on a fresh preference, expands on demand, and the explicit "
                         "expanded preference survives a reload; the rail's explicit closed preference survives it too")
+
+
+        # ---- 8. ACTIVITY IS REALLY ANNOUNCED TO ASSISTIVE TECHNOLOGY -------------------
+        # The first version of this slice failed acceptance here: the floating strip had
+        # carried aria-live="polite", removing it left the announcer dispatching only a
+        # JavaScript event, and a real Chromium page contained ZERO aria-live nodes. So
+        # this asks the rendered document, not the source.
+        aria = page.evaluate("""() => {
+            const live = [...document.querySelectorAll('[aria-live]')];
+            const region = document.getElementById('activity-live-region');
+            const box = region ? region.getBoundingClientRect() : null;
+            const style = region ? getComputedStyle(region) : null;
+            return {
+              count: live.length,
+              ids: live.map((n) => n.id || n.className || n.tagName),
+              hasRegion: !!region,
+              role: region ? region.getAttribute('role') : '',
+              polite: region ? region.getAttribute('aria-live') : '',
+              atomic: region ? region.getAttribute('aria-atomic') : '',
+              width: box ? Math.round(box.width) : -1,
+              height: box ? Math.round(box.height) : -1,
+              position: style ? style.position : '',
+              clip: style ? style.clip : '',
+              controls: region ? region.querySelectorAll('button,a,input,select,textarea').length : -1,
+              text: region ? region.textContent : '',
+            };
+        }""")
+        assert aria["hasRegion"], "8. a persistent activity live region must exist in the rendered document"
+        assert aria["count"] >= 1, f"8. the document must contain at least one aria-live node, found {aria['ids']}"
+        assert aria["role"] == "status" and aria["polite"] == "polite" and aria["atomic"] == "true", \
+            f"8. the live region must be role=status, polite and atomic, got {aria}"
+        # VISUALLY HIDDEN, measured rather than assumed.
+        assert aria["width"] <= 1 and aria["height"] <= 1, \
+            f"8. the live region must occupy no visible space, got {aria['width']}x{aria['height']}"
+        assert aria["position"] == "absolute" and "rect" in (aria["clip"] or ""), \
+            f"8. the live region must be clipped out of sight, got position={aria['position']} clip={aria['clip']}"
+        assert aria["controls"] == 0, "8. the live region must carry no control — it speaks, it is not a surface"
+
+        # AND ITS TEXT CHANGES ON A REAL TRANSITION, in the shipped vocabulary.
+        served_runs["payload"] = {"projectSlug": slug, "runs": []}
+        page.evaluate("() => { AUTOMATION_RUNS = []; v641UpdateActivityButton(); }")
+        quiet_text = page.evaluate("() => document.getElementById('activity-live-region').textContent")
+        assert "idle" in quiet_text.lower(), f"8. a quiet project must be announced as idle, got {quiet_text!r}"
+
+        page.evaluate("(run) => { AUTOMATION_RUNS = [run]; v641UpdateActivityButton(); }", WAITING_RUN)
+        waiting_text = page.evaluate("() => document.getElementById('activity-live-region').textContent")
+        assert waiting_text != quiet_text, "8. a real activity transition must change the announced text"
+        assert "waiting for you" in waiting_text.lower(), \
+            f"8. a pending approval must be announced, got {waiting_text!r}"
+
+        # AND THE CHIP IS STILL THE ONLY THING WITH PIXELS.
+        visual = page.evaluate(GEOMETRY)
+        assert visual["globalIndicators"] == ["topbar-chip"], \
+            f"8. the topbar chip must remain the only persistent visual indicator, found {visual['globalIndicators']}"
+        assert page.locator("#automation-global-live-strip").count() == 0, \
+            "8. no duplicate visual strip may return"
+        findings.append(f"8. one visually-hidden role=status live region (0x0, clipped, no controls) announced "
+                        f"{quiet_text!r} -> {waiting_text!r}; the topbar chip is still the only visual indicator")
+
+        page.evaluate("() => { AUTOMATION_RUNS = []; v641UpdateActivityButton(); }")
+
+        # ---- 9. THE RAIL BOUNDARY, ATTACKED IN A REAL BROWSER -------------------------
+        # Independent acceptance reproduced a viewport at which NEITHER the rail-permitted
+        # nor the rail-hidden rule matched: the rail stayed and the centre fell to 884px.
+        # The repair states the boundary once, as a min-width PERMIT, so there is no
+        # interval between two rules for a fractional width to fall into.
+        #
+        # First: Chromium's OWN parse of the shipped stylesheet, not a regex over it.
+        cssom = page.evaluate("""() => {
+            const out = [];
+            for (const sheet of [...document.styleSheets]) {
+              let rules;
+              try { rules = [...sheet.cssRules]; } catch { continue; }
+              for (const rule of rules) {
+                if (!(rule.media && rule.conditionText)) continue;
+                const text = rule.cssText;
+                /* ONLY THE RULES THAT DECIDE. A media block that merely lays out a CHILD
+                   of an occupied rail — `.cb-shell-main:has(...) .guided-next-action` —
+                   neither grants nor withholds the rail, and treating it as one makes
+                   this check fail on an unrelated responsive rule. */
+                const decides = /#cb-shell-rail\\[data-occupied\\]\\s*\\{[^}]*display/.test(text)
+                  || /\\.creator-rail-toggle\\s*\\{[^}]*display/.test(text)
+                  || /:has\\(\\s*>\\s*#cb-shell-rail\\[data-occupied\\]\\s*\\)\\s*\\{[^}]*grid-template-columns/.test(text);
+                if (!decides) continue;
+                out.push({
+                  condition: rule.conditionText,
+                  rail: /#cb-shell-rail\\[data-occupied\\]/.test(text),
+                  toggle: /creator-rail-toggle/.test(text),
+                  hides: /display:\\s*none/.test(text),
+                });
+              }
+            }
+            return out;
+        }""")
+        assert cssom, "9. Chromium found no media rule governing the rail; the permit must exist in the parsed sheet"
+        for rule in cssom:
+            assert "min-width" in rule["condition"] and "max-width" not in rule["condition"], \
+                (f"9. the rail is governed by \"{rule['condition']}\" — a max-width exclusion leaves the interval "
+                 "between two integers unclaimed, which is the 1359px failure")
+            assert not rule["hides"], f"9. no media rule may HIDE the rail; the permit must be the only decider ({rule})"
+        granting = [rule for rule in cssom if rule["rail"] and rule["toggle"]]
+        assert len(granting) == 1, \
+            f"9. the rail and its open control must be granted by exactly one shared condition, got {cssom}"
+        boundary = int(granting[0]["condition"].split("min-width:")[1].split("px")[0].strip())
+        findings.append(f"9. Chromium parses one min-width permit at {boundary}px granting both the rail and its "
+                        f"control; no max-width rule governs either")
+
+        # Second: real geometry across the boundary, including the exact width Codex
+        # reproduced the failure at.
+        page.evaluate("() => window.CineBraidCreatorSurfaces.openRail()")
+        swept = []
+        for width in [1180, 1358, 1359, boundary, boundary + 1, 1366, 1440, 1459, 1460, 1461, 1920]:
+            page.set_viewport_size({"width": width, "height": 900})
+            page.wait_for_timeout(90)
+            geo = page.evaluate(GEOMETRY)
+            offered = geo["railToggleDisplay"] != "none"
+            shown = geo["railShown"]
+            # NO WIDTH MAY OFFER A RAIL IT WILL NOT PAINT, OR PAINT ONE IT WILL NOT OFFER.
+            assert offered == shown, \
+                (f"9. at {width}px the open control is {'offered' if offered else 'hidden'} while the rail is "
+                 f"{'shown' if shown else 'hidden'} — one boundary, or the control outlives the surface")
+            if shown:
+                assert geo["mainWidth"] >= 900, \
+                    (f"9. at {width}px the rail left the centre {geo['mainWidth']}px, below the 900px floor "
+                     f"(rail {geo['railWidth']}px)")
+            else:
+                assert geo["railWidth"] == 0, f"9. at {width}px a hidden rail still measured {geo['railWidth']}px"
+            assert not geo["horizontalOverflow"], f"9. the page overflowed horizontally at {width}px"
+            swept.append(f"{width}:{'rail ' + str(geo['railWidth']) + 'px centre ' + str(geo['mainWidth']) + 'px' if shown else 'no rail'}")
+        # THE EXACT REPRODUCED FAILURE.
+        page.set_viewport_size({"width": 1359, "height": 900})
+        page.wait_for_timeout(90)
+        at1359 = page.evaluate(GEOMETRY)
+        assert not at1359["railShown"] and at1359["railToggleDisplay"] == "none", \
+            f"9. at 1359px both the rail and its control must be withheld, got {at1359}"
+        assert at1359["mainWidth"] >= 900, \
+            f"9. at 1359px the centre measured {at1359['mainWidth']}px, below the 900px floor — the reproduced failure"
+        findings.append("9. boundary sweep — " + "; ".join(swept) +
+                        f"; at 1359px the rail and control are both withheld and the centre holds "
+                        f"{at1359['mainWidth']}px")
+        page.set_viewport_size({"width": 1920, "height": 1080})
+        page.wait_for_timeout(120)
+        page.evaluate("() => window.CineBraidCreatorSurfaces.closeRail()")
+
+        # ---- 10. MOTION AND ENTITY RESULTS HAND OFF TOO --------------------------------
+        # Independent acceptance found both returning resolved:false and dropping the
+        # filmmaker at the top of a workspace. Both now resolve through vocabulary that
+        # already shipped: motion through the declared stage model, entity through the
+        # entity workspace's own four tasks.
+        entity_list, entity_id = page.evaluate("""() => {
+            for (const list of ['characters', 'locations', 'props', 'vehicles']) {
+              const rows = (P && P[list]) || [];
+              if (rows.length) return [list, rows[0].id];
+            }
+            return ['', ''];
+        }""")
+        assert entity_id, "10. the sandbox must carry at least one reference for the entity hand-off"
+
+        motion_run = dict(COMPLETED_RUN, id="quiet-shell-motion", scope="motion", stage="Take approved")
+        entity_run = dict(COMPLETED_RUN, id="quiet-shell-entity", type="entity-chain",
+                          targetId=f"{entity_list}:{entity_id}", scope="default-only", stage="Base reference approved")
+        served_runs["payload"] = {"projectSlug": slug, "runs": [motion_run, entity_run]}
+        page.evaluate("() => refreshGlobalAutomationActivity(true)")
+        page.wait_for_timeout(300)
+
+        resolved = page.evaluate("""() => ({
+            motion: v670RunResultTarget(v641RunById('quiet-shell-motion')),
+            entity: v670RunResultTarget(v641RunById('quiet-shell-entity')),
+        })""")
+        assert resolved["motion"]["resolved"] and resolved["motion"]["stage"] == "motion", \
+            f"10. a completed motion run must resolve the declared Motion & sound stage, got {resolved['motion']}"
+        assert resolved["entity"]["resolved"] and resolved["entity"]["task"] == "review", \
+            f"10. a completed base-reference run must resolve the candidate review task, got {resolved['entity']}"
+
+        # MOTION, clicked from the drawer, with the hash already on the shot.
+        page.evaluate("(shot) => { localStorage.setItem(`cinebraid-focused:${ACTIVE_PROJECT_SLUG}:shot-task:${shot}`, 'inputs'); route(); }", SHOT)
+        page.wait_for_selector('[data-selected-task="inputs"]', timeout=10000)
+        page.click("#automation-activity-toggle")
+        page.wait_for_selector('#automation-activity-drawer [data-run-id="quiet-shell-motion"]', timeout=10000)
+        page.locator('#automation-activity-drawer [data-run-id="quiet-shell-motion"] button', has_text="OPEN RESULT").click()
+        page.wait_for_selector('[data-selected-task="motion"]', timeout=10000)
+        motion_landed = page.evaluate("""(shot) => ({
+            hash: location.hash,
+            selected: localStorage.getItem(`cinebraid-focused:${ACTIVE_PROJECT_SLUG}:shot-task:${shot}`),
+            motionWorkspace: document.querySelectorAll('#main [data-bounded-task="motion"]').length,
+        })""", SHOT)
+        assert motion_landed["selected"] == "motion", \
+            f"10. the motion hand-off must select the Motion & sound stage, got {motion_landed['selected']!r}"
+        assert motion_landed["hash"] == f"#/shot/{SHOT}", \
+            f"10. the motion hand-off must keep the shot's own route, got {motion_landed['hash']!r}"
+
+        # ENTITY, clicked from the drawer, with the hash on a DIFFERENT workspace.
+        page.click("#automation-activity-toggle")
+        page.wait_for_selector('#automation-activity-drawer [data-run-id="quiet-shell-entity"]', timeout=10000)
+        page.locator('#automation-activity-drawer [data-run-id="quiet-shell-entity"] button', has_text="OPEN RESULT").click()
+        page.wait_for_function(
+            """(ctx) => localStorage.getItem(`cinebraid-focused:${ACTIVE_PROJECT_SLUG}:entity-task:${ctx}`) === 'review'""",
+            arg=f"{entity_list}:{entity_id}", timeout=10000)
+        # WAIT FOR THE REQUESTED THING, not for the selection that asks for it. The hash
+        # change re-renders asynchronously, so reading the DOM straight after the
+        # localStorage write reads the page the filmmaker was on a moment ago.
+        page.wait_for_selector("#main .entity-candidate-section", timeout=10000)
+        entity_landed = page.evaluate("""(ctx) => ({
+            hash: location.hash,
+            selected: localStorage.getItem(`cinebraid-focused:${ACTIVE_PROJECT_SLUG}:entity-task:${ctx}`),
+            candidateSurface: document.querySelectorAll('#main .entity-candidate-section').length,
+        })""", f"{entity_list}:{entity_id}")
+        assert entity_landed["selected"] == "review", \
+            f"10. the entity hand-off must select the candidate review task, got {entity_landed['selected']!r}"
+        assert entity_id in entity_landed["hash"], \
+            f"10. the entity hand-off must reach that reference's own route, got {entity_landed['hash']!r}"
+        assert entity_landed["candidateSurface"] >= 1, \
+            "10. the entity hand-off must actually render the candidate surface, not just record the selection"
+        findings.append(f"10. completed motion -> Motion & sound on the unchanged {motion_landed['hash']} route; "
+                        f"completed base-reference run -> {entity_landed['hash']} with the candidate review task "
+                        f"selected and its surface rendered")
+        served_runs["payload"] = {"projectSlug": slug, "runs": []}
+        page.evaluate("() => refreshGlobalAutomationActivity(true)")
+        page.wait_for_timeout(200)
 
         # ---- teardown: the page is left exactly as the shipped build renders it ---------
         final = page.evaluate("""() => ({

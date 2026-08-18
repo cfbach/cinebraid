@@ -72,8 +72,14 @@ assert(!read("public/styles.css").includes("automation-global-live-strip"), "the
 /* THE COUNT. A persistent global indicator is a control that lives in the shipped
    chrome and reads v6602ActivityStatus(). There is one, and it is the topbar chip. */
 const persistentIndicators = (activityCode.match(/v6602ActivityStatus\(\)/g) || []).length;
-assert.strictEqual(persistentIndicators, 2,
-  `v6602ActivityStatus() has ${persistentIndicators} readers; expected exactly two — its own definition and the single topbar chip that renders it`);
+assert.strictEqual(persistentIndicators, 3,
+  `v6602ActivityStatus() has ${persistentIndicators} occurrences; expected exactly three — its own definition, the single topbar chip that renders it, and the visually-hidden live region that speaks it`);
+/* THE ANNOUNCEMENT IS A REAL ARIA LIVE REGION, not a JavaScript event. The retired
+   strip carried aria-live as a side effect of being visible; the two are now separate
+   mechanisms and only one of them has pixels. */
+assert(activityCode.includes('document.getElementById("activity-live-region")'), "the announcer must write a real aria-live region");
+assert(read("public/index.html").includes('id="activity-live-region"'), "the live region must be shipped chrome, not built by script");
+assert(/aria-live="polite"[^>]*>|role="status"/.test(read("public/index.html")), "the live region must carry live-region semantics");
 assert(activityCode.includes('document.getElementById("automation-activity-toggle")'), "the topbar chip must remain the one persistent global indicator");
 
 /* THE ARIA-LIVE ANNOUNCEMENT SURVIVED THE STRIP. It was a separate mechanism that

@@ -124,31 +124,31 @@ function overflowControls() {
 
   /* The rail's width and its two thresholds are one piece of arithmetic, added in O3
      when the rail acquired content. Each control breaks the relation a different way. */
-  control("C6a the compact band is removed, so the rail vanishes on ordinary laptops", "checkRailWidthBands",
+  /* THE CONTROL THIS BATCH MOST NEEDED. Independent acceptance reproduced a viewport at
+     which neither the "rail permitted" nor the "rail hidden" rule matched, because the
+     bands were max-width exclusions and a fractional CSS pixel falls between two
+     integers. This puts the exclusion back and requires the band check to catch it. */
+  control("C6a the rail permit reverts to a max-width exclusion", "checkRailWidthBands",
     { styles: mutate(SOURCES.styles,
-        "  #app{--cb-shell-rail-width:240px}\n}",
-        "}",
+        "@media(min-width:1360px){\n  .cb-shell-main:has(>#cb-shell-rail[data-occupied])",
+        "@media(max-width:1359px){\n  .cb-shell-main:has(>#cb-shell-rail[data-occupied])",
         "C6a") },
-    "Without a compact band the rail is 340px or nothing, and nothing is what 1366px and 1440px get — the two most common laptop widths, and the ones O3's primary surface most needs to survive.");
+    "A max-width exclusion leaves the interval between two integers unclaimed: at 1359.4 CSS px, which Windows display scaling produces routinely, neither rule matches, the rail stays, and the centre falls below its 900px floor.");
 
-  control("C6b the rail stays 340px into the compact band", "checkRailWidthBands",
+  control("C6b the base rail is widened into the compact band", "checkRailWidthBands",
     { styles: mutate(SOURCES.styles, "#app{--cb-shell-rail-width:240px}", "#app{--cb-shell-rail-width:340px}", "C6b") },
-    "A 340px rail below 1460px leaves the centre under 900px, which is the band no component rule in this stylesheet was written for.");
+    "A 340px rail from 1360px leaves the centre under 900px, which is the band no component rule in this stylesheet was written for.");
 
-  /* The anchor names the RAIL's own hide rule, not the bare media query. Batch 2
-     Slice 1 added a second `@media(max-width:1359px){` for the rail's open control —
-     deliberately the same number, so the control cannot outlive the rail it opens — and
-     a bare-query anchor stopped being unique the moment it landed. */
-  control("C6c the hide threshold drops below what the compact rail can afford", "checkRailWidthBands",
+  control("C6c the permit drops below what the compact rail can afford", "checkRailWidthBands",
+    { styles: mutate(SOURCES.styles, "@media(min-width:1360px){", "@media(min-width:1180px){", "C6c") },
+    "Permitting a 240px rail from 1180px leaves a 720px centre; the threshold has to move with the rail's width, not sit where a narrower assumption left it.");
+
+  control("C6d the open control is granted separately from the rail", "checkRailWidthBands",
     { styles: mutate(SOURCES.styles,
-        '@media(max-width:1359px){\n  .cb-shell-main:has(>#cb-shell-rail[data-occupied])',
-        '@media(max-width:1179px){\n  .cb-shell-main:has(>#cb-shell-rail[data-occupied])',
-        "C6c") },
-    "Keeping a 240px rail down to 1180px leaves an 760px centre; the threshold has to move with the rail's width, not stay where an empty rail left it.");
-
-  control("C6d the full-width declaration is dropped back to a var() fallback", "checkRailWidthBands",
-    { styles: mutate(SOURCES.styles, "#app{--cb-shell-rail-width:340px}\n\n/* Slot defaults", "\n/* Slot defaults", "C6d") },
-    "With the width living only in a var() fallback there is no declaration for the compact band to override or for this arithmetic to read, and the two numbers drift apart unnoticed.");
+        "  .creator-rail-toggle{display:inline-flex}\n}",
+        "}\n@media(min-width:1180px){\n  .creator-rail-toggle{display:inline-flex}\n}",
+        "C6d") },
+    "Two hand-written numbers for one boundary is how a control comes to offer a rail the stylesheet refuses to paint — the control and the rail must answer to the same query.");
 }
 
 /* ===========================================================================
