@@ -426,6 +426,24 @@ function checkPanelDefaults() {
   assert.ok(/creator-rail-toggle[^>]*aria-expanded="false"/.test(index),
     "the open control must ship reflecting a closed rail");
 
+  /* AND IT IS NOT OFFERED WHERE THE RAIL CANNOT PAINT.
+
+     Below 1360px the shell hides the rail whatever its occupancy, so a control that
+     opens it there would take topbar width to promise something the stylesheet
+     refuses — and it really did cost width: it overflowed the 390px Production route
+     by 18px, which check:browser-real caught. The two breakpoints are asserted to be
+     the same number so they cannot drift apart. */
+  /* Flattened: both rules are written across several indented lines, and a whitespace
+     -sensitive match here would fail on reformatting rather than on drift. */
+  const styles = read("public/styles.css").replace(/\/\*[\s\S]*?\*\//g, "").replace(/\s+/g, "");
+  const railHiddenAt = styles.match(/@media\(max-width:(\d+)px\)\{[^@]*?#cb-shell-rail\[data-occupied\]\{display:none\}/);
+  assert.ok(railHiddenAt, "the shell must declare the width below which the rail cannot paint");
+  const toggleHiddenAt = styles.match(/@media\(max-width:(\d+)px\)\{\.creator-rail-toggle\{display:none!important\}\}/);
+  assert.ok(toggleHiddenAt, "the rail's open control must be hidden below some width");
+  assert.strictEqual(toggleHiddenAt[1], railHiddenAt[1],
+    `the open control hides at ${toggleHiddenAt[1]}px but the rail hides at ${railHiddenAt[1]}px; `
+    + "a control that opens a rail the stylesheet will not paint is topbar width spent on a promise that cannot be kept");
+
   /* THE RAIL IS NOT MOUNTED WHILE CLOSED, and closing takes back only OUR node. */
   const surfaces = codeOnly(read("public/creator-surfaces.js"));
   assert.ok(/if \(!railOpen\(\)\) closeRailMount\(\);/.test(surfaces),

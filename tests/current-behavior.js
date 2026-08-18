@@ -489,6 +489,8 @@ async function main() {
     "project-save-revision-race.js",
     "project-switch-safety.js",
     "provider-health.js",
+    "quiet-shell-real-browser.py",
+    "quiet-shell.js",
     "readiness-feedback.js",
     "real-browser-workflow.py",
     "reference-angle-routing.js",

@@ -2460,7 +2460,11 @@ body.automation-activity-open{overflow:hidden}
 .creator-rail-toggle:hover:not(:disabled){border-color:color-mix(in srgb,var(--acc) 45%,var(--line));color:var(--text)}
 .creator-rail-toggle.open{border-color:color-mix(in srgb,var(--acc) 55%,var(--line));background:var(--acc-soft);color:var(--text)}
 .creator-rail-toggle[hidden]{display:none!important}
-@media(max-width:900px){.creator-rail-toggle b{display:none}}
+/* NOT OFFERED WHERE THE RAIL CANNOT PAINT. Below 1360px the rail is display:none
+   whatever its occupancy (see the shell responsive block), so a control that opens it
+   there would take topbar width to promise something the stylesheet refuses. The
+   breakpoint is the rail's own, deliberately, so the two cannot drift apart. */
+@media(max-width:1359px){.creator-rail-toggle{display:none!important}}
 /* THE COMPACT RUN STATUS a working page shows in place of the embedded timeline.
    One line: a state glyph, the run's own sentence, and the way into the drawer. */
 .automation-compact-status{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:10px;margin:10px 0;padding:9px 12px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
