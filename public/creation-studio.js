@@ -4711,15 +4711,22 @@ function sourceInferences(review) {
 function projectBuilderContinuityReview(states = []) {
   if (!states.length)
     return `<p class="import-outline-empty">No default or marked continuity states require special attention.</p>`;
-  /* A state can carry BOTH — CineBraid chose it as the default while the filmmaker's
-     own delta already contained the marker. Saying only the first would quietly drop
-     the second, so both are said, and the data attribute names both. */
+  /* A state can carry BOTH — CineBraid chose it as the default while the source it
+     came from already contained matching text. Saying only the first would quietly
+     drop the second, so both are said, and the data attribute names both.
+
+     THE SOURCE WORDING CLAIMS PRESENCE, NOT INTENT. All the payload establishes is
+     `origin === "source"`: that text matching the planning marker was in the document
+     CineBraid was handed. It does NOT establish that a person meant it as an
+     operative annotation, deliberately "marked" that field, or knew the phrase means
+     anything to CineBraid — a filmmaker writing a note ABOUT the convention produces
+     exactly the same payload. So the words say what was found and stop there. */
   const origin = (state) =>
     state.inferred && state.sourceMarked ? "cinebraid+source" : state.inferred ? "cinebraid" : state.sourceMarked ? "source" : "none";
   const ORIGIN_WORDS = {
-    "cinebraid+source": ["cinebraid", "CineBraid decided this · your source also marked it"],
+    "cinebraid+source": ["cinebraid", "CineBraid decided this · source also contains planning-marker text"],
     cinebraid: ["cinebraid", "CineBraid decided this"],
-    source: ["source", "Marked in your source"],
+    source: ["source", "Planning-marker text found in source"],
   };
   const label = (state) => {
     const words = ORIGIN_WORDS[origin(state)];
@@ -4752,7 +4759,7 @@ function renderProjectBuilderReview(data) {
      whether they can press the button. The standing says that in three words, off
      the same payload the columns are rendered from. */
   const standing = projectEntryStanding(review);
-  return `<div class="project-builder-review"><header><div><span class="creation-kicker">NORMALIZED IMPORT PREVIEW</span><h3>${esc(data.title)}</h3><p>${counts.scenes} scenes · ${counts.shots} shots · ${counts.characters} characters · ${counts.locations} locations · ${counts.props} props · ${counts.vehicles || 0} vehicles</p></div><span class="creation-state ready">Exact preview locked</span></header>${projectEntryStandingMarkup(standing, projectEntryStandingReasons(review))}${projectBuilderCountComparison(review)}<div class="import-preview-proof"><span>PREVIEW SHA-256</span><code>${esc(data.previewHash)}</code><button class="ghost-btn" onclick="downloadNormalizedProjectBuilderJSON()">Download normalized JSON</button></div><div class="import-review-legend"><span class="inferred">CINEBRAID</span><span class="source">FROM YOUR SOURCE</span><span class="missing">MISSING</span><span class="removed">REMOVED</span><span>REVIEW</span></div><div class="import-review-grid">${projectBuilderReviewColumn("CineBraid planning decisions", "inferred", cinebraidInferences(review), "CineBraid inferred nothing during this import.")}${projectBuilderReviewColumn("Marked in your source", "source", sourceInferences(review), "Your source marked nothing as inferred.")}${projectBuilderReviewColumn("Source conflicts", "review", review.conflicts || [], "No [SOURCE CONFLICT] values were found.")}${projectBuilderReviewColumn("Missing before production", "missing", review.missing, "No important descriptive gaps detected.")}${projectBuilderReviewColumn("Removed during import", "removed", review.removed, "No unsupported generated or approval claims detected.")}${projectBuilderReviewColumn("Needs human review", "review", review.review, "No additional warnings.")}</div><details class="import-normalized-section" open><summary>Normalized scene and shot plan</summary>${projectBuilderOutline(review.outline)}</details><details class="import-normalized-section"><summary>Continuity states CineBraid will import</summary>${projectBuilderContinuityReview(review.continuity)}</details><div class="creation-next-step"><div><span>SAFE EXACT IMPORT</span><b>The button imports this exact normalized preview into a separate project. Editing the source JSON requires a new validation.</b></div><button class="assemble-btn" onclick="commitProjectBuilderImport()">Import this exact preview →</button></div></div>`;
+  return `<div class="project-builder-review"><header><div><span class="creation-kicker">NORMALIZED IMPORT PREVIEW</span><h3>${esc(data.title)}</h3><p>${counts.scenes} scenes · ${counts.shots} shots · ${counts.characters} characters · ${counts.locations} locations · ${counts.props} props · ${counts.vehicles || 0} vehicles</p></div><span class="creation-state ready">Exact preview locked</span></header>${projectEntryStandingMarkup(standing, projectEntryStandingReasons(review))}${projectBuilderCountComparison(review)}<div class="import-preview-proof"><span>PREVIEW SHA-256</span><code>${esc(data.previewHash)}</code><button class="ghost-btn" onclick="downloadNormalizedProjectBuilderJSON()">Download normalized JSON</button></div><div class="import-review-legend"><span class="inferred">CINEBRAID</span><span class="source">IN SOURCE</span><span class="missing">MISSING</span><span class="removed">REMOVED</span><span>REVIEW</span></div><div class="import-review-grid">${projectBuilderReviewColumn("CineBraid planning decisions", "inferred", cinebraidInferences(review), "CineBraid inferred nothing during this import.")}${projectBuilderReviewColumn("Planning-marker text found in source", "source", sourceInferences(review), "No planning-marker text was found in your source.")}${projectBuilderReviewColumn("Source conflicts", "review", review.conflicts || [], "No [SOURCE CONFLICT] values were found.")}${projectBuilderReviewColumn("Missing before production", "missing", review.missing, "No important descriptive gaps detected.")}${projectBuilderReviewColumn("Removed during import", "removed", review.removed, "No unsupported generated or approval claims detected.")}${projectBuilderReviewColumn("Needs human review", "review", review.review, "No additional warnings.")}</div><details class="import-normalized-section" open><summary>Normalized scene and shot plan</summary>${projectBuilderOutline(review.outline)}</details><details class="import-normalized-section"><summary>Continuity states CineBraid will import</summary>${projectBuilderContinuityReview(review.continuity)}</details><div class="creation-next-step"><div><span>SAFE EXACT IMPORT</span><b>The button imports this exact normalized preview into a separate project. Editing the source JSON requires a new validation.</b></div><button class="assemble-btn" onclick="commitProjectBuilderImport()">Import this exact preview →</button></div></div>`;
 }
 window.importProjectBuilderJSON = async () => {
   /* EVERYTHING THIS OPERATION NEEDS TO KNOW, DECIDED NOW. After the await below the

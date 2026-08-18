@@ -3145,8 +3145,27 @@ function importedProjectShape(raw) {
   return {
     project: normalized.project,
     warnings: [...new Set(warnings)],
+    /* PROVENANCE IS PART OF IDENTITY.
+
+       This de-duplicated on path + text alone, which is fine for two rows saying the
+       same thing and wrong for two rows saying DIFFERENT things that happen to read
+       alike. If a filmmaker's own prose at a path is byte-identical to the annotation
+       CineBraid recorded against that same path, those are two separate facts — one
+       about a decision CineBraid made, one about text that was already there — and
+       collapsing them left the field looking purely CineBraid's.
+
+       Origin joins the key. Same-origin duplicates still collapse, which is the
+       behaviour this filter was added for. */
     inferred: inferred
-      .filter((item, index, list) => list.findIndex((other) => other.path === item.path && other.value === item.value) === index)
+      .filter(
+        (item, index, list) =>
+          list.findIndex(
+            (other) =>
+              other.origin === item.origin &&
+              other.path === item.path &&
+              other.value === item.value,
+          ) === index,
+      )
       .slice(0, 100),
   };
 }

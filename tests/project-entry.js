@@ -43,6 +43,8 @@
  *   Q  the stage strip describes the rendered workspace, not the requested URL
  *   R  the review never attributes the filmmaker's own prose to CineBraid
  *   S  an async validation or import belongs to the intent that started it
+ *   T  source-origin wording claims presence, never intent, and a cross-origin
+ *      collision at one path survives de-duplication
  *
  * Section I runs the real server, because the leak was in the real normalizer and a
  * source-level claim about it would prove nothing. Everything else runs in the render
@@ -633,6 +635,7 @@ async function sectionPlanningMarkerBoundary() {
     assert(!/CineBraid (selected|added|assigned|created|kept|set) /.test(diskText),
       "O. and none of it may reach disk either");
     await sectionRenderedOriginIsTruthful(base);
+    await sectionSourceWordingAndCollisions(base);
     note(`O. ${AUTHORED_CHECKS.length} adversarial authored markers — exact, lower, mixed, leading, trailing, repeated, newline-separated, punctuated, in arrays and nested objects — all survived byte for byte through preview and onto disk, while ${generated.length} generated inferences were reported and none was written; one field carried both at once`);
   } finally {
     child.kill();
@@ -999,7 +1002,7 @@ async function sectionRenderedOriginIsTruthful(base) {
     "R. every CineBraid row is rendered, in its own column");
   assert.strictEqual((markup.source.match(/data-origin="source"/g) || []).length, fromSource.length,
     "R. and every authored row in its own");
-  assert(/CineBraid planning decisions/.test(markup.full) && /Marked in your source/.test(markup.full),
+  assert(/CineBraid planning decisions/.test(markup.full) && /Planning-marker text found in source/.test(markup.full),
     "R. the review must offer both headings");
   assert(!/>Inferred values</.test(markup.full),
     "R. and must not offer the single undifferentiated heading that hid the difference");
@@ -1007,17 +1010,17 @@ async function sectionRenderedOriginIsTruthful(base) {
   const card = (id) => (markup.continuity.match(new RegExp(`<article[^>]*>(?:(?!</article>)[\\s\\S])*?${id}[\\s\\S]*?</article>`)) || [""])[0];
   assert(/data-continuity-origin="source"/.test(card("state-wet")),
     "R. a state marked only by the source must be labelled as the source's");
-  assert(/Marked in your source/.test(card("state-wet")), "R. in words as well as in an attribute");
+  assert(/Planning-marker text found in source/.test(card("state-wet")), "R. in words as well as in an attribute");
   assert(!/CineBraid decided this<\/em>/.test(card("state-wet")),
     "R. and must never claim CineBraid decided it");
   assert(!/class="inferred"/.test(card("state-wet")),
     "R. nor carry the class that means a CineBraid inference");
   assert(/data-continuity-origin="cinebraid\+source"/.test(card("state-clean")),
     "R. a state carrying both must say both rather than the louder one");
-  assert(/your source also marked it/.test(card("state-clean")), "R. in words");
+  assert(/source also contains planning-marker text/.test(card("state-clean")), "R. in words");
   assert(/data-continuity-origin="cinebraid"/.test(card("state-default")),
     "R. and a state CineBraid really created is its own");
-  note(`R. ${cinebraid.length} CineBraid decisions and ${fromSource.length} source-authored markers render in separate columns with zero crossover; a source-only state reads "Marked in your source", a state carrying both says both, and the undifferentiated "Inferred values" heading is gone`);
+  note(`R. ${cinebraid.length} CineBraid decisions and ${fromSource.length} source-origin rows render in separate columns with zero crossover; a source-only state reads "Planning-marker text found in source", a state carrying both says both, and the undifferentiated "Inferred values" heading is gone`);
 }
 
 /* =========================================================================
@@ -1233,6 +1236,174 @@ async function sectionAsyncOwnershipAttacks() {
       "S8. the refusal is recorded for the intent that asked");
   }
   note("S. the remaining five attacks — failed validation, assisted-started validation, stale older response, four-switch churn, and a blocked import — each left every other intent's material byte-identical and every result with its own owner");
+}
+
+/* =========================================================================
+   T. WHAT THE PAYLOAD ACTUALLY PROVES, AND WHAT DEDUPLICATION MUST NOT LOSE.
+
+   T1. `origin === "source"` establishes exactly one thing: text matching the planning
+   marker was in the document CineBraid was handed. It does NOT establish that a
+   person meant it as an operative annotation, deliberately marked that field, or knew
+   the phrase means anything here — a filmmaker writing a note ABOUT the convention
+   produces an identical payload. The words must claim presence and stop.
+
+   T2. Rows were de-duplicated on path + text alone. If a filmmaker's prose at a path
+   is byte-identical to the annotation CineBraid recorded against that same path, that
+   is two facts, and collapsing them left the field looking purely CineBraid's.
+   ========================================================================= */
+const INTENT_CLAIMING_WORDS = [
+  /\bmarked in your source\b/i,
+  /\byour source (?:also )?marked\b/i,
+  /\byou marked\b/i,
+  /\bthe filmmaker (?:marked|intended|declared)\b/i,
+  /\bdeliberately\b/i,
+  /\bintended\b/i,
+  /\bannotated by\b/i,
+];
+/* The exact sentence CineBraid records when it picks a default continuity state — the
+   text a filmmaker would have to write to collide with it. */
+const COLLIDING_TEXT = "[INFERRED FOR PLANNING] CineBraid selected this as the default continuity state during import.";
+function collisionSource(title, states) {
+  return {
+    meta: { title, format: "Short film" },
+    characters: [{ id: "CHAR-ADA", name: "Ada", description: "A dock engineer.", continuityStates: states }],
+    locations: [{ id: "LOC-DOCK", name: "Dock", description: "A wet dock.", continuityStates: [{ id: "l1", name: "Night", isDefault: true, notes: "Sodium light." }] }],
+    props: [], vehicles: [],
+    scenes: [{ id: "SC-01", title: "Arrival", tier: "A", whatHappens: "Ada walks.", howItFeels: "Cold." }],
+    shots: [{ id: "L1-01", scene: "SC-01", title: "Walk", desc: "Ada walks.", positioning: "Wide.", dur: 6,
+      characters: ["CHAR-ADA"], codes: ["LOC-DOCK"],
+      keyframes: [{ id: "kf-a", label: "A", title: "Open", description: "Ada at the rail.", notes: "" }],
+      clips: [{ kind: "i2v", dur: 6, motionPrompt: "She walks." }] }],
+  };
+}
+async function sectionSourceWordingAndCollisions(base) {
+  const preview = async (project) => (await (await fetch(`${base}/api/projects/preview-import-json`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ project }),
+  })).json());
+  const NOTES_PATH = "characters[0].continuityStates[0].notes";
+
+  /* ---- T1. the words --------------------------------------------------------- */
+  const { context } = await createRender();
+  const wordsFor = (state) => vm.runInContext(
+    `projectBuilderContinuityReview([${JSON.stringify({ kind: "Character", entityId: "CHAR-ADA", entityName: "Ada", stateId: "state-x", stateName: "X", isDefault: false, notes: "prose", ...state })}])`,
+    context);
+  const sourceOnly = wordsFor({ inferred: false, sourceMarked: true });
+  const cineOnly = wordsFor({ inferred: true, sourceMarked: false });
+  const both = wordsFor({ inferred: true, sourceMarked: true });
+
+  for (const pattern of INTENT_CLAIMING_WORDS)
+    assert(!pattern.test(sourceOnly), `T1. source-origin wording must not claim intent (${pattern}): ${sourceOnly}`);
+  assert(/Planning-marker text found in source/.test(sourceOnly),
+    `T1. it must say what was found and stop, got ${sourceOnly}`);
+  assert(!/class="inferred"/.test(sourceOnly),
+    "T1. and a source-only row must never carry the class that means a CineBraid inference");
+  assert(/data-continuity-origin="source"/.test(sourceOnly), "T1. its origin is source");
+
+  assert(/CineBraid decided this/.test(cineOnly), "T1. a CineBraid decision may be described as one");
+  assert(/data-continuity-origin="cinebraid"/.test(cineOnly), "T1. and is marked so");
+
+  assert(/data-continuity-origin="cinebraid\+source"/.test(both), "T1. a combined row declares both origins");
+  assert(/CineBraid decided this/.test(both) && /source also contains planning-marker text/.test(both),
+    `T1. and separates the decision from the separate fact of matching text, got ${both}`);
+  for (const pattern of INTENT_CLAIMING_WORDS)
+    assert(!pattern.test(both), `T1. without claiming intent (${pattern}): ${both}`);
+
+  /* The column heading and the whole review, on the same rule. */
+  const full = vm.runInContext(`renderProjectBuilderReview({ title: "T", previewHash: "f".repeat(64), review: ${JSON.stringify({ counts: { scenes: 0, shots: 0, characters: 0, locations: 0, props: 0, vehicles: 0 }, sourceCounts: {}, inferred: [], conflicts: [], missing: [], removed: [], review: [], continuity: [], outline: [] })} })`, context);
+  assert(/Planning-marker text found in source/.test(full), "T1. the column says what it holds");
+  for (const pattern of INTENT_CLAIMING_WORDS)
+    assert(!pattern.test(full), `T1. and the review as a whole claims no intent (${pattern})`);
+
+  /* Every authored shape produces the same neutral treatment — the words cannot vary
+     with where in the prose the phrase happens to sit. */
+  const shapes = {
+    alone: "[INFERRED FOR PLANNING]",
+    beginning: "[INFERRED FOR PLANNING] then my own sentence.",
+    middle: "My note; [INFERRED FOR PLANNING] appears here; and continues.",
+    end: "My own sentence, ending with [INFERRED FOR PLANNING]",
+    discussing: "Literal discussion: [INFERRED FOR PLANNING] is a bracketed phrase the prompt kit asks assistants to use.",
+  };
+  for (const [shape, text] of Object.entries(shapes)) {
+    const answer = await preview(collisionSource(`Shape ${shape}`, [
+      { id: "state-a", name: "A", isDefault: true, notes: "Dry." },
+      { id: "state-b", name: "B", parentStateId: "state-a", notes: text },
+    ]));
+    const row = answer.review.inferred.find((item) => item.path === "characters[0].continuityStates[1].notes");
+    assert(row && row.origin === "source", `T1. ${shape}: must be reported as source-origin, got ${JSON.stringify(row)}`);
+    const state = answer.review.continuity.find((item) => item.stateId === "state-b");
+    assert(state && state.inferred === false && state.sourceMarked === true,
+      `T1. ${shape}: source presence must never be read as a CineBraid inference, got ${JSON.stringify(state)}`);
+    assert.strictEqual(answer.normalizedProject.characters[0].continuityStates[1].notes, text,
+      `T1. ${shape}: and the prose is untouched`);
+  }
+
+  /* ---- T2. the collision matrix ----------------------------------------------- */
+  const originsAt = (answer, at) => answer.review.inferred.filter((row) => row.path === at).map((row) => row.origin).sort();
+  const stateOf = (answer, id) => answer.review.continuity.find((row) => row.entityId === "CHAR-ADA" && row.stateId === id);
+
+  /* 1. same path, same text, both origins — the case that used to collapse. */
+  const one = await preview(collisionSource("Collide One", [
+    { id: "state-a", name: "A", notes: COLLIDING_TEXT },
+    { id: "state-b", name: "B", parentStateId: "state-a", notes: "Wet." },
+  ]));
+  assert.deepStrictEqual(originsAt(one, NOTES_PATH), ["cinebraid", "source"],
+    "T2.1. a byte-identical collision at one path must keep BOTH provenance facts");
+  assert.strictEqual(stateOf(one, "state-a").inferred, true, "T2.1. the CineBraid decision survives");
+  assert.strictEqual(stateOf(one, "state-a").sourceMarked, true, "T2.1. and so does the source presence");
+  const rendered = vm.runInContext(`projectBuilderContinuityReview(${JSON.stringify(one.review.continuity)})`, context);
+  assert(/data-continuity-origin="cinebraid\+source"/.test(rendered),
+    "T2.1. and the card renders as cinebraid+source rather than either alone");
+
+  /* 2. same path, different text, both origins. */
+  const two = await preview(collisionSource("Collide Two", [
+    { id: "state-a", name: "A", notes: "[INFERRED FOR PLANNING] a different sentence entirely." },
+    { id: "state-b", name: "B", parentStateId: "state-a", notes: "Wet." },
+  ]));
+  assert.deepStrictEqual(originsAt(two, NOTES_PATH), ["cinebraid", "source"], "T2.2. both survive when the text differs too");
+
+  /* 3 + 4. same-origin duplicates still collapse. */
+  const dupes = await preview(collisionSource("Collide Dupes", [
+    { id: "state-a", name: "A", notes: `${COLLIDING_TEXT}\n${COLLIDING_TEXT}` },
+    { id: "state-b", name: "B", parentStateId: "state-a", notes: "Wet." },
+  ]));
+  assert.deepStrictEqual(originsAt(dupes, NOTES_PATH), ["cinebraid", "source"],
+    "T2.3/4. repeated identical text at one path yields one row per origin, not four");
+
+  /* 5. source only. */
+  const five = await preview(collisionSource("Collide Five", [
+    { id: "state-a", name: "A", isDefault: true, notes: "Dry." },
+    { id: "state-b", name: "B", parentStateId: "state-a", notes: "[INFERRED FOR PLANNING] my own aside." },
+  ]));
+  assert.deepStrictEqual(originsAt(five, NOTES_PATH), [], "T2.5. a state CineBraid decided nothing about reports nothing there");
+  assert.strictEqual(stateOf(five, "state-b").inferred, false, "T2.5. and is not an inference");
+  assert.strictEqual(stateOf(five, "state-b").sourceMarked, true, "T2.5. only a source presence");
+
+  /* 6. CineBraid only. */
+  const six = await preview(collisionSource("Collide Six", [
+    { id: "state-a", name: "A", notes: "Dry." },
+    { id: "state-b", name: "B", parentStateId: "state-a", notes: "Wet." },
+  ]));
+  assert.deepStrictEqual(originsAt(six, NOTES_PATH), ["cinebraid"], "T2.6. a CineBraid decision alone");
+  assert.strictEqual(!!stateOf(six, "state-a").sourceMarked, false, "T2.6. with no source presence claimed");
+
+  /* 7. the mixed project's grouping and counts stay truthful. */
+  const mixed = one;
+  const cineRows = mixed.review.inferred.filter((row) => row.origin === "cinebraid");
+  const srcRows = mixed.review.inferred.filter((row) => row.origin === "source");
+  assert.strictEqual(cineRows.length + srcRows.length, mixed.review.inferred.length,
+    "T2.7. every row is one origin or the other, and nothing is uncounted");
+  const columns = vm.runInContext(`(() => {
+    const review = ${JSON.stringify(mixed.review)};
+    return { cine: projectBuilderReviewColumn("CineBraid planning decisions", "inferred", cinebraidInferences(review), "none"),
+             source: projectBuilderReviewColumn("Planning-marker text found in source", "source", sourceInferences(review), "none") };
+  })()`, context);
+  assert.strictEqual((columns.cine.match(/data-origin="cinebraid"/g) || []).length, cineRows.length,
+    "T2.7. the CineBraid column's count is its rows");
+  assert.strictEqual((columns.source.match(/data-origin="source"/g) || []).length, srcRows.length,
+    "T2.7. and the source column's is its own");
+  assert.strictEqual((columns.cine.match(/data-origin="source"/g) || []).length, 0, "T2.7. with no crossover");
+
+  note(`T. source-origin wording says only that planning-marker text was found — asserted against ${INTENT_CLAIMING_WORDS.length} intent-claiming phrasings and five authored shapes — and a byte-identical cross-origin collision at one path now keeps both facts (${originsAt(one, NOTES_PATH).join("+")}), rendering as cinebraid+source, while same-origin duplicates still collapse`);
 }
 
 async function main() {

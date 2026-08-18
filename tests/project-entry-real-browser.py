@@ -545,7 +545,7 @@ try:
             "  }));"
             "  return {"
             "    cine: rows(col('CineBraid planning decisions')),"
-            "    source: rows(col('Marked in your source')),"
+            "    source: rows(col('Planning-marker text found in source')),"
             "    legacyHeading: [...document.querySelectorAll('.import-review-column header span')].some((n) => n.textContent === 'Inferred values'),"
             "    cards,"
             "  };"
@@ -563,15 +563,55 @@ try:
             f"9. a state marked only by the source must be labelled the source's, got {by_id['state-wet']}"
         assert not by_id["state-wet"]["inferredClass"], \
             "9. and must not carry the class that means a CineBraid inference"
-        assert "Marked in your source" in by_id["state-wet"]["label"], \
-            f"9. in words too, got {by_id['state-wet']['label']!r}"
+        assert by_id["state-wet"]["label"] == "Planning-marker text found in source", \
+            f"9. in neutral words that claim presence and not intent, got {by_id['state-wet']['label']!r}"
+        # `origin === "source"` establishes only that matching text was in the document.
+        # Any wording beyond that asserts an intent the payload cannot support.
+        review_text = page.evaluate("() => document.querySelector('.project-builder-review').textContent.toLowerCase()")
+        for claim in ("marked in your source", "you marked", "deliberately", "intended", "annotated by"):
+            assert claim not in review_text, f"9. the review must claim no authorial intent, found {claim!r}"
         assert by_id["state-clean"]["origin"] == "cinebraid+source", \
             f"9. a state carrying both must say both, got {by_id['state-clean']}"
         assert by_id["state-default"]["origin"] == "cinebraid", \
             f"9. and one CineBraid really created is its own, got {by_id['state-default']}"
-        findings.append(f"9. {len(origins['cine'])} CineBraid rows and {len(origins['source'])} source-authored rows render in "
+        findings.append(f"9. {len(origins['cine'])} CineBraid rows and {len(origins['source'])} source-origin rows render in "
                         f"separate columns with zero crossover; state-wet reads \"{by_id['state-wet']['label']}\", state-clean "
-                        f"declares both origins, and the old 'Inferred values' heading is gone")
+                        f"declares both origins, the review claims no authorial intent anywhere, and the old 'Inferred values' "
+                        f"heading is gone")
+
+        # ---- 9b. a byte-identical cross-origin collision keeps both facts ---------------
+        # The exact sentence CineBraid records when it picks a default continuity state,
+        # written by the filmmaker into that very field. De-duplication on path + text
+        # used to keep one row and leave the state reading CineBraid-only.
+        COLLIDING = ("[INFERRED FOR PLANNING] CineBraid selected this as the default "
+                     "continuity state during import.")
+        collision = json.loads(json.dumps(ORIGIN_SOURCE))
+        collision["meta"]["title"] = "Collision Audit"
+        collision["characters"][0]["continuityStates"] = [
+            {"id": "state-a", "name": "A", "notes": COLLIDING},
+            {"id": "state-b", "name": "B", "parentStateId": "state-a", "notes": "Wet."},
+        ]
+        page.fill("#project-builder-json", json.dumps(collision))
+        page.click("#creation-cinebraid button.assemble-btn")
+        page.wait_for_function(
+            "() => { const n = document.querySelector('.project-builder-review h3');"
+            " return n && n.textContent === 'Collision Audit'; }", timeout=25000)
+        collided = page.evaluate(
+            "() => {"
+            "  const card = [...document.querySelectorAll('[data-continuity-origin]')]"
+            "    .find((c) => ((c.querySelector('strong') || {}).textContent || '').startsWith('state-a'));"
+            "  return card ? { origin: card.dataset.continuityOrigin,"
+            "    label: (card.querySelector('.continuity-origin') || {}).textContent || '' } : null;"
+            "}")
+        assert collided and collided["origin"] == "cinebraid+source", \
+            f"9b. a byte-identical collision must keep both provenance facts, got {collided}"
+        assert "CineBraid decided this" in collided["label"], \
+            f"9b. the decision is stated, got {collided['label']!r}"
+        assert "source also contains planning-marker text" in collided["label"], \
+            f"9b. and separated from the text that was already there, got {collided['label']!r}"
+        findings.append(f"9b. a filmmaker writing CineBraid's own annotation sentence into the field CineBraid then decides "
+                        f"about renders as \"{collided['origin']}\" — \"{collided['label']}\" — instead of collapsing to "
+                        f"one origin")
 
         # ---- 10. an async validation or import belongs to the intent that started it -----
         # THE RESPONSES ARE GENUINELY DELAYED, by a route handler that sleeps before it

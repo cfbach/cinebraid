@@ -25,6 +25,8 @@
  *   N12 a stage strip painted from the hash before the workspace renders is caught
  *   N13 a review that collapses the two inference origins is caught
  *   N14 deciding async ownership after the await is caught
+ *   N15 source wording that claims the filmmaker's intent is caught
+ *   N16 de-duplication that drops one side of an origin collision is caught
  *
  * Nothing here contacts a provider, spends anything, or writes to a project.
  */
@@ -593,6 +595,97 @@ async function n14PostAwaitOwnershipIsCaught() {
   note("N14. the pre-correction consumption clears the visible intent's script and document and spares the one it consumed; the shipped operation does the opposite, and a re-introduced post-await read is caught structurally");
 }
 
+/* =========================================================================
+   N15. WORDING THAT CLAIMS INTENT IS CAUGHT.
+
+   `origin === "source"` proves that text matching the planning marker was in the
+   document CineBraid was handed. It does not prove a person meant anything by it, so
+   the previous copy — "Marked in your source", "your source also marked it" — asserted
+   something the payload cannot support. This restores that copy and requires the
+   wording detector to catch it.
+   ========================================================================= */
+const INTENT_CLAIMS = [
+  /\bmarked in your source\b/i,
+  /\byour source (?:also )?marked\b/i,
+  /\byou marked\b/i,
+  /\bthe filmmaker (?:marked|intended|declared)\b/i,
+  /\bdeliberately\b/i,
+  /\bintended\b/i,
+  /\bannotated by\b/i,
+];
+const claimsIntent = (text) => INTENT_CLAIMS.some((pattern) => pattern.test(String(text)));
+async function n15IntentClaimingWordingIsCaught() {
+  const { context } = await render("#/create", buildFixture());
+  const card = (state) => vm.runInContext(
+    `projectBuilderContinuityReview([${JSON.stringify({ kind: "Character", entityId: "CHAR-ADA", entityName: "Ada", stateId: "state-x", stateName: "X", isDefault: false, notes: "prose", ...state })}])`,
+    context);
+  const sourceOnly = card({ inferred: false, sourceMarked: true });
+  const both = card({ inferred: true, sourceMarked: true });
+  assert(!claimsIntent(sourceOnly), `N15. precondition: the shipped source wording claims nothing, got ${sourceOnly}`);
+  assert(!claimsIntent(both), "N15. precondition: nor does the combined wording");
+
+  /* THE BREAK: the retired copy, restored verbatim. */
+  for (const [label, regressed] of [
+    ["source-only", `<em class="continuity-origin source">Marked in your source</em>`],
+    ["combined", `<em class="continuity-origin cinebraid">CineBraid decided this · your source also marked it</em>`],
+    ["stronger still", `<em class="continuity-origin source">You deliberately marked this field</em>`],
+  ]) {
+    assert(claimsIntent(regressed), `N15. the detector must catch "${label}": ${regressed}`);
+  }
+  /* And the neutral replacement really does state presence rather than nothing. */
+  assert(/Planning-marker text found in source/.test(sourceOnly),
+    "N15. the shipped wording must still say what was found, or it has gone silent instead of neutral");
+  assert(/source also contains planning-marker text/.test(both),
+    "N15. and the combined case must still distinguish the decision from the separate text");
+  note("N15. all three intent-claiming phrasings — the two retired ones and a stronger invention — are caught, while the shipped copy still states what was found");
+}
+
+/* =========================================================================
+   N16. DEDUPLICATION THAT DROPS AN ORIGIN IS CAUGHT.
+
+   Rows were de-duplicated on path + text. Two facts that read alike became one, and
+   the field then looked purely CineBraid's. Both filters run here on the same rows.
+   ========================================================================= */
+function n16OriginBlindDedupIsCaught() {
+  const TEXT = "[INFERRED FOR PLANNING] CineBraid selected this as the default continuity state during import.";
+  const PATH = "characters[0].continuityStates[0].notes";
+  const rows = [
+    { path: PATH, value: TEXT, origin: "cinebraid" },
+    { path: PATH, value: TEXT, origin: "source" },
+    /* A genuine same-origin duplicate, which must still collapse. */
+    { path: PATH, value: TEXT, origin: "source" },
+  ];
+  const blind = rows.filter((item, index, list) =>
+    list.findIndex((other) => other.path === item.path && other.value === item.value) === index);
+  const shipped = rows.filter((item, index, list) =>
+    list.findIndex((other) => other.origin === item.origin && other.path === item.path && other.value === item.value) === index);
+
+  assert.deepStrictEqual(blind.map((row) => row.origin), ["cinebraid"],
+    "N16. the break must land — the old filter really does discard the source fact entirely");
+  assert.deepStrictEqual(shipped.map((row) => row.origin), ["cinebraid", "source"],
+    "N16. while the shipped filter keeps both, and still collapses the same-origin duplicate");
+
+  /* The continuity flag is derived from those paths, so the drop propagates. */
+  const flagsFrom = (kept) => ({
+    inferred: kept.some((row) => row.origin === "cinebraid" && row.path === PATH),
+    sourceMarked: kept.some((row) => row.origin === "source" && row.path === PATH),
+  });
+  assert.deepStrictEqual(flagsFrom(blind), { inferred: true, sourceMarked: false },
+    "N16. and really does leave the state looking purely CineBraid's");
+  assert.deepStrictEqual(flagsFrom(shipped), { inferred: true, sourceMarked: true },
+    "N16. which is exactly what the cinebraid+source assertion catches");
+
+  /* The shipped filter is the one in the product, not a lookalike written here. */
+  const server = codeOnly(read("server.js"));
+  assert(/other\.origin === item\.origin &&\s*other\.path === item\.path &&\s*other\.value === item\.value/.test(server),
+    "N16. the shipped de-duplication must key on origin, path and text together");
+  const regressed = server.replace(/other\.origin === item\.origin &&\s*/, "");
+  assert(regressed !== server, "N16. the source break must land");
+  assert(!/other\.origin === item\.origin/.test(regressed),
+    "N16. and removing origin from the key is visible to that same check");
+  note("N16. the origin-blind filter discards the source fact and leaves the state reading CineBraid-only; the shipped one keeps both facts, still collapses same-origin duplicates, and its key is pinned in the product source");
+}
+
 async function main() {
   await n1ParallelDerivationIsCaught();
   await n2LandingFollowsTheAuthority();
@@ -608,6 +701,8 @@ async function main() {
   n12StripAheadOfRenderIsCaught();
   await n13CollapsedOriginIsCaught();
   await n14PostAwaitOwnershipIsCaught();
+  await n15IntentClaimingWordingIsCaught();
+  n16OriginBlindDedupIsCaught();
   console.log(notes.join("\n"));
   console.log("Project entry negative controls passed: every Slice 2 assertion was made to fail against a deliberate break, and to pass again once it was undone.");
 }
