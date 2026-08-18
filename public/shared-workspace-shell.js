@@ -249,10 +249,68 @@
     return { present: true, view, reason: "" };
   }
 
+  /* ==========================================================================
+     THE RAIL'S FLOOR, AND WHY IT IS DECIDED HERE RATHER THAN IN A MEDIA QUERY.
+
+     900px is the viewport width the app's own component rules stack at, so a centre
+     below it enters a band nothing was laid out for. Everything about the rail's
+     visibility exists to protect that number.
+
+     It used to be protected by width bands in public/styles.css. Media queries answer
+     to the VIEWPORT, and a classic vertical scrollbar consumes layout width the
+     viewport still counts: headed Windows Chromium at a nominal 1360px viewport matched
+     `min-width:1360px`, gave the rail 240px, and left the centre 884.8px. Headless
+     Chromium uses overlay scrollbars, so no source-level invariant and no headless
+     suite could see it.
+
+     So the decision is made from a MEASURED region width instead, by this pure
+     function, and public/styles.css consumes the answer rather than deriving one. The
+     module that declares the shell declares the rule; the runtime measures; CSS paints.
+
+     THE HYSTERESIS IS NOT A FUDGE FACTOR. Growing into a rail — or showing one at all —
+     requires enough room for the centre floor PLUS whatever a scrollbar would consume,
+     because the narrower centre may reflow taller and bring one on. Keeping a rail
+     already shown requires only the floor itself. Without that band the rail could
+     appear, summon a scrollbar, fall below the floor, disappear, release the scrollbar
+     and appear again. The band is the scrollbar width the runtime actually measured —
+     zero on a system with overlay scrollbars — never a constant. */
+  const SHELL_CENTRE_FLOOR = 900;
+
+  /* Ascending, and each is a width the Assistant was verified to read at: 240px is the
+     measured floor for its own content, 340px is the comfortable one. */
+  const SHELL_RAIL_WIDTHS = deepFreeze([240, 340]);
+
+  /* regionWidth  the measured inline size of the Main region — what the centre and the
+                  rail actually share, already net of the navigation and of any
+                  scrollbar the document is consuming.
+     allowance    the scrollbar width the runtime measured, or 0 where scrollbars
+                  overlay.
+     current      the rail width in force right now, so a rail already shown is judged
+                  against the floor rather than against the floor plus the band.
+
+     Returns the rail width that may be exposed, or 0 for "not at this width". */
+  function railWidthForRegion(regionWidth, allowance = 0, current = 0) {
+    const region = Number(regionWidth);
+    if (!Number.isFinite(region) || region <= 0) return 0;
+    const band = Math.max(0, Number(allowance) || 0);
+    const held = SHELL_RAIL_WIDTHS.includes(Number(current)) ? Number(current) : 0;
+    for (let index = SHELL_RAIL_WIDTHS.length - 1; index >= 0; index -= 1) {
+      const width = SHELL_RAIL_WIDTHS[index];
+      /* Already at this width: it only has to still be true. Otherwise it has to be
+         true with room to spare for a scrollbar that is not there yet. */
+      const required = SHELL_CENTRE_FLOOR + width + (held === width ? 0 : band);
+      if (region >= required) return width;
+    }
+    return 0;
+  }
+
   return {
     SHELL_SLOTS,
     SHELL_SLOT_NAMES,
     MOUNTABLE_SLOT_NAMES,
+    SHELL_CENTRE_FLOOR,
+    SHELL_RAIL_WIDTHS,
+    railWidthForRegion,
     CREATOR_SHELL_VIEWS,
     EXCLUDED_SHELL_VIEWS,
     EXCLUDED_SHELL_VIEW_NAMES,

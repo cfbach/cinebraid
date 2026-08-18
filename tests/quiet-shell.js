@@ -99,6 +99,7 @@ const RUNS = {
      or the code under test — restating a stage list. */
   completedMotion: () => run({ id: "run-motion", status: "completed", scope: "motion", stage: "Take approved" }),
   completedEntityState: () => run({ id: "run-entity-state", status: "completed", type: "entity-chain", targetId: "characters:KAI", scope: "state:soot-heavy" }),
+  completedEntityDefaultState: () => run({ id: "run-entity-default-state", status: "completed", type: "entity-chain", targetId: "characters:KAI", scope: "state:state-default" }),
   completedEntityChain: () => run({ id: "run-entity-chain", status: "completed", type: "entity-chain", targetId: "characters:KAI", scope: "state-chain" }),
 };
 
@@ -486,28 +487,24 @@ function checkPanelDefaults() {
   assert.ok(/creator-rail-toggle[^>]*aria-expanded="false"/.test(index),
     "the open control must ship reflecting a closed rail");
 
-  /* ONE PERMIT, ONE NUMBER — and it is a MIN-width.
+  /* ONE ANSWER, AND IT IS MEASURED RATHER THAN INFERRED FROM THE VIEWPORT.
 
-     Independent acceptance reproduced, under real Chromium with Windows display
-     scaling, a viewport at which neither the "rail permitted" nor the "rail hidden"
-     rule matched: the rail stayed visible and the centre fell to 884px, below the
-     declared 900px floor.
+     This started as a max-width exclusion, became a min-width permit when acceptance
+     found a fractional gap, and is now not a width band at all — because headed Windows
+     Chromium found the deeper fault: a media query answers to the VIEWPORT, and a
+     classic vertical scrollbar consumes layout width the viewport still counts. At a
+     nominal 1360px viewport `min-width:1360px` matched, the rail took 240px, and the
+     centre rendered 884.8px. Headless Chromium overlays its scrollbars, so no headless
+     suite and no source-level media-query invariant could ever have seen it.
 
-     The cause was that the bands were written as MAX-width exclusions.
-     `max-width:1359px` does not match a viewport of 1359.4 CSS px — which device
-     scaling produces routinely — so the rail was permitted at a width the floor
-     arithmetic forbids. Two adjacent hand-written numbers can never close that: the gap
-     lives BETWEEN the integers.
-
-     A min-width PERMIT has no such interval. Every real width either satisfies it or it
-     does not, and the un-permitted state is the safe one. And because the rail's grid
-     track, the rail's own display and the open control's display are granted by the
-     SAME block, "the rail may show" and "the control may offer it" are one condition
-     with one number rather than two that can drift. */
+     Adding 15px would have been a magic number: wrong by 15px wherever scrollbars
+     overlay, and wrong again wherever they are a different width. So the quantity being
+     tested changed. public/workspace-shell.js measures the Main region — the width the
+     centre and the rail actually share, already net of the navigation and of whatever
+     the scrollbar took — and publishes ONE answer as `#workspace[data-rail-width]` plus
+     `--cb-shell-rail-width`. CSS paints that answer and derives nothing. */
   const flatStyles = read("public/styles.css").replace(/\/\*[\s\S]*?\*\//g, "").replace(/\s+/g, "");
 
-  /* Blocks are extracted by counting braces rather than by regex, because a media
-     block contains nested rules and a lazy match silently stops at the first `}`. */
   function mediaBlocks(css) {
     const blocks = [];
     const query = /@media\(([^)]*)\)\{/g;
@@ -525,69 +522,95 @@ function checkPanelDefaults() {
     return blocks;
   }
 
-  const blocks = mediaBlocks(flatStyles);
-  const railPermits = blocks.filter((block) => block.body.includes('#cb-shell-rail[data-occupied]{display:block}'));
-  assert.strictEqual(railPermits.length, 1,
-    `the rail must be granted by exactly one media block, found ${railPermits.length}`);
-  const permit = railPermits[0];
-
-  const permitAt = permit.condition.match(/^min-width:(\d+(?:\.\d+)?)px$/);
-  assert.ok(permitAt,
-    `the rail must be granted by a MIN-width permit, not excluded by a max-width — got "${permit.condition}". `
-    + "A max-width exclusion leaves the fractional interval between two integers unclaimed, which is the "
-    + "1359px failure: at 1359.4 CSS px neither rule matched and the centre fell below its floor.");
-
-  assert.ok(permit.body.includes('.creator-rail-toggle{display:inline-flex}'),
-    "the rail's open control must be granted by the SAME block that grants the rail, or the two numbers can drift apart");
-  assert.ok(/\.cb-shell-main:has\(>#cb-shell-rail\[data-occupied\]\)\{grid-template-columns:/.test(permit.body),
-    "the rail's grid track must be granted by the same permit");
-
-  /* AND NOTHING EXCLUDES THEM ANY MORE. A leftover max-width rule would reintroduce
-     exactly the gap this replaced. */
-  for (const block of blocks) {
-    if (!block.condition.startsWith("max-width")) continue;
-    assert.ok(!block.body.includes("#cb-shell-rail[data-occupied]{display:none}"),
-      `a max-width block (${block.condition}) still hides the rail; the permit must be the only rule that decides`);
-    assert.ok(!/\.creator-rail-toggle\{display:none/.test(block.body),
-      `a max-width block (${block.condition}) still hides the rail's control`);
+  /* THE THREE GRANTS ALL READ THE SAME ATTRIBUTE. */
+  for (const [what, rule] of [
+    ["the rail's own display", '#workspace[data-rail-width][data-creator-shell="1"]#cb-shell-rail[data-occupied]{display:block}'],
+    ["the rail's grid track", '#workspace[data-rail-width].cb-shell-main:has(>#cb-shell-rail[data-occupied]){grid-template-columns:'],
+    ["the open control", '#workspace[data-rail-width].creator-rail-toggle{display:inline-flex}'],
+  ]) {
+    assert.ok(flatStyles.includes(rule),
+      `${what} must be granted by the measured #workspace[data-rail-width], not by a width band`);
   }
 
-  /* THE BOUNDARY IS THE FLOOR ARITHMETIC, not a round number. */
-  const CENTRE_FLOOR = 900;
-  const nav = Number((flatStyles.match(/#app\{--cb-nav-width:(\d+)px/) || [])[1]);
-  const compactRail = Number((flatStyles.match(/#app\{--cb-shell-rail-width:(\d+)px\}/) || [])[1]);
-  assert.ok(nav > 0 && compactRail > 0, `nav (${nav}) and base rail width (${compactRail}) must both be declared`);
-  assert.ok(Number(permitAt[1]) >= CENTRE_FLOOR + nav + compactRail,
-    `the rail is permitted from ${permitAt[1]}px, but ${CENTRE_FLOOR} + ${nav} + ${compactRail} = `
-    + `${CENTRE_FLOOR + nav + compactRail}px is the narrowest viewport that still leaves the centre its floor`);
-
-  /* The wider band answers to the same arithmetic with its own rail width. */
-  const wide = blocks.find((block) => /#app\{--cb-shell-rail-width:\d+px\}/.test(block.body));
-  assert.ok(wide, "there must be a band that grants the full rail width");
-  const wideAt = wide.condition.match(/^min-width:(\d+(?:\.\d+)?)px$/);
-  assert.ok(wideAt, `the full-rail band must also be a min-width permit, got "${wide.condition}"`);
-  const wideRail = Number(wide.body.match(/#app\{--cb-shell-rail-width:(\d+)px\}/)[1]);
-  assert.ok(wideRail > compactRail, `the wide band (${wideRail}px) must be wider than the base (${compactRail}px)`);
-  assert.ok(Number(wideAt[1]) >= CENTRE_FLOOR + nav + wideRail,
-    `the ${wideRail}px rail is permitted from ${wideAt[1]}px, below the ${CENTRE_FLOOR + nav + wideRail}px it needs`);
-
-  /* THE GAPLESS PROOF, walked over the exact widths the failure was reproduced at,
-     including the fractional ones a max-width bound cannot see. */
-  const permitWidth = Number(permitAt[1]);
-  const wideWidth = Number(wideAt[1]);
-  for (const width of [1180, 1358, 1359, 1359.4, 1359.9, permitWidth, permitWidth + 0.5, 1366, 1440,
-                       wideWidth - 0.5, wideWidth, 1920]) {
-    const permitted = width >= permitWidth;
-    const rail = !permitted ? 0 : width >= wideWidth ? wideRail : compactRail;
-    const centre = width - nav - rail;
-    assert.ok(centre >= CENTRE_FLOOR,
-      `at ${width}px the rail would leave a ${centre}px centre, below the ${CENTRE_FLOOR}px floor`);
-    /* And the two states are exhaustive: a width is permitted or it is not, and the
-       control follows the rail because it is in the same block. */
-    assert.strictEqual(typeof permitted, "boolean");
+  /* AND NO MEDIA QUERY DECIDES ANY OF THEM. A width band cannot see the scrollbar, so a
+     surviving one would reintroduce exactly the defect this replaced. */
+  for (const block of mediaBlocks(flatStyles)) {
+    assert.ok(!/#cb-shell-rail\[data-occupied\]\{display:/.test(block.body),
+      `a media block (${block.condition}) still decides whether the rail paints; only the measured attribute may`);
+    assert.ok(!/\.creator-rail-toggle\{display:/.test(block.body),
+      `a media block (${block.condition}) still decides whether the rail's control is offered`);
+    assert.ok(!/--cb-shell-rail-width:/.test(block.body),
+      `a media block (${block.condition}) still sets the rail's width; the runtime publishes it from measurement`);
   }
-  note(`   6b. rail permitted from ${permitWidth}px (= ${CENTRE_FLOOR} + ${nav} + ${compactRail}), full rail from `
-    + `${wideWidth}px; one min-width permit grants the track, the rail and its control, and no max-width rule excludes them`);
+  assert.ok(!/#app\{--cb-shell-rail-width:\d/.test(flatStyles),
+    "the stylesheet must not declare a rail width at all — a value here is a second opinion about a measured quantity");
+
+  /* ---- THE ARITHMETIC, DRIVEN EXHAUSTIVELY ------------------------------------
+     railWidthForRegion is pure and lives in the module that declares the shell, so the
+     property that actually matters — the centre never falls below its floor — can be
+     driven over far more cases than a browser could visit, including the fractional
+     region widths a device-scaled viewport produces and the scrollbar widths three
+     platforms use. */
+  const shell = require("../public/shared-workspace-shell.js");
+  const FLOOR = shell.SHELL_CENTRE_FLOOR;
+  const WIDTHS = [...shell.SHELL_RAIL_WIDTHS];
+  assert.strictEqual(FLOOR, 900, "the centre floor must remain the declared 900px");
+  assert.deepStrictEqual(WIDTHS, [240, 340], "the two declared rail widths must be unchanged");
+
+  const ALLOWANCES = [0, 15, 15.2, 16, 17, 20];
+  let considered = 0;
+  let everShown = 0;
+  for (const allowance of ALLOWANCES) {
+    for (let region = 600; region <= 1800; region += 0.4) {
+      for (const held of [0, ...WIDTHS]) {
+        const width = shell.railWidthForRegion(region, allowance, held);
+        considered += 1;
+        if (width === 0) continue;
+        everShown += 1;
+        assert.ok(WIDTHS.includes(width), `railWidthForRegion returned ${width}, which is not a declared rail width`);
+        /* THE CONTRACT. Whatever the scrollbar took is already out of `region`, so this
+           is the real centre the filmmaker gets. */
+        assert.ok(region - width >= FLOOR,
+          `at region ${region.toFixed(1)}px (allowance ${allowance}, held ${held}) a ${width}px rail would leave `
+          + `${(region - width).toFixed(1)}px, below the ${FLOOR}px floor`);
+        /* AND TURNING IT ON LEAVES ROOM FOR A SCROLLBAR THAT IS NOT THERE YET. */
+        if (held !== width) {
+          assert.ok(region - width >= FLOOR + allowance,
+            `at region ${region.toFixed(1)}px a ${width}px rail was newly permitted with only `
+            + `${(region - width - FLOOR).toFixed(1)}px of headroom for a ${allowance}px scrollbar`);
+        }
+      }
+    }
+  }
+  assert.ok(everShown > 1000, `the sweep must actually exercise the rail being shown, got ${everShown} cases`);
+
+  /* NO OSCILLATION. A rail already at a width may not be revoked at a region width that
+     would have granted it, or it flickers as a scrollbar comes and goes. */
+  for (const allowance of ALLOWANCES) {
+    for (let region = 900; region <= 1800; region += 0.4) {
+      const fresh = shell.railWidthForRegion(region, allowance, 0);
+      if (!fresh) continue;
+      assert.ok(shell.railWidthForRegion(region, allowance, fresh) >= fresh,
+        `a ${fresh}px rail granted at region ${region.toFixed(1)}px was revoked while still held — that flickers`);
+    }
+  }
+
+  /* AND IT REFUSES WHAT IT CANNOT MEASURE. */
+  for (const bad of [0, -1, NaN, null, undefined, "wide"]) {
+    assert.strictEqual(shell.railWidthForRegion(bad, 0, 0), 0,
+      `an unmeasurable region (${String(bad)}) must not permit a rail`);
+  }
+
+  /* THE RUNTIME MEASURES THE RIGHT TWO THINGS. */
+  const runtime = codeOnly(read("public/workspace-shell.js"));
+  assert.ok(/innerWidth\)\s*\|\|\s*0;[\s\S]{0,200}clientWidth/.test(runtime) || /innerWidth[\s\S]{0,200}documentElement\.clientWidth/.test(runtime),
+    "the scrollbar allowance must be measured as innerWidth minus documentElement.clientWidth, never assumed");
+  assert.ok(/mainRegion\(\)[\s\S]{0,200}getBoundingClientRect\(\)\.width/.test(runtime),
+    "the permit must read the Main region's own measured width");
+  assert.ok(/railWidthForRegion\(regionWidth\(\), scrollbarAllowance\(\), current\)/.test(runtime),
+    "the runtime must ask the declared resolver rather than deciding for itself");
+  assert.ok(/observer\.observe\(region\)/.test(runtime),
+    "the region whose width decides the permit must be observed, or the answer goes stale on resize");
 
   /* THE RAIL IS NOT MOUNTED WHILE CLOSED, and closing takes back only OUR node. */
   const surfaces = codeOnly(read("public/creator-surfaces.js"));
@@ -606,8 +629,24 @@ function checkPanelDefaults() {
    the shipped workspace route instead of guessing a stage.
    =========================================================================== */
 
+/* A project whose first character DECLARES a continuity state.
+
+   The shipped fixture declares none, and until this correction that did not matter:
+   the resolver checked the SHAPE of `state:<id>` and answered yes. It now checks that
+   the state exists, so the valid path needs a real one and the negative matrix below
+   gets its meaning from the same fixture. */
+function fixtureWithState(stateId = "soot-heavy") {
+  const project = buildFixture();
+  const entity = (project.characters || [])[0];
+  if (entity) entity.continuityStates = [
+    { id: "state-default", name: "Default", isDefault: true, approvedFile: entity.approvedFile || "" },
+    { id: stateId, name: "Heavy soot", appliesTo: "", notes: "" },
+  ];
+  return project;
+}
+
 async function checkResultHandoff() {
-  const page = await render("#/shot/L1-01", buildFixture());
+  const page = await render("#/shot/L1-01", fixtureWithState());
 
   const target = (record) => JSON.parse(vm.runInContext(`
     AUTOMATION_RUNS = ${JSON.stringify([record])};
@@ -747,6 +786,88 @@ async function checkResultHandoff() {
     "the opener must render when the route is already current, or an unchanged hash leaves the page unmoved");
   assert.ok(/selectGuidedPanelTask/.test(openerBody) && /selectEntityResultTask/.test(openerBody),
     "the opener must apply the shot writer and the entity writer, each for its own target kind");
+
+  /* ---- THE INVALID-IDENTITY MATRIX -------------------------------------------
+     RESOLVED MUST MEAN THE REQUESTED RESULT EXISTS.
+
+     Independent acceptance reproduced four families of identity that came back
+     resolved:true and then rendered a closed state, because the resolver checked the
+     SHAPE of the target rather than the thing it named. Each family is driven here,
+     and each must fail CLOSED — resolved:false, no kind, no task, no state — while
+     still keeping the shipped workspace route, because falling back is not the same as
+     being lost. */
+  const invalidIdentities = [
+    ["extra colon", "characters:KAI:extra", "default-only"],
+    ["extra colon on a state scope", "characters:KAI:extra", "state:soot-heavy"],
+    ["three colons", "characters:KAI:a:b", "default-only"],
+    ["trailing colon", "characters:KAI:", "default-only"],
+    ["leading colon", ":characters:KAI", "default-only"],
+    ["no colon at all", "characters", "default-only"],
+    ["empty target", "", "default-only"],
+    ["colon only", ":", "default-only"],
+    ["unknown collection", "widgets:KAI", "default-only"],
+    ["unknown collection, state scope", "widgets:KAI", "state:soot-heavy"],
+    ["unknown collection, chain scope", "gadgets:KAI", "state-chain"],
+    ["audio is not an entity-chain collection", "audio:AUD-1", "default-only"],
+    ["missing entity", "characters:NO-SUCH-ENTITY", "default-only"],
+    ["missing entity, state scope", "characters:NO-SUCH-ENTITY", "state:soot-heavy"],
+    ["missing entity, chain scope", "characters:NO-SUCH-ENTITY", "state-chain"],
+    ["entity from the wrong collection", "locations:KAI", "default-only"],
+    ["missing state", "characters:KAI", "state:NO-SUCH-STATE"],
+    ["missing state that looks plausible", "characters:KAI", "state:soot-light"],
+    ["empty state id", "characters:KAI", "state:"],
+    ["state scope with only whitespace", "characters:KAI", "state:   "],
+    ["case-mismatched state", "characters:KAI", "state:SOOT-HEAVY"],
+    ["case-mismatched entity", "characters:kai", "default-only"],
+    ["unknown scope on a real entity", "characters:KAI", "not-a-scope"],
+    ["state-chain spelled wrong", "characters:KAI", "state-chains"],
+  ];
+  const refused = [];
+  for (const [label, targetId, scope] of invalidIdentities) {
+    const answer = target(run({ id: `bad-${refused.length}`, status: "completed", type: "entity-chain", targetId, scope }));
+    assert.strictEqual(answer.resolved, false, `${label} ("${targetId}" / "${scope}") must fail closed, not resolve`);
+    assert.strictEqual(answer.kind, "", `${label} must name no target kind`);
+    assert.strictEqual(answer.task, "", `${label} must name no entity task`);
+    assert.strictEqual(answer.state, "", `${label} must name no state`);
+    /* Falling back is not being lost: the workspace route is still the router's own. */
+    const route = vm.runInContext(`
+      AUTOMATION_RUNS = ${JSON.stringify([run({ id: "route-probe", status: "completed", type: "entity-chain", targetId, scope })])};
+      v641RunRoute(AUTOMATION_RUNS[0]);
+    `, page.context);
+    assert.strictEqual(answer.route, route, `${label} must keep v641RunRoute's own answer, got ${answer.route}`);
+    refused.push(label);
+  }
+
+  /* AND THE MATRIX IS NOT VACUOUS. The same resolver still says yes to the identities
+     that really exist, including the fixture's declared default state — so "fails
+     closed" is a discrimination, not a refusal to answer. */
+  const defaultState = target(RUNS.completedEntityDefaultState());
+  assert.strictEqual(defaultState.resolved, true, "a declared default state must still resolve");
+  assert.strictEqual(defaultState.state, "state-default", "the declared default state must be the one selected");
+
+  /* A PROJECT THIS REALM CANNOT READ IS ALSO UNVERIFIABLE. Nothing may be claimed from
+     a build that has no project loaded. */
+  const withoutProject = vm.runInContext(`
+    (() => {
+      const held = P;
+      P = null;
+      try {
+        AUTOMATION_RUNS = ${JSON.stringify([RUNS.completedEntity()])};
+        return JSON.stringify(v670RunResultTarget(AUTOMATION_RUNS[0]));
+      } finally { P = held; }
+    })()
+  `, page.context);
+  assert.strictEqual(JSON.parse(withoutProject).resolved, false,
+    "with no project to verify against, an entity identity must not be claimed as resolved");
+
+  /* The shot branch is unaffected by any of this — the correction is about identity the
+     project owns, and a stage id is owned by the declared model instead. */
+  assert.strictEqual(target(RUNS.completed()).resolved, true, "the shot hand-off must be unchanged");
+  assert.strictEqual(target(RUNS.completedMotion()).resolved, true, "the motion hand-off must be unchanged");
+
+  note(`   7b. ${refused.length} invalid entity identities all fail closed (malformed delimiters, unknown collections, `
+    + `missing entities, missing states, invalid chains, unreadable project) while keeping the shipped route; `
+    + `declared identities still resolve`);
 
   note("7. still -> Frames, blocking -> Look/blocking, motion -> Motion & sound, and every declared panel key resolves to "
     + "its owning stage; entity default -> Choose & approve, state -> Coverage/states/that state, chain -> Coverage/states; "

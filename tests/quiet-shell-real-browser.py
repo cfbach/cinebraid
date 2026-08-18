@@ -100,6 +100,13 @@ GEOMETRY = """
     ].filter(Boolean),
     railToggleDisplay: document.getElementById('creator-rail-toggle')
       ? getComputedStyle(document.getElementById('creator-rail-toggle')).display : 'MISSING',
+    /* THE THREE WIDTHS THAT ARE NOT THE SAME NUMBER, which is the whole of this defect.
+       innerWidth counts a classic scrollbar; clientWidth does not; and the Main region
+       is what the centre and the rail actually share. */
+    clientWidth: document.documentElement.clientWidth,
+    scrollbar: Math.max(0, window.innerWidth - document.documentElement.clientWidth),
+    railAttr: (document.getElementById('workspace').dataset.railWidth || ''),
+    railVar: getComputedStyle(document.getElementById('app')).getPropertyValue('--cb-shell-rail-width').trim(),
     liveRegions: [...document.querySelectorAll('[aria-live]')].map((n) => n.id || n.className || n.tagName),
     liveText: (document.getElementById('activity-live-region') || {}).textContent,
     railPreference: (() => { try { return localStorage.getItem('cinebraid-creator-rail-open'); } catch { return 'THREW'; } })(),
@@ -140,11 +147,28 @@ try:
 
     base = f"http://127.0.0.1:{port}"
     with sync_playwright() as pw:
-        browser = launch_chromium(pw, label=LABEL)
+        # HEADED, AND WITH CLASSIC SCROLLBARS, because that is the only configuration in
+        # which the defect this suite now guards can exist. Headless Chromium overlays its
+        # scrollbars: they consume no layout width, so the mismatch between "what the
+        # viewport measures" and "what the layout gets" is exactly zero and the reported
+        # 884.8px centre cannot be reproduced. Disabling the overlay feature and running
+        # headed reproduces the founder's own machine.
+        #
+        # Headless is kept as a fallback for a host with no desktop session, and the mode
+        # is recorded — but section 9 asserts that a consuming scrollbar was really
+        # observed, so a fallback that cannot reproduce the condition fails loudly rather
+        # than passing quietly.
+        SCROLLBAR_ARGS = ["--no-sandbox", "--disable-dev-shm-usage",
+                          "--disable-features=OverlayScrollbar,FluentOverlayScrollbars"]
+        browser_mode = "headed"
+        try:
+            browser = launch_chromium(pw, label=LABEL, headless=False, args=SCROLLBAR_ARGS)
+        except Exception as headed_error:  # noqa: BLE001 - headless is the recovery
+            browser_mode = f"headless (headed unavailable: {type(headed_error).__name__})"
+            browser = launch_chromium(pw, label=LABEL, args=SCROLLBAR_ARGS)
+        findings.append(f"0. Chromium launched {browser_mode} with overlay scrollbars disabled")
         # A fresh context is the whole point of sections 1 and 4: no stored preference.
         context = browser.new_context(viewport={"width": 1920, "height": 1080})
-        page = context.new_page()
-        page.on("pageerror", lambda e: page_errors.append(str(e)))
 
         served_runs = {"payload": None}
 
@@ -167,7 +191,17 @@ try:
             offsite.append(f"{route.request.method} {url}")
             return route.abort("failed")
 
-        page.route("**/*", guard)
+        # INSTALLED ON THE CONTEXT, BEFORE A PAGE EXISTS.
+        #
+        # A page-level route is installed after new_page(), which leaves a window — small,
+        # but real — in which a navigation could begin before the interceptor is in place.
+        # A context route covers every page the context will ever open, including one
+        # opened by the product, and it is in force before the first page is created. The
+        # correction evidence has to be able to claim ZERO off-site requests, and it can
+        # only claim that if nothing could have escaped before the guard was armed.
+        context.route("**/*", guard)
+        page = context.new_page()
+        page.on("pageerror", lambda e: page_errors.append(str(e)))
         page.goto(f"{base}/#/shot/{SHOT}", wait_until="domcontentloaded")
         page.wait_for_selector(".bounded-shot-taskbar", timeout=20000)
         page.wait_for_timeout(400)
@@ -476,13 +510,45 @@ try:
 
         page.evaluate("() => { AUTOMATION_RUNS = []; v641UpdateActivityButton(); }")
 
-        # ---- 9. THE RAIL BOUNDARY, ATTACKED IN A REAL BROWSER -------------------------
-        # Independent acceptance reproduced a viewport at which NEITHER the rail-permitted
-        # nor the rail-hidden rule matched: the rail stayed and the centre fell to 884px.
-        # The repair states the boundary once, as a min-width PERMIT, so there is no
-        # interval between two rules for a fractional width to fall into.
+        # ---- 9. THE RAIL FLOOR, ATTACKED WITH A REAL CONSUMING SCROLLBAR --------------
+        # Headed Windows Chromium found what two rounds of width bands could not:
+        # `@media(min-width:1360px)` answers to the VIEWPORT, and a classic vertical
+        # scrollbar consumes ~15.2px of LAYOUT width the viewport still counts. At a
+        # nominal 1360px viewport the rail was permitted, took 240px, and the centre
+        # rendered 884.8px — under the 900px floor the arithmetic exists to protect.
         #
-        # First: Chromium's OWN parse of the shipped stylesheet, not a regex over it.
+        # Headless Chromium overlays its scrollbars, so this suite FORCES a consuming one
+        # rather than hoping the platform supplies it. Without that, a green run here
+        # would prove nothing about the defect it is meant to guard.
+        page.evaluate("""() => {
+            /* A STYLED ::-webkit-scrollbar IS A CLASSIC SCROLLBAR. Chromium opts a
+               scrollbar out of overlay rendering the moment it is styled, so this makes
+               the gutter consume layout width even where the platform would have
+               overlaid it — belt and braces beside the launch flag, because the whole
+               value of this section is that the condition is really present. */
+            let sheet = document.getElementById('cb-scrollbar-force');
+            if (!sheet) {
+              sheet = document.createElement('style');
+              sheet.id = 'cb-scrollbar-force';
+              sheet.dataset.quietProbe = '1';
+              sheet.textContent = 'html{scrollbar-width:auto}'
+                + '::-webkit-scrollbar{width:15px;height:15px}'
+                + '::-webkit-scrollbar-track{background:#222}'
+                + '::-webkit-scrollbar-thumb{background:#888}';
+              document.head.appendChild(sheet);
+            }
+            let probe = document.getElementById('cb-scrollbar-probe');
+            if (!probe) {
+              probe = document.createElement('div');
+              probe.id = 'cb-scrollbar-probe';
+              probe.dataset.quietProbe = '1';
+              probe.style.cssText = 'position:absolute;left:0;top:0;width:1px;height:12000px;pointer-events:none;opacity:0';
+              document.body.appendChild(probe);
+            }
+        }""")
+        page.wait_for_timeout(120)
+
+        # Chromium's own parse of the shipped sheet: no media query may decide the rail.
         cssom = page.evaluate("""() => {
             const out = [];
             for (const sheet of [...document.styleSheets]) {
@@ -491,72 +557,96 @@ try:
               for (const rule of rules) {
                 if (!(rule.media && rule.conditionText)) continue;
                 const text = rule.cssText;
-                /* ONLY THE RULES THAT DECIDE. A media block that merely lays out a CHILD
-                   of an occupied rail — `.cb-shell-main:has(...) .guided-next-action` —
-                   neither grants nor withholds the rail, and treating it as one makes
-                   this check fail on an unrelated responsive rule. */
                 const decides = /#cb-shell-rail\\[data-occupied\\]\\s*\\{[^}]*display/.test(text)
                   || /\\.creator-rail-toggle\\s*\\{[^}]*display/.test(text)
-                  || /:has\\(\\s*>\\s*#cb-shell-rail\\[data-occupied\\]\\s*\\)\\s*\\{[^}]*grid-template-columns/.test(text);
-                if (!decides) continue;
-                out.push({
-                  condition: rule.conditionText,
-                  rail: /#cb-shell-rail\\[data-occupied\\]/.test(text),
-                  toggle: /creator-rail-toggle/.test(text),
-                  hides: /display:\\s*none/.test(text),
-                });
+                  || /--cb-shell-rail-width\\s*:/.test(text);
+                if (decides) out.push(rule.conditionText);
               }
             }
             return out;
         }""")
-        assert cssom, "9. Chromium found no media rule governing the rail; the permit must exist in the parsed sheet"
-        for rule in cssom:
-            assert "min-width" in rule["condition"] and "max-width" not in rule["condition"], \
-                (f"9. the rail is governed by \"{rule['condition']}\" — a max-width exclusion leaves the interval "
-                 "between two integers unclaimed, which is the 1359px failure")
-            assert not rule["hides"], f"9. no media rule may HIDE the rail; the permit must be the only decider ({rule})"
-        granting = [rule for rule in cssom if rule["rail"] and rule["toggle"]]
-        assert len(granting) == 1, \
-            f"9. the rail and its open control must be granted by exactly one shared condition, got {cssom}"
-        boundary = int(granting[0]["condition"].split("min-width:")[1].split("px")[0].strip())
-        findings.append(f"9. Chromium parses one min-width permit at {boundary}px granting both the rail and its "
-                        f"control; no max-width rule governs either")
+        assert cssom == [], \
+            (f"9. media queries still decide the rail: {cssom}. A width band answers to the viewport and cannot "
+             "see a scrollbar consuming layout width — that is the 884.8px centre this replaced.")
+        findings.append("9. Chromium parses no media query deciding the rail, its control or its width")
 
-        # Second: real geometry across the boundary, including the exact width Codex
-        # reproduced the failure at.
         page.evaluate("() => window.CineBraidCreatorSurfaces.openRail()")
-        swept = []
-        for width in [1180, 1358, 1359, boundary, boundary + 1, 1366, 1440, 1459, 1460, 1461, 1920]:
-            page.set_viewport_size({"width": width, "height": 900})
-            page.wait_for_timeout(90)
+        page.wait_for_timeout(120)
+
+        # THE SWEEP. Every width in the neighbourhood of both thresholds, with the
+        # scrollbar really consuming layout width, recording what the reviewer asked for:
+        # viewport, usable width, rail state, control state, measured centre.
+        sweep_widths = []
+        for centre_of in (1360, 1460):
+            sweep_widths.extend(range(centre_of - 6, centre_of + 7))
+        sweep_widths.extend([1180, 1280, 1600, 1920])
+        sweep_rows = []
+        exposures = 0
+        for width in sorted(set(sweep_widths)):
+            page.set_viewport_size({"width": width, "height": 820})
+            page.wait_for_timeout(80)
             geo = page.evaluate(GEOMETRY)
             offered = geo["railToggleDisplay"] != "none"
             shown = geo["railShown"]
-            # NO WIDTH MAY OFFER A RAIL IT WILL NOT PAINT, OR PAINT ONE IT WILL NOT OFFER.
+            sweep_rows.append({
+                "viewport": geo["innerWidth"], "usable": geo["clientWidth"], "scrollbar": geo["scrollbar"],
+                "region": geo["regionWidth"], "rail": geo["railWidth"], "centre": geo["mainWidth"],
+                "shown": shown, "offered": offered, "attr": geo["railAttr"],
+            })
+            # THE CONTRACT, stated three ways so no state can slip between them.
             assert offered == shown, \
-                (f"9. at {width}px the open control is {'offered' if offered else 'hidden'} while the rail is "
-                 f"{'shown' if shown else 'hidden'} — one boundary, or the control outlives the surface")
+                (f"9. at viewport {width}px (usable {geo['clientWidth']}px) the control is "
+                 f"{'offered' if offered else 'hidden'} while the rail is {'shown' if shown else 'hidden'}")
             if shown:
+                exposures += 1
                 assert geo["mainWidth"] >= 900, \
-                    (f"9. at {width}px the rail left the centre {geo['mainWidth']}px, below the 900px floor "
-                     f"(rail {geo['railWidth']}px)")
+                    (f"9. at viewport {width}px (usable {geo['clientWidth']}px, scrollbar {geo['scrollbar']}px, "
+                     f"region {geo['regionWidth']}px) a {geo['railWidth']}px rail left the centre "
+                     f"{geo['mainWidth']}px, below the 900px floor")
+                assert str(geo["railWidth"]) == geo["railAttr"], \
+                    f"9. at {width}px the painted rail is {geo['railWidth']}px but the published answer is {geo['railAttr']!r}"
             else:
                 assert geo["railWidth"] == 0, f"9. at {width}px a hidden rail still measured {geo['railWidth']}px"
+                assert geo["railAttr"] == "", f"9. at {width}px the rail is hidden but {geo['railAttr']!r} is still published"
             assert not geo["horizontalOverflow"], f"9. the page overflowed horizontally at {width}px"
-            swept.append(f"{width}:{'rail ' + str(geo['railWidth']) + 'px centre ' + str(geo['mainWidth']) + 'px' if shown else 'no rail'}")
-        # THE EXACT REPRODUCED FAILURE.
-        page.set_viewport_size({"width": 1359, "height": 900})
-        page.wait_for_timeout(90)
-        at1359 = page.evaluate(GEOMETRY)
-        assert not at1359["railShown"] and at1359["railToggleDisplay"] == "none", \
-            f"9. at 1359px both the rail and its control must be withheld, got {at1359}"
-        assert at1359["mainWidth"] >= 900, \
-            f"9. at 1359px the centre measured {at1359['mainWidth']}px, below the 900px floor — the reproduced failure"
-        findings.append("9. boundary sweep — " + "; ".join(swept) +
-                        f"; at 1359px the rail and control are both withheld and the centre holds "
-                        f"{at1359['mainWidth']}px")
-        page.set_viewport_size({"width": 1920, "height": 1080})
+
+        consuming = [row for row in sweep_rows if row["scrollbar"] > 0]
+        assert consuming, \
+            ("9. no swept width had a consuming scrollbar, so this sweep could not have reproduced the reported "
+             "defect. The forced overflow probe is not working and the evidence is worthless.")
+        assert exposures >= 4, f"9. the sweep must actually expose the rail somewhere, got {exposures} widths"
+        narrowest = min((row for row in sweep_rows if row["shown"]), key=lambda row: row["centre"])
+        findings.append(
+            f"9. swept {len(sweep_rows)} viewports with a consuming scrollbar on {len(consuming)} of them "
+            f"(scrollbar {consuming[0]['scrollbar']}px); rail exposed at {exposures}; narrowest exposed centre "
+            f"{narrowest['centre']}px at viewport {narrowest['viewport']}px "
+            f"(usable {narrowest['usable']}px, region {narrowest['region']}px, rail {narrowest['rail']}px)")
+        for row in sweep_rows:
+            findings.append(
+                f"   9. viewport {row['viewport']} usable {row['usable']} scrollbar {row['scrollbar']} "
+                f"region {row['region']} rail {row['rail']}{' (shown)' if row['shown'] else ' (hidden)'} "
+                f"control {'offered' if row['offered'] else 'hidden'} centre {row['centre']}")
+
+        # THE EXACT REPORTED CASE.
+        page.set_viewport_size({"width": 1360, "height": 820})
         page.wait_for_timeout(120)
+        at1360 = page.evaluate(GEOMETRY)
+        assert at1360["mainWidth"] >= 900, \
+            (f"9. at the reported 1360px viewport the centre measured {at1360['mainWidth']}px "
+             f"(usable {at1360['clientWidth']}px, scrollbar {at1360['scrollbar']}px) — the reproduced failure")
+        findings.append(
+            f"9. the reported case: viewport 1360px, usable {at1360['clientWidth']}px, scrollbar "
+            f"{at1360['scrollbar']}px, rail {at1360['railWidth']}px, centre {at1360['mainWidth']}px "
+            f"(was 884.8px)")
+
+        page.evaluate("""() => {
+            for (const id of ['cb-scrollbar-probe', 'cb-scrollbar-force']) {
+              const node = document.getElementById(id);
+              if (node) node.remove();
+            }
+        }""")
+        page.set_viewport_size({"width": 1920, "height": 1080})
+        page.wait_for_timeout(140)
         page.evaluate("() => window.CineBraidCreatorSurfaces.closeRail()")
 
         # ---- 10. MOTION AND ENTITY RESULTS HAND OFF TOO --------------------------------
@@ -588,6 +678,33 @@ try:
             f"10. a completed motion run must resolve the declared Motion & sound stage, got {resolved['motion']}"
         assert resolved["entity"]["resolved"] and resolved["entity"]["task"] == "review", \
             f"10. a completed base-reference run must resolve the candidate review task, got {resolved['entity']}"
+
+        # AND THE RUNTIME REFUSES AN IDENTITY IT CANNOT VERIFY. The Node suite drives 24
+        # of these; these four are the families acceptance actually reproduced, checked
+        # against the real project this page loaded rather than a fixture.
+        refusals = page.evaluate("""(ctx) => {
+            const cases = [
+              ["extra colon", ctx.list + ":" + ctx.id + ":extra", "default-only"],
+              ["unknown collection", "widgets:" + ctx.id, "default-only"],
+              ["missing entity", ctx.list + ":NO-SUCH-ENTITY", "default-only"],
+              ["missing state", ctx.list + ":" + ctx.id, "state:NO-SUCH-STATE"],
+            ];
+            const out = [];
+            for (const [label, targetId, scope] of cases) {
+              AUTOMATION_RUNS = [{ id: "probe", revision: 1, type: "entity-chain", targetId, scope,
+                status: "completed", label: "probe", stage: "done", steps: {}, logs: [],
+                createdAt: "2026-08-17T10:00:00Z", updatedAt: "2026-08-17T10:05:00Z" }];
+              const answer = v670RunResultTarget(AUTOMATION_RUNS[0]);
+              out.push([label, answer.resolved, answer.task, answer.route]);
+            }
+            AUTOMATION_RUNS = [];
+            return out;
+        }""", {"list": entity_list, "id": entity_id})
+        for label, resolved, task, route in refusals:
+            assert resolved is False and task == "",                 f"10. {label} was claimed as resolved (task {task!r}) — an identity that does not exist must fail closed"
+            assert route.startswith("#/"), f"10. {label} must still keep a workspace route, got {route!r}"
+        findings.append("10. four unverifiable entity identities (extra colon, unknown collection, missing entity, "
+                        "missing state) all fail closed in the running page while keeping their workspace route")
 
         # MOTION, clicked from the drawer, with the hash already on the shot.
         page.evaluate("(shot) => { localStorage.setItem(`cinebraid-focused:${ACTIVE_PROJECT_SLUG}:shot-task:${shot}`, 'inputs'); route(); }", SHOT)

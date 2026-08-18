@@ -4524,11 +4524,13 @@ body[data-focused-workspace="1"] .guided-frame-body,
 .cb-shell-main{display:grid;grid-template-columns:minmax(0,1fr)}
 .cb-shell-main>#main{min-width:0}
 
-/* THE RAIL'S WIDTH. The BASE value is the COMPACT one, and that direction is the whole
-   correction: every rail rule is now a min-width PERMIT rather than a max-width
-   exclusion, so the narrow, safe state is what a width falls back to rather than what it
-   has to be caught by. See the permit block at the foot of this section. */
-#app{--cb-shell-rail-width:240px}
+/* THE RAIL'S WIDTH IS WRITTEN BY THE RUNTIME, not declared here.
+
+   public/workspace-shell.js measures the Main region and publishes both this property
+   and `#workspace[data-rail-width]` together, so the width the grid uses and the
+   decision to show a rail at all can never come from two different readings. There is
+   no declaration in this file to override, which is deliberate: a stylesheet value here
+   would be a second opinion about a measured quantity. */
 
 /* Slot defaults: present in the document, occupying nothing, painting nothing. */
 .cb-shell-slot{display:none;min-width:0;min-height:0}
@@ -4609,28 +4611,27 @@ body[data-focused-workspace="1"] .guided-frame-body,
    Both thresholds are `900 + 220 + railWidth` with the rail width of the band above
    them, which is why they are 1460 and 1360 rather than round numbers. An overlay or
    toggled rail for the sub-1360 band is O4 work, not a number to fudge here. */
-/* THE PERMIT, and there is exactly one of it.
+/* THE PERMIT, and there is exactly one of it — but it is no longer a width band.
 
-   Everything that lets the rail take width from the centre lives in this block: its
-   grid track, its own display, and the topbar control that opens it. A width either
-   satisfies this query or it does not, so "the rail may be shown" and "the control may
-   offer it" cannot drift apart into two numbers, and no fractional or device-scaled
-   width can fall between them.
+   `#workspace[data-rail-width]` is written by public/workspace-shell.js from the
+   MEASURED inline size of the Main region, and `--cb-shell-rail-width` is written in
+   the same breath. Everything that lets the rail take width from the centre reads that
+   one answer: its grid track, its own display, and the topbar control that opens it.
 
-   1360 = 900 (centre floor) + 220 (navigation) + 240 (compact rail). It is the smallest
-   viewport at which a compact rail still leaves the centre its floor. */
-@media(min-width:1360px){
-  .cb-shell-main:has(>#cb-shell-rail[data-occupied]){grid-template-columns:minmax(0,1fr) var(--cb-shell-rail-width,240px)}
-  #workspace[data-creator-shell="1"] #cb-shell-rail[data-occupied]{display:block}
-  .creator-rail-toggle{display:inline-flex}
-}
+   WHY NOT A MEDIA QUERY. Media queries answer to the VIEWPORT, and a classic vertical
+   scrollbar consumes layout width the viewport still counts. Headed Windows Chromium at
+   a nominal 1360px viewport matched `min-width:1360px`, gave the rail 240px, and
+   rendered the centre at 884.8px — below the 900px floor the bands exist to protect.
+   Headless Chromium overlays its scrollbars and never showed it. No arrangement of
+   width bands can be right on both, because the quantity they test is not the quantity
+   that matters. The region's measured width IS that quantity, already net of the
+   navigation and of whatever the scrollbar took.
 
-/* Wider, not different. 340px is the full rail; 1460 = 900 + 220 + 340 is the smallest
-   viewport that can afford it. Below this the base 240px stands, which is why 1366 and
-   1440 — the two most common laptop widths — keep their Assistant. */
-@media(min-width:1460px){
-  #app{--cb-shell-rail-width:340px}
-}
+   The floor, the two rail widths and the arithmetic are declared once in
+   public/shared-workspace-shell.js. This file paints the answer and derives nothing. */
+#workspace[data-rail-width] .cb-shell-main:has(>#cb-shell-rail[data-occupied]){grid-template-columns:minmax(0,1fr) var(--cb-shell-rail-width,240px)}
+#workspace[data-rail-width][data-creator-shell="1"] #cb-shell-rail[data-occupied]{display:block}
+#workspace[data-rail-width] .creator-rail-toggle{display:inline-flex}
 @media(max-width:900px){
   #cb-shell-dock{max-height:min(42vh,260px)}
 }

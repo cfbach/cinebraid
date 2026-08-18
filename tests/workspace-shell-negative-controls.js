@@ -124,31 +124,39 @@ function overflowControls() {
 
   /* The rail's width and its two thresholds are one piece of arithmetic, added in O3
      when the rail acquired content. Each control breaks the relation a different way. */
-  /* THE CONTROL THIS BATCH MOST NEEDED. Independent acceptance reproduced a viewport at
-     which neither the "rail permitted" nor the "rail hidden" rule matched, because the
-     bands were max-width exclusions and a fractional CSS pixel falls between two
-     integers. This puts the exclusion back and requires the band check to catch it. */
-  control("C6a the rail permit reverts to a max-width exclusion", "checkRailWidthBands",
+  /* THE CONTROL THIS BATCH MOST NEEDED, twice over. Acceptance first reproduced a
+     fractional gap between two max-width integers, then — in HEADED Windows Chromium,
+     where scrollbars consume layout width — a viewport band permitting a rail the
+     centre could not afford. Both faults are the same mistake: deciding from the
+     viewport instead of from the space the centre and the rail actually share. This
+     puts a width band back in charge and requires the check to catch it. */
+  control("C6a the rail permit goes back to a viewport width band", "checkRailWidthBands",
     { styles: mutate(SOURCES.styles,
-        "@media(min-width:1360px){\n  .cb-shell-main:has(>#cb-shell-rail[data-occupied])",
-        "@media(max-width:1359px){\n  .cb-shell-main:has(>#cb-shell-rail[data-occupied])",
+        '#workspace[data-rail-width][data-creator-shell="1"] #cb-shell-rail[data-occupied]{display:block}',
+        '@media(min-width:1360px){#workspace[data-creator-shell="1"] #cb-shell-rail[data-occupied]{display:block}}',
         "C6a") },
-    "A max-width exclusion leaves the interval between two integers unclaimed: at 1359.4 CSS px, which Windows display scaling produces routinely, neither rule matches, the rail stays, and the centre falls below its 900px floor.");
+    "A media query answers to the viewport, and a classic vertical scrollbar consumes layout width the viewport still counts: at a nominal 1360px viewport the rail was permitted and the centre rendered 884.8px, below its floor. Headless Chromium overlays its scrollbars and never showed it.");
 
-  control("C6b the base rail is widened into the compact band", "checkRailWidthBands",
-    { styles: mutate(SOURCES.styles, "#app{--cb-shell-rail-width:240px}", "#app{--cb-shell-rail-width:340px}", "C6b") },
-    "A 340px rail from 1360px leaves the centre under 900px, which is the band no component rule in this stylesheet was written for.");
-
-  control("C6c the permit drops below what the compact rail can afford", "checkRailWidthBands",
-    { styles: mutate(SOURCES.styles, "@media(min-width:1360px){", "@media(min-width:1180px){", "C6c") },
-    "Permitting a 240px rail from 1180px leaves a 720px centre; the threshold has to move with the rail's width, not sit where a narrower assumption left it.");
-
-  control("C6d the open control is granted separately from the rail", "checkRailWidthBands",
+  control("C6b the stylesheet states a rail width of its own", "checkRailWidthBands",
     { styles: mutate(SOURCES.styles,
-        "  .creator-rail-toggle{display:inline-flex}\n}",
-        "}\n@media(min-width:1180px){\n  .creator-rail-toggle{display:inline-flex}\n}",
+        '#workspace[data-rail-width] .creator-rail-toggle{display:inline-flex}',
+        '#workspace[data-rail-width] .creator-rail-toggle{display:inline-flex}\n#app{--cb-shell-rail-width:340px}',
+        "C6b") },
+    "A width declared here is a second opinion about a measured quantity: the grid would use one number while the decision to show a rail at all used another.");
+
+  control("C6c the arithmetic stops leaving the centre its floor", "checkRailWidthBands",
+    { declaration: mutate(SOURCES.declaration,
+        "  const SHELL_CENTRE_FLOOR = 900;",
+        "  const SHELL_CENTRE_FLOOR = 700;",
+        "C6c") },
+    "The floor is the viewport width the component rules stack at; lowering it does not widen anything, it just stops reporting that the centre has entered a band nothing was laid out for.");
+
+  control("C6d turning the rail on stops reserving room for a scrollbar", "checkRailWidthBands",
+    { declaration: mutate(SOURCES.declaration,
+        "      const required = SHELL_CENTRE_FLOOR + width + (held === width ? 0 : band);",
+        "      const required = SHELL_CENTRE_FLOOR + width;",
         "C6d") },
-    "Two hand-written numbers for one boundary is how a control comes to offer a rail the stylesheet refuses to paint — the control and the rail must answer to the same query.");
+    "Without the band a rail can be granted at exactly the floor, reflow the narrower centre into a scrollbar, fall under the floor, disappear, release the scrollbar and be granted again — which is a flicker, not a layout.");
 }
 
 /* ===========================================================================
@@ -258,10 +266,13 @@ function structuralControls() {
     { styles: mutate(SOURCES.styles, ".cb-shell-slot{display:none;", ".cb-shell-slot{display:block;", "C19") },
     "An empty region that occupies space is the dead chrome O2 is required not to ship.");
 
+  /* The anchor gained `[data-rail-width]` when the rail permit stopped being a width
+     band and became a measured attribute. The control is unchanged in meaning: it drops
+     the shell-PRESENCE condition and nothing else. */
   control("C20 retained content paints on an excluded surface", "checkEmptyAndPresence",
     { styles: mutate(SOURCES.styles,
-        '#workspace[data-creator-shell="1"] #cb-shell-rail[data-occupied]{display:block}',
-        "#cb-shell-rail[data-occupied]{display:block}",
+        '#workspace[data-rail-width][data-creator-shell="1"] #cb-shell-rail[data-occupied]{display:block}',
+        '#workspace[data-rail-width] #cb-shell-rail[data-occupied]{display:block}',
         "C20") },
     "Mounted content is retained across navigation so an Assistant conversation survives a visit to Settings; without the presence condition it would also be VISIBLE there.");
 

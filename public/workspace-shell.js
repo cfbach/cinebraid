@@ -94,13 +94,23 @@
      back space a fixed element covers, this one tells the sticky surfaces below the
      bar where the bar stops. Both are heights only the running document knows. */
   const BAR_VARIABLE = "--cb-bar-height";
+  /* The rail width in force, published as a custom property AND as an attribute. The
+     property is what the grid track reads; the attribute is what the rail's own display
+     and its topbar control are keyed off, so all three answer to one measurement. */
+  const RAIL_VARIABLE = "--cb-shell-rail-width";
+  const RAIL_ATTRIBUTE = "railWidth";
 
   function declaration() {
     /* The shared module assigns onto the same global scope this script shares. It is
        read through a function rather than captured at load so that a suite can prove
        this file has no private copy of the route list. */
     return typeof creatorShellState === "function"
-      ? { creatorShellState, shellSlotElementId, MOUNTABLE_SLOT_NAMES, SHELL_SLOT_NAMES }
+      ? {
+        creatorShellState, shellSlotElementId, MOUNTABLE_SLOT_NAMES, SHELL_SLOT_NAMES,
+        /* The rail arithmetic, for the same reason as everything else here: this file
+           measures and paints, and the module that declares the shell decides. */
+        railWidthForRegion, SHELL_CENTRE_FLOOR, SHELL_RAIL_WIDTHS,
+      }
       : null;
   }
 
@@ -220,11 +230,57 @@
       : 0;
   }
 
+  /* WHAT A VERTICAL SCROLLBAR IS ACTUALLY COSTING, right now, on this machine.
+
+     `innerWidth` counts the scrollbar; `documentElement.clientWidth` does not. The
+     difference is the real number — 0 where scrollbars overlay the content, ~15-17 on
+     Windows with classic scrollbars — and it is measured rather than assumed because
+     assuming it is how a 15px constant becomes wrong on two platforms at once. */
+  function scrollbarAllowance() {
+    if (typeof window === "undefined" || !document.documentElement) return 0;
+    const inner = Number(window.innerWidth) || 0;
+    const client = Number(document.documentElement.clientWidth) || 0;
+    return Math.max(0, inner - client);
+  }
+
+  /* The Main region's own inline size: the width the centre and the rail share, already
+     net of the navigation column and of any scrollbar the document is consuming. It is
+     the same number whether or not the rail is currently shown — the rail takes a track
+     INSIDE this region — which is what makes it safe to decide from. */
+  function regionWidth() {
+    const region = mainRegion();
+    if (!region || typeof region.getBoundingClientRect !== "function") return 0;
+    return region.getBoundingClientRect().width;
+  }
+
   function measure() {
     const host = variableHost();
     if (!host || !host.style) return;
     host.style.setProperty(RESERVE_VARIABLE, `${paintedSlotHeight("dock")}px`);
     host.style.setProperty(BAR_VARIABLE, `${paintedSlotHeight("bar")}px`);
+    measureRail(host);
+  }
+
+  /* THE RAIL PERMIT, AND IT IS ONE ANSWER.
+
+     public/styles.css used to decide this with width bands. A media query answers to
+     the VIEWPORT, and a classic scrollbar consumes layout width the viewport still
+     counts: at a nominal 1360px viewport the rail was permitted and the centre rendered
+     884.8px, under its 900px floor. This asks the region how wide it really is and
+     writes the single answer both CSS and the control read. */
+  function measureRail(host) {
+    const api = declaration();
+    const root = shellRoot();
+    if (!api || typeof api.railWidthForRegion !== "function" || !root) return;
+    const current = Number(root.dataset[RAIL_ATTRIBUTE] || 0);
+    const width = api.railWidthForRegion(regionWidth(), scrollbarAllowance(), current);
+    if (width > 0) {
+      root.dataset[RAIL_ATTRIBUTE] = String(width);
+      host.style.setProperty(RAIL_VARIABLE, `${width}px`);
+    } else {
+      delete root.dataset[RAIL_ATTRIBUTE];
+      host.style.removeProperty(RAIL_VARIABLE);
+    }
   }
 
   /* ==========================================================================
@@ -278,6 +334,12 @@
       const slot = slotElement(name);
       if (slot) observer.observe(slot);
     }
+    /* AND THE MAIN REGION, because the rail permit is decided from its measured width.
+       Observing the region rather than listening for viewport resizes catches every
+       reason it can change — the window, the navigation collapsing, a scrollbar
+       arriving — with one subscription and no second notion of "wide enough". */
+    const region = mainRegion();
+    if (region) observer.observe(region);
   }
 
   function start() {
@@ -285,6 +347,9 @@
     watch();
   }
 
+  /* The backstop for a host without ResizeObserver: the region's width is what the
+     rail permit reads, and a viewport change is the commonest reason it moves. */
+  window.addEventListener("resize", measure);
   window.addEventListener("hashchange", syncCreatorShell);
   window.addEventListener("cinebraid:route-rendered", syncCreatorShell);
   window.addEventListener("cinebraid:workspace-updated", syncCreatorShell);

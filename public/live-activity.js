@@ -452,12 +452,18 @@ function v641StandaloneFalJobs() {
 function v641StandaloneFalMarkup(job) {
   return `<article class="automation-drawer-run state-active" data-activity-key="fal:${attr(job.id)}"><header><div><span>FAL · GPT IMAGE 2</span><b>${esc(job.purpose || "Manual image generation")}</b></div><i><span class="spin">◌</span></i></header><p>${esc(String(job.status || "working").replace(/_/g, " "))}${job.queuePosition != null ? ` · queue ${job.queuePosition}` : ""}</p><small>${esc(job.model || "GPT Image 2")} · ${Number(job.outputCount || 0)} candidate${Number(job.outputCount || 0) === 1 ? "" : "s"}</small></article>`;
 }
+/* The four reference collections an entity-chain run can target, and the route each
+   one is read at. Hoisted out of v641RunRoute so that "which collections exist" has ONE
+   statement: the router reads it to build a hash, and v670RunResultTarget reads the same
+   keys to refuse a collection that does not exist. */
+const V641_ENTITY_ROUTES = { characters: "character", locations: "location", props: "prop", vehicles: "vehicle" };
+
 function v641RunRoute(run) {
   if (run?.type === "scene-chain") return `#/scene/${run.targetId}`;
   if (run?.type === "shot-chain") return `#/shot/${run.targetId}`;
   if (run?.type === "entity-chain") {
     const [list, id] = String(run.targetId || "").split(":");
-    const route = { characters: "character", locations: "location", props: "prop", vehicles: "vehicle" }[list] || "library";
+    const route = V641_ENTITY_ROUTES[list] || "library";
     return `#/${route}/${id || ""}`;
   }
   return "#/production";
@@ -614,15 +620,49 @@ window.v670RunResultTarget = (run) => {
   }
 
   if (run.type === "entity-chain") {
-    /* The entity-chain targetId is `list:id`, and both halves are needed: the list is
-       what the entity workspace keys its task selection on, and v641RunRoute has
-       already turned the same pair into the hash. A malformed target resolves nothing
-       rather than half of something. */
-    const [list, id] = String(run.targetId || "").split(":");
+    /* RESOLVED MEANS THE REQUESTED IDENTITY EXISTS, not that it parsed.
+
+       The first version of this checked the shape of `list:id` and stopped there, so a
+       target naming a collection CineBraid does not have, a reference that was deleted,
+       or a continuity state that was never declared all came back resolved:true — and
+       the workspace then rendered the state closed, because the thing the run asked for
+       was not there. A hand-off that claims to know where a result is, and is wrong, is
+       worse than one that admits it does not: the filmmaker stops trusting the button.
+
+       So every half of the identity is verified against the project before this says
+       yes, and anything it cannot verify — including a project it cannot read — falls
+       back to the workspace route with resolved:false. That is the same fallback a
+       scene-chain run gets, and it is honest rather than empty-handed: the route is
+       still the right workspace, it simply makes no claim about where inside it. */
+    const parts = String(run.targetId || "").split(":");
+    /* EXACTLY two segments. `characters:KAI:extra` is not a target with a stray
+       suffix — it is a target this build does not understand, and quietly using its
+       first two segments is guessing. */
+    if (parts.length !== 2) return base;
+    const [list, id] = parts;
     if (!list || !id) return base;
+    if (!Object.prototype.hasOwnProperty.call(V641_ENTITY_ROUTES, list)) return base;
+
+    const project = typeof P !== "undefined" ? P : null;
+    const rows = project && Array.isArray(project[list]) ? project[list] : null;
+    if (!rows) return base;
+    const entity = rows.find((row) => row && String(row.id) === id) || null;
+    if (!entity) return base;
+
     const scope = String(run.scope || "");
     const perState = /^state:(.+)$/.exec(scope);
-    const target = perState ? { task: "coverage", view: "states", state: perState[1] } : V670_ENTITY_SCOPE_TASKS[scope] || null;
+    let target = null;
+    if (perState) {
+      /* The DECLARED states, read without materialising anything. ensureEntityStateList
+         would create a default as a side effect of being asked, which would make this
+         check able to invent the very state it is verifying. */
+      const stateId = perState[1];
+      const states = Array.isArray(entity.continuityStates) ? entity.continuityStates : [];
+      if (!states.some((state) => state && String(state.id) === stateId)) return base;
+      target = { task: "coverage", view: "states", state: stateId };
+    } else {
+      target = V670_ENTITY_SCOPE_TASKS[scope] || null;
+    }
     if (!target) return base;
     return { ...base, kind: "entity-task", task: target.task, view: target.view || "", state: target.state || "", resolved: true };
   }
