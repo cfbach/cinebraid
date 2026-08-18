@@ -83,16 +83,6 @@ function assistantWorkingCard(title, detail, options = {}) {
   const startedAt = Number(options.startedAt || Date.now());
   return `<div class="assistant-working-card mode-${attr(mode)}" role="status" aria-live="polite" data-working-start="${startedAt}"><div class="assistant-portrait" aria-hidden="true"><span class="assistant-antenna"></span><div class="assistant-face"><i></i><i></i><b></b></div><span class="assistant-scan"></span></div><div class="assistant-working-copy"><span>${esc(eyebrow)}</span><b>${esc(title)}</b><small>${esc(detail)}</small><div class="assistant-working-local-status"><span>Started now</span><span>Safe to switch workspaces while this tab stays open</span><a href="#/reports">Activity & reports →</a></div><div class="assistant-attempt-track"><i></i><i></i><i></i><em>${esc(recovery)}</em></div></div><div class="assistant-thinking-dots" aria-hidden="true"><i></i><i></i><i></i></div></div>`;
 }
-function creationStartPath() {
-  return localStorage.getItem(CREATION_START_PATH_KEY) || "manual";
-}
-window.setCreationStartPath = (path) => {
-  localStorage.setItem(CREATION_START_PATH_KEY, path === "import" ? "import" : "manual");
-  route();
-  setTimeout(() =>
-    document.getElementById(path === "import" ? "creation-import" : "creation-manual")?.scrollIntoView({ behavior: "smooth", block: "start" }),
-  30);
-};
 function creationSourceRows(rows) {
   const present = rows.filter((row) => String(row.value || "").trim());
   if (!present.length) return `<div class="prompt-origin-empty">No structured source details were recorded for this build.</div>`;
@@ -4191,33 +4181,324 @@ window.toggleShotCreationProp = (id, propId) => {
   dirty();
   route();
 };
+/* ==========================================================================
+   PROJECT ENTRY, ANSWERED AS AN INTENT INSTEAD OF AS A MECHANISM.
+
+   The chooser used to offer "Build manually" and "Import with an LLM": one label
+   naming a CineBraid workflow and one naming somebody else's software. A filmmaker
+   arriving with a script had to work out that "LLM" was the door marked *script*,
+   and a filmmaker arriving with a CineBraid project someone had sent them had no
+   door at all — that import shared the LLM one, silently.
+
+   Three intents now, and they are frozen for Batch 2. Nothing here changes what
+   CineBraid actually does with the material: the assisted path and the CineBraid
+   path go through the SAME preview/validate/commit endpoints they always did.
+   Only what the filmmaker is asked to understand before starting has changed. */
+const CREATION_INTENTS = Object.freeze([
+  Object.freeze({
+    key: "assisted",
+    eyebrow: "YOU HAVE A SCRIPT OR A STORY",
+    title: "Build from a script/story with AI",
+    blurb: "Hand your script, story, treatment or notes to the AI assistant you already use. It returns a structured project; CineBraid checks it and shows you exactly what it would create before anything is imported.",
+    recommended: true,
+  }),
+  Object.freeze({
+    key: "cinebraid",
+    eyebrow: "YOU HAVE A CINEBRAID PROJECT",
+    title: "Import a CineBraid project",
+    blurb: "Open a project document that came out of CineBraid — your own backup, or one someone sent you. It is checked and previewed the same way, and it becomes its own project.",
+    recommended: false,
+  }),
+  Object.freeze({
+    key: "scratch",
+    eyebrow: "YOU HAVE AN IDEA",
+    title: "Start from scratch",
+    blurb: "Begin with an empty project and build it a scene at a time. Nothing about look, format or generation has to be decided before you start.",
+    recommended: false,
+  }),
+]);
+const CREATION_INTENT_KEYS = Object.freeze(CREATION_INTENTS.map((intent) => intent.key));
+/* Whatever a returning filmmaker already had stored, read as the intent it meant.
+   "import" was the LLM path, which is the assisted one; "manual" was the blank
+   canvas, which is scratch. */
+const CREATION_LEGACY_PATHS = Object.freeze({ import: "assisted", manual: "scratch" });
+function creationIntent(key) {
+  return CREATION_INTENTS.find((intent) => intent.key === key) || null;
+}
+function creationStartPath() {
+  let stored = "";
+  try { stored = String(localStorage.getItem(CREATION_START_PATH_KEY) || ""); } catch { stored = ""; }
+  const resolved = CREATION_LEGACY_PATHS[stored] || stored;
+  return CREATION_INTENT_KEYS.includes(resolved) ? resolved : "assisted";
+}
+window.setCreationStartPath = (path) => {
+  const key = CREATION_INTENT_KEYS.includes(path) ? path : CREATION_LEGACY_PATHS[path] || "assisted";
+  try { localStorage.setItem(CREATION_START_PATH_KEY, key); } catch {}
+  /* The Import control belongs to the review on screen, so the visible candidate
+     follows the intent. Nothing is destroyed: the other intent's candidate stays in
+     the map, waiting. */
+  syncVisibleCreationCandidate();
+  route();
+  setTimeout(() => document.getElementById(`creation-${key}`)?.scrollIntoView({ behavior: "smooth", block: "start" }), 30);
+};
+
+/* ==========================================================================
+   SOURCE MATERIAL THE FILMMAKER ENTERED, AND WHO OWNS IT.
+
+   Switching paths calls route(), which rebuilds #main. Every textarea in the old
+   chooser was therefore emptied by a single mis-click: a pasted project document —
+   often the whole output of an assistant session — was gone with no undo, no
+   warning, and nothing on screen that had ever suggested it was at risk.
+   Reproduced in a real browser before this was written.
+
+   OWNERSHIP: this browser tab, and nothing else. LIFETIME: until the filmmaker
+   clears the field, or until an import consumes it and succeeds. It is deliberately
+   NOT written to the project, to the server, or to localStorage — it is unsaved
+   working material, it can be large, and persisting it would be claiming a
+   durability CineBraid is not offering. A reload still loses it, which is the same
+   promise every other unsaved textarea in the product makes.
+
+   One buffer per intent, so the CineBraid document a filmmaker is holding is never
+   overwritten by the assistant output they pasted a minute earlier. */
+const CREATION_SOURCE_DRAFTS =
+  window.__cinebraidCreationDrafts || (window.__cinebraidCreationDrafts = new Map());
+function creationDraft(key) {
+  return String(CREATION_SOURCE_DRAFTS.get(key) || "");
+}
+window.setCreationDraft = (key, value) => {
+  const text = String(value == null ? "" : value);
+  if (text) CREATION_SOURCE_DRAFTS.set(key, text);
+  else CREATION_SOURCE_DRAFTS.delete(key);
+};
+window.clearCreationDraft = (key) => {
+  CREATION_SOURCE_DRAFTS.delete(key);
+  route();
+  toast("Cleared");
+};
+function creationDraftKeys(path) {
+  return { story: `${path}:story`, json: `${path}:json` };
+}
+
+/* ==========================================================================
+   AN IN-FLIGHT FILE READ BELONGS TO THE INTENT THAT STARTED IT.
+
+   `readProjectBuilderFile` used to decide where the bytes went inside
+   `reader.onload` — that is, from whichever intent happened to be selected when the
+   read FINISHED. Independent review reproduced the consequence: choose an ~8 MiB
+   CineBraid project, switch to the assisted path while the read is running, and all
+   8,388,667 bytes land in `assisted:json` while `cinebraid:json` stays empty. The
+   filmmaker's CineBraid document silently became the assistant's output, and the box
+   they were actually looking at was overwritten by a file they had chosen for a
+   different purpose.
+
+   This is an ownership bug, not a timing bug, so it is fixed at the ownership
+   boundary: the destination buffer is resolved and captured when the read STARTS,
+   and nothing that happens afterwards can move it. Switching intents mid-read is
+   fine and changes nothing about where the bytes are going.
+
+   STALE READS ARE DETERMINISTIC. Every read takes the next number in a global
+   sequence and registers it as its owner buffer's current read. A completing read
+   writes only if it is still the registered one, so two selections on the same
+   buffer resolve last-selection-wins regardless of which finishes first — an older,
+   larger file finishing after a newer, smaller one cannot resurrect itself. A failed
+   or superseded read clears nothing it does not own. */
+const CREATION_FILE_READS = window.__cinebraidCreationFileReads || (window.__cinebraidCreationFileReads = new Map());
+let CREATION_FILE_READ_SEQUENCE = 0;
+function beginCreationFileRead(ownerKey) {
+  const ticket = ++CREATION_FILE_READ_SEQUENCE;
+  CREATION_FILE_READS.set(ownerKey, ticket);
+  return ticket;
+}
+/* True only for the read that is still the newest one for its buffer. Retiring the
+   ticket here is what makes a second completion of the same read a no-op. */
+function settleCreationFileRead(ownerKey, ticket) {
+  if (CREATION_FILE_READS.get(ownerKey) !== ticket) return false;
+  CREATION_FILE_READS.delete(ownerKey);
+  return true;
+}
+
+/* ==========================================================================
+   A VALIDATION OR AN IMPORT BELONGS TO THE INTENT THAT STARTED IT.
+
+   Exactly the rule above, one layer out. Both async handlers used to ask
+   `creationStartPath()` AFTER their response arrived, which meant the answer was
+   "whichever intent is on screen now". Independent review reproduced what that costs:
+   start a CineBraid import, switch to the assisted path before the response lands,
+   and the CineBraid document is imported while the ASSISTANT'S script and JSON are
+   cleared as though they had been consumed — and the CineBraid source that really was
+   consumed survives. Three wrong answers from one late question.
+
+   So an operation captures its own context at initiation — which intent, which
+   buffers, which result slot — and never asks again. A ticket per intent makes an
+   older response unable to overwrite a newer operation's state, and a completion that
+   arrives while its intent is off screen is KEPT FOR THAT INTENT rather than shown to
+   whoever happens to be looking. Nothing about ownership is ever inferred from the
+   visible path. */
+const CREATION_OPERATIONS = window.__cinebraidCreationOps || (window.__cinebraidCreationOps = new Map());
+let CREATION_OPERATION_SEQUENCE = 0;
+function beginCreationOperation(kind) {
+  const path = creationStartPath();
+  const ticket = ++CREATION_OPERATION_SEQUENCE;
+  CREATION_OPERATIONS.set(path, ticket);
+  return { kind, path, keys: creationDraftKeys(path), ticket };
+}
+function settleCreationOperation(operation) {
+  if (!operation || CREATION_OPERATIONS.get(operation.path) !== operation.ticket) return false;
+  CREATION_OPERATIONS.delete(operation.path);
+  return true;
+}
+/* Per-intent, because two intents can hold two different validated previews and
+   neither may be shown under the other's heading. */
+const CREATION_CANDIDATES = window.__cinebraidCreationCandidates || (window.__cinebraidCreationCandidates = new Map());
+const CREATION_RESULTS = window.__cinebraidCreationResults || (window.__cinebraidCreationResults = new Map());
+function creationCandidate(path) {
+  return CREATION_CANDIDATES.get(path) || null;
+}
+function creationResultMarkup(path) {
+  return String(CREATION_RESULTS.get(path) || "");
+}
+/* `window._projectBuilderCandidate` remains the candidate for the intent ON SCREEN.
+   It is a view of the map above, never the storage: the Import control the filmmaker
+   can press belongs to the review they can see. */
+function syncVisibleCreationCandidate() {
+  window._projectBuilderCandidate = creationCandidate(creationStartPath());
+}
+function setCreationCandidate(path, candidate) {
+  if (candidate) CREATION_CANDIDATES.set(path, candidate);
+  else CREATION_CANDIDATES.delete(path);
+  syncVisibleCreationCandidate();
+}
+/* The result markup is stored for its owner and painted only if that owner is on
+   screen. A filmmaker who walked away from a validation finds it waiting when they
+   come back, and the intent they walked TO is not handed somebody else's answer. */
+function setCreationResult(path, markup) {
+  if (markup) CREATION_RESULTS.set(path, markup);
+  else CREATION_RESULTS.delete(path);
+  if (creationStartPath() !== path) return;
+  const out = document.getElementById("project-builder-result");
+  if (out) out.innerHTML = String(markup || "");
+}
+
+/* ==========================================================================
+   READY / NEEDS REVIEW / BLOCKED — PRESENTATION, NOT A READINESS AUTHORITY.
+
+   These three words describe ONE THING: what the server's import review already
+   said about the material being imported. `review.missing` is CineBraid naming a
+   production input the document does not contain; `review.conflicts`,
+   `review.inferred` and `review.review` are things a human should look at but
+   nothing is waiting on. That is the whole derivation — a projection of an existing
+   payload onto three words, computed nowhere else.
+
+   IT IS NOT projectShotReadiness(), IT DOES NOT SHADOW IT, and it never speaks for
+   a shot. Shot readiness answers "can this shot's next unit run"; this answers "did
+   the thing you just imported arrive complete". The project's next action still has
+   exactly one owner, projectNextProductionAction(), and the landing below renders
+   that owner's answer through the same markup the create view already used. */
+const PROJECT_ENTRY_STANDINGS = Object.freeze({
+  ready: Object.freeze({ key: "ready", label: "Ready", detail: "Nothing in this import needs your attention before production." }),
+  "needs-review": Object.freeze({ key: "needs-review", label: "Needs review", detail: "CineBraid made or found decisions worth checking. Production can start anyway." }),
+  blocked: Object.freeze({ key: "blocked", label: "Blocked", detail: "Production detail this project needs is not in the source material." }),
+});
+function projectEntryStanding(review) {
+  const list = (value) => (Array.isArray(value) ? value : []);
+  if (list(review?.missing).length) return PROJECT_ENTRY_STANDINGS.blocked;
+  if (list(review?.review).length || list(review?.conflicts).length || list(review?.inferred).length)
+    return PROJECT_ENTRY_STANDINGS["needs-review"];
+  return PROJECT_ENTRY_STANDINGS["ready"];
+}
+/* The review's own sentences, in the order it ranked them. Never re-worded: a
+   restated verdict is a second verdict. */
+function projectEntryStandingReasons(review, limit = 6) {
+  const rows = [];
+  const push = (items, prefix) => {
+    for (const item of Array.isArray(items) ? items : []) {
+      const text = typeof item === "string" ? item : `${item?.path || "Value"} — ${item?.value || ""}`;
+      if (text.trim()) rows.push(`${prefix}${text.trim()}`);
+    }
+  };
+  push(review?.missing, "");
+  push(review?.conflicts, "Source conflict at ");
+  push(review?.review, "");
+  return rows.slice(0, limit);
+}
+function projectEntryStandingMarkup(standing, reasons) {
+  return `<div class="project-entry-standing is-${attr(standing.key)}" data-entry-standing="${attr(standing.key)}"><div><span>PROJECT STANDING</span><b>${esc(standing.label)}</b><small>${esc(standing.detail)}</small></div>${reasons.length ? `<ul>${reasons.map((row) => `<li>${esc(row)}</li>`).join("")}</ul>` : ""}</div>`;
+}
+
 function creationStartChooser() {
   const selected = creationStartPath();
-  return `<section class="creation-start-choice"><div><span class="creation-kicker">HOW DO YOU WANT TO START?</span><h2>Two paths, one production-ready project</h2><p>Start manually for a blank canvas, or use an external LLM to structure an existing script, story, character bible, or shot list.</p></div><div class="creation-path-buttons"><button class="${selected === "manual" ? "on" : ""}" onclick="setCreationStartPath('manual')"><span>FROM SCRATCH</span><b>Build manually</b><small>Best for a new idea or a project you want to shape inside CineBraid.</small></button><button class="${selected === "import" ? "on" : ""}" onclick="setCreationStartPath('import')"><span>EXISTING MATERIAL</span><b>Import with an LLM</b><small>Best when you already have a script, story document, character notes, or shot list.</small></button></div></section>`;
+  return `<section class="creation-start-choice"><div class="creation-start-intro"><span class="creation-kicker">HOW DO YOU WANT TO START?</span><h2>Three ways in. All of them end in the same project.</h2><p>Pick the one that matches what you already have. You can change your mind — anything you have typed or pasted is kept while you look around.</p></div><div class="creation-path-buttons" role="group" aria-label="How do you want to start?">${CREATION_INTENTS.map((intent) => `<button type="button" data-creation-intent="${attr(intent.key)}" class="${selected === intent.key ? "on" : ""}${intent.recommended ? " is-recommended" : ""}" aria-pressed="${selected === intent.key ? "true" : "false"}" onclick="setCreationStartPath('${attr(intent.key)}')"><span>${esc(intent.eyebrow)}</span><b>${esc(intent.title)}</b>${intent.recommended ? `<em class="creation-path-recommended">Recommended</em>` : ""}<small>${esc(intent.blurb)}</small></button>`).join("")}</div></section>`;
 }
-function creationImportCard() {
-  return `<section id="creation-import" class="creation-card creation-import-card">
-    <div class="creation-card-head"><div><span class="creation-kicker">IMPORT EXISTING MATERIAL</span><h3>Turn documents into a reviewable CineBraid project</h3><p>Use the Project Builder prompt with ChatGPT, Claude, or a capable local LLM. CineBraid validates the returned JSON, normalizes safe planning defaults, and shows marked inference, missing production detail, unsupported runtime claims, and anything needing human review before it creates a separate project.</p></div><div class="creation-import-actions"><a class="ghost-btn" href="/api/project-builder/kit" download>Download prompt kit</a><button class="ghost-btn" onclick="copyProjectBuilderSystemPrompt()">Copy system prompt</button></div></div>
-    <div class="import-steps"><span><b>1</b> Give the prompt and your documents to an LLM</span><span><b>2</b> Paste or upload the returned JSON</span><span><b>3</b> Validate, review, then import</span></div>
-    <textarea id="project-builder-json" class="project-builder-json" placeholder='{"meta":{"title":"My Project"}, ...}'></textarea>
-    <div class="creation-import-footer"><input type="file" accept=".json,application/json" id="project-builder-file" onchange="readProjectBuilderFile(this)"><button class="assemble-btn" onclick="importProjectBuilderJSON()">Validate + review</button></div>
-    <div id="project-builder-result"></div>
+
+/* The paste-and-review half, shared by both import intents rather than duplicated
+   for them. The ids are unchanged — one JSON box, one result region — because the
+   validate/preview/commit path underneath is the same accepted mechanism it was
+   before this slice, and only the surrounding words differ. */
+function creationImportPanel(path, options = {}) {
+  const keys = creationDraftKeys(path);
+  const draft = creationDraft(keys.json);
+  /* This intent's own result — a review, or the error its own validation returned.
+     Looked up by path, so it can never be another intent's answer. */
+  const review = creationResultMarkup(path);
+  return `<textarea id="project-builder-json" class="project-builder-json" spellcheck="false" placeholder="${attr(options.placeholder || '{"meta":{"title":"My Project"}, ...}')}" aria-label="${attr(options.label || "Project document")}" oninput="setCreationDraft('${attr(keys.json)}',this.value)">${esc(draft)}</textarea>
+    <div class="creation-import-footer"><input type="file" accept=".json,application/json" id="project-builder-file" aria-label="Choose a project document" onchange="readProjectBuilderFile(this)"><div class="creation-import-footer-actions">${draft ? `<button type="button" class="ghost-btn" onclick="clearCreationDraft('${attr(keys.json)}')">Clear</button>` : ""}<button type="button" class="assemble-btn" onclick="importProjectBuilderJSON()">Validate + review</button></div></div>
+    <div id="project-builder-result">${review}</div>`;
+}
+
+/* THE ASSISTED PATH. It says what the filmmaker gives and what comes back; it does
+   not ask them to choose a provider, a model or a runtime in order to begin. The
+   kit and the instructions are the same two resources CineBraid has always served. */
+function creationAssistedCard() {
+  const keys = creationDraftKeys("assisted");
+  const story = creationDraft(keys.story);
+  return `<section id="creation-assisted" class="creation-card creation-import-card">
+    <div class="creation-card-head"><div><span class="creation-kicker">BUILD FROM A SCRIPT OR STORY</span><h3>Turn what you have written into a reviewable project</h3><p>CineBraid gives you the instructions and the shape it expects back. You give those, and your material, to the AI assistant you already use. CineBraid then checks what comes back and shows you every scene, shot, frame and reference it would create — before it creates anything.</p></div><div class="creation-import-actions"><a class="ghost-btn" href="/api/project-builder/kit" download>Download the kit</a><button type="button" class="ghost-btn" onclick="copyProjectBuilderSystemPrompt()">Copy the instructions</button></div></div>
+    <div class="import-steps"><span><b>1</b> Put your script or story below</span><span><b>2</b> Send it with CineBraid's instructions to your assistant</span><span><b>3</b> Paste what comes back, review it, import</span></div>
+    <label class="creation-source-field" for="creation-source-material"><span>Your script, story, treatment or notes</span><textarea id="creation-source-material" placeholder="Paste the script, the story, the outline, the character notes — whatever you already have. It stays in this browser; CineBraid does not send it anywhere on its own." oninput="setCreationDraft('${attr(keys.story)}',this.value)">${esc(story)}</textarea><div class="creation-source-actions"><small>Kept while you move around this screen. Not saved into the project.</small><span>${story ? `<button type="button" class="ghost-btn" onclick="copyProjectBuilderRequest()">Copy instructions + my material</button><button type="button" class="ghost-btn" onclick="clearCreationDraft('${attr(keys.story)}')">Clear</button>` : ""}</span></div></label>
+    <div class="creation-source-field"><span>What your assistant sent back</span></div>
+    ${creationImportPanel("assisted", { label: "Structured project from your assistant" })}
   </section>`;
 }
+
+/* THE CINEBRAID PATH. Same mechanism, a different thing being held: a project
+   document that already came out of CineBraid, which needs no assistant at all. */
+function creationCineBraidImportCard() {
+  return `<section id="creation-cinebraid" class="creation-card creation-import-card">
+    <div class="creation-card-head"><div><span class="creation-kicker">IMPORT A CINEBRAID PROJECT</span><h3>Open a project document you already have</h3><p>A CineBraid project file — your own JSON backup, or one another CineBraid user sent you. No assistant is involved. CineBraid checks it, shows you exactly what it contains, and imports it as a separate project, so nothing you are working on now is touched.</p></div></div>
+    <div class="import-steps"><span><b>1</b> Choose or paste the project file</span><span><b>2</b> Check what it contains</span><span><b>3</b> Import it as its own project</span></div>
+    ${creationImportPanel("cinebraid", { label: "CineBraid project document", placeholder: "Paste the contents of a CineBraid project.json, or choose the file below." })}
+  </section>`;
+}
+
 function creationManualWorkspace() {
   const approvedCount = (list) => (P[list] || []).filter((x) => entityWorkflowState(x).key === "APPROVED" && entityApprovedFileForState(x, "")).length;
   const sceneCount = P.scenes.length;
   const shotCount = P.shots.length;
-  return `<div id="creation-manual">
-  <section id="creation-global-style" class="creation-card global-style-card"><div class="creation-card-head"><div><span class="creation-kicker">STEP 1 · PROJECT LOOK</span><h3>Set the visual rules once</h3><p>These details automatically shape new location, character, prop, and shot-image prompts. Plain language works.</p></div><span class="creation-state ${globalStylePrompt() ? "ready" : "warn"}">${globalStylePrompt() ? "Style set" : "Start here"}</span></div><div class="creation-grid">${field("Global style prompt", `<textarea placeholder="Cinematic naturalism, damp medieval textures, smoke-softened torchlight, muted earth palette, practical grime…" onchange="setGlobalCreationField('globalStylePrompt',this.value)">${esc(P.meta?.globalStylePrompt || "")}</textarea>`)}${field("World / setting", `<textarea placeholder="Late-medieval border town in winter; poor river district; practical candle and hearth light…" onchange="setGlobalCreationField('worldSetting',this.value)">${esc(P.meta?.world?.setting || "")}</textarea>`)}${field("World / period exclusions", `<textarea placeholder="No modern objects, no clean fantasy theme-park surfaces, no legible text unless requested…" onchange="setGlobalCreationField('globalNegativePrompt',this.value)">${esc(P.meta?.globalNegativePrompt || P.meta?.world?.reject || "")}</textarea>`)}</div></section>
+  return `<div id="creation-scratch">
+  ${creationOptionalStyleCard()}
   <div class="creation-quick-grid">
-    <button onclick="addEntity('locations')"><span>STEP 2</span><b>Create a location plate</b><small>Describe an empty environment and compile a reusable base-plate prompt.</small></button>
-    <button onclick="addEntity('characters')"><span>STEP 3</span><b>Create a character anchor</b><small>Lock identity, wardrobe, proportions, and materials before placing the character in shots.</small></button>
+    <button onclick="addEntity('locations')"><span>STEP 1</span><b>Create a location plate</b><small>Describe an empty environment and compile a reusable base-plate prompt.</small></button>
+    <button onclick="addEntity('characters')"><span>STEP 2</span><b>Create a character anchor</b><small>Lock identity, wardrobe, proportions, and materials before placing the character in shots.</small></button>
     <button onclick="addEntity('props')"><span>OPTIONAL</span><b>Create a prop reference</b><small>Lock an object's shape, materials, scale, and wear when continuity matters.</small></button>
-    <button onclick="addShot()"><span>STEP 4</span><b>Create the first shot</b><small>Add a scene automatically if needed, then describe the visible action and staging.</small></button>
+    <button onclick="addShot()"><span>STEP 3</span><b>Create the first shot</b><small>Add a scene automatically if needed, then describe the visible action and staging.</small></button>
   </div>
   <section class="creation-progress"><header><div><span class="creation-kicker">PROJECT AT A GLANCE</span><h3>${esc(P.meta.title)}</h3></div><a class="ghost-btn" href="#/production/scenes">Open scenes & shots →</a></header><div class="creation-metrics"><div><b>${sceneCount}</b><span>scenes</span></div><div><b>${shotCount}</b><span>shots</span></div><div><b>${approvedCount("locations")}/${P.locations.length}</b><span>approved locations</span></div><div><b>${approvedCount("characters")}/${P.characters.length}</b><span>approved characters</span></div><div><b>${approvedCount("props")}/${P.props.length}</b><span>approved props</span></div><div><b>${approvedCount("vehicles")}/${(P.vehicles || []).length}</b><span>approved vehicles</span></div></div>${!sceneCount ? `<div class="creation-empty-project"><h3>Your project is ready for its first scene</h3><p>Create a scene and shot now, or create the location and character references first.</p><button class="add-btn" onclick="addShot()">Create scene + first shot</button><button class="ghost-btn" onclick="addEntity('locations')">Create first location</button></div>` : `<div class="creation-project-actions">${creationRecommendedActionMarkup()}<article><span>PROJECT STRUCTURE</span><b>${sceneCount} scenes · ${shotCount} shots</b><small>Scene beats and the complete shot list now live in Production, where they can be filtered and paginated.</small><a class="ghost-btn" href="#/shots/board">OPEN SHOTS</a></article></div>`}</section>
   </div>`;
+}
+/* THE GLOBAL LOOK, OFFERED RATHER THAN DEMANDED.
+ *
+ * This was "STEP 1 · PROJECT LOOK", first on the page, carrying a `warn` chip that
+ * read "Start here" until it was filled in. A filmmaker whose first act is creating
+ * a location plate was told they had already fallen behind on a decision the plate
+ * does not need — the style feeds NEW prompts, and there are none yet.
+ *
+ * Every field, handler and downstream effect is unchanged; it is a disclosure now
+ * rather than a gate, and it is still editable in Settings → Project. Deferring a
+ * decision is not removing the capability to make it.
+ */
+function creationOptionalStyleCard() {
+  const set = !!globalStylePrompt();
+  return `<details id="creation-global-style" class="creation-card global-style-card creation-optional-style" ${set ? "open" : ""}><summary><div><span class="creation-kicker">OPTIONAL · PROJECT LOOK</span><b>Set the visual rules once</b><small>${set ? "Applied to new location, character, prop and shot-image prompts." : "Not needed to begin. Set it whenever the project has a look worth repeating."}</small></div><span class="creation-state ${set ? "ready" : ""}">${set ? "Style set" : "Optional"}</span></summary><div class="creation-grid">${field("Global style prompt", `<textarea placeholder="Cinematic naturalism, damp medieval textures, smoke-softened torchlight, muted earth palette, practical grime…" onchange="setGlobalCreationField('globalStylePrompt',this.value)">${esc(P.meta?.globalStylePrompt || "")}</textarea>`)}${field("World / setting", `<textarea placeholder="Late-medieval border town in winter; poor river district; practical candle and hearth light…" onchange="setGlobalCreationField('worldSetting',this.value)">${esc(P.meta?.world?.setting || "")}</textarea>`)}${field("World / period exclusions", `<textarea placeholder="No modern objects, no clean fantasy theme-park surfaces, no legible text unless requested…" onchange="setGlobalCreationField('globalNegativePrompt',this.value)">${esc(P.meta?.globalNegativePrompt || P.meta?.world?.reject || "")}</textarea>`)}</div></details>`;
 }
 /* THE RECOMMENDED CARD, FROM THE ONE ANSWER.
  *
@@ -4231,19 +4512,91 @@ function creationManualWorkspace() {
  * Both halves now come from projectNextProductionAction(), so the words, the
  * destination and the button are one answer. `typeof` because this file is also
  * evaluated in suite realms that load it without public/app.js.
+ *
+ * Batch 2 Slice 2 gave this function a SECOND CALLER — the post-import landing —
+ * and deliberately gave it no second implementation. The landing needs exactly what
+ * this card renders, so it renders THIS, and "what should I do next" still has one
+ * derivation in the product.
  */
 function creationRecommendedActionMarkup() {
   const next = typeof projectNextProductionAction === "function" ? projectNextProductionAction() : null;
   if (!next) {
-    return `<article><span>RECOMMENDED</span><b>Nothing outstanding</b><small>Readiness has nothing left to ask for on the current shots.</small><a class="ghost-btn" href="#/shots/board">OPEN SHOTS</a></article>`;
+    /* NO ANSWER IS AN ANSWER, AND IT IS NOT A LICENCE TO PICK ONE.
+     *
+     * This branch used to render "Nothing outstanding" with an OPEN SHOTS button —
+     * which reads as a recommendation, is a production destination, and was chosen
+     * here rather than by the authority. Independent review named it correctly: a
+     * second next-action derivation, reachable exactly when the first one declines
+     * to speak, which is the worst possible moment to start guessing.
+     *
+     * So this states the absence and offers nothing. Anything a filmmaker might want
+     * to do next from this screen is ordinary navigation that is present whatever
+     * the authority says, and is labelled as such — never as the next action. */
+    return `<article data-recommended-kind="none" data-no-production-action="1"><span>NEXT PRODUCTION ACTION</span><b>None right now</b><small>Nothing is being recommended. CineBraid does not choose a production task when its readiness derivation names none.</small></article>`;
   }
   return `<article data-recommended-kind="${attr(next.kind)}"${next.shotId ? ` data-recommended-shot="${attr(next.shotId)}"` : ""}><span>RECOMMENDED</span><b>${esc(next.title)}</b><small>${esc(next.message || next.actionLabel)}</small><button class="assemble-btn" onclick="continueProduction()">${esc(next.actionLabel)} →</button></article>`;
 }
+
+/* ==========================================================================
+   WHERE A SUCCESSFUL IMPORT LANDS.
+
+   It used to land here: `location.hash = "#/create"`, on the chooser, under a green
+   sentence. The filmmaker had just handed CineBraid a finished script and was
+   returned to the question "how do you want to start?" — the one thing they had
+   demonstrably already answered. Nothing on that screen said what had been created,
+   whether any of it needed looking at, or what to do next.
+
+   The landing answers those three, in that order, and the third one is not answered
+   here: it is creationRecommendedActionMarkup(), which is
+   projectNextProductionAction(). */
+function projectEntryLanding() {
+  const landing = window.__cinebraidProjectEntryLanding;
+  if (!landing || typeof landing !== "object") return null;
+  /* A landing belongs to the project it created. Switching to another project must
+     not leave a stale welcome sitting on top of it. */
+  if (typeof ACTIVE_PROJECT_SLUG !== "undefined" && ACTIVE_PROJECT_SLUG && landing.slug && landing.slug !== ACTIVE_PROJECT_SLUG) return null;
+  return landing;
+}
+window.dismissProjectEntryLanding = () => {
+  window.__cinebraidProjectEntryLanding = null;
+  route();
+};
+function projectEntryLandingCounts(counts = {}) {
+  const rows = [
+    ["scenes", counts.scenes],
+    ["shots", counts.shots],
+    ["characters", counts.characters],
+    ["locations", counts.locations],
+    ["props", counts.props],
+    ["vehicles", counts.vehicles],
+  ].filter(([, value]) => Number(value || 0) > 0);
+  if (!rows.length) return `<p class="project-entry-empty">This project was created empty.</p>`;
+  return `<div class="creation-metrics">${rows.map(([label, value]) => `<div><b>${esc(Number(value || 0))}</b><span>${esc(label)}</span></div>`).join("")}</div>`;
+}
+function projectEntryLandingView(landing) {
+  const standing = PROJECT_ENTRY_STANDINGS[landing.standing] || PROJECT_ENTRY_STANDINGS["needs-review"];
+  const intent = creationIntent(landing.path);
+  return `<div class="view-head creation-view-head"><div><div class="eyebrow">Project created</div><span class="view-title">${esc(landing.title || P.meta.title)}</span><div class="view-sub">${esc(intent ? `Created through “${intent.title}”.` : "Created.")} It is open now, and it is its own project — nothing you had open before was changed.</div></div><button class="ghost-btn" onclick="dismissProjectEntryLanding()">Start another project</button></div>
+  <section class="project-entry-landing" data-project-entry-landing="1" data-landing-slug="${attr(landing.slug || "")}">
+    <div class="project-entry-landing-block"><span class="creation-kicker">WHAT WAS CREATED</span>${projectEntryLandingCounts(landing.counts)}</div>
+    <div class="project-entry-landing-block"><span class="creation-kicker">DOES ANYTHING NEED REVIEW?</span>${projectEntryStandingMarkup(standing, landing.reasons || [])}</div>
+    <div class="project-entry-landing-block"><span class="creation-kicker">WHAT TO DO NEXT</span><div class="creation-project-actions">${creationRecommendedActionMarkup()}<article><span>OR LOOK AROUND</span><b>Read what was imported</b><small>The scene beats and the whole shot list are in Production; every reference CineBraid created is in the library.</small><a class="ghost-btn" href="#/shots/board">OPEN SHOTS</a><a class="ghost-btn" href="#/library">OPEN REFERENCES</a></article></div></div>
+  </section>`;
+}
+
 function creationStudioView() {
+  const landing = projectEntryLanding();
+  if (landing) return projectEntryLandingView(landing);
   const path = creationStartPath();
-  return `<div class="view-head creation-view-head"><div><div class="eyebrow">Guided creation</div><span class="view-title">Build the first usable shot</span><div class="view-sub">CineBraid keeps the beginner path short while using the same workflow throughout.</div></div><button class="add-btn" onclick="newProject()">+ Project</button></div>
+  const panel =
+    path === "cinebraid"
+      ? creationCineBraidImportCard()
+      : path === "scratch"
+        ? creationManualWorkspace()
+        : creationAssistedCard();
+  return `<div class="view-head creation-view-head"><div><div class="eyebrow">New project</div><span class="view-title">Start a project</span><div class="view-sub">Bring a script, bring a CineBraid project, or start with nothing. CineBraid keeps the same workflow whichever one you choose.</div></div><button class="add-btn" onclick="newProject()">+ Project</button></div>
   ${creationStartChooser()}
-  ${path === "import" ? `${creationImportCard()}<details class="alternate-start"><summary>Or continue manually</summary>${creationManualWorkspace()}</details>` : `${creationManualWorkspace()}<details class="alternate-start"><summary>Import an existing script or story instead</summary>${creationImportCard()}</details>`}`;
+  ${panel}`;
 }
 
 
@@ -4257,20 +4610,64 @@ window.copyProjectBuilderSystemPrompt = async () => {
     toast("Could not copy prompt: " + error.message);
   }
 };
+/* The instructions CineBraid already serves, followed by the filmmaker's own
+   material, so the assisted path is one paste into their assistant instead of three.
+   No prompt is written here: this concatenates the shipped system prompt with text
+   the filmmaker typed, and it reaches no provider — the clipboard is the transport,
+   and the filmmaker is the one who sends it. */
+window.copyProjectBuilderRequest = async () => {
+  const story = creationDraft(creationDraftKeys("assisted").story);
+  if (!story.trim()) return toast("Add your script or story first");
+  try {
+    const r = await fetch("/api/project-builder/system-prompt");
+    if (!r.ok) throw new Error("Instructions unavailable");
+    const instructions = await r.text();
+    await navigator.clipboard.writeText(`${instructions}\n\n---\n\nSOURCE MATERIAL\n\n${story}`);
+    toast("Instructions and your material copied");
+  } catch (error) {
+    toast("Could not copy: " + error.message);
+  }
+};
 window.readProjectBuilderFile = (input) => {
   const file = input.files?.[0];
   if (!file) return;
+  /* CAPTURED HERE, at the moment the filmmaker chose the file, and never read
+     again. `ownerPath` is kept alongside the key so the completion can ask "is that
+     intent still on screen?" without re-deriving where the bytes belong. */
+  const ownerPath = creationStartPath();
+  const ownerKey = creationDraftKeys(ownerPath).json;
+  const ticket = beginCreationFileRead(ownerKey);
   const reader = new FileReader();
   reader.onload = () => {
+    if (!settleCreationFileRead(ownerKey, ticket)) return;
+    const text = String(reader.result == null ? "" : reader.result);
+    /* A chosen file is entered source material like any other, so it goes into the
+       buffer that survives a path switch. */
+    setCreationDraft(ownerKey, text);
+    /* The visible box is written only while its owner is the intent on screen. If
+       the filmmaker has moved on, the buffer alone is correct: switching back
+       renders it, and whatever they are looking at now is left alone. */
+    if (creationStartPath() !== ownerPath) return;
     const box = document.getElementById("project-builder-json");
-    if (box) box.value = reader.result;
+    if (box) box.value = text;
+  };
+  reader.onerror = () => {
+    /* A failed read retires its own ticket and nothing else. Any buffer content the
+       filmmaker already had is theirs and is not cleared by CineBraid failing to
+       read a file. */
+    if (!settleCreationFileRead(ownerKey, ticket)) return;
+    if (typeof toast === "function") toast("That file could not be read");
   };
   reader.readAsText(file);
 };
 function projectBuilderReviewColumn(title, css, items, emptyText) {
+  /* `data-origin` is not decoration. A row is either something CineBraid decided or
+     something the source already said, and the two must stay distinguishable in the
+     rendered document as well as in the payload — a reader looking at a badge, and a
+     test looking at the DOM, have to get the same answer. */
   const row = (item) =>
     item && typeof item === "object"
-      ? `<li class="import-review-value"><code>${esc(item.path || item.label || "Value")}</code><span>${esc(item.value || item.notes || "")}</span></li>`
+      ? `<li class="import-review-value"${item.origin ? ` data-origin="${attr(item.origin)}"` : ""}><code>${esc(item.path || item.label || "Value")}</code><span>${esc(item.value || item.notes || "")}</span></li>`
       : `<li>${esc(item)}</li>`;
   return `<section class="import-review-column ${css}"><header><span>${esc(title)}</span><b>${items.length}</b></header>${items.length ? `<ul>${items.slice(0, 18).map(row).join("")}</ul>${items.length > 18 ? `<small>+ ${items.length - 18} more</small>` : ""}` : `<p>${esc(emptyText)}</p>`}</section>`;
 }
@@ -4294,12 +4691,50 @@ function projectBuilderCountComparison(review) {
     })
     .join("")}</div>`;
 }
+/* ==========================================================================
+   WHO SAID IT. The server reports `origin` on every inferred row — "cinebraid" for a
+   decision CineBraid made while normalising, "source" for a marker that was already
+   in the document it was handed. The renderer used to drop that and file both under
+   "Inferred values", so a filmmaker who had written `[INFERRED FOR PLANNING]` in
+   their own state delta was shown their own sentence as a CineBraid inference.
+
+   These two splitters are the whole mechanism: no new provenance, no re-derivation,
+   and nothing about the project value changes to make the screen easier. A row whose
+   origin is missing is treated as the source's, because CineBraid's own rows are the
+   ones it can positively account for. */
+function cinebraidInferences(review) {
+  return (Array.isArray(review?.inferred) ? review.inferred : []).filter((row) => row?.origin === "cinebraid");
+}
+function sourceInferences(review) {
+  return (Array.isArray(review?.inferred) ? review.inferred : []).filter((row) => row?.origin !== "cinebraid");
+}
 function projectBuilderContinuityReview(states = []) {
   if (!states.length)
-    return `<p class="import-outline-empty">No default or inferred continuity states require special attention.</p>`;
+    return `<p class="import-outline-empty">No default or marked continuity states require special attention.</p>`;
+  /* A state can carry BOTH — CineBraid chose it as the default while the source it
+     came from already contained matching text. Saying only the first would quietly
+     drop the second, so both are said, and the data attribute names both.
+
+     THE SOURCE WORDING CLAIMS PRESENCE, NOT INTENT. All the payload establishes is
+     `origin === "source"`: that text matching the planning marker was in the document
+     CineBraid was handed. It does NOT establish that a person meant it as an
+     operative annotation, deliberately "marked" that field, or knew the phrase means
+     anything to CineBraid — a filmmaker writing a note ABOUT the convention produces
+     exactly the same payload. So the words say what was found and stop there. */
+  const origin = (state) =>
+    state.inferred && state.sourceMarked ? "cinebraid+source" : state.inferred ? "cinebraid" : state.sourceMarked ? "source" : "none";
+  const ORIGIN_WORDS = {
+    "cinebraid+source": ["cinebraid", "CineBraid decided this · source also contains planning-marker text"],
+    cinebraid: ["cinebraid", "CineBraid decided this"],
+    source: ["source", "Planning-marker text found in source"],
+  };
+  const label = (state) => {
+    const words = ORIGIN_WORDS[origin(state)];
+    return words ? `<em class="continuity-origin ${words[0]}">${esc(words[1])}</em>` : "";
+  };
   return `<div class="import-continuity-list">${states
     .map(
-      (state) => `<article class="${state.inferred ? "inferred" : ""}"><header><b>${esc(state.entityId)} · ${esc(state.entityName || state.kind)}</b><span>${state.isDefault ? "DEFAULT" : "STATE"}</span></header><strong>${esc(state.stateId)} · ${esc(state.stateName)}</strong>${state.notes ? `<p>${esc(state.notes)}</p>` : ""}</article>`,
+      (state) => `<article class="${state.inferred ? "inferred" : state.sourceMarked ? "source-marked" : ""}" data-continuity-origin="${attr(origin(state))}"><header><b>${esc(state.entityId)} · ${esc(state.entityName || state.kind)}</b><span>${state.isDefault ? "DEFAULT" : "STATE"}</span></header><strong>${esc(state.stateId)} · ${esc(state.stateName)}</strong>${label(state)}${state.notes ? `<p>${esc(state.notes)}</p>` : ""}</article>`,
     )
     .join("")}</div>`;
 }
@@ -4319,12 +4754,21 @@ function projectBuilderOutline(outline = []) {
 function renderProjectBuilderReview(data) {
   const review = data.review;
   const counts = review.counts;
-  return `<div class="project-builder-review"><header><div><span class="creation-kicker">NORMALIZED IMPORT PREVIEW</span><h3>${esc(data.title)}</h3><p>${counts.scenes} scenes · ${counts.shots} shots · ${counts.characters} characters · ${counts.locations} locations · ${counts.props} props · ${counts.vehicles || 0} vehicles</p></div><span class="creation-state ready">Exact preview locked</span></header>${projectBuilderCountComparison(review)}<div class="import-preview-proof"><span>PREVIEW SHA-256</span><code>${esc(data.previewHash)}</code><button class="ghost-btn" onclick="downloadNormalizedProjectBuilderJSON()">Download normalized JSON</button></div><div class="import-review-legend"><span class="inferred">INFERRED</span><span class="missing">MISSING</span><span class="removed">REMOVED</span><span>REVIEW</span></div><div class="import-review-grid">${projectBuilderReviewColumn("Inferred values", "inferred", review.inferred, "No [INFERRED FOR PLANNING] values were found.")}${projectBuilderReviewColumn("Source conflicts", "review", review.conflicts || [], "No [SOURCE CONFLICT] values were found.")}${projectBuilderReviewColumn("Missing before production", "missing", review.missing, "No important descriptive gaps detected.")}${projectBuilderReviewColumn("Removed during import", "removed", review.removed, "No unsupported generated or approval claims detected.")}${projectBuilderReviewColumn("Needs human review", "review", review.review, "No additional warnings.")}</div><details class="import-normalized-section" open><summary>Normalized scene and shot plan</summary>${projectBuilderOutline(review.outline)}</details><details class="import-normalized-section"><summary>Continuity states CineBraid will import</summary>${projectBuilderContinuityReview(review.continuity)}</details><div class="creation-next-step"><div><span>SAFE EXACT IMPORT</span><b>The button imports this exact normalized preview into a separate project. Editing the source JSON requires a new validation.</b></div><button class="assemble-btn" onclick="commitProjectBuilderImport()">Import this exact preview →</button></div></div>`;
+  /* The five columns below are complete and stay complete; what they never did was
+     answer the question the filmmaker actually has in front of them, which is
+     whether they can press the button. The standing says that in three words, off
+     the same payload the columns are rendered from. */
+  const standing = projectEntryStanding(review);
+  return `<div class="project-builder-review"><header><div><span class="creation-kicker">NORMALIZED IMPORT PREVIEW</span><h3>${esc(data.title)}</h3><p>${counts.scenes} scenes · ${counts.shots} shots · ${counts.characters} characters · ${counts.locations} locations · ${counts.props} props · ${counts.vehicles || 0} vehicles</p></div><span class="creation-state ready">Exact preview locked</span></header>${projectEntryStandingMarkup(standing, projectEntryStandingReasons(review))}${projectBuilderCountComparison(review)}<div class="import-preview-proof"><span>PREVIEW SHA-256</span><code>${esc(data.previewHash)}</code><button class="ghost-btn" onclick="downloadNormalizedProjectBuilderJSON()">Download normalized JSON</button></div><div class="import-review-legend"><span class="inferred">CINEBRAID</span><span class="source">IN SOURCE</span><span class="missing">MISSING</span><span class="removed">REMOVED</span><span>REVIEW</span></div><div class="import-review-grid">${projectBuilderReviewColumn("CineBraid planning decisions", "inferred", cinebraidInferences(review), "CineBraid inferred nothing during this import.")}${projectBuilderReviewColumn("Planning-marker text found in source", "source", sourceInferences(review), "No planning-marker text was found in your source.")}${projectBuilderReviewColumn("Source conflicts", "review", review.conflicts || [], "No [SOURCE CONFLICT] values were found.")}${projectBuilderReviewColumn("Missing before production", "missing", review.missing, "No important descriptive gaps detected.")}${projectBuilderReviewColumn("Removed during import", "removed", review.removed, "No unsupported generated or approval claims detected.")}${projectBuilderReviewColumn("Needs human review", "review", review.review, "No additional warnings.")}</div><details class="import-normalized-section" open><summary>Normalized scene and shot plan</summary>${projectBuilderOutline(review.outline)}</details><details class="import-normalized-section"><summary>Continuity states CineBraid will import</summary>${projectBuilderContinuityReview(review.continuity)}</details><div class="creation-next-step"><div><span>SAFE EXACT IMPORT</span><b>The button imports this exact normalized preview into a separate project. Editing the source JSON requires a new validation.</b></div><button class="assemble-btn" onclick="commitProjectBuilderImport()">Import this exact preview →</button></div></div>`;
 }
 window.importProjectBuilderJSON = async () => {
-  const out = document.getElementById("project-builder-result");
+  /* EVERYTHING THIS OPERATION NEEDS TO KNOW, DECIDED NOW. After the await below the
+     filmmaker may be looking at another intent, and this operation must not care. */
+  const operation = beginCreationOperation("validate");
+  const box = document.getElementById("project-builder-json");
+  const entered = String(box?.value || "") || creationDraft(operation.keys.json);
   try {
-    const raw = document.getElementById("project-builder-json")?.value.trim();
+    const raw = entered.trim();
     if (!raw) throw new Error("Paste or choose a JSON file first.");
     const project = JSON.parse(raw.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, ""));
     const r = await fetch("/api/projects/preview-import-json", {
@@ -4333,16 +4777,29 @@ window.importProjectBuilderJSON = async () => {
       body: JSON.stringify({ project }),
     });
     const d = await r.json();
+    /* Superseded by a newer validation on the same intent: this answer is stale and
+       writes nothing, rather than replacing a review the filmmaker asked for later. */
+    if (!settleCreationOperation(operation)) return;
     if (!r.ok) throw new Error(d.error || "Validation failed");
-    window._projectBuilderCandidate = {
+    /* `path` and `renderedReview` are what let a validated preview survive a path
+       switch alongside the text that produced it. `path` is the operation's, captured
+       before the request — never the intent that happens to be visible now. */
+    setCreationCandidate(operation.path, {
       previewToken: d.previewToken,
       previewHash: d.previewHash,
       normalizedProject: d.normalizedProject,
-    };
-    if (out) out.innerHTML = renderProjectBuilderReview(d);
+      path: operation.path,
+      title: d.title,
+      review: d.review,
+      renderedReview: renderProjectBuilderReview(d),
+    });
+    setCreationResult(operation.path, creationCandidate(operation.path).renderedReview);
   } catch (error) {
-    window._projectBuilderCandidate = null;
-    if (out) out.innerHTML = `<div class="prompt-check warn">${esc(error.message)}</div>`;
+    /* A validation that failed clears ITS OWN candidate and nothing else — no other
+       intent's preview, and no source material anywhere. */
+    if (!settleCreationOperation(operation) && CREATION_OPERATIONS.has(operation.path)) return;
+    setCreationCandidate(operation.path, null);
+    setCreationResult(operation.path, `<div class="prompt-check warn">${esc(error.message)}</div>`);
   }
 };
 window.downloadNormalizedProjectBuilderJSON = () => {
@@ -4363,9 +4820,13 @@ window.downloadNormalizedProjectBuilderJSON = () => {
   URL.revokeObjectURL(link.href);
 };
 window.commitProjectBuilderImport = async () => {
-  const candidate = window._projectBuilderCandidate;
-  if (!candidate) return toast("Validate the Project Builder JSON first");
-  const out = document.getElementById("project-builder-result");
+  const operation = beginCreationOperation("import");
+  /* The candidate for the intent that started this, looked up by that intent. */
+  const candidate = creationCandidate(operation.path);
+  if (!candidate) {
+    settleCreationOperation(operation);
+    return toast("Validate the Project Builder JSON first");
+  }
   try {
     await flushPendingProjectSave();
     const r = await fetch("/api/projects/import-json", {
@@ -4377,15 +4838,42 @@ window.commitProjectBuilderImport = async () => {
       }),
     });
     const d = await r.json();
+    if (!settleCreationOperation(operation)) return;
     if (!r.ok) throw new Error(d.error || "Import failed");
-    if (out) out.innerHTML = `<div class="prompt-check ok">Imported ${esc(d.counts.scenes)} scenes, ${esc(d.counts.shots)} shots, and ${esc(d.counts.characters + d.counts.locations + d.counts.props)} reusable references as a separate project.</div>`;
-    window._projectBuilderCandidate = null;
-    localStorage.setItem(CREATION_START_PATH_KEY, "manual");
+    setCreationResult(operation.path, `<div class="prompt-check ok">Imported ${esc(d.counts.scenes)} scenes, ${esc(d.counts.shots)} shots, and ${esc(d.counts.characters + d.counts.locations + d.counts.props)} reusable references as a separate project.</div>`);
+    const path = operation.path;
+    const standing = projectEntryStanding(candidate.review);
+    setCreationCandidate(path, null);
+    /* CONSUMED, NOT DISCARDED, AND ONLY WHAT WAS CONSUMED. The document that was
+       validated and imported is cleared; the script beside it is not, because the
+       import did not consume it and a filmmaker iterating on that script would lose
+       it. Scoped to the operation's own intent, so no other intent's material can be
+       reached from here at all. */
+    setCreationDraft(operation.keys.json, "");
     await load();
-    location.hash = "#/create";
-    toast("Reviewed Project Builder JSON imported");
+    /* The landing is recorded AFTER load(), because load() is what makes
+       ACTIVE_PROJECT_SLUG the imported project, and the landing is scoped to it. */
+    window.__cinebraidProjectEntryLanding = {
+      slug: d.slug || (typeof ACTIVE_PROJECT_SLUG !== "undefined" ? ACTIVE_PROJECT_SLUG : ""),
+      title: candidate.title || (P && P.meta ? P.meta.title : ""),
+      path,
+      counts: d.counts || {},
+      standing: standing.key,
+      reasons: projectEntryStandingReasons(candidate.review),
+    };
+    /* NAVIGATE WHEN THE ROUTE CHANGES, RENDER WHEN IT DOES NOT — the same rule
+       openRunResult() follows. The import is almost always started FROM #/create,
+       where assigning the hash its current value fires no hashchange and the landing
+       would never paint. */
+    if (location.hash !== "#/create") location.hash = "#/create";
+    else route();
+    toast("Project imported");
   } catch (error) {
-    if (out) out.innerHTML += `<div class="prompt-check warn">${esc(error.message)}</div>`;
+    /* A failed or blocked import consumes nothing. Its own source material is exactly
+       where the filmmaker left it, and so is every other intent's. */
+    if (!settleCreationOperation(operation) && CREATION_OPERATIONS.has(operation.path)) return;
+    setCreationResult(operation.path,
+      `${creationResultMarkup(operation.path)}<div class="prompt-check warn">${esc(error.message)}</div>`);
   }
 };
 

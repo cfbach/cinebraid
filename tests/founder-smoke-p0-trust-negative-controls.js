@@ -267,7 +267,12 @@ const CONTROLS = [
     to: `<span>RECOMMENDED</span><b>\${esc(shotProductionNextAction(P.shots[0]).label)}</b>`,
     expect: /recommendation and the action it labels/,
     async guard(run) {
-      const app = await run({ hash: "#/create" });
+      /* Batch 2 Slice 2 moved this card. #/create opens on the intent chooser, whose
+         default is the assisted path; the RECOMMENDED card belongs to the project
+         workspace, which is now the scratch intent. The stored preference puts this
+         control back in front of the card it has always been about — what it proves,
+         that the headline and the button it labels are one answer, is unchanged. */
+      const app = await run({ hash: "#/create", storage: { "cinebraid-creation-start-path": "scratch" } });
       const feed = vm.runInContext("projectShotReadiness()", app.context);
       assert.strictEqual(feed.counts.ready, 0, "the fixture must have no startable shot, or this control is vacuous");
       const canonical = vm.runInContext("projectNextProductionAction()", app.context);

@@ -119,6 +119,31 @@
      reason O3 asks it: a third opinion about where the workspace exists is how three
      surfaces come to disagree about whether they are on one. What this file adds on
      top is the narrower question only it can answer — is this a shot. */
+  /* THE STRIP DESCRIBES THE RENDERED WORKSPACE, NOT THE REQUESTED URL.
+   *
+   * `paint` is wired to `hashchange`, and `ROUTES.shot` awaits an HTTP POST before it
+   * writes `#main`. So on every arrival at a shot there was a window — one server
+   * round-trip wide — in which the shell had already mounted a full stage navigator
+   * for SH010 while the centre still showed the page the filmmaker was leaving. The
+   * strip was describing a workspace that did not exist yet.
+   *
+   * That is the same defect the `shotId` comment below already refuses one step later
+   * ("a strip that fell back to the last shot visited would be describing a shot the
+   * filmmaker is not looking at"), so it is refused here on the same grounds: the
+   * strip mounts when the workspace it navigates has actually rendered.
+   *
+   * It is also what made tests/production-media-real-browser.py section 11 a coin
+   * flip. That suite waits for `.cb-stage-strip` and then reads the shot surface;
+   * because the strip appeared before the surface, the wait proved nothing and the
+   * read landed on the previous view often enough to fail the gate. Nothing about the
+   * assertion changed — the product stopped claiming to be somewhere it was not.
+   *
+   * `typeof` guarded because the O4 suites evaluate this module without public/app.js;
+   * with no rendered-route key to consult, the answer is the pre-existing one. */
+  function renderedRouteIsCurrent() {
+    if (typeof CURRENT_RENDER_ROUTE_KEY === "undefined" || typeof currentRouteKey !== "function") return true;
+    return CURRENT_RENDER_ROUTE_KEY === currentRouteKey();
+  }
   function stageContext() {
     const project = activeProject();
     const view = currentView();
@@ -132,7 +157,7 @@
       blockedReason: shell.reason || "",
       /* The route's own id, not a remembered one. A strip that fell back to the last
          shot visited would be describing a shot the filmmaker is not looking at. */
-      shotId: view === "shot" ? currentTargetId() : "",
+      shotId: view === "shot" && renderedRouteIsCurrent() ? currentTargetId() : "",
     };
   }
 
