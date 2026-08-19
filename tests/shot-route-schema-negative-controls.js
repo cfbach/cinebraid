@@ -336,21 +336,34 @@ async function surfaceControls() {
     },
   );
 
-  /* NC-11 — a rendered surface starts printing the route. Proven against the byte
-     identity the suite relies on, so a control that changed nothing visible would not
-     satisfy it. */
+  /* NC-11 — AN UNROUTED SHOT'S SURFACE ACQUIRES AN INTENT BY INFERENCE.
+
+     REWRITTEN FOR SLICE 5b, AND THE ORIGINAL IS RECORDED HERE BECAUSE ITS RETIREMENT IS
+     THE POINT. This control used to declare a route and require every rendered surface
+     to be byte-identical, which was 5a's central guarantee and is 5b's central change:
+     the Shot Intent control and adaptive frame exposure are supposed to move. Left as it
+     was, the control would have gone on "passing" against a difference the product now
+     makes deliberately — a guard that reports success while proving nothing.
+
+     What is still absolutely forbidden, in 5a and in 5b alike, is a route nobody
+     declared. So the mutation makes the SHOT INTENT SURFACE ITSELF read a route off the
+     shot's first motion unit when the record declares none — the cheapest and likeliest
+     backfill, and the one that would put a filmmaker's name on a decision they never
+     made — and the guard is that an unrouted shot renders exactly as the shipped build
+     renders it. The fixture's first clip is `i2v`, so the inference has something to
+     find. */
   await mustFail(
-    "NC-11 a rendered surface prints the declared route",
-    "changed a rendered surface",
+    "NC-11 the Shot Intent surface infers an intent from the shot's motion units",
+    "must not add up to a declared intent",
     async () => {
-      const hook = replacing("creation-studio.js",
-        "function shotStageModelFacts(s, takes) {",
-        "function shotStageModelFacts(s, takes) {\n  if (typeof document !== \"undefined\" && document.getElementById(\"tally\") && shotRouteFactValue(s))\n    document.getElementById(\"tally\").innerHTML += `<span>Delivery route: ${shotRouteFactValue(s)}</span>`;",
-        "NC-11");
-      const unrouted = await factsFor(undefined, { mutateSource: hook });
-      const routed = await factsFor("flf", { mutateSource: hook });
-      assert.strictEqual(routed.slots, unrouted.slots,
-        'declaring "flf" changed a rendered surface; Slice 5a may change nothing a filmmaker sees');
+      const inferred = await factsFor(undefined, {
+        mutateSource: replacing("creation-studio.js",
+          "  const intent = readShotIntent(s);",
+          "  const intent = readShotIntent(Object.prototype.hasOwnProperty.call(s, \"deliveryRoute\") ? s : { ...s, deliveryRoute: shotRouteFromClipKind(((s.clips || [])[0] || {}).kind) });",
+          "NC-11"),
+      });
+      assert.strictEqual(inferred.slots, baseline.slots,
+        "frames, references and motion units must not add up to a declared intent on a rendered surface");
     },
   );
   note(`  surface controls ran against ${baseline.progress.length} declared stages`);

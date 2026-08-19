@@ -50,6 +50,11 @@ const SCRIPT_ORDER = [
   "shared-shot-route.js",
   "shared-stage-model.js",
   "shared-shot-readiness.js",
+  /* Slice 5b. The Shot Intent projection: public/creation-studio.js draws the shot
+     workspace through it, so a harness without it would throw on the first shot render.
+     It reads shared-shot-route.js, shared-generation-options.js and readiness's
+     ANIMATE_METHOD_PROBES, all three of which are already above it here. */
+  "shared-shot-intent.js",
   "bounded-rendering.js",
   "app.js",
   "media.js",
