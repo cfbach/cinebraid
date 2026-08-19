@@ -525,6 +525,8 @@ async function main() {
     "shot-readiness-negative-controls.js",
     "shot-readiness-real-browser.py",
     "shot-readiness.js",
+    "shot-route-schema-negative-controls.js",
+    "shot-route-schema.js",
     "shot-workspace-responsive-layout.js",
     "stage-model-negative-controls.js",
     "stage-model-real-browser.py",

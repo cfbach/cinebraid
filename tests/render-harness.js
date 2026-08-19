@@ -44,6 +44,10 @@ const SCRIPT_ORDER = [
   "shared-generation-presentation.js",
   /* The browser half of the same pair. Five surfaces in this list draw through it. */
   "generation-view.js",
+  /* Slice 5a. The declared shot delivery route's vocabulary. public/creation-studio.js
+     reads it while assembling the shot stage fact record, so a harness without it would
+     throw on the first shot workspace render rather than produce one. */
+  "shared-shot-route.js",
   "shared-stage-model.js",
   "shared-shot-readiness.js",
   "bounded-rendering.js",

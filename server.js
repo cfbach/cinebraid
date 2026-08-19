@@ -28,6 +28,7 @@ const { httpStatusForError } = require("./http-errors");
 const { resolveShotEntities, shotEntityTokenMatches, unresolvedShotDependencies, entityVisualDescription, resolveShotDuration, lossyShotCodeTokens } = require("./public/shared-entities");
 const { referenceAspectLabel, aspectRatioMentions } = require("./public/shared-aspect");
 const { deriveLipSync, lipSyncRequiredFrom } = require("./public/shared-lip-sync");
+const ShotRoute = require("./public/shared-shot-route");
 const Coverage = require("./public/shared-coverage");
 const Continuity = require("./public/shared-continuity");
 const EntityOwnership = require("./public/shared-entity-ownership");
@@ -2768,6 +2769,22 @@ function normalizeBuilderShot(shot, index, warnings, inferences) {
       referenceRoles: builderObject(source.referenceRoles),
       referenceSelection: builderObject(source.referenceSelection),
     };
+  /* A DECLARED ROUTE IS AUTHORED INTENT, so it survives import; a route this build
+     cannot read is removed and said out loud.
+
+     Only the value the document already carried is looked at. Nothing here reads the
+     shot's frames, clips, references or prose to supply one, so a shot that declared no
+     route arrives declaring no route — which is the whole point of the field.
+
+     The failure policy is the one normalizeBuilderClips() established directly above for
+     an unknown clip kind: name the value in a warning and leave the record in the state
+     that permits nothing, rather than choose the nearest token that happens to be
+     valid. */
+  const routeOutcome = ShotRoute.normaliseStoredShotRoute(normalized);
+  if (routeOutcome.dropped)
+    warnings.push(
+      `Shot ${normalized.id || index + 1} declared delivery route ${JSON.stringify(String(routeOutcome.stored))}, which CineBraid does not recognise; the shot was imported with no declared route.`,
+    );
   normalized.keyframes = normalizeBuilderKeyframes(normalized, warnings, inferences);
   normalized.clips = normalizeBuilderClips(
     { ...normalized, clips: source.clips },

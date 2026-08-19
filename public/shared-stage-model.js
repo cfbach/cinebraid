@@ -243,8 +243,14 @@
   const SHOT_STAGE_LIMITATIONS = deepFreeze({
     "no-not-applicable": {
       question: "Is this stage not yet relevant to this shot, as opposed to not started?",
-      why: "A shot record declares no per-stage generation route, so nothing distinguishes a shot that will never need motion from one that has not reached motion.",
-      wouldNeed: "a declared shot delivery route on the shot record",
+      /* CORRECTED BY SLICE 5a, which supplied half of what this entry asked for. A shot
+         record CAN now declare a delivery route, and the fact record carries it — but no
+         derivation in this file reads it, so the question below is still unanswerable
+         here and `not-applicable` is still not a declared availability. Saying the
+         record lacks the field would now be false; saying the limitation is closed would
+         be falser. */
+      why: "A declared shot delivery route reaches this model's fact record and no derivation in it reads one, so nothing distinguishes a shot that will never need motion from one that has not reached motion.",
+      wouldNeed: "a stage derivation that reads the declared shot delivery route the fact record already carries",
     },
     "frames-not-optional": {
       question: "May Frames be skipped entirely for a reference-only or description-only shot?",
@@ -310,6 +316,21 @@
     "activityStatus",
     "lifecycleKey",
     "deliveryIntent",
+    /* Slice 5a. The shot's DECLARED delivery route, or "" where none is declared.
+
+       It is carried and nothing more. No derivation below reads it, and adding one is
+       Slice 5b's decision rather than a side effect of the record learning the word —
+       which is why SHOT_STAGE_LIMITATIONS still declares `no-not-applicable` unresolved
+       and SHOT_STAGE_AVAILABILITY still has no `not-applicable` member. A stage that
+       started reading this today would change what a filmmaker sees, and 5a changes
+       nothing a filmmaker sees.
+
+       Carried as a bare string like `deliveryIntent` and `lifecycleKey` beside it: the
+       assembler canonicalises through public/shared-shot-route.js and hands this record
+       the answer, so the fact record holds one vocabulary rather than a second copy of
+       the rule that produces it. "" is BOTH no declaration and an unreadable one — a
+       fact record states what is true, and neither of those is a route. */
+    "deliveryRoute",
   ]);
 
   function stageCount(value) {
@@ -333,6 +354,7 @@
       activityStatus: ACTIVITY.includes(activity) ? activity : "",
       lifecycleKey: stageText(raw.lifecycleKey),
       deliveryIntent: stageText(raw.deliveryIntent),
+      deliveryRoute: stageText(raw.deliveryRoute),
     };
   }
 

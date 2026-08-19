@@ -133,6 +133,8 @@ const nodeSuites = [
   "check:reference-reframe-negative",
   "check:simple-advanced",
   "check:simple-advanced-negative",
+  "check:shot-route",
+  "check:shot-route-negative",
   "check:stage-surfaces",
   "check:stage-surfaces-negative",
   "check:production-media",

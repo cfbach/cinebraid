@@ -3147,6 +3147,11 @@ function shotStageModelFacts(s, takes) {
     activityStatus: activeRun ? activeRun.status : "",
     lifecycleKey: life.key,
     deliveryIntent: life.intent,
+    /* Slice 5a. Read straight off the shot record through the one vocabulary owner, and
+       never derived: a shot that has declared no route hands the model "", and so does a
+       shot whose stored token this build does not recognise. Nothing here consults the
+       shot's frames, references, clips or prior generations to fill it in. */
+    deliveryRoute: shotRouteFactValue(s),
   };
 }
 /* The strip's view of a stage. The judgement is the declared model's; this

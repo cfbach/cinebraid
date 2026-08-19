@@ -796,7 +796,14 @@ const RULES = [
           if (risks.length === 0) context.claim(risksPointer, DISPOSITION.MAPPED, [`${subject}#/risks`], "explicitly empty collection, preserved as empty");
           else risks.forEach((_, riskIndex) => context.claim(risksPointer + ptr(riskIndex), DISPOSITION.MAPPED, [`${subject}#/risks`], "risk text carried verbatim in order"));
         }
-        for (const key of ["positioning", "safe", "route", "notes", "deliveryIntent", "iterations", "iterBudget", "targetRuntime", "contextDoc", "creationBrief"])
+        /* `deliveryRoute` joins its two nearest relatives by name rather than falling
+           to M070's sweep. All three are shot-level production intent this contract
+           revision has no core field for, and a preserved value whose reason names the
+           field is the difference between "the contract does not model this yet" and
+           "no rule looked at it". Nothing is dropped either way; 1.0-draft.1 is frozen,
+           so the route is carried into extensions["com.cinebraid.legacy"].preserved[]
+           with its source pointer and its value, exactly like shot.route before it. */
+        for (const key of ["positioning", "safe", "route", "deliveryRoute", "notes", "deliveryIntent", "iterations", "iterBudget", "targetRuntime", "contextDoc", "creationBrief"])
           if (context.exists(from + ptr(key)) && key !== "creationBrief") context.preserve(from + ptr(key), `shot.${key} has no OFP core home at ${context.contractVersion}`);
         target.push(record);
         context.registerShot(id, record, from, shot, subject);
