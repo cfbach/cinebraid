@@ -112,6 +112,11 @@
 <!-- After shared-generation-options.js, because readiness derives its method truth
      by asking resolveTaskModes() at load rather than tabulating it. -->
 <script src="shared-shot-readiness.js?v=6.7.0-private.1"></script>
+<!-- Slice 5b. The Shot Intent projection over the Slice 5a route: it reads the route
+     vocabulary, the shipped mode language and readiness's ANIMATE_METHOD_PROBES, so it
+     must load after all three. public/creation-studio.js and the shot workspace draw
+     through it. -->
+<script src="shared-shot-intent.js?v=6.7.0-private.1"></script>
 <script src="shared-workspace-shell.js?v=6.7.0-private.1"></script>
 <script src="shared-creator-state.js?v=6.7.0-private.1"></script>
 <script src="shared-stage-actions.js?v=6.7.0-private.1"></script>
