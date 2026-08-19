@@ -4244,6 +4244,41 @@ body[data-focused-workspace="1"] .guided-frame-body,
 .shot-aspect-fields .shot-aspect-hint{flex:1 1 100%;color:var(--amber)}
 @media(max-width:760px){.shot-aspect-fields{align-items:stretch;flex-direction:column}.shot-aspect-fields select,.shot-aspect-fields input{width:100%}}
 
+/* --- shot intent (Batch 2, Slice 5b) --------------------------------------
+   One collapsed line above the shot's next action, in the shot format control's
+   own shape because it answers the same kind of question: a decision most shots
+   make once. It borrows that control's summary geometry deliberately rather than
+   inventing a second collapsed-row treatment. */
+.shot-intent-control{margin:0 0 12px;border:1px solid var(--line);border-radius:9px;background:var(--surface-2)}
+.shot-intent-control>summary{display:flex;align-items:center;gap:9px;padding:9px 12px;cursor:pointer;list-style:none}
+.shot-intent-control>summary::-webkit-details-marker{display:none}
+.shot-intent-control>summary b{font:700 8px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.shot-intent-control>summary span{font-family:var(--mono);font-size:11px;color:var(--ink)}
+.shot-intent-control>summary::after{content:"⌄";margin-left:auto;color:var(--faint)}
+.shot-intent-control[open]>summary::after{content:"⌃"}
+/* A stored value this build cannot read is a state the summary has to carry on its
+   own, because the control is closed when it is first seen. */
+.shot-intent-control[data-shot-intent-reading="unrecognised"]{border-color:var(--amber)}
+.shot-intent-control[data-shot-intent-reading="unrecognised"]>summary span{color:var(--amber)}
+.shot-intent-fields{display:flex;align-items:center;gap:9px;flex-wrap:wrap;padding:0 12px 11px}
+.shot-intent-fields label{font:700 8px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.shot-intent-fields select{width:auto;min-width:230px;padding:7px 25px 7px 8px;font-size:11px}
+.shot-intent-fields .hint{margin:0;flex:1 1 100%;min-width:0}
+.shot-intent-fields .shot-intent-unreadable{flex:1 1 100%;margin:0}
+.shot-intent-fields .shot-intent-clear{flex:0 0 auto}
+@media(max-width:760px){.shot-intent-fields{align-items:stretch;flex-direction:column}.shot-intent-fields select{width:100%}}
+
+/* The Frames stage when the shot's declared intent asks for no frame. It is a
+   STATEMENT, not a refusal: the workflow below it is present, folded, and one click
+   away, so this row is quiet rather than an alert. */
+.shot-frames-not-required{display:flex;align-items:center;gap:12px;margin:0 0 12px;padding:11px 13px;border:1px solid var(--line);border-radius:9px;background:var(--surface-2)}
+.shot-frames-not-required>div{min-width:0}
+.shot-frames-not-required span{display:block;font:700 8px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.shot-frames-not-required b{display:block;margin-top:3px;font-size:13px;color:var(--ink)}
+.shot-frames-not-required small{display:block;margin-top:3px;font-size:11px;line-height:1.5;color:var(--muted)}
+.shot-frames-not-required button{flex:0 0 auto;margin-left:auto}
+@media(max-width:760px){.shot-frames-not-required{align-items:stretch;flex-direction:column}.shot-frames-not-required button{margin-left:0}}
+
 /* --- inspection ----------------------------------------------------------- */
 /* The viewer's own height allowance was 49px short of the chrome it has to sit
    inside — header, footer and the stage's padding — so a viewport-filling frame

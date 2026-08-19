@@ -2374,8 +2374,27 @@ window.reviewGuidedFrameSequence = async (shotId) => {
   }
 };
 
-function guidedFrameWorkflowPanel(s, takes) {
+/* Slice 5b adds two arguments and changes nothing else about this panel.
+ *
+ * `openDefault` is a DEFAULT: workspaceSectionOpen honours a remembered value and falls
+ * back to this, so a filmmaker's own choice still wins.
+ *
+ * `sectionSuffix` IS WHY THAT IS TRUE, AND IT IS NOT DECORATION. A `<details>` rendered
+ * WITH the `open` attribute fires a `toggle` event in a real browser, and the event is
+ * queued as a task — so it lands AFTER public/app.js clears ROUTE_RENDER_IN_PROGRESS and
+ * rememberWorkspaceSection writes "1" for a panel nobody touched. Measured in Chromium:
+ * `cinebraid-section:<project>:<shot>:frames-workflow` is already "1" the first time a
+ * shot is opened, before any interaction at all.
+ *
+ * That is harmless while the default never changes, and it silently defeats a default
+ * that does: every shot a filmmaker had ever visited would ignore its declared intent.
+ * So the two states remember SEPARATELY. "How open should this be when the shot says it
+ * needs no frames" is a different question from "how open should this be when it does",
+ * and a real answer to either is kept. Nothing about rememberWorkspaceSection changes —
+ * the panels that share it are untouched. */
+function guidedFrameWorkflowPanel(s, takes, openDefault = true, sectionSuffix = "") {
   const progress = guidedFrameProgress(s, takes);
+  const sectionKey = `${s.id}:frames-workflow${sectionSuffix}`;
   const approvedCount = progress.frames.filter((f, i) => guidedFrameApproved(s, f, takes, i)).length;
   const complete = approvedCount === progress.frames.length && progress.frames.length > 0;
   const attention = progress.frames.some((frame, index) => {
@@ -2385,10 +2404,12 @@ function guidedFrameWorkflowPanel(s, takes) {
   });
   const tone = attention ? "attention" : complete ? "complete" : "pending";
   const label = attention ? "Needs attention" : complete ? `${approvedCount}/${progress.frames.length} complete` : `${approvedCount}/${progress.frames.length} approved`;
-  // This is the primary content of the bounded Frames stage. Keep it open by
-  // default even after approval so the user can inspect the approved anchors
-  // and continue directly into motion without reopening a collapsed shell.
-  const openDefault = true;
+  // This is the primary content of the bounded Frames stage. It is open by default
+  // even after approval so the user can inspect the approved anchors and continue
+  // directly into motion without reopening a collapsed shell — EXCEPT where the shot's
+  // declared intent asks for no frame at all, which is the one case the caller passes
+  // false for. Folded, never removed: the frames, their candidates and their approvals
+  // are all still built below and are one click away.
   const ids = progress.frames.map((frame) => frame.id);
   const fallback = progress.frames.find((frame, index) => !guidedFrameApproved(s, frame, takes, index))?.id || ids[0] || "";
   const selectedId = boundedSelected("shot-frame", s.id, ids, fallback);
@@ -2470,7 +2491,7 @@ function guidedFrameWorkflowPanel(s, takes) {
   const continuityMarkup = continuityPanel
     ? `<details class="fold shot-continuity-fold" ${workspaceSectionOpen(`${s.id}:continuity-check`, false) ? "open" : ""} ontoggle="rememberWorkspaceSection('${attr(s.id)}:continuity-check',this.open)"><summary>Continuity check</summary><p class="hint">Compare two approved frames against this shot's declared references. Open this when you are checking continuity; it stays out of the way while you are choosing and approving frames.</p>${continuityPanel}</details>`
     : "";
-  return `<details class="guided-frame-workflow compact-work-section ${complete ? "is-complete" : ""}" ${workspaceSectionOpen(`${s.id}:frames-workflow`, openDefault) ? "open" : ""} ontoggle="rememberWorkspaceSection('${attr(s.id)}:frames-workflow',this.open)"><summary class="guided-workflow-title"><div><span>FRAMES</span><h2>Import, choose, and approve images</h2><span class="sr-only">Create and choose the images</span><p>Edit one frame at a time. Use the compact frame strip to move between start, end, and additional compositions.</p></div>${workspaceStatusPill(label, tone)}<i class="compact-chevron">⌄</i></summary><div class="guided-frame-workflow-body">${guidedFrameRailMarkup(s,progress.frames,takes,selectedId)}${motionCta}${selectedFrame ? guidedFrameCard(s, selectedFrame, selectedIndex, takes) : ""}${continuityMarkup}${legacyReviewMarkup}<button class="guided-add-frame" onclick="addGuidedFrame('${s.id}')"><b>＋ Add frame</b><span>Add an end frame or another required composition only when the motion needs it.</span></button></div></details>`;
+  return `<details class="guided-frame-workflow compact-work-section ${complete ? "is-complete" : ""}" ${workspaceSectionOpen(sectionKey, openDefault) ? "open" : ""} ontoggle="rememberWorkspaceSection('${attr(sectionKey)}',this.open)"><summary class="guided-workflow-title"><div><span>FRAMES</span><h2>Import, choose, and approve images</h2><span class="sr-only">Create and choose the images</span><p>Edit one frame at a time. Use the compact frame strip to move between start, end, and additional compositions.</p></div>${workspaceStatusPill(label, tone)}<i class="compact-chevron">⌄</i></summary><div class="guided-frame-workflow-body">${guidedFrameRailMarkup(s,progress.frames,takes,selectedId)}${motionCta}${selectedFrame ? guidedFrameCard(s, selectedFrame, selectedIndex, takes) : ""}${continuityMarkup}${legacyReviewMarkup}<button class="guided-add-frame" onclick="addGuidedFrame('${s.id}')"><b>＋ Add frame</b><span>Add an end frame or another required composition only when the motion needs it.</span></button></div></details>`;
 }
 function profileSupportsGuidedAudio(profile) {
   return !!(profile && (profile.mode === "audio-video" || profile.mode === "r2v" && (profile.limits?.maxAudio || profile.family === "happy-horse-1.1")));
@@ -2578,15 +2599,48 @@ function preferredGuidedVideoProfile(selected = "") {
     || profiles[0]?.id
     || "";
 }
+/* THE CLIP KIND A TARGET'S MODE MEANS, which for one mode is not its own name.
+ *
+ * `audio-video` is CineBraid's name for a reference-to-video workflow that carries
+ * sound, and the repository already folds it that way in two places —
+ * ensureGuidedMotionUnit() when it stamps a unit's kind, and guidedEffectiveVideoMode()
+ * when it recognises an imported one. A third reading of the same profile would be a
+ * third answer, so this is the same fold, named. */
+function guidedVideoProfileRouteKind(profile) {
+  const mode = String(profile?.mode || "");
+  return mode === "audio-video" ? "r2v" : mode;
+}
+/* DOES THIS SHOT'S DECLARED INTENT ADMIT THIS TARGET. Slice 5b.
+ *
+ * NARROWING ONLY, and the direction is the whole guarantee. A declared route can take a
+ * target OUT of the picker's selectable set and can never put one in: dispatchability is
+ * still resolved first and independently, and this answer is ANDed with it below, never
+ * ORed. A shot with no declared route — and a shot carrying a token this build cannot
+ * read — admits everything, which is exactly the picker CineBraid shipped.
+ *
+ * The intersection itself belongs to public/shared-shot-intent.js; this is the one line
+ * that asks it about one profile. */
+function guidedVideoProfileMatchesIntent(profile, route = "") {
+  if (typeof shotIntentAdmitsMode !== "function") return true;
+  return shotIntentAdmitsMode(route, guidedVideoProfileRouteKind(profile));
+}
 /* The one-line description of a target's availability, in the picker's own words. */
-function guidedVideoProfileOptionSuffix(profile) {
+function guidedVideoProfileOptionSuffix(profile, route = "") {
   if (!guidedVideoProfileDispatchable(profile)) return " · not available in this build";
+  /* Stated BEFORE the workflow description, because "why can I not choose this" is the
+   * question a greyed row raises and the workflow it performs is no longer the answer.
+   * It names the filmmaker's own declaration rather than a mode token: the intent
+   * control is the place to change it, and this says so. */
+  if (!guidedVideoProfileMatchesIntent(profile, route)) return " · not how this shot is made";
   if (profile.mode === "t2v") return " · prompt only, no reference images";
   if (profile.mode === "flf") return " · first + last frame";
   if (profile.mode === "r2v") return profile.family === "minimax-h3" ? " · multi-frame + references" : " · reference performance";
   return profileSupportsGuidedAudio(profile) ? " · native audio" : "";
 }
-function guidedVideoProfileOptions(selected = "") {
+/* `route` is the shot's DECLARED delivery route, or "" where none is declared. It is
+   passed in rather than read here, because this function is handed a selection and a
+   catalogue and has never known which shot it is drawing for. */
+function guidedVideoProfileOptions(selected = "", route = "") {
   const profiles = guidedVideoProfiles();
   const families = [
     ["minimax-h3", "MiniMax H3"],
@@ -2599,7 +2653,14 @@ function guidedVideoProfileOptions(selected = "") {
      the catalogue a filmmaker is entitled to see; leaving it pressable is what made a
      dead end reachable. A stored selection keeps rendering either way, so a project
      that already names one is never silently moved onto another model. */
-  const option = (profile) => `<option value="${attr(profile.id)}" ${profile.id === selected ? "selected" : ""} ${guidedVideoProfileDispatchable(profile) || profile.id === selected ? "" : "disabled"}>${esc(profile.name.replace(/^.*?—\s*/, ""))}${esc(guidedVideoProfileOptionSuffix(profile))}</option>`;
+  /* SELECTABLE IS AN AND, NEVER AN OR. Dispatchable AND admitted by the declared
+     intent; a route that is not declared admits everything, so the shipped answer is
+     unchanged for every shot that has not opted in. The stored selection is still
+     exempted, exactly as before — a project that already names a target is never
+     silently moved onto another one, and an intent declared afterwards must not trap
+     the filmmaker on a control they cannot operate. */
+  const selectable = (profile) => (guidedVideoProfileDispatchable(profile) && guidedVideoProfileMatchesIntent(profile, route)) || profile.id === selected;
+  const option = (profile) => `<option value="${attr(profile.id)}" ${profile.id === selected ? "selected" : ""} ${selectable(profile) ? "" : "disabled"}>${esc(profile.name.replace(/^.*?—\s*/, ""))}${esc(guidedVideoProfileOptionSuffix(profile, route))}</option>`;
   const rendered = [];
   for (const [family, label] of families) {
     const rows = profiles.filter((profile) => profile.family === family);
@@ -2607,7 +2668,7 @@ function guidedVideoProfileOptions(selected = "") {
     rendered.push(`<optgroup label="${attr(label)}">${rows.map(option).join("")}</optgroup>`);
   }
   const other = profiles.filter((profile) => !families.some(([family]) => family === profile.family));
-  if (other.length) rendered.push(`<optgroup label="Other compatible targets">${other.map((profile) => `<option value="${attr(profile.id)}" ${profile.id === selected ? "selected" : ""} ${guidedVideoProfileDispatchable(profile) || profile.id === selected ? "" : "disabled"}>${esc(profile.name)}${esc(guidedVideoProfileOptionSuffix(profile))}</option>`).join("")}</optgroup>`);
+  if (other.length) rendered.push(`<optgroup label="Other compatible targets">${other.map((profile) => `<option value="${attr(profile.id)}" ${profile.id === selected ? "selected" : ""} ${selectable(profile) ? "" : "disabled"}>${esc(profile.name)}${esc(guidedVideoProfileOptionSuffix(profile, route))}</option>`).join("")}</optgroup>`);
   return rendered.join("");
 }
 /* The refusal, in the standard CineBraid uses everywhere it declines to spend: plain
@@ -2623,6 +2684,12 @@ function guidedVideoProfileRefusalMarkup(profile) {
 }
 function guidedVideoProfileCount() {
   return guidedDispatchableVideoProfiles().length;
+}
+/* How many of the targets CineBraid can really run this shot's declared intent admits.
+   Derived by filtering the SAME dispatchable list the count above reports, so it can
+   only ever be smaller than it. */
+function guidedIntentVideoProfileCount(route = "") {
+  return guidedDispatchableVideoProfiles().filter((profile) => guidedVideoProfileMatchesIntent(profile, route)).length;
 }
 function ensureGuidedMotionUnit(s, currentName = "", profile = null) {
   normalizeShotV5(s);
@@ -3086,6 +3153,12 @@ function guidedMotionPanel(s, current, takes, open = false) {
   const unit = guidedActiveMotionUnit(s, c), supportedKinds = ["t2v", "i2v", "flf", "r2v", "audio-video"], complex = (s.clips || []).length > 1 || (unit && !supportedKinds.includes(unit.kind));
   const direction = c.motionDirection || unit?.motionPrompt || s.motionPrompt || "";
   const profileId = preferredGuidedVideoProfile(c.motionProfileId || ""), profile = guidedVideoProfiles().find((item) => item.id === profileId);
+  /* Slice 5b. The shot's DECLARED delivery route, read through the one vocabulary owner
+     and never derived: "" for a shot that declared none and "" for a stored token this
+     build cannot read. It narrows which targets the picker will let the filmmaker
+     select, and it does nothing else here — the lock above, the duration bounds, the
+     references and the prompt are all resolved exactly as they were. */
+  const intentRoute = declaredShotRoute(s);
   const duration = guidedClampedMotionDuration(c.motionDuration || unit?.dur || 5, profile);
   const [durationMin, durationMax] = guidedMotionDurationBounds(profile);
   const latest = latestPromptBuild(P, c.motionPromptBuilds), audioRefs = shotPlanningGenerationReferences(s, ["audio"]).filter((ref) => shotInputEnabled(s, ref.key));
@@ -3114,7 +3187,7 @@ function guidedMotionPanel(s, current, takes, open = false) {
     : operation?.status === "error"
       ? guidedPromptErrorMarkup(operation.error, `buildGuidedMotionPrompt('${s.id}',${busyLabel === "improve" ? "true" : "false"})`)
       : `<div class="guided-motion-result-slot">${latest ? guidedMotionPromptResult(s, latest) : `<div class="guided-next-note"><b>Optional:</b> build a motion prompt when you need help creating another video.</div>`}</div>`;
-  return `<details id="guided-motion-workspace-${attr(s.id)}" class="guided-work-panel guided-motion-card" data-guided-panel="motion" ${guidedPanelOpen(s, "motion", open) ? "open" : ""} ontoggle="rememberGuidedPanel('${s.id}','motion',this.open)"><summary><div><span>MOTION · OPTIONAL</span><b>${esc(label)}</b><small>Attach an existing video or audio first; assisted motion tools remain optional.</small></div><span class="guided-mode-pill ${approved ? "ready" : ""}">${approved ? "APPROVED" : approvedFrames.length > 1 ? `${approvedFrames.length} FRAMES READY` : needsApprovedStill ? "START FRAME READY" : "NO FRAMES NEEDED"}</span><i>⌄</i></summary><div class="guided-work-panel-body">${c.automationReadyForMotion ? `<div class="automation-motion-ready"><span>STILL AUTOMATION COMPLETE</span><b>${approvedFrames.length > 1 ? `${approvedFrames.length} approved frames are ready for a first/last-frame or multi-frame video.` : "The approved start frame is ready for image-to-video."}</b><small>Choose the video target, direct motion, build or improve the motion prompt, then generate the video manually. Motion is never submitted by the still-automation runner.</small></div>` : ""}<nav class="motion-workflow-map" aria-label="Motion workflow sections"><button type="button" onclick="scrollGuidedMotionSection('${attr(s.id)}','frames')"><span>1</span><b>Approved frames</b><small>${approvedFrames.length} ready</small></button><button type="button" onclick="scrollGuidedMotionSection('${attr(s.id)}','results')"><span>2</span><b>Returned video</b><small>${videos.length} result${videos.length === 1 ? "" : "s"}</small></button><button type="button" onclick="scrollGuidedMotionSection('${attr(s.id)}','create')"><span>3</span><b>Create motion</b><small>${esc(profile?.name || profileId)}</small></button></nav><section class="motion-workflow-section approved-motion-frames" id="motion-frames-${attr(s.id)}"><div class="motion-section-heading"><span>1 · APPROVED FRAMES</span><div><b>Choose the visual anchors for motion</b><small>Click any frame to inspect it at a useful size. H3 keyframes and first/last-frame packages use these approved images.</small></div><i>${approvedFrames.length} READY</i></div><div class="guided-motion-frame-strip">${approvedFrames.map(({frame,take}, index) => { const title = `Frame ${frame.label} · ${take.name}`; return `<article><button type="button" class="guided-motion-frame-preview" onclick="openMediaTheatre('${attr(encodeURIComponent(take.url))}','${attr(encodeURIComponent(title))}','image')" aria-label="View approved Frame ${esc(frame.label)} larger"><img src="${attr(take.url)}" alt="Approved Frame ${esc(frame.label)}"><span>${index === 0 ? "START" : index === approvedFrames.length - 1 ? "END" : `FRAME ${esc(frame.label)}`}</span><em>View larger</em></button><b>Frame ${esc(frame.label)}</b></article>`; }).join("")}</div>${guidedH3KeyframePanel(s, profile)}</section>${guidedMotionCandidatePanel(s, takes, approved)}<section class="motion-workflow-section motion-create-section" id="motion-create-${attr(s.id)}"><div class="motion-section-heading"><span>3 · ASSISTED MOTION</span><div><b>Direct movement and build the provider prompt</b><small>Open only the part you need. Existing finished video can skip this entire section.</small></div><i>OPTIONAL</i></div><details class="guided-assisted-tools motion-assisted-tools" ${guidedPanelOpen(s, "motionCreate", !manualFirstWorkflow()) ? "open" : ""} ontoggle="rememberGuidedPanel('${s.id}','motionCreate',this.open)"><summary><div><span>OPTIONAL ASSISTED CREATION</span><b>Direct motion or build a video prompt</b><small>Imported video and audio can be approved without using these tools.</small></div></summary><div class="guided-motion-main"><details class="motion-director" ${guidedPanelOpen(s, "motionDirector", false) ? "open" : ""} ontoggle="rememberGuidedPanel('${s.id}','motionDirector',this.open)"><summary>Direct motion <span>structured controls</span></summary>${motionDirectorMap(s,c)}<div class="motion-director-camera"><label><span>Camera move</span><select onchange="setMotionPlanField('${s.id}','camera','move',this.value)">${composerOptions([["locked","Locked off"],["static-handheld","Static handheld"],["pan","Pan"],["tilt","Tilt"],["push-in","Push in"],["pull-back","Pull back"],["dolly","Dolly / truck"],["arc","Arc"],["follow-subject","Follow subject"],["subtle-drift","Subtle drift"]], c.motionPlan.camera.move)}</select></label><label><span>Direction</span><select onchange="setMotionPlanField('${s.id}','camera','direction',this.value)">${composerOptions([["","Not specified"],["left","Left"],["right","Right"],["up","Up"],["down","Down"],["clockwise","Clockwise"],["counterclockwise","Counterclockwise"]], c.motionPlan.camera.direction)}</select></label><label><span>Strength</span><select onchange="setMotionPlanField('${s.id}','camera','intensity',this.value)">${composerOptions([["subtle","Subtle"],["moderate","Moderate"],["strong","Strong"]], c.motionPlan.camera.intensity)}</select></label><label><span>Style</span><select onchange="setMotionPlanField('${s.id}','camera','style',this.value)">${composerOptions([["smooth","Smooth"],["handheld","Handheld"],["documentary","Documentary"],["mechanical","Mechanical"],["floating","Floating"],["abrupt","Abrupt"]], c.motionPlan.camera.style)}</select></label><label><span>Framing</span><select onchange="setMotionPlanField('${s.id}','camera','framing',this.value)">${composerOptions([["preserve","Preserve composition"],["preserve-loosely","Preserve loosely"],["allow-reframe","Allow reframing"]], c.motionPlan.camera.framing)}</select></label></div><div class="motion-director-subjects">${motionSubjectControls(s,c)}${motionPropControls(s,c)}</div><div class="motion-director-environment"><label><span>Environment</span><select onchange="setMotionPlanField('${s.id}','environment','action',this.value)">${composerOptions([["static","Static"],["wind","Wind / fabric"],["rain","Rain"],["smoke","Smoke / steam"],["traffic","Traffic"],["crowd","Crowd background"],["light-flicker","Light flicker"],["water","Water / ripple"],["dust","Dust / atmosphere"]], c.motionPlan.environment.action)}</select></label><label><span>Intensity</span><select onchange="setMotionPlanField('${s.id}','environment','intensity',this.value)">${composerOptions([["subtle","Subtle"],["moderate","Moderate"],["strong","Strong"]], c.motionPlan.environment.intensity)}</select></label><label class="wide"><span>Environment note</span><input value="${attr(c.motionPlan.environment.notes || "")}" onchange="setMotionPlanField('${s.id}','environment','notes',this.value)" placeholder="Only distant traffic moves; foreground remains still…"></label></div><div class="motion-director-timing"><label><span>Onset</span><select onchange="setMotionPlanField('${s.id}','timing','onset',this.value)">${composerOptions([["immediate","Immediate"],["delayed","Delayed"],["gradual","Gradual"]], c.motionPlan.timing.onset)}</select></label><label><span>Pacing</span><select onchange="setMotionPlanField('${s.id}','timing','pacing',this.value)">${composerOptions([["slow","Slow"],["natural","Natural"],["brisk","Brisk"]], c.motionPlan.timing.pacing)}</select></label><label class="checkline"><input type="checkbox" ${c.motionPlan.timing.holdEnd ? "checked" : ""} onchange="setMotionPlanField('${s.id}','timing','holdEnd',this.checked)"> Hold final state</label><label class="wide"><span>Optional secondary action</span><input value="${attr(c.motionPlan.timing.secondary || "")}" onchange="setMotionPlanField('${s.id}','timing','secondary',this.value)" placeholder="A light flickers once after the character stops…"></label></div></details>${field("Additional motion direction", `<textarea class="guided-motion-editor" placeholder="Only add details not covered by the controls above." onchange="setGuidedMotionField('${s.id}','motionDirection',this.value)">${esc(direction)}</textarea>`)}<details class="guided-inline-defaults motion-defaults"><summary>Motion defaults: ${esc(String(c.motionIntensity || "subtle").replace(/-/g," "))}${c.preserveComposition ? " · preserve composition" : ""}</summary><div class="guided-motion-detail-grid"><label><span>Overall intensity</span><select onchange="setGuidedMotionField('${s.id}','motionIntensity',this.value)">${["nearly-still","subtle","moderate","active","highly-dynamic"].map((x) => `<option value="${x}" ${c.motionIntensity === x ? "selected" : ""}>${x.replace(/-/g," ")}</option>`).join("")}</select></label><label class="checkline"><input type="checkbox" ${c.preserveComposition ? "checked" : ""} onchange="setGuidedMotionField('${s.id}','preserveComposition',this.checked)"> Preserve composition and identity</label></div></details>${guidedAudioPanel(s,c,profile,audioRefs)}<div class="guided-motion-controls"><label><span>Duration</span><input type="number" min="${durationMin}" max="${durationMax}" value="${duration}" onchange="setGuidedMotionField('${s.id}','motionDuration',+this.value)"><small>${durationMin}–${durationMax}s for this target${profile?.mode === "r2v" ? "; use chained clips for longer shots" : ""}</small></label><label class="guided-video-target-control"><span>Video model and workflow</span><select ${busy ? "disabled" : ""} onchange="setGuidedMotionField('${s.id}','motionProfileId',this.value)">${guidedVideoProfileOptions(profileId)}</select><small>${guidedVideoProfileCount()} of ${guidedVideoProfiles().length} written-up targets can be generated from CineBraid today. The rest stay listed, and say why they cannot run.</small></label>${guidedVideoProfileRefusalMarkup(profile)}<div><button class="assemble-btn" ${busy ? "disabled" : ""} onclick="buildGuidedMotionPrompt('${s.id}',false)">${busy ? `<span class="spin">◌</span> WORKING…` : "Build prompt"}</button><button class="ghost-btn" ${busy ? "disabled" : ""} onclick="buildGuidedMotionPrompt('${s.id}',true)"${aiDisabledAttrs("text")}>${busy ? `<span class="spin">◌</span> Improving…` : "Improve"}</button></div></div>${operationBody}</div></details></section></div></details>`;
+  return `<details id="guided-motion-workspace-${attr(s.id)}" class="guided-work-panel guided-motion-card" data-guided-panel="motion" ${guidedPanelOpen(s, "motion", open) ? "open" : ""} ontoggle="rememberGuidedPanel('${s.id}','motion',this.open)"><summary><div><span>MOTION · OPTIONAL</span><b>${esc(label)}</b><small>Attach an existing video or audio first; assisted motion tools remain optional.</small></div><span class="guided-mode-pill ${approved ? "ready" : ""}">${approved ? "APPROVED" : approvedFrames.length > 1 ? `${approvedFrames.length} FRAMES READY` : needsApprovedStill ? "START FRAME READY" : "NO FRAMES NEEDED"}</span><i>⌄</i></summary><div class="guided-work-panel-body">${c.automationReadyForMotion ? `<div class="automation-motion-ready"><span>STILL AUTOMATION COMPLETE</span><b>${approvedFrames.length > 1 ? `${approvedFrames.length} approved frames are ready for a first/last-frame or multi-frame video.` : "The approved start frame is ready for image-to-video."}</b><small>Choose the video target, direct motion, build or improve the motion prompt, then generate the video manually. Motion is never submitted by the still-automation runner.</small></div>` : ""}<nav class="motion-workflow-map" aria-label="Motion workflow sections"><button type="button" onclick="scrollGuidedMotionSection('${attr(s.id)}','frames')"><span>1</span><b>Approved frames</b><small>${approvedFrames.length} ready</small></button><button type="button" onclick="scrollGuidedMotionSection('${attr(s.id)}','results')"><span>2</span><b>Returned video</b><small>${videos.length} result${videos.length === 1 ? "" : "s"}</small></button><button type="button" onclick="scrollGuidedMotionSection('${attr(s.id)}','create')"><span>3</span><b>Create motion</b><small>${esc(profile?.name || profileId)}</small></button></nav><section class="motion-workflow-section approved-motion-frames" id="motion-frames-${attr(s.id)}"><div class="motion-section-heading"><span>1 · APPROVED FRAMES</span><div><b>Choose the visual anchors for motion</b><small>Click any frame to inspect it at a useful size. H3 keyframes and first/last-frame packages use these approved images.</small></div><i>${approvedFrames.length} READY</i></div><div class="guided-motion-frame-strip">${approvedFrames.map(({frame,take}, index) => { const title = `Frame ${frame.label} · ${take.name}`; return `<article><button type="button" class="guided-motion-frame-preview" onclick="openMediaTheatre('${attr(encodeURIComponent(take.url))}','${attr(encodeURIComponent(title))}','image')" aria-label="View approved Frame ${esc(frame.label)} larger"><img src="${attr(take.url)}" alt="Approved Frame ${esc(frame.label)}"><span>${index === 0 ? "START" : index === approvedFrames.length - 1 ? "END" : `FRAME ${esc(frame.label)}`}</span><em>View larger</em></button><b>Frame ${esc(frame.label)}</b></article>`; }).join("")}</div>${guidedH3KeyframePanel(s, profile)}</section>${guidedMotionCandidatePanel(s, takes, approved)}<section class="motion-workflow-section motion-create-section" id="motion-create-${attr(s.id)}"><div class="motion-section-heading"><span>3 · ASSISTED MOTION</span><div><b>Direct movement and build the provider prompt</b><small>Open only the part you need. Existing finished video can skip this entire section.</small></div><i>OPTIONAL</i></div><details class="guided-assisted-tools motion-assisted-tools" ${guidedPanelOpen(s, "motionCreate", !manualFirstWorkflow()) ? "open" : ""} ontoggle="rememberGuidedPanel('${s.id}','motionCreate',this.open)"><summary><div><span>OPTIONAL ASSISTED CREATION</span><b>Direct motion or build a video prompt</b><small>Imported video and audio can be approved without using these tools.</small></div></summary><div class="guided-motion-main"><details class="motion-director" ${guidedPanelOpen(s, "motionDirector", false) ? "open" : ""} ontoggle="rememberGuidedPanel('${s.id}','motionDirector',this.open)"><summary>Direct motion <span>structured controls</span></summary>${motionDirectorMap(s,c)}<div class="motion-director-camera"><label><span>Camera move</span><select onchange="setMotionPlanField('${s.id}','camera','move',this.value)">${composerOptions([["locked","Locked off"],["static-handheld","Static handheld"],["pan","Pan"],["tilt","Tilt"],["push-in","Push in"],["pull-back","Pull back"],["dolly","Dolly / truck"],["arc","Arc"],["follow-subject","Follow subject"],["subtle-drift","Subtle drift"]], c.motionPlan.camera.move)}</select></label><label><span>Direction</span><select onchange="setMotionPlanField('${s.id}','camera','direction',this.value)">${composerOptions([["","Not specified"],["left","Left"],["right","Right"],["up","Up"],["down","Down"],["clockwise","Clockwise"],["counterclockwise","Counterclockwise"]], c.motionPlan.camera.direction)}</select></label><label><span>Strength</span><select onchange="setMotionPlanField('${s.id}','camera','intensity',this.value)">${composerOptions([["subtle","Subtle"],["moderate","Moderate"],["strong","Strong"]], c.motionPlan.camera.intensity)}</select></label><label><span>Style</span><select onchange="setMotionPlanField('${s.id}','camera','style',this.value)">${composerOptions([["smooth","Smooth"],["handheld","Handheld"],["documentary","Documentary"],["mechanical","Mechanical"],["floating","Floating"],["abrupt","Abrupt"]], c.motionPlan.camera.style)}</select></label><label><span>Framing</span><select onchange="setMotionPlanField('${s.id}','camera','framing',this.value)">${composerOptions([["preserve","Preserve composition"],["preserve-loosely","Preserve loosely"],["allow-reframe","Allow reframing"]], c.motionPlan.camera.framing)}</select></label></div><div class="motion-director-subjects">${motionSubjectControls(s,c)}${motionPropControls(s,c)}</div><div class="motion-director-environment"><label><span>Environment</span><select onchange="setMotionPlanField('${s.id}','environment','action',this.value)">${composerOptions([["static","Static"],["wind","Wind / fabric"],["rain","Rain"],["smoke","Smoke / steam"],["traffic","Traffic"],["crowd","Crowd background"],["light-flicker","Light flicker"],["water","Water / ripple"],["dust","Dust / atmosphere"]], c.motionPlan.environment.action)}</select></label><label><span>Intensity</span><select onchange="setMotionPlanField('${s.id}','environment','intensity',this.value)">${composerOptions([["subtle","Subtle"],["moderate","Moderate"],["strong","Strong"]], c.motionPlan.environment.intensity)}</select></label><label class="wide"><span>Environment note</span><input value="${attr(c.motionPlan.environment.notes || "")}" onchange="setMotionPlanField('${s.id}','environment','notes',this.value)" placeholder="Only distant traffic moves; foreground remains still…"></label></div><div class="motion-director-timing"><label><span>Onset</span><select onchange="setMotionPlanField('${s.id}','timing','onset',this.value)">${composerOptions([["immediate","Immediate"],["delayed","Delayed"],["gradual","Gradual"]], c.motionPlan.timing.onset)}</select></label><label><span>Pacing</span><select onchange="setMotionPlanField('${s.id}','timing','pacing',this.value)">${composerOptions([["slow","Slow"],["natural","Natural"],["brisk","Brisk"]], c.motionPlan.timing.pacing)}</select></label><label class="checkline"><input type="checkbox" ${c.motionPlan.timing.holdEnd ? "checked" : ""} onchange="setMotionPlanField('${s.id}','timing','holdEnd',this.checked)"> Hold final state</label><label class="wide"><span>Optional secondary action</span><input value="${attr(c.motionPlan.timing.secondary || "")}" onchange="setMotionPlanField('${s.id}','timing','secondary',this.value)" placeholder="A light flickers once after the character stops…"></label></div></details>${field("Additional motion direction", `<textarea class="guided-motion-editor" placeholder="Only add details not covered by the controls above." onchange="setGuidedMotionField('${s.id}','motionDirection',this.value)">${esc(direction)}</textarea>`)}<details class="guided-inline-defaults motion-defaults"><summary>Motion defaults: ${esc(String(c.motionIntensity || "subtle").replace(/-/g," "))}${c.preserveComposition ? " · preserve composition" : ""}</summary><div class="guided-motion-detail-grid"><label><span>Overall intensity</span><select onchange="setGuidedMotionField('${s.id}','motionIntensity',this.value)">${["nearly-still","subtle","moderate","active","highly-dynamic"].map((x) => `<option value="${x}" ${c.motionIntensity === x ? "selected" : ""}>${x.replace(/-/g," ")}</option>`).join("")}</select></label><label class="checkline"><input type="checkbox" ${c.preserveComposition ? "checked" : ""} onchange="setGuidedMotionField('${s.id}','preserveComposition',this.checked)"> Preserve composition and identity</label></div></details>${guidedAudioPanel(s,c,profile,audioRefs)}<div class="guided-motion-controls"><label><span>Duration</span><input type="number" min="${durationMin}" max="${durationMax}" value="${duration}" onchange="setGuidedMotionField('${s.id}','motionDuration',+this.value)"><small>${durationMin}–${durationMax}s for this target${profile?.mode === "r2v" ? "; use chained clips for longer shots" : ""}</small></label><label class="guided-video-target-control"><span>Video model and workflow</span><select ${busy ? "disabled" : ""} data-intent-route="${attr(intentRoute)}" onchange="setGuidedMotionField('${s.id}','motionProfileId',this.value)">${guidedVideoProfileOptions(profileId, intentRoute)}</select><small>${guidedVideoProfileCount()} of ${guidedVideoProfiles().length} written-up targets can be generated from CineBraid today. The rest stay listed, and say why they cannot run.${intentRoute ? ` This shot's intent narrows that to ${guidedIntentVideoProfileCount(intentRoute)}; change the intent above the workspace to widen it again.` : ""}</small></label>${guidedVideoProfileRefusalMarkup(profile)}<div><button class="assemble-btn" ${busy ? "disabled" : ""} onclick="buildGuidedMotionPrompt('${s.id}',false)">${busy ? `<span class="spin">◌</span> WORKING…` : "Build prompt"}</button><button class="ghost-btn" ${busy ? "disabled" : ""} onclick="buildGuidedMotionPrompt('${s.id}',true)"${aiDisabledAttrs("text")}>${busy ? `<span class="spin">◌</span> Improving…` : "Improve"}</button></div></div>${operationBody}</div></details></section></div></details>`;
 }
 function guidedFinishPanel(s, approved, current, open = false) {
   const c = ensureShotCreation(s), source = approved || current;
@@ -3128,6 +3201,136 @@ function guidedFinishPanel(s, approved, current, open = false) {
    its takes and the live automation runs; nothing is cached and nothing is stored.
    Keeping the assembly here and the judgement in public/shared-stage-model.js is
    what lets Node exercise representative shot states without a project on disk. */
+/* ===========================================================================
+   SHOT INTENT — Batch 2, Slice 5b. The filmmaker-facing half of the Slice 5a route.
+
+   ONE QUESTION, AND IT IS NOT SLICE 4'S. Shot intent answers "how am I intending to
+   make this shot"; Simple/Advanced answers "how much generation configuration do I want
+   to see". They are deliberately separate controls in separate places, and nothing in
+   this block draws a generation setting.
+
+   WHAT IT MAY DO: narrow. What it may never do: grant. Every effective-method answer
+   below comes out of public/shared-shot-intent.js, which is a filter over an existing
+   authority's list and cannot add to one. The writer is Slice 5a's declareShotRoute /
+   clearShotRoute and nothing else, so declaring an intent touches exactly one key on the
+   shot record and no frame, candidate, approval, reference, generation or receipt.
+
+   NOTHING HERE INFERS. No branch reads the shot's frames, references, clips, prompts or
+   prior generations to choose an intent, and there is no code path that writes a route
+   the filmmaker did not pick. A legacy shot stays undeclared until somebody decides. */
+
+/* The words. The route tokens and the four mode labels come from the shipped owners —
+   public/shared-shot-route.js and CINEBRAID_MODE_LANGUAGE — so only the three things no
+   shipped owner names are written here: the undeclared state, the route that names no
+   mode, and the needs-review state.
+
+   The role phrases are this surface's own and are deliberately shorter than
+   shared-shot-readiness.js's METHOD_INPUT_LABELS. That module is answering "is this
+   satisfied", so it says "an approved opening frame"; this control is answering "what
+   will this ask for", before any of it exists. */
+const SHOT_INTENT_UI_WORDS = Object.freeze({
+  absent: "Not decided yet",
+  hybrid: "More than one method",
+  unrecognised: "Needs review — this shot's stored intent is not readable",
+  roles: Object.freeze({ "first-frame": "an opening frame", "last-frame": "a closing frame", reference: "approved references" }),
+});
+function shotIntentNeedsPhrase(needs) {
+  const words = (needs || []).map((role) => SHOT_INTENT_UI_WORDS.roles[role] || role);
+  if (!words.length) return "";
+  if (words.length === 1) return words[0];
+  return `${words.slice(0, -1).join(", ")} and ${words[words.length - 1]}`;
+}
+
+/* SHOULD THE FRAMES WORKFLOW BE PUT IN FRONT OF THIS FILMMAKER.
+ *
+ * The composition of TWO shipped authorities, and this is the one place it happens:
+ *
+ *   the probes    public/shared-shot-readiness.js's ANIMATE_METHOD_PROBES, itself
+ *                 derived from resolveTaskModes() — what inputs a method asks for
+ *   the gate      guidedVideoModeNeedsApprovedStill, the predicate the shipped Motion
+ *                 panel locks itself on, passed in rather than copied
+ *
+ * They disagree about r2v — the probes want a reference, the Motion panel wants an
+ * approved still — so the UNION is taken, in public/shared-shot-intent.js. Folding
+ * Frames away for a route the Motion panel then refuses to open would be a workflow
+ * simplification that removes the workflow. */
+function shotIntentFramesExposure(s) {
+  return shotIntentFrameExposure(declaredShotRoute(s), guidedVideoModeNeedsApprovedStill);
+}
+
+/* THE CONTROL. One collapsed line on every stage of the shot, because the intent
+   governs which stages are relevant and a control that only existed inside one of them
+   could not be found from the others. It is the shot format control's shape —
+   `<details>` with the live answer in the summary — for the same reason: most shots need
+   it once, and a permanently expanded panel is the thing Batch 2 is removing. */
+function shotIntentControl(s) {
+  const intent = readShotIntent(s);
+  const exposure = shotIntentFramesExposure(s);
+  const declared = intent.reading === "declared";
+  const summary = declared
+    ? (intent.label || SHOT_INTENT_UI_WORDS.hybrid)
+    : intent.reading === "unrecognised" ? SHOT_INTENT_UI_WORDS.unrecognised : SHOT_INTENT_UI_WORDS.absent;
+  /* AN UNREADABLE STORED VALUE SELECTS NOTHING. The placeholder is disabled, so the
+     control shows a state that is true and offers no valid intent the filmmaker did not
+     choose. Withdrawing it is an explicit act with its own button, because clearing a
+     value CineBraid merely failed to understand should never be a side effect of
+     glancing at a menu. */
+  const placeholder = intent.reading === "unrecognised"
+    ? `<option value="" disabled selected>${esc(SHOT_INTENT_UI_WORDS.unrecognised)}</option>`
+    : `<option value="" ${declared ? "" : "selected"}>${esc(SHOT_INTENT_UI_WORDS.absent)}</option>`;
+  const options = placeholder + shotIntentChoices().map((choice) =>
+    `<option value="${attr(choice.route)}" ${intent.route === choice.route ? "selected" : ""}>${esc(choice.label || SHOT_INTENT_UI_WORDS.hybrid)}</option>`).join("");
+  const needs = shotIntentNeedsPhrase(intent.needs);
+  const workflow = !declared
+    ? "CineBraid is offering the whole workflow. Say how this shot is made and it will lead with the part that applies."
+    : exposure.adapt
+      ? "No frames are needed for this intent, so the Frames workflow opens folded. Everything already in it is kept."
+      : "Frames stay in the workflow: the motion workspace for this intent opens from an approved frame.";
+  const narrowing = declared
+    ? `Video targets are narrowed to ${guidedIntentVideoProfileCount(intent.route)} of the ${guidedVideoProfileCount()} CineBraid can run.`
+    : "";
+  const warning = intent.reading === "unrecognised"
+    ? `<p class="prompt-check warn shot-intent-unreadable">${esc(intent.reason || "the stored value is not one CineBraid recognises")}. Nothing about this shot has been changed, and no method has been offered because of it. Choose how the shot is made, or withdraw the stored value.</p><button type="button" class="ghost-btn shot-intent-clear" onclick="setShotIntent('${attr(s.id)}','')">Withdraw the unreadable value</button>`
+    : "";
+  const sectionKey = `${s.id}:shot-intent`;
+  return `<details class="shot-intent-control" data-shot-intent-control="1" data-shot-id="${attr(s.id)}" data-shot-intent="${attr(intent.route)}" data-shot-intent-reading="${attr(intent.reading)}" data-frames-required="${exposure.required ? "1" : "0"}" ${workspaceSectionOpen(sectionKey, false) ? "open" : ""} ontoggle="rememberWorkspaceSection('${attr(sectionKey)}',this.open)"><summary><b>Shot intent</b><span>${esc(summary)}</span></summary>
+    <div class="shot-intent-fields"><label for="shot-intent-${attr(s.id)}">How is this shot made?</label>
+    <select id="shot-intent-${attr(s.id)}" onchange="setShotIntent('${attr(s.id)}',this.value)">${options}</select>
+    ${needs ? `<small class="hint shot-intent-needs">Asks for ${esc(needs)}.</small>` : ""}
+    <small class="hint shot-intent-workflow">${esc(workflow)}</small>
+    ${narrowing ? `<small class="hint shot-intent-narrowing">${esc(narrowing)}</small>` : ""}
+    ${warning}
+    <small class="hint">Changing this changes what CineBraid shows you. It never deletes a frame, a reference, a candidate, an approval or a generation.</small></div></details>`;
+}
+
+/* THE ONLY WRITER OF A DECLARED ROUTE IN THE APPLICATION, and it writes through Slice
+   5a's authority rather than touching the field. A value the normaliser refuses is
+   reported and the record is left exactly as it was — that is declareShotRoute's own
+   contract, and this must not repair around it.
+
+   markContinuitySchema() is called on a real change for the reason app.js states: the
+   record now genuinely holds a 6.7 field, and only then should its marker say so. Slice
+   5a shipped no writer and therefore no caller; this is it. */
+window.setShotIntent = (shotId, value) => {
+  const s = shotById(shotId);
+  if (!s) return;
+  const raw = String(value == null ? "" : value).trim();
+  if (!raw) {
+    const cleared = clearShotRoute(s);
+    if (!cleared.ok) return toast(cleared.reason);
+    if (cleared.changed) { markContinuitySchema(); dirty(); }
+    route();
+    return;
+  }
+  const declaration = declareShotRoute(s, raw);
+  if (!declaration.ok) return toast(declaration.reason);
+  if (declaration.changed) { markContinuitySchema(); dirty(); }
+  route();
+};
+/* The way back from a folded stage, through the shipped scroll-and-focus helper rather
+   than a second one. It opens the control; it never changes it. */
+window.openShotIntent = (shotId) => focusGuidedWorkspaceTarget(`.shot-intent-control[data-shot-id="${shotId}"]`);
+
 function shotStageModelFacts(s, takes) {
   const progress = guidedFrameProgress(s, takes), life = guidedShotLifecycle(s, takes);
   const references = shotCreationReferences(s);
@@ -3252,11 +3455,35 @@ function shotLookWorkspace(s) {
   const ids=["blocking","authority"], selected=boundedSelected("shot-look-view",s.id,ids,"blocking");
   return `<section class="shot-subworkspace">${shotAspectControl(s)}<nav class="entity-subworkspace-tabs"><button class="${selected==="blocking"?"selected":""}" onclick="selectBoundedItem('shot-look-view','${attr(s.id)}','blocking')">Blocking & camera</button><button class="${selected==="authority"?"selected":""}" onclick="selectBoundedItem('shot-look-view','${attr(s.id)}','authority')">Approved references</button></nav>${selected === "authority" ? guidedShotComposerPanel(s,false) : guidedBlockingPanel(s)}</section>`;
 }
+/* ADAPTIVE FRAME EXPOSURE — Batch 2, Slice 5b.
+ *
+ * PRESENTATION, AND ONLY PRESENTATION. Nothing below changes a stage availability, a
+ * completion, a prerequisite, a readiness state or a progress count: public/shared-
+ * stage-model.js still declares Frames non-optional and still derives its state from
+ * approved frames alone, and it still does not know that routes exist. What changes is
+ * what opens.
+ *
+ * NOTHING IS DELETED AND NOTHING IS WITHHELD. The frame workflow is BUILT in every case
+ * and rendered in every case; a shot whose declared intent asks for no frame gets it
+ * folded, with a line saying so and saying that everything in it is kept. Changing the
+ * intent back unfolds it, because there was never anything to restore.
+ *
+ * A RUN IN FLIGHT STILL OPENS. What a machine is doing is not a workflow preference, so
+ * an automation run keeps the automation panel open whatever the shot intends. */
 function shotFramesWorkspace(s,takes) {
   const run = typeof v626LatestRun === "function" ? v626LatestRun("shot-chain",s.id,"stills") : null;
-  const open = !manualFirstWorkflow() || (run && ["running","awaiting-review","failed","interrupted"].includes(run.status));
+  const running = !!(run && ["running","awaiting-review","failed","interrupted"].includes(run.status));
+  const exposure = shotIntentFramesExposure(s);
+  const open = running || (!manualFirstWorkflow() && !exposure.adapt);
   const automation = `<details class="shot-stage-automation" ${open ? "open" : ""}><summary><div><b>Full shot automation</b><small>${run ? esc(run.stage || run.summary || run.status) : "Blocking → review → required frames → optional scene continuity"}</small></div><span>${run ? esc(String(run.status).replace(/-/g," ").toUpperCase()) : "OPTIONAL"}</span></summary>${typeof shotAutomationPanel === "function" ? shotAutomationPanel(s) : ""}</details>`;
-  return `${guidedFrameWorkflowPanel(s,takes)}${automation}`;
+  const statement = exposure.adapt
+    ? `<section class="shot-frames-not-required" data-frames-not-required="1"><div><span>FRAMES · NOT REQUIRED</span><b>This shot's intent asks for no frame</b><small>Nothing this shot declares needs a frame, so the frame workflow starts folded. Every frame, candidate, approval and result already here is kept exactly as it is — open the panel below to work on them.</small></div><button type="button" class="ghost-btn" onclick="openShotIntent('${attr(s.id)}')">Change shot intent</button></section>`
+    : "";
+  /* The relevance is stated on the element rather than only implied by what is open, so
+     a surface, a suite or a screen reader can tell "folded because this shot does not
+     need it" from "folded because somebody closed it". */
+  const relevance = !exposure.known ? "undeclared" : exposure.required ? "required" : "not-required";
+  return `<section class="shot-frames-workspace" data-frames-relevance="${attr(relevance)}" data-frames-required="${exposure.required ? "1" : "0"}" data-shot-intent="${attr(exposure.route)}">${statement}${guidedFrameWorkflowPanel(s,takes,!exposure.adapt,exposure.adapt ? ":not-required" : "")}${automation}</section>`;
 }
 function guidedShotWorkspaceView(s, takes, sc, state, refs, planningMedia, neighbors) {
   const current = guidedCurrentShotStill(s, takes), approvedMotion = guidedApprovedMotion(s, takes), life = guidedShotLifecycle(s, takes);
@@ -3293,8 +3520,13 @@ function guidedShotWorkspaceView(s, takes, sc, state, refs, planningMedia, neigh
   const approvedFrames = requiredFrames.filter((frame, index) => guidedFrameApproved(s, frame, takes, progress.frames.indexOf(frame))).length;
   const referenceCount = shotCreationReferences(s).filter((row) => row.url).length;
   const videos = takes.filter((take) => isVideo(take.name)).length;
+  /* Slice 5b. One collapsed line, rendered on EVERY stage of the shot, because the
+     declared intent governs which stages are relevant and a control reachable from only
+     one of them could not be found from the others. It sits after the command summary
+     and before the next-action card: it is context for the whole shot, not an action. */
+  const intentControl = shotIntentControl(s);
   const commandSummary = `<section class="shot-command-summary"><article><span>References</span><b>${referenceCount}</b><small>${referenceCount ? "linked and available" : "none linked yet"}</small></article><article><span>Required frames</span><b>${approvedFrames}/${requiredFrames.length || 1}</b><small>${approvedFrames === requiredFrames.length && requiredFrames.length ? "approved" : "still to approve"}</small></article><article><span>Motion</span><b>${videos || "—"}</b><small>${videos ? plural(videos, "video file") : progress.requiredApproved ? "ready when needed" : "waiting for frames"}</small></article><article><span>Open stage</span><b>${esc(String(selectedTask).replace(/^./, (c) => c.toUpperCase()))}</b><small>Shot status: ${esc(state?.label || life.label || "In progress")}</small></article></section>`;
-  return `<div class="shot-shell guided-shot-shell focused-workspace-shell bounded-shot-workspace clarity-shot-workspace" data-bounded="1" data-selected-task="${attr(selectedTask)}">${projectNavigator(s)}<div class="shot-main"><div class="crumb"><a href="#/shots/board">Shots</a> / <a href="#/scene/${s.scene}">${esc(sc ? sc.title : s.scene)}</a> / ${esc(s.id)}</div><header class="shot-workspace-head guided-shot-head"><div class="shot-head-nav">${neighbors.prev ? `<a href="#/shot/${neighbors.prev.id}" title="Previous shot" aria-label="Previous shot: ${attr(neighbors.prev.title || neighbors.prev.id)}">‹</a>` : '<span aria-hidden="true">‹</span>'}${neighbors.next ? `<a href="#/shot/${neighbors.next.id}" title="Next shot" aria-label="Next shot: ${attr(neighbors.next.title || neighbors.next.id)}">›</a>` : '<span aria-hidden="true">›</span>'}</div><div class="shot-head-main"><h1 class="shot-title-display">${esc(s.title || "Untitled shot")}</h1><div class="record-meta">${esc(s.id)} · ${takes.length} returned file${takes.length === 1 ? "" : "s"}</div></div><div class="shot-head-controls"><details class="guided-inline-actions"><summary>Shot actions</summary><button class="ghost-btn" onclick="openRenameShotModal('${s.id}')">Rename shot</button><button class="ghost-btn" onclick="duplicateShot('${s.id}')">Duplicate shot</button><button class="ghost-btn" onclick="clickGuidedUpload('${s.id}','${life.key.includes("motion") || life.key === "final" ? "video" : "still"}')">Import existing ${life.key.includes("motion") || life.key === "final" ? "video" : "still"}</button><button class="danger-btn" onclick="delShot('${s.id}')">Delete shot</button></details></div></header>${commandSummary}${guidedShotStatusCard(s,takes,neighbors)}${typeof v642RelatedShotActivityMarkup === "function" ? v642RelatedShotActivityMarkup(s.id) : ""}<div class="guided-work-stack bounded-selected-task" data-bounded-task="${attr(selectedTask)}">${selectedMarkup}</div></div></div>`;
+  return `<div class="shot-shell guided-shot-shell focused-workspace-shell bounded-shot-workspace clarity-shot-workspace" data-bounded="1" data-selected-task="${attr(selectedTask)}">${projectNavigator(s)}<div class="shot-main"><div class="crumb"><a href="#/shots/board">Shots</a> / <a href="#/scene/${s.scene}">${esc(sc ? sc.title : s.scene)}</a> / ${esc(s.id)}</div><header class="shot-workspace-head guided-shot-head"><div class="shot-head-nav">${neighbors.prev ? `<a href="#/shot/${neighbors.prev.id}" title="Previous shot" aria-label="Previous shot: ${attr(neighbors.prev.title || neighbors.prev.id)}">‹</a>` : '<span aria-hidden="true">‹</span>'}${neighbors.next ? `<a href="#/shot/${neighbors.next.id}" title="Next shot" aria-label="Next shot: ${attr(neighbors.next.title || neighbors.next.id)}">›</a>` : '<span aria-hidden="true">›</span>'}</div><div class="shot-head-main"><h1 class="shot-title-display">${esc(s.title || "Untitled shot")}</h1><div class="record-meta">${esc(s.id)} · ${takes.length} returned file${takes.length === 1 ? "" : "s"}</div></div><div class="shot-head-controls"><details class="guided-inline-actions"><summary>Shot actions</summary><button class="ghost-btn" onclick="openRenameShotModal('${s.id}')">Rename shot</button><button class="ghost-btn" onclick="duplicateShot('${s.id}')">Duplicate shot</button><button class="ghost-btn" onclick="clickGuidedUpload('${s.id}','${life.key.includes("motion") || life.key === "final" ? "video" : "still"}')">Import existing ${life.key.includes("motion") || life.key === "final" ? "video" : "still"}</button><button class="danger-btn" onclick="delShot('${s.id}')">Delete shot</button></details></div></header>${commandSummary}${intentControl}${guidedShotStatusCard(s,takes,neighbors)}${typeof v642RelatedShotActivityMarkup === "function" ? v642RelatedShotActivityMarkup(s.id) : ""}<div class="guided-work-stack bounded-selected-task" data-bounded-task="${attr(selectedTask)}">${selectedMarkup}</div></div></div>`;
 }
 
 window.setComposerConstraint = (id, key, value) => {
