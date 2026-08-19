@@ -31,6 +31,9 @@
  *   N12 deleting provenance instead of disclosing it is caught
  *   N13 persisting the derived demand tier beside the fact is caught
  *   N14 the "no later-slice vocabulary" detector actually detects
+ *   N15 THE REPRODUCED DEFECT: id-only production-usage matching is caught
+ *   N16 the mirror mistake, type-only matching, is caught
+ *   N17 an unrecognised collection guessing a real type is caught
  *
  * Nothing here contacts a provider, spends anything, or writes to a project.
  */
@@ -458,6 +461,86 @@ async function n12() {
   delete require.cache[require.resolve("./reference-reframe")];
 }
 
+/* ============================================ typed-identity controls (N15-N17)
+   The defect the Codex acceptance pass reproduced, plus the two ways a fix for
+   it can be wrong in the other direction. Every one of these is a mutation of
+   the MATCHER, so each proves that section 9's table is measuring the matcher
+   rather than the fixture.
+
+   The probe renders a project where one id sits in four collections and exactly
+   one typed reference exists, and asserts the wrong answer really appears before
+   the detector is asked to catch it. */
+const COLLISION = { id: "X-COLLIDE", shots: [{ characters: ["X-COLLIDE"] }] };
+
+async function typedIdentityControl({ id, defect, editsByFile, wrong }) {
+  await control({
+    id,
+    defect,
+    run: async () => {
+      const mutate = sourceMutator(editsByFile);
+      const seen = await suite.usageFor(suite.collisionProject(COLLISION), COLLISION.id, { mutateSource: mutate });
+      /* PROOF THE BREAK LANDED — a distinct assertion from the one being tested. */
+      for (const [list, count] of Object.entries(wrong)) {
+        assert.strictEqual(seen[list], count,
+          `${id} probe: expected the broken matcher to report ${count} for ${list}, got ${seen[list]}`);
+      }
+      for (const file of mutate.expected) {
+        assert.ok(mutate.applied.has(file), `${id}: ${file} was never evaluated, so the defect never ran`);
+      }
+      await expectRed(id, async () => {
+        delete require.cache[require.resolve("./reference-reframe")];
+        await require("./reference-reframe").typedIdentitySection({ mutateSource: sourceMutator(editsByFile) });
+      });
+    },
+  });
+  delete require.cache[require.resolve("./reference-reframe")];
+}
+
+/* N15 IS THE REPRODUCED DEFECT, VERBATIM. A prop and a location that merely
+   share a name with a referenced character each claim its usage. */
+const n15 = () => typedIdentityControl({
+  id: "N15",
+  defect: "production usage is matched on the raw id, so a colliding prop claims a character's shot",
+  editsByFile: {
+    "entities.js": [[
+      `if (shotDependencyRecords(P, shot).some((row) => row.resolved && row.type === type && String(row.id) === wanted)) used += 1;`,
+      `if (shotDependencyRecords(P, shot).some((row) => row.resolved && String(row.id) === wanted)) used += 1;`,
+    ]],
+  },
+  wrong: { characters: 1, locations: 1, props: 1, vehicles: 1 },
+});
+
+/* The mirror-image mistake: keeping the type and dropping the id. Every entity
+   in a referenced collection would then report the usage of its neighbours. */
+const n16 = () => typedIdentityControl({
+  id: "N16",
+  defect: "production usage is matched on the type alone, so any character claims any character's shot",
+  editsByFile: {
+    "entities.js": [[
+      `if (shotDependencyRecords(P, shot).some((row) => row.resolved && row.type === type && String(row.id) === wanted)) used += 1;`,
+      `if (shotDependencyRecords(P, shot).some((row) => row.resolved && row.type === type)) used += 1;`,
+    ]],
+  },
+  wrong: { characters: 1, locations: 0, props: 0, vehicles: 0 },
+});
+
+/* And the guard that makes an unrecognised collection answer nothing. With a
+   real type as the fallback, a typo in a caller silently becomes a claim about
+   characters. */
+const n17 = () => typedIdentityControl({
+  id: "N17",
+  defect: "an unrecognised collection falls back to a real dependency type instead of refusing to guess",
+  editsByFile: {
+    "entities.js": [[
+      `  return ENTITY_DEPENDENCY_TYPES[String(list || "")] || "";`,
+      `  return ENTITY_DEPENDENCY_TYPES[String(list || "")] || "character";`,
+    ]],
+  },
+  /* The four real collections still answer correctly — that is what makes this
+     the SNEAKY version, and why section 9 has to test the unknown ones too. */
+  wrong: { characters: 1, locations: 0, props: 0, vehicles: 0 },
+});
+
 /* ================================================== the detector's own control
    N14 proves the "no later-slice vocabulary" check is a detector rather than a
    comfortable tautology, without touching the product at all. */
@@ -509,6 +592,9 @@ async function main() {
   await n11();
   await n12();
   await n13();
+  await n15();
+  await n16();
+  await n17();
   await n14();
 
   /* THE TREE MUST BE EXACTLY AS IT WAS. Every on-disk control restores in a

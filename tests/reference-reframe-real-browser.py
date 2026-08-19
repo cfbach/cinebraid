@@ -428,6 +428,95 @@ try:
         page.set_viewport_size({"width": 1600, "height": 1000})
         findings.append("7. no horizontal overflow at 1600px or 1280px with the reframed surfaces on screen")
 
+        # ---- 8. TYPED IDENTITY, the exact Codex collision, in a real browser -----------
+        #
+        # An entity id is not an entity identity. A project may legitimately hold the
+        # same id in more than one collection, and the reproduced defect was that
+        # entityProductionUse() matched dependency rows on the raw id: a shot that
+        # referenced only the CHARACTER made the PROP of the same id headline
+        # "Used by 1 shot in this production" on its own default Reference surface.
+        #
+        # This drives the shipped surfaces, one route per collection, and reads the
+        # sentence a filmmaker actually sees.
+        COLLIDE = "X-COLLIDE"
+
+        def collide_project(shot_spec, collections=("characters", "locations", "props", "vehicles")):
+            names = {"characters": "Colliding character", "locations": "Colliding location",
+                     "props": "Colliding prop", "vehicles": "Colliding vehicle"}
+            payload = {"collections": {}, "shot": shot_spec, "id": COLLIDE}
+            for key in ("characters", "locations", "props", "vehicles"):
+                payload["collections"][key] = ([{
+                    "id": COLLIDE, "name": names[key],
+                    "continuityStates": [{"id": "state-default", "name": "Default", "isDefault": True}],
+                }] if key in collections else [])
+            return payload
+
+        def install_collision(payload):
+            page.evaluate(
+                """(payload) => {
+                    for (const [list, rows] of Object.entries(payload.collections)) P[list] = rows;
+                    P.productionAuthority = { version: 1, receipts: [] };
+                    const base = (P.shots || [])[0] || {};
+                    P.shots = [{ ...base, id: 'X1-01', codes: [], audio: payload.shot.audio || {}, clips: [],
+                                 characters: payload.shot.characters || [],
+                                 creationBrief: { locationId: payload.shot.location || '',
+                                                  propIds: payload.shot.propIds || [],
+                                                  vehicleIds: payload.shot.vehicleIds || [] } }];
+                    SCAN.anchors = []; SCAN.plates = []; SCAN.props = []; SCAN.vehicles = [];
+                }""", payload)
+
+        def usage_sentence(route, entity_id):
+            """The line the Primary Reference surface prints, read off the rendered page."""
+            page.evaluate("(hash) => { location.hash = hash; }", f"#/{route}/{entity_id}")
+            page.evaluate("() => route()")
+            page.wait_for_selector("#main .reference-primary-hero", timeout=15000)
+            return page.evaluate(
+                """() => { const n = document.querySelector('#main .reference-primary-usage'); return n ? n.textContent.trim() : ''; }""")
+
+        # 8a — THE REPRODUCED CASE: only the character is referenced.
+        install_collision(collide_project({"characters": [COLLIDE]}))
+        character_line = usage_sentence("character", COLLIDE)
+        prop_line = usage_sentence("prop", COLLIDE)
+        location_line = usage_sentence("location", COLLIDE)
+        vehicle_line = usage_sentence("vehicle", COLLIDE)
+        assert character_line == "Used by 1 shot in this production.", \
+            f"8a: the referenced character must state its real usage, got {character_line!r}"
+        for label, line in (("prop", prop_line), ("location", location_line), ("vehicle", vehicle_line)):
+            assert "Used by" not in line, \
+                f"8a: the {label} sharing that id must not claim the character's shot, got {line!r}"
+            assert line == f"No shot references this {label} yet.", \
+                f"8a: and must say so in its own words, got {line!r}"
+
+        # 8b — A SECOND CROSS-TYPE COLLISION, in the other direction: only the prop is
+        # referenced, and the character of the same id must now be the one at zero.
+        install_collision(collide_project({"propIds": [COLLIDE]}))
+        assert usage_sentence("prop", COLLIDE) == "Used by 1 shot in this production.", \
+            "8b: the referenced prop must state its usage"
+        assert usage_sentence("character", COLLIDE) == "No shot references this character yet.", \
+            "8b: and the character of the same id must report zero"
+        assert usage_sentence("location", COLLIDE) == "No shot references this location yet.", \
+            "8b: as must the location"
+
+        # 8c — BOTH HALVES OF THE IDENTITY. A different character of the SAME type must
+        # also stay at zero, or the fix would be matching on the type alone.
+        install_collision(collide_project({"characters": [COLLIDE]}, collections=("characters",)))
+        page.evaluate(
+            """(id) => { P.characters.push({ id: 'Y-OTHER', name: 'Unreferenced character',
+                 continuityStates: [{ id: 'state-default', name: 'Default', isDefault: true }] }); void id; }""",
+            COLLIDE)
+        assert usage_sentence("character", COLLIDE) == "Used by 1 shot in this production.", \
+            "8c: the referenced character still states its usage"
+        assert usage_sentence("character", "Y-OTHER") == "No shot references this character yet.", \
+            "8c: and a different character of the same type must report zero"
+
+        findings.append("8. typed identity in Chromium: with X-COLLIDE present as a character, location, prop and "
+                        "vehicle, a shot referencing only the character leaves the other three surfaces reading "
+                        "\"No shot references this <kind> yet.\"; referencing only the prop reverses it; and a "
+                        "second character of the same type stays at zero, so both halves of the identity hold")
+
+        # Back to the reframe fixture for the controls below.
+        install()
+
         # ---- N1. the generate action CAN appear, so its absence means something ---------
         # Same detector, same renderer, a project in which the orphan legitimately has an
         # approved parent. If this did not appear, section 4's absences would be proving

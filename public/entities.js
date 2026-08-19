@@ -1316,6 +1316,32 @@ function coverageBoardMarkup(list, entity, mediaByName, media) {
 const ENTITY_KIND_LABELS = { characters: "Character", locations: "Location", props: "Prop", vehicles: "Vehicle", audio: "Audio reference" };
 function entityKindLabel(list) { return ENTITY_KIND_LABELS[list] || "Reference"; }
 
+/* AN ENTITY ID IS NOT AN ENTITY IDENTITY.
+
+   A project may legitimately carry the same id in more than one collection —
+   nothing forbids a character and a prop both called PARCEL — so `id` alone
+   names a string, not a thing. shared-entities.js has always known this: it
+   de-duplicates dependency rows on `${resolvedType}:${rawId}` and hands every
+   row its resolved `type`. The composite is the identity; the id is half of it.
+
+   This is the complete existing vocabulary rather than a new one: `type` is the
+   value shotDependencyRecords() already resolves (including narrowing a
+   `prop-or-vehicle` request to whichever collection actually holds the entity),
+   and the pair below is the same key that module keys its own `seen` map on. */
+const ENTITY_DEPENDENCY_TYPES = {
+  characters: "character",
+  locations: "location",
+  props: "prop",
+  vehicles: "vehicle",
+  audio: "audio",
+};
+/* "" for anything unrecognised, which is what makes an unknown collection
+   answer NOTHING rather than guessing a neighbouring one: no dependency row
+   carries an empty type, so nothing can match. */
+function entityDependencyType(list) {
+  return ENTITY_DEPENDENCY_TYPES[String(list || "")] || "";
+}
+
 /* HOW MUCH THIS PRODUCTION ACTUALLY USES THIS REFERENCE.
 
    Section C asks the default screen to justify coverage by the actual
@@ -1327,15 +1353,30 @@ function entityKindLabel(list) { return ENTITY_KIND_LABELS[list] || "Reference";
    `s.characters` locally would be a second dependency resolver, and the whole
    point of that module is that there is only one.
 
-   This is CONTEXT, not requirement. Nothing below lets a shot count change what
+   THE DEFECT THIS NOW REFUSES (Codex acceptance, Slice 3). This matched
+   `String(row.id) === wanted` and ignored `row.type`, so a shot that referenced
+   only the CHARACTER `X` made the PROP `X` and the LOCATION `X` each report
+   "Used by 1 shot in this production" on their own default Reference surface.
+   The first line a filmmaker read about a reference was a claim about a
+   different entity that happened to share a name.
+
+   Both halves of the identity are required now, and `resolved` still is too: a
+   shot naming an id the project does not have is an unresolved dependency, not
+   a use of anything.
+
+   This is CONTEXT, not requirement. Nothing here lets a shot count change what
    coverageRequirement() answers. */
 function entityProductionUse(list, entity) {
   const shots = Array.isArray(P.shots) ? P.shots : [];
   const wanted = String((entity && entity.id) || "");
-  if (!wanted || typeof shotDependencyRecords !== "function") return { shots: 0, total: shots.length, known: false };
+  const type = entityDependencyType(list);
+  /* `known: false` for a collection this build does not recognise. The surface
+     then says nothing about usage, which is the honest answer — claiming "no
+     shot references this yet" would be an assertion nothing supports. */
+  if (!wanted || !type || typeof shotDependencyRecords !== "function") return { shots: 0, total: shots.length, known: false };
   let used = 0;
   for (const shot of shots) {
-    if (shotDependencyRecords(P, shot).some((row) => row.resolved && String(row.id) === wanted)) used += 1;
+    if (shotDependencyRecords(P, shot).some((row) => row.resolved && row.type === type && String(row.id) === wanted)) used += 1;
   }
   return { shots: used, total: shots.length, known: true };
 }

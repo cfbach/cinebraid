@@ -30,6 +30,8 @@
  *   6  G/K    details, history and provenance survive under disclosure
  *   7  H/L    the completed-run hand-off reaches the surface that owns the result
  *   8  M/N/O/P no Slice 1/2 regression, no Slice 4/5 leakage, no schema addition
+ *   9      typed identity — an id is not an identity, and production usage is
+ *          never claimed for a collection that merely shares a name
  *
  * Provider calls: 0. Paid calls: 0. Nothing is written to any project on disk.
  */
@@ -745,6 +747,221 @@ async function boundarySection(options = {}) {
     + "demand tier is never stored");
 }
 
+/* ==================================================== 9 · TYPED IDENTITY
+   AN ENTITY ID IS NOT AN ENTITY IDENTITY.
+
+   The defect the Codex acceptance pass reproduced: entityProductionUse() matched
+   dependency rows on `row.id` alone and ignored `row.type`, so a shot that
+   referenced only the CHARACTER `X` made the PROP `X` and the LOCATION `X` each
+   headline "Used by 1 shot in this production" on their own default Reference
+   surface — the first line a filmmaker read about a reference was a claim about
+   a different entity that merely shared a name.
+
+   Nothing about the fix is new vocabulary. shared-entities.js already resolves a
+   `type` for every row and already de-duplicates on `${resolvedType}:${rawId}`;
+   the matcher now uses the same pair that module keys its own map on.
+
+   The matrix below is deliberately built so that an id-only matcher passes NONE
+   of cases 1-4 and a type-only matcher passes none of 1-3 either. */
+
+/* A project in which one id is placed in several collections at once, with
+   `shots` naming exactly the typed dependencies asked for. Everything else comes
+   from the shared fixture so this is a real project, not a stub. */
+function collisionProject({ id = "X-COLLIDE", collections = ["characters", "locations", "props", "vehicles"], shots = [] } = {}) {
+  const project = referenceFixture();
+  const base = project.shots[0] || {};
+  const named = { characters: "Colliding character", locations: "Colliding location", props: "Colliding prop", vehicles: "Colliding vehicle" };
+  for (const list of ["characters", "locations", "props", "vehicles"]) {
+    project[list] = collections.includes(list)
+      ? [{ id, name: named[list], continuityStates: [{ id: "state-default", name: "Default", isDefault: true }] }]
+      : [];
+  }
+  /* Each entry is one shot and names its dependencies BY TYPE, through the exact
+     shot fields shotDependencyRecords() reads. `propIds` is the shipped
+     `prop-or-vehicle` request, which the resolver narrows itself. */
+  project.shots = shots.map((spec, index) => ({
+    ...base,
+    id: `X1-${String(index + 1).padStart(2, "0")}`,
+    characters: spec.characters || [],
+    codes: [],
+    audio: {},
+    clips: [],
+    creationBrief: {
+      locationId: spec.location || "",
+      propIds: spec.propIds || [],
+      vehicleIds: spec.vehicleIds || [],
+    },
+  }));
+  return project;
+}
+
+/* Ask the page itself, through the shipped function, for every collection at
+   once. One render answers a whole row of the matrix. */
+async function usageFor(project, id, options = {}) {
+  const rendered = await render(`#/character/${id}`, project, { scan: referenceScan(project), ...options });
+  return JSON.parse(vm.runInContext(`JSON.stringify((() => {
+    const answer = {};
+    for (const list of ["characters", "locations", "props", "vehicles"]) {
+      const entity = (P[list] || []).find((row) => row && row.id === ${JSON.stringify(id)});
+      answer[list] = entity ? entityProductionUse(list, entity).shots : null;
+    }
+    return answer;
+  })())`, rendered.context));
+}
+
+async function typedIdentitySection(options = {}) {
+  const ID = "X-COLLIDE";
+
+  /* ---- 1-3 · one typed reference, three collections holding the id --------
+     Exactly one of them may report usage, and it must be the one the shot named.
+     An id-only matcher reports 1/1/1 on every row of this table. */
+  const single = [
+    ["a character", { characters: [ID] }, { characters: 1, locations: 0, props: 0, vehicles: 0 }],
+    ["a location", { location: ID }, { characters: 0, locations: 1, props: 0, vehicles: 0 }],
+    ["a prop", { propIds: [ID] }, { characters: 0, locations: 0, props: 1, vehicles: 0 }],
+    ["a vehicle", { vehicleIds: [ID] }, { characters: 0, locations: 0, props: 0, vehicles: 1 }],
+  ];
+  for (const [what, shot, expected] of single) {
+    /* The vehicle case must not have a prop of the same id present, because the
+       shipped `prop-or-vehicle` resolver narrows to whichever collection holds
+       the entity and checks props first — case 4 covers that on purpose. */
+    const collections = shot.vehicleIds ? ["characters", "locations", "vehicles"] : ["characters", "locations", "props", "vehicles"];
+    const seen = await usageFor(collisionProject({ id: ID, collections, shots: [shot] }), ID, options);
+    for (const [list, count] of Object.entries(expected)) {
+      if (seen[list] === null) continue;
+      assert.strictEqual(seen[list], count,
+        `a shot referencing ${what} ${ID} must report ${count} for ${list}, got ${seen[list]} — an id is not an identity`);
+    }
+  }
+
+  /* ---- 1b · the OTHER half of identity: same type, different entity -------
+     The table above holds one entity per collection, so a matcher that kept the
+     type and threw the id away would pass all of it. Identity is both halves,
+     and this is the half a cross-type matrix cannot see: two characters, one
+     referenced, and the other must stay at zero. */
+  const sameType = collisionProject({ id: ID, collections: ["characters"], shots: [{ characters: [ID] }] });
+  sameType.characters.push({
+    id: "Y-OTHER", name: "Unreferenced character",
+    continuityStates: [{ id: "state-default", name: "Default", isDefault: true }],
+  });
+  const pair = await render(`#/character/Y-OTHER`, sameType, { scan: referenceScan(sameType), ...options });
+  const bothCharacters = JSON.parse(vm.runInContext(`JSON.stringify({
+    referenced: entityProductionUse("characters", P.characters.find((row) => row.id === ${JSON.stringify(ID)})).shots,
+    unreferenced: entityProductionUse("characters", P.characters.find((row) => row.id === "Y-OTHER")).shots,
+  })`, pair.context));
+  assert.strictEqual(bothCharacters.referenced, 1,
+    "1b: the character the shot named must report its usage");
+  assert.strictEqual(bothCharacters.unreferenced, 0,
+    "1b: and a different character of the SAME type must report zero — the type is only half the identity");
+  assert.ok(pair.html.includes("No shot references this character yet"),
+    "1b: and the unreferenced character's own surface must say so");
+
+  /* ---- 4 · several typed references, all colliding on one id -------------- */
+  const many = await usageFor(collisionProject({
+    id: ID,
+    collections: ["characters", "locations", "props", "vehicles"],
+    shots: [{ characters: [ID], location: ID }],
+  }), ID, options);
+  assert.strictEqual(many.characters, 1, "4: the referenced character identity is counted");
+  assert.strictEqual(many.locations, 1, "4: the referenced location identity is counted");
+  assert.strictEqual(many.props, 0, "4: the prop sharing that id was never referenced");
+  assert.strictEqual(many.vehicles, 0, "4: neither was the vehicle");
+
+  /* The shipped `prop-or-vehicle` narrowing, asserted as the behaviour it is
+     rather than changed: `propIds` resolves against props FIRST, so with the id
+     in both collections the prop is the identity referenced and the vehicle is
+     not. This suite reports that resolver's answer; it does not second-guess it. */
+  const narrowed = await usageFor(collisionProject({
+    id: ID, collections: ["props", "vehicles"], shots: [{ propIds: [ID] }],
+  }), ID, options);
+  assert.strictEqual(narrowed.props, 1, "4: `propIds` narrows to the prop when both collections hold the id");
+  assert.strictEqual(narrowed.vehicles, 0, "4: and the vehicle of the same id is not the entity referenced");
+
+  /* ---- 5 · several shots, one typed entity -------------------------------- */
+  const repeated = await usageFor(collisionProject({
+    id: ID,
+    shots: [{ characters: [ID] }, { characters: [ID] }, { characters: [ID] }, { location: ID }],
+  }), ID, options);
+  assert.strictEqual(repeated.characters, 3, `5: three shots reference the character, got ${repeated.characters}`);
+  assert.strictEqual(repeated.locations, 1, `5: one references the location, got ${repeated.locations}`);
+  assert.strictEqual(repeated.props, 0, "5: and none references the prop");
+
+  /* ---- 6 · one shot, several typed dependencies, counted once each --------
+     The shot names the character twice over — in `characters` and again as the
+     audio speaker — which is the case where a per-ROW count would report 2 for a
+     single shot. The shipped counting semantics are per-shot, and this pins them. */
+  const combined = collisionProject({
+    id: ID, collections: ["characters", "locations", "props", "vehicles"],
+    shots: [{ characters: [ID], location: ID, propIds: [ID] }],
+  });
+  combined.shots[0].audio = { speakerId: ID };
+  const once = await usageFor(combined, ID, options);
+  assert.deepStrictEqual(once, { characters: 1, locations: 1, props: 1, vehicles: 0 },
+    `6: one shot naming three typed identities must count each exactly once, got ${JSON.stringify(once)}`);
+
+  /* ---- 7 · an unrecognised collection must not guess a neighbour ---------- */
+  const guessProject = collisionProject({ id: ID, shots: [{ characters: [ID], location: ID, propIds: [ID] }] });
+  const guessed = await render(`#/character/${ID}`, guessProject, { scan: referenceScan(guessProject), ...options });
+  const unknown = JSON.parse(vm.runInContext(`JSON.stringify((() => {
+    const entity = P.characters[0];
+    const out = {};
+    for (const list of ["sculptures", "", "character", "CHARACTERS", "props "]) out[String(list)] = entityProductionUse(list, entity);
+    out["__null"] = entityProductionUse(null, entity);
+    out["__typemap"] = entityDependencyType("sculptures");
+    return out;
+  })())`, guessed.context));
+  for (const [label, answer] of Object.entries(unknown)) {
+    if (label === "__typemap") continue;
+    assert.strictEqual(answer.shots, 0, `7: the unrecognised collection ${label} must claim no usage`);
+    assert.strictEqual(answer.known, false,
+      `7: and must report that it does not know, rather than asserting zero usage it cannot support (${label})`);
+  }
+  assert.strictEqual(unknown.__typemap, "", "7: an unrecognised collection resolves to no dependency type at all");
+  /* Singular spellings are NOT collection names, and this is the trap the map
+     exists to close: `character` looks like the dependency type and would match
+     every character row if it were accepted as a collection. */
+  assert.strictEqual(unknown.character.known, false,
+    "7: the singular dependency type is not a collection name and must not be accepted as one");
+
+  /* ---- 8 · a project with no collisions is unchanged ---------------------- */
+  const plain = referenceFixture();
+  plain.shots = [
+    { ...(plain.shots[0] || {}), id: "P1-01", characters: ["CHAR-REFRAME"], codes: [], audio: {}, clips: [], creationBrief: {} },
+    { ...(plain.shots[0] || {}), id: "P1-02", characters: ["CHAR-REFRAME"], codes: [], audio: {}, clips: [], creationBrief: {} },
+    { ...(plain.shots[0] || {}), id: "P1-03", characters: [], codes: [], audio: {}, clips: [], creationBrief: {} },
+  ];
+  const plainRender = await renderReference(plain, options);
+  /* Compared against an INDEPENDENT walk through the shipped resolver, so this
+     asserts agreement with shotDependencyRecords() rather than a number I chose. */
+  const [reported, independent] = JSON.parse(vm.runInContext(`JSON.stringify([
+    entityProductionUse("characters", P.characters[0]).shots,
+    (P.shots || []).filter((shot) => shotDependencyRecords(P, shot).some((row) => row.resolved && row.type === "character" && row.id === "CHAR-REFRAME")).length,
+  ])`, plainRender.context));
+  assert.strictEqual(reported, 2, `8: an uncollided project must count its two referencing shots, got ${reported}`);
+  assert.strictEqual(reported, independent,
+    "8: and must agree with an independent walk of the shipped dependency resolver");
+  assert.ok(plainRender.html.includes("Used by 2 shots in this production"),
+    "8: and the surface must print that count");
+
+  /* ---- and the surface itself, not only the function --------------------- */
+  const surfaceProject = collisionProject({ id: ID, shots: [{ characters: [ID] }] });
+  const charSurface = await render(`#/character/${ID}`, surfaceProject, { scan: referenceScan(surfaceProject), ...options });
+  const propSurface = await render(`#/prop/${ID}`, surfaceProject, { scan: referenceScan(surfaceProject), ...options });
+  assert.ok(charSurface.html.includes("Used by 1 shot in this production"),
+    "the referenced character's surface must state its real usage");
+  assert.ok(propSurface.html.includes("No shot references this prop yet"),
+    "and the unreferenced prop of the same id must say so on its own surface");
+  assert.ok(!propSurface.html.includes("Used by 1 shot"),
+    "the prop must never claim a usage that belongs to the character it collides with");
+
+  note("9. typed identity · a shot referencing character X leaves prop X, location X and vehicle X at zero, and "
+    + "the same holds for each type in turn; a DIFFERENT character of the same type also stays at zero, so both "
+    + "halves of the identity are load-bearing; colliding ids count only the identities actually referenced; "
+    + "`propIds` narrows to the prop as the shipped resolver does; three shots count 3 and one shot naming a "
+    + "character three ways counts 1; an unrecognised collection — including the singular `character` — reports "
+    + "`known: false` and guesses nothing; an uncollided project agrees with an independent walk of the resolver");
+}
+
 async function main() {
   await primarySection();
   coverageSection();
@@ -754,6 +971,7 @@ async function main() {
   await detailsSection();
   handoffSection();
   await boundarySection();
+  await typedIdentitySection();
   console.log("Reference reframe suite passed:");
   for (const line of notes) console.log("  " + line);
 }
@@ -761,7 +979,8 @@ async function main() {
 module.exports = {
   detectors, referenceFixture, referenceScan, renderReference, codeOnly,
   primarySection, coverageSection, authoritySection, demandSection,
-  continuitySection, detailsSection, handoffSection, boundarySection, main,
+  continuitySection, detailsSection, handoffSection, boundarySection, typedIdentitySection,
+  collisionProject, usageFor, main,
 };
 
 if (require.main === module) main().catch((error) => {
