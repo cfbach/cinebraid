@@ -196,10 +196,16 @@ async function main() {
 
   /* NC-C2 — the refusal removed. The target is still not dispatchable and still has no
      Generate button; the only thing lost is the sentence saying why. */
-  const C2_ANCHOR = `function guidedVideoProfileRefusalMarkup(profile) {
-  if (!profile || guidedVideoProfileDispatchable(profile)) return "";`;
-  const C2_BROKEN = `function guidedVideoProfileRefusalMarkup(profile) {
-  if (profile || !profile) return "";`;
+  /* ANCHOR MOVED BY BATCH 2 SLICE 5b, and the control is unchanged. The renderer now
+     handles a SECOND reason a target can be unusable — the shot's declared intent
+     excluding it — and that branch sits above this one. NC-C2 is still about the
+     DISPATCH refusal going silent, so it still mutates the dispatch branch; the scenario
+     below declares no intent, so the branch above it returns "" and control reaches this
+     one exactly as it always did. */
+  const C2_ANCHOR = `  if (!profile || guidedVideoProfileDispatchable(profile)) return "";
+  const execution = profile.execution || {};`;
+  const C2_BROKEN = `  if (profile || !profile) return "";
+  const execution = profile.execution || {};`;
   const brokenRefusal = () => mutateScript("creation-studio.js", C2_ANCHOR, C2_BROKEN, "NC-C2 the refusal is silent again");
   await control({
     id: "NC-C2",

@@ -774,6 +774,19 @@ function falH3MotionInline(shotId) {
 }
 function falH3MotionPromptAction(shotId, buildId, profile) {
   if (!falGenerationReady() || profile?.family !== "minimax-h3") return "";
+  /* SLICE 5b EXECUTION GATE — PAID-ACTION CREATION.
+
+     A package compiled BEFORE the shot's intent changed is still sitting in the shot's
+     build list, and this is the function that turns one into a paid button. So the
+     question is asked again from current truth rather than remembered from compile time:
+     an intent that now excludes this target draws the reason instead of the button.
+
+     The rule is public/creation-studio.js's single execution predicate, called rather
+     than reproduced — there is no second compatibility answer in this file. */
+  const shot = typeof shotById === "function" ? shotById(shotId) : null;
+  const refusal = typeof guidedMotionIntentRefusal === "function" ? guidedMotionIntentRefusal(shot, profile) : "";
+  if (refusal)
+    return `<p class="prompt-check warn h3-generate-intent-blocked" data-h3-intent-blocked="${attr(shotId)}">${esc(refusal)}</p>`;
   return `<button class="approve-btn h3-generate-btn" onclick="openFalH3MotionModal('${shotId}','${buildId}')">GENERATE H3 VIDEO</button>`;
 }
 /* THE PRE-FLIGHT QUOTE, from the same configured rate the ledger will record.
@@ -1034,6 +1047,15 @@ window.openFalH3MotionModal = async (shotId, buildId = "") => {
   if (!build?.prompt) return toast("Build the MiniMax H3 prompt first");
   const profile = typeof profileById === "function" ? profileById(build.profileId || "") : (PROMPT_LIBRARY?.profiles || []).find((item) => item.id === build.profileId);
   if (profile?.family !== "minimax-h3") return toast("Select and build a MiniMax H3 motion profile first");
+  /* SLICE 5b EXECUTION GATE — THE PAID DIALOG WILL NOT OPEN.
+
+     Reached by direct programmatic invocation, by a "Try again" chip on an older job, and
+     by any caller that bypassed the rendered surface entirely. It is asked of the SHOT
+     RECORD and the BUILD'S OWN PROFILE, so a stale build, a restored selection, a
+     re-enabled option or a hand-called opener all fail closed here — before the plan is
+     fetched and long before anything is submitted. */
+  const intentRefusal = typeof guidedMotionIntentRefusal === "function" ? guidedMotionIntentRefusal(s, profile) : "";
+  if (intentRefusal) return toast(intentRefusal);
   /* Unsaved edits reach the server through the project document, and the plan is
      compiled from the stored package — so the save has to land before the compile. */
   if (typeof flushPendingProjectSave === "function") await flushPendingProjectSave();
@@ -1225,6 +1247,21 @@ function renderFalH3GenerationView(mode) {
 window.startFalH3MotionGeneration = async () => {
   const request = window._falH3MotionRequest;
   if (!request || window._falH3Submitting) return;
+  /* SLICE 5b EXECUTION GATE — THE PAID POST ITSELF, and the last one there is.
+
+     A dialog opened while the intent still matched, left open, and submitted after the
+     intent changed is the one path the two gates above cannot see. The request carries
+     the shot and the profile it was built for, so the question is re-asked here from the
+     record as it is NOW. This is the boundary that spends money; it fails closed. */
+  const gateShot = typeof shotById === "function" ? shotById(request.shotId) : null;
+  /* Resolved exactly as openFalH3MotionModal resolves it — `profileById` is a LOCAL
+     function inside public/v607-composer.js's IIFE and is not a global, so a lookup that
+     trusted it would resolve `null`, and a null profile refuses nothing. */
+  const gateProfile = typeof profileById === "function"
+    ? profileById(request.profileId || "")
+    : (PROMPT_LIBRARY?.profiles || []).find((item) => item.id === request.profileId) || null;
+  const gateRefusal = typeof guidedMotionIntentRefusal === "function" ? guidedMotionIntentRefusal(gateShot, gateProfile) : "";
+  if (gateRefusal) return toast(gateRefusal);
   const limit = falH3PromptLimit();
   const editedPrompt = String(document.getElementById("fal-h3-prompt-editor")?.value ?? request.prompt ?? "").trim();
   if (!editedPrompt) return toast("Enter a MiniMax H3 prompt before generation");

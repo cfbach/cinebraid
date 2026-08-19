@@ -47,10 +47,19 @@ sync_playwright = require_browser(LABEL)
 FRAMES_SHOT = "SAMPLE-01"      # a route-less legacy shot: one frame, no motion unit
 MOTION_SHOT = "SAMPLE-03"      # given a t2v motion unit below, so its picker is reachable
 PAID_ROUTE = "/api/generation/fal/jobs"
+COMPILE_ROUTE = "/api/prompt/compile"
+# Everything under /api/generation/ — the plan, the options and the job. A refused target
+# must reach none of them, not merely stop short of the one that bills.
+GENERATION_ROUTE = "/api/generation/"
+generation_calls = []
 FONT_HOSTS = ("https://fonts.googleapis.com", "https://fonts.gstatic.com")
 ROUTES = ["t2v", "i2v", "flf", "r2v", "hybrid"]
 
 page_errors, console_errors, offsite, paid_calls = [], [], [], []
+# Every prompt COMPILE, recorded the same way the paid route is. "Build prompt did not
+# proceed" is a claim about a request that was never made, so the request has to be
+# counted rather than inferred from the screen.
+compile_calls = []
 findings = []
 
 
@@ -198,6 +207,12 @@ try:
             if PAID_ROUTE in url and request.method == "POST":
                 paid_calls.append(f"{request.method} {url}")
                 return route.abort("failed")
+            if COMPILE_ROUTE in url and request.method == "POST":
+                compile_calls.append(f"{request.method} {url}")
+                return route.continue_()
+            if GENERATION_ROUTE in url:
+                generation_calls.append(f"{request.method} {url}")
+                return route.continue_()
             if url.startswith(base) or url.startswith("data:") or url.startswith("blob:"):
                 return route.continue_()
             if any(url.startswith(host) for host in FONT_HOSTS):
@@ -525,6 +540,200 @@ try:
         findings.append("4. Simple opens, Advanced discloses and Simple returns with the declared intent untouched; "
                         "the intent control itself is one select and no generation configuration")
 
+        # ============ 8 · STORED IS NOT EXECUTABLE — the reproduced blocker, end to end
+        #
+        # The exact case review reproduced: a shot storing minimax-h3/t2v and declaring
+        # flf. The stored target must stay selected and changeable, and must not be able
+        # to build or spend. Everything below is read off the live document and off the
+        # requests the page really made.
+        H3_T2V = "minimax-h3/t2v"
+        # IS A GENERATION DIALOG ACTUALLY OPEN. closeModal() hides the host and leaves the
+        # markup inside it — that is the shipped behaviour — so counting
+        # `.h3-generation-modal` across the whole document finds a dialog somebody closed
+        # two sections ago. The product's own answer is whether `#modal` is hidden.
+        OPEN_DIALOGS = """
+        () => {
+          const host = document.getElementById('modal');
+          if (!host || host.classList.contains('hidden')) return 0;
+          return host.querySelectorAll('.h3-generation-modal').length;
+        }
+        """
+        open_shot(MOTION_SHOT)
+        set_intent("")
+        select_stage("Motion")
+        expand_all()
+        page.wait_for_selector("#main .guided-video-target-control select", timeout=15000)
+
+        # Chosen the way a filmmaker chooses it, with nothing declared so it is selectable.
+        page.locator("#main .guided-video-target-control select").first.select_option(H3_T2V)
+        page.wait_for_timeout(600)
+        expand_all()
+        page.locator("#main textarea.guided-motion-editor").first.fill("The bay lights flicker once as he turns.")
+        page.locator("#main textarea.guided-motion-editor").first.blur()
+        page.wait_for_timeout(600)
+        expand_all()
+
+        MOTION_STATE = """
+        () => {
+          const select = document.querySelector('#main .guided-video-target-control select');
+          const build = [...document.querySelectorAll('#main button.assemble-btn')]
+            .find((node) => /Build prompt/i.test(node.textContent));
+          const shot = (location.hash.split('?')[0].split('/')[2] || '');
+          const row = (P.shots || []).find((item) => item.id === shot);
+          const creation = row ? ensureShotCreation(row) : null;
+          const unit = row ? guidedActiveMotionUnit(row) : null;
+          return {
+            selected: select ? select.value : null,
+            selectedLabel: select && select.selectedOptions[0] ? select.selectedOptions[0].textContent : '',
+            selectedDisabled: select && select.selectedOptions[0] ? select.selectedOptions[0].disabled : null,
+            intentRoute: row ? (row.deliveryRoute === undefined ? null : row.deliveryRoute) : 'NO-SHOT',
+            /* Where the product really keeps the choice: the active motion unit first,
+               the shot's creation record as the fallback. */
+            stored: (unit && unit.motionProfileId) || (creation && creation.motionProfileId) || '',
+            buildDisabled: build ? build.disabled : null,
+            buildDescribedBy: build ? build.getAttribute('aria-describedby') : null,
+            refusalLines: document.querySelectorAll('#main [data-video-profile-intent-blocked]').length,
+            paidButtons: document.querySelectorAll('#main .h3-generate-btn').length,
+            paidBlocked: document.querySelectorAll('#main [data-h3-intent-blocked]').length,
+            builds: creation ? (creation.motionPromptBuilds || []).length : -1,
+            executable: row && typeof guidedMotionProfileExecutable === 'function'
+              ? guidedMotionProfileExecutable(row, guidedVideoProfiles().find((p) => p.id === (unit && unit.motionProfileId) || '') || null)
+              : null,
+          };
+        }
+        """
+
+        chosen = page.evaluate(MOTION_STATE)
+        assert chosen["selected"] == H3_T2V, f"8. precondition: the t2v target must be selected, got {chosen['selected']!r}"
+        assert chosen["stored"] == H3_T2V, f"8. precondition: and stored on the record, got {chosen['stored']!r}"
+        assert chosen["intentRoute"] is None, "8. precondition: nothing is declared yet"
+        assert chosen["buildDisabled"] is False, "8. precondition: with nothing declared, Build prompt is available"
+
+        # It really builds while nothing is declared — the accepted baseline, and what
+        # makes every refusal below a change rather than a product that never worked.
+        before_compiles = len(compile_calls)
+        page.locator("#main button.assemble-btn", has_text="Build prompt").first.click()
+        page.wait_for_timeout(3000)
+        expand_all()
+        compatible = page.evaluate(MOTION_STATE)
+        assert len(compile_calls) > before_compiles, \
+            "8. precondition: an undeclared shot must really compile, or the refusals below prove nothing"
+        assert compatible["builds"] >= 1, "8. precondition: and the compiled package must exist"
+        assert compatible["paidButtons"] == 1, \
+            f"8. precondition: the paid GENERATE H3 VIDEO button must be drawn, got {compatible['paidButtons']}"
+        findings.append(f"8. baseline: {H3_T2V} stored with nothing declared compiles a package and draws the paid "
+                        "GENERATE H3 VIDEO button — the state review reproduced")
+
+        # ---- declare flf: the stored target becomes non-executable --------------------
+        set_intent("flf")
+        expand_all()
+        excluded = page.evaluate(MOTION_STATE)
+        assert excluded["intentRoute"] == "flf", "8. the intent must be declared"
+        assert excluded["stored"] == H3_T2V, \
+            f"8. the stored target must NOT be erased or rewritten, got {excluded['stored']!r}"
+        assert excluded["selected"] == H3_T2V, "8. and must still be the selected option, so it can be seen and changed"
+        assert "not how this shot is made" in excluded["selectedLabel"], \
+            f"8. and must be labelled truthfully, got {excluded['selectedLabel']!r}"
+        assert excluded["executable"] is False, "8. but it must not be executable"
+        assert excluded["refusalLines"] == 1, "8. the refusal must be stated once, through the picker's own convention"
+        assert excluded["buildDisabled"] is True, "8. Build prompt must be disabled"
+        assert excluded["buildDescribedBy"], "8. and must point at the visible reason rather than a tooltip"
+        assert excluded["paidButtons"] == 0, "8. the paid button must be gone"
+        assert excluded["paidBlocked"] == 1, "8. and the reason must stand where it was"
+
+        # ---- BYPASS ATTACKS. The screen is not the gate. -----------------------------
+        # Cleared first, because an earlier section's dialog is still in `#modal` — the
+        # shell replaces `#main` on navigation and leaves the modal host alone — and a
+        # "no dialog opened" assertion that started from one would be meaningless.
+        page.evaluate("""() => {
+            if (typeof closeModal === 'function') closeModal();
+            window._falH3MotionRequest = null;
+        }""")
+        page.wait_for_timeout(200)
+        assert page.evaluate(OPEN_DIALOGS) == 0, \
+            "8. precondition: no generation dialog may be open before the bypass attacks"
+        attack_compiles, attack_generation, attack_paid = len(compile_calls), len(generation_calls), len(paid_calls)
+        builds_before_attack = excluded["builds"]
+
+        # 1 · direct programmatic invocation of the prompt builder
+        page.evaluate("async () => { await buildGuidedMotionPrompt('%s', false); }" % MOTION_SHOT)
+        page.wait_for_timeout(1500)
+        # 2 · the picker DOM re-enabled by hand, then the builder called again
+        page.evaluate("""() => {
+            const select = document.querySelector('#main .guided-video-target-control select');
+            if (select) for (const option of select.querySelectorAll('option')) option.disabled = false;
+            const build = [...document.querySelectorAll('#main button.assemble-btn')]
+              .find((node) => /Build prompt/i.test(node.textContent));
+            if (build) build.disabled = false;
+        }""")
+        page.wait_for_timeout(200)
+        page.locator("#main button.assemble-btn", has_text="Build prompt").first.click()
+        page.wait_for_timeout(1500)
+        # 3 · the paid dialog, opened programmatically on the stale package
+        page.evaluate("""async (shot) => {
+            const row = (P.shots || []).find((item) => item.id === shot);
+            const builds = ensureShotCreation(row).motionPromptBuilds || [];
+            const last = builds[builds.length - 1];
+            try { await openFalH3MotionModal(shot, last ? last.id : ''); } catch (error) {}
+        }""", MOTION_SHOT)
+        page.wait_for_timeout(1500)
+        # THE SHARPEST SIGNAL THERE IS: the H3 preflight sets `_falH3MotionRequest` as it
+        # opens, and nothing else does. Checked HERE, before attack 4 supplies one of its
+        # own, so it can only be the dialog's.
+        assert page.evaluate("() => !window._falH3MotionRequest"), \
+            "8. the paid dialog must not have built a submittable request"
+        assert page.evaluate(OPEN_DIALOGS) == 0, \
+            "8. and must not have opened"
+        # 4 · the paid submit, hand-built the way an open dialog would leave it
+        page.evaluate("""async (shot) => {
+            window._falH3Submitting = false;
+            window._falH3MotionRequest = { shotId: shot, buildId: 'x', profileId: 'minimax-h3/t2v',
+              profileMode: 't2v', prompt: 'A compiled t2v prompt.', compiledPrompt: 'A compiled t2v prompt.',
+              durationSeconds: 5, clientRequestId: 'bypass', aspectRatio: '16:9', aspectOk: true };
+            try { await startFalH3MotionGeneration(); } catch (error) {}
+        }""", MOTION_SHOT)
+        page.wait_for_timeout(1500)
+
+        after_attack = page.evaluate(MOTION_STATE)
+        assert len(compile_calls) == attack_compiles, \
+            f"8. a bypassed screen must still compile nothing: {compile_calls[attack_compiles:]}"
+        assert len(generation_calls) == attack_generation, \
+            f"8. and must reach no generation endpoint: {generation_calls[attack_generation:]}"
+        assert len(paid_calls) == attack_paid, f"8. and must spend nothing: {paid_calls[attack_paid:]}"
+        assert after_attack["builds"] == builds_before_attack, "8. and must create no new package"
+        assert after_attack["stored"] == H3_T2V, "8. and every attack must leave the stored target exactly as it was"
+
+        # 5 · a reload, so nothing depends on the state of a rendered page
+        page.reload(wait_until="domcontentloaded")
+        page.wait_for_selector("#main .shot-shell", timeout=20000)
+        select_stage("Motion")
+        expand_all()
+        reloaded = page.evaluate(MOTION_STATE)
+        assert reloaded["stored"] == H3_T2V and reloaded["intentRoute"] == "flf", \
+            "8. the reloaded page must carry both the stored target and the intent"
+        assert reloaded["executable"] is False, "8. and the refusal must survive the reload"
+        assert reloaded["paidButtons"] == 0, "8. with no paid button restored by it"
+        findings.append("8. blocked: the stored target is preserved, selected and labelled, and refuses to build or "
+                        "spend through a direct call, a re-enabled picker, a forced click, a programmatic paid "
+                        "dialog, a hand-built submit and a full reload — 0 compiles, 0 generation calls, 0 paid")
+
+        # ---- and back again: the SAME preserved selection becomes usable -------------
+        set_intent("t2v")
+        expand_all()
+        restored = page.evaluate(MOTION_STATE)
+        assert restored["stored"] == H3_T2V, "8. the preserved target must be the one that comes back"
+        assert restored["executable"] is True, "8. and a compatible intent must make it executable again"
+        assert restored["refusalLines"] == 0, "8. with the refusal gone"
+        assert restored["buildDisabled"] is False, "8. and Build prompt available again"
+        assert restored["paidButtons"] == 1, "8. and the paid button restored from the package that was already there"
+        restored_compiles = len(compile_calls)
+        page.locator("#main button.assemble-btn", has_text="Build prompt").first.click()
+        page.wait_for_timeout(3000)
+        assert len(compile_calls) > restored_compiles, \
+            "8. and the same stored target must really compile again once the intent matches"
+        findings.append("8. restored: changing the intent back to t2v makes the SAME preserved target executable "
+                        "again — the picker, the build control, the paid button and a real compile all return")
+
         assert not page_errors, f"the page raised uncaught errors: {page_errors}"
         assert not console_errors, f"the page logged console errors: {console_errors}"
         browser.close()
@@ -539,5 +748,6 @@ assert not paid_calls, f"a paid route was called: {paid_calls}"
 
 print("\n".join(findings))
 print(f"project data isolated: config {config_path}, projects {projects_root} — data/ untouched")
+print(f"prompt compiles: {len(compile_calls)} (all local) · generation endpoint calls: {len(generation_calls)}")
 print("provider calls: 0 · paid execution: 0 · off-site requests: 0")
 print("Batch 2 Slice 5b shot intent UX real-browser audit passed")

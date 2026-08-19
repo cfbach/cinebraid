@@ -52,6 +52,10 @@ const { render, buildFixture } = require("./render-harness");
 const notes = [];
 const note = (line) => notes.push(line);
 
+/* Comments are where the reasoning lives and where a forbidden word is legitimately
+   discussed; CODE is where a violation would hide. */
+const codeOnly = (source) => String(source).replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+
 const ROUTES = ["t2v", "i2v", "flf", "r2v", "hybrid"];
 /* Values this build cannot read. "T2V " is deliberately NOT among them: Slice 5a folds
    case and trims the ends, so it IS a declaration of t2v, and a suite that treated it as
@@ -136,7 +140,7 @@ function checkProjection() {
   const source = readLF("public/shared-shot-intent.js");
   /* Comments are where the reasoning lives and where the tokens are legitimately
      discussed. CODE is where a second vocabulary would hide. */
-  const code = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  const code = codeOnly(source);
 
   for (const token of [...ROUTES, "audio-video", "first-frame", "last-frame"])
     assert(!code.includes(`"${token}"`) && !code.includes(`'${token}'`),
@@ -794,6 +798,309 @@ function checkOwnershipAndSeparation() {
     + "destination, writes only through Slice 5a, and the persistent stage bar still reads only the stage model");
 }
 
+/* ===========================================================================
+   10 — STORED IS NOT EXECUTABLE. The execution gate.
+
+   THE DEFECT THIS SECTION EXISTS FOR, reproduced exactly as review reproduced it: a shot
+   carrying `minimax-h3/t2v` and a declared `flf` intent. The picker exempts the STORED
+   selection from narrowing on purpose, so the option stayed enabled — and nothing
+   downstream re-asked the question, so Build prompt compiled a t2v package and the paid
+   GENERATE H3 VIDEO button was drawn from it. Narrowing that only paints is not a gate.
+
+   The distinction being asserted is STORED/EDITABLE vs EXECUTABLE, and the implication
+   the brief states is checked over the whole matrix:
+
+       selected method executable  =>  selected method is in the effective admissible set
+   =========================================================================== */
+
+const H3_T2V = "minimax-h3/t2v";
+
+/* WHERE THE SHOT'S CHOSEN TARGET ACTUALLY LIVES, which is not one field.
+   public/v607-composer.js writes `motionProfileId` onto the ACTIVE MOTION UNIT whenever a
+   shot has one, and falls back to the shot's creation record when it does not — and its
+   wrappers copy the unit's value onto the creation record for the duration of a render or
+   a build. A suite that read only `creation.motionProfileId` would find `undefined` on
+   every shot with a clip and prove nothing about what a filmmaker chose. */
+const STORED_TARGET = `(() => {
+  const shot = P.shots.find((row) => row.id === "L1-01");
+  const unit = guidedActiveMotionUnit(shot);
+  return (unit && unit.motionProfileId) || ensureShotCreation(shot).motionProfileId || "";
+})()`;
+
+/* THE REQUESTS THAT MEAN SOMETHING HERE. A refused build still re-renders — the shipped
+   v607 wrapper calls route() whatever the base returned — and a render fetches the shot's
+   folder listing. Asserting "no request at all" would be asserting that the app stopped
+   repainting. What must never happen is a PROMPT COMPILE or anything on the generation
+   endpoints, so those are what is counted. */
+const BUILD_ROUTES = ["/api/prompt/compile", "/api/prompt/improve"];
+const PAID_ROUTES = ["/api/generation/"];
+const matching = (requests, needles) => requests.filter((url) => needles.some((needle) => url.includes(needle)));
+
+/* A shot workspace with fal reported ready and every request recorded. Nothing is
+   stubbed that decides anything: only `falGenerationReady` (the harness has no key) and
+   `fetch`/`toast`, which are observed rather than replaced. */
+async function executionPage(routeValue) {
+  const page = await renderShot(routeValue);
+  vm.runInContext(`
+    globalThis.__requests = [];
+    const __fetch = fetch;
+    globalThis.fetch = (url, options) => { __requests.push(String(url)); return __fetch(url, options); };
+    globalThis.falGenerationReady = () => true;
+    globalThis.__toasts = [];
+    globalThis.toast = (message) => { __toasts.push(String(message)); };
+  `, page.context);
+  return page;
+}
+
+async function checkExecutionGate() {
+  /* ---- the reproduction, verbatim ------------------------------------------------ */
+  const page = await executionPage("flf");
+  const reproduction = JSON.parse(await vm.runInContext(`(async () => {
+    const shot = P.shots.find((row) => row.id === "L1-01");
+    const creation = ensureShotCreation(shot);
+    /* Stored the way a filmmaker stores it: through the shipped handler the picker's own
+       onchange names, while nothing is declared and the target is therefore selectable. */
+    setGuidedMotionField("L1-01", "motionProfileId", ${JSON.stringify(H3_T2V)});
+    creation.motionDirection = "He turns to the panel.";
+    creation.motionPromptBuilds = [{
+      id: "stale-build", packageId: "L1-01-MOTION-R01", date: "2026-08-19T00:00:00.000Z",
+      profileId: ${JSON.stringify(H3_T2V)}, prompt: "A compiled t2v prompt.", durationSeconds: 5, references: [],
+    }];
+    const profile = guidedVideoProfiles().find((row) => row.id === ${JSON.stringify(H3_T2V)});
+    const storedBefore = ${STORED_TARGET};
+    const buildsBefore = creation.motionPromptBuilds.length;
+
+    __requests.length = 0;
+    await buildGuidedMotionPrompt("L1-01", false);
+    const afterBuild = { requests: [...__requests], builds: creation.motionPromptBuilds.length };
+
+    __requests.length = 0;
+    await openFalH3MotionModal("L1-01", "stale-build");
+    const afterModal = { requests: [...__requests], request: !!window._falH3MotionRequest };
+
+    __requests.length = 0;
+    document.getElementById("fal-h3-prompt-editor").value = "A compiled t2v prompt.";
+    window._falH3Submitting = false;
+    window._falH3MotionRequest = { shotId: "L1-01", buildId: "stale-build", profileId: ${JSON.stringify(H3_T2V)},
+      profileMode: "t2v", prompt: "A compiled t2v prompt.", compiledPrompt: "A compiled t2v prompt.",
+      durationSeconds: 5, clientRequestId: "gate-probe" };
+    await startFalH3MotionGeneration();
+    const afterSubmit = { requests: [...__requests], submitting: !!window._falH3Submitting };
+
+    return JSON.stringify({
+      route: declaredShotRoute(shot),
+      compatible: guidedVideoProfileMatchesIntent(profile, declaredShotRoute(shot)),
+      executable: guidedMotionProfileExecutable(shot, profile),
+      admissible: guidedMotionAdmissibleModes(),
+      effective: guidedMotionEffectiveModes(declaredShotRoute(shot)),
+      storedBefore, storedAfter: ${STORED_TARGET},
+      buildsBefore, afterBuild, afterModal, afterSubmit,
+      paidAction: falH3MotionPromptAction("L1-01", "stale-build", profile),
+      picker: guidedVideoProfileOptions(${STORED_TARGET}, declaredShotRoute(shot)),
+      panel: guidedMotionPanel(shot, guidedCurrentShotStill(shot), takesFor("L1-01"), true),
+      refusal: guidedMotionIntentRefusal(shot, profile),
+    });
+  })()`, page.context));
+
+  assert.strictEqual(reproduction.route, "flf", "precondition: the shot declares flf");
+  assert.strictEqual(reproduction.storedBefore, H3_T2V, "precondition: the shot stores the t2v target");
+  assert.strictEqual(reproduction.compatible, false, "precondition: t2v is not compatible with an flf intent");
+
+  /* 1 — THE STORED SELECTION IS PRESERVED, not erased and not rewritten. */
+  assert.strictEqual(reproduction.storedAfter, H3_T2V,
+    "a refused build must leave the filmmaker's stored target exactly as they left it");
+  assert(reproduction.picker.includes(`value="${H3_T2V}" selected`),
+    "the stored target must still be rendered and still be selected, so the filmmaker can see and change it");
+  assert(reproduction.picker.includes("not how this shot is made"),
+    "and it must be labelled truthfully rather than silently");
+
+  /* 2 — IT IS NOT EXECUTABLE. */
+  assert.strictEqual(reproduction.executable, false, "an intent-excluded stored target must not be executable");
+  assert(reproduction.refusal, "and the refusal must say why, in one place");
+  assert(!reproduction.effective.includes("t2v"), "t2v must not be in the effective set for an flf intent");
+  assert(reproduction.admissible.includes("t2v"), "while remaining in the accepted admissible set — this is narrowing, not deletion");
+
+  /* 3 — BUILD PROMPT CANNOT PROCEED, and nothing was compiled. */
+  assert.deepStrictEqual(matching(reproduction.afterBuild.requests, [...BUILD_ROUTES, ...PAID_ROUTES]), [],
+    `a refused build must compile nothing and spend nothing, got ${JSON.stringify(reproduction.afterBuild.requests)}`);
+  assert.strictEqual(reproduction.afterBuild.builds, reproduction.buildsBefore,
+    "and must create no compiled package for a paid action to be drawn from");
+
+  /* 4 — NO PAID ACTION IS PRODUCED, from a stale build or otherwise. */
+  assert(!reproduction.paidAction.includes("GENERATE H3 VIDEO"),
+    "a stale package compiled before the intent changed must not draw the paid button");
+  assert(reproduction.paidAction.includes("data-h3-intent-blocked"),
+    "it must state the reason where the button was, rather than leaving a gap");
+  assert(!reproduction.panel.includes("GENERATE H3 VIDEO"),
+    "and the rendered motion workspace must not carry the paid button either");
+
+  /* 5 — THE BUILD CONTROLS ARE DISABLED AND SAY WHY. Belt; the gate above is the braces. */
+  const buildButton = /<button class="assemble-btn"([^>]*)onclick="buildGuidedMotionPrompt\('L1-01',false\)"/.exec(reproduction.panel);
+  assert(buildButton, "the Build prompt control must be locatable");
+  assert(/\bdisabled\b/.test(buildButton[1]), "Build prompt must be disabled for an intent-excluded target");
+  assert(/aria-describedby="guided-motion-intent-refusal-L1-01"/.test(buildButton[1]),
+    "and the visible reason must be associated with it rather than left to a tooltip");
+  assert(reproduction.panel.includes("data-video-profile-intent-blocked"),
+    "the refusal must be rendered through the picker's existing refusal convention");
+
+  /* 6 — THE PAID DIALOG DOES NOT OPEN, and the paid POST is never built. */
+  assert.deepStrictEqual(matching(reproduction.afterModal.requests, PAID_ROUTES), [],
+    "opening the paid dialog on an excluded target must reach no generation endpoint — not even the plan");
+  assert.strictEqual(reproduction.afterModal.request, false,
+    "and must not leave a submittable request behind");
+  assert.deepStrictEqual(matching(reproduction.afterSubmit.requests, PAID_ROUTES), [],
+    "and a hand-built submit must reach no generation endpoint");
+  assert.strictEqual(reproduction.afterSubmit.submitting, false,
+    "the paid submit must fail closed before it marks itself in flight");
+
+  /* 7 — AND THE SAME BUILD REALLY DOES COMPILE ONCE THE INTENT MATCHES. Without this the
+     six assertions above would be satisfied by a product where nothing ever builds. */
+  const permitted = JSON.parse(await vm.runInContext(`(async () => {
+    const shot = P.shots.find((row) => row.id === "L1-01");
+    setShotIntent("L1-01", "t2v");
+    __requests.length = 0;
+    await buildGuidedMotionPrompt("L1-01", false);
+    return JSON.stringify({ requests: [...__requests], stored: ${STORED_TARGET} });
+  })()`, page.context));
+  assert(matching(permitted.requests, BUILD_ROUTES).length >= 1,
+    `a compatible intent must let the SAME stored target compile, got ${JSON.stringify(permitted.requests)}`);
+  assert.strictEqual(permitted.stored, H3_T2V,
+    "and it must still be the target the filmmaker stored, not one chosen for them");
+
+  /* ---- the transition, on one page, in sequence ---------------------------------- */
+  const journey = await executionPage(undefined);
+  const trip = JSON.parse(await vm.runInContext(`(async () => {
+    const shot = P.shots.find((row) => row.id === "L1-01");
+    const creation = ensureShotCreation(shot);
+    setGuidedMotionField("L1-01", "motionProfileId", ${JSON.stringify(H3_T2V)});
+    creation.motionDirection = "He turns to the panel.";
+    const profile = guidedVideoProfiles().find((row) => row.id === ${JSON.stringify(H3_T2V)});
+    const snapshot = async () => {
+      __requests.length = 0;
+      const executable = guidedMotionProfileExecutable(shot, profile);
+      return {
+        route: declaredShotRoute(shot),
+        stored: ${STORED_TARGET},
+        executable,
+        effective: guidedMotionEffectiveModes(declaredShotRoute(shot)),
+        refused: !!guidedMotionIntentRefusal(shot, profile),
+      };
+    };
+    const compatible = await snapshot();
+    setShotIntent("L1-01", "flf");
+    const excluded = await snapshot();
+    setShotIntent("L1-01", "t2v");
+    const restored = await snapshot();
+    setShotIntent("L1-01", "");
+    const withdrawn = await snapshot();
+    return JSON.stringify({ compatible, excluded, restored, withdrawn });
+  })()`, journey.context));
+
+  assert.strictEqual(trip.compatible.executable, true, "with no intent declared the stored target executes, exactly as it always has");
+  assert.strictEqual(trip.excluded.executable, false, "declaring an intent that excludes it must block execution");
+  assert.strictEqual(trip.restored.executable, true, "and declaring a compatible intent must make the SAME preserved target usable again");
+  assert.strictEqual(trip.withdrawn.executable, true, "withdrawing the intent must return the accepted baseline");
+  for (const [name, row] of Object.entries(trip))
+    assert.strictEqual(row.stored, H3_T2V, `${name}: the stored target must survive every transition untouched`);
+  assert.strictEqual(trip.excluded.refused, true, "only the excluded state may carry a refusal");
+  assert.strictEqual(trip.restored.refused, false, "and it must be gone the moment the intent matches again");
+
+  /* ---- THE IMPLICATION, over the whole matrix ------------------------------------ */
+  const matrix = JSON.parse(vm.runInContext(`JSON.stringify((() => {
+    const shot = P.shots.find((row) => row.id === "L1-01");
+    const rows = [];
+    for (const value of [null, ...CINEBRAID_SHOT_ROUTES, "flf2", "GENERATE (FLF)"]) {
+      if (value === null) delete shot.deliveryRoute; else shot.deliveryRoute = value;
+      const route = declaredShotRoute(shot);
+      const effective = guidedMotionEffectiveModes(route);
+      const admissible = guidedMotionAdmissibleModes();
+      for (const profile of guidedVideoProfiles())
+        rows.push({ value: String(value), route, effective, admissible, id: profile.id,
+          mode: guidedVideoProfileRouteKind(profile),
+          executable: guidedMotionProfileExecutable(shot, profile) });
+    }
+    delete shot.deliveryRoute;
+    return rows;
+  })())`, journey.context));
+
+  assert(matrix.length >= 8 * 6, "the matrix must cover every target against every route state");
+  let executableCount = 0;
+  for (const row of matrix) {
+    /* THE IMPLICATION THE BRIEF STATES, checked on every single row. */
+    if (row.executable) {
+      executableCount += 1;
+      assert(row.effective.includes(row.mode),
+        `${row.value} + ${row.id}: executable but ${row.mode} is not in the effective set ${JSON.stringify(row.effective)}`);
+    }
+    /* And the effective set is always a subset of the accepted admissible one. */
+    for (const mode of row.effective)
+      assert(row.admissible.includes(mode), `${row.value}: ${mode} is not in the accepted admissible set`);
+  }
+  assert(executableCount > 0, "something must be executable, or this proves only that nothing runs");
+  /* Unset and unreadable both reproduce the accepted baseline EXACTLY: everything the
+     catalogue offers stays executable. */
+  for (const value of ["null", "flf2", "GENERATE (FLF)"]) {
+    const rows = matrix.filter((row) => row.value === value);
+    assert(rows.length && rows.every((row) => row.executable),
+      `${value}: no target may be blocked when nothing readable is declared`);
+  }
+  /* And a single-method intent really does block something, or the gate is inert. */
+  assert(matrix.some((row) => row.value === "flf" && !row.executable),
+    "declaring flf must actually block a target");
+
+  /* ---- THE GATE IS SEMANTIC, NOT A READING OF THE SCREEN ------------------------- */
+  const studio = readLF("public/creation-studio.js");
+  const gate = studio.slice(studio.indexOf("function guidedMotionAdmissibleModes()"), studio.indexOf("function guidedVideoProfileOptionSuffix"));
+  assert(gate.includes("function guidedMotionProfileExecutable"), "the gate must be locatable to be constrained");
+  /* CODE, not comments. The comments here legitimately discuss the disabled control the
+     gate exists to be independent of; what must not appear is a READ of one. */
+  const gateCode = codeOnly(gate);
+  for (const forbidden of ["document", "getElementById", "querySelector", "disabled", "localStorage"])
+    assert(!gateCode.includes(forbidden),
+      `the execution gate must not consult the screen (${forbidden}); a disabled <option> is a courtesy, not a fact`);
+  assert(gate.includes("shotIntentEffectiveModes"),
+    "and it must reach its answer through the accepted narrowing authority rather than a second resolver");
+  assert(!/shotIntentAdmitsMode|CINEBRAID_SHOT_ROUTE/.test(gateCode),
+    "one authority, one call: the gate must not also hand-roll a route comparison");
+
+  /* Every boundary that builds or spends asks the ONE predicate, and none of them
+     re-implements it. */
+  const fal = readLF("public/fal-generation.js");
+  assert.strictEqual((fal.match(/guidedMotionIntentRefusal\(/g) || []).length, 3,
+    "all three paid boundaries in fal-generation.js must ask the shared predicate");
+  assert(!/deliveryRoute|shotIntentEffectiveModes|shotIntentAdmitsMode/.test(fal),
+    "and none of them may derive compatibility for itself");
+  /* ONE DECLARATION AND THREE ASKERS in the studio: the picker's refusal line, the motion
+     panel's build controls, and the prompt builder's gate. Counted so a fourth surface
+     that grew its own compatibility opinion shows up here. */
+  assert(studio.includes("function guidedMotionIntentRefusal("), "the predicate must be declared once");
+  assert.strictEqual(studio.split("guidedMotionIntentRefusal(").length - 1, 4,
+    "one declaration and exactly three askers; a new one means a new surface that must be reviewed");
+  assert(!/declaredShotRoute\([^)]*\)[^\n]*===\s*["']/.test(codeOnly(studio)),
+    "no surface may compare a route token by hand instead of asking the predicate");
+
+  /* ---- ASKING THE QUESTION CHANGES NOTHING --------------------------------------- */
+  const purity = JSON.parse(vm.runInContext(`JSON.stringify((() => {
+    const shot = P.shots.find((row) => row.id === "L1-01");
+    shot.deliveryRoute = "flf";
+    const profile = guidedVideoProfiles().find((row) => row.id === ${JSON.stringify(H3_T2V)});
+    const before = JSON.stringify(shot);
+    guidedMotionIntentRefusal(shot, profile);
+    guidedMotionProfileExecutable(shot, profile);
+    guidedMotionEffectiveModes(declaredShotRoute(shot));
+    const after = JSON.stringify(shot);
+    delete shot.deliveryRoute;
+    return { unchanged: before === after };
+  })())`, journey.context));
+  assert.strictEqual(purity.unchanged, true,
+    "the gate is a question, not an edit: asking it must not touch the shot record");
+
+  note(`10. execution gate: the reproduced case (stored ${H3_T2V} + flf intent) is preserved, labelled, `
+    + "disabled and refused at all four boundaries with zero requests; "
+    + `${matrix.length} target/route rows all satisfy executable ⇒ in the effective set; unset and unreadable stay baseline; `
+    + "the gate reads no DOM and the question mutates nothing");
+}
+
 /* =========================================================================== */
 
 async function main() {
@@ -806,6 +1113,7 @@ async function main() {
   await checkInvalidRoute();
   await checkLegacyAndBoundedChange();
   checkOwnershipAndSeparation();
+  await checkExecutionGate();
 
   console.log("Shot intent UX suite passed:");
   for (const line of notes) console.log(`  - ${line}`);
