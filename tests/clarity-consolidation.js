@@ -18,9 +18,19 @@ const composer = read("public/v607-composer.js");
 
 assert(index.includes(`styles.css?v=${RELEASE_VERSION}`));
 
-for (const label of ["Reference", "Coverage & states", "Details & history"])
+/* AMENDED BY BATCH 2 SLICE 3 — three consolidated workspaces, not four.
+
+   The reference workspace used to be Reference / Choose & approve / Coverage &
+   states / Details & history, and this suite pinned all four labels. Slice 3
+   retired `Choose & approve` as a peer: candidate review is now contextual to
+   the reference that owns it, and coverage is stated as a production demand
+   rather than as a filing cabinet. The consolidation property this file exists
+   to guard is unchanged and is asserted more strictly below — there must be
+   exactly three, and the retired id must still resolve rather than dangle. */
+for (const label of ["Primary reference", "What this production needs", "Details & history"])
   assert(entities.includes(`label:"${label}"`), `missing ${label} reference workspace`);
-assert(entities.includes('label:manualFirstWorkflow()?"Choose & approve":"Review"'), "review workspace must adapt its label without changing the four-workspace structure");
+assert(!entities.includes('label:manualFirstWorkflow()?"Choose & approve":"Review"'), "Choose & approve must no longer be a peer top-level reference stage");
+assert(entities.includes('review:"reference"'), "a stored or handed-off `review` selection must resolve onto the reference that owns candidate review");
 assert(entities.includes("bounded-single-state"), "continuity states must render one editor at a time");
 assert(entities.includes("selected:continuity-state"), "continuity state selection must persist");
 assert(!entities.includes('label:"Approved",detail:'), "Approved must be a status, not a workspace");

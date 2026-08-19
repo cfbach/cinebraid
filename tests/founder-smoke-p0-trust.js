@@ -386,8 +386,30 @@ async function testLineageRuntimeSurfaces() {
   assert(!/selected/.test(modal.split("SOURCE STATE NOT RECORDED")[1].split("</select>")[0] || ""),
     "no source may be preselected — CineBraid must not choose on the filmmaker's behalf");
 
-  /* And so is the state card, reached through Coverage & states. */
+  /* And so is the state card, reached through the coverage workspace.
+   *
+   * AMENDED BY BATCH 2 SLICE 3, and deliberately STRENGTHENED rather than relaxed.
+   * That workspace is `What this production needs` now: it leads with a demand list
+   * and keeps the angle / expression / continuity boards behind a toggle, so the
+   * full chooser is one click away instead of being the first thing rendered.
+   *
+   * The P0-3 guarantee is that a missing lineage is SURFACED as a human decision
+   * rather than guessed, so both halves are asserted: the demand list must name the
+   * decision by itself — a filmmaker must not have to go looking for it — and
+   * opening the board must still produce the chooser this test has always required.
+   * A reframe that hid the decision behind a toggle and said nothing about it would
+   * fail the first assertion. */
   vm.runInContext(`selectBoundedTask('entity-task','locations:LOC-ROOF','coverage')`, app.context);
+  await app.context.route();
+  const demandHtml = app.context.document.getElementById("main").innerHTML;
+  assert(/Record what this state derives from/.test(demandHtml),
+    "the demand surface must name the missing-lineage decision without the filmmaker going looking for it");
+  assert(/Source not recorded/.test(demandHtml),
+    "and must say why that state is blocked");
+  assert(!/SOURCE STATE NOT RECORDED[\s\S]*Rooftop working state/.test(demandHtml.split("entity-coverage-detail")[0] || demandHtml),
+    "while the full chooser stays behind the coverage detail rather than leading the surface");
+
+  vm.runInContext(`selectBoundedItem('entity-coverage-view','locations:LOC-ROOF','states')`, app.context);
   await app.context.route();
   assert(app.context.document.getElementById("main").innerHTML.includes("SOURCE STATE NOT RECORDED"),
     "the continuity state card must offer the same decision");

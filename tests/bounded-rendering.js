@@ -26,8 +26,15 @@ async function main() {
   assert(count(candidateRender.html, 'class="entity-candidate-card') <= 12, "reference candidate HTML must be sliced before rendering");
   assert(!candidateRender.html.includes("KAI_CANDIDATE_100.png"), "off-page candidates must not exist in route HTML");
 
+  /* The sub-view key was added by Batch 2 Slice 3 and changes nothing this suite
+     asserts. `What this production needs` now leads with the demand list and keeps
+     the angle / expression / continuity boards behind a toggle, so a suite that
+     wants to measure the coverage EDITOR has to select a board the way a filmmaker
+     would. The bounded-rendering claims below — one complete editor, every slot
+     still navigable — are unchanged and still tested against exactly that board. */
   const coverageStorage = {
     "cinebraid-focused:fixture:entity-task:characters:KAI": "coverage",
+    "cinebraid-bounded:fixture:selected:entity-coverage-view:characters:KAI": "coverage",
     "cinebraid-bounded:fixture:selected:coverage-slot:characters:KAI": "slot-17",
   };
   const coverageRender = await render("#/character/KAI", fixture, { storage: coverageStorage, scan: { anchors, plates: [], props: [], vehicles: [], audio: [], media: [], shots: {} } });

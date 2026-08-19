@@ -119,7 +119,11 @@ try:
         assert page.get_by_text("Human approval is enough", exact=False).count() >= 1
         assisted = page.locator("details.reference-assisted-tools")
         assert assisted.count() == 1 and not assisted.first.evaluate("node => node.open"), "assisted tools must start collapsed"
-        page.locator(".focused-task-button", has_text="Choose & approve").click()
+        # AMENDED BY BATCH 2 SLICE 3. `Choose & approve` is no longer a peer stage:
+        # the candidates for a reference render on the reference that owns them.
+        # Clicking Primary reference is therefore navigating to the same surface the
+        # page already opened on, and the assertions that follow are unchanged.
+        page.locator(".focused-task-button", has_text="Primary reference").click()
         page.wait_for_timeout(150)
         assert page.get_by_role("button", name="ASSIGN TO FRONT").count() == 1
         assert page.get_by_text("OPTIONAL AI CHECK", exact=True).count() == 0
@@ -128,8 +132,20 @@ try:
         page.wait_for_timeout(100)
         page.get_by_role("button", name="ASSIGN VIEW").click()
         page.wait_for_timeout(250)
-        page.locator(".focused-task-button", has_text="Coverage & states").click()
+        page.locator(".focused-task-button", has_text="What this production needs").click()
         page.wait_for_timeout(150)
+        # SLICE 3 §E: the angle/expression/state boards no longer arrive uninvited.
+        # The demand list leads and the boards sit behind a toggle whose open state is
+        # derived from the selected sub-view, so a suite that drives the boards has to
+        # open it the way a filmmaker would — by clicking.
+        coverage_detail = page.locator(".entity-coverage-detail")
+        assert coverage_detail.count() == 1, "coverage detail must be present behind a toggle"
+        assert coverage_detail.first.get_attribute("data-coverage-detail-open") == "0", \
+            "coverage detail must start closed so unneeded views are not dumped on the filmmaker"
+        assert page.locator("section.entity-demand").count() == 1, \
+            "what this production needs must lead the surface"
+        page.locator(".entity-coverage-detail-toggle").click()
+        page.wait_for_selector('.entity-coverage-detail[data-coverage-detail-open="1"]', timeout=10000)
         assert page.get_by_text("Front", exact=True).count() >= 1
         front_button = page.locator(".bounded-slot-rail button").filter(has=page.locator("span", has_text="Front")).first
         # A human-assigned coverage view is a SUPPORTING REFERENCE, not canon.

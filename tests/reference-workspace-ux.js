@@ -17,7 +17,13 @@ const coverage = read('public/coverage-automation.js');
 const libraryTools = read('public/library-tools.js');
 
 assert(index.includes(`focused-workspaces.js?v=${RELEASE_VERSION}`));
-assert(/referenceWorkspaceMarkup\(list,\s*it\)/.test(entities), 'manual-first reference workspace must be rendered on the entity page');
+/* AMENDED BY BATCH 2 SLICE 3. The workspace is still rendered on the entity page
+   and that is still what this line guards; it now receives the candidate markup
+   as well, because candidate review moved out of a peer stage and into the
+   reference that owns it. Asserting the argument is the point: a call that
+   dropped it would render a reference with no candidates and no error. */
+assert(/referenceWorkspaceMarkup\(list,\s*it\s*,\s*\{/.test(entities), 'manual-first reference workspace must be rendered on the entity page');
+assert(/referenceWorkspaceMarkup\(list,\s*it\s*,\s*\{[^}]*candidatesMarkup:candidatesTask/.test(entities), 'the reference workspace must own the candidate grid rather than a peer stage');
 assert(entities.includes('reference-manual-hub') && entities.includes('reference-assisted-tools'), 'manual intake must lead while assisted creation remains available');
 assert(entities.includes('Generate angle / viewpoint coverage') && entities.includes('Generate expression sheet') && entities.includes('Map imported references'), 'reference workspace must expose manual mapping and optional assisted workflows');
 assert(creation.includes('OUTPUT TYPE — LOCKED'));

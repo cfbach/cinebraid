@@ -54,6 +54,7 @@ const SUITES = [
   "check:founder-p0-browser",
   "check:quiet-shell-browser",
   "check:project-entry-browser",
+  "check:reference-reframe-browser",
 ];
 
 /* Suites that launch a browser and are known to fail, pinned to the reason.

@@ -501,6 +501,9 @@ async function main() {
     "reference-authority-deep-dive.js",
     "reference-automation-closed-loop.js",
     "reference-automation-real-browser.py",
+    "reference-reframe-negative-controls.js",
+    "reference-reframe-real-browser.py",
+    "reference-reframe.js",
     "reference-review-contract.js",
     "reference-workflow-repair.js",
     "reference-workspace-ux.js",
@@ -874,7 +877,20 @@ async function main() {
     "no other block on Production may declare the project ready");
   const reportsRender = await render("#/reports", fixture);
   assert(reportsRender.html.includes("Export production summary"), "Reports must expose the production summary export action");
-  assert(labels.size <= 80, `distinct rendered button labels: ${labels.size}`);
+  /* RAISED FROM 80 TO 84 BY BATCH 2 SLICE 3, with the accounting stated so the
+     next person to hit this ceiling can tell proliferation from relocation.
+
+     This budget counts distinct button labels rendered across the ten routes
+     above. Slice 3 moved candidate review out of a peer `Choose & approve` stage
+     and into the reference that owns it, so eleven labels that already existed —
+     APPROVE…, REJECT, the four optional-AI-check controls and the five candidate
+     workflow filters — now render on the default reference route instead of only
+     on a stage the fixture never opened. Exactly ONE label is genuinely new
+     ("Approve as primary reference"), and three taskbar labels were renamed in
+     place of four. Relocating existing vocabulary onto a default surface is what
+     the reframe is FOR; inventing new vocabulary is what this line guards, and
+     that number went up by one. */
+  assert(labels.size <= 84, `distinct rendered button labels: ${labels.size}`);
 
   /* ---- the two aggregate runners must not diverge ----
 

@@ -305,13 +305,17 @@ try:
             page.goto(f"{base}/#/character/{entity_id}", wait_until="domcontentloaded")
             page.wait_for_selector("#main", timeout=20000)
             page.wait_for_selector(".focused-task-button", timeout=20000)
-            task = page.locator(".focused-task-button", has_text="Reference").first
+            # AMENDED BY BATCH 2 SLICE 3: the task is `Primary reference` now, and it
+            # owns the candidate grid as well as the creation hub. Matched exactly
+            # rather than by substring, because `Reference` alone would also match
+            # `What this production needs`' description text on some renders.
+            task = page.locator(".focused-task-button", has_text="Primary reference").first
             assert task.count() >= 1, \
                 f"the Reference task control is missing for {entity_id}; the workspace offers: " \
                 f"{page.locator('.focused-task-button').all_inner_texts()}"
             task.click()
             selected = ("() => { const button = [...document.querySelectorAll('.focused-task-button')]"
-                        ".find(row => (row.querySelector('b')?.textContent || '').trim() === 'Reference');"
+                        ".find(row => (row.querySelector('b')?.textContent || '').trim() === 'Primary reference');"
                         " return !!button && button.classList.contains('selected'); }")
             try:
                 page.wait_for_function(selected, timeout=20000)
@@ -421,8 +425,12 @@ try:
         assert "MARA-P2-A.png" in gate.first.inner_text(), "F: the passing candidate is not offered for approval"
 
         # ---- G. a rejected candidate keeps a way into its review --------
-        page.locator(".focused-task-button", has_text="Review").first.click()
-        page.wait_for_timeout(500)
+        # AMENDED BY BATCH 2 SLICE 3: there is no `Review` peer stage any more. The
+        # candidate grid is the second half of `Primary reference`, so that is the
+        # task this section opens — and it waits for the grid itself rather than for
+        # a delay, because the click re-renders.
+        page.locator(".focused-task-button", has_text="Primary reference").first.click()
+        page.wait_for_selector("#main .entity-candidate-section", timeout=20000)
         page.evaluate("() => document.querySelectorAll('#main details').forEach(node => { node.open = true; })")
         page.wait_for_timeout(300)
         card = page.locator('.entity-candidate-card[data-candidate-file="MARA-P1-B.png"]').first

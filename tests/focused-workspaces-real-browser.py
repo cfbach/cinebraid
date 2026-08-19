@@ -265,6 +265,15 @@ try:
             stylesheet."""
             page.evaluate("() => window.selectFocusedTask('coverage')")
             page.wait_for_timeout(900)
+            # BATCH 2 SLICE 3: that task leads with the demand list and keeps the
+            # angle / expression / continuity boards behind a toggle, so the board
+            # this case reads is opened the way a filmmaker opens it. Waiting for the
+            # board itself rather than for a delay, because the click re-renders.
+            toggle = page.locator(".entity-coverage-detail-toggle")
+            if toggle.count():
+                if page.locator('.entity-coverage-detail[data-coverage-detail-open="1"]').count() == 0:
+                    toggle.first.click()
+                page.wait_for_selector(".entity-coverage-section > summary", timeout=10000)
             seen = page.evaluate("""([list, id]) => {
                 const board = document.querySelector('.entity-coverage-section > summary');
                 const facts = [...document.querySelectorAll('.focused-inspector .focused-inspector-facts article')];

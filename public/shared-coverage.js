@@ -226,6 +226,84 @@
     return value === "not-required" ? "Not required" : value === "planned" ? "Planned" : "Required";
   }
 
+  /* -------------------------------------------------------------------------
+     BATCH 2 SLICE 3 — THE DEMAND PROJECTION. Presentation only, and additive.
+
+     Slice 3 has to present coverage as "what does THIS production need" in
+     filmmaker language, and the brief is explicit that flipping the
+     `source: "unspecified"` default from required is NOT a casual UI change.
+     It is not made here, and nothing above this comment changed: the five
+     resolvers — requirementTrace, coverageRequirement, isRequiredCoverage,
+     summariseCoverage, writeCoverageRequirement — answer exactly what they
+     answered before, so server.js, ofp/ofp-migrate-rules.js M015,
+     coverage-automation.js, creation-studio.js and the Reference Inspector
+     count what they always counted.
+
+     What this adds is a PROJECTION of the answer requirementTrace() already
+     gives, and it is a projection precisely because the three things below are
+     different questions that the checklist-shaped UI had collapsed into one:
+
+       1. IS IT REQUIRED          coverageRequirement(). Unchanged. Authority.
+       2. DID ANYONE SAY SO       requirementTrace().source. Already recorded.
+                                  `unspecified` means the project never authored
+                                  this slot; it is still REQUIRED, and it is
+                                  still counted, but it is not evidence that the
+                                  production asked for the view.
+       3. WHAT DOES THE DEFAULT
+          SCREEN LEAD WITH        `tier` plus `confirmed`, below.
+
+     The tier is a ONE-TO-ONE RENAME of the three shipped tokens. It invents no
+     fourth state and it can never disagree with coverageRequirement(), because
+     it is computed from it:
+
+         required       -> "required"           "Required"
+         planned        -> "recommended"        "Recommended"
+         not-required   -> "not-currently-needed"  "Not currently needed"
+
+     `confirmed` is the only genuinely new bit, and it is deliberately NOT a
+     requirement: it says whether a human, a template or the default-state rule
+     put the value there, as opposed to nobody having authored the slot at all.
+     A surface may use it to decide what to show FIRST. A surface that used it
+     to decide what is REQUIRED would be re-deciding question 1, which is the
+     duplicate-truth this file exists to prevent. */
+  const COVERAGE_DEMAND_TIERS = ["required", "recommended", "not-currently-needed"];
+
+  /* requirement token -> demand tier. Total over COVERAGE_REQUIREMENTS, so a
+     token that ever gains a member fails loudly here rather than silently
+     rendering as Required. */
+  const DEMAND_TIER_BY_REQUIREMENT = {
+    required: "required",
+    planned: "recommended",
+    "not-required": "not-currently-needed",
+  };
+
+  /* The sources that represent somebody ASSERTING something about this slot.
+     `unspecified` is absent by definition — it is the absence of an assertion.
+     `legacy-boolean` counts: every coverage template seeds it, so it carries a
+     template author's intent even though it cannot carry a specific one. */
+  const CONFIRMED_DEMAND_SOURCES = ["default-state", "retired", "declared", "legacy-boolean"];
+
+  function coverageDemand(item, isDefault = false) {
+    const trace = requirementTrace(item, isDefault);
+    return {
+      /* Carried through unchanged so a caller never has to re-resolve, and so a
+         tier and a requirement can be compared in one place. */
+      requirement: trace.requirement,
+      source: trace.source,
+      tier: DEMAND_TIER_BY_REQUIREMENT[trace.requirement] || "required",
+      confirmed: CONFIRMED_DEMAND_SOURCES.includes(trace.source),
+    };
+  }
+
+  /* WORDING, and the one place it lives. The same exception requirementLabel()
+     already is: a rendering helper over a token, never a judgement. */
+  function coverageDemandLabel(tier) {
+    const value = COVERAGE_DEMAND_TIERS.includes(tier) ? tier : "required";
+    return value === "recommended" ? "Recommended"
+      : value === "not-currently-needed" ? "Not currently needed"
+        : "Required";
+  }
+
   return {
     COVERAGE_REQUIREMENTS,
     LEGACY_FALSE_REQUIREMENT,
@@ -241,5 +319,9 @@
     coverageSlotFile,
     summariseCoverage,
     requirementLabel,
+    COVERAGE_DEMAND_TIERS,
+    CONFIRMED_DEMAND_SOURCES,
+    coverageDemand,
+    coverageDemandLabel,
   };
 });

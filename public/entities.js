@@ -1290,6 +1290,155 @@ function coverageBoardMarkup(list, entity, mediaByName, media) {
 
 
 
+/* ===========================================================================
+   BATCH 2 · SLICE 3 — THE REFERENCE REFRAME.
+
+   PRIMARY REFERENCE  ->  WHAT THIS PRODUCTION NEEDS  ->  DETAILS & HISTORY.
+
+   This is a presentation change over accepted Production Truth. It moves no
+   authority, adds no persisted field, and re-decides nothing:
+
+     * Canon / Reference / Historic still come from entityStateTruth(), which
+       still comes from entityProductionTruth(). This file asks; it never judges.
+     * Whether a coverage slot is REQUIRED is still coverageRequirement()'s
+       answer alone, and an unspecified slot still reads as required. Slice 3
+       relabels and re-orders that answer; it does not change it. The projection
+       used below is shared-coverage.js's own coverageDemand(), which is a pure
+       function of requirementTrace().
+     * A continuity state's parent is still whatever the state RECORDS. Nothing
+       here guesses one, and offering the generate action writes nothing.
+
+   What actually changed is which question the default screen asks first. It
+   used to be "here are four equal filing cabinets"; it is now "here is your
+   approved primary reference, and here is what this production still needs".
+   =========================================================================== */
+
+const ENTITY_KIND_LABELS = { characters: "Character", locations: "Location", props: "Prop", vehicles: "Vehicle", audio: "Audio reference" };
+function entityKindLabel(list) { return ENTITY_KIND_LABELS[list] || "Reference"; }
+
+/* AN ENTITY ID IS NOT AN ENTITY IDENTITY.
+
+   A project may legitimately carry the same id in more than one collection —
+   nothing forbids a character and a prop both called PARCEL — so `id` alone
+   names a string, not a thing. shared-entities.js has always known this: it
+   de-duplicates dependency rows on `${resolvedType}:${rawId}` and hands every
+   row its resolved `type`. The composite is the identity; the id is half of it.
+
+   This is the complete existing vocabulary rather than a new one: `type` is the
+   value shotDependencyRecords() already resolves (including narrowing a
+   `prop-or-vehicle` request to whichever collection actually holds the entity),
+   and the pair below is the same key that module keys its own `seen` map on. */
+const ENTITY_DEPENDENCY_TYPES = {
+  characters: "character",
+  locations: "location",
+  props: "prop",
+  vehicles: "vehicle",
+  audio: "audio",
+};
+/* "" for anything unrecognised, which is what makes an unknown collection
+   answer NOTHING rather than guessing a neighbouring one: no dependency row
+   carries an empty type, so nothing can match. */
+function entityDependencyType(list) {
+  return ENTITY_DEPENDENCY_TYPES[String(list || "")] || "";
+}
+
+/* HOW MUCH THIS PRODUCTION ACTUALLY USES THIS REFERENCE.
+
+   Section C asks the default screen to justify coverage by the actual
+   production rather than by what the schema can imagine. The only production
+   fact available at this slice — Slice 5 owns declared shot routes and must not
+   be pre-implemented — is which shots already depend on this entity, and that
+   question already has exactly one owner: shared-entities.js's
+   shotDependencyRecords(). It is asked here, never re-derived: scanning
+   `s.characters` locally would be a second dependency resolver, and the whole
+   point of that module is that there is only one.
+
+   THE DEFECT THIS NOW REFUSES (Codex acceptance, Slice 3). This matched
+   `String(row.id) === wanted` and ignored `row.type`, so a shot that referenced
+   only the CHARACTER `X` made the PROP `X` and the LOCATION `X` each report
+   "Used by 1 shot in this production" on their own default Reference surface.
+   The first line a filmmaker read about a reference was a claim about a
+   different entity that happened to share a name.
+
+   Both halves of the identity are required now, and `resolved` still is too: a
+   shot naming an id the project does not have is an unresolved dependency, not
+   a use of anything.
+
+   This is CONTEXT, not requirement. Nothing here lets a shot count change what
+   coverageRequirement() answers. */
+function entityProductionUse(list, entity) {
+  const shots = Array.isArray(P.shots) ? P.shots : [];
+  const wanted = String((entity && entity.id) || "");
+  const type = entityDependencyType(list);
+  /* `known: false` for a collection this build does not recognise. The surface
+     then says nothing about usage, which is the honest answer — claiming "no
+     shot references this yet" would be an assertion nothing supports. */
+  if (!wanted || !type || typeof shotDependencyRecords !== "function") return { shots: 0, total: shots.length, known: false };
+  let used = 0;
+  for (const shot of shots) {
+    if (shotDependencyRecords(P, shot).some((row) => row.resolved && row.type === type && String(row.id) === wanted)) used += 1;
+  }
+  return { shots: used, total: shots.length, known: true };
+}
+
+/* The primary reference, resolved through the SAME standing every other surface
+   on this page reads. `entity.approvedFile` is deliberately not consulted: a raw
+   pointer is historic until a receipt says otherwise, and that distinction is
+   what MB-PT-02 exists to keep. */
+function entityPrimaryStanding(list, entity) {
+  const states = entityStateListRead(entity, true);
+  const primary = states.find((state) => state.isDefault) || states[0] || null;
+  const truth = entityStateTruth(list, entity);
+  const standing = primary ? truth.of(primary) : { standing: "missing", file: "" };
+  return { primary, primaryId: (primary && primary.id) || "state-default", states, standing: standing.standing, file: standing.file, isCanon: standing.standing === "canon" };
+}
+
+/* SECTION A — the surface that opens when a filmmaker opens a reference.
+
+   Three facts and one action, in that order: what the approved primary IS,
+   whether one is still needed, and the single most useful next thing. Deliberately
+   NOT here: the provenance table, the coverage matrix, the generation records and
+   the approval machinery. All four remain one click away and none of them leads. */
+function referencePrimaryHeroMarkup(list, entity, media, mediaByName, activeCandidates) {
+  if (list === "audio") return "";
+  const it = entityPrimaryStanding(list, entity);
+  const heroMedia = it.file ? mediaByName.get(it.file) : null;
+  const kind = entityKindLabel(list).toLowerCase();
+  const candidates = activeCandidates.length;
+  const use = entityProductionUse(list, entity);
+  const band = it.isCanon ? "PRIMARY REFERENCE · CANON" : it.file ? "PRIMARY REFERENCE · NOT APPROVED" : "PRIMARY REFERENCE NEEDED";
+  /* Every count and every filename lives in this sentence rather than on a
+     button, so the action labels below stay fixed. A button label that grows a
+     new variant per file, per count and per state is how an app ends up with a
+     vocabulary nobody can keep consistent, and tests/current-behavior.js budgets
+     exactly that. */
+  const line = it.isCanon
+    ? `${esc(it.file)} is the approved primary reference for this ${esc(kind)}.${candidates ? ` ${plural(candidates, "candidate")} still waiting for your decision.` : ""}`
+    : it.file
+      ? `${esc(it.file)} was selected but never approved. Approve it to make it this ${esc(kind)}'s production truth.`
+      : media.length
+        ? `Nothing is approved yet. Choose which of the ${plural(media.length, "file")} on this reference is the primary.`
+        : `No reference material has been added yet.`;
+  /* THE NEXT ACTION, derived from the standing above and from nothing else.
+     There is no second readiness opinion here: each branch is a direct
+     consequence of the canon/historic/missing answer already resolved. */
+  const next = !media.length
+    ? { label: `Upload reference files`, hint: `Add existing images or video from disk`, run: `document.getElementById('entity-file').click()`, primary: true }
+    : !it.file
+      ? { label: `Choose the approved primary`, hint: `Pick from the files already on this reference`, run: `approveEntityFile('${attr(list)}','${attr(entity.id)}','','${attr(it.primaryId)}')`, primary: true }
+      : !it.isCanon
+        ? { label: `Approve as primary reference`, hint: `Make the selected image this reference's production truth`, run: `approveEntityFile('${attr(list)}','${attr(entity.id)}','${attr(it.file)}','${attr(it.primaryId)}')`, primary: true }
+        : candidates
+          ? { label: `Review candidates`, hint: `Waiting for your decision, below`, run: `document.querySelector('.entity-candidate-section')?.scrollIntoView({behavior:'smooth',block:'start'})`, primary: false }
+          : { label: `See what this production needs`, hint: `Required views, states and variants`, run: `selectBoundedTask('entity-task','${attr(list + ":" + entity.id)}','coverage')`, primary: false };
+  const usage = use.known
+    ? (use.shots ? `Used by ${plural(use.shots, "shot")} in this production.` : `No shot references this ${esc(kind)} yet.`)
+    : "";
+  return `<section class="reference-primary-hero ${it.isCanon ? "is-canon" : it.file ? "is-historic" : "is-missing"}" data-primary-standing="${attr(it.standing)}"><div class="reference-primary-visual">${heroMedia
+    ? `<button type="button" class="reference-primary-preview" onclick="inspectMediaFile('${attr(encodeURIComponent(heroMedia.url))}','${attr(heroMedia.assetId || "")}','${attr(encodeURIComponent(`${entity.name || entity.id} primary reference · ${it.file}`))}','${isVideo(heroMedia.name) ? "video" : "image"}')" aria-label="${it.isCanon ? "Inspect the approved primary reference" : "Inspect the selected but unapproved primary reference"}">${isVideo(heroMedia.name) ? `<video muted src="${attr(heroMedia.url)}"></video>` : `<img src="${attr(heroMedia.url)}" alt="">`}<span>INSPECT</span></button>`
+    : `<div class="reference-primary-empty">No primary image</div>`}</div><div class="reference-primary-copy"><span>${band}</span><h2>${esc(entity.name || entity.id)}</h2><p>${line}</p>${usage ? `<small class="reference-primary-usage">${usage}</small>` : ""}<div class="reference-primary-actions"><button class="${next.primary ? "approve-btn recommended" : "ghost-btn"}" onclick="${next.run}"><span>${esc(next.label)}</span><small>${next.hint}</small></button></div></div></section>`;
+}
+
 function referenceCreationHub(list, entity) {
   if (list === "audio") return "";
   const states = entityStateListRead(entity, true);
@@ -1321,8 +1470,25 @@ function referenceAssistedToolsMarkup(list, entity) {
   const open = workspaceSectionOpen(sectionKey, !manualFirstWorkflow());
   return `<details class="reference-assisted-tools" data-ui-state-key="${attr(sectionKey)}" ${open ? "open" : ""} ontoggle="rememberWorkspaceSection('${attr(sectionKey)}',this.open)"><summary><div><span>OPTIONAL ASSISTED TOOLS</span><b>Prompt building, generation, and automation</b><small>Open this only when CineBraid should help create material you do not already have.</small></div><span>${primaryReady ? `${missingRequired + missingStates} missing` : "primary first"}</span></summary><div class="reference-assisted-tools-body"><div class="reference-creation-actions reference-creation-actions-expanded"><button class="ghost-btn" onclick="openEntityCreationSection('${attr(list)}','${attr(entity.id)}')"><span>Build primary prompt</span><small>Compile a prompt without submitting generation</small></button><button class="ghost-btn" ${primaryReady ? "" : "disabled"} onclick="openCoverageAutomationModal('${attr(list)}','${attr(entity.id)}','hybrid')"><span>Generate angle / viewpoint coverage</span><small>${missingRequired ? `${missingRequired} required view${missingRequired === 1 ? "" : "s"} remain` : "Coverage is already complete or optional"}</small></button>${expressionButton}<button class="ghost-btn" ${primaryReady ? "" : "disabled"} onclick="openContinuityStateVariantHub('${attr(list)}','${attr(entity.id)}')"><span>Generate continuity-state variant</span><small>${missingStates ? `${missingStates} state reference${missingStates === 1 ? "" : "s"} remain` : "No required state reference is missing"}</small></button></div>${assetPromptStudio(list, entity)}</div></details>`;
 }
-function referenceWorkspaceMarkup(list, entity) {
-  return `${referenceCreationHub(list, entity)}${referenceAssistedToolsMarkup(list, entity)}`;
+/* SECTIONS A AND B, in the order they are asked.
+
+   The primary hero leads. The candidate grid follows IN THE SAME SURFACE, which
+   is the whole of Section B: candidate review is no longer a peer stage a
+   filmmaker navigates to independently of the thing being referenced, it is the
+   second half of the reference that owns it. `candidatesMarkup` is passed in
+   rather than rebuilt because entityPage() already resolved the disposition,
+   the filters, the pagination and the ownership conflicts — building a second
+   copy here is how a screen ends up disagreeing with itself about which media is
+   approved, which is exactly the P4-SEM-C2 defect.
+
+   Upload/organise and the assisted tools keep their existing markup and simply
+   stop being the first thing on the page. */
+function referenceWorkspaceMarkup(list, entity, context = {}) {
+  const media = Array.isArray(context.media) ? context.media : [];
+  const mediaByName = context.mediaByName instanceof Map ? context.mediaByName : new Map(media.map((item) => [item.name, item]));
+  const activeCandidates = Array.isArray(context.activeCandidates) ? context.activeCandidates : [];
+  const candidatesMarkup = typeof context.candidatesMarkup === "string" ? context.candidatesMarkup : "";
+  return `${referencePrimaryHeroMarkup(list, entity, media, mediaByName, activeCandidates)}${candidatesMarkup}${referenceCreationHub(list, entity)}${referenceAssistedToolsMarkup(list, entity)}`;
 }
 window.openEntityCreationSection = (list, id) => {
   window.selectBoundedTask?.("entity-task", `${list}:${id}`, "reference");
@@ -1344,12 +1510,17 @@ window.openEntityCreationSection = (list, id) => {
 };
 function entityGenerationRecordsMarkup(list, entity) {
   const id = entity.id;
-  return `<details class="fold compact-entity-section" open><summary>Generation records — provenance <span>${(entity.made || []).length}</span></summary><div class="section-label">Generation record — model + prompt that made the approved files</div>${(entity.made || []).map((g,gi) => `<div class="block-row"><div class="block-row-head"><select class="status-select" onchange="P['${list}'].find(x=>x.id==='${id}').made[${gi}].model=this.value;dirty()"><option value="">model…</option>${(P.meta.models || []).map((m) => `<option value="${m.id}" ${g.model === m.id ? "selected" : ""}>${esc(m.name)}</option>`).join("")}</select><input style="width:200px" placeholder="file(s)" value="${attr(g.files || "")}" onchange="P['${list}'].find(x=>x.id==='${id}').made[${gi}].files=this.value;dirty()"><span class="dur-chip">${esc(g.date || "")}</span>${g.automationRunId ? `<span class="dur-chip">AUTOMATION · ${esc(g.approval || "approved")}</span><button class="chip" onclick="copyEntityAutomationReport('${list}','${id}',${gi})">COPY RUN REPORT</button>` : ""}<button class="copy-btn" style="margin-left:auto" onclick="copyText(P['${list}'].find(x=>x.id==='${id}').made[${gi}].prompt||'')">COPY</button><button class="chip" onclick="P['${list}'].find(x=>x.id==='${id}').made.splice(${gi},1);dirty();route()">remove</button></div><textarea placeholder="the exact prompt used" onchange="P['${list}'].find(x=>x.id==='${id}').made[${gi}].prompt=this.value;dirty()">${esc(g.prompt || "")}</textarea></div>`).join("")}<button class="add-btn" onclick="(P['${list}'].find(x=>x.id==='${id}').made=P['${list}'].find(x=>x.id==='${id}').made||[]).push({model:'',files:'',prompt:'',date:new Date().toISOString().slice(0,10)});dirty();route()">+ Add generation record</button></details>`;
+  /* SECTION G. Provenance is production evidence and none of it is deleted —
+     the records, their prompts, their models and their run reports are all still
+     here, one click away. What changed is that a wall of prompt text no longer
+     opens by default underneath the reference, which is the same progressive
+     disclosure the freeze asks of the Project Bible. */
+  return `<details class="fold compact-entity-section"><summary>Generation records — provenance <span>${(entity.made || []).length}</span></summary><div class="section-label">Generation record — model + prompt that made the approved files</div>${(entity.made || []).map((g,gi) => `<div class="block-row"><div class="block-row-head"><select class="status-select" onchange="P['${list}'].find(x=>x.id==='${id}').made[${gi}].model=this.value;dirty()"><option value="">model…</option>${(P.meta.models || []).map((m) => `<option value="${m.id}" ${g.model === m.id ? "selected" : ""}>${esc(m.name)}</option>`).join("")}</select><input style="width:200px" placeholder="file(s)" value="${attr(g.files || "")}" onchange="P['${list}'].find(x=>x.id==='${id}').made[${gi}].files=this.value;dirty()"><span class="dur-chip">${esc(g.date || "")}</span>${g.automationRunId ? `<span class="dur-chip">AUTOMATION · ${esc(g.approval || "approved")}</span><button class="chip" onclick="copyEntityAutomationReport('${list}','${id}',${gi})">COPY RUN REPORT</button>` : ""}<button class="copy-btn" style="margin-left:auto" onclick="copyText(P['${list}'].find(x=>x.id==='${id}').made[${gi}].prompt||'')">COPY</button><button class="chip" onclick="P['${list}'].find(x=>x.id==='${id}').made.splice(${gi},1);dirty();route()">remove</button></div><textarea placeholder="the exact prompt used" onchange="P['${list}'].find(x=>x.id==='${id}').made[${gi}].prompt=this.value;dirty()">${esc(g.prompt || "")}</textarea></div>`).join("")}<button class="add-btn" onclick="(P['${list}'].find(x=>x.id==='${id}').made=P['${list}'].find(x=>x.id==='${id}').made||[]).push({model:'',files:'',prompt:'',date:new Date().toISOString().slice(0,10)});dirty();route()">+ Add generation record</button></details>`;
 }
 function entitySavedPromptsMarkup(list, entity) {
   const id=entity.id, prompts=entity.prompts || [];
   if (!prompts.length) return `<div class="entity-candidate-empty"><b>No saved Phase 1 prompts</b><span>Build a plate or sheet prompt from the primary creation task.</span></div>`;
-  return `<details class="fold compact-entity-section" open><summary>Saved Phase 1 prompts <span>${prompts.length}</span></summary>${prompts.map((pr,pi) => `<div class="block-row"><div class="block-row-head"><span class="opt-id">${esc(pr.id)}</span><button class="copy-btn" style="margin-left:auto" onclick="copyText(P['${list}'].find(x=>x.id==='${id}').prompts[${pi}].text)">COPY</button><button class="chip" onclick="P['${list}'].find(x=>x.id==='${id}').prompts.splice(${pi},1);dirty();route()">remove</button></div><div class="opt-refs" style="white-space:pre-wrap">${esc(pr.text)}</div></div>`).join("")}</details>`;
+  return `<details class="fold compact-entity-section"><summary>Saved Phase 1 prompts <span>${prompts.length}</span></summary>${prompts.map((pr,pi) => `<div class="block-row"><div class="block-row-head"><span class="opt-id">${esc(pr.id)}</span><button class="copy-btn" style="margin-left:auto" onclick="copyText(P['${list}'].find(x=>x.id==='${id}').prompts[${pi}].text)">COPY</button><button class="chip" onclick="P['${list}'].find(x=>x.id==='${id}').prompts.splice(${pi},1);dirty();route()">remove</button></div><div class="opt-refs" style="white-space:pre-wrap">${esc(pr.text)}</div></div>`).join("")}</details>`;
 }
 function entityReconciliationMarkup(list, entity) {
   const id=entity.id;
@@ -1365,7 +1536,22 @@ function boundedEntityTaskStatus(list, entity, taskId, activeCandidates, states)
      entity, and inherited the word "image" with it — so a voice reference used
      to report that it had "no approved image yet". The material a voice is
      missing is a recording. */
-  if (taskId === "reference") return primary ? {tone:"complete",label:STAGE_STATUS.approved} : {tone:"attention",label:STAGE_STATUS.incomplete,note:list === "audio" ? "no approved recording yet" : "no approved image yet"};
+  /* SLICE 3: this task absorbed the candidate grid, so it also absorbed the
+     signal the retired `review` task used to carry. Without this, a reference
+     with an approved primary and three candidates waiting would report a flat
+     "complete" and the waiting work would be invisible on the taskbar — the
+     information the reframe is supposed to surface, lost by the reframe. The
+     primary question still comes first: nothing is "needs review" while the
+     primary itself is still missing. */
+  if (taskId === "reference") {
+    if (!primary) return {tone:"attention",label:STAGE_STATUS.incomplete,note:list === "audio" ? "no approved recording yet" : "no approved image yet"};
+    return activeCandidates.length
+      ? {tone:"attention",label:STAGE_STATUS.needsReview,note:`${plural(activeCandidates.length, "candidate")} to choose from`}
+      : {tone:"complete",label:STAGE_STATUS.approved};
+  }
+  /* Retired as a peer stage, kept as an answerable id: legacyMap resolves a
+     stored `review` onto `reference`, and focused-workspaces.js may still ask
+     about it. Returning the candidate count keeps that answer truthful. */
   if (taskId === "review") return activeCandidates.length ? {tone:"attention",label:STAGE_STATUS.needsReview,note:`${plural(activeCandidates.length, "file")} to choose from`} : {tone:"optional",label:STAGE_STATUS.nothingWaiting};
   if (taskId === "coverage") {
     const coverage = coverageStats(ensureCoverageSlots(list,entity));
@@ -1448,6 +1634,133 @@ function entityAuthoritySummaryMarkup(list, entity, states, mediaByName, selecte
   }).join("");
   return `<section class="entity-authority-summary"><header><div><span class="entity-authority-label">CANON IMAGES</span>${rows ? authorityStatus : `<b class="entity-authority-status"><span>No states</span></b>`}</div></header><div>${rows}</div></section>`;
 }
+/* SECTIONS C, E AND F — "what this production needs", in one demand list.
+
+   THE SEMANTIC POINT, stated where an implementer will trip over it: `tier` here
+   is shared-coverage.js's coverageDemand(), which is a RENAME of the answer
+   coverageRequirement() already gives. required -> Required,
+   planned -> Recommended, not-required -> Not currently needed. An unauthored
+   slot still resolves to `required` and therefore still appears under Required,
+   because Slice 3 did not change that default and must not appear to have. What
+   `confirmed` records is only whether anybody ASSERTED the value — it orders the
+   list and it never re-decides it.
+
+   Three families are gathered because a filmmaker does not think of them as
+   three filing systems: a missing costume state and a missing rear angle are the
+   same sentence, "this production still needs a picture of that". */
+function entityDemandRows(list, entity) {
+  if (list === "audio" || !entity) return [];
+  const truth = entityStateTruth(list, entity);
+  const rows = [];
+  for (const state of entityStateListRead(entity, true)) {
+    /* The default state is the primary reference, and the primary reference has
+       its own surface. It is not a "need" to list beside a costume variant. */
+    if (state.isDefault) continue;
+    const demand = coverageDemand(state, false);
+    const standing = truth.of(state).standing;
+    const parentInfo = entityStateParentSummary(entity, state);
+    rows.push({
+      family: "state", id: state.id, label: state.name || "Continuity state",
+      tier: demand.tier, confirmed: demand.confirmed, requirement: demand.requirement,
+      satisfied: standing === "canon", standing,
+      parentLabel: parentInfo.label,
+      /* RECORDED, not guessed. A state whose parentStateId names something that
+         no longer exists has `broken: true` and no parent, and it must read as
+         "no parent" rather than silently borrowing the default's. */
+      parentRecorded: !!parentInfo.parent,
+      parentIsCanon: !!(parentInfo.parent && truth.of(parentInfo.parent).standing === "canon"),
+    });
+  }
+  for (const slot of ensureCoverageSlots(list, entity)) {
+    if (!slot || slot.retired) continue;
+    const demand = coverageDemand(slot);
+    rows.push({ family: "coverage", id: slot.id, label: slot.label || slot.id, tier: demand.tier, confirmed: demand.confirmed, requirement: demand.requirement, satisfied: !!slotSelectedFile(slot) });
+  }
+  if (list === "characters") for (const slot of ensureExpressionSlots(entity)) {
+    if (!slot || slot.retired) continue;
+    const demand = coverageDemand(slot);
+    rows.push({ family: "expression", id: slot.id, label: slot.label || slot.id, tier: demand.tier, confirmed: demand.confirmed, requirement: demand.requirement, satisfied: !!slotSelectedFile(slot) });
+  }
+  return rows;
+}
+
+/* SECTION F — the contextual action, and the four answers it can give.
+
+   Only the first one generates, and it can only appear when a parent is BOTH
+   recorded and canon. The other three explain the exact obstacle instead of
+   offering an action that would have to guess: an unapproved parent is not a
+   parent to derive from yet, an unrecorded source is a human decision
+   shared-state-lineage.js refuses to make, and a satisfied need needs nothing.
+   openContinuityStateVariant() writes nothing, so none of these mutates by
+   being rendered or by being looked at. */
+function entityDemandActionMarkup(list, entity, row) {
+  const context = `${list}:${entity.id}`;
+  const openState = `boundedWriteState('selected:entity-coverage-view','${attr(context)}','states');selectBoundedItem('continuity-state','${attr(context)}','${attr(row.id)}')`;
+  if (row.family === "state") {
+    if (row.satisfied) return "";
+    /* THE ONE DELIBERATELY DYNAMIC LABEL ON THIS SCREEN. Section F asks for
+       "Use approved [parent] reference to generate [state]" verbatim, because
+       naming the parent IS the reassurance — a generic "Generate" gives the
+       filmmaker no way to see WHICH approved image is about to be inherited
+       from. Every other action below keeps a fixed label and lets the row it
+       sits in carry the identity, so the app's button vocabulary does not grow
+       by one phrase per continuity state. */
+    if (row.parentIsCanon) return `<button class="approve-btn" onclick="openContinuityStateVariant('${attr(list)}','${attr(entity.id)}','${attr(row.id)}')">Use approved ${esc(row.parentLabel)} reference to generate ${esc(row.label)}</button>`;
+    if (row.parentRecorded) return `<button class="ghost-btn" onclick="${openState}">Approve the parent state first</button>`;
+    return `<button class="ghost-btn" onclick="${openState}">Record what this state derives from</button>`;
+  }
+  if (row.satisfied) return "";
+  const view = row.family === "expression" ? "expressions" : "coverage";
+  /* Two different bounded scopes with two different context keys — the
+     expression rail is keyed on the entity id alone and the coverage rail on
+     `list:id`. Getting this wrong writes a selection nothing reads. */
+  const scope = row.family === "expression" ? "expression-slot" : "coverage-slot";
+  const scopeContext = row.family === "expression" ? entity.id : context;
+  return `<button class="ghost-btn" onclick="boundedWriteState('selected:entity-coverage-view','${attr(context)}','${view}');selectBoundedItem('${scope}','${attr(scopeContext)}','${attr(row.id)}')">${row.family === "expression" ? "Open this expression" : "Open this view"}</button>`;
+}
+
+function entityDemandRowMarkup(list, entity, row) {
+  const what = row.family === "state" ? "Continuity state" : row.family === "expression" ? "Expression" : "View";
+  const status = row.satisfied
+    ? (row.family === "state" ? "Canon" : "Selected")
+    : row.family === "state"
+      /* The parent is named HERE rather than on the button, so its identity is
+         still on screen for the cases whose action label is deliberately fixed. */
+      ? (row.standing === "historic" ? "Image not approved" : row.parentIsCanon ? `Derives from ${row.parentLabel}` : row.parentRecorded ? `${row.parentLabel} is not approved` : "Source not recorded — CineBraid will not guess")
+      : "Nothing selected yet";
+  return `<article class="entity-demand-row ${row.satisfied ? "is-satisfied" : "is-open"}" data-demand-family="${attr(row.family)}" data-demand-tier="${attr(row.tier)}" data-demand-confirmed="${row.confirmed ? "1" : "0"}" data-demand-id="${attr(row.id)}"><div><span>${esc(what)}</span><b>${esc(row.label)}</b><small>${esc(status)}</small></div>${entityDemandActionMarkup(list, entity, row)}</article>`;
+}
+
+/* SECTION E — what the default screen leads with, and what it declines to dump.
+
+   Required-and-still-missing leads, because that is the only group that is an
+   answer to "what does this production still need". Required-and-done,
+   Recommended, and Not-currently-needed are all present, all counted, and all
+   collapsed: nothing is deleted and nothing is hidden, but the schema's full
+   catalogue of conceivable angles and expressions no longer arrives uninvited. */
+function entityDemandMarkup(list, entity) {
+  if (list === "audio") return "";
+  const rows = entityDemandRows(list, entity);
+  const required = rows.filter((row) => row.tier === "required");
+  const missing = required.filter((row) => !row.satisfied);
+  const covered = required.filter((row) => row.satisfied);
+  const recommended = rows.filter((row) => row.tier === "recommended");
+  const notNeeded = rows.filter((row) => row.tier === "not-currently-needed");
+  const use = entityProductionUse(list, entity);
+  const headline = missing.length
+    ? `${plural(missing.length, "required reference")} still needed`
+    : required.length
+      ? `Everything this production requires is covered`
+      : `This production has not asked for anything beyond the primary reference`;
+  const usage = use.known
+    ? (use.shots ? `Used by ${plural(use.shots, "shot")}.` : `No shot references this yet.`)
+    : "";
+  const group = (label, items, tone) => items.length
+    ? `<details class="entity-demand-group tone-${tone}" data-demand-group="${attr(tone)}"><summary>${esc(label)} <span>${items.length}</span></summary><div class="entity-demand-rows">${items.map((row) => entityDemandRowMarkup(list, entity, row)).join("")}</div></details>`
+    : "";
+  return `<section class="entity-demand" data-demand-required="${required.length}" data-demand-missing="${missing.length}" data-demand-recommended="${recommended.length}" data-demand-not-needed="${notNeeded.length}"><header><div><span>WHAT THIS PRODUCTION NEEDS</span><b>${esc(headline)}</b><small>${esc(`${coverageDemandLabel("required")} material is listed first. ${coverageDemandLabel("recommended")} and ${coverageDemandLabel("not-currently-needed")} material stays available below.`)}${usage ? ` ${esc(usage)}` : ""}</small></div></header>${missing.length ? `<div class="entity-demand-rows entity-demand-open">${missing.map((row) => entityDemandRowMarkup(list, entity, row)).join("")}</div>` : `<div class="entity-demand-clear">Nothing required is outstanding.</div>`}${group(`${coverageDemandLabel("required")} · already covered`, covered, "covered")}${group(coverageDemandLabel("recommended"), recommended, "recommended")}${group(coverageDemandLabel("not-currently-needed"), notNeeded, "not-needed")}</section>`;
+}
+
 function entityCoverageStatesMarkup(list, entity, mediaByName, media) {
   const views = [{id:"coverage",label:"Angles / views",render:()=>coverageBoardMarkup(list,entity,mediaByName,media)}];
   if (list === "characters") views.push({id:"expressions",label:"Expressions",render:()=>expressionBoardMarkup(entity,mediaByName,media)});
@@ -1455,7 +1768,35 @@ function entityCoverageStatesMarkup(list, entity, mediaByName, media) {
   const ids=views.map((view)=>view.id), context=`${list}:${entity.id}`;
   const fallback = entityStateListRead(entity,true).some((state)=>!state.isDefault && !state.approvedFile) ? "states" : "coverage";
   const selectedId=boundedSelected("entity-coverage-view",context,ids,fallback), selected=views.find((view)=>view.id===selectedId)||views[0];
-  return `<section class="entity-subworkspace"><nav class="entity-subworkspace-tabs" aria-label="Coverage and state tools">${views.map((view)=>`<button type="button" class="${view.id===selectedId?"selected":""}" onclick="selectBoundedItem('entity-coverage-view','${attr(context)}','${attr(view.id)}')">${esc(view.label)}</button>`).join("")}</nav><div data-entity-subworkspace="${attr(selected.id)}">${selected.render()}</div></section>`;
+  /* WHY THE DETAIL BOARDS ARE BEHIND A TOGGLE, AND WHY IT IS NOT A `<details>`.
+
+     Section E says the boards must not dominate merely because the schema knows
+     they can exist, so they start closed. But Slice 1's result hand-off reaches a
+     specific continuity state by writing `selected:entity-coverage-view` and then
+     selecting this task, and a hand-off that lands on a shut door has delivered
+     the filmmaker nowhere.
+
+     A `<details>` CANNOT KEEP THAT PROMISE HERE, and the real-browser suite is
+     what proved it. app.js captureRouteViewState() records every disclosure's
+     open state before a re-render and applyRouteDisclosureState() puts it back
+     afterwards — deliberately, so disclosures do not snap shut under the
+     filmmaker on every redraw. On a SAME-ROUTE re-render that restore overrides
+     the freshly computed `open` attribute, so the hand-off wrote the right
+     selection and the boards stayed closed anyway.
+
+     So the open state is derived from the selection itself rather than from DOM
+     memory: explicitly selected sub-view means open, no selection means closed,
+     and the toggle writes through the same shipped key the hand-off writes. One
+     fact, one home, and nothing to restore over. boundedSelected() cannot answer
+     the question because it substitutes a fallback and reports the same value
+     either way, which is why this reads the stored value directly. */
+  const explicitView = typeof boundedReadState === "function" ? String(boundedReadState("selected:entity-coverage-view", context, "") || "") : "";
+  const detailOpen = ids.includes(explicitView);
+  const toggle = `<button type="button" class="entity-coverage-detail-toggle" aria-expanded="${detailOpen ? "true" : "false"}" onclick="selectBoundedItem('entity-coverage-view','${attr(context)}','${detailOpen ? "" : attr(selectedId)}')"><span>Coverage detail</span><small>Angles, expressions and continuity states</small></button>`;
+  const board = detailOpen
+    ? `<nav class="entity-subworkspace-tabs" aria-label="Coverage and state tools">${views.map((view)=>`<button type="button" class="${view.id===selectedId?"selected":""}" onclick="selectBoundedItem('entity-coverage-view','${attr(context)}','${attr(view.id)}')">${esc(view.label)}</button>`).join("")}</nav><div data-entity-subworkspace="${attr(selected.id)}">${selected.render()}</div>`
+    : "";
+  return `<section class="entity-subworkspace">${entityDemandMarkup(list, entity)}<section class="entity-coverage-detail" data-coverage-detail="1" data-coverage-detail-open="${detailOpen ? "1" : "0"}">${toggle}${board}</section></section>`;
 }
 function entityDetailsHistoryMarkup(list, entity, extra) {
   const dangerZone = `<details class="entity-danger-zone"><summary>Advanced reference actions</summary><div><p class="hint">Deleting a reference removes it from this project. Media files remain on disk.</p><button class="danger-btn" onclick="delEntity('${list}','${entity.id}');location.hash='#/library/${list}'">Delete reference</button></div></details>`;
@@ -1518,21 +1859,41 @@ function entityPage(list, id, extra) {
      the second is a conflict only a person can settle. */
   const unassignedMedia=entityUnassignedMedia(list,it), contestedMedia=entityContestedMedia(list,it);
   const ownershipMarkup=`${contestedMedia.length ? `<section class="entity-media-contested" data-contested-count="${contestedMedia.length}"><header><span>OWNERSHIP CONFLICT</span><b>${plural(contestedMedia.length,"file")} claimed by more than one reference</b><small>No reference owns these while the conflict stands, and none of them can be approved. Remove the incorrect claim from whichever reference should not hold it.</small></header><ul>${contestedMedia.map((m)=>`<li><b>${esc(m.name)}</b><span>claimed by ${esc(resolveMediaOwnership(entityOwnerIndex(list),m.name).claimants.join(", "))}</span></li>`).join("")}</ul></section>` : ""}${unassignedMedia.length ? `<details class="entity-media-unassigned" data-unassigned-count="${unassignedMedia.length}"><summary>Possible matches, not yet claimed <span>${unassignedMedia.length}</span></summary><p class="hint">These filenames start with this reference's prefix, but nothing in the project records them as belonging to it. A name is a possible match, not ownership — claim one to make it a candidate you can review and approve.</p><div class="entity-media entity-candidate-grid">${unassignedMedia.map((m)=>`<div class="entity-tile-wrap"><div class="entity-tile">${isVideo(m.name)?`<video muted src="${attr(m.url)}"></video>`:`<img src="${attr(m.url)}" alt="">`}<span class="entity-tile-name">${esc(m.name)}</span></div><button class="ghost-btn" onclick="claimEntityMedia('${list}','${id}','${attr(m.name)}')">CLAIM FOR THIS REFERENCE</button></div>`).join("")}</div></details>` : ""}`;
-  const candidatesTask = `<details class="fold compact-entity-section entity-candidate-section bounded-source-section" open><summary>Candidate files <span>${activeCandidates.length} to organize</span></summary><header><div><span>CHOOSE & APPROVE</span><b>${filteredCandidates.length} shown in ${esc(ENTITY_CANDIDATE_FILTERS.find((item)=>item.id===candidateFilter)?.label || "All")}</b><small>Choose the approved image directly by human judgment. Optional AI checks remain separate and never approve on their own.</small></div></header>${approvedAuthorityMarkup}${ownershipMarkup}${filterMarkup}${batchPanel}<div class="entity-media entity-candidate-grid">${candidatePage.rows.length ? candidatePage.rows.map((m,i)=>entityCandidateCard(list,it,m,i,candidateJson,false)).join("") : `<div class="entity-candidate-empty"><b>${activeCandidates.length ? "No candidates in this filter" : media.length ? "No undecided candidates" : "No candidates yet"}</b><span>${activeCandidates.length ? "Choose another workflow filter." : "Upload or map another file."}</span></div>`}</div>${boundedPagerMarkup("candidates",`${list}:${id}:active:${candidateFilter}`,candidatePage,"reference candidates")}${rejectedCandidates.length ? `<details class="entity-rejected-candidates"><summary>Rejected candidates <span>${rejectedCandidates.length}</span></summary><div class="entity-media entity-candidate-grid">${rejectedPage.rows.map((m,i)=>entityCandidateCard(list,it,m,i,rejectedJson,true)).join("")}</div>${boundedPagerMarkup("candidates",`${list}:${id}:rejected`,rejectedPage,"rejected candidates")}</details>` : ""}</details>`;
+  /* SECTION B. Same grid, same approvals, same authority — named for the thing
+     it belongs to. The header used to announce a production stage ("CHOOSE &
+     APPROVE") that the filmmaker reached independently of the reference; it now
+     says whose candidates these are, because this section renders inside the
+     reference that owns them. Nothing about how an approval is made changed. */
+  const candidateKind = entityKindLabel(list).toLowerCase();
+  const candidatesTask = `<details class="fold compact-entity-section entity-candidate-section bounded-source-section" open><summary>Candidates for this ${esc(candidateKind)} reference <span>${activeCandidates.length} to choose from</span></summary><header><div><span>CANDIDATES FOR THIS ${esc(candidateKind.toUpperCase())} REFERENCE</span><b>${filteredCandidates.length} shown in ${esc(ENTITY_CANDIDATE_FILTERS.find((item)=>item.id===candidateFilter)?.label || "All")}</b><small>These are candidates for ${esc(it.name || it.id)}. Choose the approved image directly by human judgment. Optional AI checks remain separate and never approve on their own.</small></div></header>${approvedAuthorityMarkup}${ownershipMarkup}${filterMarkup}${batchPanel}<div class="entity-media entity-candidate-grid">${candidatePage.rows.length ? candidatePage.rows.map((m,i)=>entityCandidateCard(list,it,m,i,candidateJson,false)).join("") : `<div class="entity-candidate-empty"><b>${activeCandidates.length ? "No candidates in this filter" : media.length ? "No undecided candidates" : "No candidates yet"}</b><span>${activeCandidates.length ? "Choose another workflow filter." : "Upload or map another file."}</span></div>`}</div>${boundedPagerMarkup("candidates",`${list}:${id}:active:${candidateFilter}`,candidatePage,"reference candidates")}${rejectedCandidates.length ? `<details class="entity-rejected-candidates"><summary>Rejected candidates <span>${rejectedCandidates.length}</span></summary><div class="entity-media entity-candidate-grid">${rejectedPage.rows.map((m,i)=>entityCandidateCard(list,it,m,i,rejectedJson,true)).join("")}</div>${boundedPagerMarkup("candidates",`${list}:${id}:rejected`,rejectedPage,"rejected candidates")}</details>` : ""}</details>`;
   const specs = list === "audio" ? [
     {id:"reference",label:"Audio",detail:"Candidates and the approved file",render:()=>approvedTask},
     {id:"details",label:"Details & history",detail:"Mix intent, media and records",render:()=>entityDetailsHistoryMarkup(list,it,extra)},
   ] : [
-    {id:"reference",label:"Reference",detail:"Approved files and manual organization",render:()=>referenceWorkspaceMarkup(list,it)},
-    {id:"review",label:manualFirstWorkflow()?"Choose & approve":"Review",detail:manualFirstWorkflow()?"Imported files and human decisions":"Candidates and approvals",render:()=>candidatesTask},
-    {id:"coverage",label:"Coverage & states",detail:"Views, expressions and variants",render:()=>entityCoverageStatesMarkup(list,it,mediaByName,media)},
-    {id:"details",label:"Details & history",detail:"Notes, media and records",render:()=>entityDetailsHistoryMarkup(list,it,extra)},
+    /* BATCH 2 SLICE 3 — THREE STAGES, NOT FOUR.
+
+       `review` is gone as a peer. It was the stage a filmmaker had to navigate to
+       in order to look at candidates for a reference they were already standing
+       in, and it is now the second half of `reference` itself. Its id survives in
+       legacyMap below, so a stored selection, a cross-surface writer, or a Slice 1
+       result hand-off that still names it resolves here rather than falling back
+       to an unrelated task. */
+    {id:"reference",label:"Primary reference",detail:"The approved image and its candidates",render:()=>referenceWorkspaceMarkup(list,it,{media,mediaByName,activeCandidates,candidatesMarkup:candidatesTask})},
+    {id:"coverage",label:"What this production needs",detail:"Required views, states and variants",render:()=>entityCoverageStatesMarkup(list,it,mediaByName,media)},
+    {id:"details",label:"Details & history",detail:"Notes, provenance and records",render:()=>entityDetailsHistoryMarkup(list,it,extra)},
   ];
-  const legacyMap={primary:"reference",approved:"reference",candidates:"review",coverage:"coverage",expressions:"coverage",states:"coverage",planning:"details",notes:"details",reconciliation:"details",records:"details",prompts:"details"};
+  const legacyMap={primary:"reference",approved:"reference",candidates:"reference",review:"reference",coverage:"coverage",expressions:"coverage",states:"coverage",planning:"details",notes:"details",reconciliation:"details",records:"details",prompts:"details"};
   const context=`${list}:${id}`, allowed=specs.map((spec)=>spec.id);
-  const defaultTask = typeof manualFirstWorkflow === "function" && manualFirstWorkflow() && allowed.includes("reference")
-    ? "reference"
-    : specs.find((spec)=>boundedEntityTaskStatus(list,it,spec.id,activeCandidates,states).tone === "attention")?.id || specs[0].id;
+  /* SECTION A — the primary reference is where a reference opens.
+
+     This used to jump to whichever stage reported "attention", which meant an
+     entity with a missing required view opened on the coverage matrix. That is
+     precisely what Section A forbids leading with, and it also answered a
+     question the filmmaker had not asked yet: you cannot judge what else a
+     production needs before you know what the primary IS. The taskbar still
+     shows every stage's tone, so nothing that needs attention is hidden — it is
+     one click away instead of being the front door. */
+  const defaultTask = specs[0].id;
   let selectedId=boundedFocusedTask("entity-task",context,allowed,defaultTask);
   try {
     const stored=localStorage.getItem(`cinebraid-focused:${((typeof ACTIVE_PROJECT_SLUG !== "undefined" && ACTIVE_PROJECT_SLUG) || window.ACTIVE_PROJECT_SLUG || P.meta?.id || "project")}:entity-task:${context}`);
