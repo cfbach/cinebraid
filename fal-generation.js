@@ -13,6 +13,7 @@ const { serializeImagePlanForFal, FalImageBackendError, FAL_IMAGE_BACKEND } = re
 const { generationOptionsFor, generationConnections } = require("./generation-options");
 const { generationBindingRecord, GenerationBindingError } = require("./generation-binding");
 const { submissionAccounting } = require("./generation-cost");
+const { configuredMotionRate } = require("./public/shared-generation-rate");
 const Lifecycle = require("./generation-lifecycle");
 const FramePresence = require("./public/shared-frame-presence");
 
@@ -1992,6 +1993,14 @@ function registerFalGeneration(app, context) {
       purpose: job.purpose,
       outputCount: job.outputCount,
       ratePerImage: cfg.estimatedCostPerImage,
+      /* THE SAME RATE THE DIALOG QUOTED FROM. The browser read this out of the
+         configuration it was served and multiplied it by the duration it displayed;
+         this reads the configuration in effect at submission and multiplies it by the
+         duration the COMPILED PLAN settled on. Where those differ the plan wins, for
+         exactly the reason the image path records the plan's candidate count rather
+         than the caller's: the record must describe the job that was submitted. */
+      motionRate: configuredMotionRate({ generation: { fal: cfg } }),
+      durationSeconds: job.durationSeconds,
       at: now(),
     });
     /* The row is committed against CURRENT durable state, not against the

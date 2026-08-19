@@ -131,6 +131,8 @@ const nodeSuites = [
   "check:project-entry-negative",
   "check:reference-reframe",
   "check:reference-reframe-negative",
+  "check:simple-advanced",
+  "check:simple-advanced-negative",
   "check:stage-surfaces",
   "check:stage-surfaces-negative",
   "check:production-media",
@@ -204,7 +206,7 @@ const browserSuites = ["check:manual-browser", "check:browser-real", "check:h3-b
   "check:ui-state", "check:c2b-browser", "check:brand-logo-browser", "check:lan-passcode-browser",
   "check:focused-browser", "check:alpha-loop-browser", "check:entity-truth-browser",
   "check:shot-readiness-browser", "check:founder-p0-browser", "check:quiet-shell-browser",
-  "check:project-entry-browser", "check:reference-reframe-browser"];
+  "check:project-entry-browser", "check:reference-reframe-browser", "check:simple-advanced-browser"];
 const releaseSuites = ["check:environment", "check:package"];
 /* How a suite is launched, without a shell.
 

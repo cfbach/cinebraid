@@ -211,6 +211,7 @@ function renderFalFramePanels() {
   if (references) references.innerHTML = falFrameReferenceRows(request);
   const notes = document.getElementById("fal-frame-warnings");
   if (notes) notes.innerHTML = falFrameWarningRows(request);
+  renderFalFrameGenerationView();
   const refusalPanel = document.getElementById("fal-frame-refusal");
   if (refusalPanel) {
     refusalPanel.hidden = !request.refusal;
@@ -363,10 +364,95 @@ window.openFalFrameGenerationModal = async (purpose, shotId, frameId = "", build
 
   const sizes = Array.isArray(preview.sizes) && preview.sizes.length ? preview.sizes : ["auto"];
   const qualities = Array.isArray(preview.qualityTiers) && preview.qualityTiers.length ? preview.qualityTiers : ["auto", "low", "medium", "high"];
+  /* The two lists the shared view draws from, resolved on the same terms the dialog has
+     always used: the capability's own sizes where it has them, and the model's quality
+     tiers where it declares them. Assigned after their `const`s rather than inside the
+     literal above — reading a `const` before its declaration is a temporal-dead-zone
+     ReferenceError that takes the whole dialog with it. */
+  window._falFrameRequest.sizes = sizes;
+  window._falFrameRequest.qualityTiers = qualities;
   const frameLabel = preview.source?.frameLabel ? ` ${preview.source.frameLabel}` : "";
-  openModal(`<div class="h3-generation-modal"><header class="h3-generation-head"><div><span>PAID GENERATION</span><h3>${esc(kind.title)}${esc(frameLabel)}</h3><p>${esc(kind.lead)}</p></div><button class="cancel" onclick="closeModal()">Close</button></header><div class="h3-generation-scroll"><div class="modal-sub">${esc(preview.dispatch?.model || "fal")} · compiled by ${esc(preview.compiler?.packId || "gpt-image-2")} ${esc(preview.compiler?.packVersion || "")}</div><div id="fal-frame-facts" class="candidate-evidence-facts"></div><div class="gen-prompt-count" id="fal-frame-prompt-count">${preview.compiledPrompt.length.toLocaleString()} characters</div><div id="fal-frame-refusal" class="guided-prompt-error" hidden></div><div id="fal-frame-model-note" class="guided-prompt-error" hidden></div><div id="fal-frame-options"></div><div id="fal-frame-references"></div><section class="h3-generation-settings"><h4>Output settings</h4><div class="h3-settings-grid"><label><span>Size</span><select id="fal-frame-size" onchange="refreshFalFramePlan()">${sizes.map((value) => `<option value="${attr(value)}" ${value === preview.size ? "selected" : ""}>${esc(value)}</option>`).join("")}</select><small>Sizes GPT Image 2 documents. CineBraid picks the smallest at this shot's format unless you choose otherwise.</small></label><label><span>Quality</span><select id="fal-frame-quality" onchange="refreshFalFramePlan()">${qualities.map((value) => `<option value="${attr(value)}" ${value === preview.quality ? "selected" : ""}>${esc(value[0].toUpperCase() + value.slice(1))}</option>`).join("")}</select></label><label><span>Number of options</span><select id="fal-frame-count" onchange="refreshFalFramePlan()">${[1, 2, 3, 4].map((n) => `<option value="${n}" ${n === Number(preview.outputCount) ? "selected" : ""}>${n}</option>`).join("")}</select></label></div></section><div id="fal-frame-warnings"></div><section class="h3-prompt-editor"><header><div><b>Edit prompt before generation</b><small>This is the prompt CineBraid compiled and the exact text that will be sent. The compiled package is preserved; any change is recorded beside the compiled original.</small></div></header><textarea id="fal-frame-prompt-editor" oninput="updateFalFramePrompt()" onchange="reviewFalFramePromptEdit()">${esc(preview.compiledPrompt)}</textarea><div id="fal-frame-edit-coverage" class="h3-edit-coverage" hidden></div><div class="h3-prompt-editor-actions"><button class="ghost-btn" onclick="resetFalFramePrompt()">Reset compiled prompt</button></div></section><p class="hint">This submits one paid fal request. Returned images are saved as unapproved candidates in this shot and do not become canon until you approve one. The request uses an idempotency key to prevent an accidental double submission from this dialog.</p></div><footer class="modal-actions h3-generation-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button id="fal-frame-submit" class="approve-btn large" onclick="startFalFrameGeneration()" disabled>GENERATE</button></footer></div>`);
+  openModal(`<div class="h3-generation-modal"><header class="h3-generation-head"><div><span>PAID GENERATION</span><h3>${esc(kind.title)}${esc(frameLabel)}</h3><p>${esc(kind.lead)}</p></div><button class="cancel" onclick="closeModal()">Close</button></header><div class="h3-generation-scroll"><div class="modal-sub">${esc(preview.dispatch?.model || "fal")} · compiled by ${esc(preview.compiler?.packId || "gpt-image-2")} ${esc(preview.compiler?.packVersion || "")}</div><div id="fal-frame-facts" class="candidate-evidence-facts"></div><div class="gen-prompt-count" id="fal-frame-prompt-count">${preview.compiledPrompt.length.toLocaleString()} characters</div><div id="fal-frame-refusal" class="guided-prompt-error" hidden></div><div id="fal-frame-model-note" class="guided-prompt-error" hidden></div><div id="fal-frame-options"></div><div id="fal-frame-references"></div><div id="fal-frame-generation-view"></div><div id="fal-frame-warnings"></div><section class="h3-prompt-editor"><header><div><b>Edit prompt before generation</b><small>This is the prompt CineBraid compiled and the exact text that will be sent. The compiled package is preserved; any change is recorded beside the compiled original.</small></div></header><textarea id="fal-frame-prompt-editor" oninput="updateFalFramePrompt()" onchange="reviewFalFramePromptEdit()">${esc(preview.compiledPrompt)}</textarea><div id="fal-frame-edit-coverage" class="h3-edit-coverage" hidden></div><div class="h3-prompt-editor-actions"><button class="ghost-btn" onclick="resetFalFramePrompt()">Reset compiled prompt</button></div></section><p class="hint">This submits one paid fal request. Returned images are saved as unapproved candidates in this shot and do not become canon until you approve one. The request uses an idempotency key to prevent an accidental double submission from this dialog.</p></div><footer class="modal-actions h3-generation-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button id="fal-frame-submit" class="approve-btn large" onclick="startFalFrameGeneration()" disabled>GENERATE</button></footer></div>`);
+  window._generationViewRefresh = () => renderFalFrameGenerationView();
   setTimeout(() => { renderFalFramePanels(); updateFalFramePrompt(); }, 0);
 };
+
+/* The frame dialog's own controls, drawn from the plan rather than from a fixed grid.
+ *
+ * Size comes from `capability.resolutions` — the sizes this model and this provider BOTH
+ * document, already intersected server-side — and quality from the model's own declared
+ * tiers. The candidate count exists because GPT Image 2 declares `candidateBatching`; a
+ * model that did not would lose the picker rather than gain a disabled one. */
+function falFrameControlsMarkup(plan, request) {
+  const rendered = new Set(plan.rendered || []);
+  const parts = [];
+  if (rendered.has("outputCount"))
+    parts.push(`<label><span>Number of options</span><select id="fal-frame-count" onchange="refreshFalFramePlan()">${
+      [1, 2, 3, 4].map((n) => `<option value="${n}" ${n === Number(request.outputCount) ? "selected" : ""}>${n}</option>`).join("")
+    }</select></label>`);
+  if (rendered.has("quality")) {
+    const tiers = Array.isArray(request.qualityTiers) && request.qualityTiers.length ? request.qualityTiers : [];
+    parts.push(`<label><span>Quality</span><select id="fal-frame-quality" onchange="refreshFalFramePlan()">${
+      tiers.map((value) => `<option value="${attr(value)}" ${value === request.quality ? "selected" : ""}>${esc(value[0].toUpperCase() + value.slice(1))}</option>`).join("")
+    }</select></label>`);
+  }
+  if (rendered.has("resolution")) {
+    const values = Array.isArray(request.sizes) && request.sizes.length ? request.sizes : [];
+    parts.push(`<label><span>Size</span><select id="fal-frame-size" onchange="refreshFalFramePlan()">${
+      values.map((value) => `<option value="${attr(value)}" ${value === request.size ? "selected" : ""}>${esc(value)}</option>`).join("")
+    }</select><small>Sizes this model and provider both document. CineBraid picks the smallest at this shot's format unless you choose otherwise.</small></label>`);
+  }
+  return parts.length ? `<div class="h3-settings-grid">${parts.join("")}</div>` : "";
+}
+
+/* What this dialog may draw, and what startFalFrameGeneration() may put in the body.
+ *
+ * ASPECT RATIO IS NOT IN THE VOCABULARY, deliberately. This dialog SHOWS the shot's
+ * format and does not offer a picker for it — the compiled prompt was written at that
+ * ratio, and a control here could only disagree with it. Leaving the key ungoverned is
+ * what lets the production's real ratio travel untouched; declaring it and then hiding it
+ * would strip it and hand the server its literal "16:9" fallback. */
+function falFrameControlPlan(mode) {
+  const request = window._falFrameRequest || {};
+  return generationControlPlan({
+    capability: capabilityFromPlan(request, {
+      /* Still-image plans return a candidate count, so the batching capability is real
+         here in a way it is not for a one-clip motion request. */
+      candidateBatching: true,
+      referenceWeights: false,
+    }),
+    mode,
+    only: ["outputCount", "quality", "resolution", "seed", "cfgScale", "steps", "referenceStrength"],
+  });
+}
+
+function renderFalFrameGenerationView(mode) {
+  const host = document.getElementById("fal-frame-generation-view");
+  if (!host) return;
+  const request = window._falFrameRequest || {};
+  const view = generationViewMode(mode || generationViewPreference());
+  const plan = falFrameControlPlan(view);
+  const resolved = request.options || null;
+  const count = Math.max(1, Number(request.outputCount) || 1);
+  host.innerHTML = generationViewMarkup({
+    mode: view,
+    plan,
+    option: selectedGenerationOption(resolved, request.selectedOptionId),
+    recommendation: generationRecommendationFor(resolved),
+    rate: generationRateFor("image"),
+    /* Images, because the image rate is per image — and the count the PLAN settled on
+       rather than the one the picker asked for, which is the same quantity the ledger
+       will record at submission. */
+    quantity: count,
+    limits: {
+      rows: [{ value: count, label: count === 1 ? "candidate returned" : "candidates returned" }],
+      /* No early stop is claimed: this is a single request, not a run. Saying otherwise
+         would invent a policy this path does not have. */
+      stopEarly: "Every returned image is an unapproved candidate. Nothing becomes canon until you approve one.",
+    },
+    controlsMarkup: falFrameControlsMarkup(plan, request),
+  });
+}
 
 window.startFalFrameGeneration = async () => {
   const request = window._falFrameRequest;
@@ -400,10 +486,13 @@ window.startFalFrameGeneration = async () => {
     aspectRatio: request.aspectRatio,
     ...settings,
   };
+  /* THE GATE, recomputed at dispatch against the view that is actually showing. A size
+     chosen under Advanced and abandoned by a return to Simple does not travel. */
+  const gated = restrictPayloadToPlan(body, falFrameControlPlan(generationViewPreference()));
   try {
     await flushPendingProjectSave();
     closeModal();
-    const response = await fetch("/api/generation/fal/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const response = await fetch("/api/generation/fal/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(gated.payload) });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || "Could not start generation");
     FAL_GENERATION_JOBS = [...(FAL_GENERATION_JOBS || []).filter((job) => job.id !== data.job.id), data.job];

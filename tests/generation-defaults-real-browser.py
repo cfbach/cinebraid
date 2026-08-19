@@ -153,12 +153,28 @@ try:
             page.wait_for_selector("#fal-frame-quality", timeout=20000)
             page.wait_for_timeout(400)
 
+        def open_advanced():
+            """Size is an expert control since the Simple/Advanced split, so a suite that
+            wants to read it has to disclose it - exactly as a filmmaker does. Quality
+            stays on the Simple screen because it is a production decision.
+
+            Asserted rather than assumed: if the tab did not take, the size read below
+            would be None and the failure would look like a missing default."""
+            page.locator('.gen-view-tab[data-gen-view-mode="advanced"]').first.click()
+            page.wait_for_selector("#fal-frame-size", timeout=10000)
+            assert page.locator('.gen-view[data-gen-view="advanced"]').count() == 1, \
+                "the Advanced disclosure did not open"
+
         # ---- A. CONFIG A -------------------------------------------------
         open_frame_dialog()
         assert not page_errors, f"A: the workspace raised uncaught errors: {page_errors}"
         assert not console_errors, f"A: console errors: {console_errors}; failed: {failed_requests}"
 
-        quality_a, size_a = selected("fal-frame-quality"), selected("fal-frame-size")
+        quality_a = selected("fal-frame-quality")
+        assert selected("fal-frame-size") is None, \
+            "A: Size is an expert control and must not be on the Simple screen"
+        open_advanced()
+        size_a = selected("fal-frame-size")
         assert quality_a == "low", f"A: under saved LOW the dialog opened at {quality_a!r}"
         assert quality_a != "auto", "A: the audit's Auto came back"
         # 16:9 is the sample's format and GPT Image 2 documents no 1K size at it, so
@@ -252,7 +268,9 @@ try:
             f"B: the browser did not pick up the saved settings: {loaded}"
 
         open_frame_dialog()
-        quality_b, size_b = selected("fal-frame-quality"), selected("fal-frame-size")
+        quality_b = selected("fal-frame-quality")
+        open_advanced()
+        size_b = selected("fal-frame-size")
         assert quality_b == "medium", f"B: under saved MEDIUM the dialog opened at {quality_b!r}"
         assert quality_b != "low", "B: MEDIUM was answered with the audit's LOW; the fix is pinned to the cheap settings"
         assert quality_b != "auto", "B: the audit's Auto came back"

@@ -1013,11 +1013,24 @@ async function main() {
       /* The limit shown is the effective one, and the stale number is gone. */
       assert(modal.includes("/7,000"), "the character counter must show the effective ceiling");
       assert(!modal.includes("/2,000"), "the stale 2,000-character limit must not appear on the screen");
-      /* Duration options come from the effective range, not a hard-coded 5..15. */
-      assert(modal.includes(">5 seconds<") && modal.includes(">15 seconds<"));
-      assert(!modal.includes(">4 seconds<"), "a duration the backend cannot render must not be offered");
-      assert(modal.includes("MiniMax H3 itself renders 4–15s; this backend renders 5–15s"),
+      /* Duration options come from the effective range, not a hard-coded 5..15.
+         READ FROM THE PANEL, not from the modal string. The output settings moved into
+         the shared Simple/Advanced block, which — like the provider-input list asserted a
+         few lines below — is filled after the modal is in the DOM. The harness models the
+         document as a flat id map, so a sub-container's innerHTML is never part of its
+         parent's; asserting against `modal` here would report a control that is on the
+         real screen as missing. */
+      const settings = view.context.document.getElementById("fal-h3-generation-view").innerHTML;
+      assert(settings.includes(">5 seconds<") && settings.includes(">15 seconds<"),
+        `the effective duration range must be offered, got: ${settings.slice(0, 300)}`);
+      assert(!settings.includes(">4 seconds<"), "a duration the backend cannot render must not be offered");
+      assert(settings.includes("MiniMax H3 itself renders 4–15s; this backend renders 5–15s"),
         "the screen must say which layer set the floor");
+      /* Simple is the default, and duration is a production decision that stays in it. */
+      assert(settings.includes('data-gen-view="simple"'), "the dialog must open on Simple");
+      /* No seed control on any H3 endpoint, and none is offered — derived from the
+         capability rather than from this dialog knowing about MiniMax. */
+      assert(!settings.includes('id="fal-h3-seed"'), "H3 documents no seed, so no seed control may be drawn");
       assert(modal.includes("compiled by minimax-h3"), "and say what compiled it");
       /* The provider input list is filled after the modal is in the DOM, so it is read
          from its own panel rather than from the modal string. */
@@ -1047,7 +1060,8 @@ async function main() {
       assert(shortModal.includes("h3-generation-modal"), "a 4-second shot must still be able to open the dialog");
       assert(shortModal.includes("written as 4 seconds"), "the dialog must name the length the shot asks for");
       assert(shortModal.includes("refused, not adjusted"), "and state that submitting it will refuse rather than convert");
-      assert(shortModal.includes(">5 seconds<") && !shortModal.includes(">4 seconds<"),
+      const shortSettings = shortView.context.document.getElementById("fal-h3-generation-view").innerHTML;
+      assert(shortSettings.includes(">5 seconds<") && !shortSettings.includes(">4 seconds<"),
         "and offer only the lengths this backend can render");
       note("ui: a 4s shot opens the dialog, is told 4s will be refused rather than converted, and is offered only 5–15s");
     }

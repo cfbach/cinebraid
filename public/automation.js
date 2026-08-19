@@ -115,24 +115,80 @@ function v6211GenerationProfileMarkup(settings) {
   return `<div class="automation-generation-profile"><span><b>Blocking</b>${esc(v6211GenerationLabel(settings, "blocking"))}</span><span><b>Frames & references</b>${esc(v6211GenerationLabel(settings, "frame"))}</span></div>`;
 }
 
+/* THE PLANNER'S CONTROLS, tiered by the same rule as every other generation surface.
+ *
+ * A planner has two scopes of the same two controls — blocking and frame each have a
+ * quality and a resolution — so the vocabulary maps onto the KIND rather than onto the
+ * instance: quality is a production decision in both scopes, resolution is a machine
+ * setting in both. What a word means must not change with which dialog is showing.
+ *
+ * A control the active view does not render is simply absent, and v6211SyncGenerationControls()
+ * falls back to the saved setting for anything absent — so a Simple plan runs at the
+ * defaults chosen in Settings rather than at whatever was last typed under Advanced. */
 function v6211GenerationControlsMarkup(settings, scope, options = {}) {
   const includeBlocking = options.includeBlocking !== false;
   const includeFrame = options.includeFrame !== false;
   const includeOutputs = options.includeOutputs !== false;
   const outputs = Math.max(1, Math.min(4, Number(options.outputs || 3)));
+  const plan = options.plan || falFixedImageControlPlan(generationViewMode(options.mode || generationViewPreference()), {});
+  const rendered = new Set(plan.rendered || []);
   const qualityOptions = (selected) => ["low","medium","high"].map((value) => `<option value="${value}" ${value===selected?"selected":""}>${value[0].toUpperCase()+value.slice(1)}</option>`).join("");
   const resolutionOptions = (selected) => ["1k","2k","4k"].map((value) => `<option value="${value}" ${value===selected?"selected":""}>${value.toUpperCase()}</option>`).join("");
   const rows = [];
-  if (includeOutputs) rows.push(`<label><span>Images per pass</span><select id="${attr(scope)}-auto-outputs" onchange="v6211SyncGenerationControls('${attr(scope)}')">${[1,2,3,4].map((n)=>`<option value="${n}" ${n===outputs?"selected":""}>${n}</option>`).join("")}</select></label>`);
-  if (includeBlocking) {
+  if (includeOutputs && rendered.has("outputCount")) rows.push(`<label><span>Images per pass</span><select id="${attr(scope)}-auto-outputs" onchange="v6211SyncGenerationControls('${attr(scope)}')">${[1,2,3,4].map((n)=>`<option value="${n}" ${n===outputs?"selected":""}>${n}</option>`).join("")}</select></label>`);
+  if (includeBlocking && rendered.has("quality"))
     rows.push(`<label><span>Blocking quality</span><select id="${attr(scope)}-auto-blocking-quality" onchange="v6211SyncGenerationControls('${attr(scope)}')">${qualityOptions(settings.blockingQuality || "low")}</select></label>`);
+  if (includeBlocking && rendered.has("resolution"))
     rows.push(`<label><span>Blocking resolution</span><select id="${attr(scope)}-auto-blocking-resolution" onchange="v6211SyncGenerationControls('${attr(scope)}')">${resolutionOptions(settings.blockingResolution || "1k")}</select></label>`);
-  }
-  if (includeFrame) {
+  if (includeFrame && rendered.has("quality"))
     rows.push(`<label><span>Frame / reference quality</span><select id="${attr(scope)}-auto-frame-quality" onchange="v6211SyncGenerationControls('${attr(scope)}')">${qualityOptions(settings.frameQuality || "high")}</select></label>`);
+  if (includeFrame && rendered.has("resolution"))
     rows.push(`<label><span>Frame / reference resolution</span><select id="${attr(scope)}-auto-frame-resolution" onchange="v6211SyncGenerationControls('${attr(scope)}')">${resolutionOptions(settings.frameResolution || "1k")}</select></label>`);
-  }
-  return `<section class="automation-generation-controls"><header><span>GENERATION SETTINGS</span><b>Choose cost and output settings before automation starts</b></header><div>${rows.join("")}</div></section>`;
+  return rows.length ? `<section class="automation-generation-controls"><div>${rows.join("")}</div></section>` : "";
+}
+
+/* WHAT EACH OPEN PLANNER IS CURRENTLY SHOWING, so a redraw triggered by the Simple/
+   Advanced switch and a redraw triggered by changing the round count both produce the
+   same panel. Keyed by scope because a planner is identified by its scope everywhere
+   else in this file. */
+window._v6211GenerationViewState = {};
+function v6211DrawGenerationView(scope, options) {
+  const state = { ...(window._v6211GenerationViewState[scope] || {}), ...(options || {}) };
+  window._v6211GenerationViewState[scope] = state;
+  const host = document.getElementById(`${scope}-generation-view`);
+  if (!host) return;
+  const draft = v6211DraftForScope(scope);
+  const settings = (draft && draft.generationSettings) || v6211AutomationGenerationSettings();
+  host.innerHTML = v6211GenerationViewMarkup(settings, scope, state);
+}
+/* Registered when a planner opens. The switch redraws THIS planner and nothing else. */
+function v6211RegisterGenerationView(scope, options) {
+  window._v6211GenerationViewState[scope] = { ...(options || {}) };
+  window._generationViewRefresh = (mode) => v6211DrawGenerationView(scope, { mode });
+  setTimeout(() => v6211DrawGenerationView(scope, {}), 0);
+}
+
+/* The planner's shared Simple/Advanced block. Same shell, same words and the same one
+   rate as the frame, entity and motion dialogs — a planner that priced work differently
+   from the dialog that dispatches the same work would be the original defect in a
+   different room. */
+function v6211GenerationViewMarkup(settings, scope, options = {}) {
+  const view = generationViewMode(options.mode || generationViewPreference());
+  const plan = falFixedImageControlPlan(view, {});
+  return generationViewMarkup({
+    mode: view,
+    plan,
+    /* A planner resolves no picker, so it names no model — the fixed fal image route is
+       what it dispatches to and that is what the shell reports. */
+    option: typeof falFixedImageRoute === "function" ? falFixedImageRoute() : null,
+    recommendation: generationRecommendation({ guide: null, options: [] }),
+    rate: configuredImageRate(typeof CONFIG === "object" ? CONFIG : {}),
+    /* The WORST CASE this plan can reach, which is the number a filmmaker needs before
+       starting an unattended run — not the number it will probably cost. */
+    quantity: Math.max(0, Number(options.maxImages || 0)),
+    limits: options.limits || null,
+    controlsMarkup: v6211GenerationControlsMarkup(settings, scope, { ...options, plan }),
+  });
 }
 function v6211DraftForScope(scope) {
   if (scope === "blocking") return window._v626BlockingAutomationDraft;
@@ -486,18 +542,26 @@ function v626StatusLabel(run) {
   if (run.status === "running" && !V626_ACTIVE_AUTOMATION_RUNS.has(run.id)) return "READY TO RESUME";
   return String(run.status || "idle").replace(/-/g, " ").toUpperCase();
 }
+/* ONE RATE READER for the whole application. This used to reach into CONFIG itself,
+   which meant the automation planner, the motion dialog and the ledger were three
+   readers of two different numbers. */
 function v628EstimatedCostPerImage() {
-  const value = Number(CONFIG?.generation?.fal?.estimatedCostPerImage || 0);
-  return Number.isFinite(value) && value > 0 ? value : 0;
+  const rate = configuredImageRate(typeof CONFIG === "object" ? CONFIG : {});
+  return rate.configured ? Number(rate.amount) : 0;
 }
 function v628Usd(value) {
-  try { return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(value); }
-  catch { return `$${Number(value || 0).toFixed(2)}`; }
+  return formatRateUsd(value);
 }
-function v628CostEstimateText(imageCount) {
-  const rate = v628EstimatedCostPerImage();
-  return rate ? ` · estimated worst case ${v628Usd(Math.max(0, Number(imageCount || 0)) * rate)} at ${v628Usd(rate)} per image` : "";
-}
+/* v628CostEstimateText() USED TO LIVE HERE and has been deleted rather than kept.
+ *
+ * It appended " · estimated worst case $X at $Y per image" to five different planner
+ * sentences, and returned an EMPTY STRING when no rate was configured — which silently
+ * removed the cost line from a paid automation planner altogether. Both problems are
+ * answered by the shared price block the planners now render: one statement per screen,
+ * from the one configured rate, and an unconfigured rate says so instead of vanishing.
+ *
+ * Deleted rather than left unused because a dormant second cost renderer is one a future
+ * caller finds; check:behavior enforces that rule and caught this on the first run. */
 function v626RunUsageMarkup(run) {
   const usage = run?.usage || {};
   const max = Number(run?.config?.maxImages || 0);
@@ -951,7 +1015,8 @@ window.openBlockingAutomationModal = (shotId) => {
   if (!shot) return toast("Shot is unavailable");
   const generationSettings = v6211AutomationGenerationSettings();
   window._v626BlockingAutomationDraft = { shotId, rounds: 3, outputsPerRequest: 3, reuseApproved: true, generationSettings };
-  openModal(`<div class="automation-plan-modal"><h3>Plan blocking automation — ${esc(shotId)}</h3><div class="modal-sub">GRAYSCALE COMPOSITION GUIDE ONLY · NO FINISHED STILL</div>${v6211GenerationControlsMarkup(generationSettings,"blocking",{includeOutputs:false,includeFrame:false})}<p class="modal-confirm-message">CineBraid will build and improve the blocking prompt, generate options, review camera/pose/scale/contact points, revise failed rounds, and install the best passing result as the active guide.</p><div class="two-col"><label><span>Maximum review rounds</span><select id="v626-blocking-rounds" onchange="updateBlockingAutomationEstimate()">${[1,2,3].map((n)=>`<option value="${n}" ${n===3?"selected":""}>${n}</option>`).join("")}</select></label><label><span>Options per round</span><select id="v626-blocking-outputs" onchange="updateBlockingAutomationEstimate()">${[1,2,3,4].map((n)=>`<option value="${n}" ${n===3?"selected":""}>${n}</option>`).join("")}</select></label></div><label class="checkline"><input id="v626-blocking-reuse" type="checkbox" checked onchange="updateBlockingAutomationEstimate()"> Reuse the current active guide instead of spending credits again when one already exists</label><div id="v626-blocking-auto-preflight"></div><div id="v626-blocking-auto-estimate" class="automation-cost-guard"></div><div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button id="v626-start-blocking-auto" class="approve-btn" onclick="startPlannedBlockingAutomation()">START BLOCKING AUTOMATION</button></div></div>`);
+  v6211RegisterGenerationView("blocking", { includeOutputs: false, includeFrame: false, maxImages: 9 });
+  openModal(`<div class="automation-plan-modal"><h3>Plan blocking automation — ${esc(shotId)}</h3><div class="modal-sub">GRAYSCALE COMPOSITION GUIDE ONLY · NO FINISHED STILL</div><div id="blocking-generation-view"></div><p class="modal-confirm-message">CineBraid will build and improve the blocking prompt, generate options, review camera/pose/scale/contact points, revise failed rounds, and install the best passing result as the active guide.</p><div class="two-col"><label><span>Maximum review rounds</span><select id="v626-blocking-rounds" onchange="updateBlockingAutomationEstimate()">${[1,2,3].map((n)=>`<option value="${n}" ${n===3?"selected":""}>${n}</option>`).join("")}</select></label><label><span>Options per round</span><select id="v626-blocking-outputs" onchange="updateBlockingAutomationEstimate()">${[1,2,3,4].map((n)=>`<option value="${n}" ${n===3?"selected":""}>${n}</option>`).join("")}</select></label></div><label class="checkline"><input id="v626-blocking-reuse" type="checkbox" checked onchange="updateBlockingAutomationEstimate()"> Reuse the current active guide instead of spending credits again when one already exists</label><div id="v626-blocking-auto-preflight"></div><div id="v626-blocking-auto-estimate" class="automation-cost-guard"></div><div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button id="v626-start-blocking-auto" class="approve-btn" onclick="startPlannedBlockingAutomation()">START BLOCKING AUTOMATION</button></div></div>`);
   updateBlockingAutomationEstimate();
 };
 window.updateBlockingAutomationEstimate = () => {
@@ -967,7 +1032,22 @@ window.updateBlockingAutomationEstimate = () => {
   const preflightEl = document.getElementById("v626-blocking-auto-preflight");
   if (preflightEl) preflightEl.innerHTML = `${preflight.errors.length ? `<div class="guided-prompt-error"><b>Cannot start yet</b><span>${esc(preflight.errors.join(" "))}</span></div>` : `<div class="prompt-check ok">Preflight passed for blocking-only automation.</div>`}${preflight.warnings.length ? `<div class="prompt-check warn">${esc(preflight.warnings.join(" "))}</div>` : ""}`;
   const estimate = document.getElementById("v626-blocking-auto-estimate");
-  if (estimate) estimate.innerHTML = `<b>Maximum ${maxImages} generated blocking image${maxImages === 1 ? "" : "s"}${v628CostEstimateText(maxImages)}</b><span>${outputsPerRequest} option${outputsPerRequest === 1 ? "" : "s"} per round · up to ${rounds} round${rounds === 1 ? "" : "s"}. The run stops early on a passing guide.</span>`;
+  if (estimate) estimate.innerHTML = `<b>Maximum ${maxImages} generated blocking image${maxImages === 1 ? "" : "s"}</b><span>${outputsPerRequest} option${outputsPerRequest === 1 ? "" : "s"} per round · up to ${rounds} round${rounds === 1 ? "" : "s"}. The run stops early on a passing guide.</span>`;
+  /* The worst case moved, so the price moves with it. One statement of the cost per
+     screen, from the one configured rate — a planner that priced a nine-image run
+     differently from the dialog that dispatches those nine images would be the original
+     two-authorities defect in a different room. */
+  v6211DrawGenerationView("blocking", {
+    includeOutputs: false, includeFrame: false, maxImages,
+    limits: {
+      rows: [
+        { value: rounds, label: rounds === 1 ? "review round at most" : "review rounds at most" },
+        { value: outputsPerRequest, label: "options per round" },
+        { value: maxImages, label: "images at the very most" },
+      ],
+      stopEarly: `The run stops as soon as a guide passes review, so it usually spends less than the worst case.${reuseApproved ? " An existing active guide is reused instead of generating again." : ""}`,
+    },
+  });
   const button = document.getElementById("v626-start-blocking-auto");
   if (button) button.disabled = !!preflight.errors.length;
   window._v626BlockingAutomationDraft = { ...draft, shotId: shot.id, rounds, outputsPerRequest, reuseApproved, maxImages, generationSettings: settings };
@@ -1135,7 +1215,8 @@ window.openShotAutomationModal = (shotId) => {
   const generationSettings = v6211AutomationGenerationSettings();
   window._v626ShotAutomationDraft = { shotId, frameIds: defaultIds, reviewExistingBlocking: true, reviewSceneAfterShot: true, generationSettings };
   const existingBlocking = v664BlockingRowsForReview(shot).length;
-  openModal(`<div class="automation-plan-modal"><h3>Automate the full shot — ${esc(shotId)}</h3><div class="modal-sub">BLOCKING → AI REVIEW / SELECTION → REQUIRED FRAMES → OPTIONAL SCENE CONTINUITY · VIDEO REMAINS MANUAL</div>${v6211GenerationControlsMarkup(generationSettings,"shot",{outputs:3})}<section class="automation-pipeline-summary"><b>Full still pipeline</b><span>CineBraid first reviews the ${existingBlocking || "existing"} blocking attempt${existingBlocking === 1 ? "" : "s"}. If none passes, it generates and reviews new grayscale guides. It then creates selected frames parent-first and can review the scene against approved references and Project Bible text.</span></section><div class="automation-frame-picker">${required.map((frame, index) => { const approved = guidedFrameApproved(shot, frame, takesFor(shot.id), frames.indexOf(frame)); return `<label><input type="checkbox" class="v626-auto-frame" value="${attr(frame.id)}" ${defaultIds.includes(frame.id) ? "checked" : ""} onchange="updateShotAutomationEstimate()"><span><b>Frame ${esc(frame.label)}</b><small>${approved ? `Already approved · ${esc(approved.name)}` : esc(frame.description || "No description")}${index ? ` · derives from Frame ${esc(required[index - 1]?.label || "previous")}` : ""}</small></span></label>`; }).join("")}</div><label class="checkline"><input id="v626-review-existing-blocking" type="checkbox" checked onchange="updateShotAutomationEstimate()"> Review and reuse existing blocking attempts before generating more${existingBlocking ? ` · ${existingBlocking} available` : ""}</label><label class="checkline"><input id="v626-derivative-blocking" type="checkbox" checked onchange="updateShotAutomationEstimate()"> Generate and review a frame-specific blocking edit for later frames</label><label class="checkline"><input id="v626-reuse-approved" type="checkbox" checked> Reuse existing approved frames and guides instead of spending credits again</label><label class="checkline"><input id="v626-review-scene-after" type="checkbox" checked> Review scene continuity after this shot completes when at least two scene stills are approved</label><div id="v626-shot-auto-preflight"></div><div id="v626-shot-auto-estimate" class="automation-cost-guard"><b>Maximum ${maxWithBlocking} images</b><span>3 options per request · up to 3 opening-blocking rounds · up to 2 frame and derivative-blocking rounds</span></div><div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button id="v626-start-shot-auto" class="approve-btn large" onclick="startPlannedShotAutomation()">START FULL SHOT AUTOMATION</button></div></div>`);
+  v6211RegisterGenerationView("shot", { outputs: 3, maxImages: maxWithBlocking });
+  openModal(`<div class="automation-plan-modal"><h3>Automate the full shot — ${esc(shotId)}</h3><div class="modal-sub">BLOCKING → AI REVIEW / SELECTION → REQUIRED FRAMES → OPTIONAL SCENE CONTINUITY · VIDEO REMAINS MANUAL</div><div id="shot-generation-view"></div><section class="automation-pipeline-summary"><b>Full still pipeline</b><span>CineBraid first reviews the ${existingBlocking || "existing"} blocking attempt${existingBlocking === 1 ? "" : "s"}. If none passes, it generates and reviews new grayscale guides. It then creates selected frames parent-first and can review the scene against approved references and Project Bible text.</span></section><div class="automation-frame-picker">${required.map((frame, index) => { const approved = guidedFrameApproved(shot, frame, takesFor(shot.id), frames.indexOf(frame)); return `<label><input type="checkbox" class="v626-auto-frame" value="${attr(frame.id)}" ${defaultIds.includes(frame.id) ? "checked" : ""} onchange="updateShotAutomationEstimate()"><span><b>Frame ${esc(frame.label)}</b><small>${approved ? `Already approved · ${esc(approved.name)}` : esc(frame.description || "No description")}${index ? ` · derives from Frame ${esc(required[index - 1]?.label || "previous")}` : ""}</small></span></label>`; }).join("")}</div><label class="checkline"><input id="v626-review-existing-blocking" type="checkbox" checked onchange="updateShotAutomationEstimate()"> Review and reuse existing blocking attempts before generating more${existingBlocking ? ` · ${existingBlocking} available` : ""}</label><label class="checkline"><input id="v626-derivative-blocking" type="checkbox" checked onchange="updateShotAutomationEstimate()"> Generate and review a frame-specific blocking edit for later frames</label><label class="checkline"><input id="v626-reuse-approved" type="checkbox" checked> Reuse existing approved frames and guides instead of spending credits again</label><label class="checkline"><input id="v626-review-scene-after" type="checkbox" checked> Review scene continuity after this shot completes when at least two scene stills are approved</label><div id="v626-shot-auto-preflight"></div><div id="v626-shot-auto-estimate" class="automation-cost-guard"><b>Maximum ${maxWithBlocking} images</b><span>3 options per request · up to 3 opening-blocking rounds · up to 2 frame and derivative-blocking rounds</span></div><div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button id="v626-start-shot-auto" class="approve-btn large" onclick="startPlannedShotAutomation()">START FULL SHOT AUTOMATION</button></div></div>`);
   updateShotAutomationEstimate();
 };
 window.updateShotAutomationEstimate = () => {
@@ -1158,7 +1239,14 @@ window.updateShotAutomationEstimate = () => {
   const preflightEl = document.getElementById("v626-shot-auto-preflight");
   if (preflightEl) preflightEl.innerHTML = `${preflight.errors.length ? `<div class="guided-prompt-error"><b>Cannot start yet</b><span>${esc(preflight.errors.join(" "))}</span></div>` : `<div class="prompt-check ok">Preflight passed for ${ids.length} frame${ids.length === 1 ? "" : "s"}.</div>`}${preflight.warnings.length ? `<div class="prompt-check warn">${esc(preflight.warnings.join(" "))}</div>` : ""}`;
   const estimate = document.getElementById("v626-shot-auto-estimate");
-  if (estimate) estimate.innerHTML = `<b>Maximum ${max} generated image${max === 1 ? "" : "s"}${v628CostEstimateText(max)}</b><span>The run stops early on passing results and cannot exceed this confirmed cap. Cost is an estimate only when configured in Settings.</span>`;
+  if (estimate) estimate.innerHTML = `<b>Maximum ${max} generated image${max === 1 ? "" : "s"}</b><span>The run stops early on passing results and cannot exceed this confirmed cap.</span>`;
+  v6211DrawGenerationView("shot", {
+    outputs: 3, maxImages: max,
+    limits: {
+      rows: [{ value: max, label: "images at the very most" }],
+      stopEarly: "The run stops as soon as results pass review and can never exceed this confirmed cap, so it usually spends less than the worst case.",
+    },
+  });
   const button = document.getElementById("v626-start-shot-auto");
   if (button) button.disabled = !ids.length || !!preflight.errors.length;
   window._v626ShotAutomationDraft = { ...draft, shotId, frameIds: ids, derivativeBlocking: derivative, reviewExistingBlocking, reviewSceneAfterShot, outputsPerRequest, maxImages: max, generationSettings: settings };
@@ -1259,7 +1347,8 @@ window.openAssetAutomationModal = (list, id) => {
   const stateIds = [state?.id || "state-default"], preflight = v627EntityPreflight(list, entity, stateIds);
   const generationSettings = v6211AutomationGenerationSettings();
   window._v626EntityAutomationDraft = { list, id, stateIds, scope: "default-only", generationSettings };
-  openModal(`<div class="automation-plan-modal compact"><h3>Automate default reference — ${esc(entity.name || id)}</h3><div class="modal-sub">DURABLE STILL AUTOMATION · THREE PASSES MAXIMUM${v628CostEstimateText(9)}</div>${v6211GenerationControlsMarkup(generationSettings,"entity",{includeBlocking:false,outputs:3})}<p class="hint">CineBraid builds and improves the reference prompt, generates the selected number of candidates per pass, and reviews each against canon. When a pass produces nothing approvable it aggregates why every candidate failed, corrects the prompt, and runs the next authorized pass. It stops as soon as a candidate earns a strong pass — and always waits for your approval before anything becomes canon.</p><label class="checkline"><input id="v626-reuse-approved-states" type="checkbox" checked> Reuse the existing approved default instead of spending credits again</label><div>${v627PreflightMarkup(preflight, list, entity)}</div><div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button class="approve-btn" ${preflight.errors.length ? "disabled" : ""} onclick="startPlannedEntityAutomation()">START</button></div></div>`);
+  v6211RegisterGenerationView("entity", { includeBlocking: false, outputs: 3, maxImages: 9, limits: { rows: [{ value: 3, label: "passes at most" }, { value: 3, label: "candidates per pass" }, { value: 9, label: "images at the very most" }], stopEarly: "The run stops as soon as a candidate earns a strong pass. Nothing becomes canon without your approval." } });
+  openModal(`<div class="automation-plan-modal compact"><h3>Automate default reference — ${esc(entity.name || id)}</h3><div class="modal-sub">DURABLE STILL AUTOMATION · THREE PASSES MAXIMUM</div><div id="entity-generation-view"></div><p class="hint">CineBraid builds and improves the reference prompt, generates the selected number of candidates per pass, and reviews each against canon. When a pass produces nothing approvable it aggregates why every candidate failed, corrects the prompt, and runs the next authorized pass. It stops as soon as a candidate earns a strong pass — and always waits for your approval before anything becomes canon.</p><label class="checkline"><input id="v626-reuse-approved-states" type="checkbox" checked> Reuse the existing approved default instead of spending credits again</label><div>${v627PreflightMarkup(preflight, list, entity)}</div><div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button class="approve-btn" ${preflight.errors.length ? "disabled" : ""} onclick="startPlannedEntityAutomation()">START</button></div></div>`);
 };
 window.openEntityStateAutomationModal = (list, id, stateId) => {
   const entity = P[list]?.find((item) => item.id === id), state = entityStateById(entity, stateId);
@@ -1268,7 +1357,8 @@ window.openEntityStateAutomationModal = (list, id, stateId) => {
   const generationSettings = v6211AutomationGenerationSettings();
   window._v626EntityAutomationDraft = { list, id, stateIds, scope: `state:${state.id}`, generationSettings };
   const parent = assetStateParent(entity, state);
-  openModal(`<div class="automation-plan-modal compact"><h3>Automate ${esc(state.name || "state")} — ${esc(entity.name || id)}</h3><div class="modal-sub">DERIVED REFERENCE · THREE PASSES MAXIMUM${v628CostEstimateText(9)}</div>${v6211GenerationControlsMarkup(generationSettings,"entity",{includeBlocking:false,outputs:3})}<p class="hint">The approved ${esc(parent?.name || "base")} reference becomes the editable input. Review checks identity preservation and only the requested visible state delta. If no candidate passes, automation aggregates why they failed, corrects the prompt, and retries within the confirmed cap. Approval always stays with you.</p><label class="checkline"><input id="v626-reuse-approved-states" type="checkbox" checked> Reuse this state when it is already approved</label><div>${v627PreflightMarkup(preflight, list, entity)}</div><div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button class="approve-btn" ${preflight.errors.length ? "disabled" : ""} onclick="startPlannedEntityAutomation()">START</button></div></div>`);
+  v6211RegisterGenerationView("entity", { includeBlocking: false, outputs: 3, maxImages: 9, limits: { rows: [{ value: 3, label: "passes at most" }, { value: 3, label: "candidates per pass" }, { value: 9, label: "images at the very most" }], stopEarly: "The run stops as soon as a candidate passes review within the confirmed cap. Approval always stays with you." } });
+  openModal(`<div class="automation-plan-modal compact"><h3>Automate ${esc(state.name || "state")} — ${esc(entity.name || id)}</h3><div class="modal-sub">DERIVED REFERENCE · THREE PASSES MAXIMUM</div><div id="entity-generation-view"></div><p class="hint">The approved ${esc(parent?.name || "base")} reference becomes the editable input. Review checks identity preservation and only the requested visible state delta. If no candidate passes, automation aggregates why they failed, corrects the prompt, and retries within the confirmed cap. Approval always stays with you.</p><label class="checkline"><input id="v626-reuse-approved-states" type="checkbox" checked> Reuse this state when it is already approved</label><div>${v627PreflightMarkup(preflight, list, entity)}</div><div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button class="approve-btn" ${preflight.errors.length ? "disabled" : ""} onclick="startPlannedEntityAutomation()">START</button></div></div>`);
 };
 window.openEntityChainAutomationModal = (list, id) => {
   const entity = P[list]?.find((item) => item.id === id);
@@ -1285,7 +1375,8 @@ window.openEntityChainAutomationModal = (list, id) => {
   const defaultIds = states.filter((state) => !planCanon.has(state.id)).map((state) => state.id);
   const generationSettings = v6211AutomationGenerationSettings();
   window._v626EntityAutomationDraft = { list, id, stateIds: defaultIds, scope: "state-chain", generationSettings };
-  openModal(`<div class="automation-plan-modal"><h3>Plan continuity-state chain — ${esc(entity.name || id)}</h3><div class="modal-sub">PARENT-FIRST DERIVED REFERENCES</div>${v6211GenerationControlsMarkup(generationSettings,"entity",{includeBlocking:false,outputs:3})}<div class="automation-frame-picker">${states.map((state) => { const parent = assetStateParent(entity, state); return `<label><input type="checkbox" class="v626-auto-state" value="${attr(state.id)}" ${defaultIds.includes(state.id) ? "checked" : ""} onchange="updateEntityChainEstimate()"><span><b>${esc(state.name || "State")}</b><small>${state.approvedFile ? `Approved · ${esc(state.approvedFile)}` : "Needs reference"}${state.isDefault ? " · base state" : ` · derives from ${esc(parent?.name || "Default")}`}</small></span></label>`; }).join("")}</div><label class="checkline"><input id="v626-reuse-approved-states" type="checkbox" checked> Reuse already approved states</label><div id="v627-entity-chain-preflight"></div><div id="v626-entity-chain-note" class="automation-cost-guard"></div><div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button id="v626-start-entity-chain" class="approve-btn" onclick="startPlannedEntityAutomation()">START STATE CHAIN</button></div></div>`);
+  v6211RegisterGenerationView("entity", { includeBlocking: false, outputs: 3, maxImages: 0 });
+  openModal(`<div class="automation-plan-modal"><h3>Plan continuity-state chain — ${esc(entity.name || id)}</h3><div class="modal-sub">PARENT-FIRST DERIVED REFERENCES</div><div id="entity-generation-view"></div><div class="automation-frame-picker">${states.map((state) => { const parent = assetStateParent(entity, state); return `<label><input type="checkbox" class="v626-auto-state" value="${attr(state.id)}" ${defaultIds.includes(state.id) ? "checked" : ""} onchange="updateEntityChainEstimate()"><span><b>${esc(state.name || "State")}</b><small>${state.approvedFile ? `Approved · ${esc(state.approvedFile)}` : "Needs reference"}${state.isDefault ? " · base state" : ` · derives from ${esc(parent?.name || "Default")}`}</small></span></label>`; }).join("")}</div><label class="checkline"><input id="v626-reuse-approved-states" type="checkbox" checked> Reuse already approved states</label><div id="v627-entity-chain-preflight"></div><div id="v626-entity-chain-note" class="automation-cost-guard"></div><div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button id="v626-start-entity-chain" class="approve-btn" onclick="startPlannedEntityAutomation()">START STATE CHAIN</button></div></div>`);
   updateEntityChainEstimate();
 };
 /* Planners READ. They are called from render paths and from estimate updaters,
@@ -1327,7 +1418,18 @@ window.updateEntityChainEstimate = () => {
   settings.frameQuality = document.getElementById("entity-auto-frame-quality")?.value || settings.frameQuality;
   settings.frameResolution = document.getElementById("entity-auto-frame-resolution")?.value || settings.frameResolution;
   const maxImages = expanded.length * 3 * outputsPerRequest;
-  if (note) note.innerHTML = `<b>Up to ${maxImages} generated images${v628CostEstimateText(maxImages)}</b><span>${expanded.length} state${expanded.length === 1 ? "" : "s"} · ${outputsPerRequest} image${outputsPerRequest === 1 ? "" : "s"} per pass · three rounds maximum per state</span>`;
+  if (note) note.innerHTML = `<b>Up to ${maxImages} generated images</b><span>${expanded.length} state${expanded.length === 1 ? "" : "s"} · ${outputsPerRequest} image${outputsPerRequest === 1 ? "" : "s"} per pass · three rounds maximum per state</span>`;
+  v6211DrawGenerationView("entity", {
+    includeBlocking: false, outputs: outputsPerRequest, maxImages,
+    limits: {
+      rows: [
+        { value: expanded.length, label: expanded.length === 1 ? "state" : "states" },
+        { value: outputsPerRequest, label: "images per pass" },
+        { value: maxImages, label: "images at the very most" },
+      ],
+      stopEarly: "Each state stops as soon as a candidate passes review, and approval always stays with you.",
+    },
+  });
   const preflight = entity ? v627EntityPreflight(draft.list, entity, expanded) : { errors: ["Entity unavailable."], warnings: [] };
   const preflightEl = document.getElementById("v627-entity-chain-preflight");
   if (preflightEl) preflightEl.innerHTML = v627PreflightMarkup(preflight, draft.list, entity);

@@ -185,9 +185,23 @@ async function main() {
   assert(entityStateHtml.includes('CANON IMAGE') && entityStateHtml.includes('state-approved-preview'), 'selected state must show its approved image near the top with a large-preview control');
 
   look.context.openShotAutomationModal('L1-01');
-  const automationModal = look.context.document.getElementById('modal').innerHTML;
-  for (const id of ['shot-auto-outputs','shot-auto-blocking-quality','shot-auto-blocking-resolution','shot-auto-frame-quality','shot-auto-frame-resolution']) assert(automationModal.includes(id), `${id} missing from full-shot automation`);
-  assert(automationModal.includes('Images per pass') && automationModal.includes('GENERATION SETTINGS'), 'automation must expose grouped generation settings');
+  /* The planner's generation settings moved into the shared Simple/Advanced block, which
+     is filled after the modal is in the DOM — and the harness models the document as a
+     flat id map, so a sub-container's innerHTML is never part of its parent's. Read the
+     panel, and open Advanced for the two resolution controls: quality and images-per-pass
+     are production decisions and stay on the Simple screen, resolution is an expert one. */
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const automationPanel = () => look.context.document.getElementById('shot-generation-view').innerHTML;
+  assert(automationPanel().includes('data-gen-view="simple"'), 'the planner must open on Simple');
+  for (const id of ['shot-auto-outputs','shot-auto-blocking-quality','shot-auto-frame-quality'])
+    assert(automationPanel().includes(id), `${id} missing from the Simple full-shot planner`);
+  for (const id of ['shot-auto-blocking-resolution','shot-auto-frame-resolution'])
+    assert(!automationPanel().includes(id), `${id} is an expert control and must not be on the Simple screen`);
+  look.context.setGenerationViewMode('advanced');
+  for (const id of ['shot-auto-outputs','shot-auto-blocking-quality','shot-auto-blocking-resolution','shot-auto-frame-quality','shot-auto-frame-resolution'])
+    assert(automationPanel().includes(id), `${id} missing from full-shot automation under Advanced`);
+  assert(automationPanel().includes('Images per pass') && automationPanel().includes('Generation settings'), 'automation must expose grouped generation settings');
+  look.context.setGenerationViewMode('simple');
   const outputSelect = look.context.document.getElementById('shot-auto-outputs');
   outputSelect.value = '4';
   look.context.v6211SyncGenerationControls('shot');

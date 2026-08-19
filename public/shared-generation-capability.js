@@ -87,6 +87,15 @@ const CINEBRAID_CAPABILITY_LAYERS = ["model", "backend", "node", "recipe"];
 const CINEBRAID_CAPABILITY_FLAGS = [
   "firstFrame", "lastFrame", "mask", "controlNet", "lora", "multiLora",
   "nativeAudio", "seed", "candidateBatching", "referenceWeights",
+  /* Sampler settings. No CineBraid model or backend declares either one, so both
+     intersect to false everywhere and no screen may offer them — which is the point of
+     declaring them. A generation UI that draws a CFG slider for every model because SOME
+     model somewhere has one, greys it out here and ships its default anyway is the exact
+     defect these two entries make impossible: a control with no declared capability is
+     not rendered and therefore contributes nothing to the payload. Adding a member to
+     this list constrains nothing on its own — an undeclared flag is false — it only
+     gives the absence a name a screen and a test can both read. */
+  "cfgScale", "steps",
 ];
 
 const CINEBRAID_ENUM_FIELDS = ["modes", "referenceRoles", "resolutions", "aspectRatios", "fps"];

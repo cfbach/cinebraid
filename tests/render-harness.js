@@ -36,6 +36,14 @@ const SCRIPT_ORDER = [
      dependencies of its own, which is why this closes one gap in this list rather
      than opening the whole of it. */
   "shared-generation-options.js",
+  /* Slice 4. Both are pure, dependency-free and loaded at this point on the real page.
+     public/fal-generation.js and public/automation.js — already in this list — now read
+     the configured rate and the Simple/Advanced control plan from them, so a harness
+     without them would throw on the first generation dialog rather than render one. */
+  "shared-generation-rate.js",
+  "shared-generation-presentation.js",
+  /* The browser half of the same pair. Five surfaces in this list draw through it. */
+  "generation-view.js",
   "shared-stage-model.js",
   "shared-shot-readiness.js",
   "bounded-rendering.js",

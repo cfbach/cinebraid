@@ -92,6 +92,31 @@ const DEFAULT_CONFIG = {
       maxConcurrent: 1,
       requireConfirmation: true,
       estimatedCostPerImage: 0,
+      /* WHAT A SECOND OF RENDERED MOTION IS ESTIMATED TO COST, and the only place
+         CineBraid holds that number.
+       *
+       * It used to live in the browser as a hard-coded $0.26 inside falH3CostEstimate(),
+       * which meant the pre-flight quote and the durable record were two authorities
+       * reading two different things: the dialog printed a confident figure and
+       * generation-cost.js recorded `unknown` for the same job, because the server had
+       * no motion rate to read. One configured number ends that — the quote and the
+       * record now derive from this field through one shared function.
+       *
+       * CineBraid ships NO PRICES. 0 is the default and means UNCONFIGURED, which is not
+       * free and not zero: an unconfigured rate produces "unavailable" on the screen and
+       * `confidence: "unknown"` on the row, and never a $0.00 that would read as a
+       * completed purchase of nothing.
+       *
+       * `source` and `asOf` are the operator's own note about where the number came from
+       * and when they read it. CineBraid cannot check a provider's pricing page and does
+       * not pretend to, so both are free of any verification claim — and both stay empty
+       * unless somebody fills them in. An `asOf` defaulted to today would be a
+       * manufactured freshness stamp, which is worse than admitting the date is unknown. */
+      motionRate: {
+        usdPerSecond: 0,
+        source: "",
+        asOf: "",
+      },
     },
   },
   appearance: {
@@ -337,6 +362,27 @@ function normalizeConfig(config, options = {}) {
   merged.generation.fal.estimatedCostPerImage = Number.isFinite(estimatedCostPerImage)
     ? Math.max(0, Math.min(100, estimatedCostPerImage))
     : 0;
+  /* The motion rate, normalised on the same terms as the per-image one — bounded, and
+     anything that is not a usable number becomes 0, which reads as UNCONFIGURED
+     everywhere downstream rather than as a price of zero.
+
+     `asOf` is accepted only as an ISO calendar date. A freshness field that took
+     "recently" could not be compared to anything, and one that quietly substituted
+     today's date when the operator left it blank would be inventing the verification
+     this whole field exists to record honestly. An unparseable date becomes empty and
+     renders as "freshness unknown". */
+  merged.generation.fal.motionRate = deepMerge(
+    DEFAULT_CONFIG.generation.fal.motionRate,
+    isPlainObject(merged.generation.fal.motionRate) ? merged.generation.fal.motionRate : {},
+  );
+  const motionUsdPerSecond = Number(merged.generation.fal.motionRate.usdPerSecond);
+  merged.generation.fal.motionRate.usdPerSecond = Number.isFinite(motionUsdPerSecond)
+    ? Math.max(0, Math.min(100, motionUsdPerSecond))
+    : 0;
+  merged.generation.fal.motionRate.source = String(merged.generation.fal.motionRate.source || "").trim().slice(0, 200);
+  merged.generation.fal.motionRate.asOf = /^\d{4}-\d{2}-\d{2}$/.test(String(merged.generation.fal.motionRate.asOf || "").trim())
+    ? String(merged.generation.fal.motionRate.asOf).trim()
+    : "";
   merged.generation.fal.blockingQuality = ["low", "medium", "high", "auto"].includes(merged.generation.fal.blockingQuality) ? merged.generation.fal.blockingQuality : "low";
   merged.generation.fal.frameQuality = ["low", "medium", "high", "auto"].includes(merged.generation.fal.frameQuality) ? merged.generation.fal.frameQuality : "high";
   merged.appearance = deepMerge(DEFAULT_CONFIG.appearance, merged.appearance || {});

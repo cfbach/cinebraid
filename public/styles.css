@@ -5216,3 +5216,38 @@ body[data-focused-workspace="1"] .guided-frame-body,
   .mi-actions button{min-height:44px}
   .mi-actions{gap:8px}
 }
+
+/* Simple vs Advanced generation (Batch 2, Slice 4).
+   Every colour is a token so the block renders in all four surfaces and in both themes;
+   the price row keeps its own tone per state so "unavailable" never reads like a figure. */
+.gen-view{display:grid;gap:12px;padding:12px 14px;margin:12px 0;border:1px solid var(--line);border-radius:13px;background:var(--surface-1)}
+.gen-view-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.gen-view-head b{display:block;font-size:12px}
+.gen-view-head small{display:block;margin-top:3px;color:var(--muted);font-size:9px;line-height:1.4}
+.gen-view-switch{display:inline-flex;gap:2px;padding:2px;border:1px solid var(--line);border-radius:9px;background:var(--panel-2)}
+.gen-view-tab{padding:5px 12px;border:0;border-radius:7px;background:transparent;color:var(--muted);font:800 9px var(--mono);letter-spacing:.1em;text-transform:uppercase;cursor:pointer}
+.gen-view-tab.is-active{background:var(--acc);color:var(--bg)}
+.gen-view-tab:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+.gen-view-always{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px}
+.gen-view-fact{display:grid;gap:3px;align-content:start;padding:9px 10px;border:1px solid var(--line);border-radius:9px;background:var(--panel-2)}
+.gen-view-fact>span{font:800 8px var(--mono);letter-spacing:.12em;color:var(--muted)}
+.gen-view-fact>b{font-size:11px;line-height:1.3}
+.gen-view-fact>small{color:var(--muted);font-size:9px;line-height:1.45}
+.gen-view-provenance{margin-top:2px;color:var(--muted);font:600 8px var(--mono);letter-spacing:.06em;font-style:normal}
+.gen-view-price.is-estimated{border-color:color-mix(in srgb,var(--amber) 38%,var(--line));background:color-mix(in srgb,var(--amber) 5%,var(--panel-2))}
+.gen-view-price.is-unavailable{border-color:color-mix(in srgb,var(--muted) 32%,var(--line))}
+.gen-view-price.is-local{border-color:color-mix(in srgb,var(--ok,var(--acc)) 34%,var(--line))}
+.gen-view-controls .h3-settings-grid,.gen-view-controls .automation-generation-controls{margin:0}
+.gen-view-defaults{margin:8px 0 0;color:var(--muted);font-size:9px;line-height:1.5}
+.gen-view-limits{display:grid;gap:6px}
+.gen-view-limit-rows{display:flex;flex-wrap:wrap;gap:8px}
+.gen-view-limit-rows span{display:inline-flex;align-items:baseline;gap:4px;padding:4px 9px;border:1px solid var(--line);border-radius:99px;background:var(--panel-2);color:var(--muted);font-size:9px}
+.gen-view-limit-rows b{color:var(--fg);font-size:11px}
+.gen-view-stop-early{margin:0;color:var(--muted);font-size:9px;line-height:1.5}
+.gen-view-unsupported{display:grid;gap:6px;padding:9px 10px;border:1px dashed var(--line);border-radius:9px}
+.gen-view-unsupported>b{font-size:10px}
+.gen-view-unsupported ul{margin:0;padding:0;list-style:none;display:grid;gap:4px}
+.gen-view-unsupported li{display:grid;gap:1px}
+.gen-view-unsupported li span{font-size:10px}
+.gen-view-unsupported li small,.gen-view-unsupported>small{color:var(--muted);font-size:9px;line-height:1.45}
+@media (prefers-reduced-motion:no-preference){.gen-view-tab{transition:background .12s ease,color .12s ease}}

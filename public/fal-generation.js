@@ -111,6 +111,78 @@ function falBlockingRevisionPrompt(s, build, sourceAssetId, request) {
     : `Apply these requested structural changes exactly: ${request}`;
   return `${base}\n\nBLOCKING REVISION\n${source} ${changes}\nPreserve all unaffected shot relationships. Keep the result a flat grayscale storyboard scaffold. Do not introduce finished identity, colour, materials, lighting, location design, texture, or production style.`;
 }
+/* The route these two dialogs actually dispatch to, read from the configuration the
+   DISPATCHER reads rather than written into the screen. `textModel` is the exact model id
+   that will be sent, so naming it here is reporting the request, not asserting a choice.
+   Neither dialog resolves a picker, so neither gets a recommendation — and there is no
+   guide for these jobs anyway, so there would be none to render. */
+function falFixedImageRoute() {
+  const cfg = falGenerationConfig();
+  const model = String(cfg.textModel || "").trim();
+  if (!model) return null;
+  return {
+    modelId: model,
+    modelName: model,
+    surfaceId: "fal",
+    surfaceName: "fal",
+    surfaceKind: "api",
+    where: "API",
+  };
+}
+
+/* The control plan for a fixed-route image dialog. Quality and size are CineBraid's own
+   request vocabulary for this path rather than a per-model intersection, so they are
+   declared as the lists these dialogs have always offered — and the four machine settings
+   are evaluated against a capability that declares none of them, which is why none of
+   them renders and none of them can reach the body. */
+function falFixedImageControlPlan(mode, request) {
+  return generationControlPlan({
+    capability: {
+      qualityTiers: ["low", "medium", "high"],
+      resolutions: ["1k", "2k", "4k"],
+      durationSeconds: null,
+      flags: { seed: false, candidateBatching: true, referenceWeights: false, cfgScale: false, steps: false },
+    },
+    mode,
+    only: ["outputCount", "quality", "resolution", "seed", "cfgScale", "steps", "referenceStrength"],
+  });
+}
+
+function falFixedImageControlsMarkup(plan, ids, current) {
+  const rendered = new Set(plan.rendered || []);
+  const parts = [];
+  if (rendered.has("outputCount"))
+    parts.push(`<label><span>Number of options</span><select id="${attr(ids.count)}">${
+      [1, 2, 3, 4].map((n) => `<option value="${n}" ${n === Number(current.count) ? "selected" : ""}>${n}</option>`).join("")
+    }</select></label>`);
+  if (rendered.has("quality"))
+    parts.push(`<label><span>Quality</span><select id="${attr(ids.quality)}">${
+      ["low", "medium", "high"].map((value) => `<option value="${value}" ${value === current.quality ? "selected" : ""}>${value[0].toUpperCase() + value.slice(1)}</option>`).join("")
+    }</select></label>`);
+  if (rendered.has("resolution"))
+    parts.push(`<label><span>Resolution</span><select id="${attr(ids.resolution)}">${falResolutionOptions(current.resolution)}</select></label>`);
+  return parts.length ? `<div class="h3-settings-grid">${parts.join("")}</div>` : "";
+}
+
+/* One renderer for both dialogs, so "Simple" means the same thing on a blocking revision
+   and on a continuity-state reference as it does on the compiled frame dialog. */
+function renderFalFixedImageView(hostId, ids, current, limits, mode) {
+  const host = document.getElementById(hostId);
+  if (!host) return;
+  const view = generationViewMode(mode || generationViewPreference());
+  const plan = falFixedImageControlPlan(view, current);
+  host.innerHTML = generationViewMarkup({
+    mode: view,
+    plan,
+    option: falFixedImageRoute(),
+    recommendation: generationRecommendation({ guide: null, options: [] }),
+    rate: generationRateFor("image"),
+    quantity: Math.max(1, Number(current.count) || 1),
+    limits,
+    controlsMarkup: falFixedImageControlsMarkup(plan, ids, current),
+  });
+}
+
 window.openFalGenerationModal = (purpose, shotId, frameId = "", buildId = "") => {
   const s = shotById(shotId);
   if (!s) return;
@@ -145,7 +217,15 @@ window.openFalGenerationModal = (purpose, shotId, frameId = "", buildId = "") =>
   const sourceRow = sourceId ? blockingMediaRows(s).find(({ asset }) => asset.id === sourceId) : null;
   const profile = typeof profileById === "function" ? profileById(build.profileId || "") : null;
   window._falGenerationRequest = { purpose, shotId, frameId, buildId: build.id, packageId: build.packageId || "", prompt: build.prompt, frameLabel: frame?.label || "A", revision, sourceId, profileId: build.profileId || "", profileName: build.profileName || profile?.name || build.profileId || "", profileFamily: profile?.family || "" };
-  openModal(`<h3>${blocking ? revision && sourceRow ? "Revise blocking attempt" : "Generate blocking options" : `Generate Frame ${esc(frame?.label || "A")} options`}</h3><div class="modal-sub">FAL · ${esc((build.profileName || build.profileId || "Prompt build").toUpperCase())}${blocking && revision && sourceRow ? " · EDIT" : ""}</div>${blocking && revision ? `<div class="fal-revision-summary"><b>Requested changes</b><p>${esc(revision)}</p>${sourceRow ? `<small>Using ${esc(sourceRow.asset.title || sourceRow.asset.file)} as the editable grayscale scaffold.</small>` : `<small>Generating a fresh blocking attempt from the revised prompt.</small>`}</div>` : ""}<div class="two-col"><label><span>Number of options</span><select id="fal-output-count">${[1,2,3,4].map((n)=>`<option value="${n}" ${n===count?"selected":""}>${n}</option>`).join("")}</select></label><label><span>Quality</span><select id="fal-quality">${["low","medium","high"].map((value)=>`<option value="${value}" ${value===quality?"selected":""}>${value[0].toUpperCase()+value.slice(1)}</option>`).join("")}</select></label><label><span>Resolution</span><select id="fal-resolution">${falResolutionOptions(resolution)}</select></label></div><p class="hint">This submits a paid FAL request. CineBraid will store returned images in this shot and link them to the prompt build.</p><div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button class="approve-btn large" onclick="startFalGeneration()">START GENERATION</button></div>`);
+  const legacyIds = { count: "fal-output-count", quality: "fal-quality", resolution: "fal-resolution" };
+  const legacyCurrent = { count, quality, resolution };
+  const drawLegacyView = (mode) => renderFalFixedImageView("fal-legacy-generation-view", legacyIds, legacyCurrent, {
+    rows: [{ value: count, label: count === 1 ? "candidate returned" : "candidates returned" }],
+    stopEarly: "Every returned image is an unapproved candidate. Nothing becomes canon until you approve one.",
+  }, mode);
+  window._generationViewRefresh = drawLegacyView;
+  openModal(`<h3>${blocking ? revision && sourceRow ? "Revise blocking attempt" : "Generate blocking options" : `Generate Frame ${esc(frame?.label || "A")} options`}</h3><div class="modal-sub">FAL · ${esc((build.profileName || build.profileId || "Prompt build").toUpperCase())}${blocking && revision && sourceRow ? " · EDIT" : ""}</div>${blocking && revision ? `<div class="fal-revision-summary"><b>Requested changes</b><p>${esc(revision)}</p>${sourceRow ? `<small>Using ${esc(sourceRow.asset.title || sourceRow.asset.file)} as the editable grayscale scaffold.</small>` : `<small>Generating a fresh blocking attempt from the revised prompt.</small>`}</div>` : ""}<div id="fal-legacy-generation-view"></div><p class="hint">This submits a paid FAL request. CineBraid will store returned images in this shot and link them to the prompt build.</p><div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button class="approve-btn large" onclick="startFalGeneration()">START GENERATION</button></div>`);
+  setTimeout(() => drawLegacyView(), 0);
 };
 window.startFalGeneration = async () => {
   const request = window._falGenerationRequest;
@@ -185,10 +265,13 @@ window.startFalGeneration = async () => {
     revisionRequest: request.revision || "",
     revisedFromAssetId: request.sourceId || "",
   };
+  /* Same gate as every other generation surface: a control the active view does not
+     render does not travel, and a machine setting no model declares can never travel. */
+  const gatedBody = restrictPayloadToPlan(body, falFixedImageControlPlan(generationViewPreference(), request)).payload;
   closeModal();
   keepGuidedPanelOpen(s, blocking ? "blocking" : "");
   try {
-    const response = await fetch("/api/generation/fal/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const response = await fetch("/api/generation/fal/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(gatedBody) });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || "Could not start generation");
     FAL_GENERATION_JOBS = [...(FAL_GENERATION_JOBS || []).filter((job) => job.id !== data.job.id), data.job];
@@ -375,12 +458,20 @@ window.openFalEntityGenerationModal = (list, entityId, buildId = "", stateId = "
   const typeLabel = { characters: "character", locations: "location", props: "prop", vehicles: "vehicle" }[list] || "entity";
   const workspaceAnchor = document.querySelector("details.asset-creation-card");
   window._falEntityGenerationRequest = { list, entityId, buildId: build.id, stateId: state?.id || "", requestedMode, effectiveMode, anchorTop: workspaceAnchor?.getBoundingClientRect?.().top };
+  const entityIds = { count: "fal-entity-output-count", quality: "fal-entity-quality", resolution: "fal-entity-resolution" };
+  const entityCurrent = { count, quality, resolution };
+  const drawEntityView = (mode) => renderFalFixedImageView("fal-entity-generation-view", entityIds, entityCurrent, {
+    rows: [{ value: count, label: count === 1 ? "candidate returned" : "candidates returned" }],
+    stopEarly: `Every returned file is an unapproved ${typeLabel} candidate. Nothing becomes canon until you approve one.`,
+  }, mode);
+  window._generationViewRefresh = drawEntityView;
   /* Shown, not chosen. The prompt in `build` was compiled at this ratio minutes ago;
      a picker here could only disagree with it, and when it did the request won and the
      prompt was left describing a frame nobody was going to get. */
   const aspectLabel = referenceAspectLabel(list);
   const stateSummary = state ? `<div class="fal-revision-summary"><b>${esc(state.name || "Continuity state")}</b><p>${esc(state.notes || "No state delta entered.")}</p><small>${effectiveMode === "derive" ? `Editing from ${esc(parentInfo?.parent?.name || "parent state")} · ${esc(parentInfo?.file || "")}` : requestedMode === "derive" ? `The selected parent has no approved image, so this run will create independently.` : "Creating independently from entity canon and the state delta."}</small></div>` : "";
-  openModal(`<h3>Generate ${state ? `${esc(state.name || "state")} ` : ""}${esc(typeLabel)} reference candidates</h3><div class="modal-sub">FAL · GPT IMAGE 2${refs.length ? " EDIT / REFERENCE-GUIDED" : " TEXT-TO-IMAGE"}</div>${stateSummary}<div class="candidate-evidence-facts"><span>${esc(entity.id)}</span>${state ? `<span>Target · ${esc(state.name || "State")}</span>` : ""}<span>${refs.length} input${refs.length === 1 ? "" : "s"}</span><span>Candidate only · approval required</span></div><div class="two-col"><label><span>Number of options</span><select id="fal-entity-output-count">${[1,2,3,4].map((n) => `<option value="${n}" ${n === count ? "selected" : ""}>${n}</option>`).join("")}</select></label><label><span>Quality</span><select id="fal-entity-quality">${["low","medium","high"].map((value) => `<option value="${value}" ${value === quality ? "selected" : ""}>${value[0].toUpperCase() + value.slice(1)}</option>`).join("")}</select></label><label><span>Resolution</span><select id="fal-entity-resolution">${falResolutionOptions(resolution)}</select></label></div><div class="candidate-evidence-facts" data-fal-entity-aspect="${attr(aspectLabel)}"><span>Aspect ratio · ${esc(aspectLabel)}</span><span>${esc(typeLabel)} reference format · matches the compiled prompt</span></div><p class="hint">This submits a paid FAL image request. Returned files are added as unapproved ${esc(typeLabel)} candidates${state ? ` targeted to ${esc(state.name || "this state")}` : ""}. They do not become canon until you explicitly approve one.</p><div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button class="approve-btn large" onclick="startFalEntityGeneration()">START GENERATION</button></div>`);
+  openModal(`<h3>Generate ${state ? `${esc(state.name || "state")} ` : ""}${esc(typeLabel)} reference candidates</h3><div class="modal-sub">FAL · GPT IMAGE 2${refs.length ? " EDIT / REFERENCE-GUIDED" : " TEXT-TO-IMAGE"}</div>${stateSummary}<div class="candidate-evidence-facts"><span>${esc(entity.id)}</span>${state ? `<span>Target · ${esc(state.name || "State")}</span>` : ""}<span>${refs.length} input${refs.length === 1 ? "" : "s"}</span><span>Candidate only · approval required</span></div><div id="fal-entity-generation-view"></div><div class="candidate-evidence-facts" data-fal-entity-aspect="${attr(aspectLabel)}"><span>Aspect ratio · ${esc(aspectLabel)}</span><span>${esc(typeLabel)} reference format · matches the compiled prompt</span></div><p class="hint">This submits a paid FAL image request. Returned files are added as unapproved ${esc(typeLabel)} candidates${state ? ` targeted to ${esc(state.name || "this state")}` : ""}. They do not become canon until you explicitly approve one.</p><div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button class="approve-btn large" onclick="startFalEntityGeneration()">START GENERATION</button></div>`);
+  setTimeout(() => drawEntityView(), 0);
 };
 
 window.generateMoreEntityStateCandidates = async (list, entityId, stateId, buildId = "", improve = false) => {
@@ -479,10 +570,12 @@ window.startFalEntityGeneration = async () => {
        this shape; reading a control here is what let the two disagree. */
     aspectRatio: referenceAspectLabel(request.list),
   };
+  /* The same gate every generation surface passes through. */
+  const gatedBody = restrictPayloadToPlan(body, falFixedImageControlPlan(generationViewPreference(), request)).payload;
   try {
     await flushPendingProjectSave();
     closeModal();
-    const response = await fetch("/api/generation/fal/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const response = await fetch("/api/generation/fal/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(gatedBody) });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || "Could not start entity generation");
     FAL_GENERATION_JOBS = [...(FAL_GENERATION_JOBS || []).filter((job) => job.id !== data.job.id), data.job];
@@ -620,19 +713,28 @@ function falH3MotionPromptAction(shotId, buildId, profile) {
   if (!falGenerationReady() || profile?.family !== "minimax-h3") return "";
   return `<button class="approve-btn h3-generate-btn" onclick="openFalH3MotionModal('${shotId}','${buildId}')">GENERATE H3 VIDEO</button>`;
 }
-function falH3CostEstimate(duration, imageCount, videoCount, resolution = "2K") {
-  const seconds = Math.max(5, Math.min(15, Number(duration || 5)));
-  const base2K = seconds * 0.26;
-  const extraImages = Math.max(0, Number(imageCount || 0) - 5) * 0.08;
-  const total = base2K + extraImages;
-  const resolutionNote = String(resolution).toUpperCase() === "2K"
-    ? "Current public 2K rate"
-    : "2K-rate reference; verify the current 768P rate on FAL";
-  return {
-    total,
-    label: `${resolutionNote}: about $${total.toFixed(2)} USD`,
-    detail: `${seconds}s output${extraImages ? ` + $${extraImages.toFixed(2)} for ${Math.max(0, imageCount - 5)} image${imageCount - 5 === 1 ? "" : "s"} beyond the first five` : ""}${videoCount ? "; reference-video usage is billed separately" : ""}. Pricing can change before submission.`,
-  };
+/* THE PRE-FLIGHT QUOTE, from the same configured rate the ledger will record.
+ *
+ * This function used to BE the price authority for motion: $0.26 per second and $0.08
+ * per reference image beyond the first five, typed into the browser, multiplied here,
+ * and printed as "about $2.60 USD" beside the paid button. The server meanwhile recorded
+ * `confidence: "unknown"` for the identical job, because generation-cost.js had no motion
+ * rate to read and rightly refused to multiply a per-IMAGE rate by a video. Two
+ * authorities, two answers, and the filmmaker only ever saw one of them.
+ *
+ * Now there is one rate in configuration and one function that multiplies it, and this
+ * calls that function. Two consequences worth stating:
+ *
+ *   - An install that has not configured a motion rate quotes UNAVAILABLE rather than a
+ *     number, and the job it submits records `unknown`. The screen and the row agree
+ *     about not knowing, which is the honest version of agreeing.
+ *   - The per-reference-image surcharge is GONE rather than moved. It was a second
+ *     hard-coded rate that no CineBraid source establishes, and configuration holds the
+ *     per-second rate this slice was scoped to. Inventing a config field to preserve an
+ *     unverified number would have carried the guess forward wearing better clothes. */
+function falH3MotionQuote(durationSeconds) {
+  const rate = configuredMotionRate(typeof CONFIG === "object" ? CONFIG : {});
+  return generationPriceLine({ rate, quantity: Number(durationSeconds) || 0, local: false });
 }
 /* The dialog shows the COMPILED PLAN, because the compiled plan is what is sent.
  *
@@ -649,13 +751,19 @@ function falH3CostEstimate(duration, imageCount, videoCount, resolution = "2K") 
 window.updateFalH3CostEstimate = () => {
   const request = window._falH3MotionRequest || {};
   const duration = Number(document.getElementById("fal-h3-duration")?.value || request.durationSeconds || 5);
-  const resolution = document.getElementById("fal-h3-resolution")?.value || request.resolution || falH3ResolutionValue();
-  const refs = request.references || [];
-  const images = refs.filter((ref) => ref.mediaType === "image").length;
-  const videos = refs.filter((ref) => ref.mediaType === "video").length;
-  const estimate = falH3CostEstimate(duration, images, videos, resolution);
+  const quote = falH3MotionQuote(duration);
   const target = document.getElementById("fal-h3-cost-estimate");
-  if (target) target.innerHTML = `<b>${esc(estimate.label)}</b><span>${esc(estimate.detail)}</span>`;
+  if (!target) return;
+  /* The provenance rides with the figure rather than sitting in Settings. A filmmaker
+     about to spend money should be able to see, without leaving the dialog, whether the
+     number came from somebody who read the provider's page last week or from a field
+     nobody has ever filled in. */
+  const provenance = (quote.provenance && quote.provenance.line) || "";
+  target.innerHTML = `<b>${esc(quote.headline)}</b><span>${esc(quote.detail)}</span>${provenance ? `<em class="gen-view-provenance">${esc(provenance)}</em>` : ""}`;
+  /* The whole Simple/Advanced block re-renders with it: duration is the quantity the
+     quote multiplies, so a duration change that moved the price and left the panel
+     showing the previous one would be the same disagreement in miniature. */
+  renderFalH3GenerationView();
 };
 /* The effective ceiling: MiniMax H3's own limit intersected with fal's. The dialog is
    told the number rather than deciding it, and says which layer set it. */
@@ -887,6 +995,14 @@ window.openFalH3MotionModal = async (shotId, buildId = "") => {
   window._falH3MotionRequest = {
     ...preview,
     options: motionOptions,
+    /* The four things the shared Simple/Advanced view needs and the plan payload does not
+       carry: the legal aspect list for this mode, the ratio the production actually asked
+       for, whether this model can deliver it, and the note explaining a narrowed duration
+       range. Stored rather than recomputed on every redraw, because they are decided once
+       when the dialog opens. */
+    aspectSupported: aspectGate.supported || [],
+    aspectRequested: ratio,
+    aspectOk: aspectGate.ok !== false,
     selectedOptionId: readyMotion.find((option) => option.modelId.startsWith("minimax-h3/"))?.optionId || readyMotion[0]?.optionId || "",
     shotId,
     buildId: build.id,
@@ -936,13 +1052,113 @@ window.openFalH3MotionModal = async (shotId, buildId = "") => {
   const freshnessBanner = freshness.recorded && !freshness.current
     ? `<div id="fal-h3-stale-notice" class="guided-prompt-error"><div><b>This compiled package is out of date</b><small>${esc(freshness.reasons.join("; "))}. Rebuild the motion prompt to send what the shot says now, or continue to send this package as compiled.</small></div></div>`
     : "";
+  /* Assigned here rather than in the literal above: `durationNote` is computed from the
+     preview a few lines up, and reading it before its `const` is a temporal-dead-zone
+     ReferenceError that takes the whole dialog with it. */
+  request.durationNote = durationNote;
   const durationBanner = durationChanged
     ? `<div id="fal-h3-duration-notice" class="guided-prompt-error"><div><b>This shot is written as ${esc(String(askedDuration))} seconds, which this backend cannot render</b><small>MiniMax H3 renders from ${preview.modelDurationRange[0]}s, but fal accepts ${durationLow}–${durationHigh}s. ${preview.durationSeconds}s is selected below — confirm it or choose another length. CineBraid will not change the length of your shot for you: submitting ${esc(String(askedDuration))}s is refused, not adjusted.</small></div></div>`
     : "";
 
-  openModal(`<div class="h3-generation-modal"><header class="h3-generation-head"><div><span>MINIMAX H3 · PAID GENERATION</span><h3>Generate with ${esc(request.profileName)}</h3><p>This is the request CineBraid compiled from the approved package. Confirm the inputs, the prompt and the estimated spend before submission.</p></div><button class="cancel" onclick="closeModal()">Close</button></header><div class="h3-generation-scroll"><div class="modal-sub">FAL · ${esc(preview.dispatch?.model || "minimax/h3")} · compiled by ${esc(preview.compiler?.packId || "minimax-h3")} ${esc(preview.compiler?.packVersion || "")}</div><div class="candidate-evidence-facts"><span>${images.length} image${images.length === 1 ? "" : "s"}</span><span>${videos.length} video${videos.length === 1 ? "" : "s"}</span><span>${audio.length} audio</span><span id="fal-h3-prompt-fact">${preview.compiledPrompt.length.toLocaleString()}/${limit.toLocaleString()} prompt characters</span><span>Native stereo audio</span></div><div id="fal-h3-refusal" class="guided-prompt-error" hidden></div><div id="fal-h3-options"></div><section id="fal-h3-sequence" class="h3-submit-sequence" hidden></section>${freshnessBanner}${durationBanner}<section class="h3-generation-settings"><h4>Output settings</h4><div class="h3-settings-grid"><label><span>Duration</span><select id="fal-h3-duration" onchange="refreshFalH3Plan()">${durationOptions.map((n)=>`<option value="${n}" ${n===Number(preview.durationSeconds)?"selected":""}>${n} seconds</option>`).join("")}</select><small>${esc(durationNote)}</small></label><label><span>Resolution</span><select id="fal-h3-resolution" onchange="refreshFalH3Plan()">${resolutions.map((value)=>`<option value="${attr(value)}" ${value===preview.resolution?"selected":""}>${esc(value)}</option>`).join("")}</select></label>${preview.carriesAspectRatio ? `<label><span>Aspect ratio</span><select id="fal-h3-aspect" onchange="refreshFalH3Plan()">${aspectGate.ok ? "" : `<option value="${attr(ratio)}" selected>${esc(ratio)} — not supported</option>`}${aspectGate.supported.map((value)=>`<option value="${attr(value)}" ${value===preview.aspectRatio?"selected":""}>${esc(value)}</option>`).join("")}</select></label>` : ""}</div></section><div id="fal-h3-aspect-warning" class="guided-prompt-error" ${aspectGate.ok ? "hidden" : ""}>${aspectGate.ok ? "" : `<div><b>MiniMax H3 cannot deliver ${esc(ratio)}</b><small>${esc(aspectGate.message)}</small></div>`}</div><div id="fal-h3-cost-estimate" class="h3-cost-estimate"></div><div id="fal-h3-plan-warnings"></div><div id="fal-h3-prompt-warning" class="guided-prompt-error" ${promptReady ? "hidden" : ""}><div><b>Prompt is not ready for submission</b><small>${promptReady ? "" : `Shorten this prompt to ${limit.toLocaleString()} characters before a paid submission.`}</small></div></div><section class="h3-prompt-editor"><header><div><b>Edit prompt before generation</b><small>This is the prompt CineBraid compiled and the exact text that will be sent. ${esc(limitNote)} The compiled package is preserved; any change is saved as a linked manual revision and recorded beside the compiled original.</small></div><span id="fal-h3-prompt-count">${preview.compiledPrompt.length.toLocaleString()}/${limit.toLocaleString()}</span></header><textarea id="fal-h3-prompt-editor" oninput="updateFalH3PromptEditor()" onchange="reviewFalH3PromptEdit()">${esc(preview.compiledPrompt)}</textarea><div id="fal-h3-edit-coverage" class="h3-edit-coverage" hidden></div><div class="h3-prompt-editor-actions"><label><span>Revision note · optional</span><input id="fal-h3-prompt-edit-reason" placeholder="Clarified timing, removed duplicate action…"></label><button class="ghost-btn" onclick="resetFalH3PromptEditor()">Reset compiled prompt</button></div></section><p class="hint">This submits one paid MiniMax H3 request through FAL. The returned MP4 is saved as an unapproved video candidate in this shot. The request uses an idempotency key to prevent an accidental double submission from this dialog.</p></div><footer class="modal-actions h3-generation-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button id="fal-h3-submit" class="approve-btn large" onclick="startFalH3MotionGeneration()" ${promptReady && aspectGate.ok && !preview.refusal ? "" : "disabled"}>START H3 GENERATION</button></footer></div>`);
+  openModal(`<div class="h3-generation-modal"><header class="h3-generation-head"><div><span>MINIMAX H3 · PAID GENERATION</span><h3>Generate with ${esc(request.profileName)}</h3><p>This is the request CineBraid compiled from the approved package. Confirm the inputs, the prompt and the estimated spend before submission.</p></div><button class="cancel" onclick="closeModal()">Close</button></header><div class="h3-generation-scroll"><div class="modal-sub">FAL · ${esc(preview.dispatch?.model || "minimax/h3")} · compiled by ${esc(preview.compiler?.packId || "minimax-h3")} ${esc(preview.compiler?.packVersion || "")}</div><div class="candidate-evidence-facts"><span>${images.length} image${images.length === 1 ? "" : "s"}</span><span>${videos.length} video${videos.length === 1 ? "" : "s"}</span><span>${audio.length} audio</span><span id="fal-h3-prompt-fact">${preview.compiledPrompt.length.toLocaleString()}/${limit.toLocaleString()} prompt characters</span><span>Native stereo audio</span></div><div id="fal-h3-refusal" class="guided-prompt-error" hidden></div><div id="fal-h3-options"></div><section id="fal-h3-sequence" class="h3-submit-sequence" hidden></section>${freshnessBanner}${durationBanner}<div id="fal-h3-generation-view"></div><div id="fal-h3-aspect-warning" class="guided-prompt-error" ${aspectGate.ok ? "hidden" : ""}>${aspectGate.ok ? "" : `<div><b>MiniMax H3 cannot deliver ${esc(ratio)}</b><small>${esc(aspectGate.message)}</small></div>`}</div><div id="fal-h3-cost-estimate" class="h3-cost-estimate"></div><div id="fal-h3-plan-warnings"></div><div id="fal-h3-prompt-warning" class="guided-prompt-error" ${promptReady ? "hidden" : ""}><div><b>Prompt is not ready for submission</b><small>${promptReady ? "" : `Shorten this prompt to ${limit.toLocaleString()} characters before a paid submission.`}</small></div></div><section class="h3-prompt-editor"><header><div><b>Edit prompt before generation</b><small>This is the prompt CineBraid compiled and the exact text that will be sent. ${esc(limitNote)} The compiled package is preserved; any change is saved as a linked manual revision and recorded beside the compiled original.</small></div><span id="fal-h3-prompt-count">${preview.compiledPrompt.length.toLocaleString()}/${limit.toLocaleString()}</span></header><textarea id="fal-h3-prompt-editor" oninput="updateFalH3PromptEditor()" onchange="reviewFalH3PromptEdit()">${esc(preview.compiledPrompt)}</textarea><div id="fal-h3-edit-coverage" class="h3-edit-coverage" hidden></div><div class="h3-prompt-editor-actions"><label><span>Revision note · optional</span><input id="fal-h3-prompt-edit-reason" placeholder="Clarified timing, removed duplicate action…"></label><button class="ghost-btn" onclick="resetFalH3PromptEditor()">Reset compiled prompt</button></div></section><p class="hint">This submits one paid MiniMax H3 request through FAL. The returned MP4 is saved as an unapproved video candidate in this shot. The request uses an idempotency key to prevent an accidental double submission from this dialog.</p></div><footer class="modal-actions h3-generation-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button id="fal-h3-submit" class="approve-btn large" onclick="startFalH3MotionGeneration()" ${promptReady && aspectGate.ok && !preview.refusal ? "" : "disabled"}>START H3 GENERATION</button></footer></div>`);
+  /* One slot, and this dialog now owns it: switching Simple/Advanced redraws THIS view.
+     Registered before the first paint so the very first toggle has somewhere to go. */
+  window._generationViewRefresh = () => renderFalH3GenerationView();
   setTimeout(() => { renderFalH3PlanPanels(); updateFalH3CostEstimate(); updateFalH3PromptEditor(); }, 0);
 };
+
+/* The H3 dialog's own controls, drawn from the plan rather than from a fixed grid.
+ *
+ * Duration and resolution come out of the effective capability the server already
+ * computed - `durationRange` IS capability.durationSeconds and `resolutions` IS the
+ * model-intersect-backend resolution list - so a value this configuration cannot render
+ * has no option to select. There is no seed control because no H3 endpoint has a seed and
+ * no candidate-count control because H3 returns one clip: both absences are derived from
+ * the capability rather than from this function knowing anything about MiniMax. */
+function falH3ControlsMarkup(plan, request) {
+  const rendered = new Set(plan.rendered || []);
+  const parts = [];
+  if (rendered.has("durationSeconds")) {
+    const [low, high] = Array.isArray(request.durationRange) && request.durationRange.length === 2
+      ? request.durationRange
+      : [5, 15];
+    const options = Array.from({ length: Math.max(1, high - low + 1) }, (_, i) => low + i);
+    parts.push(`<label><span>Duration</span><select id="fal-h3-duration" onchange="refreshFalH3Plan()">${
+      options.map((n) => `<option value="${n}" ${n === Number(request.durationSeconds) ? "selected" : ""}>${n} seconds</option>`).join("")
+    }</select><small>${esc(String(request.durationNote || ""))}</small></label>`);
+  }
+  if (rendered.has("resolution")) {
+    const values = Array.isArray(request.resolutions) && request.resolutions.length ? request.resolutions : [];
+    parts.push(`<label><span>Resolution</span><select id="fal-h3-resolution" onchange="refreshFalH3Plan()">${
+      values.map((value) => `<option value="${attr(value)}" ${value === request.resolution ? "selected" : ""}>${esc(value)}</option>`).join("")
+    }</select></label>`);
+  }
+  if (rendered.has("aspectRatio")) {
+    const supported = Array.isArray(request.aspectSupported) ? request.aspectSupported : [];
+    /* The production's own ratio stays selectable and labelled as unsupported when it is,
+       because removing it would silently reframe the shot to something nobody chose. */
+    const unsupportedRow = request.aspectOk === false
+      ? `<option value="${attr(request.aspectRequested || "")}" selected>${esc(String(request.aspectRequested || ""))} - not supported</option>`
+      : "";
+    parts.push(`<label><span>Aspect ratio</span><select id="fal-h3-aspect" onchange="refreshFalH3Plan()">${unsupportedRow}${
+      supported.map((value) => `<option value="${attr(value)}" ${value === request.aspectRatio ? "selected" : ""}>${esc(value)}</option>`).join("")
+    }</select></label>`);
+  }
+  return parts.length ? `<div class="h3-settings-grid">${parts.join("")}</div>` : "";
+}
+
+/* What this dialog may draw, and - the same answer read differently - what
+   startFalH3MotionGeneration() is allowed to put in the body. */
+function falH3ControlPlan(mode) {
+  const request = window._falH3MotionRequest || {};
+  return generationControlPlan({
+    capability: capabilityFromPlan(request, {
+      aspectRatios: request.carriesAspectRatio
+        ? [...(request.aspectSupported || []), ...(request.aspectOk === false && request.aspectRequested ? [request.aspectRequested] : [])]
+        /* The mode carries no aspect_ratio field at all - i2v and flf do not - so the
+           legal set is genuinely empty and the control does not exist. An empty ARRAY,
+           never null: null would mean "nobody constrained it" and would draw a picker for
+           a field the request has no room for. */
+        : [],
+      /* H3 renders one clip per request and declares no candidateBatching, so there is no
+         "number of options" control to draw. */
+      candidateBatching: false,
+      referenceWeights: false,
+    }),
+    mode,
+    only: ["durationSeconds", "resolution", "aspectRatio", "seed", "cfgScale", "steps", "referenceStrength"],
+    /* A format this model cannot deliver disables the paid button, and the control that
+       fixes it must not sit behind a panel the filmmaker has not opened. */
+    force: request.aspectOk === false ? ["aspectRatio"] : [],
+  });
+}
+
+function renderFalH3GenerationView(mode) {
+  const host = document.getElementById("fal-h3-generation-view");
+  if (!host) return;
+  const request = window._falH3MotionRequest || {};
+  const view = generationViewMode(mode || generationViewPreference());
+  const plan = falH3ControlPlan(view);
+  const resolved = request.options || null;
+  host.innerHTML = generationViewMarkup({
+    mode: view,
+    plan,
+    option: selectedGenerationOption(resolved, request.selectedOptionId),
+    recommendation: generationRecommendationFor(resolved),
+    rate: generationRateFor("video"),
+    /* Seconds, because the motion rate is per second. The quantity a price multiplies and
+       the quantity the record keeps are the same number by construction. */
+    quantity: Number(request.durationSeconds) || 0,
+    limits: {
+      rows: [{ value: 1, label: "clip per request" }],
+      /* Truthful about THIS path and nothing more: a running H3 job can genuinely be
+         cancelled, so the dialog says that. It claims no unattended retry policy and no
+         early-stop heuristic, because this path has neither. */
+      stopEarly: "One clip is returned as an unapproved candidate. A request already at the provider can be cancelled from the shot while it runs.",
+    },
+    controlsMarkup: falH3ControlsMarkup(plan, request),
+  });
+}
 window.startFalH3MotionGeneration = async () => {
   const request = window._falH3MotionRequest;
   if (!request || window._falH3Submitting) return;
@@ -976,6 +1192,11 @@ window.startFalH3MotionGeneration = async () => {
   window._falH3Submitting = true;
   const button = document.getElementById("fal-h3-submit");
   if (button) { button.disabled = true; button.textContent = "SUBMITTING…"; }
+  /* THE PLAN THE SCREEN IS ACTUALLY SHOWING, recomputed at the moment of dispatch rather
+     than remembered from when the dialog opened. A filmmaker who set a size under
+     Advanced and returned to Simple is submitting a Simple request, and this is where
+     that becomes true of the payload rather than only of the screen. */
+  const dispatchPlan = falH3ControlPlan(generationViewPreference());
   const body = {
     purpose: "motion-h3",
     clientRequestId: request.clientRequestId,
@@ -992,15 +1213,23 @@ window.startFalH3MotionGeneration = async () => {
     /* The text to send. Identical to the compiled prompt unless it was edited above, in
        which case the server records both. */
     prompt: request.prompt,
-    outputCount: 1,
+    /* `outputCount` is deliberately absent. The server forces 1 for motion-h3 and ignores
+       whatever the body says, so asserting a number here would be the browser claiming a
+       decision it does not make — and H3 declares no candidateBatching, so there is no
+       control behind it either. */
     durationSeconds: Number(document.getElementById("fal-h3-duration")?.value || request.durationSeconds || 5),
     resolution: document.getElementById("fal-h3-resolution")?.value || request.resolution || falH3ResolutionValue(),
     aspectRatio: gate.carriesAspectRatio ? gate.value : request.aspectRatio || "",
   };
+  /* THE GATE. Every control key the active view does not render is removed here, so a
+     value can only reach the provider if the screen offered it and this model supports
+     it. Nothing else in the body is touched: the prompt, the package identity and the
+     profile are the request itself, not settings. */
+  const gated = restrictPayloadToPlan(body, dispatchPlan);
   try {
     await flushPendingProjectSave();
     closeModal();
-    const response = await fetch("/api/generation/fal/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const response = await fetch("/api/generation/fal/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(gated.payload) });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || "Could not start MiniMax H3 generation");
     FAL_GENERATION_JOBS = [...(FAL_GENERATION_JOBS || []).filter((job) => job.id !== data.job.id), data.job];

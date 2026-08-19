@@ -45,18 +45,39 @@
  * Pure module: no I/O, no configuration reads of its own, no clock of its own.
  */
 
+/* THE ARITHMETIC IS NOT HERE, and that is the point of importing it.
+ *
+ * public/shared-generation-rate.js multiplies a configured rate by a quantity, and the
+ * BROWSER calls the identical function to draw its pre-flight quote. Keeping the
+ * multiplication in one place is what makes "the number you were shown" and "the number
+ * that was recorded" the same number by construction rather than by review.
+ *
+ * This module still decides everything that is a POLICY question — which purposes are
+ * billed per image, which per second, what a row carries and what "unpriced" means — and
+ * it is still the only writer of a durable estimate. */
+const { costEstimateFromRate } = require("./public/shared-generation-rate");
+
 /* Purposes billed per generated image. `motion-h3` is billed by the provider on a
    different basis entirely — duration, resolution and reference count — and
    multiplying a per-IMAGE rate by a video would be a fabricated number wearing a real
    one's clothes. So a motion job records `confidence: "unknown"`: metered, honestly
    unpriced, and never folded into a total as if it were free.
 
-   A per-second model for H3 does exist, but it lives in the browser as a hard-coded
-   pre-flight quote (`falH3CostEstimate`, public/fal-generation.js) rather than in
-   configuration, so the server has no rate to record here. Giving motion a recorded
-   amount means first giving that model a home the server can read; that is a larger
-   change than this one and is deliberately left out rather than approximated. */
+   That basis now HAS a home the server can read. The per-second figure used to live in
+   the browser as a hard-coded pre-flight quote (`falH3CostEstimate`) rather than in
+   configuration, so the dialog printed a confident number and this module recorded
+   `unknown` for the same job — two authorities, two answers, one of them invisible.
+   The rate is configuration now (`generation.fal.motionRate`) and both sides derive
+   from it through the one shared function in public/shared-generation-rate.js.
+
+   WHAT HAS NOT CHANGED: an unconfigured rate is still unconfigured. A motion job on an
+   install that never filled the field in records `confidence: "unknown"` exactly as it
+   always did, and a per-IMAGE rate still cannot price a video. */
 const IMAGE_PURPOSES = ["blocking", "frame", "correction", "entity-reference"];
+
+/* Purposes billed per second of rendered output. One family today; a list rather than a
+   comparison so a second one needs no new branch. */
+const MOTION_PURPOSES = ["motion-h3"];
 
 /* Every fal dispatch is a remote paid API call. Nothing in this module is free_local. */
 const COST_CLASS = "metered_api";
@@ -89,52 +110,75 @@ function isRecord(value) {
    compiled image path is the count the PLAN settled on rather than the count the
    caller asked for. Recording the requested number would describe a job that was
    never submitted. */
-function submissionAccounting({ purpose, outputCount, ratePerImage, at } = {}) {
+function submissionAccounting({ purpose, outputCount, ratePerImage, motionRate, durationSeconds, at } = {}) {
   const kind = String(purpose || "");
   const perImage = IMAGE_PURPOSES.includes(kind);
-  const quantity = Math.max(0, Math.round(Number(outputCount) || 0));
-  const rate = positiveRate(ratePerImage);
-  /* Priced only when a per-image rate genuinely applies AND one is configured. An
-     unconfigured rate is the default (0), and treating that as "this job cost $0"
-     is the exact fiction this module exists to prevent. */
-  const priced = perImage && rate > 0 && quantity > 0;
-  const amount = priced ? roundUsd(rate * quantity) : null;
+  const perSecond = MOTION_PURPOSES.includes(kind);
 
-  const estimate = priced
+  /* WHICH RATE APPLIES TO THIS OUTPUT, decided here and by nothing downstream. This is
+     the judgement that belongs to the recording authority: a per-image rate prices
+     images and a per-second rate prices seconds, and neither may be pressed into
+     service for the other. The arithmetic itself belongs to the shared module, so the
+     figure this row keeps is the same figure the dialog quoted. */
+  const applicable = perImage
     ? {
-      costClass: COST_CLASS,
-      unit: CURRENCY,
-      confidence: "estimated",
-      amount,
-      breakdown: [{
-        label: `${quantity} image${quantity === 1 ? "" : "s"} at ${rate} USD each`,
-        amount,
-      }],
+      rate: {
+        configured: positiveRate(ratePerImage) > 0,
+        amount: positiveRate(ratePerImage),
+        basis: "image",
+        unitNoun: "image",
+        configPath: "generation.fal.estimatedCostPerImage",
+        unpricedReason: "no-configured-rate",
+      },
+      quantity: Math.max(0, Math.round(Number(outputCount) || 0)),
     }
-    : {
-      /* Metered, and honestly unpriced. The contract refuses an amount alongside
-         `unknown`, which is precisely the guarantee wanted here. */
-      costClass: COST_CLASS,
-      unit: CURRENCY,
-      confidence: "unknown",
-    };
+    : perSecond
+      ? {
+        rate: isRecord(motionRate) && positiveRate(motionRate.amount) > 0
+          ? motionRate
+          : {
+            configured: false, amount: 0, basis: "second", unitNoun: "second",
+            configPath: "generation.fal.motionRate.usdPerSecond",
+            unpricedReason: "no-configured-rate",
+          },
+        quantity: Math.max(0, Math.round(Number(durationSeconds) || 0)),
+      }
+      /* An output whose billing basis CineBraid does not know. Not priced, and the
+         quantity recorded is the one thing that is certainly true about it. */
+      : {
+        rate: {
+          configured: false, amount: 0, basis: "video", unitNoun: "output",
+          configPath: "", unpricedReason: "no-rate-basis-for-this-output",
+        },
+        quantity: Math.max(0, Math.round(Number(outputCount) || 0)),
+      };
+
+  const derived = costEstimateFromRate(applicable);
+  const priced = derived.priced;
 
   return {
     costClass: COST_CLASS,
-    estimate,
+    estimate: derived.estimate,
     recordedAt: String(at || ""),
     /* The arithmetic, not a price list: the one rate used and the one quantity it
        multiplied, so the figure can be explained years later without consulting a
-       Settings value that has since changed. */
-    basis: {
-      unitBasis: perImage ? "image" : "video",
-      quantity,
-      ratePerUnit: priced ? rate : null,
-      rateSource: priced ? "generation.fal.estimatedCostPerImage" : null,
-      ...(priced ? {} : {
-        unpricedReason: perImage ? "no-configured-rate" : "no-per-image-rate-for-this-output",
-      }),
-    },
+       Settings value that has since changed.
+
+       An UNPRICED motion job still records `unitBasis: "video"` and its output count,
+       because that is what is actually known about it — the per-second basis is claimed
+       only when a per-second rate was really applied. */
+    basis: priced
+      ? derived.basis
+      : {
+        ...derived.basis,
+        unitBasis: perImage ? "image" : "video",
+        quantity: perSecond && !priced
+          ? Math.max(0, Math.round(Number(outputCount) || 0))
+          : derived.basis.quantity,
+        unpricedReason: perImage || perSecond
+          ? derived.basis.unpricedReason
+          : "no-per-image-rate-for-this-output",
+      },
   };
 }
 
