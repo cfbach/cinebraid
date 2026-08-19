@@ -286,10 +286,18 @@ async function surfacesSection(options = {}) {
   /* Dogfood §7.1, the same invariant in a dropdown: a coverage selector listing
      approved and unapproved media together must say which is which, or a creator
      can pick an unapproved image believing they are working from canon. */
+  /* The sub-view key was added by Batch 2 Slice 3. `What this production needs`
+     leads with a demand list and keeps the angle / expression / continuity boards
+     behind a toggle, so a suite that wants to inspect the coverage SELECTOR has to
+     select that board the way a filmmaker would. The Dogfood §7.1 invariant below
+     is unchanged and is still asserted against exactly that selector. */
   const coverage = await render(`#/location/${location.id}`, project, {
     ...options,
     scan,
-    storage: { [`cinebraid-focused:fixture:entity-task:locations:${location.id}`]: "coverage" },
+    storage: {
+      [`cinebraid-focused:fixture:entity-task:locations:${location.id}`]: "coverage",
+      [`cinebraid-bounded:fixture:selected:entity-coverage-view:locations:${location.id}`]: "coverage",
+    },
   });
   const coverageHtml = coverage.context.document.getElementById("main").innerHTML;
   assert(coverageHtml.includes(`data-media-role="approved"`),

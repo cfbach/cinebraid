@@ -537,6 +537,13 @@ try:
             # it is selected through the module's OWN task API rather than by
             # reaching past it.
             page.evaluate("() => window.selectFocusedTask && window.selectFocusedTask('coverage')")
+            # BATCH 2 SLICE 3: that task leads with the demand list and keeps the angle /
+            # expression / continuity boards behind a toggle, so the board this case
+            # reads is opened the way a filmmaker opens it — by clicking — and then
+            # waited for by name rather than by a delay.
+            toggle = page.locator(".entity-coverage-detail-toggle")
+            if toggle.count() and page.locator('.entity-coverage-detail[data-coverage-detail-open="1"]').count() == 0:
+                toggle.first.click()
             page.wait_for_selector(".entity-coverage-section", state="attached", timeout=30000)
             reveal()
             seen = page.evaluate("""() => {

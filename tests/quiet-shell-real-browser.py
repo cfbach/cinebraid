@@ -676,8 +676,13 @@ try:
         })""")
         assert resolved["motion"]["resolved"] and resolved["motion"]["stage"] == "motion", \
             f"10. a completed motion run must resolve the declared Motion & sound stage, got {resolved['motion']}"
-        assert resolved["entity"]["resolved"] and resolved["entity"]["task"] == "review", \
-            f"10. a completed base-reference run must resolve the candidate review task, got {resolved['entity']}"
+        # AMENDED BY BATCH 2 SLICE 3, with the rest of this hand-off: the candidate grid
+        # left the `Choose & approve` peer stage and became the second half of the
+        # reference itself, so the surface that owns a finished base-reference run is
+        # `reference` now. Slice 1's rule -- hand off to the surface that OWNS the
+        # result, named in the entity workspace's own vocabulary -- is unchanged.
+        assert resolved["entity"]["resolved"] and resolved["entity"]["task"] == "reference", \
+            f"10. a completed base-reference run must resolve the reference that owns its candidates, got {resolved['entity']}"
 
         # AND THE RUNTIME REFUSES AN IDENTITY IT CANNOT VERIFY. The Node suite drives 24
         # of these; these four are the families acceptance actually reproduced, checked
@@ -727,8 +732,14 @@ try:
         page.click("#automation-activity-toggle")
         page.wait_for_selector('#automation-activity-drawer [data-run-id="quiet-shell-entity"]', timeout=10000)
         page.locator('#automation-activity-drawer [data-run-id="quiet-shell-entity"] button', has_text="OPEN RESULT").click()
+        # AMENDED BY BATCH 2 SLICE 3. Slice 1's rule is unchanged -- a completed run
+        # hands off to the surface that OWNS its result -- but Slice 3 moved the
+        # candidate grid out of the `Choose & approve` peer stage and into the
+        # reference itself, so the task that owns it is `reference` now. The
+        # assertion that actually matters is unchanged and sits below: the candidate
+        # surface must be RENDERED, not merely selected.
         page.wait_for_function(
-            """(ctx) => localStorage.getItem(`cinebraid-focused:${ACTIVE_PROJECT_SLUG}:entity-task:${ctx}`) === 'review'""",
+            """(ctx) => localStorage.getItem(`cinebraid-focused:${ACTIVE_PROJECT_SLUG}:entity-task:${ctx}`) === 'reference'""",
             arg=f"{entity_list}:{entity_id}", timeout=10000)
         # WAIT FOR THE REQUESTED THING, not for the selection that asks for it. The hash
         # change re-renders asynchronously, so reading the DOM straight after the
@@ -739,14 +750,14 @@ try:
             selected: localStorage.getItem(`cinebraid-focused:${ACTIVE_PROJECT_SLUG}:entity-task:${ctx}`),
             candidateSurface: document.querySelectorAll('#main .entity-candidate-section').length,
         })""", f"{entity_list}:{entity_id}")
-        assert entity_landed["selected"] == "review", \
-            f"10. the entity hand-off must select the candidate review task, got {entity_landed['selected']!r}"
+        assert entity_landed["selected"] == "reference", \
+            f"10. the entity hand-off must select the reference that owns the candidates, got {entity_landed['selected']!r}"
         assert entity_id in entity_landed["hash"], \
             f"10. the entity hand-off must reach that reference's own route, got {entity_landed['hash']!r}"
         assert entity_landed["candidateSurface"] >= 1, \
             "10. the entity hand-off must actually render the candidate surface, not just record the selection"
         findings.append(f"10. completed motion -> Motion & sound on the unchanged {motion_landed['hash']} route; "
-                        f"completed base-reference run -> {entity_landed['hash']} with the candidate review task "
+                        f"completed base-reference run -> {entity_landed['hash']} with the owning reference task "
                         f"selected and its surface rendered")
         served_runs["payload"] = {"projectSlug": slug, "runs": []}
         page.evaluate("() => refreshGlobalAutomationActivity(true)")

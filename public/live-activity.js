@@ -587,8 +587,20 @@ const V670_RUN_SCOPE_PANELS = { stills: "still", "blocking-only": "blocking" };
      state-chain    the run derived SEVERAL states and names none of them, so the result
                     surface is the states view with no state singled out. Choosing one
                     would be a guess about which of them the director wants. */
+/* BATCH 2 SLICE 3 — SAME CONTRACT, MOVED TARGET.
+
+   Slice 1's rule is unchanged and is the reason this map exists: a completed run
+   hands off to the surface that OWNS its result, named in the entity workspace's
+   own task vocabulary, applied through selectEntityResultTask. Slice 3 retired
+   `review` as a peer stage and moved the candidate grid into `reference`, so the
+   surface that owns a finished base-reference generation is `reference` now.
+
+   This had to move in the same commit as the task set. A hand-off naming a task
+   the workspace no longer declares does not fail loudly — boundedFocusedTask
+   silently substitutes a fallback, and the filmmaker lands somewhere plausible
+   and wrong, which is the exact "hunt for what finished" Slice 1 removed. */
 const V670_ENTITY_SCOPE_TASKS = {
-  "default-only": { task: "review" },
+  "default-only": { task: "reference" },
   "state-chain": { task: "coverage", view: "states" },
 };
 

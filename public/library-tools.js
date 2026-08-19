@@ -178,7 +178,10 @@ window.doIntake = async () => {
   dirty();
   SCAN = await (await fetch("/api/scan")).json();
   window._pendingEntityStateUpload = null;
-  if (targetStateId) window.selectBoundedTask?.("entity-task", `${list}:${id}`, "review");
+  /* SLICE 3: the candidate grid these files land in moved into `reference`.
+     Writing the retired `review` id would still resolve through legacyMap, but it
+     would leave a stale id in storage that every later read has to translate. */
+  if (targetStateId) window.selectBoundedTask?.("entity-task", `${list}:${id}`, "reference");
   else route();
   toast(saved.length + ` candidate file(s) uploaded${targetStateName ? ` for ${targetStateName}` : ""}`);
 };

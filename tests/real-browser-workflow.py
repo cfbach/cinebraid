@@ -161,6 +161,20 @@ try:
             page.evaluate("value => { location.hash = value; window.dispatchEvent(new HashChangeEvent('hashchange')); }", hash_value)
             page.wait_for_timeout(350)
             page.wait_for_selector("#main")
+
+        def open_coverage_detail():
+            """BATCH 2 SLICE 3. `What this production needs` leads with the demand
+            list and keeps the angle / expression / continuity-state boards behind a
+            toggle, so that the schema's full catalogue of conceivable coverage is not
+            dumped on the filmmaker by default. A suite that drives those boards has to
+            open it the way a filmmaker would — by clicking, and then waiting for the
+            boards it asked for rather than for a fixed delay."""
+            detail = page.locator(".entity-coverage-detail")
+            if not detail.count():
+                return
+            if detail.first.get_attribute("data-coverage-detail-open") != "1":
+                page.locator(".entity-coverage-detail-toggle").first.click()
+            page.wait_for_selector('.entity-coverage-detail[data-coverage-detail-open="1"]', timeout=10000)
         checkpoint("initial board")
         open_hash("#/shots/board")
         assert page.locator(".slate").count() <= 40, "shot overview rendered more than 40 cards"
@@ -174,10 +188,13 @@ try:
             open_hash(f"#/character/{character_id}")
             page.wait_for_selector(".bounded-entity-page")
             assert page.locator(".entity-candidate-card").count() <= 12, "reference page rendered more than 12 candidates"
-            coverage = page.locator(".bounded-entity-taskbar button", has_text="Coverage")
+            # AMENDED BY BATCH 2 SLICE 3: the coverage workspace is stated as a
+            # production demand now, and its detail boards sit behind a disclosure.
+            coverage = page.locator(".bounded-entity-taskbar button", has_text="What this production needs")
             if coverage.count():
                 coverage.first.click()
                 page.wait_for_timeout(250)
+                open_coverage_detail()
                 assert page.locator(".coverage-slot-card").count() <= 1, "more than one complete coverage editor exists"
 
         checkpoint("base routes complete")
@@ -193,7 +210,10 @@ try:
         page.wait_for_timeout(250)
         page.wait_for_selector(".bounded-entity-page", timeout=5000)
         checkpoint("audit character loaded")
-        candidates_task = page.locator(".bounded-entity-taskbar button", has_text=re.compile(r"Choose & approve|Review", re.I))
+        # AMENDED BY BATCH 2 SLICE 3: candidate review is contextual to the reference
+        # that owns it rather than a peer stage, so the task that carries the
+        # candidate grid is Primary reference.
+        candidates_task = page.locator(".bounded-entity-taskbar button", has_text=re.compile(r"Primary reference", re.I))
         assert candidates_task.count(), "audit candidate task is missing"
         candidates_task.first.click()
         page.wait_for_timeout(300)
@@ -219,10 +239,11 @@ try:
         assert batch_state == {"status": "partial", "total": 5, "completed": 5, "failed": 1}, f"unexpected real-browser batch state: {batch_state}"
 
         checkpoint("batch review complete")
-        coverage_task = page.locator(".bounded-entity-taskbar button", has_text="Coverage & states")
-        assert coverage_task.count(), "Coverage & states workspace is missing"
+        coverage_task = page.locator(".bounded-entity-taskbar button", has_text="What this production needs")
+        assert coverage_task.count(), "What this production needs workspace is missing"
         coverage_task.first.click()
         page.wait_for_timeout(250)
+        open_coverage_detail()
         states_tab = page.locator(".entity-subworkspace-tabs button", has_text="Continuity states")
         assert states_tab.count(), "Continuity states subworkspace is missing"
         states_tab.first.click()
@@ -246,9 +267,10 @@ try:
         }""")
         page.evaluate("route()")
         page.wait_for_timeout(250)
-        coverage_task = page.locator(".bounded-entity-taskbar button", has_text="Coverage & states")
+        coverage_task = page.locator(".bounded-entity-taskbar button", has_text="What this production needs")
         coverage_task.first.click()
         page.wait_for_timeout(250)
+        open_coverage_detail()
         angles_tab = page.locator(".entity-subworkspace-tabs button", has_text="Angles / views")
         if angles_tab.count():
             angles_tab.first.click()

@@ -844,7 +844,15 @@ async function main() {
   assert(/entity-authority-status[^>]*>\s*<strong>2\/2<\/strong>\s*<span>states have a canon image<\/span>/.test(stateApprovedRender.html), "canon-image summary must report continuity coverage with separated label/value markup and correct plural agreement");
   assert(stateApprovedRender.html.includes("Default") && stateApprovedRender.html.includes("Damaged"), "canon-image summary must name both canon states");
   const stateCandidateRender = await render("#/prop/PR-TOOL", stateFixture, { scan: stateScan, storage: { "cinebraid-focused:fixture:entity-task:props:PR-TOOL": "candidates" } });
-  assert(stateCandidateRender.html.includes("CHOOSE & APPROVE"), "candidate task must separate unapproved media from canon");
+  /* AMENDED BY BATCH 2 SLICE 3, deliberately and in the same commit as the
+     change that makes it necessary. The banner used to read "CHOOSE & APPROVE"
+     because candidate review was a peer production stage; it now names the
+     reference that owns the candidates, which is the whole of Slice 3 §B. The
+     property this line has always actually guarded — that approved canon is
+     separated from the undecided pile rather than mixed into it — is asserted
+     below on the markup that does the separating. */
+  assert(stateCandidateRender.html.includes("CANDIDATES FOR THIS PROP REFERENCE"), "candidate review must be contextual to the reference that owns it");
+  assert(stateCandidateRender.html.includes("entity-approved-authority"), "candidate task must separate unapproved media from canon");
   assert(stateCandidateRender.html.includes("AI 84 · PASS · Damaged"), "stored state-specific vision review must appear on the candidate card");
   assert(stateCandidateRender.html.includes("AI CHECK DETAILS") || stateCandidateRender.html.includes("OPTIONAL AI CHECK"), "active entity candidates must expose optional structured vision review when vision is available");
   assert(stateCandidateRender.html.includes("Rejected candidates"), "rejected generations must collapse outside the active candidate grid");

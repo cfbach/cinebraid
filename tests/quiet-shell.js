@@ -706,8 +706,18 @@ async function checkResultHandoff() {
   const entityDefault = target(RUNS.completedEntity());
   assert.strictEqual(entityDefault.resolved, true, "a completed default-reference run must resolve a result target");
   assert.strictEqual(entityDefault.kind, "entity-task", "an entity run must resolve an entity-task target");
-  assert.strictEqual(entityDefault.task, "review",
-    "a run that built and approved the base reference must land on Choose & approve, where the candidates are");
+  /* AMENDED BY BATCH 2 SLICE 3, and the amendment is the point rather than an
+     accommodation. Slice 1's rule has not moved: a completed run hands off to the
+     surface that OWNS its result. Slice 3 changed which surface that is — the
+     candidate grid left the `Choose & approve` peer stage and became the second
+     half of the reference itself — so the same rule now names `reference`.
+
+     This assertion had to move in the same commit as the task set, because a
+     hand-off naming a retired task does not fail loudly: boundedFocusedTask
+     substitutes a fallback and the filmmaker lands somewhere plausible and
+     wrong. That silent-substitution property is exactly why it is asserted. */
+  assert.strictEqual(entityDefault.task, "reference",
+    "a run that built and approved the base reference must land on the reference that owns its candidates");
   assert.strictEqual(entityDefault.route, "#/character/KAI", "the entity hand-off must keep the shipped entity route");
 
   const entityState = target(RUNS.completedEntityState());
@@ -725,11 +735,19 @@ async function checkResultHandoff() {
     "a chain derived several states and names none, so singling one out would be a guess");
 
   /* Those task ids are the ones the entity workspace actually declares. */
-  /* The four task ids the entity workspace declares in its own `specs` array, read
-     out of entities.js rather than restated here. */
+  /* The task ids the entity workspace declares in its own `specs` array, read out
+     of entities.js rather than restated here. Slice 3 consolidated four peer
+     stages into three, so the count moved with it — but the property this reads
+     for is unchanged and is asserted below: every hand-off must name a task the
+     workspace actually declares, whatever that set happens to be. */
   const specsBlock = read("public/entities.js");
   const entityTasks = [...specsBlock.matchAll(/\{id:"(reference|review|coverage|details)",label:/g)].map((m) => m[1]);
-  assert.ok(entityTasks.length >= 4, `could not read the entity task ids from entities.js, got ${entityTasks.join(", ")}`);
+  assert.ok(entityTasks.length >= 3, `could not read the entity task ids from entities.js, got ${entityTasks.join(", ")}`);
+  /* And the retired peer stage must still RESOLVE rather than dangle: a stored
+     selection or an older writer naming `review` has to reach the reference that
+     absorbed it, not fall through to an unrelated task. */
+  assert.ok(specsBlock.includes('review:"reference"'),
+    "the retired `review` task id must map onto the reference that now owns candidate review");
   for (const answer of [entityDefault, entityState, entityChain]) {
     assert.ok(entityTasks.includes(answer.task),
       `${answer.task} is not one of the entity workspace's declared tasks (${entityTasks.join(", ")})`);
@@ -870,7 +888,7 @@ async function checkResultHandoff() {
     + `declared identities still resolve`);
 
   note("7. still -> Frames, blocking -> Look/blocking, motion -> Motion & sound, and every declared panel key resolves to "
-    + "its owning stage; entity default -> Choose & approve, state -> Coverage/states/that state, chain -> Coverage/states; "
+    + "its owning stage; entity default -> Primary reference, state -> Coverage/states/that state, chain -> Coverage/states; "
     + "eight unresolvable cases keep the shipped route");
 }
 
