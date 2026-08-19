@@ -423,8 +423,14 @@ try:
                    check_unwired_targets_explain_themselves)
 
         # ---- NC-C: the refusal removed, leaving a silent dead end ---------------
-        arm("NC-C", ("function guidedVideoProfileRefusalMarkup(profile) {\n  if (!profile || guidedVideoProfileDispatchable(profile)) return \"\";",
-                     "function guidedVideoProfileRefusalMarkup(profile) {\n  if (profile || !profile) return \"\";"))
+        # ANCHOR MOVED BY BATCH 2 SLICE 5b, and the control is unchanged. The renderer now
+        # handles a SECOND reason a target can be unusable — the shot's declared intent
+        # excluding it — and that branch sits above this one. NC-C is still about the
+        # DISPATCH refusal going silent, so it still mutates the dispatch branch; this
+        # scenario declares no intent, so the branch above returns "" and control reaches
+        # this one exactly as it always did.
+        arm("NC-C", ("  if (!profile || guidedVideoProfileDispatchable(profile)) return \"\";\n  const execution = profile.execution || {};",
+                     "  if (profile || !profile) return \"\";\n  const execution = profile.execution || {};"))
         del page_errors[:]
         open_shot_on_frames()
         click_add_motion()
