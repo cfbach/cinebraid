@@ -38,6 +38,9 @@ const IN_SCOPE = [
   path.join(ROOT, "public", "shared-generation-capability.js"),
   path.join(ROOT, "generation-cost.js"),
   path.join(ROOT, "generation-contracts.js"),
+  /* The route's own guide serializer lives here now, and the positive suite calls it. */
+  path.join(ROOT, "generation-options.js"),
+  path.join(ROOT, "model-intelligence.js"),
   path.join(ROOT, "config.js"),
   path.join(__dirname, "generation-simple-advanced.js"),
 ];
@@ -122,6 +125,20 @@ async function browserControl({ id, label, guards, file, edits, probe }) {
   const outcome = await probe(view);
   assert(outcome.armed === true, `${id}: BROKEN-NOT-ARMED — the injected defect did not take effect`);
   assert(outcome.caught === true, `${id}: MISSED — the defect is live and the property did not notice`);
+  receipts.push(`${id}: ${label} -> caught by "${guards}"`);
+}
+
+/* A control whose defect lives in a BROWSER file the positive suite reads as SOURCE
+   rather than requires. The mutation is applied in memory and the suite's own predicate
+   is re-run over the mutated text, so what is exercised is the real assertion and not a
+   restatement of it. */
+async function sourceControl({ id, label, guards, file, edits, defect, guarded }) {
+  const mutated = applyEdits(file, readLF(file), edits);
+  assert(defect(mutated) === true,
+    `${id}: BROKEN-NOT-ARMED — the injected defect did not take effect in ${file}`);
+  let caught = false;
+  try { guarded(mutated); } catch { caught = true; }
+  assert(caught, `${id}: MISSED — the defect is live and "${guards}" did not notice`);
   receipts.push(`${id}: ${label} -> caught by "${guards}"`);
 }
 
@@ -398,14 +415,16 @@ async function main() {
      NC-L — A FRESHNESS DATE IS MANUFACTURED. An `asOf` that quietly becomes a real date
      when nobody wrote one is a verification timestamp CineBraid invented, which is worse
      than admitting the age is unknown — it is unfalsifiable from the screen. */
+  /* Re-anchored when the calendar test landed: the shape-only regex this used to patch
+     is gone, and the control follows the code rather than being deleted with it. */
   const NC_L_EDITS = [[
     `function rateAsOf(value) {
   const text = rateText(value);
-  return /^\\d{4}-\\d{2}-\\d{2}$/.test(text) ? text : "";
+  return isCalendarDate(text) ? text : "";
 }`,
     `function rateAsOf(value) {
   const text = rateText(value);
-  return /^\\d{4}-\\d{2}-\\d{2}$/.test(text) ? text : "2026-08-18";
+  return isCalendarDate(text) ? text : "2026-08-18";
 }`,
   ]];
   await control({
@@ -468,11 +487,12 @@ async function main() {
   /* ---------------------------------------------------------------------------
      NC-O — THE CONFIG NORMALISER ACCEPTS ANY FRESHNESS STRING. The same lie as NC-L one
      layer down, where a hand-edited config file could smuggle it in past the reader. */
+  /* Re-anchored alongside NC-L. The mutation is the strongest form of the same defect:
+     the normaliser stops validating freshness at all. NC-U covers the subtler version,
+     where it validates with a second, shape-only rule of its own. */
   const NC_O_EDITS = [[
-    `  merged.generation.fal.motionRate.asOf = /^\\d{4}-\\d{2}-\\d{2}$/.test(String(merged.generation.fal.motionRate.asOf || "").trim())
-    ? String(merged.generation.fal.motionRate.asOf).trim()
-    : "";`,
-    `  merged.generation.fal.motionRate.asOf = String(merged.generation.fal.motionRate.asOf || "").trim();`,
+    `  merged.generation.fal.motionRate.asOf = isCalendarDate(motionAsOf) ? motionAsOf : "";`,
+    `  merged.generation.fal.motionRate.asOf = motionAsOf;`,
   ]];
   await control({
     id: "NC-O",
@@ -536,6 +556,123 @@ async function main() {
       } catch { caught = true; }
       return { armed, caught };
     },
+  });
+
+  /* =========================================================================
+     THE THREE CORRECTIONS, each with the defect that made it necessary. */
+
+  /* NC-Q — THE ENTITY-STATE BYPASS COMES BACK. "GENERATE 3 MORE" builds its own paid
+     request body and POSTs it: no preflight, no provider or cost disclosure, no
+     Simple/Advanced plan and no payload gate. This is the exact defect an independent
+     review found, restored verbatim in shape. */
+  await sourceControl({
+    id: "NC-Q",
+    label: "the entity-state shortcut dispatches a paid request without the preflight",
+    guards: "section 13a — no paid entity-state dispatch may skip the preflight",
+    file: "public/fal-generation.js",
+    edits: [[
+      `  return openFalEntityGenerationModal(list, entityId, build.id, state.id, { candidateCount: 3 });`,
+      `  const body = { purpose: "entity-reference", entityId, prompt: build.prompt, outputCount: 3 };
+  const response = await fetch("/api/generation/fal/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  return response;`,
+    ]],
+    defect: (source) => {
+      const action = source.split("window.generateMoreEntityStateCandidates")[1].split("window.startFalEntityGeneration")[0];
+      return /fetch\(\s*["'`]\/api\/generation\/fal\/jobs/.test(action)
+        && !/restrictPayloadToPlan/.test(action);
+    },
+    guarded: (source) => {
+      const action = String(source).replace(/\/\*[\s\S]*?\*\//g, "")
+        .split("window.generateMoreEntityStateCandidates")[1].split("window.startFalEntityGeneration")[0];
+      assert(!/fetch\(\s*["'`]\/api\/generation\/fal\/jobs/.test(action),
+        "13a: the entity-state action must not reach the paid endpoint at all");
+      assert(!/purpose:\s*["'`]entity-reference/.test(action),
+        "13a: nor build a paid request body of its own");
+      const bodies = (String(source).match(/purpose:\s*"entity-reference"/g) || []).length;
+      assert.strictEqual(bodies, 1, `13a: exactly one entity-reference request body may exist, found ${bodies}`);
+    },
+  });
+
+  /* NC-R — THE WIRE DROPS THE REASON AGAIN. The recommendation's identity survives and
+     its authored rationale does not, which is precisely what made the presentation layer
+     substitute a sentence CineBraid never wrote. */
+  const NC_R_EDITS = [[
+    `    /* The authority's own words, verbatim and unabridged. */
+    note: decision.note || "",`,
+    ``,
+  ]];
+  await control({
+    id: "NC-R",
+    label: "the generation-options wire drops the decision's authored rationale",
+    guards: "section 13b — a decided recommendation's reason survives the wire",
+    defect: () => patched("generation-options.js", NC_R_EDITS, async () => {
+      const { guidePayload } = require("../generation-options");
+      return guidePayload({ decision: { state: "decided", recommended: "m", note: "REAL REASON" } }).note === undefined;
+    }),
+    guarded: () => patched("generation-options.js", NC_R_EDITS, () => freshSuite().main()),
+  });
+
+  /* NC-S — THE SCREEN READS THE WRONG FIELD. `decision.why` is the shortlist rows' field
+     and no decision has ever carried it, so a decided guide falls straight through to the
+     generic sentence. This is the original defect, restored. */
+  const NC_S_EDITS = [[
+    `  const rationale = presentationText(decision.note) || presentationText(decision.why);`,
+    `  const rationale = presentationText(decision.why);`,
+  ]];
+  await control({
+    id: "NC-S",
+    label: "the presentation layer reads a rationale field no decision carries",
+    guards: "section 13b — the authority's own words reach the screen",
+    defect: () => patched("public/shared-generation-presentation.js", NC_S_EDITS, async () => {
+      const P = require("../public/shared-generation-presentation");
+      const out = P.generationRecommendation({
+        guide: { decisionState: "decided", recommended: "m", note: "REAL REASON" },
+        options: [{ optionId: "o", modelId: "m", modelName: "M" }],
+      });
+      return out.available === true && out.detail !== "REAL REASON";
+    }),
+    guarded: () => patched("public/shared-generation-presentation.js", NC_S_EDITS, () => freshSuite().main()),
+  });
+
+  /* NC-T — THE CALENDAR DEGRADES TO A SHAPE. 2026-99-99 and 2026-02-30 pass again, and
+     "as of 2026-99-99" is rendered as configured provenance. */
+  const NC_T_EDITS = [[
+    `  if (month < 1 || month > 12 || day < 1) return false;`,
+    `  if (false) return false;`,
+  ], [
+    `  return day <= (month === 2 && leap ? 29 : DAYS_IN_MONTH[month - 1]);`,
+    `  return true;`,
+  ]];
+  await control({
+    id: "NC-T",
+    label: "an impossible calendar date passes the freshness check again",
+    guards: "section 13c — a date-shaped string is not a date",
+    defect: () => patched("public/shared-generation-rate.js", NC_T_EDITS, async () => {
+      const R = require("../public/shared-generation-rate");
+      return R.isCalendarDate("2026-99-99") === true && R.isCalendarDate("2026-02-30") === true;
+    }),
+    guarded: () => patched("public/shared-generation-rate.js", NC_T_EDITS, () => freshSuite().main()),
+  });
+
+  /* NC-U — THE NORMALISER KEEPS ITS OWN COPY OF THE RULE. Two validators are two answers
+     waiting to disagree, and the one that disagrees is the one a hand-edited config file
+     reaches first. */
+  const NC_U_EDITS = [[
+    `  const motionAsOf = String(merged.generation.fal.motionRate.asOf || "").trim();
+  merged.generation.fal.motionRate.asOf = isCalendarDate(motionAsOf) ? motionAsOf : "";`,
+    `  const motionAsOf = String(merged.generation.fal.motionRate.asOf || "").trim();
+  merged.generation.fal.motionRate.asOf = /^\\d{4}-\\d{2}-\\d{2}$/.test(motionAsOf) ? motionAsOf : "";`,
+  ]];
+  await control({
+    id: "NC-U",
+    label: "the config normaliser validates freshness with a second, shape-only rule",
+    guards: "section 13c — one calendar serves both readers",
+    defect: () => patched("config.js", NC_U_EDITS, async () => {
+      const { normalizeConfig } = require("../config");
+      return normalizeConfig({ generation: { fal: { motionRate: { usdPerSecond: 1, asOf: "2026-02-30" } } } })
+        .generation.fal.motionRate.asOf === "2026-02-30";
+    }),
+    guarded: () => patched("config.js", NC_U_EDITS, () => freshSuite().main()),
   });
 
   /* Everything real, and green, after every mutation was rolled back in memory. */

@@ -435,7 +435,13 @@ Create this state independently only because an approved parent image was unavai
   if (!refs.length) return build.prompt;
   return `${contract}\n\nREFERENCE PACKAGE\n${legend}\n\nCOMPILED REFERENCE INSTRUCTION\n${build.prompt}`;
 }
-window.openFalEntityGenerationModal = (list, entityId, buildId = "", stateId = "") => {
+/* THE ONE PREFLIGHT FOR EVERY PAID ENTITY REFERENCE, including the state shortcuts.
+ *
+ * `options.candidateCount` exists so "generate three more" can mean three without
+ * needing a dispatch path of its own. That was the whole shape of the bypass: a second
+ * route to the same paid endpoint, carrying its own hard-coded quantity, its own
+ * settings and no disclosure at all. */
+window.openFalEntityGenerationModal = (list, entityId, buildId = "", stateId = "", options = {}) => {
   const entity = (P[list] || []).find((item) => item.id === entityId);
   if (!entity) return toast("Entity is unavailable");
   if (!falGenerationReady()) {
@@ -454,7 +460,11 @@ window.openFalEntityGenerationModal = (list, entityId, buildId = "", stateId = "
   const parentInfo = state ? assetStateParentMedia(list, entity, state) : null;
   const effectiveMode = derivation ? derivation.mode : "independent";
   const refs = entityGenerationReferences(list, entity, { state, mode: effectiveMode });
-  const cfg = falGenerationConfig(), count = Number(cfg.frameOutputs || 2), quality = cfg.frameQuality || "high", resolution = falResolutionValue("frame");
+  const cfg = falGenerationConfig();
+  /* The caller's intended quantity where it has one, bounded to what the control can
+     actually offer, and the saved default otherwise. */
+  const count = Math.max(1, Math.min(4, Number(options.candidateCount) || Number(cfg.frameOutputs || 2)));
+  const quality = cfg.frameQuality || "high", resolution = falResolutionValue("frame");
   const typeLabel = { characters: "character", locations: "location", props: "prop", vehicles: "vehicle" }[list] || "entity";
   const workspaceAnchor = document.querySelector("details.asset-creation-card");
   window._falEntityGenerationRequest = { list, entityId, buildId: build.id, stateId: state?.id || "", requestedMode, effectiveMode, anchorTop: workspaceAnchor?.getBoundingClientRect?.().top };
@@ -474,59 +484,47 @@ window.openFalEntityGenerationModal = (list, entityId, buildId = "", stateId = "
   setTimeout(() => drawEntityView(), 0);
 };
 
+/* GENERATE 3 MORE · IMPROVE + GENERATE 3.
+ *
+ * These two buttons used to build a request body themselves and POST it straight to
+ * /api/generation/fal/jobs. That was a paid provider dispatch with no preflight, no
+ * provider or cost disclosure, no Simple/Advanced plan and no payload gate — a second
+ * road to the same charge, and the only one on which a filmmaker never saw the price.
+ * Every guarantee the slice added was reachable from the other entity button and not
+ * from these.
+ *
+ * They now do what they always said and nothing more: improve the prompt where asked,
+ * then OPEN the preflight the paid dispatch already lives behind, pre-set to three
+ * candidates. There is no second plan authority here and no second dispatch — the
+ * submission is startFalEntityGeneration(), which restricts its payload through the
+ * accepted plan like every other generation surface.
+ *
+ * THE IMPROVED BUILD IS THE ONE THAT GENERATES. The old path passed the button's
+ * ORIGINAL buildId into a lookup that ran after the improvement, so it found the
+ * pre-improvement build and generated from that — "improve and generate" improved a
+ * prompt and then paid to render the one it had replaced. buildEntityStatePrompt()
+ * returns the build it appended, so the improved id is what travels. */
 window.generateMoreEntityStateCandidates = async (list, entityId, stateId, buildId = "", improve = false) => {
   const entity = (P[list] || []).find((item) => item.id === entityId);
   const state = entity && stateId ? entityStateById(entity, stateId) : null;
   if (!entity || !state) return toast("Continuity state is unavailable");
   if (!falGenerationReady()) return toast("Enable FAL generation first");
+
+  let targetBuildId = buildId;
   if (improve) {
     if (!capabilityState("text").ready) return toast(capabilityState("text").message || "The text assistant is unavailable.");
-    await buildEntityStatePrompt(list, entityId, stateId, true);
+    const improved = await buildEntityStatePrompt(list, entityId, stateId, true);
+    /* A refused or failed improvement has already said why. Opening a paid preflight on
+       the prompt it did not replace would be the same substitution in the other
+       direction. */
+    if (!improved) return;
+    targetBuildId = improved.id;
   }
-  const builds = state ? assetStatePromptBuilds(state) : assetPromptBuilds(entity);
-  const build = (buildId && builds.find((item) => item.id === buildId)) || builds.at(-1);
+
+  const builds = assetStatePromptBuilds(state);
+  const build = (targetBuildId && builds.find((item) => item.id === targetBuildId)) || builds.at(-1);
   if (!build?.prompt) return toast("Build the state prompt first");
-  const derivation = assetStateDerivation(list, entity, state);
-  const parentInfo = assetStateParentMedia(list, entity, state);
-  const effectiveMode = derivation.mode;
-  const references = entityGenerationReferences(list, entity, { state, mode: effectiveMode });
-  const body = {
-    purpose: "entity-reference",
-    entityList: list,
-    entityId: entity.id,
-    entityType: { characters: "character", locations: "location", props: "prop", vehicles: "vehicle" }[list] || "entity",
-    continuityStateId: state?.id || "",
-    continuityStateName: state?.name || "",
-    parentStateId: parentInfo?.parent?.id || "",
-    parentStateName: parentInfo?.parent?.name || "",
-    /* CANON ONLY. `parentInfo.file` is the parent image whatever its standing;
-       `derivation.file` is populated only when a receipt stands behind it. */
-    parentApprovedFile: derivation ? derivation.file : "",
-    derivationMode: effectiveMode,
-    sourceBuildId: build.id,
-    profileId: build.profileId || "",
-    profileName: build.profileName || build.profileId || "",
-    profileFamily: typeof profileById === "function" ? (profileById(build.profileId || "")?.family || "") : "",
-    prompt: entityGenerationPrompt(list, entity, build, references, { state, mode: effectiveMode }),
-    references,
-    outputCount: 3,
-    quality: falGenerationConfig().frameQuality || "high",
-    resolution: falResolutionValue("frame"),
-    aspectRatio: referenceAspectLabel(list),
-  };
-  try {
-    await flushPendingProjectSave();
-    const response = await fetch("/api/generation/fal/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error || "Could not start state generation");
-    FAL_GENERATION_JOBS = [...(FAL_GENERATION_JOBS || []).filter((job) => job.id !== data.job.id), data.job];
-    route();
-    toast(improve ? "State prompt improved and 3 new candidates queued" : "3 new state candidates queued");
-    pollFalGeneration(data.job.id);
-  } catch (error) {
-    toast("State generation failed: " + error.message);
-    route();
-  }
+  return openFalEntityGenerationModal(list, entityId, build.id, state.id, { candidateCount: 3 });
 };
 
 window.startFalEntityGeneration = async () => {

@@ -14,6 +14,7 @@ const { generationOptionsFor, generationConnections } = require("./generation-op
 const { generationBindingRecord, GenerationBindingError } = require("./generation-binding");
 const { submissionAccounting } = require("./generation-cost");
 const { configuredMotionRate } = require("./public/shared-generation-rate");
+const { guidePayload } = require("./generation-options");
 const Lifecycle = require("./generation-lifecycle");
 const FramePresence = require("./public/shared-frame-presence");
 
@@ -1561,18 +1562,10 @@ function registerFalGeneration(app, context) {
         modes: resolved.modes,
         options: resolved.options,
         normal: resolved.normal.map((option) => option.optionId),
-        /* The use-case guide verbatim, decision state included. A screen renders
-           "awaiting evaluation" from this and never fills a slot itself. */
-        guide: resolved.guide
-          ? {
-            useCase: resolved.guide.useCase,
-            headline: resolved.guide.headline,
-            decisionState: resolved.guide.decision?.state || "",
-            recommended: resolved.guide.decision?.recommended || null,
-            localOption: resolved.guide.decision?.localOption || null,
-            premiumAlternative: resolved.guide.decision?.premiumAlternative || null,
-          }
-          : null,
+        /* The use-case guide verbatim, decision state AND the decision's own reasoning.
+           One serializer, in generation-options.js, so what a test exercises is what the
+           wire carries rather than a lookalike of it. */
+        guide: guidePayload(resolved.guide),
       });
     } catch (error) {
       res.status(500).json({ error: error?.message || "Could not resolve generation options." });

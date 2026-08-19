@@ -56,6 +56,8 @@ const Presentation = require("../public/shared-generation-presentation");
 const Rate = require("../public/shared-generation-rate");
 const Capability = require("../public/shared-generation-capability");
 const { submissionAccounting, recordedEstimate, recordedAmount, summarizeRecordedCost } = require("../generation-cost");
+const { guidePayload, generationOptionsFor } = require("../generation-options");
+const { createModelIntelligence } = require("../model-intelligence");
 const { validateCostEstimate } = require("../generation-contracts");
 
 const notes = [];
@@ -819,6 +821,230 @@ function noLeakageSection() {
     + "or rate field entered the persistent format");
 }
 
+/* ============ 13 · THE THREE CORRECTIONS, EACH ATTACKED WHERE IT BROKE
+
+   Added after an independent review returned HOLD on three specific defects. Each is
+   asserted here at the boundary it actually failed at, not at a paraphrase of it. */
+
+/* --- 13a · NO PAID ENTITY-STATE DISPATCH MAY SKIP THE PREFLIGHT.
+
+   "GENERATE 3 MORE" and "IMPROVE + GENERATE 3" used to build a request body and POST it
+   straight to /api/generation/fal/jobs: a paid provider charge with no preflight, no
+   provider or cost disclosure, no Simple/Advanced plan and no payload gate. Every
+   guarantee this slice added was reachable from the other entity button and not from
+   these two. */
+async function entityStatePreflightSection() {
+  const client = readLF("public/fal-generation.js");
+  const action = codeOnly(client).split("window.generateMoreEntityStateCandidates")[1] || "";
+  const upToNext = action.split("window.startFalEntityGeneration")[0];
+  assert(upToNext, "13a: the entity-state action must still exist to be asserted about");
+
+  /* THE BYPASS IS GONE, not guarded. A second dispatch path that merely checks something
+     first is still a second dispatch path, and the next edit re-opens it. */
+  assert(!/fetch\(\s*["'`]\/api\/generation\/fal\/jobs/.test(upToNext),
+    "13a: the entity-state action must not reach the paid endpoint at all");
+  assert(!/purpose:\s*["'`]entity-reference/.test(upToNext),
+    "13a: nor build a paid request body of its own");
+  assert(/openFalEntityGenerationModal/.test(upToNext),
+    "13a: it must open the preflight the paid dispatch already lives behind");
+
+  /* AND THERE IS STILL EXACTLY ONE PAID ENTITY DISPATCH. Counting rather than presence:
+     "the gate exists" is satisfied by a file that also contains an ungated twin. */
+  const entityDispatches = (client.match(/purpose:\s*"entity-reference"/g) || []).length;
+  assert.strictEqual(entityDispatches, 1,
+    `13a: exactly one entity-reference request body may exist, found ${entityDispatches}`);
+
+  /* The one that remains is gated. */
+  const dispatch = codeOnly(client).split("window.startFalEntityGeneration")[1] || "";
+  assert(/restrictPayloadToPlan\(/.test(dispatch),
+    "13a: the surviving dispatch must restrict its payload through the accepted plan");
+
+  /* NO SECOND PLAN AUTHORITY. The corrected action reuses the accepted one and defines
+     none of its own. */
+  for (const invented of ["generationControlPlan(", "capabilityFromPlan(", "CINEBRAID_GENERATION_CONTROLS"])
+    assert(!upToNext.includes(invented),
+      `13a: the entity-state action must not build its own plan (${invented})`);
+
+  /* THE IMPROVED BUILD IS THE ONE THAT GENERATES. The old path looked the button's
+     ORIGINAL buildId up AFTER improving, found the pre-improvement build and paid to
+     render the prompt it had just replaced. */
+  assert(/buildEntityStatePrompt\([\s\S]{0,120}?improved/.test(upToNext) || /const improved = await buildEntityStatePrompt/.test(upToNext),
+    "13a: the improvement's own returned build must be captured");
+  assert(/targetBuildId = improved\.id/.test(upToNext),
+    "13a: and it must be the build the preflight opens on");
+  assert(/if \(!improved\) return/.test(upToNext),
+    "13a: a refused improvement must not open a paid preflight on the prompt it did not replace");
+
+  /* And the unsupported controls are absent from an entity submission exactly as they are
+     everywhere else — the plan the entity dispatch gates through is the shared one. */
+  const plan = Presentation.generationControlPlan({
+    capability: CAPABLE_OF_NOTHING_EXTRA, mode: "advanced",
+    only: ["outputCount", "quality", "resolution", "seed", "cfgScale", "steps", "referenceStrength"],
+  });
+  const gated = Presentation.restrictPayloadToPlan({
+    purpose: "entity-reference", entityId: "PR-TOOL", prompt: "P", references: [],
+    outputCount: 3, quality: "high", seed: 7, cfgScale: 9, steps: 40, referenceStrength: 0.5,
+  }, plan);
+  for (const key of EXPERT_CONTROLS)
+    assert(!(key in gated.payload), `13a: ${key} must not survive into an entity-reference request`);
+  assert.strictEqual(gated.payload.outputCount, 3, "13a: while the candidate count the preflight showed does travel");
+  assert.strictEqual(gated.payload.purpose, "entity-reference", "13a: and the request itself is untouched");
+
+  note("13a. Blocker 1 · both entity-state shortcuts open the accepted preflight instead of dispatching; exactly one "
+    + "entity-reference body exists and it is gated; the improved build is the one that generates; no second plan authority");
+}
+
+/* --- 13b · A DECIDED RECOMMENDATION'S REASON SURVIVES THE WIRE.
+
+   The identity survived and the rationale did not: `guidePayload` dropped `note`, and the
+   presentation layer read `decision.why` — a field no decision has ever carried, because
+   `why` belongs to the shortlist rows. So a genuinely decided guide fell through to a
+   generic sentence CineBraid never wrote. Asserted through the REAL resolver and the REAL
+   serializer the route calls, with a real catalogue. */
+function recommendationRationaleSection() {
+  const definitions = JSON.parse(readLF("data/model-definitions.json"));
+  const surfaces = JSON.parse(readLF("data/provider-surfaces.json"));
+
+  /* A DISTINCTIVE, AUTHORED REASON. Distinctive on purpose: a generic substitute cannot
+     accidentally match it, and neither can a paraphrase. */
+  const RATIONALE = "Decided on the 2026-08 staging evaluation: the only candidate that kept both characters "
+    + "on their scripted sides of frame across all nine test shots, including the two with a mirror.";
+  const guide = definitions.useCaseGuides.find((row) => row.useCase === "blocking-frame");
+  assert(guide, "13b: the fixture needs the shipped guide to decide");
+  const RECOMMENDED = "gpt-image-2/standard";
+  const decided = JSON.parse(JSON.stringify(definitions));
+  const decidedGuide = decided.useCaseGuides.find((row) => row.useCase === "blocking-frame");
+  decidedGuide.decision = {
+    ...decidedGuide.decision, state: "decided", recommended: RECOMMENDED, note: RATIONALE,
+  };
+
+  const intelligence = createModelIntelligence({ definitions: decided, surfaces });
+  const resolved = generationOptionsFor({
+    task: "blocking-frame", inputs: { references: [] }, request: { references: [] },
+    intelligence, config: {},
+  });
+
+  /* THE WIRE. The exact serializer the /api/generation/options route calls. */
+  const payload = guidePayload(resolved.guide);
+  assert.strictEqual(payload.decisionState, "decided", "13b: the decision state must survive");
+  assert.strictEqual(payload.recommended, RECOMMENDED, "13b: and the recommendation's identity");
+  assert.strictEqual(payload.note, RATIONALE,
+    "13b: and its authored reason, verbatim — this is the field that was being dropped");
+
+  /* THE SCREEN. Fed the wire payload exactly as the browser feeds it. */
+  const recommendation = Presentation.generationRecommendation({
+    guide: payload, options: resolved.options,
+  });
+  assert.strictEqual(recommendation.available, true, "13b: a decided guide must produce a recommendation");
+  assert.strictEqual(recommendation.modelId, RECOMMENDED, "13b: for the model the authority named");
+  assert.strictEqual(recommendation.option.modelId, RECOMMENDED, "13b: matched by identity, not by position");
+  assert.strictEqual(recommendation.detail, RATIONALE,
+    "13b: and carrying the authority's own words rather than a generic substitute");
+  assert.strictEqual(recommendation.hasRationale, true, "13b: reported as genuinely explained");
+  assert(!/CineBraid recommends this model/.test(recommendation.detail),
+    "13b: the generic sentence must not appear where a real reason exists");
+
+  /* AND IT REACHES THE FILMMAKER, through the same standing line the dialogs render. */
+  const standing = Presentation.selectedModelStanding(recommendation.option, recommendation);
+  assert(/^Recommended · /.test(standing.label), "13b: the model is named as recommended");
+  assert.strictEqual(standing.detail, RATIONALE, "13b: with the authored reason intact on screen");
+
+  /* NOT INFERRED FROM ORDER. The same decided catalogue with the options reversed must
+     answer identically. */
+  const reversed = Presentation.generationRecommendation({
+    guide: payload, options: [...resolved.options].reverse(),
+  });
+  assert.strictEqual(reversed.modelId, RECOMMENDED, "13b: list order must not change who is recommended");
+  assert.strictEqual(reversed.detail, RATIONALE, "13b: nor what the reason is");
+
+  /* UNDECIDED STAYS UNDECIDED, note or no note. The shipped guide carries a long `note`
+     explaining why it is deliberately unfilled — turning THAT into a recommendation
+     rationale would manufacture a positive recommendation out of an explanation of its
+     absence. */
+  const shipped = guidePayload(
+    generationOptionsFor({
+      task: "blocking-frame", inputs: { references: [] }, request: { references: [] },
+      intelligence: createModelIntelligence({ definitions, surfaces }), config: {},
+    }).guide,
+  );
+  assert.strictEqual(shipped.decisionState, "undecided-pending-evaluation");
+  assert(shipped.note, "13b: the shipped guide does carry a note, which is what makes this control non-vacuous");
+  const undecided = Presentation.generationRecommendation({ guide: shipped, options: resolved.options });
+  assert.strictEqual(undecided.available, false, "13b: an undecided guide must still produce no recommendation");
+  assert.strictEqual(undecided.option, null, "13b: and adopt no candidate");
+  assert(!undecided.detail.includes(shipped.note.slice(0, 40)),
+    "13b: an undecided guide's note explains its ABSENCE and must never be served as a rationale");
+
+  /* A DECIDED GUIDE THAT RECORDS NO REASON SAYS SO, rather than being handed one. */
+  const silent = Presentation.generationRecommendation({
+    guide: { ...payload, note: "" }, options: resolved.options,
+  });
+  assert.strictEqual(silent.available, true, "13b: the decision still stands");
+  assert.strictEqual(silent.hasRationale, false, "13b: but it is reported as unexplained");
+  assert(/No reasoning was recorded/i.test(silent.detail), "13b: and says so instead of inventing one");
+
+  note("13b. Blocker 2 · a decided recommendation's authored reason survives the real resolver, the route's own guide "
+    + "serializer and the presentation layer verbatim; order does not change it; an undecided guide's note is never "
+    + "served as a rationale; and a decision with no reason admits that rather than borrowing one");
+}
+
+/* --- 13c · A DATE-SHAPED STRING IS NOT A DATE.
+
+   `^\d{4}-\d{2}-\d{2}$` accepted 2026-99-99 and 2026-02-30, and a provenance line
+   reading "as of 2026-99-99" is worse than "freshness unknown": it presents a day nobody
+   could have read a price on as though somebody had. */
+function calendarDateSection() {
+  const { normalizeConfig } = require("../config");
+  const impossible = ["2026-99-99", "2026-02-30", "2026-13-01", "2026-00-10", "2026-04-31",
+    "2026-06-31", "2026-09-31", "2026-11-31", "2026-02-29", "1900-02-29", "2026-01-32", "2026-12-00"];
+  const real = ["2026-08-15", "2026-01-01", "2026-12-31", "2024-02-29", "2000-02-29", "2026-02-28"];
+
+  for (const value of impossible) {
+    /* THE READER. */
+    const rate = Rate.configuredMotionRate({ generation: { fal: { motionRate: { usdPerSecond: 0.26, asOf: value } } } });
+    assert.strictEqual(rate.asOf, "", `13c: ${value} is not a day that existed and must not survive the reader`);
+    assert.strictEqual(Rate.isCalendarDate(value), false, `13c: ${value} must fail the calendar test`);
+    /* THE NORMALISER — the same function, so a hand-edited config cannot smuggle one in. */
+    assert.strictEqual(
+      normalizeConfig({ generation: { fal: { motionRate: { usdPerSecond: 0.26, asOf: value } } } }).generation.fal.motionRate.asOf,
+      "", `13c: ${value} must not survive normalization either`);
+    /* AND IT IS NEVER RENDERED AS CONFIGURED TRUTH. */
+    const line = Rate.rateProvenance(rate).line;
+    assert(/freshness unknown/.test(line), `13c: ${value} must render as unknown freshness, got ${JSON.stringify(line)}`);
+    assert(!line.includes(value), `13c: ${value} must never appear in a provenance line`);
+  }
+
+  for (const value of real) {
+    const rate = Rate.configuredMotionRate({ generation: { fal: { motionRate: { usdPerSecond: 0.26, asOf: value } } } });
+    assert.strictEqual(rate.asOf, value, `13c: ${value} is a real date and must survive`);
+    assert.strictEqual(Rate.isCalendarDate(value), true, `13c: ${value} must pass the calendar test`);
+    assert.strictEqual(
+      normalizeConfig({ generation: { fal: { motionRate: { usdPerSecond: 0.26, asOf: value } } } }).generation.fal.motionRate.asOf,
+      value, `13c: ${value} must survive normalization`);
+    assert(Rate.rateProvenance(rate).line.includes(`as of ${value}`), `13c: and be rendered as the freshness it is`);
+  }
+
+  /* ONE CALENDAR, TWO READERS. config.js must not carry a second copy of the rule. */
+  const configSource = codeOnly(readLF("config.js"));
+  assert(/require\(["']\.\/public\/shared-generation-rate["']\)/.test(configSource),
+    "13c: the normaliser must use the shared calendar test");
+  assert(!/\^\\d\{4\}-\\d\{2\}-\\d\{2\}\$/.test(configSource),
+    "13c: and must not keep a date pattern of its own");
+
+  /* An invalid date invalidates the FRESHNESS, not the rate. The price is still
+     configured and still quotes — only its age is unknown. */
+  const stillPriced = Rate.generationPriceLine({
+    rate: Rate.configuredMotionRate({ generation: { fal: { motionRate: { usdPerSecond: 0.26, asOf: "2026-99-99" } } } }),
+    quantity: 8,
+  });
+  assert.strictEqual(stillPriced.kind, "estimated", "13c: a bad date must not silently unprice a configured rate");
+  assert(/freshness unknown/.test(stillPriced.provenance.line), "13c: it makes the freshness unknown and says so");
+
+  note("13c. Blocker 3 · twelve impossible dates — including 2026-99-99, 2026-02-30 and both century-leap cases — fail "
+    + "the calendar in the reader AND the normaliser and never reach a provenance line; six real dates survive; one "
+    + "calendar serves both readers; and a bad date costs the freshness, not the price");
+}
+
 /* ------------------------------------------------------------------------ run */
 async function main() {
   await simpleIsDefaultSection();
@@ -833,6 +1059,9 @@ async function main() {
   claimsSection();
   preservationSection();
   noLeakageSection();
+  await entityStatePreflightSection();
+  recommendationRationaleSection();
+  calendarDateSection();
 
   console.log([
     "Batch 2 Slice 4 — Simple vs Advanced generation + price truth — passed:",

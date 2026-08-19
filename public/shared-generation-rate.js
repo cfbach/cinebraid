@@ -78,14 +78,34 @@ function roundRateUsd(value) {
   return Number.isFinite(amount) ? Math.round(amount * 1e6) / 1e6 : 0;
 }
 
-/* An ISO calendar date and nothing else. A freshness field that will accept "recently"
-   or "last week" is a freshness field that cannot be compared to anything, and one that
-   silently accepts today's date when the operator left it blank is a manufactured
-   verification timestamp — which is precisely what must never happen. Blank stays blank
-   and renders as unknown. */
+/* An ISO calendar date and nothing else.
+ *
+ * A freshness field that will accept "recently" or "last week" cannot be compared to
+ * anything, and one that silently accepts today's date when the operator left it blank is
+ * a manufactured verification timestamp. Blank stays blank and renders as unknown.
+ *
+ * AND THE SHAPE IS NOT THE DATE. `^\d{4}-\d{2}-\d{2}$` accepts 2026-99-99, 2026-13-01
+ * and 2026-02-30 — strings that look like dates and are not days that ever existed. A
+ * provenance line reading "as of 2026-99-99" is worse than one reading "freshness
+ * unknown": it presents a value nobody could have read a price on as though somebody had.
+ * So the month and the day are checked against the calendar, with the leap rule written
+ * out rather than delegated — this module has no clock and gains none here, because a
+ * date's validity is arithmetic and does not depend on today. */
+const DAYS_IN_MONTH = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+function isCalendarDate(value) {
+  const parts = /^(\d{4})-(\d{2})-(\d{2})$/.exec(rateText(value));
+  if (!parts) return false;
+  const year = Number(parts[1]);
+  const month = Number(parts[2]);
+  const day = Number(parts[3]);
+  if (month < 1 || month > 12 || day < 1) return false;
+  /* Gregorian: every fourth year, except centuries, except every fourth century. */
+  const leap = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+  return day <= (month === 2 && leap ? 29 : DAYS_IN_MONTH[month - 1]);
+}
 function rateAsOf(value) {
   const text = rateText(value);
-  return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : "";
+  return isCalendarDate(text) ? text : "";
 }
 
 /* ---------------------------------------------------------------------------
@@ -295,6 +315,9 @@ const GENERATION_RATE_EXPORTS = {
   CINEBRAID_LOCAL_CHARGE_LINE,
   CINEBRAID_RATE_UNAVAILABLE_LINE,
   configuredImageRate,
+  /* Exported so config.js validates freshness with THIS function rather than a second
+     copy of the calendar. One rate authority means one answer to "is that a date", too. */
+  isCalendarDate,
   configuredMotionRate,
   costEstimateFromRate,
   formatRateUsd,

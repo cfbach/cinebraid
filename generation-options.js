@@ -204,6 +204,32 @@ function generationConnections(config = {}) {
 /* The one call a route makes. Everything variable arrives as an argument so a test
    can ask the same question with a different catalogue, a different connection map
    or a different adapter list, and get an answer computed the same way. */
+/* THE USE-CASE GUIDE, ON THE WIRE.
+ *
+ * Named and exported rather than written inline in the route, because what it drops is
+ * invisible from either end: the identity of a recommendation survived this mapping while
+ * its REASON did not, so a genuinely decided recommendation arrived at the screen with a
+ * model id and nothing to justify it — and the presentation layer, given nothing,
+ * substituted a generic sentence CineBraid never wrote.
+ *
+ * `note` is the field data/model-definitions.json records a decision's reasoning in. It
+ * travels with the decision it explains. A recommendation without its reason is an
+ * assertion of authority, which is the one thing this catalogue is careful never to be. */
+function guidePayload(guide) {
+  if (!guide || typeof guide !== "object") return null;
+  const decision = guide.decision && typeof guide.decision === "object" ? guide.decision : {};
+  return {
+    useCase: guide.useCase,
+    headline: guide.headline,
+    decisionState: decision.state || "",
+    recommended: decision.recommended || null,
+    /* The authority's own words, verbatim and unabridged. */
+    note: decision.note || "",
+    localOption: decision.localOption || null,
+    premiumAlternative: decision.premiumAlternative || null,
+  };
+}
+
 function generationOptionsFor(input = {}) {
   return resolveGenerationOptions({
     task: input.task,
@@ -221,6 +247,7 @@ module.exports = {
   annotateProfileLibraryExecution,
   generationConnections,
   generationOptionsFor,
+  guidePayload,
   profileExecutionSupport,
   publicAdapters,
   resolveTaskModes,

@@ -33,6 +33,10 @@ than letting a green tick imply more than it proves.
   G  with the rate removed, the dialog says unavailable and the recorder says unknown -
      both, consistently, and neither says $0.00
   H  a local route reads "$0 provider charge", and no generation dialog says "Free"
+  J  the two entity-state shortcuts — "GENERATE 3 MORE" and "IMPROVE + GENERATE 3" —
+     cannot reach the paid endpoint on their own, and what they DO submit is gated
+  K  a use-case guide's authored reasoning survives the real /api/generation/options
+     response, over real HTTP, rather than being dropped on the wire
   I  no provider was contacted, no paid route was called, nothing left this machine
 
 NOTHING HERE IS PAID. The dialogs compile through /api/generation/fal/image/plan,
@@ -93,6 +97,30 @@ subprocess.run(["node", "scripts/qa-sandbox.js", "--out", str(sandbox / "env"), 
                cwd=ROOT, check=True, stdout=subprocess.DEVNULL)
 config_path = sandbox / "env" / "config.json"
 projects_root = sandbox / "env" / "projects"
+
+# A CONTINUITY STATE WITH A COMPILED PROMPT, so the entity-state shortcuts have
+# something real to press. PROP-PARCEL/state-open is the sample's own derived state; only
+# the prompt build is added, because that is the one thing standing between the shipped
+# fixture and a paid entity-state dispatch.
+ENTITY_LIST, ENTITY_ID, ENTITY_STATE = "props", "PROP-PARCEL", "state-open"
+ENTITY_BUILD = "slice4-state-build"
+project_file = projects_root / "dogfood-sample" / "project.json"
+project = json.loads(project_file.read_text(encoding="utf-8"))
+parcel = next(row for row in project["props"] if row["id"] == ENTITY_ID)
+open_state = next(row for row in parcel["continuityStates"] if row["id"] == ENTITY_STATE)
+open_state["notes"] = open_state.get("notes") or "Torn flap, contents visible."
+open_state.setdefault("assetPromptBuilds", []).append({
+    "id": ENTITY_BUILD,
+    "date": "2026-08-18T00:00:00.000Z",
+    "stateId": ENTITY_STATE,
+    "stateName": open_state.get("name") or "Open",
+    "profileId": "gpt-image-2/edit",
+    "profileName": "GPT Image 2 · Reference Edit",
+    "prompt": "COMPILED OPEN-PARCEL STATE INSTRUCTION",
+    "warnings": [], "confirmations": [],
+})
+project_file.write_text(json.dumps(project, indent=2), encoding="utf-8")
+
 
 def write_config(motion_rate):
     config = json.loads(config_path.read_text(encoding="utf-8"))
@@ -435,6 +463,81 @@ try:
         findings.append("G: with the rate removed the dialog says unavailable and the recorder says unknown - "
                         "consistently, and neither says $0.00")
 
+        # ===== J · THE ENTITY-STATE SHORTCUTS CANNOT REACH THE PAID ENDPOINT ALONE
+        #
+        # Both buttons used to build a request body and POST it straight to
+        # /api/generation/fal/jobs — a paid provider charge with no preflight, no provider
+        # or cost disclosure and no payload gate. Driven here through the real shipped
+        # function, with the paid route still intercepted.
+        page.goto(f"{base}/#/{'prop'}/{ENTITY_ID}", wait_until="domcontentloaded")
+        page.wait_for_selector("#main", timeout=15000)
+        page.wait_for_timeout(1200)
+        reset_view_preference()
+
+        before_entity = len(captured_submits)
+        page.evaluate(
+            "args => generateMoreEntityStateCandidates(args[0], args[1], args[2], args[3], false)",
+            [ENTITY_LIST, ENTITY_ID, ENTITY_STATE, ENTITY_BUILD])
+        page.wait_for_selector("#fal-entity-generation-view .gen-view", timeout=20000)
+        page.wait_for_timeout(400)
+        assert len(captured_submits) == before_entity, \
+            "J: GENERATE 3 MORE must not reach the paid endpoint on its own"
+
+        # The disclosure it now goes through is the real one.
+        entity_always = page.locator("#fal-entity-generation-view .gen-view-always").inner_text()
+        for expected in ("Provider cost", "Where it runs", "Model"):
+            assert expected in entity_always, \
+                f"J: the entity-state preflight must state {expected!r} before the paid button, got {entity_always!r}"
+        assert view_mode() == "simple", f"J: and open on Simple, got {view_mode()!r}"
+        assert page.locator("#fal-entity-output-count").input_value() == "3", \
+            "J: pre-set to the three candidates the button promises"
+        assert page.locator("#fal-entity-resolution").count() == 0, \
+            "J: with the expert control behind Advanced like everywhere else"
+
+        # And the submission it does make is gated.
+        page.locator("button.approve-btn.large", has_text="START GENERATION").first.click()
+        page.wait_for_timeout(1500)
+        assert len(captured_submits) == before_entity + 1, \
+            f"J: pressing generate must submit; captured {captured_submits[before_entity:]}"
+        entity_body = captured_submits[-1]
+        assert entity_body.get("purpose") == "entity-reference", \
+            f"J: the submission must be the entity-reference request, got {entity_body.get('purpose')!r}"
+        assert entity_body.get("outputCount") == 3, \
+            f"J: carrying the three candidates the preflight showed, got {entity_body.get('outputCount')!r}"
+        assert entity_body.get("continuityStateId") == ENTITY_STATE, "J: targeted at the state it was pressed for"
+        assert "resolution" not in entity_body, "J: and not the expert size Simple never asked about"
+        for key in EXPERT_KEYS:
+            assert key not in entity_body, f"J: {key} must never reach a paid entity-state request"
+        findings.append(f"J: the entity-state shortcut opened the real preflight, dispatched nothing on its own, and its "
+                        f"gated body carries {sorted(entity_body.keys() & {'outputCount', 'quality', 'resolution'})}")
+
+        # ===== K · THE GUIDE'S AUTHORED REASONING SURVIVES THE REAL WIRE
+        #
+        # The route preserved a recommendation's identity and dropped the reason beside
+        # it. Asserted over real HTTP against the shipped catalogue, whose one guide is
+        # UNDECIDED and carries a long authored note explaining why — so this proves the
+        # field travels without manufacturing a recommendation that does not exist.
+        wire = page.evaluate("""async () => {
+          const response = await fetch('/api/generation/options', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ task: 'blocking-frame', references: [] }),
+          });
+          const data = await response.json();
+          return data.guide;
+        }""")
+        assert wire, "K: the blocking-frame guide must reach the browser"
+        assert wire.get("note"), "K: and carry the decision's authored reasoning rather than dropping it on the wire"
+        assert len(wire["note"]) > 80, f"K: the real authored note, not a stub: {wire['note']!r}"
+        assert wire.get("decisionState") == "undecided-pending-evaluation", \
+            f"K: the shipped guide is undecided, got {wire.get('decisionState')!r}"
+        rendered = page.evaluate("guide => generationRecommendation({ guide, options: [] })", wire)
+        assert rendered["available"] is False, \
+            "K: an undecided guide must still produce no recommendation, note or no note"
+        assert wire["note"][:40] not in rendered["detail"], \
+            "K: and its note explains an ABSENCE — it must never be served as a rationale"
+        findings.append(f"K: the guide's {len(wire['note'])}-character authored note survives the real API response, "
+                        f"and an undecided guide still yields no recommendation")
+
         # ============================================================ I · NOTHING WAS SPENT
         assert not page_errors, f"I: uncaught errors: {page_errors}"
         assert not offsite, f"I: requests tried to leave this machine: {offsite}"
@@ -444,11 +547,11 @@ try:
         # hide behind the intended one.
         unexpected = [line for line in console_errors if "net::ERR_FAILED" not in line]
         assert not unexpected, f"I: unexpected console errors: {unexpected}; failed: {failed_requests}"
-        assert failed_requests == [f"POST {base}{PAID_ROUTE} (net::ERR_FAILED)"], \
-            f"I: the only failed request must be the intercepted paid POST, got {failed_requests}"
-        assert len(paid_calls) == len(captured_submits) == 1, \
-            f"I: expected exactly one intercepted paid submit, saw paid={paid_calls} captured={captured_submits}"
-        findings.append(f"I: 1 paid POST was intercepted and aborted before the server saw it, 0 provider calls, "
+        assert failed_requests == [f"POST {base}{PAID_ROUTE} (net::ERR_FAILED)"] * 2, \
+            f"I: the only failed requests must be the intercepted paid POSTs, got {failed_requests}"
+        assert len(paid_calls) == len(captured_submits) == 2, \
+            f"I: expected exactly two intercepted paid submits, saw paid={paid_calls} captured={captured_submits}"
+        findings.append(f"I: 2 paid POSTs were intercepted and aborted before the server saw them, 0 provider calls, "
                         f"0 off-site requests")
 
         browser.close()

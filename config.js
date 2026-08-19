@@ -7,6 +7,10 @@ const CONFIG_PATH = process.env.CINEBRAID_CONFIG_PATH
   : path.join(__dirname, "data", "config.json");
 const MASK_PREFIX = "••••";
 
+/* The calendar test the motion rate's freshness is validated with. Shared with the
+   browser's reader so a date this file accepts is a date that file also accepts. */
+const { isCalendarDate } = require("./public/shared-generation-rate");
+
 const DEFAULT_CONFIG = {
   assistant: { provider: "ollama", visionProvider: "same" },
   agents: {
@@ -366,11 +370,16 @@ function normalizeConfig(config, options = {}) {
      anything that is not a usable number becomes 0, which reads as UNCONFIGURED
      everywhere downstream rather than as a price of zero.
 
-     `asOf` is accepted only as an ISO calendar date. A freshness field that took
+     `asOf` is accepted only as a REAL ISO calendar date. A freshness field that took
      "recently" could not be compared to anything, and one that quietly substituted
      today's date when the operator left it blank would be inventing the verification
      this whole field exists to record honestly. An unparseable date becomes empty and
-     renders as "freshness unknown". */
+     renders as "freshness unknown".
+
+     Shape alone is not enough: 2026-99-99 and 2026-02-30 both match YYYY-MM-DD and
+     neither is a day that existed. The calendar test lives in the shared rate module and
+     is CALLED here rather than copied, for the same reason the arithmetic is — two
+     validators are two answers waiting to disagree. */
   merged.generation.fal.motionRate = deepMerge(
     DEFAULT_CONFIG.generation.fal.motionRate,
     isPlainObject(merged.generation.fal.motionRate) ? merged.generation.fal.motionRate : {},
@@ -380,9 +389,8 @@ function normalizeConfig(config, options = {}) {
     ? Math.max(0, Math.min(100, motionUsdPerSecond))
     : 0;
   merged.generation.fal.motionRate.source = String(merged.generation.fal.motionRate.source || "").trim().slice(0, 200);
-  merged.generation.fal.motionRate.asOf = /^\d{4}-\d{2}-\d{2}$/.test(String(merged.generation.fal.motionRate.asOf || "").trim())
-    ? String(merged.generation.fal.motionRate.asOf).trim()
-    : "";
+  const motionAsOf = String(merged.generation.fal.motionRate.asOf || "").trim();
+  merged.generation.fal.motionRate.asOf = isCalendarDate(motionAsOf) ? motionAsOf : "";
   merged.generation.fal.blockingQuality = ["low", "medium", "high", "auto"].includes(merged.generation.fal.blockingQuality) ? merged.generation.fal.blockingQuality : "low";
   merged.generation.fal.frameQuality = ["low", "medium", "high", "auto"].includes(merged.generation.fal.frameQuality) ? merged.generation.fal.frameQuality : "high";
   merged.appearance = deepMerge(DEFAULT_CONFIG.appearance, merged.appearance || {});

@@ -391,15 +391,30 @@ function generationRecommendation({ guide, options } = {}) {
       detail: "The recommended model for this job is not among the options this shot can use.",
     };
 
+  /* THE AUTHORITY'S OWN WORDS, under the name the authority actually uses.
+   *
+   * `note` is the field data/model-definitions.json writes a decision's reasoning into —
+   * the same field public/media-inspector.js already renders for a recorded decision.
+   * This once read `decision.why`, which no decision has ever carried: `why` belongs to
+   * the SHORTLIST rows, so a genuinely decided guide fell straight through to a generic
+   * sentence. Both names are accepted now, `note` first, because a reader that knows only
+   * one of them is how the rationale got lost in the first place.
+   *
+   * And when a decision genuinely records no reasoning, that is said rather than papered
+   * over: inventing a rationale for a real decision is the same fabrication as inventing
+   * the decision. */
+  const rationale = presentationText(decision.note) || presentationText(decision.why);
   return {
     available: true,
     reason: "",
     modelId,
     option,
     headline: `Recommended · ${presentationText(option.modelName) || modelId}`,
-    /* The guide's own words where it wrote any. CineBraid does not compose a rationale
-       it was not given. */
-    detail: presentationText(decision.why) || "CineBraid recommends this model for this job.",
+    detail: rationale
+      || "Recorded as the recommendation for this job. No reasoning was recorded with the decision.",
+    /* Separately readable, so a surface can tell "the authority explained itself" from
+       "the authority decided and said nothing", without parsing a sentence. */
+    hasRationale: Boolean(rationale),
   };
 }
 
