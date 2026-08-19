@@ -41,11 +41,16 @@
  * THREE NEIGHBOURING FIELDS IT IS NOT, because all three already exist on or beside a
  * shot and confusing any of them with this would be a silent semantic merge:
  *
- *     shot.route                   legacy free text — "GENERATE", "GENERATE (FLF)",
- *                                  "GENERATE (R2V)", "COMPOSITE", "REUSE". It answers
- *                                  "does CineBraid make this at all", and three
- *                                  different output plans write the same "GENERATE", so
- *                                  it cannot carry a route without losing information.
+ *     shot.route                   legacy free text. CineBraid writes five values —
+ *                                  "GENERATE", "GENERATE (FLF)", "GENERATE (R2V)",
+ *                                  "COMPOSITE", "REUSE" — but the field has never been
+ *                                  constrained and real projects carry typed prose in it.
+ *                                  It answers "does CineBraid make this at all", and
+ *                                  three different output plans write the same
+ *                                  "GENERATE", so it cannot carry a route without losing
+ *                                  information. Only whole-value equality against the two
+ *                                  values that name a method is admitted; see
+ *                                  CINEBRAID_SHOT_ROUTE_LEGACY_VALUES.
  *     creationBrief.deliveryIntent still vs motion — WHAT is delivered, not how. A dozen
  *                                  motion-panel writers set it to "motion" as a side
  *                                  effect of editing, which is exactly why durable
@@ -101,18 +106,45 @@ const CINEBRAID_SHOT_ROUTE_MODES = {
   hybrid: "",
 };
 
-/* The legacy `shot.route` dialect, and the ONLY two of its values that carry a route.
+/* The legacy `shot.route` dialect: the EXACT strings CineBraid writes, and nothing else.
 
-   public/app.js reads this field in two places today — `(s.route || "").includes("FLF")`
-   and `.includes("R2V")` — to choose a clip kind, and window.setOutputPlan writes exactly
-   these strings. So the mapping below is not a new claim; it is the one the running app
-   already makes, written down.
+   THE FIELD IS FREE TEXT IN THE WILD, and that is the whole reason this table is exact
+   rather than a search. `window.setOutputPlan` writes exactly five values — "GENERATE",
+   "GENERATE (FLF)", "GENERATE (R2V)", "COMPOSITE", "REUSE" — but nothing has ever
+   constrained the field, and the sanitized Overfit corpus in tests/fixtures is full of
+   prose a human typed:
 
-   "GENERATE" is absent on purpose. setOutputPlan writes it for `still`, `animate` AND
-   `sequence`, so it is three different plans wearing one word and reading a route out of
-   it would be a guess. "COMPOSITE" and "REUSE" are absent because they describe a shot
-   CineBraid does not generate at all. */
-const CINEBRAID_SHOT_ROUTE_LEGACY_TOKENS = { FLF: "flf", R2V: "r2v" };
+       "GENERATE (hero)"                            "EDIT (swap locked states)"
+       "GENERATE / EDIT off endpoint"               "GENERATE + heavy post"
+       "GENERATE + STAGE-3 (FLF t.b.d. at build)"   <- 12 shots, in real data
+
+   That last one is the case that settles it. A substring reading turns a sentence whose
+   own words say the FLF decision is TO BE DECIDED AT BUILD into a declared first/last-
+   frame route — inventing the exact production intent a filmmaker wrote down as not yet
+   made. So only whole-value equality is admitted, and everything else is absent.
+
+   WHY THIS DELIBERATELY DOES NOT COPY app.js's READ. public/app.js does test
+   `(s.route || "").includes("FLF")`, and this file does not follow it. Those two readers
+   are answering different questions. app.js is picking a starting clip kind while
+   CONVERTING a shot the filmmaker is actively editing, where a poor guess is visible in
+   front of them and one click away from correction. A declared delivery route is a
+   durable statement attributed to the filmmaker, and a wrong one is silent. Absence is
+   the only safe wrong answer here, so the loose read is not inherited.
+
+   "GENERATE" is absent on purpose even though it is exact: setOutputPlan writes it for
+   `still`, `animate` AND `sequence`, so it is three different plans wearing one word and
+   reading a route out of it would be a guess. "COMPOSITE" and "REUSE" are absent because
+   they describe a shot CineBraid does not generate at all.
+
+   CASE IS FOLDED, and only case. server.js's import normaliser stores this field as
+   `String(source.route || "GENERATE").toUpperCase()`, so CineBraid itself treats the
+   vocabulary as case-insensitive and canonicalises it upward. Surrounding whitespace is
+   trimmed as whole-value hygiene — it strips only the ends and can never admit a value
+   that carries any extra content. */
+const CINEBRAID_SHOT_ROUTE_LEGACY_VALUES = {
+  "GENERATE (FLF)": "flf",
+  "GENERATE (R2V)": "r2v",
+};
 
 function shotRouteText(value) {
   return String(value == null ? "" : value).trim();
@@ -229,15 +261,24 @@ function shotRouteFromGenerationMode(mode) {
 
 /* The legacy `shot.route` dialect -> route, or "" with the reason it carries none. Kept
    as its own named function rather than folded into canonicalShotRoute, so that a caller
-   translating an old output-plan label has to say that is what it is doing. */
+   translating an old output-plan label has to say that is what it is doing.
+
+   WHOLE-VALUE EQUALITY ONLY. The stored string, trimmed and upper-cased, must BE one of
+   the two values in the table. It is never searched, never prefix- or suffix-matched and
+   never parsed: "WAFFLEFLFZ", "FLF MAYBE" and "GENERATE + STAGE-3 (FLF t.b.d. at build)"
+   all name no route, because none of them is a value CineBraid wrote. */
 function shotRouteFromLegacyOutputRoute(value) {
-  const text = shotRouteText(value).toUpperCase();
-  if (!text) return { route: "", reason: "no legacy output route was stored" };
-  for (const [token, route] of Object.entries(CINEBRAID_SHOT_ROUTE_LEGACY_TOKENS))
-    if (text.includes(token)) return { route, reason: "" };
+  if (typeof value !== "string")
+    return { route: "", reason: "a legacy output route is a string or it is nothing" };
+  const stored = value.trim();
+  if (!stored) return { route: "", reason: "no legacy output route was stored" };
+  const exact = stored.toUpperCase();
+  if (Object.prototype.hasOwnProperty.call(CINEBRAID_SHOT_ROUTE_LEGACY_VALUES, exact))
+    return { route: CINEBRAID_SHOT_ROUTE_LEGACY_VALUES[exact], reason: "" };
   return {
     route: "",
-    reason: `the legacy output route ${JSON.stringify(shotRouteText(value))} names no delivery route`,
+    reason: `the legacy output route ${JSON.stringify(stored)} is not one of the exact values CineBraid writes `
+      + `(${Object.keys(CINEBRAID_SHOT_ROUTE_LEGACY_VALUES).join(", ")}), so it names no delivery route`,
   };
 }
 
@@ -279,7 +320,7 @@ const SHOT_ROUTE_EXPORTS = {
   CINEBRAID_SHOT_ROUTES,
   CINEBRAID_SHOT_ROUTE_READINGS,
   CINEBRAID_SHOT_ROUTE_MODES,
-  CINEBRAID_SHOT_ROUTE_LEGACY_TOKENS,
+  CINEBRAID_SHOT_ROUTE_LEGACY_VALUES,
   canonicalShotRoute,
   readShotRoute,
   declaredShotRoute,

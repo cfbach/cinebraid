@@ -206,20 +206,29 @@ function checkDialects() {
   assert.strictEqual(Route.shotRouteFromClipKind("hybrid"), "",
     "hybrid is a shot-level statement and never one unit's kind");
 
-  /* (d) THE LEGACY `shot.route` FIELD. public/app.js already reads FLF and R2V out of
-     it to choose a clip kind, and window.setOutputPlan writes the strings below. Both
-     halves are lifted from the shipped source so this cannot drift into a claim the app
-     does not make. */
+  /* (d) THE LEGACY `shot.route` FIELD, and the one place this slice had to be narrowed.
+
+     WHOLE-VALUE EQUALITY, NOT A SEARCH. The first implementation matched substrings, and
+     independent review reproduced it fabricating declared intent out of arbitrary text —
+     "WAFFLEFLFZ" reading as flf. Section (f) below is the standing guard; this section
+     pins the two exact values that DO map, lifted from the shipped writer so the test
+     cannot drift into a claim the app does not make. */
   const appSource = readLF("public/app.js");
-  assert(appSource.includes('(s.route || "").includes("FLF")'),
-    "public/app.js must still read FLF out of the legacy output route");
-  assert(appSource.includes('(s.route || "").includes("R2V")'),
-    "public/app.js must still read R2V out of the legacy output route");
   const planWriter = appSource.slice(appSource.indexOf("  s.route = {"), appSource.indexOf("  s.route = {") + 400);
   const written = [...planWriter.matchAll(/:\s*"([A-Z][^"]*)"/g)].map((match) => match[1]);
   assert(written.length >= 5, `expected setOutputPlan's own route strings, got ${written.join(" | ")}`);
+  /* The module's table is a SUBSET of what the shipped writer writes. A key that no
+     writer produces would be an invented alias, which is the other half of the same
+     defect. */
+  const table = Route.CINEBRAID_SHOT_ROUTE_LEGACY_VALUES;
+  const tableKeys = Object.keys(table);
+  assert.deepStrictEqual(tableKeys, ["GENERATE (FLF)", "GENERATE (R2V)"],
+    "only the two exact output-plan values that name a method may map");
+  for (const key of tableKeys)
+    assert(written.includes(key),
+      `${JSON.stringify(key)} must be a value window.setOutputPlan actually writes, not an alias invented here`);
   for (const value of new Set(written)) {
-    const expected = value.includes("FLF") ? "flf" : value.includes("R2V") ? "r2v" : "";
+    const expected = Object.prototype.hasOwnProperty.call(table, value) ? table[value] : "";
     assert.strictEqual(Route.shotRouteFromLegacyOutputRoute(value).route, expected,
       `legacy output route ${JSON.stringify(value)} must map to ${expected ? expected : "no route"}`);
   }
@@ -231,14 +240,103 @@ function checkDialects() {
   assert.strictEqual(Route.shotRouteFromLegacyOutputRoute("GENERATE").route, "");
   assert(Route.shotRouteFromLegacyOutputRoute("GENERATE").reason.includes("names no delivery route"));
 
+  /* CASE IS FOLDED, and the evidence for that is server.js's own import normaliser
+     storing this field upper-cased. Surrounding whitespace is trimmed as whole-value
+     hygiene. Neither admits a value carrying any extra content — section (f) proves it. */
+  assert(/String\(source\.route \|\| "GENERATE"\)\.toUpperCase\(\)/.test(serverSource),
+    "the case-insensitivity of this field is CineBraid's own convention and must stay evidenced");
+  for (const [spelling, expected] of [["generate (flf)", "flf"], ["Generate (R2v)", "r2v"],
+    ["  GENERATE (FLF)  ", "flf"], ["\tGENERATE (R2V)\n", "r2v"]])
+    assert.strictEqual(Route.shotRouteFromLegacyOutputRoute(spelling).route, expected,
+      `${JSON.stringify(spelling)} is the same stored value in another case`);
+
   /* (e) A DIALECT VALUE IS NOT A ROUTE VALUE. The legacy field's spelling must not be
      accepted by the canonical reader, or the two fields would quietly merge. */
   for (const value of ["GENERATE (FLF)", "GENERATE (R2V)", "COMPOSITE", "REUSE"])
     assert.strictEqual(Route.canonicalShotRoute(value), "",
       `${value} belongs to shot.route and must not be readable as a declared delivery route`);
 
+  /* (f) THE STANDING GUARD AGAINST SUBSTRING MATCHING.
+
+     Three independent sweeps, so a reader that went back to searching cannot pass any of
+     them. This is the section that makes the reproduced defect impossible to reintroduce
+     quietly. */
+
+  /* (f1) MECHANICAL AFFIXES. For every exact value that maps and for the bare route
+     tokens inside them, decorate in every direction and require nothing. Generated
+     rather than listed, so a fourth affix costs nothing and a new table key is covered
+     the moment it is added. */
+  const AFFIXES = ["X", "-", " ", "MAYBE", "prefix-", "-suffix", "0", "_", "Z"];
+  const seeds = [...tableKeys, "FLF", "R2V", "flf", "r2v"];
+  let decorated = 0;
+  for (const seed of seeds)
+    for (const affix of AFFIXES)
+      for (const candidate of [`${affix}${seed}`, `${seed}${affix}`, `${affix}${seed}${affix}`,
+        `WAFFLE${seed}Z`, `NOT-${seed}-ROUTE`, `${seed} MAYBE`]) {
+        /* A decorated value that happens to trim back to an exact key is not a decorated
+           value — whitespace-only padding is whole-value hygiene and is covered above. */
+        if (Object.prototype.hasOwnProperty.call(table, candidate.trim().toUpperCase())) continue;
+        decorated += 1;
+        assert.strictEqual(Route.shotRouteFromLegacyOutputRoute(candidate).route, "",
+          `${JSON.stringify(candidate)} merely CONTAINS a route token and must name no route`);
+      }
+  assert(decorated > 200, `expected a broad affix sweep, ran ${decorated}`);
+
+  /* (f2) THE NAMED REPRODUCTIONS from the review, kept verbatim so the record and the
+     guard read the same. */
+  for (const value of ["WAFFLEFLFZ", "NOT-R2V-ROUTE", "FLF MAYBE", "R2V MAYBE", "prefix-FLF",
+    "R2V-suffix", "GENERATE", "", "   ", "unknown arbitrary text", "flf", "r2v", "FLF", "R2V",
+    "GENERATE (FLF) X", "XGENERATE (FLF)", "GENERATE(FLF)", "GENERATE  (FLF)"]) {
+    const outcome = Route.shotRouteFromLegacyOutputRoute(value);
+    assert.strictEqual(outcome.route, "",
+      `${JSON.stringify(value)} must not map — it is not a value CineBraid writes`);
+    assert(outcome.reason, `${JSON.stringify(value)} must say why it names no route`);
+  }
+  for (const value of [null, undefined, 42, true, [], ["GENERATE (FLF)"], { route: "GENERATE (FLF)" }])
+    assert.strictEqual(Route.shotRouteFromLegacyOutputRoute(value).route, "",
+      "a legacy output route is a string or it is nothing");
+
+  /* (f3) THE REAL LEGACY CORPUS. The sanitized Overfit projects are what this field
+     actually contains in production, and it is prose: one value across twelve shots reads
+     "GENERATE + STAGE-3 (FLF t.b.d. at build)" — a sentence whose own words say the FLF
+     decision has NOT been made. A substring reader declares it. Sweeping the corpus is
+     what turns this guard from a list somebody thought of into a measurement. */
+  const corpusRoot = path.join(__dirname, "fixtures", "ofp-migration", "overfit");
+  const corpusValues = new Map();
+  const walkForRoutes = (node, file) => {
+    if (Array.isArray(node)) { for (const item of node) walkForRoutes(item, file); return; }
+    if (!node || typeof node !== "object") return;
+    if (typeof node.route === "string" && (Array.isArray(node.keyframes) || Array.isArray(node.clips) || typeof node.scene === "string"))
+      corpusValues.set(node.route, (corpusValues.get(node.route) || 0) + 1);
+    for (const value of Object.values(node)) walkForRoutes(value, file);
+  };
+  const corpusFiles = [];
+  const collect = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) collect(full);
+      else if (entry.name.endsWith(".json")) corpusFiles.push(full);
+    }
+  };
+  if (fs.existsSync(corpusRoot)) collect(corpusRoot);
+  for (const file of corpusFiles) {
+    let parsed = null;
+    try { parsed = JSON.parse(fs.readFileSync(file, "utf8")); } catch { continue; }
+    walkForRoutes(parsed, file);
+  }
+  assert(corpusValues.size >= 8,
+    `expected the real Overfit legacy corpus to carry many distinct shot.route values, found ${corpusValues.size}`);
+  const prose = [...corpusValues.keys()].filter((value) => !Object.prototype.hasOwnProperty.call(table, value.trim().toUpperCase()));
+  assert(prose.some((value) => /FLF/i.test(value)),
+    "the corpus must still contain the prose value carrying FLF, or this sweep proves nothing");
+  for (const value of prose)
+    assert.strictEqual(Route.shotRouteFromLegacyOutputRoute(value).route, "",
+      `real legacy value ${JSON.stringify(value)} is prose, not a declared route, and must map to nothing`);
+
   note(`3. dialects: case-folded; ${VIDEO_ROUTES.length} modes both ways; ${allowedKinds.length} clip kinds checked; `
-    + `legacy GENERATE(FLF)/GENERATE(R2V) only, and GENERATE deliberately carries none`);
+    + `legacy is WHOLE-VALUE equality against ${tableKeys.length} exact strings the shipped writer writes, `
+    + `GENERATE deliberately carries none, ${decorated} decorated variants and ${prose.length} real corpus values `
+    + `(across ${corpusFiles.length} Overfit documents) all map to nothing`);
 }
 
 /* ===========================================================================

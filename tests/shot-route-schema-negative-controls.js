@@ -191,6 +191,50 @@ async function moduleControls() {
     },
   );
 
+  /* NC-7a — THE REPRODUCED REVIEW BLOCKER, put back. The legacy `shot.route` reader
+     searches for a token instead of matching the whole value, so arbitrary text becomes a
+     declared delivery route. This is the control for the exact defect independent review
+     found, and it is checked against the REAL Overfit corpus as well as the named
+     reproductions, because the corpus is where the consequence actually lands. */
+  await mustFail(
+    "NC-7a the legacy output-plan reader searches for a token instead of matching the value",
+    "must name no route",
+    () => {
+      const broken = compileModule(ROUTE_FILE, mutate(ROUTE_SOURCE,
+        "  const exact = stored.toUpperCase();\n"
+        + "  if (Object.prototype.hasOwnProperty.call(CINEBRAID_SHOT_ROUTE_LEGACY_VALUES, exact))\n"
+        + "    return { route: CINEBRAID_SHOT_ROUTE_LEGACY_VALUES[exact], reason: \"\" };",
+        "  const exact = stored.toUpperCase();\n"
+        + "  for (const [key, route] of Object.entries(CINEBRAID_SHOT_ROUTE_LEGACY_VALUES))\n"
+        + "    if (exact.includes(key.slice(key.indexOf(\"(\") + 1, key.indexOf(\")\")))) return { route, reason: \"\" };",
+        "NC-7a"));
+      for (const value of ["WAFFLEFLFZ", "NOT-R2V-ROUTE", "FLF MAYBE",
+        "GENERATE + STAGE-3 (FLF t.b.d. at build)"])
+        assert.strictEqual(broken.shotRouteFromLegacyOutputRoute(value).route, "",
+          `${JSON.stringify(value)} merely CONTAINS a route token and must name no route`);
+    },
+  );
+
+  /* NC-7b — an alias nobody writes is added to the table. The narrowing is only as good
+     as the rule that every key must be a string the shipped writer actually produces;
+     without it a convenient "FLF" would walk straight back in through the front door. */
+  await mustFail(
+    "NC-7b the legacy table gains an alias no writer produces",
+    "not an alias invented here",
+    () => {
+      const broken = compileModule(ROUTE_FILE, mutate(ROUTE_SOURCE,
+        '  "GENERATE (FLF)": "flf",',
+        '  "GENERATE (FLF)": "flf",\n  FLF: "flf",',
+        "NC-7b"));
+      const written = readLF(path.join(PUBLIC, "app.js"));
+      const planWriter = written.slice(written.indexOf("  s.route = {"), written.indexOf("  s.route = {") + 400);
+      const produced = [...planWriter.matchAll(/:\s*"([A-Z][^"]*)"/g)].map((match) => match[1]);
+      for (const key of Object.keys(broken.CINEBRAID_SHOT_ROUTE_LEGACY_VALUES))
+        assert(produced.includes(key),
+          `${JSON.stringify(key)} must be a value window.setOutputPlan actually writes, not an alias invented here`);
+    },
+  );
+
   /* NC-7 — hybrid acquires a generation mode. It names no single method, and the moment
      it names one it becomes a claim about what a shot may generate. */
   await mustFail(
