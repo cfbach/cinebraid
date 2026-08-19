@@ -1086,8 +1086,10 @@ function candidateCorrectionSection() {
     "13d: the accepted preflight must be mounted in the dialog");
   assert(/renderFalFixedImageView\("candidate-correction-generation-view"/.test(modal),
     "13d: and drawn by the shared renderer every other fixed-route image dialog uses");
-  assert(/window\._generationViewRefresh = drawCorrectionView/.test(modal),
-    "13d: with the Simple/Advanced switch wired to redraw THIS dialog");
+  /* The switch redraws THIS dialog — through the refresher rather than through a closure
+     over the values the dialog opened at, which is what 13e pins and why. */
+  assert(/window\._generationViewRefresh = \(mode\) => refreshFalFixedImageView\(mode\);/.test(modal),
+    "13d: with the Simple/Advanced switch wired to redraw THIS dialog from its current controls");
 
   /* EVERY CONTROL THE DIALOG DRAWS IS PLAN-DERIVED. The three ids it owns may appear only
      inside the shared renderer's own markup — never as a literal <select> in the modal. */
@@ -1148,6 +1150,126 @@ function candidateCorrectionSection() {
     + "every correction provenance field untouched");
 }
 
+/* --- 13e · THE QUOTE FOLLOWS THE COUNT.
+
+   A filmmaker opened the correction dialog at two candidates, read "Estimated $0.12 · 2
+   images", changed the count to four, and dispatched — and the request carried four while
+   the price above the button still described two. The number on screen and the number in
+   the body were computed at different moments from different values.
+
+   The controls the three fixed-route dialogs draw carried no change handler at all, so
+   the derived block above them could never move. The fix is dataflow, not a price updater:
+   one refresher re-reads what the controls hold and re-renders the whole block from it,
+   and it is the same path the Simple/Advanced switch takes. */
+async function reactiveQuoteSection() {
+  const client = readLF("public/fal-generation.js");
+  const code = codeOnly(client);
+
+  /* EVERY CONTROL ANNOUNCES ITSELF. A quote derived from a control that cannot report a
+     change is a quote frozen to whatever the dialog opened at. */
+  const controls = code.split("function falFixedImageControlsMarkup")[1].split("function renderFalFixedImageView")[0];
+  /* Exactly one literal: the shared const. Three copies written out per control would
+     drift the moment a fourth control appears. */
+  assert.strictEqual((controls.match(/onchange="refreshFalFixedImageView\(\)"/g) || []).length, 1,
+    "13e: the handler is declared once and interpolated, not repeated per control");
+  assert(/const onchange = ` onchange="refreshFalFixedImageView\(\)"`/.test(controls),
+    "13e: the shared controls must carry the refresher");
+  for (const key of ["ids.count", "ids.quality", "ids.resolution"])
+    assert(new RegExp(`attr\\(${key.replace(".", "\\.")}\\)}"\\$\\{lock}\\$\\{onchange}`).test(controls),
+      `13e: ${key} must carry it too — a stale quote from any of them is the same defect`);
+
+  /* THE SWITCH TAKES THE SAME PATH. A closure over the opening values would reset the
+     count every time somebody looked at Advanced. */
+  const legacyAndEntity = (code.match(/window\._generationViewRefresh = \(mode\) => refreshFalFixedImageView\(mode\);/g) || []).length;
+  assert.strictEqual(legacyAndEntity, 2, "13e: both dialogs in this file must route their switch through the refresher");
+  assert(/window\._generationViewRefresh = \(mode\) => refreshFalFixedImageView\(mode\);/
+    .test(codeOnly(readLF("public/review-provenance.js"))), "13e: and so must the correction dialog");
+  assert(!/window\._generationViewRefresh = draw[A-Za-z]+View;/.test(code + readLF("public/review-provenance.js")),
+    "13e: no dialog may route its switch through a closure over its opening values");
+
+  /* NO SECOND CALCULATOR. The refresher re-renders; it does not price anything itself. */
+  const refresher = code.split("window.refreshFalFixedImageView")[1].split("window.openFalGenerationModal")[0];
+  for (const forbidden of ["costEstimateFromRate", "generationPriceLine", "configuredImageRate", "estimatedCostPerImage"])
+    assert(!refresher.includes(forbidden), `13e: the refresher must not compute a price (${forbidden})`);
+
+  /* --- AND THE BEHAVIOUR, through the shipped renderer in the harness. */
+  const view = withPicker(await render("#/production", buildFixture()));
+  const ids = { count: "cc-count", quality: "cc-quality", resolution: "cc-res" };
+  const host = "cc-view";
+  const draw = (mode) => view.context.renderFalFixedImageView(host, ids,
+    { count: 2, quality: "high", resolution: "1k", disabled: false },
+    (n) => ({ rows: [{ value: n, label: n === 1 ? "candidate returned" : "candidates returned" }], stopEarly: "x" }),
+    mode);
+  const panel = () => String(view.context.document.getElementById(host).innerHTML);
+  const quoted = () => {
+    const match = /gen-view-price[\s\S]*?<b>([^<]*)<\/b><small>([^<]*)</.exec(panel()) || [];
+    return { headline: match[1] || "", detail: match[2] || "" };
+  };
+  const promisedRow = () => {
+    const match = /gen-view-limit-rows[\s\S]*?<b>([^<]*)<\/b>/.exec(panel()) || [];
+    return Number(match[1] || 0);
+  };
+  const setCount = (n) => {
+    view.context.document.getElementById(ids.count).value = String(n);
+    view.context.refreshFalFixedImageView();
+  };
+
+  setClientConfig(view, { frameOutputs: 2, frameQuality: "high", frameResolution: "1k", estimatedCostPerImage: 0.06 });
+  draw("simple");
+  /* THE OPENING STATE, read from the markup. This harness never parses markup into live
+     elements, so a select reports an empty `.value` whatever it was drawn with — the
+     option carrying `selected` is what a browser would show, and it is what is asserted
+     here. The LIVE control value is proven in the real-Chromium attack. */
+  assert(/<option value="2" selected>/.test(panel()), "13e: the dialog opens on the saved count of 2");
+  assert.strictEqual(quoted().headline, "Estimated $0.12", "13e: quoted at the count it opened on");
+  assert.strictEqual(promisedRow(), 2);
+
+  /* THE REPRODUCTION, then the correction: 2 -> 4 -> 1 -> 3, each read back off the
+     screen after the control moved. */
+  for (const [count, expected] of [[4, "$0.24"], [1, "$0.06"], [3, "$0.18"], [2, "$0.12"]]) {
+    setCount(count);
+    const { headline, detail } = quoted();
+    assert.strictEqual(headline, `Estimated ${expected}`,
+      `13e: at ${count} candidates the visible estimate must be ${expected}, got ${headline}`);
+    assert(detail.startsWith(`${count} image${count === 1 ? "" : "s"} at 0.06 USD each`),
+      `13e: and must say it is pricing ${count}, got ${detail}`);
+    assert.strictEqual(promisedRow(), count,
+      `13e: the candidates-returned row must follow the count too, got ${promisedRow()}`);
+    /* THE THREE NUMBERS ARE ONE NUMBER: what the control holds, what the price
+       multiplied, and — because the submission reads this same element — what would be
+       dispatched. */
+    assert.strictEqual(Number(view.context.document.getElementById(ids.count).value), count,
+      "13e: the live control, the quote and a submission must all be the same number");
+    assert(new RegExp(`<option value="${count}" selected>`).test(panel()),
+      `13e: and the redrawn control must show ${count} as selected`);
+  }
+
+  /* THE SWITCH DOES NOT RESET IT. Advanced and back, with four still selected. */
+  setCount(4);
+  view.context._generationViewRefresh = (mode) => view.context.refreshFalFixedImageView(mode);
+  view.context.setGenerationViewMode("advanced");
+  assert.strictEqual(quoted().headline, "Estimated $0.24", "13e: the switch must not reset the count to the opening value");
+  assert.strictEqual(promisedRow(), 4);
+  view.context.setGenerationViewMode("simple");
+  assert.strictEqual(quoted().headline, "Estimated $0.24", "13e: nor on the way back");
+
+  /* NO RATE, NO NUMBER — however many times the count moves. An unpriced route says so
+     and keeps saying so; a count change must never talk it into a figure. */
+  setClientConfig(view, { frameOutputs: 2, frameQuality: "high", frameResolution: "1k", estimatedCostPerImage: 0 });
+  draw("simple");
+  for (const count of [4, 1, 2]) {
+    setCount(count);
+    const { headline } = quoted();
+    assert(/unavailable/i.test(headline), `13e: with no configured rate the quote stays unavailable, got ${headline}`);
+    assert(!/\$/.test(headline), `13e: and never grows a figure, got ${headline}`);
+    assert.strictEqual(promisedRow(), count, "13e: while the candidates-returned row still follows the count");
+  }
+
+  note("13e. Reactive quote · the candidate count, the price it multiplies and the candidates-returned row are one value read "
+    + "from the live control: 2/4/1/3 candidates quote $0.12/$0.24/$0.06/$0.18, the Simple/Advanced switch no longer resets "
+    + "the count, and with no configured rate the disclosure stays unavailable however often the count moves");
+}
+
 /* ------------------------------------------------------------------------ run */
 async function main() {
   await simpleIsDefaultSection();
@@ -1166,6 +1288,7 @@ async function main() {
   recommendationRationaleSection();
   calendarDateSection();
   candidateCorrectionSection();
+  await reactiveQuoteSection();
 
   console.log([
     "Batch 2 Slice 4 — Simple vs Advanced generation + price truth — passed:",

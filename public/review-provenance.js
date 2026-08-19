@@ -1278,13 +1278,17 @@ window.openCandidateCorrectionModal = (shotId, frameId, name, buildId = "") => {
     /* `disabled` is the dialog's existing in-flight behaviour, preserved: a correction
        already at the provider must not have its settings changed underneath it. */
     { count, quality, resolution, disabled: active },
-    {
-      rows: [{ value: count, label: count === 1 ? "corrected candidate returned" : "corrected candidates returned" }],
+    /* A FUNCTION OF THE CURRENT COUNT, not of the count this dialog opened at. The price
+       above and the promise below are both derived from the number in the picker, and
+       freezing either one is how a $0.12 quote for two candidates sat above a request for
+       four. */
+    (n) => ({
+      rows: [{ value: n, label: n === 1 ? "corrected candidate returned" : "corrected candidates returned" }],
       stopEarly: `Every result is returned to the Frame ${frame.label || "A"} candidate list as an unapproved candidate carrying correction provenance. The original build and candidate are unchanged.`,
-    }, mode);
+    }), mode);
   const jobMarkup = job ? `<div class="fal-job-strip ${active ? "active" : job.status === "COMPLETED" ? "done" : job.status === "FAILED" ? "failed" : ""}"><div><span>${active ? '<i class="spin">◌</i>' : job.status === "COMPLETED" ? "✓" : job.status === "FAILED" ? "!" : "·"}</span><div><b>${esc(typeof falJobStatusLabel === "function" ? falJobStatusLabel(job) : job.status)}</b><small>${esc(job.model || "GPT Image 2 Edit")}${job.error ? ` · ${esc(job.error)}` : ""}</small></div></div><div>${active ? `<button class="chip" onclick="refreshCandidateCorrectionGeneration('${job.id}')">Refresh</button><button class="chip danger" onclick="cancelCandidateCorrectionGeneration('${job.id}')">Cancel</button>` : job.status === "FAILED" ? `<span>Adjust the correction and try again.</span>` : ""}</div></div>` : "";
   openModal(`<div class="candidate-correction-modal"><header><div><span>FRAME ${esc(frame.label || "A")} · TARGETED REPAIR</span><h3>Correction — ${esc(name)}</h3><p>The candidate remains the editable base. The guide supplies geometry only; recovered approved references supply finished appearance and location design.</p></div><button class="cancel" onclick="closeModal();route()">Close</button></header><div class="candidate-evidence-facts"><span>${esc(build.packageId)}</span><span>${esc(build.profileName || build.profileId || "Source profile")}</span><span>${(build.references || []).length} input${(build.references || []).length === 1 ? "" : "s"}</span><span>${esc(build.parentPackageId || "Original build unavailable")}</span></div>${candidateCorrectionWarningsMarkup(build)}${jobMarkup}<label class="candidate-correction-prompt"><span>Correction instructions</span><textarea id="candidate-correction-prompt">${esc(build.prompt || "")}</textarea><small>Editing this creates a new immutable correction revision when generation starts. The original production build and candidate remain unchanged.</small></label>${candidateCorrectionReferenceMarkup(build)}<div id="candidate-correction-generation-view"></div><p class="hint">Generating submits a paid FAL edit request and returns each result to the existing Frame ${esc(frame.label || "A")} candidate list with correction provenance.</p><div class="modal-actions"><button class="ghost-btn" onclick="downloadCandidateCorrectionDraft()">Download</button><button class="ghost-btn" onclick="copyCandidateCorrectionDraft()">Copy correction</button>${ready ? `<button class="approve-btn large" onclick="startCandidateCorrectionGeneration()" ${active ? "disabled" : ""}>${active ? "CORRECTION IN PROGRESS" : "GENERATE CORRECTION WITH FAL"}</button>` : `<button class="approve-btn" onclick="closeModal();location.hash='#/settings'">OPEN FAL SETTINGS</button>`}</div></div>`);
-  window._generationViewRefresh = drawCorrectionView;
+  window._generationViewRefresh = (mode) => refreshFalFixedImageView(mode);
   setTimeout(() => drawCorrectionView(), 0);
 };
 

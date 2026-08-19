@@ -23,6 +23,7 @@ const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
 const Module = require("module");
+const vm = require("vm");
 
 const ROOT = path.resolve(__dirname, "..");
 const readLF = (file) => fs.readFileSync(path.join(ROOT, file), "utf8").replace(/\r\n/g, "\n");
@@ -736,6 +737,81 @@ async function main() {
         "13d: the accepted preflight must be mounted in the dialog");
       for (const id of ["candidate-correction-output-count", "candidate-correction-quality", "candidate-correction-resolution"])
         assert(!new RegExp(`<select id="${id}"`).test(source), `13d: ${id} must not be drawn by the dialog itself`);
+    },
+  });
+
+  /* NC-X — THE CONTROLS STOP ANNOUNCING THEMSELVES. Exactly the reproduced defect: the
+     count changes, nothing redraws, and the price above the paid button keeps describing
+     the request the dialog opened with while the body carries the new one. */
+  await sourceControl({
+    id: "NC-X",
+    label: "the shared generation controls stop reporting a change, freezing the quote",
+    guards: "section 13e — every control announces itself",
+    file: "public/fal-generation.js",
+    edits: [[
+      `  const onchange = \` onchange="refreshFalFixedImageView()"\`;`,
+      `  const onchange = "";`,
+    ]],
+    defect: (source) => {
+      const controls = source.split("function falFixedImageControlsMarkup")[1]
+        .split("function renderFalFixedImageView")[0];
+      return !/onchange="refreshFalFixedImageView\(\)"/.test(controls);
+    },
+    guarded: (source) => {
+      const controls = String(source).split("function falFixedImageControlsMarkup")[1]
+        .split("function renderFalFixedImageView")[0];
+      assert.strictEqual((controls.match(/onchange="refreshFalFixedImageView\(\)"/g) || []).length, 1,
+        "13e: the handler is declared once and interpolated, not repeated per control");
+      for (const key of ["ids.count", "ids.quality", "ids.resolution"])
+        assert(new RegExp(`attr\\(${key.replace(".", "\\.")}\\)}"\\$\\{lock}\\$\\{onchange}`).test(controls),
+          `13e: ${key} must carry it too`);
+    },
+  });
+
+  /* NC-Y — THE REFRESHER REDRAWS THE OPENING STATE INSTEAD OF THE LIVE CONTROLS. The
+     softer shape of the same lie, and the one a handler-presence check alone would miss:
+     the event fires, something redraws, and the number never moves.
+
+     A BROWSER control, because this defect is only visible in behaviour — the handler is
+     present, the render happens, and only the VALUE it renders from is wrong. */
+  await browserControl({
+    id: "NC-Y",
+    label: "the refresher redraws the dialog's opening state instead of its current controls",
+    guards: "section 13e — the visible quote is read from the live control",
+    file: "fal-generation.js",
+    edits: [[
+      `  const count = Number(read(state.ids.count, state.current.count));
+  renderFalFixedImageView(state.hostId, state.ids, {
+    ...state.current,
+    count: Number.isFinite(count) && count > 0 ? Math.max(1, Math.min(4, Math.round(count))) : state.current.count,
+    quality: read(state.ids.quality, state.current.quality),
+    resolution: read(state.ids.resolution, state.current.resolution),
+  }, state.limits, mode);`,
+      `  renderFalFixedImageView(state.hostId, state.ids, { ...state.current }, state.limits, mode);`,
+    ]],
+    probe: async (view) => {
+      vm.runInContext(
+        `CONFIG = { ...(typeof CONFIG === "object" ? CONFIG : {}), generation: { fal: ${JSON.stringify({ enabled: true, apiKey: "k", frameOutputs: 2, frameQuality: "high", frameResolution: "1k", estimatedCostPerImage: 0.06 })} } };`,
+        view.context);
+      const ids = { count: "ncy-count", quality: "ncy-quality", resolution: "ncy-res" };
+      view.context.renderFalFixedImageView("ncy-view", ids,
+        { count: 2, quality: "high", resolution: "1k", disabled: false },
+        (n) => ({ rows: [{ value: n, label: "candidates returned" }], stopEarly: "x" }), "simple");
+      const quote = () => (/gen-view-price[\s\S]*?<b>([^<]*)</.exec(
+        String(view.context.document.getElementById("ncy-view").innerHTML)) || [])[1] || "";
+      const opened = quote();
+      view.context.document.getElementById(ids.count).value = "4";
+      view.context.refreshFalFixedImageView();
+      const afterChange = quote();
+      /* ARMED: four candidates, and the screen still quotes two. */
+      const armed = opened === "Estimated $0.12" && afterChange === "Estimated $0.12";
+      /* CAUGHT: the property that owns this reads the same screen. */
+      let caught = false;
+      try {
+        assert.strictEqual(afterChange, "Estimated $0.24",
+          "13e: at 4 candidates the visible estimate must be $0.24");
+      } catch { caught = true; }
+      return { armed, caught };
     },
   });
 

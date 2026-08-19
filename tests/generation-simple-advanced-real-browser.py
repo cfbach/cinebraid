@@ -40,6 +40,9 @@ than letting a green tick imply more than it proves.
   L  candidate correction — the last paid image dialog that drew its own grid and
      posted its own body — presents the accepted preflight with a real cost, and
      what it submits is gated
+  M  changing the candidate count moves the quote BEFORE dispatch, and the number
+     on screen is the number in the body — with no rate configured, no count
+     change invents one
   I  no provider was contacted, no paid route was called, nothing left this machine
 
 NOTHING HERE IS PAID. The dialogs compile through /api/generation/fal/image/plan,
@@ -158,13 +161,16 @@ project.setdefault("promptBuildsById", {})[CORRECTION_BUILD] = {
 project_file.write_text(json.dumps(project, indent=2), encoding="utf-8")
 
 
-def write_config(motion_rate):
+IMAGE_RATE = 0.06
+
+
+def write_config(motion_rate, image_rate=IMAGE_RATE):
     config = json.loads(config_path.read_text(encoding="utf-8"))
     fal = config.setdefault("generation", {}).setdefault("fal", {})
     fal.update({"enabled": True, "frameOutputs": 2, "blockingOutputs": 2,
                 "frameQuality": "high", "frameResolution": "1k",
                 "blockingQuality": "low", "blockingResolution": "1k",
-                "h3Resolution": "2K", "estimatedCostPerImage": 0.06})
+                "h3Resolution": "2K", "estimatedCostPerImage": image_rate})
     if motion_rate is None:
         fal.pop("motionRate", None)
     else:
@@ -619,6 +625,52 @@ try:
         assert f"{expected_correction:.2f}" in correction_price, \
             f"L: the estimate must be the configured rate times the count, got {correction_price!r}"
 
+        # ===== M · THE QUOTE FOLLOWS THE COUNT, BEFORE ANYTHING IS SPENT
+        #
+        # The reproduced defect: opened at two candidates showing "Estimated $0.12 · 2
+        # images", changed to four, and the disclosure stayed at $0.12 / 2 images while the
+        # request that left carried outputCount 4. Every number below is read off the
+        # screen AFTER the control moved and BEFORE anything is submitted.
+        def visible_quote():
+            block = page.locator("#candidate-correction-generation-view .gen-view-price").inner_text()
+            headline = next((line.strip() for line in block.splitlines() if "Estimated" in line or "unavailable" in line.lower()), "")
+            detail = next((line.strip() for line in block.splitlines() if "USD each" in line), "")
+            return headline, detail
+
+        def visible_promised_count():
+            row = page.locator("#candidate-correction-generation-view .gen-view-limit-rows").inner_text()
+            return int(row.strip().split()[0])
+
+        def set_count(n):
+            page.select_option("#candidate-correction-output-count", str(n))
+            page.wait_for_timeout(400)
+
+        opened_headline, opened_detail = visible_quote()
+        assert opened_headline == f"Estimated ${2 * IMAGE_RATE:.2f}", \
+            f"M: the dialog must open quoting its own count, got {opened_headline!r}"
+        assert opened_detail.startswith("2 images at"), f"M: naming the two it is pricing, got {opened_detail!r}"
+        assert visible_promised_count() == 2, "M: and promising two back"
+
+        # 2 -> 4 -> 1 -> 4. Each visible quote must follow the CURRENT count, not the
+        # initial one and not the previous one.
+        for count in (4, 1, 4):
+            set_count(count)
+            headline, detail = visible_quote()
+            assert headline == f"Estimated ${count * IMAGE_RATE:.2f}", \
+                f"M: at {count} candidates the visible estimate must be ${count * IMAGE_RATE:.2f}, got {headline!r}"
+            assert detail.startswith(f"{count} image{'' if count == 1 else 's'} at"), \
+                f"M: and must say it is pricing {count}, got {detail!r}"
+            assert visible_promised_count() == count, \
+                f"M: the candidates-returned row must follow the count too, got {visible_promised_count()}"
+            assert page.locator("#candidate-correction-output-count").input_value() == str(count), \
+                "M: and the control itself must hold it"
+
+        # THE NUMBER ON SCREEN IS THE NUMBER IN THE BODY. Captured immediately before the
+        # paid button, then compared against what the restricted payload actually carried.
+        quote_before_submit, detail_before_submit = visible_quote()
+        count_before_submit = int(page.locator("#candidate-correction-output-count").input_value())
+        promised_before_submit = visible_promised_count()
+
         # ADVANCED DISCLOSES ONLY WHAT THIS ROUTE SUPPORTS.
         open_advanced()
         assert page.locator("#candidate-correction-resolution").count() == 1, "L: Advanced discloses the size"
@@ -646,6 +698,21 @@ try:
             assert key not in correction_body, f"L: {key} must never reach a paid correction request"
         assert correction_body.get("quality"), "L: while a Simple control does travel"
 
+        # M · the three numbers are one number.
+        assert correction_body.get("outputCount") == count_before_submit, \
+            (f"M: the visible count {count_before_submit} and the submitted outputCount "
+             f"{correction_body.get('outputCount')!r} must be the same number")
+        assert promised_before_submit == correction_body["outputCount"], \
+            "M: and so must the candidates-returned row the filmmaker read"
+        assert quote_before_submit == f"Estimated ${correction_body['outputCount'] * IMAGE_RATE:.2f}", \
+            (f"M: the estimate shown immediately before dispatch ({quote_before_submit!r}) must be the configured "
+             f"rate times the submitted outputCount ({correction_body['outputCount']})")
+        assert detail_before_submit.startswith(f"{correction_body['outputCount']} images at"), \
+            f"M: and must have named that same count, got {detail_before_submit!r}"
+        findings.append(f"M: 2 -> 4 -> 1 -> 4 each re-quoted before dispatch; the screen showed {quote_before_submit!r} "
+                        f"for {count_before_submit} and the restricted payload carried outputCount="
+                        f"{correction_body['outputCount']}")
+
         # CORRECTION SEMANTICS AND PROVENANCE ARE UNTOUCHED BY THE GATE.
         assert correction_body.get("sourceCandidate") == CORRECTION_CANDIDATE, \
             f"L: the correction must still target its candidate, got {correction_body.get('sourceCandidate')!r}"
@@ -658,6 +725,33 @@ try:
             "L: with the editable base still first in the package"
         assert "CORRECTION:" in (correction_body.get("prompt") or ""), "L: and the correction instruction intact"
         correction_headline = next((line for line in correction_price.splitlines() if "Estimated" in line), correction_price)
+        # ===== M · WITH NO RATE, A COUNT CHANGE MUST NOT INVENT ONE
+        write_config(MOTION_RATE, image_rate=0)
+        page.goto(f"{base}/#/shot/{CORRECTION_SHOT}", wait_until="domcontentloaded")
+        page.reload(wait_until="domcontentloaded")
+        page.wait_for_selector("#main", timeout=15000)
+        page.wait_for_timeout(1200)
+        reset_view_preference()
+        page.evaluate(
+            "args => openCandidateCorrectionModal(args[0], args[1], args[2], args[3])",
+            [CORRECTION_SHOT, CORRECTION_FRAME, CORRECTION_CANDIDATE, CORRECTION_BUILD])
+        page.wait_for_selector("#candidate-correction-generation-view .gen-view", timeout=20000)
+        page.wait_for_timeout(400)
+        for count in (2, 4, 1):
+            if count != 2:
+                set_count(count)
+            unpriced_headline, _ = visible_quote()
+            assert "unavailable" in unpriced_headline.lower(), \
+                f"M: with no configured rate the disclosure stays unavailable, got {unpriced_headline!r}"
+            assert "$" not in unpriced_headline, f"M: and never grows a figure, got {unpriced_headline!r}"
+            assert visible_promised_count() == count, \
+                "M: while the candidates-returned row still follows the count"
+        unpriced_block = page.locator("#candidate-correction-generation-view .gen-view-price").inner_text()
+        assert "still paid" in unpriced_block.lower(), "M: an unpriced paid route must still say it is paid"
+        assert "free" not in unpriced_block.lower(), "M: and never Free"
+        findings.append("M: with the image rate removed, 2 -> 4 -> 1 left the disclosure unavailable throughout — no count "
+                        "change invented a price, and the route still said it is paid")
+
         findings.append(f"L: the correction dialog opened on Simple showing {correction_headline.strip()!r}, "
                         f"disclosed only the size under Advanced, and its gated body kept every provenance field while "
                         f"carrying {sorted(correction_body.keys() & {'outputCount', 'quality', 'resolution'})}")

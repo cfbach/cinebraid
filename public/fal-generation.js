@@ -156,40 +156,87 @@ function falFixedImageControlsMarkup(plan, ids, current) {
      just not changeable while the request it would describe is in flight. Collapsing the
      two would put "this model cannot" and "not right now" behind the same greyed box. */
   const lock = current.disabled === true ? " disabled" : "";
+  /* EVERY CONTROL ANNOUNCES ITSELF, because the block above it is DERIVED from these
+     values. The candidate count is multiplied by the configured rate to produce the quote
+     a filmmaker reads before paying; a count that changes without redrawing leaves the
+     price describing a request nobody is about to send. The compiled frame and motion
+     dialogs have always re-rendered on change — through refreshFalFramePlan() and
+     refreshFalH3Plan(), which recompile — and these three had no handler at all. */
+  const onchange = ` onchange="refreshFalFixedImageView()"`;
   const parts = [];
   if (rendered.has("outputCount"))
-    parts.push(`<label><span>Number of options</span><select id="${attr(ids.count)}"${lock}>${
+    parts.push(`<label><span>Number of options</span><select id="${attr(ids.count)}"${lock}${onchange}>${
       [1, 2, 3, 4].map((n) => `<option value="${n}" ${n === Number(current.count) ? "selected" : ""}>${n}</option>`).join("")
     }</select></label>`);
   if (rendered.has("quality"))
-    parts.push(`<label><span>Quality</span><select id="${attr(ids.quality)}"${lock}>${
+    parts.push(`<label><span>Quality</span><select id="${attr(ids.quality)}"${lock}${onchange}>${
       ["low", "medium", "high"].map((value) => `<option value="${value}" ${value === current.quality ? "selected" : ""}>${value[0].toUpperCase() + value.slice(1)}</option>`).join("")
     }</select></label>`);
   if (rendered.has("resolution"))
-    parts.push(`<label><span>Resolution</span><select id="${attr(ids.resolution)}"${lock}>${falResolutionOptions(current.resolution)}</select></label>`);
+    parts.push(`<label><span>Resolution</span><select id="${attr(ids.resolution)}"${lock}${onchange}>${falResolutionOptions(current.resolution)}</select></label>`);
   return parts.length ? `<div class="h3-settings-grid">${parts.join("")}</div>` : "";
 }
 
 /* One renderer for every fixed-route image dialog, so "Simple" means the same thing on a
    blocking revision, on a continuity-state reference and on a candidate correction as it
    does on the compiled frame dialog. Three callers now; the correction dialog was the last
-   paid image surface still drawing its own grid and posting its own body. */
+   paid image surface still drawing its own grid and posting its own body.
+ *
+ * `limits` may be a FUNCTION of the candidate count. The row beneath the price says how
+ * many candidates come back, which is the same number the price multiplies — passing it as
+ * a fixed object froze it to whatever the dialog opened at, so a filmmaker who chose four
+ * read a quote for two above a promise of two below, and got four. Either shape is
+ * accepted; a function is the one that stays true. */
 function renderFalFixedImageView(hostId, ids, current, limits, mode) {
   const host = document.getElementById(hostId);
   if (!host) return;
   const view = generationViewMode(mode || generationViewPreference());
   const plan = falFixedImageControlPlan(view, current);
+  const quantity = Math.max(1, Number(current.count) || 1);
+  /* WHAT THIS DIALOG IS, so a control change can redraw it from the values the filmmaker
+     has actually chosen rather than from the ones it opened with. One slot, because one
+     paid dialog is open at a time — the same reasoning as _generationViewRefresh. */
+  window._falFixedImageView = { hostId, ids, current: { ...current }, limits };
   host.innerHTML = generationViewMarkup({
     mode: view,
     plan,
     option: falFixedImageRoute(),
     recommendation: generationRecommendation({ guide: null, options: [] }),
     rate: generationRateFor("image"),
-    quantity: Math.max(1, Number(current.count) || 1),
-    limits,
+    quantity,
+    limits: typeof limits === "function" ? limits(quantity) : limits,
     controlsMarkup: falFixedImageControlsMarkup(plan, ids, current),
   });
 }
+
+/* THE QUOTE FOLLOWS THE CONTROLS.
+ *
+ * Re-reads what the controls hold RIGHT NOW and redraws the block from that. It is the
+ * one path both the Simple/Advanced switch and every control change go through, so the
+ * price, the candidate row and the selected values can never describe three different
+ * requests — and it reads the same DOM the submission reads, which is what makes
+ * "the number on screen" and "the number in the body" the same number by construction
+ * rather than by review.
+ *
+ * A control the active view does not render falls back to the stored value: switching to
+ * Simple must not lose the size a filmmaker chose under Advanced, and switching back must
+ * show it again. What Simple SENDS is still decided by restrictPayloadToPlan(), which
+ * strips it regardless — a remembered preference is not a payload. */
+window.refreshFalFixedImageView = (mode) => {
+  const state = window._falFixedImageView;
+  if (!state) return;
+  const read = (id, fallback) => {
+    const value = document.getElementById(id)?.value;
+    return value === undefined || value === null || value === "" ? fallback : value;
+  };
+  const count = Number(read(state.ids.count, state.current.count));
+  renderFalFixedImageView(state.hostId, state.ids, {
+    ...state.current,
+    count: Number.isFinite(count) && count > 0 ? Math.max(1, Math.min(4, Math.round(count))) : state.current.count,
+    quality: read(state.ids.quality, state.current.quality),
+    resolution: read(state.ids.resolution, state.current.resolution),
+  }, state.limits, mode);
+};
 
 window.openFalGenerationModal = (purpose, shotId, frameId = "", buildId = "") => {
   const s = shotById(shotId);
@@ -227,11 +274,14 @@ window.openFalGenerationModal = (purpose, shotId, frameId = "", buildId = "") =>
   window._falGenerationRequest = { purpose, shotId, frameId, buildId: build.id, packageId: build.packageId || "", prompt: build.prompt, frameLabel: frame?.label || "A", revision, sourceId, profileId: build.profileId || "", profileName: build.profileName || profile?.name || build.profileId || "", profileFamily: profile?.family || "" };
   const legacyIds = { count: "fal-output-count", quality: "fal-quality", resolution: "fal-resolution" };
   const legacyCurrent = { count, quality, resolution };
-  const drawLegacyView = (mode) => renderFalFixedImageView("fal-legacy-generation-view", legacyIds, legacyCurrent, {
-    rows: [{ value: count, label: count === 1 ? "candidate returned" : "candidates returned" }],
+  const drawLegacyView = (mode) => renderFalFixedImageView("fal-legacy-generation-view", legacyIds, legacyCurrent, (n) => ({
+    rows: [{ value: n, label: n === 1 ? "candidate returned" : "candidates returned" }],
     stopEarly: "Every returned image is an unapproved candidate. Nothing becomes canon until you approve one.",
-  }, mode);
-  window._generationViewRefresh = drawLegacyView;
+  }), mode);
+  /* Through the refresher, not the opening closure: the switch must redraw what the
+     filmmaker has chosen, and a closure over the opening values would quietly reset the
+     count every time somebody looked at Advanced. */
+  window._generationViewRefresh = (mode) => refreshFalFixedImageView(mode);
   openModal(`<h3>${blocking ? revision && sourceRow ? "Revise blocking attempt" : "Generate blocking options" : `Generate Frame ${esc(frame?.label || "A")} options`}</h3><div class="modal-sub">FAL · ${esc((build.profileName || build.profileId || "Prompt build").toUpperCase())}${blocking && revision && sourceRow ? " · EDIT" : ""}</div>${blocking && revision ? `<div class="fal-revision-summary"><b>Requested changes</b><p>${esc(revision)}</p>${sourceRow ? `<small>Using ${esc(sourceRow.asset.title || sourceRow.asset.file)} as the editable grayscale scaffold.</small>` : `<small>Generating a fresh blocking attempt from the revised prompt.</small>`}</div>` : ""}<div id="fal-legacy-generation-view"></div><p class="hint">This submits a paid FAL request. CineBraid will store returned images in this shot and link them to the prompt build.</p><div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button class="approve-btn large" onclick="startFalGeneration()">START GENERATION</button></div>`);
   setTimeout(() => drawLegacyView(), 0);
 };
@@ -478,11 +528,11 @@ window.openFalEntityGenerationModal = (list, entityId, buildId = "", stateId = "
   window._falEntityGenerationRequest = { list, entityId, buildId: build.id, stateId: state?.id || "", requestedMode, effectiveMode, anchorTop: workspaceAnchor?.getBoundingClientRect?.().top };
   const entityIds = { count: "fal-entity-output-count", quality: "fal-entity-quality", resolution: "fal-entity-resolution" };
   const entityCurrent = { count, quality, resolution };
-  const drawEntityView = (mode) => renderFalFixedImageView("fal-entity-generation-view", entityIds, entityCurrent, {
-    rows: [{ value: count, label: count === 1 ? "candidate returned" : "candidates returned" }],
+  const drawEntityView = (mode) => renderFalFixedImageView("fal-entity-generation-view", entityIds, entityCurrent, (n) => ({
+    rows: [{ value: n, label: n === 1 ? "candidate returned" : "candidates returned" }],
     stopEarly: `Every returned file is an unapproved ${typeLabel} candidate. Nothing becomes canon until you approve one.`,
-  }, mode);
-  window._generationViewRefresh = drawEntityView;
+  }), mode);
+  window._generationViewRefresh = (mode) => refreshFalFixedImageView(mode);
   /* Shown, not chosen. The prompt in `build` was compiled at this ratio minutes ago;
      a picker here could only disagree with it, and when it did the request won and the
      prompt was left describing a frame nobody was going to get. */
