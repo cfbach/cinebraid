@@ -7,6 +7,10 @@ const CONFIG_PATH = process.env.CINEBRAID_CONFIG_PATH
   : path.join(__dirname, "data", "config.json");
 const MASK_PREFIX = "••••";
 
+/* The calendar test the motion rate's freshness is validated with. Shared with the
+   browser's reader so a date this file accepts is a date that file also accepts. */
+const { isCalendarDate } = require("./public/shared-generation-rate");
+
 const DEFAULT_CONFIG = {
   assistant: { provider: "ollama", visionProvider: "same" },
   agents: {
@@ -92,6 +96,31 @@ const DEFAULT_CONFIG = {
       maxConcurrent: 1,
       requireConfirmation: true,
       estimatedCostPerImage: 0,
+      /* WHAT A SECOND OF RENDERED MOTION IS ESTIMATED TO COST, and the only place
+         CineBraid holds that number.
+       *
+       * It used to live in the browser as a hard-coded $0.26 inside falH3CostEstimate(),
+       * which meant the pre-flight quote and the durable record were two authorities
+       * reading two different things: the dialog printed a confident figure and
+       * generation-cost.js recorded `unknown` for the same job, because the server had
+       * no motion rate to read. One configured number ends that — the quote and the
+       * record now derive from this field through one shared function.
+       *
+       * CineBraid ships NO PRICES. 0 is the default and means UNCONFIGURED, which is not
+       * free and not zero: an unconfigured rate produces "unavailable" on the screen and
+       * `confidence: "unknown"` on the row, and never a $0.00 that would read as a
+       * completed purchase of nothing.
+       *
+       * `source` and `asOf` are the operator's own note about where the number came from
+       * and when they read it. CineBraid cannot check a provider's pricing page and does
+       * not pretend to, so both are free of any verification claim — and both stay empty
+       * unless somebody fills them in. An `asOf` defaulted to today would be a
+       * manufactured freshness stamp, which is worse than admitting the date is unknown. */
+      motionRate: {
+        usdPerSecond: 0,
+        source: "",
+        asOf: "",
+      },
     },
   },
   appearance: {
@@ -337,6 +366,31 @@ function normalizeConfig(config, options = {}) {
   merged.generation.fal.estimatedCostPerImage = Number.isFinite(estimatedCostPerImage)
     ? Math.max(0, Math.min(100, estimatedCostPerImage))
     : 0;
+  /* The motion rate, normalised on the same terms as the per-image one — bounded, and
+     anything that is not a usable number becomes 0, which reads as UNCONFIGURED
+     everywhere downstream rather than as a price of zero.
+
+     `asOf` is accepted only as a REAL ISO calendar date. A freshness field that took
+     "recently" could not be compared to anything, and one that quietly substituted
+     today's date when the operator left it blank would be inventing the verification
+     this whole field exists to record honestly. An unparseable date becomes empty and
+     renders as "freshness unknown".
+
+     Shape alone is not enough: 2026-99-99 and 2026-02-30 both match YYYY-MM-DD and
+     neither is a day that existed. The calendar test lives in the shared rate module and
+     is CALLED here rather than copied, for the same reason the arithmetic is — two
+     validators are two answers waiting to disagree. */
+  merged.generation.fal.motionRate = deepMerge(
+    DEFAULT_CONFIG.generation.fal.motionRate,
+    isPlainObject(merged.generation.fal.motionRate) ? merged.generation.fal.motionRate : {},
+  );
+  const motionUsdPerSecond = Number(merged.generation.fal.motionRate.usdPerSecond);
+  merged.generation.fal.motionRate.usdPerSecond = Number.isFinite(motionUsdPerSecond)
+    ? Math.max(0, Math.min(100, motionUsdPerSecond))
+    : 0;
+  merged.generation.fal.motionRate.source = String(merged.generation.fal.motionRate.source || "").trim().slice(0, 200);
+  const motionAsOf = String(merged.generation.fal.motionRate.asOf || "").trim();
+  merged.generation.fal.motionRate.asOf = isCalendarDate(motionAsOf) ? motionAsOf : "";
   merged.generation.fal.blockingQuality = ["low", "medium", "high", "auto"].includes(merged.generation.fal.blockingQuality) ? merged.generation.fal.blockingQuality : "low";
   merged.generation.fal.frameQuality = ["low", "medium", "high", "auto"].includes(merged.generation.fal.frameQuality) ? merged.generation.fal.frameQuality : "high";
   merged.appearance = deepMerge(DEFAULT_CONFIG.appearance, merged.appearance || {});

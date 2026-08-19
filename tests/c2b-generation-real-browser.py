@@ -171,6 +171,10 @@ try:
         assert page.locator("#fal-frame-references").inner_text().strip(), "C: no approved-reference panel"
         compiled = page.locator("#fal-frame-prompt-editor").input_value()
         assert len(compiled) > 80, f"C: the compiled prompt is too short to be real ({len(compiled)} characters)"
+        # Size moved behind Advanced with the Simple/Advanced split; quality and the
+        # candidate count are production decisions and stay on the opening screen.
+        page.locator('.gen-view-tab[data-gen-view-mode="advanced"]').first.click()
+        page.wait_for_selector("#fal-frame-size", timeout=10000)
         for control in ("fal-frame-size", "fal-frame-quality", "fal-frame-count"):
             assert page.locator(f"#{control}").count() == 1, f"C: the {control} control is missing"
         assert page.locator("#fal-frame-facts").inner_text().strip(), "C: the request summary is empty"
@@ -245,6 +249,8 @@ try:
 
         # ---- K. an output change re-compiles ----------------------------
         before_facts = page.locator("#fal-frame-facts").inner_text()
+        page.locator('.gen-view-tab[data-gen-view-mode="advanced"]').first.click()
+        page.wait_for_selector("#fal-frame-size", timeout=10000)
         sizes = page.evaluate("() => [...document.querySelectorAll('#fal-frame-size option')].map(o => o.value)")
         other = next((value for value in sizes if value != page.locator("#fal-frame-size").input_value()), "")
         assert other, "K: only one size is offered, so a change cannot be tested"

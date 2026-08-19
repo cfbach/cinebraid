@@ -136,10 +136,36 @@ async function main() {
 
   /* =========================================================================
      2 — generateMoreEntityStateCandidates. THE REAL FUNCTION, and the request
-     body captured immediately before transport. */
+     body captured immediately before transport.
+
+     THIS ACTION NO LONGER DISPATCHES BY ITSELF, and that is the point of the
+     Slice 4 correction: "GENERATE 3 MORE" used to build a body and POST it with
+     no preflight, no provider or cost disclosure and no payload gate. It now
+     OPENS the preflight the paid dispatch already lives behind. So the same
+     derivation claims are asserted where they now belong — at the submit — and
+     the step in between is asserted too, because "it opened a dialog" and "it
+     charged somebody" must never again be the same keystroke. */
   {
     const historic = await page({ canon: false });
     await historic.context.generateMoreEntityStateCandidates("props", "PR-TOOL", "state-worn", "build-worn", false);
+    eq(historic.sent.filter((row) => !row.__validation).length, 0,
+      "GENERATE 3 MORE must not reach the paid endpoint on its own");
+    const stashed = json(historic, "window._falEntityGenerationRequest || {}");
+    eq(stashed.stateId, "state-worn", "it must open the preflight on the state it was pressed for");
+    /* The preflight paints its settings block on the next tick, exactly as the shipped
+       dialog does after openModal(); reading before that would report an empty panel and
+       look like a control that was never drawn. */
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    /* Read from the RENDERED MARKUP, not from a control's `.value`: this harness models
+       the document as a flat id map and never parses markup into live elements, so every
+       select reports an empty value here whatever it was drawn with. The real dispatched
+       number is asserted in tests/generation-simple-advanced-real-browser.py, where the
+       control is a real one. */
+    ok(/<option value="3"[^>]*selected/.test(
+      String(evaluate(historic, `document.getElementById("fal-entity-generation-view").innerHTML`))),
+      "and pre-set to the three candidates the button promises");
+
+    await historic.context.startFalEntityGeneration();
     const jobs = historic.sent.filter((row) => !row.__validation);
     eq(jobs.length, 1, "the request is issued — a historic parent does not block generation, it blocks DERIVATION");
     eq(jobs[0].derivationMode, "independent", "and it is dispatched independently");
@@ -151,6 +177,9 @@ async function main() {
 
     const canon = await page({ canon: true });
     await canon.context.generateMoreEntityStateCandidates("props", "PR-TOOL", "state-worn", "build-worn", false);
+    eq(canon.sent.filter((row) => !row.__validation).length, 0,
+      "an approved parent does not change that: still no dispatch without the preflight");
+    await canon.context.startFalEntityGeneration();
     const canonJobs = canon.sent.filter((row) => !row.__validation);
     eq(canonJobs.length, 1, "an approved parent also dispatches");
     eq(canonJobs[0].derivationMode, "derive", "but as a derivation");

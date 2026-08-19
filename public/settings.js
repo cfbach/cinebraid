@@ -274,6 +274,14 @@ function generationConfigPatch() {
         blockingResolution: v("#cfg-fal-blocking-resolution", CONFIG.generation?.fal?.blockingResolution || "1k"),
         frameResolution: v("#cfg-fal-frame-resolution", CONFIG.generation?.fal?.frameResolution || "1k"),
         estimatedCostPerImage: Math.max(0, Number(v("#cfg-fal-cost-per-image", CONFIG.generation?.fal?.estimatedCostPerImage || "0")) || 0),
+        /* The one motion rate, and the two facts that make it readable later. Bounds and
+           the date format are enforced again in config.js — this is a form, not the
+           authority — but an unparseable value must not arrive as a confident number. */
+        motionRate: {
+          usdPerSecond: Math.max(0, Number(v("#cfg-fal-motion-rate", CONFIG.generation?.fal?.motionRate?.usdPerSecond || "0")) || 0),
+          source: String(v("#cfg-fal-motion-rate-source", CONFIG.generation?.fal?.motionRate?.source || "")).trim(),
+          asOf: String(v("#cfg-fal-motion-rate-asof", CONFIG.generation?.fal?.motionRate?.asOf || "")).trim(),
+        },
         maxConcurrent: Number(CONFIG.generation?.fal?.maxConcurrent || 1),
         requireConfirmation: true,
       },

@@ -39,6 +39,11 @@ const readLF = (file) => fs.readFileSync(file, "utf8").replace(/\r\n/g, "\n");
    and the control would report a false pass. */
 const IN_SCOPE = [
   path.join(ROOT, "generation-cost.js"),
+  /* The arithmetic moved here when the browser quote and the durable record were made
+     to derive from one configured rate. A control that patched only generation-cost.js
+     would leave the real multiplication in the cache and report a false pass, so the
+     module that now performs it is in scope for eviction and for patching. */
+  path.join(ROOT, "public", "shared-generation-rate.js"),
   path.join(ROOT, "fal-generation.js"),
   path.join(ROOT, "automation-runs.js"),
   path.join(__dirname, "generation-cost-history.js"),
@@ -266,12 +271,12 @@ async function main() {
   const NC_E_EDITS = [[
     `  return {
     costClass: COST_CLASS,
-    estimate,
+    estimate: derived.estimate,
     recordedAt: String(at || ""),`,
     `  return {
     costClass: COST_CLASS,
-    estimate,
-    actualCost: amount,
+    estimate: derived.estimate,
+    actualCost: derived.estimate.amount,
     recordedAt: String(at || ""),`,
   ]];
   await control({
@@ -290,22 +295,30 @@ async function main() {
      NC-E2 — the softer version of the same lie: a locally computed number
      claiming the provider priced this job. `quoted` is a real word in the
      contract and it must stay reserved for when it is true. */
+  /* The anchor moved with the code. `confidence` is chosen in the shared rate module
+     now, because that is where the one multiplication lives — so the control patches
+     the module that would actually have to tell the lie. Patching generation-cost.js
+     for it would edit a file that no longer contains the word and report itself stale.
+
+     `quotedAt` is injected as a literal rather than as `String(at || "")`: `at` is a
+     parameter of submissionAccounting and does not exist in this scope, and an injected
+     defect that throws a ReferenceError is a control that proves nothing. */
   const NC_E2_EDITS = [[
     `      confidence: "estimated",
       amount,`,
     `      confidence: "quoted",
-      quotedAt: String(at || ""),
+      quotedAt: "2026-08-10T00:00:00.000Z",
       amount,`,
   ]];
   await control({
     id: "NC-E2",
     label: "a locally computed estimate claims the provider quoted it",
     guards: "CASE 5 — fal does not quote at submission, so nothing may claim it did",
-    defect: () => patched("generation-cost.js", NC_E2_EDITS, async () => {
+    defect: () => patched("public/shared-generation-rate.js", NC_E2_EDITS, async () => {
       const { submissionAccounting } = require("../generation-cost");
       return submissionAccounting({ purpose: "frame", outputCount: 2, ratePerImage: 0.06, at: "2026-08-10T00:00:00.000Z" }).estimate.confidence === "quoted";
     }),
-    guarded: () => patched("generation-cost.js", NC_E2_EDITS, () => freshSuite().main()),
+    guarded: () => patched("public/shared-generation-rate.js", NC_E2_EDITS, () => freshSuite().main()),
   });
 
   /* -------------------------------------------------------------------------

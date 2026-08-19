@@ -424,16 +424,36 @@ async function dialogSection() {
 
     await view.context.openFalFrameGenerationModal("frame", "L1-01", "FR-A", "b1");
     await new Promise((resolve) => setTimeout(resolve, 25));
-    const modal = view.context.document.getElementById("modal").innerHTML;
+    /* READ FROM THE PANEL, not the modal string. The output settings moved into the
+       shared Simple/Advanced block, which is filled after the modal is in the DOM, and
+       the harness models the document as a flat id map — a sub-container's innerHTML is
+       never part of its parent's. */
+    const panel = () => view.context.document.getElementById("fal-frame-generation-view").innerHTML;
 
     assert(planBody, `${label}: the frame dialog must compile a plan before it opens`);
-    assert.strictEqual(selectedOption(modal, "fal-frame-quality"), expectQuality,
+    /* SIMPLE IS THE DEFAULT, so Quality — a production decision — is on the opening
+       screen and Size is not. Inheritance is asserted for both regardless of which view
+       carries them: what a control opens on must not depend on how it was disclosed. */
+    assert(panel().includes('data-gen-view="simple"'), `${label}: the dialog must open on Simple`);
+    assert.strictEqual(selectedOption(panel(), "fal-frame-quality"), expectQuality,
       `${label}: the Quality control must open on the saved value`);
-    assert.strictEqual(selectedOption(modal, "fal-frame-size"), expectSize,
-      `${label}: the Size control must open on the resolved saved size`);
-    assert.notStrictEqual(selectedOption(modal, "fal-frame-quality"), "auto",
+    assert.notStrictEqual(selectedOption(panel(), "fal-frame-quality"), "auto",
       `${label}: the audit's Auto must not be the initial value`);
-    note(`dialog: under ${label} the frame dialog opens at ${expectQuality} / ${expectSize}`);
+    assert.strictEqual(selectedOption(panel(), "fal-frame-size"), null,
+      `${label}: Size is an expert control and must not be on the Simple screen at all`);
+
+    view.context.setGenerationViewMode("advanced");
+    assert(panel().includes('data-gen-view="advanced"'), `${label}: the switch must reach Advanced`);
+    assert.strictEqual(selectedOption(panel(), "fal-frame-size"), expectSize,
+      `${label}: the Size control must open on the resolved saved size`);
+    assert.strictEqual(selectedOption(panel(), "fal-frame-quality"), expectQuality,
+      `${label}: and Advanced must not lose the saved quality on the way`);
+    /* Back to Simple, and the saved inheritance is unchanged — a view switch is a
+       disclosure, never an edit. */
+    view.context.setGenerationViewMode("simple");
+    assert.strictEqual(selectedOption(panel(), "fal-frame-quality"), expectQuality,
+      `${label}: returning to Simple must not have changed what the dialog inherited`);
+    note(`dialog: under ${label} the frame dialog opens on Simple at ${expectQuality}, and Advanced carries the resolved ${expectSize}`);
   }
 
   /* --- The H3 dialog. The value it opens on is the value it asked the server to
