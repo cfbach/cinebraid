@@ -1045,6 +1045,109 @@ function calendarDateSection() {
     + "calendar serves both readers; and a bad date costs the freshness, not the price");
 }
 
+/* --- 13d · CANDIDATE CORRECTION IS NOT A FOURTH PRIVATE GENERATION PATH.
+
+   The last paid image surface still doing everything itself: it drew count, quality and
+   resolution side by side whatever the model supported, rendered no plan, showed no price
+   before a paid edit request even with a per-image rate configured, and POSTed its own raw
+   body. It renders the accepted preflight now and gates through the accepted plan.
+
+   The correction's OWN semantics are deliberately untouched, and section 13d asserts that
+   too: this was a generation-entry correction, not a reason to redesign review
+   provenance. */
+function candidateCorrectionSection() {
+  const modal = readLF("public/review-provenance.js");
+  const client = readLF("public/fal-generation.js");
+  /* THE FUNCTION, not everything after it. Slicing to end-of-file would sweep in the H3
+     dialog's own legitimate plan calls and report them as this one's. */
+  const dispatch = (codeOnly(client).split("window.startCandidateCorrectionGeneration")[1] || "")
+    .split("window.refreshCandidateCorrectionGeneration")[0];
+  assert(dispatch, "13d: the correction dispatch must still exist to be asserted about");
+
+  /* NO RAW-BODY BYPASS REMAINS. Asserted on the dispatch that actually leaves, not on the
+     presence of a gate somewhere in the file. */
+  const posts = dispatch.split("/api/generation/fal/jobs");
+  assert(posts.length >= 2, "13d: the correction must still reach the paid endpoint somewhere");
+  assert(/JSON\.stringify\(gatedBody\)/.test(dispatch),
+    "13d: the correction must submit the gated body");
+  assert(!/body: JSON\.stringify\(body\)/.test(dispatch),
+    "13d: and must not keep a raw-body POST beside it");
+  assert(/restrictPayloadToPlan\(\s*body,\s*falFixedImageControlPlan\(/.test(dispatch),
+    "13d: through the accepted plan authority, not one of its own");
+
+  /* NOT A SECOND PLAN AUTHORITY. It reuses the shared fixed-route plan and defines none. */
+  for (const invented of ["generationControlPlan(", "CINEBRAID_GENERATION_CONTROLS", "capabilityFromPlan("])
+    assert(!dispatch.includes(invented), `13d: the correction dispatch must not build its own plan (${invented})`);
+
+  /* THE FIXED THREE-CONTROL GRID IS GONE, replaced by the shared preflight. */
+  assert(!/candidate-correction-settings/.test(modal),
+    "13d: the hand-rolled settings grid must be gone, not merely hidden");
+  assert(/id="candidate-correction-generation-view"/.test(modal),
+    "13d: the accepted preflight must be mounted in the dialog");
+  assert(/renderFalFixedImageView\("candidate-correction-generation-view"/.test(modal),
+    "13d: and drawn by the shared renderer every other fixed-route image dialog uses");
+  assert(/window\._generationViewRefresh = drawCorrectionView/.test(modal),
+    "13d: with the Simple/Advanced switch wired to redraw THIS dialog");
+
+  /* EVERY CONTROL THE DIALOG DRAWS IS PLAN-DERIVED. The three ids it owns may appear only
+     inside the shared renderer's own markup — never as a literal <select> in the modal. */
+  for (const id of ["candidate-correction-output-count", "candidate-correction-quality", "candidate-correction-resolution"])
+    assert(!new RegExp(`<select id="${id}"`).test(modal),
+      `13d: ${id} must not be drawn by the dialog itself`);
+
+  /* AND THE PLAN IS THE SAME ONE, so Simple/Advanced means here what it means everywhere. */
+  const simple = Presentation.generationControlPlan({
+    capability: { qualityTiers: ["low", "medium", "high"], resolutions: ["1k", "2k", "4k"], durationSeconds: null,
+      flags: { seed: false, candidateBatching: true, referenceWeights: false, cfgScale: false, steps: false } },
+    mode: "simple", only: ["outputCount", "quality", "resolution", "seed", "cfgScale", "steps", "referenceStrength"],
+  });
+  assert.deepStrictEqual(simple.rendered, ["outputCount", "quality"],
+    "13d: Simple draws the two production controls and not the expert size");
+  const advanced = Presentation.generationControlPlan({
+    capability: { qualityTiers: ["low", "medium", "high"], resolutions: ["1k", "2k", "4k"], durationSeconds: null,
+      flags: { seed: false, candidateBatching: true, referenceWeights: false, cfgScale: false, steps: false } },
+    mode: "advanced", only: ["outputCount", "quality", "resolution", "seed", "cfgScale", "steps", "referenceStrength"],
+  });
+  assert(advanced.rendered.includes("resolution"), "13d: Advanced discloses the size");
+  for (const key of EXPERT_CONTROLS)
+    assert(!advanced.rendered.includes(key), `13d: and still never ${key}, which this route does not support`);
+
+  /* NOTHING UNSUPPORTED OR UNRENDERED CAN LEAK INTO A CORRECTION REQUEST. Over a body
+     carrying the correction's real fields plus every control at once. */
+  const body = {
+    purpose: "correction", shotId: "L1-01", frameId: "frame-a", frameLabel: "A",
+    sourceBuildId: "correction-build", packageId: "pkg", sourceCandidate: "FRAME_B.png",
+    parentBuildId: "orig-build", parentPackageId: "orig-pkg", guideAssetId: "guide-1",
+    prompt: "CORRECTION INSTRUCTION", references: [{ role: "base" }],
+    outputCount: 2, quality: "high", resolution: "2k",
+    seed: 11, cfgScale: 6, steps: 22, referenceStrength: 0.4,
+  };
+  const gated = Presentation.restrictPayloadToPlan(body, simple);
+  for (const key of [...EXPERT_CONTROLS, "resolution"])
+    assert(!(key in gated.payload), `13d: ${key} must not reach a paid correction request from Simple`);
+  assert.strictEqual(gated.payload.outputCount, 2, "13d: while the Simple controls do travel");
+  assert.strictEqual(gated.payload.quality, "high");
+
+  /* THE CORRECTION'S OWN SEMANTICS SURVIVE THE GATE UNTOUCHED. Every field that carries
+     what is being corrected, which build it came from and what provenance it keeps is a
+     request field rather than a setting, and the gate must never touch one. */
+  for (const key of ["purpose", "shotId", "frameId", "frameLabel", "sourceBuildId", "packageId",
+    "sourceCandidate", "parentBuildId", "parentPackageId", "guideAssetId", "prompt", "references"])
+    assert.deepStrictEqual(gated.payload[key], body[key],
+      `13d: ${key} is correction provenance, not a control, and must pass through untouched`);
+
+  /* AND REVIEW PROVENANCE ITSELF WAS NOT REDESIGNED. */
+  for (const owner of ["candidateCorrectionPackage", "registerCandidateCorrectionBuild",
+    "candidateCorrectionIssues", "candidateCorrectionReferenceInstruction"])
+    assert(modal.includes(`function ${owner}`), `13d: ${owner} must still own what it owned`);
+  assert(/kind: "candidate-correction"/.test(modal) && /revisionReason: "candidate-correction"/.test(modal),
+    "13d: and the correction build's own identity and revision reason are unchanged");
+
+  note("13d. Candidate correction · the last private paid image path now renders the accepted preflight from the shared "
+    + "renderer, gates through restrictPayloadToPlan, keeps no raw-body POST, draws no control of its own, and leaves "
+    + "every correction provenance field untouched");
+}
+
 /* ------------------------------------------------------------------------ run */
 async function main() {
   await simpleIsDefaultSection();
@@ -1062,6 +1165,7 @@ async function main() {
   await entityStatePreflightSection();
   recommendationRationaleSection();
   calendarDateSection();
+  candidateCorrectionSection();
 
   console.log([
     "Batch 2 Slice 4 — Simple vs Advanced generation + price truth — passed:",

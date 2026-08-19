@@ -675,6 +675,70 @@ async function main() {
     guarded: () => patched("config.js", NC_U_EDITS, () => freshSuite().main()),
   });
 
+  /* NC-V — THE CORRECTION POSTS ITS RAW BODY AGAIN. The exact defect an independent
+     review reproduced in Chromium: the paid edit request leaves carrying whatever the
+     dialog's selects held, past the plan that decides what may be sent. */
+  await sourceControl({
+    id: "NC-V",
+    label: "candidate-correction submits a raw body past the payload gate",
+    guards: "section 13d — the correction submits the gated body and keeps no raw POST beside it",
+    file: "public/fal-generation.js",
+    edits: [[
+      `  const gatedBody = restrictPayloadToPlan(body, falFixedImageControlPlan(generationViewPreference(), draft)).payload;
+  try {
+    await flushPendingProjectSave();
+    closeModal();
+    const response = await fetch("/api/generation/fal/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(gatedBody) });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || "Could not start correction generation");`,
+      `  try {
+    await flushPendingProjectSave();
+    closeModal();
+    const response = await fetch("/api/generation/fal/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || "Could not start correction generation");`,
+    ]],
+    defect: (source) => {
+      const dispatch = source.split("window.startCandidateCorrectionGeneration")[1]
+        .split("window.refreshCandidateCorrectionGeneration")[0];
+      return /body: JSON\.stringify\(body\)/.test(dispatch) && !/restrictPayloadToPlan/.test(dispatch);
+    },
+    guarded: (source) => {
+      const dispatch = String(source).replace(/\/\*[\s\S]*?\*\//g, "")
+        .split("window.startCandidateCorrectionGeneration")[1]
+        .split("window.refreshCandidateCorrectionGeneration")[0];
+      assert(/JSON\.stringify\(gatedBody\)/.test(dispatch), "13d: the correction must submit the gated body");
+      assert(!/body: JSON\.stringify\(body\)/.test(dispatch), "13d: and must not keep a raw-body POST beside it");
+      assert(/restrictPayloadToPlan\(\s*body,\s*falFixedImageControlPlan\(/.test(dispatch),
+        "13d: through the accepted plan authority, not one of its own");
+    },
+  });
+
+  /* NC-W — THE DIALOG DRAWS ITS OWN THREE-CONTROL GRID AGAIN. Count, quality and
+     resolution side by side whatever the model supports, with no plan and no price above
+     them — the presentation half of the same defect, and the half a payload assertion
+     alone would never notice. */
+  await sourceControl({
+    id: "NC-W",
+    label: "candidate-correction draws a fixed count/quality/resolution grid of its own",
+    guards: "section 13d — every control the dialog draws is plan-derived",
+    file: "public/review-provenance.js",
+    edits: [[
+      `<div id="candidate-correction-generation-view"></div>`,
+      `<div class="two-col candidate-correction-settings"><label><span>Number of options</span><select id="candidate-correction-output-count"></select></label><label><span>Quality</span><select id="candidate-correction-quality"></select></label><label><span>Resolution</span><select id="candidate-correction-resolution"></select></label></div>`,
+    ]],
+    defect: (source) => /<select id="candidate-correction-resolution"/.test(source)
+      && !/id="candidate-correction-generation-view"/.test(source),
+    guarded: (source) => {
+      assert(!/candidate-correction-settings/.test(source),
+        "13d: the hand-rolled settings grid must be gone, not merely hidden");
+      assert(/id="candidate-correction-generation-view"/.test(source),
+        "13d: the accepted preflight must be mounted in the dialog");
+      for (const id of ["candidate-correction-output-count", "candidate-correction-quality", "candidate-correction-resolution"])
+        assert(!new RegExp(`<select id="${id}"`).test(source), `13d: ${id} must not be drawn by the dialog itself`);
+    },
+  });
+
   /* Everything real, and green, after every mutation was rolled back in memory. */
   await freshSuite().main();
 

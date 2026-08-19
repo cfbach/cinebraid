@@ -150,22 +150,30 @@ function falFixedImageControlPlan(mode, request) {
 
 function falFixedImageControlsMarkup(plan, ids, current) {
   const rendered = new Set(plan.rendered || []);
+  /* A REQUEST ALREADY AT THE PROVIDER FREEZES THE CONTROLS, and that is a fact about this
+     RUN rather than about the model — so it is a pass-through here and never folded into
+     capability. An unsupported control is still absent; a supported one is still drawn,
+     just not changeable while the request it would describe is in flight. Collapsing the
+     two would put "this model cannot" and "not right now" behind the same greyed box. */
+  const lock = current.disabled === true ? " disabled" : "";
   const parts = [];
   if (rendered.has("outputCount"))
-    parts.push(`<label><span>Number of options</span><select id="${attr(ids.count)}">${
+    parts.push(`<label><span>Number of options</span><select id="${attr(ids.count)}"${lock}>${
       [1, 2, 3, 4].map((n) => `<option value="${n}" ${n === Number(current.count) ? "selected" : ""}>${n}</option>`).join("")
     }</select></label>`);
   if (rendered.has("quality"))
-    parts.push(`<label><span>Quality</span><select id="${attr(ids.quality)}">${
+    parts.push(`<label><span>Quality</span><select id="${attr(ids.quality)}"${lock}>${
       ["low", "medium", "high"].map((value) => `<option value="${value}" ${value === current.quality ? "selected" : ""}>${value[0].toUpperCase() + value.slice(1)}</option>`).join("")
     }</select></label>`);
   if (rendered.has("resolution"))
-    parts.push(`<label><span>Resolution</span><select id="${attr(ids.resolution)}">${falResolutionOptions(current.resolution)}</select></label>`);
+    parts.push(`<label><span>Resolution</span><select id="${attr(ids.resolution)}"${lock}>${falResolutionOptions(current.resolution)}</select></label>`);
   return parts.length ? `<div class="h3-settings-grid">${parts.join("")}</div>` : "";
 }
 
-/* One renderer for both dialogs, so "Simple" means the same thing on a blocking revision
-   and on a continuity-state reference as it does on the compiled frame dialog. */
+/* One renderer for every fixed-route image dialog, so "Simple" means the same thing on a
+   blocking revision, on a continuity-state reference and on a candidate correction as it
+   does on the compiled frame dialog. Three callers now; the correction dialog was the last
+   paid image surface still drawing its own grid and posting its own body. */
 function renderFalFixedImageView(hostId, ids, current, limits, mode) {
   const host = document.getElementById(hostId);
   if (!host) return;
@@ -632,10 +640,17 @@ window.startCandidateCorrectionGeneration = async () => {
     resolution: document.getElementById("candidate-correction-resolution")?.value || falResolutionValue("frame"),
     aspectRatio: shotAspectLabel(P, s),
   };
+  /* THE SAME GATE EVERY OTHER PAID GENERATION SURFACE PASSES THROUGH, recomputed against
+     the view that is actually showing. This dialog used to POST `body` directly: it drew
+     count, quality and resolution together whatever the model supported, showed no plan
+     and no price, and shipped whatever its selects happened to hold. The correction's own
+     semantics are untouched — the package, the references, the provenance and the
+     revision behaviour are all still the ones candidateCorrectionPackage() built. */
+  const gatedBody = restrictPayloadToPlan(body, falFixedImageControlPlan(generationViewPreference(), draft)).payload;
   try {
     await flushPendingProjectSave();
     closeModal();
-    const response = await fetch("/api/generation/fal/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const response = await fetch("/api/generation/fal/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(gatedBody) });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || "Could not start correction generation");
     FAL_GENERATION_JOBS = [...(FAL_GENERATION_JOBS || []).filter((job) => job.id !== data.job.id), data.job];

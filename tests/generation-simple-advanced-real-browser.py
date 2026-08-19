@@ -37,6 +37,9 @@ than letting a green tick imply more than it proves.
      cannot reach the paid endpoint on their own, and what they DO submit is gated
   K  a use-case guide's authored reasoning survives the real /api/generation/options
      response, over real HTTP, rather than being dropped on the wire
+  L  candidate correction — the last paid image dialog that drew its own grid and
+     posted its own body — presents the accepted preflight with a real cost, and
+     what it submits is gated
   I  no provider was contacted, no paid route was called, nothing left this machine
 
 NOTHING HERE IS PAID. The dialogs compile through /api/generation/fal/image/plan,
@@ -119,6 +122,39 @@ open_state.setdefault("assetPromptBuilds", []).append({
     "prompt": "COMPILED OPEN-PARCEL STATE INSTRUCTION",
     "warnings": [], "confirmations": [],
 })
+project_file.write_text(json.dumps(project, indent=2), encoding="utf-8")
+
+
+# A CORRECTION BUILD, so the candidate-correction dialog has something real to open on.
+# The candidate RECORD is created on demand by candidateRecord(), so only the build has to
+# exist. The first reference must be the editable base — the dispatch refuses otherwise,
+# which is correction semantics this suite deliberately does not weaken.
+CORRECTION_SHOT, CORRECTION_FRAME = "SAMPLE-01", "frame-a"
+CORRECTION_CANDIDATE = "SAMPLE-01-ARRIVAL.png"
+CORRECTION_BUILD = "slice4-correction-build"
+CORRECTION_PACKAGE = "SAMPLE-01-A-CORRECTION-R01"
+correction_url = f"/assets/shots/{CORRECTION_SHOT}/takes/{CORRECTION_CANDIDATE}"
+project = json.loads(project_file.read_text(encoding="utf-8"))
+project.setdefault("promptBuildsById", {})[CORRECTION_BUILD] = {
+    "id": CORRECTION_BUILD,
+    "date": "2026-08-18T00:00:00.000Z",
+    "packageId": CORRECTION_PACKAGE,
+    "parentPackageId": "SAMPLE-01-A-R01",
+    "parentBuildId": "slice4-original-build",
+    "kind": "candidate-correction",
+    "revisionReason": "candidate-correction",
+    "profileId": "gpt-image-2/edit",
+    "profileName": "GPT Image 2 · Reference Edit",
+    "sourceCandidate": CORRECTION_CANDIDATE,
+    "prompt": "CORRECTION: restore the approved platform architecture behind the courier.",
+    "correctionWarnings": [],
+    "references": [
+        {"key": "base", "label": "Candidate under correction", "role": "base",
+         "url": correction_url, "instruction": "Editable base. Preserve everything not named."},
+        {"key": "guide", "label": "Blocking guide", "role": "composition",
+         "url": correction_url, "instruction": "Geometry only."},
+    ],
+}
 project_file.write_text(json.dumps(project, indent=2), encoding="utf-8")
 
 
@@ -538,6 +574,94 @@ try:
         findings.append(f"K: the guide's {len(wire['note'])}-character authored note survives the real API response, "
                         f"and an undecided guide still yields no recommendation")
 
+        # ===== L · CANDIDATE CORRECTION IS NOT A PRIVATE PAID PATH
+        #
+        # This dialog drew count, quality and resolution side by side whatever the model
+        # supported, rendered no plan, showed no price before a paid edit request even with
+        # a per-image rate configured, and POSTed its own raw body. Driven here through the
+        # real shipped entry point, with the paid route still intercepted.
+        write_config(MOTION_RATE)
+        page.goto(f"{base}/#/shot/{CORRECTION_SHOT}", wait_until="domcontentloaded")
+        page.reload(wait_until="domcontentloaded")
+        page.wait_for_selector("#main", timeout=15000)
+        page.wait_for_timeout(1200)
+        reset_view_preference()
+
+        before_correction = len(captured_submits)
+        page.evaluate(
+            "args => openCandidateCorrectionModal(args[0], args[1], args[2], args[3])",
+            [CORRECTION_SHOT, CORRECTION_FRAME, CORRECTION_CANDIDATE, CORRECTION_BUILD])
+        page.wait_for_selector("#candidate-correction-generation-view .gen-view", timeout=20000)
+        page.wait_for_timeout(400)
+        assert len(captured_submits) == before_correction, \
+            "L: opening the correction dialog must not dispatch anything"
+
+        # SIMPLE IS WHAT OPENS, and the three controls are no longer side by side.
+        assert view_mode() == "simple", f"L: the correction dialog opened on {view_mode()!r}"
+        assert page.locator("#candidate-correction-output-count").count() == 1, \
+            "L: Simple keeps the candidate count"
+        assert page.locator("#candidate-correction-quality").count() == 1, "L: and the quality decision"
+        assert page.locator("#candidate-correction-resolution").count() == 0, \
+            "L: but not the expert size, which used to sit beside them unconditionally"
+
+        # PROVIDER AND COST TRUTH BEFORE THE PAID BUTTON, from the configured image rate.
+        correction_always = page.locator("#candidate-correction-generation-view .gen-view-always").inner_text()
+        for expected in ("Provider cost", "Where it runs", "Model"):
+            assert expected in correction_always, \
+                f"L: the correction preflight must state {expected!r}, got {correction_always!r}"
+        correction_price = page.locator("#candidate-correction-generation-view .gen-view-price").inner_text()
+        assert "Estimated" in correction_price, \
+            f"L: a configured image rate must produce an estimate here, got {correction_price!r}"
+        assert "$0.00" not in correction_price, "L: and never a confident zero"
+        assert "free" not in correction_price.lower(), "L: nor Free"
+        # The number is the configured rate times the candidate count, from the one authority.
+        expected_correction = float(page.locator("#candidate-correction-output-count").input_value()) * 0.06
+        assert f"{expected_correction:.2f}" in correction_price, \
+            f"L: the estimate must be the configured rate times the count, got {correction_price!r}"
+
+        # ADVANCED DISCLOSES ONLY WHAT THIS ROUTE SUPPORTS.
+        open_advanced()
+        assert page.locator("#candidate-correction-resolution").count() == 1, "L: Advanced discloses the size"
+        correction_labels = page.evaluate(
+            "() => [...document.querySelectorAll('#candidate-correction-generation-view .gen-view-controls label')]"
+            "  .filter(node => node.querySelector('input, select, textarea'))"
+            "  .map(node => (node.querySelector('span')?.textContent || '').trim().toLowerCase())")
+        for word in ("guidance", "cfg", "sampling steps", "seed", "reference strength"):
+            assert not any(word in label for label in correction_labels), \
+                f"L: {word!r} is unsupported on this route and must not be drawn: {correction_labels}"
+
+        # AND A SIMPLE DISPATCH CARRIES ONLY WHAT SIMPLE OFFERED.
+        open_simple()
+        assert page.locator("#candidate-correction-resolution").count() == 0, \
+            "L: returning to Simple must remove the expert control, not hide it"
+        page.locator("button.approve-btn.large", has_text="GENERATE CORRECTION WITH FAL").first.click()
+        page.wait_for_timeout(1500)
+        assert len(captured_submits) == before_correction + 1, \
+            f"L: pressing generate must submit; captured {captured_submits[before_correction:]}"
+        correction_body = captured_submits[-1]
+        assert correction_body.get("purpose") == "correction", \
+            f"L: the submission must be the correction request, got {correction_body.get('purpose')!r}"
+        assert "resolution" not in correction_body, "L: and must not carry the size Simple never asked about"
+        for key in EXPERT_KEYS:
+            assert key not in correction_body, f"L: {key} must never reach a paid correction request"
+        assert correction_body.get("quality"), "L: while a Simple control does travel"
+
+        # CORRECTION SEMANTICS AND PROVENANCE ARE UNTOUCHED BY THE GATE.
+        assert correction_body.get("sourceCandidate") == CORRECTION_CANDIDATE, \
+            f"L: the correction must still target its candidate, got {correction_body.get('sourceCandidate')!r}"
+        assert correction_body.get("sourceBuildId") == CORRECTION_BUILD, \
+            f"L: and its build, got {correction_body.get('sourceBuildId')!r}"
+        assert correction_body.get("packageId") == CORRECTION_PACKAGE, "L: and its package identity"
+        assert correction_body.get("parentPackageId") == "SAMPLE-01-A-R01", "L: and its parent package"
+        assert correction_body.get("frameId") == CORRECTION_FRAME, "L: and the frame it repairs"
+        assert (correction_body.get("references") or [])[0].get("role") == "base", \
+            "L: with the editable base still first in the package"
+        assert "CORRECTION:" in (correction_body.get("prompt") or ""), "L: and the correction instruction intact"
+        correction_headline = next((line for line in correction_price.splitlines() if "Estimated" in line), correction_price)
+        findings.append(f"L: the correction dialog opened on Simple showing {correction_headline.strip()!r}, "
+                        f"disclosed only the size under Advanced, and its gated body kept every provenance field while "
+                        f"carrying {sorted(correction_body.keys() & {'outputCount', 'quality', 'resolution'})}")
+
         # ============================================================ I · NOTHING WAS SPENT
         assert not page_errors, f"I: uncaught errors: {page_errors}"
         assert not offsite, f"I: requests tried to leave this machine: {offsite}"
@@ -547,11 +671,11 @@ try:
         # hide behind the intended one.
         unexpected = [line for line in console_errors if "net::ERR_FAILED" not in line]
         assert not unexpected, f"I: unexpected console errors: {unexpected}; failed: {failed_requests}"
-        assert failed_requests == [f"POST {base}{PAID_ROUTE} (net::ERR_FAILED)"] * 2, \
+        assert failed_requests == [f"POST {base}{PAID_ROUTE} (net::ERR_FAILED)"] * 3, \
             f"I: the only failed requests must be the intercepted paid POSTs, got {failed_requests}"
-        assert len(paid_calls) == len(captured_submits) == 2, \
-            f"I: expected exactly two intercepted paid submits, saw paid={paid_calls} captured={captured_submits}"
-        findings.append(f"I: 2 paid POSTs were intercepted and aborted before the server saw them, 0 provider calls, "
+        assert len(paid_calls) == len(captured_submits) == 3, \
+            f"I: expected exactly three intercepted paid submits, saw paid={paid_calls} captured={captured_submits}"
+        findings.append(f"I: 3 paid POSTs were intercepted and aborted before the server saw them, 0 provider calls, "
                         f"0 off-site requests")
 
         browser.close()
