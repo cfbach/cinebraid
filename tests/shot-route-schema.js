@@ -834,18 +834,27 @@ async function checkFactRecord() {
 }
 
 /* ===========================================================================
-   10 — NO VISIBLE WORKFLOW CHANGE.
+   10 — NO ROUTE CHANGES STAGE SEMANTICS, OR ANY OTHER FACT.
 
-   The central Slice 5a assertion. Every rendered surface the harness owns, plus the
-   stage model's own output and the strip's status projection, must be byte-identical
-   with and without a declared route — for all five routes and for a malformed one.
+   SUPERSEDED IN PART BY SLICE 5b, AND DELIBERATELY NOT DELETED. What this section
+   asserted when it was written was that every rendered surface is byte-identical with
+   and without a declared route, because Slice 5a shipped no surface at all. Slice 5b
+   ships the Shot Intent control and adaptive frame exposure, so that half is now false
+   BY DESIGN and its replacement — a masked byte-identity proving 5b's visible change is
+   bounded to the two surfaces it declares — lives in tests/shot-intent-ux.js, which is
+   the suite that owns the visible half.
+
+   WHAT SURVIVES HERE IS THE HALF SLICE 5a STILL OWNS, and it is the more important one:
+   the stage model, the stage bar's status projection and every other fact in the record
+   are byte-identical for all five routes and for a malformed one. public/shared-stage-
+   model.js still does not read a route, `not-applicable` is still not an availability,
+   and no shot's progress, completion or blocked reason moves because somebody said how
+   the shot is made.
    =========================================================================== */
 
 async function checkNoVisibleChange(baseline) {
   for (const value of [...ROUTES, "GENERATE (FLF)", ""]) {
     const routed = await factsFor(value);
-    assert.strictEqual(routed.slots, baseline.slots,
-      `declaring ${JSON.stringify(value)} changed a rendered surface; Slice 5a may change nothing a filmmaker sees`);
     assert.strictEqual(JSON.stringify(routed.progress), JSON.stringify(baseline.progress),
       `declaring ${JSON.stringify(value)} changed the stage model's output`);
     assert.strictEqual(JSON.stringify(routed.statuses), JSON.stringify(baseline.statuses),
@@ -857,27 +866,40 @@ async function checkNoVisibleChange(baseline) {
       `declaring ${JSON.stringify(value)} disturbed another fact`);
   }
 
-  /* And no Slice 5b vocabulary reached a rendered surface. The four route tokens are NOT
-     probed for: `i2v` and `flf` are pre-existing motion-unit and profile vocabulary and
-     have been rendered since long before this slice. The byte-identity above is what
-     proves nothing new appeared; these probe the words the slice would leak. */
-  for (const pattern of [/\bdelivery\s*route\b/i, /\bshot\s*intent\b/i, /adaptive\s*execution/i, /\broute\s*chooser\b/i])
+  /* THE STORAGE VOCABULARY STILL DOES NOT LEAK ONTO A SCREEN. `deliveryRoute` is a key
+     on a record; a filmmaker is shown "Shot intent" and the shipped mode language. The
+     `shot intent` probe that used to sit in this list is gone, because that IS the 5b
+     surface's name and it is now supposed to be there. The four route tokens are still
+     not probed for: `i2v` and `flf` are pre-existing motion-unit and profile vocabulary
+     and have been rendered since long before either slice. */
+  for (const pattern of [/\bdelivery\s*route\b/i, /adaptive\s*execution/i, /\broute\s*chooser\b/i])
     assert(!pattern.test(baseline.slots),
-      `no rendered surface may carry Slice 5b vocabulary: ${pattern}`);
+      `no rendered surface may carry the route's storage vocabulary: ${pattern}`);
 
-  /* The shipped page has no control that writes one, either. */
-  const shipped = ["public/app.js", "public/creation-studio.js", "public/v607-composer.js",
+  /* THERE IS EXACTLY ONE WRITER, AND IT IS NOT AN ASSIGNMENT. Slice 5b's Shot Intent
+     control writes through Slice 5a's declareShotRoute / clearShotRoute; every other
+     shipped surface still writes nothing, and NO surface — including the one that
+     writes — may touch the field directly, because a second way to set it is a second
+     normaliser. */
+  const writer = "public/creation-studio.js";
+  const shipped = ["public/app.js", writer, "public/v607-composer.js",
     "public/motion-sound-composer.js", "public/generation-picker.js", "public/stage-surfaces.js",
     "public/creator-surfaces.js", "public/views.js", "public/planning.js", "public/mutations.js",
     "public/fal-generation.js", "public/automation.js"];
+  let writers = 0;
   for (const file of shipped) {
     const source = readLF(file);
-    assert(!/declareShotRoute|clearShotRoute|\.deliveryRoute\s*=/.test(source),
-      `${file} must not write a declared route: Slice 5a ships no writer and no chooser`);
+    assert(!/\.deliveryRoute\s*=/.test(source),
+      `${file} must never assign the route field directly; declareShotRoute is the only writer`);
+    if (!/declareShotRoute|clearShotRoute/.test(source)) continue;
+    writers += 1;
+    assert.strictEqual(file, writer,
+      `${file} declares or clears a route; the Shot Intent control in ${writer} is the only surface allowed to`);
   }
+  assert.strictEqual(writers, 1, `exactly one shipped surface may write a declared route, found ${writers}`);
 
-  note(`10. no visible change: ${ROUTES.length + 2} route values rendered byte-identically across `
-    + "every harness slot, the stage model's output and the stage bar's status projection");
+  note(`10. stage semantics: ${ROUTES.length + 2} route values produced byte-identical stage-model output, `
+    + "stage-bar status projection and fact records; one shipped writer, and it writes through 5a");
 }
 
 /* ===========================================================================

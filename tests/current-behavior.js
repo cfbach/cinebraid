@@ -520,6 +520,9 @@ async function main() {
     "settings-consistency.js",
     "shot-execution-tier0-negative-controls.js",
     "shot-execution-tier0.js",
+    "shot-intent-ux-negative-controls.js",
+    "shot-intent-ux-real-browser.py",
+    "shot-intent-ux.js",
     "shot-media-identity-negative-controls.js",
     "shot-media-identity.js",
     "shot-readiness-negative-controls.js",
@@ -628,6 +631,16 @@ async function main() {
           "the projection binds the P4 partition at load"],
         ["shared-authority-kernel.js", "shared-production-authority.js",
           "the wrapper reads the kernel namespace at load"],
+        /* Slice 5b. public/shared-shot-intent.js resolves all three of its owners at
+           load and THROWS by name when one is missing, so a page that loaded it early
+           would be a blank application rather than a quiet wrong answer. Node sees none
+           of it, because require() resolves whatever the page order is. */
+        ["shared-shot-route.js", "shared-shot-intent.js",
+          "the intent projection resolves the route vocabulary at load and throws without it"],
+        ["shared-generation-options.js", "shared-shot-intent.js",
+          "the intent projection resolves the shipped mode language at load"],
+        ["shared-shot-readiness.js", "shared-shot-intent.js",
+          "the intent projection reads ANIMATE_METHOD_PROBES at load"],
       ]) {
         assert(at(dependency) >= 0 && at(dependent) >= 0,
           `index.html must load both ${dependency} and ${dependent}`);
