@@ -82,6 +82,15 @@ const FOREIGN_MARKERS = ["ambientLight", "envMap", "shadowQuality", "workspacePa
 const SHAPE_MARKERS = [
   { marker: "shot.continuityIntent", era: SOURCE_GENERATION.V6_7, test: (d) => shots(d).some((s) => isObject(s.continuityIntent)) },
   { marker: "entity.tracking", era: SOURCE_GENERATION.V6_7, test: (d) => allEntities(d).some((e) => isObject(e.tracking)) },
+  /* Slice 5a's declared shot delivery route, listed for the same reason
+     shot.continuityIntent is: it is a 6.7 user-writable field that exists only once
+     somebody declares one, so a project can carry it while its meta.schemaVersion still
+     says 6.6. A declared marker beats every shape reading, so this changes nothing for a
+     document that states its generation, and gives a document that does not one more
+     piece of honest evidence. It is evidence and never a route: nothing here reads the
+     value, and no classification writes one. An empty or blank slot is not a
+     declaration and deliberately does not fire. */
+  { marker: "shot.deliveryRoute", era: SOURCE_GENERATION.V6_7, test: (d) => shots(d).some((s) => typeof s.deliveryRoute === "string" && s.deliveryRoute.trim() !== "") },
   { marker: "coverageSlots.requirement", era: SOURCE_GENERATION.V6_6, test: (d) => allEntities(d).some((e) => arr(e.coverageSlots).some((c) => typeof c.requirement === "string")) },
   { marker: "shot.creationBrief", era: SOURCE_GENERATION.V6_6, test: (d) => shots(d).some((s) => isObject(s.creationBrief)) },
   { marker: "entity.continuityStates", era: SOURCE_GENERATION.PRE_6_6, test: (d) => allEntities(d).some((e) => Array.isArray(e.continuityStates)) },

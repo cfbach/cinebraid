@@ -133,7 +133,7 @@ function checkDeclaration() {
       `limitation ${key} must say what it cannot answer, why, and what would fix it`);
   }
   assert(!Stage.SHOT_STAGE_AVAILABILITY.includes("not-applicable"),
-    "not-applicable must not be a declared availability while no shot record carries a delivery route");
+    "not-applicable must not be a declared availability while no stage derivation reads a shot's declared delivery route");
 
   note(`Declaration: ${ids.length} stages, unique ids, explicit order — ${ids.join(" -> ")}`);
   note("Declaration: no generation route and no frame-count arithmetic reaches stage semantics");
