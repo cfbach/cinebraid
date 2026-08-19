@@ -459,6 +459,12 @@ async function checkFrameExposure() {
         bodyLength: html.length,
         progress: JSON.stringify(guidedFrameProgress(s, takesFor("L1-01")).frames.map((f) => f.id)),
         stageProgress: JSON.stringify(shotStageProgress(shotStageModelFacts(s, takesFor("L1-01")))),
+        /* READINESS IS THE OTHER TRUTH A HIDDEN STAGE COULD FABRICATE, and it is a
+           different owner from the stage model: public/shared-shot-readiness.js answers
+           "can this be produced now" from durable authority. It is closed architecture
+           and this slice does not touch it — asserted rather than assumed, because
+           "the stage is folded" must never become "the work is done". */
+        readiness: (() => { try { return JSON.stringify(evaluateShotReadiness(P, s, {})); } catch (error) { return "unavailable: " + error.message; } })(),
       };`);
   }
 
@@ -466,6 +472,8 @@ async function checkFrameExposure() {
   assert(baseline.rail > 0 && baseline.frameLabels.length > 0 && baseline.addFrame,
     "precondition: the fixture's Frames stage must really build a rail, some frames and the add-frame control, "
     + "or every 'nothing was deleted' assertion below is comparing two empty sets");
+  assert(!baseline.readiness.startsWith("unavailable"),
+    `precondition: the readiness derivation must actually run, got ${baseline.readiness.slice(0, 160)}`);
   assert.strictEqual(baseline.relevance, "undeclared", "an undeclared shot's Frames stage says so");
   assert.strictEqual(baseline.workflowOpen, true, "and opens exactly as it always has");
   assert.strictEqual(baseline.statement, false, "with no not-required statement");
@@ -489,6 +497,8 @@ async function checkFrameExposure() {
     /* AND NO PROGRESS IS FABRICATED. A folded stage is not a finished one. */
     assert.strictEqual(row.stageProgress, baseline.stageProgress,
       `${route}: folding a stage must not move a single completion, availability or blocked reason`);
+    assert.strictEqual(row.readiness, baseline.readiness,
+      `${route}: folding a stage must not move a single readiness state, requirement or next action`);
   }
 
   /* THE TWO STATES REMEMBER SEPARATELY, and this is the assertion that keeps the
