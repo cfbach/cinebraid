@@ -391,148 +391,102 @@ control("NC-4d", "restoring unconditional start-frame assignment in the live bui
   assert.notStrictEqual(result.fromFrame, "");
 });
 
-/* The Motion panel's start-frame prerequisite, applied unconditionally. */
-control("NC-4e", "restoring the unconditional Motion panel lock", async () => {
-  const page = await render("#/production", buildFixture(), {
+/* The old unconditional frame gate bypasses canonical Motion readiness. */
+control("NC-4e", "restoring a local frame gate beside canonical readiness", async () => {
+  const project = buildFixture();
+  const shot = project.shots[0];
+  shot.characters = [];
+  shot.codes = [];
+  shot.creationBrief = {};
+  shot.deliveryRoute = "t2v";
+  const page = await render("#/production", project, {
     mutateSource: (file, source) => (file === "creation-studio.js"
-      ? mutated("public/creation-studio.js", () => source.replace(
-        "if (needsApprovedStill && !progress.requiredApproved && !videos.length) return",
-        "if (!progress.requiredApproved && !videos.length) return",
-      ))
+      ? mutated("public/creation-studio.js", () => source
+        .replace('if (motionStage?.availability === "blocked") {', 'if (!progress.requiredApproved && !videos.length) {')
+        .replace('const reason = motionStage.blockedReason || "Resolve the required production inputs first";',
+          'const reason = "Approve required frames first";'))
       : source),
   });
   const result = vm.runInContext(`(() => {
     const shot = P.shots[0];
     for (const frame of shot.keyframes || []) frame.winner = "";
-    shot.clips = []; shot.motionPrompt = "";
+    shot.clips = [];
     const c = ensureShotCreation(shot);
     c.activeMotionUnitId = "";
     const profile = (PROMPT_LIBRARY?.profiles || []).find((p) => p.mediaType === "video" && p.mode === "t2v") || null;
     c.motionProfileId = profile ? profile.id : "";
     ensureGuidedMotionUnit(shot, "", profile);
     const html = guidedMotionPanel(shot, null, []);
-    return { locked: html.includes("guided-motion-card locked"), saysApproveFirst: html.includes("Approve required frames first") };
+    return { locked: html.includes("guided-motion-card locked"), saysOldWarning: html.includes("Approve required frames first") };
   })()`, page.context);
-
-  /* THE LIVE DEFECT: the one route in the picker that needs no approved still is the one
-     route nobody can open. */
-  assert.strictEqual(result.locked, true, "the control must reintroduce the unconditional lock");
-  assert.strictEqual(result.saysApproveFirst, true, "and demand a frame t2v never begins from");
-  /* THE GUARD asserts the opposite. */
+  assert.strictEqual(result.locked, true, "the control must reintroduce the local frame lock");
+  assert.strictEqual(result.saysOldWarning, true, "the control must restore the contradictory frame warning");
   assert.notStrictEqual(result.locked, false);
 });
 
-/* NC-4f — resolve the panel's prerequisite from the PICKER'S profile again.
- *
- * The subtle one, and the one that survived the first repair: `preferredGuidedVideoProfile`
- * falls back to the wired image-to-video default when nothing is selected, so reading the
- * gate off it makes an imported t2v unit — which carries its kind and no profile id —
- * look like an i2v shot and lock behind a frame it never begins from. */
-control("NC-4f", "resolving the panel gate from the picker's default profile", async () => {
-  const page = await render("#/production", buildFixture(), {
+/* The open panel reads a picker default instead of canonical route facts. */
+control("NC-4f", "deriving Motion frame wording from the picker default", async () => {
+  const project = buildFixture();
+  const shot = project.shots[0];
+  shot.characters = [];
+  shot.codes = [];
+  shot.creationBrief = {};
+  shot.deliveryRoute = "t2v";
+  const page = await render("#/production", project, {
     mutateSource: (file, source) => (file === "creation-studio.js"
       ? mutated("public/creation-studio.js", () => source.replace(
-        "guidedVideoModeNeedsApprovedStill(guidedEffectiveVideoMode(s, c, unit))",
-        'guidedVideoModeNeedsApprovedStill(profile?.mode || "")',
+        `  const needsApprovedStill = motionFacts.routeRequirementsKnown
+    ? motionFacts.requiredFrameCount > 0
+    : guidedVideoModeNeedsApprovedStill(guidedEffectiveVideoMode(s, c, unit));`,
+        '  const needsApprovedStill = guidedVideoModeNeedsApprovedStill(profile?.mode || "");',
       ))
       : source),
   });
   const result = vm.runInContext(`(() => {
     const shot = P.shots[0];
     for (const frame of shot.keyframes || []) frame.winner = "";
-    shot.motionPrompt = "";
+    shot.clips = [];
     const c = ensureShotCreation(shot);
-    c.activeMotionUnitId = ""; c.motionProfileId = "";
+    c.activeMotionUnitId = "";
+    c.motionProfileId = "";
     shot.clips = [{ id: "seg-imported", kind: "t2v", dur: 6, motionPrompt: "A storm front.", fromFrame: "", toFrame: "", motionProfileId: "", generationPackages: [] }];
     const html = guidedMotionPanel(shot, null, []);
-    const unit = shot.clips[0];
-    return {
-      panelLocked: html.includes("guided-motion-card locked"),
-      saysApproveFirst: html.includes("Approve required frames first"),
-      unitKind: unit.kind, unitFromFrame: unit.fromFrame,
-      unitProfileId: unit.motionProfileId || "", shotProfileId: c.motionProfileId || "",
-    };
+    return { locked: html.includes("guided-motion-card locked"), pill: /guided-mode-pill[^>]*>([^<]*)</.exec(html)?.[1] || "" };
   })()`, page.context);
-
-  /* THE LIVE DEFECT, reproduced field for field as it was reported. Compared as JSON
-     rather than with deepStrictEqual: the object is built inside the harness's vm realm,
-     so its prototype is not the host's and a structural comparison fails while printing
-     identical values. */
-  assert.strictEqual(
-    JSON.stringify(result, ["panelLocked", "saysApproveFirst", "unitKind", "unitFromFrame", "unitProfileId", "shotProfileId"]),
-    JSON.stringify({ panelLocked: true, saysApproveFirst: true, unitKind: "t2v", unitFromFrame: "", unitProfileId: "", shotProfileId: "" },
-      ["panelLocked", "saysApproveFirst", "unitKind", "unitFromFrame", "unitProfileId", "shotProfileId"]),
-    "the control must reproduce the reported shape exactly",
-  );
-  /* THE GUARD asserts the opposite of the first two. */
-  assert.notStrictEqual(result.panelLocked, false);
-
-  /* And an EXPLICIT t2v selection still opened even with the defect present, which is
-     why the first repair looked complete: the missing case is the one with no profile. */
-  const explicit = vm.runInContext(`(() => {
-    const shot = P.shots[0];
-    for (const frame of shot.keyframes || []) frame.winner = "";
-    const c = ensureShotCreation(shot);
-    const t2v = (PROMPT_LIBRARY?.profiles || []).find((p) => p.mediaType === "video" && p.mode === "t2v");
-    c.motionProfileId = t2v ? t2v.id : "";
-    shot.clips = [{ id: "seg-x", kind: "t2v", dur: 5, fromFrame: "", toFrame: "", motionProfileId: "", generationPackages: [] }];
-    return guidedMotionPanel(shot, null, []).includes("guided-motion-card locked");
-  })()`, page.context);
-  assert.strictEqual(explicit, false, "an explicitly selected t2v profile hid the defect and must be shown doing so");
+  assert.strictEqual(result.locked, false, "canonical readiness must still open description-only Motion");
+  assert.notStrictEqual(result.pill, "NO FRAMES NEEDED", "the control must make the open panel contradict its canonical route");
 });
 
-/* NC-4g — resolve the panel from the FIRST clip again instead of the active unit.
- *
- * Both directions are wrong and they fail differently: one locks a route that needs no
- * frame, the other OPENS a route that does. The second is the one that matters, because
- * a silently opened gate is not a gate. */
-control("NC-4g", "resolving the panel from the first clip instead of the active unit", async () => {
-  const page = await render("#/production", buildFixture(), {
+/* Active clip focus is allowed to choose editor context, never shot availability. */
+control("NC-4g", "letting an active t2v clip bypass hybrid readiness", async () => {
+  const project = buildFixture();
+  const shot = project.shots[0];
+  shot.characters = [];
+  shot.codes = [];
+  shot.creationBrief = {};
+  shot.deliveryRoute = "hybrid";
+  const page = await render("#/production", project, {
     mutateSource: (file, source) => (file === "creation-studio.js"
       ? mutated("public/creation-studio.js", () => source.replace(
-        "const unit = guidedActiveMotionUnit(s, c), supportedKinds =",
-        "const unit = (s.clips || [])[0], supportedKinds =",
+        '  const motionStage = shotStageState("motion", motionFacts);',
+        '  const canonicalMotionStage = shotStageState("motion", motionFacts);\n  const motionStage = guidedEffectiveVideoMode(s, c, unit) === "t2v" ? { ...canonicalMotionStage, availability: "available", blockedReason: "" } : canonicalMotionStage;',
       ))
       : source),
   });
-  vm.runInContext(`globalThis.__multi = (firstKind, secondKind, activeIndex) => {
+  const result = vm.runInContext(`(() => {
     const shot = P.shots[0];
     for (const frame of shot.keyframes || []) frame.winner = "";
-    shot.motionPrompt = "";
     const c = ensureShotCreation(shot);
-    c.motionProfileId = ""; c.motionDirection = ""; c.motionDuration = 0;
+    c.motionProfileId = "";
     shot.clips = [
-      { id: "seg-one", suffix: "a", label: "A", dur: 5, kind: firstKind, motionPrompt: "First unit.", fromFrame: firstKind === "t2v" ? "" : "frame-a", toFrame: "", motionProfileId: "", generationPackages: [] },
-      { id: "seg-two", suffix: "b", label: "B", dur: 6, kind: secondKind, motionPrompt: "Second unit.", fromFrame: secondKind === "t2v" ? "" : "frame-a", toFrame: "", motionProfileId: "", generationPackages: [] },
+      { id: "seg-one", kind: "i2v", dur: 5, motionPrompt: "First.", fromFrame: "frame-a", toFrame: "", motionProfileId: "", generationPackages: [] },
+      { id: "seg-two", kind: "t2v", dur: 5, motionPrompt: "Second.", fromFrame: "", toFrame: "", motionProfileId: "", generationPackages: [] },
     ];
-    c.activeMotionUnitId = shot.clips[activeIndex].id;
-    const html = guidedMotionPanel(shot, null, []);
-    return {
-      activeKind: guidedActiveMotionUnit(shot, c)?.kind || "",
-      panelLocked: html.includes("guided-motion-card locked"),
-      saysApproveFirst: html.includes("Approve required frames first"),
-      pill: /guided-mode-pill[^>]*>([^<]*)</.exec(html)?.[1] || "",
-    };
-  };`, page.context);
-  const multi = (first, second, index) =>
-    vm.runInContext(`__multi(${JSON.stringify(first)}, ${JSON.stringify(second)}, ${index})`, page.context);
-
-  /* THE LIVE DEFECT, case A: the active unit is t2v and the panel is locked anyway. */
-  const a = multi("i2v", "t2v", 1);
-  assert.strictEqual(a.activeKind, "t2v", "the active unit really is the t2v one");
-  assert.strictEqual(a.panelLocked, true, "the control must lock it from the first clip");
-  assert.strictEqual(a.saysApproveFirst, true, "and demand a frame the active route never begins from");
-
-  /* THE LIVE DEFECT, case B — the dangerous inversion: the active unit is i2v with no
-     approved still, and the panel opens and announces NO FRAMES NEEDED. */
-  const b = multi("t2v", "i2v", 1);
-  assert.strictEqual(b.activeKind, "i2v", "the active unit really is the i2v one");
-  assert.strictEqual(b.panelLocked, false, "the control must open a route that needs a frame");
-  assert.strictEqual(b.pill, "NO FRAMES NEEDED", "and state the opposite of the truth about it");
-
-  /* THE GUARD asserts the opposite of both. */
-  assert.notStrictEqual(a.panelLocked, false);
-  assert.notStrictEqual(b.panelLocked, true);
+    c.activeMotionUnitId = "seg-two";
+    return guidedMotionPanel(shot, null, []).includes("guided-motion-card locked");
+  })()`, page.context);
+  assert.strictEqual(result, false, "the control must let active clip focus bypass the hybrid shot blocker");
+  assert.notStrictEqual(result, true);
 });
 
 /* The frameless half of T0-2, which is the half with the blast radius: leaving t2v out
@@ -628,20 +582,7 @@ async function main() {
   assert(read("public/app.js").includes('"t2v", "i2v", "flf", "r2v", "plan", "post", "reuse"'));
   assert(read("server.js").includes('framelessKinds = ["t2v", "plan", "post", "reuse"]'));
 
-  console.log(
-    `Shot Execution Tier 0 negative controls passed: ${detected.length} deliberate defects reintroduced in memory — `
-    + "each of the seven inventory rows dropped in turn, the dialogue-implies-lip-sync shortcut restored in the shared "
-    + "derivation and at a former call site, the derived level persisted into the record it outranks, the H3 pack's "
-    + "explicit audio refusal dropped back to the generic backstop, the "
-    + "prompt-expansion flag omitted and then sent on, t2v removed from "
-    + "the browser vocabulary, the import vocabulary and the frameless list, and all four live Motion regressions — "
-    + "the unit builder fabricating a start frame again, the panel locking unconditionally, the panel resolving its "
-    + "route from the picker's default profile so an imported t2v unit locked again, and the panel following the first "
-    + "clip instead of the active unit so a multi-unit shot both locked a frameless route and opened a gated one — "
-    + "every one detected by the property that "
-    + "guards it, with the real modules green afterwards. Nothing was written to disk and nothing was reverted with "
-    + "git. Provider calls made: 0.",
-  );
+  console.log("Shot Execution Tier 0 negative controls passed: " + detected.length + " deliberate defects detected in memory; route requirements, canonical Motion readiness, compiler accounting and provider boundaries all remained guarded. Nothing was written or reverted. Provider calls made: 0.");
 }
 
 main().catch((error) => { console.error(error.stack || error); process.exitCode = 1; });

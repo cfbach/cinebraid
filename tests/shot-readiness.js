@@ -28,6 +28,7 @@ const PUBLIC = path.join(ROOT, "public");
 const Kernel = require(path.join(PUBLIC, "shared-authority-kernel.js"));
 const Authority = require(path.join(PUBLIC, "shared-production-authority.js"));
 const Readiness = require(path.join(PUBLIC, "shared-shot-readiness.js"));
+const Route = require(path.join(PUBLIC, "shared-shot-route.js"));
 const { resolveTaskModes } = require(path.join(PUBLIC, "shared-generation-options.js"));
 const { installTestManualActionSource } = require("./authority-test-gesture.js");
 const { render } = require("./render-harness.js");
@@ -1107,6 +1108,109 @@ async function renderedSurfaceSection() {
     "but never as a top-level sibling of the verdict, where an empty array reads as an all-clear");
   ok(route.indexOf("setup: {") < route.indexOf("issues: projectReadinessIssues"),
     "they are nested inside the setup envelope");
+}
+
+
+/* ===========================================================================
+   DECLARED ROUTE -> REQUIRED INPUTS -> CANONICAL READINESS
+   =========================================================================== */
+{
+  const routeCases = {
+    t2v: [],
+    i2v: ["first-frame"],
+    flf: ["first-frame", "last-frame"],
+    r2v: ["reference"],
+  };
+  for (const [route, expected] of Object.entries(routeCases)) {
+    deepEqual(Readiness.shotRouteInputNeeds(route).needs.slice(), expected,
+      route + " requirements come from the canonical readiness owner");
+  }
+
+  const t2vShot = shot("SH-T2V-INTENT", {
+    deliveryRoute: "t2v",
+    keyframes: [{ id: "frame-a", label: "A", required: true }, { id: "frame-b", label: "B", required: true }],
+    clips: [],
+    creationBrief: {},
+  });
+  const t2vProject = project({ shots: [t2vShot] });
+  const t2v = shotOf(t2vProject, t2vShot.id, oracleFor([], { [t2vShot.id]: [] }));
+  deepEqual(t2v.units.filter((unit) => unit.kind === "frame").map((unit) => unit.required), [false, false],
+    "description-only keeps existing frames but makes neither a required unit");
+  equal(unitOf(t2v, "motion:shot").status, "READY", "description-only Motion is ready without frames");
+  equal(t2v.nextAction.code, "produce-motion", "description-only projects Motion as the next work");
+
+  const i2vShot = shot("SH-I2V-INTENT", {
+    deliveryRoute: "i2v",
+    keyframes: [{ id: "frame-a", label: "A", required: false }, { id: "frame-b", label: "B", required: true }],
+    clips: [],
+    creationBrief: {},
+  });
+  const i2vProject = project({ shots: [i2vShot] });
+  const i2v = shotOf(i2vProject, i2vShot.id, oracleFor([], { [i2vShot.id]: [] }));
+  deepEqual(i2v.units.filter((unit) => unit.kind === "frame").map((unit) => unit.required), [true, false],
+    "first-frame intent requires its opening frame even when a stale authored flag says otherwise");
+  equal(unitOf(i2v, "motion:shot").status, "BLOCKED", "first-frame Motion is blocked without opening-frame Canon");
+  equal(unitOf(i2v, "motion:shot").nextAction.code, "approve-required-frames",
+    "first-frame Motion names the canonical frame blocker");
+
+  const flfShot = shot("SH-FLF-INTENT", {
+    deliveryRoute: "flf",
+    keyframes: [{ id: "frame-a", label: "A" }, { id: "frame-b", label: "B" }],
+    clips: [],
+    creationBrief: {},
+  });
+  const flfProject = project({ shots: [flfShot] });
+  approveFrame(flfProject, flfShot.id, "frame-a", "A.png");
+  const flf = shotOf(flfProject, flfShot.id, oracleFor([], { [flfShot.id]: [{ name: "A.png", url: "/shots/A.png" }] }));
+  deepEqual(flf.units.filter((unit) => unit.kind === "frame").map((unit) => unit.required), [true, true],
+    "first-plus-last intent requires both endpoints");
+  equal(unitOf(flf, "motion:shot").status, "BLOCKED", "first-plus-last Motion stays blocked with only one endpoint");
+  equal(unitOf(flf, "motion:shot").nextAction.count, 1, "the missing closing endpoint is represented exactly once");
+
+  const r2vShot = shot("SH-R2V-INTENT", {
+    deliveryRoute: "r2v",
+    winner: "EXISTING-STILL.png",
+    keyframes: [{ id: "frame-a", label: "A", winner: "EXISTING-STILL.png" }],
+    clips: [],
+    creationBrief: {},
+  });
+  const r2vProject = project({ shots: [r2vShot] });
+  approveFrame(r2vProject, r2vShot.id, "frame-a", "EXISTING-STILL.png");
+  const r2vOracle = oracleFor([], { [r2vShot.id]: [{ name: "EXISTING-STILL.png", url: "/shots/EXISTING-STILL.png" }] });
+  const r2v = shotOf(r2vProject, r2vShot.id, r2vOracle);
+  equal(r2v.status, "BLOCKED", "reference-driven readiness stays blocked despite enough still media to tempt Animate");
+  equal(r2v.nextAction.code, "prepare-references", "the blocked shot projects the canonical reference action");
+  equal(unitOf(r2v, "motion:shot").status, "BLOCKED", "the motion unit agrees with the shot rollup");
+  ok(!unitOf(r2v, "motion:shot").admissible, "no forward motion method is exposed while its declared input is absent");
+
+  const retained = {
+    keyframes: JSON.stringify(r2vShot.keyframes),
+    clips: JSON.stringify(r2vShot.clips),
+    winner: r2vShot.winner,
+  };
+  Route.declareShotRoute(r2vShot, "t2v");
+  equal(JSON.stringify(r2vShot.keyframes), retained.keyframes, "changing Shot Intent preserves frames and their authority pointers");
+  equal(JSON.stringify(r2vShot.clips), retained.clips, "changing Shot Intent preserves motion units and generations");
+  equal(r2vShot.winner, retained.winner, "changing Shot Intent preserves selected media");
+
+  Route.declareShotRoute(r2vShot, "r2v");
+  r2vShot.clips.push({ id: "shot", label: "Imported motion" });
+  GESTURE.gesture(() => Kernel.approveMotionCanon(r2vProject, {
+    shotId: r2vShot.id,
+    unitKey: "shot",
+    value: "IMPORTED-MOTION.mp4",
+    assetId: "asset-imported-motion",
+    at: AT,
+    via: "readiness-suite",
+  }));
+  const manual = shotOf(r2vProject, r2vShot.id, oracleFor([], {
+    [r2vShot.id]: [
+      { name: "EXISTING-STILL.png", url: "/shots/EXISTING-STILL.png" },
+      { name: "IMPORTED-MOTION.mp4", url: "/shots/IMPORTED-MOTION.mp4", assetId: "asset-imported-motion" },
+    ],
+  }));
+  equal(unitOf(manual, "motion:shot").complete, true, "receipt-backed imported motion is accepted as existing production media");
+  equal(manual.status, "COMPLETE", "manual-first approved motion satisfies the declared motion unit without generation");
 }
 
 renderedSurfaceSection().then(

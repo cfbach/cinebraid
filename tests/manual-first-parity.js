@@ -1,7 +1,7 @@
 const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
-const { render, buildFixture, withFixtureCanon } = require("./render-harness");
+const { render, buildFixture, withFixtureCanon, withCanon } = require("./render-harness");
 
 const ROOT = path.resolve(__dirname, "..");
 const SAMPLE = JSON.parse(fs.readFileSync(path.join(ROOT, "projects", "cinebraid-sample", "project.json"), "utf8"));
@@ -156,6 +156,19 @@ async function renderSet(project, emphasis) {
        who had approved those frames would have left. The file on disk is not
        touched; `structuredClone` above is the copy this stamps. */
     const copy = withFixtureCanon(structuredClone(project));
+    /* The Motion parity row is about assisted-control exposure, so it declares an
+       image-to-video route and carries the receipt-backed inputs that make that route
+       canonically available. Other rows retain the legacy sample unchanged. */
+    if (spec.name === "shot motion") {
+      const motionShot = copy.shots.find((row) => row.id === "SAMPLE-02");
+      motionShot.deliveryRoute = "i2v";
+      motionShot.creationBrief = { ...(motionShot.creationBrief || {}), deliveryIntent: "motion" };
+      withCanon(copy, [
+        { kind: "entity-state", list: "characters", entityId: "CHAR-COURIER", stateId: "state-default", value: "CHAR-COURIER-FRONT.png" },
+        { kind: "entity-state", list: "locations", entityId: "LOC-PLATFORM", stateId: "state-default", value: "LOC-PLATFORM-MASTER.png" },
+        { kind: "entity-state", list: "props", entityId: "PROP-PARCEL", stateId: "state-closed", value: "PROP-PARCEL-CLOSED.png" },
+      ]);
+    }
     copy.meta.workflowEmphasis = emphasis;
     copy.mediaAssets = Array.isArray(copy.mediaAssets) ? copy.mediaAssets : [];
     if (!copy.mediaAssets.some((asset) => asset.id === "manual-parity-blocking")) copy.mediaAssets.push({

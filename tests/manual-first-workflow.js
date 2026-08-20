@@ -126,7 +126,7 @@ async function testManualShotAndApprovedLibrary() {
   const storage = { "cinebraid-focused:fixture:shot-task:L1-01": "frames" };
   const shot = await render("#/shot/L1-01", project, { storage, agentStatus: disabledAgents() });
   assert(shot.html.includes("Import, choose, and approve images"));
-  assert(shot.html.includes("Add shot image") || shot.html.includes("Choose frame"), "manual frame intake must be the next action");
+  assert(shot.html.includes("guided-frame-dropzone"), "manual frame intake must remain available even when canonical readiness names an earlier blocker");
   const dropIndex = shot.html.indexOf("guided-frame-dropzone");
   const assistedIndex = shot.html.indexOf("OPTIONAL ASSISTED CREATION");
   assert(dropIndex >= 0 && assistedIndex > dropIndex, "manual result intake must appear before prompt generation tools");

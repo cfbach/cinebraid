@@ -188,7 +188,8 @@
   const ownership = nodeModule ? require("./shared-entity-ownership.js") : root;
   const options = nodeModule ? require("./shared-generation-options.js") : root;
   const lipSync = nodeModule ? require("./shared-lip-sync.js") : root;
-  const api = factory({ authority, kernel, disposition, entities, continuity, binding, presence, ownership, options, lipSync });
+  const route = nodeModule ? require("./shared-shot-route.js") : root;
+  const api = factory({ authority, kernel, disposition, entities, continuity, binding, presence, ownership, options, lipSync, route });
   if (nodeModule) module.exports = api;
   if (root) Object.assign(root, api);
 })(typeof window !== "undefined" ? window : globalThis, function (OWNERS) {
@@ -202,6 +203,7 @@
   const OWNERSHIP = OWNERS.ownership;
   const OPTIONS = OWNERS.options;
   const LIP_SYNC = OWNERS.lipSync;
+  const ROUTE = OWNERS.route;
 
   function deepFreeze(value) {
     if (value && typeof value === "object" && !Object.isFrozen(value)) {
@@ -384,6 +386,8 @@
   const resolveMediaOwnershipOwner = requireOwner(OWNERSHIP && OWNERSHIP.resolveMediaOwnership, "resolveMediaOwnership", "shared-entity-ownership.js");
   const resolveTaskModesOwner = requireOwner(OPTIONS && OPTIONS.resolveTaskModes, "resolveTaskModes", "shared-generation-options.js");
   const deriveLipSyncOwner = requireOwner(LIP_SYNC && LIP_SYNC.deriveLipSync, "deriveLipSync", "shared-lip-sync.js");
+  const canonicalShotRouteOwner = requireOwner(ROUTE && ROUTE.canonicalShotRoute, "canonicalShotRoute", "shared-shot-route.js");
+  const shotRouteGenerationModeOwner = requireOwner(ROUTE && ROUTE.shotRouteGenerationMode, "shotRouteGenerationMode", "shared-shot-route.js");
   const VISUAL_KINDS = list(CONTINUITY && CONTINUITY.VISUAL_ENTITY_KINDS).length
     ? list(CONTINUITY.VISUAL_ENTITY_KINDS)
     : ["character", "location", "prop", "vehicle"];
@@ -425,6 +429,32 @@
   /* The universe of animate-shot methods, as the shipped resolver defines it. */
   const ANIMATE_METHODS = deepFreeze([...new Set(ANIMATE_METHOD_PROBES.map((row) => row.method))]);
 
+
+  /* THE DECLARED ROUTE'S REQUIRED INPUTS, derived here beside the method probes that
+     establish them. Shot Intent presents this answer; readiness enforces it. Keeping
+     both on this owner makes it impossible for the surface to say "no frames" while
+     the production derivation silently applies another route's prerequisites. */
+  const FRAME_INPUT_ROLES = deepFreeze(["first-frame", "last-frame"]);
+  function shotRouteInputNeeds(value) {
+    const route = canonicalShotRouteOwner(value);
+    if (!route) return deepFreeze({ route: "", constrained: false, known: false, modes: [], needs: [], frameNeeds: [], framesRequired: false });
+    const namedMode = shotRouteGenerationModeOwner(route);
+    const modes = namedMode ? [namedMode] : [...ANIMATE_METHODS];
+    const probes = modes.map((mode) => ANIMATE_METHOD_PROBES.find((row) => row.method === mode) || null);
+    if (probes.some((row) => !row))
+      return deepFreeze({ route, constrained: true, known: false, modes: deepFreeze(modes), needs: [], frameNeeds: [], framesRequired: false });
+    const needs = [...new Set(probes.flatMap((row) => row.needs))];
+    const frameNeeds = needs.filter((role) => FRAME_INPUT_ROLES.includes(role));
+    return deepFreeze({
+      route,
+      constrained: true,
+      known: true,
+      modes: deepFreeze(modes),
+      needs: deepFreeze(needs),
+      frameNeeds: deepFreeze(frameNeeds),
+      framesRequired: frameNeeds.length > 0,
+    });
+  }
   const METHOD_INPUT_LABELS = deepFreeze({
     "first-frame": "an approved opening frame",
     "last-frame": "an approved closing frame",
@@ -792,9 +822,14 @@
   function declaredUnits(shot) {
     const s = record(shot);
     const creation = record(s.creationBrief);
+    const routeNeeds = shotRouteInputNeeds(s.deliveryRoute);
     const units = [];
     const frames = list(s.keyframes).map(record).filter((frame) => text(frame.id));
     frames.forEach((frame, index) => {
+      const isFirst = index === 0;
+      const isLast = frames.length > 1 && index === frames.length - 1;
+      const routeRequired = (isFirst && routeNeeds.needs.includes("first-frame"))
+        || (isLast && routeNeeds.needs.includes("last-frame"));
       units.push({
         id: `frame:${text(frame.id)}`,
         kind: "frame",
@@ -802,7 +837,10 @@
         frame,
         frameId: text(frame.id),
         index,
-        required: frame.required !== false,
+        /* A declared route governs which endpoint units are required without editing
+           or deleting the stored frames. With no route, the legacy authored flag keeps
+           its exact meaning. */
+        required: routeNeeds.known ? routeRequired : frame.required !== false,
         target: { kind: "shot-frame", shotId: text(s.id), frameId: text(frame.id) },
       });
     });
@@ -817,7 +855,7 @@
         target: { kind: "shot-motion", shotId: text(s.id), unitKey: text(clip.id) },
       });
     }
-    if (!clips.length && MOTION_INTENTS.includes(text(creation.deliveryIntent))) {
+    if (!clips.length && (MOTION_INTENTS.includes(text(creation.deliveryIntent)) || routeNeeds.known)) {
       units.push({
         id: "motion:shot",
         kind: "motion",
@@ -898,10 +936,59 @@
           ? row
           : deepFreeze({ ...row, state: "optional", required: false, reason: "", unlocks: unlockedByFrame(frames, frame) }));
       }
-    }
+      /* A route can require an endpoint before a corresponding frame record exists.
+         The route declared the input, so readiness must represent the gap instead of
+         falling back to a frameless method. No frame record is manufactured. */
+      const presentRoles = new Set();
+      if (frames.length) presentRoles.add("first-frame");
+      if (frames.length > 1) presentRoles.add("last-frame");
+      for (const role of context.routeNeeds.needs.filter((item) => item === "first-frame" || item === "last-frame")) {
+        if (presentRoles.has(role)) continue;
+        requirements.push(deepFreeze({
+          id: `route-input:${role}`,
+          kind: "shot-frame",
+          label: role === "first-frame" ? "Opening frame" : "Closing frame",
+          basis: "derived",
+          state: "missing",
+          reason: "required-frame-not-approved",
+          detail: "",
+          required: true,
+          producible: true,
+          target: null,
+          targetKey: "",
+          value: "",
+          assetId: "",
+          satisfiedBy: "",
+          mediaCheck: "not-checked",
+        }));
+      }
+      /* Reference-driven intent needs at least one canonical visual reference. Entity
+         requirements name the real authority targets when present; this generic row is
+         only the honest answer when the shot declares none at all. */
+      if (context.routeNeeds.needs.includes("reference")
+          && !requirements.some((row) => row.kind === "entity-state")) {
+        requirements.push(deepFreeze({
+          id: "route-input:reference",
+          kind: "reference",
+          label: "Approved motion reference",
+          basis: "derived",
+          state: "missing",
+          reason: "no-approved-reference",
+          detail: "",
+          required: true,
+          producible: true,
+          target: null,
+          targetKey: "",
+          value: "",
+          assetId: "",
+          satisfiedBy: "",
+          mediaCheck: "not-checked",
+        }));
+      }
 
+    }
     const methods = unit.kind === "motion"
-      ? animateMethods(requirements, frames)
+      ? animateMethods(requirements, frames, context.routeNeeds)
       : createFrameMethods(requirements);
 
     const counts = countRequirements(requirements);
@@ -956,7 +1043,7 @@
      research's Fixture F failure demands: a deterministic tie-break is not evidence
      that one method is uniquely superior, and hiding the alternatives would present
      it as though it were. */
-  function animateMethods(requirements, frames) {
+  function animateMethods(requirements, frames, routeNeeds) {
     const satisfied = new Set(requirements.filter((row) => row.state === "satisfied").map((row) => row.id));
     const first = frames[0];
     const last = frames.length > 1 ? frames[frames.length - 1] : null;
@@ -969,11 +1056,18 @@
     if (have.has("first-frame")) references.push({ role: "first-frame", mediaType: "image" });
     if (have.has("last-frame")) references.push({ role: "last-frame", mediaType: "image" });
     if (have.has("reference")) references.push({ role: "reference", mediaType: "image" });
-    const admissible = text(list(resolveTaskModesOwner("animate-shot", { references }))[0]);
-
-    const reachable = ANIMATE_METHOD_PROBES.filter((row) => row.needs.every((role) => have.has(role)));
+    const resolved = text(list(resolveTaskModesOwner("animate-shot", { references }))[0]);
+    const considered = routeNeeds.known
+      ? ANIMATE_METHOD_PROBES.filter((row) => routeNeeds.modes.includes(row.method))
+      : ANIMATE_METHOD_PROBES;
+    const reachable = considered.filter((row) => row.needs.every((role) => have.has(role)));
+    /* A declared route narrows the operational answer; it never lets the resolver's
+       frameless fallback bypass a missing route input. */
+    const admissible = routeNeeds.known
+      ? text((reachable.find((row) => row.method === resolved) || reachable[0] || {}).method)
+      : resolved;
     const alsoAdmissible = [...new Set(reachable.map((row) => row.method))].filter((method) => method && method !== admissible);
-    const contraindicated = ANIMATE_METHOD_PROBES
+    const contraindicated = considered
       .filter((row) => !row.needs.every((role) => have.has(role)))
       .map((row) => {
         const missing = row.needs.filter((role) => !have.has(role));
@@ -1206,11 +1300,13 @@
     const mediaCheck = typeof oracle.mediaListing === "function"
       ? "resolveApprovalMedia"
       : typeof oracle.fileExists === "function" ? "file-name-only" : "not-checked";
+    const routeNeeds = shotRouteInputNeeds(record(shot).deliveryRoute);
     return {
       oracle,
       mediaCheck,
       truthProblem: projectTruth === undefined ? projectTruthProblem(project) : projectTruth,
       dependencies: list(shotDependencyRecordsOwner(project, shot)),
+      routeNeeds,
       units: declaredUnits(shot),
       ownerIndexes: {},
     };
@@ -1357,6 +1453,7 @@
     SHOT_READINESS_UNAVAILABLE_KEYS,
     ANIMATE_METHODS,
     ANIMATE_METHOD_PROBES,
+    shotRouteInputNeeds,
     productionInputSatisfaction,
     evaluateShotReadiness,
     evaluateProjectReadiness,

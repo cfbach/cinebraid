@@ -2,7 +2,7 @@ const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
-const { render, buildFixture } = require("./render-harness");
+const { render, buildFixture, withCanon } = require("./render-harness");
 const RELEASE_VERSION = require("../package.json").version;
 
 const ROOT = path.join(__dirname, "..");
@@ -530,6 +530,7 @@ async function main() {
     "shot-readiness.js",
     "shot-route-schema-negative-controls.js",
     "shot-route-schema.js",
+    "shot-truth-cohesion.js",
     "shot-workspace-responsive-layout.js",
     "stage-model-negative-controls.js",
     "stage-model-real-browser.py",
@@ -765,7 +766,11 @@ async function main() {
   assert(server.includes("parseAssistantMotionRevision"), "nested and plain-text motion revisions must be normalized server-side");
   assert(server.includes("removeUnsuppliedAudioClaims"), "assistant motion revisions must not invent audio when none was supplied");
 
-  const promptFixture = buildFixture();
+  const promptFixture = withCanon(buildFixture(), [
+    { kind: "entity-state", list: "characters", entityId: "KAI", stateId: "state-default", value: "KAI-ANCHOR.png" },
+    { kind: "entity-state", list: "locations", entityId: "LOC-HULL", stateId: "state-default", value: "LOC-HULL-PLATE.png" },
+    { kind: "entity-state", list: "props", entityId: "PR-TOOL", stateId: "state-default", value: "PR-TOOL-PLATE.png" },
+  ]);
   promptFixture.shots[0].creationBrief = {
     motionProfileId: "kling-3/i2v",
     motionDirection: "The ship drifts slowly. Camera remains locked.",

@@ -189,8 +189,8 @@
       panels: ["still", "review", "frames"],
       panelViews: {},
       legacyTaskIds: ["automation"],
-      /* Not declared optional, and that is a limitation being reported rather than
-         a policy being endorsed — see SHOT_STAGE_LIMITATIONS.frames-not-optional. */
+      /* The fact projection may mark this optional for a declared route while
+         keeping the retained Frames workspace selectable. */
       optional: false,
       authority: ["approved-entity-references", "approved-blocking-guide", "approved-continuity-states"],
       prerequisites: [],
@@ -215,7 +215,7 @@
          be able to proceed without a deliberate ending frame. A prerequisite
          phrased as "two approved frames" would have made the endpoint constraint an
          accident of how many frames exist. */
-      prerequisites: [{ id: "required-frames-approved", reason: "Approve the required frames first" }],
+      prerequisites: [{ id: "canonical-motion-readiness", reason: "Resolve the required production inputs first" }],
       next: ["deliver"],
     },
     {
@@ -242,20 +242,9 @@
      condition holds, so a limitation cannot be quietly dropped instead of fixed. */
   const SHOT_STAGE_LIMITATIONS = deepFreeze({
     "no-not-applicable": {
-      question: "Is this stage not yet relevant to this shot, as opposed to not started?",
-      /* CORRECTED BY SLICE 5a, which supplied half of what this entry asked for. A shot
-         record CAN now declare a delivery route, and the fact record carries it — but no
-         derivation in this file reads it, so the question below is still unanswerable
-         here and `not-applicable` is still not a declared availability. Saying the
-         record lacks the field would now be false; saying the limitation is closed would
-         be falser. */
-      why: "A declared shot delivery route reaches this model's fact record and no derivation in it reads one, so nothing distinguishes a shot that will never need motion from one that has not reached motion.",
-      wouldNeed: "a stage derivation that reads the declared shot delivery route the fact record already carries",
-    },
-    "frames-not-optional": {
-      question: "May Frames be skipped entirely for a reference-only or description-only shot?",
-      why: "The shipped runtime gates the motion workspace on approved required frames regardless of how the shot would be generated, so declaring Frames optional would describe a path the app does not currently offer.",
-      wouldNeed: "a motion workspace whose prerequisite depends on the shot's chosen generation route",
+      question: "Is this stage not relevant to this shot, as opposed to not started?",
+      why: "Canonical readiness governs required inputs and availability, but it does not yet declare every stage inapplicable for still-delivery or other lifecycle paths.",
+      wouldNeed: "an authoritative applicability answer for every declared shot stage",
     },
   });
 
@@ -312,24 +301,19 @@
     "frameApprovedCount",
     "frameNeedsReview",
     "requiredFramesApproved",
+    "routeRequirementsKnown",
+    "requiredFrameCount",
+    "hasMotionUnit",
+    "motionReadinessStatus",
+    "motionReadinessReason",
     "motionCandidateCount",
     "activityStatus",
     "lifecycleKey",
     "deliveryIntent",
-    /* Slice 5a. The shot's DECLARED delivery route, or "" where none is declared.
-
-       It is carried and nothing more. No derivation below reads it, and adding one is
-       Slice 5b's decision rather than a side effect of the record learning the word —
-       which is why SHOT_STAGE_LIMITATIONS still declares `no-not-applicable` unresolved
-       and SHOT_STAGE_AVAILABILITY still has no `not-applicable` member. A stage that
-       started reading this today would change what a filmmaker sees, and 5a changes
-       nothing a filmmaker sees.
-
-       Carried as a bare string like `deliveryIntent` and `lifecycleKey` beside it: the
-       assembler canonicalises through public/shared-shot-route.js and hands this record
-       the answer, so the fact record holds one vocabulary rather than a second copy of
-       the rule that produces it. "" is BOTH no declaration and an unreadable one — a
-       fact record states what is true, and neither of those is a route. */
+    /* The canonical route token remains in the fact record for truthful storage
+       projection. Route requirements are assembled into the dedicated facts above;
+       stage derivations consume those facts rather than parsing route vocabulary or
+       inferring intent from frame counts. */
     "deliveryRoute",
   ]);
 
@@ -350,6 +334,11 @@
       frameApprovedCount: stageCount(raw.frameApprovedCount),
       frameNeedsReview: !!raw.frameNeedsReview,
       requiredFramesApproved: !!raw.requiredFramesApproved,
+      routeRequirementsKnown: !!raw.routeRequirementsKnown,
+      requiredFrameCount: stageCount(raw.requiredFrameCount),
+      hasMotionUnit: !!raw.hasMotionUnit,
+      motionReadinessStatus: stageText(raw.motionReadinessStatus),
+      motionReadinessReason: stageText(raw.motionReadinessReason),
       motionCandidateCount: stageCount(raw.motionCandidateCount),
       activityStatus: ACTIVITY.includes(activity) ? activity : "",
       lifecycleKey: stageText(raw.lifecycleKey),
@@ -429,13 +418,17 @@
        machine is doing is not how far the work has got. The projection below then
        prefers the run for the status slot, which is what the shipped taskbar does. */
     const note = { key: "frames-approved", count: facts.frameApprovedCount, total: facts.frameTotal };
+    const noFramesRequired = facts.routeRequirementsKnown && facts.requiredFrameCount === 0;
+    const retainedFramesComplete = noFramesRequired && !!facts.frameTotal && facts.frameApprovedCount >= facts.frameTotal;
     const completion = facts.frameNeedsReview
       ? "needs-review"
-      : facts.requiredFramesApproved
-        ? "complete"
-        : facts.frameApprovedCount
-          ? "in-progress"
-          : "not-started";
+      : noFramesRequired
+        ? retainedFramesComplete ? "complete" : facts.frameApprovedCount ? "in-progress" : "not-started"
+        : facts.requiredFramesApproved
+          ? "complete"
+          : facts.frameApprovedCount
+            ? "in-progress"
+            : "not-started";
     if (facts.activityStatus) {
       const attention = facts.activityStatus === "failed" || facts.activityStatus === "interrupted";
       return stageResult(stage, {
@@ -448,6 +441,14 @@
     }
     if (facts.frameNeedsReview)
       return stageResult(stage, { availability: "available", completion, statusKey: "needsReview", tone: "attention", note });
+    if (noFramesRequired)
+      return stageResult(stage, {
+        availability: "available",
+        completion,
+        statusKey: retainedFramesComplete ? "approved" : facts.frameApprovedCount ? "inProgress" : "notStarted",
+        tone: retainedFramesComplete ? "complete" : "pending",
+        note,
+      });
     if (facts.requiredFramesApproved)
       return stageResult(stage, { availability: "available", completion, statusKey: "approved", tone: "complete", note });
     return stageResult(stage, {
@@ -460,18 +461,18 @@
   }
 
   function motionState(stage, facts) {
-    /* The runtime opens the motion workspace when the required frames are approved
-       OR when video has already come back, so availability says exactly that. Note
-       what it does not say: nothing here counts approved frames, and nothing here
-       chooses how the motion will be generated. */
-    const open = facts.requiredFramesApproved || facts.motionCandidateCount > 0;
+    /* Canonical readiness has already applied the declared route, Canon authority,
+       media availability and reference blockers to the motion unit. This model
+       projects that answer; it does not restate a frame prerequisite beside it. */
+    const complete = facts.motionReadinessStatus === "COMPLETE";
+    const open = facts.motionReadinessStatus === "READY" || complete;
     const availability = open ? "available" : "blocked";
-    const blockedReason = open ? "" : stage.prerequisites[0].reason;
+    const blockedReason = open ? "" : facts.motionReadinessReason || "Production readiness is unavailable for Motion";
     if (facts.lifecycleKey === "final" || facts.lifecycleKey === "motion-approved")
       return stageResult(stage, { availability, blockedReason, completion: "complete", statusKey: "approved", tone: "complete", recommendedNext: "deliver" });
     if (facts.lifecycleKey === "review-motion")
       return stageResult(stage, { availability, blockedReason, completion: "needs-review", statusKey: "needsReview", tone: "attention" });
-    if (facts.requiredFramesApproved)
+    if (open)
       return stageResult(stage, { availability, blockedReason, completion: "not-started", statusKey: "notStarted", tone: "pending" });
     return stageResult(stage, {
       availability,
@@ -510,7 +511,7 @@
     if (stageId === "look") return "frames";
     if (stageId === "frames") {
       if (!facts.requiredFramesApproved) return "";
-      if (facts.deliveryIntent === "motion") return "motion";
+      if (facts.hasMotionUnit || facts.deliveryIntent === "motion") return "motion";
       if (facts.deliveryIntent === "still") return "deliver";
       return "";
     }
@@ -522,6 +523,11 @@
     if (!stage) return null;
     const resolved = normaliseShotStageFacts(facts);
     const state = DERIVATIONS[stage.id](stage, resolved);
+    /* Frames remain selectable so retained work is always reachable, but a declared
+       route that needs no frame makes the stage optional. With no declared route the
+       stage declaration's legacy default is preserved. */
+    if (stage.id === "frames" && resolved.routeRequirementsKnown)
+      state.optional = resolved.requiredFrameCount === 0;
     const recommended = state.recommendedNext || recommendedNextFor(stage.id, resolved);
     /* A recommendation that is not a declared successor is a bug, not a shortcut. */
     return { ...state, recommendedNext: stage.next.includes(recommended) ? recommended : "" };

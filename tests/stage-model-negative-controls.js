@@ -95,9 +95,9 @@ async function stageSemantics(project, takes, options = {}) {
   const payload = vm.runInContext(`(() => {
     const shot = P.shots.find((row) => row.id === "L1-01");
     const facts = shotStageModelFacts(shot, takesFor("L1-01"));
-    return JSON.stringify(shotStageProgress(facts));
+    return JSON.stringify({ facts, progress: shotStageProgress(facts) });
   })()`, rendered.context);
-  return { rendered, progress: JSON.parse(payload) };
+  return { rendered, ...JSON.parse(payload) };
 }
 
 const semantic = (state) => ({ id: state.id, availability: state.availability, completion: state.completion, optional: state.optional, blockedReason: state.blockedReason, next: state.next });
@@ -183,8 +183,8 @@ async function main() {
   const routePolicyBroken = `      panels: ["motion", "motionCreate", "motionAudio"],\n      endpointPolicy: true,`;
   await mustFail("C5a frame-count arithmetic reaches stage semantics", "how a route gets forced", async () => {
     const broken = mutate(MODEL_SOURCE,
-      `    if (facts.requiredFramesApproved)\n      return stageResult(stage, { availability, blockedReason, completion: "not-started", statusKey: "notStarted", tone: "pending" });`,
-      `    if (facts.frameApprovedCount >= 2)\n      return stageResult(stage, { availability, blockedReason, completion: "needs-review", statusKey: "needsReview", tone: "attention" });\n    if (facts.requiredFramesApproved)\n      return stageResult(stage, { availability, blockedReason, completion: "not-started", statusKey: "notStarted", tone: "pending" });`,
+      `    if (open)\n      return stageResult(stage, { availability, blockedReason, completion: "not-started", statusKey: "notStarted", tone: "pending" });`,
+      `    if (facts.frameApprovedCount >= 2)\n      return stageResult(stage, { availability, blockedReason, completion: "needs-review", statusKey: "needsReview", tone: "attention" });\n    if (open)\n      return stageResult(stage, { availability, blockedReason, completion: "not-started", statusKey: "notStarted", tone: "pending" });`,
       "C5a");
     const body = broken.slice(broken.indexOf("function inputsState"), broken.indexOf("const DERIVATIONS"));
     assert(!/(frameApprovedCount|frameTotal)\s*(>=|>|<|<=|===|==)\s*[0-9]/.test(body),
@@ -192,8 +192,8 @@ async function main() {
   });
   await mustFail("C5b one approved frame and two stop meaning the same thing", "does not choose a generation route", async () => {
     const forceEndpoints = replacing("shared-stage-model.js",
-      `    if (facts.requiredFramesApproved)\n      return stageResult(stage, { availability, blockedReason, completion: "not-started", statusKey: "notStarted", tone: "pending" });`,
-      `    if (facts.frameApprovedCount >= 2)\n      return stageResult(stage, { availability, blockedReason, completion: "needs-review", statusKey: "needsReview", tone: "attention" });\n    if (facts.requiredFramesApproved)\n      return stageResult(stage, { availability, blockedReason, completion: "not-started", statusKey: "notStarted", tone: "pending" });`,
+      `    if (open)\n      return stageResult(stage, { availability, blockedReason, completion: "not-started", statusKey: "notStarted", tone: "pending" });`,
+      `    if (facts.frameApprovedCount >= 2)\n      return stageResult(stage, { availability, blockedReason, completion: "needs-review", statusKey: "needsReview", tone: "attention" });\n    if (open)\n      return stageResult(stage, { availability, blockedReason, completion: "not-started", statusKey: "notStarted", tone: "pending" });`,
       "C5b");
     const one = await stageSemantics(frameAFixture(), ["FRAME_A.png"], { mutateSource: forceEndpoints });
     const two = await stageSemantics(bothFramesFixture(), ["FRAME_A.png", "FRAME_B.png"], { mutateSource: forceEndpoints });
@@ -203,25 +203,23 @@ async function main() {
   assert(!MODEL_SOURCE.includes(routePolicyBroken) && MODEL_SOURCE.includes(routePolicy), "C5 anchors must describe the shipped declaration");
 
   /* ---------------------------------------------------------------------------
-     C6 — A REFERENCE-RICH SHOT LOSES ITS ROUTE TO MOTION.
-     The optional-frame case is the one that must keep working: a shot whose motion comes
-     from approved references, with a second frame the filmmaker declared not required.
-     Making motion depend on EVERY frame rather than every REQUIRED frame breaks it. */
-  await mustFail("C6 motion gated on every frame rather than every required frame", "without a deliberate ending frame", async () => {
-    const gateOnAll = replacing("creation-studio.js",
-      `    requiredFramesApproved: !!progress.requiredApproved,`,
-      `    requiredFramesApproved: frameStates.length > 0 && frameStates.every((row) => row.key === "approved"),`,
+     C6 - AN ABSENT ROUTE ENDPOINT DISAPPEARS FROM THE STAGE FACTS.
+     Looking only at frame units loses a required closing endpoint when no frame record
+     exists for it. Canonical Motion requirements include that synthetic missing row,
+     so the stage fact must not use an empty/short array every() as approval. */
+  await mustFail("C6 missing route endpoint erased by frame-unit every", "absent closing endpoint", async () => {
+    const eraseMissingEndpoint = replacing("creation-studio.js",
+      `    requiredFramesApproved: routeNeeds.known ? routeRequiredFramesApproved : !!progress.requiredApproved,`,
+      `    requiredFramesApproved: routeNeeds.known ? requiredFrameUnits.every((unit) => unit.complete) : !!progress.requiredApproved,`,
       "C6");
-    const referenceRich = buildFixture();
-    referenceRich.shots[0].keyframes[1].winner = null;
-    referenceRich.shots[0].keyframes[1].required = false;
-    referenceRich.shots[0].clips = [];
-    const { progress } = await stageSemantics(referenceRich, ["FRAME_A.png"], { mutateSource: gateOnAll });
-    const motion = progress.find((state) => state.id === "motion");
-    assert.strictEqual(motion.availability, "available",
-      "a reference-rich shot must reach motion without a deliberate ending frame");
+    const firstOnly = buildFixture();
+    firstOnly.shots[0].deliveryRoute = "flf";
+    firstOnly.shots[0].keyframes = [firstOnly.shots[0].keyframes[0]];
+    firstOnly.shots[0].clips = [];
+    const { facts } = await stageSemantics(firstOnly, ["FRAME_A.png"], { mutateSource: eraseMissingEndpoint });
+    assert.strictEqual(facts.requiredFramesApproved, false,
+      "an absent closing endpoint must remain unapproved in the stage facts");
   });
-
   /* ---------------------------------------------------------------------------
      C7 — REINTRODUCE DOM-ORDER INFERENCE FOR SHOTS.
      The exact code O1 removed: identity from a CSS class, order from render order,
@@ -282,21 +280,21 @@ async function main() {
      C10 — DROP A DECLARED LIMITATION.
      "Expose the limitation instead of guessing" only holds if quietly deleting the
      limitation is a failure rather than a tidy-up. */
-  const FRAMES_LIMITATION = `    "frames-not-optional": {
-      question: "May Frames be skipped entirely for a reference-only or description-only shot?",
-      why: "The shipped runtime gates the motion workspace on approved required frames regardless of how the shot would be generated, so declaring Frames optional would describe a path the app does not currently offer.",
-      wouldNeed: "a motion workspace whose prerequisite depends on the shot's chosen generation route",
+  const APPLICABILITY_LIMITATION = `    "no-not-applicable": {
+      question: "Is this stage not relevant to this shot, as opposed to not started?",
+      why: "Canonical readiness governs required inputs and availability, but it does not yet declare every stage inapplicable for still-delivery or other lifecycle paths.",
+      wouldNeed: "an authoritative applicability answer for every declared shot stage",
     },
 `;
   await mustFail("C10a a declared limitation is deleted outright", "must stay declared", async () => {
-    const broken = compileModel(mutate(MODEL_SOURCE, FRAMES_LIMITATION, "", "C10a"));
-    assert(Object.keys(broken.SHOT_STAGE_LIMITATIONS).length >= 2, "known limitations must stay declared, not quietly dropped");
+    const broken = compileModel(mutate(MODEL_SOURCE, APPLICABILITY_LIMITATION, "", "C10a"));
+    assert(Object.keys(broken.SHOT_STAGE_LIMITATIONS).length >= 1, "known limitations must stay declared, not quietly dropped");
   });
   /* And a limitation hollowed out rather than removed — the tidier way to stop
      admitting something — has to be noticed too. */
   await mustFail("C10b a declared limitation is hollowed out", "what would fix it", async () => {
     const broken = compileModel(mutate(MODEL_SOURCE,
-      `      wouldNeed: "a motion workspace whose prerequisite depends on the shot's chosen generation route",`,
+      `      wouldNeed: "an authoritative applicability answer for every declared shot stage",`,
       `      wouldNeed: "",`, "C10b"));
     for (const [key, limitation] of Object.entries(broken.SHOT_STAGE_LIMITATIONS)) {
       assert(limitation.question && limitation.why && limitation.wouldNeed,

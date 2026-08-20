@@ -318,24 +318,28 @@ async function surfaceControls() {
     },
   );
 
-  /* NC-10 — a stage derivation starts reading the route. This is Slice 5b's whole job
-     and doing it here would change what a filmmaker sees, which is the one thing 5a
-     promised not to do. */
+  /* NC-10 - the stage re-derives availability from frame approval and bypasses
+     canonical readiness. This recreates the product defect: an r2v shot has no required
+     frames, so requiredFramesApproved is true while an unapproved Canon reference still
+     blocks the authoritative motion unit. */
   await mustFail(
-    "NC-10 a stage derivation reads the declared route",
-    "changed the stage model's output",
+    "NC-10 Motion bypasses canonical readiness",
+    "Motion availability must project canonical readiness",
     async () => {
       const hook = replacing("shared-stage-model.js",
-        '    if (stageId === "frames") {\n      if (!facts.requiredFramesApproved) return "";',
-        '    if (stageId === "frames") {\n      if (facts.deliveryRoute === "t2v") return "motion";\n      if (!facts.requiredFramesApproved) return "";',
+        '    const complete = facts.motionReadinessStatus === "COMPLETE";\n    const open = facts.motionReadinessStatus === "READY" || complete;',
+        '    const complete = facts.motionReadinessStatus === "COMPLETE";\n    const open = facts.requiredFramesApproved || complete;',
         "NC-10");
-      const unrouted = await factsFor(undefined, { mutateSource: hook });
-      const routed = await factsFor("t2v", { mutateSource: hook });
-      assert.strictEqual(JSON.stringify(routed.progress), JSON.stringify(unrouted.progress),
-        'declaring "t2v" changed the stage model\'s output');
+      const routed = await factsFor("r2v", { mutateSource: hook });
+      assert.strictEqual(routed.facts.requiredFramesApproved, true,
+        "precondition: r2v has no required frame blocker");
+      assert.strictEqual(routed.facts.motionReadinessStatus, "NEEDS_DECISION",
+        "precondition: canonical reference authority still blocks Motion");
+      const motion = routed.progress.find((state) => state.id === "motion");
+      assert.strictEqual(motion.availability, "blocked",
+        "Motion availability must project canonical readiness");
     },
   );
-
   /* NC-11 — AN UNROUTED SHOT'S SURFACE ACQUIRES AN INTENT BY INFERENCE.
 
      REWRITTEN FOR SLICE 5b, AND THE ORIGINAL IS RECORDED HERE BECAUSE ITS RETIREMENT IS

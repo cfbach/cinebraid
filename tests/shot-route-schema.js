@@ -1,29 +1,7 @@
-/* Batch 2 Slice 5a — the declared shot delivery route: schema, plumbing, and the
- * boundaries it has to survive.
- *
- * WHAT THIS SLICE ADDED, and therefore what this suite has to hold:
- *
- *   1. one durable representation of a shot's declared delivery route;
- *   2. one vocabulary, which is the repository's own and not a second copy of it;
- *   3. migration and import behaviour that carries a declaration and manufactures none;
- *   4. deterministic reconciliation of the dialects CineBraid already speaks;
- *   5. the route in the shot stage FACT RECORD, carried and read by no derivation;
- *   6. NOTHING A FILMMAKER CAN SEE.
- *
- * The sixth is the one worth stating twice. Slice 5a is schema and plumbing; the Shot
- * Intent surface, adaptive stage exposure and route-aware execution are Slice 5b's. So
- * the central behavioural assertion here is a NEGATIVE one — declaring any of the five
- * routes on a shot must leave every rendered surface byte-identical — and it is asserted
- * against the shipped renderers rather than against a claim about them.
- *
- * WHAT IS DELIBERATELY NOT PROVEN HERE, because it is not true yet: that a route narrows
- * anything, that a stage becomes not-applicable, that a picker filters, or that any
- * model is recommended. Section 11 proves the opposite of the dangerous half of that —
- * no route can widen resolveTaskModes() — which is the invariant Slice 5b inherits.
- *
- * No provider is contacted, no paid route is called, and nothing outside a temporary
- * directory is written. The repository's own project data is opened read-only.
- */
+/* Declared Shot Intent route: durable storage, migration boundaries and its one
+ * intended consumer. Canonical readiness projects valid routes into required inputs;
+ * stage facts render that projection. Malformed or absent routes remain inert, provider
+ * capability resolution remains route-agnostic, and no paid/provider call is made. */
 
 const assert = require("assert");
 const fs = require("fs");
@@ -834,38 +812,59 @@ async function checkFactRecord() {
 }
 
 /* ===========================================================================
-   10 — NO ROUTE CHANGES STAGE SEMANTICS, OR ANY OTHER FACT.
+   10 - DECLARED ROUTE PROJECTS THROUGH CANONICAL READINESS.
 
-   SUPERSEDED IN PART BY SLICE 5b, AND DELIBERATELY NOT DELETED. What this section
-   asserted when it was written was that every rendered surface is byte-identical with
-   and without a declared route, because Slice 5a shipped no surface at all. Slice 5b
-   ships the Shot Intent control and adaptive frame exposure, so that half is now false
-   BY DESIGN and its replacement — a masked byte-identity proving 5b's visible change is
-   bounded to the two surfaces it declares — lives in tests/shot-intent-ux.js, which is
-   the suite that owns the visible half.
-
-   WHAT SURVIVES HERE IS THE HALF SLICE 5a STILL OWNS, and it is the more important one:
-   the stage model, the stage bar's status projection and every other fact in the record
-   are byte-identical for all five routes and for a malformed one. public/shared-stage-
-   model.js still does not read a route, `not-applicable` is still not an availability,
-   and no shot's progress, completion or blocked reason moves because somebody said how
-   the shot is made.
+   Slice 5a originally carried this fact without reading it. Shot Intent and canonical
+   readiness now own the intended consumption: a valid declaration changes only route
+   requirements and their readiness/stage projections. Absence and malformed storage
+   remain inert, and no media or authority is inferred into a declaration.
    =========================================================================== */
-
 async function checkNoVisibleChange(baseline) {
-  for (const value of [...ROUTES, "GENERATE (FLF)", ""]) {
-    const routed = await factsFor(value);
-    assert.strictEqual(JSON.stringify(routed.progress), JSON.stringify(baseline.progress),
-      `declaring ${JSON.stringify(value)} changed the stage model's output`);
-    assert.strictEqual(JSON.stringify(routed.statuses), JSON.stringify(baseline.statuses),
-      `declaring ${JSON.stringify(value)} changed what the persistent stage bar would print`);
-    /* Everything ELSE in the fact record is identical too, so the route is the only
-       thing that moved. */
-    const strip = (facts) => { const copy = { ...facts }; delete copy.deliveryRoute; return JSON.stringify(copy); };
-    assert.strictEqual(strip(routed.facts), strip(baseline.facts),
-      `declaring ${JSON.stringify(value)} disturbed another fact`);
+  const withoutRouteProjection = (facts) => {
+    const copy = { ...facts };
+    for (const key of [
+      "deliveryRoute",
+      "routeRequirementsKnown",
+      "requiredFrameCount",
+      "requiredFramesApproved",
+      "motionReadinessStatus",
+      "motionReadinessReason",
+    ]) delete copy[key];
+    return JSON.stringify(copy);
+  };
+
+  /* Values that do not name a canonical route must remain exactly as inert as absence. */
+  for (const value of ["GENERATE (FLF)", ""]) {
+    const unreadable = await factsFor(value);
+    assert.strictEqual(JSON.stringify(unreadable.progress), JSON.stringify(baseline.progress),
+      JSON.stringify(value) + " changed stage semantics without declaring a route");
+    assert.strictEqual(JSON.stringify(unreadable.statuses), JSON.stringify(baseline.statuses),
+      JSON.stringify(value) + " changed stage status without declaring a route");
+    assert.strictEqual(JSON.stringify(unreadable.facts), JSON.stringify(baseline.facts),
+      JSON.stringify(value) + " changed facts without declaring a route");
   }
 
+  const requiredFramesByRoute = { t2v: 0, i2v: 1, flf: 2, r2v: 0, hybrid: 2 };
+  for (const route of ROUTES) {
+    const routed = await factsFor(route);
+    assert.strictEqual(routed.facts.routeRequirementsKnown, true,
+      route + ": a declared Shot Intent must produce known route requirements");
+    assert.strictEqual(routed.facts.requiredFrameCount, requiredFramesByRoute[route],
+      route + ": the stage fact must carry the intended frame requirement");
+    assert.strictEqual(withoutRouteProjection(routed.facts), withoutRouteProjection(baseline.facts),
+      route + ": declaring Shot Intent disturbed facts outside the readiness projection");
+
+    const frames = routed.progress.find((state) => state.id === "frames");
+    assert.strictEqual(frames.optional, requiredFramesByRoute[route] === 0,
+      route + ": Frames optionality must project the canonical route requirement");
+
+    const motion = routed.progress.find((state) => state.id === "motion");
+    const canonicalOpen = ["READY", "COMPLETE"].includes(routed.facts.motionReadinessStatus);
+    assert.strictEqual(motion.availability, canonicalOpen ? "available" : "blocked",
+      route + ": Motion availability must project canonical readiness");
+    assert.strictEqual(motion.blockedReason, canonicalOpen ? "" : routed.facts.motionReadinessReason,
+      route + ": Motion must explain the canonical blocker without inventing another prerequisite");
+  }
   /* THE STORAGE VOCABULARY STILL DOES NOT LEAK ONTO A SCREEN. `deliveryRoute` is a key
      on a record; a filmmaker is shown "Shot intent" and the shipped mode language. The
      `shot intent` probe that used to sit in this list is gone, because that IS the 5b
@@ -898,12 +897,12 @@ async function checkNoVisibleChange(baseline) {
   }
   assert.strictEqual(writers, 1, `exactly one shipped surface may write a declared route, found ${writers}`);
 
-  note(`10. stage semantics: ${ROUTES.length + 2} route values produced byte-identical stage-model output, `
-    + "stage-bar status projection and fact records; one shipped writer, and it writes through 5a");
+  note("10. route projection: " + ROUTES.length + " declared routes produced canonical input requirements, " +
+    "malformed/absent routes remained inert, and one shipped writer remains");
 }
 
 /* ===========================================================================
-   11 — NO ROUTE WIDENS resolveTaskModes().
+   11 - ROUTE CONSTRAINS READINESS BUT DOES NOT WIDEN resolveTaskModes().
    =========================================================================== */
 
 function checkNoWidening() {
@@ -913,19 +912,22 @@ function checkNoWidening() {
   assert(optionsSource.includes("function resolveTaskModes(task, inputs = {})"),
     "resolveTaskModes must still take a task and its inputs, and nothing else");
 
-  /* No generation-admissibility owner names the field. This is the structural half of
-     the guarantee: a route that reaches none of them cannot widen any of them. */
+  /* Canonical readiness is the one intended route consumer. Provider and capability
+     owners remain route-agnostic, so Shot Intent can constrain readiness but cannot
+     manufacture a provider capability. */
+  const readinessSource = readLF("public/shared-shot-readiness.js");
+  assert(/shared-shot-route/.test(readinessSource) && /shotRouteInputNeeds/.test(readinessSource),
+    "canonical readiness must own the route-to-required-input projection");
   const owners = [
     "public/shared-generation-options.js", "public/shared-generation-capability.js",
-    "public/shared-shot-readiness.js", "generation-options.js", "generation-compiler.js",
-    "generation-contracts.js", "generation-binding.js", "fal-generation.js",
-    "h3-execution.js", "image-execution.js", "prompt-engine.js",
-    "model-packs/minimax-h3.js", "model-packs/gpt-image-2.js",
+    "generation-options.js", "generation-compiler.js", "generation-contracts.js",
+    "generation-binding.js", "fal-generation.js", "h3-execution.js",
+    "image-execution.js", "prompt-engine.js", "model-packs/minimax-h3.js",
+    "model-packs/gpt-image-2.js",
   ];
   for (const file of owners)
     assert(!/deliveryRoute|shared-shot-route/.test(readLF(file)),
-      `${file} decides what may be generated and must not read a declared route in Slice 5a`);
-
+      file + " must not turn a declared Shot Intent into provider capability");
   /* The behavioural half: the shipped resolver's answers for every reference shape are
      exactly the baseline's, and the modes it can EVER return for an animated shot are
      the four video ones — so `hybrid`, which is a route and not a mode, can never become
@@ -960,8 +962,8 @@ function checkNoWidening() {
   assert(!resolveTaskModes("animate-shot", { references: [] }).includes("hybrid"),
     "hybrid is not a generation mode and must never be returned as one");
 
-  note("11. resolveTaskModes: unchanged signature, unchanged table, no admissibility owner reads a route, "
-    + "and a route supplied as an input widens nothing");
+  note("11. resolveTaskModes: unchanged signature/table, canonical readiness is the route consumer, "
+    + "provider capability owners remain route-agnostic, and a route supplied as an input widens nothing");
 }
 
 /* =========================================================================== */

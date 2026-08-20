@@ -185,11 +185,11 @@ const FIXTURES = {
   /* Required frames approved, delivery undecided: the case principle 9 is about. */
   undecided: { referenceCount: 5, frameTotal: 2, frameApprovedCount: 2, requiredFramesApproved: true, deliveryIntent: "" },
   /* The same shot that has said it wants motion. */
-  motion: { referenceCount: 5, frameTotal: 2, frameApprovedCount: 2, requiredFramesApproved: true, deliveryIntent: "motion" },
+  motion: { referenceCount: 5, frameTotal: 2, frameApprovedCount: 2, requiredFramesApproved: true, motionReadinessStatus: "READY", deliveryIntent: "motion" },
   /* A machine working on the frames stage. */
   running: { referenceCount: 5, frameTotal: 2, frameApprovedCount: 1, activityStatus: "running", deliveryIntent: "" },
   /* Delivered. */
-  final: { referenceCount: 5, frameTotal: 2, frameApprovedCount: 2, requiredFramesApproved: true, lifecycleKey: "final", deliveryIntent: "motion" },
+  final: { referenceCount: 5, frameTotal: 2, frameApprovedCount: 2, requiredFramesApproved: true, motionReadinessStatus: "COMPLETE", lifecycleKey: "final", deliveryIntent: "motion" },
 };
 
 /* ===========================================================================
@@ -450,8 +450,8 @@ function checkRecommendationSafety(sources = SOURCES) {
      identical, because a frame COUNT is not a directorial decision about endpoints. */
   const shape = (facts) => [...stageActions(Stage.shotStageState("motion", facts), "SAMPLE-01")]
     .map((action) => `${action.id}:${action.availability}:${action.label}`);
-  const oneFrame = { frameTotal: 1, frameApprovedCount: 1, requiredFramesApproved: true, deliveryIntent: "motion" };
-  const twoFrames = { frameTotal: 2, frameApprovedCount: 2, requiredFramesApproved: true, deliveryIntent: "motion" };
+  const oneFrame = { frameTotal: 1, frameApprovedCount: 1, requiredFramesApproved: true, motionReadinessStatus: "READY", deliveryIntent: "motion" };
+  const twoFrames = { frameTotal: 2, frameApprovedCount: 2, requiredFramesApproved: true, motionReadinessStatus: "READY", deliveryIntent: "motion" };
   assert.deepStrictEqual(shape(oneFrame), shape(twoFrames),
     "the persistent actions changed because a second frame was approved. A frame count is a fact about frames; it is not a decision to constrain both endpoints, and O4 must not turn the first into the second.");
 
@@ -502,7 +502,7 @@ function checkDisabledAndAccess(sources = SOURCES) {
 
   /* An available stage: no disabled attribute, no orphan reason. */
   const open = modelFor(sources, FIXTURES.motion, "motion");
-  assert.strictEqual(open.current.availability, "available", "fixture check: approved required frames open motion");
+  assert.strictEqual(open.current.availability, "available", "fixture check: canonical readiness opens Motion");
   const openHtml = surfaces.actionsMarkup(open);
   assert.ok(!/disabled/.test(openHtml), "an available stage's actions must not be disabled");
   assert.ok(!/cb-stage-action-reason/.test(openHtml), "an available action must not print a disabled reason");

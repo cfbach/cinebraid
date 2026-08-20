@@ -192,6 +192,7 @@ const STAGE_FACTS = {
   framesUndecided: { referenceCount: 3, frameTotal: 2, frameApprovedCount: 2, requiredFramesApproved: true,
     deliveryIntent: "undecided", lifecycleKey: "still-ready" },
   motionBlocked: { referenceCount: 1, frameTotal: 2, frameApprovedCount: 0, requiredFramesApproved: false,
+    motionReadinessStatus: "BLOCKED", motionReadinessReason: "Confirm the required production reference",
     deliveryIntent: "undecided", lifecycleKey: "needs-image" },
 };
 
@@ -423,7 +424,7 @@ function checkRepresentativeStates(sources = SOURCES) {
   const blocked = project([], stageFor("motion", STAGE_FACTS.motionBlocked));
   assert.strictEqual(blocked.stage.availability, "blocked");
   assert.strictEqual(blocked.recommendation.kind, "blocked");
-  assert.strictEqual(blocked.recommendation.reason, "Approve the required frames first",
+  assert.strictEqual(blocked.recommendation.reason, "Confirm the required production reference",
     "the blocked reason must be the declared model's own words");
   assert.strictEqual(blocked.headline.kind, "stage-blocked");
 
@@ -670,7 +671,7 @@ function checkAssistantRendering(sources = SOURCES) {
     "a failure must claim the headline over a running operation");
 
   /* The blocked stage speaks the declared model's words. */
-  assert.ok(html.includes("Approve the required frames first"),
+  assert.ok(html.includes("Confirm the required production reference"),
     "the blocked reason must be the declared model's, not one composed by the rail");
   assert.ok(html.includes("Motion &amp; sound") || html.includes("Motion & sound"),
     "the current step must be named by the declared model");

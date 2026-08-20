@@ -71,26 +71,11 @@
  * So hybrid never collapses into absence, never widens, and never becomes a mode.
  *
  * ---------------------------------------------------------------------------
- * FRAME RELEVANCE NEEDS TWO SHIPPED ANSWERS AND THIS FILE OWNS NEITHER.
+ * FRAME RELEVANCE PROJECTS THE CANONICAL ROUTE-INPUT ANSWER.
  *
- * "Does this route need the Frames workflow" has two authorities in the repository and
- * they do not agree about r2v:
- *
- *     ANIMATE_METHOD_PROBES               r2v's needs are ["reference"] — no frame role
- *     guidedVideoModeNeedsApprovedStill   TRUE for r2v: the shipped motion workspace
- *                                         gates every route except t2v behind an
- *                                         approved still, and ensureGuidedMotionUnit
- *                                         attaches `fromFrame` on the same predicate
- *
- * The UNION is taken, and taking it is the only safe reading. Hiding Frames for a route
- * the shipped Motion panel then refuses to open without an approved frame would send a
- * filmmaker to a locked panel with no way back — a workflow simplification that removes
- * the workflow. So the Frames workflow is de-emphasised only where EVERY shipped
- * authority agrees no input is required, which today is `t2v` and only `t2v`.
- *
- * The second authority lives in public/creation-studio.js, so it is PASSED IN rather
- * than copied. There is no default: a caller that cannot supply it gets `known: false`
- * and no adaptation whatsoever, which is baseline behaviour and the only honest answer.
+ * shared-shot-readiness.js derives route inputs beside the shipped method probes.
+ * This module delegates to that answer for both its filmmaker-facing needs and whether
+ * Frames should lead or start folded. It never invents a stage prerequisite.
  *
  * ---------------------------------------------------------------------------
  * ABSENCE AND CORRUPTION BOTH MEAN "DO NOTHING".
@@ -144,6 +129,7 @@
   const shotRouteGenerationMode = requireOwner(ROUTE && ROUTE.shotRouteGenerationMode, "shotRouteGenerationMode()", "shared-shot-route.js");
   const modeLanguage = requireOwner(OPTIONS && OPTIONS.modeLanguage, "modeLanguage()", "shared-generation-options.js");
   const ANIMATE_METHOD_PROBES = requireOwner(READINESS && READINESS.ANIMATE_METHOD_PROBES, "ANIMATE_METHOD_PROBES", "shared-shot-readiness.js");
+  const shotRouteInputNeedsOwner = requireOwner(READINESS && READINESS.shotRouteInputNeeds, "shotRouteInputNeeds()", "shared-shot-readiness.js");
 
   const CINEBRAID_SHOT_INTENT_CONTRACT = "cinebraid.shot-intent/1";
 
@@ -228,37 +214,23 @@
      route whose methods the probe set does not cover — in every case the caller must
      treat the answer as "nothing established" and change nothing. */
   function shotIntentInputNeeds(value) {
-    const compatible = shotIntentCompatibleModes(value);
-    if (!compatible.constrained)
-      return deepFreeze({ route: "", constrained: false, known: false, modes: [], needs: [] });
-    const rows = compatible.modes.map((mode) => SHOT_INTENT_METHOD_PROBES[mode] || null);
-    if (rows.some((row) => !row))
-      return deepFreeze({ route: compatible.route, constrained: true, known: false, modes: [...compatible.modes], needs: [] });
-    const needs = [...new Set(rows.flatMap((row) => [...row.needs]))];
+    const answer = shotRouteInputNeedsOwner(value);
     return deepFreeze({
-      route: compatible.route,
-      constrained: true,
-      known: true,
-      modes: [...compatible.modes],
-      needs,
+      route: answer.route,
+      constrained: answer.constrained,
+      known: answer.known,
+      modes: [...answer.modes],
+      needs: [...answer.needs],
     });
   }
 
   /* ==========================================================================
      SHOULD THE FRAMES WORKFLOW BE PUT IN FRONT OF THIS FILMMAKER.
 
-     PRESENTATION ONLY. Nothing here is a stage availability, a completion, a readiness
-     state or a prerequisite; the shipped answers to all four stay exactly as they were
-     and stay authoritative. `adapt: true` means one thing: the Frames workflow may open
-     folded instead of open. The frames, their candidates, their approvals and their
-     history are untouched and one click away, because a route is a statement about how
-     a shot is delivered and never a reason to lose work.
-
-     `needsVisualAnchor(mode)` is public/creation-studio.js's own
-     guidedVideoModeNeedsApprovedStill — the predicate the shipped Motion panel gates
-     itself on. It is required, not defaulted: a wrong guess here is a filmmaker sent to
-     a locked panel. */
-  function shotIntentFrameExposure(value, needsVisualAnchor) {
+     PRESENTATION ONLY. The canonical route-input answer decides whether Frames leads
+     or starts folded. Stored frames, candidates, approvals and history remain intact
+     and reachable; a declared route changes requirements, never media. */
+  function shotIntentFrameExposure(value) {
     const needs = shotIntentInputNeeds(value);
     const inert = (reason) => deepFreeze({
       route: needs.route,
@@ -273,9 +245,8 @@
     });
     if (!needs.constrained) return inert("no-declared-intent");
     if (!needs.known) return inert("no-shipped-probe-for-method");
-    if (typeof needsVisualAnchor !== "function") return inert("no-motion-workspace-prerequisite-supplied");
-    const anchored = needs.modes.filter((mode) => needsVisualAnchor(mode) === true);
-    const required = needs.needs.length > 0 || anchored.length > 0;
+    const routeNeeds = shotRouteInputNeedsOwner(value);
+    const required = routeNeeds.framesRequired === true;
     return deepFreeze({
       route: needs.route,
       constrained: true,
@@ -283,9 +254,9 @@
       required,
       adapt: !required,
       modes: [...needs.modes],
-      needs: [...needs.needs],
-      anchored,
-      reason: required ? "input-required-by-shipped-authority" : "no-input-required-by-any-shipped-authority",
+      needs: [...routeNeeds.frameNeeds],
+      anchored: [],
+      reason: required ? "frame-input-required-by-canonical-route" : "no-frame-input-required-by-canonical-route",
     });
   }
 

@@ -163,7 +163,10 @@ const WORKFLOW_STATUS_LABELS = {
    by w" and an unknown token came back exactly as stored. */
 const workflowStatusLabel = (key) => WORKFLOW_STATUS_LABELS[key]
   || String(key).toLowerCase().replace(/\b\w/, (c) => c.toUpperCase());
-const shotIsDelivered = (s) => shotProductionNextAction(s).key === "final";
+const shotIsDelivered = (s) => {
+  const c = s?.creationBrief || {};
+  return !!(c.finalVideoFile || c.finalStillFile || s?.finalVideoFile || s?.finalStillFile);
+};
 const shotIsApproved = (s) => workflowState(s).key === "APPROVED";
 
 const skey = (s) => s.replace(/ /g, "");
@@ -607,11 +610,10 @@ function normalizeShotV5(s) {
       c.kind = "i2v";
       changed = true;
     }
-    /* A start frame is attached only to the kinds that begin from one. Text-to-video
-       begins from a prompt by construction, so handing it a keyframe would make the
-       shot look as though it were waiting on an approval it does not need — and would
-       be sent to a fal endpoint that has no field to put it in. */
-    if (!c.fromFrame && c.kind !== "t2v") {
+    /* Only endpoint-driven routes begin from a shot frame. Description-only begins
+       from direction, and reference-driven motion receives canonical references rather
+       than an inferred opening-frame prerequisite. */
+    if (!c.fromFrame && ["i2v", "flf"].includes(c.kind)) {
       c.fromFrame =
         s.keyframes[Math.min(i, s.keyframes.length - 1)]?.id ||
         s.keyframes[0]?.id ||
@@ -2773,43 +2775,43 @@ function shotBadgeLegend() {
   const rows = [["Initials", "Character"], ["L", "Location"], ["P", "Prop"], ["V", "Vehicle"], ["A", "Audio"]];
   return `<div class="board-badge-legend"><span>CARD BADGES</span>${rows.map(([mark, meaning]) => `<b><i>${esc(mark)}</i>${esc(meaning)}</b>`).join("")}</div>`;
 }
-function shotProductionNextAction(s, takes = takesFor(s.id)) {
-  const c = s.creationBrief || {};
-  const images = takes.filter((take) => !isVideo(take.name) && !isAudio(take.name));
-  const videos = takes.filter((take) => isVideo(take.name));
-  const still = c.finalStillFile || s.finalStillFile || s.winner || (s.keyframes || []).find((frame) => frame.winner)?.winner;
-  const motion = c.finalVideoFile || s.finalVideoFile || c.approvedMotionFile || (s.clips || []).find((clip) => clip.videoWinner)?.videoWinner;
-  if (c.finalVideoFile || c.finalStillFile || s.finalVideoFile || s.finalStillFile) return { key: "final", label: "Final", detail: "Delivered" };
-  if (motion) return { key: "finish", label: "Finish video", detail: "Approved motion" };
-  if (videos.length) return { key: "review-video", label: "Review video", detail: `${videos.length} returned` };
-  const wantsMotion = c.deliveryIntent === "motion" || (c.deliveryIntent !== "still" && (!!String(c.motionDirection || s.motionPrompt || "").trim() || (s.clips || []).length));
-  if (still && wantsMotion) return { key: "animate", label: "Animate", detail: "Still approved" };
-  if (still) return { key: "decide", label: "Finish or animate", detail: "Still approved" };
-  if (images.length) return { key: "review-still", label: "Review still", detail: `${images.length} returned` };
-  return { key: "create", label: "Add still", detail: "No image yet" };
+function shotReadinessFor(s, feed = projectShotReadiness()) {
+  if (!s || !feed || feed.error) return null;
+  return (feed.shots || []).find((row) => row.shotId === s.id) || null;
 }
-/* `nextProductionShot()` WAS HERE, AND IS DELETED RATHER THAN LEFT UNUSED.
- *
- * It answered "the first shot that is not final" from media presence alone, and
- * it was the project's recommended-next-action owner on two screens. Independent
- * review found it still driving the visible RECOMMENDED card in #/create beside a
- * button that routed from canonical readiness — two answers on one card.
- *
- * A dormant second readiness owner is a reachable one, so it is gone. The project
- * next action has exactly one derivation: projectNextProductionAction() below.
- * shotProductionNextAction() above remains and is NOT that derivation — it labels
- * ONE shot's media chip on the board and cannot see whether that shot's inputs
- * exist, which is precisely why it may never speak for the project. */
+/* A SHOT-LOCAL PROJECTION, not a second next-action derivation. The readiness row owns
+   status, requirements and action; this adds only the compact words board/list surfaces
+   need. A caller rendering several shots passes the already-derived feed row. */
+function shotProductionNextAction(s, readiness = shotReadinessFor(s)) {
+  if (!readiness) {
+    return { key: "unavailable", label: "Readiness unavailable", detail: "Open Production for details", status: "" };
+  }
+  const action = readiness.nextAction || {};
+  return {
+    key: action.code || String(readiness.status || "unavailable").toLowerCase(),
+    label: readinessActionWords(action),
+    detail: action.message || (READINESS_STATUS_WORDS[readiness.status] || readiness.status || ""),
+    status: readiness.status,
+    action,
+    nextUnitId: readiness.nextUnitId || "",
+  };
+}
+function shotReadinessTargetStage(readiness) {
+  const action = readiness?.nextAction?.code || "";
+  if (action === "produce-motion") return "motion";
+  if (["produce-frame", "approve-parent-frame", "approve-required-frames"].includes(action)) return "frames";
+  if (action === "nothing-outstanding") return "deliver";
+  return "inputs";
+}
+/* `nextProductionShot()` remains deleted: project and shot surfaces now both project
+   evaluateProjectReadiness(), at their respective scopes. The project projection below
+   still adds its existing prioritisation over those authoritative rows. */
 /* ==========================================================================
    THE PROJECT'S NEXT ACTION — READ OFF CANONICAL READINESS, NOT DERIVED BESIDE IT.
 
-   shotProductionNextAction() above answers ONE question: what media does this shot
-   already hold? It is the right answer for a board card, and it is the wrong answer
-   for "what should I do next", because it cannot see inputs. A shot whose reference
-   nobody has approved still has a still on disk, so it reported "Animate — Still
-   approved" while the canonical derivation said the same shot was BLOCKED and the
-   headline directly above said 0 shots have work that can start now. The founder
-   smoke reproduced exactly that, and Continue Production sent them into the shot.
+   The shot-local projection above and this project-level recommendation read the
+   same readiness feed. This owner retains the stronger project prioritisation already
+   shipped; board/list/card consumers do not independently infer readiness from media.
 
    THIS IS NOT A SECOND READINESS PREDICATE. It asks evaluateProjectReadiness() —
    the same module the server answers from — and does two things with the answer it
@@ -2911,7 +2913,7 @@ window.continueProduction = () => {
   if (!next) return toast("Every shot is complete");
   location.hash = next.href;
 };
-function slate(s, sceneId) {
+function slate(s, sceneId, readiness = null) {
   const takes = takesFor(s.id);
   const last = takes[takes.length - 1];
   const winner = anyWinnerTake(s, takes);
@@ -2929,7 +2931,7 @@ function slate(s, sceneId) {
         ? '<span class="slate-alert changes">Changes requested</span>'
         : "";
   const refs = referenceRecordsForShot(s);
-  const next = shotProductionNextAction(s, takes);
+  const next = shotProductionNextAction(s, readiness || shotReadinessFor(s));
   /* The card itself is a link to the shot, so inspection needs its own control:
      enlarging must never navigate away from the board. */
   /* O5: INSPECT, NOT MERELY ENLARGE. The board's thumbnail is the shot's approved
@@ -3368,6 +3370,8 @@ const READINESS_STATUS_WORDS = {
 };
 const READINESS_ACTION_WORDS = {
   "repair-authority-ledger": "Repair the approval records",
+  "awaiting-project-repair": "Await project repair",
+  "establish-media-availability": "Check approved media",
   "confirm-existing-reference": "Confirm existing reference",
   "reapprove-revoked-reference": "Re-approve withdrawn reference",
   "resolve-relationship": "Resolve a shot input",
@@ -3550,7 +3554,9 @@ async function productionHomeView() {
        waiting   — a returned result is sitting unreviewed in the inbox           */
   const deliveredCount = P.shots.filter(shotIsDelivered).length;
   const approvedCount = P.shots.filter(shotIsApproved).length;
-  const activeRows = P.shots.map((shot) => ({ shot, next: shotProductionNextAction(shot) })).filter((row) => !shotIsDelivered(row.shot)).slice(0, 8);
+  const readinessByShot = new Map((shotReadiness?.shots || []).map((row) => [row.shotId, row]));
+  const activeRows = P.shots.map((shot) => ({ shot, next: shotProductionNextAction(shot, readinessByShot.get(shot.id)) }))
+    .filter((row) => !shotIsDelivered(row.shot)).slice(0, 8);
   return `<div class="view-head production-home-head"><div><div class="eyebrow">Production</div><span class="view-title">${esc(P.meta.title)}</span><div class="view-sub">Continue the film from the next unfinished decision. Detailed tools stay inside each shot.</div></div><div class="production-home-actions"><button class="assemble-btn" onclick="continueProduction()">${next ? "CONTINUE PRODUCTION" : hasShots ? "NOTHING OUTSTANDING" : "ADD THE FIRST SHOT"}</button><button class="add-btn" onclick="openGlobalAdd('shot')">＋ Add shot</button></div></div>
   <div class="production-summary"><article title="A shot is delivered once a final still or video file is recorded on it."><b>${deliveredCount}/${P.shots.length}</b><span>${pluralWord(P.shots.length, "shot")} delivered</span></article><article title="A shot is signed off once its workflow status reaches Signed off. Signing a shot off is not the same as delivering it, and neither one approves an image."><b>${approvedCount}/${P.shots.length}</b><span>${pluralWord(P.shots.length, "shot")} signed off</span></article><article class="review" title="Returned results that are waiting for you to choose or approve."><b>${decisions.length}</b><span>${pluralWord(decisions.length, "decision")} waiting</span></article><article><b>${mmss(P.shots.reduce((sum, shot) => sum + shotDur(shot), 0))}</b><span>planned runtime across ${plural(P.scenes.length, "scene")}</span></article></div>
   <!-- THE ORDER OF THIS PAGE IS THE POINT.
@@ -3567,7 +3573,7 @@ async function productionHomeView() {
   <section class="production-active"><header><div><span>NOT YET DELIVERED</span><h2>Shots and their next action</h2></div><a href="#/shots/board">View all shots →</a></header>${activeRows.length ? `<div class="production-active-list">${activeRows.map(({shot,next}) => `<a href="#/shot/${shot.id}"><span class="next-${next.key}" title="Next action for this shot">${esc(next.label)}</span><div><b>${esc(shot.id)} · ${esc(shot.title)}</b><small>${esc(sceneById(shot.scene)?.title || shot.scene)} · ${esc(next.detail)}</small></div><i>→</i></a>`).join("")}</div>` : `<div class="production-inbox-empty">${hasShots ? "Every shot has been delivered." : "No shots have been added yet."}</div>`}</section>
   <section class="production-scenes"><header><div><span>SCENES</span><h2>Production progress</h2></div><a href="#/shots/scenes">Manage scenes →</a></header>${P.scenes.length ? `<div class="scene-progress-grid">${P.scenes.map((scene) => {
     const shots = P.shots.filter((shot) => shot.scene === scene.id), done = shots.filter(shotIsDelivered).length, pct = shots.length ? Math.round(done / shots.length * 100) : 0;
-    const waiting = shots.filter((shot) => ["review-still","review-video"].includes(shotProductionNextAction(shot).key)).length;
+    const waiting = shots.filter((shot) => readinessByShot.get(shot.id)?.status === "NEEDS_DECISION").length;
     return `<a href="#/scene/${scene.id}" class="scene-progress-card"><header><b>${esc(scene.title)}</b><span title="Shots delivered in this scene">${done}/${shots.length} delivered</span></header><div class="progress-line"><i style="width:${pct}%"></i></div><footer><span>${plural(waiting, "shot")} waiting for review</span><span>${plural(shots.length - done, "shot")} not delivered</span></footer></a>`;
   }).join("")}</div>` : `<div class="production-inbox-empty">No scenes have been added yet.</div>`}</section>`;
 }
@@ -3595,15 +3601,11 @@ window.runGlobalAdd = (key) => {
 };
 
 
-function shotBoardActionCategory(shot) {
-  const next = shotProductionNextAction(shot);
-  if (["review-still", "review-video"].includes(next.key)) return "review";
-  if (next.key === "create") {
-    const refs = typeof shotCreationReferences === "function" ? shotCreationReferences(shot) : [];
-    return refs.some((row) => !row.url) ? "missing-inputs" : "ready";
-  }
-  if (["animate", "decide", "finish"].includes(next.key)) return "ready";
-  if (next.key === "final") return "complete";
+function shotBoardActionCategory(shot, readiness = shotReadinessFor(shot)) {
+  if (shotIsDelivered(shot)) return "complete";
+  if (readiness?.status === "NEEDS_DECISION") return "review";
+  if (readiness?.status === "BLOCKED") return "missing-inputs";
+  if (readiness?.status === "READY") return "ready";
   return "unfinished";
 }
 window.setShotActionFilter = (value) => {
@@ -3612,19 +3614,21 @@ window.setShotActionFilter = (value) => {
   if (typeof boundedWriteState === "function") boundedWriteState("page:shots", `board:${FILTER.status}:${FILTER.route}:${FILTER.char}:${FILTER.action}`, 0);
   route();
 };
-function shotBoardActionMatches(shot) {
-  const category = shotBoardActionCategory(shot), next = shotProductionNextAction(shot);
+function shotBoardActionMatches(shot, feed = projectShotReadiness()) {
+  const category = shotBoardActionCategory(shot, shotReadinessFor(shot, feed));
   if (!FILTER.action || FILTER.action === "all") return true;
   if (FILTER.action === "unfinished") return !shotIsDelivered(shot);
   return category === FILTER.action;
 }
-function shotBoardActionFilters() {
+function shotBoardActionFilters(feed = projectShotReadiness()) {
   const defs = [["unfinished","Not delivered"],["review","Needs review"],["missing-inputs","Missing inputs"],["ready",manualFirstWorkflow() ? "Ready for media" : "Ready to generate"],["complete","Delivered"],["all","All shots"]];
-  const counts = Object.fromEntries(defs.map(([id]) => [id, P.shots.filter((shot) => id === "all" ? true : id === "unfinished" ? !shotIsDelivered(shot) : shotBoardActionCategory(shot) === id).length]));
+  const counts = Object.fromEntries(defs.map(([id]) => [id, P.shots.filter((shot) => id === "all" ? true : id === "unfinished" ? !shotIsDelivered(shot) : shotBoardActionCategory(shot, shotReadinessFor(shot, feed)) === id).length]));
   return `<nav class="board-action-filters" aria-label="Shot next-action filters">${defs.map(([id,label]) => `<button type="button" class="${FILTER.action===id?"selected":""}" onclick="setShotActionFilter('${id}')"><span>${esc(label)}</span><b>${counts[id]}</b></button>`).join("")}</nav>`;
 }
 function productionView(tab = "board") {
   if (!["board", "table", "scenes"].includes(tab)) tab = "board";
+  const shotReadiness = projectShotReadiness();
+  const readinessByShot = new Map((shotReadiness?.shots || []).map((row) => [row.shotId, row]));
   const approved = P.shots.filter(
     (s) => workflowState(s).key === "APPROVED",
   ).length;
@@ -3651,14 +3655,14 @@ function productionView(tab = "board") {
     ...new Set(P.shots.map((s) => outputPlanLabel(s)).filter(Boolean)),
   ];
   const filterBody = `<div class="toolbar"><select aria-label="Filter lifecycle" onchange="FILTER.status=this.value;route()"><option value="">All shots</option>${WORKFLOW_STATES.map((x) => `<option value="${x}" ${FILTER.status === x ? "selected" : ""}>${workflowStatusLabel(x)}</option>`).join("")}</select><select aria-label="Filter output" onchange="FILTER.route=this.value;route()"><option value="">Any output</option>${routes.map((r) => `<option value="${attr(r.toUpperCase())}" ${FILTER.route === r.toUpperCase() ? "selected" : ""}>${esc(r)}</option>`).join("")}</select><select aria-label="Filter character" onchange="FILTER.char=this.value;route()"><option value="">Any character</option>${P.characters.map((c) => `<option value="${c.id}" ${FILTER.char === c.id ? "selected" : ""}>${esc(c.name)}</option>`).join("")}</select></div>`;
-  const controls = `<div class="board-list-controls">${shotBoardActionFilters()}${shotBoardDensityControl()}</div>${P.shots.length ? shotBadgeLegend() : ""}${tab === "table" ? batchToolbar() : ""}<details class="board-filter-fold" ${(FILTER.status || FILTER.route || FILTER.char) ? "open" : ""}><summary>More filters${(FILTER.status || FILTER.route || FILTER.char) ? " · active" : ""}</summary>${filterBody}</details>`;
+  const controls = `<div class="board-list-controls">${shotBoardActionFilters(shotReadiness)}${shotBoardDensityControl()}</div>${P.shots.length ? shotBadgeLegend() : ""}${tab === "table" ? batchToolbar() : ""}<details class="board-filter-fold" ${(FILTER.status || FILTER.route || FILTER.char) ? "open" : ""}><summary>More filters${(FILTER.status || FILTER.route || FILTER.char) ? " · active" : ""}</summary>${filterBody}</details>`;
   const filteredPairs = [];
   P.scenes.forEach((sc) => {
     P.shots.filter((shot) => shot.scene === sc.id).filter((shot) =>
       (!FILTER.status || workflowState(shot).key === FILTER.status) &&
       (!FILTER.route || outputPlanLabel(shot).toUpperCase() === FILTER.route) &&
       (!FILTER.char || (shot.characters || []).includes(FILTER.char)) &&
-      shotBoardActionMatches(shot)
+      shotBoardActionMatches(shot, shotReadiness)
     ).forEach((shot) => filteredPairs.push({ sc, shot }));
   });
   const boardPageKey = `board:${FILTER.status}:${FILTER.route}:${FILTER.char}:${FILTER.action}`;
@@ -3667,7 +3671,7 @@ function productionView(tab = "board") {
   shotPage.rows.forEach(({ sc, shot }) => { if (!grouped.has(sc.id)) grouped.set(sc.id, { sc, shots: [] }); grouped.get(sc.id).shots.push(shot); });
   const body = [...grouped.values()].map(({ sc, shots }) => {
     const all = P.shots.filter((shot) => shot.scene === sc.id), collapsed = COLLAPSED_SCENES.has(sc.id), pending = all.filter((shot) => workflowState(shot).key === "READY FOR REVIEW").length, approvedCount = all.filter(shotIsApproved).length;
-    return `<section class="log-strip ${collapsed ? "collapsed" : ""}"><div class="log-head"><button class="collapse-btn" onclick="toggleSceneCollapse('${sc.id}')" aria-label="${collapsed ? "Expand" : "Collapse"} ${attr(sc.title || sc.id)}" aria-expanded="${collapsed ? "false" : "true"}">${collapsed ? "▸" : "▾"}</button><a class="log-title" href="#/scene/${sc.id}">${esc(sc.title)}</a><span class="tier-badge ${sc.tier || "B"}">TIER ${sc.tier || "B"}</span>${pending ? `<span class="scene-attention">${plural(pending, "shot")} ready for review</span>` : ""}<span class="log-count" title="Shots in this scene whose workflow status has reached Signed off">${approvedCount}/${all.length} ${pluralWord(all.length, "shot")} signed off</span></div>${collapsed ? "" : `<div class="shot-row bounded-shot-page size-${SHOT_BOARD_DENSITY}">${shots.map((shot) => slate(shot)).join("")}</div>`}</section>`;
+    return `<section class="log-strip ${collapsed ? "collapsed" : ""}"><div class="log-head"><button class="collapse-btn" onclick="toggleSceneCollapse('${sc.id}')" aria-label="${collapsed ? "Expand" : "Collapse"} ${attr(sc.title || sc.id)}" aria-expanded="${collapsed ? "false" : "true"}">${collapsed ? "▸" : "▾"}</button><a class="log-title" href="#/scene/${sc.id}">${esc(sc.title)}</a><span class="tier-badge ${sc.tier || "B"}">TIER ${sc.tier || "B"}</span>${pending ? `<span class="scene-attention">${plural(pending, "shot")} ready for review</span>` : ""}<span class="log-count" title="Shots in this scene whose workflow status has reached Signed off">${approvedCount}/${all.length} ${pluralWord(all.length, "shot")} signed off</span></div>${collapsed ? "" : `<div class="shot-row bounded-shot-page size-${SHOT_BOARD_DENSITY}">${shots.map((shot) => slate(shot, "", readinessByShot.get(shot.id))).join("")}</div>`}</section>`;
   }).join("") || (P.shots.length
     ? `<div class="empty-state"><h2>No shots match these filters</h2><p>Change a filter to see the other ${plural(P.shots.length, "shot")} in this project.</p></div>`
     : `<div class="empty-state"><h2>This project has no shots yet</h2><p>Add the first shot to start tracking scenes, frames and deliveries.</p><button class="add-btn" onclick="openGlobalAdd('shot')">＋ Add shot</button></div>`);

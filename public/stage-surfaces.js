@@ -231,7 +231,7 @@
     /* THE NOTE REPLACES THE DETAIL RATHER THAN EXTENDING IT, which the retired taskbar
        did the other way round. `detail` is a fixed sentence about what the stage is
        for; `note` is what is true of THIS shot right now — "5 references", "1 of 2
-       frames approved", "Approve the required frames first". Concatenating them cost
+       frames approved", "Confirm the required production reference". Concatenating them cost
        about thirty characters of a line that has room for twenty, so the live half was
        the half that got ellipsised away. The static sentence is still in `title`. */
     const detail = status.note || state.detail;
@@ -284,7 +284,7 @@
   /* ONE LINE PER DISTINCT REASON. Two blocked actions on one stage necessarily carry
      the SAME reason — the contract copies both from the stage — so keying the reason
      elements by the reason text rather than by the action id is what stops the bar
-     printing "Approve the required frames first" twice. Every blocked button points at
+     printing the same canonical blocker twice. Every blocked button points at
      the single element for its reason. */
   function actionsMarkup(model) {
     const actions = model.actions;

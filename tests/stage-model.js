@@ -33,7 +33,7 @@ const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
-const { render, buildFixture } = require("./render-harness");
+const { render, buildFixture, withCanon } = require("./render-harness");
 
 const ROOT = path.join(__dirname, "..");
 const PUBLIC = path.join(ROOT, "public");
@@ -127,13 +127,13 @@ function checkDeclaration() {
     "no stage derivation may branch on a frame count — that is how a route gets forced");
 
   /* Limitations are declared rather than guessed at. */
-  assert(Object.keys(Stage.SHOT_STAGE_LIMITATIONS).length >= 2, "known limitations must stay declared, not quietly dropped");
+  assert(Object.keys(Stage.SHOT_STAGE_LIMITATIONS).length >= 1, "known limitations must stay declared, not quietly dropped");
   for (const [key, limitation] of Object.entries(Stage.SHOT_STAGE_LIMITATIONS)) {
     assert(limitation.question && limitation.why && limitation.wouldNeed,
       `limitation ${key} must say what it cannot answer, why, and what would fix it`);
   }
   assert(!Stage.SHOT_STAGE_AVAILABILITY.includes("not-applicable"),
-    "not-applicable must not be a declared availability while no stage derivation reads a shot's declared delivery route");
+    "not-applicable must remain undeclared until an authoritative applicability answer exists for every stage");
 
   note(`Declaration: ${ids.length} stages, unique ids, explicit order — ${ids.join(" -> ")}`);
   note("Declaration: no generation route and no frame-count arithmetic reaches stage semantics");
@@ -173,6 +173,18 @@ async function stagesFor(project, takes, options = {}) {
   return { rendered, facts, progress, byId: Object.fromEntries(progress.map((state) => [state.id, state])) };
 }
 
+
+function authoritativeFixture(route = "i2v") {
+  const project = buildFixture();
+  project.shots[0].deliveryRoute = route;
+  withCanon(project, [
+    { kind: "entity-state", list: "characters", entityId: "KAI", stateId: "state-default", value: "KAI-ANCHOR.png" },
+    { kind: "entity-state", list: "locations", entityId: "LOC-HULL", stateId: "state-default", value: "LOC-HULL-PLATE.png" },
+    { kind: "entity-state", list: "props", entityId: "PR-TOOL", stateId: "state-default", value: "PR-TOOL-PLATE.png" },
+  ]);
+  return project;
+}
+
 const observed = [];
 const record = (label, byId) => {
   for (const state of Object.values(byId)) observed.push(`${state.id}:${state.availability}:${state.completion}:${state.tone}`);
@@ -182,7 +194,7 @@ const record = (label, byId) => {
 async function checkRepresentativeStates() {
   /* S1 — an early, incomplete shot. Nothing approved, one linked reference with no
      approved file of its own. */
-  const early = buildFixture();
+  const early = authoritativeFixture("i2v");
   early.props.find((row) => row.id === "PR-TOOL").approvedFile = "";
   early.shots[0].keyframes = [{ ...early.shots[0].keyframes[0], winner: null }];
   early.shots[0].clips = [];
@@ -195,7 +207,8 @@ async function checkRepresentativeStates() {
   assert.strictEqual(S1.byId.inputs.availability, "available", "inputs is never blocked — describing the shot has no prerequisite");
   assert.strictEqual(S1.byId.frames.completion, "not-started");
   assert.strictEqual(S1.byId.motion.availability, "blocked", "motion is blocked before any required frame is approved");
-  assert.strictEqual(S1.byId.motion.blockedReason, "Approve the required frames first");
+  assert.strictEqual(S1.byId.motion.blockedReason, S1.facts.motionReadinessReason, "the stage repeats the canonical motion blocker");
+  assert(!/Approve the required frames first/.test(S1.byId.motion.blockedReason), "the stage must not substitute its former all-routes frame gate");
   assert.strictEqual(S1.byId.deliver.availability, "blocked");
   assert.strictEqual(S1.byId.deliver.blockedReason, "Approve a still or a video first");
   /* Blocked is not the same claim as not-started, and the model states both separately. */
@@ -203,7 +216,7 @@ async function checkRepresentativeStates() {
   record("S1 early shot: inputs in-progress, motion + deliver blocked with stated reasons", S1.byId);
 
   /* S2 — ready for frame work: every reference approved, a blocking guide chosen. */
-  const ready = buildFixture();
+  const ready = authoritativeFixture("i2v");
   ready.shots[0].keyframes = [{ ...ready.shots[0].keyframes[0], winner: null }];
   ready.mediaAssets.push({
     id: "media-blocking", file: "blocking-guide.png", title: "Blocking guide", originalName: "blocking-guide.png",
@@ -218,7 +231,7 @@ async function checkRepresentativeStates() {
   record("S2 ready for frames: inputs + look complete, frames available and not started", S2.byId);
 
   /* S3 — Frame A approved, and it is the shot's only required frame. */
-  const frameA = buildFixture();
+  const frameA = authoritativeFixture("i2v");
   frameA.shots[0].keyframes = [frameA.shots[0].keyframes[0]];
   frameA.shots[0].clips = [];
   const S3 = await stagesFor(frameA, ["FRAME_A.png"]);
@@ -230,7 +243,7 @@ async function checkRepresentativeStates() {
 
   /* S4 — Frame A and Frame B both approved and both required. Deliberate endpoint
      control: the filmmaker declared the second frame required. */
-  const bothFrames = buildFixture();
+  const bothFrames = authoritativeFixture("i2v");
   bothFrames.shots[0].keyframes.forEach((frame) => { frame.required = true; });
   bothFrames.shots[0].clips = [];
   const S4 = await stagesFor(bothFrames, ["FRAME_A.png", "FRAME_B.png"]);
@@ -247,7 +260,7 @@ async function checkRepresentativeStates() {
   /* S5 — the reference-rich shot. Frame A approved, a second frame present but declared
      NOT required, because this shot's motion comes from approved references and the
      ending composition is not a directorial constraint. Motion must be reachable. */
-  const referenceRich = buildFixture();
+  const referenceRich = authoritativeFixture("i2v");
   referenceRich.shots[0].keyframes[1].winner = null;
   referenceRich.shots[0].keyframes[1].required = false;
   referenceRich.shots[0].clips = [];
@@ -261,7 +274,7 @@ async function checkRepresentativeStates() {
   record("S5 reference-rich: optional Frame B unapproved, motion still available", S5.byId);
 
   /* S6 — delivered. A final still is recorded on the shot. */
-  const delivered = buildFixture();
+  const delivered = authoritativeFixture("i2v");
   delivered.shots[0].keyframes = [delivered.shots[0].keyframes[0]];
   delivered.shots[0].clips = [];
   delivered.shots[0].creationBrief = { finalStillFile: "FRAME_A.png" };
@@ -297,18 +310,24 @@ async function checkRepresentativeStates() {
   assert.strictEqual(reviewFrames.tone, "attention");
   observed.push("frames:available:needs-review:attention");
 
-  /* Motion with returned video but no approved frame: the runtime opens the workspace,
-     so availability says available while the work still needs a human decision. */
-  const returnedVideo = Stage.shotStageState("motion", { requiredFramesApproved: false, motionCandidateCount: 1, lifecycleKey: "review-motion" });
-  assert.strictEqual(returnedVideo.availability, "available", "returned video opens motion even without approved frames");
+  /* Returned media cannot bypass a canonical input blocker. The review state remains
+     visible as completion, while availability stays blocked until readiness permits it. */
+  const returnedVideo = Stage.shotStageState("motion", {
+    motionReadinessStatus: "BLOCKED",
+    motionReadinessReason: "Approve the required opening frame",
+    motionCandidateCount: 1,
+    lifecycleKey: "review-motion",
+  });
+  assert.strictEqual(returnedVideo.availability, "blocked", "returned video is not proof that route inputs are ready");
+  assert.strictEqual(returnedVideo.blockedReason, "Approve the required opening frame");
   assert.strictEqual(returnedVideo.completion, "needs-review");
-  observed.push("motion:available:needs-review:attention");
+  observed.push("motion:blocked:needs-review:attention");
 
   /* Recommended handoffs: present where one genuinely exists, absent where the shot has
      not said what it wants. */
   assert.strictEqual(Stage.shotStageState("inputs", S3.facts).recommendedNext, "look");
   assert.strictEqual(Stage.shotStageState("look", S3.facts).recommendedNext, "frames");
-  assert.strictEqual(Stage.shotStageState("frames", { requiredFramesApproved: true, deliveryIntent: "motion" }).recommendedNext, "motion");
+  assert.strictEqual(Stage.shotStageState("frames", { requiredFramesApproved: true, hasMotionUnit: true }).recommendedNext, "motion");
   assert.strictEqual(Stage.shotStageState("frames", { requiredFramesApproved: true, deliveryIntent: "still" }).recommendedNext, "deliver");
   assert.strictEqual(Stage.shotStageState("frames", { requiredFramesApproved: true, deliveryIntent: "undecided" }).recommendedNext, "",
     "an undecided shot must get no recommendation rather than a guessed one");
@@ -321,7 +340,11 @@ async function checkRepresentativeStates() {
   assert.strictEqual(S1.byId.look.optional, true, "planning may be skipped where appropriate");
   assert.strictEqual(S1.byId.motion.optional, true, "a still shot never needs motion");
   assert.strictEqual(S1.byId.frames.optional, false);
-  assert(Stage.SHOT_STAGE_LIMITATIONS["frames-not-optional"], "and the reason frames is not optional is a declared limitation");
+  const description = authoritativeFixture("t2v");
+  description.shots[0].clips = [];
+  const T2V = await stagesFor(description, ["FRAME_A.png", "FRAME_B.png"]);
+  assert.strictEqual(T2V.byId.frames.optional, true, "description-only makes retained Frames optional");
+  assert.strictEqual(T2V.byId.motion.availability, "available", "description-only Motion requires no frame input");
 }
 
 /* ===========================================================================
@@ -525,7 +548,7 @@ function checkCoverage() {
     ["frames:available:needs-review", "frames waiting on a human decision"],
     ["motion:blocked:not-started", "motion blocked by an unmet prerequisite"],
     ["motion:available:not-started", "motion opened by approved required frames"],
-    ["motion:available:needs-review", "motion with returned video to judge"],
+    ["motion:blocked:needs-review", "returned motion retained for review while canonical inputs block forward work"],
     ["motion:available:complete", "motion after approval"],
     ["deliver:blocked:not-started", "deliver blocked by an unmet prerequisite"],
     ["deliver:available:not-started", "deliver opened by an approved result"],

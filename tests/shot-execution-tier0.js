@@ -420,13 +420,14 @@ async function main() {
   assert.strictEqual(result.fromFrame, "", "text-to-video begins from no frame and must not be handed one");
   assert.strictEqual(result.toFrame, "");
 
-  /* The gate that would demand an approved still already reads from the MODE and already
-     exempts t2v. Asserting it stays that way is the point: the enum member is only safe
-     because this answer is false. */
+  /* The local start-frame predicate applies only to endpoint-driven modes. Canonical
+     readiness separately enforces reference-driven inputs. */
   assert.strictEqual(vm.runInContext(`guidedVideoModeNeedsApprovedStill("t2v")`, page.context), false);
-  for (const mode of ["i2v", "flf", "r2v"])
+  assert.strictEqual(vm.runInContext(`guidedVideoModeNeedsApprovedStill("r2v")`, page.context), false,
+    "reference-driven motion requires references, not an unrelated approved start frame");
+  for (const mode of ["i2v", "flf"])
     assert.strictEqual(vm.runInContext(`guidedVideoModeNeedsApprovedStill(${JSON.stringify(mode)})`, page.context), true,
-      `${mode} still needs an approved still and must be unaffected`);
+      `${mode} still requires its approved start-frame input`);
 
   /* AND THE EXISTING KINDS ARE UNTOUCHED — including the coercion itself, which must
      still catch a kind that really is unknown rather than being weakened to let t2v
@@ -492,7 +493,11 @@ async function main() {
  * Asserting a helper's return value could not have caught either. These drive the real
  * functions in the loaded page. */
 {
-  const page = await render("#/production", buildFixture());
+  const project = buildFixture();
+  project.shots[0].characters = [];
+  project.shots[0].codes = [];
+  project.shots[0].creationBrief = {};
+  const page = await render("#/production", project);
   /* One case, fully reset: no approved still anywhere, no motion unit, and the route
      selected the way the picker selects it. */
   const install = `globalThis.__t2vCase = (mode) => {
@@ -500,6 +505,10 @@ async function main() {
     for (const frame of shot.keyframes || []) frame.winner = "";
     shot.clips = [];
     shot.motionPrompt = "";
+    shot.characters = [];
+    shot.codes = [];
+    if (["t2v", "i2v", "flf", "r2v"].includes(mode)) declareShotRoute(shot, mode);
+    else clearShotRoute(shot);
     const c = ensureShotCreation(shot);
     c.activeMotionUnitId = "";
     const profile = (PROMPT_LIBRARY?.profiles || []).find((p) => p.mediaType === "video" && p.mode === mode) || null;
@@ -535,14 +544,17 @@ async function main() {
   /* 5 — AND EVERY OTHER ROUTE IS EXACTLY AS IT WAS. Each still receives its start frame,
      and each is still held behind the approval it genuinely depends on. This is the half
      that makes the fix a correction rather than a hole in the gate. */
-  for (const mode of ["i2v", "flf", "r2v"]) {
+  for (const mode of ["i2v", "flf"]) {
     const row = probe(mode);
-    assert.strictEqual(row.kind, mode === "audio-video" ? "r2v" : mode, `${mode} must keep its kind`);
-    assert(row.fromFrame, `${mode} begins from an approved still and must still be given one`);
-    assert.strictEqual(row.locked, true,
-      `${mode} must still be locked until its required frames are approved`);
-    assert.strictEqual(row.saysApproveFirst, true, `${mode} must still say why it is locked`);
+    assert.strictEqual(row.kind, mode, `${mode} must keep its kind`);
+    assert(row.fromFrame, `${mode} begins from a frame and must still be given its endpoint`);
+    assert.strictEqual(row.locked, true, `${mode} must stay blocked until its required frame is Canon`);
   }
+  const r2v = probe("r2v");
+  assert.strictEqual(r2v.kind, "r2v");
+  assert.strictEqual(r2v.fromFrame, "", "reference-driven motion must not manufacture a start-frame requirement");
+  assert.strictEqual(r2v.locked, true, "reference-driven Motion is blocked until its canonical reference exists");
+  assert.strictEqual(r2v.saysApproveFirst, false, "the reference blocker must not be described as a frame blocker");
 
   /* 6 — an unknown route is treated as needing a frame, which is the safe direction:
      the gate is relaxed only where a route is known not to need one. */
@@ -561,7 +573,11 @@ async function main() {
  * and was locked behind a frame it never begins from, with the unit sitting right there
  * saying `t2v`. A default nobody chose is not a route decision. */
 {
-  const page = await render("#/production", buildFixture());
+  const routeProject = buildFixture();
+  routeProject.shots[0].characters = [];
+  routeProject.shots[0].codes = [];
+  routeProject.shots[0].creationBrief = {};
+  const page = await render("#/production", routeProject);
   const install = `globalThis.__routeCase = (unitKind, unitProfileMode, shotProfileMode) => {
     const shot = P.shots[0];
     for (const frame of shot.keyframes || []) frame.winner = "";
@@ -573,15 +589,20 @@ async function main() {
     shot.clips = [{ id: "seg-route", suffix: "a", label: "A", title: "Primary motion", dur: 6, kind: unitKind,
       note: "", motionPrompt: "A storm front crosses the ridge.", fromFrame: "", toFrame: "",
       motionProfileId: idFor(unitProfileMode), generationPackages: [] }];
+    const effectiveMode = guidedEffectiveVideoMode(shot, c, shot.clips[0]);
+    if (["t2v", "i2v", "flf", "r2v"].includes(effectiveMode)) declareShotRoute(shot, effectiveMode);
+    const motionStage = shotStageState("motion", shotStageModelFacts(shot, []));
     const html = guidedMotionPanel(shot, null, []);
     const unit = shot.clips[0];
     return {
+      canonicalReason: motionStage.blockedReason,
+      panelHasCanonicalReason: !!motionStage.blockedReason && html.includes(motionStage.blockedReason),
       panelLocked: html.includes("guided-motion-card locked"),
       saysApproveFirst: html.includes("Approve required frames first"),
       pill: /guided-mode-pill[^>]*>([^<]*)</.exec(html)?.[1] || "",
       unitKind: unit.kind, unitFromFrame: unit.fromFrame,
       unitProfileId: unit.motionProfileId || "", shotProfileId: c.motionProfileId || "",
-      effectiveMode: guidedEffectiveVideoMode(shot, c, unit),
+      effectiveMode,
     };
   };`;
   vm.runInContext(install, page.context);
@@ -614,8 +635,10 @@ async function main() {
   for (const kind of ["i2v", "flf", "r2v"]) {
     const row = route(kind);
     assert.strictEqual(row.effectiveMode, kind, `${kind} resolves from its own kind`);
-    assert.strictEqual(row.panelLocked, true, `${kind} must still be gated on its approved frame`);
-    assert.strictEqual(row.saysApproveFirst, true, `${kind} must still say why`);
+    assert.strictEqual(row.panelLocked, true, `${kind} must stay gated by canonical readiness`);
+    assert(row.canonicalReason, `${kind} must name its canonical blocker`);
+    assert.strictEqual(row.panelHasCanonicalReason, true, `${kind} panel must project the canonical blocker`);
+    assert.strictEqual(row.saysApproveFirst, false, `${kind} must not substitute the obsolete all-routes frame warning`);
   }
   for (const kind of ["plan", "post", "reuse", "wormhole"]) {
     assert.strictEqual(route(kind).panelLocked, true,
@@ -642,7 +665,11 @@ async function main() {
  * followed a unit the filmmaker was not looking at. Both directions were wrong, and the
  * second is the dangerous one: it OPENS a frame-gated route. */
 {
-  const page = await render("#/production", buildFixture());
+  const multiProject = buildFixture();
+  multiProject.shots[0].characters = [];
+  multiProject.shots[0].codes = [];
+  multiProject.shots[0].creationBrief = {};
+  const page = await render("#/production", multiProject);
   vm.runInContext(`globalThis.__readPanel = (shot, c) => {
     const html = guidedMotionPanel(shot, null, []);
     const unit = guidedActiveMotionUnit(shot, c);
@@ -664,6 +691,8 @@ async function main() {
       { id: "seg-one", suffix: "a", label: "A", title: "One", dur: 5, kind: firstKind, note: "", motionPrompt: "First unit.", fromFrame: firstKind === "t2v" ? "" : "frame-a", toFrame: "", motionProfileId: "", generationPackages: [] },
       { id: "seg-two", suffix: "b", label: "B", title: "Two", dur: 6, kind: secondKind, note: "", motionPrompt: "Second unit.", fromFrame: secondKind === "t2v" ? "" : "frame-a", toFrame: "", motionProfileId: "", generationPackages: [] },
     ];
+    const oneRoute = firstKind === secondKind && ["t2v", "i2v", "flf", "r2v"].includes(firstKind) ? firstKind : "hybrid";
+    declareShotRoute(shot, oneRoute);
     c.activeMotionUnitId = shot.clips[activeIndex].id;
     return globalThis.__readPanel(shot, c);
   };`, page.context);
@@ -674,9 +703,9 @@ async function main() {
   const a = multi("i2v", "t2v", 1);
   assert.strictEqual(a.activeKind, "t2v", "the active unit is the t2v one");
   assert.strictEqual(a.effectiveMode, "t2v", "and it is what the route resolves to");
-  assert.strictEqual(a.panelLocked, false, "an active t2v unit must open the panel behind an i2v first clip");
-  assert.strictEqual(a.saysApproveFirst, false, "and must not demand a frame the active route never begins from");
-  assert.strictEqual(a.pill, "NO FRAMES NEEDED", "and must say so truthfully");
+  assert.strictEqual(a.panelLocked, true, "selecting a t2v clip cannot bypass the hybrid shot's required inputs");
+  assert.strictEqual(a.saysApproveFirst, false, "the panel must explain canonical readiness, not the deleted local frame warning");
+  assert.strictEqual(a.pill, "LOCKED", "the persistent shot-level truth governs the panel");
 
   /* B — first clip t2v, ACTIVE unit i2v. The gate must come BACK. This is the direction
      that silently opened a frame-gated route, which is the worse of the two. */
@@ -684,7 +713,7 @@ async function main() {
   assert.strictEqual(b.activeKind, "i2v", "the active unit is the i2v one");
   assert.strictEqual(b.effectiveMode, "i2v", "and it is what the route resolves to");
   assert.strictEqual(b.panelLocked, true, "an active i2v unit must stay gated behind a t2v first clip");
-  assert.strictEqual(b.saysApproveFirst, true, "and must still say why it is gated");
+  assert.strictEqual(b.saysApproveFirst, false, "and must use the canonical blocker rather than the deleted local warning");
   assert.strictEqual(b.pill, "LOCKED", "and must present its frame status truthfully");
 
   /* SINGLE-UNIT BEHAVIOUR IS UNCHANGED, in both directions. */
@@ -692,7 +721,7 @@ async function main() {
   assert.strictEqual(soloT2v.panelLocked, false, "a single t2v unit still opens");
   assert.strictEqual(soloT2v.pill, "NO FRAMES NEEDED");
   assert.strictEqual(soloI2v.panelLocked, true, "a single i2v unit is still gated");
-  assert.strictEqual(soloI2v.saysApproveFirst, true);
+  assert.strictEqual(soloI2v.saysApproveFirst, false);
 
   /* SWITCHING THE ACTIVE UNIT CHANGES THE PANEL, driven through the shipped selector
      rather than by writing the id directly — `selectMotionUnit` is what the composer's
@@ -710,10 +739,10 @@ async function main() {
   assert.strictEqual(swap.api, "function", "the shipped active-unit selector must exist");
   assert.strictEqual(swap.before.panelLocked, true, "starts on the i2v unit, gated");
   assert.strictEqual(swap.after.activeId, "seg-two", "selecting the t2v unit moves the active id");
-  assert.strictEqual(swap.after.panelLocked, false, "and the gate lifts immediately");
-  assert.strictEqual(swap.after.pill, "NO FRAMES NEEDED", "and the pill follows it");
-  assert.strictEqual(swap.back.panelLocked, true, "selecting back returns the gate");
-  assert.strictEqual(swap.back.saysApproveFirst, true, "with its reason");
+  assert.strictEqual(swap.after.panelLocked, true, "clip focus cannot lift the hybrid shot's canonical blocker");
+  assert.strictEqual(swap.after.pill, "LOCKED", "the pill remains a shot-level readiness projection");
+  assert.strictEqual(swap.back.panelLocked, true, "selecting back preserves the same shot truth");
+  assert.strictEqual(swap.back.saysApproveFirst, false, "the obsolete local warning remains absent");
 }
 
 /* THE SAME ANSWERS FROM THE FALLBACK BUILDER.
@@ -724,7 +753,11 @@ async function main() {
  * error and restores the base functions, which makes the base copy a live path too — so
  * both must agree, and this drives the base one through the real restore path. */
 {
-  const page = await render("#/production", buildFixture());
+  const fallbackProject = buildFixture();
+  fallbackProject.shots[0].characters = [];
+  fallbackProject.shots[0].codes = [];
+  fallbackProject.shots[0].creationBrief = {};
+  const page = await render("#/production", fallbackProject);
   const result = vm.runInContext(`(() => {
     /* THE SHIPPED RESTORE, not a test-only hook. \`window.disableComposerEnhancements\`
        IS \`restoreComposerOriginals607\`, and it is what the composer's own error handler
@@ -758,6 +791,7 @@ async function main() {
         const cc = ensureShotCreation(s);
         cc.activeMotionUnitId = ""; cc.motionProfileId = "";
         s.clips = [{ id: "seg-imported", kind: "t2v", dur: 6, motionPrompt: "A storm front.", fromFrame: "", toFrame: "", motionProfileId: "", generationPackages: [] }];
+        declareShotRoute(s, "t2v");
         return guidedMotionPanel(s, null, []).includes("guided-motion-card locked");
       })(),
     };
@@ -940,20 +974,7 @@ async function main() {
     "and a met request must not warn");
 }
 
-console.log(
-  "Shot Execution Tier 0 passed: six filmmaking facts inventoried, carried and accounted for with unknowns left unknown; "
-  + "a dialogue line no longer manufactures a lip-sync requirement at either former site and nothing stored is rewritten; "
-  + "t2v survives normalisation and import as t2v and, in both live Motion builders and the Motion panel itself, "
-  + "is given no start frame and is not locked behind one — resolved from an explicit profile where there is one and "
-  + "from the unit's own kind where there is not, so an imported t2v shot carrying no profile id opens too, and from the "
-  + "ACTIVE motion unit rather than the first clip, so a multi-unit shot gates on the unit the filmmaker selected and "
-  + "changes the moment they select another, while every other route keeps its frame and its gate and an unrecognised "
-  + "one stays fail-safe; "
-  + "the serialised fal request carries prompt expansion off and an explicit, capability-bounded resolution; "
-  + "and an explicit request for no generated audio is refused by name on a route that cannot comply, with the "
-  + "payload byte-identical and no invented provider field. "
-  + "Provider calls made: 0.",
-);
+console.log("Shot Execution Tier 0 passed: filmmaking facts remain inventoried; declared route requirements and canonical readiness govern Motion availability; t2v remains frameless, endpoint/reference routes retain their blockers, paid boundaries are unchanged, and provider calls made: 0.");
 }
 
 main().catch((error) => { console.error(error.stack || error); process.exitCode = 1; });

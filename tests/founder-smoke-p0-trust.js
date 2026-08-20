@@ -202,8 +202,8 @@ async function testFalLedgerOwnership() {
    Reproduction: PRODUCTION READINESS said "0 shots have work that can start now"
    while NEXT ACTION said "L1-01 · Animate — Still approved" and CONTINUE
    PRODUCTION routed into that blocked shot. The two answers came from two
-   derivations: shotProductionNextAction() reads media presence and cannot see
-   whether a shot's inputs exist. */
+   derivations: the former shotProductionNextAction() read media presence and could not
+   see whether a shot's canonical inputs existed. */
 async function testNextActionAgreesWithReadiness() {
   const fixture = buildFixture();
   const app = await render("#/production", fixture);
@@ -211,18 +211,17 @@ async function testNextActionAgreesWithReadiness() {
   assert.strictEqual(feed.counts.ready, 0, "the fixture must have no READY shot, or this test proves nothing");
   assert.strictEqual(feed.shots[0].status, "NEEDS_DECISION");
 
-  /* THERE IS ONE PROJECT-LEVEL ANSWER, AND ONLY ONE.
-     `nextProductionShot()` answered "the first shot that is not final" from media
-     presence alone and owned the recommendation on two screens. Independent review
-     found it still driving the visible RECOMMENDED card in #/create beside a button
-     that routed from readiness, so it is deleted rather than left dormant — a
-     second readiness owner that nothing calls today is one a caller finds tomorrow.
-     `shotProductionNextAction()` remains and is explicitly NOT that answer: it
-     labels one shot's media chip on the board. */
+  /* Project and shot-level projections now read the same canonical feed. The project
+     projection keeps its stronger cross-shot prioritisation. */
   assert.strictEqual(vm.runInContext("typeof nextProductionShot", app.context), "undefined",
-    "the media-presence project-level answer must not exist alongside the canonical one");
-  assert.strictEqual(vm.runInContext(`shotProductionNextAction(shotById("L1-01")).key`, app.context), "animate",
-    "the per-shot media chip must still be the thing it always was");
+    "the deleted media-presence project answer must not return");
+  const local = vm.runInContext(`shotProductionNextAction(shotById("L1-01"), projectShotReadiness().shots[0])`, app.context);
+  assert.strictEqual(local.key, feed.shots[0].nextAction.code, "the shot-local action must project canonical readiness");
+  assert.strictEqual(local.detail, feed.shots[0].nextAction.message, "the shot-local explanation must be canonical");
+  assert.strictEqual(local.status, feed.shots[0].status, "the shot-local status must be canonical");
+  assert.strictEqual(vm.runInContext(`shotBoardActionCategory(shotById("L1-01"), projectShotReadiness().shots[0])`, app.context), "review",
+    "the board category must not classify a canonical decision blocker as ready");
+
   assert.strictEqual((fs.readFileSync(path.join(ROOT, "public", "app.js"), "utf8").match(/function nextProductionShot\(/g) || []).length, 0,
     "nextProductionShot must be gone from the source, not merely unexported");
 

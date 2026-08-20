@@ -401,26 +401,24 @@ async function checkNoWidening() {
    =========================================================================== */
 
 async function checkFrameExposure() {
-  /* The composition is of TWO shipped authorities and the union of them is what decides.
-     Both are read here from the running page rather than assumed. */
+  /* Frame exposure is a projection of the canonical route-input answer. */
   const page = await renderShot(undefined);
   const truth = run(page.context, `
     const rows = {};
     for (const route of CINEBRAID_SHOT_ROUTES) {
-      const exposure = shotIntentFrameExposure(route, guidedVideoModeNeedsApprovedStill);
+      const exposure = shotIntentFrameExposure(route);
       rows[route] = { required: exposure.required, adapt: exposure.adapt, needs: [...exposure.needs], anchored: [...exposure.anchored], known: exposure.known };
     }
-    return { rows, anchorFree: CINEBRAID_GENERATION_MODES.filter((mode) => guidedVideoModeNeedsApprovedStill(mode) === false) };`);
+    return { rows };`);
 
-  /* WHICH ROUTES MAY FOLD IS DERIVED, NOT ASSERTED AS A LIST. A route may fold Frames
-     only when the probes ask it for nothing AND the shipped motion gate exempts it. */
+  /* A route may fold Frames exactly when its canonical requirements contain no frame role. */
   for (const route of ROUTES) {
-    const probeNeeds = Intent.shotIntentInputNeeds(route);
-    const gateExempt = Intent.shotIntentCompatibleModes(route).modes.every((mode) => truth.anchorFree.includes(mode));
-    const mayFold = probeNeeds.known && probeNeeds.needs.length === 0 && gateExempt;
+    const routeNeeds = Intent.shotIntentInputNeeds(route);
+    const frameNeeds = routeNeeds.needs.filter((role) => ["first-frame", "last-frame"].includes(role));
+    const mayFold = routeNeeds.known && frameNeeds.length === 0;
     assert.strictEqual(truth.rows[route].adapt, mayFold,
-      `${route}: the Frames workflow may fold exactly when no shipped authority asks it for an input`);
-    assert.strictEqual(truth.rows[route].required, !mayFold, `${route}: required is the negation of that, and nothing else`);
+      `${route}: Frames folds exactly when the canonical route requires no frame input`);
+    assert.strictEqual(truth.rows[route].required, !mayFold, `${route}: required is the negation of that answer`);
   }
   const folds = ROUTES.filter((route) => truth.rows[route].adapt);
   assert(folds.length >= 1, "at least one route must genuinely need no frame, or this adaptation does nothing");
@@ -429,17 +427,11 @@ async function checkFrameExposure() {
   /* AN UNDECLARED AND AN UNREADABLE INTENT BOTH LEAVE IT ALONE. */
   for (const value of ["", ...BAD_ROUTES]) {
     const inert = run(page.context, `
-      const exposure = shotIntentFrameExposure(${JSON.stringify(value)}, guidedVideoModeNeedsApprovedStill);
+      const exposure = shotIntentFrameExposure(${JSON.stringify(value)});
       return { adapt: exposure.adapt, required: exposure.required, known: exposure.known };`);
     assert.deepStrictEqual(inert, { adapt: false, required: true, known: false },
       `${JSON.stringify(value)}: nothing established means nothing adapted`);
   }
-  /* AND SO DOES A CALLER THAT CANNOT SUPPLY THE MOTION WORKSPACE'S OWN GATE. There is no
-     default, because a guess here sends a filmmaker to a locked panel. */
-  for (const route of ROUTES)
-    assert.strictEqual(Intent.shotIntentFrameExposure(route, null).adapt, false,
-      `${route}: without the shipped prerequisite predicate, nothing may be folded`);
-
   /* THE RENDERED FRAMES STAGE. What is actually built, for every route. */
   const foldRoute = folds[0];
   const keepRoute = ROUTES.find((route) => !truth.rows[route].adapt);
@@ -498,11 +490,24 @@ async function checkFrameExposure() {
     assert.deepStrictEqual(row.frameLabels, baseline.frameLabels, `${route}: every frame must still be rendered`);
     assert.strictEqual(row.progress, baseline.progress, `${route}: the shot's frames are unchanged`);
 
-    /* AND NO PROGRESS IS FABRICATED. A folded stage is not a finished one. */
-    assert.strictEqual(row.stageProgress, baseline.stageProgress,
-      `${route}: folding a stage must not move a single completion, availability or blocked reason`);
-    assert.strictEqual(row.readiness, baseline.readiness,
-      `${route}: folding a stage must not move a single readiness state, requirement or next action`);
+    /* Route declarations change requirements, not stored media. Stage availability must
+       project the canonical motion unit rather than preserving the undeclared baseline. */
+    const stageProgress = JSON.parse(row.stageProgress);
+    const readiness = JSON.parse(row.readiness);
+    const framesStage = stageProgress.find((stage) => stage.id === "frames");
+    const motionStage = stageProgress.find((stage) => stage.id === "motion");
+    const frameUnits = readiness.units.filter((unit) => unit.kind === "frame");
+    const motionUnit = readiness.units.find((unit) => unit.kind === "motion" && unit.required);
+    const expectedFrameCount = truth.rows[route].needs.length;
+    assert.strictEqual(frameUnits.filter((unit) => unit.required).length, expectedFrameCount,
+      `${route}: canonical readiness represents exactly the declared frame roles`);
+    assert.strictEqual(framesStage.optional, shouldFold,
+      `${route}: stage optionality projects the canonical frame requirement`);
+    const motionAvailable = ["READY", "COMPLETE"].includes(motionUnit.status);
+    assert.strictEqual(motionStage.availability, motionAvailable ? "available" : "blocked",
+      `${route}: Motion availability projects the canonical motion unit`);
+    assert.strictEqual(motionStage.blockedReason, motionAvailable ? "" : motionUnit.nextAction.message,
+      `${route}: Motion explains the canonical blocker without substituting another prerequisite`);
   }
 
   /* THE TWO STATES REMEMBER SEPARATELY, and this is the assertion that keeps the
@@ -564,7 +569,7 @@ async function checkFrameExposure() {
   }
 
   note(`5D. adaptive frames: ${folds.join(", ")} fold and ${ROUTES.filter((r) => !folds.includes(r)).join(", ")} do not, `
-    + "derived from the probes AND the shipped motion gate; every frame, unit and stage state survives folding, and intent changes back restore the default");
+    + "derived from canonical route-input requirements; every frame, unit and stage state survives folding, and intent changes back restore the default");
 }
 
 /* ===========================================================================
@@ -609,7 +614,7 @@ async function checkHybrid() {
       reread: JSON.parse(JSON.stringify(P)).shots.find((row) => row.id === "L1-01").deliveryRoute,
       reading: readShotIntent(shot).reading,
       markup: html,
-      framesRequired: shotIntentFrameExposure("hybrid", guidedVideoModeNeedsApprovedStill).required,
+      framesRequired: shotIntentFrameExposure("hybrid").required,
     };`);
   assert.strictEqual(result.stored, "hybrid", "hybrid must persist as hybrid");
   assert.strictEqual(result.reread, "hybrid", "and survive a round trip as hybrid");
@@ -662,7 +667,7 @@ async function checkInvalidRoute() {
         admissible,
         constrained: shotIntentEffectiveModes(shot.deliveryRoute, admissible).constrained,
         picker: guidedVideoProfileOptions("", declaredShotRoute(shot)) === guidedVideoProfileOptions("", "") ,
-        framesRequired: shotIntentFrameExposure(declaredShotRoute(shot), guidedVideoModeNeedsApprovedStill).required,
+        framesRequired: shotIntentFrameExposure(declaredShotRoute(shot)).required,
       };`);
     assert.strictEqual(state.stored, bad, `${bad}: opening the shot must not rewrite or delete the stored value`);
     assert.deepStrictEqual(state.effective, state.admissible, `${bad}: the accepted answer must stand untouched`);
@@ -696,63 +701,63 @@ async function checkInvalidRoute() {
 
 async function checkLegacyAndBoundedChange() {
   const mask = (slots) => slots.replace(/<details class="shot-intent-control"[\s\S]*?<\/details>/g, "<<SHOT-INTENT>>");
-
   const baseline = await renderShot(undefined);
   assert(mask(baseline.slots).includes("<<SHOT-INTENT>>"), "the mask must actually find the control it is masking");
 
-  for (const value of [...ROUTES, ...BAD_ROUTES]) {
+  /* Unreadable values remain inert everywhere except the control that reports them. */
+  for (const value of BAD_ROUTES) {
     const routed = await renderShot(value);
     assert.strictEqual(mask(routed.slots), mask(baseline.slots),
-      `declaring ${JSON.stringify(value)} changed a rendered surface OUTSIDE the Shot Intent control; `
-      + "Slice 5b's visible change is bounded to the surfaces it declares");
+      `${JSON.stringify(value)}: an unreadable route must not alter readiness or stage semantics`);
   }
-  /* An unreadable value's INERTNESS is asserted behaviourally in section 7 — the picker,
-     the effective method set and the frame exposure are all identical to a shot that
-     declared nothing. Here it is enough that it, too, changes nothing outside the
-     control: what the control itself says about it is SUPPOSED to differ, because the
-     record really is in a state a filmmaker has to be able to see. */
 
-  /* THE ROUTE-LESS SHOT'S EXECUTION PATH IS THE ACCEPTED ONE. The picker's markup, the
-     motion panel's gate and its route-status pill are all exactly what they were, which
-     is asserted against the one-argument call the rest of the app still makes. */
-  const legacy = run(baseline.context, `
-    const s = P.shots.find((row) => row.id === "L1-01");
-    return {
-      pickerMatches: guidedVideoProfileOptions("minimax-h3/i2v") === guidedVideoProfileOptions("minimax-h3/i2v", declaredShotRoute(s)),
-      route: declaredShotRoute(s),
-      count: guidedVideoProfileCount(),
-      narrowed: guidedIntentVideoProfileCount(declaredShotRoute(s)),
-    };`);
-  assert.strictEqual(legacy.route, "", "precondition: the legacy shot declares nothing");
-  assert.strictEqual(legacy.pickerMatches, true,
-    "with no intent declared the picker must be byte-identical to the call every other caller makes");
-  assert.strictEqual(legacy.narrowed, legacy.count,
-    "and no target may be narrowed away from a shot that has declared nothing");
-
-  /* THE MOTION PANEL'S OWN GATE IS UNTOUCHED BY AN INTENT. Driven through the shipped
-     renderer, on the shipped t2v case, for every route: the lock follows the unit's
-     route exactly as Shot Execution T0 established, and never the declared intent. */
-  const gate = run(baseline.context, `
-    const rows = {};
-    const shot = P.shots[0];
-    for (const value of [null, ...CINEBRAID_SHOT_ROUTES]) {
-      for (const frame of shot.keyframes || []) frame.winner = "";
-      shot.clips = []; shot.motionPrompt = "";
-      if (value === null) delete shot.deliveryRoute; else shot.deliveryRoute = value;
-      const c = ensureShotCreation(shot);
-      c.activeMotionUnitId = ""; c.motionProfileId = "";
-      ensureGuidedMotionUnit(shot, "", null);
-      const html = guidedMotionPanel(shot, null, []);
-      rows[String(value)] = { locked: html.includes("guided-motion-card locked") };
-    }
+  const baselineState = run(baseline.context, `
+    const shot = JSON.parse(JSON.stringify(P.shots.find((row) => row.id === "L1-01")));
     delete shot.deliveryRoute;
-    return rows;`);
-  for (const value of ["null", ...ROUTES])
-    assert.strictEqual(gate[value].locked, gate.null.locked,
-      `${value}: a declared intent must not change whether the motion workspace is locked — that gate is the unit's, not the intent's`);
+    return {
+      shot: JSON.stringify(shot),
+      authority: JSON.stringify(P.productionAuthority || null),
+      pickerMatches: guidedVideoProfileOptions("minimax-h3/i2v") === guidedVideoProfileOptions("minimax-h3/i2v", ""),
+      count: guidedVideoProfileCount(),
+      narrowed: guidedIntentVideoProfileCount(""),
+    };`);
+  assert.strictEqual(baselineState.pickerMatches, true, "an undeclared route preserves the accepted picker answer");
+  assert.strictEqual(baselineState.narrowed, baselineState.count, "an undeclared route narrows no generation target");
 
-  note(`8G. bounded change: ${ROUTES.length + BAD_ROUTES.length} route values rendered byte-identically outside the Shot Intent `
-    + "control; a route-less shot's picker, target count and motion gate are all exactly the accepted ones");
+  for (const route of ROUTES) {
+    const rendered = await renderShot(route);
+    const state = run(rendered.context, `
+      const source = P.shots.find((row) => row.id === "L1-01");
+      const shot = JSON.parse(JSON.stringify(source));
+      delete shot.deliveryRoute;
+      const readiness = shotReadinessFor(source);
+      const facts = shotStageModelFacts(source, takesFor(source.id));
+      const frames = shotStageState("frames", facts);
+      const motion = shotStageState("motion", facts);
+      const motionUnit = readiness.units.find((unit) => unit.kind === "motion" && unit.required);
+      return {
+        shot: JSON.stringify(shot),
+        authority: JSON.stringify(P.productionAuthority || null),
+        requiredFrames: readiness.units.filter((unit) => unit.kind === "frame" && unit.required).length,
+        canonicalFrameNeeds: shotRouteInputNeeds(source.deliveryRoute).frameNeeds.length,
+        framesOptional: frames.optional,
+        motionAvailability: motion.availability,
+        motionReason: motion.blockedReason,
+        motionStatus: motionUnit.status,
+        motionAction: motionUnit.nextAction.message,
+      };`);
+    assert.strictEqual(state.shot, baselineState.shot, `${route}: declaring intent changes no stored shot data except deliveryRoute`);
+    assert.strictEqual(state.authority, baselineState.authority, `${route}: declaring intent changes no Canon receipt`);
+    assert.strictEqual(state.requiredFrames, state.canonicalFrameNeeds, `${route}: readiness represents the declared frame inputs`);
+    assert.strictEqual(state.framesOptional, state.requiredFrames === 0, `${route}: Frames optionality projects readiness`);
+    const available = ["READY", "COMPLETE"].includes(state.motionStatus);
+    assert.strictEqual(state.motionAvailability, available ? "available" : "blocked",
+      `${route}: Motion availability projects canonical readiness`);
+    assert.strictEqual(state.motionReason, available ? "" : state.motionAction,
+      `${route}: Motion explains the canonical blocker`);
+  }
+
+  note(`8G. bounded change: ${BAD_ROUTES.length} unreadable values are inert; ${ROUTES.length} declared routes change only deliveryRoute while readiness and stage projections move together`);
 }
 
 /* ===========================================================================
@@ -840,8 +845,17 @@ const matching = (requests, needles) => requests.filter((url) => needles.some((n
    stubbed that decides anything: only `falGenerationReady` (the harness has no key) and
    `fetch`/`toast`, which are observed rather than replaced. */
 async function executionPage(routeValue) {
-  const page = await renderShot(routeValue);
+  const page = await renderShot(routeValue, (project) => {
+    const shot = project.shots[0];
+    shot.characters = [];
+    shot.codes = [];
+    shot.creationBrief = {};
+  });
   vm.runInContext(`
+    const __shotScan = SCAN?.shots?.["L1-01"];
+    if (__shotScan) __shotScan.takes = (P.shots[0].keyframes || [])
+      .filter((frame) => frame.winner)
+      .map((frame) => ({ name: frame.winner, url: "/assets/shots/L1-01/takes/" + frame.winner }));
     globalThis.__requests = [];
     const __fetch = fetch;
     globalThis.fetch = (url, options) => { __requests.push(String(url)); return __fetch(url, options); };

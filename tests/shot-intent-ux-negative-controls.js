@@ -178,23 +178,18 @@ async function projectionControls() {
     },
   );
 
-  /* NC-5 — FRAME EXPOSURE DEFAULTS THE MOTION WORKSPACE'S GATE AWAY. The probes and the
-     shipped Motion panel disagree about r2v; a default of "no anchor needed" folds the
-     Frames workflow for a route the panel then refuses to open without an approved
-     frame. That is a filmmaker sent to a dead end by a simplification. */
+  /* NC-5 - FRAME EXPOSURE REINTRODUCES A NON-FRAME REQUIREMENT.
+     r2v requires a canonical reference, but that does not make Frames required. */
   await mustFail(
-    "NC-5 frame exposure assumes no approved still is needed when the gate is not supplied",
-    "no shipped authority asks it for an input",
+    "NC-5 a reference requirement is misclassified as a frame requirement",
+    "canonical route requires no frame input",
     () => {
       const broken = compileModule(INTENT_FILE, mutate(INTENT_SOURCE,
-        '    if (typeof needsVisualAnchor !== "function") return inert("no-motion-workspace-prerequisite-supplied");\n    const anchored = needs.modes.filter((mode) => needsVisualAnchor(mode) === true);',
-        "    const gate = typeof needsVisualAnchor === \"function\" ? needsVisualAnchor : () => false;\n    const anchored = needs.modes.filter((mode) => gate(mode) === true);",
+        "    const required = routeNeeds.framesRequired === true;",
+        "    const required = routeNeeds.needs.length > 0;",
         "NC-5"));
-      /* The shipped composition is asked WITHOUT the gate, exactly as a caller that
-         could not supply it would ask. Nothing may fold. */
-      for (const route of ROUTES)
-        assert.strictEqual(broken.shotIntentFrameExposure(route, null).adapt, false,
-          `${route}: the Frames workflow may fold only where no shipped authority asks it for an input`);
+      assert.strictEqual(broken.shotIntentFrameExposure("r2v").adapt, true,
+        "r2v: Frames folds because the canonical route requires no frame input");
     },
   );
 
@@ -241,22 +236,21 @@ async function surfaceControls() {
     },
   );
 
-  /* NC-7 — A FOLDED STAGE FABRICATES COMPLETION. Adaptive exposure is presentation; the
-     moment it reaches into the stage model, a shot that skipped Frames starts reporting
-     the work as done and every rollup that counts completions is wrong. */
+  /* NC-7 - ROUTE FACTS ARE WITHHELD FROM THE STAGE MODEL. */
   await mustFail(
-    "NC-7 folding the Frames stage marks its work complete",
-    "must not move a single completion",
+    "NC-7 canonical frame optionality is hidden from the stage model",
+    "must project canonical frame optionality",
     async () => {
       const page = await renderShot("t2v", {
         mutateSource: replacing("creation-studio.js",
-          "    requiredFramesApproved: !!progress.requiredApproved,",
-          "    requiredFramesApproved: !!progress.requiredApproved || shotIntentFramesExposure(s).adapt,",
+          "    routeRequirementsKnown: routeNeeds.known === true,",
+          "    routeRequirementsKnown: false,",
           "NC-7"),
       });
       const folded = framesFor(page.context);
-      assert.strictEqual(folded.stageProgress, baseFrames.stageProgress,
-        "folding a stage must not move a single completion, availability or blocked reason");
+      const frames = JSON.parse(folded.stageProgress).find((stage) => stage.id === "frames");
+      assert.strictEqual(frames.optional, true,
+        "description-only Frames must project canonical frame optionality");
     },
   );
 
@@ -418,6 +412,15 @@ const matching = (requests, needles) => requests.filter((url) => needles.some((n
 async function excludedPage(options = {}) {
   const page = await renderShot("flf", options);
   vm.runInContext(`
+    const __shot = P.shots[0];
+    __shot.characters = [];
+    __shot.codes = [];
+    const __creation = ensureShotCreation(__shot);
+    __creation.locationId = "";
+    __creation.propIds = [];
+    const __scan = SCAN?.shots?.["L1-01"];
+    if (__scan) __scan.takes = (__shot.keyframes || []).filter((frame) => frame.winner)
+      .map((frame) => ({ name: frame.winner, url: "/assets/shots/L1-01/takes/" + frame.winner }));
     globalThis.__requests = [];
     const __fetch = fetch;
     globalThis.fetch = (url, opts) => { __requests.push(String(url)); return __fetch(url, opts); };

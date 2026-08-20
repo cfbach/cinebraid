@@ -992,7 +992,11 @@ async function main() {
   assert(!frameBlockingModalHtml.includes("Build revised prompt"), "frame-specific blocking must not accidentally launch the global blocking revision path");
   blockingRender.context.closeModal();
 
-  const motionReadyFixture = buildFixture();
+  const motionReadyFixture = withCanon(buildFixture(), [
+    { kind: "entity-state", list: "characters", entityId: "KAI", stateId: "state-default", value: "KAI-ANCHOR.png" },
+    { kind: "entity-state", list: "locations", entityId: "LOC-HULL", stateId: "state-default", value: "LOC-HULL-PLATE.png" },
+    { kind: "entity-state", list: "props", entityId: "PR-TOOL", stateId: "state-default", value: "PR-TOOL-PLATE.png" },
+  ]);
   motionReadyFixture.shots[0].creationBrief = motionReadyFixture.shots[0].creationBrief || {};
   motionReadyFixture.shots[0].creationBrief.automationReadyForMotion = true;
   motionReadyFixture.shots[0].creationBrief.automationCompletedFrameIds = ["frame-a", "frame-b"];
