@@ -145,6 +145,53 @@ try:
             f"2. feed rendered: {before['occurrences']} requirements -> {before['unique']} confirmations, "
             f"counts={before['counts']['ready']}R/{before['counts']['blocked']}B/{before['counts']['needsDecision']}D")
 
+        # ---- 2b. THE PAGE LEADS WITH THE NEXT ACTION, NOT WITH THE BACKLOG ------------
+        #
+        # The confirmation queue is administration: real, required, and not what a
+        # filmmaker opens a production page to read. It used to ship expanded, above the
+        # NEXT ACTION card, so four rows of it owned the first viewport while the one
+        # thing to do next sat below the fold. Nothing was removed to fix that -- the
+        # card moved up and the queue ships behind its own summary line.
+        #
+        # Measured against the real fold, not against source order.
+        hierarchy = page.evaluate(r"""() => {
+            const box = (sel) => {
+                const n = document.querySelector(sel);
+                if (!n) return null;
+                const b = n.getBoundingClientRect();
+                return { top: Math.round(b.top + window.scrollY), height: Math.round(b.height) };
+            };
+            const backlog = document.querySelector('.historic-confirm');
+            return {
+                next: box('.production-next'),
+                backlog: box('.historic-confirm'),
+                backlogOpen: backlog ? backlog.open : null,
+                summary: backlog ? backlog.querySelector('summary').textContent.replace(/\s+/g, ' ').trim() : '',
+                rows: document.querySelectorAll('.historic-confirm-list > li').length,
+                fold: window.innerHeight,
+            };
+        }""")
+        assert hierarchy["next"], "2b. the production page must still carry a next action"
+        assert hierarchy["backlog"], "2b. and must still carry the confirmation backlog"
+        assert hierarchy["next"]["top"] < hierarchy["backlog"]["top"], (
+            f"2b. the next action must come before the backlog "
+            f"({hierarchy['next']['top']}px vs {hierarchy['backlog']['top']}px)")
+        assert hierarchy["next"]["top"] < hierarchy["fold"], (
+            f"2b. and must be in the first viewport, at {hierarchy['next']['top']}px of {hierarchy['fold']}px")
+        assert hierarchy["backlogOpen"] is False, "2b. the backlog ships behind its own summary line"
+        # NOT HIDDEN. Collapsed is only acceptable because the closed line still states
+        # the count and what it is a count OF, and every row is still in the document.
+        assert "confirmation" in hierarchy["summary"], (
+            f"2b. the closed backlog must still say what it is: {hierarchy['summary']!r}")
+        assert any(ch.isdigit() for ch in hierarchy["summary"]), (
+            f"2b. and must still carry its count: {hierarchy['summary']!r}")
+        assert hierarchy["rows"] == before["unique"], (
+            f"2b. and every row must still be in the document while closed "
+            f"({hierarchy['rows']} vs {before['unique']})")
+        findings.append(f"2b. next action at {hierarchy['next']['top']}px leads the backlog at "
+                        f"{hierarchy['backlog']['top']}px; the backlog ships closed with all "
+                        f"{hierarchy['rows']} rows present and its summary reading {hierarchy['summary']!r}")
+
         # ---- 3. NEGATIVE CONTROL: THE SAME COMMAND OUTSIDE A TRUSTED EVENT IS REFUSED -
         # Run FIRST, so a build whose gesture check had stopped working could not pass
         # step 4 by accident.
@@ -176,8 +223,17 @@ try:
             return item ? item.key : "";
         }""")
         assert target_key, "no confirmable row to click"
+        # The queue ships closed (see 2b), so the click path a filmmaker takes is: open
+        # the list, then confirm a row. Opened through the real <summary>, because a
+        # disclosure that could not be opened by a person would make 2b a regression
+        # rather than a hierarchy.
+        page.locator(".historic-confirm > summary").first.click()
+        page.wait_for_timeout(300)
+        assert page.evaluate("() => document.querySelector('.historic-confirm').open") is True, \
+            "the confirmation backlog must open when a person clicks its summary"
         button = page.query_selector(f".historic-confirm-list button[onclick*=\"{target_key}\"]")
         assert button, f"the confirmation button for {target_key} is not in the page"
+        assert button.is_visible(), "and the row it offers must be visible once the list is open"
         button.click()
         page.wait_for_timeout(600)
         assert not page_errors, f"confirming raised uncaught errors: {page_errors}"

@@ -144,9 +144,25 @@ const STAGE_STATUS = {
  *
  * The STORED token is unchanged — renaming it would be a data migration, and
  * nothing here migrates. Only the word a person reads changes. */
-const WORKFLOW_STATUS_LABELS = { APPROVED: "Signed off" };
+/* ALL FIVE, not only the one that collides. The collision is why this table
+ * exists, but a table that renames APPROVED alone leaves a filmmaker reading
+ * "Signed off" beside "IN PROGRESS" — one sentence-case word among four shouted
+ * ones, which reads as a different KIND of fact rather than as the same field
+ * holding a different value. Surfaces that want the shouted form keep their own
+ * `text-transform:uppercase`; the WORD is decided here and nowhere else. */
+const WORKFLOW_STATUS_LABELS = {
+  DRAFT: "Draft",
+  "IN PROGRESS": "In progress",
+  "READY FOR REVIEW": "Ready for review",
+  "CHANGES REQUESTED": "Changes requested",
+  APPROVED: "Signed off",
+};
+/* The fallback is for a token this build does not know — a project written by a
+   later version, say. It could not fire before: the literal carried a raw
+   backspace byte where `\b` was meant, so the pattern was "a backspace followed
+   by w" and an unknown token came back exactly as stored. */
 const workflowStatusLabel = (key) => WORKFLOW_STATUS_LABELS[key]
-  || String(key).replace(/w/g, (c) => c.toUpperCase());
+  || String(key).toLowerCase().replace(/\b\w/, (c) => c.toUpperCase());
 const shotIsDelivered = (s) => shotProductionNextAction(s).key === "final";
 const shotIsApproved = (s) => workflowState(s).key === "APPROVED";
 
@@ -1532,7 +1548,7 @@ function tally() {
     `<div><b>${P.shots.length}</b> ${pluralWord(P.shots.length, "shot")} · <b>${P.scenes.length}</b> ${pluralWord(P.scenes.length, "scene")} · <b>${mmss(total)}</b></div>` +
     `<div class="tally-heading">Shot workflow status</div>` +
     WORKFLOW_STATES.map(
-      (k) => `<div>${k.toLowerCase()} <b>${c[k] || 0}</b></div>`,
+      (k) => `<div>${workflowStatusLabel(k).toLowerCase()} <b>${c[k] || 0}</b></div>`,
     ).join("");
 }
 
@@ -3007,7 +3023,7 @@ window.exportBatchPackages = async () => {
   a.click();
 };
 function batchToolbar() {
-  return `<div class="batch-toolbar ${BATCH_SHOTS.size ? "active" : ""}"><b>${BATCH_SHOTS.size} selected</b><select onchange="if(this.value){batchSetWorkflow(this.value);this.value=''}"><option value="">Set workflow…</option>${WORKFLOW_STATES.map((x) => `<option value="${x}">${x}</option>`).join("")}</select><button onclick="batchContinuityState()">Assign continuity state</button><button onclick="batchHealthCheck()">Check health</button><button onclick="exportBatchPackages()">Export packages ZIP</button><button onclick="clearBatchShots()">Clear</button></div>`;
+  return `<div class="batch-toolbar ${BATCH_SHOTS.size ? "active" : ""}"><b>${BATCH_SHOTS.size} selected</b><select onchange="if(this.value){batchSetWorkflow(this.value);this.value=''}"><option value="">Set workflow…</option>${WORKFLOW_STATES.map((x) => `<option value="${x}">${workflowStatusLabel(x)}</option>`).join("")}</select><button onclick="batchContinuityState()">Assign continuity state</button><button onclick="batchHealthCheck()">Check health</button><button onclick="exportBatchPackages()">Export packages ZIP</button><button onclick="clearBatchShots()">Clear</button></div>`;
 }
 
 window.setBoardMode = (mode) => {
@@ -3387,7 +3403,12 @@ function historicConfirmationMarkup(feed) {
   const bulk = confirmable > 1
     ? `<div class="historic-confirm-bulk"><button class="assemble-btn" onclick="confirmAllListedHistoricSelections()">Confirm the ${confirmable} listed above</button><small>Confirming is approving. Each one writes a production approval you can withdraw later.</small></div>`
     : "";
-  return `<details class="production-readiness historic-confirm" open><summary><div><span>EXISTING SELECTIONS</span><b>${plural(queue.uniqueTargets, "existing selection")} need${queue.uniqueTargets === 1 ? "s" : ""} your confirmation</b></div><span>${queue.occurrences} REQUIREMENT${queue.occurrences === 1 ? "" : "S"}</span></summary><div class="historic-confirm-body"><p>These references are already in the project and nobody has approved them. Confirming one approves it everywhere it is used.</p><ul class="historic-confirm-list">${rows}</ul>${bulk}</div></details>`;
+  /* SHIPS CLOSED, and nothing about it is hidden: the summary line carries the
+     count, the word `confirmation` and the number of requirements it covers, and
+     the NEXT ACTION card above states the first of these decisions outright. What
+     changes is that four rows of administration no longer own the first viewport
+     of a film's production page. One click is the whole list back. */
+  return `<details class="production-readiness historic-confirm"><summary><div><span>EXISTING SELECTIONS</span><b>${plural(queue.uniqueTargets, "existing selection")} need${queue.uniqueTargets === 1 ? "s" : ""} your confirmation</b></div><span>${queue.occurrences} REQUIREMENT${queue.occurrences === 1 ? "" : "S"}</span></summary><div class="historic-confirm-body"><p>These references are already in the project and nobody has approved them. Confirming one approves it everywhere it is used.</p><ul class="historic-confirm-list">${rows}</ul>${bulk}</div></details>`;
 }
 function shotReadinessFeedMarkup(feed) {
   if (!feed) return "";
@@ -3523,11 +3544,17 @@ async function productionHomeView() {
   const approvedCount = P.shots.filter(shotIsApproved).length;
   const activeRows = P.shots.map((shot) => ({ shot, next: shotProductionNextAction(shot) })).filter((row) => !shotIsDelivered(row.shot)).slice(0, 8);
   return `<div class="view-head production-home-head"><div><div class="eyebrow">Production</div><span class="view-title">${esc(P.meta.title)}</span><div class="view-sub">Continue the film from the next unfinished decision. Detailed tools stay inside each shot.</div></div><div class="production-home-actions"><button class="assemble-btn" onclick="continueProduction()">${next ? "CONTINUE PRODUCTION" : hasShots ? "NOTHING OUTSTANDING" : "ADD THE FIRST SHOT"}</button><button class="add-btn" onclick="openGlobalAdd('shot')">＋ Add shot</button></div></div>
-  <div class="production-summary"><article title="A shot is delivered once a final still or video file is recorded on it."><b>${deliveredCount}/${P.shots.length}</b><span>${pluralWord(P.shots.length, "shot")} delivered</span></article><article title="A shot is approved once its workflow status is Approved. Approving a shot does not deliver it."><b>${approvedCount}/${P.shots.length}</b><span>${pluralWord(P.shots.length, "shot")} approved</span></article><article class="review" title="Returned results that are waiting for you to choose or approve."><b>${decisions.length}</b><span>${pluralWord(decisions.length, "decision")} waiting</span></article><article><b>${mmss(P.shots.reduce((sum, shot) => sum + shotDur(shot), 0))}</b><span>planned runtime across ${plural(P.scenes.length, "scene")}</span></article></div>
+  <div class="production-summary"><article title="A shot is delivered once a final still or video file is recorded on it."><b>${deliveredCount}/${P.shots.length}</b><span>${pluralWord(P.shots.length, "shot")} delivered</span></article><article title="A shot is signed off once its workflow status reaches Signed off. Signing a shot off is not the same as delivering it, and neither one approves an image."><b>${approvedCount}/${P.shots.length}</b><span>${pluralWord(P.shots.length, "shot")} signed off</span></article><article class="review" title="Returned results that are waiting for you to choose or approve."><b>${decisions.length}</b><span>${pluralWord(decisions.length, "decision")} waiting</span></article><article><b>${mmss(P.shots.reduce((sum, shot) => sum + shotDur(shot), 0))}</b><span>planned runtime across ${plural(P.scenes.length, "scene")}</span></article></div>
+  <!-- THE ORDER OF THIS PAGE IS THE POINT.
+       What to do now, then the outstanding decisions behind it, then the detail.
+       The next action used to render THIRD, below a four-row confirmation backlog
+       that filled the first viewport with administration -- and the backlog's own
+       first row is usually this very action, so the page led with the long form of
+       its own answer. Nothing is derived differently; the card is the same card. -->
+  ${next ? `<section class="production-next" data-next-action-kind="${attr(next.kind)}"${next.shotId ? ` data-next-action-shot="${attr(next.shotId)}"` : ""}${next.unblocks ? ` data-next-action-unblocks="${attr(String(next.unblocks))}"` : ""}><div><span>NEXT ACTION</span><h2>${esc(next.title)}</h2><p>${esc(next.message)}</p></div><a class="assemble-btn" href="${attr(next.href)}">${esc(next.actionLabel)} →</a></section>` : hasShots ? `<section class="production-next complete"><div><span>NOTHING OUTSTANDING</span><h2>Every declared unit of all ${plural(P.shots.length, "shot")} holds approved authority</h2><p>Readiness has nothing left to ask for. Open Shots to inspect or deliver the approved media, or add another shot.</p></div><a class="ghost-btn" href="#/shots/board">Open Shots →</a></section>` : `<section class="production-next"><div><span>NO SHOTS YET</span><h2>This project has no shots</h2><p>Add the first shot to start tracking scenes, frames and deliveries.</p></div><a class="assemble-btn" href="#/shots/board">Open Shots →</a></section>`}
   ${shotReadinessFeedMarkup(shotReadiness)}
   ${historicConfirmationMarkup(shotReadiness)}
   ${projectSetupIssuesMarkup(setup)}
-  ${next ? `<section class="production-next" data-next-action-kind="${attr(next.kind)}"${next.shotId ? ` data-next-action-shot="${attr(next.shotId)}"` : ""}${next.unblocks ? ` data-next-action-unblocks="${attr(String(next.unblocks))}"` : ""}><div><span>NEXT ACTION</span><h2>${esc(next.title)}</h2><p>${esc(next.message)}</p></div><a class="assemble-btn" href="${attr(next.href)}">${esc(next.actionLabel)} →</a></section>` : hasShots ? `<section class="production-next complete"><div><span>NOTHING OUTSTANDING</span><h2>Every declared unit of all ${plural(P.shots.length, "shot")} holds approved authority</h2><p>Readiness has nothing left to ask for. Open Shots to inspect or deliver the approved media, or add another shot.</p></div><a class="ghost-btn" href="#/shots/board">Open Shots →</a></section>` : `<section class="production-next"><div><span>NO SHOTS YET</span><h2>This project has no shots</h2><p>Add the first shot to start tracking scenes, frames and deliveries.</p></div><a class="assemble-btn" href="#/shots/board">Open Shots →</a></section>`}
   ${productionResultInbox()}
   <section class="production-active"><header><div><span>NOT YET DELIVERED</span><h2>Shots and their next action</h2></div><a href="#/shots/board">View all shots →</a></header>${activeRows.length ? `<div class="production-active-list">${activeRows.map(({shot,next}) => `<a href="#/shot/${shot.id}"><span class="next-${next.key}" title="Next action for this shot">${esc(next.label)}</span><div><b>${esc(shot.id)} · ${esc(shot.title)}</b><small>${esc(sceneById(shot.scene)?.title || shot.scene)} · ${esc(next.detail)}</small></div><i>→</i></a>`).join("")}</div>` : `<div class="production-inbox-empty">${hasShots ? "Every shot has been delivered." : "No shots have been added yet."}</div>`}</section>
   <section class="production-scenes"><header><div><span>SCENES</span><h2>Production progress</h2></div><a href="#/shots/scenes">Manage scenes →</a></header>${P.scenes.length ? `<div class="scene-progress-grid">${P.scenes.map((scene) => {
@@ -3609,13 +3636,13 @@ function productionView(tab = "board") {
     const scenePage = boundedPage(P.scenes, "scenes", "overview", BOUNDED_PAGE_SIZES.scenes);
     return head + runtimeBar(P.shots, P.meta.targetRuntime) + `<div class="bounded-scene-list">${scenePage.rows.map((sc) => {
       const shots = P.shots.filter((s) => s.scene === sc.id), refs = sceneReferenceRecords(sc), done = shots.filter(shotIsApproved).length;
-      return `<a class="scene-card" href="#/scene/${sc.id}"><div class="scene-card-head"><span class="scene-card-title">${esc(sc.title)}</span><span class="tier-badge ${sc.tier || "B"}">TIER ${sc.tier || "B"}</span><span class="scene-card-meta">${mmss(shots.reduce((a, s) => a + shotDur(s), 0))} · ${done}/${shots.length} ${pluralWord(shots.length, "shot")} approved · ${plural(refs.length, "reference")}</span></div><div class="scene-card-beat">${esc(sc.whatHappens || "No scene beat written yet.")}</div></a>`;
+      return `<a class="scene-card" href="#/scene/${sc.id}"><div class="scene-card-head"><span class="scene-card-title">${esc(sc.title)}</span><span class="tier-badge ${sc.tier || "B"}">TIER ${sc.tier || "B"}</span><span class="scene-card-meta">${mmss(shots.reduce((a, s) => a + shotDur(s), 0))} · ${done}/${shots.length} ${pluralWord(shots.length, "shot")} signed off · ${plural(refs.length, "reference")}</span></div><div class="scene-card-beat">${esc(sc.whatHappens || "No scene beat written yet.")}</div></a>`;
     }).join("")}</div>${boundedPagerMarkup("scenes","overview",scenePage,"scenes")}`;
   }
   const routes = [
     ...new Set(P.shots.map((s) => outputPlanLabel(s)).filter(Boolean)),
   ];
-  const filterBody = `<div class="toolbar"><select aria-label="Filter lifecycle" onchange="FILTER.status=this.value;route()"><option value="">All shots</option>${WORKFLOW_STATES.map((x) => `<option value="${x}" ${FILTER.status === x ? "selected" : ""}>${x}</option>`).join("")}</select><select aria-label="Filter output" onchange="FILTER.route=this.value;route()"><option value="">Any output</option>${routes.map((r) => `<option value="${attr(r.toUpperCase())}" ${FILTER.route === r.toUpperCase() ? "selected" : ""}>${esc(r)}</option>`).join("")}</select><select aria-label="Filter character" onchange="FILTER.char=this.value;route()"><option value="">Any character</option>${P.characters.map((c) => `<option value="${c.id}" ${FILTER.char === c.id ? "selected" : ""}>${esc(c.name)}</option>`).join("")}</select></div>`;
+  const filterBody = `<div class="toolbar"><select aria-label="Filter lifecycle" onchange="FILTER.status=this.value;route()"><option value="">All shots</option>${WORKFLOW_STATES.map((x) => `<option value="${x}" ${FILTER.status === x ? "selected" : ""}>${workflowStatusLabel(x)}</option>`).join("")}</select><select aria-label="Filter output" onchange="FILTER.route=this.value;route()"><option value="">Any output</option>${routes.map((r) => `<option value="${attr(r.toUpperCase())}" ${FILTER.route === r.toUpperCase() ? "selected" : ""}>${esc(r)}</option>`).join("")}</select><select aria-label="Filter character" onchange="FILTER.char=this.value;route()"><option value="">Any character</option>${P.characters.map((c) => `<option value="${c.id}" ${FILTER.char === c.id ? "selected" : ""}>${esc(c.name)}</option>`).join("")}</select></div>`;
   const controls = `<div class="board-list-controls">${shotBoardActionFilters()}${shotBoardDensityControl()}</div>${P.shots.length ? shotBadgeLegend() : ""}${tab === "table" ? batchToolbar() : ""}<details class="board-filter-fold" ${(FILTER.status || FILTER.route || FILTER.char) ? "open" : ""}><summary>More filters${(FILTER.status || FILTER.route || FILTER.char) ? " · active" : ""}</summary>${filterBody}</details>`;
   const filteredPairs = [];
   P.scenes.forEach((sc) => {
@@ -3632,7 +3659,7 @@ function productionView(tab = "board") {
   shotPage.rows.forEach(({ sc, shot }) => { if (!grouped.has(sc.id)) grouped.set(sc.id, { sc, shots: [] }); grouped.get(sc.id).shots.push(shot); });
   const body = [...grouped.values()].map(({ sc, shots }) => {
     const all = P.shots.filter((shot) => shot.scene === sc.id), collapsed = COLLAPSED_SCENES.has(sc.id), pending = all.filter((shot) => workflowState(shot).key === "READY FOR REVIEW").length, approvedCount = all.filter(shotIsApproved).length;
-    return `<section class="log-strip ${collapsed ? "collapsed" : ""}"><div class="log-head"><button class="collapse-btn" onclick="toggleSceneCollapse('${sc.id}')" aria-label="${collapsed ? "Expand" : "Collapse"} ${attr(sc.title || sc.id)}" aria-expanded="${collapsed ? "false" : "true"}">${collapsed ? "▸" : "▾"}</button><a class="log-title" href="#/scene/${sc.id}">${esc(sc.title)}</a><span class="tier-badge ${sc.tier || "B"}">TIER ${sc.tier || "B"}</span>${pending ? `<span class="scene-attention">${plural(pending, "shot")} ready for review</span>` : ""}<span class="log-count" title="Shots in this scene whose workflow status is Approved">${approvedCount}/${all.length} ${pluralWord(all.length, "shot")} approved</span></div>${collapsed ? "" : `<div class="shot-row bounded-shot-page size-${SHOT_BOARD_DENSITY}">${shots.map((shot) => slate(shot)).join("")}</div>`}</section>`;
+    return `<section class="log-strip ${collapsed ? "collapsed" : ""}"><div class="log-head"><button class="collapse-btn" onclick="toggleSceneCollapse('${sc.id}')" aria-label="${collapsed ? "Expand" : "Collapse"} ${attr(sc.title || sc.id)}" aria-expanded="${collapsed ? "false" : "true"}">${collapsed ? "▸" : "▾"}</button><a class="log-title" href="#/scene/${sc.id}">${esc(sc.title)}</a><span class="tier-badge ${sc.tier || "B"}">TIER ${sc.tier || "B"}</span>${pending ? `<span class="scene-attention">${plural(pending, "shot")} ready for review</span>` : ""}<span class="log-count" title="Shots in this scene whose workflow status has reached Signed off">${approvedCount}/${all.length} ${pluralWord(all.length, "shot")} signed off</span></div>${collapsed ? "" : `<div class="shot-row bounded-shot-page size-${SHOT_BOARD_DENSITY}">${shots.map((shot) => slate(shot)).join("")}</div>`}</section>`;
   }).join("") || (P.shots.length
     ? `<div class="empty-state"><h2>No shots match these filters</h2><p>Change a filter to see the other ${plural(P.shots.length, "shot")} in this project.</p></div>`
     : `<div class="empty-state"><h2>This project has no shots yet</h2><p>Add the first shot to start tracking scenes, frames and deliveries.</p><button class="add-btn" onclick="openGlobalAdd('shot')">＋ Add shot</button></div>`);

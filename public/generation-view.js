@@ -100,9 +100,9 @@ function generationUnsupportedMarkup(plan) {
   if (!plan || plan.mode !== "advanced") return "";
   const rows = (plan.controls || []).filter((control) => !control.supported);
   if (!rows.length) return "";
-  return `<div class="gen-view-unsupported"><b>${rows.length} setting${rows.length === 1 ? "" : "s"} this model does not have</b><ul>`
+  return `<div class="gen-view-unsupported"><b>Not supported by this model</b><ul>`
     + rows.map((row) => `<li><span>${esc(row.label)}</span><small>${esc(row.reason)}</small></li>`).join("")
-    + '</ul><small>These are not shown as disabled controls because CineBraid will not send a value for something this model cannot accept.</small></div>';
+    + '</ul><small>These are listed rather than greyed out because CineBraid will not send a value this model cannot accept.</small></div>';
 }
 
 /* WHAT SIMPLE IS NOT ASKING ABOUT, said out loud.

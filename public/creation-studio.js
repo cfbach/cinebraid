@@ -3308,7 +3308,7 @@ const SHOT_INTENT_UI_WORDS = Object.freeze({
   absent: "Not decided yet",
   hybrid: "More than one method",
   unrecognised: "Needs review — this shot's stored intent is not readable",
-  roles: Object.freeze({ "first-frame": "an opening frame", "last-frame": "a closing frame", reference: "approved references" }),
+  roles: Object.freeze({ "first-frame": "an opening frame", "last-frame": "a closing frame", reference: "approved references to guide the motion" }),
 });
 function shotIntentNeedsPhrase(needs) {
   const words = (needs || []).map((role) => SHOT_INTENT_UI_WORDS.roles[role] || role);
@@ -3358,12 +3358,19 @@ function shotIntentControl(s) {
     `<option value="${attr(choice.route)}" ${intent.route === choice.route ? "selected" : ""}>${esc(choice.label || SHOT_INTENT_UI_WORDS.hybrid)}</option>`).join("");
   const needs = shotIntentNeedsPhrase(intent.needs);
   const workflow = !declared
-    ? "CineBraid is offering the whole workflow. Say how this shot is made and it will lead with the part that applies."
+    ? "Every stage is open until you say how this shot is made. Say it, and the workflow leads with the part that applies."
     : exposure.adapt
-      ? "No frames are needed for this intent, so the Frames workflow opens folded. Everything already in it is kept."
-      : "Frames stay in the workflow: the motion workspace for this intent opens from an approved frame.";
+      ? "No frame inputs required, so the frame work starts folded. Existing frames are kept."
+      : "Frames stay in the workflow — this intent animates from an approved frame.";
+  const compatible = declared ? guidedIntentVideoProfileCount(intent.route) : 0;
   const narrowing = declared
-    ? `Video targets are narrowed to ${guidedIntentVideoProfileCount(intent.route)} of the ${guidedVideoProfileCount()} CineBraid can run.`
+    ? `${compatible} compatible video ${compatible === 1 ? "method" : "methods"}`
+    : "";
+  /* The arithmetic behind that number is real and stays reachable, but it is not the
+     sentence: "1 of the 4 CineBraid can run" describes a resolver, and a filmmaker is
+     asking how many ways there are to shoot this. */
+  const narrowingDetail = declared
+    ? `${compatible} of the ${guidedVideoProfileCount()} video methods this build can run suit this intent.`
     : "";
   const warning = intent.reading === "unrecognised"
     ? `<p class="prompt-check warn shot-intent-unreadable">${esc(intent.reason || "the stored value is not one CineBraid recognises")}. Nothing about this shot has been changed, and no method has been offered because of it. Choose how the shot is made, or withdraw the stored value.</p><button type="button" class="ghost-btn shot-intent-clear" onclick="setShotIntent('${attr(s.id)}','')">Withdraw the unreadable value</button>`
@@ -3372,11 +3379,11 @@ function shotIntentControl(s) {
   return `<details class="shot-intent-control" data-shot-intent-control="1" data-shot-id="${attr(s.id)}" data-shot-intent="${attr(intent.route)}" data-shot-intent-reading="${attr(intent.reading)}" data-frames-required="${exposure.required ? "1" : "0"}" ${workspaceSectionOpen(sectionKey, false) ? "open" : ""} ontoggle="rememberWorkspaceSection('${attr(sectionKey)}',this.open)"><summary><b>Shot intent</b><span>${esc(summary)}</span></summary>
     <div class="shot-intent-fields"><label for="shot-intent-${attr(s.id)}">How is this shot made?</label>
     <select id="shot-intent-${attr(s.id)}" onchange="setShotIntent('${attr(s.id)}',this.value)">${options}</select>
-    ${needs ? `<small class="hint shot-intent-needs">Asks for ${esc(needs)}.</small>` : ""}
+    ${needs ? `<small class="hint shot-intent-needs">Uses ${esc(needs)}.</small>` : ""}
     <small class="hint shot-intent-workflow">${esc(workflow)}</small>
-    ${narrowing ? `<small class="hint shot-intent-narrowing">${esc(narrowing)}</small>` : ""}
+    ${narrowing ? `<small class="hint shot-intent-narrowing" title="${attr(narrowingDetail)}">${esc(narrowing)}</small>` : ""}
     ${warning}
-    <small class="hint">Changing this changes what CineBraid shows you. It never deletes a frame, a reference, a candidate, an approval or a generation.</small></div></details>`;
+    <small class="hint">Changing this changes which stages lead. Nothing is ever deleted — every frame, reference, candidate, approval and generation stays exactly where it is.</small></div></details>`;
 }
 
 /* THE ONLY WRITER OF A DECLARED ROUTE IN THE APPLICATION, and it writes through Slice
@@ -3553,7 +3560,7 @@ function shotFramesWorkspace(s,takes) {
   const open = running || (!manualFirstWorkflow() && !exposure.adapt);
   const automation = `<details class="shot-stage-automation" ${open ? "open" : ""}><summary><div><b>Full shot automation</b><small>${run ? esc(run.stage || run.summary || run.status) : "Blocking → review → required frames → optional scene continuity"}</small></div><span>${run ? esc(String(run.status).replace(/-/g," ").toUpperCase()) : "OPTIONAL"}</span></summary>${typeof shotAutomationPanel === "function" ? shotAutomationPanel(s) : ""}</details>`;
   const statement = exposure.adapt
-    ? `<section class="shot-frames-not-required" data-frames-not-required="1"><div><span>FRAMES · NOT REQUIRED</span><b>This shot's intent asks for no frame</b><small>Nothing this shot declares needs a frame, so the frame workflow starts folded. Every frame, candidate, approval and result already here is kept exactly as it is — open the panel below to work on them.</small></div><button type="button" class="ghost-btn" onclick="openShotIntent('${attr(s.id)}')">Change shot intent</button></section>`
+    ? `<section class="shot-frames-not-required" data-frames-not-required="1"><div><span>FRAMES · NOT REQUIRED</span><b>This shot needs no frame</b><small>No frame inputs are required for the way this shot is made, so the frame work starts folded. Existing frames are kept — open the panel below to work on them.</small></div><button type="button" class="ghost-btn" onclick="openShotIntent('${attr(s.id)}')">Change shot intent</button></section>`
     : "";
   /* The relevance is stated on the element rather than only implied by what is open, so
      a surface, a suite or a screen reader can tell "folded because this shot does not

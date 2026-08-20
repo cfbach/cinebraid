@@ -313,9 +313,9 @@ try:
             assert f'id="fal-frame-{key.lower()}"' not in modal_html.lower(), \
                 f"D: neither shipped model documents {key}, so no {key} control may be drawn"
 
-        # NAMED IS NOT DRAWN, and the difference is the whole requirement. Advanced states
-        # "settings this model does not have" and lists them BY NAME - that is the honest
-        # form of the absence, and a word search would call it a violation. So the check is
+        # NAMED IS NOT DRAWN, and the difference is the whole requirement. Advanced heads
+        # the block "Not supported by this model" and lists them BY NAME - that is the
+        # honest form of the absence, and a word search would call it a violation. So the check is
         # for an actual FORM CONTROL: a labelled input or select the filmmaker could set.
         # A model without CFG must have no CFG control, disabled or otherwise; it may
         # perfectly well have a sentence saying it has none.
@@ -330,8 +330,13 @@ try:
         # And it IS named as absent, rather than leaving a gap the filmmaker reads as a
         # missing feature.
         unsupported = page.locator(".gen-view-unsupported").inner_text().lower()
-        assert "does not have" in unsupported, \
-            "D: Advanced must name the settings this model does not have instead of leaving a gap"
+        # The REQUIREMENT is that the absence is headed and then itemised, not that it is
+        # worded one particular way. The heading used to read "4 settings this model does
+        # not have", which counts an absence at a filmmaker; it now says what it is. Both
+        # halves are still asserted here: a heading that declares the block, and every
+        # setting named below it.
+        assert "not supported by this model" in unsupported, \
+            f"D: Advanced must head the absence rather than leave a gap, got {unsupported[:120]!r}"
         for word in ("guidance (cfg)", "sampling steps", "seed", "reference strength"):
             assert word in unsupported, f"D: {word!r} must be named as unsupported rather than silently missing"
         findings.append(f"D: the only settable controls under Advanced are {control_labels}; CFG, steps, seed and "

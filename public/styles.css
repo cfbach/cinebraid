@@ -2438,6 +2438,33 @@ body.automation-activity-open{overflow:hidden}
 .historic-confirm-list>li em{font-style:normal;font-size:11px;color:var(--acc)}
 .historic-confirm-bulk{display:grid;gap:4px;justify-items:start}
 .historic-confirm-bulk small{font-size:11px;color:var(--muted)}
+
+/* WHICH OF THESE IS THE ONE TO PRESS?
+ *
+ * Solid accent is how this product says "this is the action". The backlog was
+ * rendering it FIVE times on one panel — once per row plus the bulk control —
+ * and the bulk control, an `.assemble-btn`, was the quietest of the five, so the
+ * repeated administrative rows shouted louder than the single action that
+ * clears them all.
+ *
+ * The rows keep the accent, keep their label and keep doing exactly what they
+ * did — one approval, one receipt — but as an outline rather than a fill. The
+ * bulk control takes the fill. Nothing is disabled, hidden or merged, and no
+ * individual confirmation is taken away: this is which of them is LOUDEST. */
+.historic-confirm-list>li .approve-btn{
+  background:transparent!important;
+  border-color:color-mix(in srgb,var(--acc) 46%,var(--line))!important;
+  color:var(--acc)!important;
+  box-shadow:none;
+}
+.historic-confirm-list>li .approve-btn:hover{
+  background:color-mix(in srgb,var(--acc) 12%,transparent)!important;
+  border-color:var(--acc)!important;
+  filter:none;
+}
+.historic-confirm-bulk .assemble-btn{
+  background:var(--acc)!important;border-color:var(--acc)!important;color:#041217!important;font-weight:700;
+}
 @media(max-width:720px){.shot-readiness-list>a{grid-template-columns:1fr auto}.shot-readiness-list>a small{grid-column:1/-1}.historic-confirm-list>li{flex-direction:column;align-items:stretch}}
 /* v6.6.2.1 clarity, error semantics, and interface polish */
 
@@ -4395,6 +4422,21 @@ body[data-focused-workspace="1"] .guided-frame-body,
 #app[data-surf="light"] .reference-manual-actions .recommended small,
 #app[data-surf="light"] .reference-primary-actions .approve-btn span,
 #app[data-surf="light"] .reference-primary-actions .approve-btn small{color:#ffffff!important}
+
+/* ...except the backlog rows, which are deliberately NOT filled here. The rule
+   above assumes an accent fill and hands the label the light ink; an outlined
+   row on a light surface needs the accent back, or the label is white on white.
+   Written with the same id-carrying specificity, because that is what decides
+   between two `!important` declarations. */
+#app[data-surf="light"] .historic-confirm-list>li .approve-btn{
+  background:transparent!important;
+  border-color:color-mix(in srgb,var(--acc) 52%,var(--line))!important;
+  color:var(--acc)!important;
+}
+#app[data-surf="light"] .historic-confirm-list>li .approve-btn:hover{
+  background:color-mix(in srgb,var(--acc) 10%,transparent)!important;
+  border-color:var(--acc)!important;
+}
 
 /* THE CANDIDATE CARD ON THE LIGHT SURFACE — surfaced by Batch 2 Slice 3.
  *

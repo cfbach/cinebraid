@@ -183,7 +183,7 @@ function falFrameReferenceRows(request) {
 function falFrameWarningRows(request) {
   const rows = (request?.warnings || []).filter((row) => row && row.message);
   if (!rows.length) return "";
-  return `<section class="h3-plan-warnings"><b>${rows.length} note${rows.length === 1 ? "" : "s"} from compilation</b><ul>${rows.map((row) => `<li><span>${esc(row.message)}</span>${row.action ? `<small>${esc(row.action)}</small>` : ""}</li>`).join("")}</ul></section>`;
+  return `<section class="h3-plan-warnings"><b>${rows.length} note${rows.length === 1 ? "" : "s"} about this request</b><ul>${rows.map((row) => `<li><span>${esc(row.message)}</span>${row.action ? `<small>${esc(row.action)}</small>` : ""}</li>`).join("")}</ul></section>`;
 }
 
 /* The one-line summary of what is about to be asked for. Re-rendered rather than
