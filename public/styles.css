@@ -2658,6 +2658,10 @@ body.automation-activity-open{overflow:hidden}
 .reference-primary-copy h2{margin:0}
 .reference-primary-copy p{margin:0;color:var(--muted);line-height:1.45;max-width:760px}
 .reference-primary-usage{color:var(--muted);opacity:.85}
+/* What the primary image stands for, directly under the name it belongs to. */
+.reference-primary-role{font:800 9px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--accent)}
+/* And the requirement that outlives this decision, deliberately quieter than it. */
+.reference-primary-remaining{margin-top:2px;color:var(--muted);opacity:.85}
 .reference-primary-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:6px}
 .reference-primary-actions button{display:grid;gap:3px;justify-items:start;text-align:left;white-space:normal;overflow-wrap:anywhere;padding:10px 14px}
 .reference-primary-actions button span{font-weight:800}

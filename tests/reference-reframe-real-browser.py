@@ -268,8 +268,17 @@ try:
         assert candidates["section"] == 1, \
             f"2. exactly one candidate surface must exist on the reference, got {candidates['section']}"
         assert candidates["cards"] >= 2, f"2. with its real candidate cards, got {candidates['cards']}"
-        assert candidates["heading"] == "CANDIDATES FOR THIS CHARACTER REFERENCE", \
-            f"2. the grid must name the kind of reference it belongs to, got {candidates['heading']!r}"
+        # THE REQUIREMENT IS THAT THIS SECTION IS CONTEXTUAL, not that it is worded one
+        # way. What it replaced was a header announcing a PRODUCTION STAGE ("CHOOSE &
+        # APPROVE") that a filmmaker reached independently of any reference; what it owes
+        # is to belong to the reference it renders inside. The heading now says what the
+        # section is FOR rather than which kind of record owns it, and the sentence under
+        # it still names the reference by name -- which is the half that actually proves
+        # ownership, and is asserted immediately below.
+        assert candidates["heading"], "2. the candidate surface must carry a heading"
+        for staged in ("CHOOSE & APPROVE", "CHOOSE AND APPROVE"):
+            assert staged not in candidates["heading"].upper(), \
+                f"2. the grid must not announce a production stage, got {candidates['heading']!r}"
         assert "Nora Reframe" in candidates["names"], \
             f"2. and the reference itself, got {candidates['names']!r}"
 
@@ -599,6 +608,145 @@ try:
                         f"{header['selected']!r}, the same fact and the same word as the inspector; every option "
                         f"matches the label function, the stored vocabulary is unchanged, and APPROVED reads back "
                         f"as {vocabulary['approvedLabel']!r} rather than 'approved'")
+
+        # ---- 7d. ONE PAINT, ONE TRUTH, ONE ACTION ---------------------------------------
+        #
+        # THE REPRODUCED CONDITION. The screenshot review found a reference showing, at
+        # once: SIGNED OFF, Coverage 1/2, "CANON IMAGES 0/1", an image badged HISTORIC and
+        # "not approved", "PRIMARY REFERENCE - NOT APPROVED", "0 to choose from", and
+        # "APPROVED AUTHORITY - 2 approved references ... Already canon for this
+        # reference". Every one of those came from a real authority. Together they did not
+        # answer what is true or what to do.
+        #
+        # THE ROOT CAUSE OF THE WORST OF THEM: shared-media-disposition.js gives a file
+        # `role: "approved"` when it is bound to an EDGE -- a state, the primary, a
+        # coverage slot, an expression slot. It never consults the ledger. With zero
+        # receipts in the project, NOTHING is canon, so the section header claiming
+        # "Already canon" contradicted the "no state has an approved image" two panels
+        # above it. The partition was right; the header was not.
+        #
+        # This fixture reproduces the condition exactly: review signed off, a required
+        # primary state whose pointer is historic, other media bound to other views, and
+        # no undecided candidates at all.
+        page.evaluate(
+            """(payload) => {
+                const it = P.characters[0];
+                it.workflowStatus = 'APPROVED';
+                it.status = 'APPROVED';
+                /* Every image is bound to a role, so the undecided pool is empty -- the
+                   "0 candidates beside 2 approved" shape under review. */
+                it.candidateFiles = [];
+                it.coverageSlots = [
+                    { id: 'front', label: 'Front', requirement: 'required', selectedFile: payload.primary },
+                    { id: 'front-three-quarter', label: '3/4 front', requirement: 'required', selectedFile: '' },
+                    { id: 'profile', label: 'Profile', requirement: 'planned', selectedFile: payload.other },
+                ];
+                /* AND NOTHING IS CANON. Not a styling choice: an empty ledger is what
+                   makes the pointer historic, which is the whole condition. */
+                P.productionAuthority = { version: 1, receipts: [] };
+                route();
+            }""",
+            {"primary": f"{ENTITY}-PRIMARY.png", "other": f"{ENTITY}-FRONT-A.png"})
+        page.wait_for_timeout(500)
+        page.locator(".bounded-entity-taskbar .focused-task-button", has_text="Primary reference").click()
+        page.wait_for_selector("#main .reference-primary-hero", timeout=10000)
+        page.wait_for_timeout(500)
+
+        paint = page.evaluate(r"""() => {
+            const t = (n) => n ? n.textContent.replace(/\s+/g, ' ').trim() : null;
+            const main = document.querySelector('#main');
+            return {
+                headerLabel: t(document.querySelector('.entity-head-review-label')),
+                headerValue: (() => { const s = document.querySelector('.workflow-select');
+                                      return s ? s.options[s.selectedIndex].text.trim() : null; })(),
+                standing: (document.querySelector('.reference-primary-hero') || {}).dataset?.primaryStanding || '',
+                authorityStatus: t(document.querySelector('.entity-authority-status')),
+                primaryRole: t(document.querySelector('.reference-primary-role')),
+                primaryRemaining: t(document.querySelector('.reference-primary-remaining')),
+                cta: t(document.querySelector('.reference-primary-actions button span')),
+                ctaIsPrimary: !!document.querySelector('.reference-primary-actions .approve-btn'),
+                inUseHeadline: t(document.querySelector('.entity-approved-authority header b')),
+                inUseNote: t(document.querySelector('.entity-approved-authority header small')),
+                inUseRoles: [...document.querySelectorAll('.entity-approved-authority .entity-candidate-workflow-type')]
+                    .map((n) => n.textContent.trim()),
+                /* CLAIMS of canon, not the word. "CANON IMAGES" is a guarded section
+                   label and "0/1 states with a canon image" is a guarded count -- neither
+                   asserts that anything here IS canon. "Already canon for this reference"
+                   did, about two files no receipt supported, and that is what may not
+                   come back. */
+                canonClaims: (main.textContent.match(/already canon|is canon|are canon|currently canon/gi) || []).length,
+                canonWords: (main.textContent.match(/\bcanon\b/gi) || []).length,
+                primaryActions: main.querySelectorAll('.reference-primary-actions .approve-btn').length,
+            };
+        }""")
+
+        # ONE STATUS, SCOPED. "Signed off" is the record's review lifecycle and must say so.
+        assert paint["headerLabel"] and paint["headerLabel"].lower() != "review", (
+            f"7d. the lifecycle control must name its scope, got {paint['headerLabel']!r}")
+        assert paint["headerValue"] == "Signed off", (
+            f"7d. precondition: this fixture must be signed off, got {paint['headerValue']!r}")
+
+        # AND THE SAME PAINT MUST NOT CLAIM CANON, because nothing here is canon.
+        assert paint["standing"] == "historic", (
+            f"7d. precondition: the primary must be a historic pointer, got {paint['standing']!r}")
+        assert paint["canonClaims"] == 0, (
+            f"7d. with zero receipts nothing may CLAIM canon, found "
+            f"{paint['canonClaims']} claim(s)")
+        # The guarded vocabulary itself must still be here, or this check would pass on
+        # a build that had simply deleted the canon summary rather than stopped lying.
+        assert paint["canonWords"] > 0, (
+            "7d. the guarded CANON summary must still be on the surface -- a paint with no "
+            "canon vocabulary at all would satisfy the claim check vacuously")
+        assert paint["inUseHeadline"] and "approved" not in paint["inUseHeadline"].lower(), (
+            f"7d. edge-bound media must not be headlined as approved: {paint['inUseHeadline']!r}")
+        assert "not the same as being approved" in (paint["inUseNote"] or ""), (
+            f"7d. the section must say what being assigned is not: {paint['inUseNote']!r}")
+
+        # EACH ASSIGNED IMAGE NAMES THE ROLE IT IS ASSIGNED TO, which is what makes
+        # "2 assigned, 0 waiting" legible rather than a contradiction. The coarse
+        # workflow-type default ("PRIMARY / STATE") was printed for BOTH files here,
+        # including one bound only to a Profile view.
+        assert len(paint["inUseRoles"]) == 2, f"7d. precondition: two assigned images, got {paint['inUseRoles']}"
+        assert any("Front" in role for role in paint["inUseRoles"]), (
+            f"7d. the primary's own image must name its state and view: {paint['inUseRoles']}")
+        assert any(role.strip().lower() == "profile" for role in paint["inUseRoles"]), (
+            f"7d. an image bound only to the Profile view must say Profile, not the "
+            f"primary-state default: {paint['inUseRoles']}")
+
+        # ONE ACTION. The decision names what it is for and what outlives it, and it is
+        # the only filled-accent action on the surface.
+        assert paint["cta"] == "Approve as primary reference", f"7d. got {paint['cta']!r}"
+        assert paint["ctaIsPrimary"] and paint["primaryActions"] == 1, (
+            f"7d. exactly one filled recommended action, got {paint['primaryActions']}")
+        assert paint["primaryRole"] and "Front" in paint["primaryRole"], (
+            f"7d. the decision must name the state and view it settles: {paint['primaryRole']!r}")
+        assert paint["primaryRemaining"] and "3/4 front" in paint["primaryRemaining"], (
+            f"7d. and what remains after it: {paint['primaryRemaining']!r}")
+        # SCOPED, so it cannot be read as everything outstanding: `What this production
+        # needs` counts views, states AND expressions, and this line counts views.
+        assert paint["primaryRemaining"].lower().startswith("view"), (
+            f"7d. the remaining-work line must name the axis it counts: {paint['primaryRemaining']!r}")
+
+        # THE STATE SUMMARY MUST NOT READ AS A CLAIM. Its headline and its fraction are
+        # both guarded by the Dogfood #2 P0 that made an unreceipted pointer count 0/1 and
+        # refused the looser word APPROVED IMAGES, so neither may be reworded here. What
+        # was wrong was the SENTENCE: `pluralWord(1, "state has", "states have")` printed
+        # "0/1 state has a canon image", a fraction followed by an affirmative verb, and
+        # the review read the region as saying the state HAS one while the number said
+        # none does. With nothing canon, no affirmative may appear beside that zero.
+        assert "canon" in (paint["authorityStatus"] or "").lower(), \
+            f"7d. the guarded canon headline must survive: {paint['authorityStatus']!r}"
+        assert "0/" in (paint["authorityStatus"] or ""), \
+            f"7d. and its guarded fraction must still count zero: {paint['authorityStatus']!r}"
+        assert "has a canon image" not in (paint["authorityStatus"] or "").lower(), (
+            f"7d. with nothing canon the summary must not read as a claim that a state "
+            f"has one: {paint['authorityStatus']!r}")
+
+        findings.append(f"7d. one paint, one truth: header {paint['headerLabel']!r}={paint['headerValue']!r}, "
+                        f"state summary {paint['authorityStatus']!r}, one action {paint['cta']!r} for "
+                        f"{paint['primaryRole']!r} with {paint['primaryRemaining']!r} outstanding, "
+                        f"{paint['inUseHeadline']!r} labelled {paint['inUseRoles']}, and zero canon claims "
+                        "anywhere in the working column")
 
         # ---- 8. TYPED IDENTITY, the exact Codex collision, in a real browser -----------
         #

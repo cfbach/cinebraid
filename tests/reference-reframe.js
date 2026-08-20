@@ -258,9 +258,17 @@ async function primarySection(options = {}) {
   /* B: the candidates are HERE, and they say whose they are. */
   assert.ok(fresh.html.includes("entity-candidate-section"),
     "B: candidate review must render on the reference that owns it");
-  assert.ok(fresh.html.includes("CANDIDATES FOR THIS CHARACTER REFERENCE"),
-    "B: the candidate grid must name the kind of reference it belongs to");
-  assert.ok(fresh.html.includes("These are candidates for Nora Reframe"),
+  /* THE PROPERTY IS OWNERSHIP, not one heading. What Slice 3 removed was a header
+     announcing a PRODUCTION STAGE ("CHOOSE & APPROVE") that a filmmaker reached
+     independently of any reference. The heading now says what the section is FOR,
+     because with every image assigned it was reading "CANDIDATES FOR THIS CHARACTER
+     REFERENCE / 0 shown in All" directly above the assigned images themselves. Both
+     halves of the original property are still asserted: no production stage, and the
+     reference named by name. */
+  const candidateSurface = fresh.html.slice(fresh.html.indexOf("entity-candidate-section"));
+  assert.ok(!/CHOOSE\s*&(amp;)?\s*APPROVE/i.test(candidateSurface),
+    "B: the candidate grid must not announce a production stage reached independently of the reference");
+  assert.ok(candidateSurface.includes("Nora Reframe"),
     "B: and it must name the reference itself, so the filmmaker knows whose candidates these are");
   assert.ok(fresh.html.includes('data-candidate-file="CHAR-REFRAME-FRONT-A.png"'),
     "B: with the actual candidate cards, not a link to somewhere else");
