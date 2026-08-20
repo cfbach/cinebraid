@@ -663,11 +663,24 @@
 
   function terminalMarkup(state, collapsed) {
     const rows = [...state.working, ...state.waiting, ...state.attention, ...state.recent];
-    const summary = [
-      `${state.counts.working} running`,
-      `${state.counts.waiting} waiting`,
-      `${state.counts.attention} needing attention`,
-    ].join(" · ");
+    /* A COUNT OF NOTHING IS NOT NEWS.
+     *
+     * This line is permanent chrome across the bottom of every screen, and while a
+     * project is idle it read "0 running · 0 waiting · 0 needing attention" — three
+     * zeros competing with the filmmaker's actual task for the same attention that
+     * one real running job will need. It now states only what is true: a zero is
+     * omitted, and when every count is zero it says so in one quiet phrase.
+     *
+     * Nothing is removed. The counts, the rows, the collapse control, OPEN ACTIVITY
+     * and the deep history in Reports are all exactly where they were, and the
+     * instant anything is running, waiting or needing attention it is named here —
+     * more prominently than before, because it is no longer one of three. */
+    const parts = [
+      state.counts.working ? `${state.counts.working} running` : "",
+      state.counts.waiting ? `${state.counts.waiting} waiting` : "",
+      state.counts.attention ? `${state.counts.attention} needing attention` : "",
+    ].filter(Boolean);
+    const summary = parts.length ? parts.join(" · ") : "Nothing running";
     /* What is NOT shown is stated, because a bounded surface that truncates silently
        reads as a complete one. Deep history is already paginated in Reports and this
        says so rather than quietly becoming a worse copy of it. */

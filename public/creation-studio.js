@@ -4758,7 +4758,7 @@ function projectEntryStandingMarkup(standing, reasons) {
 
 function creationStartChooser() {
   const selected = creationStartPath();
-  return `<section class="creation-start-choice"><div class="creation-start-intro"><span class="creation-kicker">HOW DO YOU WANT TO START?</span><h2>Three ways in. All of them end in the same project.</h2><p>Pick the one that matches what you already have. You can change your mind — anything you have typed or pasted is kept while you look around.</p></div><div class="creation-path-buttons" role="group" aria-label="How do you want to start?">${CREATION_INTENTS.map((intent) => `<button type="button" data-creation-intent="${attr(intent.key)}" class="${selected === intent.key ? "on" : ""}${intent.recommended ? " is-recommended" : ""}" aria-pressed="${selected === intent.key ? "true" : "false"}" onclick="setCreationStartPath('${attr(intent.key)}')"><span>${esc(intent.eyebrow)}</span><b>${esc(intent.title)}</b>${intent.recommended ? `<em class="creation-path-recommended">Recommended</em>` : ""}<small>${esc(intent.blurb)}</small></button>`).join("")}</div></section>`;
+  return `<section class="creation-start-choice"><div class="creation-start-intro"><span class="creation-kicker">HOW DO YOU WANT TO START?</span><h2>Three ways in. All of them end in one new project.</h2><p>Pick the one that matches what you already have. You can change your mind — anything you have typed or pasted is kept while you look around.</p></div><div class="creation-path-buttons" role="group" aria-label="How do you want to start?">${CREATION_INTENTS.map((intent) => `<button type="button" data-creation-intent="${attr(intent.key)}" class="${selected === intent.key ? "on" : ""}${intent.recommended ? " is-recommended" : ""}" aria-pressed="${selected === intent.key ? "true" : "false"}" onclick="setCreationStartPath('${attr(intent.key)}')"><span>${esc(intent.eyebrow)}</span><b>${esc(intent.title)}</b>${intent.recommended ? `<em class="creation-path-recommended">Recommended</em>` : ""}<small>${esc(intent.blurb)}</small></button>`).join("")}</div></section>`;
 }
 
 /* The paste-and-review half, shared by both import intents rather than duplicated
@@ -4925,7 +4925,7 @@ function creationStudioView() {
       : path === "scratch"
         ? creationManualWorkspace()
         : creationAssistedCard();
-  return `<div class="view-head creation-view-head"><div><div class="eyebrow">New project</div><span class="view-title">Start a project</span><div class="view-sub">Bring a script, bring a CineBraid project, or start with nothing. CineBraid keeps the same workflow whichever one you choose.</div></div><button class="add-btn" onclick="newProject()">+ Project</button></div>
+  return `<div class="view-head creation-view-head"><div><div class="eyebrow">New project</div><span class="view-title">Start a project</span><div class="view-sub">Bring a script, bring a CineBraid project, or start with nothing — CineBraid keeps the same workflow whichever way you begin. What you start here becomes its own project, separate from the one open now.</div></div><button class="add-btn" onclick="newProject()">+ Project</button></div>
   ${creationStartChooser()}
   ${panel}`;
 }

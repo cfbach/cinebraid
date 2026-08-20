@@ -1544,12 +1544,20 @@ function tally() {
   /* The breakdown below the totals is the workflow status of every shot, so it is
      labelled as such — otherwise "approved 2" reads as a contradiction of the
      "0/3 shots delivered" tile on Production, which counts a different thing. */
+  /* ONLY THE STATES THIS FILM IS ACTUALLY IN.
+     A five-row ladder in permanent chrome, three rows of it reading zero, is
+     technical detail sitting where a filmmaker looks for their project. The
+     breakdown is unchanged in what it counts; a state no shot is in is simply not
+     listed, and the heading goes with it when there is nothing to head. */
+  const breakdown = WORKFLOW_STATES.filter((k) => c[k]);
   $("#tally").innerHTML =
     `<div><b>${P.shots.length}</b> ${pluralWord(P.shots.length, "shot")} · <b>${P.scenes.length}</b> ${pluralWord(P.scenes.length, "scene")} · <b>${mmss(total)}</b></div>` +
-    `<div class="tally-heading">Shot workflow status</div>` +
-    WORKFLOW_STATES.map(
-      (k) => `<div>${workflowStatusLabel(k).toLowerCase()} <b>${c[k] || 0}</b></div>`,
-    ).join("");
+    (breakdown.length
+      ? `<div class="tally-heading">Shot workflow status</div>` +
+        breakdown.map(
+          (k) => `<div>${workflowStatusLabel(k).toLowerCase()} <b>${c[k]}</b></div>`,
+        ).join("")
+      : "");
 }
 
 /* ---------- project switcher ---------- */
