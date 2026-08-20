@@ -10,7 +10,8 @@ the seven a filmmaker would actually notice:
   2  choosing an intent from the real <select> writes the canonical token, and the
      project on disk carries it after the debounced save
   3  the Frames stage visibly adapts: declaring an intent that needs no frame folds the
-     frame workflow, and declaring one that does brings it straight back
+     frame workflow, and declaring one that does brings it straight back — and the line
+     that explains the fold is laid out so a filmmaker can actually read it (3b)
   4  Simple <-> Advanced still works, and the two controls do not touch each other
   5  frame data survives folding and re-exposure — read out of the live DOM, not out of
      a function's return value
@@ -164,6 +165,34 @@ FRAMES_STATE = """
     addFrame: document.querySelectorAll('#main .guided-add-frame').length,
     frameCards: document.querySelectorAll('#main .guided-frame-card, #main .guided-frame-workflow-body > *').length,
     automation: document.querySelectorAll('#main .shot-stage-automation').length,
+  };
+}
+"""
+
+# THE FOLDED-FRAMES BANNER'S GEOMETRY. Node can prove the sentence is in the markup; only
+# a real layout can prove a filmmaker can read it. `flex:0 0 auto` resolves flex-basis from
+# the width property, and the generic .ghost-btn is `width:100%`, so the button claimed the
+# whole row and — being unshrinkable — left the sentence 0px wide and 36 lines tall at a
+# 1600px viewport. Measured, not inferred: getBoundingClientRect and the resolved
+# line-height, which is the only way a collapsed text column is visible to a test at all.
+FOLDED_BANNER_GEOMETRY = """
+() => {
+  const row = document.querySelector('#main .shot-frames-not-required');
+  if (!row) return null;
+  const button = row.querySelector('button');
+  const copy = row.querySelector('div');
+  const small = copy && copy.querySelector('small');
+  const width = (node) => Math.round(node.getBoundingClientRect().width);
+  return {
+    row: width(row),
+    button: width(button),
+    copy: width(copy),
+    small: small ? width(small) : 0,
+    /* The rendered wrap count. One word per line is what the defect looked like. */
+    smallLines: small
+      ? Math.round(small.getBoundingClientRect().height / parseFloat(getComputedStyle(small).lineHeight))
+      : 0,
+    column: getComputedStyle(row).flexDirection === 'column',
   };
 }
 """
@@ -330,6 +359,57 @@ try:
         assert folded["statement"] == 1, "3. and the fold must explain itself in one visible line"
         assert page.locator("#main .shot-frames-not-required button", has_text="Change shot intent").count() == 1, \
             "3. and offer the way back to the control that caused it"
+        # 3b · AND THE STATEMENT MUST BE READABLE. A banner whose sentence renders one word
+        # per line states nothing. The button is allowed to sit beside the text (row) or
+        # above it (the <=760px column); it is never allowed to BE the row.
+        wide = page.evaluate(FOLDED_BANNER_GEOMETRY)
+        assert wide and not wide["column"], "3b. precondition: 1600px must still lay the banner out as a row"
+        assert wide["button"] < wide["row"] * 0.5, (
+            f"3b. the button must not consume the row it explains itself in "
+            f"({wide['button']}px of {wide['row']}px)")
+        assert wide["copy"] > wide["row"] * 0.5, (
+            f"3b. the sentence must get most of the row, got {wide['copy']}px of {wide['row']}px")
+        assert wide["smallLines"] <= 4, (
+            f"3b. the sentence must not collapse into a column of single words, "
+            f"got {wide['smallLines']} rendered lines")
+
+        # AND THE NARROW LAYOUT IS NOT COLLATERAL. Below 760px the banner is a column and
+        # the button is meant to fill it. Widening the text above must not take that away.
+        page.set_viewport_size({"width": 700, "height": 1000})
+        page.wait_for_timeout(350)
+        narrow = page.evaluate(FOLDED_BANNER_GEOMETRY)
+        assert narrow and narrow["column"], "3b. precondition: 700px must still lay the banner out as a column"
+        assert narrow["button"] > narrow["row"] * 0.9, (
+            f"3b. the column layout must still give the button the full row "
+            f"({narrow['button']}px of {narrow['row']}px)")
+        assert narrow["smallLines"] <= 4, (
+            f"3b. and the sentence must stay readable there too, got {narrow['smallLines']} rendered lines")
+        page.set_viewport_size({"width": 1600, "height": 1000})
+        page.wait_for_timeout(350)
+        # N3 · AND 3b CAN FAIL. The defect was one declaration — the generic .ghost-btn
+        # `width:100%` reaching a `flex:0 0 auto` button — so the negative control is that
+        # declaration, put back through a stylesheet the page really applies. If 3b's
+        # comparison could not see it, 3b would be proving nothing about the fix.
+        page.add_style_tag(content=".shot-frames-not-required button{width:100%}")
+        page.wait_for_timeout(350)
+        regressed = page.evaluate(FOLDED_BANNER_GEOMETRY)
+        assert regressed["button"] >= regressed["row"] * 0.5, \
+            "N3: the control must actually reproduce the defect it is testing for"
+        caught = not (regressed["button"] < regressed["row"] * 0.5
+                      and regressed["copy"] > regressed["row"] * 0.5
+                      and regressed["smallLines"] <= 4)
+        assert caught, "N3: 3b would not have noticed the button eating the row it explains itself in"
+        findings.append(f"N3. negative control: restoring the single `width:100%` declaration puts the button "
+                        f"back to {regressed['button']}px of the {regressed['row']}px row and the sentence to "
+                        f"{regressed['smallLines']} lines, and 3b's own comparison catches it")
+        page.reload(wait_until="domcontentloaded")
+        page.wait_for_selector("#main .shot-frames-not-required", timeout=20000)
+        page.wait_for_timeout(400)
+
+        findings.append(f"3b. the folded-frames statement is readable: at 1600px the button takes "
+                        f"{wide['button']}px of the {wide['row']}px row and the sentence renders in "
+                        f"{wide['smallLines']} lines; at 700px the column layout still gives the button "
+                        f"the full {narrow['button']}px row")
         # AND THE WAY BACK REALLY WORKS. The control is collapsed by default and lives
         # above the stage, so a folded stage that only NAMED it would be a dead end with
         # a label on it. Clicked, not asserted from source.

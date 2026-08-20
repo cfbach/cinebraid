@@ -3237,6 +3237,14 @@ button:disabled,
 .reference-manual-actions .recommended small{font-weight:700}
 .reference-manual-actions .ghost-btn{background:var(--panel-2)!important;color:var(--ink)!important}
 .reference-manual-actions .ghost-btn small{color:var(--muted)!important}
+/* The Primary Reference hero offers the same recommended action in the same
+   filled-accent button, but its helper line kept `--muted` — grey on cyan,
+   measured at 1.14:1 in Chromium. It takes the ink the surface above already
+   uses, and only on the filled variant: the ghost-btn branch of the same action
+   stays muted, because that one is not sitting on the accent. */
+.reference-primary-actions .approve-btn span,
+.reference-primary-actions .approve-btn small{color:#06131e!important;text-shadow:none!important;opacity:1!important}
+.reference-primary-actions .approve-btn small{font-weight:700}
 .reference-manual-hub p,
 .reference-assisted-tools p,
 .guided-assisted-tools p,
@@ -4276,7 +4284,12 @@ body[data-focused-workspace="1"] .guided-frame-body,
 .shot-frames-not-required span{display:block;font:700 8px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
 .shot-frames-not-required b{display:block;margin-top:3px;font-size:13px;color:var(--ink)}
 .shot-frames-not-required small{display:block;margin-top:3px;font-size:11px;line-height:1.5;color:var(--muted)}
-.shot-frames-not-required button{flex:0 0 auto;margin-left:auto}
+/* `flex:0 0 auto` resolves flex-basis from the width property, and the generic
+   .ghost-btn is `width:100%` — so the button claimed the whole 1108px row and,
+   being unshrinkable, left the sentence beside it 0px wide and 36 lines tall.
+   `width:auto` is the correction: the button sizes to its label here, and in the
+   column layout below it `align-items:stretch` still fills the row. */
+.shot-frames-not-required button{flex:0 0 auto;width:auto;margin-left:auto}
 @media(max-width:760px){.shot-frames-not-required{align-items:stretch;flex-direction:column}.shot-frames-not-required button{margin-left:0}}
 
 /* --- inspection ----------------------------------------------------------- */
@@ -4379,7 +4392,9 @@ body[data-focused-workspace="1"] .guided-frame-body,
 #app[data-surf="light"] .frame-sequence-correction-overview article.is-auto>i,
 #app[data-surf="light"] .reference-manual-actions .recommended,
 #app[data-surf="light"] .reference-manual-actions .recommended span,
-#app[data-surf="light"] .reference-manual-actions .recommended small{color:#ffffff!important}
+#app[data-surf="light"] .reference-manual-actions .recommended small,
+#app[data-surf="light"] .reference-primary-actions .approve-btn span,
+#app[data-surf="light"] .reference-primary-actions .approve-btn small{color:#ffffff!important}
 
 /* THE CANDIDATE CARD ON THE LIGHT SURFACE — surfaced by Batch 2 Slice 3.
  *

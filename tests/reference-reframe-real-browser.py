@@ -4,8 +4,8 @@
 WHY A BROWSER IS NEEDED AT ALL. tests/reference-reframe.js proves everything semantic
 about this slice in Node: that the unauthored-slot default was not flipped, that the
 demand tier is a total rename of the shipped requirement tokens, that no parent is ever
-guessed, and that the hand-off names a task the workspace declares. Five claims cannot
-be proven there, and they are the five a filmmaker would actually notice:
+guessed, and that the hand-off names a task the workspace declares. Six claims cannot
+be proven there, and they are the six a filmmaker would actually notice:
 
   * THE PRIMARY REFERENCE IS PHYSICALLY FIRST. "Leads the surface" is a claim about
     LAYOUT. The Node harness never lays anything out, so a string-order assertion there
@@ -24,6 +24,9 @@ be proven there, and they are the five a filmmaker would actually notice:
     real click through the real event path rather than by calling the handler.
   * THE PAGE DOES NOT SCROLL SIDEWAYS at 1600 or at 1280 with the reframed surfaces on
     screen.
+  * THE RECOMMENDED ACTION'S HELPER LINE IS LEGIBLE ON ITS OWN BUTTON. Contrast is a
+    property of the resolved cascade against a resolved background; Node has neither,
+    so a correct string there passed while the rendered helper sat at 1.14:1.
 
 IT CARRIES ITS OWN NEGATIVE CONTROLS, because a detector that can only ever report one
 answer is worth nothing. Both work by changing the PROJECT rather than the code, so the
@@ -427,6 +430,95 @@ try:
             assert overflow <= 0, f"7. the reference page scrolls sideways at {width}px by {overflow}px"
         page.set_viewport_size({"width": 1600, "height": 1000})
         findings.append("7. no horizontal overflow at 1600px or 1280px with the reframed surfaces on screen")
+
+        # ---- 7b. the recommended action's own helper line must be legible ---------------
+        #
+        # The Primary Reference hero renders its next action as a button carrying a label
+        # AND a helper line. On the filled-accent branch the helper kept the generic
+        # `--muted` grey, which is a muted colour for a PANEL, not for a cyan fill:
+        # measured at 1.14:1 in Chromium, i.e. invisible. Only a browser can catch this —
+        # the markup is correct, and Node has no cascade and no computed colour.
+        #
+        # Ratios are computed from RESOLVED colours against the nearest ancestor that
+        # actually paints, so any later rule reaching this button is judged on what a
+        # person really sees rather than on what the stylesheet says.
+        CONTRAST = r"""
+        () => {
+          const button = document.querySelector('#main .reference-primary-actions button');
+          if (!button) return null;
+          const parse = (value) => (value.match(/[\d.]+/g) || []).slice(0, 3).map(Number);
+          const channel = (c) => { c /= 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+          const luminance = (rgb) => 0.2126 * channel(rgb[0]) + 0.7152 * channel(rgb[1]) + 0.0722 * channel(rgb[2]);
+          const painted = (node) => {
+            for (let n = node; n; n = n.parentElement) {
+              const bg = getComputedStyle(n).backgroundColor;
+              const rgb = parse(bg);
+              if (rgb.length === 3 && (bg.match(/[\d.]+/g) || [])[3] !== '0') return rgb;
+            }
+            return [0, 0, 0];
+          };
+          const ratio = (fg, bg) => {
+            const a = luminance(fg), b = luminance(bg);
+            return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+          };
+          const background = painted(button);
+          const read = (selector) => {
+            const node = button.querySelector(selector);
+            if (!node) return null;
+            return { text: node.textContent.trim(),
+                     ratio: Math.round(ratio(parse(getComputedStyle(node).color), background) * 100) / 100 };
+          };
+          return { label: read('span'), hint: read('small'),
+                   filled: button.classList.contains('approve-btn'),
+                   standing: (document.querySelector('#main .reference-primary-hero') || {}).dataset?.primaryStanding || '' };
+        }
+        """
+
+        def primary_cta():
+            page.locator(".bounded-entity-taskbar .focused-task-button", has_text="Primary reference").click()
+            page.wait_for_selector("#main .reference-primary-hero", timeout=10000)
+            return page.evaluate(CONTRAST)
+
+        # 4.5:1 is the ordinary body-text bar. The helper is small text carrying real
+        # instruction, not decoration, so it is held to that rather than to the
+        # large-text exemption.
+        def assert_legible(where, cta):
+            assert cta and cta["hint"], f"7b. {where}: the action must still carry its helper line"
+            assert cta["hint"]["ratio"] >= 4.5, (
+                f"7b. {where}: the helper line {cta['hint']['text']!r} renders at "
+                f"{cta['hint']['ratio']}:1 against what it sits on")
+            assert cta["label"]["ratio"] >= 4.5, (
+                f"7b. {where}: the label {cta['label']['text']!r} renders at {cta['label']['ratio']}:1")
+
+        canon_cta = primary_cta()
+        assert canon_cta["standing"] == "canon", \
+            f"7b. precondition: the fixture's primary is approved, got {canon_cta['standing']!r}"
+        assert not canon_cta["filled"], "7b. precondition: an approved primary offers the quiet variant"
+        assert_legible("approved primary", canon_cta)
+
+        # AND THE BRANCH THE DEFECT LIVED ON. The filled variant only appears when the
+        # primary is a raw pointer, so the surface is put into that real state rather than
+        # a synthesised one: the receipt is withdrawn, which is exactly what makes a
+        # pointer historic, and put back immediately afterwards.
+        page.evaluate("() => { window.__reframeReceipts = P.productionAuthority.receipts; "
+                      "P.productionAuthority = { ...P.productionAuthority, receipts: [] }; route(); }")
+        page.wait_for_timeout(400)
+        historic_cta = primary_cta()
+        assert historic_cta["standing"] == "historic", \
+            f"7b. precondition: withdrawing the receipt must make the pointer historic, got {historic_cta['standing']!r}"
+        assert historic_cta["filled"], "7b. precondition: an unapproved primary must offer the filled recommended action"
+        assert_legible("unapproved primary", historic_cta)
+
+        page.evaluate("() => { P.productionAuthority = { ...P.productionAuthority, "
+                      "receipts: window.__reframeReceipts }; delete window.__reframeReceipts; route(); }")
+        page.wait_for_timeout(400)
+        restored = primary_cta()
+        assert restored["standing"] == "canon", \
+            f"7b. the receipt must be back where it was, got {restored['standing']!r}"
+        findings.append(f"7b. the Primary Reference action is legible on both branches: approved "
+                        f"{canon_cta['label']['ratio']}:1 / {canon_cta['hint']['ratio']}:1, and the filled "
+                        f"recommended action an unapproved primary offers "
+                        f"{historic_cta['label']['ratio']}:1 / {historic_cta['hint']['ratio']}:1")
 
         # ---- 8. TYPED IDENTITY, the exact Codex collision, in a real browser -----------
         #
