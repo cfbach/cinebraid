@@ -520,6 +520,86 @@ try:
                         f"recommended action an unapproved primary offers "
                         f"{historic_cta['label']['ratio']}:1 / {historic_cta['hint']['ratio']}:1")
 
+        # ---- 7c. the header names the fact its control carries --------------------------
+        #
+        # THE COLLISION THIS PREVENTS. The reference header's lifecycle control is a
+        # <select> whose value is a WORKFLOW state. Unlabelled, it read as a bare verdict
+        # about the reference -- "SIGNED OFF" -- sitting directly above the Primary
+        # Reference band reading "NOT APPROVED" about something else entirely: the canon
+        # standing of an image. Two true statements about two different facts, one of
+        # which looked like a denial of the other.
+        #
+        # The fix is that the header names its fact, in the SAME word the inspector uses,
+        # so the assertion is that the two surfaces agree rather than that either one
+        # says a particular string.
+        header = page.evaluate(r"""() => {
+            const select = document.querySelector('#main .workflow-select');
+            if (!select) return null;
+            const id = select.getAttribute('id');
+            const label = id ? document.querySelector(`label[for="${id}"]`) : null;
+            const inspector = [...document.querySelectorAll('.focused-inspector-facts article')]
+                .map((a) => ({ label: (a.querySelector('span') || {}).textContent || '',
+                               value: (a.querySelector('b') || {}).textContent || '' }));
+            return {
+                labelText: label ? label.textContent.trim() : null,
+                labelVisible: label ? label.getBoundingClientRect().width > 0 : false,
+                selected: select.options[select.selectedIndex].text.trim(),
+                storedValue: select.value,
+                inspector,
+            };
+        }""")
+        assert header, "7c. the reference header must still carry its workflow control"
+        assert header["labelText"], "7c. the lifecycle control must be labelled, not a bare verdict"
+        assert header["labelVisible"], "7c. and the label must be visible, not only an accessible name"
+        review = next((row for row in header["inspector"]
+                       if row["label"].strip().lower() == header["labelText"].strip().lower()), None)
+        assert review, (
+            f"7c. the header labels this fact {header['labelText']!r}, which names no field in the "
+            f"inspector: {[row['label'] for row in header['inspector']]}")
+        assert review["value"].strip().lower() == header["selected"].strip().lower(), (
+            f"7c. the header and the inspector must state the same value for the same fact: "
+            f"{header['selected']!r} vs {review['value']!r}")
+        # AND THE STORED TOKEN IS UNTOUCHED. The whole contract is that only the word a
+        # person reads changed; a suite that let the option VALUE drift would have missed
+        # the one thing that would have been a data change.
+        #
+        # Asserted against the LABEL FUNCTION rather than against this fixture's current
+        # state. The header only offers APPROVED once a reference has reached it, so a
+        # DRAFT fixture cannot show the one mapping that matters -- and "DRAFT" vs "Draft"
+        # differs only in case, so a same-fixture comparison would pass on a build that
+        # had never renamed anything.
+        vocabulary = page.evaluate(r"""() => {
+            const select = document.querySelector('#main .workflow-select');
+            const options = [...select.options].map((o) => ({ value: o.value, text: o.text.trim() }));
+            return {
+                options,
+                /* Every rendered option must be the label function's answer, so no surface
+                   can quietly go back to printing the raw token. */
+                mismatched: options.filter((o) => o.text !== workflowStatusLabel(o.value)),
+                approvedLabel: workflowStatusLabel("APPROVED"),
+                states: (typeof WORKFLOW_STATES !== "undefined") ? WORKFLOW_STATES.slice() : null,
+            };
+        }""")
+        assert not vocabulary["mismatched"], (
+            f"7c. every option must read the label function's answer, these do not: {vocabulary['mismatched']}")
+        assert vocabulary["states"] == ["DRAFT", "IN PROGRESS", "READY FOR REVIEW",
+                                        "CHANGES REQUESTED", "APPROVED"], (
+            f"7c. the STORED vocabulary must be untouched, got {vocabulary['states']}")
+        for option in vocabulary["options"]:
+            assert option["value"] in vocabulary["states"], (
+                f"7c. an option value drifted off the stored vocabulary: {option}")
+        # THE MAPPING THE WHOLE CONTRACT EXISTS FOR: the lifecycle token that collides
+        # with image approval must not be READ as the word "approved".
+        assert vocabulary["approvedLabel"].strip().lower() != "approved", (
+            f"7c. the lifecycle token APPROVED must not be read back as {vocabulary['approvedLabel']!r} -- "
+            "that is the collision with canon approval this contract exists to prevent")
+        assert header["storedValue"] in vocabulary["states"], (
+            f"7c. the stored workflow token must remain the shipped vocabulary, got {header['storedValue']!r}")
+        findings.append(f"7c. the header labels its lifecycle control {header['labelText']!r} and reads "
+                        f"{header['selected']!r}, the same fact and the same word as the inspector; every option "
+                        f"matches the label function, the stored vocabulary is unchanged, and APPROVED reads back "
+                        f"as {vocabulary['approvedLabel']!r} rather than 'approved'")
+
         # ---- 8. TYPED IDENTITY, the exact Codex collision, in a real browser -----------
         #
         # An entity id is not an entity identity. A project may legitimately hold the
