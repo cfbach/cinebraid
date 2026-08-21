@@ -2798,10 +2798,9 @@ function shotProductionNextAction(s, readiness = shotReadinessFor(s)) {
 }
 function shotReadinessTargetStage(readiness) {
   const action = readiness?.nextAction?.code || "";
-  if (action === "produce-motion") return "motion";
-  if (["produce-frame", "approve-parent-frame", "approve-required-frames"].includes(action)) return "frames";
-  if (action === "nothing-outstanding") return "deliver";
-  return "inputs";
+  return typeof shotStageForReadinessAction === "function"
+    ? shotStageForReadinessAction(action)?.id || ""
+    : "";
 }
 /* Readiness names the stage whose work answers the next action. openGuidedPanel()
    accepts the different panel vocabulary, so resolve that navigation identity from

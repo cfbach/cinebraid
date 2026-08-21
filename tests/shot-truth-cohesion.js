@@ -9,6 +9,10 @@ function equal(actual, expected, message) {
   checks += 1;
   assert.strictEqual(actual, expected, message);
 }
+function deepEqual(actual, expected, message) {
+  checks += 1;
+  assert.deepStrictEqual(actual, expected, message);
+}
 function ok(value, message) {
   checks += 1;
   assert(value, message);
@@ -201,12 +205,23 @@ async function actionableNextActionPanels() {
     const shot = P.shots[0];
     const readiness = shotReadinessFor(shot);
     const cases = [
-      ["produce-motion", "motion", "motion"],
-      ["produce-frame", "frames", "still"],
+      ["repair-authority-ledger", "", ""],
+      ["awaiting-project-repair", "", ""],
+      ["establish-media-availability", "inputs", "inputs"],
+      ["confirm-existing-reference", "inputs", "inputs"],
+      ["reapprove-revoked-reference", "inputs", "inputs"],
+      ["resolve-relationship", "inputs", "inputs"],
+      ["resolve-state-declaration", "inputs", "inputs"],
+      ["repair-presence-declaration", "frames", "still"],
+      ["resolve-media-ownership", "inputs", "inputs"],
+      ["declare-producible-unit", "inputs", "inputs"],
+      ["supply-approved-media", "inputs", "inputs"],
+      ["prepare-references", "inputs", "inputs"],
       ["approve-parent-frame", "frames", "still"],
       ["approve-required-frames", "frames", "still"],
+      ["produce-frame", "frames", "still"],
+      ["produce-motion", "motion", "motion"],
       ["nothing-outstanding", "deliver", "finish"],
-      ["confirm-existing-reference", "inputs", "inputs"],
     ].map(([code, expectedStage, expectedPanel]) => {
       const row = { nextAction: { code } };
       const stage = shotReadinessTargetStage(row);
@@ -218,11 +233,13 @@ async function actionableNextActionPanels() {
     const before = boundedShotSelectedTask(shot, takesFor(shot.id));
     await openGuidedPanel(shot.id, targetPanel);
     const after = boundedShotSelectedTask(shot, takesFor(shot.id));
-    return { status: readiness.status, action: readiness.nextAction.code, targetPanel, before, after, cases, card };
+    return { status: readiness.status, action: readiness.nextAction.code, targetPanel, before, after, cases, actionVocabulary: [...READINESS_NEXT_ACTIONS], card };
   })()`, page.context);
 
   equal(payload.status, "COMPLETE", "precondition: the still-only shot has no outstanding declared unit");
   equal(payload.action, "nothing-outstanding", "complete readiness selects the delivery next action");
+  deepEqual(payload.cases.map((row) => row.code), payload.actionVocabulary,
+    "the B1 matrix covers every canonical readiness NEXT ACTION code in declared order");
   for (const row of payload.cases) {
     equal(row.stage, row.expectedStage, row.code + " resolves to the intended stage identity");
     equal(row.panel, row.expectedPanel, row.code + " resolves to the declared navigation panel");
@@ -233,6 +250,53 @@ async function actionableNextActionPanels() {
   ok(payload.before !== payload.after, "the complete-shot primary action changes the selected workspace");
   ok(payload.card.includes("openGuidedPanel('L1-01','finish')"), "the surfaced primary action is wired to an actionable panel");
   ok(!payload.card.includes("openGuidedPanel('L1-01','deliver')"), "the stage id is never consumed as a panel key");
+
+  /* A malformed frame-presence declaration is a frame-local decision. Its primary
+     action must render the Frames workspace where setFramePresence() can repair it,
+     not the default Inputs panel that cannot perform the advertised action. */
+  const malformedProject = buildFixture();
+  delete malformedProject.productionAuthority;
+  withCanon(malformedProject, entityCanonEntries());
+  const malformedShot = malformedProject.shots[0];
+  malformedShot.creationBrief = malformedShot.creationBrief || {};
+  malformedShot.creationBrief.frameWorkflows = {
+    "frame-a": { entityPresence: { KAI: { state: "absent" } } },
+  };
+  const malformedPage = await render("#/shot/L1-01", malformedProject, {
+    storage: { "cinebraid-focused:fixture:shot-task:L1-01": "look" },
+  });
+  const malformed = await vm.runInContext(`(async () => {
+    const shot = P.shots[0];
+    const readiness = shotReadinessFor(shot);
+    const targetStage = shotReadinessTargetStage(readiness);
+    const targetPanel = shotReadinessTargetPanel(readiness);
+    const card = guidedShotStatusCard(shot, takesFor(shot.id), { prev: null, next: null });
+    const before = boundedShotSelectedTask(shot, takesFor(shot.id));
+    await openGuidedPanel(shot.id, targetPanel);
+    const html = document.getElementById("main").innerHTML;
+    return {
+      status: readiness.status,
+      action: readiness.nextAction.code,
+      targetStage,
+      targetPanel,
+      before,
+      after: boundedShotSelectedTask(shot, takesFor(shot.id)),
+      card,
+      presenceControlVisible: html.includes("frame-presence-panel"),
+      presenceWriterVisible: html.includes("setFramePresence("),
+      inputsVisible: html.includes('data-guided-panel="inputs"'),
+    };
+  })()`, malformedPage.context);
+  equal(malformed.status, "NEEDS_DECISION", "malformed frame presence is a canonical readiness decision");
+  equal(malformed.action, "repair-presence-declaration", "readiness emits the established presence-repair action");
+  equal(malformed.targetStage, "frames", "presence repair resolves to the declared Frames stage");
+  equal(malformed.targetPanel, "still", "presence repair resolves to the Frames stage's declared panel identity");
+  equal(malformed.before, "look", "precondition: a different workspace is selected before the primary action");
+  equal(malformed.after, "frames", "clicking the surfaced action selects the Frames workspace");
+  ok(malformed.card.includes("openGuidedPanel('L1-01','still')"), "the surfaced presence action is wired to the actionable Frames panel");
+  ok(malformed.presenceControlVisible, "the selected destination exposes the frame-presence repair control");
+  ok(malformed.presenceWriterVisible, "the repair control is wired to setFramePresence");
+  ok(!malformed.inputsVisible, "the presence action no longer falls through to Inputs");
 }
 
 function returnedVideoScan(project) {

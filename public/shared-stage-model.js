@@ -136,7 +136,12 @@
 
      `authority` names the APPROVED production authority that feeds the stage.
      Human approval establishes canon; an AI PASS is not on this list because an
-     AI recommendation is not an approval and causes nothing on its own. */
+     AI recommendation is not an approval and causes nothing on its own.
+
+     `readinessActions` maps the canonical shot-local NEXT ACTION vocabulary to the
+     stage that exposes the work. Readiness still owns which action is true; this
+     declaration owns only navigation. Project-level repair actions are deliberately
+     absent because they route to Production rather than a shot workspace. */
   const SHOT_STAGES = deepFreeze([
     {
       id: "inputs",
@@ -147,6 +152,17 @@
       task: { scope: SHOT_STAGE_SCOPE, id: "inputs" },
       navigation: { kind: "task-selection", route: "#/shot/:shotId" },
       panels: ["inputs"],
+      readinessActions: [
+        "establish-media-availability",
+        "confirm-existing-reference",
+        "reapprove-revoked-reference",
+        "resolve-relationship",
+        "resolve-state-declaration",
+        "resolve-media-ownership",
+        "declare-producible-unit",
+        "supply-approved-media",
+        "prepare-references",
+      ],
       panelViews: {},
       legacyTaskIds: [],
       optional: true,
@@ -169,6 +185,7 @@
       task: { scope: SHOT_STAGE_SCOPE, id: "look" },
       navigation: { kind: "task-selection", route: "#/shot/:shotId" },
       panels: ["blocking", "composer"],
+      readinessActions: [],
       /* The two look sub-views are one stage with a tab, so a panel target has to
          say which tab as well as which stage. */
       panelViews: { blocking: "blocking", composer: "authority" },
@@ -187,6 +204,12 @@
       task: { scope: SHOT_STAGE_SCOPE, id: "frames" },
       navigation: { kind: "task-selection", route: "#/shot/:shotId" },
       panels: ["still", "review", "frames"],
+      readinessActions: [
+        "repair-presence-declaration",
+        "approve-parent-frame",
+        "approve-required-frames",
+        "produce-frame",
+      ],
       panelViews: {},
       legacyTaskIds: ["automation"],
       /* The fact projection may mark this optional for a declared route while
@@ -205,6 +228,7 @@
       task: { scope: SHOT_STAGE_SCOPE, id: "motion" },
       navigation: { kind: "task-selection", route: "#/shot/:shotId" },
       panels: ["motion", "motionCreate", "motionAudio"],
+      readinessActions: ["produce-motion"],
       panelViews: {},
       legacyTaskIds: [],
       optional: true,
@@ -227,6 +251,7 @@
       task: { scope: SHOT_STAGE_SCOPE, id: "deliver" },
       navigation: { kind: "task-selection", route: "#/shot/:shotId" },
       panels: ["finish"],
+      readinessActions: ["nothing-outstanding"],
       panelViews: {},
       legacyTaskIds: ["finish"],
       optional: false,
@@ -257,6 +282,15 @@
   function shotStage(id) {
     const key = stageText(id);
     return SHOT_STAGES.find((stage) => stage.id === key) || null;
+  }
+
+  /* Canonical readiness decides the action; the declared stage model decides which
+     workspace contains that action. Unknown and project-scoped codes stay unmapped
+     instead of silently pretending they belong to Inputs. */
+  function shotStageForReadinessAction(actionCode) {
+    const key = stageText(actionCode);
+    if (!key) return null;
+    return SHOT_STAGES.find((stage) => stage.readinessActions.includes(key)) || null;
   }
 
   /* Legacy panel key -> stage. The panel keys are the `data-guided-panel` values
@@ -583,6 +617,7 @@
     SHOT_STAGE_COMPLETION: deepFreeze(COMPLETION),
     SHOT_STAGE_ACTIVITY: deepFreeze(ACTIVITY),
     shotStage,
+    shotStageForReadinessAction,
     shotStageForPanel,
     shotStagePanelView,
     shotStageForLegacyTaskId,
