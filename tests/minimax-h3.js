@@ -1,8 +1,9 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
+const vm = require('vm');
 const PromptEngine = require('../prompt-engine');
-const { render, buildFixture } = require('./render-harness');
+const { render, buildFixture, withCanon } = require('./render-harness');
 
 function contextFixture() {
   return {
@@ -190,7 +191,11 @@ function testSourceIntegration() {
 }
 
 async function testRenderedMultiFrameWorkspace() {
-  const project = buildFixture();
+  const project = withCanon(buildFixture(), [
+    { kind: 'entity-state', list: 'characters', entityId: 'KAI', stateId: 'state-default', value: 'KAI-ANCHOR.png' },
+    { kind: 'entity-state', list: 'locations', entityId: 'LOC-HULL', stateId: 'state-default', value: 'LOC-HULL-PLATE.png' },
+    { kind: 'entity-state', list: 'props', entityId: 'PR-TOOL', stateId: 'state-default', value: 'PR-TOOL-PLATE.png' },
+  ]);
   project.shots[0].creationBrief = {
     motionProfileId: 'minimax-h3/multi-frame',
     motionDuration: 10,
@@ -203,6 +208,9 @@ async function testRenderedMultiFrameWorkspace() {
   const result = await render('#/shot/L1-01', project, {
     storage: { 'cinebraid-focused:fixture:shot-task:L1-01': 'motion' },
   });
+  const motionState = vm.runInContext(`shotStageState("motion", shotStageModelFacts(P.shots[0], takesFor(P.shots[0].id)))`, result.context);
+  assert.strictEqual(motionState.availability, 'available',
+    'fixture precondition: canonical readiness, not an H3-specific rule, must open Motion');
   assert(result.html.includes('MINIMAX H3 · MULTI-FRAME INPUT'));
   assert(result.html.includes('Sequence / transition direction'));
   assert(result.html.includes('2/9 ACTIVE'));

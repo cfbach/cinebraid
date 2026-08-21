@@ -327,8 +327,8 @@ async function surfaceControls() {
     "Motion availability must project canonical readiness",
     async () => {
       const hook = replacing("shared-stage-model.js",
-        '    const complete = facts.motionReadinessStatus === "COMPLETE";\n    const open = facts.motionReadinessStatus === "READY" || complete;',
-        '    const complete = facts.motionReadinessStatus === "COMPLETE";\n    const open = facts.requiredFramesApproved || complete;',
+        '    const complete = facts.motionReadinessStatus === "COMPLETE";\n    const generationOpen = facts.motionReadinessStatus === "READY" || complete;\n    const returnedWork = facts.motionCandidateCount > 0;\n    const open = generationOpen || returnedWork;',
+        '    const complete = facts.motionReadinessStatus === "COMPLETE";\n    const generationOpen = facts.requiredFramesApproved || complete;\n    const returnedWork = facts.motionCandidateCount > 0;\n    const open = generationOpen || returnedWork;',
         "NC-10");
       const routed = await factsFor("r2v", { mutateSource: hook });
       assert.strictEqual(routed.facts.requiredFramesApproved, true,

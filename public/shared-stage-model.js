@@ -462,10 +462,13 @@
 
   function motionState(stage, facts) {
     /* Canonical readiness has already applied the declared route, Canon authority,
-       media availability and reference blockers to the motion unit. This model
-       projects that answer; it does not restate a frame prerequisite beside it. */
+       media availability and reference blockers to NEW motion work. A returned
+       candidate does not satisfy those inputs, but it does make this review workspace
+       reachable: access to paid/returned media is not a generation permission. */
     const complete = facts.motionReadinessStatus === "COMPLETE";
-    const open = facts.motionReadinessStatus === "READY" || complete;
+    const generationOpen = facts.motionReadinessStatus === "READY" || complete;
+    const returnedWork = facts.motionCandidateCount > 0;
+    const open = generationOpen || returnedWork;
     const availability = open ? "available" : "blocked";
     const blockedReason = open ? "" : facts.motionReadinessReason || "Production readiness is unavailable for Motion";
     if (facts.lifecycleKey === "final" || facts.lifecycleKey === "motion-approved")

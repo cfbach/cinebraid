@@ -402,8 +402,8 @@ control("NC-4e", "restoring a local frame gate beside canonical readiness", asyn
   const page = await render("#/production", project, {
     mutateSource: (file, source) => (file === "creation-studio.js"
       ? mutated("public/creation-studio.js", () => source
-        .replace('if (motionStage?.availability === "blocked") {', 'if (!progress.requiredApproved && !videos.length) {')
-        .replace('const reason = motionStage.blockedReason || "Resolve the required production inputs first";',
+        .replace('if (!generationAvailable && !videos.length) {', 'if (!progress.requiredApproved && !videos.length) {')
+        .replace('const reason = generationBlockedReason;',
           'const reason = "Approve required frames first";'))
       : source),
   });
@@ -435,9 +435,7 @@ control("NC-4f", "deriving Motion frame wording from the picker default", async 
   const page = await render("#/production", project, {
     mutateSource: (file, source) => (file === "creation-studio.js"
       ? mutated("public/creation-studio.js", () => source.replace(
-        `  const needsApprovedStill = motionFacts.routeRequirementsKnown
-    ? motionFacts.requiredFrameCount > 0
-    : guidedVideoModeNeedsApprovedStill(guidedEffectiveVideoMode(s, c, unit));`,
+        /  const needsApprovedStill = motionFacts\.routeRequirementsKnown\r?\n    \? motionFacts\.requiredFrameCount > 0\r?\n    : guidedVideoModeNeedsApprovedStill\(guidedEffectiveVideoMode\(s, c, unit\)\);/,
         '  const needsApprovedStill = guidedVideoModeNeedsApprovedStill(profile?.mode || "");',
       ))
       : source),
@@ -468,8 +466,8 @@ control("NC-4g", "letting an active t2v clip bypass hybrid readiness", async () 
   const page = await render("#/production", project, {
     mutateSource: (file, source) => (file === "creation-studio.js"
       ? mutated("public/creation-studio.js", () => source.replace(
-        '  const motionStage = shotStageState("motion", motionFacts);',
-        '  const canonicalMotionStage = shotStageState("motion", motionFacts);\n  const motionStage = guidedEffectiveVideoMode(s, c, unit) === "t2v" ? { ...canonicalMotionStage, availability: "available", blockedReason: "" } : canonicalMotionStage;',
+        '  const generationAvailable = generationUnit?.status === "READY";',
+        '  const generationAvailable = guidedEffectiveVideoMode(s, c, unit) === "t2v" || generationUnit?.status === "READY";',
       ))
       : source),
   });

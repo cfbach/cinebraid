@@ -2803,6 +2803,13 @@ function shotReadinessTargetStage(readiness) {
   if (action === "nothing-outstanding") return "deliver";
   return "inputs";
 }
+/* Readiness names the stage whose work answers the next action. openGuidedPanel()
+   accepts the different panel vocabulary, so resolve that navigation identity from
+   the stage declaration instead of passing a stage id through by accident. */
+function shotReadinessTargetPanel(readiness) {
+  const stage = typeof shotStage === "function" ? shotStage(shotReadinessTargetStage(readiness)) : null;
+  return stage?.panels?.[0] || "";
+}
 /* `nextProductionShot()` remains deleted: project and shot surfaces now both project
    evaluateProjectReadiness(), at their respective scopes. The project projection below
    still adds its existing prioritisation over those authoritative rows. */

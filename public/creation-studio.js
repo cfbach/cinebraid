@@ -2112,7 +2112,7 @@ function guidedShotStatusCard(s, takes, neighbors) {
   if (life.key !== "final") {
     const truth = readiness || { status: "UNAVAILABLE", nextAction: { code: "readiness-unavailable" } };
     const next = shotProductionNextAction(s, readiness);
-    const target = shotReadinessTargetStage(truth);
+    const target = shotReadinessTargetPanel(truth);
     const available = truth.status === "READY";
     const status = READINESS_STATUS_WORDS[truth.status] || truth.status || "NEXT ACTION";
     const action = !readiness || truth.nextAction?.code === "awaiting-project-repair"
@@ -2468,23 +2468,18 @@ function guidedFrameWorkflowPanel(s, takes, openDefault = true, sectionSuffix = 
   } else if (progress.requiredApproved && approvedAnchors.length >= 2 && sequenceReview?.pass) {
     motionCta = `<section class="frames-to-motion-cta state-pass"><div><span>NEXT STEP · MOTION READINESS ${Math.round(Number(sequenceReview.score||0))}/100</span><b>${motionMode} is ready</b><small>${approvedAnchors.length} approved anchors passed the motion readiness check.</small></div><button type="button" class="approve-btn large" onclick="openGuidedMotionFromFrames('${attr(s.id)}','create')">CREATE MOTION →</button></section>`;
   } else if (progress.requiredApproved && approvedAnchors.length >= 2 && sequenceReview?.status === "working") {
-    motionCta = `<section class="frames-to-motion-cta state-blocked"><div><span>MOTION READINESS CHECK IN PROGRESS</span><b>Checking whether these anchors are motion-ready</b><small>This hand-off waits for the check to finish. Motion & sound itself stays open in the stage bar.</small></div><button type="button" class="approve-btn large" disabled><span class="spin">◌</span> REVIEWING</button></section>`;
+    motionCta = `<section class="frames-to-motion-cta state-blocked"><div><span>MOTION READINESS CHECK IN PROGRESS</span><b>Checking whether these anchors are motion-ready</b><small>This hand-off waits for the check to finish. Motion & sound availability still follows Production Readiness.</small></div><button type="button" class="approve-btn large" disabled><span class="spin">◌</span> REVIEWING</button></section>`;
   } else if (progress.requiredApproved && approvedAnchors.length >= 2) {
     /* Motion readiness, not continuity. The declared-entity continuity check
        below is the continuity instrument; this gate only decides whether these
        anchors can drive a first/last or multi-frame generation, and naming it
        "continuity" put two competing continuity buttons on one screen.
 
-       AND IT GATES THIS HAND-OFF, NOT THE MOTION STAGE. The copy here used to say
-       first/last and multi-frame motion "stay locked until … continuity pass", which
-       the shipped runtime does not do: public/shared-stage-model.js declares exactly
-       one motion prerequisite — required-frames-approved — and motionState() opens the
-       stage on it, so the stage bar reaches Motion, FLF is selectable and Generate is
-       present with this check never run. What is really true is the narrower thing:
-       openGuidedMotionFromFrames refuses THIS route until the anchors it verified pass.
-       Say that instead. A gate that overstates itself teaches a filmmaker to distrust
-       the gates that are real. */
-    motionCta = `<section class="frames-to-motion-cta state-blocked"><div><span>${sequenceReview ? "MOTION HAND-OFF BLOCKED" : "MOTION READINESS CHECK REQUIRED"}</span><b>${sequenceReview ? "These anchors are not motion-ready" : "Check the approved anchors together"}</b><small>${sequenceReview?.summary ? esc(sequenceReview.summary) : "This check compares the approved anchors before they drive a first/last or multi-frame generation. It does not lock Motion & sound: that stage opens once the required frames are approved."}</small>${motionReadinessNote}</div><button type="button" class="approve-btn large" onclick="reviewGuidedFrameSequence('${attr(s.id)}')"${motionReadinessDescribedBy}${aiDisabledAttrs("vision")}>${sequenceReview ? "CHECK AGAIN" : "CHECK MOTION READINESS"}</button></section>`;
+       AND IT GATES THIS HAND-OFF, NOT THE MOTION STAGE. Canonical Production
+       Readiness evaluates any declared route and every required approved input;
+       public/shared-stage-model.js only projects that answer. This anchor-sequence
+       check cannot become a second stage-availability owner. */
+    motionCta = `<section class="frames-to-motion-cta state-blocked"><div><span>${sequenceReview ? "MOTION HAND-OFF BLOCKED" : "MOTION READINESS CHECK REQUIRED"}</span><b>${sequenceReview ? "These anchors are not motion-ready" : "Check the approved anchors together"}</b><small>${sequenceReview?.summary ? esc(sequenceReview.summary) : "This check compares the approved anchors before they drive a first/last or multi-frame generation. Motion availability comes from Production Readiness for the shot; it evaluates any declared route and the required approved production inputs. This anchor check does not decide stage availability."}</small>${motionReadinessNote}</div><button type="button" class="approve-btn large" onclick="reviewGuidedFrameSequence('${attr(s.id)}')"${motionReadinessDescribedBy}${aiDisabledAttrs("vision")}>${sequenceReview ? "CHECK AGAIN" : "CHECK MOTION READINESS"}</button></section>`;
   }
   const sequenceReviewMarkup = progress.requiredApproved && sequenceInputs.length >= 2 ? guidedFrameSequenceReviewMarkup(s, sequenceInputs, sequenceReview) : "";
   /* The v6.6 pair review is a model scoring two images together. The declared-
@@ -3263,13 +3258,27 @@ function guidedMotionPanel(s, current, takes, open = false) {
   const latest = latestPromptBuild(P, c.motionPromptBuilds), audioRefs = shotPlanningGenerationReferences(s, ["audio"]).filter((ref) => shotInputEnabled(s, ref.key));
   const videos = takes.filter((take) => isVideo(take.name));
   const approvedFrames = frames.map((frame, index) => ({ frame, take: guidedFrameApproved(s, frame, takes, index) })).filter((item) => item.take);
-  /* Motion availability is the stage model's projection of the canonical motion unit.
-     Existing results never become proof that missing route inputs are satisfied. */
+  /* Motion workspace reachability and permission to create NEW motion are different
+     questions. The stage model keeps returned work reachable; the canonical motion
+     unit still owns whether another prompt/generation path may be offered. */
   const motionFacts = shotStageModelFacts(s, takes);
   const motionStage = shotStageState("motion", motionFacts);
-  if (motionStage?.availability === "blocked") {
-    const reason = motionStage.blockedReason || "Resolve the required production inputs first";
+  const readiness = typeof shotReadinessFor === "function" ? shotReadinessFor(s) : null;
+  const generationUnitId = unit?.id ? `motion:${unit.id}` : "motion:shot";
+  const generationUnit = (readiness?.units || []).find((row) => row.kind === "motion" && row.required && row.id === generationUnitId)
+    || (readiness?.units || []).find((row) => row.kind === "motion" && row.required)
+    || null;
+  const generationAvailable = generationUnit?.status === "READY";
+  const generationBlockedReason = generationUnit?.nextAction?.message
+    || readiness?.nextAction?.message
+    || motionStage?.blockedReason
+    || "Resolve the required production inputs first";
+  if (!generationAvailable && !videos.length) {
+    const reason = generationBlockedReason;
     return `<details class="guided-work-panel guided-motion-card locked" data-guided-panel="motion"><summary><div><span>MOTION &middot; OPTIONAL</span><b>${esc(reason)}</b><small>Production readiness identifies the input that must be resolved before Motion is available.</small></div><span class="guided-mode-pill">LOCKED</span><i>&#8964;</i></summary></details>`;
+  }
+  if (!generationAvailable) {
+    return `<details id="guided-motion-workspace-${attr(s.id)}" class="guided-work-panel guided-motion-card" data-guided-panel="motion" data-generation-readiness="blocked" ${guidedPanelOpen(s, "motion", open) ? "open" : ""} ontoggle="rememberGuidedPanel('${s.id}','motion',this.open)"><summary><div><span>MOTION &middot; REVIEW</span><b>${videos.length} returned video${videos.length === 1 ? "" : "s"} available</b><small>Review, approve, finish, or import returned media. Production readiness still blocks new generation.</small></div><span class="guided-mode-pill">REVIEW</span><i>&#8964;</i></summary><div class="guided-work-panel-body"><nav class="motion-workflow-map" aria-label="Motion workflow sections"><button type="button" onclick="scrollGuidedMotionSection('${attr(s.id)}','results')"><span>2</span><b>Returned video</b><small>${videos.length} result${videos.length === 1 ? "" : "s"}</small></button><button type="button" onclick="scrollGuidedMotionSection('${attr(s.id)}','create')"><span>3</span><b>Create motion</b><small>New generation blocked</small></button></nav>${guidedMotionCandidatePanel(s, takes, approved)}<section class="motion-workflow-section motion-create-section locked" id="motion-create-${attr(s.id)}"><div class="motion-section-heading"><span>3 &middot; NEW GENERATION BLOCKED</span><div><b>${esc(generationBlockedReason)}</b><small>Resolve the current route prerequisites before creating new work. Returned video above remains available for review, approval, finishing, and import.</small></div><i>BLOCKED</i></div></section></div></details>`;
   }
   const needsApprovedStill = motionFacts.routeRequirementsKnown
     ? motionFacts.requiredFrameCount > 0

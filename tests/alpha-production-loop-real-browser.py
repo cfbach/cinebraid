@@ -42,7 +42,7 @@ sample are never touched, and the directory is removed at the end.
 import json, os, pathlib, shutil, socket, subprocess, tempfile, time
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-from browser_runtime import require_browser, launch_chromium
+from browser_runtime import canon_receipts, require_browser, launch_chromium
 
 LABEL = "Private-alpha production loop real-browser audit"
 sync_playwright = require_browser(LABEL)
@@ -81,25 +81,24 @@ projects_root = sandbox / "env" / "projects"
 def _stamp_sandbox_canon():
     for project_file in projects_root.rglob("project.json"):
         data = json.loads(project_file.read_text(encoding="utf-8"))
-        rows, seq = [], 0
+        entries = []
         for shot in data.get("shots") or []:
             for frame in shot.get("keyframes") or []:
-                if not frame.get("winner"):
+                if frame.get("winner"):
+                    entries.append({"kind": "shot-frame", "shotId": shot["id"],
+                                    "frameId": frame["id"], "value": frame["winner"]})
+        for list_name in ("characters", "locations", "props", "vehicles"):
+            for entity in data.get(list_name) or []:
+                value = entity.get("approvedFile")
+                if not value:
                     continue
-                seq += 1
-                rows.append({
-                    "id": "authority-%06d" % seq, "sequence": seq, "actor": "human",
-                    "act": "explicit-approval", "command": "approve-shot-frame", "kind": "shot-frame",
-                    "targetKey": "shot-frame:%s#%s" % (shot["id"], frame["id"]),
-                    "shotId": shot["id"], "frameId": frame["id"], "unitKey": "",
-                    "list": "", "entityId": "", "stateId": "", "slotId": "",
-                    "value": frame["winner"], "assetId": "", "at": "2026-08-15T00:00:00.000Z",
-                    "status": "current", "supersededBy": "", "supersededAt": "", "revokedAt": "",
-                    "revocationReason": "", "note": "",
-                    "provenance": {"manualAction": "gesture-sandbox-fixture", "via": "alpha-loop-sandbox", "gesture": "click"},
-                })
-        if rows:
-            data["productionAuthority"] = {"version": 1, "receipts": rows}
+                states = entity.get("continuityStates") or []
+                state = next((row for row in states if row.get("isDefault")), states[0] if states else {})
+                entries.append({"kind": "entity-state", "list": list_name,
+                                "entityId": entity["id"], "stateId": state.get("id", "state-default"),
+                                "value": value})
+        if entries:
+            data["productionAuthority"] = canon_receipts(entries, via="alpha-loop-sandbox")
             project_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
@@ -461,6 +460,125 @@ try:
         check_unwired_targets_explain_themselves()
         findings.append("the shipped module was re-served after the controls and every case passed again, so the "
                         "three red results came from the mutations and not from the environment")
+
+        # ---- B1 REMEDIATION RUNTIME: complete-shot NEXT ACTION is a panel key --------
+        page.goto(f"{base}/#/shot/{SHOT}", wait_until="domcontentloaded")
+        page.wait_for_selector("#main", timeout=15000)
+        page.evaluate("""async () => {
+            const shot = P.shots.find((row) => row.id === 'SAMPLE-01');
+            delete shot.deliveryRoute;
+            shot.clips = [];
+            shot.deliveryIntent = 'still';
+            const creation = ensureShotCreation(shot);
+            creation.deliveryIntent = 'still';
+            creation.approvedMotionFile = '';
+            creation.finalVideoFile = '';
+            selectBoundedTask('shot-task', shot.id, 'frames');
+            dirty();
+            if (typeof flushPendingProjectSave === 'function') await flushPendingProjectSave();
+            route();
+        }""")
+        page.wait_for_timeout(700)
+        primary = page.locator("button.shot-primary-action").first
+        primary_call = primary.get_attribute("onclick") or ""
+        assert "openGuidedPanel('SAMPLE-01','finish')" in primary_call,             f"B1: complete-shot NEXT ACTION must resolve to the finish panel, got {primary_call!r}"
+        assert "'deliver'" not in primary_call, "B1: a stage id must not be passed as a panel key"
+        primary.click()
+        page.wait_for_timeout(900)
+        b1_state = page.evaluate("""() => ({
+            task: document.querySelector('[data-bounded-task]')?.dataset.boundedTask || '',
+            finish: !!document.querySelector('[data-guided-panel="finish"]'),
+        })""")
+        assert b1_state == {"task": "deliver", "finish": True},             f"B1: NEXT ACTION did not reach the Deliver workspace: {b1_state}"
+        findings.append("B1 runtime: the complete-shot primary action carried panel 'finish', selected stage "
+                        "'deliver', and rendered the Finish & Delivery workspace with no silent no-op")
+
+        # ---- B2 REMEDIATION RUNTIME: returned media outlives generation readiness ----
+        returned_name = "PAID-RETURN.mp4"
+        returned_file = projects_root / "dogfood-sample" / "shots" / SHOT / "takes" / returned_name
+        returned_file.parent.mkdir(parents=True, exist_ok=True)
+        # The media browser needs a returned file identity, not a decodable production
+        # asset. A tiny local ftyp marker is sufficient for DOM/review-path validation.
+        returned_file.write_bytes(b"\x00\x00\x00\x18ftypmp42cinebraid-runtime-fixture")
+        page.evaluate("""async () => {
+            const shot = P.shots.find((row) => row.id === 'SAMPLE-01');
+            shot.deliveryRoute = 'r2v';
+            shot.deliveryIntent = 'motion';
+            shot.clips = [{
+                id: 'motion-a', label: 'A', suffix: 'a', title: 'Returned motion', kind: 'r2v',
+                fromFrame: '', toFrame: '', dur: 1, motionPrompt: 'Returned provider motion.',
+                generationPackages: [], videoWinner: '',
+            }];
+            const creation = ensureShotCreation(shot);
+            creation.deliveryIntent = 'motion';
+            creation.activeMotionUnitId = 'motion-a';
+            creation.approvedMotionFile = '';
+            creation.finalVideoFile = '';
+            /* Keep every pointer and byte, but remove entity authority: the exact state
+               where a current route prerequisite becomes unmet after work returned. */
+            P.productionAuthority.receipts = (P.productionAuthority.receipts || [])
+                .filter((row) => row.kind !== 'entity-state');
+            dirty();
+            if (typeof flushPendingProjectSave === 'function') await flushPendingProjectSave();
+        }""")
+        page.goto(f"{base}/#/production", wait_until="domcontentloaded")
+        page.wait_for_selector("#main", timeout=15000)
+        page.evaluate("""async () => {
+            SCAN = await (await fetch('/api/scan')).json();
+            route();
+        }""")
+        page.wait_for_timeout(700)
+        assert returned_name in page.content(), "B2: Production inbox stopped advertising the returned video"
+
+        page.goto(f"{base}/#/shot/{SHOT}", wait_until="domcontentloaded")
+        page.wait_for_selector("#main", timeout=15000)
+        page.evaluate(f"() => selectBoundedTask('shot-task', {json.dumps(SHOT)}, 'motion')")
+        page.wait_for_selector('[data-generation-readiness="blocked"]', timeout=15000)
+        b2_before = page.evaluate("""() => {
+            const shot = P.shots.find((row) => row.id === 'SAMPLE-01');
+            const readiness = shotReadinessFor(shot);
+            const unit = readiness.units.find((row) => row.id === 'motion:motion-a');
+            const panel = document.querySelector('[data-generation-readiness="blocked"]');
+            return {
+                status: readiness.status, generationStatus: unit?.status || '',
+                stage: shotStageState('motion', shotStageModelFacts(shot, takesFor(shot.id))).availability,
+                returned: !![...panel.querySelectorAll('b')].find((node) => node.textContent.includes('PAID-RETURN.mp4')),
+                inspect: !!panel.querySelector('.media-enlarge-btn'),
+                approve: [...panel.querySelectorAll('button')].some((node) => node.textContent.includes('APPROVE VIDEO')),
+                importInput: !!panel.querySelector('#motion-file'),
+                buildPrompt: [...panel.querySelectorAll('button')].some((node) => node.textContent.includes('Build prompt')),
+                paidAction: !!panel.querySelector('.h3-generate-btn'),
+            };
+        }""")
+        assert b2_before["status"] == "NEEDS_DECISION" and b2_before["generationStatus"] == "NEEDS_DECISION",             f"B2: the route prerequisite must really be unmet: {b2_before}"
+        assert b2_before["stage"] == "available", f"B2: returned work must keep Motion reachable: {b2_before}"
+        assert all(b2_before[key] for key in ("returned", "inspect", "approve", "importInput")),             f"B2: returned media lost a review/approval/import path: {b2_before}"
+        assert not b2_before["buildPrompt"] and not b2_before["paidAction"],             f"B2: fresh or paid generation leaked through the blocked route: {b2_before}"
+
+        page.locator('[data-generation-readiness="blocked"] .media-enlarge-btn').first.click()
+        page.wait_for_selector(".media-theatre-modal", timeout=10000)
+        page.keyboard.press("Escape")
+        page.locator('[data-generation-readiness="blocked"] button.approve-btn', has_text="APPROVE VIDEO").first.click()
+        page.wait_for_timeout(1000)
+        b2_after = page.evaluate("""() => {
+            const shot = P.shots.find((row) => row.id === 'SAMPLE-01');
+            const readiness = shotReadinessFor(shot);
+            const unit = readiness.units.find((row) => row.id === 'motion:motion-a');
+            return {
+                winner: shot.clips.find((row) => row.id === 'motion-a')?.videoWinner || '',
+                receipt: (P.productionAuthority.receipts || []).some((row) => row.kind === 'shot-motion'
+                    && row.unitKey === 'motion-a' && row.value === 'PAID-RETURN.mp4' && row.status === 'current'),
+                generationStatus: unit?.status || '',
+                blocked: !!document.querySelector('[data-generation-readiness="blocked"]'),
+                approved: document.querySelector('[data-guided-panel="motion"]')?.textContent.includes('APPROVED') || false,
+            };
+        }""")
+        assert b2_after["winner"] == returned_name and b2_after["receipt"],             f"B2: existing approval authority did not accept the returned video: {b2_after}"
+        assert b2_after["generationStatus"] in ("BLOCKED", "NEEDS_DECISION") and b2_after["blocked"],             f"B2: approving returned work must not bypass fresh-generation readiness: {b2_after}"
+        assert b2_after["approved"], f"B2: approved returned media stopped being reachable: {b2_after}"
+        findings.append("B2 runtime: with r2v entity Canon removed after PAID-RETURN.mp4 arrived, Motion stayed "
+                        "reachable for theatre review, approval and import; approval wrote shot-motion Canon, "
+                        "while prompt creation and paid generation remained blocked")
 
         assert not page_errors, f"the audit raised uncaught errors: {page_errors}"
         assert not console_errors, f"the audit logged console errors: {console_errors}; failed: {failed_requests}"

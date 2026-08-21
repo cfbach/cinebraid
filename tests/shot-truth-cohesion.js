@@ -2,7 +2,7 @@
  * No provider or paid-generation call is made; render-harness stubs transport. */
 const assert = require("assert");
 const vm = require("vm");
-const { render, buildFixture } = require("./render-harness");
+const { render, buildFixture, withCanon } = require("./render-harness");
 
 let checks = 0;
 function equal(actual, expected, message) {
@@ -179,10 +179,156 @@ async function firstLastMissingEndpoint() {
     "canonical readiness represents the absent closing endpoint explicitly");
   ok(payload.panel.includes("guided-motion-card locked"), "Motion workspace projects the missing-endpoint blocker");
 }
+
+function entityCanonEntries() {
+  return [
+    { kind: "entity-state", list: "characters", entityId: "KAI", stateId: "state-default", value: "KAI-ANCHOR.png" },
+    { kind: "entity-state", list: "locations", entityId: "LOC-HULL", stateId: "state-default", value: "LOC-HULL-PLATE.png" },
+    { kind: "entity-state", list: "props", entityId: "PR-TOOL", stateId: "state-default", value: "PR-TOOL-PLATE.png" },
+  ];
+}
+
+async function actionableNextActionPanels() {
+  const project = withCanon(buildFixture(), entityCanonEntries());
+  const shot = project.shots[0];
+  shot.creationBrief = { deliveryIntent: "still" };
+  shot.clips = [];
+
+  const page = await render("#/shot/L1-01", project, {
+    storage: { "cinebraid-focused:fixture:shot-task:L1-01": "look" },
+  });
+  const payload = await vm.runInContext(`(async () => {
+    const shot = P.shots[0];
+    const readiness = shotReadinessFor(shot);
+    const cases = [
+      ["produce-motion", "motion", "motion"],
+      ["produce-frame", "frames", "still"],
+      ["approve-parent-frame", "frames", "still"],
+      ["approve-required-frames", "frames", "still"],
+      ["nothing-outstanding", "deliver", "finish"],
+      ["confirm-existing-reference", "inputs", "inputs"],
+    ].map(([code, expectedStage, expectedPanel]) => {
+      const row = { nextAction: { code } };
+      const stage = shotReadinessTargetStage(row);
+      const panel = shotReadinessTargetPanel(row);
+      return { code, stage, panel, expectedStage, expectedPanel, resolvedStage: guidedPanelTaskId(panel) };
+    });
+    const card = guidedShotStatusCard(shot, takesFor(shot.id), { prev: null, next: null });
+    const targetPanel = shotReadinessTargetPanel(readiness);
+    const before = boundedShotSelectedTask(shot, takesFor(shot.id));
+    await openGuidedPanel(shot.id, targetPanel);
+    const after = boundedShotSelectedTask(shot, takesFor(shot.id));
+    return { status: readiness.status, action: readiness.nextAction.code, targetPanel, before, after, cases, card };
+  })()`, page.context);
+
+  equal(payload.status, "COMPLETE", "precondition: the still-only shot has no outstanding declared unit");
+  equal(payload.action, "nothing-outstanding", "complete readiness selects the delivery next action");
+  for (const row of payload.cases) {
+    equal(row.stage, row.expectedStage, row.code + " resolves to the intended stage identity");
+    equal(row.panel, row.expectedPanel, row.code + " resolves to the declared navigation panel");
+    equal(row.resolvedStage, row.expectedStage, row.code + " panel resolves back to the same declared stage");
+  }
+  equal(payload.targetPanel, "finish", "complete-shot NEXT ACTION passes the Deliver panel, not the Deliver stage id");
+  equal(payload.after, "deliver", "complete-shot NEXT ACTION selects the Deliver workspace");
+  ok(payload.before !== payload.after, "the complete-shot primary action changes the selected workspace");
+  ok(payload.card.includes("openGuidedPanel('L1-01','finish')"), "the surfaced primary action is wired to an actionable panel");
+  ok(!payload.card.includes("openGuidedPanel('L1-01','deliver')"), "the stage id is never consumed as a panel key");
+}
+
+function returnedVideoScan(project) {
+  const shotId = project.shots[0].id;
+  return {
+    anchors: project.characters.filter((row) => row.approvedFile).map((row) => ({ name: row.approvedFile, url: "/assets/anchors/" + row.approvedFile })),
+    plates: project.locations.filter((row) => row.approvedFile).map((row) => ({ name: row.approvedFile, url: "/assets/plates/" + row.approvedFile })),
+    props: project.props.filter((row) => row.approvedFile).map((row) => ({ name: row.approvedFile, url: "/assets/props/" + row.approvedFile })),
+    vehicles: [], audio: [], media: [],
+    shots: {
+      [shotId]: {
+        takes: [
+          { name: "FRAME_A.png", url: "/assets/shots/" + shotId + "/takes/FRAME_A.png" },
+          { name: "FRAME_B.png", url: "/assets/shots/" + shotId + "/takes/FRAME_B.png" },
+          { name: "PAID-RETURN.mp4", url: "/assets/shots/" + shotId + "/takes/PAID-RETURN.mp4", assetId: "asset-paid-return" },
+        ],
+        locked: [],
+      },
+    },
+  };
+}
+
+async function returnedMediaOutlivesGenerationReadiness() {
+  const project = buildFixture();
+  const shot = project.shots[0];
+  shot.deliveryRoute = "r2v";
+  const scan = returnedVideoScan(project);
+
+  const production = await render("#/production", project, { scan });
+  ok(production.html.includes("video candidate to review"), "Production inbox still advertises the returned video");
+  ok(production.html.includes("#/shot/L1-01"), "the inbox links the returned video back to its shot");
+
+  const page = await render("#/shot/L1-01", project, { scan });
+  const before = vm.runInContext(`(() => {
+    const shot = P.shots[0];
+    const takes = takesFor(shot.id);
+    const readiness = shotReadinessFor(shot);
+    const facts = shotStageModelFacts(shot, takes);
+    const motion = shotStageState("motion", facts);
+    const unit = readiness.units.find((row) => row.kind === "motion" && row.required);
+    const panel = guidedMotionPanel(shot, null, takes, true);
+    return {
+      readinessStatus: readiness.status,
+      generationStatus: unit.status,
+      generationReason: unit.nextAction.message,
+      selectedTask: boundedShotSelectedTask(shot, takes),
+      motion,
+      panel,
+    };
+  })()`, page.context);
+
+  equal(before.readinessStatus, "NEEDS_DECISION", "route prerequisite is genuinely unmet after output returned");
+  equal(before.generationStatus, "NEEDS_DECISION", "canonical motion unit still blocks new work");
+  equal(before.motion.availability, "available", "returned work keeps the Motion review workspace reachable");
+  await page.gesture.act(() => page.context.openGuidedPanel("L1-01", "motion"));
+  const selectedAfterNavigation = vm.runInContext('boundedShotSelectedTask(P.shots[0], takesFor("L1-01"))', page.context);
+  equal(selectedAfterNavigation, "motion", "the available Motion stage reaches the returned-media workspace");
+  ok(before.panel.includes('data-generation-readiness="blocked"'), "the review panel states that new generation remains blocked");
+  ok(before.panel.includes("PAID-RETURN.mp4"), "the returned provider asset remains visible");
+  ok(before.panel.includes("openMediaTheatre"), "the returned provider asset remains inspectable");
+  ok(before.panel.includes("APPROVE VIDEO"), "the existing approval owner remains reachable");
+  ok(before.panel.includes('id="motion-file"'), "the existing video import/ingest control remains reachable");
+  ok(before.panel.includes(before.generationReason), "the canonical generation blocker remains visible");
+  ok(!before.panel.includes("Build prompt"), "new prompt creation is not offered while readiness blocks new work");
+  ok(!before.panel.includes("openFalH3MotionModal"), "no paid provider action is surfaced through the blocked creation section");
+
+  await page.gesture.act(() => page.context.approveGuidedMotion("L1-01", "PAID-RETURN.mp4"));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const after = vm.runInContext(`(() => {
+    const shot = P.shots[0];
+    const readiness = shotReadinessFor(shot);
+    const unit = readiness.units.find((row) => row.kind === "motion" && row.required && !row.complete)
+      || readiness.units.find((row) => row.kind === "motion" && row.required);
+    const receipt = (P.productionAuthority?.receipts || []).find((row) => row.kind === "shot-motion" && row.value === "PAID-RETURN.mp4" && row.status === "current");
+    const panel = guidedMotionPanel(shot, guidedApprovedMotion(shot, takesFor(shot.id)), takesFor(shot.id), true);
+    return {
+      approvedFile: (shot.clips || []).map((row) => row.videoWinner).find(Boolean) || ensureShotCreation(shot).approvedMotionFile,
+      receipt: !!receipt,
+      generationStatus: unit.status,
+      panel,
+    };
+  })()`, page.context);
+
+  equal(after.approvedFile, "PAID-RETURN.mp4", "the existing motion approval owner accepts the returned asset");
+  equal(after.receipt, true, "approval establishes receipt-backed motion Canon");
+  ok(["BLOCKED", "NEEDS_DECISION"].includes(after.generationStatus), "approval does not erase the unmet prerequisite for additional generation");
+  ok(after.panel.includes("PAID-RETURN.mp4") && after.panel.includes("APPROVED"), "approved returned media remains reachable");
+  ok(after.panel.includes('data-generation-readiness="blocked"'), "new generation remains blocked after reviewing and approving returned media");
+}
+
 async function main() {
   await blockedShotConsumers();
   await descriptionOnlyConsumers();
   await firstLastMissingEndpoint();
+  await actionableNextActionPanels();
+  await returnedMediaOutlivesGenerationReadiness();
   console.log(`shot-truth-cohesion: ${checks} assertions passed`);
 }
 

@@ -38,6 +38,8 @@ async function main() {
   withCanon(project, [
     { kind: "entity-state", list: "characters", entityId: project.characters[0].id, stateId: "state-default", value: "KAI-ANCHOR.png" },
     { kind: "entity-state", list: "characters", entityId: project.characters[0].id, stateId: "state-active", value: "KAI-ACTIVE.png" },
+    { kind: "entity-state", list: "locations", entityId: "LOC-HULL", stateId: "state-default", value: "LOC-HULL-PLATE.png" },
+    { kind: "entity-state", list: "props", entityId: "PR-TOOL", stateId: "state-default", value: "PR-TOOL-PLATE.png" },
   ]);
   project.shots[0].creationBrief = project.shots[0].creationBrief || {};
   project.mediaAssets.push(
@@ -68,22 +70,22 @@ async function main() {
 
      1. THE COPY. It claimed first/last and multi-frame motion "stay locked until camera,
         environment, lighting, character and prop continuity pass". The shipped runtime
-        declares exactly ONE motion prerequisite -- required-frames-approved, in
-        public/shared-stage-model.js -- so the stage bar reaches Motion, FLF is selectable
-        and Generate is present with this check never run. The claim is cross-read against
-        the model that owns it rather than pinned to a sentence, so rewording the copy
-        cannot quietly restore the falsehood.
+        now projects canonical, route-aware Production Readiness; this local anchor check
+        is not a second stage gate. The claim is cross-read against the model that owns it
+        rather than pinned to a sentence, so rewording cannot quietly restore the falsehood.
      2. THE CONTROL. `CHECK MOTION READINESS` is a vision call. It was primary, enabled
         and refused in a toast AFTER the click, while its two siblings on the same screen
         read the same capability and disable themselves with the reason showing. */
   const motionStages = require(path.join(ROOT, 'public', 'shared-stage-model.js'));
   const motionPrereqs = motionStages.SHOT_STAGES.find((stage) => stage.id === 'motion').prerequisites.map((item) => item.id);
-  assert.deepStrictEqual(motionPrereqs, ['required-frames-approved'],
-    'precondition: the shipped runtime gates Motion on approved required frames and nothing else -- if that changed, this copy has to be rewritten, not this assertion');
+  assert.deepStrictEqual(motionPrereqs, ['canonical-motion-readiness'],
+    'precondition: the shipped stage projects canonical Motion readiness rather than a frames-only gate');
   assert(!/motion stay locked until|stay locked until camera/i.test(framesPending.html),
     'the motion readiness CTA must not claim motion is locked by a check the runtime does not gate motion on');
-  assert(framesPending.html.includes('It does not lock Motion & sound: that stage opens once the required frames are approved.'),
-    'the CTA must state what the executable runtime actually requires');
+  assert(framesPending.html.includes('Motion availability comes from Production Readiness for the shot; it evaluates any declared route and the required approved production inputs.'),
+    'the CTA must identify the deterministic route-aware readiness owner');
+  assert(!/opens once the required frames are approved|Motion & sound itself stays open/i.test(framesPending.html),
+    'retired required-frames-only availability language must not remain on the affected surface');
 
   const visionOff = {
     capabilities: {
@@ -140,7 +142,7 @@ async function main() {
   const lockedAgain = await render('#/shot/L1-01', project, {
     scan, storage: framesStorage,
     mutateSource: mutateOnce('creation-studio.js',
-      'This check compares the approved anchors before they drive a first/last or multi-frame generation. It does not lock Motion & sound: that stage opens once the required frames are approved.',
+      'This check compares the approved anchors before they drive a first/last or multi-frame generation. Motion availability comes from Production Readiness for the shot; it evaluates any declared route and the required approved production inputs. This anchor check does not decide stage availability.',
       'First/last and multi-frame motion stay locked until camera, environment, lighting, character, and prop continuity pass.', 'NC-2'),
   });
   assert(/stay locked until camera/i.test(lockedAgain.html),

@@ -40,7 +40,7 @@ import json, os, pathlib, shutil, socket, subprocess, sys, tempfile, time
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tests"))
-from browser_runtime import require_browser, launch_chromium
+from browser_runtime import canon_receipts, require_browser, launch_chromium
 
 LABEL = "Batch 2 Slice 5b Shot Intent UX"
 sync_playwright = require_browser(LABEL)
@@ -89,6 +89,32 @@ motion_shot["clips"] = [{
     "kind": "t2v", "dur": 5, "note": "", "motionPrompt": "The bay lights flicker once.",
     "fromFrame": "", "toFrame": "", "generationPackages": [],
 }]
+# Section 6 compares every route in the rendered picker. Give that one shot truthful
+# Canon for every possible route input so the comparison is about intent narrowing,
+# not about a different route's missing frame/reference prerequisite.
+frame_a = motion_shot["keyframes"][0]
+frame_a["winner"] = "SAMPLE-03-OPEN.png"
+frame_b = {
+    "id": "frame-b", "label": "B", "title": "Closing frame",
+    "winner": "SAMPLE-02-BENCH.png", "description": "The parcel settles on the bench.",
+    "required": True, "generationPackages": [],
+}
+motion_shot["keyframes"] = [frame_a, frame_b]
+source_frame = projects_root / "dogfood-sample" / "shots" / "SAMPLE-02" / "takes" / "SAMPLE-02-BENCH.png"
+target_dir = projects_root / "dogfood-sample" / "shots" / MOTION_SHOT / "takes"
+target_dir.mkdir(parents=True, exist_ok=True)
+shutil.copy2(source_frame, target_dir / source_frame.name)
+entries = [
+    {"kind": "shot-frame", "shotId": MOTION_SHOT, "frameId": "frame-a", "value": "SAMPLE-03-OPEN.png"},
+    {"kind": "shot-frame", "shotId": MOTION_SHOT, "frameId": "frame-b", "value": "SAMPLE-02-BENCH.png"},
+]
+for list_name in ("characters", "locations", "props", "vehicles"):
+    for entity in project.get(list_name) or []:
+        for state in entity.get("continuityStates") or []:
+            if state.get("approvedFile"):
+                entries.append({"kind": "entity-state", "list": list_name, "entityId": entity["id"],
+                                "stateId": state["id"], "value": state["approvedFile"]})
+project["productionAuthority"] = canon_receipts(entries, via="shot-intent-browser-fixture")
 # Every shot starts route-less, which is section 1's precondition and is asserted there.
 for row in project["shots"]:
     row.pop("deliveryRoute", None)
@@ -429,16 +455,18 @@ try:
         assert reopened["workflowOpen"] is True, "3. and the workflow must come straight back open"
         assert reopened["statement"] == 0, "3. with the not-required line gone"
 
-        # AND r2v KEEPS FRAMES, which is the disagreement this slice resolved: the probes
-        # ask r2v only for a reference, but the shipped Motion panel still opens it from
-        # an approved still, so folding Frames would be a dead end.
+        # r2v asks canonical readiness for approved references, not for a frame. Keeping
+        # Frames expanded here would preserve the retired local prerequisite beside the
+        # route owner, so it folds just as t2v does while keeping every stored frame.
         set_intent("r2v")
         page.wait_for_timeout(400)
         reference_route = page.evaluate(FRAMES_STATE)
-        assert reference_route["relevance"] == "required", \
-            "3. r2v must keep the Frames workflow: the shipped motion workspace still opens it from an approved frame"
-        findings.append("3. the Frames stage adapts visibly: t2v folds it with a stated reason and a way back, "
-                        "i2v reopens it, and r2v keeps it because the shipped motion gate still asks for a frame")
+        assert reference_route["relevance"] == "not-required", \
+            "3. r2v must not manufacture a frame prerequisite beside canonical route readiness"
+        assert reference_route["workflowOpen"] is False, "3. r2v must fold the non-required Frames workflow"
+        assert reference_route["statement"] == 1, "3. r2v must explain why Frames is folded"
+        findings.append("3. the Frames stage adapts visibly: t2v and r2v fold with a stated reason and a way back, "
+                        "while i2v reopens it because its canonical route inputs require a frame")
 
         # N1 · THE ADAPTATION ASSERTION CAN FAIL. Force the folded workflow open and
         # require section 3's own check to catch it.

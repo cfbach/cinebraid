@@ -310,18 +310,18 @@ async function checkRepresentativeStates() {
   assert.strictEqual(reviewFrames.tone, "attention");
   observed.push("frames:available:needs-review:attention");
 
-  /* Returned media cannot bypass a canonical input blocker. The review state remains
-     visible as completion, while availability stays blocked until readiness permits it. */
+  /* Returned media cannot satisfy a canonical input blocker, but the review workspace
+     must remain reachable. New generation still reads the separate readiness status. */
   const returnedVideo = Stage.shotStageState("motion", {
     motionReadinessStatus: "BLOCKED",
     motionReadinessReason: "Approve the required opening frame",
     motionCandidateCount: 1,
     lifecycleKey: "review-motion",
   });
-  assert.strictEqual(returnedVideo.availability, "blocked", "returned video is not proof that route inputs are ready");
-  assert.strictEqual(returnedVideo.blockedReason, "Approve the required opening frame");
+  assert.strictEqual(returnedVideo.availability, "available", "returned video keeps the Motion review workspace reachable");
+  assert.strictEqual(returnedVideo.blockedReason, "", "workspace access must not wear the new-generation blocker");
   assert.strictEqual(returnedVideo.completion, "needs-review");
-  observed.push("motion:blocked:needs-review:attention");
+  observed.push("motion:available:needs-review:attention");
 
   /* Recommended handoffs: present where one genuinely exists, absent where the shot has
      not said what it wants. */
@@ -548,7 +548,7 @@ function checkCoverage() {
     ["frames:available:needs-review", "frames waiting on a human decision"],
     ["motion:blocked:not-started", "motion blocked by an unmet prerequisite"],
     ["motion:available:not-started", "motion opened by approved required frames"],
-    ["motion:blocked:needs-review", "returned motion retained for review while canonical inputs block forward work"],
+    ["motion:available:needs-review", "returned motion reachable for review while canonical inputs block new work"],
     ["motion:available:complete", "motion after approval"],
     ["deliver:blocked:not-started", "deliver blocked by an unmet prerequisite"],
     ["deliver:available:not-started", "deliver opened by an approved result"],

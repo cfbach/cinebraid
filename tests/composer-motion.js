@@ -1,7 +1,7 @@
 const assert = require("assert");
 const vm = require("vm");
 const PromptEngine = require("../prompt-engine");
-const { render, buildFixture } = require("./render-harness");
+const { render, buildFixture, withCanon } = require("./render-harness");
 
 function contextFixture() {
   return {
@@ -162,7 +162,11 @@ function motionFixture() {
 }
 
 async function testRenderedWorkspace() {
-  const project = buildFixture();
+  const project = withCanon(buildFixture(), [
+    { kind: "entity-state", list: "characters", entityId: "KAI", stateId: "state-default", value: "KAI-ANCHOR.png" },
+    { kind: "entity-state", list: "locations", entityId: "LOC-HULL", stateId: "state-default", value: "LOC-HULL-PLATE.png" },
+    { kind: "entity-state", list: "props", entityId: "PR-TOOL", stateId: "state-default", value: "PR-TOOL-PLATE.png" },
+  ]);
   project.meta.legacyVisualStaging = true;
   project.mediaAssets.push(
     {
@@ -194,6 +198,9 @@ async function testRenderedWorkspace() {
   const composerRender = await render("#/shot/L1-01", project, { storage: { "cinebraid-focused:fixture:shot-task:L1-01": "composer" } });
   const motionRender = await render("#/shot/L1-01", project, { storage: { "cinebraid-focused:fixture:shot-task:L1-01": "motion" } });
   const composerHtml = composerRender.html, motionHtml = motionRender.html;
+  const motionState = vm.runInContext(`shotStageState("motion", shotStageModelFacts(P.shots[0], takesFor(P.shots[0].id)))`, motionRender.context);
+  assert.strictEqual(motionState.availability, "available",
+    "fixture precondition: canonical production inputs must make Motion available before testing its controls");
   assert(composerHtml.includes("FINAL REFERENCES · REVIEW"), "shot workspace should expose final reference review");
   for (const html of [composerHtml, motionHtml]) {
     assert(!html.includes("shot-composer-canvas"), "legacy visual staging canvas must not render");
@@ -235,7 +242,11 @@ function testDirectMotionControlsDriveCompactPrompt() {
 }
 
 async function testMotionPreviewUsesApprovedStillAndPersistentDisclosures() {
-  const project = buildFixture();
+  const project = withCanon(buildFixture(), [
+    { kind: "entity-state", list: "characters", entityId: "KAI", stateId: "state-default", value: "KAI-ANCHOR.png" },
+    { kind: "entity-state", list: "locations", entityId: "LOC-HULL", stateId: "state-default", value: "LOC-HULL-PLATE.png" },
+    { kind: "entity-state", list: "props", entityId: "PR-TOOL", stateId: "state-default", value: "PR-TOOL-PLATE.png" },
+  ]);
   project.shots[0].creationBrief = {
     locationId: "LOC-HULL",
     propIds: ["PR-TOOL"],
@@ -1161,7 +1172,11 @@ function testAudioVoiceRouting() {
 }
 
 async function testAudioVoiceWorkspace() {
-  const project = buildFixture();
+  const project = withCanon(buildFixture(), [
+    { kind: "entity-state", list: "characters", entityId: "KAI", stateId: "state-default", value: "KAI-ANCHOR.png" },
+    { kind: "entity-state", list: "locations", entityId: "LOC-HULL", stateId: "state-default", value: "LOC-HULL-PLATE.png" },
+    { kind: "entity-state", list: "props", entityId: "PR-TOOL", stateId: "state-default", value: "PR-TOOL-PLATE.png" },
+  ]);
   project.audio.push({ id: "VOICE-KAI-CLEAN", name: "Kai clean master", role: "voice", cleanMaster: true, sameObjectAs: "", notes: "One clean session." });
   project.shots[0].audio = { vo: "Production note. Line: 'Air scrubbers nominal.'", line: "", speakerId: "", note: "", voiceEntityId: "", sfx: "" };
   const shotRender = await render("#/shot/L1-01", project, { storage: { "cinebraid-focused:fixture:shot-task:L1-01": "motion" } });
