@@ -206,7 +206,7 @@ try:
             found = None
             for index in range(buttons.count()):
                 node = buttons.nth(index)
-                if "openGuidedPanel" in (node.get_attribute("onclick") or "") and "motion" in (node.get_attribute("onclick") or ""):
+                if "openShotReadinessAction" in (node.get_attribute("onclick") or "") and "produce-motion" in (node.get_attribute("onclick") or ""):
                     found = node
                     break
             assert found is not None, "the shot's next-action card offered no Add motion control to click"
@@ -481,8 +481,9 @@ try:
         page.wait_for_timeout(700)
         primary = page.locator("button.shot-primary-action").first
         primary_call = primary.get_attribute("onclick") or ""
-        assert "openGuidedPanel('SAMPLE-01','finish')" in primary_call,             f"B1: complete-shot NEXT ACTION must resolve to the finish panel, got {primary_call!r}"
-        assert "'deliver'" not in primary_call, "B1: a stage id must not be passed as a panel key"
+        assert "openShotReadinessAction('SAMPLE-01','nothing-outstanding')" in primary_call,             f"B1: complete-shot NEXT ACTION must delegate to the declared router, got {primary_call!r}"
+        assert "openGuidedPanel('SAMPLE-01','deliver')" not in primary_call, \
+            "B1: a stage id must not be passed as a panel key"
         primary.click()
         page.wait_for_timeout(900)
         b1_state = page.evaluate("""() => ({
@@ -490,8 +491,8 @@ try:
             finish: !!document.querySelector('[data-guided-panel="finish"]'),
         })""")
         assert b1_state == {"task": "deliver", "finish": True},             f"B1: NEXT ACTION did not reach the Deliver workspace: {b1_state}"
-        findings.append("B1 runtime: the complete-shot primary action carried panel 'finish', selected stage "
-                        "'deliver', and rendered the Finish & Delivery workspace with no silent no-op")
+        findings.append("B1 runtime: the complete-shot primary action delegated by canonical code, resolved "
+                        "through panel 'finish' to stage 'deliver', and rendered Finish & Delivery with no silent no-op")
 
         # ---- B2 REMEDIATION RUNTIME: returned media outlives generation readiness ----
         returned_name = "PAID-RETURN.mp4"

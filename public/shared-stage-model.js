@@ -139,9 +139,11 @@
      AI recommendation is not an approval and causes nothing on its own.
 
      `readinessActions` maps the canonical shot-local NEXT ACTION vocabulary to the
-     stage that exposes the work. Readiness still owns which action is true; this
-     declaration owns only navigation. Project-level repair actions are deliberately
-     absent because they route to Production rather than a shot workspace. */
+     destination that exposes the work. Readiness still owns which action is true;
+     this declaration owns only navigation and names the surface/control that makes
+     the destination actionable. Most destinations are shot stages. The Production
+     route declared below owns the shot-local actions completed outside a shot
+     workspace. Project-only actions remain explicitly outside this map. */
   const SHOT_STAGES = deepFreeze([
     {
       id: "inputs",
@@ -153,15 +155,13 @@
       navigation: { kind: "task-selection", route: "#/shot/:shotId" },
       panels: ["inputs"],
       readinessActions: [
-        "establish-media-availability",
-        "confirm-existing-reference",
-        "reapprove-revoked-reference",
-        "resolve-relationship",
-        "resolve-state-declaration",
-        "resolve-media-ownership",
-        "declare-producible-unit",
-        "supply-approved-media",
-        "prepare-references",
+        { code: "establish-media-availability", surface: "shot-inputs", renderer: "guidedSourceInputsPanel", control: "guidedShotAttachmentPicker" },
+        { code: "resolve-relationship", surface: "shot-inputs", renderer: "guidedUnresolvedDependenciesMarkup", control: "openShotDependencyRelink" },
+        { code: "resolve-state-declaration", surface: "shot-inputs", renderer: "guidedShotAttachmentPicker", control: "guidedEntityPickerButton" },
+        { code: "resolve-media-ownership", surface: "shot-inputs", renderer: "guidedShotAttachmentPicker", control: "guidedEntityPickerButton" },
+        { code: "declare-producible-unit", surface: "shot-inputs", renderer: "shotIntentControl", control: "setShotIntent" },
+        { code: "supply-approved-media", surface: "shot-inputs", renderer: "guidedSourceInputsPanel", control: "guidedShotAttachmentPicker" },
+        { code: "prepare-references", surface: "shot-inputs", renderer: "guidedSourceInputsPanel", control: "guidedShotAttachmentPicker" },
       ],
       panelViews: {},
       legacyTaskIds: [],
@@ -205,10 +205,10 @@
       navigation: { kind: "task-selection", route: "#/shot/:shotId" },
       panels: ["still", "review", "frames"],
       readinessActions: [
-        "repair-presence-declaration",
-        "approve-parent-frame",
-        "approve-required-frames",
-        "produce-frame",
+        { code: "repair-presence-declaration", surface: "shot-frames", renderer: "guidedFramePresencePanel", control: "setFramePresence" },
+        { code: "approve-parent-frame", surface: "shot-frames", renderer: "guidedFrameCandidatesPanel", control: "approveGuidedFrame" },
+        { code: "approve-required-frames", surface: "shot-frames", renderer: "guidedFrameCandidatesPanel", control: "approveGuidedFrame" },
+        { code: "produce-frame", surface: "shot-frames", renderer: "guidedFrameCandidatesPanel", control: "guidedFrameCandidatesPanel" },
       ],
       panelViews: {},
       legacyTaskIds: ["automation"],
@@ -228,7 +228,7 @@
       task: { scope: SHOT_STAGE_SCOPE, id: "motion" },
       navigation: { kind: "task-selection", route: "#/shot/:shotId" },
       panels: ["motion", "motionCreate", "motionAudio"],
-      readinessActions: ["produce-motion"],
+      readinessActions: [{ code: "produce-motion", surface: "shot-motion", renderer: "guidedMotionPanel", control: "guidedMotionPanel" }],
       panelViews: {},
       legacyTaskIds: [],
       optional: true,
@@ -251,7 +251,7 @@
       task: { scope: SHOT_STAGE_SCOPE, id: "deliver" },
       navigation: { kind: "task-selection", route: "#/shot/:shotId" },
       panels: ["finish"],
-      readinessActions: ["nothing-outstanding"],
+      readinessActions: [{ code: "nothing-outstanding", surface: "shot-deliver", renderer: "guidedFinishPanel", control: "guidedFinishPanel" }],
       panelViews: {},
       legacyTaskIds: ["finish"],
       optional: false,
@@ -259,6 +259,52 @@
       prerequisites: [{ id: "approved-result", reason: "Approve a still or a video first" }],
       next: [],
     },
+  ]);
+
+  /* Shot-local readiness can name work whose real control is project-wide. Production
+     is deliberately a ROUTE destination, not a sixth shot stage: it has no stored
+     shot-task identity, no stage status and no panel key. The route registry in
+     public/views.js owns rendering #/production; this declaration owns only the fact
+     that these readiness actions are completed there. */
+  const SHOT_READINESS_ROUTE_DESTINATIONS = deepFreeze([
+    {
+      id: "production",
+      label: "Production",
+      navigation: { kind: "route", route: "#/production" },
+      readinessActions: [
+        { code: "awaiting-project-repair", surface: "production-project-repair", renderer: "shotReadinessFeedMarkup", control: "shotReadinessFeedMarkup" },
+        { code: "confirm-existing-reference", surface: "production-historic-confirmation", renderer: "historicConfirmationMarkup", control: "confirmHistoricSelection" },
+        { code: "reapprove-revoked-reference", surface: "production-historic-confirmation", renderer: "historicConfirmationMarkup", control: "confirmHistoricSelection" },
+      ],
+    },
+  ]);
+
+  /* This code belongs to the project readiness row, never to a shot row. Keeping the
+     exception explicit lets completeness tests distinguish intentional non-routing
+     from an accidentally omitted shot-local action. */
+  const NON_SHOT_READINESS_ACTIONS = deepFreeze(["repair-authority-ledger"]);
+
+  const SHOT_READINESS_ACTION_DESTINATIONS = deepFreeze([
+    ...SHOT_STAGES.flatMap((stage) => stage.readinessActions.map((action) => ({
+      code: action.code,
+      destinationId: stage.id,
+      stageId: stage.id,
+      panel: stage.panels[0] || "",
+      navigation: stage.navigation,
+      surface: action.surface,
+      control: action.control,
+      renderer: action.renderer,
+    }))),
+    ...SHOT_READINESS_ROUTE_DESTINATIONS.flatMap((destination) => destination.readinessActions.map((action) => ({
+      code: action.code,
+      destinationId: destination.id,
+      stageId: "",
+      panel: "",
+      navigation: destination.navigation,
+      surface: action.surface,
+      control: action.control,
+      renderer: action.renderer,
+    }))),
   ]);
 
   /* What this model cannot currently answer, stated rather than guessed. Each entry
@@ -284,13 +330,18 @@
     return SHOT_STAGES.find((stage) => stage.id === key) || null;
   }
 
-  /* Canonical readiness decides the action; the declared stage model decides which
-     workspace contains that action. Unknown and project-scoped codes stay unmapped
-     instead of silently pretending they belong to Inputs. */
-  function shotStageForReadinessAction(actionCode) {
+  /* Canonical readiness decides the action; this declared model decides where the
+     action can be completed. Unknown and project-scoped codes stay unmapped instead
+     of silently pretending they belong to Inputs. */
+  function shotReadinessDestinationForAction(actionCode) {
     const key = stageText(actionCode);
     if (!key) return null;
-    return SHOT_STAGES.find((stage) => stage.readinessActions.includes(key)) || null;
+    return SHOT_READINESS_ACTION_DESTINATIONS.find((destination) => destination.code === key) || null;
+  }
+
+  function shotStageForReadinessAction(actionCode) {
+    const destination = shotReadinessDestinationForAction(actionCode);
+    return destination?.stageId ? shotStage(destination.stageId) : null;
   }
 
   /* Legacy panel key -> stage. The panel keys are the `data-guided-panel` values
@@ -611,12 +662,16 @@
     SHOT_STAGE_SCOPE,
     SHOT_STAGES,
     SHOT_STAGE_IDS,
+    SHOT_READINESS_ROUTE_DESTINATIONS,
+    SHOT_READINESS_ACTION_DESTINATIONS,
+    NON_SHOT_READINESS_ACTIONS,
     SHOT_STAGE_LIMITATIONS,
     SHOT_STAGE_FACT_KEYS,
     SHOT_STAGE_AVAILABILITY: deepFreeze(AVAILABILITY),
     SHOT_STAGE_COMPLETION: deepFreeze(COMPLETION),
     SHOT_STAGE_ACTIVITY: deepFreeze(ACTIVITY),
     shotStage,
+    shotReadinessDestinationForAction,
     shotStageForReadinessAction,
     shotStageForPanel,
     shotStagePanelView,

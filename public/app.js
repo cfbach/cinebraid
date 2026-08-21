@@ -2796,19 +2796,44 @@ function shotProductionNextAction(s, readiness = shotReadinessFor(s)) {
     nextUnitId: readiness.nextUnitId || "",
   };
 }
-function shotReadinessTargetStage(readiness) {
+function shotReadinessTargetDestination(readiness) {
   const action = readiness?.nextAction?.code || "";
-  return typeof shotStageForReadinessAction === "function"
-    ? shotStageForReadinessAction(action)?.id || ""
-    : "";
+  return typeof shotReadinessDestinationForAction === "function"
+    ? shotReadinessDestinationForAction(action)
+    : null;
 }
-/* Readiness names the stage whose work answers the next action. openGuidedPanel()
-   accepts the different panel vocabulary, so resolve that navigation identity from
-   the stage declaration instead of passing a stage id through by accident. */
+function shotReadinessTargetStage(readiness) {
+  return shotReadinessTargetDestination(readiness)?.stageId || "";
+}
+/* Readiness names the next action. The declaration resolves its destination and,
+   for a shot stage, the distinct panel vocabulary openGuidedPanel() accepts, so a
+   stage id is never passed through as though it were a panel id. */
 function shotReadinessTargetPanel(readiness) {
-  const stage = typeof shotStage === "function" ? shotStage(shotReadinessTargetStage(readiness)) : null;
-  return stage?.panels?.[0] || "";
+  return shotReadinessTargetDestination(readiness)?.panel || "";
 }
+function shotReadinessTargetRoute(readiness) {
+  const destination = shotReadinessTargetDestination(readiness);
+  return destination?.navigation?.kind === "route" ? destination.navigation.route || "" : "";
+}
+/* One router consumes both declared destination kinds. An action code never appears
+   in this function: shared-stage-model.js owns WHERE it goes, while readiness owns
+   WHICH code is true. Unknown and project-only codes refuse visibly and leave the
+   current workspace untouched instead of falling through to a plausible panel. */
+window.openShotReadinessAction = (shotId, actionCode) => {
+  const destination = typeof shotReadinessDestinationForAction === "function"
+    ? shotReadinessDestinationForAction(actionCode)
+    : null;
+  if (!destination) return toast("That next action has no shot-local destination");
+  if (destination.navigation?.kind === "route" && destination.navigation.route) {
+    location.hash = destination.navigation.route.replace(":shotId", encodeURIComponent(shotId || ""));
+    return;
+  }
+  if (destination.navigation?.kind === "task-selection" && destination.panel) {
+    return openGuidedPanel(shotId, destination.panel);
+  }
+  return toast("That next action has no actionable destination");
+};
+
 /* `nextProductionShot()` remains deleted: project and shot surfaces now both project
    evaluateProjectReadiness(), at their respective scopes. The project projection below
    still adds its existing prioritisation over those authoritative rows. */
@@ -3426,7 +3451,7 @@ function historicConfirmationMarkup(feed) {
      the NEXT ACTION card above states the first of these decisions outright. What
      changes is that four rows of administration no longer own the first viewport
      of a film's production page. One click is the whole list back. */
-  return `<details class="production-readiness historic-confirm"><summary><div><span>EXISTING SELECTIONS</span><b>${plural(queue.uniqueTargets, "existing selection")} need${queue.uniqueTargets === 1 ? "s" : ""} your confirmation</b></div><span>${queue.occurrences} REQUIREMENT${queue.occurrences === 1 ? "" : "S"}</span></summary><div class="historic-confirm-body"><p>These references are already in the project and nobody has approved them. Confirming one approves it everywhere it is used.</p><ul class="historic-confirm-list">${rows}</ul>${bulk}</div></details>`;
+  return `<details class="production-readiness historic-confirm" data-readiness-action-surface="production-historic-confirmation"><summary><div><span>EXISTING SELECTIONS</span><b>${plural(queue.uniqueTargets, "existing selection")} need${queue.uniqueTargets === 1 ? "s" : ""} your confirmation</b></div><span>${queue.occurrences} REQUIREMENT${queue.occurrences === 1 ? "" : "S"}</span></summary><div class="historic-confirm-body"><p>These references are already in the project and nobody has approved them. Confirming one approves it everywhere it is used.</p><ul class="historic-confirm-list">${rows}</ul>${bulk}</div></details>`;
 }
 function shotReadinessFeedMarkup(feed) {
   if (!feed) return "";
@@ -3441,7 +3466,7 @@ function shotReadinessFeedMarkup(feed) {
    * still appear — their readiness genuinely cannot be answered — but they say so
    * without each asking for the same repair. */
   const problem = feed.truthProblem
-    ? `<div class="readiness-truth-problem" data-readiness-truth-problem="${attr(feed.truthProblem.reason)}"><b>${esc(readinessActionWords(feed.nextAction))}</b><span>${esc(feed.truthProblem.message)}</span>${feed.truthProblem.diagnostics?.length ? `<small>${esc(feed.truthProblem.diagnostics.map((row) => row.code).filter(Boolean).join(", "))}</small>` : ""}</div>`
+    ? `<div class="readiness-truth-problem" data-readiness-action-surface="production-project-repair" data-readiness-truth-problem="${attr(feed.truthProblem.reason)}"><b>${esc(readinessActionWords(feed.nextAction))}</b><span>${esc(feed.truthProblem.message)}</span>${feed.truthProblem.diagnostics?.length ? `<small>${esc(feed.truthProblem.diagnostics.map((row) => row.code).filter(Boolean).join(", "))}</small>` : ""}</div>`
     : "";
   const rows = (feed.shots || []).map((shot) => {
     const status = READINESS_STATUS_WORDS[shot.status] || shot.status;

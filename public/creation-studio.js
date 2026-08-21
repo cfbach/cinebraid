@@ -2112,12 +2112,11 @@ function guidedShotStatusCard(s, takes, neighbors) {
   if (life.key !== "final") {
     const truth = readiness || { status: "UNAVAILABLE", nextAction: { code: "readiness-unavailable" } };
     const next = shotProductionNextAction(s, readiness);
-    const target = shotReadinessTargetPanel(truth);
     const available = truth.status === "READY";
     const status = READINESS_STATUS_WORDS[truth.status] || truth.status || "NEXT ACTION";
-    const action = !readiness || truth.nextAction?.code === "awaiting-project-repair"
+    const action = !readiness
       ? `<button class="assemble-btn shot-primary-action" onclick="location.hash='#/production'">${esc(next.label)}</button>`
-      : `<button class="assemble-btn shot-primary-action" onclick="openGuidedPanel('${s.id}','${target}')">${esc(next.label)}</button>`;
+      : `<button class="assemble-btn shot-primary-action" onclick="openShotReadinessAction('${attr(s.id)}','${attr(truth.nextAction?.code || "")}')">${esc(next.label)}</button>`;
     return canonicalShotReadinessCardMarkup(s, neighbors, truth, next, action, media, available, status);
   }
   const ready = ["still-ready", "animate", "motion-approved", "final"].includes(life.key);

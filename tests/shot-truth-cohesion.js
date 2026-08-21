@@ -204,52 +204,98 @@ async function actionableNextActionPanels() {
   const payload = await vm.runInContext(`(async () => {
     const shot = P.shots[0];
     const readiness = shotReadinessFor(shot);
-    const cases = [
-      ["repair-authority-ledger", "", ""],
-      ["awaiting-project-repair", "", ""],
-      ["establish-media-availability", "inputs", "inputs"],
-      ["confirm-existing-reference", "inputs", "inputs"],
-      ["reapprove-revoked-reference", "inputs", "inputs"],
-      ["resolve-relationship", "inputs", "inputs"],
-      ["resolve-state-declaration", "inputs", "inputs"],
-      ["repair-presence-declaration", "frames", "still"],
-      ["resolve-media-ownership", "inputs", "inputs"],
-      ["declare-producible-unit", "inputs", "inputs"],
-      ["supply-approved-media", "inputs", "inputs"],
-      ["prepare-references", "inputs", "inputs"],
-      ["approve-parent-frame", "frames", "still"],
-      ["approve-required-frames", "frames", "still"],
-      ["produce-frame", "frames", "still"],
-      ["produce-motion", "motion", "motion"],
-      ["nothing-outstanding", "deliver", "finish"],
-    ].map(([code, expectedStage, expectedPanel]) => {
+    const cases = READINESS_NEXT_ACTIONS.map((code) => {
       const row = { nextAction: { code } };
+      const destination = shotReadinessTargetDestination(row);
       const stage = shotReadinessTargetStage(row);
       const panel = shotReadinessTargetPanel(row);
-      return { code, stage, panel, expectedStage, expectedPanel, resolvedStage: guidedPanelTaskId(panel) };
+      const route = shotReadinessTargetRoute(row);
+      return {
+        code, destinationId: destination?.destinationId || "", stage, panel, route,
+        navigationKind: destination?.navigation?.kind || "", surface: destination?.surface || "",
+        renderer: destination?.renderer || "", control: destination?.control || "", resolvedStage: guidedPanelTaskId(panel),
+      };
     });
     const card = guidedShotStatusCard(shot, takesFor(shot.id), { prev: null, next: null });
     const targetPanel = shotReadinessTargetPanel(readiness);
     const before = boundedShotSelectedTask(shot, takesFor(shot.id));
-    await openGuidedPanel(shot.id, targetPanel);
+    await openShotReadinessAction(shot.id, readiness.nextAction.code);
     const after = boundedShotSelectedTask(shot, takesFor(shot.id));
-    return { status: readiness.status, action: readiness.nextAction.code, targetPanel, before, after, cases, actionVocabulary: [...READINESS_NEXT_ACTIONS], card };
+    const unknownBefore = { hash: location.hash, selected: after };
+    openShotReadinessAction(shot.id, "unknown-readiness-action");
+    const unknownAfter = { hash: location.hash, selected: boundedShotSelectedTask(shot, takesFor(shot.id)) };
+    const projectScopedBefore = { ...unknownAfter };
+    openShotReadinessAction(shot.id, "repair-authority-ledger");
+    const projectScopedAfter = { hash: location.hash, selected: boundedShotSelectedTask(shot, takesFor(shot.id)) };
+    const routedCases = [];
+    for (const item of cases.filter((row) => row.destinationId)) {
+      location.hash = '#/shot/' + shot.id;
+      boundedWriteFocusedTask(SHOT_STAGE_SCOPE, shot.id, 'look');
+      await openShotReadinessAction(shot.id, item.code);
+      routedCases.push({ code: item.code, hash: location.hash, selected: boundedShotSelectedTask(shot, takesFor(shot.id)) });
+    }
+    return {
+      status: readiness.status, action: readiness.nextAction.code, targetPanel, before, after, cases, routedCases,
+      actionVocabulary: [...READINESS_NEXT_ACTIONS],
+      declaredVocabulary: [...SHOT_READINESS_ACTION_DESTINATIONS.map((row) => row.code), ...NON_SHOT_READINESS_ACTIONS],
+      declaredActionability: cases.filter((row) => row.renderer || row.control).map((row) => {
+        let rendererAvailable = false, controlAvailable = false, rendererUsesControl = false;
+        try {
+          const renderer = eval(row.renderer), control = eval(row.control);
+          rendererAvailable = typeof renderer === "function";
+          controlAvailable = typeof control === "function";
+          rendererUsesControl = rendererAvailable && controlAvailable
+            && (row.renderer === row.control || Function.prototype.toString.call(renderer).includes(row.control));
+        } catch {}
+        return { code: row.code, renderer: row.renderer, control: row.control, rendererAvailable, controlAvailable, rendererUsesControl };
+      }),
+      unknownBefore, unknownAfter, projectScopedBefore, projectScopedAfter, unknownDestination: shotReadinessDestinationForAction("unknown-readiness-action"), card,
+    };
   })()`, page.context);
 
   equal(payload.status, "COMPLETE", "precondition: the still-only shot has no outstanding declared unit");
   equal(payload.action, "nothing-outstanding", "complete readiness selects the delivery next action");
-  deepEqual(payload.cases.map((row) => row.code), payload.actionVocabulary,
-    "the B1 matrix covers every canonical readiness NEXT ACTION code in declared order");
+  deepEqual([...payload.declaredVocabulary].sort(), [...payload.actionVocabulary].sort(),
+    "declared destinations plus explicit project-only exceptions exhaust the canonical NEXT ACTION vocabulary");
+  equal(new Set(payload.declaredVocabulary).size, payload.declaredVocabulary.length,
+    "every canonical action is owned by exactly one destination/scope declaration");
   for (const row of payload.cases) {
-    equal(row.stage, row.expectedStage, row.code + " resolves to the intended stage identity");
-    equal(row.panel, row.expectedPanel, row.code + " resolves to the declared navigation panel");
-    equal(row.resolvedStage, row.expectedStage, row.code + " panel resolves back to the same declared stage");
+    if (row.code === "repair-authority-ledger") {
+      equal(row.destinationId, "", "the project-only repair action is explicitly not a shot-local destination");
+      continue;
+    }
+    ok(row.destinationId, row.code + " has an explicit declared destination");
+    ok(["task-selection", "route"].includes(row.navigationKind), row.code + " has a supported navigation kind");
+    ok(row.surface, row.code + " names the destination surface that exposes its work");
+    ok(row.renderer, row.code + " names the renderer that exposes its work");
+    ok(row.control, row.code + " names the concrete control rendered on that surface");
+    const actionability = payload.declaredActionability.find((item) => item.code === row.code);
+    ok(actionability?.rendererAvailable, row.code + " names a renderer present in the shipped composition");
+    ok(actionability?.controlAvailable, row.code + " names a control present in the shipped composition");
+    ok(actionability?.rendererUsesControl,
+      row.code + " renderer actually includes its declared control (a mapping to a disconnected function fails)");
+    const routed = payload.routedCases.find((item) => item.code === row.code);
+    if (row.navigationKind === "task-selection") {
+      ok(row.stage && row.panel, row.code + " declares distinct stage and panel identities");
+      equal(row.destinationId, row.stage, row.code + " stage is the declared destination");
+      equal(row.resolvedStage, row.stage, row.code + " panel resolves back to the same declared stage");
+      equal(routed?.selected, row.stage, row.code + " generic router selects its declared stage");
+    } else {
+      equal(row.stage, "", row.code + " does not invent a shot stage for a route destination");
+      equal(row.panel, "", row.code + " does not invent a panel for a route destination");
+      ok(row.route.startsWith("#/"), row.code + " has an explicit application route");
+      equal(routed?.hash, row.route, row.code + " generic router opens its declared route");
+      equal(routed?.selected, "look", row.code + " route navigation does not counterfeit a shot-stage selection");
+    }
   }
   equal(payload.targetPanel, "finish", "complete-shot NEXT ACTION passes the Deliver panel, not the Deliver stage id");
   equal(payload.after, "deliver", "complete-shot NEXT ACTION selects the Deliver workspace");
   ok(payload.before !== payload.after, "the complete-shot primary action changes the selected workspace");
-  ok(payload.card.includes("openGuidedPanel('L1-01','finish')"), "the surfaced primary action is wired to an actionable panel");
+  ok(payload.card.includes("openShotReadinessAction('L1-01','nothing-outstanding')"), "the surfaced primary action delegates to the declared action router");
   ok(!payload.card.includes("openGuidedPanel('L1-01','deliver')"), "the stage id is never consumed as a panel key");
+  equal(payload.unknownDestination, null, "an unknown action has no declared destination");
+  deepEqual(payload.unknownAfter, payload.unknownBefore, "an unknown action changes neither route nor selected stage");
+  deepEqual(payload.projectScopedAfter, payload.projectScopedBefore, "the project-only repair action changes neither route nor selected stage");
 
   /* A malformed frame-presence declaration is a frame-local decision. Its primary
      action must render the Frames workspace where setFramePresence() can repair it,
@@ -272,7 +318,7 @@ async function actionableNextActionPanels() {
     const targetPanel = shotReadinessTargetPanel(readiness);
     const card = guidedShotStatusCard(shot, takesFor(shot.id), { prev: null, next: null });
     const before = boundedShotSelectedTask(shot, takesFor(shot.id));
-    await openGuidedPanel(shot.id, targetPanel);
+    await openShotReadinessAction(shot.id, readiness.nextAction.code);
     const html = document.getElementById("main").innerHTML;
     return {
       status: readiness.status,
@@ -293,12 +339,138 @@ async function actionableNextActionPanels() {
   equal(malformed.targetPanel, "still", "presence repair resolves to the Frames stage's declared panel identity");
   equal(malformed.before, "look", "precondition: a different workspace is selected before the primary action");
   equal(malformed.after, "frames", "clicking the surfaced action selects the Frames workspace");
-  ok(malformed.card.includes("openGuidedPanel('L1-01','still')"), "the surfaced presence action is wired to the actionable Frames panel");
+  ok(malformed.card.includes("openShotReadinessAction('L1-01','repair-presence-declaration')"), "the surfaced presence action delegates to the declared action router");
   ok(malformed.presenceControlVisible, "the selected destination exposes the frame-presence repair control");
   ok(malformed.presenceWriterVisible, "the repair control is wired to setFramePresence");
   ok(!malformed.inputsVisible, "the presence action no longer falls through to Inputs");
 }
 
+
+async function historicReadinessActionsReachProduction() {
+  /* Historic pointers are already visible bytes. Their canonical action is the
+     explicit Production confirmation, not an Inputs toggle or a replacement job. */
+  const historicProject = buildFixture();
+  historicProject.shots[0].deliveryRoute = "r2v";
+  const historicPage = await render("#/shot/L1-01", historicProject, {
+    storage: { "cinebraid-focused:fixture:shot-task:L1-01": "look" },
+  });
+  const historic = await vm.runInContext(`(async () => {
+    const shot = P.shots[0];
+    const readiness = shotReadinessFor(shot);
+    const destination = shotReadinessTargetDestination(readiness);
+    const before = boundedShotSelectedTask(shot, takesFor(shot.id));
+    const card = guidedShotStatusCard(shot, takesFor(shot.id), { prev: null, next: null });
+    await openShotReadinessAction(shot.id, readiness.nextAction.code);
+    await route();
+    const html = document.getElementById("main").innerHTML;
+    const item = projectShotReadiness().historic.items[0];
+    return {
+      status: readiness.status, action: readiness.nextAction.code,
+      destinationId: destination?.destinationId || "", route: destination?.navigation?.route || "",
+      hash: location.hash, before, after: boundedShotSelectedTask(shot, takesFor(shot.id)), card,
+      key: item?.key || "", inputsVisible: html.includes('data-guided-panel="inputs"'),
+      surfaceVisible: html.includes('data-readiness-action-surface="production-historic-confirmation"'),
+      controlVisible: html.includes("confirmHistoricSelection("),
+    };
+  })()`, historicPage.context);
+  equal(historic.status, "NEEDS_DECISION", "historic pointer precondition needs a decision");
+  equal(historic.action, "confirm-existing-reference", "readiness emits the historic confirmation action");
+  equal(historic.destinationId, "production", "historic confirmation has the declared Production destination");
+  equal(historic.route, "#/production", "historic confirmation owns the existing Production route");
+  equal(historic.hash, "#/production", "the surfaced historic action navigates to Production");
+  equal(historic.after, historic.before, "route navigation does not silently select Inputs");
+  ok(!historic.inputsVisible, "Production does not render the incorrect Inputs panel");
+  ok(historic.surfaceVisible, "Production renders the declared historic-confirmation surface");
+  ok(historic.controlVisible, "Production exposes confirmHistoricSelection");
+  ok(historic.card.includes("openShotReadinessAction('L1-01','confirm-existing-reference')"),
+    "the historic primary action delegates to the declared router");
+  ok(historic.key, "the Production confirmation queue exposes the affected authority target");
+
+  await historicPage.gesture.act(() => historicPage.context.confirmHistoricSelection(historic.key));
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  const historicAfter = vm.runInContext(`(() => ({
+    stillQueued: projectShotReadiness().historic.items.some((item) => item.key === ${JSON.stringify(historic.key)}),
+    currentReceipt: (P.productionAuthority?.receipts || []).some((row) => row.targetKey === ${JSON.stringify(historic.key)} && row.status === "current"),
+  }))()`, historicPage.context);
+  equal(historicAfter.stillQueued, false, "using the visible confirmation control removes that Historic decision");
+  equal(historicAfter.currentReceipt, true, "the visible control writes receipt-backed Canon through the existing owner");
+
+  /* A retained pointer whose receipt was withdrawn uses the same Production control,
+     but readiness keeps its distinct reapproval action and reason. */
+  const revokedProject = withCanon(buildFixture(), entityCanonEntries());
+  revokedProject.shots[0].deliveryRoute = "r2v";
+  const revokedPage = await render("#/shot/L1-01", revokedProject, {
+    storage: { "cinebraid-focused:fixture:shot-task:L1-01": "look" },
+  });
+  await revokedPage.gesture.act(() => vm.runInContext(`revokeEntityStateCanon(P, {
+    list: "characters", entityId: "KAI", stateId: "state-default", reason: "withdrawn",
+    at: "2026-08-21T00:00:00.000Z", clearEdge: false,
+  })`, revokedPage.context));
+  const revoked = await vm.runInContext(`(async () => {
+    const shot = P.shots[0];
+    const readiness = shotReadinessFor(shot);
+    const destination = shotReadinessTargetDestination(readiness);
+    const before = boundedShotSelectedTask(shot, takesFor(shot.id));
+    const card = guidedShotStatusCard(shot, takesFor(shot.id), { prev: null, next: null });
+    await openShotReadinessAction(shot.id, readiness.nextAction.code);
+    await route();
+    const html = document.getElementById("main").innerHTML;
+    const item = projectShotReadiness().historic.items.find((row) => row.target?.entityId === "KAI");
+    return {
+      status: readiness.status, action: readiness.nextAction.code,
+      destinationId: destination?.destinationId || "", route: destination?.navigation?.route || "",
+      hash: location.hash, before, after: boundedShotSelectedTask(shot, takesFor(shot.id)), card,
+      key: item?.key || "", inputsVisible: html.includes('data-guided-panel="inputs"'),
+      surfaceVisible: html.includes('data-readiness-action-surface="production-historic-confirmation"'),
+      controlVisible: html.includes("confirmHistoricSelection("),
+    };
+  })()`, revokedPage.context);
+  equal(revoked.status, "NEEDS_DECISION", "retained revoked pointer precondition needs a decision");
+  equal(revoked.action, "reapprove-revoked-reference", "readiness emits the distinct reapproval action");
+  equal(revoked.destinationId, "production", "revoked-reference reapproval has the declared Production destination");
+  equal(revoked.route, "#/production", "revoked-reference reapproval owns the existing Production route");
+  equal(revoked.hash, "#/production", "the surfaced reapproval action navigates to Production");
+  equal(revoked.after, revoked.before, "reapproval route navigation does not silently select Inputs");
+  ok(!revoked.inputsVisible, "reapproval does not render the incorrect Inputs panel");
+  ok(revoked.surfaceVisible, "Production renders the declared reapproval surface");
+  ok(revoked.controlVisible, "Production exposes the reapproval confirmation control");
+  ok(revoked.card.includes("openShotReadinessAction('L1-01','reapprove-revoked-reference')"),
+    "the reapproval primary action delegates to the declared router");
+  ok(revoked.key, "the Production queue exposes the withdrawn authority target");
+
+  await revokedPage.gesture.act(() => revokedPage.context.confirmHistoricSelection(revoked.key));
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  const revokedAfter = vm.runInContext(`(() => ({
+    stillQueued: projectShotReadiness().historic.items.some((item) => item.key === ${JSON.stringify(revoked.key)}),
+    currentReceipt: (P.productionAuthority?.receipts || []).some((row) => row.targetKey === ${JSON.stringify(revoked.key)} && row.status === "current"),
+  }))()`, revokedPage.context);
+  equal(revokedAfter.stillQueued, false, "using the visible reapproval control removes the revoked decision");
+  equal(revokedAfter.currentReceipt, true, "reapproval writes a new current Canon receipt through the existing owner");
+
+  /* A corrupt project ledger is one project repair. Its shot projection is still
+     shot-local routing input, but the declared destination is the project-wide
+     Production diagnostic rather than a fabricated shot panel. */
+  const brokenProject = buildFixture();
+  brokenProject.productionAuthority = { version: 1, receipts: [{ id: "broken" }] };
+  const brokenPage = await render("#/shot/L1-01", brokenProject);
+  const broken = await vm.runInContext(`(async () => {
+    const shot = P.shots[0];
+    const readiness = shotReadinessFor(shot);
+    const destination = shotReadinessTargetDestination(readiness);
+    await openShotReadinessAction(shot.id, readiness.nextAction.code);
+    await route();
+    return {
+      action: readiness.nextAction.code, destinationId: destination?.destinationId || "",
+      route: destination?.navigation?.route || "", hash: location.hash,
+      surfaceVisible: document.getElementById("main").innerHTML.includes('data-readiness-action-surface="production-project-repair"'),
+    };
+  })()`, brokenPage.context);
+  equal(broken.action, "awaiting-project-repair", "a shot blocked by project truth emits only the waiting projection");
+  equal(broken.destinationId, "production", "the waiting projection has the declared Production destination");
+  equal(broken.route, "#/production", "the waiting projection uses the existing Production route");
+  equal(broken.hash, "#/production", "the waiting projection navigates to Production");
+  ok(broken.surfaceVisible, "Production renders the project repair diagnostic named by the destination contract");
+}
 function returnedVideoScan(project) {
   const shotId = project.shots[0].id;
   return {
@@ -392,6 +564,7 @@ async function main() {
   await descriptionOnlyConsumers();
   await firstLastMissingEndpoint();
   await actionableNextActionPanels();
+  await historicReadinessActionsReachProduction();
   await returnedMediaOutlivesGenerationReadiness();
   console.log(`shot-truth-cohesion: ${checks} assertions passed`);
 }

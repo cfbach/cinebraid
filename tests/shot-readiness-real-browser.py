@@ -192,6 +192,50 @@ try:
                         f"{hierarchy['backlog']['top']}px; the backlog ships closed with all "
                         f"{hierarchy['rows']} rows present and its summary reading {hierarchy['summary']!r}")
 
+        # ---- 2c. SHOT NEXT ACTION REACHES THE PRODUCTION CONFIRMATION CONTROL --------
+        routed_shot = page.evaluate("""() => {
+            const row = P.shots.map((shot) => ({ shot, readiness: shotReadinessFor(shot) }))
+                .find((item) => item.readiness?.nextAction?.code === 'confirm-existing-reference');
+            return row ? row.shot.id : '';
+        }""")
+        assert routed_shot, "no shot emitted confirm-existing-reference for the browser routing proof"
+        page.goto(f"{base}/#/shot/{routed_shot}", wait_until="domcontentloaded")
+        page.wait_for_selector("button.shot-primary-action", timeout=15000)
+        route_before = page.evaluate("""(shotId) => {
+            const shot = P.shots.find((row) => row.id === shotId);
+            const readiness = shotReadinessFor(shot);
+            const destination = shotReadinessDestinationForAction(readiness.nextAction.code);
+            return {
+                action: readiness.nextAction.code,
+                destination: destination?.destinationId || '',
+                route: destination?.navigation?.route || '',
+                selected: boundedShotSelectedTask(shot, takesFor(shot.id)),
+                call: document.querySelector('button.shot-primary-action')?.getAttribute('onclick') || '',
+            };
+        }""", routed_shot)
+        assert route_before["action"] == "confirm-existing-reference", f"wrong browser precondition: {route_before}"
+        assert route_before["destination"] == "production" and route_before["route"] == "#/production", \
+            f"historic confirmation is not declared on Production: {route_before}"
+        assert f"openShotReadinessAction('{routed_shot}','confirm-existing-reference')" in route_before["call"], \
+            f"the primary action bypasses the declared router: {route_before['call']!r}"
+        page.locator("button.shot-primary-action").first.click()
+        page.wait_for_function("location.hash === '#/production'", timeout=15000)
+        page.wait_for_selector('[data-readiness-action-surface="production-historic-confirmation"]', timeout=15000)
+        route_after = page.evaluate("""(shotId) => {
+            const shot = P.shots.find((row) => row.id === shotId);
+            return {
+                selected: boundedShotSelectedTask(shot, takesFor(shot.id)),
+                inputs: !!document.querySelector('[data-guided-panel="inputs"]'),
+                surface: !!document.querySelector('[data-readiness-action-surface="production-historic-confirmation"]'),
+                control: !!document.querySelector('.historic-confirm-list button[onclick*="confirmHistoricSelection"]'),
+            };
+        }""", routed_shot)
+        assert route_after["selected"] == route_before["selected"], \
+            f"Production navigation silently changed the shot task: {route_before} -> {route_after}"
+        assert not route_after["inputs"] and route_after["surface"] and route_after["control"], \
+            f"the routed surface cannot perform historic confirmation: {route_after}"
+        findings.append(f"2c. {routed_shot} confirm-existing-reference routed to Production; "
+                        "the confirmation control rendered and Inputs was not selected")
         # ---- 3. NEGATIVE CONTROL: THE SAME COMMAND OUTSIDE A TRUSTED EVENT IS REFUSED -
         # Run FIRST, so a build whose gesture check had stopped working could not pass
         # step 4 by accident.
