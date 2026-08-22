@@ -93,8 +93,8 @@ async function main() {
   const task = "";`;
   const A_ANCHOR2 = `  if (task && boundedShotSelectedTask(s, takesFor(s.id)) !== task)
     return toast(\`Could not open the \${key} workspace.\`);
-  await focusGuidedWorkspaceTarget(\`[data-guided-panel="\${key}"]\`);`;
-  const A_BROKEN2 = `  const found = await focusGuidedWorkspaceTarget(\`[data-guided-panel="\${key}"]\`);
+  await focusGuidedWorkspaceTarget(focusSelector || \`[data-guided-panel="\${key}"]\`);`;
+  const A_BROKEN2 = `  const found = await focusGuidedWorkspaceTarget(focusSelector || \`[data-guided-panel="\${key}"]\`);
   if (!found) toast(\`Could not find the \${key} workspace.\`);`;
   const brokenNavigation = () => (file, source) => {
     if (file !== "creation-studio.js") return source;
