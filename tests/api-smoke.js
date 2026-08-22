@@ -1956,6 +1956,38 @@ async function main() {
       "VEH-ROVER": "state-rover-dust",
     });
 
+    const suffixedRelationshipImport = structuredClone(leanImport);
+    suffixedRelationshipImport.meta.title = "Suffixed character relationship import";
+    suffixedRelationshipImport.shots[0].characters = ["CHAR-WORKER-alt"];
+    suffixedRelationshipImport.shots[0].audio.speakerId = "";
+    suffixedRelationshipImport.shots[0].clips[0].speakerId = "";
+    suffixedRelationshipImport.shots[0].clips[0].motionBrief.dialogue.speakerId = "";
+    result = await request("/api/projects/preview-import-json", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ project: suffixedRelationshipImport }),
+    });
+    assert.strictEqual(result.response.status, 200, result.body?.error || "Suffixed Project Builder preview failed");
+    const suffixedPreview = structuredClone(result.body);
+    assert.deepStrictEqual(suffixedPreview.normalizedProject.shots[0].characters, ["CHAR-WORKER-alt"]);
+    assert.deepStrictEqual(suffixedPreview.normalizedProject.shots[0].continuityStateSelections, {
+      "CHAR-WORKER": "state-worker-clean",
+    });
+    result = await request("/api/projects/import-json", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        previewToken: suffixedPreview.previewToken,
+        previewHash: suffixedPreview.previewHash,
+      }),
+    });
+    assert.strictEqual(result.response.status, 200, result.body?.error || "Suffixed Project Builder import failed");
+    const suffixedImported = JSON.parse(fs.readFileSync(path.join(PROJECTS_ROOT, result.body.slug, "project.json"), "utf8"));
+    assert.deepStrictEqual(suffixedImported.shots[0].characters, ["CHAR-WORKER-alt"]);
+    assert.deepStrictEqual(suffixedImported.shots[0].continuityStateSelections, {
+      "CHAR-WORKER": "state-worker-clean",
+    });
+
     const unattachedDeclarationImport = structuredClone(leanImport);
     unattachedDeclarationImport.meta.title = "Unattached declaration import";
     unattachedDeclarationImport.shots[0].characters = [];

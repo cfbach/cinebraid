@@ -3017,7 +3017,7 @@ function validateImportedProject(raw) {
         `Shot ${shot.id || "(missing id)"} references unknown scene ${shot.scene || "(blank)"}.`,
       );
     for (const id of Array.isArray(shot.characters) ? shot.characters : [])
-      if (!characterIds.has(id))
+      if (!(raw.characters || []).some((entity) => shotEntityTokenMatches(id, entity?.id)))
         errors.push(`Shot ${shot.id} references unknown character ${id}.`);
     for (const id of Array.isArray(shot.codes) ? shot.codes : [])
       if (![...(raw.locations || []), ...(raw.props || []), ...(raw.vehicles || []), ...(raw.audio || [])].some((entity) => shotEntityTokenMatches(id, entity?.id)))

@@ -338,6 +338,101 @@ function actionabilityFixture() {
   return project;
 }
 
+function tokenNamespaceOwnerSection() {
+  const cases = [
+    {
+      label: "suffixed shot.characters",
+      source: "characters",
+      entityId: "CHAR-RHEA",
+      stateId: "state-rhea-night",
+      foreignStateId: "state-kai-rain",
+      arrange: (project, shot) => { shot.characters = ["CHAR-RHEA-alt"]; },
+    },
+    {
+      label: "suffixed creationBrief.propIds",
+      source: "creationBrief.propIds",
+      entityId: "PR-TOOL",
+      stateId: "state-tool-worn",
+      foreignStateId: "state-rhea-night",
+      arrange: (project, shot) => {
+        project.props[0].continuityStates = [{ id: "state-tool-worn", name: "Worn", isDefault: true, approvedFile: "PR-TOOL-PLATE.png" }];
+        shot.creationBrief.propIds = ["PR-TOOL_b"];
+      },
+    },
+    {
+      label: "suffixed creationBrief.vehicleIds",
+      source: "creationBrief.vehicleIds",
+      entityId: "VEH-CART",
+      stateId: "state-cart-dust",
+      foreignStateId: "state-rhea-night",
+      arrange: (project, shot) => {
+        project.vehicles[0].continuityStates = [{ id: "state-cart-dust", name: "Dusty", isDefault: true, approvedFile: "VEH-CART.png" }];
+        shot.creationBrief.vehicleIds = ["VEH-CART-alt"];
+      },
+    },
+  ];
+  const projectFor = (testCase) => {
+    const project = actionabilityFixture();
+    const shot = project.shots[0];
+    shot.characters = [];
+    shot.codes = [];
+    shot.audio = {};
+    shot.clips = [];
+    shot.creationBrief = { propIds: [], vehicleIds: [] };
+    shot.continuityStateSelections = {};
+    testCase.arrange(project, shot);
+    return project;
+  };
+  for (const [index, testCase] of cases.entries()) {
+    const project = projectFor(testCase);
+    const shot = project.shots[0];
+    const record = Entities.shotStateBearingEntityRecords(project, shot)
+      .find((row) => row.id === testCase.entityId && row.sources.includes(testCase.source));
+    ok(record?.resolved, `${testCase.label} resolves through canonical state-bearing truth`);
+    equal(record?.entity?.id, testCase.entityId, `${testCase.label} records the canonical entity identity`);
+    equal(record?.id, testCase.entityId, `${testCase.label} is keyed by canonical id, not the authored suffix token`);
+    equal(Binding.applyShotStateDeclaration(project, {
+      shotId: shot.id, entityId: testCase.entityId, stateId: testCase.stateId,
+    }).status, "applied", `${testCase.label} accepts its valid owned declaration`);
+
+    const foreign = projectFor(testCase);
+    equal(Binding.applyShotStateDeclaration(foreign, {
+      shotId: foreign.shots[0].id, entityId: testCase.entityId, stateId: testCase.foreignStateId,
+    }).status, "state-owned-by-different-entity", `${testCase.label} still refuses a foreign state`);
+
+    const missing = projectFor(testCase);
+    equal(Binding.applyShotStateDeclaration(missing, {
+      shotId: missing.shots[0].id, entityId: `MISSING-${index}`, stateId: testCase.stateId,
+    }).status, "entity-not-found", `${testCase.label} does not loosen nonexistent entity identity`);
+  }
+
+  const exactFirst = actionabilityFixture();
+  exactFirst.characters.push({
+    id: "CHAR-RHEA-alt", name: "Rhea alternate entity",
+    continuityStates: [{ id: "state-alt-entity", name: "Alternate entity state", isDefault: true }],
+  });
+  exactFirst.shots[0].characters = ["CHAR-RHEA-alt"];
+  exactFirst.shots[0].codes = [];
+  const exactRecord = Entities.shotStateBearingEntityRecords(exactFirst, exactFirst.shots[0])
+    .find((row) => row.sources.includes("characters"));
+  equal(exactRecord?.id, "CHAR-RHEA-alt", "token namespaces prefer an exact entity id before suffix matching");
+
+  const codes = actionabilityFixture();
+  codes.shots[0].characters = [];
+  codes.shots[0].codes = ["CHAR-RHEA-alt"];
+  const codeRecord = Entities.shotStateBearingEntityRecords(codes, codes.shots[0])
+    .find((row) => row.sources.includes("codes"));
+  equal(codeRecord?.id, "CHAR-RHEA", "the existing codes token namespace still resolves its canonical entity unchanged");
+
+  const exactSpeaker = actionabilityFixture();
+  exactSpeaker.shots[0].characters = [];
+  exactSpeaker.shots[0].codes = [];
+  exactSpeaker.shots[0].audio = { speakerId: "CHAR-RHEA-alt" };
+  equal(Entities.shotStateBearingEntityRecords(exactSpeaker, exactSpeaker.shots[0])
+    .some((row) => row.resolved && row.id === "CHAR-RHEA"), false,
+  "exact-ID speaker fields do not inherit token-namespace matching");
+}
+
 async function relationshipTruthSection() {
   const cases = [
     {
@@ -372,13 +467,42 @@ async function relationshipTruthSection() {
         shot.creationBrief.vehicleIds = ["VEH-ROVER"];
       },
     },
+    {
+      label: "suffixed character relationship",
+      entityId: "CHAR-RHEA",
+      stateId: "state-rhea-night",
+      arrange: (project, shot) => { shot.characters = ["CHAR-RHEA-alt"]; },
+    },
+    {
+      label: "suffixed prop relationship",
+      entityId: "PR-TOOL",
+      stateId: "state-tool-worn",
+      arrange: (project, shot) => {
+        project.props[0].continuityStates = [{ id: "state-tool-worn", name: "Worn", isDefault: true, approvedFile: "PR-TOOL-PLATE.png" }];
+        shot.codes = (shot.codes || []).filter((token) => !Entities.shotEntityTokenMatches(token, "PR-TOOL"));
+        shot.creationBrief = shot.creationBrief || {};
+        shot.creationBrief.propIds = ["PR-TOOL_b"];
+      },
+    },
+    {
+      label: "suffixed vehicle relationship",
+      entityId: "VEH-CART",
+      stateId: "state-cart-dust",
+      arrange: (project, shot) => {
+        project.vehicles[0].status = "APPROVED";
+        project.vehicles[0].approvedFile = "VEH-CART.png";
+        project.vehicles[0].continuityStates = [{ id: "state-cart-dust", name: "Dusty", isDefault: true, approvedFile: "VEH-CART.png" }];
+        shot.creationBrief = shot.creationBrief || {};
+        shot.creationBrief.vehicleIds = ["VEH-CART-alt"];
+      },
+    },
   ];
   for (const testCase of cases) {
     const project = actionabilityFixture();
     const shot = project.shots[0];
     shot.continuityStateSelections = {};
     testCase.arrange(project, shot);
-    const stateId = testCase.entityId === "VEH-ROVER" ? "state-rover-dust" : "state-rhea-night";
+    const stateId = testCase.stateId || (testCase.entityId === "VEH-ROVER" ? "state-rover-dust" : "state-rhea-night");
     const page = await render("#/shot/L1-01", project, {
       storage: { "cinebraid-focused:fixture:shot-task:L1-01": "inputs" },
     });
@@ -1056,6 +1180,7 @@ async function reloadSection() {
 
 async function main() {
   mutationOwnerSection();
+  tokenNamespaceOwnerSection();
   await relationshipTruthSection();
   await renderedControlSection();
   await nextActionReachabilitySection();
@@ -1076,6 +1201,7 @@ if (require.main === module) main().catch((error) => {
 module.exports = {
   mutationFixture,
   mutationOwnerSection,
+  tokenNamespaceOwnerSection,
   actionabilityFixture,
   relationshipTruthSection,
   renderedControlSection,

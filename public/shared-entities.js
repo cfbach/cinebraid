@@ -197,11 +197,19 @@ function shotDependencyRecords(project, shot) {
     const rawId = String(id || "").trim();
     if (!rawId || !type) return;
     const candidates = type === "prop-or-vehicle" ? [...lists.prop, ...lists.vehicle] : lists[type] || [];
-    const entity = candidates.find((item) => String(item?.id || "") === rawId) || null;
+    /* Some authored attachment fields are established token namespaces: they
+       preserve a canonical entity id plus a view/variant suffix. Resolve those
+       exact-first through the same matcher as resolveShotEntities; exact-ID
+       relationships such as speakerId deliberately do not opt into this. */
+    const exact = candidates.find((item) => String(item?.id || "") === rawId) || null;
+    const entity = exact || (options.tokenNamespace
+      ? candidates.find((item) => shotEntityTokenMatches(rawId, item?.id)) || null
+      : null);
     const resolvedType = entity && type === "prop-or-vehicle"
       ? (lists.vehicle.includes(entity) ? "vehicle" : "prop")
       : type;
-    const key = `${resolvedType}:${rawId}`;
+    const canonicalId = entity ? String(entity.id) : rawId;
+    const key = `${resolvedType}:${canonicalId}`;
     const existing = seen.get(key);
     if (existing) {
       if (!existing.sources.includes(source)) existing.sources.push(source);
@@ -210,7 +218,7 @@ function shotDependencyRecords(project, shot) {
     const row = {
       type: resolvedType,
       requestedType: type,
-      id: rawId,
+      id: canonicalId,
       entity,
       resolved: !!entity,
       sources: [source],
@@ -220,10 +228,10 @@ function shotDependencyRecords(project, shot) {
     records.push(row);
   };
 
-  for (const id of Array.isArray(s.characters) ? s.characters : []) add("character", id, "characters");
-  add("location", creation.locationId, "creationBrief.locationId");
-  for (const id of Array.isArray(creation.propIds) ? creation.propIds : []) add("prop-or-vehicle", id, "creationBrief.propIds");
-  for (const id of Array.isArray(creation.vehicleIds) ? creation.vehicleIds : []) add("vehicle", id, "creationBrief.vehicleIds");
+  for (const id of Array.isArray(s.characters) ? s.characters : []) add("character", id, "characters", { tokenNamespace: true });
+  add("location", creation.locationId, "creationBrief.locationId", { tokenNamespace: true });
+  for (const id of Array.isArray(creation.propIds) ? creation.propIds : []) add("prop-or-vehicle", id, "creationBrief.propIds", { tokenNamespace: true });
+  for (const id of Array.isArray(creation.vehicleIds) ? creation.vehicleIds : []) add("vehicle", id, "creationBrief.vehicleIds", { tokenNamespace: true });
 
   const audio = s.audio && typeof s.audio === "object" ? s.audio : {};
   add("character", audio.speakerId, "audio.speakerId");
