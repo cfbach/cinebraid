@@ -385,10 +385,12 @@ try:
             shot.title = 'State action browser fixture';
             shot.characters = [];
             shot.codes = [];
+            shot.clips = [];
             shot.creationBrief = {
               ...(shot.creationBrief || {}),
-              locationId: '', propIds: [], vehicleIds: [], frameWorkflows: {},
+              locationId: '', propIds: [], vehicleIds: [], motionPlan: {}, frameWorkflows: {},
             };
+            shot.audio = { speakerId: entity.id };
             shot.continuityStateSelections = { [entity.id]: 'state-browser-rain' };
             P.shots.push(shot);
             return { shotId: shot.id, entityId: entity.id };
@@ -396,6 +398,44 @@ try:
 
         page.goto(f"{base}/#/shot/{correction['shotId']}", wait_until="domcontentloaded")
         page.wait_for_selector("button.shot-primary-action", timeout=15000)
+        speaker_before = page.evaluate("""({ shotId, entityId }) => {
+            const shot = P.shots.find((row) => row.id === shotId);
+            const readiness = shotReadinessFor(shot);
+            const requirements = [...(readiness.requirements || []), ...(readiness.units || []).flatMap((unit) => unit.requirements || [])];
+            return {
+              action: readiness.nextAction.code,
+              canonical: shotStateBearingEntityRecords(P, shot).filter((row) => row.resolved).map((row) => row.entity.id),
+              required: requirements.some((row) => row.entityId === entityId || String(row.id || '').includes(entityId)),
+              call: document.querySelector('button.shot-primary-action')?.getAttribute('onclick') || '',
+              staleSurface: !!document.querySelector('[data-stale-shot-state-declaration="' + CSS.escape(entityId) + '"]'),
+            };
+        }""", correction)
+        assert correction["entityId"] in speaker_before["canonical"] and speaker_before["required"],             f"the speaker-only relationship did not reach canonical rendered readiness: {speaker_before}"
+        assert speaker_before["action"] != "remove-stale-state-declaration"             and "remove-stale-state-declaration" not in speaker_before["call"]             and not speaker_before["staleSurface"],             f"the speaker-only declaration was rendered as stale: {speaker_before}"
+        findings.append("8a. audio-speaker-only relationship rendered as required continuity truth, never stale cleanup")
+
+        page.evaluate("""async ({ shotId }) => {
+            const shot = P.shots.find((row) => row.id === shotId);
+            shot.audio.speakerId = '';
+            if (shot.creationBrief?.motionPlan?.audio)
+              shot.creationBrief.motionPlan.audio.speakerId = '';
+            const sentinel = document.createElement('div');
+            sentinel.setAttribute('data-readiness-scenario-sentinel', 'speaker-only');
+            document.querySelector('#main').append(sentinel);
+            await route();
+        }""", correction)
+        stale_render = page.evaluate("""({ shotId, entityId }) => {
+            const shot = P.shots.find((row) => row.id === shotId);
+            const readiness = shotReadinessFor(shot);
+            return {
+              sentinel: !!document.querySelector('[data-readiness-scenario-sentinel]'),
+              action: readiness.nextAction.code,
+              call: document.querySelector('button.shot-primary-action')?.getAttribute('onclick') || '',
+              records: shotStateBearingEntityRecords(P, shot).map((row) => ({ id: row.id, sources: row.sources })),
+              declaration: shot.continuityStateSelections?.[entityId] || '',
+            };
+        }""", correction)
+        assert not stale_render["sentinel"]             and stale_render["action"] == "remove-stale-state-declaration"             and "remove-stale-state-declaration" in stale_render["call"],             f"the awaited rerender did not establish fresh stale-declaration DOM: {stale_render}"
         stale_before = page.evaluate("""(shotId) => {
             const shot = P.shots.find((row) => row.id === shotId);
             const readiness = shotReadinessFor(shot);
@@ -433,9 +473,48 @@ try:
         }""", arg=correction)
         assert stale_after["action"] != "remove-stale-state-declaration" and not stale_after["attached"], \
             f"explicit cleanup did not resolve only the stale key: {stale_after}"
-        findings.append("8a. declaration-only NEXT ACTION rendered explicit stale cleanup; a real click removed the key without attaching the entity")
+        findings.append("8b. declaration-only NEXT ACTION rendered explicit stale cleanup; a real click removed the key without attaching the entity")
 
-        correction["frameId"] = page.evaluate("""({ shotId, entityId }) => {
+        page.evaluate("""async ({ shotId, entityId }) => {
+            const shot = P.shots.find((row) => row.id === shotId);
+            shot.characters = [entityId];
+            shot.continuityStateSelections = { [entityId]: 'state-browser-missing' };
+            const sentinel = document.createElement('div');
+            sentinel.setAttribute('data-readiness-scenario-sentinel', 'stale-declaration');
+            document.querySelector('#main').append(sentinel);
+            await route();
+        }""", correction)
+        page.wait_for_function("""({ shotId }) => {
+            const shot = P.shots.find((row) => row.id === shotId);
+            const call = document.querySelector('button.shot-primary-action')?.getAttribute('onclick') || '';
+            return !document.querySelector('[data-readiness-scenario-sentinel]')
+              && shotReadinessFor(shot).nextAction.code === 'resolve-state-declaration'
+              && call.includes('resolve-state-declaration');
+        }""", arg=correction, timeout=15000)
+        shot_before = page.evaluate("""(shotId) => {
+            const shot = P.shots.find((row) => row.id === shotId);
+            return {
+              action: shotReadinessFor(shot).nextAction.code,
+              call: document.querySelector('button.shot-primary-action')?.getAttribute('onclick') || '',
+            };
+        }""", correction["shotId"])
+        assert shot_before["action"] == "resolve-state-declaration"             and "resolve-state-declaration" in shot_before["call"],             f"the invalid shot declaration did not render its own NEXT ACTION: {shot_before}"
+        page.locator("button.shot-primary-action").first.click()
+        page.wait_for_selector('[data-readiness-action-surface="shot-state-declaration"]', timeout=15000)
+        shot_surface = page.evaluate("""() => ({
+            shot: !!document.querySelector('[data-shot-state-declaration-invalid="1"] select'),
+            frame: !!document.querySelector('[data-readiness-action-surface="shot-frame-state-declaration"]'),
+        })""")
+        assert shot_surface["shot"] and not shot_surface["frame"],             f"shot NEXT ACTION presented the wrong repair surface: {shot_surface}"
+        page.locator('[data-shot-state-declaration-invalid="1"] select').first.select_option("state-browser-clean")
+        page.wait_for_function("""({ shotId }) => {
+            const shot = P.shots.find((row) => row.id === shotId);
+            const requirements = [...(shotReadinessFor(shot).requirements || []), ...(shotReadinessFor(shot).units || []).flatMap((unit) => unit.requirements || [])];
+            return !requirements.some((row) => row.reason === 'declared-state-not-on-entity');
+        }""", arg=correction)
+        findings.append("8c. shot declaration NEXT ACTION rendered the Inputs selector and real repair cleared only the shot blocker")
+
+        correction["frameId"] = page.evaluate("""async ({ shotId, entityId }) => {
             const shot = P.shots.find((row) => row.id === shotId);
             delete P.productionAuthority;
             const currentFrame = (shotReadinessFor(shot).units || []).find((unit) => String(unit.id || '').startsWith('frame:'));
@@ -447,10 +526,19 @@ try:
               ...(shot.creationBrief.frameWorkflows[frameId] || {}),
               characterStateSelections: { [entityId]: 'state-browser-missing' },
             };
+            const sentinel = document.createElement('div');
+            sentinel.setAttribute('data-readiness-scenario-sentinel', 'shot-declaration');
+            document.querySelector('#main').append(sentinel);
+            await route();
             return frameId;
         }""", correction)
-        page.goto(f"{base}/#/shot/{correction['shotId']}", wait_until="domcontentloaded")
-        page.wait_for_selector("button.shot-primary-action", timeout=15000)
+        page.wait_for_function("""({ shotId }) => {
+            const shot = P.shots.find((row) => row.id === shotId);
+            const call = document.querySelector('button.shot-primary-action')?.getAttribute('onclick') || '';
+            return !document.querySelector('[data-readiness-scenario-sentinel]')
+              && shotReadinessFor(shot).nextAction.code === 'resolve-frame-state-declaration'
+              && call.includes('resolve-frame-state-declaration');
+        }""", arg=correction, timeout=15000)
         frame_before = page.evaluate("""(shotId) => {
             const shot = P.shots.find((row) => row.id === shotId);
             const readiness = shotReadinessFor(shot);
@@ -508,7 +596,7 @@ try:
         assert frame_after["frameState"] == "state-browser-clean" \
             and frame_after["action"] != "resolve-frame-state-declaration", \
             f"the real frame control did not clear its own blocker: {frame_after}"
-        findings.append("8b. frame NEXT ACTION rendered the existing frame control; shot mutation left the blocker, then a real frame selection cleared it without rewriting shot state")
+        findings.append("8d. fresh rerender removed the prior scenario sentinel; frame NEXT ACTION rendered Frames, shot mutation left the blocker, and real frame repair preserved shot state")
 
         assert not paid_calls, f"a paid route was called: {paid_calls}"
         assert not offsite, f"a request left this machine: {offsite}"
