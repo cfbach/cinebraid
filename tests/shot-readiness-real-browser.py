@@ -598,6 +598,112 @@ try:
             f"the real frame control did not clear its own blocker: {frame_after}"
         findings.append("8d. fresh rerender removed the prior scenario sentinel; frame NEXT ACTION rendered Frames, shot mutation left the blocker, and real frame repair preserved shot state")
 
+        # ---- 8e. SHIPPED SPEAKER AND CAST CONTROLS DETACH ACTIONABLY ----------------
+        # Enter through the real bounded stage owner, then use Playwright gestures on
+        # the same <select> and cast button a filmmaker uses. This is the product path
+        # the prior fixture-only coverage missed.
+        route_entry = page.evaluate("""async ({ shotId }) => {
+            const shot = P.shots.find((row) => row.id === shotId);
+            const declaration = declareShotRoute(shot, 't2v');
+            await route();
+            const unit = (shotReadinessFor(shot).units || []).find((row) => row.kind === 'motion' && row.required);
+            return { declaration, unit: unit ? { id: unit.id, status: unit.status, action: unit.nextAction?.code || '' } : null };
+        }""", correction)
+        assert route_entry["declaration"]["route"] == "t2v", \
+            f"the canonical route owner refused the browser t2v precondition: {route_entry}"
+        if route_entry["unit"]["status"] != "READY":
+            assert route_entry["unit"]["action"] == "confirm-existing-reference", \
+                f"the t2v Motion unit was blocked for an unexpected reason: {route_entry}"
+            page.locator("button.shot-primary-action").first.click()
+            page.wait_for_selector('[data-readiness-action-surface="production-historic-confirmation"]', timeout=15000)
+            target_key = page.evaluate("""({ shotId, entityId }) => {
+                const shot = P.shots.find((row) => row.id === shotId);
+                const selectedState = shot.continuityStateSelections?.[entityId] || '';
+                const feed = evaluateProjectReadiness(P, { mediaListing: (list) => entityMediaPool(list), shotMediaListing: (id) => takesFor(id) });
+                const item = feed.historic.items.find((row) => row.target?.kind === 'entity-state'
+                  && row.target.entityId === entityId && row.target.stateId === selectedState && !row.ownership.wouldRefuse);
+                return item?.key || '';
+            }""", correction)
+            assert target_key, "the selected relationship state was not offered for canonical confirmation"
+            if page.locator('.historic-confirm').first.get_attribute('open') is None:
+                page.locator('.historic-confirm > summary').first.click()
+            confirm = page.locator(f'.historic-confirm-list button[onclick*="{target_key}"]').first
+            assert confirm.count() == 1 and confirm.is_visible(), \
+                "the canonical state confirmation control was not rendered for the relationship fixture"
+            confirm.click()
+            page.wait_for_function("""(key) => {
+                const feed = evaluateProjectReadiness(P, { mediaListing: (list) => entityMediaPool(list), shotMediaListing: (id) => takesFor(id) });
+                return !feed.historic.items.some((row) => row.key === key);
+            }""", arg=target_key, timeout=15000)
+            page.goto(f"{base}/#/shot/{correction['shotId']}", wait_until="domcontentloaded")
+            page.wait_for_selector("button.shot-primary-action", timeout=15000)
+        motion_entry = page.evaluate("""async ({ shotId }) => {
+            const shot = P.shots.find((row) => row.id === shotId);
+            const unit = (shotReadinessFor(shot).units || []).find((row) => row.kind === 'motion' && row.required);
+            await openGuidedPanel(shotId, 'motion');
+            return unit ? { id: unit.id, status: unit.status, action: unit.nextAction?.code || '' } : null;
+        }""", correction)
+        assert motion_entry["status"] == "READY", \
+            f"canonical confirmation did not make the shipped Motion controls reachable: {motion_entry}"
+        page.wait_for_selector('[data-bounded-task="motion"] [data-guided-panel="motion"][open]', timeout=15000)
+        assisted = page.locator('[data-guided-panel="motion"] details.motion-assisted-tools').first
+        if assisted.get_attribute('open') is None:
+            assisted.locator(':scope > summary').click()
+        audio_block = page.locator('[data-guided-panel="motion"] details.guided-audio-block').first
+        if audio_block.get_attribute('open') is None:
+            audio_block.locator(':scope > summary').click()
+        page.wait_for_selector('[data-guided-panel="motion"] label:has-text("Who says it?") select', timeout=15000)
+        speaker_select = page.locator('[data-guided-panel="motion"] label:has-text("Who says it?") select').first
+        assert speaker_select.locator(f'option[value="{correction["entityId"]}"]').count() == 1, \
+            "the shipped speaker control must offer the attached cast member"
+        speaker_select.select_option(correction["entityId"])
+        page.wait_for_function("""({ shotId, entityId }) => {
+            const shot = P.shots.find((row) => row.id === shotId);
+            return shot?.audio?.speakerId === entityId
+              && shot?.creationBrief?.motionPlan?.audio?.speakerId === entityId;
+        }""", arg=correction, timeout=15000)
+
+        page.evaluate("""async ({ shotId }) => { await openGuidedPanel(shotId, 'inputs'); }""", correction)
+        page.wait_for_selector('[data-bounded-task="inputs"] .guided-cast-assets', timeout=15000)
+        assert page.locator('[data-guided-panel="motion"] label:has-text("Who says it?") select').count() == 0, \
+            "the Inputs render must replace the prior Motion DOM before cast assertions"
+        cast_manager = page.locator('[data-bounded-task="inputs"] .guided-cast-assets').first
+        if cast_manager.get_attribute('open') is None:
+            cast_manager.locator(':scope > summary').click()
+        cast_button = page.locator(
+            f'.guided-cast-assets button[onclick*="toggleShotCreationCharacter"][onclick*="{correction["entityId"]}"]'
+        ).first
+        assert cast_button.count() == 1 and cast_button.is_visible(), \
+            "the attached speaker must remain reachable through the shipped cast picker"
+        cast_button.click()
+        page.wait_for_function("""({ shotId, entityId }) => {
+            const shot = P.shots.find((row) => row.id === shotId);
+            const castButton = [...document.querySelectorAll('.guided-cast-assets button')]
+              .find((button) => (button.getAttribute('onclick') || '').includes(entityId));
+            return shot
+              && !(shot.characters || []).includes(entityId)
+              && (shot.audio?.speakerId || '') === ''
+              && (shot.creationBrief?.motionPlan?.audio?.speakerId || '') === ''
+              && !Object.prototype.hasOwnProperty.call(shot.continuityStateSelections || {}, entityId)
+              && !shotStateBearingEntityRecords(P, shot).some((row) => row.resolved && row.id === entityId)
+              && !!castButton && !castButton.classList.contains('on')
+              && !document.querySelector('[data-guided-panel="motion"]');
+        }""", arg=correction, timeout=15000)
+        detached = page.evaluate("""({ shotId, entityId }) => {
+            const shot = P.shots.find((row) => row.id === shotId);
+            const readiness = shotReadinessFor(shot);
+            const requirements = [...(readiness.requirements || []), ...(readiness.units || []).flatMap((unit) => unit.requirements || [])];
+            return {
+              action: readiness.nextAction.code,
+              required: requirements.some((row) => row.entityId === entityId || String(row.id || '').includes(entityId)),
+              stale: !!document.querySelector(`[data-stale-shot-state-declaration="${CSS.escape(entityId)}"]`),
+              castSelected: document.querySelector(`.guided-cast-assets button[onclick*="${CSS.escape(entityId)}"]`)?.classList.contains('on') || false,
+            };
+        }""", correction)
+        assert not detached["required"] and not detached["stale"] and not detached["castSelected"], \
+            f"cast removal left an invisible or stale blocking relationship: {detached}"
+        findings.append("8e. real Who says it? selection followed by real cast removal cleared speaker, motion-plan, declaration, and rendered readiness truth")
+
         assert not paid_calls, f"a paid route was called: {paid_calls}"
         assert not offsite, f"a request left this machine: {offsite}"
         assert not page_errors, f"uncaught page errors: {page_errors}"
@@ -613,5 +719,5 @@ for line in findings:
 print("Shot readiness real-browser suite passed: the shared derivation loads in the page, the "
       "deduplicated confirmation surface renders one row per authority target, a real trusted click "
       "writes exactly one human receipt while the same command from page script is refused, readiness "
-      "recalculates from current truth, and the server answers the same question through the same module. "
+      "recalculates from current truth, shipped speaker/cast controls detach actionably, and the server answers the same question through the same module. "
       "Paid calls: 0. Offsite requests: 0.")

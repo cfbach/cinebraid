@@ -421,7 +421,7 @@ window.toggleShotChar = (id, cid) => {
   s.characters = s.characters || [];
   const removing = s.characters.includes(cid);
   if (removing && typeof updateShotDependencyRelationship === "function") {
-    /* Cast is the only product surface that can select a speaker. Once a
+    /* Cast is the source list for every product speaker selector. Once a
        character leaves cast, clear every relationship that surface authored so
        no invisible speaker can keep a declaration/readiness blocker alive. The
        dependency owner rechecks attachment before it clears any declaration. */
