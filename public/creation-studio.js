@@ -1842,6 +1842,9 @@ function replaceShotDependencyToken(value, rawId, nextId) {
 }
 function updateShotDependencyRelationship(shot, rawId, nextId = "") {
   const replaceArray = (rows) => [...new Set((Array.isArray(rows) ? rows : []).map((value) => replaceShotDependencyToken(value, rawId, nextId)).filter(Boolean))];
+  const hadStateDeclaration = !!shot.continuityStateSelections
+    && Object.prototype.hasOwnProperty.call(shot.continuityStateSelections, rawId);
+  const declarationStateId = hadStateDeclaration ? String(shot.continuityStateSelections[rawId] || "") : "";
   shot.characters = replaceArray(shot.characters);
   shot.codes = replaceArray(shot.codes);
   const creation = ensureShotCreation(shot);
@@ -1859,10 +1862,12 @@ function updateShotDependencyRelationship(shot, rawId, nextId = "") {
     replaceField(clip, "speakerId");
     replaceField(clip, "voiceEntityId");
   }
-  if (shot.continuityStateSelections && Object.prototype.hasOwnProperty.call(shot.continuityStateSelections, rawId)) {
-    const stateId = shot.continuityStateSelections[rawId];
-    delete shot.continuityStateSelections[rawId];
-    if (nextId) shot.continuityStateSelections[nextId] = stateId;
+  if (hadStateDeclaration && typeof clearDetachedShotStateDeclaration === "function") {
+    const cleared = clearDetachedShotStateDeclaration(P, { shotId: shot.id, entityId: rawId });
+    if (nextId && declarationStateId && cleared.status === "applied"
+        && cleared.operation !== "retained-attached" && typeof applyShotStateDeclaration === "function") {
+      applyShotStateDeclaration(P, { shotId: shot.id, entityId: nextId, stateId: declarationStateId });
+    }
   }
   for (const workflow of Object.values(creation.frameWorkflows || {})) {
     for (const key of ["characterStateSelections", "locationStateSelections", "propStateSelections", "vehicleStateSelections"]) {
@@ -1915,6 +1920,26 @@ function guidedUnresolvedDependenciesMarkup(s) {
   const unresolved = typeof unresolvedShotDependencies === "function" ? unresolvedShotDependencies(P, s) : [];
   if (!unresolved.length) return "";
   return `<section class="guided-unresolved-dependencies" aria-label="Unresolved shot references"><header><div><span>BLOCKING REFERENCE ISSUES</span><b>${unresolved.length} unresolved relationship${unresolved.length === 1 ? "" : "s"}</b><small>These IDs are still stored in the shot. Relink or remove them before building production prompts.</small></div></header><div>${unresolved.map((row) => `<article data-unresolved-dependency="${attr(row.id)}"><div><span>${esc(shotDependencyTypeLabel(row.type))}</span><b>${esc(row.id)}</b><small>${esc(row.sources.join(" · "))}</small></div><div class="guided-unresolved-actions"><button class="ghost-btn" onclick="openShotDependencyRelink('${attr(s.id)}','${attr(row.type)}','${attr(row.id)}')">Relink</button><button class="chip danger" onclick="removeShotDependency('${attr(s.id)}','${attr(row.id)}')">Remove</button></div></article>`).join("")}</div></section>`;
+}
+
+function guidedStaleShotStateDeclarations(s) {
+  const selections = s.continuityStateSelections && typeof s.continuityStateSelections === "object"
+    && !Array.isArray(s.continuityStateSelections) ? s.continuityStateSelections : {};
+  const attached = resolveShotEntities(P, s);
+  const attachedIds = new Set([
+    ...(attached.characters || []),
+    ...(attached.locations || []),
+    ...(attached.props || []),
+    ...(attached.vehicles || []),
+  ].map((entity) => String(entity?.id || "")).filter(Boolean));
+  const entities = [...(P.characters || []), ...(P.locations || []), ...(P.props || []), ...(P.vehicles || [])];
+  const stale = Object.keys(selections)
+    .sort()
+    .map((entityId) => ({ entityId, stateId: String(selections[entityId] || ""), entity: entities.find((row) => String(row?.id || "") === entityId) || null }))
+    .filter((row) => row.entity && !attachedIds.has(row.entityId));
+  if (!stale.length) return "";
+  const rows = stale.map((row) => `<article data-stale-shot-state-declaration="${attr(row.entityId)}"><div><span>STALE SHOT STATE</span><b>${esc(row.entity.name || row.entityId)} · ${esc(row.stateId || "empty declaration")}</b><small>This state key does not attach the reference to the shot. Remove it without changing canonical attachments.</small></div><button type="button" class="chip danger" onclick="removeStaleShotStateDeclaration('${attr(s.id)}','${attr(row.entityId)}')">Remove stale declaration</button></article>`).join("");
+  return `<section class="guided-stale-shot-state-declarations" data-readiness-action-surface="shot-stale-state-declaration"><header><div><span>STALE CONTINUITY DECLARATIONS</span><b>${stale.length} declaration${stale.length === 1 ? "" : "s"} no longer has an attached reference</b><small>State declarations never create shot attachments. Remove only these orphaned keys.</small></div></header><div>${rows}</div></section>`;
 }
 
 function guidedShotAttachmentPicker(s) {
@@ -2028,6 +2053,8 @@ async function focusGuidedWorkspaceTarget(selector, attempts = 12) {
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     const target = document.querySelector(selector);
     if (target) {
+      for (let parent = target.parentElement; parent; parent = parent.parentElement)
+        if (parent.tagName === "DETAILS") parent.open = true;
       if (target.tagName === "DETAILS") target.open = true;
       target.classList.add("guided-scroll-focus");
       target.scrollIntoView({ behavior: "smooth", block: "start", inline: "nearest" });
@@ -2072,7 +2099,7 @@ window.openGuidedPanel = async (id, key, focusSelector = "") => {
   if (["still", "review", "frames"].includes(key)) {
     const first = guidedFrames(s)[0];
     await Promise.resolve(route());
-    await focusGuidedWorkspaceTarget(`[data-frame-id="${first.id}"]`);
+    await focusGuidedWorkspaceTarget(focusSelector || `[data-frame-id="${first.id}"]`);
     return;
   }
   c.openPanels[key] = true;
@@ -2223,7 +2250,7 @@ function guidedSourceInputsPanel(s, current, open = false) {
   const planningCount = shotMediaLinks(s).length;
   const rows = [...imageRefs, ...motionRefs];
   const ready = rows.filter((row) => row.url).length;
-  return `<details class="guided-work-panel guided-inputs-card" data-guided-panel="inputs" ${guidedPanelOpen(s, "inputs", open) ? "open" : ""} ontoggle="rememberGuidedPanel('${s.id}','inputs',this.open)"><summary><div><span>SOURCE & REFERENCES</span><b>${ready ? `${ready} usable input${ready === 1 ? "" : "s"}` : "Attach cast, assets, or source media"}</b><small>Choose the shot's location, cast, props, plates, audio, and motion references.</small></div><i>⌄</i></summary><div class="guided-work-panel-body">${guidedUnresolvedDependenciesMarkup(s)}${guidedShotAttachmentPicker(s)}${guidedShotStateDeclarations(s)}<div class="guided-input-tray">${rows.length ? rows.map((ref) => {
+  return `<details class="guided-work-panel guided-inputs-card" data-guided-panel="inputs" ${guidedPanelOpen(s, "inputs", open) ? "open" : ""} ontoggle="rememberGuidedPanel('${s.id}','inputs',this.open)"><summary><div><span>SOURCE & REFERENCES</span><b>${ready ? `${ready} usable input${ready === 1 ? "" : "s"}` : "Attach cast, assets, or source media"}</b><small>Choose the shot's location, cast, props, plates, audio, and motion references.</small></div><i>⌄</i></summary><div class="guided-work-panel-body">${guidedUnresolvedDependenciesMarkup(s)}${guidedStaleShotStateDeclarations(s)}${guidedShotAttachmentPicker(s)}${guidedShotStateDeclarations(s)}<div class="guided-input-tray">${rows.length ? rows.map((ref) => {
     const enabled = shotInputEnabled(s, ref.key);
     const route = ref.role === "identity" ? "character" : ref.role === "prop" ? "prop" : ["base","location"].includes(ref.role) ? "location" : "";
     const blocked = !ref.url;

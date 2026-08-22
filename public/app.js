@@ -3027,15 +3027,21 @@ window.confirmBatchContinuity = () => {
   const [entityId, stateId] = (
     document.getElementById("batch-continuity-choice")?.value || "|"
   ).split("|");
-  for (const id of BATCH_SHOTS) {
-    const s = shotById(id);
-    s.continuityStateSelections = s.continuityStateSelections || {};
-    s.continuityStateSelections[entityId] = stateId;
+  const declarations = [...BATCH_SHOTS].map((shotId) => ({ shotId, entityId, stateId }));
+  const result = typeof applyShotStateDeclarationBatch === "function"
+    ? applyShotStateDeclarationBatch(P, declarations)
+    : { status: "invalid-declarations", changed: false };
+  if (result.status !== "applied") {
+    const reason = result.failure?.status;
+    toast(SHOT_STATE_DECLARATION_RESULT_WORDS[reason]
+      || "No shots changed because every selected shot must accept this continuity state.");
+    return result;
   }
   closeModal();
-  dirty();
+  if (result.changed) dirty();
   route();
-  toast("Continuity state assigned");
+  toast(`Continuity state assigned to ${result.count} shot${result.count === 1 ? "" : "s"}`);
+  return result;
 };
 window.batchHealthCheck = () => {
   if (!BATCH_SHOTS.size) return toast("Select shots first");
@@ -3406,7 +3412,9 @@ const READINESS_ACTION_WORDS = {
   "confirm-existing-reference": "Confirm existing reference",
   "reapprove-revoked-reference": "Re-approve withdrawn reference",
   "resolve-relationship": "Resolve a shot input",
+  "remove-stale-state-declaration": "Remove the stale state declaration",
   "resolve-state-declaration": "Resolve the declared state",
+  "resolve-frame-state-declaration": "Resolve the frame state",
   "repair-presence-declaration": "Repair the frame presence",
   "resolve-media-ownership": "Resolve the media claim",
   "declare-producible-unit": "Declare what this shot produces",
@@ -3857,6 +3865,26 @@ function applyShotStateDeclarationFromUi(shotId, entityId, stateId) {
   toast(result.operation === "cleared" ? "Shot continuity-state declaration cleared" : "Continuity state selected for this shot");
   return result;
 }
+function clearStaleShotStateDeclarationFromUi(shotId, entityId) {
+  const result = typeof clearDetachedShotStateDeclaration === "function"
+    ? clearDetachedShotStateDeclaration(P, { shotId, entityId })
+    : { status: "invalid-declaration", shotId, entityId };
+  if (result.status !== "applied") {
+    toast(SHOT_STATE_DECLARATION_RESULT_WORDS[result.status] || "The stale shot state declaration was not removed.");
+    return result;
+  }
+  if (result.operation === "retained-attached") {
+    toast("That reference is still attached to this shot, so its declaration was kept.");
+    route();
+    return result;
+  }
+  if (result.changed) dirty();
+  route();
+  toast(result.changed ? "Stale shot state declaration removed" : "No stale shot state declaration remained");
+  return result;
+}
+window.removeStaleShotStateDeclaration = (shotId, entityId) =>
+  clearStaleShotStateDeclarationFromUi(shotId, entityId);
 window.chooseShotContinuityState = (shotId, entityId, stateId) =>
   applyShotStateDeclarationFromUi(shotId, entityId, stateId);
 /* Kept for old extensions and the pre-existing browser regression, but no longer

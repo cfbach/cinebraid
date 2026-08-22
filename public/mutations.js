@@ -192,10 +192,22 @@ window.confirmDuplicateShot = (id) => {
   copy.creationBrief.referencePackDownloadedAt = "";
   copy.creationBrief.lastImagePackageId = "";
   copy.creationBrief.lastMotionPackageId = "";
+  const copiedStateDeclarations = mode !== "structure"
+    && copy.continuityStateSelections && typeof copy.continuityStateSelections === "object"
+    && !Array.isArray(copy.continuityStateSelections)
+    ? Object.entries(copy.continuityStateSelections).map(([entityId, stateId]) => ({
+        shotId: newId,
+        entityId,
+        stateId: String(stateId || ""),
+      }))
+    : [];
+  /* The cloned object never carries assignment authority. Once the new shot and
+     its cloned canonical attachments exist, the shared atomic owner re-applies
+     every declaration or none of them. */
+  copy.continuityStateSelections = {};
   if (mode === "structure") {
     copy.characters = [];
     copy.codes = [];
-    copy.continuityStateSelections = {};
     copy.creationBrief.locationId = "";
     copy.creationBrief.propIds = [];
     copy.creationBrief.disabledInputKeys = [];
@@ -206,6 +218,9 @@ window.confirmDuplicateShot = (id) => {
     copy.creationBrief.motionAudioNotes = "";
   }
   P.shots.push(copy);
+  const copiedStateResult = copiedStateDeclarations.length && typeof applyShotStateDeclarationBatch === "function"
+    ? applyShotStateDeclarationBatch(P, copiedStateDeclarations)
+    : { status: copiedStateDeclarations.length ? "invalid-declarations" : "applied" };
   for (const asset of P.mediaAssets || []) {
     const sourceLinks = (asset.links || []).filter((link) => link.targetType === "shot" && String(link.targetId) === String(id));
     for (const link of sourceLinks) asset.links.push({ ...JSON.parse(JSON.stringify(link)), id: `link-${Date.now().toString(36)}${Math.random().toString(36).slice(2,6)}`, targetId: newId });
@@ -214,7 +229,9 @@ window.confirmDuplicateShot = (id) => {
   closeModal();
   location.hash = `#/shot/${newId}`;
   route();
-  toast("Shot duplicated with reusable production context");
+  toast(copiedStateResult.status === "applied"
+    ? "Shot duplicated with reusable production context"
+    : "Shot duplicated; incompatible continuity-state declarations were not copied");
 };
 
 /* ---------- mutations ---------- */

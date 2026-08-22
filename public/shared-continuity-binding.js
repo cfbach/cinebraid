@@ -52,11 +52,14 @@
      - provider or model awareness
      - Date.now(), new Date(), Math.random()
 
-   ONE NARROW MUTATION. `applyShotStateDeclaration` is the product boundary for
-   writing the runtime shot binding. It validates the same owner-scoped fact this
-   module reads, including that the entity is genuinely attached to the shot,
-   before changing `shot.continuityStateSelections`. No UI caller gets to restate
-   those rules. Every other function in this module remains read-only. */
+   NARROW MUTATION OWNERS. `applyShotStateDeclaration` is the product boundary for
+   writing one runtime shot binding. `applyShotStateDeclarationBatch` applies that
+   same validation atomically across several shots, and
+   `clearDetachedShotStateDeclaration` is the explicit stale/detach cleanup. They
+   validate the same owner-scoped fact this module reads, including that assignment
+   targets are genuinely attached to the shot, before changing
+   `shot.continuityStateSelections`. No UI caller gets to restate those rules. Every
+   other function in this module remains read-only. */
 
 /* The profile name as it appears in `format.profiles`. */
 const CONTINUITY_PROFILE_ID = "continuity";
@@ -74,6 +77,7 @@ const SHOT_STATE_DECLARATION_RESULTS = [
   "state-owned-by-different-entity",
   "invalid-declaration",
 ];
+const SHOT_STATE_DECLARATION_BATCH_RESULTS = ["applied", "refused", "invalid-declarations"];
 const RUNTIME_FRAME_SELECTION_KEYS = {
   character: "characterStateSelections",
   location: "locationStateSelections",
@@ -134,33 +138,45 @@ function pointerToken(token) {
   return String(token).replace(/~/g, "~0").replace(/\//g, "~1");
 }
 
-/* First wins. Duplicates at one scope are a validation ERROR rather than a
-   merge, and a resolver that picked the last would make the reported error and
-   the resolved value disagree about which one is live. */
-function pickBinding(entityStates, entityId) {
-  const wanted = text(entityId);
-  if (!wanted) return "";
-  for (const entry of entityStates || []) if (entry && entry.entityId === wanted) return entry.stateId;
-  return "";
-}
-
 /* THE RULE. Everything else in this file exists to hand this function the same
    binding set no matter which representation the caller started from.
 
-   Returns "" for "nothing is declared here", which the caller resolves against
-   the entity's own default - deliberately NOT the default itself, because this
-   function has no entity and must never guess one. */
-function resolveBoundStateId(bindingSet, frameId, entityId) {
-  if (!isObject(bindingSet)) return "";
+   The declaration record carries the winning scope and source as well as its id,
+   so a readiness caller can route a frame override to a frame control without
+   restating precedence. First wins when malformed input duplicates an entity at
+   one scope, matching duplicateBindingEntityIds() and the canonical resolver. */
+function resolveBoundStateDeclaration(bindingSet, frameId, entityId) {
+  const empty = { scope: "", frameId: "", entityId: text(entityId), stateId: "", from: "" };
+  if (!isObject(bindingSet)) return Object.freeze(empty);
   const wantedFrame = text(frameId);
   if (wantedFrame) {
     const frame = (bindingSet.frames || []).find((entry) => entry && entry.frameId === wantedFrame);
     if (frame) {
-      const fromFrame = pickBinding(frame.entityStates, entityId);
-      if (fromFrame) return fromFrame;
+      const fromFrame = (frame.entityStates || []).find((entry) => entry && entry.entityId === text(entityId));
+      if (fromFrame) return Object.freeze({
+        scope: "frame",
+        frameId: wantedFrame,
+        entityId: text(entityId),
+        stateId: text(fromFrame.stateId),
+        from: text(fromFrame.from),
+      });
     }
   }
-  return pickBinding(bindingSet.entityStates, entityId);
+  const fromShot = (bindingSet.entityStates || []).find((entry) => entry && entry.entityId === text(entityId));
+  if (fromShot) return Object.freeze({
+    scope: "shot",
+    frameId: "",
+    entityId: text(entityId),
+    stateId: text(fromShot.stateId),
+    from: text(fromShot.from),
+  });
+  return Object.freeze(empty);
+}
+
+function resolveBoundStateId(bindingSet, frameId, entityId) {
+  /* "" means nothing is declared here. The caller resolves that absence against
+     the entity default; this owner has no entity and never guesses one. */
+  return resolveBoundStateDeclaration(bindingSet, frameId, entityId).stateId;
 }
 
 function isEmptyBindingSet(bindingSet) {
@@ -391,23 +407,23 @@ function shotEntityResolverOwner() {
   return null;
 }
 
-function applyShotStateDeclaration(project, declaration = {}) {
+function shotStateDeclarationValidation(project, declaration = {}) {
   const P = isObject(project) ? project : null;
-  if (!P || !isObject(declaration)) return shotStateDeclarationResult("invalid-declaration", declaration);
+  if (!P || !isObject(declaration)) return { result: shotStateDeclarationResult("invalid-declaration", declaration) };
   const shotId = text(declaration.shotId);
   const entityId = text(declaration.entityId);
   const stateId = text(declaration.stateId);
-  if (!shotId || !entityId) return shotStateDeclarationResult("invalid-declaration", declaration);
+  if (!shotId || !entityId) return { result: shotStateDeclarationResult("invalid-declaration", declaration) };
 
   const shot = (Array.isArray(P.shots) ? P.shots : []).find((row) => isObject(row) && text(row.id) === shotId);
-  if (!shot) return shotStateDeclarationResult("shot-not-found", declaration);
+  if (!shot) return { result: shotStateDeclarationResult("shot-not-found", declaration) };
 
   const entries = runtimeVisualEntityEntries(P).filter((row) => text(row.entity.id) === entityId);
-  if (!entries.length) return shotStateDeclarationResult("entity-not-found", declaration);
-  if (entries.length !== 1) return shotStateDeclarationResult("invalid-declaration", declaration);
+  if (!entries.length) return { result: shotStateDeclarationResult("entity-not-found", declaration) };
+  if (entries.length !== 1) return { result: shotStateDeclarationResult("invalid-declaration", declaration) };
 
   const resolver = shotEntityResolverOwner();
-  if (!resolver) return shotStateDeclarationResult("invalid-declaration", declaration);
+  if (!resolver) return { result: shotStateDeclarationResult("invalid-declaration", declaration) };
   const attached = resolver(P, shot);
   const attachedIds = [
     ...(attached.characters || []),
@@ -415,11 +431,29 @@ function applyShotStateDeclaration(project, declaration = {}) {
     ...(attached.props || []),
     ...(attached.vehicles || []),
   ].map((entity) => text(entity && entity.id)).filter(Boolean);
-  if (!attachedIds.includes(entityId)) return shotStateDeclarationResult("entity-not-attached", declaration);
+  if (!attachedIds.includes(entityId)) return { result: shotStateDeclarationResult("entity-not-attached", declaration) };
 
   const current = shot[RUNTIME_SHOT_SELECTION_KEY];
   if (current !== undefined && current !== null && !isObject(current))
-    return shotStateDeclarationResult("invalid-declaration", declaration);
+    return { result: shotStateDeclarationResult("invalid-declaration", declaration) };
+
+  const normalized = { shotId, entityId, stateId };
+  if (!stateId) return { P, shot, current, entity: entries[0].entity, declaration: normalized };
+
+  const entity = entries[0].entity;
+  const states = Array.isArray(entity.continuityStates) ? entity.continuityStates : [];
+  if (!stateIdBelongsToEntity(states, stateId)) {
+    const foreign = runtimeVisualEntityEntries(P).some((row) => row.entity !== entity
+      && stateIdBelongsToEntity(row.entity.continuityStates, stateId));
+    return { result: shotStateDeclarationResult(foreign ? "state-owned-by-different-entity" : "state-not-found", normalized) };
+  }
+  return { P, shot, current, entity, declaration: normalized };
+}
+
+function commitShotStateDeclaration(validation) {
+  const { shot, declaration } = validation;
+  const { entityId, stateId } = declaration;
+  const current = shot[RUNTIME_SHOT_SELECTION_KEY];
 
   /* Attachment cleanup is part of this owner so a detach cannot leave a valid
      binding behind that later masquerades as an attachment of its own. */
@@ -429,19 +463,46 @@ function applyShotStateDeclaration(project, declaration = {}) {
     return shotStateDeclarationResult("applied", declaration, { changed: existed, operation: "cleared" });
   }
 
-  const entity = entries[0].entity;
-  const states = Array.isArray(entity.continuityStates) ? entity.continuityStates : [];
-  if (!stateIdBelongsToEntity(states, stateId)) {
-    const foreign = runtimeVisualEntityEntries(P).some((row) => row.entity !== entity
-      && stateIdBelongsToEntity(row.entity.continuityStates, stateId));
-    return shotStateDeclarationResult(foreign ? "state-owned-by-different-entity" : "state-not-found", declaration);
-  }
-
   const selections = isObject(current) ? current : {};
   const changed = text(selections[entityId]) !== stateId;
   if (!isObject(current)) shot[RUNTIME_SHOT_SELECTION_KEY] = selections;
   selections[entityId] = stateId;
   return shotStateDeclarationResult("applied", declaration, { changed, operation: "selected" });
+}
+
+function applyShotStateDeclaration(project, declaration = {}) {
+  const validation = shotStateDeclarationValidation(project, declaration);
+  return validation.result || commitShotStateDeclaration(validation);
+}
+
+/* Existing batch behavior did not establish a supported partial-application
+   contract: it simply wrote every selected shot. The owner therefore chooses the
+   narrow safe meaning. Every declaration is validated first; one refusal means no
+   declaration is committed. */
+function shotStateDeclarationBatchResult(status, declarations, extra = {}) {
+  return Object.freeze({
+    status: SHOT_STATE_DECLARATION_BATCH_RESULTS.includes(status) ? status : "invalid-declarations",
+    atomic: true,
+    count: Array.isArray(declarations) ? declarations.length : 0,
+    ...extra,
+  });
+}
+
+function applyShotStateDeclarationBatch(project, declarations = []) {
+  if (!Array.isArray(declarations) || !declarations.length)
+    return shotStateDeclarationBatchResult("invalid-declarations", declarations, { changed: false });
+  const validations = declarations.map((declaration) => shotStateDeclarationValidation(project, declaration));
+  const failureIndex = validations.findIndex((validation) => !!validation.result);
+  if (failureIndex >= 0) return shotStateDeclarationBatchResult("refused", declarations, {
+    changed: false,
+    failureIndex,
+    failure: validations[failureIndex].result,
+  });
+  const results = validations.map((validation) => commitShotStateDeclaration(validation));
+  return shotStateDeclarationBatchResult("applied", declarations, {
+    changed: results.some((result) => result.changed),
+    results: Object.freeze(results),
+  });
 }
 
 /* Attachment mutations call this after changing one relationship. It removes
@@ -480,12 +541,14 @@ const CONTINUITY_BINDING_EXPORTS = {
   RUNTIME_SHOT_SELECTION_KEY,
   RUNTIME_VISUAL_ENTITY_LISTS,
   SHOT_STATE_DECLARATION_RESULTS,
+  SHOT_STATE_DECLARATION_BATCH_RESULTS,
   RUNTIME_FRAME_SELECTION_KEYS,
   RUNTIME_FRAME_SELECTION_KEY_LIST,
   RUNTIME_FRAME_LOCATION_KEY,
   readShotStateBindings,
   unattributedFrameLocationStates,
   resolveBoundStateId,
+  resolveBoundStateDeclaration,
   isEmptyBindingSet,
   buildContinuityProfile,
   continuityProfileBindings,
@@ -493,6 +556,7 @@ const CONTINUITY_BINDING_EXPORTS = {
   duplicateBindingEntityIds,
   stateIdBelongsToEntity,
   applyShotStateDeclaration,
+  applyShotStateDeclarationBatch,
   clearDetachedShotStateDeclaration,
 };
 

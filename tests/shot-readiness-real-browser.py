@@ -369,6 +369,147 @@ try:
                 f"{banned!r} must not appear in the setup block: {surface['setupText'][:160]!r}"
         findings.append("7. rendered surface carries ONE readiness verdict; setup block declares no verdict")
 
+        # ---- 8. CORRECTED STATE PRODUCERS REACH THEIR OWN REPAIR SURFACES -----------
+        # This is deliberately driven through the rendered NEXT ACTION button and the
+        # shipped controls. The Node suite owns the exhaustive owner/refusal matrix;
+        # Chromium proves that the two formerly overloaded producers are actionable.
+        correction = page.evaluate("""() => {
+            const entity = P.characters[0];
+            if (!entity) throw new Error('the demo has no character for the state-action fixture');
+            entity.continuityStates = [
+              { id: 'state-browser-clean', name: 'Browser clean', isDefault: true, approvedFile: entity.approvedFile || '' },
+              { id: 'state-browser-rain', name: 'Browser rain', isDefault: false, approvedFile: entity.approvedFile || '' },
+            ];
+            const shot = JSON.parse(JSON.stringify(P.shots[0]));
+            shot.id = 'SHOT-STATE-BROWSER';
+            shot.title = 'State action browser fixture';
+            shot.characters = [];
+            shot.codes = [];
+            shot.creationBrief = {
+              ...(shot.creationBrief || {}),
+              locationId: '', propIds: [], vehicleIds: [], frameWorkflows: {},
+            };
+            shot.continuityStateSelections = { [entity.id]: 'state-browser-rain' };
+            P.shots.push(shot);
+            return { shotId: shot.id, entityId: entity.id };
+        }""")
+
+        page.goto(f"{base}/#/shot/{correction['shotId']}", wait_until="domcontentloaded")
+        page.wait_for_selector("button.shot-primary-action", timeout=15000)
+        stale_before = page.evaluate("""(shotId) => {
+            const shot = P.shots.find((row) => row.id === shotId);
+            const readiness = shotReadinessFor(shot);
+            return {
+              action: readiness.nextAction.code,
+              attached: resolveShotEntities(P, shot).characters.map((row) => row.id),
+              call: document.querySelector('button.shot-primary-action')?.getAttribute('onclick') || '',
+            };
+        }""", correction["shotId"])
+        assert stale_before["action"] == "remove-stale-state-declaration", \
+            f"the declaration-only producer did not become the rendered next action: {stale_before}"
+        assert correction["entityId"] not in stale_before["attached"], \
+            f"the declaration key incorrectly established attachment: {stale_before}"
+        assert "remove-stale-state-declaration" in stale_before["call"], \
+            f"the rendered NEXT ACTION did not carry the stale action token: {stale_before['call']!r}"
+        page.locator("button.shot-primary-action").first.click()
+        page.wait_for_selector('[data-readiness-action-surface="shot-stale-state-declaration"]', timeout=15000)
+        stale_surface = page.evaluate("""(entityId) => ({
+            stale: !!document.querySelector(`[data-stale-shot-state-declaration="${CSS.escape(entityId)}"] button`),
+            shotSelector: !!document.querySelector(`[data-shot-state-entity="${CSS.escape(entityId)}"] select`),
+        })""", correction["entityId"])
+        assert stale_surface["stale"] and not stale_surface["shotSelector"], \
+            f"stale NEXT ACTION did not reach truthful cleanup exclusively: {stale_surface}"
+        page.locator(f'[data-stale-shot-state-declaration="{correction["entityId"]}"] button').click()
+        page.wait_for_function("""({ shotId, entityId }) => {
+            const shot = P.shots.find((row) => row.id === shotId);
+            return shot && !Object.prototype.hasOwnProperty.call(shot.continuityStateSelections || {}, entityId);
+        }""", arg=correction)
+        stale_after = page.evaluate("""({ shotId, entityId }) => {
+            const shot = P.shots.find((row) => row.id === shotId);
+            return {
+              action: shotReadinessFor(shot).nextAction.code,
+              attached: resolveShotEntities(P, shot).characters.some((row) => row.id === entityId),
+            };
+        }""", arg=correction)
+        assert stale_after["action"] != "remove-stale-state-declaration" and not stale_after["attached"], \
+            f"explicit cleanup did not resolve only the stale key: {stale_after}"
+        findings.append("8a. declaration-only NEXT ACTION rendered explicit stale cleanup; a real click removed the key without attaching the entity")
+
+        correction["frameId"] = page.evaluate("""({ shotId, entityId }) => {
+            const shot = P.shots.find((row) => row.id === shotId);
+            delete P.productionAuthority;
+            const currentFrame = (shotReadinessFor(shot).units || []).find((unit) => String(unit.id || '').startsWith('frame:'));
+            const frameId = String(currentFrame?.id || '').replace(/^frame:/, '') || 'frame-a';
+            shot.characters = [entityId];
+            shot.continuityStateSelections = { [entityId]: 'state-browser-clean' };
+            shot.creationBrief.frameWorkflows = { ...(shot.creationBrief.frameWorkflows || {}) };
+            shot.creationBrief.frameWorkflows[frameId] = {
+              ...(shot.creationBrief.frameWorkflows[frameId] || {}),
+              characterStateSelections: { [entityId]: 'state-browser-missing' },
+            };
+            return frameId;
+        }""", correction)
+        page.goto(f"{base}/#/shot/{correction['shotId']}", wait_until="domcontentloaded")
+        page.wait_for_selector("button.shot-primary-action", timeout=15000)
+        frame_before = page.evaluate("""(shotId) => {
+            const shot = P.shots.find((row) => row.id === shotId);
+            const readiness = shotReadinessFor(shot);
+            return {
+              action: readiness.nextAction.code,
+              call: document.querySelector('button.shot-primary-action')?.getAttribute('onclick') || '',
+              units: (readiness.units || []).map((unit) => ({ id: unit.id, required: unit.required, action: unit.nextAction?.code || '', reasons: (unit.requirements || []).map((row) => row.reason || row.state) })),
+            };
+        }""", correction["shotId"])
+        assert frame_before["action"] == "resolve-frame-state-declaration", \
+            f"the invalid frame producer did not become the rendered next action: {frame_before}"
+        assert "resolve-frame-state-declaration" in frame_before["call"], \
+            f"the rendered NEXT ACTION did not carry the frame action token: {frame_before['call']!r}"
+        page.locator("button.shot-primary-action").first.click()
+        page.wait_for_selector('[data-readiness-action-surface="shot-frame-state-declaration"]', timeout=15000)
+        frame_surface = page.evaluate("""() => ({
+            frame: !!document.querySelector('[data-frame-state-declaration-invalid="1"] select'),
+            shotSurface: !!document.querySelector('[data-readiness-action-surface="shot-state-declaration"]'),
+        })""")
+        assert frame_surface["frame"] and not frame_surface["shotSurface"], \
+            f"frame NEXT ACTION presented the wrong repair surface: {frame_surface}"
+
+        false_success = page.evaluate("""({ shotId, entityId, frameId }) => {
+            const result = chooseShotContinuityState(shotId, entityId, 'state-browser-rain');
+            const shot = P.shots.find((row) => row.id === shotId);
+            return {
+              status: result.status,
+              action: shotReadinessFor(shot).nextAction.code,
+              shotState: shot.continuityStateSelections[entityId],
+              frameState: shot.creationBrief.frameWorkflows[frameId].characterStateSelections[entityId],
+            };
+        }""", correction)
+        assert false_success == {
+            "status": "applied", "action": "resolve-frame-state-declaration",
+            "shotState": "state-browser-rain", "frameState": "state-browser-missing",
+        }, f"changing the shot declaration was mistaken for frame repair: {false_success}"
+
+        frame_select = page.locator('[data-frame-state-declaration-invalid="1"] select').first
+        frame_select.select_option("state-browser-clean")
+        page.wait_for_function("""({ shotId }) => {
+            const shot = P.shots.find((row) => row.id === shotId);
+            const requirements = (shotReadinessFor(shot).units || []).flatMap((unit) => unit.requirements || []);
+            return !requirements.some((row) => row.reason === 'frame-state-not-on-entity');
+        }""", arg=correction)
+        frame_after = page.evaluate("""({ shotId, entityId, frameId }) => {
+            const shot = P.shots.find((row) => row.id === shotId);
+            return {
+              shotState: shot.continuityStateSelections[entityId],
+              frameState: shot.creationBrief.frameWorkflows[frameId].characterStateSelections[entityId],
+              action: shotReadinessFor(shot).nextAction.code,
+            };
+        }""", correction)
+        assert frame_after["shotState"] == "state-browser-rain", \
+            f"the frame owner silently rewrote the shot declaration: {frame_after}"
+        assert frame_after["frameState"] == "state-browser-clean" \
+            and frame_after["action"] != "resolve-frame-state-declaration", \
+            f"the real frame control did not clear its own blocker: {frame_after}"
+        findings.append("8b. frame NEXT ACTION rendered the existing frame control; shot mutation left the blocker, then a real frame selection cleared it without rewriting shot state")
+
         assert not paid_calls, f"a paid route was called: {paid_calls}"
         assert not offsite, f"a request left this machine: {offsite}"
         assert not page_errors, f"uncaught page errors: {page_errors}"

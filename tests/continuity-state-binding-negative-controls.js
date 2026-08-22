@@ -183,10 +183,8 @@ async function main() {
     mutatesModule: {
       file: "public/shared-continuity-binding.js",
       edits: [[
-        `  return pickBinding(bindingSet.entityStates, entityId);
-}`,
-        `  return "";
-}`,
+        `  const fromShot = (bindingSet.entityStates || []).find((entry) => entry && entry.entityId === text(entityId));`,
+        `  const fromShot = null;`,
       ]],
     },
     probe: (suite) => {

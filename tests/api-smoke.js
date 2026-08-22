@@ -1822,6 +1822,9 @@ async function main() {
           block: "A maintenance worker in a practical suit.",
           visualDescription: "Dark utility suit with a rectangular shoulder patch.",
           audio: { voiceDesignPrompt: "A calm mid-register adult voice with measured technical delivery." },
+          continuityStates: [
+            { id: "state-worker-clean", name: "Clean work suit", isDefault: true },
+          ],
         },
       ],
       locations: [],
@@ -1865,7 +1868,7 @@ async function main() {
             vo: "Legacy production note retained for compatibility.",
             sfx: "Soft tool click.",
           },
-          continuityStateSelections: {},
+          continuityStateSelections: { "CHAR-WORKER": "state-worker-clean" },
           clips: [
             {
               title: "Reference-led repair",
@@ -1896,6 +1899,17 @@ async function main() {
       decisions: [{ summary: "Invented decision" }],
       sessions: [{ summary: "Invented history" }],
     };
+    const unattachedDeclarationImport = structuredClone(leanImport);
+    unattachedDeclarationImport.meta.title = "Unattached declaration import";
+    unattachedDeclarationImport.shots[0].characters = [];
+    result = await request("/api/projects/preview-import-json", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ project: unattachedDeclarationImport }),
+    });
+    assert.strictEqual(result.response.status, 400);
+    assert.match(result.body.error, /canonical owner \(entity-not-attached\)/i);
+
     result = await request("/api/projects/preview-import-json", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -1964,6 +1978,9 @@ async function main() {
     assert.strictEqual(importedProject.qcChecklist.length, 5);
     assert.strictEqual(importedProject.characters[0].continuityStates.length, 1);
     assert.strictEqual(importedProject.characters[0].continuityStates[0].isDefault, true);
+    assert.deepStrictEqual(importedProject.shots[0].continuityStateSelections, {
+      "CHAR-WORKER": "state-worker-clean",
+    });
     assert.strictEqual(importedProject.scenes[0].tier, "B");
     assert.strictEqual(importedProject.shots[0].keyframes.length, 1);
     assert.strictEqual(

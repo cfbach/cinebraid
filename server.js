@@ -26,6 +26,7 @@ const PromptEngine = require("./prompt-engine");
 const { annotateProfileLibraryExecution } = require("./generation-options");
 const { httpStatusForError } = require("./http-errors");
 const { resolveShotEntities, shotEntityTokenMatches, unresolvedShotDependencies, entityVisualDescription, resolveShotDuration, lossyShotCodeTokens } = require("./public/shared-entities");
+const ContinuityBinding = require("./public/shared-continuity-binding");
 const { referenceAspectLabel, aspectRatioMentions } = require("./public/shared-aspect");
 const { deriveLipSync, lipSyncRequiredFrom } = require("./public/shared-lip-sync");
 const ShotRoute = require("./public/shared-shot-route");
@@ -2719,7 +2720,7 @@ function normalizeBuilderClips(shot, frames, warnings) {
   });
 }
 
-function normalizeBuilderShot(shot, index, warnings, inferences) {
+function normalizeBuilderShot(shot, index, warnings, inferences, stateDeclarations) {
   const source = builderObject(shot),
     normalized = {
       ...source,
@@ -2759,7 +2760,9 @@ function normalizeBuilderShot(shot, index, warnings, inferences) {
           sync: String(audio.sync || ""),
         };
       })(),
-      continuityStateSelections: builderObject(source.continuityStateSelections),
+      /* Imported assignments are collected below and applied only after the whole
+         normalized project can be validated by the canonical owner. */
+      continuityStateSelections: {},
       candidateFiles: builderArray(source.candidateFiles),
       stageApprovals: builderObject(source.stageApprovals),
       generationPackages: builderArray(source.generationPackages),
@@ -2769,6 +2772,8 @@ function normalizeBuilderShot(shot, index, warnings, inferences) {
       referenceRoles: builderObject(source.referenceRoles),
       referenceSelection: builderObject(source.referenceSelection),
     };
+  for (const [entityId, stateId] of Object.entries(builderObject(source.continuityStateSelections)))
+    stateDeclarations.push({ shotId: normalized.id, entityId, stateId: String(stateId || "") });
   /* A DECLARED ROUTE IS AUTHORED INTENT, so it survives import; a route this build
      cannot read is removed and said out loud.
 
@@ -2814,6 +2819,7 @@ function normalizeImportedProject(raw) {
        the object it was made about. Nothing is written into the project. */
     inferences = [],
     source = JSON.parse(JSON.stringify(raw)),
+    shotStateDeclarations = [],
     blank = BLANK(),
     project = {
       ...blank,
@@ -2861,8 +2867,17 @@ function normalizeImportedProject(raw) {
     normalizeBuilderScene(item, index, warnings, inferences),
   );
   project.shots = builderArray(source.shots).map((item, index) =>
-    normalizeBuilderShot(item, index, warnings, inferences),
+    normalizeBuilderShot(item, index, warnings, inferences, shotStateDeclarations),
   );
+  if (shotStateDeclarations.length) {
+    const stateResult = ContinuityBinding.applyShotStateDeclarationBatch(project, shotStateDeclarations);
+    if (stateResult.status !== "applied") {
+      const failure = stateResult.failure || {};
+      throw new Error(
+        `Project Builder validation failed: shot continuity declaration ${stateResult.failureIndex + 1} was refused by the canonical owner (${failure.status || stateResult.status}).`,
+      );
+    }
+  }
   project.audio = builderArray(source.audio).map((item, index) => {
     const audio = builderObject(item);
     return {
@@ -2922,7 +2937,6 @@ function validateImportedProject(raw) {
     if (!Array.isArray(raw[key])) errors.push(`${key} must be an array.`);
 
   const idPattern = /^[A-Z0-9_-]+$/;
-  const entityById = new Map();
   function uniqueRecords(list, label) {
     const seen = new Set();
     for (const item of Array.isArray(list) ? list : []) {
@@ -2951,7 +2965,6 @@ function validateImportedProject(raw) {
     ["vehicle", raw.vehicles],
   ]) {
     for (const entity of Array.isArray(list) ? list : []) {
-      entityById.set(entity.id, entity);
       if (!String(entity.name || "").trim())
         errors.push(`${kind} ${entity.id || "(missing id)"} needs a name.`);
       const states = Array.isArray(entity.continuityStates)
@@ -3045,24 +3058,6 @@ function validateImportedProject(raw) {
       if (clip.kind === "r2v" && (clip.dur < 4 || clip.dur > 15))
         warnings.push(
           `Shot ${shot.id} reference-led motion unit ${clipId} is ${clip.dur || 0}s; Seedance Omni packages support 4–15s, so split or retime this unit before motion generation.`,
-        );
-    }
-    const selections =
-      shot.continuityStateSelections &&
-      typeof shot.continuityStateSelections === "object"
-        ? shot.continuityStateSelections
-        : {};
-    for (const [entityId, stateId] of Object.entries(selections)) {
-      const entity = entityById.get(entityId);
-      if (!entity)
-        errors.push(
-          `Shot ${shot.id} selects continuity for unknown entity ${entityId}.`,
-        );
-      else if (
-        !(entity.continuityStates || []).some((state) => state.id === stateId)
-      )
-        errors.push(
-          `Shot ${shot.id} selects unknown state ${stateId} for ${entityId}.`,
         );
     }
     if (

@@ -10,6 +10,10 @@ const read = (name) => fs.readFileSync(path.join(ROOT, name), "utf8");
 
 async function main() {
   const fixture = buildFixture();
+  fixture.characters.find((row) => row.id === "KAI").continuityStates = [
+    { id: "state-default", name: "Default", isDefault: true, approvedFile: "KAI-ANCHOR.png" },
+    { id: "state-night", name: "Night", isDefault: false, approvedFile: "KAI-NIGHT.png" },
+  ];
   const shot = fixture.shots.find((row) => row.id === "L1-01");
   shot.characters = [...(shot.characters || []), "MISSING-CHAR"];
   shot.creationBrief = {

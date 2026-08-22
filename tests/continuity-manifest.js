@@ -27,6 +27,8 @@ const {
   CONTINUITY_MANIFEST_VERSION,
   MANIFEST_HASH_LENGTH,
 } = require("../public/shared-continuity");
+const Binding = require("../public/shared-continuity-binding");
+const Entities = require("../public/shared-entities");
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
 
@@ -380,13 +382,24 @@ const sandbox = {
   console,
   setTimeout,
   clearTimeout,
+  applyShotStateDeclaration: Binding.applyShotStateDeclaration,
+  clearDetachedShotStateDeclaration: Binding.clearDetachedShotStateDeclaration,
+  resolveShotEntities: Entities.resolveShotEntities,
 };
 sandbox.globalThis = sandbox;
 vm.createContext(sandbox);
 vm.runInContext(fs.readFileSync(path.join(ROOT, "public", "creation-studio.js"), "utf8"), sandbox, { filename: "creation-studio.js" });
 assert.strictEqual(typeof sandbox.updateShotDependencyRelationship, "function", "the relink path must be loadable for testing");
 
-const relinkShot = buildShot();
+const relinkProject = buildProject();
+relinkProject.props.push({
+  id: "PROP-TIN-MUG",
+  name: "Tin mug",
+  description: "Replacement mug record.",
+  continuityStates: defaultStates(),
+});
+const relinkShot = relinkProject.shots[0];
+sandbox.P = relinkProject;
 relinkShot.continuityStateSelections = { "PROP-MUG": "state-default" };
 relinkShot.continuityIntent = {
   "PROP-MUG": { expected: ["the mug is set down"], allowPresenceChange: "may-leave", note: "planned" },

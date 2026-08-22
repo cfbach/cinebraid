@@ -157,6 +157,7 @@
       readinessActions: [
         { code: "establish-media-availability", surface: "shot-inputs", renderer: "guidedSourceInputsPanel", control: "guidedShotAttachmentPicker" },
         { code: "resolve-relationship", surface: "shot-inputs", renderer: "guidedUnresolvedDependenciesMarkup", control: "openShotDependencyRelink" },
+        { code: "remove-stale-state-declaration", surface: "shot-stale-state-declaration", renderer: "guidedSourceInputsPanel", control: "guidedStaleShotStateDeclarations", focus: '[data-stale-shot-state-declaration] button' },
         { code: "resolve-state-declaration", surface: "shot-state-declaration", renderer: "guidedSourceInputsPanel", control: "guidedShotStateDeclarations", focus: '[data-shot-state-declaration-invalid="1"] select' },
         { code: "resolve-media-ownership", surface: "shot-inputs", renderer: "guidedShotAttachmentPicker", control: "guidedEntityPickerButton" },
         { code: "declare-producible-unit", surface: "shot-inputs", renderer: "shotIntentControl", control: "setShotIntent" },
@@ -206,6 +207,7 @@
       panels: ["still", "review", "frames"],
       readinessActions: [
         { code: "repair-presence-declaration", surface: "shot-frames", renderer: "guidedFramePresencePanel", control: "setFramePresence" },
+        { code: "resolve-frame-state-declaration", panel: "frames", surface: "shot-frame-state-declaration", renderer: "guidedContinuityPanel", control: "continuityFrameStatePanelMarkup", focus: '[data-frame-state-declaration-invalid="1"] select' },
         { code: "approve-parent-frame", surface: "shot-frames", renderer: "guidedFrameCandidatesPanel", control: "approveGuidedFrame" },
         { code: "approve-required-frames", surface: "shot-frames", renderer: "guidedFrameCandidatesPanel", control: "approveGuidedFrame" },
         { code: "produce-frame", surface: "shot-frames", renderer: "guidedFrameCandidatesPanel", control: "guidedFrameCandidatesPanel" },
@@ -289,7 +291,7 @@
       code: action.code,
       destinationId: stage.id,
       stageId: stage.id,
-      panel: stage.panels[0] || "",
+      panel: action.panel || stage.panels[0] || "",
       navigation: stage.navigation,
       surface: action.surface,
       control: action.control,

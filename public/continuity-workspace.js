@@ -230,7 +230,12 @@ const CONTINUITY_STATE_MAP_KEYS = {
 function frameStateSelection(s, frameId, kind, entityId) {
   const workflow = (ensureShotCreation(s).frameWorkflows || {})[frameId];
   if (!workflow || typeof workflow !== "object") return "";
-  if (kind === "location") return String(workflow.locationStateId || "");
+  if (kind === "location") {
+    const explicit = workflow.locationStateSelections;
+    if (explicit && typeof explicit === "object" && !Array.isArray(explicit) && String(explicit[entityId] || ""))
+      return String(explicit[entityId]);
+    return String(workflow.locationStateId || "");
+  }
   const map = workflow[CONTINUITY_STATE_MAP_KEYS[kind]];
   return map && typeof map === "object" ? String(map[entityId] || "") : "";
 }
@@ -243,6 +248,15 @@ window.setFrameContinuityState = (shotId, frameId, kind, entityId, stateId) => {
     : {};
   const value = String(stateId || "");
   if (kind === "location") {
+    /* The shared binding reader honours the older per-entity location map before
+       the bare locationStateId. Clear that exact legacy entry while repairing it,
+       or writing the current frame control would leave the invalid higher-priority
+       override in force and falsely appear successful. */
+    const explicit = workflow.locationStateSelections;
+    if (explicit && typeof explicit === "object" && !Array.isArray(explicit)) {
+      delete explicit[entityId];
+      if (!Object.keys(explicit).length) delete workflow.locationStateSelections;
+    }
     if (value) workflow.locationStateId = value;
     else delete workflow.locationStateId;
   } else {
@@ -472,23 +486,51 @@ function continuityIntentPanelMarkup(s, rows) {
 /* ---------- per-frame state surface --------------------------------------- */
 
 function continuityFrameStatePanelMarkup(s, rows, pair) {
-  if (!rows.length || !pair) return "";
+  if (!rows.length) return "";
   const key = `${s.id}:continuity-frame-states`;
-  const frames = [pair.a, pair.b];
+  const allFrames = (typeof guidedFrames === "function" ? guidedFrames(s) : (s.keyframes || []))
+    .map((frame, index) => ({ frame, index }));
+  /* Pair controls keep their existing order. Invalid overrides outside the active
+     approved pair are appended so every readiness producer has a reachable repair
+     control, including an unapproved frame that cannot yet participate in a visual
+     comparison. */
+  const invalidFrameIds = new Set();
+  for (const row of rows) {
+    const owned = new Set((typeof entityStateListRead === "function" ? entityStateListRead(row.entity, true) : (row.entity.continuityStates || []))
+      .map((state) => String(state?.id || "")).filter(Boolean));
+    for (const frameRow of allFrames) {
+      const current = frameStateSelection(s, frameRow.frame.id, row.type, row.entity.id);
+      if (current && !owned.has(current)) invalidFrameIds.add(String(frameRow.frame.id));
+    }
+  }
+  const frames = [];
+  for (const frameRow of pair ? [pair.a, pair.b] : [])
+    if (frameRow?.frame?.id && !frames.some((row) => row.frame.id === frameRow.frame.id)) frames.push(frameRow);
+  for (const frameRow of allFrames)
+    if (invalidFrameIds.has(String(frameRow.frame.id)) && !frames.some((row) => row.frame.id === frameRow.frame.id)) frames.push(frameRow);
+  if (!frames.length) return "";
   const declared = rows.reduce((total, row) => total + frames.filter((frameRow) => frameStateSelection(s, frameRow.frame.id, row.type, row.entity.id)).length, 0);
   const body = rows.map((row) => {
     const states = typeof entityStateList === "function" ? entityStateListRead(row.entity, true) : (row.entity.continuityStates || []);
-    if (states.length < 2) return "";
+    const hasInvalid = frames.some((frameRow) => {
+      const current = frameStateSelection(s, frameRow.frame.id, row.type, row.entity.id);
+      return !!current && !states.some((state) => String(state.id || "") === current);
+    });
+    if (states.length < 2 && !hasInvalid) return "";
     const cells = frames.map((frameRow) => {
       const current = frameStateSelection(s, frameRow.frame.id, row.type, row.entity.id);
-      const inherited = typeof resolveDeclaredStateId === "function" ? resolveDeclaredStateId(s, frameRow.frame.id, row.type, row.entity.id) : "";
+      const invalid = !!current && !states.some((state) => String(state.id || "") === current);
+      const inherited = typeof resolveDeclaredStateId === "function" ? resolveDeclaredStateId(s, "", row.type, row.entity.id) : "";
       const effective = typeof resolveStateRecord === "function" ? resolveStateRecord(row.entity, inherited) : states[0];
-      return `<label><span>${esc(continuityFrameWord(frameRow))}</span><select onchange="setFrameContinuityState('${attr(s.id)}','${attr(frameRow.frame.id)}','${attr(row.type)}','${attr(row.entity.id)}',this.value)"><option value="" ${current ? "" : "selected"}>Follow the shot — ${esc(effective?.name || "Default")}</option>${states.map((state) => `<option value="${attr(state.id)}" ${current === state.id ? "selected" : ""}>${esc(state.name || "State")}</option>`).join("")}</select></label>`;
+      const invalidOption = invalid
+        ? `<option value="${attr(current)}" selected disabled>Invalid override · ${esc(current)} is not owned by ${esc(row.entity.name || row.entity.id)}</option>`
+        : "";
+      return `<label data-frame-state-declaration-invalid="${invalid ? "1" : "0"}" data-frame-state-frame="${attr(frameRow.frame.id)}" data-frame-state-entity="${attr(row.entity.id)}"><span>${esc(continuityFrameWord(frameRow))}</span><select aria-label="State for ${attr(row.entity.name || row.entity.id)} on ${attr(continuityFrameWord(frameRow))}" onchange="setFrameContinuityState('${attr(s.id)}','${attr(frameRow.frame.id)}','${attr(row.type)}','${attr(row.entity.id)}',this.value)"><option value="" ${current ? "" : "selected"}>Follow the shot — ${esc(effective?.name || "Default")}</option>${invalidOption}${states.map((state) => `<option value="${attr(state.id)}" ${!invalid && current === state.id ? "selected" : ""}>${esc(state.name || "State")}</option>`).join("")}</select></label>`;
     }).join("");
     return `<article class="continuity-state-row"><header><b>${esc(row.entity.name || row.entity.id)}</b><small>${esc(CONTINUITY_KIND_WORDS[row.type] || row.type)}</small></header><div class="continuity-state-cells">${cells}</div></article>`;
   }).join("");
   if (!body) return "";
-  return `<details class="fold continuity-frame-states" ${workspaceSectionOpen(key, false) ? "open" : ""} ontoggle="rememberWorkspaceSection('${attr(key)}',this.open)"><summary>Frame states${esc(continuityFoldCount(declared, "override", "overrides"))}</summary><p class="hint">Set a frame-specific state when a change is intentional. Otherwise the frame follows the shot, then the reference default.</p><div class="continuity-state-grid">${body}</div></details>`;
+  return `<details class="fold continuity-frame-states" data-readiness-action-surface="shot-frame-state-declaration" ${workspaceSectionOpen(key, false) ? "open" : ""} ontoggle="rememberWorkspaceSection('${attr(key)}',this.open)"><summary>Frame states${esc(continuityFoldCount(declared, "override", "overrides"))}</summary><p class="hint">Set a frame-specific state when a change is intentional. Otherwise the frame follows the shot, then the reference default. Invalid overrides remain visible until this frame control changes them.</p><div class="continuity-state-grid">${body}</div></details>`;
 }
 
 /* ---------- the section --------------------------------------------------- */

@@ -66,7 +66,8 @@
    Does NOT own, and must never re-derive:
      what Canon is                    the authority kernel, through
                                       currentHumanAuthority() / historicSelection()
-     which state a shot declares      resolveDeclaredStateId() (the binding contract)
+     which state/scope is declared    readShotStateBindings() /
+                                      resolveBoundStateDeclaration() (the binding contract)
      whether a state exists on an     stateIdBelongsToEntity(), owner-scoped —
        entity                         there is no global state lookup and must
                                       never be one
@@ -271,6 +272,12 @@
        falls back to the default so a renderer has something to draw; readiness must
        NOT, or it reproduces the state-substitution defect one layer up. */
     "declared-state-not-on-entity",
+    /* a frame override asked for a state the entity does not have. Its repair is
+       frame-scoped and must never be routed through the shot declaration control. */
+    "frame-state-not-on-entity",
+    /* a shot state key names a known entity that canonical attachment data does not
+       attach. The declaration is stale; it is never attachment evidence. */
+    "stale-state-declaration",
     /* CineBraid cannot tell who this frame excludes. */
     "presence-declaration-malformed",
     /* two references durably claim the same bytes. */
@@ -316,7 +323,9 @@
     "confirm-existing-reference",
     "reapprove-revoked-reference",
     "resolve-relationship",
+    "remove-stale-state-declaration",
     "resolve-state-declaration",
+    "resolve-frame-state-declaration",
     "repair-presence-declaration",
     "resolve-media-ownership",
     "declare-producible-unit",
@@ -376,10 +385,12 @@
   const validateAuthorityLedger = requireOwner(KERNEL && KERNEL.validateAuthorityLedger, "validateAuthorityLedger", "shared-authority-kernel.js");
   const resolveApprovalMediaOwner = requireOwner(DISPOSITION && DISPOSITION.resolveApprovalMedia, "resolveApprovalMedia", "shared-media-disposition.js");
   const shotDependencyRecordsOwner = requireOwner(ENTITIES && ENTITIES.shotDependencyRecords, "shotDependencyRecords", "shared-entities.js");
+  const resolveShotEntitiesOwner = requireOwner(ENTITIES && ENTITIES.resolveShotEntities, "resolveShotEntities", "shared-entities.js");
   const lossyShotCodeTokensOwner = requireOwner(ENTITIES && ENTITIES.lossyShotCodeTokens, "lossyShotCodeTokens", "shared-entities.js");
-  const resolveDeclaredStateIdOwner = requireOwner(CONTINUITY && CONTINUITY.resolveDeclaredStateId, "resolveDeclaredStateId", "shared-continuity.js");
   const resolveStateRecordOwner = requireOwner(CONTINUITY && CONTINUITY.resolveStateRecord, "resolveStateRecord", "shared-continuity.js");
   const stateIdBelongsToEntityOwner = requireOwner(BINDING && BINDING.stateIdBelongsToEntity, "stateIdBelongsToEntity", "shared-continuity-binding.js");
+  const readShotStateBindingsOwner = requireOwner(BINDING && BINDING.readShotStateBindings, "readShotStateBindings", "shared-continuity-binding.js");
+  const resolveBoundStateDeclarationOwner = requireOwner(BINDING && BINDING.resolveBoundStateDeclaration, "resolveBoundStateDeclaration", "shared-continuity-binding.js");
   const framePresenceRecordStatusOwner = requireOwner(PRESENCE && PRESENCE.framePresenceRecordStatus, "framePresenceRecordStatus", "shared-frame-presence.js");
   const absentEntityIdsForFrameOwner = requireOwner(PRESENCE && PRESENCE.absentEntityIdsForFrame, "absentEntityIdsForFrame", "shared-frame-presence.js");
   const buildEntityOwnerIndexOwner = requireOwner(OWNERSHIP && OWNERSHIP.buildEntityOwnerIndex, "buildEntityOwnerIndex", "shared-entity-ownership.js");
@@ -644,8 +655,15 @@
     return null;
   }
 
-  /* ==========================================================================
+  /* ===========================================================================
      WHICH ENTITIES THIS UNIT NEEDS, AND IN WHICH STATE. */
+
+  function declaredStateForScope(shot, frameId, type, entityId) {
+    const bindings = readShotStateBindingsOwner(shot, {
+      locationEntityId: type === "location" ? entityId : "",
+    });
+    return resolveBoundStateDeclarationOwner(bindings, frameId, entityId);
+  }
 
   function entityRequirementsFor(project, shot, frameId, context) {
     const rows = [];
@@ -655,6 +673,10 @@
       if (!VISUAL_KINDS.includes(type)) continue;
       const entityId = text(dependency.id);
       if (!dependency.resolved || !dependency.entity) continue;
+      /* A declaration-only dependency is a stale relationship decision, not an
+         input to every unit. Canonical attachment truth is computed separately and
+         never includes the declaration map itself. */
+      if (!context.attachedIds.has(entityId)) continue;
       const listName = text(KIND_LISTS[type]);
       if (!listName) continue;
       const entity = dependency.entity;
@@ -686,7 +708,8 @@
         continue;
       }
 
-      const declaredId = text(resolveDeclaredStateIdOwner(shot, frameId, type, entityId));
+      const declaration = declaredStateForScope(shot, frameId, type, entityId);
+      const declaredId = text(declaration.stateId);
       /* OWNER-SCOPED, AND THERE IS NO GLOBAL LOOKUP. Twelve entities in the real
          corpus all declare `state-default`, so "does this state exist" is only ever
          a question about THIS entity's own catalogue. */
@@ -697,8 +720,10 @@
           label,
           basis,
           state: "needs-decision",
-          reason: "declared-state-not-on-entity",
+          reason: declaration.scope === "frame" ? "frame-state-not-on-entity" : "declared-state-not-on-entity",
           detail: declaredId,
+          declarationScope: declaration.scope,
+          frameId: declaration.scope === "frame" ? text(declaration.frameId) : "",
           required: true,
           producible: false,
           target: null,
@@ -755,6 +780,37 @@
      a two-frame shot look twice as broken as a one-frame shot. */
   function relationshipRequirements(project, shot, context) {
     const rows = [];
+    /* A known entity reached only through a shot declaration is not attached. The
+       declaration gets one explicit cleanup decision here and is excluded from unit
+       inputs above, so it can neither bootstrap attachment nor emit an unusable state
+       selector action. */
+    const shotBindings = readShotStateBindingsOwner(shot).entityStates
+      .slice()
+      .sort((a, b) => text(a.entityId) < text(b.entityId) ? -1 : text(a.entityId) > text(b.entityId) ? 1 : 0);
+    for (const binding of shotBindings) {
+      const entityId = text(binding.entityId);
+      if (!entityId || context.attachedIds.has(entityId)) continue;
+      const dependency = context.dependencies.find((row) => text(row.id) === entityId && row.resolved && row.entity);
+      if (!dependency) continue;
+      rows.push(deepFreeze({
+        id: `state-declaration:${entityId}`,
+        kind: "relationship",
+        label: text(dependency.entity.name) || entityId,
+        basis: "inferred",
+        state: "needs-decision",
+        reason: "stale-state-declaration",
+        detail: text(binding.stateId),
+        entityId,
+        required: true,
+        producible: false,
+        target: null,
+        targetKey: "",
+        value: "",
+        assetId: "",
+        satisfiedBy: "",
+        mediaCheck: "not-checked",
+      }));
+    }
     for (const dependency of context.dependencies) {
       if (dependency.resolved) continue;
       rows.push(deepFreeze({
@@ -1102,7 +1158,9 @@
     "unresolved-relationship": "resolve-relationship",
     "code-ambiguous": "resolve-relationship",
     "code-names-nothing": "resolve-relationship",
+    "stale-state-declaration": "remove-stale-state-declaration",
     "declared-state-not-on-entity": "resolve-state-declaration",
+    "frame-state-not-on-entity": "resolve-frame-state-declaration",
     "presence-declaration-malformed": "repair-presence-declaration",
     "contested-media-ownership": "resolve-media-ownership",
     "media-availability-unknown": "establish-media-availability",
@@ -1158,6 +1216,12 @@
     }
     if (row.reason === "declared-state-not-on-entity") {
       return `${row.label} asks for state ${row.detail}, which this entity does not have. Choose a state it does have, or add it.${more}`;
+    }
+    if (row.reason === "frame-state-not-on-entity") {
+      return `Frame ${row.frameId || "override"} asks ${row.label} for state ${row.detail}, which this entity does not have. Choose a valid frame state or follow the shot.${more}`;
+    }
+    if (row.reason === "stale-state-declaration") {
+      return `${row.label} has shot state ${row.detail}, but is not attached to this shot. Remove the stale declaration.${more}`;
     }
     if (row.reason === "presence-declaration-malformed") {
       return `${row.label} has a frame-presence declaration CineBraid cannot read (${row.detail || "unrecognised value"}). Repair it before generating.${more}`;
@@ -1301,11 +1365,19 @@
       ? "resolveApprovalMedia"
       : typeof oracle.fileExists === "function" ? "file-name-only" : "not-checked";
     const routeNeeds = shotRouteInputNeeds(record(shot).deliveryRoute);
+    const attached = record(resolveShotEntitiesOwner(project, shot));
+    const attachedIds = new Set([
+      ...list(attached.characters),
+      ...list(attached.locations),
+      ...list(attached.props),
+      ...list(attached.vehicles),
+    ].map((entity) => text(record(entity).id)).filter(Boolean));
     return {
       oracle,
       mediaCheck,
       truthProblem: projectTruth === undefined ? projectTruthProblem(project) : projectTruth,
       dependencies: list(shotDependencyRecordsOwner(project, shot)),
+      attachedIds,
       routeNeeds,
       units: declaredUnits(shot),
       ownerIndexes: {},
