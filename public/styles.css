@@ -2532,6 +2532,21 @@ body.automation-activity-open{overflow:hidden}
 .guided-unresolved-actions{display:flex;gap:6px;align-items:center}
 .guided-unresolved-actions .ghost-btn{width:auto}
 .dependency-relink-modal{display:grid;gap:12px;min-width:min(560px,90vw)}
+.guided-shot-state-declarations{display:grid;gap:10px;margin:12px 0;padding:12px;border:1px solid color-mix(in srgb,var(--accent) 32%,var(--line));border-radius:12px;background:color-mix(in srgb,var(--accent) 4%,var(--panel))}
+.guided-shot-state-declarations>header>div{display:grid;gap:3px}
+.guided-shot-state-declarations>header span{font:800 8px var(--mono);letter-spacing:.12em;color:var(--accent)}
+.guided-shot-state-declarations>header b{font-size:12px}
+.guided-shot-state-declarations>header small{color:var(--muted);line-height:1.4}
+.guided-shot-state-declarations>div{display:grid;gap:7px}
+.guided-shot-state-declarations article{display:grid;grid-template-columns:minmax(0,1fr) minmax(190px,280px) auto;gap:10px;align-items:center;padding:10px;border:1px solid var(--line);border-radius:9px;background:var(--surface)}
+.guided-shot-state-declarations article.is-invalid{border-color:color-mix(in srgb,var(--red) 58%,var(--line));background:color-mix(in srgb,var(--red) 4%,var(--surface))}
+.guided-shot-state-declarations article>div{display:grid;gap:3px;min-width:0}
+.guided-shot-state-declarations article span{font:800 7px var(--mono);letter-spacing:.08em;color:var(--muted)}
+.guided-shot-state-declarations article.is-invalid span,.guided-shot-state-declarations article.is-invalid small{color:var(--red)}
+.guided-shot-state-declarations article b,.guided-shot-state-declarations article small{overflow-wrap:anywhere}
+.guided-shot-state-declarations article small{color:var(--muted);line-height:1.35}
+.guided-shot-state-declarations select{width:100%;min-width:0}
+.shot-state-no-options{padding:8px 10px;border:1px dashed var(--line);border-radius:7px;letter-spacing:0!important;text-align:center}
 
 .entity-authority-summary>header>div{display:grid;grid-template-columns:max-content minmax(0,1fr);align-items:baseline;column-gap:10px;row-gap:4px;min-width:0}
 .entity-authority-label{display:block!important}
@@ -2547,6 +2562,8 @@ body.automation-activity-open{overflow:hidden}
   .guided-unresolved-dependencies article{grid-template-columns:1fr}
   .guided-unresolved-actions{width:100%}
   .guided-unresolved-actions button{flex:1;min-height:40px}
+  .guided-shot-state-declarations article{grid-template-columns:1fr}
+  .guided-shot-state-declarations article>.chip{width:100%;min-height:40px}
   .entity-authority-summary>header>div,.entity-authority-summary.is-compact header>div{grid-template-columns:1fr;gap:4px}
   .entity-authority-status{gap:6px}
   .collapse-btn{width:40px;height:40px;min-width:40px;min-height:40px}

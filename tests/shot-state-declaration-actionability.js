@@ -3,7 +3,9 @@
  * Focused deterministic coverage for the owner-validated mutation and the
  * rendered shot-scoped product path. Provider and paid-generation calls: 0. */
 const assert = require("assert");
+const vm = require("vm");
 const Binding = require("../public/shared-continuity-binding");
+const { render, buildFixture } = require("./render-harness");
 
 let checks = 0;
 function equal(actual, expected, message) {
@@ -132,8 +134,110 @@ function mutationOwnerSection() {
     "cleanup removes only the entity's canonical shot declaration");
 }
 
+function actionabilityFixture() {
+  const project = buildFixture();
+  project.characters[0].continuityStates = [
+    { id: "state-kai-clean", name: "Clean", isDefault: true, approvedFile: "KAI-ANCHOR.png" },
+    { id: "state-kai-rain", name: "Rain soaked", isDefault: false, approvedFile: "KAI-RAIN.png" },
+  ];
+  project.characters.push({
+    id: "CHAR-RHEA",
+    name: "Rhea",
+    approvedFile: "RHEA-ANCHOR.png",
+    continuityStates: [
+      { id: "state-rhea-clean", name: "Clean", isDefault: true, approvedFile: "RHEA-ANCHOR.png" },
+      { id: "state-rhea-night", name: "Night", isDefault: false, approvedFile: "RHEA-NIGHT.png" },
+    ],
+  });
+  project.shots[0].continuityStateSelections = { KAI: "state-does-not-exist" };
+  return project;
+}
+
+async function renderedControlSection() {
+  const project = actionabilityFixture();
+  const page = await render("#/shot/L1-01", project, {
+    storage: { "cinebraid-focused:fixture:shot-task:L1-01": "inputs" },
+  });
+  const before = JSON.parse(vm.runInContext(`(() => {
+    const shot = P.shots[0];
+    const readiness = shotReadinessFor(shot);
+    const requirements = [...(readiness.requirements || []), ...(readiness.units || []).flatMap((unit) => unit.requirements || [])];
+    return JSON.stringify({
+      action: readiness.nextAction.code,
+      reason: requirements.find((row) => row.reason === "declared-state-not-on-entity")?.reason || "",
+      markup: guidedShotStateDeclarations(shot),
+    });
+  })()`, page.context));
+  equal(before.action, "resolve-state-declaration",
+    "the representative invalid declaration reproduces the canonical readiness action");
+  equal(before.reason, "declared-state-not-on-entity",
+    "the representative case is the established missing-state decision");
+  ok(before.markup.includes('data-readiness-action-surface="shot-state-declaration"'),
+    "the shot Inputs surface renders a named declaration-action surface");
+  ok(before.markup.includes('data-shot-state-entity="KAI"'),
+    "the control names the implicated attached entity");
+  ok(before.markup.includes("Invalid declaration · state-does-not-exist is not owned by Kai"),
+    "the current invalid declaration is shown honestly");
+  ok(before.markup.includes('data-continuity-state-option="state-kai-clean"')
+    && before.markup.includes('data-continuity-state-option="state-kai-rain"'),
+  "the chooser lists the implicated entity's actual states");
+  ok(!before.markup.includes("state-rhea-night"),
+    "a foreign entity's state is absent from the shot chooser");
+  ok(before.markup.includes("chooseShotContinuityState('L1-01','KAI',this.value)"),
+    "the rendered select calls the validated product mutation path");
+  ok(!before.markup.includes("setShotContinuityState("),
+    "the rendered control does not call the old compatibility helper");
+  ok(before.markup.includes("Creating a state in References does not select it here"),
+    "the authoring/assignment separation is explicit on the surface");
+
+  const applied = JSON.parse(vm.runInContext(`JSON.stringify(chooseShotContinuityState("L1-01", "KAI", "state-kai-rain"))`, page.context));
+  equal(applied.status, "applied", "choosing the rendered option crosses the shared owner successfully");
+  const after = JSON.parse(vm.runInContext(`(() => {
+    const shot = P.shots[0];
+    const readiness = shotReadinessFor(shot);
+    const requirements = [...(readiness.requirements || []), ...(readiness.units || []).flatMap((unit) => unit.requirements || [])];
+    return JSON.stringify({
+      declaration: shot.continuityStateSelections,
+      action: readiness.nextAction.code,
+      stillInvalid: requirements.some((row) => row.reason === "declared-state-not-on-entity"),
+      markup: guidedShotStateDeclarations(shot),
+    });
+  })()`, page.context));
+  deepEqual(after.declaration, { KAI: "state-kai-rain" },
+    "the real UI handler writes the canonical shot map");
+  equal(after.stillInvalid, false,
+    "readiness recomputes from the canonical owner and drops the missing-state problem");
+  ok(after.action !== "resolve-state-declaration",
+    "the round trip progresses to the next truthful readiness action");
+  ok(after.markup.includes("Current declaration · Rain soaked"),
+    "the rerendered control reads the newly selected canonical declaration");
+
+  const authoredProject = actionabilityFixture();
+  const authoredPage = await render("#/shot/L1-01", authoredProject, {
+    storage: { "cinebraid-focused:fixture:shot-task:L1-01": "inputs" },
+  });
+  const authored = JSON.parse(vm.runInContext(`(() => {
+    const shot = P.shots[0];
+    const before = JSON.stringify(shot.continuityStateSelections);
+    addContinuityState("characters", "KAI");
+    const generated = P.characters[0].continuityStates.at(-1).id;
+    const afterCreation = JSON.stringify(shot.continuityStateSelections);
+    const outcome = chooseShotContinuityState("L1-01", "KAI", generated);
+    return JSON.stringify({ before, afterCreation, generated, outcome, final: shot.continuityStateSelections });
+  })()`, authoredPage.context));
+  equal(authored.afterCreation, authored.before,
+    "creating a new catalog state alone does not retarget the shot");
+  ok(authored.generated.startsWith("state-") && authored.generated !== "state-does-not-exist",
+    "authoring produces and exposes its actual generated state id");
+  equal(authored.outcome.status, "applied",
+    "the newly authored state is assigned only by a subsequent explicit selection");
+  equal(authored.final.KAI, authored.generated,
+    "the explicit assignment persists the actual generated id, not the missing requested id");
+}
+
 async function main() {
   mutationOwnerSection();
+  await renderedControlSection();
   console.log(`shot-state-declaration-actionability: ${checks} assertions passed`);
 }
 
@@ -142,4 +246,4 @@ if (require.main === module) main().catch((error) => {
   process.exit(1);
 });
 
-module.exports = { mutationFixture, mutationOwnerSection, main };
+module.exports = { mutationFixture, mutationOwnerSection, actionabilityFixture, renderedControlSection, main };

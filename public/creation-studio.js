@@ -1930,6 +1930,50 @@ function guidedShotAttachmentPicker(s) {
   return `<details class="guided-source-manager guided-cast-assets" ${selectedCount ? "" : "open"}><summary>Cast and assets attached to this shot <span>${selectedCount}</span></summary><div class="guided-asset-picker-section"><b>LOCATION PLATE</b>${locationNote}<div class="guided-asset-picker-grid">${(P.locations || []).map((x) => guidedLocationPickerButton(x, s, c.locationId === x.id ? "primary" : attachedLocationIds.has(x.id) ? "supporting" : "")).join("") || `<div class="guided-empty-inline"><b>No location records yet.</b><span>Add a location in References first.</span></div>`}</div></div><div class="guided-asset-picker-section"><b>CHARACTERS</b><div class="guided-asset-picker-grid">${(P.characters || []).map((x) => guidedEntityPickerButton("characters", x, s, characterIds.has(x.id))).join("") || `<div class="guided-empty-inline"><b>No character records yet.</b><span>Add a character in References first.</span></div>`}</div></div><div class="guided-asset-picker-section"><b>PROPS & VEHICLES</b><div class="guided-asset-picker-grid">${[...(P.props || []).map((x) => guidedEntityPickerButton("props", x, s, propIds.has(x.id))), ...(P.vehicles || []).map((x) => guidedEntityPickerButton("vehicles", x, s, propIds.has(x.id)))].join("") || `<div class="guided-empty-inline"><b>No prop or vehicle records yet.</b><span>Add one in References first.</span></div>`}</div></div></details>`;
 }
 
+function guidedShotStateEntityRows(s) {
+  const resolved = resolveShotEntities(P, s);
+  const propIds = new Set((P.props || []).map((entity) => entity.id));
+  const rows = [
+    ...resolved.locations.map((entity) => ({ list: "locations", kind: "Location", entity })),
+    ...resolved.characters.map((entity) => ({ list: "characters", kind: "Character", entity })),
+    ...resolved.props.filter((entity) => propIds.has(entity.id)).map((entity) => ({ list: "props", kind: "Prop", entity })),
+    ...(resolved.vehicles || []).map((entity) => ({ list: "vehicles", kind: "Vehicle", entity })),
+  ];
+  return rows.filter((row, index) =>
+    rows.findIndex((candidate) => candidate.list === row.list && candidate.entity.id === row.entity.id) === index);
+}
+function shotStateEntityRoute(list, entityId) {
+  const route = { characters: "character", locations: "location", props: "prop", vehicles: "vehicle" }[list];
+  return route ? `#/${route}/${encodeURIComponent(entityId)}` : "#/library";
+}
+window.openShotStateAuthoring = (shotId, list, entityId) => {
+  if (typeof selectEntityResultTask === "function") selectEntityResultTask(list, entityId, "coverage", "states");
+  location.hash = shotStateEntityRoute(list, entityId);
+};
+function guidedShotStateDeclarations(s) {
+  const rows = guidedShotStateEntityRows(s);
+  if (!rows.length) return "";
+  const body = rows.map(({ list, kind, entity }) => {
+    const states = entityStateListRead(entity, true);
+    const declaredId = String(s.continuityStateSelections?.[entity.id] || "");
+    const selected = states.find((state) => String(state.id || "") === declaredId) || null;
+    const invalid = !!declaredId && !selected;
+    const fallback = states.find((state) => state.isDefault) || states[0] || null;
+    const current = invalid
+      ? `Invalid declaration · ${declaredId} is not owned by ${entity.name || entity.id}`
+      : selected
+        ? `Current declaration · ${selected.name || selected.id}`
+        : `No shot declaration · follows ${fallback?.name || "the reference default"}`;
+    const options = states.map((state) =>
+      `<option data-continuity-state-option="${attr(state.id)}" value="${attr(state.id)}" ${selected?.id === state.id ? "selected" : ""}>${esc(state.name || state.id)} · ${esc(state.id)}</option>`).join("");
+    const chooser = states.length
+      ? `<select aria-label="State for ${attr(entity.name || entity.id)} on this shot" onchange="chooseShotContinuityState('${attr(s.id)}','${attr(entity.id)}',this.value)"><option value="" disabled ${selected ? "" : "selected"}>Choose continuity state</option>${options}</select>`
+      : `<span class="shot-state-no-options">No continuity states authored</span>`;
+    return `<article data-shot-state-entity="${attr(entity.id)}" data-shot-state-declaration-invalid="${invalid ? "1" : "0"}" class="${invalid ? "is-invalid" : ""}"><div><span>STATE FOR ${esc(entity.name || entity.id)}</span><b>${esc(kind)} · ${esc(entity.id)}</b><small>${esc(current)}</small></div>${chooser}<button type="button" class="chip" onclick="openShotStateAuthoring('${attr(s.id)}','${attr(list)}','${attr(entity.id)}')">Add or edit states</button></article>`;
+  }).join("");
+  return `<section class="guided-shot-state-declarations" data-readiness-action-surface="shot-state-declaration"><header><div><span>SHOT CONTINUITY STATES</span><b>Choose the state each attached reference uses in this shot</b><small>Only states owned by that reference are available. Creating a state in References does not select it here; return and choose it explicitly.</small></div></header><div>${body}</div></section>`;
+}
+
 function guidedPromptModeLabel(mode) {
   return {
     t2i: "Create a new still",
@@ -2179,7 +2223,7 @@ function guidedSourceInputsPanel(s, current, open = false) {
   const planningCount = shotMediaLinks(s).length;
   const rows = [...imageRefs, ...motionRefs];
   const ready = rows.filter((row) => row.url).length;
-  return `<details class="guided-work-panel guided-inputs-card" data-guided-panel="inputs" ${guidedPanelOpen(s, "inputs", open) ? "open" : ""} ontoggle="rememberGuidedPanel('${s.id}','inputs',this.open)"><summary><div><span>SOURCE & REFERENCES</span><b>${ready ? `${ready} usable input${ready === 1 ? "" : "s"}` : "Attach cast, assets, or source media"}</b><small>Choose the shot's location, cast, props, plates, audio, and motion references.</small></div><i>⌄</i></summary><div class="guided-work-panel-body">${guidedUnresolvedDependenciesMarkup(s)}${guidedShotAttachmentPicker(s)}<div class="guided-input-tray">${rows.length ? rows.map((ref) => {
+  return `<details class="guided-work-panel guided-inputs-card" data-guided-panel="inputs" ${guidedPanelOpen(s, "inputs", open) ? "open" : ""} ontoggle="rememberGuidedPanel('${s.id}','inputs',this.open)"><summary><div><span>SOURCE & REFERENCES</span><b>${ready ? `${ready} usable input${ready === 1 ? "" : "s"}` : "Attach cast, assets, or source media"}</b><small>Choose the shot's location, cast, props, plates, audio, and motion references.</small></div><i>⌄</i></summary><div class="guided-work-panel-body">${guidedUnresolvedDependenciesMarkup(s)}${guidedShotAttachmentPicker(s)}${guidedShotStateDeclarations(s)}<div class="guided-input-tray">${rows.length ? rows.map((ref) => {
     const enabled = shotInputEnabled(s, ref.key);
     const route = ref.role === "identity" ? "character" : ref.role === "prop" ? "prop" : ["base","location"].includes(ref.role) ? "location" : "";
     const blocked = !ref.url;

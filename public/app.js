@@ -3833,14 +3833,36 @@ window.setCurrentPrompt = (id, value) => {
   }
   dirty();
 };
-window.setShotContinuityState = (shotId, entityId, stateId) => {
-  const s = shotById(shotId);
-  s.continuityStateSelections = s.continuityStateSelections || {};
-  if (stateId) s.continuityStateSelections[entityId] = stateId;
-  else delete s.continuityStateSelections[entityId];
-  dirty();
-  route();
+const SHOT_STATE_DECLARATION_RESULT_WORDS = {
+  "shot-not-found": "That shot no longer exists.",
+  "entity-not-found": "That reference no longer exists.",
+  "entity-not-attached": "Attach that reference to this shot before choosing its state.",
+  "state-not-found": "That continuity state no longer exists.",
+  "state-owned-by-different-entity": "That continuity state belongs to a different reference.",
+  "invalid-declaration": "CineBraid could not safely change this shot state declaration.",
 };
+/* The browser layer renders the shared owner's closed result; it does not decide
+   whether an entity owns a state. Both the shipped control and the compatibility
+   entry point below cross this same deterministic boundary. */
+function applyShotStateDeclarationFromUi(shotId, entityId, stateId) {
+  const result = typeof applyShotStateDeclaration === "function"
+    ? applyShotStateDeclaration(P, { shotId, entityId, stateId })
+    : { status: "invalid-declaration", shotId, entityId, stateId };
+  if (result.status !== "applied") {
+    toast(SHOT_STATE_DECLARATION_RESULT_WORDS[result.status] || "The shot state declaration was refused.");
+    return result;
+  }
+  if (result.changed) dirty();
+  route();
+  toast(result.operation === "cleared" ? "Shot continuity-state declaration cleared" : "Continuity state selected for this shot");
+  return result;
+}
+window.chooseShotContinuityState = (shotId, entityId, stateId) =>
+  applyShotStateDeclarationFromUi(shotId, entityId, stateId);
+/* Kept for old extensions and the pre-existing browser regression, but no longer
+   permissive and deliberately not used by the rendered product control. */
+window.setShotContinuityState = (shotId, entityId, stateId) =>
+  applyShotStateDeclarationFromUi(shotId, entityId, stateId);
 
 /* ---------- compact shot workspace ---------- */
 const SHOT_VIEW_MODES = ["focused", "standard", "review", "expanded"];
