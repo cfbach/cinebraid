@@ -185,7 +185,7 @@ function serverAuthority(options = {}) {
     PROJECT_DIR: () => temp,
     IMG_ONLY: (name) => /\.(png|jpg|jpeg|webp|gif)$/i.test(String(name)),
     projectAssetPath: (file) => (file ? path.join(temp, String(file)) : ""),
-    shotStateBearingEntityRecords: Entities.shotStateBearingEntityRecords,
+    resolveShotEntities: Entities.resolveShotEntities,
     /* Only NC-F's defect reads this: every state record in the project, which is
        what a GLOBAL state lookup would have available to it. */
     __ALL_ENTITY_STATES: [...project.characters, ...project.props, ...project.locations]

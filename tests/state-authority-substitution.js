@@ -54,6 +54,7 @@ const Continuity = require("../public/shared-continuity");
 const { deterministicHealth } = require("../agent-suite");
 const { render, buildFixture } = require("./render-harness");
 const Entities = require("../public/shared-entities");
+const PromptEngine = require("../prompt-engine");
 
 let checks = 0;
 const ok = (condition, message) => { assert(condition, message); checks++; };
@@ -242,7 +243,7 @@ function serverAuthority(options = {}) {
     PROJECT_DIR: () => temp,
     IMG_ONLY: (name) => /\.(png|jpg|jpeg|webp|gif)$/i.test(String(name)),
     projectAssetPath: (file) => (file ? path.join(temp, String(file)) : ""),
-    shotStateBearingEntityRecords: Entities.shotStateBearingEntityRecords,
+    resolveShotEntities: Entities.resolveShotEntities,
   });
   vm.runInContext(
     `${extractFunction(source, "entityApprovedDiskPath")}\n${extractFunction(source, "derivedFrameContext")}\n` +
@@ -391,6 +392,62 @@ function serverSection() {
     eq(perFrame.authorityFor("fr-b"), [WET_FILE, DOOR_FILE, OPEN_FILE].sort(), "case 9: Frame B resolves its own, differing from both neighbours");
     eq(perFrame.authorityFor("fr-c"), [CLEAN_FILE, DOOR_FILE, OPEN_FILE].sort(), "case 9: Frame C resolves a third combination again");
   } finally { perFrame.dispose(); }
+}
+
+function generationBoundarySection() {
+  const env = serverAuthority({ wetApproved: true, openApproved: true });
+  try {
+    const speakerFile = "CHAR-OFFSCREEN.png";
+    const vehicleFile = "VEH-OFFSCREEN.png";
+    fs.writeFileSync(path.join(env.temp, "anchors", speakerFile), "offscreen speaker");
+    fs.writeFileSync(path.join(env.temp, "vehicles", vehicleFile), "offscreen vehicle");
+    env.project.characters.push({
+      id: "CHAR-OFFSCREEN", name: "Offscreen speaker", approvedFile: speakerFile,
+      continuityStates: [{ id: "state-offscreen", name: "Offscreen state", isDefault: true, approvedFile: speakerFile }],
+    });
+    env.project.vehicles.push({
+      id: "VEH-OFFSCREEN", name: "Offscreen rover", approvedFile: vehicleFile,
+      continuityStates: [{ id: "state-vehicle", name: "Vehicle state", isDefault: true, approvedFile: vehicleFile }],
+    });
+    env.shot.audio = { speakerId: "CHAR-OFFSCREEN" };
+    env.shot.codes = (env.shot.codes || []).filter((token) => !Entities.shotEntityTokenMatches(token, "LOC-DOOR"));
+    env.shot.creationBrief.locationId = "LOC-DOOR-alt";
+    env.shot.creationBrief.vehicleIds = ["VEH-OFFSCREEN"];
+    env.shot.continuityStateSelections = {
+      ...(env.shot.continuityStateSelections || {}),
+      "CHAR-OFFSCREEN": "state-offscreen",
+      "VEH-OFFSCREEN": "state-vehicle",
+    };
+
+    const stateBearingIds = Entities.shotStateBearingEntityRecords(env.project, env.shot)
+      .filter((row) => row.resolved).map((row) => row.id);
+    const resolved = Entities.resolveShotEntities(env.project, env.shot);
+    const visibleIds = [...resolved.characters, ...resolved.locations, ...resolved.props, ...resolved.vehicles]
+      .map((entity) => entity.id);
+    const authority = env.authorityFor("fr-a");
+    const context = PromptEngine.buildContext(env.project, env.shot.id, "", { frameId: "fr-a" });
+    const spec = PromptEngine.defaultSpec(context, "blocking", "blocking", [], null);
+    const referenceIds = (context.references || []).map((row) => row.id);
+    const promptIds = (context.promptEntities || []).map((row) => row.id);
+    const blockingIds = (spec.blockingEntities || []).map((row) => row.id);
+
+    ok(stateBearingIds.includes("CHAR-OFFSCREEN"),
+      "an audio-only speaker remains state-bearing for a meaningful shot declaration");
+    ok(stateBearingIds.includes("VEH-OFFSCREEN"),
+      "a creation-brief vehicle remains state-bearing for a meaningful shot declaration");
+    ok(!visibleIds.includes("CHAR-OFFSCREEN") && !visibleIds.includes("VEH-OFFSCREEN"),
+      "offscreen speaker and vehicle-only relationships are outside primary visual attachment truth");
+    ok(!authority.includes(speakerFile) && !authority.includes(vehicleFile),
+      "derived frame generation does not attach identity references absent from primary visual truth");
+    ok(!referenceIds.includes("CHAR-OFFSCREEN") && !referenceIds.includes("VEH-OFFSCREEN"),
+      "prompt-engine reference membership uses the same primary visual projection");
+    ok(!promptIds.includes("CHAR-OFFSCREEN") && !blockingIds.includes("CHAR-OFFSCREEN"),
+      "blocking prompt/entity membership does not promote an offscreen speaker to a visual subject");
+    ok(!blockingIds.includes("VEH-OFFSCREEN"),
+      "blocking entity membership does not promote a vehicle-only state relationship to a visual subject");
+    ok(visibleIds.includes("LOC-DOOR") && referenceIds.includes("LOC-DOOR") && authority.includes(DOOR_FILE),
+      "a suffixed primary location remains coherent across visible, prompt-reference, and derived-frame membership");
+  } finally { env.dispose(); }
 }
 
 /* ===========================================================================
@@ -695,6 +752,7 @@ function noPaidCallsSection() {
 async function main() {
   ruleSection();
   serverSection();
+  generationBoundarySection();
   await browserSection();
   await agreementSection();
   await noMutationSection();

@@ -641,7 +641,7 @@ function authoritySection(options = {}) {
       PROJECT_DIR: () => temp,
       IMG_ONLY: (name) => /\.(png|jpg|jpeg|webp|gif)$/i.test(String(name)),
       projectAssetPath: (file) => (file ? path.join(temp, String(file)) : ""),
-      shotStateBearingEntityRecords: Entities.shotStateBearingEntityRecords,
+      resolveShotEntities: Entities.resolveShotEntities,
     });
     vm.runInContext(`${extractFunction(source, "entityApprovedDiskPath")}\n${extractFunction(source, "derivedFrameContext")}\nglobalThis.__run = (P, shot, frame) => derivedFrameContext(P, shot, frame);`, context);
     const authorityFor = (frameId) => {

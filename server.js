@@ -25,7 +25,7 @@ const {
 const PromptEngine = require("./prompt-engine");
 const { annotateProfileLibraryExecution } = require("./generation-options");
 const { httpStatusForError } = require("./http-errors");
-const { resolveShotEntities, shotStateBearingEntityRecords, shotEntityTokenMatches, unresolvedShotDependencies, entityVisualDescription, resolveShotDuration, lossyShotCodeTokens } = require("./public/shared-entities");
+const { resolveShotEntities, shotEntityTokenMatches, unresolvedShotDependencies, entityVisualDescription, resolveShotDuration, lossyShotCodeTokens } = require("./public/shared-entities");
 const ContinuityBinding = require("./public/shared-continuity-binding");
 const { referenceAspectLabel, aspectRatioMentions } = require("./public/shared-aspect");
 const { deriveLipSync, lipSyncRequiredFrom } = require("./public/shared-lip-sync");
@@ -5820,10 +5820,12 @@ function derivedFrameContext(P, shot, frame) {
   const blockingId = state.automationBlockingAssetId || creation.activeBlockingAssetId || "";
   const blocking = (P.mediaAssets || []).find((asset) => String(asset.id) === String(blockingId));
   if (blocking) add(projectAssetPath(blocking.storagePath || blocking.file), blocking.title || blocking.file, "frame-specific composition guide");
-  const stateBearing = shotStateBearingEntityRecords(P, shot).filter((record) => record.resolved && record.entity);
-  const byType = (type) => stateBearing.filter((record) => record.type === type).map((record) => record.entity);
-  const locations = byType("location");
-  const location = locations.find((item) => item.id === creation.locationId) || locations[0];
+  /* Generation references use the same primary visual attachment projection as
+     prompt-engine shotRefs/buildContext. Continuity state-bearing relationships
+     are intentionally broader: an offscreen speaker can own shot state without
+     becoming a visual subject or an identity reference for this generation. */
+  const resolved = resolveShotEntities(P, shot);
+  const location = resolved.locations.find((item) => item.id === creation.locationId) || resolved.locations[0];
   /* P4-SEM-B. This used to read the frame's own workflow maps directly, which
      meant it honoured a frame override and then fell straight past the SHOT's
      declared state to the entity's default - so a shot that declared "Rhea is
@@ -5833,9 +5835,9 @@ function derivedFrameContext(P, shot, frame) {
      `continuity` profile use: frame, then shot, then the entity's default. */
   const declared = (kind, entity) => (entity ? Continuity.resolveDeclaredStateId(shot, frame.id, kind, entity.id) : "");
   add(entityApprovedDiskPath("locations", location, declared("location", location)), location?.name || "Approved location", "location design authority");
-  for (const character of byType("character")) add(entityApprovedDiskPath("characters", character, declared("character", character)), character.name || character.id, "character identity authority");
-  for (const prop of byType("prop")) add(entityApprovedDiskPath("props", prop, declared("prop", prop)), prop.name || prop.id, "prop design authority");
-  for (const vehicle of byType("vehicle")) add(entityApprovedDiskPath("vehicles", vehicle, declared("vehicle", vehicle)), vehicle.name || vehicle.id, "vehicle design authority");
+  for (const character of resolved.characters || []) add(entityApprovedDiskPath("characters", character, declared("character", character)), character.name || character.id, "character identity authority");
+  for (const prop of resolved.props || []) add(entityApprovedDiskPath("props", prop, declared("prop", prop)), prop.name || prop.id, "prop design authority");
+  for (const vehicle of resolved.vehicles || []) add(entityApprovedDiskPath("vehicles", vehicle, declared("vehicle", vehicle)), vehicle.name || vehicle.id, "vehicle design authority");
   return context;
 }
 
