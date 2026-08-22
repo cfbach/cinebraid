@@ -51,7 +51,12 @@
      - file or network I/O
      - provider or model awareness
      - Date.now(), new Date(), Math.random()
-     - any mutation of the project record, shot or document passed in */
+
+   ONE NARROW MUTATION. `applyShotStateDeclaration` is the product boundary for
+   writing the runtime shot binding. It validates the same owner-scoped fact this
+   module reads, including that the entity is genuinely attached to the shot,
+   before changing `shot.continuityStateSelections`. No UI caller gets to restate
+   those rules. Every other function in this module remains read-only. */
 
 /* The profile name as it appears in `format.profiles`. */
 const CONTINUITY_PROFILE_ID = "continuity";
@@ -59,6 +64,16 @@ const CONTINUITY_PROFILE_ID = "continuity";
 /* The legacy runtime storage, named in one place so a reader elsewhere is a
    spelling mistake rather than a second opinion. */
 const RUNTIME_SHOT_SELECTION_KEY = "continuityStateSelections";
+const RUNTIME_VISUAL_ENTITY_LISTS = ["characters", "locations", "props", "vehicles"];
+const SHOT_STATE_DECLARATION_RESULTS = [
+  "applied",
+  "shot-not-found",
+  "entity-not-found",
+  "entity-not-attached",
+  "state-not-found",
+  "state-owned-by-different-entity",
+  "invalid-declaration",
+];
 const RUNTIME_FRAME_SELECTION_KEYS = {
   character: "characterStateSelections",
   location: "locationStateSelections",
@@ -331,9 +346,109 @@ function stateIdBelongsToEntity(states, stateId) {
   return (Array.isArray(states) ? states : []).some((state) => isObject(state) && text(state.id) === wanted);
 }
 
+/* ---------- the one runtime shot-binding mutation -------------------------
+
+   A declaration is `{ shotId, entityId, stateId }`. `stateId: ""` is the
+   explicit cleanup operation used when an attachment is removed; the rendered
+   assignment control never offers it as a state.
+
+   Failure is closed and non-mutating. In particular, the selection map is not
+   created until every entity/attachment/state check has passed. A foreign-state
+   diagnostic may inspect the other catalogues only to explain the refusal; it
+   never resolves through them. If the requested entity owns the id, that
+   owner-scoped fact wins even when another entity legally uses the same id. */
+function shotStateDeclarationResult(status, declaration, extra = {}) {
+  const result = {
+    status: SHOT_STATE_DECLARATION_RESULTS.includes(status) ? status : "invalid-declaration",
+    shotId: text(declaration && declaration.shotId),
+    entityId: text(declaration && declaration.entityId),
+    stateId: text(declaration && declaration.stateId),
+    ...extra,
+  };
+  return Object.freeze(result);
+}
+
+function runtimeVisualEntityEntries(project) {
+  const P = isObject(project) ? project : {};
+  const rows = [];
+  for (const list of RUNTIME_VISUAL_ENTITY_LISTS) {
+    for (const entity of Array.isArray(P[list]) ? P[list] : []) {
+      if (!isObject(entity) || !text(entity.id)) continue;
+      rows.push({ list, entity });
+    }
+  }
+  return rows;
+}
+
+function shotEntityResolverOwner() {
+  if (typeof resolveShotEntities === "function") return resolveShotEntities;
+  const global = typeof globalThis !== "undefined" ? globalThis : {};
+  if (typeof global.resolveShotEntities === "function") return global.resolveShotEntities;
+  if (typeof module !== "undefined" && module.exports) {
+    const shared = require("./shared-entities");
+    if (typeof shared.resolveShotEntities === "function") return shared.resolveShotEntities;
+  }
+  return null;
+}
+
+function applyShotStateDeclaration(project, declaration = {}) {
+  const P = isObject(project) ? project : null;
+  if (!P || !isObject(declaration)) return shotStateDeclarationResult("invalid-declaration", declaration);
+  const shotId = text(declaration.shotId);
+  const entityId = text(declaration.entityId);
+  const stateId = text(declaration.stateId);
+  if (!shotId || !entityId) return shotStateDeclarationResult("invalid-declaration", declaration);
+
+  const shot = (Array.isArray(P.shots) ? P.shots : []).find((row) => isObject(row) && text(row.id) === shotId);
+  if (!shot) return shotStateDeclarationResult("shot-not-found", declaration);
+
+  const entries = runtimeVisualEntityEntries(P).filter((row) => text(row.entity.id) === entityId);
+  if (!entries.length) return shotStateDeclarationResult("entity-not-found", declaration);
+  if (entries.length !== 1) return shotStateDeclarationResult("invalid-declaration", declaration);
+
+  const resolver = shotEntityResolverOwner();
+  if (!resolver) return shotStateDeclarationResult("invalid-declaration", declaration);
+  const attached = resolver(P, shot);
+  const attachedIds = [
+    ...(attached.characters || []),
+    ...(attached.locations || []),
+    ...(attached.props || []),
+    ...(attached.vehicles || []),
+  ].map((entity) => text(entity && entity.id)).filter(Boolean);
+  if (!attachedIds.includes(entityId)) return shotStateDeclarationResult("entity-not-attached", declaration);
+
+  const current = shot[RUNTIME_SHOT_SELECTION_KEY];
+  if (current !== undefined && current !== null && !isObject(current))
+    return shotStateDeclarationResult("invalid-declaration", declaration);
+
+  /* Attachment cleanup is part of this owner so a detach cannot leave a valid
+     binding behind that later masquerades as an attachment of its own. */
+  if (!stateId) {
+    const existed = isObject(current) && Object.prototype.hasOwnProperty.call(current, entityId);
+    if (existed) delete current[entityId];
+    return shotStateDeclarationResult("applied", declaration, { changed: existed, operation: "cleared" });
+  }
+
+  const entity = entries[0].entity;
+  const states = Array.isArray(entity.continuityStates) ? entity.continuityStates : [];
+  if (!stateIdBelongsToEntity(states, stateId)) {
+    const foreign = runtimeVisualEntityEntries(P).some((row) => row.entity !== entity
+      && stateIdBelongsToEntity(row.entity.continuityStates, stateId));
+    return shotStateDeclarationResult(foreign ? "state-owned-by-different-entity" : "state-not-found", declaration);
+  }
+
+  const selections = isObject(current) ? current : {};
+  const changed = text(selections[entityId]) !== stateId;
+  if (!isObject(current)) shot[RUNTIME_SHOT_SELECTION_KEY] = selections;
+  selections[entityId] = stateId;
+  return shotStateDeclarationResult("applied", declaration, { changed, operation: "selected" });
+}
+
 const CONTINUITY_BINDING_EXPORTS = {
   CONTINUITY_PROFILE_ID,
   RUNTIME_SHOT_SELECTION_KEY,
+  RUNTIME_VISUAL_ENTITY_LISTS,
+  SHOT_STATE_DECLARATION_RESULTS,
   RUNTIME_FRAME_SELECTION_KEYS,
   RUNTIME_FRAME_SELECTION_KEY_LIST,
   RUNTIME_FRAME_LOCATION_KEY,
@@ -346,6 +461,7 @@ const CONTINUITY_BINDING_EXPORTS = {
   resolveProfileStateId,
   duplicateBindingEntityIds,
   stateIdBelongsToEntity,
+  applyShotStateDeclaration,
 };
 
 if (typeof window !== "undefined") for (const [key, value] of Object.entries(CONTINUITY_BINDING_EXPORTS)) window[key] = value;
