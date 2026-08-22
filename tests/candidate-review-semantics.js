@@ -36,6 +36,7 @@
    every fetch the client makes. */
 
 const assert = require("assert");
+const crypto = require("crypto");
 const fs = require("fs");
 const http = require("http");
 const net = require("net");
@@ -557,8 +558,9 @@ async function routeSection() {
     vehicles: [],
   });
   fs.writeFileSync(path.join(PROJECT_DIR, "project.json"), JSON.stringify(project(""), null, 2));
+  const currentRevision = () => `"${crypto.createHash("sha256").update(fs.readFileSync(path.join(PROJECT_DIR, "project.json"))).digest("hex")}"`;
   const putProject = (marker) => request(port, "/api/projects/b2a-project/project", {
-    method: "PUT", headers: { "if-match": "*" }, body: project(marker),
+    method: "PUT", headers: { "if-match": currentRevision() }, body: project(marker),
   });
   const reviewCandidate = () => request(port, "/api/llm/review-entity-candidate", {
     method: "POST",

@@ -57,6 +57,7 @@ const SUITES = [
   "check:reference-reframe-browser",
   "check:simple-advanced-browser",
   "check:shot-intent-browser",
+  "check:authority-browser",
 ];
 
 /* Suites that launch a browser and are known to fail, pinned to the reason.

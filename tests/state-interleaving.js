@@ -434,13 +434,13 @@ async function testStaleProjectSave() {
     "the ingested candidate must survive the refused save",
   );
 
-  /* NEGATIVE CONTROL: with the revision check bypassed ("*"), the same stale body
-     lands and destroys the ingest — the exact original defect. */
+  /* O8 closes the old wildcard bypass: even a caller that submits "*" cannot
+     evade the exact revision contract or erase the server-side ingest. */
   const bypass = await putJson(`/api/projects/${A}/project`, staleAfterIngest, { "if-match": "*" });
-  assert.strictEqual(bypass.response.status, 200, "negative control: a wildcard save is accepted");
+  assert.strictEqual(bypass.response.status, 409, "a wildcard must not bypass the exact project revision");
   assert.strictEqual(
-    (docOf(A).shots[0].candidateFiles || []).length, candidatesBeforeIngest,
-    "negative control: without the revision check the stale body erases the ingested candidate",
+    (docOf(A).shots[0].candidateFiles || []).length, candidatesAfterIngest,
+    "the rejected wildcard body must leave the ingested candidate intact",
   );
 }
 

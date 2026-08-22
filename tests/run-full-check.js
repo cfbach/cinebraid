@@ -19,6 +19,8 @@ const nodeSuites = [
   "check:shot-readiness-negative",
   "check:preview-ux",
   "check:api",
+  "check:authority-write-seam",
+  "check:authority-server",
   "check:diagnostics",
   "check:activity",
   "check:coverage",
@@ -212,7 +214,7 @@ const browserSuites = ["check:manual-browser", "check:browser-real", "check:h3-b
   "check:focused-browser", "check:alpha-loop-browser", "check:entity-truth-browser",
   "check:shot-readiness-browser", "check:founder-p0-browser", "check:quiet-shell-browser",
   "check:project-entry-browser", "check:reference-reframe-browser", "check:simple-advanced-browser",
-  "check:shot-intent-browser"];
+  "check:shot-intent-browser", "check:authority-browser"];
 const releaseSuites = ["check:environment", "check:package"];
 /* How a suite is launched, without a shell.
 

@@ -1,4 +1,5 @@
 const assert = require('assert');
+const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -39,20 +40,24 @@ async function main(){
   let stderr=''; child.stderr.on('data',d=>stderr+=d);
   try{
     const base=`http://127.0.0.1:${port}`; await wait(`${base}/api/project`);
-    let r=await fetch(`${base}/api/projects/recovery/project`,{method:'PUT',headers:{'content-type':'application/json','if-match':'*'},body:JSON.stringify({meta:{title:'Broken'},scenes:'bad',shots:[]})});
+    const currentRevision=()=>`"${crypto.createHash('sha256').update(fs.readFileSync(path.join(projectDir,'project.json'))).digest('hex')}"`;
+    let r=await fetch(`${base}/api/projects/recovery/project`,{method:'PUT',headers:{'content-type':'application/json','if-match':currentRevision()},body:JSON.stringify({meta:{title:'Broken'},scenes:'bad',shots:[]})});
     assert.strictEqual(r.status,422,'invalid project save must be rejected');
     assert.strictEqual(JSON.parse(fs.readFileSync(path.join(projectDir,'project.json'),'utf8')).meta.title,'Recovery','rejected save must not replace project');
     for(let i=1;i<=12;i++){
       const next=structuredClone(initial); next.meta.title=`Recovery ${i}`;
-      r=await fetch(`${base}/api/projects/recovery/project`,{method:'PUT',headers:{'content-type':'application/json','if-match':'*'},body:JSON.stringify(next)});
+      r=await fetch(`${base}/api/projects/recovery/project`,{method:'PUT',headers:{'content-type':'application/json','if-match':currentRevision()},body:JSON.stringify(next)});
       assert(r.ok,`validated save ${i} failed`);
     }
     r=await fetch(`${base}/api/projects/recovery/backups`); const list=await r.json();
     assert(r.ok && list.backups.length===10,'rotating backup list must be capped at 10');
     const restoreName=list.backups[list.backups.length-1].name;
-    r=await fetch(`${base}/api/projects/recovery/restore`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name:restoreName})});
+    r=await fetch(`${base}/api/projects/recovery/restore`,{method:'POST',headers:{'content-type':'application/json','if-match':currentRevision()},body:JSON.stringify({name:restoreName})});
+    const preview=await r.json();
+    assert(r.ok && preview.preview===true,'backup restore must first disclose a preview');
+    r=await fetch(`${base}/api/projects/recovery/restore`,{method:'POST',headers:{'content-type':'application/json','if-match':currentRevision()},body:JSON.stringify({name:restoreName,confirm:true,previewHash:preview.previewHash,resurrectionConfirmed:false})});
     const restored=await r.json();
-    assert(r.ok && restored.restored===restoreName,'backup restore must succeed');
+    assert(r.ok && restored.restored===restoreName,'confirmed backup restore must succeed');
     assert(fs.existsSync(path.join(projectDir,'backups')),'backup directory must exist');
   } finally { child.kill('SIGTERM'); }
   if(stderr && /Error|Exception/.test(stderr)) throw new Error(stderr);

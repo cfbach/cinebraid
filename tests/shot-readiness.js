@@ -25,7 +25,7 @@ const path = require("path");
 const ROOT = path.join(__dirname, "..");
 const PUBLIC = path.join(ROOT, "public");
 
-const Kernel = require(path.join(PUBLIC, "shared-authority-kernel.js"));
+const { Kernel, Private } = require("./authority-kernel-private");
 const Authority = require(path.join(PUBLIC, "shared-production-authority.js"));
 const Readiness = require(path.join(PUBLIC, "shared-shot-readiness.js"));
 const Route = require(path.join(PUBLIC, "shared-shot-route.js"));
@@ -239,7 +239,7 @@ function requirementOf(row, needle) {
   equal(shotOf(retained, "SH-REVOKED", oracleFor()).status, "READY", "precondition: it was READY before the revocation");
 
   /* clearEdge:false is the pointer-retained case. */
-  GESTURE.gesture(() => Kernel.revokeEntityStateCanon(retained, {
+  GESTURE.gesture(() => Private.revokeEntityStateCanon(retained, {
     list: "characters", entityId: "CHAR-KAI", stateId: "state-default", reason: "withdrawn", at: AT, clearEdge: false,
   }));
   const retainedRow = shotOf(retained, "SH-REVOKED", oracleFor());
@@ -252,7 +252,7 @@ function requirementOf(row, needle) {
   /* Cleared edge: nothing points anywhere, so it is plain absence. */
   const cleared = castProject({ shots: [castShot("SH-CLEARED")] });
   approveWholeCast(cleared);
-  GESTURE.gesture(() => Kernel.revokeEntityStateCanon(cleared, {
+  GESTURE.gesture(() => Private.revokeEntityStateCanon(cleared, {
     list: "characters", entityId: "CHAR-KAI", stateId: "state-default", reason: "withdrawn", at: AT,
   }));
   const clearedRow = shotOf(cleared, "SH-CLEARED", oracleFor());

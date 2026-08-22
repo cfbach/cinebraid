@@ -35,6 +35,8 @@ const Continuity = require("./public/shared-continuity");
 const EntityOwnership = require("./public/shared-entity-ownership");
 const FramePresence = require("./public/shared-frame-presence");
 const ProductionAuthority = require("./public/shared-production-authority");
+const AuthorityKernel = require("./public/shared-authority-kernel");
+const { WRITE_CLASSES, createAuthorityWriteSeam, canonComparison } = require("./authority-write-seam");
 const ShotReadiness = require("./public/shared-shot-readiness");
 /* There is nothing to wire. The Canon kernel depends on
    public/shared-entity-ownership.js directly — by `require` in Node, by name in
@@ -96,6 +98,9 @@ function copyMissingTree(source, destination) {
     if (entry.isDirectory()) {
       const nested = copyMissingTree(src, dest);
       copied += nested.copied; skipped += nested.skipped;
+    } else if (path.basename(entry.name).toLowerCase() === "project.json") {
+      /* Project documents are enrolled separately through WORKSPACE_MIGRATION. */
+      skipped += 1;
     } else if (!fs.existsSync(dest)) {
       fs.copyFileSync(src, dest); copied += 1;
     } else skipped += 1;
@@ -536,7 +541,92 @@ function projectRevisionFor(file) {
     throw error;
   }
 }
+/* ---- O8 Authority Write Seam --------------------------------------------- */
+const AuthorityWriteBoundary = createAuthorityWriteSeam({
+  resolveFile(slugValue, writeClass, metadata) {
+    const destinationRoot = String(metadata?.destinationRoot || "").trim();
+    if (!destinationRoot) return projectDirForSlug(slugValue, false).file;
+    const root = path.resolve(destinationRoot), slug = containedProjectSlug(slugValue, root);
+    if (!slug) throw new Error("Invalid project slug.");
+    return path.join(root, slug, "project.json");
+  },
+  exists: (file) => fs.existsSync(file),
+  readProject: (file) => readJsonSync(file),
+  revisionFor: projectRevisionFor,
+  prepareSuccessor(successor, current, context) {
+    const metadata = context.transitionMetadata && typeof context.transitionMetadata === "object"
+      ? context.transitionMetadata : {};
+    if (context.writeClass === WRITE_CLASSES.RECOVERY) {
+      const view = AuthorityKernel.validateAuthorityLedger(current);
+      metadata.diagnostics = view.diagnostics;
+      metadata.accounting = view.diagnostics.map((diagnostic) => ({
+        disposition: "QUARANTINED",
+        index: Number.isInteger(diagnostic.index) ? diagnostic.index : null,
+        id: String(diagnostic.id || ""),
+        diagnostic: diagnostic.code,
+      }));
+      const recovered = structuredClone(current);
+      recovered.productionAuthority = { version: AuthorityKernel.AUTHORITY_LEDGER_VERSION, receipts: [] };
+      return normalizeProjectCollections(recovered);
+    }
+    const prepared = normalizeProjectCollections(structuredClone(successor || {}));
+    if ([WRITE_CLASSES.NORMAL_SAVE, WRITE_CLASSES.CANON_TRANSITION].includes(context.writeClass))
+      prepared.agentRuns = Array.isArray(current.agentRuns) ? current.agentRuns : [];
+    normalizePromptBuildHistory(prepared, { applyRetention: false });
+    return prepared;
+  },
+  validateProject: validateProjectForSave,
+  writeProject(file, project, context) {
+    const metadata = context.transitionMetadata && typeof context.transitionMetadata === "object"
+      ? context.transitionMetadata : {};
+    if ([WRITE_CLASSES.NORMAL_SAVE, WRITE_CLASSES.CANON_TRANSITION].includes(context.writeClass))
+      metadata.backup = createProjectBackup(file, context.writeClass === WRITE_CLASSES.NORMAL_SAVE ? "autosave" : "canon-transition");
+    if (context.writeClass === WRITE_CLASSES.RESTORE_SNAPSHOT) {
+      metadata.safetyBackup = createProjectBackup(file, "before-restore");
+      const auditName = "authority-restore-audit-" + Date.now() + "-" + crypto.randomBytes(4).toString("hex") + ".json";
+      fs.mkdirSync(projectBackupDir(file), { recursive: true });
+      fs.writeFileSync(path.join(projectBackupDir(file), auditName), JSON.stringify({
+        kind: "RESTORE_SNAPSHOT",
+        at: new Date().toISOString(),
+        slug: context.slug,
+        sourceBackup: metadata.sourceBackup || "",
+        priorRevision: projectRevisionFor(file),
+        previewHash: metadata.previewHash || "",
+        trust: metadata.trust || null,
+        authorityDelta: metadata.authorityDelta || [],
+        resurrection: metadata.resurrection === true,
+      }, null, 2));
+      metadata.audit = auditName;
+    }
+    if (context.writeClass === WRITE_CLASSES.RECOVERY) {
+      const evidenceName = "authority-recovery-evidence-" + Date.now() + "-" + crypto.randomBytes(4).toString("hex") + ".json";
+      fs.mkdirSync(projectBackupDir(file), { recursive: true });
+      fs.writeFileSync(path.join(projectBackupDir(file), evidenceName), JSON.stringify({
+        kind: "AUTHORITY_RECOVERY_PREIMAGE",
+        at: new Date().toISOString(),
+        slug: context.slug,
+        mode: metadata.mode,
+        revision: projectRevisionFor(file),
+        project: context.current,
+        diagnostics: metadata.diagnostics || [],
+      }, null, 2));
+      metadata.evidence = evidenceName;
+    }
+    atomicWriteJson(file, project, { backup: ![WRITE_CLASSES.UNTRUSTED_IMPORT, WRITE_CLASSES.WORKSPACE_MIGRATION].includes(context.writeClass) });
+  },
+});
+const persistProjectSuccessor = AuthorityWriteBoundary.persistProjectSuccessor;
+
+function seamFailure(res, outcome, slug) {
+  const failure = outcome.refusal || { status: 500, code: "PROJECT_PERSISTENCE_FAILED", message: "Project persistence failed." };
+  return res.status(failure.status || 500).json({
+    ok: false, error: failure.message, code: failure.code, slug,
+    revision: outcome.revision || "", ...failure,
+  });
+}
+
 /* ---- explicit project ownership for media writes ----------------------------
+
 
    The media routes resolved their destination from PROJECT_DIR() — the globally
    active project at the moment the write ran. An upload is a request body that
@@ -659,23 +749,27 @@ function ensureDirs(dir) {
   const oldData = path.join(__dirname, "data", "project.json");
   const oldProj = path.join(__dirname, "project");
   if (!fs.existsSync(oldData)) return;
-  fs.mkdirSync(projectsRoot(), { recursive: true });
-  let slug = "project-1";
-  try {
-    slug = (readJsonSync(oldData).meta.title || slug)
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-|-$/g, "");
-  } catch {}
+  let legacy;
+  try { legacy = readJsonSync(oldData); } catch (error) {
+    console.error("  Legacy project migration refused: " + error.message);
+    return;
+  }
+  let slug = String(legacy.meta?.title || "project-1").toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "project-1";
+  const metadata = { destinationRoot: projectsRoot() };
+  const outcome = persistProjectSuccessor({
+    slug, successor: legacy, writeClass: WRITE_CLASSES.WORKSPACE_MIGRATION,
+    expectedRevision: "", transitionMetadata: metadata,
+  });
+  if (!outcome.ok) {
+    console.error("  Legacy project migration refused [" + outcome.refusal.code + "]: " + outcome.refusal.message);
+    return;
+  }
   const dest = path.join(projectsRoot(), slug);
-  if (fs.existsSync(dest)) return;
-  fs.mkdirSync(dest, { recursive: true });
-  fs.copyFileSync(oldData, path.join(dest, "project.json"));
   if (fs.existsSync(oldProj))
     for (const d of SUBDIRS) {
       const src = path.join(oldProj, d);
-      if (fs.existsSync(src))
-        fs.cpSync(src, path.join(dest, d), { recursive: true });
+      if (fs.existsSync(src)) fs.cpSync(src, path.join(dest, d), { recursive: true });
     }
   ensureDirs(dest);
   const c = readConfig();
@@ -937,6 +1031,19 @@ app.get("/api/project", (req, res) => {
     res.status(500).json({ error: "Could not open the active project — " + e.message });
   }
 });
+app.get("/api/projects/:slug/project", (req, res) => {
+  try {
+    const inspected = inspectProjectFile(req.params.slug);
+    if (!inspected.ok) return res.status(inspected.status).json(projectFailurePayload(inspected));
+    const revision = projectRevisionFor(inspected.file);
+    if (revision) {
+      res.setHeader("ETag", revision);
+      res.setHeader("X-CineBraid-Project-Revision", revision);
+    }
+    normalizePromptBuildHistory(inspected.project, { applyRetention: false });
+    res.json(inspected.project);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
 /* Seconds a shot actually declares, under any supported alias, and 0 when it
    declares none. Report surfaces want the stored number or nothing — never the
    compiler's invented default — so this reads the shared resolver but refuses
@@ -1115,58 +1222,46 @@ app.get("/api/project/readiness", (req, res) => {
 });
 app.put("/api/projects/:slug/project", (req, res) => {
   try {
-    /* Containment first, unconditionally: an out-of-root slug is refused before
-       any revision reasoning, so Repair A's boundary stays the outermost gate. */
-    const { slug, file } = projectDirForSlug(req.params.slug),
-      current = fs.existsSync(file)
-      ? readJsonSync(file)
-      : {};
-
-    /* Optimistic concurrency. The client must say which document it edited; if
-       storage has moved on, its body is stale by definition and is refused
-       whole. No deep merge is attempted — silently interleaving two divergent
-       documents is how a lost update becomes an unexplainable one. */
-    const storedRevision = projectRevisionFor(file);
-    const requested = String(req.headers["if-match"] || "").trim();
-    if (storedRevision && !requested)
-      return res.status(428).json({
-        error: "This save did not say which version of the project it edited. Reload CineBraid and try again.",
-        code: "PROJECT_REVISION_REQUIRED",
-        slug,
-        revision: storedRevision,
-      });
-    if (storedRevision && requested !== "*" && requested !== storedRevision)
-      return res.status(409).json({
-        error: "This project changed while this view was open, so the save was refused to protect the newer version. Reload to continue from the current project.",
-        code: "PROJECT_REVISION_CONFLICT",
-        slug,
-        revision: storedRevision,
-        yourRevision: requested,
-        action: "reload",
-      });
-
-    const incoming = normalizeProjectCollections({
-      ...req.body,
-      agentRuns: Array.isArray(current.agentRuns) ? current.agentRuns : [],
+    const { slug } = projectDirForSlug(req.params.slug);
+    const metadata = {};
+    const outcome = persistProjectSuccessor({
+      slug, successor: req.body, writeClass: WRITE_CLASSES.NORMAL_SAVE,
+      expectedRevision: String(req.headers["if-match"] || "").trim(), transitionMetadata: metadata,
     });
-    normalizePromptBuildHistory(incoming, { applyRetention: false });
-    const validation = validateProjectForSave(incoming);
-    if (!validation.ok) return res.status(422).json({ error: "Project validation failed.", issues: validation.errors });
-    const backup = createProjectBackup(file, "autosave");
-    atomicWriteJson(file, incoming);
-    const revision = projectRevisionFor(file);
-    if (revision) {
-      res.setHeader("ETag", revision);
-      res.setHeader("X-CineBraid-Project-Revision", revision);
+    if (!outcome.ok) return seamFailure(res, outcome, slug);
+    if (outcome.revision) {
+      res.setHeader("ETag", outcome.revision);
+      res.setHeader("X-CineBraid-Project-Revision", outcome.revision);
     }
-    res.json({ ok: true, slug, backup, revision });
-    setTimeout(() => {
-      if (activeSlug() === slug) maybeAutoIndex();
-    }, 100);
-  } catch (e) {
-    res.status(/No such project|Invalid project slug/.test(e.message) ? 404 : 500).json({ error: e.message });
+    res.json({ ok: true, slug, backup: metadata.backup || null, revision: outcome.revision });
+    setTimeout(() => { if (activeSlug() === slug) maybeAutoIndex(); }, 100);
+  } catch (error) {
+    res.status(/No such project|Invalid project slug/.test(error.message) ? 404 : 500).json({ error: error.message });
   }
 });
+
+app.post("/api/projects/:slug/canon-transition", (req, res) => {
+  try {
+    const { slug } = projectDirForSlug(req.params.slug);
+    const metadata = { ...(req.body?.transition || {}) };
+    const outcome = persistProjectSuccessor({
+      slug, successor: req.body?.successor, writeClass: WRITE_CLASSES.CANON_TRANSITION,
+      expectedRevision: String(req.headers["if-match"] || "").trim(), transitionMetadata: metadata,
+    });
+    if (!outcome.ok) return seamFailure(res, outcome, slug);
+    if (outcome.revision) {
+      res.setHeader("ETag", outcome.revision);
+      res.setHeader("X-CineBraid-Project-Revision", outcome.revision);
+    }
+    res.json({
+      ok: true, slug, revision: outcome.revision, backup: metadata.backup || null,
+      project: outcome.successor,
+    });
+  } catch (error) {
+    res.status(/No such project|Invalid project slug/.test(error.message) ? 404 : 500).json({ error: error.message });
+  }
+});
+
 app.get("/api/projects/:slug/backups", (req, res) => {
   try {
     const { slug, file } = projectDirForSlug(req.params.slug);
@@ -1187,21 +1282,76 @@ app.post("/api/projects/:slug/backups", (req, res) => {
 app.post("/api/projects/:slug/restore", (req, res) => {
   try {
     const { slug, file } = projectDirForSlug(req.params.slug);
+    const requestedRevision = String(req.headers["if-match"] || "").trim();
+    const storedRevision = projectRevisionFor(file);
+    if (!requestedRevision)
+      return res.status(428).json({ error: "Restore requires the project revision being replaced.", code: "PROJECT_REVISION_REQUIRED", revision: storedRevision });
+    if (requestedRevision !== storedRevision)
+      return res.status(409).json({ error: "The project changed before restore confirmation.", code: "PROJECT_REVISION_CONFLICT", revision: storedRevision });
     const name = path.basename(String(req.body?.name || ""));
-    if (!/^project-.*\.json$/i.test(name)) return res.status(400).json({ error: "Choose a valid project backup." });
+    if (!isCineBraidBackupName(name)) return res.status(400).json({ error: "Choose a CineBraid project backup." });
     const backupFile = path.join(projectBackupDir(file), name);
-    if (!backupFile.startsWith(projectBackupDir(file) + path.sep) || !fs.existsSync(backupFile)) return res.status(404).json({ error: "Backup not found." });
+    if (!backupFile.startsWith(projectBackupDir(file) + path.sep) || !fs.existsSync(backupFile))
+      return res.status(404).json({ error: "Backup not found." });
     const restored = normalizeProjectCollections(readJsonSync(backupFile));
     normalizePromptBuildHistory(restored, { applyRetention: false });
     const validation = validateProjectForSave(restored);
     if (!validation.ok) return res.status(422).json({ error: "Backup validation failed.", issues: validation.errors });
-    const safetyBackup = createProjectBackup(file, "before-restore");
-    atomicWriteJson(file, restored);
-    res.json({ ok: true, slug, restored: name, safetyBackup });
-  } catch (e) {
-    res.status(/No such project|Invalid project slug/.test(e.message) ? 404 : 500).json({ error: e.message });
+    const current = readJsonSync(file), comparison = canonComparison(current, restored);
+    const trustView = AuthorityKernel.validateAuthorityLedger(restored);
+    const authorityDelta = comparison.targets.map((row) => ({
+      targetKey: row.targetKey, before: row.before, after: row.after,
+      beforeCurrent: !!(row.target && AuthorityKernel.hasCurrentHumanAuthority(current, row.target)),
+      afterCurrent: !!(row.target && AuthorityKernel.hasCurrentHumanAuthority(restored, row.target)),
+    }));
+    const resurrection = authorityDelta.some((row) => !row.beforeCurrent && row.afterCurrent);
+    const previewHash = crypto.createHash("sha256").update(JSON.stringify(restored)).digest("hex");
+    const preview = {
+      trust: { trusted: trustView.trusted, diagnostics: trustView.diagnostics },
+      authorityDelta, resurrection, previewHash, revision: storedRevision,
+    };
+    if (req.body?.confirm !== true) return res.json({ ok: true, preview: true, slug, restored: name, ...preview });
+    if (String(req.body?.previewHash || "") !== previewHash)
+      return res.status(409).json({ error: "The backup changed after preview. Preview it again.", code: "RESTORE_PREVIEW_STALE" });
+    const metadata = {
+      confirmed: true, resurrection, resurrectionConfirmed: req.body?.resurrectionConfirmed === true,
+      sourceBackup: name, previewHash, trust: preview.trust, authorityDelta,
+    };
+    const outcome = persistProjectSuccessor({
+      slug, successor: restored, writeClass: WRITE_CLASSES.RESTORE_SNAPSHOT,
+      expectedRevision: requestedRevision, transitionMetadata: metadata,
+    });
+    if (!outcome.ok) return seamFailure(res, outcome, slug);
+    res.json({ ok: true, slug, restored: name, safetyBackup: metadata.safetyBackup, audit: metadata.audit, revision: outcome.revision });
+  } catch (error) {
+    res.status(/No such project|Invalid project slug/.test(error.message) ? 404 : 500).json({ error: error.message });
   }
 });
+
+app.post("/api/projects/:slug/authority/recover", (req, res) => {
+  try {
+    const { slug } = projectDirForSlug(req.params.slug);
+    const keys = Object.keys(req.body || {});
+    if (keys.some((key) => key !== "mode"))
+      return res.status(400).json({ error: "Authority recovery accepts only a mode; it never accepts a replacement ledger.", code: "RECOVERY_CLIENT_LEDGER_FORBIDDEN" });
+    const mode = String(req.body?.mode || "QUARANTINE").toUpperCase();
+    if (!["QUARANTINE", "TERMINATE"].includes(mode))
+      return res.status(400).json({ error: "Recovery mode must be QUARANTINE or TERMINATE." });
+    const metadata = { mode };
+    const outcome = persistProjectSuccessor({
+      slug, successor: {}, writeClass: WRITE_CLASSES.RECOVERY,
+      expectedRevision: "", transitionMetadata: metadata,
+    });
+    if (!outcome.ok) return seamFailure(res, outcome, slug);
+    res.json({
+      ok: true, slug, mode, revision: outcome.revision, evidence: metadata.evidence,
+      diagnostics: metadata.diagnostics || [], accounting: metadata.accounting || [], currentReceipts: 0,
+    });
+  } catch (error) {
+    res.status(/No such project|Invalid project slug/.test(error.message) ? 404 : 500).json({ error: error.message });
+  }
+});
+
 app.put("/api/project", (req, res) =>
   res.status(409).json({
     error:
@@ -1222,8 +1372,16 @@ function readProject(slug = activeSlug()) {
 }
 
 function writeProject(project, slug = activeSlug()) {
-  if (!slug) throw new Error("No active project.");
-  atomicWriteJson(projectDirForSlug(slug).file, project);
+  if (!slug) return { ok: false, revision: "", refusal: { code: "NO_ACTIVE_PROJECT", message: "No active project." } };
+  const outcome = persistProjectSuccessor({
+    slug, successor: project, writeClass: WRITE_CLASSES.INTERNAL_NONAUTHORITY_WRITE,
+    expectedRevision: "", transitionMetadata: {},
+  });
+  if (!outcome.ok) {
+    const targets = (outcome.refusal?.targets || []).map((row) => row.targetKey).join(", ");
+    console.error("INTERNAL_CANON_DELTA_REFUSED " + slug + (targets ? " " + targets : "") + ": " + (outcome.refusal?.message || "write refused"));
+  }
+  return outcome;
 }
 
 /* ---- media scan ---- */
@@ -1694,8 +1852,24 @@ app.post("/api/workspace/settings", (req, res) => {
     paths.forEach(safeEnsureDirectory);
     let migration = { copied: 0, skipped: 0, movedRoot: false };
     if (path.resolve(previousRoot) !== path.resolve(nextRoot) && fs.existsSync(previousRoot)) {
+      const sourceProjects = fs.readdirSync(previousRoot, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory() && fs.existsSync(path.join(previousRoot, entry.name, "project.json")))
+        .map((entry) => entry.name);
+      const collisions = sourceProjects.filter((slug) => fs.existsSync(path.join(nextRoot, slug, "project.json")));
+      if (collisions.length) return res.status(409).json({
+        error: "Workspace migration refused because destination project documents already exist.",
+        code: "WORKSPACE_PROJECT_COLLISION", collisions,
+      });
+      for (const slug of sourceProjects) {
+        const metadata = { destinationRoot: nextRoot };
+        const outcome = persistProjectSuccessor({
+          slug, successor: readJsonSync(path.join(previousRoot, slug, "project.json")),
+          writeClass: WRITE_CLASSES.WORKSPACE_MIGRATION, expectedRevision: "", transitionMetadata: metadata,
+        });
+        if (!outcome.ok) return seamFailure(res, outcome, slug);
+      }
       const result = copyMissingTree(previousRoot, nextRoot);
-      migration = { ...result, movedRoot: true, from: previousRoot, to: nextRoot };
+      migration = { ...result, projectDocuments: sourceProjects.length, movedRoot: true, from: previousRoot, to: nextRoot };
     }
     writeConfig(nextConfig);
     res.json({ ok: true, migration, ...workspaceStatus(nextConfig) });
@@ -3082,33 +3256,33 @@ function validateImportedProject(raw) {
 }
 
 function clearUnsupportedBuilderClaims(project, warnings) {
-  /* BATCH 1B — AN IMPORTED AUTHORITY LEDGER IS NOT THIS PROJECT'S HISTORY.
-
-     This function already strips every approved edge an import claims, because
-     CineBraid cannot verify media it did not produce. The durable authority
-     receipts are records ABOUT those edges, so they go the same way: keeping
-     them would let an imported document assert that a person here approved
-     something, which is the one claim the whole batch exists to make
-     unforgeable-by-accident.
-
-     Dropping them is also safe in the other direction — a receipt with no edge
-     behind it satisfies nothing, so this is belt as well as braces. */
-  if (project[ProductionAuthority.PRODUCTION_AUTHORITY_LEDGER_KEY]) {
-    const imported = ProductionAuthority.authorityReceipts(project).length;
-    delete project[ProductionAuthority.PRODUCTION_AUTHORITY_LEDGER_KEY];
-    if (imported) warnings.push(`The import carried ${imported} production-approval record${imported === 1 ? "" : "s"}. CineBraid cannot verify approvals made elsewhere, so they were not adopted; approve here to establish authority.`);
+  if (Object.prototype.hasOwnProperty.call(project, "productionAuthority")) {
+    const rawLedger = project.productionAuthority;
+    const imported = Array.isArray(rawLedger?.receipts) ? rawLedger.receipts.length : 0;
+    delete project.productionAuthority;
+    warnings.push("The import carried production-authority data. CineBraid did not adopt it; approve here to establish authority.");
+    if (imported) warnings.push("Removed " + imported + " imported production-approval record" + (imported === 1 ? "." : "s."));
   }
-  for (const list of ["characters", "locations", "props", "vehicles"])
-    for (const entity of project[list] || []) {
+  for (const listName of ["characters", "locations", "props", "vehicles", "audio"])
+    for (const entity of project[listName] || []) {
       entity.approvedFile = "";
+      delete entity.approvedAssetId;
+      delete entity.approvalIdentity;
       entity.promptPackages = [];
       entity.assetPromptBuilds = [];
-      if (/approved|locked|complete/i.test(String(entity.workflowStatus || "")))
-        entity.workflowStatus = "DRAFT";
-      for (const state of entity.continuityStates || []) state.approvedFile = "";
+      if (/approved|locked|complete/i.test(String(entity.workflowStatus || ""))) entity.workflowStatus = "DRAFT";
+      for (const state of entity.continuityStates || []) {
+        state.approvedFile = "";
+        delete state.approvedAssetId;
+        delete state.approvalIdentity;
+      }
     }
   for (const shot of project.shots || []) {
     shot.winner = null;
+    delete shot.winnerAssetId;
+    delete shot.finalStillFile;
+    delete shot.finalStillAssetId;
+    delete shot.approvalIdentity;
     shot.candidateFiles = [];
     shot.stageApprovals = {};
     shot.generationPackages = [];
@@ -3117,26 +3291,32 @@ function clearUnsupportedBuilderClaims(project, warnings) {
     shot.referenceInstructions = {};
     shot.referenceRoles = {};
     shot.referenceSelection = {};
-    if (/approved|locked|complete|built/i.test(String(shot.workflowStatus || "")))
-      shot.workflowStatus = "DRAFT";
+    if (/approved|locked|complete|built/i.test(String(shot.workflowStatus || ""))) shot.workflowStatus = "DRAFT";
+    const creation = shot.creationBrief && typeof shot.creationBrief === "object" ? shot.creationBrief : null;
+    if (creation) {
+      delete creation.finalStillFile;
+      delete creation.finalStillAssetId;
+      delete creation.approvedMotionFile;
+      delete creation.approvedMotionAssetId;
+      delete creation.approvalIdentity;
+    }
     for (const frame of shot.keyframes || []) {
       frame.winner = null;
+      delete frame.winnerAssetId;
+      delete frame.approvalIdentity;
       frame.generationPackages = [];
     }
-    for (const clip of shot.clips || []) clip.generationPackages = [];
+    for (const clip of shot.clips || []) {
+      delete clip.videoWinner;
+      delete clip.videoWinnerAssetId;
+      delete clip.approvalIdentity;
+      clip.generationPackages = [];
+      if (/approved|locked|complete/i.test(String(clip.status || ""))) clip.status = "DRAFT";
+    }
   }
-  for (const key of [
-    "mediaAssets",
-    "finishJobs",
-    "jobs",
-    "decisions",
-    "sessions",
-    "agentRuns",
-  ])
+  for (const key of ["mediaAssets", "finishJobs", "jobs", "decisions", "sessions", "agentRuns"])
     if ((project[key] || []).length) {
-      warnings.push(
-        `${key} was cleared because Project Builder imports contain planning data, not generated media or runtime history.`,
-      );
+      warnings.push(key + " was cleared because Project Builder imports contain planning data, not generated media or runtime history.");
       project[key] = [];
     }
 }
@@ -3207,7 +3387,10 @@ function projectBuilderCounts(project) {
 }
 
 function prepareImportedProjectForPreview(project) {
-  const prepared = structuredClone(project);
+  /* The preview is the exact normalized representation the untrusted-import
+     write class will validate and commit, so review and durable bytes cannot
+     diverge merely because the seam applies collection/history normalization. */
+  const prepared = normalizeProjectCollections(structuredClone(project));
   prepared.sessions = [
     {
       n: 1,
@@ -3218,6 +3401,7 @@ function prepareImportedProjectForPreview(project) {
       ],
     },
   ];
+  normalizePromptBuildHistory(prepared, { applyRetention: false });
   return prepared;
 }
 
@@ -3473,7 +3657,11 @@ app.post("/api/projects/import-json", (req, res) => {
     while (fs.existsSync(path.join(projectsRoot(), slug))) slug = base + "-" + ++n;
     const dir = path.join(projectsRoot(), slug);
     ensureDirs(dir);
-    atomicWriteJson(path.join(dir, "project.json"), project, { backup: false });
+    const importOutcome = persistProjectSuccessor({
+      slug, successor: project, writeClass: WRITE_CLASSES.UNTRUSTED_IMPORT,
+      expectedRevision: "", transitionMetadata: {},
+    });
+    if (!importOutcome.ok) return seamFailure(res, importOutcome, slug);
     const config = readConfig();
     config.activeProject = slug;
     writeConfig(config);
@@ -3560,11 +3748,14 @@ app.post("/api/export/packages", async (req, res) => {
         s.positioning || "",
       ];
       for (const f of s.keyframes || []) {
+        const frameCanon = AuthorityKernel.hasCurrentHumanAuthority(P, {
+          kind: "shot-frame", shotId: s.id, frameId: f.id,
+        });
         lines.push(
           "",
           `## Frame ${f.label} — ${f.title || ""}`,
           f.description || "",
-          f.winner ? `Approved file: ${f.winner}` : "Approved file: none",
+          frameCanon ? `Approved file: ${f.winner}` : f.winner ? `Historic selection: ${f.winner}` : "Approved file: none",
         );
         const framePackages = resolvePromptBuildList(P, f.generationPackages || []),
           pkg = framePackages.at(-1);
@@ -3581,7 +3772,7 @@ app.post("/api/export/packages", async (req, res) => {
             JSON.stringify(revision, null, 2),
           );
         }
-        if (f.winner) {
+        if (frameCanon && f.winner) {
           const file = path.join(
             PROJECT_DIR(),
             "shots",
@@ -3597,6 +3788,9 @@ app.post("/api/export/packages", async (req, res) => {
         }
       }
       for (const c of s.clips || []) {
+        const motionCanon = AuthorityKernel.hasCurrentHumanAuthority(P, {
+          kind: "shot-motion", shotId: s.id, unitKey: c.id || c.suffix,
+        });
         lines.push(
           "",
           `## Motion ${c.label || c.suffix || ""} — ${c.title || ""}`,
@@ -3618,7 +3812,7 @@ app.post("/api/export/packages", async (req, res) => {
             JSON.stringify(revision, null, 2),
           );
         }
-        if (c.videoWinner) {
+        if (motionCanon && c.videoWinner) {
           const file = path.join(
             PROJECT_DIR(),
             "shots",
@@ -3768,13 +3962,13 @@ function buildMarkdown(P) {
         : s.dur || 0;
       const frames =
         (s.keyframes || [])
-          .map((f) => `${f.label || "?"}${f.winner ? " ✓" : ""}`)
+          .map((f) => `${f.label || "?"}${AuthorityKernel.hasCurrentHumanAuthority(P, { kind: "shot-frame", shotId: s.id, frameId: f.id }) ? " ✓" : ""}`)
           .join(" · ") || "—";
       const motion =
         (s.clips || [])
           .map(
             (c) =>
-              `${c.label || c.suffix || "?"} ${String(c.kind || "plan").toUpperCase()}${c.videoWinner ? " ✓" : ""}`,
+              `${c.label || c.suffix || "?"} ${String(c.kind || "plan").toUpperCase()}${AuthorityKernel.hasCurrentHumanAuthority(P, { kind: "shot-motion", shotId: s.id, unitKey: c.id || c.suffix }) ? " ✓" : ""}`,
           )
           .join(" · ") || "—";
       L.push(
@@ -3813,7 +4007,7 @@ function buildMarkdown(P) {
       }
       for (const f of s.keyframes || []) {
         L.push(
-          `- **Frame ${f.label || "?"} — ${f.title || "Keyframe"}**${f.required === false ? " (optional)" : ""}${f.winner ? ` · approved: ${f.winner}` : ""}`,
+          `- **Frame ${f.label || "?"} — ${f.title || "Keyframe"}**${f.required === false ? " (optional)" : ""}${AuthorityKernel.hasCurrentHumanAuthority(P, { kind: "shot-frame", shotId: s.id, frameId: f.id }) ? ` · approved: ${f.winner}` : f.winner ? ` · historic selection: ${f.winner}` : ""}`,
         );
         if (f.description) L.push("  - " + oneLine(f.description));
         const pkg = resolvePromptBuildList(P, f.generationPackages || []).at(-1);
@@ -3828,7 +4022,7 @@ function buildMarkdown(P) {
         const to =
           (s.keyframes || []).find((f) => f.id === c.toFrame)?.label || "";
         L.push(
-          `- **Motion ${c.label || c.suffix || "?"} — ${c.title || "Motion unit"}** · ${String(c.kind || "plan").toUpperCase()} · ${from}${to ? " → " + to : ""} · ${c.dur || 0}s${c.videoWinner ? ` · approved: ${c.videoWinner}` : ""}`,
+          `- **Motion ${c.label || c.suffix || "?"} — ${c.title || "Motion unit"}** · ${String(c.kind || "plan").toUpperCase()} · ${from}${to ? " → " + to : ""} · ${c.dur || 0}s${AuthorityKernel.hasCurrentHumanAuthority(P, { kind: "shot-motion", shotId: s.id, unitKey: c.id || c.suffix }) ? ` · approved: ${c.videoWinner}` : c.videoWinner ? ` · historic selection: ${c.videoWinner}` : ""}`,
         );
         if (c.motionPrompt || c.note)
           L.push("  - " + oneLine(c.motionPrompt || c.note));
@@ -7652,7 +7846,7 @@ async function maybeAutoIndex() {
 }
 app.get("/api/agents/status", async (req, res) => {
   const cfg = readConfig();
-  const P = reconcileOrphanedAgentRuns(readProject());
+  const P = readProject();
   const inventories = await providerInventories(cfg);
   const readiness = Object.fromEntries(
     await Promise.all(
@@ -7695,6 +7889,12 @@ app.get("/api/agents/status", async (req, res) => {
     })),
     runs: [...agentRuns(P)].reverse().slice(0, 40),
   });
+});
+app.post("/api/agents/reconcile", (req, res) => {
+  try {
+    const project = reconcileOrphanedAgentRuns(readProject());
+    res.json({ ok: true, runs: [...agentRuns(project)].reverse().slice(0, 40) });
+  } catch (error) { res.status(500).json({ error: error.message }); }
 });
 app.post("/api/agents/run", async (req, res) => {
   try {
@@ -8392,7 +8592,11 @@ app.post("/api/projects/new", (req, res) => {
       howItFeels: "",
       audio: {},
     });
-  atomicWriteJson(path.join(dir, "project.json"), blank, { backup: false });
+  const createOutcome = persistProjectSuccessor({
+    slug, successor: blank, writeClass: WRITE_CLASSES.UNTRUSTED_IMPORT,
+    expectedRevision: "", transitionMetadata: {},
+  });
+  if (!createOutcome.ok) return seamFailure(res, createOutcome, slug);
   const c = readConfig();
   c.activeProject = slug;
   writeConfig(c);

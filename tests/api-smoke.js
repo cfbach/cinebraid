@@ -8,6 +8,9 @@ const http = require("http");
 const { resolvePromptBuildList } = require("../public/shared-build-history");
 const PromptEngine = require("../prompt-engine");
 const { httpStatusForError } = require("../http-errors");
+const { Kernel: AuthorityKernel, Private: AuthorityPrivate } = require("./authority-kernel-private");
+const { installTestManualActionSource } = require("./authority-test-gesture");
+const AUTHORITY_MANUAL = installTestManualActionSource(AuthorityKernel);
 const RELEASE_VERSION = require("../package.json").version;
 
 const ROOT = path.join(__dirname, "..");
@@ -463,6 +466,41 @@ async function request(url, options) {
   return { response, body };
 }
 
+async function projectRevision(slug) {
+  const response = await fetch(`${base}/api/projects/${encodeURIComponent(slug)}/project`, { cache: "no-store" });
+  assert.strictEqual(response.status, 200, `could not read revision for ${slug}`);
+  const revision = response.headers.get("etag") || response.headers.get("x-cinebraid-revision");
+  assert(revision, `project ${slug} response did not include a revision`);
+  return revision;
+}
+
+async function canonTransition(current, successor) {
+  return request("/api/projects/smoke-project/canon-transition", {
+    method: "POST",
+    headers: { "content-type": "application/json", "if-match": await projectRevision("smoke-project") },
+    body: JSON.stringify({ successor, transition: AuthorityKernel.authorityWriteTransition(current, successor).declaration }),
+  });
+}
+
+function appendEntityApprovalFixture(project, { list, entityId, stateId, value, at }) {
+  const ledger = project.productionAuthority || (project.productionAuthority = { version: 1, receipts: [] });
+  const receipts = Array.isArray(ledger.receipts) ? ledger.receipts : (ledger.receipts = []);
+  const sequence = receipts.reduce((max, row) => Math.max(max, Number(row.sequence) || 0), 0) + 1;
+  const entity = (project[list] || []).find((row) => row.id === entityId);
+  const state = (entity?.continuityStates || []).find((row) => row.id === stateId);
+  assert(entity && state, "authority fixture target must exist");
+  entity.approvedFile = value;
+  state.approvedFile = value;
+  receipts.push({
+    id: `authority-${String(sequence).padStart(6, "0")}`, sequence,
+    actor: "human", act: "explicit-approval", command: "approve-entity-state", kind: "entity-state",
+    targetKey: `entity-state:${list}:${entityId}#${stateId}`,
+    shotId: "", frameId: "", unitKey: "", list, entityId, stateId, slotId: "",
+    value, assetId: "", at, status: "current", supersededBy: "", supersededAt: "",
+    revokedAt: "", revocationReason: "", note: "",
+    provenance: { manualAction: "gesture-api-fixture", via: "api-smoke-fixture", gesture: "click" },
+  });
+}
 async function waitForServer() {
   const deadline = Date.now() + 8000;
   while (Date.now() < deadline) {
@@ -596,7 +634,7 @@ async function main() {
     firstProject.meta.title = "Smoke Project Scoped Save";
     result = await request("/api/projects/smoke-project/project", {
       method: "PUT",
-      headers: { "content-type": "application/json", "if-match": "*" },
+      headers: { "content-type": "application/json", "if-match": await projectRevision("smoke-project") },
       body: JSON.stringify(firstProject),
     });
     assert.strictEqual(result.response.status, 200);
@@ -886,7 +924,7 @@ async function main() {
     ];
     result = await request("/api/projects/smoke-project/project", {
       method: "PUT",
-      headers: { "content-type": "application/json", "if-match": "*" },
+      headers: { "content-type": "application/json", "if-match": await projectRevision("smoke-project") },
       body: JSON.stringify(mediaProject),
     });
     assert.strictEqual(result.response.status, 200);
@@ -1079,7 +1117,7 @@ async function main() {
     projectBeforeChange.meta.version = "v2";
     result = await request("/api/projects/smoke-project/project", {
       method: "PUT",
-      headers: { "content-type": "application/json", "if-match": "*" },
+      headers: { "content-type": "application/json", "if-match": await projectRevision("smoke-project") },
       body: JSON.stringify(projectBeforeChange),
     });
     assert.strictEqual(result.response.status, 200);
@@ -1383,7 +1421,8 @@ async function main() {
       "ready",
     );
 
-    const entityReviewProject = (await request("/api/project")).body;
+    const entityReviewBase = (await request("/api/project")).body;
+    let entityReviewProject = structuredClone(entityReviewBase);
     entityReviewProject.props = [
       {
         id: "PROP-REVIEW",
@@ -1415,10 +1454,13 @@ async function main() {
     };
     result = await request("/api/projects/smoke-project/project", {
       method: "PUT",
-      headers: { "content-type": "application/json", "if-match": "*" },
+      headers: { "content-type": "application/json", "if-match": await projectRevision("smoke-project") },
       body: JSON.stringify(entityReviewProject),
     });
-    assert.strictEqual(result.response.status, 200);
+    assert.strictEqual(result.response.status, 422, "ordinary whole-project authority creation must be refused");
+    assert.strictEqual(result.body.code, "CANON_TRANSITION_REQUIRED");
+    result = await canonTransition(entityReviewBase, entityReviewProject);
+    assert.strictEqual(result.response.status, 200, JSON.stringify(result.body));
     result = await request("/api/prompt/asset-compile", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -1510,15 +1552,13 @@ async function main() {
        that creates the first reference must not be blocked for not already
        having one. */
     const bootstrapProject = JSON.parse(JSON.stringify(entityReviewProject));
-    bootstrapProject.props[0].approvedFile = "";
-    bootstrapProject.props[0].continuityStates[0].approvedFile = "";
+    AUTHORITY_MANUAL.gesture(() => AuthorityPrivate.revokeEntityStateCanon(bootstrapProject, {
+      list: "props", entityId: "PROP-REVIEW", stateId: "state-default",
+      reason: "withdrawn", at: "2026-08-22T15:00:00.000Z", via: "api-smoke-fixture",
+    }));
     bootstrapProject.props[0].continuityStates[1].approvedFile = "";
-    result = await request("/api/projects/smoke-project/project", {
-      method: "PUT",
-      headers: { "content-type": "application/json", "if-match": "*" },
-      body: JSON.stringify(bootstrapProject),
-    });
-    assert.strictEqual(result.response.status, 200);
+    result = await canonTransition(entityReviewProject, bootstrapProject);
+    assert.strictEqual(result.response.status, 200, JSON.stringify(result.body));
     result = await request("/api/llm/review-entity-candidate", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -1537,7 +1577,7 @@ async function main() {
     mismatchProject.props[0].continuityStates[0].notes = "FORCE_STATE_MISMATCH Clean tool.";
     result = await request("/api/projects/smoke-project/project", {
       method: "PUT",
-      headers: { "content-type": "application/json", "if-match": "*" },
+      headers: { "content-type": "application/json", "if-match": await projectRevision("smoke-project") },
       body: JSON.stringify(mismatchProject),
     });
     assert.strictEqual(result.response.status, 200);
@@ -1551,17 +1591,19 @@ async function main() {
     assert.strictEqual(result.body.review.stateMatch.closerState, "Damp inside");
     assert.strictEqual(result.body.review.outcome, "correctable", "moving the subject back is something generation can do");
 
-    result = await request("/api/projects/smoke-project/project", {
-      method: "PUT",
-      headers: { "content-type": "application/json", "if-match": "*" },
-      body: JSON.stringify(entityReviewProject),
+    const restoredAuthorityProject = structuredClone(mismatchProject);
+    appendEntityApprovalFixture(restoredAuthorityProject, {
+      list: "props", entityId: "PROP-REVIEW", stateId: "state-default",
+      value: "PROP-REVIEW-DEFAULT.png", at: "2026-08-22T15:01:00.000Z",
     });
-    assert.strictEqual(result.response.status, 200);
+    result = await canonTransition(mismatchProject, restoredAuthorityProject);
+    assert.strictEqual(result.response.status, 200, JSON.stringify(result.body));
+    entityReviewProject = restoredAuthorityProject;
 
     entityReviewProject.props[0].continuityStates[1].notes = "FORCE_MAJOR_PASS Scratched casing and chipped grip.";
     result = await request("/api/projects/smoke-project/project", {
       method: "PUT",
-      headers: { "content-type": "application/json", "if-match": "*" },
+      headers: { "content-type": "application/json", "if-match": await projectRevision("smoke-project") },
       body: JSON.stringify(entityReviewProject),
     });
     assert.strictEqual(result.response.status, 200);
@@ -1581,7 +1623,7 @@ async function main() {
     entityReviewProject.props[0].continuityStates[1].notes = "FORCE_EMBEDDED_MISMATCH Tape the exact same photograph to the tile; change only the tape and placement.";
     result = await request("/api/projects/smoke-project/project", {
       method: "PUT",
-      headers: { "content-type": "application/json", "if-match": "*" },
+      headers: { "content-type": "application/json", "if-match": await projectRevision("smoke-project") },
       body: JSON.stringify(entityReviewProject),
     });
     assert.strictEqual(result.response.status, 200);
@@ -1609,12 +1651,13 @@ async function main() {
       candidateFiles: [{ stored: "LOC-REVIEW-LEFT.png", decision: "unreviewed", targetCoverageSlotId: "left-coverage", targetCoverageSlotName: "Left coverage", coverageGroup: "angles", referenceView: "left-profile", targetStateId: "state-default" }],
     }];
     for (const name of ["LOC-REVIEW-MASTER.png", "LOC-REVIEW-REVERSE.png", "LOC-REVIEW-LEFT.png"]) fs.writeFileSync(path.join(PROJECT_DIR, "plates", name), Buffer.from(`mock-${name}`));
-    result = await request("/api/projects/smoke-project/project", {
-      method: "PUT",
-      headers: { "content-type": "application/json", "if-match": "*" },
-      body: JSON.stringify(entityReviewProject),
+    const beforeLocationAuthority = (await request("/api/projects/smoke-project/project")).body;
+    appendEntityApprovalFixture(entityReviewProject, {
+      list: "locations", entityId: "LOC-REVIEW", stateId: "state-default",
+      value: "LOC-REVIEW-MASTER.png", at: "2026-08-22T15:02:00.000Z",
     });
-    assert.strictEqual(result.response.status, 200);
+    result = await canonTransition(beforeLocationAuthority, entityReviewProject);
+    assert.strictEqual(result.response.status, 200, JSON.stringify(result.body));
     result = await request("/api/llm/review-entity-candidate", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -1662,7 +1705,7 @@ async function main() {
     });
     result = await request("/api/projects/smoke-project/project", {
       method: "PUT",
-      headers: { "content-type": "application/json", "if-match": "*" },
+      headers: { "content-type": "application/json", "if-match": await projectRevision("smoke-project") },
       body: JSON.stringify(guardianProject),
     });
     assert.strictEqual(result.response.status, 200);
@@ -1704,7 +1747,7 @@ async function main() {
     });
     result = await request("/api/projects/smoke-project/project", {
       method: "PUT",
-      headers: { "content-type": "application/json", "if-match": "*" },
+      headers: { "content-type": "application/json", "if-match": await projectRevision("smoke-project") },
       body: JSON.stringify(weakProject),
     });
     assert.strictEqual(result.response.status, 200);
@@ -1760,7 +1803,7 @@ async function main() {
     stageProject.shots[0].positioning = "";
     result = await request("/api/projects/smoke-project/project", {
       method: "PUT",
-      headers: { "content-type": "application/json", "if-match": "*" },
+      headers: { "content-type": "application/json", "if-match": await projectRevision("smoke-project") },
       body: JSON.stringify(stageProject),
     });
     assert.strictEqual(result.response.status, 200);

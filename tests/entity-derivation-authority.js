@@ -364,12 +364,12 @@ async function main() {
                action mid-run, not a test-authored guard. */
             if (revokeDuringImprove && !revoked) {
               revoked = true;
-              vm.runInContext(
+              rendered.gesture.act(() => vm.runInContext(
                 /* clearEdge:false is the HISTORIC shape exactly: the receipt is
                    withdrawn, the creator's chosen image stays on the state. */
-                'revokeEntityStateCanon(P, { list: "props", entityId: "PR-TOOL", stateId: "state-default", clearEdge: false, reason: "withdrawn" });',
+                'revokeEntityStateCanon(P, { list: "props", entityId: "PR-TOOL", stateId: "state-default", clearEdge: false, reason: "withdrawn", at: "2026-08-22T15:03:00.000Z", via: "entity-derivation-test" });',
                 rendered.context,
-              );
+              ));
             }
             return answer;
           }

@@ -4322,11 +4322,15 @@ function guidedInvalidateMotionAfterFrameChange(s, previousName = "", nextName =
      rather than the safety net — but a project should be able to say WHY a
      decision stopped standing, and "the frame it was built on changed" is the
      reason. */
-  if (typeof revokeDeliveryCanon === "function") {
-    revokeDeliveryCanon(P, { shotId: s.id, at: new Date().toISOString(), via: "frame-input-changed", reason: "target-cleared" });
+  if (typeof systemInvalidateDeliveryCanon === "function") {
+    const deliveryTarget = authorityTarget({ kind: "shot-delivery", shotId: s.id });
+    if (hasCurrentHumanAuthority(P, deliveryTarget))
+      systemInvalidateDeliveryCanon(P, { shotId: s.id, at: new Date().toISOString(), reason: "target-cleared" });
     for (const clip of s.clips || []) {
       if (!clip.videoWinner) continue;
-      revokeMotionCanon(P, { shotId: s.id, unitKey: clip.id || unitKey(clip), at: new Date().toISOString(), via: "frame-input-changed", reason: "target-cleared" });
+      const motionTarget = authorityTarget({ kind: "shot-motion", shotId: s.id, unitKey: clip.id || unitKey(clip) });
+      if (hasCurrentHumanAuthority(P, motionTarget))
+        systemInvalidateMotionCanon(P, { shotId: s.id, unitKey: clip.id || unitKey(clip), at: new Date().toISOString(), reason: "target-cleared" });
     }
   }
   c.approvedMotionFile = "";
@@ -4386,9 +4390,16 @@ window.resetGuidedFrameApproval = (id, frameId) => {
          resume rebuilt authority from that step. Withdrawing the receipt is what
          reopens every dependent gate on the next read, and it records that the
          decision was withdrawn rather than never made. */
-      revokeFrameCanon(P, {
-        shotId: s.id, frameId, at: new Date().toISOString(), via: "guided-frame-approval-reset", reason: "withdrawn",
-      });
+      const frameTarget = authorityTarget({ kind: "shot-frame", shotId: s.id, frameId });
+      if (hasCurrentHumanAuthority(P, frameTarget)) {
+        revokeFrameCanon(P, {
+          shotId: s.id, frameId, at: new Date().toISOString(), via: "guided-frame-approval-reset", reason: "withdrawn",
+        });
+      } else {
+        frame.winner = "";
+        clearShotApprovalIdentity(frame, "winner");
+        if (index === 0) { s.winner = ""; clearShotApprovalIdentity(s, "winner"); }
+      }
       const state = guidedFrameState(s, frame, index);
       state.selectedCandidate = previous.name;
       const c = ensureShotCreation(s);

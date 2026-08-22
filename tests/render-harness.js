@@ -1026,7 +1026,7 @@ async function main() {
   assert.strictEqual(selected, "FRAME_B.png", "candidate choice must survive a route rerender");
 
   interactive.context.confirmModal = (message, action) => action();
-  interactive.context.resetGuidedFrameApproval("L1-01", "frame-a");
+  interactive.gesture.act(() => interactive.context.resetGuidedFrameApproval("L1-01", "frame-a"));
   await new Promise((resolve) => setTimeout(resolve, 25));
   const resetState = vm.runInContext(`(() => { const s=P.shots.find((x)=>x.id==="L1-01"); return { shotWinner:s.winner||"", frameWinner:s.keyframes[0].winner||"", motionWinners:(s.clips||[]).map((x)=>x.videoWinner||"") }; })()`, interactive.context);
   assert.strictEqual(resetState.shotWinner, "", "reset must clear the active shot winner");

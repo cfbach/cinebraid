@@ -104,7 +104,7 @@ def _stamp_sandbox_canon():
 
 _stamp_sandbox_canon()
 
-console_errors, page_errors, offsite, paid_calls, failed_requests = [], [], [], [], []
+console_errors, page_errors, offsite, paid_calls, failed_requests, http_errors, canon_responses = [], [], [], [], [], [], []
 findings, controls = [], []
 # When armed, the guard below serves a MUTATED module instead of the shipped one:
 # the defect is reintroduced in flight, nothing on disk is touched, and no control
@@ -133,6 +133,17 @@ try:
         page = browser.new_page(viewport={"width": 1600, "height": 1000})
         page.on("console", lambda m: console_errors.append(m.text) if m.type == "error" else None)
         page.on("pageerror", lambda e: page_errors.append(str(e)))
+        page.on("response", lambda response: http_errors.append(
+            f"{response.request.method} {response.url} ({response.status})") if response.status >= 400 else None)
+        def capture_canon_response(response):
+            if "/canon-transition" not in response.url:
+                return
+            try:
+                detail = response.text() if response.status >= 400 else ""
+            except Exception as error:
+                detail = f"<response body unavailable: {error}>"
+            canon_responses.append(f"{response.request.method} {response.status} {detail[:600]}")
+        page.on("response", capture_canon_response)
         page.on("requestfailed", lambda request: failed_requests.append(
             f"{request.method} {request.url} ({(request.failure or '')})"))
 
@@ -501,27 +512,52 @@ try:
         # The media browser needs a returned file identity, not a decodable production
         # asset. A tiny local ftyp marker is sufficient for DOM/review-path validation.
         returned_file.write_bytes(b"\x00\x00\x00\x18ftypmp42cinebraid-runtime-fixture")
-        page.evaluate("""async () => {
-            const shot = P.shots.find((row) => row.id === 'SAMPLE-01');
-            shot.deliveryRoute = 'r2v';
-            shot.deliveryIntent = 'motion';
-            shot.clips = [{
-                id: 'motion-a', label: 'A', suffix: 'a', title: 'Returned motion', kind: 'r2v',
-                fromFrame: '', toFrame: '', dur: 1, motionPrompt: 'Returned provider motion.',
-                generationPackages: [], videoWinner: '',
-            }];
-            const creation = ensureShotCreation(shot);
-            creation.deliveryIntent = 'motion';
-            creation.activeMotionUnitId = 'motion-a';
-            creation.approvedMotionFile = '';
-            creation.finalVideoFile = '';
-            /* Keep every pointer and byte, but remove entity authority: the exact state
-               where a current route prerequisite becomes unmet after work returned. */
-            P.productionAuthority.receipts = (P.productionAuthority.receipts || [])
-                .filter((row) => row.kind !== 'entity-state');
-            dirty();
-            if (typeof flushPendingProjectSave === 'function') await flushPendingProjectSave();
+        page.evaluate("""() => {
+            document.getElementById('alpha-loop-revoke-entity-canon')?.remove();
+            window.__alphaLoopAuthorityError = null;
+            const button = document.createElement('button');
+            button.id = 'alpha-loop-revoke-entity-canon';
+            button.textContent = 'PREPARE RETURNED MEDIA CASE';
+            button.addEventListener('click', () => {
+                try {
+                    const K = window.CineBraidAuthorityKernel;
+                    const at = new Date().toISOString();
+                    const rows = [...(P.productionAuthority?.receipts || [])]
+                        .filter((row) => row.kind === 'entity-state' && row.status === 'current');
+                    for (const row of rows) {
+                        const target = K.authorityTarget(row);
+                        revokeEntityStateCanon(P, {
+                            list: target.list, entityId: target.entityId, stateId: target.stateId,
+                            reason: 'withdrawn', at, via: 'alpha-loop-returned-media-case',
+                        });
+                    }
+                    const shot = P.shots.find((row) => row.id === 'SAMPLE-01');
+                    shot.deliveryRoute = 'r2v';
+                    shot.deliveryIntent = 'motion';
+                    shot.clips = [{
+                        id: 'motion-a', label: 'A', suffix: 'a', title: 'Returned motion', kind: 'r2v',
+                        fromFrame: '', toFrame: '', dur: 1, motionPrompt: 'Returned provider motion.',
+                        generationPackages: [], videoWinner: '',
+                    }];
+                    const creation = ensureShotCreation(shot);
+                    creation.deliveryIntent = 'motion';
+                    creation.activeMotionUnitId = 'motion-a';
+                    creation.approvedMotionFile = '';
+                    creation.finalVideoFile = '';
+                    /* Remove the current route prerequisite through the same explicit,
+                       trusted revocation path the product uses. The returned media must
+                       remain inspectable even though its source Canon is now withdrawn. */
+                    dirty();
+                } catch (error) {
+                    window.__alphaLoopAuthorityError = { message: error.message || String(error), code: error.code || '' };
+                }
+            });
+            document.body.appendChild(button);
         }""")
+        page.locator('#alpha-loop-revoke-entity-canon').click()
+        authority_error = page.evaluate("() => window.__alphaLoopAuthorityError")
+        assert not authority_error, f"B2: explicit entity-Canon revocation failed: {authority_error}"
+        page.evaluate("async () => { if (typeof flushPendingProjectSave === 'function') await flushPendingProjectSave(); await SAVE_CHAIN; }")
         page.goto(f"{base}/#/production", wait_until="domcontentloaded")
         page.wait_for_selector("#main", timeout=15000)
         page.evaluate("""async () => {
@@ -551,7 +587,7 @@ try:
                 paidAction: !!panel.querySelector('.h3-generate-btn'),
             };
         }""")
-        assert b2_before["status"] == "NEEDS_DECISION" and b2_before["generationStatus"] == "NEEDS_DECISION",             f"B2: the route prerequisite must really be unmet: {b2_before}"
+        assert b2_before["status"] == "BLOCKED" and b2_before["generationStatus"] == "BLOCKED",             f"B2: the explicitly revoked route prerequisite must block fresh generation: {b2_before}"
         assert b2_before["stage"] == "available", f"B2: returned work must keep Motion reachable: {b2_before}"
         assert all(b2_before[key] for key in ("returned", "inspect", "approve", "importInput")),             f"B2: returned media lost a review/approval/import path: {b2_before}"
         assert not b2_before["buildPrompt"] and not b2_before["paidAction"],             f"B2: fresh or paid generation leaked through the blocked route: {b2_before}"
@@ -577,12 +613,12 @@ try:
         assert b2_after["winner"] == returned_name and b2_after["receipt"],             f"B2: existing approval authority did not accept the returned video: {b2_after}"
         assert b2_after["generationStatus"] in ("BLOCKED", "NEEDS_DECISION") and b2_after["blocked"],             f"B2: approving returned work must not bypass fresh-generation readiness: {b2_after}"
         assert b2_after["approved"], f"B2: approved returned media stopped being reachable: {b2_after}"
-        findings.append("B2 runtime: with r2v entity Canon removed after PAID-RETURN.mp4 arrived, Motion stayed "
+        findings.append("B2 runtime: with r2v entity Canon explicitly revoked after PAID-RETURN.mp4 arrived, Motion stayed "
                         "reachable for theatre review, approval and import; approval wrote shot-motion Canon, "
                         "while prompt creation and paid generation remained blocked")
 
         assert not page_errors, f"the audit raised uncaught errors: {page_errors}"
-        assert not console_errors, f"the audit logged console errors: {console_errors}; failed: {failed_requests}"
+        assert not console_errors, f"the audit logged console errors: {console_errors}; Canon: {canon_responses}; HTTP: {http_errors}; failed: {failed_requests}"
         browser.close()
 
     assert not paid_calls, f"a paid route was called: {paid_calls}"

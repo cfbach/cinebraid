@@ -269,6 +269,24 @@ window.addScene = () =>
       route();
     },
   );
+function revokeShotCanonForRemoval(shot) {
+  if (!shot || typeof hasCurrentHumanAuthority !== "function") return;
+  const revokeIfCurrent = (target, command, details) => {
+    if (target && hasCurrentHumanAuthority(P, target)) command(P, {
+      ...details, at: new Date().toISOString(), via: "confirmed-target-removal",
+      reason: "target-removed", clearEdge: false,
+    });
+  };
+  for (const frame of shot.keyframes || []) revokeIfCurrent(
+    authorityTarget({ kind: "shot-frame", shotId: shot.id, frameId: frame.id }),
+    revokeFrameCanon, { shotId: shot.id, frameId: frame.id },
+  );
+  for (const clip of shot.clips || []) {
+    const key = clip.id || unitKey(clip);
+    revokeIfCurrent(authorityTarget({ kind: "shot-motion", shotId: shot.id, unitKey: key }), revokeMotionCanon, { shotId: shot.id, unitKey: key });
+  }
+  revokeIfCurrent(authorityTarget({ kind: "shot-delivery", shotId: shot.id }), revokeDeliveryCanon, { shotId: shot.id });
+}
 function deletedTargetRecord(type, id, extra = {}) {
   P.meta = P.meta || {};
   P.meta.deletedTargets = Array.isArray(P.meta.deletedTargets) ? P.meta.deletedTargets : [];
@@ -282,7 +300,7 @@ window.delScene = (id) => {
     const button = document.getElementById("delete-scene-confirm");
     if (!button) return;
     button.onclick = () => {
-      shots.forEach((shot) => deletedTargetRecord("shot", shot.id, { scene: id, mediaRetained: true }));
+      shots.forEach((shot) => { revokeShotCanonForRemoval(shot); deletedTargetRecord("shot", shot.id, { scene: id, mediaRetained: true }); });
       deletedTargetRecord("scene", id, { shotIds: shots.map((shot) => shot.id), mediaRetained: true });
       P.scenes = P.scenes.filter((s) => s.id !== id);
       P.shots = P.shots.filter((s) => s.scene !== id);
@@ -389,6 +407,7 @@ window.delShot = (id) => {
     const button = document.getElementById("delete-shot-confirm");
     if (!button) return;
     button.onclick = () => {
+      revokeShotCanonForRemoval(shot);
       deletedTargetRecord("shot", id, { scene: shot.scene, mediaRetained: true, takeCount: takes.length });
       P.shots = P.shots.filter((s) => s.id !== id);
       dirty(); closeModal(); location.hash = "#/scene/" + shot.scene;

@@ -31,6 +31,7 @@
      G  the derived-edit prompt the workspace assembles for itself             */
 
 const assert = require("assert");
+const crypto = require("crypto");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
@@ -357,7 +358,7 @@ async function testLaterPassStability() {
       moved.meta.format = "Vertical cut · 9:16";
       const saved = await request(`/api/projects/${SLUG}/project`, {
         method: "PUT",
-        headers: { "content-type": "application/json", "if-match": "*" },
+        headers: { "content-type": "application/json", "if-match": `"${crypto.createHash("sha256").update(fs.readFileSync(path.join(PROJECT_DIR, "project.json"))).digest("hex")}"` },
         body: JSON.stringify(moved),
       });
       assert.strictEqual(saved.response.status, 200, `project update failed: ${JSON.stringify(saved.body)}`);

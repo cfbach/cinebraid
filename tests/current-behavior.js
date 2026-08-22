@@ -337,7 +337,11 @@ async function main() {
     "api-smoke.js",
     "approval-reference-consistency.js",
     "asset-lifecycle.js",
+    "authority-kernel-private.js",
     "authority-test-gesture.js",
+    "authority-write-seam-real-browser.py",
+    "authority-write-seam-server.js",
+    "authority-write-seam.js",
     "automation-diagnostics.js",
     "automation-frame-preflight-negative-controls.js",
     "automation-frame-preflight.js",
@@ -513,6 +517,7 @@ async function main() {
     "release-package-smoke.js",
     "render-harness.js",
     "request-boundary.js",
+    "run-authority-browser-gate.js",
     "run-browser-gate.js",
     "run-full-check.js",
     "run-python-check.js",
@@ -674,7 +679,8 @@ async function main() {
   const settings = read("public/settings.js");
   const server = read("server.js");
   assert(app.includes("flushPendingProjectSave"));
-  assert(app.includes("/api/projects/${encodeURIComponent(job.slug)}/project"));
+  assert(app.includes('"/api/projects/" + encodeURIComponent(job.slug) + "/project"'));
+  assert(app.includes('"/api/projects/" + encodeURIComponent(job.slug) + "/canon-transition"'), "authority changes must use the explicit Canon transition route");
   assert(app.includes('falConfig.enabled && falConfig.keySource !== "none"'), "FAL job history must load only when the optional integration is configured");
   assert(!settings.includes("commitImport"));
   assert(!settings.includes("doImport"));

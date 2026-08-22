@@ -465,26 +465,48 @@ window.createManualProjectBackup = async () => {
     toast("Could not create project backup");
   }
 };
-window.restoreProjectBackup = (name) => {
+window.restoreProjectBackup = async (name) => {
   const slug = activeProjectSlug();
   if (!slug || !name) return toast("No active project to restore into");
-  confirmModal(`Restore ${name}? CineBraid will first create a safety backup of the current project.`, async () => {
-    try {
-      const response = await fetch(`/api/projects/${encodeURIComponent(slug)}/restore`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name }),
+  try {
+    const headers = { "Content-Type": "application/json", "If-Match": PROJECT_REVISION };
+    const previewResponse = await fetch("/api/projects/" + encodeURIComponent(slug) + "/restore", {
+      method: "POST", headers, body: JSON.stringify({ name }),
+    });
+    const preview = await previewResponse.json();
+    if (!previewResponse.ok) throw new Error(preview.error || "Restore preview failed");
+    const delta = preview.authorityDelta || [];
+    const trust = preview.trust?.trusted
+      ? "The snapshot's production-authority ledger is structurally trusted."
+      : "The snapshot's production-authority ledger is NOT trusted: " + (preview.trust?.diagnostics || []).map((row) => row.code).join(", ");
+    const deltaMarkup = delta.length
+      ? "<ul>" + delta.map((row) => "<li><b>" + esc(row.targetKey) + "</b> · " + (row.beforeCurrent ? "current" : "non-Canon") + " → " + (row.afterCurrent ? "current" : "non-Canon") + "</li>").join("") + "</ul>"
+      : "<p>No resolved production-authority target changes.</p>";
+    const perform = async (resurrectionConfirmed) => {
+      const response = await fetch("/api/projects/" + encodeURIComponent(slug) + "/restore", {
+        method: "POST", headers,
+        body: JSON.stringify({ name, confirm: true, previewHash: preview.previewHash, resurrectionConfirmed }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Restore failed");
       toast("Project restored — reloading");
       setTimeout(() => location.reload(), 350);
-    } catch (error) {
-      toast(error.message || "Could not restore project");
-    }
-  }, { title: "Restore project backup", confirmLabel: "RESTORE", danger: false });
+    };
+    const confirmRestore = () => {
+      if (!preview.resurrection) return perform(false).catch((error) => toast(error.message || "Could not restore project"));
+      confirmModal(
+        "This snapshot would resurrect previously non-current production authority. Restore it as current Canon?",
+        () => perform(true).catch((error) => toast(error.message || "Could not restore project")),
+        { title: "Confirm Canon resurrection", confirmLabel: "RESURRECT & RESTORE", danger: true },
+      );
+    };
+    confirmModal(
+      "<p>" + esc(trust) + "</p>" + deltaMarkup + "<p>CineBraid will first preserve the current project and write a restore audit beside the backups.</p>",
+      confirmRestore,
+      { title: "Review restore authority change", confirmLabel: preview.resurrection ? "CONTINUE" : "RESTORE", danger: false, html: true },
+    );
+  } catch (error) { toast(error.message || "Could not preview project restore"); }
 };
-
 
 /* ---------- studio appearance / workspace settings ---------- */
 function filenameTemplatePreviewValue(template, config = CONFIG) {

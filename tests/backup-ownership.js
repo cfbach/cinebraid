@@ -20,6 +20,7 @@
  * else does.
  */
 const assert = require("assert");
+const crypto = require("crypto");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
@@ -49,6 +50,10 @@ const FOREIGN = [
 ];
 
 let server = null;
+
+function currentRevision() {
+  return `"${crypto.createHash("sha256").update(fs.readFileSync(path.join(PROJECT_DIR, "project.json"))).digest("hex")}"`;
+}
 
 function writeProject() {
   fs.mkdirSync(path.join(PROJECT_DIR, "shots"), { recursive: true });
@@ -115,7 +120,7 @@ async function main() {
   /* ---- 2. one ordinary autosave prunes CineBraid's backups and nothing else ---- */
   const current = await server.request("/api/project");
   const saved = await server.request("/api/projects/owned-project/project", {
-    method: "PUT", headers: { "content-type": "application/json", "if-match": "*" }, body: JSON.stringify(current.body),
+    method: "PUT", headers: { "content-type": "application/json", "if-match": currentRevision() }, body: JSON.stringify(current.body),
   });
   assert.strictEqual(saved.status, 200, JSON.stringify(saved.body));
 
@@ -137,7 +142,7 @@ async function main() {
   /* ---- 3. repeated saves never reach the foreign files ---- */
   for (let i = 0; i < 6; i += 1) {
     const again = await server.request("/api/projects/owned-project/project", {
-      method: "PUT", headers: { "content-type": "application/json", "if-match": "*" }, body: JSON.stringify(current.body),
+      method: "PUT", headers: { "content-type": "application/json", "if-match": currentRevision() }, body: JSON.stringify(current.body),
     });
     assert.strictEqual(again.status, 200);
   }
@@ -158,17 +163,22 @@ async function main() {
     );
 
   /* ---- 4. the same holds for the default in-project backup folder ---- */
-  await server.request("/api/workspace/settings", {
+  const resetBackupRoot = await server.request("/api/workspace/settings", {
     method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ workspace: { backupRoot: "" } }),
   });
+  assert.strictEqual(resetBackupRoot.status, 200, JSON.stringify(resetBackupRoot.body));
+  assert.strictEqual(resetBackupRoot.body.backupRoot, "", "the default backup folder must be selected");
   const inProject = path.join(PROJECT_DIR, "backups");
   fs.mkdirSync(inProject, { recursive: true });
   fs.writeFileSync(path.join(inProject, "project-plan.json"), '{"user":"kept"}');
   for (let i = 0; i < 14; i += 1) fs.writeFileSync(path.join(inProject, ownedBackupName(i, "manual")), "{}");
-  await server.request("/api/projects/owned-project/project", {
-    method: "PUT", headers: { "content-type": "application/json", "if-match": "*" }, body: JSON.stringify(current.body),
+  const changedForDefaultBackup = structuredClone(current.body);
+  changedForDefaultBackup.meta.title = "Owned — default backup retention";
+  const defaultSaved = await server.request("/api/projects/owned-project/project", {
+    method: "PUT", headers: { "content-type": "application/json", "if-match": currentRevision() }, body: JSON.stringify(changedForDefaultBackup),
   });
+  assert.strictEqual(defaultSaved.status, 200, JSON.stringify(defaultSaved.body));
   assert(fs.existsSync(path.join(inProject, "project-plan.json")),
     "a foreign file in the default backup folder is protected by the same rule");
   assert.strictEqual(

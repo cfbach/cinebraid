@@ -647,6 +647,7 @@ const PRODUCTION_AUTHORITY_EXPORTS = {
   currentHumanAuthority,
   hasCurrentHumanAuthority,
   historicSelection,
+  authorityWriteTransition: KERNEL && KERNEL.authorityWriteTransition,
   /* S9 — the one projection. Read-only derived state; every surface that wants
      to know what an entity's production truth is asks this rather than
      re-deriving it from raw fields. */
@@ -656,11 +657,6 @@ const PRODUCTION_AUTHORITY_EXPORTS = {
   approveMotionCanon: KERNEL && KERNEL.approveMotionCanon,
   approveDeliveryCanon: KERNEL && KERNEL.approveDeliveryCanon,
   approveEntityStateCanon: KERNEL && KERNEL.approveEntityStateCanon,
-  revokeFrameCanon: KERNEL && KERNEL.revokeFrameCanon,
-  revokeMotionCanon: KERNEL && KERNEL.revokeMotionCanon,
-  revokeDeliveryCanon: KERNEL && KERNEL.revokeDeliveryCanon,
-  revokeEntityStateCanon: KERNEL && KERNEL.revokeEntityStateCanon,
-  repairCanonValue: KERNEL && KERNEL.repairCanonValue,
   gateRequirement,
   gateRequirementForAnyStatus,
   runGateRequirements,

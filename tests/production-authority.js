@@ -26,7 +26,7 @@ const path = require("path");
 const ROOT = path.join(__dirname, "..");
 const read = (name) => fs.readFileSync(path.join(ROOT, name), "utf8");
 const Authority = require("../public/shared-production-authority");
-const Kernel = require("../public/shared-authority-kernel");
+const { Kernel, Private } = require("./authority-kernel-private");
 const Slots = require("../public/shared-entity-slots");
 const P4 = require("../public/shared-production-media");
 
@@ -47,7 +47,8 @@ const human = (fn) => MANUAL.gesture(fn);
 let checks = 0;
 const ok = (condition, message) => { assert(condition, message); checks++; };
 const eq = (actual, expected, message) => {
-  assert.deepStrictEqual(actual, expected, `${message}\n  actual:   ${JSON.stringify(actual)}\n  expected: ${JSON.stringify(expected)}`);
+  const comparable = (value) => value && typeof value === "object" ? JSON.parse(JSON.stringify(value)) : value;
+  assert.deepStrictEqual(comparable(actual), comparable(expected), `${message}\n  actual:   ${JSON.stringify(actual)}\n  expected: ${JSON.stringify(expected)}`);
   checks++;
 };
 const refuses = (fn, code, message) => {
@@ -129,15 +130,12 @@ const kernelSource = read("public/shared-authority-kernel.js").replace(/\r\n/g, 
 for (const name of ["installAuthorityEdgeReader", "installAuthorityEdgeWriter", "installAuthorityOwnershipPolicy", "installAuthorityProjectCommitter"]) {
   ok(!new RegExp(`function\\s+${name}\\s*\\(`).test(kernelSource), `${name} must not exist in the kernel source`);
 }
-/* THE WHOLE PUBLIC WRITE SURFACE, ENUMERATED. Four approvals, four revocations,
-   one repair. A test that pins the count is what makes adding a fifth a
-   deliberate act rather than a drift. */
+/* THE WHOLE PUBLIC WRITE SURFACE, ENUMERATED. O8 exposes only the four
+   authority-creating commands; destructive owners and repair are private. */
 const WRITE_SURFACE = Object.keys(Kernel).filter((name) => /^(approve|revoke|repair)/.test(name)).sort();
 eq(WRITE_SURFACE, [
   "approveDeliveryCanon", "approveEntityStateCanon", "approveFrameCanon", "approveMotionCanon",
-  "repairCanonValue",
-  "revokeDeliveryCanon", "revokeEntityStateCanon", "revokeFrameCanon", "revokeMotionCanon",
-], "the kernel's write surface is exactly four approvals, four revocations and one repair");
+], "the kernel's public write surface is exactly the four authority-creating commands");
 
 /* ===========================================================================
    1. CANON — a human explicitly approves these exact bytes. */
@@ -277,7 +275,7 @@ eq(WRITE_SURFACE, [
   const project = shotProject();
   const target = { kind: "shot-delivery", shotId: "SH-01" };
   human(() => Kernel.approveDeliveryCanon(project, { shotId: "SH-01", value: "FINAL.mp4", assetId: "asset-V", at: AT(1) }));
-  eq(Kernel.liveAuthorityEdge(project, target), { value: "FINAL.mp4", assetId: "asset-V" },
+  eq({ ...Kernel.liveAuthorityEdge(project, target) }, { value: "FINAL.mp4", assetId: "asset-V", recordId: "SH-01:creationBrief", field: "approvedMotionFile", form: "video" },
     "a delivery edge reports its asset identity like every other canon edge");
   ok(Kernel.hasCurrentHumanAuthority(project, target), "so delivery canon can be verified at all");
   delete project.shots[0].creationBrief.approvedMotionAssetId;
@@ -294,7 +292,7 @@ eq(WRITE_SURFACE, [
   human(() => Kernel.approveFrameCanon(project, { shotId: "SH-01", frameId: "fr-a", value: "FRAME.png", assetId: "asset-F", at: AT(1) }));
   human(() => Kernel.approveDeliveryCanon(project, { shotId: "SH-01", value: "MOVIE.mp4", assetId: "asset-V", at: AT(2) }));
   eq(project.shots[0].creationBrief.approvedMotionFile, "MOVIE.mp4", "baseline: the video is the delivery");
-  Kernel.revokeDeliveryCanon(project, { shotId: "SH-01", at: AT(3), reason: "withdrawn" });
+  human(() => Private.revokeDeliveryCanon(project, { shotId: "SH-01", at: AT(3), reason: "withdrawn" }));
   eq(project.shots[0].creationBrief.approvedMotionFile, undefined, "revoking video delivery clears the video pointer");
   eq(project.shots[0].creationBrief.approvedMotionAssetId, undefined, "and its identity");
   eq(project.shots[0].finalStillFile, undefined, "and does not invent a still");
@@ -307,7 +305,7 @@ eq(WRITE_SURFACE, [
   const still = shotProject();
   human(() => Kernel.approveDeliveryCanon(still, { shotId: "SH-01", value: "FINAL.png", assetId: "asset-S", at: AT(1) }));
   eq(still.shots[0].finalStillFile, "FINAL.png", "a still delivery writes the still pointer");
-  Kernel.revokeDeliveryCanon(still, { shotId: "SH-01", at: AT(2) });
+  human(() => Private.revokeDeliveryCanon(still, { shotId: "SH-01", at: AT(2), reason: "withdrawn" }));
   eq(still.shots[0].finalStillFile, undefined, "and revoking it clears that one");
 }
 
@@ -379,7 +377,7 @@ eq(WRITE_SURFACE, [
   eq(Authority.authorityReceiptsFor(project, target)[0].supersededBy, second.id, "and names what replaced it");
   eq(Authority.currentAuthorityReceipt(project, target).id, second.id, "the newest decision is the current one");
   ok(first.id !== second.id, "each decision has its own durable identity");
-  Kernel.revokeFrameCanon(project, { shotId: "SH-01", frameId: "fr-a", at: AT(3), reason: "withdrawn" });
+  human(() => Private.revokeFrameCanon(project, { shotId: "SH-01", frameId: "fr-a", at: AT(3), reason: "withdrawn" }));
   eq(Kernel.hasCurrentHumanAuthority(project, target), false, "a revoked target has no canon");
   eq(Kernel.historicSelection(project, target), null, "and with the edge cleared there is not even a historic pointer");
 }
@@ -396,7 +394,7 @@ eq(WRITE_SURFACE, [
   /* THE REPAIR NAMES ITS TARGET. A filename is not an identity, so a repair that
      selected receipts by basename alone rewrote canon for unrelated objects that
      happened to share a name — Codex MB-PT-01. */
-  eq(Kernel.repairCanonValue(project, { ...target, from: "RAW.png", to: "CANONICAL.png", assetId: "asset-A" }).length, 1,
+  eq(Private.repairCanonValue(project, { ...target, from: "RAW.png", to: "CANONICAL.png", assetId: "asset-A" }).length, 1,
     "the repair moves the receipt for the target the person acted on");
   ok(Kernel.hasCurrentHumanAuthority(project, target), "and the decision the person really made survives its own rename");
 
@@ -415,7 +413,7 @@ eq(WRITE_SURFACE, [
   twoShots.shots[0].keyframes[0].winnerAssetId = "asset-A2";
   twoShots.shots[0].winner = "RENAMED.png";
   twoShots.shots[0].winnerAssetId = "asset-A2";
-  const moved = Kernel.repairCanonValue(twoShots, { ...targetA, from: "FRAME.png", to: "RENAMED.png", assetId: "asset-A2" });
+  const moved = Private.repairCanonValue(twoShots, { ...targetA, from: "FRAME.png", to: "RENAMED.png", assetId: "asset-A2" });
   eq(moved.length, 0, "a repair whose identity contradicts the receipt writes nothing — it cannot prove the same bytes");
   eq(Kernel.hasCurrentHumanAuthority(twoShots, targetA), false, "so shot A reads as historic and can be approved again in one act");
   const receiptB = Authority.currentAuthorityReceipt(twoShots, targetB);
@@ -446,7 +444,7 @@ eq(WRITE_SURFACE, [
   unindexed.shots[0].winner = "RENAMED.png";
   /* The caller offers an identity the rename just minted. It proves nothing
      about what the creator approved, and the repair refuses it. */
-  const scoped = Kernel.repairCanonValue(unindexed, { ...unA, from: "FRAME.png", to: "RENAMED.png", assetId: "asset-NEW" });
+  const scoped = Private.repairCanonValue(unindexed, { ...unA, from: "FRAME.png", to: "RENAMED.png", assetId: "asset-NEW" });
   eq(scoped.length, 0, "a receipt with no recorded identity cannot follow its bytes anywhere");
   eq(Authority.authorityReceiptsFor(unindexed, unA)[0].assetId, "",
     "and the receipt does NOT acquire an identity from the rename that needed one");
@@ -468,10 +466,10 @@ eq(WRITE_SURFACE, [
   human(() => Kernel.approveFrameCanon(indexed, { shotId: "SH-C", frameId: "fr-a", value: "RAW.png", assetId: "asset-C", at: AT(1) }));
   indexed.shots[0].keyframes[0].winner = "TIDY.png";
   indexed.shots[0].winner = "TIDY.png";
-  eq(Kernel.repairCanonValue(indexed, { ...unC, from: "RAW.png", to: "TIDY.png", assetId: "asset-C" }).length, 1,
+  eq(Private.repairCanonValue(indexed, { ...unC, from: "RAW.png", to: "TIDY.png", assetId: "asset-C" }).length, 1,
     "a receipt that already proved its bytes follows them through a rename");
   ok(Kernel.hasCurrentHumanAuthority(indexed, unC), "and the decision survives its own rename");
-  eq(Kernel.repairCanonValue(indexed, { ...unC, from: "TIDY.png", to: "OTHER.png", assetId: "asset-DIFFERENT" }).length, 0,
+  eq(Private.repairCanonValue(indexed, { ...unC, from: "TIDY.png", to: "OTHER.png", assetId: "asset-DIFFERENT" }).length, 0,
     "while a different identity is refused outright");
 }
 

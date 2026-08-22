@@ -22,7 +22,9 @@ let P = null,
   /* The server's token for the stored document this view was loaded from.
      SAVE_REVISION counts local edits; this identifies what is on disk. */
   PROJECT_REVISION = "",
-  PROJECT_CONFLICT = false;
+  PROJECT_CONFLICT = false,
+  AUTHORITY_SAVE_REFUSED = false,
+  SAVED_PROJECT_BASELINE = null;
 let FILTER = { status: "", route: "", char: "", action: "unfinished" };
 const storedValue = (key, fallback = null) => localStorage.getItem(key) ?? fallback;
 FILTER.action = storedValue("cinebraid-shot-action-filter", "unfinished") || "unfinished";
@@ -975,6 +977,7 @@ function normalizeProjectV5() {
           name: "Default",
           appliesTo: "",
           approvedFile: x.approvedFile || "",
+          approvedAssetId: x.approvedAssetId || "",
           notes: "Primary approved reference.",
           isDefault: true,
         });
@@ -1025,8 +1028,15 @@ function normalizeProjectV5() {
           );
         }
       }
-      if (x.approvedFile && x.continuityStates[0] && !x.continuityStates[0].approvedFile) x.continuityStates[0].approvedFile = x.approvedFile;
-      if ((x.continuityStates[0] || {}).approvedFile && x.approvedFile !== x.continuityStates[0].approvedFile) x.approvedFile = x.continuityStates[0].approvedFile;
+      const defaultState = x.continuityStates.find((st) => st && st.isDefault) || null;
+      if (defaultState && x.approvedFile && !defaultState.approvedFile) {
+        defaultState.approvedFile = x.approvedFile;
+        defaultState.approvedAssetId = x.approvedAssetId || "";
+      }
+      if (defaultState?.approvedFile && (x.approvedFile !== defaultState.approvedFile || (x.approvedAssetId || "") !== (defaultState.approvedAssetId || ""))) {
+        x.approvedFile = defaultState.approvedFile;
+        x.approvedAssetId = defaultState.approvedAssetId || "";
+      }
       if (before !== JSON.stringify(x.continuityStates)) changed = true;
     }
   if (!Array.isArray(P.mediaAssets)) {
@@ -1229,7 +1239,7 @@ async function load() {
      also covers reopening the SAME project, where the slug never changes but
      the record does. */
   if (typeof resetContinuityWorkspaceState === "function") resetContinuityWorkspaceState();
-  const projectResponse = await fetch("/api/project");
+  const projectResponse = await fetch("/api/project", { cache: "no-store" });
   if (projectResponse.status === 404) {
     const data = await projectResponse.json().catch(() => ({}));
     await showFirstRunWorkspace(data.error || "No project is available yet.");
@@ -1354,6 +1364,8 @@ async function load() {
      so opening an already-current project leaves the file byte-identical. */
   const schemaWasOlder = storedSchemaIsOlder(P.meta);
   const migratedV5 = normalizeProjectV5();
+  SAVED_PROJECT_BASELINE = structuredClone(P);
+  AUTHORITY_SAVE_REFUSED = false;
   $("#project-title").textContent = P.meta.title;
   $("#project-title").setAttribute("aria-label", `Open the project switcher — ${P.meta.title} is open`);
   $("#project-format").textContent =
@@ -1399,16 +1411,29 @@ function setSaveState(state, label) {
   const text = el.querySelector("span:last-child");
   if (text) text.textContent = label;
 }
+function currentAuthorityTransition() {
+  if (!SAVED_PROJECT_BASELINE || !P || typeof authorityWriteTransition !== "function")
+    return { requiresTransition: false, declaration: { targetKeys: [], receiptIds: [], transitionKind: "HUMAN_CANON_TRANSITION" } };
+  return authorityWriteTransition(SAVED_PROJECT_BASELINE, P);
+}
 function dirty() {
   clearTimeout(saveTimer);
   clearTimeout(SAVE_STATE_TIMER);
   SAVE_REVISION += 1;
   setSaveState("dirty", "Unsaved changes");
+  if (AUTHORITY_SAVE_REFUSED) return;
+  const transition = currentAuthorityTransition();
+  if (transition.requiresTransition) {
+    saveTimer = null;
+    queueProjectSave(captureProjectSave()).catch(() => {});
+    return;
+  }
   saveTimer = setTimeout(() => {
     saveTimer = null;
     queueProjectSave(captureProjectSave()).catch(() => {});
   }, 500);
 }
+/* Media writes name the project they belong to
 /* Media writes name the project they belong to, so a switch that happens while
    an upload body is still arriving cannot redirect the file. Empty before the
    first load, which the server reads as "the active project" — the old
@@ -1420,11 +1445,14 @@ function projectSlugParam() {
 }
 function captureProjectSave() {
   if (!P || !ACTIVE_PROJECT_SLUG) return null;
+  const transition = currentAuthorityTransition();
   return {
     slug: ACTIVE_PROJECT_SLUG,
     revision: SAVE_REVISION,
     documentRevision: PROJECT_REVISION,
     body: JSON.stringify(P),
+    baseline: SAVED_PROJECT_BASELINE ? structuredClone(SAVED_PROJECT_BASELINE) : null,
+    transition: transition.requiresTransition ? transition.declaration : null,
   };
 }
 /* A stale view must stop writing, not keep retrying with a body that will be
@@ -1446,6 +1474,33 @@ function projectConflict(data) {
       + `<div class="modal-actions"><button class="approve-btn large" onclick="location.reload()">RELOAD PROJECT</button></div>`,
     );
 }
+function authoritySaveRefusal(data, job) {
+  AUTHORITY_SAVE_REFUSED = true;
+  clearTimeout(saveTimer);
+  saveTimer = null;
+  setSaveState("error", "Not saved — approval change refused");
+  const targets = (data?.targets || []).map((row) => row.targetKey).filter(Boolean);
+  const message = data?.error || "This edit would change production authority outside its explicit protocol.";
+  if (typeof toast === "function") toast(message);
+  if (typeof openModal === "function") openModal(
+    "<h3>Production authority was not changed</h3><div class=\"modal-sub\">THE EDIT BATCH IS STILL IN THIS TAB</div><p>" + esc(message) + "</p>"
+    + (targets.length ? "<p><b>Protected targets</b><br>" + targets.map(esc).join("<br>") + "</p>" : "")
+    + "<div class=\"modal-actions\"><button class=\"cancel\" onclick=\"location.reload()\">RELOAD</button><button class=\"approve-btn large\" onclick=\"rebaseAuthoritySave()\">REBASE &amp; RETRY</button></div>",
+  );
+}
+window.rebaseAuthoritySave = async () => {
+  if (!P || !ACTIVE_PROJECT_SLUG) return;
+  try {
+    const response = await fetch("/api/projects/" + encodeURIComponent(ACTIVE_PROJECT_SLUG) + "/project", { cache: "no-store" });
+    const stored = await response.json();
+    if (!response.ok) throw new Error(stored.error || "Could not reload the stored authority baseline");
+    SAVED_PROJECT_BASELINE = structuredClone(stored);
+    PROJECT_REVISION = response.headers?.get?.("x-cinebraid-project-revision") || response.headers?.get?.("etag") || PROJECT_REVISION;
+    AUTHORITY_SAVE_REFUSED = false;
+    closeModal();
+    await queueProjectSave(captureProjectSave());
+  } catch (error) { toast(error.message || "Could not rebase this save"); }
+};
 function queueProjectSave(job) {
   if (!job) return SAVE_CHAIN;
   const run = SAVE_CHAIN.catch(() => {}).then(async () => {
@@ -1479,24 +1534,53 @@ function queueProjectSave(job) {
        to make elsewhere. */
     headers["If-Match"] =
       (ACTIVE_PROJECT_SLUG === job.slug ? PROJECT_REVISION : job.documentRevision) || "*";
-    const r = await fetch(
-      `/api/projects/${encodeURIComponent(job.slug)}/project`,
-      {
-        method: "PUT",
-        headers,
-        body: job.body,
-      },
-    );
+    const successor = JSON.parse(job.body);
+    let transitionDeclaration = job.transition;
+    const transitionBaseline =
+      ACTIVE_PROJECT_SLUG === job.slug ? SAVED_PROJECT_BASELINE : job.baseline;
+    /* A second job can be captured while the first explicit transition is still
+       in flight. Once the first commits, its receipt is already in the durable
+       baseline: resending the captured declaration would claim a receipt changed
+       when it did not. Re-derive the complete Canon delta only after the preceding
+       job has settled, from that durable baseline and this job's exact successor. */
+    if (transitionBaseline && typeof authorityWriteTransition === "function") {
+      const comparison = authorityWriteTransition(transitionBaseline, successor);
+      transitionDeclaration = comparison.requiresTransition ? comparison.declaration : null;
+    }
+    const isCanonTransition = transitionDeclaration && typeof transitionDeclaration === "object";
+    const endpoint = isCanonTransition
+      ? "/api/projects/" + encodeURIComponent(job.slug) + "/canon-transition"
+      : "/api/projects/" + encodeURIComponent(job.slug) + "/project";
+    const r = await fetch(endpoint, {
+      method: isCanonTransition ? "POST" : "PUT",
+      headers,
+      body: isCanonTransition ? JSON.stringify({ successor, transition: transitionDeclaration }) : job.body,
+    });
     if (!r.ok) {
       const data = await r.json().catch(() => ({}));
       if (r.status === 409 || r.status === 428) {
         if (ACTIVE_PROJECT_SLUG === job.slug) projectConflict(data);
         return;
       }
+      if (r.status === 422) {
+        if (ACTIVE_PROJECT_SLUG === job.slug) authoritySaveRefusal(data, job);
+        return;
+      }
       throw new Error(data.error || "Project save failed");
     }
     const saved = await r.json().catch(() => ({}));
     if (ACTIVE_PROJECT_SLUG === job.slug) {
+      /* Install the durable authority result before accepting its revision. P
+         already contains the submitted edge; the server-returned ledger is the
+         verifier's exact accepted record. Later ordinary edits remain in P. */
+      const persisted = saved.project || successor;
+      if (saved.project) {
+        if (Object.prototype.hasOwnProperty.call(saved.project, "productionAuthority"))
+          P.productionAuthority = structuredClone(saved.project.productionAuthority);
+        else delete P.productionAuthority;
+      }
+      SAVED_PROJECT_BASELINE = structuredClone(persisted);
+      AUTHORITY_SAVE_REFUSED = false;
       /* The document this view is now in step with. Without this the next save
          would carry the pre-save revision and be refused as stale. */
       PROJECT_REVISION =
@@ -1523,10 +1607,12 @@ function queueProjectSave(job) {
 async function flushPendingProjectSave() {
   clearTimeout(saveTimer);
   saveTimer = null;
-  if (!P || !ACTIVE_PROJECT_SLUG || SAVE_REVISION <= SAVED_REVISION) {
-    await SAVE_CHAIN;
-    return;
-  }
+  /* Let an already queued transition settle before deciding that its
+     revision still needs another request. A pre-check here duplicates the
+     in-flight act because SAVED_REVISION advances only with its response. */
+  await SAVE_CHAIN;
+  if (AUTHORITY_SAVE_REFUSED) return;
+  if (!P || !ACTIVE_PROJECT_SLUG || SAVE_REVISION <= SAVED_REVISION) return;
   await queueProjectSave(captureProjectSave());
 }
 function toast(msg) {
@@ -1901,7 +1987,10 @@ function confirmModal(message, onConfirm, options = {}) {
   const title = options.title || "Confirm action";
   const confirmLabel = options.confirmLabel || "CONFIRM";
   const danger = options.danger !== false;
-  openModal(`<h3>${esc(title)}</h3><p class="modal-confirm-message">${esc(message)}</p><div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button class="${danger ? "danger-btn" : "lock-btn"}" id="modal-confirm-action">${esc(confirmLabel)}</button></div>`);
+  const content = options.html === true
+    ? `<div class="modal-confirm-message">${String(message || "")}</div>`
+    : `<p class="modal-confirm-message">${esc(message)}</p>`;
+  openModal(`<h3>${esc(title)}</h3>${content}<div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button class="${danger ? "danger-btn" : "lock-btn"}" id="modal-confirm-action">${esc(confirmLabel)}</button></div>`);
   setTimeout(() => {
     const button = document.getElementById("modal-confirm-action");
     if (button) button.onclick = () => { closeModal(); onConfirm?.(); };
@@ -2680,6 +2769,7 @@ function ensureEntityStateList(entity, includeDefault = true) {
       name: "Default",
       appliesTo: "",
       approvedFile: entity.approvedFile || "",
+      approvedAssetId: entity.approvedAssetId || "",
       notes: "Primary approved reference.",
       isDefault: true,
     });
@@ -2697,8 +2787,14 @@ function ensureEntityStateList(entity, includeDefault = true) {
     if (st.assetPromptNotes == null) st.assetPromptNotes = "";
     st.assetPromptBuilds = Array.isArray(st.assetPromptBuilds) ? st.assetPromptBuilds : [];
   });
-  if (entity.continuityStates[0]?.approvedFile && entity.approvedFile !== entity.continuityStates[0].approvedFile)
-    entity.approvedFile = entity.continuityStates[0].approvedFile;
+  if (defaultState && entity.approvedFile && !defaultState.approvedFile) {
+    defaultState.approvedFile = entity.approvedFile;
+    defaultState.approvedAssetId = entity.approvedAssetId || "";
+  }
+  if (defaultState?.approvedFile && (entity.approvedFile !== defaultState.approvedFile || (entity.approvedAssetId || "") !== (defaultState.approvedAssetId || ""))) {
+    entity.approvedFile = defaultState.approvedFile;
+    entity.approvedAssetId = defaultState.approvedAssetId || "";
+  }
   return includeDefault
     ? entity.continuityStates
     : entity.continuityStates.filter((st) => !st.isDefault);

@@ -110,7 +110,13 @@ function mutate(text, needle, replacement, label, expected = 1) {
 function build(relPath, text) {
   const moduleObject = { exports: {} };
   const sandboxRequire = (specifier) => require(specifier.startsWith(".") ? path.join(ROOT, path.dirname(relPath), specifier) : specifier);
-  vm.runInNewContext(text ?? source(relPath), { module: moduleObject, exports: moduleObject.exports, require: sandboxRequire, console, structuredClone }, { filename: relPath });
+  let executable = text ?? source(relPath);
+  /* O8 keeps destructive Canon functions off the production export surface.
+     This negative-control VM captures the one private owner it mutates without
+     changing the shipped module API. */
+  if (relPath === "public/shared-authority-kernel.js")
+    executable += "\n;module.exports.__testOnlyRevokeDeliveryCanon = revokeDeliveryCanon;";
+  vm.runInNewContext(executable, { module: moduleObject, exports: moduleObject.exports, require: sandboxRequire, console, structuredClone }, { filename: relPath });
   return moduleObject.exports;
 }
 
@@ -310,7 +316,7 @@ control({
     const project = shotProject();
     manual.gesture(() => kernel.approveDeliveryCanon(project, { shotId: "SH-01", value: "MOVIE.mp4", assetId: "asset-V", at: AT }));
     if (project.shots[0].creationBrief.approvedMotionFile !== "MOVIE.mp4") return { reached: false };
-    kernel.revokeDeliveryCanon(project, { shotId: "SH-01", at: AT, reason: "withdrawn" });
+    manual.gesture(() => kernel.__testOnlyRevokeDeliveryCanon(project, { shotId: "SH-01", at: AT, reason: "withdrawn" }));
     const left = project.shots[0].creationBrief.approvedMotionFile || "";
     return { reached: true, held: !left, reason: left ? `stale-pointer(${left})` : "cleared" };
   },

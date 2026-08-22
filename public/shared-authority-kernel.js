@@ -508,98 +508,115 @@ function shotEdgeAssetId(record, field) {
 function deliveryEdgeOf(shot) {
   const s = kernelObject(shot);
   const creation = kernelObject(s.creationBrief);
-  const still = kernelText(s.finalStillFile) || kernelText(creation.finalStillFile);
-  if (still) {
-    return { form: "still", value: still, assetId: kernelText(s.finalStillAssetId) || kernelText(creation.finalStillAssetId) };
-  }
+  const shotStill = kernelText(s.finalStillFile);
+  if (shotStill) return {
+    form: "still", value: shotStill, assetId: kernelText(s.finalStillAssetId),
+    recordId: kernelText(s.id), field: "finalStillFile",
+  };
+  const briefStill = kernelText(creation.finalStillFile);
+  if (briefStill) return {
+    form: "still", value: briefStill, assetId: kernelText(creation.finalStillAssetId),
+    recordId: `${kernelText(s.id)}:creationBrief`, field: "finalStillFile",
+  };
   const motion = kernelText(creation.approvedMotionFile);
-  if (motion) return { form: "video", value: motion, assetId: kernelText(creation.approvedMotionAssetId) };
-  return { form: "", value: "", assetId: "" };
+  if (motion) return {
+    form: "video", value: motion, assetId: kernelText(creation.approvedMotionAssetId),
+    recordId: `${kernelText(s.id)}:creationBrief`, field: "approvedMotionFile",
+  };
+  return { form: "", value: "", assetId: "", recordId: "", field: "" };
 }
 
 function readAuthorityEdge(project, target) {
   const P = kernelObject(project);
   const it = kernelObject(target);
+  const empty = (form = "") => ({ value: "", assetId: "", recordId: "", field: "", form });
   const shot = () => kernelList(P.shots).map(kernelObject).find((row) => kernelText(row.id) === it.shotId) || null;
   const entity = () => kernelList(P[it.list]).map(kernelObject).find((row) => kernelText(row.id) === it.entityId) || null;
   if (it.kind === "shot-frame") {
     const s = shot();
-    if (!s) return { value: "", assetId: "" };
+    if (!s) return empty();
     const frames = kernelList(s.keyframes).map(kernelObject);
     const index = frames.findIndex((row) => kernelText(row.id) === it.frameId);
-    if (index < 0) return { value: "", assetId: "" };
-    const frame = frames[index];
-    /* The opening frame's Canon may live on the shot, which is where the manual
-       path has always written it. Both are the same edge. */
-    const value = kernelText(frame.winner) || (index === 0 ? kernelText(s.winner) : "");
-    const assetId = shotEdgeAssetId(frame, "winner") || (index === 0 ? shotEdgeAssetId(s, "winner") : "");
-    return { value, assetId };
+    if (index < 0) return empty();
+    const frame = frames[index], frameValue = kernelText(frame.winner);
+    if (frameValue) return {
+      value: frameValue, assetId: shotEdgeAssetId(frame, "winner"),
+      recordId: kernelText(frame.id), field: "winner", form: "keyframe",
+    };
+    const shotValue = index === 0 ? kernelText(s.winner) : "";
+    return shotValue ? {
+      value: shotValue, assetId: shotEdgeAssetId(s, "winner"),
+      recordId: kernelText(s.id), field: "winner", form: "shot-opening-frame",
+    } : empty();
   }
   if (it.kind === "shot-motion") {
     const s = shot();
-    if (!s) return { value: "", assetId: "" };
-    const unit = kernelList(s.clips).map(kernelObject).find((row) => kernelText(row.id) === it.unitKey || kernelText(row.suffix) === it.unitKey);
-    if (!unit) return { value: "", assetId: "" };
-    return { value: kernelText(unit.videoWinner), assetId: shotEdgeAssetId(unit, "videoWinner") };
+    if (!s) return empty();
+    const matches = kernelList(s.clips).map(kernelObject)
+      .filter((row) => kernelText(row.id) === it.unitKey || kernelText(row.suffix) === it.unitKey);
+    if (matches.length !== 1) return empty(matches.length ? "ambiguous-motion-unit" : "");
+    const unit = matches[0];
+    return {
+      value: kernelText(unit.videoWinner), assetId: shotEdgeAssetId(unit, "videoWinner"),
+      recordId: kernelText(unit.id), field: "videoWinner", form: "motion-unit",
+    };
   }
   if (it.kind === "shot-delivery") {
     const s = shot();
-    if (!s) return { value: "", assetId: "" };
-    /* S5A — DELIVERY IS NOT STRUCTURALLY SPECIAL. It reports its asset identity
-       like every other Canon edge. Batch 1D returned a hard-coded `assetId: ""`
-       here while approval callers stamped one into the receipt, so a delivery
-       receipt could never be checked against the bytes it named. */
-    const edge = deliveryEdgeOf(s);
-    return { value: edge.value, assetId: edge.assetId };
+    return s ? deliveryEdgeOf(s) : empty();
   }
   if (it.kind === "entity-state") {
     const x = entity();
-    if (!x) return { value: "", assetId: "" };
-    const states = kernelList(x.continuityStates).map(kernelObject);
-    const state = states.find((row) => kernelText(row.id) === it.stateId);
+    if (!x) return empty();
+    const state = kernelList(x.continuityStates).map(kernelObject)
+      .find((row) => kernelText(row.id) === it.stateId);
     if (state) {
       const own = kernelText(state.approvedFile);
-      if (own) return { value: own, assetId: kernelText(state.approvedAssetId) };
-      /* A non-default state with no file of its own is NOT answered by the
-         entity's primary — that substitution is the state-authority defect. */
-      return state.isDefault === true
-        ? { value: kernelText(x.approvedFile), assetId: kernelText(x.approvedAssetId) }
-        : { value: "", assetId: "" };
-    }
-    return it.stateId === "state-default"
-      ? { value: kernelText(x.approvedFile), assetId: kernelText(x.approvedAssetId) }
-      : { value: "", assetId: "" };
+      if (own) return {
+        value: own, assetId: kernelText(state.approvedAssetId),
+        recordId: kernelText(state.id), field: "approvedFile", form: "continuity-state",
+      };
+      if (state.isDefault !== true) return empty();
+    } else if (it.stateId !== "state-default") return empty();
+    return {
+      value: kernelText(x.approvedFile), assetId: kernelText(x.approvedAssetId),
+      recordId: kernelText(x.id), field: "approvedFile", form: "entity-default",
+    };
   }
-  return { value: "", assetId: "" };
+  return empty();
 }
 
 function liveAuthorityEdge(project, target) {
   const wanted = authorityTarget(target);
-  if (!wanted) return { value: "", assetId: "" };
+  if (!wanted) return { value: "", assetId: "", recordId: "", field: "", form: "" };
   const edge = kernelObject(readAuthorityEdge(project, wanted));
-  return { value: kernelText(edge.value), assetId: kernelText(edge.assetId) };
+  return {
+    value: kernelText(edge.value), assetId: kernelText(edge.assetId),
+    recordId: kernelText(edge.recordId), field: kernelText(edge.field), form: kernelText(edge.form),
+  };
 }
 
 /* WRITING THE EDGE. The exact mirror of the reader above, and private for the
    same reason: a caller-supplied writer is a closure over whatever the caller
    chose, which is how the 1D audit mutated a live project from inside a
    transaction that then threw.
- *
- * Returns false when the target is not in the project, so the transaction can
- * refuse before it writes a receipt for something that does not exist. */
+
+   Returns false when the target is not in the project, so the transaction can
+   refuse before it writes a receipt for something that does not exist. */
 function writeAuthorityEdge(draft, target, details) {
   const P = kernelObject(draft);
   const it = kernelObject(target);
   const value = kernelText(kernelObject(details).value);
   const assetId = kernelText(kernelObject(details).assetId);
   const at = kernelText(kernelObject(details).at);
-  /* A CLEAR IS THE SAME WRITE WITH NO VALUE. The identity goes with it — a
-     stale asset id that outlived the approval justifying it would silently
-     re-resolve later. */
   const stampShot = (record, field) => {
     if (!record) return;
     if (assetId) record[`${field}AssetId`] = assetId;
-    else if (!value) delete record[`${field}AssetId`];
+    else delete record[`${field}AssetId`];
+    if (record.approvalIdentity && typeof record.approvalIdentity === "object") {
+      delete record.approvalIdentity[field];
+      if (!Object.keys(record.approvalIdentity).length) delete record.approvalIdentity;
+    }
   };
   const shot = () => kernelList(P.shots).find((row) => row && kernelText(row.id) === it.shotId) || null;
 
@@ -611,18 +628,16 @@ function writeAuthorityEdge(draft, target, details) {
     if (index < 0) return false;
     frames[index].winner = value;
     stampShot(frames[index], "winner");
-    /* The opening frame's Canon is also the shot's headline image. Both are the
-       same edge, and readAuthorityEdge falls back to it. */
     if (index === 0) { s.winner = value; stampShot(s, "winner"); }
     return true;
   }
   if (it.kind === "shot-motion") {
     const s = shot();
     if (!s) return false;
-    const unit = kernelList(s.clips).find((row) => row && (kernelText(row.id) === it.unitKey || kernelText(row.suffix) === it.unitKey));
-    if (!unit) return false;
-    unit.videoWinner = value;
-    stampShot(unit, "videoWinner");
+    const units = kernelList(s.clips).filter((row) => row && (kernelText(row.id) === it.unitKey || kernelText(row.suffix) === it.unitKey));
+    if (units.length !== 1) return false;
+    units[0].videoWinner = value;
+    stampShot(units[0], "videoWinner");
     return true;
   }
   if (it.kind === "shot-delivery") {
@@ -630,28 +645,20 @@ function writeAuthorityEdge(draft, target, details) {
     if (!s) return false;
     s.creationBrief = s.creationBrief && typeof s.creationBrief === "object" ? s.creationBrief : {};
     if (!value) {
-      /* S5B — REVOCATION KNOWS ITS TARGET KIND, AND CLEARS ALL OF IT.
-       *
-       * Batch 1D decided still-versus-video from the NEW value's extension. On a
-       * revocation the new value is empty, so every video revocation took the
-       * still branch: it cleared `finalStillFile`, left `approvedMotionFile`
-       * behind, and the revoked video pointer stayed in the document.
-       *
-       * The inference is deleted. `shot-delivery` names ONE edge — the shot's
-       * final deliverable pointer — and clearing that edge clears the pointer in
-       * whichever form it took, with its identity. `deliveryIntent` is the
-       * creator's PLAN, not Canon, and is left alone; and `s.winner` is the
-       * OPENING FRAME's edge, so this must never touch it. */
       delete s.finalStillFile;
       delete s.finalStillAssetId;
       delete s.creationBrief.finalStillFile;
       delete s.creationBrief.finalStillAssetId;
       delete s.creationBrief.approvedMotionFile;
       delete s.creationBrief.approvedMotionAssetId;
+      for (const record of [s, s.creationBrief]) {
+        if (!record.approvalIdentity || typeof record.approvalIdentity !== "object") continue;
+        delete record.approvalIdentity.finalStillFile;
+        delete record.approvalIdentity.approvedMotionFile;
+        if (!Object.keys(record.approvalIdentity).length) delete record.approvalIdentity;
+      }
       return true;
     }
-    /* Which delivery form this is, is a fact about the bytes. Establishing one
-       form clears the other, so the shot has exactly one deliverable. */
     if (/\.(mp4|mov|webm|m4v|avi|mkv)$/i.test(value)) {
       delete s.finalStillFile;
       delete s.finalStillAssetId;
@@ -683,12 +690,12 @@ function writeAuthorityEdge(draft, target, details) {
       state.approvedAt = at;
       state.parentValidation = null;
       if (assetId) state.approvedAssetId = assetId;
-      else if (!value) delete state.approvedAssetId;
+      else delete state.approvedAssetId;
     }
     if (!state || state.isDefault === true || kernelText(state.id) === "state-default") {
       x.approvedFile = value;
       if (assetId) x.approvedAssetId = assetId;
-      else if (!value) delete x.approvedAssetId;
+      else delete x.approvedAssetId;
     }
     return true;
   }
@@ -1169,23 +1176,53 @@ function revokeCanon(project, request, kind) {
   const it = kernelObject(request);
   const target = authorityTarget({ ...it, kind });
   if (!target) throw authorityError("AUTHORITY_TARGET_INCOMPLETE", "A revocation must name a complete target. Nothing was changed.");
-  const reason = AUTHORITY_REVOCATION_REASONS.includes(kernelText(it.reason)) ? kernelText(it.reason) : "withdrawn";
-  const at = kernelText(it.at);
+  requireTrustedGesture(describeTarget(target));
+  const reason = kernelText(it.reason);
+  if (!AUTHORITY_REVOCATION_REASONS.includes(reason) || reason === "replaced" || reason === "target-cleared")
+    throw authorityError("AUTHORITY_REVOCATION_REASON_INVALID", "This human revocation reason is not recognised. Nothing was changed.", { reason });
+  const view = validateAuthorityLedger(project);
+  if (!view.trusted)
+    throw authorityError("AUTHORITY_LEDGER_UNTRUSTED", "This project's authority ledger is not trustworthy. Nothing was changed.", { diagnostics: view.diagnostics });
+  const receipt = currentHumanAuthority(project, target);
+  if (!receipt)
+    throw authorityError("AUTHORITY_CURRENT_RECEIPT_REQUIRED", "No matching current authority receipt can be revoked. Nothing was changed.", { targetKey: target.key });
   const draft = draftOf(project);
-  if (it.clearEdge !== false) writeAuthorityEdge(draft, target, { value: "", assetId: "", at });
-  const ledger = kernelObject(draft[AUTHORITY_LEDGER_KEY]);
-  const revoked = [];
-  for (const row of kernelList(ledger.receipts)) {
-    const receipt = kernelObject(row);
-    if (authorityTarget(receipt)?.key !== target.key || kernelText(receipt.status) !== "current") continue;
-    receipt.status = "revoked";
-    receipt.revokedAt = at;
-    receipt.revocationReason = reason;
-    receipt.revokedVia = kernelText(it.via);
-    revoked.push(receipt.id);
-  }
+  if (it.clearEdge !== false) writeAuthorityEdge(draft, target, { value: "", assetId: "", at: kernelText(it.at) });
+  const row = kernelList(kernelObject(draft[AUTHORITY_LEDGER_KEY]).receipts)
+    .map(kernelObject).find((candidate) => kernelText(candidate.id) === kernelText(receipt.id));
+  row.status = "revoked";
+  row.revokedAt = kernelText(it.at);
+  row.revocationReason = reason;
+  row.revokedVia = kernelText(it.via);
+  row.revokedBy = "human";
   mergeInPlace(project, draft);
-  return revoked;
+  return [kernelText(row.id)];
+}
+
+function systemInvalidateCanon(project, request, kind) {
+  const it = kernelObject(request);
+  const target = authorityTarget({ ...it, kind });
+  if (!target) throw authorityError("AUTHORITY_TARGET_INCOMPLETE", "A system invalidation must name a complete target. Nothing was changed.");
+  if (kernelText(it.reason) !== "target-cleared")
+    throw authorityError("AUTHORITY_REVOCATION_REASON_INVALID", "System invalidation only supports target-cleared. Nothing was changed.", { reason: kernelText(it.reason) });
+  const view = validateAuthorityLedger(project);
+  if (!view.trusted)
+    throw authorityError("AUTHORITY_LEDGER_UNTRUSTED", "This project's authority ledger is not trustworthy. Nothing was changed.", { diagnostics: view.diagnostics });
+  const receipt = currentHumanAuthority(project, target);
+  if (!receipt)
+    throw authorityError("AUTHORITY_CURRENT_RECEIPT_REQUIRED", "No matching current authority receipt can be invalidated. Nothing was changed.", { targetKey: target.key });
+  const draft = draftOf(project);
+  if (it.clearEdge !== false) writeAuthorityEdge(draft, target, { value: "", assetId: "", at: kernelText(it.at) });
+  const row = kernelList(kernelObject(draft[AUTHORITY_LEDGER_KEY]).receipts)
+    .map(kernelObject).find((candidate) => kernelText(candidate.id) === kernelText(receipt.id));
+  row.status = "revoked";
+  row.revokedAt = kernelText(it.at);
+  row.revocationReason = "target-cleared";
+  row.revokedBy = "system";
+  delete row.revokedVia;
+  delete row.revocationProvenance;
+  mergeInPlace(project, draft);
+  return [kernelText(row.id)];
 }
 
 /* A rename moved the bytes and the edge followed; the receipt has to follow or
@@ -1210,11 +1247,13 @@ function repairCanonValue(project, change = {}) {
    * this is not an approval path. */
   const target = authorityTarget(it);
   if (!target) return [];
+  if (!validateAuthorityLedger(project).trusted) return [];
   const draft = draftOf(project);
   const ledger = kernelObject(draft[AUTHORITY_LEDGER_KEY]);
   const repaired = [];
   for (const row of kernelList(ledger.receipts)) {
     const receipt = kernelObject(row);
+    if (kernelText(receipt.status) !== "current") continue;
     if (kernelText(receipt.value) !== from) continue;
     if (authorityTarget(receipt)?.key !== target.key) continue;
     /* AND ONLY WHEN THE RECEIPT ITSELF CAN PROVE THE BYTES ARE THE SAME ONES.
@@ -1266,9 +1305,119 @@ function revokeMotionCanon(project, request = {}) { return revokeCanon(project, 
 function revokeDeliveryCanon(project, request = {}) { return revokeCanon(project, request, "shot-delivery"); }
 function revokeEntityStateCanon(project, request = {}) { return revokeCanon(project, request, "entity-state"); }
 
+function systemInvalidateFrameCanon(project, request = {}) { return systemInvalidateCanon(project, request, "shot-frame"); }
+function systemInvalidateMotionCanon(project, request = {}) { return systemInvalidateCanon(project, request, "shot-motion"); }
+function systemInvalidateDeliveryCanon(project, request = {}) { return systemInvalidateCanon(project, request, "shot-delivery"); }
+function systemInvalidateEntityStateCanon(project, request = {}) { return systemInvalidateCanon(project, request, "entity-state"); }
+
 /* THERE IS NO approveCoverageCanon AND NO approveExpressionCanon. Coverage and
    expression slots are supporting references; public/shared-entity-slots.js
    owns them, and a test asserts these names do not come back. */
+
+
+/* The read-only half of Authority Write Seam V1. Browser capture and the Node
+ * persistence primitive ask this same oracle which resolved targets and receipt
+ * rows moved. It enumerates raw current rows from both documents, so damage in
+ * either ledger cannot shrink the protected domain. */
+function authorityTargetFromKey(key) {
+  const raw = kernelText(key);
+  let match = raw.match(/^shot-frame:([^#]+)#(.+)$/);
+  if (match) return authorityTarget({ kind: "shot-frame", shotId: match[1], frameId: match[2] });
+  match = raw.match(/^shot-motion:([^#]+)#(.+)$/);
+  if (match) return authorityTarget({ kind: "shot-motion", shotId: match[1], unitKey: match[2] });
+  match = raw.match(/^shot-delivery:(.+)$/);
+  if (match) return authorityTarget({ kind: "shot-delivery", shotId: match[1] });
+  match = raw.match(/^entity-state:([^:]+):([^#]+)#(.+)$/);
+  return match ? authorityTarget({ kind: "entity-state", list: match[1], entityId: match[2], stateId: match[3] }) : null;
+}
+function authorityStable(value) {
+  if (Array.isArray(value)) return value.map(authorityStable);
+  if (!value || typeof value !== "object") return value;
+  return Object.keys(value).sort().reduce((out, key) => { out[key] = authorityStable(value[key]); return out; }, {});
+}
+function authorityStableJson(value) { return JSON.stringify(authorityStable(value)); }
+function rawAuthorityRows(project) { return kernelList(kernelObject(kernelObject(project).productionAuthority).receipts); }
+function rawAuthorityDomain(current, successor) {
+  const targets = new Map();
+  for (const project of [current, successor]) for (const rowValue of rawAuthorityRows(project)) {
+    const row = kernelObject(rowValue);
+    if (row.status !== "current") continue;
+    const stored = kernelText(row.targetKey);
+    if (stored) targets.set(stored, authorityTargetFromKey(stored));
+    const derived = authorityTarget(row);
+    if (derived) targets.set(derived.key, derived);
+  }
+  return targets;
+}
+function authorityTargetExists(project, target) {
+  if (!target) return false;
+  const P = kernelObject(project);
+  const shot = kernelList(P.shots).map(kernelObject).find((row) => kernelText(row.id) === target.shotId);
+  if (target.kind === "shot-delivery") return !!shot;
+  if (target.kind === "shot-frame") return !!shot && kernelList(shot.keyframes).some((row) => kernelText(kernelObject(row).id) === target.frameId);
+  if (target.kind === "shot-motion") return !!shot && kernelList(shot.clips).filter((row) => {
+    const clip = kernelObject(row); return kernelText(clip.id) === target.unitKey || kernelText(clip.suffix) === target.unitKey;
+  }).length === 1;
+  if (target.kind === "entity-state") {
+    const entity = kernelList(P[target.list]).map(kernelObject).find((row) => kernelText(row.id) === target.entityId);
+    return !!entity && (target.stateId === "state-default" || kernelList(entity.continuityStates).some((row) => kernelText(kernelObject(row).id) === target.stateId));
+  }
+  return false;
+}
+function authorityEdgeTuple(project, target) {
+  const edge = target ? liveAuthorityEdge(project, target) : {};
+  return {
+    value: kernelText(edge.value), assetId: kernelText(edge.assetId), recordId: kernelText(edge.recordId),
+    field: kernelText(edge.field), form: kernelText(edge.form),
+  };
+}
+function authorityCanonicalLedger(project) {
+  const ledger = kernelObject(project).productionAuthority;
+  if (ledger === undefined) return "__absent__";
+  const copy = JSON.parse(JSON.stringify(ledger));
+  if (Array.isArray(copy?.receipts)) copy.receipts.sort((a, b) =>
+    (kernelText(a?.id) + "\u0000" + authorityStableJson(a)).localeCompare(kernelText(b?.id) + "\u0000" + authorityStableJson(b)));
+  return authorityStableJson(copy);
+}
+function authorityWriteTransition(current, successor) {
+  const domain = rawAuthorityDomain(current, successor), targets = [];
+  for (const [targetKey, target] of domain) {
+    const before = authorityEdgeTuple(current, target), after = authorityEdgeTuple(successor, target);
+    const beforeExists = authorityTargetExists(current, target), afterExists = authorityTargetExists(successor, target);
+    if (authorityStableJson(before) !== authorityStableJson(after) || beforeExists !== afterExists)
+      targets.push({ targetKey, target, before, after, beforeExists, afterExists });
+  }
+  targets.sort((a, b) => a.targetKey.localeCompare(b.targetKey));
+  const beforeById = new Map(rawAuthorityRows(current).map((row) => [kernelText(kernelObject(row).id), row]));
+  const afterById = new Map(rawAuthorityRows(successor).map((row) => [kernelText(kernelObject(row).id), row]));
+  const receiptIds = new Set([...beforeById.keys(), ...afterById.keys()]), receiptChanges = [];
+  for (const id of receiptIds) if (authorityStableJson(beforeById.get(id)) !== authorityStableJson(afterById.get(id)))
+    receiptChanges.push({ id, before: beforeById.get(id), after: afterById.get(id) });
+  receiptChanges.sort((a, b) => a.id.localeCompare(b.id));
+  const affected = new Set(targets.map((row) => row.targetKey));
+  for (const change of receiptChanges) for (const rowValue of [change.before, change.after]) {
+    const row = kernelObject(rowValue), derived = authorityTarget(row);
+    if (kernelText(row.targetKey)) affected.add(kernelText(row.targetKey));
+    if (derived) affected.add(derived.key);
+  }
+  const targetKeys = [...affected].sort();
+  const targetRemoval = receiptChanges.length > 0 && receiptChanges.every((change) => {
+    const before = kernelObject(change.before), after = kernelObject(change.after), target = authorityTarget(before);
+    return before.status === "current" && after.status === "revoked" && after.revocationReason === "target-removed"
+      && target && !authorityTargetExists(successor, target);
+  }) && targets.every((row) => row.beforeExists && !row.afterExists);
+  return {
+    domain: [...domain.keys()].sort(), targets, changedTargetKeys: targets.map((row) => row.targetKey),
+    ledgerChanged: authorityCanonicalLedger(current) !== authorityCanonicalLedger(successor),
+    receiptChanges,
+    declaration: {
+      targetKeys, receiptIds: receiptChanges.map((row) => row.id),
+      transitionKind: receiptChanges.some((row) => kernelObject(row.after).revokedBy === "system") ? "SYSTEM_INVALIDATE" : "HUMAN_CANON_TRANSITION",
+    },
+    targetRemoval,
+    requiresTransition: !targetRemoval && (targets.length > 0 || receiptChanges.length > 0),
+  };
+}
 
 const AUTHORITY_KERNEL_EXPORTS = {
   AUTHORITY_TARGET_KINDS,
@@ -1298,18 +1447,15 @@ const AUTHORITY_KERNEL_EXPORTS = {
   hasCurrentHumanAuthority,
   authorityHistory,
   historicSelection,
+  authorityWriteTransition,
   /* the one projection — read-only derived state */
   entityProductionTruth,
-  /* writing — four named commands, four named revocations, one repair */
+  /* Only authority-creating commands are namespaced. Destructive and repair
+     functions remain private classic-script owners, not a general module API. */
   approveFrameCanon,
   approveMotionCanon,
   approveDeliveryCanon,
   approveEntityStateCanon,
-  revokeFrameCanon,
-  revokeMotionCanon,
-  revokeDeliveryCanon,
-  revokeEntityStateCanon,
-  repairCanonValue,
 };
 
 /* A NAMESPACE, NOT LOOSE GLOBALS — and this is not tidiness.

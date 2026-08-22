@@ -4,6 +4,7 @@
  * capability resolution remains route-agnostic, and no paid/provider call is made. */
 
 const assert = require("assert");
+const crypto = require("crypto");
 const fs = require("fs");
 const net = require("net");
 const os = require("os");
@@ -475,7 +476,7 @@ async function checkServerRoundTrip() {
     /* Save the document straight back, exactly as the browser would. */
     const saved = await fetch(`${base}/api/projects/seed/project`, {
       method: "PUT",
-      headers: { "content-type": "application/json", "if-match": "*" },
+      headers: { "content-type": "application/json", "if-match": `"${crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex")}"` },
       body: JSON.stringify(loaded),
     });
     assert.strictEqual(saved.status, 200, "the routed project must save");
