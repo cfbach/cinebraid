@@ -387,8 +387,8 @@ try:
              "  const s = shotById(id), c = ensureShotCreation(s);\n  const task = \"\";"),
             ("  if (task && boundedShotSelectedTask(s, takesFor(s.id)) !== task)\n"
              "    return toast(`Could not open the ${key} workspace.`);\n"
-             "  await focusGuidedWorkspaceTarget(`[data-guided-panel=\"${key}\"]`);",
-             "  const found = await focusGuidedWorkspaceTarget(`[data-guided-panel=\"${key}\"]`);\n"
+             "  await focusGuidedWorkspaceTarget(focusSelector || `[data-guided-panel=\"${key}\"]`);",
+             "  const found = await focusGuidedWorkspaceTarget(focusSelector || `[data-guided-panel=\"${key}\"]`);\n"
              "  if (!found) toast(`Could not find the ${key} workspace.`);"))
         del page_errors[:]
         open_shot_on_frames()
