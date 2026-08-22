@@ -764,7 +764,7 @@ async function main() {
   assert.strictEqual(fs.readFileSync(path.join(ROOT, "server.js"), "utf8"), SERVER_SOURCE,
     "server.js was modified on disk — this suite reads it and never writes it");
 
-  console.log(`State-specific authority passed ${checks} checks: a declared non-default state resolves its OWN approved image or nothing at all, the default keeps the entity-level file it has always used, frame overrides and shot inheritance both follow the P4-SEM-B canonical rule across A/B/C and across entities that share state ids, the automation preflight and the generation authority lookup answer the same question the same way, resolution writes nothing, and the FLF motion gate is exactly where it was. Provider calls made: 0.`);
+  console.log(`State-specific authority passed ${checks} checks: a declared non-default state resolves its OWN approved image or nothing at all, the default keeps the entity-level file it has always used, frame overrides and shot inheritance both follow the P4-SEM-B canonical rule across A/B/C and across entities that share state ids, for primary visual attachments, automation preflight and generation authority lookup agree on state-specific authority, while state-bearing-only speakers and vehicles stay outside generation entity membership, resolution writes nothing, and the FLF motion gate is exactly where it was. Provider calls made: 0.`);
 }
 
 main().catch((error) => {
