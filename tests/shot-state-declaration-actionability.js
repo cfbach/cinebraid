@@ -531,6 +531,77 @@ async function relationshipTruthSection() {
   }
 }
 
+async function productDetachSection() {
+  const project = actionabilityFixture();
+  project.shots[0].continuityStateSelections = {};
+  const page = await render("#/shot/L1-01", project, {
+    storage: { "cinebraid-focused:fixture:shot-task:L1-01": "motion" },
+  });
+  const result = JSON.parse(vm.runInContext(`(() => {
+    const shot = P.shots[0];
+    const motionMarkup = guidedAudioPanel(shot, ensureShotCreation(shot), { supports: { audio: true } }, []);
+    const castMarkup = guidedShotAttachmentPicker(shot);
+    const applied = chooseShotContinuityState(shot.id, "KAI", "state-kai-rain");
+
+    /* These are the exact onchange handlers used by the shipped Who says it?
+       controls. The composer handler writes both the top-level clip speaker and
+       its nested dialogue source through syncLegacyFields(). */
+    setMotionSoundField(shot.id, "motion-a", "dialogue", "speakerId", "KAI");
+    setMotionSoundField(shot.id, "motion-b", "dialogue", "speakerId", "CHAR-RHEA");
+    setShotAudioField(shot.id, "speakerId", "KAI");
+    setSimpleMotionAudio(shot.id, "speakerId", "KAI");
+
+    const before = {
+      top: shot.audio?.speakerId || "",
+      clip: shot.clips[0]?.speakerId || "",
+      nested: shot.clips[0]?.motionBrief?.dialogue?.speakerId || "",
+      motion: shot.creationBrief?.motionPlan?.audio?.speakerId || "",
+    };
+    toggleShotCreationCharacter(shot.id, "KAI");
+    const readiness = shotReadinessFor(shot);
+    const requirements = [...(readiness.requirements || []), ...(readiness.units || []).flatMap((unit) => unit.requirements || [])];
+    return JSON.stringify({
+      applied,
+      controls: {
+        speaker: motionMarkup.includes("Who says it?") && motionMarkup.includes("setShotAudioField('L1-01','speakerId',this.value)"),
+        cast: castMarkup.includes("toggleShotCreationCharacter('L1-01','KAI')"),
+      },
+      before,
+      after: {
+        characters: shot.characters,
+        top: shot.audio?.speakerId || "",
+        clip: shot.clips[0]?.speakerId || "",
+        nested: shot.clips[0]?.motionBrief?.dialogue?.speakerId || "",
+        motion: shot.creationBrief?.motionPlan?.audio?.speakerId || "",
+        unrelatedClip: shot.clips[1]?.speakerId || "",
+        unrelatedNested: shot.clips[1]?.motionBrief?.dialogue?.speakerId || "",
+        declaration: shot.continuityStateSelections,
+        relationships: shotStateBearingEntityRecords(P, shot).filter((row) => row.resolved).map((row) => row.id),
+        visibleCharacters: resolveShotEntities(P, shot).characters.map((entity) => entity.id),
+        kaiRequirement: requirements.some((row) => row.entityId === "KAI" || String(row.id || "").includes("KAI")),
+        action: readiness.nextAction.code,
+      },
+    });
+  })()`, page.context));
+  equal(result.controls.speaker, true, "the rendered motion surface exposes the shipped Who says it? mutation handler");
+  equal(result.controls.cast, true, "the rendered cast picker exposes the shipped character-removal handler");
+  equal(result.applied.status, "applied", "precondition: the attached character owns a valid shot declaration");
+  deepEqual(result.before, { top: "KAI", clip: "KAI", nested: "KAI", motion: "KAI" },
+    "shipped speaker controls create every covered KAI speaker relationship");
+  deepEqual(result.after.characters, [], "the shipped cast control removes KAI from the visible cast");
+  equal(result.after.top, "", "cast removal clears the top-level audio speaker relationship");
+  equal(result.after.clip, "", "cast removal clears the top-level clip speaker relationship");
+  equal(result.after.nested, "", "cast removal clears the nested dialogue speaker relationship");
+  equal(result.after.motion, "", "cast removal clears the motion-plan speaker relationship");
+  equal(result.after.unrelatedClip, "CHAR-RHEA", "cast removal preserves another entity's clip relationship");
+  equal(result.after.unrelatedNested, "CHAR-RHEA", "cast removal preserves another entity's nested dialogue relationship");
+  deepEqual(result.after.declaration, {}, "the guarded owner clears KAI's declaration only after its final relationship is gone");
+  equal(result.after.relationships.includes("KAI"), false, "no invisible KAI state-bearing relationship remains");
+  equal(result.after.visibleCharacters.includes("KAI"), false, "visible attachment truth agrees that KAI is detached");
+  equal(result.after.kaiRequirement, false, "readiness no longer blocks on the removed character");
+  ok(result.after.action !== "remove-stale-state-declaration", "cast removal does not leave a stale declaration cleanup step behind");
+}
+
 async function renderedControlSection() {
   const project = actionabilityFixture();
   const page = await render("#/shot/L1-01", project, {
@@ -948,6 +1019,58 @@ async function duplicationSection() {
     return JSON.stringify(P.shots.at(-1).continuityStateSelections);
   })()`, foreignPage.context));
   deepEqual(foreign, {}, "duplication cannot bless a state owned by a different entity");
+
+  const structureProject = actionabilityFixture();
+  const source = structureProject.shots[0];
+  structureProject.vehicles[0].continuityStates = [{ id: "state-cart-dust", name: "Dusty", isDefault: true }];
+  source.continuityStateSelections = { KAI: "state-kai-rain" };
+  source.audio = { ...(source.audio || {}), speakerId: "KAI" };
+  source.clips[0].speakerId = "KAI";
+  source.clips[0].motionBrief = { dialogue: { speakerId: "KAI" } };
+  source.creationBrief = {
+    ...(source.creationBrief || {}),
+    locationId: "LOC-HULL",
+    propIds: ["PR-TOOL"],
+    vehicleIds: ["VEH-CART"],
+    motionPlan: { audio: { speakerId: "KAI" } },
+  };
+
+  const structurePage = await render("#/shot/L1-01", structureProject);
+  const structure = JSON.parse(await vm.runInContext(`(async () => {
+    const sourceBefore = JSON.stringify(P.shots[0]);
+    duplicateShot("L1-01");
+    document.getElementById("duplicate-shot-mode").value = "structure";
+    confirmDuplicateShot("L1-01");
+    const copy = P.shots.at(-1);
+    const resolved = resolveShotEntities(P, copy);
+    return JSON.stringify({
+      characters: copy.characters,
+      codes: copy.codes,
+      locationId: copy.creationBrief?.locationId || "",
+      propIds: copy.creationBrief?.propIds || [],
+      vehicleIds: copy.creationBrief?.vehicleIds || [],
+      audioSpeaker: copy.audio?.speakerId || "",
+      clips: copy.clips,
+      motionSpeaker: copy.creationBrief?.motionPlan?.audio?.speakerId || "",
+      declarations: copy.continuityStateSelections,
+      relationships: shotStateBearingEntityRecords(P, copy).filter((row) => row.resolved).map((row) => row.id),
+      visible: [...resolved.characters, ...resolved.locations, ...resolved.props, ...resolved.vehicles].map((entity) => entity.id),
+      source: P.shots[0],
+      sourceBefore,
+    });
+  })()`, structurePage.context));
+  deepEqual(structure.characters, [], "structure duplication strips character attachments");
+  deepEqual(structure.codes, [], "structure duplication strips generic attachment tokens");
+  equal(structure.locationId, "", "structure duplication strips the primary location relationship");
+  deepEqual(structure.propIds, [], "structure duplication strips prop relationships");
+  deepEqual(structure.vehicleIds, [], "structure duplication strips vehicle relationships");
+  equal(structure.audioSpeaker, "", "structure duplication strips the top-level speaker relationship");
+  deepEqual(structure.clips, [], "structure duplication strips clip and nested-dialogue speaker relationships");
+  equal(structure.motionSpeaker, "", "structure duplication strips the motion-plan speaker relationship");
+  deepEqual(structure.declarations, {}, "structure duplication carries no continuity declarations");
+  deepEqual(structure.relationships, [], "canonical state-bearing truth finds no residual structure-only relationship");
+  deepEqual(structure.visible, [], "the primary visual attachment projection agrees with the structure-only copy");
+  equal(JSON.stringify(structure.source), structure.sourceBefore, "structure filtering leaves the source shot byte-for-byte unchanged");
 }
 
 async function batchProductAndCompletenessSection() {
@@ -1182,6 +1305,7 @@ async function main() {
   mutationOwnerSection();
   tokenNamespaceOwnerSection();
   await relationshipTruthSection();
+  await productDetachSection();
   await renderedControlSection();
   await nextActionReachabilitySection();
   await staleDeclarationSection();
@@ -1204,6 +1328,7 @@ module.exports = {
   tokenNamespaceOwnerSection,
   actionabilityFixture,
   relationshipTruthSection,
+  productDetachSection,
   renderedControlSection,
   nextActionReachabilitySection,
   staleDeclarationSection,

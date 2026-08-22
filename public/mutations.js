@@ -213,6 +213,9 @@ window.confirmDuplicateShot = (id) => {
     copy.codes = [];
     copy.creationBrief.locationId = "";
     copy.creationBrief.propIds = [];
+    copy.creationBrief.vehicleIds = [];
+    if (copy.audio && typeof copy.audio === "object") copy.audio.speakerId = "";
+    if (copy.creationBrief.motionPlan?.audio) copy.creationBrief.motionPlan.audio.speakerId = "";
     copy.creationBrief.disabledInputKeys = [];
   }
   if (mode === "blank-motion") {
@@ -416,11 +419,18 @@ window.toggleSceneChar = (sid, cid) => {
 window.toggleShotChar = (id, cid) => {
   const s = shotById(id);
   s.characters = s.characters || [];
-  s.characters = s.characters.includes(cid)
-    ? s.characters.filter((x) => x !== cid)
-    : [...s.characters, cid];
-  if (typeof clearDetachedShotStateDeclaration === "function")
-    clearDetachedShotStateDeclaration(P, { shotId: id, entityId: cid });
+  const removing = s.characters.includes(cid);
+  if (removing && typeof updateShotDependencyRelationship === "function") {
+    /* Cast is the only product surface that can select a speaker. Once a
+       character leaves cast, clear every relationship that surface authored so
+       no invisible speaker can keep a declaration/readiness blocker alive. The
+       dependency owner rechecks attachment before it clears any declaration. */
+    updateShotDependencyRelationship(s, cid, "");
+  } else {
+    s.characters = removing ? s.characters.filter((x) => x !== cid) : [...s.characters, cid];
+    if (typeof clearDetachedShotStateDeclaration === "function")
+      clearDetachedShotStateDeclaration(P, { shotId: id, entityId: cid });
+  }
   dirty();
   route();
 };
