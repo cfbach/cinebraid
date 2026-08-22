@@ -398,6 +398,8 @@ window.toggleShotChar = (id, cid) => {
   s.characters = s.characters.includes(cid)
     ? s.characters.filter((x) => x !== cid)
     : [...s.characters, cid];
+  if (typeof clearDetachedShotStateDeclaration === "function")
+    clearDetachedShotStateDeclaration(P, { shotId: id, entityId: cid });
   dirty();
   route();
 };

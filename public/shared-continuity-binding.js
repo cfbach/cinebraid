@@ -444,6 +444,37 @@ function applyShotStateDeclaration(project, declaration = {}) {
   return shotStateDeclarationResult("applied", declaration, { changed, operation: "selected" });
 }
 
+/* Attachment mutations call this after changing one relationship. It removes
+   only that entity's declaration, and only when the shared attachment resolver
+   confirms no other shot relationship still attaches it. A state selection can
+   therefore never keep itself alive as an inferred attachment. */
+function clearDetachedShotStateDeclaration(project, declaration = {}) {
+  const P = isObject(project) ? project : null;
+  if (!P || !isObject(declaration)) return shotStateDeclarationResult("invalid-declaration", declaration);
+  const shotId = text(declaration.shotId);
+  const entityId = text(declaration.entityId);
+  if (!shotId || !entityId) return shotStateDeclarationResult("invalid-declaration", declaration);
+  const shot = (Array.isArray(P.shots) ? P.shots : []).find((row) => isObject(row) && text(row.id) === shotId);
+  if (!shot) return shotStateDeclarationResult("shot-not-found", declaration);
+  const current = shot[RUNTIME_SHOT_SELECTION_KEY];
+  if (current !== undefined && current !== null && !isObject(current))
+    return shotStateDeclarationResult("invalid-declaration", declaration);
+  const resolver = shotEntityResolverOwner();
+  if (!resolver) return shotStateDeclarationResult("invalid-declaration", declaration);
+  const attached = resolver(P, shot);
+  const remainsAttached = [
+    ...(attached.characters || []),
+    ...(attached.locations || []),
+    ...(attached.props || []),
+    ...(attached.vehicles || []),
+  ].some((entity) => text(entity && entity.id) === entityId);
+  if (remainsAttached)
+    return shotStateDeclarationResult("applied", declaration, { changed: false, operation: "retained-attached" });
+  const existed = isObject(current) && Object.prototype.hasOwnProperty.call(current, entityId);
+  if (existed) delete current[entityId];
+  return shotStateDeclarationResult("applied", declaration, { changed: existed, operation: "cleared-detached" });
+}
+
 const CONTINUITY_BINDING_EXPORTS = {
   CONTINUITY_PROFILE_ID,
   RUNTIME_SHOT_SELECTION_KEY,
@@ -462,6 +493,7 @@ const CONTINUITY_BINDING_EXPORTS = {
   duplicateBindingEntityIds,
   stateIdBelongsToEntity,
   applyShotStateDeclaration,
+  clearDetachedShotStateDeclaration,
 };
 
 if (typeof window !== "undefined") for (const [key, value] of Object.entries(CONTINUITY_BINDING_EXPORTS)) window[key] = value;

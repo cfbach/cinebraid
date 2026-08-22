@@ -4580,6 +4580,8 @@ window.setShotCreationLocation = (id, value) => {
     s.codes = s.codes.filter((code) => !shotEntityTokenMatches(code, previous));
   c.locationId = value;
   if (value && !s.codes.some((code) => shotEntityTokenMatches(code, value))) s.codes.push(value);
+  if (previous && typeof clearDetachedShotStateDeclaration === "function")
+    clearDetachedShotStateDeclaration(P, { shotId: id, entityId: previous });
   dirty();
   route();
 };
@@ -4596,6 +4598,8 @@ window.toggleShotCreationProp = (id, propId) => {
     c.propIds = [...c.propIds, propId];
     if (!s.codes.some((code) => shotEntityTokenMatches(code, propId))) s.codes.push(propId);
   }
+  if (typeof clearDetachedShotStateDeclaration === "function")
+    clearDetachedShotStateDeclaration(P, { shotId: id, entityId: propId });
   dirty();
   route();
 };

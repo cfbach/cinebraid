@@ -132,6 +132,31 @@ function mutationOwnerSection() {
   equal(cleared.operation, "cleared", "cleanup is distinguishable from selection");
   deepEqual(clearing.shots[0].continuityStateSelections, {},
     "cleanup removes only the entity's canonical shot declaration");
+
+  const detached = mutationFixture();
+  detached.shots[0].continuityStateSelections = { "CHAR-KAI": "state-kai-rain" };
+  detached.shots[0].characters = [];
+  const clearedDetached = Binding.clearDetachedShotStateDeclaration(detached, {
+    shotId: "SH-STATE",
+    entityId: "CHAR-KAI",
+  });
+  equal(clearedDetached.status, "applied", "detached cleanup is owned by the binding contract");
+  equal(clearedDetached.operation, "cleared-detached", "the result names why cleanup occurred");
+  deepEqual(detached.shots[0].continuityStateSelections, {},
+    "a detached entity cannot keep itself attached through its stale state-map key");
+
+  const multiplyAttached = mutationFixture();
+  multiplyAttached.shots[0].codes = ["CHAR-KAI"];
+  multiplyAttached.shots[0].characters = [];
+  multiplyAttached.shots[0].continuityStateSelections = { "CHAR-KAI": "state-kai-rain" };
+  const retained = Binding.clearDetachedShotStateDeclaration(multiplyAttached, {
+    shotId: "SH-STATE",
+    entityId: "CHAR-KAI",
+  });
+  equal(retained.operation, "retained-attached",
+    "removing one relationship does not clear a declaration when another still attaches the entity");
+  deepEqual(multiplyAttached.shots[0].continuityStateSelections, { "CHAR-KAI": "state-kai-rain" },
+    "a still-attached entity keeps its valid shot declaration");
 }
 
 function actionabilityFixture() {
@@ -276,10 +301,79 @@ async function nextActionReachabilitySection() {
   equal(reached.invalidVisible, true, "the selected surface renders the implicated invalid row");
 }
 
+async function staleDeclarationSection() {
+  const characterProject = actionabilityFixture();
+  characterProject.shots[0].continuityStateSelections = { KAI: "state-kai-rain" };
+  const characterPage = await render("#/shot/L1-01", characterProject, {
+    storage: { "cinebraid-focused:fixture:shot-task:L1-01": "inputs" },
+  });
+  const detached = JSON.parse(vm.runInContext(`(() => {
+    toggleShotCreationCharacter("L1-01", "KAI");
+    const shot = P.shots[0];
+    return JSON.stringify({
+      attached: resolveShotEntities(P, shot).characters.some((entity) => entity.id === "KAI"),
+      declaration: shot.continuityStateSelections,
+    });
+  })()`, characterPage.context));
+  equal(detached.attached, false, "the character toggle genuinely detaches the entity");
+  deepEqual(detached.declaration, {}, "detaching clears that entity's shot declaration through the shared owner");
+
+  const locationProject = actionabilityFixture();
+  locationProject.shots[0].creationBrief = {
+    ...(locationProject.shots[0].creationBrief || {}),
+    locationId: "LOC-HULL",
+  };
+  locationProject.locations[0].continuityStates = [
+    { id: "state-hull-night", name: "Night", isDefault: true, approvedFile: "LOC-HULL-PLATE.png" },
+  ];
+  locationProject.locations.push({
+    id: "LOC-YARD",
+    name: "Service yard",
+    approvedFile: "LOC-YARD-PLATE.png",
+    continuityStates: [{ id: "state-yard-day", name: "Day", isDefault: true, approvedFile: "LOC-YARD-PLATE.png" }],
+  });
+  locationProject.shots[0].continuityStateSelections = { "LOC-HULL": "state-hull-night" };
+  const locationPage = await render("#/shot/L1-01", locationProject, {
+    storage: { "cinebraid-focused:fixture:shot-task:L1-01": "inputs" },
+  });
+  const replaced = JSON.parse(vm.runInContext(`(() => {
+    setShotCreationLocation("L1-01", "LOC-YARD");
+    const shot = P.shots[0];
+    return JSON.stringify({
+      locations: resolveShotEntities(P, shot).locations.map((entity) => entity.id),
+      declaration: shot.continuityStateSelections,
+    });
+  })()`, locationPage.context));
+  deepEqual(replaced.locations, ["LOC-YARD"], "location replacement attaches only the new active location");
+  deepEqual(replaced.declaration, {},
+    "location replacement does not silently carry the previous location's owner-scoped state");
+
+  const removedStateProject = actionabilityFixture();
+  removedStateProject.shots[0].continuityStateSelections = { KAI: "state-kai-rain" };
+  removedStateProject.characters[0].continuityStates =
+    removedStateProject.characters[0].continuityStates.filter((state) => state.id !== "state-kai-rain");
+  const removedStatePage = await render("#/shot/L1-01", removedStateProject);
+  const removedState = JSON.parse(vm.runInContext(`(() => {
+    const readiness = shotReadinessFor(P.shots[0]);
+    return JSON.stringify({
+      declaration: P.shots[0].continuityStateSelections,
+      action: readiness.nextAction.code,
+      markup: guidedShotStateDeclarations(P.shots[0]),
+    });
+  })()`, removedStatePage.context));
+  deepEqual(removedState.declaration, { KAI: "state-kai-rain" },
+    "deleting a selected catalog state does not silently rewrite the declaration");
+  equal(removedState.action, "resolve-state-declaration",
+    "readiness truthfully reopens the declaration action after state deletion");
+  ok(removedState.markup.includes("Invalid declaration · state-kai-rain"),
+    "the rendered control shows the stale deleted-state id honestly");
+}
+
 async function main() {
   mutationOwnerSection();
   await renderedControlSection();
   await nextActionReachabilitySection();
+  await staleDeclarationSection();
   console.log(`shot-state-declaration-actionability: ${checks} assertions passed`);
 }
 
@@ -294,5 +388,6 @@ module.exports = {
   actionabilityFixture,
   renderedControlSection,
   nextActionReachabilitySection,
+  staleDeclarationSection,
   main,
 };
