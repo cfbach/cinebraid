@@ -53,6 +53,7 @@ const ROOT = path.join(__dirname, "..");
 const Continuity = require("../public/shared-continuity");
 const { deterministicHealth } = require("../agent-suite");
 const { render, buildFixture } = require("./render-harness");
+const Entities = require("../public/shared-entities");
 
 let checks = 0;
 const ok = (condition, message) => { assert(condition, message); checks++; };
@@ -241,7 +242,7 @@ function serverAuthority(options = {}) {
     PROJECT_DIR: () => temp,
     IMG_ONLY: (name) => /\.(png|jpg|jpeg|webp|gif)$/i.test(String(name)),
     projectAssetPath: (file) => (file ? path.join(temp, String(file)) : ""),
-    resolveShotEntities: () => ({ characters: project.characters, locations: project.locations, props: project.props, vehicles: [] }),
+    shotStateBearingEntityRecords: Entities.shotStateBearingEntityRecords,
   });
   vm.runInContext(
     `${extractFunction(source, "entityApprovedDiskPath")}\n${extractFunction(source, "derivedFrameContext")}\n` +

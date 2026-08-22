@@ -31,6 +31,7 @@ const Module = require("module");
 
 const ROOT = path.join(__dirname, "..");
 const { render, buildFixture } = require("./render-harness");
+const Entities = require("../public/shared-entities");
 
 const DEFAULT_ID = "state-default";
 const ALT_ID = "state-alt";
@@ -184,7 +185,7 @@ function serverAuthority(options = {}) {
     PROJECT_DIR: () => temp,
     IMG_ONLY: (name) => /\.(png|jpg|jpeg|webp|gif)$/i.test(String(name)),
     projectAssetPath: (file) => (file ? path.join(temp, String(file)) : ""),
-    resolveShotEntities: () => ({ characters: project.characters, locations: project.locations, props: project.props, vehicles: [] }),
+    shotStateBearingEntityRecords: Entities.shotStateBearingEntityRecords,
     /* Only NC-F's defect reads this: every state record in the project, which is
        what a GLOBAL state lookup would have available to it. */
     __ALL_ENTITY_STATES: [...project.characters, ...project.props, ...project.locations]

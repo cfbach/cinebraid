@@ -117,11 +117,11 @@ function continuitySelectedPair(s, pairs) {
   return pairs.find((pair) => pair.id === selected) || pairs[0];
 }
 
-/* The entities this shot declares and continuity is allowed to judge. Same
-   resolver the manifest builder uses, so the rows on screen are the rows the
-   model was asked about. */
+/* The entities related to this shot in ways continuity is allowed to judge.
+   The manifest builder consumes the same canonical projection, so the rows on
+   screen are the rows the model was asked about. */
 function continuityEntityRows(s) {
-  const records = typeof shotDependencyRecords === "function" ? shotDependencyRecords(P, s) || [] : [];
+  const records = typeof shotStateBearingEntityRecords === "function" ? shotStateBearingEntityRecords(P, s) || [] : [];
   const kinds = typeof VISUAL_ENTITY_KINDS !== "undefined" ? VISUAL_ENTITY_KINDS : ["character", "location", "prop", "vehicle"];
   const rows = [];
   const seen = new Set();

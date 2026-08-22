@@ -385,6 +385,7 @@ const sandbox = {
   applyShotStateDeclaration: Binding.applyShotStateDeclaration,
   clearDetachedShotStateDeclaration: Binding.clearDetachedShotStateDeclaration,
   resolveShotEntities: Entities.resolveShotEntities,
+  shotStateBearingEntityRecords: Entities.shotStateBearingEntityRecords,
 };
 sandbox.globalThis = sandbox;
 vm.createContext(sandbox);
@@ -427,7 +428,66 @@ const noIntentShot = buildShot();
 sandbox.updateShotDependencyRelationship(noIntentShot, "PROP-MUG", "PROP-OTHER");
 assert.strictEqual(noIntentShot.continuityIntent, undefined, "the relink must not invent a continuityIntent object");
 
-/* ---- 15. an absent tracking/intent contract behaves as the defaults ----
+/* ---- 15. speaker/vehicle relationships and relinking share continuity truth ---- */
+const relationshipProject = buildProject();
+relationshipProject.characters.push({
+  id: "CHAR-RHEA",
+  name: "Rhea",
+  continuityStates: [{ id: "state-rhea-night", name: "Night", isDefault: true }],
+});
+relationshipProject.vehicles.push({
+  id: "VEH-ROVER",
+  name: "Rover",
+  continuityStates: [{ id: "state-rover-dust", name: "Dusty", isDefault: true }],
+});
+const relationshipShot = relationshipProject.shots[0];
+relationshipShot.audio = { speakerId: "CHAR-RHEA" };
+relationshipShot.clips = [{
+  id: "CLIP-RHEA",
+  motionBrief: { dialogue: { speakerId: "CHAR-RHEA" } },
+}];
+relationshipShot.creationBrief.vehicleIds = ["VEH-ROVER"];
+relationshipShot.continuityStateSelections = {
+  "CHAR-RHEA": "state-rhea-night",
+  "VEH-ROVER": "state-rover-dust",
+};
+const relationshipManifest = buildContinuityManifest(relationshipProject, relationshipShot, "frame-a");
+assert(idsOf(relationshipManifest).includes("CHAR-RHEA"), "a speaker-only character must enter the continuity manifest");
+assert(idsOf(relationshipManifest).includes("VEH-ROVER"), "a creation-brief vehicle must enter the continuity manifest");
+
+relationshipShot.audio.speakerId = "";
+assert.strictEqual(Binding.clearDetachedShotStateDeclaration(relationshipProject, {
+  shotId: relationshipShot.id, entityId: "CHAR-RHEA",
+}).operation, "retained-attached", "the clip dialogue relationship retains the speaker declaration");
+relationshipShot.clips[0].motionBrief.dialogue.speakerId = "";
+assert.strictEqual(Binding.clearDetachedShotStateDeclaration(relationshipProject, {
+  shotId: relationshipShot.id, entityId: "CHAR-RHEA",
+}).operation, "cleared-detached", "the declaration becomes stale after the final speaker relationship disappears");
+
+const speakerRelinkProject = buildProject();
+speakerRelinkProject.characters.push({
+  id: "CHAR-RHEA",
+  name: "Rhea",
+  continuityStates: [{ id: "state-rhea-night", name: "Night", isDefault: true }],
+});
+const speakerRelinkShot = speakerRelinkProject.shots[0];
+speakerRelinkShot.audio = { speakerId: "CHAR-RHEA" };
+speakerRelinkShot.clips = [
+  { id: "CLIP-TOP", speakerId: "CHAR-RHEA" },
+  { id: "CLIP-NESTED", motionBrief: { dialogue: { speakerId: "CHAR-RHEA" } } },
+];
+speakerRelinkShot.continuityStateSelections = { "CHAR-RHEA": "state-rhea-night" };
+sandbox.P = speakerRelinkProject;
+sandbox.updateShotDependencyRelationship(speakerRelinkShot, "CHAR-RHEA", "CHAR-KAI");
+assert.strictEqual(speakerRelinkShot.audio.speakerId, "CHAR-KAI", "audio speaker relinking updates the relationship");
+assert.strictEqual(speakerRelinkShot.clips[0].speakerId, "CHAR-KAI", "clip speaker relinking updates the relationship");
+assert.strictEqual(speakerRelinkShot.clips[1].motionBrief.dialogue.speakerId, "CHAR-KAI",
+  "nested motion-dialogue speaker relinking updates the shipped speaker control shape");
+assert(!("CHAR-RHEA" in speakerRelinkShot.continuityStateSelections), "relinking clears the old entity declaration");
+assert(!("CHAR-KAI" in speakerRelinkShot.continuityStateSelections),
+  "relinking cannot silently convert a foreign state into the replacement entity's declaration");
+
+/* ---- 16. an absent tracking/intent contract behaves as the defaults ----
 
    Phase 1 stores nothing. A project written by 6.6.6 must build a manifest
    with no migration and no write-back. */

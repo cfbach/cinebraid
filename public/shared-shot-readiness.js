@@ -73,7 +73,8 @@
                                       never be one
      which file an approval resolves  resolveApprovalMedia(), identity-first
        to
-     which entities a shot needs      shotDependencyRecords()
+     which dependency records exist   shotDependencyRecords()
+     which entities bear shot state   shotStateBearingEntityRecords()
      which tokens are ambiguous       lossyShotCodeTokens()
      who is absent from a frame       absentEntityIdsForFrame()
      is a presence record readable    framePresenceRecordStatus()
@@ -237,12 +238,12 @@
 
   const READINESS_REQUIREMENT_STATES = deepFreeze(["satisfied", "missing", "needs-decision", "optional", "waived"]);
 
-  /* WHY CineBraid believes an input is required. `inferred` is a statement about
+  /* WHY CineBraid believes an input is required. "inferred" is a statement about
      DISCOVERY ORDER, not about confidence — shotDependencyRecords() sets it when a
-     dependency was first seen through a token pattern or a state-selection key
-     rather than an authored field, which means adding a continuity selection to a
-     shot can flip an authored dependency to `inferred` while nothing about the
-     authoring changed. A surface must NOT present it as "CineBraid guessed this". */
+     dependency was first introduced through a token pattern or declaration key.
+     If an authored source later merges into that record, the flag still describes
+     how the record first entered the deterministic list. A surface must NOT present
+     it as "CineBraid guessed this". */
   const READINESS_REQUIREMENT_BASES = deepFreeze(["authored", "inferred", "derived", "declared-absent"]);
 
   /* BLOCKED reasons. `producible` says whether CineBraid could make the thing;
@@ -275,8 +276,9 @@
     /* a frame override asked for a state the entity does not have. Its repair is
        frame-scoped and must never be routed through the shot declaration control. */
     "frame-state-not-on-entity",
-    /* a shot state key names a known entity that canonical attachment data does not
-       attach. The declaration is stale; it is never attachment evidence. */
+    /* a shot state key names a known entity that no canonical state-bearing
+       relationship associates with the shot. The declaration is stale; it is
+       never relationship evidence. */
     "stale-state-declaration",
     /* CineBraid cannot tell who this frame excludes. */
     "presence-declaration-malformed",
@@ -385,7 +387,7 @@
   const validateAuthorityLedger = requireOwner(KERNEL && KERNEL.validateAuthorityLedger, "validateAuthorityLedger", "shared-authority-kernel.js");
   const resolveApprovalMediaOwner = requireOwner(DISPOSITION && DISPOSITION.resolveApprovalMedia, "resolveApprovalMedia", "shared-media-disposition.js");
   const shotDependencyRecordsOwner = requireOwner(ENTITIES && ENTITIES.shotDependencyRecords, "shotDependencyRecords", "shared-entities.js");
-  const resolveShotEntitiesOwner = requireOwner(ENTITIES && ENTITIES.resolveShotEntities, "resolveShotEntities", "shared-entities.js");
+  const shotStateBearingEntityRecordsOwner = requireOwner(ENTITIES && ENTITIES.shotStateBearingEntityRecords, "shotStateBearingEntityRecords", "shared-entities.js");
   const lossyShotCodeTokensOwner = requireOwner(ENTITIES && ENTITIES.lossyShotCodeTokens, "lossyShotCodeTokens", "shared-entities.js");
   const resolveStateRecordOwner = requireOwner(CONTINUITY && CONTINUITY.resolveStateRecord, "resolveStateRecord", "shared-continuity.js");
   const stateIdBelongsToEntityOwner = requireOwner(BINDING && BINDING.stateIdBelongsToEntity, "stateIdBelongsToEntity", "shared-continuity-binding.js");
@@ -674,8 +676,8 @@
       const entityId = text(dependency.id);
       if (!dependency.resolved || !dependency.entity) continue;
       /* A declaration-only dependency is a stale relationship decision, not an
-         input to every unit. Canonical attachment truth is computed separately and
-         never includes the declaration map itself. */
+         input to every unit. Canonical state-bearing relationship truth is computed
+         separately and never includes the declaration map itself. */
       if (!context.attachedIds.has(entityId)) continue;
       const listName = text(KIND_LISTS[type]);
       if (!listName) continue;
@@ -780,10 +782,10 @@
      a two-frame shot look twice as broken as a one-frame shot. */
   function relationshipRequirements(project, shot, context) {
     const rows = [];
-    /* A known entity reached only through a shot declaration is not attached. The
-       declaration gets one explicit cleanup decision here and is excluded from unit
-       inputs above, so it can neither bootstrap attachment nor emit an unusable state
-       selector action. */
+    /* A known entity reached only through a shot declaration has no state-bearing
+       relationship. The declaration gets one explicit cleanup decision here and is
+       excluded from unit inputs above, so it can neither bootstrap a relationship nor
+       emit an unusable state selector action. */
     const shotBindings = readShotStateBindingsOwner(shot).entityStates
       .slice()
       .sort((a, b) => text(a.entityId) < text(b.entityId) ? -1 : text(a.entityId) > text(b.entityId) ? 1 : 0);
@@ -1221,7 +1223,7 @@
       return `Frame ${row.frameId || "override"} asks ${row.label} for state ${row.detail}, which this entity does not have. Choose a valid frame state or follow the shot.${more}`;
     }
     if (row.reason === "stale-state-declaration") {
-      return `${row.label} has shot state ${row.detail}, but is not attached to this shot. Remove the stale declaration.${more}`;
+      return `${row.label} has shot state ${row.detail}, but has no state-bearing relationship to this shot. Remove the stale declaration.${more}`;
     }
     if (row.reason === "presence-declaration-malformed") {
       return `${row.label} has a frame-presence declaration CineBraid cannot read (${row.detail || "unrecognised value"}). Repair it before generating.${more}`;
@@ -1365,13 +1367,10 @@
       ? "resolveApprovalMedia"
       : typeof oracle.fileExists === "function" ? "file-name-only" : "not-checked";
     const routeNeeds = shotRouteInputNeeds(record(shot).deliveryRoute);
-    const attached = record(resolveShotEntitiesOwner(project, shot));
-    const attachedIds = new Set([
-      ...list(attached.characters),
-      ...list(attached.locations),
-      ...list(attached.props),
-      ...list(attached.vehicles),
-    ].map((entity) => text(record(entity).id)).filter(Boolean));
+    const attachedIds = new Set(list(shotStateBearingEntityRecordsOwner(project, shot))
+      .filter((dependency) => record(dependency).resolved === true)
+      .map((dependency) => text(record(record(dependency).entity).id))
+      .filter(Boolean));
     return {
       oracle,
       mediaCheck,

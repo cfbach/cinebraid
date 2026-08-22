@@ -1899,16 +1899,78 @@ async function main() {
       decisions: [{ summary: "Invented decision" }],
       sessions: [{ summary: "Invented history" }],
     };
+    /* Dialogue and motion controls can relate a speaker without listing them in
+       shot.characters. Project Builder preview and commit must consume exactly
+       the same relationship truth as readiness and canonical declaration
+       validation. */
+    leanImport.shots[0].characters = [];
+
+    const audioSpeakerImport = structuredClone(leanImport);
+    audioSpeakerImport.meta.title = "Audio speaker declaration import";
+    audioSpeakerImport.shots[0].clips = [];
+    result = await request("/api/projects/preview-import-json", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ project: audioSpeakerImport }),
+    });
+    assert.strictEqual(result.response.status, 200, result.body?.error || "Project Builder preview failed");
+    assert.deepStrictEqual(result.body.normalizedProject.shots[0].continuityStateSelections, {
+      "CHAR-WORKER": "state-worker-clean",
+    });
+
+    const clipSpeakerImport = structuredClone(leanImport);
+    clipSpeakerImport.meta.title = "Clip speaker declaration import";
+    clipSpeakerImport.shots[0].audio.speakerId = "";
+    clipSpeakerImport.shots[0].clips[0].motionBrief.dialogue.speakerId = "";
+    result = await request("/api/projects/preview-import-json", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ project: clipSpeakerImport }),
+    });
+    assert.strictEqual(result.response.status, 200, result.body?.error || "Project Builder preview failed");
+    assert.deepStrictEqual(result.body.normalizedProject.shots[0].continuityStateSelections, {
+      "CHAR-WORKER": "state-worker-clean",
+    });
+
+    const vehicleOnlyImport = structuredClone(leanImport);
+    vehicleOnlyImport.meta.title = "Vehicle relationship declaration import";
+
+    vehicleOnlyImport.vehicles = [{
+      id: "VEH-ROVER",
+      name: "Rover",
+      description: "A low utility rover.",
+      continuityStates: [{ id: "state-rover-dust", name: "Dusty", isDefault: true }],
+    }];
+    vehicleOnlyImport.shots[0].audio.speakerId = "";
+    vehicleOnlyImport.shots[0].clips[0].speakerId = "";
+    vehicleOnlyImport.shots[0].clips[0].motionBrief.dialogue.speakerId = "";
+    vehicleOnlyImport.shots[0].creationBrief = { vehicleIds: ["VEH-ROVER"] };
+    vehicleOnlyImport.shots[0].continuityStateSelections = { "VEH-ROVER": "state-rover-dust" };
+    result = await request("/api/projects/preview-import-json", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ project: vehicleOnlyImport }),
+    });
+    assert.strictEqual(result.response.status, 200, result.body?.error || "Project Builder preview failed");
+    assert.deepStrictEqual(result.body.normalizedProject.shots[0].continuityStateSelections, {
+      "VEH-ROVER": "state-rover-dust",
+    });
+
     const unattachedDeclarationImport = structuredClone(leanImport);
     unattachedDeclarationImport.meta.title = "Unattached declaration import";
     unattachedDeclarationImport.shots[0].characters = [];
+    unattachedDeclarationImport.shots[0].codes = [];
+    unattachedDeclarationImport.shots[0].audio.speakerId = "";
+    unattachedDeclarationImport.shots[0].clips[0].speakerId = "";
+    unattachedDeclarationImport.shots[0].clips[0].motionBrief.dialogue.speakerId = "";
+    unattachedDeclarationImport.shots[0].creationBrief = { vehicleIds: [] };
     result = await request("/api/projects/preview-import-json", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ project: unattachedDeclarationImport }),
     });
     assert.strictEqual(result.response.status, 400);
-    assert.match(result.body.error, /canonical owner \(entity-not-attached\)/i);
+    assert.match(result.body.error, /shot S01-01, entity CHAR-WORKER, state state-worker-clean.*reason entity-not-attached/i);
 
     result = await request("/api/projects/preview-import-json", {
       method: "POST",

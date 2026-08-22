@@ -57,7 +57,7 @@
    same validation atomically across several shots, and
    `clearDetachedShotStateDeclaration` is the explicit stale/detach cleanup. They
    validate the same owner-scoped fact this module reads, including that assignment
-   targets are genuinely attached to the shot, before changing
+   targets have a genuine state-bearing relationship to the shot, before changing
    `shot.continuityStateSelections`. No UI caller gets to restate those rules. Every
    other function in this module remains read-only. */
 
@@ -365,11 +365,11 @@ function stateIdBelongsToEntity(states, stateId) {
 /* ---------- the one runtime shot-binding mutation -------------------------
 
    A declaration is `{ shotId, entityId, stateId }`. `stateId: ""` is the
-   explicit cleanup operation used when an attachment is removed; the rendered
-   assignment control never offers it as a state.
+   explicit cleanup operation used when the final state-bearing relationship is
+   removed; the rendered assignment control never offers it as a state.
 
    Failure is closed and non-mutating. In particular, the selection map is not
-   created until every entity/attachment/state check has passed. A foreign-state
+   created until every entity/relationship/state check has passed. A foreign-state
    diagnostic may inspect the other catalogues only to explain the refusal; it
    never resolves through them. If the requested entity owns the id, that
    owner-scoped fact wins even when another entity legally uses the same id. */
@@ -396,13 +396,13 @@ function runtimeVisualEntityEntries(project) {
   return rows;
 }
 
-function shotEntityResolverOwner() {
-  if (typeof resolveShotEntities === "function") return resolveShotEntities;
+function shotStateBearingEntityRecordsOwner() {
+  if (typeof shotStateBearingEntityRecords === "function") return shotStateBearingEntityRecords;
   const global = typeof globalThis !== "undefined" ? globalThis : {};
-  if (typeof global.resolveShotEntities === "function") return global.resolveShotEntities;
+  if (typeof global.shotStateBearingEntityRecords === "function") return global.shotStateBearingEntityRecords;
   if (typeof module !== "undefined" && module.exports) {
     const shared = require("./shared-entities");
-    if (typeof shared.resolveShotEntities === "function") return shared.resolveShotEntities;
+    if (typeof shared.shotStateBearingEntityRecords === "function") return shared.shotStateBearingEntityRecords;
   }
   return null;
 }
@@ -422,15 +422,12 @@ function shotStateDeclarationValidation(project, declaration = {}) {
   if (!entries.length) return { result: shotStateDeclarationResult("entity-not-found", declaration) };
   if (entries.length !== 1) return { result: shotStateDeclarationResult("invalid-declaration", declaration) };
 
-  const resolver = shotEntityResolverOwner();
+  const resolver = shotStateBearingEntityRecordsOwner();
   if (!resolver) return { result: shotStateDeclarationResult("invalid-declaration", declaration) };
-  const attached = resolver(P, shot);
-  const attachedIds = [
-    ...(attached.characters || []),
-    ...(attached.locations || []),
-    ...(attached.props || []),
-    ...(attached.vehicles || []),
-  ].map((entity) => text(entity && entity.id)).filter(Boolean);
+  const attachedIds = resolver(P, shot)
+    .filter((record) => record && record.resolved && record.entity)
+    .map((record) => text(record.entity.id))
+    .filter(Boolean);
   if (!attachedIds.includes(entityId)) return { result: shotStateDeclarationResult("entity-not-attached", declaration) };
 
   const current = shot[RUNTIME_SHOT_SELECTION_KEY];
@@ -455,8 +452,8 @@ function commitShotStateDeclaration(validation) {
   const { entityId, stateId } = declaration;
   const current = shot[RUNTIME_SHOT_SELECTION_KEY];
 
-  /* Attachment cleanup is part of this owner so a detach cannot leave a valid
-     binding behind that later masquerades as an attachment of its own. */
+  /* Relationship cleanup is part of this owner so a detach cannot leave a valid
+     binding behind that later masquerades as a relationship of its own. */
   if (!stateId) {
     const existed = isObject(current) && Object.prototype.hasOwnProperty.call(current, entityId);
     if (existed) delete current[entityId];
@@ -505,10 +502,10 @@ function applyShotStateDeclarationBatch(project, declarations = []) {
   });
 }
 
-/* Attachment mutations call this after changing one relationship. It removes
-   only that entity's declaration, and only when the shared attachment resolver
-   confirms no other shot relationship still attaches it. A state selection can
-   therefore never keep itself alive as an inferred attachment. */
+/* Relationship mutations call this after changing one relationship. It removes
+   only that entity's declaration, and only when the shared state-bearing
+   projection confirms no other relationship still associates it. A state
+   selection can therefore never keep itself alive as an inferred relationship. */
 function clearDetachedShotStateDeclaration(project, declaration = {}) {
   const P = isObject(project) ? project : null;
   if (!P || !isObject(declaration)) return shotStateDeclarationResult("invalid-declaration", declaration);
@@ -520,15 +517,10 @@ function clearDetachedShotStateDeclaration(project, declaration = {}) {
   const current = shot[RUNTIME_SHOT_SELECTION_KEY];
   if (current !== undefined && current !== null && !isObject(current))
     return shotStateDeclarationResult("invalid-declaration", declaration);
-  const resolver = shotEntityResolverOwner();
+  const resolver = shotStateBearingEntityRecordsOwner();
   if (!resolver) return shotStateDeclarationResult("invalid-declaration", declaration);
-  const attached = resolver(P, shot);
-  const remainsAttached = [
-    ...(attached.characters || []),
-    ...(attached.locations || []),
-    ...(attached.props || []),
-    ...(attached.vehicles || []),
-  ].some((entity) => text(entity && entity.id) === entityId);
+  const remainsAttached = resolver(P, shot)
+    .some((record) => record && record.resolved && text(record.entity && record.entity.id) === entityId);
   if (remainsAttached)
     return shotStateDeclarationResult("applied", declaration, { changed: false, operation: "retained-attached" });
   const existed = isObject(current) && Object.prototype.hasOwnProperty.call(current, entityId);

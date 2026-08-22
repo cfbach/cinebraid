@@ -337,7 +337,7 @@ function entityAllowedStateValues(entity, tracking) {
 function buildContinuityManifest(project, shot, frameId = "") {
   const P = project && typeof project === "object" ? project : {};
   const s = shot && typeof shot === "object" ? shot : {};
-  const records = resolveDependencyRecords(P, s);
+  const records = resolveStateBearingDependencyRecords(P, s);
   const entities = [];
   const seen = new Set();
   for (const record of records) {
@@ -385,11 +385,11 @@ function buildContinuityManifest(project, shot, frameId = "") {
     manifestHash: sha256Hex(CONTINUITY_OBSERVATION_CONTRACT_VERSION + "\n" + canonicalJson(hashPayload)).slice(0, MANIFEST_HASH_LENGTH),
   };
 }
-function resolveDependencyRecords(project, shot) {
-  const fn = typeof shotDependencyRecords === "function"
-    ? shotDependencyRecords
-    : (typeof globalThis !== "undefined" && typeof globalThis.shotDependencyRecords === "function"
-      ? globalThis.shotDependencyRecords
+function resolveStateBearingDependencyRecords(project, shot) {
+  const fn = typeof shotStateBearingEntityRecords === "function"
+    ? shotStateBearingEntityRecords
+    : (typeof globalThis !== "undefined" && typeof globalThis.shotStateBearingEntityRecords === "function"
+      ? globalThis.shotStateBearingEntityRecords
       : null);
   return fn ? (fn(project, shot) || []) : [];
 }
@@ -1281,8 +1281,8 @@ if (typeof window !== "undefined") for (const [key, value] of Object.entries(CON
 if (typeof module !== "undefined" && module.exports) {
   /* Node has no script-tag load order, so the dependencies are taken directly. */
   const shared = require("./shared-entities");
-  globalThis.shotDependencyRecords = globalThis.shotDependencyRecords || shared.shotDependencyRecords;
-  /* Assigned, not defaulted. `shotDependencyRecords` above uses `x = x || y`
+  globalThis.shotStateBearingEntityRecords = globalThis.shotStateBearingEntityRecords || shared.shotStateBearingEntityRecords;
+  /* Assigned, not defaulted. The state-bearing projection above uses `x = x || y`
      because a browser-shaped harness may have installed it first and the two
      are the same function either way. The binding contract is different: the
      module this line just required IS the authority, and deferring to whatever

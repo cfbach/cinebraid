@@ -1163,7 +1163,16 @@ function v626ShotPreflight(shot, frameIds) {
   const frames = v626ShotFramesRead(shot), selected = frameIds.map((id) => frames.find((frame) => frame.id === id)).filter(Boolean);
   if (!frames.length) errors.push(`${shot?.id || "This shot"} has no frames yet. Open it and add an opening frame before automating it.`);
   if (!selected.length) errors.push("Choose at least one frame.");
-  const resolved = typeof resolveShotEntities === "function" ? resolveShotEntities(P, shot) : null;
+  const stateBearing = typeof shotStateBearingEntityRecords === "function"
+    ? shotStateBearingEntityRecords(P, shot).filter((record) => record?.resolved && record.entity)
+    : [];
+  const entitiesOfType = (type) => stateBearing.filter((record) => record.type === type).map((record) => record.entity);
+  const resolved = {
+    locations: entitiesOfType("location"),
+    characters: entitiesOfType("character"),
+    props: entitiesOfType("prop"),
+    vehicles: entitiesOfType("vehicle"),
+  };
   for (const frame of selected) {
     const index = frames.indexOf(frame), state = v626FrameStateRead(shot, frame);
     const description = String(state.action || frame.description || "").trim();

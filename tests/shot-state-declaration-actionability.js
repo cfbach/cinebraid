@@ -10,6 +10,7 @@ const path = require("path");
 const { spawn } = require("child_process");
 const vm = require("vm");
 const Binding = require("../public/shared-continuity-binding");
+const Entities = require("../public/shared-entities");
 const { render, buildFixture } = require("./render-harness");
 
 let checks = 0;
@@ -164,6 +165,109 @@ function mutationOwnerSection() {
   deepEqual(multiplyAttached.shots[0].continuityStateSelections, { "CHAR-KAI": "state-kai-rain" },
     "a still-attached entity keeps its valid shot declaration");
 
+  const relationshipCases = [
+    {
+      label: "audio speaker only",
+      entityId: "CHAR-RHEA",
+      stateId: "state-rhea-night",
+      arrange: (project, shot) => { shot.audio = { speakerId: "CHAR-RHEA" }; },
+    },
+    {
+      label: "clip speaker only",
+      entityId: "CHAR-RHEA",
+      stateId: "state-rhea-night",
+      arrange: (project, shot) => { shot.clips = [{ id: "CLIP-RHEA", speakerId: "CHAR-RHEA" }]; },
+    },
+    {
+      label: "nested clip dialogue speaker only",
+      entityId: "CHAR-RHEA",
+      stateId: "state-rhea-night",
+      arrange: (project, shot) => {
+        shot.clips = [{ id: "CLIP-DIALOGUE", motionBrief: { dialogue: { speakerId: "CHAR-RHEA" } } }];
+      },
+    },
+    {
+      label: "creation-brief motion-plan speaker only",
+      entityId: "CHAR-RHEA",
+      stateId: "state-rhea-night",
+      arrange: (project, shot) => {
+        shot.creationBrief = { motionPlan: { audio: { speakerId: "CHAR-RHEA" } } };
+      },
+    },
+    {
+      label: "creation-brief vehicle only",
+      entityId: "VEH-ROVER",
+      stateId: "state-rover-dust",
+      arrange: (project, shot) => {
+        project.vehicles.push({
+          id: "VEH-ROVER",
+          name: "Rover",
+          continuityStates: [{ id: "state-rover-dust", name: "Dusty", isDefault: true }],
+        });
+        shot.creationBrief = shot.creationBrief || {};
+        shot.creationBrief.vehicleIds = ["VEH-ROVER"];
+      },
+    },
+  ];
+  for (const testCase of relationshipCases) {
+    const related = mutationFixture();
+    const relatedShot = related.shots[0];
+    relatedShot.characters = [];
+    relatedShot.codes = [];
+    testCase.arrange(related, relatedShot);
+    const canonicalIds = Entities.shotStateBearingEntityRecords(related, relatedShot)
+      .filter((record) => record.resolved)
+      .map((record) => record.entity.id);
+    ok(canonicalIds.includes(testCase.entityId), `${testCase.label} is canonical state-bearing relationship truth`);
+    const primaryIds = [
+      ...Entities.resolveShotEntities(related, relatedShot).characters,
+      ...Entities.resolveShotEntities(related, relatedShot).vehicles,
+    ].map((entity) => entity.id);
+    equal(primaryIds.includes(testCase.entityId), false,
+      `${testCase.label} remains outside the narrower primary/composer attachment resolver`);
+    const relationshipApplied = Binding.applyShotStateDeclaration(related, {
+      shotId: relatedShot.id,
+      entityId: testCase.entityId,
+      stateId: testCase.stateId,
+    });
+    equal(relationshipApplied.status, "applied", `${testCase.label} accepts an owned declaration`);
+    equal(Binding.clearDetachedShotStateDeclaration(related, {
+      shotId: relatedShot.id,
+      entityId: testCase.entityId,
+    }).operation, "retained-attached", `${testCase.label} is not stale`);
+  }
+
+  const declarationOnly = mutationFixture();
+  declarationOnly.shots[0].characters = [];
+  declarationOnly.shots[0].codes = [];
+  declarationOnly.shots[0].continuityStateSelections = { "CHAR-RHEA": "state-rhea-night" };
+  equal(Entities.shotStateBearingEntityRecords(declarationOnly, declarationOnly.shots[0])
+    .some((record) => record.id === "CHAR-RHEA"), false,
+  "a declaration key alone never appears in the canonical relationship projection");
+  equal(Binding.applyShotStateDeclaration(declarationOnly, {
+    shotId: "SH-STATE",
+    entityId: "CHAR-RHEA",
+    stateId: "state-rhea-night",
+  }).status, "entity-not-attached", "removing the relationship gate would fail the declaration-only negative control");
+
+  const multipleRelationships = mutationFixture();
+  multipleRelationships.shots[0].characters = [];
+  multipleRelationships.shots[0].audio = { speakerId: "CHAR-RHEA" };
+  multipleRelationships.shots[0].clips = [{ id: "CLIP-RHEA", speakerId: "CHAR-RHEA" }];
+  equal(Binding.applyShotStateDeclaration(multipleRelationships, {
+    shotId: "SH-STATE", entityId: "CHAR-RHEA", stateId: "state-rhea-night",
+  }).status, "applied", "a declaration can be selected while two state-bearing relationships exist");
+  multipleRelationships.shots[0].audio.speakerId = "";
+  equal(Binding.clearDetachedShotStateDeclaration(multipleRelationships, {
+    shotId: "SH-STATE", entityId: "CHAR-RHEA",
+  }).operation, "retained-attached", "removing one of two relationships retains the declaration");
+  multipleRelationships.shots[0].clips[0].speakerId = "";
+  equal(Binding.clearDetachedShotStateDeclaration(multipleRelationships, {
+    shotId: "SH-STATE", entityId: "CHAR-RHEA",
+  }).operation, "cleared-detached", "removing the final state-bearing relationship makes cleanup valid");
+  deepEqual(multipleRelationships.shots[0].continuityStateSelections, {},
+    "final-relationship cleanup removes only the now-stale declaration");
+
   deepEqual(Binding.SHOT_STATE_DECLARATION_BATCH_RESULTS, ["applied", "refused", "invalid-declarations"],
     "batch application has a closed result vocabulary");
   const batchFixture = () => {
@@ -232,6 +336,75 @@ function actionabilityFixture() {
   });
   project.shots[0].continuityStateSelections = { KAI: "state-does-not-exist" };
   return project;
+}
+
+async function relationshipTruthSection() {
+  const cases = [
+    {
+      label: "audio speaker only",
+      entityId: "CHAR-RHEA",
+      arrange: (project, shot) => { shot.audio = { speakerId: "CHAR-RHEA" }; },
+    },
+    {
+      label: "clip speaker only",
+      entityId: "CHAR-RHEA",
+      arrange: (project, shot) => { shot.audio = {}; shot.clips = [{ id: "CLIP-RHEA", speakerId: "CHAR-RHEA" }]; },
+    },
+    {
+      label: "creation-brief motion-plan speaker only",
+      entityId: "CHAR-RHEA",
+      stateId: "state-rhea-night",
+      arrange: (project, shot) => {
+        shot.creationBrief = { motionPlan: { audio: { speakerId: "CHAR-RHEA" } } };
+      },
+    },
+    {
+      label: "creation-brief vehicle only",
+      entityId: "VEH-ROVER",
+      arrange: (project, shot) => {
+        project.vehicles.push({
+          id: "VEH-ROVER",
+          name: "Rover",
+          approvedFile: "ROVER.png",
+          continuityStates: [{ id: "state-rover-dust", name: "Dusty", isDefault: true, approvedFile: "ROVER.png" }],
+        });
+        shot.creationBrief = shot.creationBrief || {};
+        shot.creationBrief.vehicleIds = ["VEH-ROVER"];
+      },
+    },
+  ];
+  for (const testCase of cases) {
+    const project = actionabilityFixture();
+    const shot = project.shots[0];
+    shot.continuityStateSelections = {};
+    testCase.arrange(project, shot);
+    const stateId = testCase.entityId === "VEH-ROVER" ? "state-rover-dust" : "state-rhea-night";
+    const page = await render("#/shot/L1-01", project, {
+      storage: { "cinebraid-focused:fixture:shot-task:L1-01": "inputs" },
+    });
+    const result = JSON.parse(vm.runInContext(`(() => {
+      const shot = P.shots[0];
+      const applied = chooseShotContinuityState(shot.id, "${testCase.entityId}", "${stateId}");
+      const readiness = shotReadinessFor(shot);
+      const requirements = [...(readiness.requirements || []), ...(readiness.units || []).flatMap((unit) => unit.requirements || [])];
+      return JSON.stringify({
+        applied,
+        canonical: shotStateBearingEntityRecords(P, shot).filter((record) => record.resolved).map((record) => record.entity.id),
+        requirement: !!requirements.find((row) => row.entityId === "${testCase.entityId}" || String(row.id || "").includes("${testCase.entityId}")),
+        action: readiness.nextAction.code,
+        stale: guidedStaleShotStateDeclarations(shot),
+        selector: guidedShotStateDeclarations(shot),
+      });
+    })()`, page.context));
+    equal(result.applied.status, "applied", `${testCase.label} accepts its valid owned state through the rendered product handler`);
+    ok(result.canonical.includes(testCase.entityId), `${testCase.label} is present in rendered canonical relationship truth`);
+    equal(result.requirement, true, `${testCase.label} remains a readiness requirement`);
+    ok(result.action !== "remove-stale-state-declaration", `${testCase.label} never offers stale cleanup`);
+    ok(!result.stale.includes(`data-stale-shot-state-declaration="${testCase.entityId}"`),
+      `${testCase.label} is absent from the stale-declaration surface`);
+    ok(result.selector.includes(`data-shot-state-entity="${testCase.entityId}"`),
+      `${testCase.label} has the normal shot state selector`);
+  }
 }
 
 async function renderedControlSection() {
@@ -462,7 +635,7 @@ async function staleProducerRecoverySection() {
   })()`, page.context));
   equal(before.action, "remove-stale-state-declaration",
     "a declaration-only known entity emits the explicit stale recovery action");
-  ok(before.message.includes("is not attached") && before.message.includes("Remove the stale declaration"),
+  ok(before.message.includes("has no state-bearing relationship") && before.message.includes("Remove the stale declaration"),
     "stale readiness copy names the real condition and recovery");
   equal(before.destinationId, "inputs", "stale recovery routes to Inputs");
   equal(before.surface, "shot-stale-state-declaration", "stale recovery has its own semantic surface");
@@ -478,16 +651,28 @@ async function staleProducerRecoverySection() {
     "the routed workspace contains the declared stale recovery surface");
 
   const after = JSON.parse(vm.runInContext(`(() => {
-    const result = removeStaleShotStateDeclaration("L1-01", "KAI");
     const shot = P.shots[0];
+    shot.audio = { speakerId: "KAI" };
+    const raceResult = removeStaleShotStateDeclaration("L1-01", "KAI");
+    const declarationAfterRace = { ...shot.continuityStateSelections };
+    shot.audio.speakerId = "";
+    const result = removeStaleShotStateDeclaration("L1-01", "KAI");
     const readiness = shotReadinessFor(shot);
     return JSON.stringify({
+      raceResult,
+      declarationAfterRace,
       result,
       declaration: shot.continuityStateSelections,
       attached: resolveShotEntities(P, shot).characters.some((entity) => entity.id === "KAI"),
       action: readiness.nextAction.code,
     });
   })()`, page.context));
+  equal(after.raceResult.operation, "retained-attached",
+    "stale cleanup rechecks current canonical relationship truth when a speaker is reattached after render");
+  deepEqual(after.declarationAfterRace, {
+    KAI: "state-kai-rain",
+    "LOC-HULL": "state-hull-night",
+  }, "the stale-UI race retains the legitimate declaration");
   equal(after.result.status, "applied", "stale recovery crosses the deterministic cleanup owner");
   equal(after.result.operation, "cleared-detached", "stale recovery proves the entity is detached before removal");
   deepEqual(after.declaration, { "LOC-HULL": "state-hull-night" },
@@ -599,6 +784,48 @@ async function frameProducerRoutingSection() {
   ok(repaired.action !== "resolve-frame-state-declaration", "readiness advances after real frame repair");
 }
 
+async function duplicationSection() {
+  const mixedProject = actionabilityFixture();
+  mixedProject.shots[0].continuityStateSelections = {
+    KAI: "state-kai-rain",
+    "CHAR-RHEA": "state-rhea-night",
+  };
+  const mixedPage = await render("#/shot/L1-01", mixedProject);
+  const mixed = JSON.parse(await vm.runInContext(`(async () => {
+    duplicateShot("L1-01");
+    document.getElementById("duplicate-shot-mode").value = "continuity";
+    document.getElementById("duplicate-shot-title").value = "Mixed declaration duplicate";
+    confirmDuplicateShot("L1-01");
+    const copy = P.shots.at(-1);
+    return JSON.stringify({
+      count: P.shots.length,
+      id: copy.id,
+      title: copy.title,
+      keyframes: copy.keyframes.length,
+      copied: copy.continuityStateSelections,
+      source: P.shots[0].continuityStateSelections,
+    });
+  })()`, mixedPage.context));
+  equal(mixed.count, 2, "mixed-declaration duplication creates exactly one complete new shot");
+  equal(mixed.title, "Mixed declaration duplicate", "the complete duplicate retains the requested title");
+  equal(mixed.keyframes, 1, "the duplicate is fully initialized rather than half-created");
+  deepEqual(mixed.copied, { KAI: "state-kai-rain" },
+    "duplication preserves the valid declaration while filtering the unrelated stale declaration");
+  deepEqual(mixed.source, { KAI: "state-kai-rain", "CHAR-RHEA": "state-rhea-night" },
+    "duplication filtering does not mutate the source shot");
+
+  const foreignProject = actionabilityFixture();
+  foreignProject.shots[0].continuityStateSelections = { KAI: "state-rhea-night" };
+  const foreignPage = await render("#/shot/L1-01", foreignProject);
+  const foreign = JSON.parse(await vm.runInContext(`(async () => {
+    duplicateShot("L1-01");
+    document.getElementById("duplicate-shot-mode").value = "continuity";
+    confirmDuplicateShot("L1-01");
+    return JSON.stringify(P.shots.at(-1).continuityStateSelections);
+  })()`, foreignPage.context));
+  deepEqual(foreign, {}, "duplication cannot bless a state owned by a different entity");
+}
+
 async function batchProductAndCompletenessSection() {
   const validProject = actionabilityFixture();
   validProject.shots[0].continuityStateSelections = {};
@@ -706,8 +933,9 @@ async function batchProductAndCompletenessSection() {
     mutationsSource.indexOf("window.confirmDuplicateShot ="),
     mutationsSource.indexOf("/* ---------- mutations ---------- */"),
   );
-  ok(duplicateHandler.includes("applyShotStateDeclarationBatch(P, copiedStateDeclarations)"),
-    "global writer guard: indirect shot-copy assignment is re-applied through the canonical bulk owner");
+  ok(duplicateHandler.includes("copiedStateDeclarations.map((declaration) => applyShotStateDeclaration(P, declaration))")
+    && !duplicateHandler.includes("applyShotStateDeclarationBatch(P, copiedStateDeclarations)"),
+  "global writer guard: duplication intentionally filters each cloned declaration through the canonical single-item owner");
   const serverSource = fs.readFileSync(path.join(ROOT, "server.js"), "utf8");
   const importedShotNormalizer = serverSource.slice(
     serverSource.indexOf("function normalizeBuilderShot("),
@@ -828,11 +1056,13 @@ async function reloadSection() {
 
 async function main() {
   mutationOwnerSection();
+  await relationshipTruthSection();
   await renderedControlSection();
   await nextActionReachabilitySection();
   await staleDeclarationSection();
   await staleProducerRecoverySection();
   await frameProducerRoutingSection();
+  await duplicationSection();
   await batchProductAndCompletenessSection();
   await reloadSection();
   console.log(`shot-state-declaration-actionability: ${checks} assertions passed`);
@@ -847,11 +1077,13 @@ module.exports = {
   mutationFixture,
   mutationOwnerSection,
   actionabilityFixture,
+  relationshipTruthSection,
   renderedControlSection,
   nextActionReachabilitySection,
   staleDeclarationSection,
   staleProducerRecoverySection,
   frameProducerRoutingSection,
+  duplicationSection,
   batchProductAndCompletenessSection,
   reloadSection,
   main,

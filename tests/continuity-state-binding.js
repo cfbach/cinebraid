@@ -46,6 +46,7 @@ const { spawn } = require("child_process");
 
 const ROOT = path.join(__dirname, "..");
 const Binding = require("../public/shared-continuity-binding");
+const Entities = require("../public/shared-entities");
 const Continuity = require("../public/shared-continuity");
 const Schema = require("../ofp/ofp-schema");
 const { validateOfpDocument } = require("../ofp/ofp-validate");
@@ -640,7 +641,7 @@ function authoritySection(options = {}) {
       PROJECT_DIR: () => temp,
       IMG_ONLY: (name) => /\.(png|jpg|jpeg|webp|gif)$/i.test(String(name)),
       projectAssetPath: (file) => (file ? path.join(temp, String(file)) : ""),
-      resolveShotEntities: () => ({ characters: project.characters, locations: project.locations, props: project.props, vehicles: [] }),
+      shotStateBearingEntityRecords: Entities.shotStateBearingEntityRecords,
     });
     vm.runInContext(`${extractFunction(source, "entityApprovedDiskPath")}\n${extractFunction(source, "derivedFrameContext")}\nglobalThis.__run = (P, shot, frame) => derivedFrameContext(P, shot, frame);`, context);
     const authorityFor = (frameId) => {

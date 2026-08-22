@@ -230,6 +230,7 @@ function shotDependencyRecords(project, shot) {
   add("audio", audio.voiceEntityId, "audio.voiceEntityId");
   for (const clip of Array.isArray(s.clips) ? s.clips : []) {
     add("character", clip?.speakerId, `clips.${clip?.id || clip?.suffix || "clip"}.speakerId`);
+    add("character", clip?.motionBrief?.dialogue?.speakerId, `clips.${clip?.id || clip?.suffix || "clip"}.motionBrief.dialogue.speakerId`);
     add("audio", clip?.voiceEntityId, `clips.${clip?.id || clip?.suffix || "clip"}.voiceEntityId`);
   }
   const motionAudio = creation.motionPlan?.audio || {};
@@ -267,6 +268,37 @@ function shotDependencyRecords(project, shot) {
   return records;
 }
 
+/* The deterministic relationship truth for shot-scoped continuity state.
+
+   This is deliberately narrower than `shotDependencyRecords`: audio/voice
+   records are production dependencies, but they cannot own visual continuity
+   state. It is deliberately broader than `resolveShotEntities`: speakers and
+   creation-brief vehicles are real product relationships even when they are
+   absent from the primary attachment fields that composer-oriented callers
+   use. Most importantly, a continuity declaration is never evidence for its
+   own relationship. */
+const SHOT_STATE_BEARING_ENTITY_TYPES = Object.freeze(["character", "location", "prop", "vehicle"]);
+const SHOT_STATE_BEARING_RELATIONSHIP_SOURCES = Object.freeze([
+  "characters",
+  "creationBrief.locationId",
+  "creationBrief.propIds",
+  "creationBrief.vehicleIds",
+  "audio.speakerId",
+  "creationBrief.motionPlan.audio.speakerId",
+  "codes",
+]);
+function shotDependencySourceIsStateBearing(source) {
+  const value = String(source || "");
+  return SHOT_STATE_BEARING_RELATIONSHIP_SOURCES.includes(value)
+    || (value.startsWith("clips.") && value.endsWith(".speakerId"));
+}
+function shotStateBearingEntityRecords(project, shot) {
+  return shotDependencyRecords(project, shot).filter((record) =>
+    SHOT_STATE_BEARING_ENTITY_TYPES.includes(record.type)
+      && (record.sources || []).some(shotDependencySourceIsStateBearing),
+  );
+}
+
 function unresolvedShotDependencies(project, shot) {
   return shotDependencyRecords(project, shot).filter((row) => !row.resolved);
 }
@@ -281,6 +313,7 @@ if (typeof window !== "undefined") {
   window.lossyShotCodeTokens = lossyShotCodeTokens;
   window.shotDependencyTokenType = shotDependencyTokenType;
   window.shotDependencyRecords = shotDependencyRecords;
+  window.shotStateBearingEntityRecords = shotStateBearingEntityRecords;
   window.unresolvedShotDependencies = unresolvedShotDependencies;
 }
 if (typeof module !== "undefined" && module.exports) {
@@ -296,6 +329,10 @@ if (typeof module !== "undefined" && module.exports) {
     lossyShotCodeTokens,
     shotDependencyTokenType,
     shotDependencyRecords,
+    SHOT_STATE_BEARING_ENTITY_TYPES,
+    SHOT_STATE_BEARING_RELATIONSHIP_SOURCES,
+    shotDependencySourceIsStateBearing,
+    shotStateBearingEntityRecords,
     unresolvedShotDependencies,
   };
 }

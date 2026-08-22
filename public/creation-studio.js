@@ -1861,6 +1861,7 @@ function updateShotDependencyRelationship(shot, rawId, nextId = "") {
   for (const clip of shot.clips || []) {
     replaceField(clip, "speakerId");
     replaceField(clip, "voiceEntityId");
+    replaceField(clip?.motionBrief?.dialogue, "speakerId");
   }
   if (hadStateDeclaration && typeof clearDetachedShotStateDeclaration === "function") {
     const cleared = clearDetachedShotStateDeclaration(P, { shotId: shot.id, entityId: rawId });
@@ -1925,21 +1926,19 @@ function guidedUnresolvedDependenciesMarkup(s) {
 function guidedStaleShotStateDeclarations(s) {
   const selections = s.continuityStateSelections && typeof s.continuityStateSelections === "object"
     && !Array.isArray(s.continuityStateSelections) ? s.continuityStateSelections : {};
-  const attached = resolveShotEntities(P, s);
-  const attachedIds = new Set([
-    ...(attached.characters || []),
-    ...(attached.locations || []),
-    ...(attached.props || []),
-    ...(attached.vehicles || []),
-  ].map((entity) => String(entity?.id || "")).filter(Boolean));
+  const attachedIds = new Set((typeof shotStateBearingEntityRecords === "function"
+    ? shotStateBearingEntityRecords(P, s) : [])
+    .filter((record) => record?.resolved && record.entity)
+    .map((record) => String(record.entity.id || ""))
+    .filter(Boolean));
   const entities = [...(P.characters || []), ...(P.locations || []), ...(P.props || []), ...(P.vehicles || [])];
   const stale = Object.keys(selections)
     .sort()
     .map((entityId) => ({ entityId, stateId: String(selections[entityId] || ""), entity: entities.find((row) => String(row?.id || "") === entityId) || null }))
     .filter((row) => row.entity && !attachedIds.has(row.entityId));
   if (!stale.length) return "";
-  const rows = stale.map((row) => `<article data-stale-shot-state-declaration="${attr(row.entityId)}"><div><span>STALE SHOT STATE</span><b>${esc(row.entity.name || row.entityId)} · ${esc(row.stateId || "empty declaration")}</b><small>This state key does not attach the reference to the shot. Remove it without changing canonical attachments.</small></div><button type="button" class="chip danger" onclick="removeStaleShotStateDeclaration('${attr(s.id)}','${attr(row.entityId)}')">Remove stale declaration</button></article>`).join("");
-  return `<section class="guided-stale-shot-state-declarations" data-readiness-action-surface="shot-stale-state-declaration"><header><div><span>STALE CONTINUITY DECLARATIONS</span><b>${stale.length} declaration${stale.length === 1 ? "" : "s"} no longer has an attached reference</b><small>State declarations never create shot attachments. Remove only these orphaned keys.</small></div></header><div>${rows}</div></section>`;
+  const rows = stale.map((row) => `<article data-stale-shot-state-declaration="${attr(row.entityId)}"><div><span>STALE SHOT STATE</span><b>${esc(row.entity.name || row.entityId)} · ${esc(row.stateId || "empty declaration")}</b><small>This state key does not relate the reference to the shot. Remove it without changing canonical relationships.</small></div><button type="button" class="chip danger" onclick="removeStaleShotStateDeclaration('${attr(s.id)}','${attr(row.entityId)}')">Remove stale declaration</button></article>`).join("");
+  return `<section class="guided-stale-shot-state-declarations" data-readiness-action-surface="shot-stale-state-declaration"><header><div><span>STALE CONTINUITY DECLARATIONS</span><b>${stale.length} declaration${stale.length === 1 ? "" : "s"} no longer has a state-bearing relationship</b><small>State declarations never create shot relationships. Remove only these orphaned keys.</small></div></header><div>${rows}</div></section>`;
 }
 
 function guidedShotAttachmentPicker(s) {
@@ -1956,14 +1955,12 @@ function guidedShotAttachmentPicker(s) {
 }
 
 function guidedShotStateEntityRows(s) {
-  const resolved = resolveShotEntities(P, s);
-  const propIds = new Set((P.props || []).map((entity) => entity.id));
-  const rows = [
-    ...resolved.locations.map((entity) => ({ list: "locations", kind: "Location", entity })),
-    ...resolved.characters.map((entity) => ({ list: "characters", kind: "Character", entity })),
-    ...resolved.props.filter((entity) => propIds.has(entity.id)).map((entity) => ({ list: "props", kind: "Prop", entity })),
-    ...(resolved.vehicles || []).map((entity) => ({ list: "vehicles", kind: "Vehicle", entity })),
-  ];
+  const listByType = { character: "characters", location: "locations", prop: "props", vehicle: "vehicles" };
+  const kindByType = { character: "Character", location: "Location", prop: "Prop", vehicle: "Vehicle" };
+  const records = typeof shotStateBearingEntityRecords === "function" ? shotStateBearingEntityRecords(P, s) : [];
+  const rows = records
+    .filter((record) => record?.resolved && record.entity && listByType[record.type])
+    .map((record) => ({ list: listByType[record.type], kind: kindByType[record.type], entity: record.entity }));
   return rows.filter((row, index) =>
     rows.findIndex((candidate) => candidate.list === row.list && candidate.entity.id === row.entity.id) === index);
 }
@@ -1996,7 +1993,7 @@ function guidedShotStateDeclarations(s) {
       : `<span class="shot-state-no-options">No continuity states authored</span>`;
     return `<article data-shot-state-entity="${attr(entity.id)}" data-shot-state-declaration-invalid="${invalid ? "1" : "0"}" class="${invalid ? "is-invalid" : ""}"><div><span>STATE FOR ${esc(entity.name || entity.id)}</span><b>${esc(kind)} · ${esc(entity.id)}</b><small>${esc(current)}</small></div>${chooser}<button type="button" class="chip" onclick="openShotStateAuthoring('${attr(s.id)}','${attr(list)}','${attr(entity.id)}')">Add or edit states</button></article>`;
   }).join("");
-  return `<section class="guided-shot-state-declarations" data-readiness-action-surface="shot-state-declaration"><header><div><span>SHOT CONTINUITY STATES</span><b>Choose the state each attached reference uses in this shot</b><small>Only states owned by that reference are available. Creating a state in References does not select it here; return and choose it explicitly.</small></div></header><div>${body}</div></section>`;
+  return `<section class="guided-shot-state-declarations" data-readiness-action-surface="shot-state-declaration"><header><div><span>SHOT CONTINUITY STATES</span><b>Choose the state each related reference uses in this shot</b><small>Only states owned by that reference are available. Creating a state in References does not select it here; return and choose it explicitly.</small></div></header><div>${body}</div></section>`;
 }
 
 function guidedPromptModeLabel(mode) {
@@ -2324,13 +2321,11 @@ function guidedFrameCandidatesPanel(s, frame, index, takes, step) {
    what is needed here is the authoritative declaration, in the place a creator
    is already describing the frame. */
 function guidedFramePresencePanel(s, frame) {
-  const resolved = typeof resolveShotEntities === "function" ? resolveShotEntities(P, s) : null;
-  if (!resolved) return "";
-  const members = [
-    ...(resolved.characters || []).map((entity) => ({ entity, kind: "Character" })),
-    ...(resolved.props || []).map((entity) => ({ entity, kind: "Prop" })),
-    ...(resolved.vehicles || []).map((entity) => ({ entity, kind: "Vehicle" })),
-  ].filter((row) => row.entity && row.entity.id);
+  const kindByType = { character: "Character", prop: "Prop", vehicle: "Vehicle" };
+  const members = (typeof shotStateBearingEntityRecords === "function"
+    ? shotStateBearingEntityRecords(P, s) : [])
+    .filter((record) => record?.resolved && record.entity?.id && kindByType[record.type])
+    .map((record) => ({ entity: record.entity, kind: kindByType[record.type] }));
   if (!members.length) return "";
   const declared = members.filter((row) => resolveFramePresence(s, frame.id, row.entity.id)).length;
   const rows = members.map((row) => {
@@ -2343,7 +2338,7 @@ function guidedFramePresencePanel(s, frame) {
     }[value] || value])];
     return `<label class="frame-presence-row"><span><b>${esc(row.entity.name || row.entity.id)}</b><small>${esc(row.kind)}</small></span><select onchange="setFramePresence('${attr(s.id)}','${attr(frame.id)}','${attr(row.entity.id)}',this.value)">${options.map(([value, label]) => `<option value="${attr(value)}" ${value === current ? "selected" : ""}>${esc(label)}</option>`).join("")}</select></label>`;
   }).join("");
-  return `<details class="fold frame-presence-panel" ${declared ? "open" : ""}><summary>Who is in this frame <span>${declared ? `${declared} declared` : "follows the shot"}</span></summary><p class="hint">The shot's references say what the shot is about. This says what is visible in <b>this frame</b>. A reference stays attached for identity even when its subject is not in the frame — a frame marked <b>Not in this frame</b> compiles a prompt that requires the absence.</p><div class="frame-presence-rows">${rows}</div></details>`;
+  return `<details class="fold frame-presence-panel" ${declared ? "open" : ""}><summary>Who is in this frame <span>${declared ? `${declared} declared` : "follows the shot"}</span></summary><p class="hint">The shot's references say what the shot is about. This says what is visible in <b>this frame</b>. A reference stays related for identity even when its subject is not in the frame — a frame marked <b>Not in this frame</b> compiles a prompt that requires the absence.</p><div class="frame-presence-rows">${rows}</div></details>`;
 }
 window.setFramePresence = (shotId, frameId, entityId, value) => {
   const s = shotById(shotId);

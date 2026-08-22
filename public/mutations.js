@@ -201,9 +201,12 @@ window.confirmDuplicateShot = (id) => {
         stateId: String(stateId || ""),
       }))
     : [];
-  /* The cloned object never carries assignment authority. Once the new shot and
-     its cloned canonical attachments exist, the shared atomic owner re-applies
-     every declaration or none of them. */
+  /* The cloned object never carries assignment authority. Duplication is a
+     filtering operation, not the interactive batch transaction: after the new
+     shot and all of its cloned relationships exist, each declaration is
+     independently re-applied through the same canonical single-item owner.
+     Valid declarations survive; stale, foreign, or otherwise invalid ones do
+     not erase unrelated valid declarations. */
   copy.continuityStateSelections = {};
   if (mode === "structure") {
     copy.characters = [];
@@ -218,9 +221,10 @@ window.confirmDuplicateShot = (id) => {
     copy.creationBrief.motionAudioNotes = "";
   }
   P.shots.push(copy);
-  const copiedStateResult = copiedStateDeclarations.length && typeof applyShotStateDeclarationBatch === "function"
-    ? applyShotStateDeclarationBatch(P, copiedStateDeclarations)
-    : { status: copiedStateDeclarations.length ? "invalid-declarations" : "applied" };
+  const copiedStateResults = typeof applyShotStateDeclaration === "function"
+    ? copiedStateDeclarations.map((declaration) => applyShotStateDeclaration(P, declaration))
+    : copiedStateDeclarations.map((declaration) => ({ status: "invalid-declaration", ...declaration }));
+  const copiedStateRefusals = copiedStateResults.filter((result) => result.status !== "applied");
   for (const asset of P.mediaAssets || []) {
     const sourceLinks = (asset.links || []).filter((link) => link.targetType === "shot" && String(link.targetId) === String(id));
     for (const link of sourceLinks) asset.links.push({ ...JSON.parse(JSON.stringify(link)), id: `link-${Date.now().toString(36)}${Math.random().toString(36).slice(2,6)}`, targetId: newId });
@@ -229,9 +233,9 @@ window.confirmDuplicateShot = (id) => {
   closeModal();
   location.hash = `#/shot/${newId}`;
   route();
-  toast(copiedStateResult.status === "applied"
-    ? "Shot duplicated with reusable production context"
-    : "Shot duplicated; incompatible continuity-state declarations were not copied");
+  toast(copiedStateRefusals.length
+    ? "Shot duplicated; " + (copiedStateResults.length - copiedStateRefusals.length) + " valid continuity declaration(s) kept and " + copiedStateRefusals.length + " incompatible declaration(s) skipped"
+    : "Shot duplicated with reusable production context");
 };
 
 /* ---------- mutations ---------- */
