@@ -157,7 +157,7 @@
       readinessActions: [
         { code: "establish-media-availability", surface: "shot-inputs", renderer: "guidedSourceInputsPanel", control: "guidedShotAttachmentPicker" },
         { code: "resolve-relationship", surface: "shot-inputs", renderer: "guidedUnresolvedDependenciesMarkup", control: "openShotDependencyRelink" },
-        { code: "resolve-state-declaration", surface: "shot-inputs", renderer: "guidedShotAttachmentPicker", control: "guidedEntityPickerButton" },
+        { code: "resolve-state-declaration", surface: "shot-state-declaration", renderer: "guidedSourceInputsPanel", control: "guidedShotStateDeclarations", focus: '[data-shot-state-declaration-invalid="1"] select' },
         { code: "resolve-media-ownership", surface: "shot-inputs", renderer: "guidedShotAttachmentPicker", control: "guidedEntityPickerButton" },
         { code: "declare-producible-unit", surface: "shot-inputs", renderer: "shotIntentControl", control: "setShotIntent" },
         { code: "supply-approved-media", surface: "shot-inputs", renderer: "guidedSourceInputsPanel", control: "guidedShotAttachmentPicker" },
@@ -294,6 +294,7 @@
       surface: action.surface,
       control: action.control,
       renderer: action.renderer,
+      focus: action.focus || "",
     }))),
     ...SHOT_READINESS_ROUTE_DESTINATIONS.flatMap((destination) => destination.readinessActions.map((action) => ({
       code: action.code,
@@ -304,6 +305,7 @@
       surface: action.surface,
       control: action.control,
       renderer: action.renderer,
+      focus: action.focus || "",
     }))),
   ]);
 

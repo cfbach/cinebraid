@@ -235,9 +235,51 @@ async function renderedControlSection() {
     "the explicit assignment persists the actual generated id, not the missing requested id");
 }
 
+async function nextActionReachabilitySection() {
+  const project = actionabilityFixture();
+  const page = await render("#/shot/L1-01", project, {
+    storage: { "cinebraid-focused:fixture:shot-task:L1-01": "look" },
+  });
+  const reached = JSON.parse(await vm.runInContext(`(async () => {
+    const shot = P.shots[0];
+    const readiness = shotReadinessFor(shot);
+    const destination = shotReadinessTargetDestination(readiness);
+    const before = boundedShotSelectedTask(shot, takesFor(shot.id));
+    await openShotReadinessAction(shot.id, readiness.nextAction.code);
+    const html = document.getElementById("main").innerHTML;
+    return JSON.stringify({
+      action: readiness.nextAction.code,
+      before,
+      after: boundedShotSelectedTask(shot, takesFor(shot.id)),
+      destinationId: destination?.destinationId || "",
+      panel: destination?.panel || "",
+      surface: destination?.surface || "",
+      renderer: destination?.renderer || "",
+      control: destination?.control || "",
+      focus: destination?.focus || "",
+      controlVisible: html.includes('data-readiness-action-surface="shot-state-declaration"'),
+      invalidVisible: html.includes('data-shot-state-declaration-invalid="1"'),
+    });
+  })()`, page.context));
+  equal(reached.action, "resolve-state-declaration",
+    "the reproduced readiness row emits the state-declaration action");
+  equal(reached.before, "look", "precondition: a different shot stage is selected");
+  equal(reached.destinationId, "inputs", "the action has one declared shot-stage destination");
+  equal(reached.panel, "inputs", "the destination uses a real Inputs panel key");
+  equal(reached.surface, "shot-state-declaration", "the destination names the actual new product surface");
+  equal(reached.renderer, "guidedSourceInputsPanel", "the destination names the renderer that includes the control");
+  equal(reached.control, "guidedShotStateDeclarations", "the destination names the actual declaration control");
+  equal(reached.focus, '[data-shot-state-declaration-invalid="1"] select',
+    "the destination declares direct focus on the implicated invalid selector");
+  equal(reached.after, "inputs", "NEXT ACTION selects the Inputs stage");
+  equal(reached.controlVisible, true, "the selected stage renders the declared control");
+  equal(reached.invalidVisible, true, "the selected surface renders the implicated invalid row");
+}
+
 async function main() {
   mutationOwnerSection();
   await renderedControlSection();
+  await nextActionReachabilitySection();
   console.log(`shot-state-declaration-actionability: ${checks} assertions passed`);
 }
 
@@ -246,4 +288,11 @@ if (require.main === module) main().catch((error) => {
   process.exit(1);
 });
 
-module.exports = { mutationFixture, mutationOwnerSection, actionabilityFixture, renderedControlSection, main };
+module.exports = {
+  mutationFixture,
+  mutationOwnerSection,
+  actionabilityFixture,
+  renderedControlSection,
+  nextActionReachabilitySection,
+  main,
+};

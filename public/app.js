@@ -2829,7 +2829,7 @@ window.openShotReadinessAction = (shotId, actionCode) => {
     return;
   }
   if (destination.navigation?.kind === "task-selection" && destination.panel) {
-    return openGuidedPanel(shotId, destination.panel);
+    return openGuidedPanel(shotId, destination.panel, destination.focus || "");
   }
   return toast("That next action has no actionable destination");
 };

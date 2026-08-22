@@ -2066,7 +2066,7 @@ function selectGuidedPanelTask(s, key) {
   if (view) boundedWriteState("selected:shot-look-view", s.id, view);
   return taskId;
 }
-window.openGuidedPanel = async (id, key) => {
+window.openGuidedPanel = async (id, key, focusSelector = "") => {
   const s = shotById(id), c = ensureShotCreation(s);
   const task = selectGuidedPanelTask(s, key);
   if (["still", "review", "frames"].includes(key)) {
@@ -2084,7 +2084,7 @@ window.openGuidedPanel = async (id, key) => {
      refusal for a panel that had simply never been selected. */
   if (task && boundedShotSelectedTask(s, takesFor(s.id)) !== task)
     return toast(`Could not open the ${key} workspace.`);
-  await focusGuidedWorkspaceTarget(`[data-guided-panel="${key}"]`);
+  await focusGuidedWorkspaceTarget(focusSelector || `[data-guided-panel="${key}"]`);
 };
 window.scrollGuidedFrame = (id, frameId = "") => {
   const s = shotById(id), frame = guidedFrames(s).find((item) => item.id === frameId) || guidedFrames(s)[0];
