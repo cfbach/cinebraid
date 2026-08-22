@@ -3,11 +3,17 @@
  * Focused deterministic coverage for the owner-validated mutation and the
  * rendered shot-scoped product path. Provider and paid-generation calls: 0. */
 const assert = require("assert");
+const fs = require("fs");
+const net = require("net");
+const os = require("os");
+const path = require("path");
+const { spawn } = require("child_process");
 const vm = require("vm");
 const Binding = require("../public/shared-continuity-binding");
 const { render, buildFixture } = require("./render-harness");
 
 let checks = 0;
+const ROOT = path.resolve(__dirname, "..");
 function equal(actual, expected, message) {
   checks += 1;
   assert.strictEqual(actual, expected, message);
@@ -369,11 +375,114 @@ async function staleDeclarationSection() {
     "the rendered control shows the stale deleted-state id honestly");
 }
 
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.unref();
+    server.on("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const { port } = server.address();
+      server.close(() => resolve(port));
+    });
+  });
+}
+function waitFor(check, timeoutMs = 20000) {
+  return new Promise((resolve, reject) => {
+    const deadline = Date.now() + timeoutMs;
+    const tick = async () => {
+      try { if (await check()) return resolve(true); } catch { /* not ready yet */ }
+      if (Date.now() > deadline) return reject(new Error("timed out waiting for the CineBraid server"));
+      setTimeout(tick, 120);
+    };
+    tick();
+  });
+}
+async function reloadSection() {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "cinebraid-shot-state-actionability-"));
+  const projectsRoot = path.join(temp, "projects");
+  const slug = "state-actionability";
+  const projectDir = path.join(projectsRoot, slug);
+  for (const dir of ["anchors", "plates", "props", "audio", "media", "shots", "docs"])
+    fs.mkdirSync(path.join(projectDir, dir), { recursive: true });
+  fs.writeFileSync(path.join(projectDir, "project.json"), JSON.stringify(actionabilityFixture(), null, 2));
+
+  const port = await freePort();
+  const base = `http://127.0.0.1:${port}`;
+  const child = spawn(process.execPath, ["server.js"], {
+    cwd: ROOT,
+    env: {
+      ...process.env,
+      PORT: String(port),
+      CINEBRAID_CONFIG_PATH: path.join(temp, "config.json"),
+      CINEBRAID_PROJECTS_ROOT: projectsRoot,
+      CINEBRAID_AI_TEXT_TIMEOUT_MS: "250",
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let output = "";
+  child.stdout.on("data", (chunk) => { output += chunk; });
+  child.stderr.on("data", (chunk) => { output += chunk; });
+
+  try {
+    await waitFor(async () => {
+      const response = await fetch(`${base}/api/me`).catch(() => null);
+      return !!response && response.ok;
+    });
+    const openedResponse = await fetch(`${base}/api/project`);
+    ok(openedResponse.ok, `the real server opens the invalid fixture: ${openedResponse.status}\n${output}`);
+    const revision = openedResponse.headers.get("etag")
+      || openedResponse.headers.get("x-cinebraid-project-revision")
+      || "*";
+    const opened = await openedResponse.json();
+    const page = await render("#/shot/L1-01", opened, {
+      storage: { [`cinebraid-focused:${slug}:shot-task:L1-01`]: "inputs" },
+    });
+    const applied = JSON.parse(vm.runInContext(
+      `JSON.stringify(chooseShotContinuityState("L1-01", "KAI", "state-kai-rain"))`,
+      page.context,
+    ));
+    equal(applied.status, "applied", "the project sent to the real save route was changed through the UI handler");
+    const edited = JSON.parse(vm.runInContext("JSON.stringify(P)", page.context));
+    const save = await fetch(`${base}/api/projects/${slug}/project`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", "if-match": revision },
+      body: JSON.stringify(edited),
+    });
+    ok(save.ok, `the real project save accepts the validated declaration: ${save.status} ${await save.text().catch(() => "")}`);
+    const reloadedResponse = await fetch(`${base}/api/project`);
+    ok(reloadedResponse.ok, "the saved project reloads through the real project route");
+    const reloaded = await reloadedResponse.json();
+    deepEqual(reloaded.shots[0].continuityStateSelections, { KAI: "state-kai-rain" },
+      "the valid selection survives the actual save/reload path");
+
+    const reopenedPage = await render("#/shot/L1-01", reloaded, {
+      storage: { [`cinebraid-focused:${slug}:shot-task:L1-01`]: "inputs" },
+    });
+    const reopened = JSON.parse(vm.runInContext(`(() => {
+      const shot = P.shots[0];
+      const readiness = shotReadinessFor(shot);
+      return JSON.stringify({
+        action: readiness.nextAction.code,
+        markup: guidedShotStateDeclarations(shot),
+      });
+    })()`, reopenedPage.context));
+    ok(reopened.action !== "resolve-state-declaration",
+      "reloaded readiness remains past the missing-state declaration blocker");
+    ok(reopened.markup.includes("Current declaration · Rain soaked"),
+      "the reloaded rendered control shows the persisted state");
+  } finally {
+    child.kill();
+    await new Promise((resolve) => child.once("exit", resolve));
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+}
+
 async function main() {
   mutationOwnerSection();
   await renderedControlSection();
   await nextActionReachabilitySection();
   await staleDeclarationSection();
+  await reloadSection();
   console.log(`shot-state-declaration-actionability: ${checks} assertions passed`);
 }
 
@@ -389,5 +498,6 @@ module.exports = {
   renderedControlSection,
   nextActionReachabilitySection,
   staleDeclarationSection,
+  reloadSection,
   main,
 };

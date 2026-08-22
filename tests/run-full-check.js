@@ -25,6 +25,7 @@ const nodeSuites = [
   "check:coverage-requirement",
   "check:coverage-requirement-negative",
   "check:state-binding",
+  "check:shot-state-declaration",
   "check:state-binding-negative",
   "check:frame-preflight",
   "check:frame-preflight-negative",

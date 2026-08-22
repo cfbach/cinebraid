@@ -27,6 +27,7 @@
     "check:coverage-requirement": "node tests/coverage-requirement-semantics.js",
     "check:coverage-requirement-negative": "node tests/coverage-requirement-semantics-negative-controls.js",
     "check:state-binding": "node tests/continuity-state-binding.js",
+    "check:shot-state-declaration": "node tests/shot-state-declaration-actionability.js",
     "check:state-binding-negative": "node tests/continuity-state-binding-negative-controls.js",
     "check:state-binding-browser": "node tests/run-python-check.js tests/continuity-state-binding-real-browser.py",
     "check:frame-preflight": "node tests/automation-frame-preflight.js",

@@ -530,6 +530,7 @@ async function main() {
     "shot-readiness.js",
     "shot-route-schema-negative-controls.js",
     "shot-route-schema.js",
+    "shot-state-declaration-actionability.js",
     "shot-truth-cohesion.js",
     "shot-workspace-responsive-layout.js",
     "stage-model-negative-controls.js",
