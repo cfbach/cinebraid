@@ -108,7 +108,7 @@ function targetExists(project, target) {
       const clip = object(row);
       return text(clip.id) === target.unitKey || text(clip.suffix) === target.unitKey;
     });
-    return matches.length === 1;
+    return matches.length > 0;
   }
   if (target.kind === "entity-state") {
     const entity = list(P[target.list]).find((row) => text(object(row).id) === target.entityId);
@@ -157,6 +157,7 @@ function changedReceipts(current, successor) {
 }
 
 function targetRemovalDisposition(current, successor, comparison) {
+  if (!comparison.targetRemoval) return { ok: false, allowedIds: new Set(), keys: new Set() };
   const removable = comparison.targets.filter((row) => row.beforeExists && !row.afterExists);
   if (!removable.length) return { ok: false, allowedIds: new Set(), keys: new Set() };
   const beforeRows = receiptRows(current), afterById = currentReceiptById(successor);

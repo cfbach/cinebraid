@@ -7770,7 +7770,7 @@ function pumpAgentQueue() {
       });
   }
 }
-function reconcileOrphanedAgentRuns(P) {
+function reconcileOrphanedAgentRuns(P, slug = activeSlug()) {
   const live = new Set([
     ...AGENT_RUNTIME.queue.map((x) => x.id),
     ...AGENT_RUNTIME.running,
@@ -7790,8 +7790,12 @@ function reconcileOrphanedAgentRuns(P) {
       changed = true;
     }
   }
-  if (changed) writeProject(P);
+  if (changed) writeProject(P, slug);
   return P;
+}
+function reconcileRestartOrphanedAgentRuns() {
+  for (const project of listProjects())
+    reconcileOrphanedAgentRuns(readProject(project.slug), project.slug);
 }
 function cancelAgentRun(id) {
   const P = readProject();
@@ -8604,6 +8608,10 @@ app.post("/api/projects/new", (req, res) => {
 });
 
 const httpServer = app.listen(PORT, HOST, () => {
+  /* Runtime queues are process-local. Reconcile every durable project once at
+     restart before serving a supposedly active run forever; GET status remains
+     observational and the explicit POST remains available for manual repair. */
+  reconcileRestartOrphanedAgentRuns();
   const localUrl = `http://127.0.0.1:${PORT}`;
   const exposure = LOOPBACK_HOSTS.has(HOST)
     ? "Local-only mode: other devices cannot connect."

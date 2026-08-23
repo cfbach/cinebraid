@@ -1357,7 +1357,7 @@ function authorityTargetExists(project, target) {
   if (target.kind === "shot-frame") return !!shot && kernelList(shot.keyframes).some((row) => kernelText(kernelObject(row).id) === target.frameId);
   if (target.kind === "shot-motion") return !!shot && kernelList(shot.clips).filter((row) => {
     const clip = kernelObject(row); return kernelText(clip.id) === target.unitKey || kernelText(clip.suffix) === target.unitKey;
-  }).length === 1;
+  }).length > 0;
   if (target.kind === "entity-state") {
     const entity = kernelList(P[target.list]).map(kernelObject).find((row) => kernelText(row.id) === target.entityId);
     return !!entity && (target.stateId === "state-default" || kernelList(entity.continuityStates).some((row) => kernelText(kernelObject(row).id) === target.stateId));
@@ -1370,6 +1370,59 @@ function authorityEdgeTuple(project, target) {
     value: kernelText(edge.value), assetId: kernelText(edge.assetId), recordId: kernelText(edge.recordId),
     field: kernelText(edge.field), form: kernelText(edge.form),
   };
+}
+
+/* A target is not removed merely because its old locator stops resolving. An
+   ordinary successor can rename that locator (or make a motion locator
+   ambiguous) while leaving the authority-bearing pointer intact. For the
+   narrow target-removal exception, search the raw homes for the prior value or
+   durable asset identity without trusting record ids. Shared values are
+   deliberately ambiguous and therefore fail closed. */
+function rawAuthorityPointers(project, target) {
+  const P = kernelObject(project), wanted = kernelObject(target), pointers = [];
+  const addShot = (record, field) => {
+    const row = kernelObject(record);
+    const value = kernelText(row[field]), assetId = shotEdgeAssetId(row, field);
+    if (value || assetId) pointers.push({ value, assetId });
+  };
+  const addEntity = (record) => {
+    const row = kernelObject(record);
+    const value = kernelText(row.approvedFile), assetId = kernelText(row.approvedAssetId);
+    if (value || assetId) pointers.push({ value, assetId });
+  };
+  if (wanted.kind === "shot-frame") {
+    for (const shotValue of kernelList(P.shots)) {
+      const shot = kernelObject(shotValue);
+      addShot(shot, "winner");
+      for (const frame of kernelList(shot.keyframes)) addShot(frame, "winner");
+    }
+  } else if (wanted.kind === "shot-motion") {
+    for (const shotValue of kernelList(P.shots))
+      for (const clip of kernelList(kernelObject(shotValue).clips)) addShot(clip, "videoWinner");
+  } else if (wanted.kind === "shot-delivery") {
+    for (const shotValue of kernelList(P.shots)) {
+      const shot = kernelObject(shotValue), creation = kernelObject(shot.creationBrief);
+      addShot(shot, "finalStillFile");
+      addShot(creation, "finalStillFile");
+      addShot(creation, "approvedMotionFile");
+    }
+  } else if (wanted.kind === "entity-state") {
+    for (const entityValue of kernelList(P[wanted.list])) {
+      const entity = kernelObject(entityValue);
+      addEntity(entity);
+      for (const state of kernelList(entity.continuityStates)) addEntity(state);
+    }
+  }
+  return pointers;
+}
+function authorityPointerSurvives(project, target, priorValue) {
+  const prior = kernelObject(priorValue);
+  /* A current receipt without a positive live value is already too damaged to
+     prove safe removal through an ordinary save. */
+  if (!kernelText(prior.value)) return true;
+  return rawAuthorityPointers(project, target).some((next) =>
+    (kernelText(prior.value) && kernelText(next.value) === kernelText(prior.value))
+    || (kernelText(prior.assetId) && kernelText(next.assetId) === kernelText(prior.assetId)));
 }
 function authorityCanonicalLedger(project) {
   const ledger = kernelObject(project).productionAuthority;
@@ -1404,8 +1457,10 @@ function authorityWriteTransition(current, successor) {
   const targetRemoval = receiptChanges.length > 0 && receiptChanges.every((change) => {
     const before = kernelObject(change.before), after = kernelObject(change.after), target = authorityTarget(before);
     return before.status === "current" && after.status === "revoked" && after.revocationReason === "target-removed"
-      && target && !authorityTargetExists(successor, target);
-  }) && targets.every((row) => row.beforeExists && !row.afterExists);
+      && target && !authorityTargetExists(successor, target)
+      && !authorityPointerSurvives(successor, target, authorityEdgeTuple(current, target));
+  }) && targets.every((row) => row.beforeExists && !row.afterExists
+    && !authorityPointerSurvives(successor, row.target, row.before));
   return {
     domain: [...domain.keys()].sort(), targets, changedTargetKeys: targets.map((row) => row.targetKey),
     ledgerChanged: authorityCanonicalLedger(current) !== authorityCanonicalLedger(successor),

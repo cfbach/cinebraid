@@ -32,6 +32,7 @@ const AT = (n = 0) => `2026-08-22T12:${String(n).padStart(2, "0")}:00.000Z`;
 let server = null;
 const primaryPassed = [];
 const secondaryPassed = [];
+const reviewPassed = [];
 
 function baseProject(title = "O8 Server") {
   return {
@@ -127,8 +128,26 @@ async function secondary(id, body) {
   console.log(`[O8 server secondary] ${id} PASS`);
 }
 
+async function review(id, body) {
+  await body();
+  reviewPassed.push(id);
+  console.log(`[bounded review] ${id} PASS`);
+}
+
 function unchanged(before, message) {
   assert.strictEqual(JSON.stringify(stored()), JSON.stringify(before), message);
+}
+
+function durableSnapshot() {
+  const stat = fs.statSync(PROJECT_FILE, { bigint: true });
+  return { bytes: fs.readFileSync(PROJECT_FILE), ino: stat.ino, mtimeNs: stat.mtimeNs };
+}
+
+function noDurableWrite(before, message) {
+  const after = durableSnapshot();
+  assert(before.bytes.equals(after.bytes), message || "refusal must preserve exact durable bytes");
+  assert.strictEqual(after.ino, before.ino, "refusal must not replace the durable project file");
+  assert.strictEqual(after.mtimeNs, before.mtimeNs, "refusal must not touch the durable project file");
 }
 
 async function expectStatus(resultPromise, status, code) {
@@ -612,6 +631,90 @@ async function workspaceScenarios() {
   });
 }
 
+async function boundedReviewScenarios() {
+  await review("F1-01", async () => {
+    const current = baseProject(); approveMotion(current); reset(current);
+    const successor = clone(current);
+    human(() => Private.revokeMotionCanon(successor, {
+      shotId: "SH-01", unitKey: "clip-a", reason: "target-removed", at: AT(31), clearEdge: false,
+    }));
+    successor.shots[0].clips.push({ id: "decoy", suffix: "clip-a", title: "Decoy" });
+    const before = durableSnapshot();
+    const comparison = Kernel.authorityWriteTransition(current, successor);
+    assert.strictEqual(comparison.targetRemoval, false, "ambiguous motion lookup is not target removal");
+    assert.strictEqual(comparison.requiresTransition, true);
+    await expectStatus(normal(successor), 422, "CANON_TRANSITION_REQUIRED");
+    noDurableWrite(before, "duplicate/decoy clip ambiguity must produce zero durable write");
+  });
+
+  await review("F1-02", async () => {
+    const current = baseProject(); approveFrame(current, "fr-b", "B.png", "asset-B"); reset(current);
+    const successor = clone(current);
+    human(() => Private.revokeFrameCanon(successor, {
+      shotId: "SH-01", frameId: "fr-b", reason: "target-removed", at: AT(32), clearEdge: false,
+    }));
+    successor.shots[0].keyframes[1].id = "fr-renamed";
+    const before = durableSnapshot();
+    const comparison = Kernel.authorityWriteTransition(current, successor);
+    assert.strictEqual(comparison.targetRemoval, false, "renaming an approved keyframe is not target removal");
+    assert.strictEqual(comparison.requiresTransition, true);
+    await expectStatus(normal(successor), 422, "CANON_TRANSITION_REQUIRED");
+    noDurableWrite(before, "keyframe-id rename with its approved winner must produce zero durable write");
+  });
+
+  await review("F1-03", async () => {
+    const current = baseProject(); approveFrame(current);
+    delete current.shots[0].keyframes[0].winner;
+    delete current.shots[0].keyframes[0].winnerAssetId;
+    reset(current);
+    const successor = clone(current);
+    human(() => Private.revokeFrameCanon(successor, {
+      shotId: "SH-01", frameId: "fr-a", reason: "target-removed", at: AT(33), clearEdge: false,
+    }));
+    successor.shots[0].id = "SH-renamed";
+    const before = durableSnapshot();
+    const comparison = Kernel.authorityWriteTransition(current, successor);
+    assert.strictEqual(comparison.targetRemoval, false, "renaming a shot with its approved opening pointer is not target removal");
+    assert.strictEqual(comparison.requiresTransition, true);
+    await expectStatus(normal(successor), 422, "CANON_TRANSITION_REQUIRED");
+    noDurableWrite(before, "shot-id rename with shot-scoped authority fields must produce zero durable write");
+  });
+
+  await review("F2-01", async () => {
+    const project = baseProject("Restart Orphans");
+    project.agentRuns = [
+      { id: "agent-queued", type: "librarian", status: "QUEUED", message: "Waiting", createdAt: AT(34), updatedAt: AT(34) },
+      { id: "agent-running", type: "reviewer", status: "RUNNING", message: "Working", createdAt: AT(35), updatedAt: AT(35) },
+      { id: "agent-complete", type: "system", status: "COMPLETED", message: "Complete", createdAt: AT(36), updatedAt: AT(36), finishedAt: AT(36) },
+    ];
+    const config = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8"));
+    config.activeProject = "o8-project";
+    fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
+    reset(project);
+    const exited = new Promise((resolve) => server.child.once("exit", resolve));
+    server.stop();
+    await exited;
+    server = await startCineBraidServer({
+      CINEBRAID_CONFIG_PATH: CONFIG_PATH,
+      CINEBRAID_PROJECTS_ROOT: PROJECTS_ROOT,
+      FAL_KEY: "", OPENAI_API_KEY: "", GOOGLE_API_KEY: "", ANTHROPIC_API_KEY: "",
+    });
+    const reconciled = stored();
+    for (const id of ["agent-queued", "agent-running"]) {
+      const run = reconciled.agentRuns.find((row) => row.id === id);
+      assert.strictEqual(run.status, "FAILED");
+      assert.strictEqual(run.message, "Interrupted by CineBraid restart");
+      assert.match(run.error, /active when CineBraid stopped/);
+      assert(run.finishedAt && run.updatedAt === run.finishedAt);
+    }
+    assert.strictEqual(reconciled.agentRuns.find((row) => row.id === "agent-complete").status, "COMPLETED");
+    const afterStartup = durableSnapshot();
+    const status = await expectStatus(server.request("/api/agents/status"), 200);
+    assert(status.body.runs.some((row) => row.id === "agent-running" && row.status === "FAILED"));
+    noDurableWrite(afterStartup, "GET /api/agents/status must remain observational after restart reconciliation");
+  });
+}
+
 async function main() {
   try {
     ensureProjectDir(); writeProject(baseProject());
@@ -632,6 +735,7 @@ async function main() {
     await recoveryScenarios();
     await importScenarios();
     await restoreScenarios();
+    await boundedReviewScenarios();
     await workspaceScenarios();
 
     const expectedPrimary = [
@@ -648,7 +752,9 @@ async function main() {
     ].sort();
     assert.deepStrictEqual([...primaryPassed].sort(), expectedPrimary);
     assert.deepStrictEqual([...secondaryPassed].sort(), expectedSecondary);
+    assert.deepStrictEqual([...reviewPassed].sort(), ["F1-01", "F1-02", "F1-03", "F2-01"]);
     console.log(`Authority Write Seam O8 server acceptance: ${primaryPassed.length}/41 unique server scenarios passed; ${secondaryPassed.length}/18 secondary server executions passed; provider calls: 0.`);
+    console.log(`Authority Write Seam bounded-review regressions: ${reviewPassed.length}/4 passed; provider calls: 0.`);
   } finally {
     server?.stop();
     fs.rmSync(TEMP, { recursive: true, force: true });
