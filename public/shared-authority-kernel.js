@@ -1384,9 +1384,10 @@ function authorityEdgeTuple(project, target) {
    deliberately ambiguous and therefore fail closed. */
 function rawAuthorityPointers(project, target) {
   const P = kernelObject(project), pointers = [];
-  const addShot = (record, field) => {
+  const addShot = (record, field, identityField = `${field}AssetId`) => {
     const row = kernelObject(record);
-    const value = kernelText(row[field]), assetId = shotEdgeAssetId(row, field);
+    const value = kernelText(row[field]);
+    const assetId = kernelText(row[identityField]) || kernelText(kernelObject(row.approvalIdentity)[field]);
     if (value || assetId) pointers.push({ value, assetId });
   };
   const addEntity = (record) => {
@@ -1399,9 +1400,9 @@ function rawAuthorityPointers(project, target) {
     addShot(shot, "winner");
     for (const frame of kernelList(shot.keyframes)) addShot(frame, "winner");
     for (const clip of kernelList(shot.clips)) addShot(clip, "videoWinner");
-    addShot(shot, "finalStillFile");
-    addShot(creation, "finalStillFile");
-    addShot(creation, "approvedMotionFile");
+    addShot(shot, "finalStillFile", "finalStillAssetId");
+    addShot(creation, "finalStillFile", "finalStillAssetId");
+    addShot(creation, "approvedMotionFile", "approvedMotionAssetId");
   }
   for (const list of AUTHORITY_ENTITY_LISTS) {
     for (const entityValue of kernelList(P[list])) {

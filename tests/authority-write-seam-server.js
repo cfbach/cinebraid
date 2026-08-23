@@ -200,6 +200,8 @@ async function expectLaunderedRemovalRefusal(current, successor, message) {
   const durableReceipt = Authority.authorityReceipts(disk).find((row) => row.id === receipt.id);
   assert(durableReceipt, message + ": durable receipt must remain present");
   assert.strictEqual(durableReceipt.status, "current", message + ": durable receipt must remain current");
+  const target = Kernel.authorityTarget(receipt);
+  assert(target && Kernel.hasCurrentHumanAuthority(disk, target), message + ": prior authority must remain Canon");
   return disk;
 }
 
@@ -857,6 +859,91 @@ async function boundedReviewScenarios() {
     assert.strictEqual(Authority.authorityReceipts(stored())[0].value, "A.png");
   });
 
+  await review("F1-08", async () => {
+    const removeApprovedOpeningFrame = (successor, minute) => {
+      human(() => Private.revokeFrameCanon(successor, {
+        shotId: "SH-01", frameId: "fr-a", reason: "target-removed", at: AT(minute), clearEdge: false,
+      }));
+      const shot = successor.shots[0];
+      shot.keyframes = shot.keyframes.filter((frame) => frame.id !== "fr-a");
+      delete shot.winner;
+      delete shot.winnerAssetId;
+      if (shot.approvalIdentity) {
+        delete shot.approvalIdentity.winner;
+        if (!Object.keys(shot.approvalIdentity).length) delete shot.approvalIdentity;
+      }
+      return shot;
+    };
+    const cases = [
+      {
+        name: "identity-only frame-to-shot-finalStillFile",
+        build() {
+          const current = baseProject();
+          approveFrame(current, "fr-a", "FRAME-SHOT.png", "asset-delivery-shot", 20);
+          const successor = clone(current);
+          const shot = removeApprovedOpeningFrame(successor, 21);
+          shot.finalStillFile = "RENAMED-FRAME-SHOT.png";
+          shot.finalStillAssetId = "asset-delivery-shot";
+          return { current, successor };
+        },
+      },
+      {
+        name: "identity-only frame-to-creationBrief-finalStillFile",
+        build() {
+          const current = baseProject();
+          approveFrame(current, "fr-a", "FRAME-BRIEF.png", "asset-delivery-brief", 22);
+          const successor = clone(current);
+          const shot = removeApprovedOpeningFrame(successor, 23);
+          shot.creationBrief.finalStillFile = "RENAMED-FRAME-BRIEF.png";
+          shot.creationBrief.finalStillAssetId = "asset-delivery-brief";
+          return { current, successor };
+        },
+      },
+      {
+        name: "identity-only motion-to-creationBrief-approvedMotionFile",
+        build() {
+          const current = baseProject();
+          approveMotion(current, "MOTION-OLD.mp4", "asset-delivery-motion", 24);
+          const successor = clone(current);
+          human(() => Private.revokeMotionCanon(successor, {
+            shotId: "SH-01", unitKey: "clip-a", reason: "target-removed", at: AT(25), clearEdge: false,
+          }));
+          successor.shots[0].clips = [];
+          successor.shots[0].creationBrief.approvedMotionFile = "MOTION-RENAMED.mp4";
+          successor.shots[0].creationBrief.approvedMotionAssetId = "asset-delivery-motion";
+          return { current, successor };
+        },
+      },
+      {
+        name: "identity-only entity-to-shot-finalStillFile",
+        build() {
+          const current = withAuthorityEntity(baseProject(), "ENTITY-OLD.png");
+          approveEntity(current, "ENTITY-OLD.png", "asset-delivery-entity", 26);
+          const successor = clone(current);
+          human(() => Private.revokeEntityStateCanon(successor, {
+            list: "characters", entityId: "CHAR-01", stateId: "state-default",
+            reason: "target-removed", at: AT(27), clearEdge: false,
+          }));
+          successor.characters = [];
+          successor.shots[0].finalStillFile = "ENTITY-RENAMED.png";
+          successor.shots[0].finalStillAssetId = "asset-delivery-entity";
+          return { current, successor };
+        },
+      },
+    ];
+    for (const testCase of cases) {
+      const values = testCase.build();
+      assert.notStrictEqual(
+        Authority.authorityReceipts(values.current).find((row) => row.status === "current").value,
+        values.successor.shots[0].finalStillFile
+          || values.successor.shots[0].creationBrief.finalStillFile
+          || values.successor.shots[0].creationBrief.approvedMotionFile,
+        testCase.name + ": the filename must change so only durable identity can block removal",
+      );
+      await expectLaunderedRemovalRefusal(values.current, values.successor, testCase.name);
+    }
+  });
+
   await review("F2-01", async () => {
     const project = baseProject("Restart Orphans");
     project.agentRuns = [
@@ -1018,10 +1105,10 @@ async function main() {
     assert.deepStrictEqual([...primaryPassed].sort(), expectedPrimary);
     assert.deepStrictEqual([...secondaryPassed].sort(), expectedSecondary);
     assert.deepStrictEqual([...reviewPassed].sort(), [
-      "F1-01", "F1-02", "F1-03", "F1-04", "F1-05", "F1-06", "F1-07", "F2-01", "F2-02",
+      "F1-01", "F1-02", "F1-03", "F1-04", "F1-05", "F1-06", "F1-07", "F1-08", "F2-01", "F2-02",
     ]);
     console.log(`Authority Write Seam O8 server acceptance: ${primaryPassed.length}/41 unique server scenarios passed; ${secondaryPassed.length}/18 secondary server executions passed; provider calls: 0.`);
-    console.log(`Authority Write Seam bounded-review regressions: ${reviewPassed.length}/9 passed; provider calls: 0.`);
+    console.log(`Authority Write Seam bounded-review regressions: ${reviewPassed.length}/10 passed; provider calls: 0.`);
   } finally {
     server?.stop();
     fs.rmSync(TEMP, { recursive: true, force: true });
