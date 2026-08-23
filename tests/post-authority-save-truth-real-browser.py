@@ -15,6 +15,8 @@ would actually experience:
     document, not a status the test chose.
   * THAT NOTHING REACHED DISK. Every refusal claim is checked against the actual
     project.json the server owns.
+  * THAT A DEFERRED SAVE TRIGGER QUEUED BEFORE A REFUSAL STAYS DEAD, measured on a
+    real clock past both the trigger and the autosave debounce.
 
 NOTHING HERE IS PAID AND NOTHING LEAVES THE MACHINE. Config and projects live in
 a temporary directory reached through CINEBRAID_CONFIG_PATH and
@@ -306,6 +308,37 @@ try:
         assert disk_probe() == "written-by-another-writer", \
             f"5. the stale view must not have overwritten the newer document, disk holds {disk_probe()!r}"
         findings.append("5. a real Authority Write Seam 409 still latches the conflict, keeps the reload path, and does not overwrite the newer document")
+
+        open_app()
+
+        # ---- 8. deferred work queued BEFORE the refusal does not retry after resume ------
+        # The load-time migration write-back is the product's own instance of this,
+        # and the sample project is current-schema so it never queues one here. The
+        # trigger is therefore queued explicitly, through the same shipped registry,
+        # with a delay long enough that the refusal certainly lands first - the same
+        # ordering the reviewed reproduction achieved by racing load()'s 50ms timer.
+        # tests/post-authority-save-truth.js pins that race itself; this proves the
+        # mechanism holds in the shipped runtime, on a real clock.
+        before = len(writes)
+        pending_at_open = page.evaluate("() => PENDING_SAVE_TRIGGERS.size")
+        page.evaluate("() => scheduleSaveTrigger(() => dirty(), 2500)")
+        assert page.evaluate("() => PENDING_SAVE_TRIGGERS.size") == pending_at_open + 1,             "8. the trigger must actually be queued, or this section proves nothing"
+
+        inject["next"] = {"status": 422, "body": VALIDATION_REFUSAL}
+        edit_and_flush("queued-trigger-refusal")
+        blocked = state()
+        assert len(writes) == before + 1, f"8. exactly one PUT must have been attempted, got {writes[before:]}"
+        assert blocked["blocked"] is True, f"8. the refusal must have entered the block: {blocked}"
+        assert page.evaluate("() => PENDING_SAVE_TRIGGERS.size") == 0,             "8. THE CORRECTION: entering the block must drop every trigger queued before it"
+
+        page.evaluate("() => resumeProjectSaving()")
+        assert len(writes) == before + 1, "8. resuming must not itself send anything"
+        # Past the queued trigger AND the autosave debounce it would have started.
+        page.wait_for_timeout(3600)
+        assert len(writes) == before + 1,             f"8. THE BLOCKER: work queued before the refusal sent a further PUT after the resume - {writes[before:]}"
+        assert page.evaluate("() => P.meta.saveTruthProbe") == "queued-trigger-refusal",             "8. and the unsaved edit is still in this tab"
+        assert disk_probe() == "written-by-another-writer",             f"8. nothing durable may have been written, disk holds {disk_probe()!r}"
+        findings.append("8. a save trigger queued before the refusal is dropped by the block and sends nothing after the resume, on a real clock past both timers")
 
         # ---- the whole session ----------------------------------------------------------
         wildcards = [row for row in writes if row["ifMatch"] == "*"]

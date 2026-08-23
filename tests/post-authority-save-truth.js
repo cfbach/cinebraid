@@ -32,6 +32,17 @@
  *   5. a genuine stale revision still follows the conflict/reload path
  *   6. an ordinary successful save is byte-for-byte the same act it was
  *   7. no refusal retries by itself, and no refusal writes anything durable
+ *   8. and no deferred work QUEUED BEFORE the refusal retries after the resume
+ *
+ * CLAIM 8 IS THE HOLD CORRECTION. Independent review reproduced this against the
+ * first candidate: open an older-schema project, and load() queues its migration
+ * write-back as `setTimeout(() => dirty(), 50)`. Edit and flush before that fires,
+ * take a 422, and the refusal correctly enters SAVE_BLOCKED - but it only cleared
+ * `saveTimer`, and the migration callback was never in `saveTimer`. Resuming then
+ * let that stale callback call dirty(), and a SECOND PUT went out at ~590ms
+ * carrying the same revision and the same refused body, with no user edit behind
+ * it. Section 8 pins it on a real clock, past both the 50ms trigger and the 500ms
+ * autosave debounce.
  *
  * IT CARRIES ITS OWN NEGATIVE CONTROLS. Each reintroduces exactly one of the two
  * defects in memory, through the render harness's `mutateSource` hook - nothing
@@ -78,6 +89,30 @@ async function settle(turns = 200) {
   for (let turn = 0; turn < turns; turn++) await new Promise((resolve) => setImmediate(resolve));
 }
 
+/* SECTION 8 IS THE ONE PLACE THAT MUST WAIT ON A REAL CLOCK. The retry it forbids
+   is produced by two chained macrotask timers, and no amount of microtask draining
+   reaches either - a settle()-only guard would report success against a build that
+   still retries. Both durations are the product's own. */
+const MIGRATION_TRIGGER_MS = 50;   // load()'s deferred migration write-back
+const AUTOSAVE_DEBOUNCE_MS = 500;  // dirty()'s debounce
+const PAST_BOTH_TIMERS_MS = MIGRATION_TRIGGER_MS + AUTOSAVE_DEBOUNCE_MS + 350;
+const realDelay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/* The stored schema older than this build, which is what makes load() queue the
+   migration write-back at all. Stated here rather than inherited from the fixture,
+   so section 8 cannot quietly stop reproducing if the fixture is ever refreshed. */
+function olderSchemaProject() {
+  const project = buildFixture();
+  project.meta.hubVersion = "v5.5.0";
+  return project;
+}
+function currentSchemaProject() {
+  const project = buildFixture();
+  project.meta.hubVersion = "v6.0.0";
+  project.meta.schemaVersion = "6.7";
+  return project;
+}
+
 /* The transcript of what the browser actually put on the wire. `hasIfMatch` is
    recorded separately from its value, because "the header was absent" and "the
    header was empty" are different claims and F-4 is about the first one. */
@@ -110,7 +145,7 @@ function wireRecorder(replyFor = () => ({ status: 200 })) {
 }
 
 async function viewInStepWithStorage(harness, options = {}) {
-  const rendered = await render("#/production", buildFixture(), { ...options, fetch: harness.fetch });
+  const rendered = await render("#/production", options.project || buildFixture(), { ...options, fetch: harness.fetch });
   vm.runInContext(
     `ACTIVE_PROJECT_SLUG = ${JSON.stringify(SLUG)};`
     + ` PROJECT_REVISION = ${JSON.stringify(options.revision === undefined ? R0 : options.revision)};`
@@ -322,6 +357,126 @@ async function successfulSaveSection(options = {}) {
 }
 
 /* ===========================================================================
+   8. THE HOLD CORRECTION: deferred work queued BEFORE the refusal. */
+async function refusedOlderSchemaView(harness, options = {}) {
+  const context = await viewInStepWithStorage(harness, { ...options, project: olderSchemaProject() });
+
+  /* THE PRECONDITION, AS A RECEIPT RATHER THAN AN ASSUMPTION. If a slow machine
+     let the 50ms trigger fire before the refusal, the reproduction never happened
+     and every assertion below would pass having tested nothing. This fails loudly
+     instead. */
+  assert.strictEqual(vm.runInContext("PENDING_SAVE_TRIGGERS.size", context), 1,
+    "the older-schema open must have queued the migration write-back AND it must not have fired yet");
+
+  await vm.runInContext(`(async () => {
+    P.shots[0].title = "an edit the server will not accept";
+    dirty();
+    await flushPendingProjectSave();
+    await SAVE_CHAIN;
+  })()`, context);
+
+  assert.strictEqual(harness.requests.length, 1, "exactly one PUT reached the server");
+  assert.strictEqual(vm.runInContext("SAVE_BLOCKED", context), true, "and it was refused into the block");
+  return context;
+}
+
+async function pendingTriggerSection(options = {}) {
+  const harness = wireRecorder((index) => (index === 0 ? { status: 422, body: VALIDATION_REFUSAL } : { status: 200 }));
+  const context = await refusedOlderSchemaView(harness, options);
+
+  /* Read now, asserted after the wait: the BEHAVIOUR is the claim, and the empty
+     registry is how it is achieved. Asserting the mechanism first would make a
+     build that still retries fail for the tidier reason instead of the true one. */
+  const pendingAfterBlock = vm.runInContext("PENDING_SAVE_TRIGGERS.size", context);
+
+  /* Resumed BEFORE that trigger would have fired - the reproduction exactly. */
+  vm.runInContext("resumeProjectSaving();", context);
+  assert.strictEqual(harness.requests.length, 1, "resuming must not itself send anything");
+
+  await realDelay(PAST_BOTH_TIMERS_MS);
+  assert.strictEqual(harness.requests.length, 1,
+    `THE BLOCKER: work queued before the refusal sent a second PUT after the resume - ${JSON.stringify(harness.requests.map((row) => ({ ifMatch: row.ifMatch, title: row.title })))}`);
+  assert.strictEqual(pendingAfterBlock, 0,
+    "THE CORRECTION: entering the block must drop the trigger that was queued before it");
+  assert.strictEqual(vm.runInContext("P.shots[0].title", context), "an edit the server will not accept",
+    "the unsaved edit is still in this tab");
+  assert.strictEqual(vm.runInContext("SAVE_BLOCKED", context), false, "and saving is re-armed");
+
+  /* RE-ARMED MEANS RE-ARMED. The next edit the filmmaker actually makes saves,
+     exactly once, because this project is now one the server accepts. */
+  await vm.runInContext(`(async () => {
+    P.shots[0].title = "a later edit the filmmaker made";
+    dirty();
+    await flushPendingProjectSave();
+    await SAVE_CHAIN;
+  })()`, context);
+  await realDelay(PAST_BOTH_TIMERS_MS);
+  assert.strictEqual(harness.requests.length, 2, "a later user-driven edit saves exactly once");
+  assert.strictEqual(harness.requests[1].title, "a later edit the filmmaker made");
+  assert.strictEqual(vm.runInContext("SAVE_BLOCKED", context), false, "and it is not blocked by a save that succeeded");
+  console.log("  pending-trigger - a migration write-back queued before the refusal is dropped by the block, sends nothing after the resume, and does not stop the next real edit saving");
+}
+
+/* 8b. The same resume when the document is STILL invalid: one further refusal
+   for the one further edit, and still no retry of its own. */
+async function stillInvalidAfterResumeSection(options = {}) {
+  const harness = wireRecorder(() => ({ status: 422, body: VALIDATION_REFUSAL }));
+  const context = await refusedOlderSchemaView(harness, options);
+  vm.runInContext("resumeProjectSaving();", context);
+  await realDelay(PAST_BOTH_TIMERS_MS);
+  assert.strictEqual(harness.requests.length, 1, "the resume alone still sends nothing");
+
+  await vm.runInContext(`(async () => {
+    P.shots[0].title = "a later edit into a document the server still refuses";
+    dirty();
+    await flushPendingProjectSave();
+    await SAVE_CHAIN;
+  })()`, context);
+  await realDelay(PAST_BOTH_TIMERS_MS);
+  assert.strictEqual(harness.requests.length, 2,
+    "the later edit is attempted exactly once and refused exactly once");
+  const state = surfaces(context);
+  assert.strictEqual(state.blocked, true, "the second refusal blocks again");
+  assert.strictEqual(state.authorityRefused, false, "and still claims nothing about authority");
+  assert(!/authority|approval|REBASE/i.test(`${state.modal}\n${state.saveState}`),
+    `the second refusal must stay as truthful as the first:\n${state.modal}`);
+  console.log("  still-invalid-after-resume - a resume into a still-invalid document costs exactly one further edit and one further truthful refusal");
+}
+
+/* 8c. Control: without the resume, the block holds on its own. */
+async function blockedWithoutResumeSection(options = {}) {
+  const harness = wireRecorder(() => ({ status: 422, body: VALIDATION_REFUSAL }));
+  const context = await refusedOlderSchemaView(harness, options);
+  await realDelay(PAST_BOTH_TIMERS_MS);
+  assert.strictEqual(harness.requests.length, 1,
+    "a block that is never resumed must stay at one PUT past both timers");
+  assert.strictEqual(vm.runInContext("SAVE_BLOCKED", context), true, "and stay blocked");
+  console.log("  blocked-without-resume - the block holds past both timers when nothing resumes it");
+}
+
+/* 8d. Control: a current-schema project queues no trigger at all, so its resume
+   has nothing to retry either. The contrast is what makes 8 a claim about the
+   queued trigger rather than about resuming. */
+async function currentSchemaControlSection(options = {}) {
+  const harness = wireRecorder((index) => (index === 0 ? { status: 422, body: VALIDATION_REFUSAL } : { status: 200 }));
+  const context = await viewInStepWithStorage(harness, { ...options, project: currentSchemaProject() });
+  assert.strictEqual(vm.runInContext("PENDING_SAVE_TRIGGERS.size", context), 0,
+    "a current-schema open must queue no migration write-back");
+  await vm.runInContext(`(async () => {
+    P.shots[0].title = "an edit the server will not accept";
+    dirty();
+    await flushPendingProjectSave();
+    await SAVE_CHAIN;
+  })()`, context);
+  assert.strictEqual(harness.requests.length, 1);
+  vm.runInContext("resumeProjectSaving();", context);
+  await realDelay(PAST_BOTH_TIMERS_MS);
+  assert.strictEqual(harness.requests.length, 1,
+    "a current-schema view must not produce a hidden retry after the resume either");
+  console.log("  current-schema-control - a project with no queued trigger has nothing to retry, before or after the resume");
+}
+
+/* ===========================================================================
    NEGATIVE CONTROLS. */
 const REPAIRED_BRANCH = `      if (r.status === 422) {
         if (ACTIVE_PROJECT_SLUG === job.slug) {
@@ -342,6 +497,39 @@ const REPAIRED_PRECONDITION = `    const documentRevision =
     }`;
 const WILDCARD_FALLBACK = `    const documentRevision =
       (ACTIVE_PROJECT_SLUG === job.slug ? PROJECT_REVISION : job.documentRevision) || "*";`;
+/* The block as the reviewed candidate wrote it - clearing only `saveTimer` - and
+   the loose timer the migration write-back used to be scheduled with. */
+const REPAIRED_BLOCK = `function blockSaving() {
+  SAVE_BLOCKED = true;
+  clearTimeout(saveTimer);
+  saveTimer = null;
+  for (const timer of PENDING_SAVE_TRIGGERS) clearTimeout(timer);
+  PENDING_SAVE_TRIGGERS.clear();
+}`;
+const BLOCK_WITHOUT_CANCEL = `function blockSaving() {
+  SAVE_BLOCKED = true;
+  clearTimeout(saveTimer);
+  saveTimer = null;
+}`;
+const REPAIRED_TRIGGER = `  if (schemaWasOlder && migratedV5) scheduleSaveTrigger(() => dirty(), 50);`;
+const LOOSE_TRIGGER = `  if (schemaWasOlder && migratedV5) setTimeout(() => dirty(), 50);`;
+
+/* The reproduction itself, run against a MUTATED app.js: does a second PUT really
+   go out after the resume? Nothing on disk is touched. */
+async function observedRetryAfterResume(mutate) {
+  const harness = wireRecorder((index) => (index === 0 ? { status: 422, body: VALIDATION_REFUSAL } : { status: 200 }));
+  const context = await viewInStepWithStorage(harness, { mutateSource: mutate, project: olderSchemaProject() });
+  await vm.runInContext(`(async () => {
+    P.shots[0].title = "an edit the server will not accept";
+    dirty();
+    await flushPendingProjectSave();
+    await SAVE_CHAIN;
+  })()`, context);
+  const afterRefusal = harness.requests.length;
+  vm.runInContext("resumeProjectSaving();", context);
+  await realDelay(PAST_BOTH_TIMERS_MS);
+  return { afterRefusal, requests: harness.requests };
+}
 
 function sourceMutator(from, to) {
   const applied = new Set();
@@ -407,8 +595,40 @@ async function negativeControlsSection() {
     controls.push({ id: "NC-2", defect: 'a missing revision falls back to If-Match "*" and is refused as a project conflict', detected });
   }
 
+  /* NC-3 - the reviewed candidate's block: it clears `saveTimer` and nothing
+     else, so the trigger queued before the refusal survives it. This is the
+     defect independent review reproduced, reintroduced exactly. */
+  {
+    const mutate = sourceMutator(REPAIRED_BLOCK, BLOCK_WITHOUT_CANCEL);
+    const observed = await observedRetryAfterResume(mutate);
+    assert(mutate.applied.has("app.js"), "NC-3: app.js was never evaluated, so the defect never ran");
+    assert.strictEqual(observed.afterRefusal, 1, "NC-3 probe: the refusal must still have taken exactly one PUT");
+    assert.strictEqual(observed.requests.length, 2,
+      `NC-3 probe: the defect must actually send a SECOND PUT after the resume, and it sent ${observed.requests.length}`);
+    assert.strictEqual(observed.requests[1].title, "an edit the server will not accept",
+      "NC-3 probe: and that second PUT must carry the SAME refused body, with no user edit behind it");
+    assert.strictEqual(observed.requests[1].ifMatch, observed.requests[0].ifMatch,
+      "NC-3 probe: at the same revision - the retry the reproduction reported at ~590ms");
+    const detected = await expectRed("NC-3", () =>
+      pendingTriggerSection({ mutateSource: sourceMutator(REPAIRED_BLOCK, BLOCK_WITHOUT_CANCEL) }));
+    controls.push({ id: "NC-3", defect: "the block clears only saveTimer, so a trigger queued before the refusal retries after the resume", detected });
+  }
+
+  /* NC-4 - the trigger is scheduled loose again. The block's cancellation is
+     intact; it simply cannot see a timer nothing recorded. */
+  {
+    const mutate = sourceMutator(REPAIRED_TRIGGER, LOOSE_TRIGGER);
+    const observed = await observedRetryAfterResume(mutate);
+    assert(mutate.applied.has("app.js"), "NC-4: app.js was never evaluated, so the defect never ran");
+    assert.strictEqual(observed.requests.length, 2,
+      `NC-4 probe: an untracked trigger must still retry after the resume, and it sent ${observed.requests.length} PUT(s)`);
+    const detected = await expectRed("NC-4", () =>
+      pendingTriggerSection({ mutateSource: sourceMutator(REPAIRED_TRIGGER, LOOSE_TRIGGER) }));
+    controls.push({ id: "NC-4", defect: "the migration write-back is scheduled outside the registry, so the block cannot reach it", detected });
+  }
+
   for (const row of controls) console.log(`  ${row.id} - ${row.defect}\n        detected: ${row.detected}`);
-  assert.strictEqual(controls.length, 2, "every declared control must have produced a receipt");
+  assert.strictEqual(controls.length, 4, "every declared control must have produced a receipt");
 }
 
 async function main() {
@@ -419,8 +639,12 @@ async function main() {
   await staleRevisionSection();
   await revisionRequiredSection();
   await successfulSaveSection();
+  await pendingTriggerSection();
+  await stillInvalidAfterResumeSection();
+  await blockedWithoutResumeSection();
+  await currentSchemaControlSection();
   await negativeControlsSection();
-  console.log("Post-authority save truth passed - 7 claims proven and 2 reintroduced defects detected.");
+  console.log("Post-authority save truth passed - 8 claims proven and 4 reintroduced defects detected.");
 }
 
 module.exports = {
@@ -431,6 +655,10 @@ module.exports = {
   staleRevisionSection,
   revisionRequiredSection,
   successfulSaveSection,
+  pendingTriggerSection,
+  stillInvalidAfterResumeSection,
+  blockedWithoutResumeSection,
+  currentSchemaControlSection,
 };
 if (require.main === module) main().catch((error) => {
   console.error(error.stack || error.message || error);

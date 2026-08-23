@@ -1388,7 +1388,11 @@ async function load() {
      they got there. The sentence is the server's — it is the only side that knows
      which collector won — and it deliberately makes no claim about what was open. */
   if (backgroundRecovery?.message) setTimeout(() => toast(backgroundRecovery.message), 200);
-  if (schemaWasOlder && migratedV5) setTimeout(() => dirty(), 50);
+  /* The migration write-back is the browser's only autonomous save trigger, so
+     it is scheduled where a refusal can reach it. Left as a loose setTimeout it
+     survived the refusal that cancelled everything else and resent the refused
+     body once saving was resumed. */
+  if (schemaWasOlder && migratedV5) scheduleSaveTrigger(() => dirty(), 50);
   if (
     (AGENT_STATUS.runs || []).some((x) =>
       ["QUEUED", "RUNNING"].includes(x.status),
@@ -1422,6 +1426,46 @@ function currentAuthorityTransition() {
   if (!SAVED_PROJECT_BASELINE || !P || typeof authorityWriteTransition !== "function")
     return { requiresTransition: false, declaration: { targetKeys: [], receiptIds: [], transitionKind: "HUMAN_CANON_TRANSITION" } };
   return authorityWriteTransition(SAVED_PROJECT_BASELINE, P);
+}
+/* DEFERRED WORK WHOSE ONLY PURPOSE IS "SAVE THIS SHORTLY".
+
+   load() schedules exactly one: the migration write-back, which persists a
+   normalisation the open already applied in memory. Nobody is behind it - no
+   click, no new information - so it is the one kind of callback that can begin a
+   save entirely on its own, long after it was queued.
+
+   WHY THEY ARE TRACKED RATHER THAN LEFT LOOSE. A refusal clears `saveTimer`, but
+   a callback queued BEFORE the refusal is not in `saveTimer` and survives it.
+   Once resumeProjectSaving() clears the latch, that stale callback calls dirty()
+   and the browser resends the same refused body, at the same revision, with no
+   edit behind it - an automatic retry the filmmaker never asked for, which is
+   precisely what a refusal must not produce. Entering the block drops all of
+   them, so nothing queued before a refusal can act after it.
+
+   WHAT DOES NOT BELONG HERE. A deferred continuation of a gesture - the coverage
+   approval chain, a modal opened a tick later - cannot save on its own: it needs
+   the act that follows it, and while SAVE_BLOCKED is set dirty() refuses that
+   act too. Neither does work carrying genuinely new in-memory state, such as a
+   completed generation the poller reviewed; cancelling that would discard the
+   filmmaker's own work rather than protect it. */
+const PENDING_SAVE_TRIGGERS = new Set();
+function scheduleSaveTrigger(run, ms) {
+  const timer = setTimeout(() => {
+    PENDING_SAVE_TRIGGERS.delete(timer);
+    run();
+  }, ms);
+  PENDING_SAVE_TRIGGERS.add(timer);
+  return timer;
+}
+/* THE ONE WAY INTO SAVE_BLOCKED. Every refusal that stops this view saving goes
+   through here, so a later refusal surface cannot forget the cancellation and
+   reintroduce the retry. */
+function blockSaving() {
+  SAVE_BLOCKED = true;
+  clearTimeout(saveTimer);
+  saveTimer = null;
+  for (const timer of PENDING_SAVE_TRIGGERS) clearTimeout(timer);
+  PENDING_SAVE_TRIGGERS.clear();
 }
 function dirty() {
   clearTimeout(saveTimer);
@@ -1520,9 +1564,7 @@ function isAuthorityRefusalCode(code) {
    every keystroke, and no rebase is offered because re-reading the stored
    baseline cannot resolve it. */
 function projectSaveRefusal(data) {
-  SAVE_BLOCKED = true;
-  clearTimeout(saveTimer);
-  saveTimer = null;
+  blockSaving();
   const validation = String(data?.code || "") === "PROJECT_VALIDATION_FAILED";
   setSaveState("error", validation ? "Not saved — project failed validation" : "Not saved — save refused");
   const message = data?.error
@@ -1557,9 +1599,7 @@ window.resumeProjectSaving = () => {
    was looking at. Nothing is put on the wire, and the problem is reported as the
    local save precondition it actually is. */
 function saveRevisionUnavailable(data) {
-  SAVE_BLOCKED = true;
-  clearTimeout(saveTimer);
-  saveTimer = null;
+  blockSaving();
   setSaveState("error", "Not saved — this window cannot identify the project revision");
   const message = data?.error
     || "CineBraid could not identify which stored version of this project this window is showing, so it did not write over the stored project.";
