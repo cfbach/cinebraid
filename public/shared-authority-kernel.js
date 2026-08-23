@@ -91,6 +91,10 @@ const AUTHORITY_TARGET_KINDS = [
   "entity-state",       /* a continuity state's approved reference */
 ];
 
+/* Every durable entity collection that can own an entity-state authority
+   pointer. Keep this aligned with shared-entity-ownership.js. */
+const AUTHORITY_ENTITY_LISTS = ["characters", "locations", "props", "vehicles", "audio"];
+
 const AUTHORITY_COMMANDS = [
   "approve-shot-frame",
   "approve-shot-motion",
@@ -1379,7 +1383,7 @@ function authorityEdgeTuple(project, target) {
    durable asset identity without trusting record ids. Shared values are
    deliberately ambiguous and therefore fail closed. */
 function rawAuthorityPointers(project, target) {
-  const P = kernelObject(project), wanted = kernelObject(target), pointers = [];
+  const P = kernelObject(project), pointers = [];
   const addShot = (record, field) => {
     const row = kernelObject(record);
     const value = kernelText(row[field]), assetId = shotEdgeAssetId(row, field);
@@ -1390,24 +1394,17 @@ function rawAuthorityPointers(project, target) {
     const value = kernelText(row.approvedFile), assetId = kernelText(row.approvedAssetId);
     if (value || assetId) pointers.push({ value, assetId });
   };
-  if (wanted.kind === "shot-frame") {
-    for (const shotValue of kernelList(P.shots)) {
-      const shot = kernelObject(shotValue);
-      addShot(shot, "winner");
-      for (const frame of kernelList(shot.keyframes)) addShot(frame, "winner");
-    }
-  } else if (wanted.kind === "shot-motion") {
-    for (const shotValue of kernelList(P.shots))
-      for (const clip of kernelList(kernelObject(shotValue).clips)) addShot(clip, "videoWinner");
-  } else if (wanted.kind === "shot-delivery") {
-    for (const shotValue of kernelList(P.shots)) {
-      const shot = kernelObject(shotValue), creation = kernelObject(shot.creationBrief);
-      addShot(shot, "finalStillFile");
-      addShot(creation, "finalStillFile");
-      addShot(creation, "approvedMotionFile");
-    }
-  } else if (wanted.kind === "entity-state") {
-    for (const entityValue of kernelList(P[wanted.list])) {
+  for (const shotValue of kernelList(P.shots)) {
+    const shot = kernelObject(shotValue), creation = kernelObject(shot.creationBrief);
+    addShot(shot, "winner");
+    for (const frame of kernelList(shot.keyframes)) addShot(frame, "winner");
+    for (const clip of kernelList(shot.clips)) addShot(clip, "videoWinner");
+    addShot(shot, "finalStillFile");
+    addShot(creation, "finalStillFile");
+    addShot(creation, "approvedMotionFile");
+  }
+  for (const list of AUTHORITY_ENTITY_LISTS) {
+    for (const entityValue of kernelList(P[list])) {
       const entity = kernelObject(entityValue);
       addEntity(entity);
       for (const state of kernelList(entity.continuityStates)) addEntity(state);

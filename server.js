@@ -7794,8 +7794,13 @@ function reconcileOrphanedAgentRuns(P, slug = activeSlug()) {
   return P;
 }
 function reconcileRestartOrphanedAgentRuns() {
-  for (const project of listProjects())
-    reconcileOrphanedAgentRuns(readProject(project.slug), project.slug);
+  for (const project of listProjects()) {
+    try {
+      reconcileOrphanedAgentRuns(readProject(project.slug), project.slug);
+    } catch (error) {
+      console.error(`AGENT_RESTART_RECONCILIATION_SKIPPED ${project.slug}: ${error?.message || error}`);
+    }
+  }
 }
 function cancelAgentRun(id) {
   const P = readProject();

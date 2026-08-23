@@ -97,6 +97,30 @@ function approveDelivery(project, value = "FINAL.png", assetId = "asset-D", minu
   }));
 }
 
+function withAuthorityEntity(project = baseProject(), value = "ENTITY.png") {
+  project.characters = [{
+    id: "CHAR-01",
+    name: "Character",
+    prefix: "CHAR-01",
+    approvedFile: "",
+    candidateFiles: [{ stored: value, decision: "unreviewed" }],
+    continuityStates: [{
+      id: "state-default",
+      name: "Default",
+      isDefault: true,
+      approvedFile: "",
+    }],
+  }];
+  return project;
+}
+
+function approveEntity(project, value = "ENTITY.png", assetId = "asset-E", minute = 4) {
+  return human(() => Kernel.approveEntityStateCanon(project, {
+    list: "characters", entityId: "CHAR-01", stateId: "state-default",
+    value, assetId, at: AT(minute), via: "o8-server",
+  }));
+}
+
 async function normal(successor, expectedRevision = revision()) {
   return server.request("/api/projects/o8-project/project", {
     method: "PUT",
@@ -138,13 +162,13 @@ function unchanged(before, message) {
   assert.strictEqual(JSON.stringify(stored()), JSON.stringify(before), message);
 }
 
-function durableSnapshot() {
-  const stat = fs.statSync(PROJECT_FILE, { bigint: true });
-  return { bytes: fs.readFileSync(PROJECT_FILE), ino: stat.ino, mtimeNs: stat.mtimeNs };
+function durableSnapshot(file = PROJECT_FILE) {
+  const stat = fs.statSync(file, { bigint: true });
+  return { bytes: fs.readFileSync(file), ino: stat.ino, mtimeNs: stat.mtimeNs };
 }
 
-function noDurableWrite(before, message) {
-  const after = durableSnapshot();
+function noDurableWrite(before, message, file = PROJECT_FILE) {
+  const after = durableSnapshot(file);
   assert(before.bytes.equals(after.bytes), message || "refusal must preserve exact durable bytes");
   assert.strictEqual(after.ino, before.ino, "refusal must not replace the durable project file");
   assert.strictEqual(after.mtimeNs, before.mtimeNs, "refusal must not touch the durable project file");
@@ -160,6 +184,23 @@ async function expectStatus(resultPromise, status, code) {
 function reset(project = baseProject()) {
   writeProject(project);
   return clone(project);
+}
+
+async function expectLaunderedRemovalRefusal(current, successor, message) {
+  reset(current);
+  const receipt = Authority.authorityReceipts(current).find((row) => row.status === "current");
+  assert(receipt, message + ": fixture must begin with one current receipt");
+  const before = durableSnapshot();
+  const comparison = Kernel.authorityWriteTransition(current, successor);
+  assert.strictEqual(comparison.targetRemoval, false, message + ": surviving authority must disprove target removal");
+  assert.strictEqual(comparison.requiresTransition, true, message + ": ordinary save must require a Canon transition");
+  await expectStatus(normal(successor), 422, "CANON_TRANSITION_REQUIRED");
+  noDurableWrite(before, message + ": refusal must produce zero durable write");
+  const disk = stored();
+  const durableReceipt = Authority.authorityReceipts(disk).find((row) => row.id === receipt.id);
+  assert(durableReceipt, message + ": durable receipt must remain present");
+  assert.strictEqual(durableReceipt.status, "current", message + ": durable receipt must remain current");
+  return disk;
 }
 
 async function normalRefusalScenarios() {
@@ -680,6 +721,142 @@ async function boundedReviewScenarios() {
     noDurableWrite(before, "shot-id rename with shot-scoped authority fields must produce zero durable write");
   });
 
+  await review("F1-04", async () => {
+    const current = baseProject(); approveFrame(current, "fr-a", "A.png", "asset-A", 40);
+    const successor = clone(current);
+    human(() => Private.revokeFrameCanon(successor, {
+      shotId: "SH-01", frameId: "fr-a", reason: "target-removed", at: AT(41), clearEdge: false,
+    }));
+    const shot = successor.shots[0];
+    shot.keyframes = shot.keyframes.filter((frame) => frame.id !== "fr-a");
+    delete shot.winner;
+    delete shot.winnerAssetId;
+    if (shot.approvalIdentity) delete shot.approvalIdentity.winner;
+    shot.creationBrief.finalStillFile = "A.png";
+    shot.creationBrief.finalStillAssetId = "asset-A";
+
+    const disk = await expectLaunderedRemovalRefusal(
+      current, successor, "cross-kind frame-to-delivery laundering",
+    );
+    assert(Kernel.hasCurrentHumanAuthority(disk, {
+      kind: "shot-frame", shotId: "SH-01", frameId: "fr-a",
+    }), "the original frame receipt and edge must remain current on disk");
+    assert(disk.shots[0].keyframes.some((frame) => frame.id === "fr-a"));
+    assert.strictEqual(disk.shots[0].creationBrief.finalStillFile, undefined,
+      "the laundered delivery pointer must never reach disk");
+  });
+
+  await review("F1-05", async () => {
+    const cases = [
+      {
+        name: "motion-to-entity by durable asset identity",
+        build() {
+          const current = withAuthorityEntity(baseProject(), "MOVE.mp4");
+          approveMotion(current, "MOVE.mp4", "asset-cross-motion", 42);
+          const successor = clone(current);
+          human(() => Private.revokeMotionCanon(successor, {
+            shotId: "SH-01", unitKey: "clip-a", reason: "target-removed", at: AT(43), clearEdge: false,
+          }));
+          successor.shots[0].clips = [];
+          const entity = successor.characters[0], state = entity.continuityStates[0];
+          entity.approvedFile = "RENAMED-MOVE.mp4";
+          entity.approvedAssetId = "asset-cross-motion";
+          state.approvedFile = "RENAMED-MOVE.mp4";
+          state.approvedAssetId = "asset-cross-motion";
+          return { current, successor };
+        },
+      },
+      {
+        name: "delivery-to-frame by shared value",
+        build() {
+          const current = baseProject();
+          const destination = clone(current.shots[0]);
+          destination.id = "SH-02";
+          destination.title = "Destination";
+          current.shots.push(destination);
+          approveDelivery(current, "FINAL.png", "asset-cross-delivery", 44);
+          const successor = clone(current);
+          human(() => Private.revokeDeliveryCanon(successor, {
+            shotId: "SH-01", reason: "target-removed", at: AT(45), clearEdge: false,
+          }));
+          successor.shots = successor.shots.filter((row) => row.id !== "SH-01");
+          successor.shots[0].keyframes[0].winner = "FINAL.png";
+          delete successor.shots[0].keyframes[0].winnerAssetId;
+          return { current, successor };
+        },
+      },
+      {
+        name: "entity-to-motion by value and durable asset identity",
+        build() {
+          const current = withAuthorityEntity(baseProject(), "ENTITY.png");
+          approveEntity(current, "ENTITY.png", "asset-cross-entity", 46);
+          const successor = clone(current);
+          human(() => Private.revokeEntityStateCanon(successor, {
+            list: "characters", entityId: "CHAR-01", stateId: "state-default",
+            reason: "target-removed", at: AT(47), clearEdge: false,
+          }));
+          successor.characters = [];
+          successor.shots[0].clips[0].videoWinner = "ENTITY.png";
+          successor.shots[0].clips[0].videoWinnerAssetId = "asset-cross-entity";
+          return { current, successor };
+        },
+      },
+    ];
+    for (const testCase of cases) {
+      const values = testCase.build();
+      await expectLaunderedRemovalRefusal(values.current, values.successor, testCase.name);
+    }
+  });
+
+  await review("F1-06", async () => {
+    const delivery = (() => {
+      const current = baseProject();
+      approveDelivery(current, "FINAL.png", "asset-same-delivery", 48);
+      const successor = clone(current);
+      human(() => Private.revokeDeliveryCanon(successor, {
+        shotId: "SH-01", reason: "target-removed", at: AT(49), clearEdge: false,
+      }));
+      successor.shots[0].id = "SH-renamed";
+      return { current, successor };
+    })();
+    await expectLaunderedRemovalRefusal(
+      delivery.current, delivery.successor, "same-kind delivery shot-id rename",
+    );
+
+    const entity = (() => {
+      const current = withAuthorityEntity(baseProject(), "ENTITY-SAME.png");
+      approveEntity(current, "ENTITY-SAME.png", "asset-same-entity", 50);
+      const successor = clone(current);
+      human(() => Private.revokeEntityStateCanon(successor, {
+        list: "characters", entityId: "CHAR-01", stateId: "state-default",
+        reason: "target-removed", at: AT(51), clearEdge: false,
+      }));
+      successor.characters[0].id = "CHAR-renamed";
+      return { current, successor };
+    })();
+    await expectLaunderedRemovalRefusal(
+      entity.current, entity.successor, "same-kind entity-id rename",
+    );
+  });
+
+  await review("F1-07", async () => {
+    const current = baseProject(); approveFrame(current, "fr-a", "A.png", "asset-A", 52); reset(current);
+    const successor = clone(current);
+    human(() => Private.revokeFrameCanon(successor, {
+      shotId: "SH-01", frameId: "fr-a", reason: "target-removed", at: AT(53), clearEdge: false,
+    }));
+    successor.shots = [];
+    successor.productionAuthority.receipts[0].value = "forged-extra-mutation.png";
+    const comparison = Kernel.authorityWriteTransition(current, successor);
+    assert.strictEqual(comparison.targetRemoval, true,
+      "the kernel identifies genuine removal before the seam checks exact receipt mutation");
+    const before = durableSnapshot();
+    await expectStatus(normal(successor), 422, "CANON_TRANSITION_REQUIRED");
+    noDurableWrite(before, "target removal may mutate only the O8 revocation fields");
+    assert.strictEqual(Authority.authorityReceipts(stored())[0].status, "current");
+    assert.strictEqual(Authority.authorityReceipts(stored())[0].value, "A.png");
+  });
+
   await review("F2-01", async () => {
     const project = baseProject("Restart Orphans");
     project.agentRuns = [
@@ -712,6 +889,94 @@ async function boundedReviewScenarios() {
     const status = await expectStatus(server.request("/api/agents/status"), 200);
     assert(status.body.runs.some((row) => row.id === "agent-running" && row.status === "FAILED"));
     noDurableWrite(afterStartup, "GET /api/agents/status must remain observational after restart reconciliation");
+  });
+
+  await review("F2-02", async () => {
+    const malformedSlug = "00-malformed";
+    const healthySlug = "restart-healthy";
+    const controlSlug = "restart-control";
+    const malformedDir = path.join(PROJECTS_ROOT, malformedSlug);
+    const malformedFile = path.join(malformedDir, "project.json");
+    const healthyFile = path.join(PROJECTS_ROOT, healthySlug, "project.json");
+    const controlFile = path.join(PROJECTS_ROOT, controlSlug, "project.json");
+    fs.mkdirSync(malformedDir, { recursive: true });
+    fs.writeFileSync(malformedFile, "{ definitely-not-json");
+
+    const healthy = baseProject("Healthy Restart Reconciliation");
+    healthy.agentRuns = [
+      { id: "queued", type: "system", status: "QUEUED", message: "queued", createdAt: AT(54), updatedAt: AT(54) },
+      { id: "running", type: "system", status: "RUNNING", message: "running", createdAt: AT(55), updatedAt: AT(55) },
+      { id: "cancelling", type: "system", status: "CANCELLING", message: "cancelling", createdAt: AT(56), updatedAt: AT(56) },
+      { id: "completed", type: "system", status: "COMPLETED", message: "completed-control", createdAt: AT(57), updatedAt: AT(57), finishedAt: AT(57) },
+      { id: "cancelled", type: "system", status: "CANCELLED", message: "cancelled-control", createdAt: AT(58), updatedAt: AT(58), finishedAt: AT(58) },
+      { id: "failed", type: "system", status: "FAILED", message: "failed-control", error: "original-error", createdAt: AT(59), updatedAt: AT(59), finishedAt: AT(59) },
+    ];
+    const terminalBefore = clone(healthy.agentRuns.filter((run) =>
+      ["COMPLETED", "CANCELLED", "FAILED"].includes(run.status)));
+    writeProject(healthy, healthyFile);
+
+    const control = baseProject("Unrelated Control");
+    control.agentRuns = [{
+      id: "other-completed", type: "system", status: "COMPLETED", message: "untouched",
+      createdAt: AT(39), updatedAt: AT(39), finishedAt: AT(39),
+    }];
+    writeProject(control, controlFile);
+
+    const config = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8"));
+    config.activeProject = healthySlug;
+    fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
+    const malformedBefore = durableSnapshot(malformedFile);
+    const controlBefore = durableSnapshot(controlFile);
+    const unrelatedBefore = durableSnapshot(PROJECT_FILE);
+
+    const exited = new Promise((resolve) => server.child.once("exit", resolve));
+    server.stop();
+    await exited;
+    server = await startCineBraidServer({
+      CINEBRAID_CONFIG_PATH: CONFIG_PATH,
+      CINEBRAID_PROJECTS_ROOT: PROJECTS_ROOT,
+      FAL_KEY: "", OPENAI_API_KEY: "", GOOGLE_API_KEY: "", ANTHROPIC_API_KEY: "",
+    });
+
+    assert.strictEqual(server.child.exitCode, null, "one malformed project must not terminate startup");
+    assert.match(server.output, /AGENT_RESTART_RECONCILIATION_SKIPPED 00-malformed: .+/,
+      "startup must identify the skipped project and its read error");
+    const reconciled = stored(healthyFile);
+    for (const id of ["queued", "running", "cancelling"]) {
+      const run = reconciled.agentRuns.find((row) => row.id === id);
+      assert.strictEqual(run.status, "FAILED", id + " must reconcile to FAILED");
+      assert.strictEqual(run.message, "Interrupted by CineBraid restart");
+      assert.match(run.error, /active when CineBraid stopped/);
+      assert(run.finishedAt && run.updatedAt === run.finishedAt);
+    }
+    assert.deepStrictEqual(
+      reconciled.agentRuns.filter((run) => ["COMPLETED", "CANCELLED", "FAILED"].includes(run.status)
+        && !["queued", "running", "cancelling"].includes(run.id)),
+      terminalBefore,
+      "terminal runs must remain unchanged",
+    );
+    noDurableWrite(malformedBefore, "malformed project must be skipped without a write", malformedFile);
+    noDurableWrite(controlBefore, "healthy control project must not be rewritten", controlFile);
+    noDurableWrite(unrelatedBefore, "unrelated project must not be rewritten", PROJECT_FILE);
+
+    const afterStartup = durableSnapshot(healthyFile);
+    const status = await expectStatus(server.request("/api/agents/status"), 200);
+    for (const id of ["queued", "running", "cancelling"])
+      assert(status.body.runs.some((row) => row.id === id && row.status === "FAILED"));
+    noDurableWrite(afterStartup, "GET /api/agents/status must remain observational", healthyFile);
+
+    const source = fs.readFileSync(path.join(ROOT, "server.js"), "utf8");
+    const reconciler = source.slice(source.indexOf("function reconcileOrphanedAgentRuns("), source.indexOf("function cancelAgentRun(", source.indexOf("function reconcileOrphanedAgentRuns(")));
+    assert(reconciler.includes("if (changed) writeProject(P, slug)"),
+      "restart reconciliation must reach the enrolled project writer");
+    const writer = source.slice(source.indexOf("function writeProject("), source.indexOf("/* ---- media scan", source.indexOf("function writeProject(")));
+    assert(writer.includes("WRITE_CLASSES.INTERNAL_NONAUTHORITY_WRITE"),
+      "restart reconciliation writes must remain enrolled through INTERNAL_NONAUTHORITY_WRITE");
+
+    config.activeProject = "o8-project";
+    fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
+    for (const dir of [malformedDir, path.dirname(healthyFile), path.dirname(controlFile)])
+      fs.rmSync(dir, { recursive: true, force: true });
   });
 }
 
@@ -752,9 +1017,11 @@ async function main() {
     ].sort();
     assert.deepStrictEqual([...primaryPassed].sort(), expectedPrimary);
     assert.deepStrictEqual([...secondaryPassed].sort(), expectedSecondary);
-    assert.deepStrictEqual([...reviewPassed].sort(), ["F1-01", "F1-02", "F1-03", "F2-01"]);
+    assert.deepStrictEqual([...reviewPassed].sort(), [
+      "F1-01", "F1-02", "F1-03", "F1-04", "F1-05", "F1-06", "F1-07", "F2-01", "F2-02",
+    ]);
     console.log(`Authority Write Seam O8 server acceptance: ${primaryPassed.length}/41 unique server scenarios passed; ${secondaryPassed.length}/18 secondary server executions passed; provider calls: 0.`);
-    console.log(`Authority Write Seam bounded-review regressions: ${reviewPassed.length}/4 passed; provider calls: 0.`);
+    console.log(`Authority Write Seam bounded-review regressions: ${reviewPassed.length}/9 passed; provider calls: 0.`);
   } finally {
     server?.stop();
     fs.rmSync(TEMP, { recursive: true, force: true });
