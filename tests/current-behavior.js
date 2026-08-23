@@ -481,6 +481,8 @@ async function main() {
     "ofp-read-invariant.js",
     "ofp-serialization.js",
     "openai-request-dialect.js",
+    "post-authority-save-truth-real-browser.py",
+    "post-authority-save-truth.js",
     "private-preview-layout-real-browser.py",
     "private-preview-ux.js",
     "production-authority.js",

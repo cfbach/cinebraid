@@ -27,10 +27,13 @@ const ROOT = path.join(__dirname, "..");
    rather than as a line ending. */
 const readLF = (file) => fs.readFileSync(file, "utf8").replace(/\r\n/g, "\n");
 
-/* The shipped line, and the pre-repair line it replaced. */
-const REPAIRED = `    headers["If-Match"] =
-      (ACTIVE_PROJECT_SLUG === job.slug ? PROJECT_REVISION : job.documentRevision) || "*";`;
-const PRE_REPAIR = `    headers["If-Match"] = job.documentRevision || "*";`;
+/* The shipped line, and the pre-repair line it replaced. The wildcard fallback
+   that used to close this expression is gone - the Authority Write Seam requires
+   an exact revision - so NC-C below reintroduces it here rather than on the
+   header assignment it no longer reaches. */
+const REPAIRED = `    const documentRevision =
+      (ACTIVE_PROJECT_SLUG === job.slug ? PROJECT_REVISION : job.documentRevision) || "";`;
+const PRE_REPAIR = `    const documentRevision = job.documentRevision || "";`;
 
 function applyEdits(label, original, edits) {
   let code = original;
@@ -134,7 +137,7 @@ async function main() {
      borrows the NEW project's revision - one project's token authorising another
      project's write, which is the ownership defect app.js refuses elsewhere. */
   {
-    const edit = [REPAIRED, `    headers["If-Match"] = PROJECT_REVISION || "*";`];
+    const edit = [REPAIRED, `    const documentRevision = PROJECT_REVISION || "";`];
     const detected = await expectRed("NC-B", () =>
       freshSuite().foreignSlugSection({ mutateSource: sourceMutator({ "app.js": [edit] }) }));
     results.push({ id: "NC-B", defect: "the live revision is used even for a save belonging to a project the view has left", detected });
@@ -145,7 +148,7 @@ async function main() {
      can never refuse. Optimistic concurrency is gone and a genuinely stale view
      silently overwrites newer work - the outcome section 3 exists to forbid. */
   {
-    const edit = [REPAIRED, `    headers["If-Match"] = "*";`];
+    const edit = [REPAIRED, `    const documentRevision = "*";`];
     const detected = await expectRed("NC-C", () =>
       freshSuite().staleViewSection({ mutateSource: sourceMutator({ "app.js": [edit] }) }));
     results.push({ id: "NC-C", defect: "If-Match is weakened to '*', so a stale view is never refused", detected });

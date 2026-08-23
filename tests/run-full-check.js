@@ -156,6 +156,7 @@ const nodeSuites = [
   "check:state-interleaving",
   "check:save-revision-race",
   "check:save-revision-race-negative",
+  "check:save-truth",
   "check:generation-job-durability",
   "check:approval-references",
   "check:voice-ownership",
@@ -214,7 +215,7 @@ const browserSuites = ["check:manual-browser", "check:browser-real", "check:h3-b
   "check:focused-browser", "check:alpha-loop-browser", "check:entity-truth-browser",
   "check:shot-readiness-browser", "check:founder-p0-browser", "check:quiet-shell-browser",
   "check:project-entry-browser", "check:reference-reframe-browser", "check:simple-advanced-browser",
-  "check:shot-intent-browser", "check:authority-browser"];
+  "check:shot-intent-browser", "check:authority-browser", "check:save-truth-browser"];
 const releaseSuites = ["check:environment", "check:package"];
 /* How a suite is launched, without a shell.
 

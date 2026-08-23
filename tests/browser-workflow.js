@@ -1,6 +1,6 @@
 const assert = require("assert");
 const vm = require("vm");
-const { render, buildFixture } = require("./render-harness");
+const { render, buildFixture, HARNESS_PROJECT_REVISION } = require("./render-harness");
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -15,8 +15,11 @@ async function testProjectScopedSaveBeforeSwitch() {
   const events = [];
   const customFetch = async (url, options, response) => {
     if (url === "/api/project")
+      /* The shipped GET reports the revision the view may write over, and a view
+         that cannot identify what it read does not save. */
       return response(projects[active], 200, {
         "x-cinebraid-project-slug": active,
+        "x-cinebraid-project-revision": HARNESS_PROJECT_REVISION,
       });
     if (/^\/api\/projects\/[^/]+\/project$/.test(url) && options.method === "PUT") {
       const slug = decodeURIComponent(url.split("/")[3]);
@@ -110,6 +113,7 @@ async function testExactImportPreviewCommit() {
     if (url === "/api/project")
       return response(active === "current" ? current : normalized, 200, {
         "x-cinebraid-project-slug": active,
+        "x-cinebraid-project-revision": HARNESS_PROJECT_REVISION,
       });
     if (url === "/api/projects/preview-import-json" && options.method === "POST")
       return response({

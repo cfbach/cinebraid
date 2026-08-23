@@ -416,6 +416,10 @@ function scanFor(project) {
   };
 }
 
+/* What the server would report for the fixture document. Any value works; it is
+   opaque to the browser, which only echoes it back on save. */
+const HARNESS_PROJECT_REVISION = '"render-harness-fixture-revision"';
+
 function response(data, status = 200, headers = {}) {
   const normalizedHeaders = Object.fromEntries(
     Object.entries(headers).map(([key, value]) => [key.toLowerCase(), value]),
@@ -618,7 +622,18 @@ async function render(hash, project, options = {}) {
       if (custom) return custom;
     }
     if (url === "/api/project")
-      return response(project, 200, { "x-cinebraid-project-slug": "fixture" });
+      /* THE REVISION IS PART OF THE SHIPPED RESPONSE, so the harness serves it.
+         GET /api/project always sets ETag and X-CineBraid-Project-Revision for a
+         stored document, and app.js reads them here to learn what it may write
+         over. Without them every rendered view loaded believing it could not
+         identify its own revision - which the product now correctly refuses to
+         write from. A suite that wants the revisionless view sets
+         PROJECT_REVISION = "" for itself. */
+      return response(project, 200, {
+        "x-cinebraid-project-slug": "fixture",
+        "x-cinebraid-project-revision": HARNESS_PROJECT_REVISION,
+        etag: HARNESS_PROJECT_REVISION,
+      });
     if (url === "/api/scan") return response(scan);
     if (url === "/api/prompt/profiles")
       /* Annotated exactly as the route annotates it, so a rendered page sees the same
@@ -1151,7 +1166,7 @@ function withCanon(project, entries) {
   return project;
 }
 
-module.exports = { render, buildFixture, rawFixture, withFixtureCanon, emptyFixture, withCanon };
+module.exports = { render, buildFixture, rawFixture, withFixtureCanon, emptyFixture, withCanon, HARNESS_PROJECT_REVISION };
 if (require.main === module) main().catch((error) => {
   console.error(error.stack || error.message || error);
   process.exitCode = 1;

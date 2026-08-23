@@ -24,6 +24,12 @@ let P = null,
   PROJECT_REVISION = "",
   PROJECT_CONFLICT = false,
   AUTHORITY_SAVE_REFUSED = false,
+  /* This view has stopped saving for a reason that is neither a stale document
+     nor an authority refusal: the server refused the save itself, or this view
+     cannot identify the revision it read. Both stop the automatic save loop,
+     because repeating a request that will be refused for the same reason is a
+     retry loop, not a recovery. */
+  SAVE_BLOCKED = false,
   SAVED_PROJECT_BASELINE = null;
 let FILTER = { status: "", route: "", char: "", action: "unfinished" };
 const storedValue = (key, fallback = null) => localStorage.getItem(key) ?? fallback;
@@ -1290,6 +1296,7 @@ async function load() {
   SAVE_REVISION = 0;
   SAVED_REVISION = 0;
   PROJECT_CONFLICT = false; // a fresh load is in step with storage again
+  SAVE_BLOCKED = false; // and it carries the revision every save needs
   SCAN = loaded[1];
   PROMPT_LIBRARY = loaded[2] || { profiles: [] };
   CONFIG = loaded[3] || {};
@@ -1422,6 +1429,9 @@ function dirty() {
   SAVE_REVISION += 1;
   setSaveState("dirty", "Unsaved changes");
   if (AUTHORITY_SAVE_REFUSED) return;
+  /* Saving is paused, so the resting "saving in a moment" the dirty state speaks
+     would be untrue. The edit is kept; it is simply not on its way anywhere. */
+  if (SAVE_BLOCKED) return setSaveState("error", "Not saved — saving is paused");
   const transition = currentAuthorityTransition();
   if (transition.requiresTransition) {
     saveTimer = null;
@@ -1474,6 +1484,94 @@ function projectConflict(data) {
       + `<div class="modal-actions"><button class="approve-btn large" onclick="location.reload()">RELOAD PROJECT</button></div>`,
     );
 }
+/* THE TYPED CODE SAYS WHAT HAPPENED. THE HTTP STATUS DOES NOT.
+
+   Both the Authority Write Seam's Canon policies and ordinary project validation
+   refuse a save with 422. Branching on the status alone presented every one of
+   them as "Production authority was not changed / approval change refused", so a
+   filmmaker whose document merely failed validation was told their approval had
+   been refused - and was offered REBASE & RETRY, which re-reads the stored
+   baseline and resends the SAME document. Rebasing cannot make an invalid
+   document valid, so the only action on offer was one that could not work.
+
+   The list below is the seam's authority policy refusals. Anything else arriving
+   with a 422 is reported as the refusal it is rather than borrowed into this
+   surface, because claiming authority was involved when it was not is the exact
+   untruth this repair removes. */
+const AUTHORITY_REFUSAL_CODES = new Set([
+  "CANON_TRANSITION_REQUIRED",
+  "CANON_DECLARATION_MISMATCH",
+  "AUTHORITY_LEDGER_UNTRUSTED",
+  "AUTHORITY_RECEIPT_INVALID",
+  "AUTHORITY_TARGET_INVALID",
+  "AUTHORITY_TARGET_AMBIGUOUS",
+  "AUTHORITY_EDGE_RECEIPT_MISMATCH",
+  "AUTHORITY_EDGE_WITHOUT_CURRENT_RECEIPT",
+  "SYSTEM_INVALIDATION_DECLARATION_REQUIRED",
+  "SYSTEM_INVALIDATION_SHAPE_INVALID",
+  "SYSTEM_INVALIDATION_PROVENANCE_FORBIDDEN",
+  "SYSTEM_INVALIDATION_PRECONDITION_FAILED",
+]);
+function isAuthorityRefusalCode(code) {
+  return AUTHORITY_REFUSAL_CODES.has(String(code || ""));
+}
+/* A refused save that is NOT about production authority. The edits stay in this
+   tab, the automatic save loop stops so the same refused body is not resent on
+   every keystroke, and no rebase is offered because re-reading the stored
+   baseline cannot resolve it. */
+function projectSaveRefusal(data) {
+  SAVE_BLOCKED = true;
+  clearTimeout(saveTimer);
+  saveTimer = null;
+  const validation = String(data?.code || "") === "PROJECT_VALIDATION_FAILED";
+  setSaveState("error", validation ? "Not saved — project failed validation" : "Not saved — save refused");
+  const message = data?.error
+    || (validation
+      ? "CineBraid checked this project before writing it and found a problem, so nothing was written."
+      : "CineBraid did not write this save.");
+  const issues = (data?.issues || [])
+    .map((row) => (typeof row === "string" ? row : row?.message || row?.error || ""))
+    .filter(Boolean);
+  if (typeof toast === "function") toast(message);
+  if (typeof openModal === "function") openModal(
+    "<h3>" + (validation ? "This project did not pass validation, so it was not saved" : "The server refused this save") + "</h3>"
+    + "<div class=\"modal-sub\">NOTHING WAS WRITTEN AND YOUR EDITS ARE STILL IN THIS TAB</div>"
+    + "<p>" + esc(message) + "</p>"
+    + (issues.length ? "<p><b>What failed</b><br>" + issues.map(esc).join("<br>") + "</p>" : "")
+    + "<p>Saving is paused so the same refused save is not repeated. Undo the change that caused this and continue — CineBraid saves again on your next edit.</p>"
+    + "<div class=\"modal-actions\"><button class=\"cancel\" onclick=\"location.reload()\">RELOAD AND DISCARD</button>"
+    + "<button class=\"approve-btn large\" onclick=\"resumeProjectSaving()\">CONTINUE EDITING</button></div>",
+  );
+}
+window.resumeProjectSaving = () => {
+  SAVE_BLOCKED = false;
+  closeModal();
+  setSaveState("dirty", "Unsaved changes");
+};
+/* THIS VIEW CANNOT IDENTIFY THE PROJECT REVISION IT READ.
+
+   The Authority Write Seam requires an exact revision, so the old If-Match "*"
+   fallback could only ever be answered 409 PROJECT_REVISION_CONFLICT - which the
+   browser then presented as "this project changed while this view was open".
+   Nobody had changed anything; this view simply never learned which revision it
+   was looking at. Nothing is put on the wire, and the problem is reported as the
+   local save precondition it actually is. */
+function saveRevisionUnavailable(data) {
+  SAVE_BLOCKED = true;
+  clearTimeout(saveTimer);
+  saveTimer = null;
+  setSaveState("error", "Not saved — this window cannot identify the project revision");
+  const message = data?.error
+    || "CineBraid could not identify which stored version of this project this window is showing, so it did not write over the stored project.";
+  if (typeof toast === "function") toast(message);
+  if (typeof openModal === "function") openModal(
+    "<h3>This window cannot save safely</h3>"
+    + "<div class=\"modal-sub\">NOTHING WAS WRITTEN AND YOUR EDITS ARE STILL IN THIS TAB</div>"
+    + "<p>" + esc(message) + "</p>"
+    + "<p>Reopening the project restores saving. Edits made in this window since it stopped saving will be lost.</p>"
+    + "<div class=\"modal-actions\"><button class=\"approve-btn large\" onclick=\"location.reload()\">REOPEN PROJECT</button></div>",
+  );
+}
 function authoritySaveRefusal(data, job) {
   AUTHORITY_SAVE_REFUSED = true;
   clearTimeout(saveTimer);
@@ -1504,12 +1602,12 @@ window.rebaseAuthoritySave = async () => {
 function queueProjectSave(job) {
   if (!job) return SAVE_CHAIN;
   const run = SAVE_CHAIN.catch(() => {}).then(async () => {
-    if (PROJECT_CONFLICT) return; // this view is known stale; stop writing
+    if (PROJECT_CONFLICT || SAVE_BLOCKED) return; // this view is known stale or blocked; stop writing
     if (ACTIVE_PROJECT_SLUG === job.slug)
       setSaveState("saving", "Saving…");
     const headers = { "Content-Type": "application/json" };
-    /* "*" only for a document that has never been stored; otherwise the exact
-       revision this view loaded or last wrote.
+    /* The exact revision this view loaded or last wrote. There is no wildcard:
+       the Authority Write Seam requires an exact revision on every project write.
 
        RESOLVED HERE, AT SEND TIME, NOT WHEN THE JOB WAS QUEUED. captureProjectSave()
        snapshots PROJECT_REVISION when a save is ENQUEUED, and SAVE_CHAIN serialises
@@ -1531,9 +1629,18 @@ function queueProjectSave(job) {
        A job whose project is no longer the active one keeps its captured revision:
        PROJECT_REVISION now describes a different document, and sending one project's
        revision for another's save is the ownership defect this file already refuses
-       to make elsewhere. */
-    headers["If-Match"] =
-      (ACTIVE_PROJECT_SLUG === job.slug ? PROJECT_REVISION : job.documentRevision) || "*";
+       to make elsewhere.
+
+       A VIEW WITH NO REVISION DOES NOT WRITE. This used to fall back to "*",
+       which the seam can only answer 409 PROJECT_REVISION_CONFLICT - a normal
+       project conflict manufactured out of a local precondition failure. */
+    const documentRevision =
+      (ACTIVE_PROJECT_SLUG === job.slug ? PROJECT_REVISION : job.documentRevision) || "";
+    if (!documentRevision) {
+      if (ACTIVE_PROJECT_SLUG === job.slug) saveRevisionUnavailable();
+      return;
+    }
+    headers["If-Match"] = documentRevision;
     const successor = JSON.parse(job.body);
     let transitionDeclaration = job.transition;
     const transitionBaseline =
@@ -1558,12 +1665,21 @@ function queueProjectSave(job) {
     });
     if (!r.ok) {
       const data = await r.json().catch(() => ({}));
-      if (r.status === 409 || r.status === 428) {
+      if (r.status === 409) {
         if (ACTIVE_PROJECT_SLUG === job.slug) projectConflict(data);
         return;
       }
+      /* 428 PROJECT_REVISION_REQUIRED is not a conflict either: nothing changed
+         the project, this request simply did not identify what it read. */
+      if (r.status === 428) {
+        if (ACTIVE_PROJECT_SLUG === job.slug) saveRevisionUnavailable(data);
+        return;
+      }
       if (r.status === 422) {
-        if (ACTIVE_PROJECT_SLUG === job.slug) authoritySaveRefusal(data, job);
+        if (ACTIVE_PROJECT_SLUG === job.slug) {
+          if (isAuthorityRefusalCode(data?.code)) authoritySaveRefusal(data, job);
+          else projectSaveRefusal(data);
+        }
         return;
       }
       throw new Error(data.error || "Project save failed");
@@ -1611,7 +1727,7 @@ async function flushPendingProjectSave() {
      revision still needs another request. A pre-check here duplicates the
      in-flight act because SAVED_REVISION advances only with its response. */
   await SAVE_CHAIN;
-  if (AUTHORITY_SAVE_REFUSED) return;
+  if (AUTHORITY_SAVE_REFUSED || SAVE_BLOCKED) return;
   if (!P || !ACTIVE_PROJECT_SLUG || SAVE_REVISION <= SAVED_REVISION) return;
   await queueProjectSave(captureProjectSave());
 }
