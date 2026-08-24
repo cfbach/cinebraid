@@ -36,7 +36,7 @@ const EntityOwnership = require("./public/shared-entity-ownership");
 const FramePresence = require("./public/shared-frame-presence");
 const ProductionAuthority = require("./public/shared-production-authority");
 const AuthorityKernel = require("./public/shared-authority-kernel");
-const { WRITE_CLASSES, createAuthorityWriteSeam, canonComparison } = require("./authority-write-seam");
+const { WRITE_CLASSES, isCreateOnlyWriteClass, createAuthorityWriteSeam, canonComparison } = require("./authority-write-seam");
 const ShotReadiness = require("./public/shared-shot-readiness");
 /* There is nothing to wire. The Canon kernel depends on
    public/shared-entity-ownership.js directly — by `require` in Node, by name in
@@ -1108,11 +1108,20 @@ const AuthorityWriteBoundary = createAuthorityWriteSeam({
       metadata.evidence = evidenceName;
     }
     atomicWriteJson(file, project, {
-      backup: ![WRITE_CLASSES.UNTRUSTED_IMPORT, WRITE_CLASSES.WORKSPACE_MIGRATION].includes(context.writeClass),
-      /* Migration is the writer that has to be able to unwind its own copies, so it
-         is the one that has to know it made them. Publishing exclusively turns the
-         seam's `created` from a report into a proof. */
-      exclusive: context.writeClass === WRITE_CLASSES.WORKSPACE_MIGRATION,
+      /* Nothing to set aside: a class that may only create publishes where no
+         document is, so there is no prior version a backup could preserve. */
+      backup: !isCreateOnlyWriteClass(context.writeClass),
+      /* CREATE_ONLY is kept HERE, by the publish, and not by the seam's existsSync
+         ahead of it. rename() replaces in silence, so a writer that found the
+         destination free a moment earlier destroys whatever appeared in between and
+         is told it created a document. Migration also needs this to be able to
+         unwind its own copies: publishing exclusively turns the seam's `created`
+         from a report into a proof.
+
+         Derived from the classifier, never restated. Naming WORKSPACE_MIGRATION here
+         was a second CREATE_ONLY list, and it drifted immediately — UNTRUSTED_IMPORT
+         was classified create-only in the seam and published with a rename anyway. */
+      exclusive: isCreateOnlyWriteClass(context.writeClass),
     });
   },
 });
@@ -1243,6 +1252,43 @@ function continuityVisionModel(cfg = readConfig()) {
 const SUBDIRS = ["anchors", "plates", "props", "vehicles", "audio", "media", "shots", "docs"];
 function ensureDirs(dir) {
   for (const d of SUBDIRS) fs.mkdirSync(path.join(dir, d), { recursive: true });
+}
+
+/* The two ways a project comes into existence — importing one, and starting a blank
+   one — pick a slug the same way, and now recover from losing it the same way too.
+
+   Scanning for a free name is a pre-check and cannot hold one. Between the scan and
+   the publish another writer can create the same document: a second CineBraid on the
+   same projects folder, a sync client materialising a folder, a backup being restored
+   underneath. Nothing the scan does can see that, which is why the publish is
+   exclusive and refuses instead of replacing.
+
+   Losing that publish is not a new situation to explain to anyone. It is the same
+   situation the scan already handles — this name is taken — learned a moment later,
+   so it gets the same answer: take the next one. The whole scan runs again first, so
+   the retry skips everything now on disk rather than walking suffixes one at a time.
+   Nothing else is repeated: no project is built twice, and the config write, the
+   preview consumption and the response all still happen once, after a publish that
+   actually succeeded.
+
+   Bounded, because a retry that cannot fail is a spin. Each turn of the loop means
+   another writer won a race at that exact instant; past the limit the caller is told
+   the destination is taken rather than being kept here indefinitely. */
+const PROJECT_SLUG_COLLISION_LIMIT = 32;
+function createProjectUnderFreeSlug(title, successor) {
+  const base = String(title).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "project";
+  let slug = base, n = 1;
+  for (let lost = 0; ; lost++) {
+    while (fs.existsSync(path.join(projectsRoot(), slug))) slug = base + "-" + ++n;
+    ensureDirs(path.join(projectsRoot(), slug));
+    const outcome = persistProjectSuccessor({
+      slug, successor, writeClass: WRITE_CLASSES.UNTRUSTED_IMPORT,
+      expectedRevision: "", transitionMetadata: {},
+    });
+    if (outcome.ok || outcome.refusal?.code !== "PROJECT_DESTINATION_EXISTS") return { slug, outcome };
+    if (lost >= PROJECT_SLUG_COLLISION_LIMIT) return { slug, outcome };
+    slug = base + "-" + ++n;
+  }
 }
 
 /* one-time migration from the v1 single-project layout */
@@ -4194,21 +4240,7 @@ app.post("/api/projects/import-json", (req, res) => {
     if (!expectedHash || expectedHash !== preview.hash)
       throw new Error("The reviewed import hash does not match this preview.");
     const project = structuredClone(preview.project);
-    const title = String(project.meta.title).trim();
-    let slug =
-      title
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, "-")
-        .replace(/^-|-$/g, "") || "project";
-    let n = 1,
-      base = slug;
-    while (fs.existsSync(path.join(projectsRoot(), slug))) slug = base + "-" + ++n;
-    const dir = path.join(projectsRoot(), slug);
-    ensureDirs(dir);
-    const importOutcome = persistProjectSuccessor({
-      slug, successor: project, writeClass: WRITE_CLASSES.UNTRUSTED_IMPORT,
-      expectedRevision: "", transitionMetadata: {},
-    });
+    const { slug, outcome: importOutcome } = createProjectUnderFreeSlug(project.meta.title, project);
     if (!importOutcome.ok) return seamFailure(res, importOutcome, slug);
     const config = readConfig();
     config.activeProject = slug;
@@ -9112,16 +9144,6 @@ app.delete("/api/projects/:slug", (req, res) => {
 
 app.post("/api/projects/new", (req, res) => {
   const title = (req.body.title || "New Project").trim();
-  let slug =
-    title
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-|-$/g, "") || "project";
-  let n = 1,
-    base = slug;
-  while (fs.existsSync(path.join(projectsRoot(), slug))) slug = base + "-" + ++n;
-  const dir = path.join(projectsRoot(), slug);
-  ensureDirs(dir);
   const blank = BLANK();
   blank.meta.title = title;
   blank.meta.format = String(req.body.format || "").trim();
@@ -9149,10 +9171,7 @@ app.post("/api/projects/new", (req, res) => {
       howItFeels: "",
       audio: {},
     });
-  const createOutcome = persistProjectSuccessor({
-    slug, successor: blank, writeClass: WRITE_CLASSES.UNTRUSTED_IMPORT,
-    expectedRevision: "", transitionMetadata: {},
-  });
+  const { slug, outcome: createOutcome } = createProjectUnderFreeSlug(title, blank);
   if (!createOutcome.ok) return seamFailure(res, createOutcome, slug);
   const c = readConfig();
   c.activeProject = slug;

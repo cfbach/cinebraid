@@ -28,6 +28,11 @@ const CREATE_ONLY = new Set([
   WRITE_CLASSES.UNTRUSTED_IMPORT,
   WRITE_CLASSES.WORKSPACE_MIGRATION,
 ]);
+/* THE list of classes that may only create, asked rather than restated. The caller
+   supplies filesystem mechanics, so the caller is what has to publish exclusively —
+   and a private copy of this list on that side is exactly how UNTRUSTED_IMPORT came
+   to be classified CREATE_ONLY here and published with a rename over there. */
+function isCreateOnlyWriteClass(writeClass) { return CREATE_ONLY.has(text(writeClass)); }
 
 function object(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
@@ -382,7 +387,11 @@ function createAuthorityWriteSeam(io = {}) {
         return { ok: false, revision: "", refusal: refusal(422, "WRITE_CLASS_REQUIRED", "A known Authority Write Seam class is required. No project bytes were written.") };
       file = io.resolveFile(slug, writeClass, transitionMetadata);
       const exists = io.exists ? io.exists(file) : true;
-      if (CREATE_ONLY.has(writeClass) && exists)
+      /* A pre-check, and only a pre-check. It answers for the destination as it was
+         at this instant, and nothing holds the name between here and the publish —
+         so it exists to choose well, not to keep CREATE_ONLY. The publish is what
+         keeps CREATE_ONLY; see the EEXIST arm of the catch below. */
+      if (isCreateOnlyWriteClass(writeClass) && exists)
         return { ok: false, revision: io.revisionFor(file), refusal: refusal(409, "PROJECT_DESTINATION_EXISTS", "The destination project document already exists.", { slug: text(slug) }) };
       current = exists ? io.readProject(file) : {};
       storedRevision = exists ? io.revisionFor(file) : "";
@@ -420,11 +429,30 @@ function createAuthorityWriteSeam(io = {}) {
          replacing one that was already there. A caller that has to clean up after
          itself cannot ask the filesystem afterwards — by then another writer's
          document is indistinguishable from its own — so the one place that knows
-         says so. For a CREATE_ONLY class the destination was proven absent above
-         and io.writeProject publishes exclusively, which is what makes this a
-         proof rather than a report. */
+         says so. For a CREATE_ONLY class io.writeProject publishes exclusively and
+         a lost publish never reaches this line, which is what makes this a proof
+         rather than a report. */
       return { ok: true, revision: io.revisionFor(file), refusal: null, created: !exists, comparison, successor: clone(successor) };
     } catch (error) {
+      /* A CREATE_ONLY publish that loses is not a new kind of fact. The pre-check
+         above answers PROJECT_DESTINATION_EXISTS when it can see the destination;
+         the exclusive publish answers the same thing when nothing could have. One
+         condition, one refusal, learned at whichever moment noticed — so a caller
+         that already knows what to do about a taken destination needs nothing new.
+
+         EEXIST and nothing else. COPYFILE_EXCL also answers EPERM on Windows for a
+         destination that is a directory or a reparse point, and for a SOURCE it
+         could not read at all; calling any of those "occupied" would turn a real
+         failure into a retry that quietly succeeds somewhere else. */
+      if (isCreateOnlyWriteClass(writeClass) && text(error?.code) === "EEXIST") {
+        let revision = "";
+        try { revision = io.revisionFor(file); } catch { /* the winner's bytes; unreadable is not our failure */ }
+        return {
+          ok: false,
+          revision,
+          refusal: refusal(409, "PROJECT_DESTINATION_EXISTS", "The destination project document already exists.", { slug: text(slug) }),
+        };
+      }
       return {
         ok: false,
         revision: storedRevision,
@@ -438,6 +466,7 @@ function createAuthorityWriteSeam(io = {}) {
 
 module.exports = {
   WRITE_CLASSES,
+  isCreateOnlyWriteClass,
   createAuthorityWriteSeam,
   canonComparison,
   rawCurrentTargetDomain,

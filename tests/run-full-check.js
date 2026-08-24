@@ -196,6 +196,8 @@ const nodeSuites = [
   "check:project-switch",
   "check:workspace-migration",
   "check:workspace-migration-negative",
+  "check:untrusted-import",
+  "check:untrusted-import-negative",
   "check:brand-logo",
 ];
 

@@ -554,6 +554,8 @@ async function main() {
     "state-lineage-safety.js",
     "studio-repair.js",
     "ui-state-stability-real-browser.py",
+    "untrusted-import-exclusive-publish-negative-controls.js",
+    "untrusted-import-exclusive-publish.js",
     "v6641-usability.js",
     "v6642-board-density-real-browser.py",
     "v6642-board-density.js",
