@@ -500,7 +500,6 @@ const WILDCARD_FALLBACK = `    const documentRevision =
 /* The block as the reviewed candidate wrote it - clearing only `saveTimer` - and
    the loose timer the migration write-back used to be scheduled with. */
 const REPAIRED_BLOCK = `function blockSaving() {
-  if (PROJECT_POST_COMMIT_DEPTH > 0) return refuseFromProjectDecoration();
   SAVE_BLOCKED = true;
   clearTimeout(saveTimer);
   saveTimer = null;
@@ -508,7 +507,6 @@ const REPAIRED_BLOCK = `function blockSaving() {
   PENDING_SAVE_TRIGGERS.clear();
 }`;
 const BLOCK_WITHOUT_CANCEL = `function blockSaving() {
-  if (PROJECT_POST_COMMIT_DEPTH > 0) return refuseFromProjectDecoration();
   SAVE_BLOCKED = true;
   clearTimeout(saveTimer);
   saveTimer = null;

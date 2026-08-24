@@ -173,6 +173,13 @@ function refreshServer({ a, b, replyForWrite = () => ({ status: 200 }), ledger =
   let missNext = 0;
   let missAlways = false;
   let heldWrites = null;
+  /* A park point INSIDE PREPARE but AFTER the project read has been answered.
+     `/api/project` is awaited first and `/api/scan` rides in the Promise.all
+     behind it, so holding the scan stands a refresh still in flight with its
+     snapshot already in hand — which is the only place a save can land between a
+     refresh reading a record and committing it. */
+  let armedScan = 0;
+  let parkedScan = [];
   /* Parked reads in PARK ORDER, released individually — the only way to drive a
      chosen response order over overlapping refreshes. */
   let parked = [];
@@ -187,6 +194,13 @@ function refreshServer({ a, b, replyForWrite = () => ({ status: 200 }), ledger =
     failNextProjectRead() { failNext += 1; },
     missNextProjectRead() { missNext += 1; },
     removeProject() { missAlways = true; },
+    holdNextScanRead() { armedScan += 1; },
+    get parkedScanReads() { return parkedScan.length; },
+    releaseScanReads() {
+      const waiting = parkedScan;
+      parkedScan = [];
+      for (const resume of waiting) resume();
+    },
     holdWrites() { heldWrites = []; },
     releaseWrites() {
       const waiting = heldWrites || [];
@@ -260,6 +274,11 @@ function refreshServer({ a, b, replyForWrite = () => ({ status: 200 }), ledger =
           etag: revision,
         });
       }
+      if (url === "/api/scan" && armedScan > 0) {
+        armedScan -= 1;
+        await new Promise((resolve) => parkedScan.push(resolve));
+        return null;
+      }
       if (url === "/api/projects/switch" && options.method === "POST") {
         active = JSON.parse(options.body || "{}").slug;
         return response({ ok: true, slug: active });
@@ -315,8 +334,11 @@ const clientState = (context) => ({
   marks: marks(context),
   epoch: read(context, "PROJECT_OPEN_EPOCH"),
   refreshCommitted: read(context, "PROJECT_REFRESH_COMMITTED"),
+  saveGeneration: read(context, "PROJECT_SAVE_GENERATION"),
   conflict: read(context, "PROJECT_CONFLICT"),
   blocked: read(context, "SAVE_BLOCKED"),
+  authorityRefused: read(context, "AUTHORITY_SAVE_REFUSED"),
+  baselineTitle: read(context, "SAVED_PROJECT_BASELINE ? SAVED_PROJECT_BASELINE.meta.title : null"),
   indicator: saveIndicator(context),
 });
 function workspaceState(context) {
@@ -630,25 +652,73 @@ function commitIsAwaitFreeSection() {
     assert(!decoration.includes(forbidden),
       `post-commit decoration must not name ${forbidden}; chrome that needs data takes it from the prepared snapshot`);
   }
-  /* And the latch that makes it structural rather than a promise. */
-  for (const guarded of ["function setSaveState(state, label) {", "function blockSaving() {", "function dirty() {", "function commitPreparedProject("]) {
-    const body = bodyOf(guarded);
-    assert(/PROJECT_POST_COMMIT_DEPTH > 0\) return refuseFromProjectDecoration\(\);/.test(body),
-      `${guarded} must refuse while post-commit decoration is running`);
+  /* THERE IS NO GENERIC POST-COMMIT WRAPPER, AND NO LATCH.
+
+     An earlier version of this file guarded the transaction's tail with a depth
+     counter that every save-truth writer consulted. A counter raised around a
+     synchronous call is not an asynchronous barrier — it falls the instant that
+     call returns — and holding one across awaits would suppress the filmmaker's
+     own later edits. The guarantee it claimed was false, so it is gone, and what
+     replaces it is that the tail has no affordance to hand work to. */
+  for (const absent of ["PROJECT_POST_COMMIT_DEPTH", "PROJECT_POST_COMMIT_REFUSALS", "afterProjectCommit", "scheduleProjectDecoration", "refuseFromProjectDecoration"]) {
+    assert(!appSource.includes(absent),
+      `${absent} is the false post-commit latch and must not exist: a depth counter cannot barrier an await, and a generic wrapper is the affordance that lets a later caller hand save-truth work to the transaction's tail`);
   }
-  /* Every deferred decoration callback carries the latch. */
-  assert(/function scheduleProjectDecoration\(run, ms\) \{\s*return setTimeout\(\(\) => afterProjectCommit\(run\), ms\);/.test(appSource),
-    "a deferred decoration callback must run inside the same latch as the synchronous decoration");
-  assert(!/(?<!schedule)(?<!clear)setTimeout\(/.test(stripComments(bodyOf("function decorateProjectCommit("))),
-    "decoration must schedule through scheduleProjectDecoration(), never a bare setTimeout");
+  assert(/function decorateProjectCommit\(prepared\) \{/.test(appSource),
+    "post-commit work must be ONE DEDICATED function taking the prepared snapshot as data");
+  assert(!/async function decorateProjectCommit/.test(appSource), "which is synchronous");
+
+  /* AND WHAT IT DEFERS IS A FIXED, NAMED SET. Every identifier the decoration
+     calls is listed here; anything new has to be added deliberately, which is
+     what makes "presentational only" a checkable claim rather than an intention. */
+  const DECORATION_MAY_CALL = new Set([
+    /* presentation */
+    "applyTheme", "applyProductionFormat", "watchIntrinsicAspect", "$", "toast",
+    "setAttribute", "route",
+    /* hand-offs to independent product lifecycles, entered through their own
+       shipped entry points and carrying no authority out of this transaction */
+    "refreshAgentStatus", "resumeFalGenerationPolling",
+    /* language and scheduling */
+    "setTimeout", "if", "for", "while", "switch", "catch", "return", "typeof", "some", "includes",
+  ]);
+  /* From past the signature line, so the function's own name is not read as a
+     call it makes — and a recursive call to itself would still be caught. */
+  const decorationBody = stripComments(bodyOf("function decorateProjectCommit("));
+  const called = new Set(
+    [...decorationBody.slice(decorationBody.indexOf("\n")).matchAll(/([A-Za-z_$][\w$]*)\s*\(/g)].map((m) => m[1]),
+  );
+  const unexpected = [...called].filter((name) => !DECORATION_MAY_CALL.has(name));
+  assert.deepStrictEqual(unexpected, [],
+    `post-commit decoration may only call presentation and the two documented lifecycle hand-offs; it also calls: ${unexpected.join(", ")}`);
+
+  /* THE FRESHNESS TOKEN IS A GENERATION, AND IT IS COMPARED FOR EQUALITY. */
+  assert(/if \(ticket\.saveGeneration !== PROJECT_SAVE_GENERATION\)/.test(appSource),
+    "the refresh must require the successful-save generation it began in to be unchanged");
+  const generationWrites = appSource.match(/PROJECT_SAVE_GENERATION\s*(\+=|=[^=])/g) || [];
+  assert.strictEqual(generationWrites.length, 3,
+    `the save generation must be written by its declaration, by an accepted write and by a rebase, and it is written ${generationWrites.length} times`);
+  assert(!/PROJECT_SAVE_GENERATION\s*[<>]/.test(appSource), "and never ordered, only compared for equality");
+  assert(!/ticket\.revision\s*[<>!=]==?\s*PROJECT_REVISION|PROJECT_REVISION\s*[<>]/.test(appSource),
+    "and the opaque revision string must never be compared for order or used as the freshness token, because a refresh COMMIT legitimately moves it");
 
   /* ORDERING IS INTEGERS, NEVER AN OPAQUE REVISION STRING. A revision is a
      server token this window can only compare for equality; treating it as an
      order would make the client's idea of "newer" depend on a format the server
      is free to change. */
   const validate = stripComments(bodyOf("function projectRefreshRefusal(ticket, prepared)"));
-  assert(!/revision/i.test(validate),
-    `the refresh decision must not consult a revision at all, and it names one:\n${validate}`);
+  /* A revision may be NAMED — the reason a discard is reported in says which
+     revision the snapshot was read at, which is the useful half of carrying it —
+     but it must never be part of a DECISION. Not ordered, and not used as the
+     freshness token either: a refresh COMMIT legitimately moves PROJECT_REVISION,
+     so requiring it to be unchanged would discard the second of two overlapping
+     refreshes. */
+  const comparators = "(===|!==|==|!=|<=|>=|<|>)";
+  const revisionTokens = "(PROJECT_REVISION|ticket\\.revision|prepared\\.revision)";
+  assert(!new RegExp(`${revisionTokens}\\s*${comparators}`).test(validate)
+      && !new RegExp(`${comparators}\\s*${revisionTokens}`).test(validate),
+    `the refresh decision must not compare a revision, and it does:\n${validate}`);
+  assert(validate.includes("ticket.saveGeneration !== PROJECT_SAVE_GENERATION"),
+    "freshness must be decided on the successful-save generation, which moves only when this window puts something on disk");
   assert(validate.includes("ticket.sequence <= PROJECT_REFRESH_COMMITTED"),
     "refreshes must be ordered by their own integer sequence against the committed watermark");
 
@@ -681,49 +751,239 @@ function commitIsAwaitFreeSection() {
   console.log("  C/D commit-shape - no await between validate and commit, the commit chain is synchronous, and post-commit decoration cannot name a save-truth mutator");
 }
 
-/* The runtime half of D: a decoration callback that TRIES to write save truth is
-   refused, and counted — and an ordinary open produces no refusals at all, so
-   the latch is not quietly suppressing something the product needs. */
+/* The runtime half of D. THERE IS NO LATCH: an earlier version raised a depth
+   counter around the decoration and had every save-truth writer consult it, which
+   was a false guarantee — a counter raised around a synchronous call falls the
+   instant that call returns, so nothing resuming after an await was ever inside
+   it, and holding it across awaits would have suppressed the filmmaker's own
+   later edits.
+
+   What is claimed instead is structural narrowness, and this is the behaviour
+   that follows from it: after a commit, letting EVERY deferred decoration timer
+   fire changes nothing about save truth — over a dirty view, over a blocked view,
+   and over a conflicted one — and ordinary later user-driven saving still works,
+   so nothing was suppressed to get there. */
 async function decorationCannotWriteSaveTruthSection(options = {}) {
+  /* Past every timer decorateProjectCommit() schedules: 120ms, 200ms, 400ms and
+     500ms, stated here rather than inherited so the section cannot stop covering
+     one of them silently. */
+  const PAST_EVERY_DECORATION_TIMER_MS = 500 + 350;
+
+  /* D1. A DIRTY VIEW. The commit settles on "Saved" truthfully — the record on
+     screen IS the stored one — and then an edit is authored while the decoration's
+     deferred work is still queued. */
+  {
+    const server = soloServer();
+    const context = await openSolo(server, options);
+    assert.strictEqual(saveIndicator(context), "Saved", "precondition: the commit settled truthfully");
+    vm.runInContext(`P.meta.title = "authored while the decoration was still queued"; dirty();`, context);
+    const dirtyTruth = clientState(context);
+    assert.strictEqual(read(context, "projectHasUnsavedEdits()"), true, "precondition: there is save truth to protect");
+    assert.notStrictEqual(dirtyTruth.indicator, "Saved", "precondition: and it says so");
+
+    /* Everything the open deferred fires here — the two toasts, the agent-status
+       re-read and the generation poller — with the debounce suppressed so the
+       section observes decoration rather than the save that would follow it. */
+    vm.runInContext(`clearTimeout(saveTimer); saveTimer = null;`, context);
+    await realDelay(PAST_EVERY_DECORATION_TIMER_MS);
+    await settle();
+    assert.deepStrictEqual(clientState(context), dirtyTruth,
+      "no deferred post-commit work may restate save truth over an authored edit");
+    assert.strictEqual(read(context, "P.meta.title"), "authored while the decoration was still queued", "and the record is untouched");
+    assert.deepStrictEqual(server.writes, [], `and nothing may have been written: ${JSON.stringify(server.writes)}`);
+  }
+
+  /* D2. A BLOCKED VIEW. The refusal arrives after the commit, and the decoration
+     that was queued before it must not clear it. */
+  {
+    const server = soloServer({
+      replyForWrite: () => ({ status: 422, body: { ok: false, code: "PROJECT_VALIDATION_FAILED", error: "Project validation failed.", issues: ["shots[0].dur must be a positive number"] } }),
+    });
+    const context = await openSolo(server, options);
+    await vm.runInContext(`(async () => { P.meta.title = "refused while the decoration was queued"; dirty(); await flushPendingProjectSave(); await SAVE_CHAIN; })()`, context);
+    await settle();
+    assert.strictEqual(read(context, "SAVE_BLOCKED"), true, "precondition: the typed 422 paused saving");
+    const blockedTruth = clientState(context);
+    assert.notStrictEqual(blockedTruth.indicator, "Saved", "precondition: and the indicator says so");
+
+    await realDelay(PAST_EVERY_DECORATION_TIMER_MS);
+    await settle();
+    assert.deepStrictEqual(clientState(context), blockedTruth,
+      "THE BLOCKER: no deferred post-commit work may clear SAVE_BLOCKED or restate the indicator as Saved");
+    assert.strictEqual(read(context, "P.meta.title"), "refused while the decoration was queued",
+      "and the refused edit stays in this tab");
+    assert.strictEqual(server.writes.length, 1, `with nothing further on the wire: ${JSON.stringify(server.writes)}`);
+  }
+
+  /* D3. THE DIRECT CONFLICT AND AUTHORITY SURFACES. A real 409 latches
+     PROJECT_CONFLICT after the commit; the decoration cannot reach the mutator
+     that would clear it, and cannot reach the one that would set it either. */
+  {
+    const server = soloServer();
+    const context = await openSolo(server, options);
+    /* The stored document moves under this window — another tab, or the server's
+       own ingest — so the next write is genuinely stale. */
+    await vm.runInContext(`refreshFalGeneration("job-1", false)`, context);
+    await settle();
+    vm.runInContext(`PROJECT_REVISION = '"rev-project-a-0"'; P.meta.title = "written from a view that has fallen behind"; dirty();`, context);
+    await vm.runInContext(`(async () => { await flushPendingProjectSave(); await SAVE_CHAIN; })()`, context);
+    await settle();
+    assert.strictEqual(read(context, "PROJECT_CONFLICT"), true, "precondition: the 409 latched the conflict surface");
+    const conflicted = clientState(context);
+
+    await realDelay(PAST_EVERY_DECORATION_TIMER_MS);
+    await settle();
+    assert.deepStrictEqual(clientState(context), conflicted,
+      "a latched conflict must survive every deferred post-commit path the open queued");
+  }
+
+  /* D4. ORDINARY LATER USER-DRIVEN WORK STILL FUNCTIONS. Without this the three
+     sections above could pass against a product that had simply stopped saving. */
+  {
+    const server = soloServer();
+    const context = await openSolo(server, options);
+    await realDelay(PAST_EVERY_DECORATION_TIMER_MS);
+    await settle();
+    const ownedRevision = server.revisionOf(A);
+    await vm.runInContext(`(async () => { P.meta.title = "an ordinary edit, made afterwards"; dirty(); await flushPendingProjectSave(); await SAVE_CHAIN; })()`, context);
+    await settle();
+    assert.deepStrictEqual(server.writes.map((row) => [row.title, row.ifMatch, row.status]),
+      [["an ordinary edit, made afterwards", ownedRevision, 200]],
+      `a user-driven save after every decoration timer has fired must still send exactly one accepted write: ${JSON.stringify(server.writes)}`);
+    assert.strictEqual(saveIndicator(context), "Saved", "and settle truthfully");
+    assert.strictEqual(read(context, "projectHasUnsavedEdits()"), false, "with the counters in step");
+    /* And the blocking surfaces still ARM — the removal took away a latch, not
+       the product's ability to report a refusal. */
+    vm.runInContext(`blockSaving(); setSaveState("error", "Not saved — saving is paused");`, context);
+    assert.strictEqual(read(context, "SAVE_BLOCKED"), true, "blockSaving() still works when a real refusal calls it");
+    assert.strictEqual(saveIndicator(context), "Not saved — saving is paused", "and the indicator still writes");
+    vm.runInContext(`resumeProjectSaving();`, context);
+    assert.strictEqual(read(context, "SAVE_BLOCKED"), false, "and the filmmaker can still resume");
+  }
+  console.log("  D decoration-cannot-write-save-truth - every deferred post-commit path leaves dirty, blocked and conflicted truth untouched, and ordinary later saving still works");
+}
+
+/* ===========================================================================
+   THE PREPARED SNAPSHOT MUST STILL BE FRESH.
+
+   A refresh is several awaits long, and a save can be authored, dispatched and
+   ACCEPTED inside it. The window and storage then move on together to a revision
+   the prepared snapshot predates — and the window is CLEAN again, so the
+   unsaved-work rule has nothing left to catch. Committing there rolls the record
+   back to a document the server no longer holds: R1 on the server, R0 on screen,
+   the indicator resting on Saved, and nothing in flight to correct it.
+
+   The token is a monotonic successful-save generation, compared for EQUALITY.
+   It is deliberately NOT the revision string: a refresh COMMIT legitimately moves
+   PROJECT_REVISION, so requiring the revision to be unchanged would discard the
+   second of two overlapping refreshes — the ordering the sequence and the
+   watermark exist to get right. Two tokens, two questions. */
+async function preparedSnapshotFreshnessSection(options = {}) {
   const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
   const context = await openFixture(server, currentSchemaProject("Project A"), options);
-  assert.strictEqual(read(context, "PROJECT_POST_COMMIT_REFUSALS"), 0,
-    "an ordinary open must not need to write save truth from its own decoration — a non-zero count here would mean the latch is suppressing real work");
+  const R0 = server.revisionOf(A);
+  assert.strictEqual(read(context, "PROJECT_REVISION"), R0, "precondition: the window is at R0");
+  const generationAtOpen = read(context, "PROJECT_SAVE_GENERATION");
 
-  vm.runInContext(`P.meta.title = "authored, and unsaved"; dirty();`, context);
-  const before = clientState(context);
-  assert.strictEqual(read(context, "projectHasUnsavedEdits()"), true, "precondition: there is save truth to protect");
-  const refusalsBefore = read(context, "PROJECT_POST_COMMIT_REFUSALS");
-
-  /* Every mutator the brief names, called from inside the post-commit latch. */
-  const attempts = [
-    `setSaveState("saved", "Saved")`,
-    `dirty()`,
-    `blockSaving()`,
-    `resumeProjectSaving()`,
-    `commitPreparedProject({ available: true, slug: "project-b", revision: '"x"', project: JSON.parse(JSON.stringify(P)), scan: SCAN, promptLibrary: PROMPT_LIBRARY, config: CONFIG, agentStatus: AGENT_STATUS, automationRuns: [], falJobs: [], falLedgerLoaded: false }, { intent: "open" })`,
-  ];
-  for (const attempt of attempts) {
-    vm.runInContext(`afterProjectCommit(() => { ${attempt}; });`, context);
-    await settle();
-    assert.deepStrictEqual(clientState(context), before, `post-commit decoration calling ${attempt.split("(")[0]} changed save truth`);
-    assert.strictEqual(read(context, "projectHasUnsavedEdits()"), true, `${attempt.split("(")[0]} must not have erased the unsaved edit`);
-  }
-  assert.strictEqual(read(context, "PROJECT_POST_COMMIT_REFUSALS") - refusalsBefore, attempts.length,
-    "every refused write must be counted, so a suppression is a number rather than a silence");
-  assert.strictEqual(read(context, "P.meta.title"), "authored, and unsaved", "and the record is untouched");
-
-  /* A DEFERRED decoration callback is bound the same way. */
-  vm.runInContext(`scheduleProjectDecoration(() => { setSaveState("saved", "Saved"); }, 5);`, context);
-  await realDelay(60);
+  /* PREPARE is entered and parked AFTER the project read has been answered, so
+     the refresh is holding an R0 snapshot it has not yet committed. */
+  server.holdNextScanRead();
+  vm.runInContext(`__refresh = load({ intent: "refresh" }).then((result) => JSON.stringify(result));`, context);
   await settle();
-  assert.deepStrictEqual(clientState(context), before, "a deferred decoration callback must be refused exactly as the synchronous one is");
+  assert.strictEqual(server.parkedScanReads, 1, "precondition: the refresh is parked inside PREPARE, past the project read");
+  assert.strictEqual(read(context, "PROJECT_REVISION"), R0, "precondition: and nothing has been installed by it");
 
-  /* AND THE LATCH IS NOT A GENERAL MUTE. Outside decoration, the same calls
-     work — otherwise this section would pass against a broken product. */
-  vm.runInContext(`setSaveState("saving", "Saving…");`, context);
-  assert.strictEqual(saveIndicator(context), "Saving…", "outside decoration the indicator still writes normally");
-  console.log("  D decoration-cannot-write-save-truth - every save-truth mutator refuses inside post-commit decoration, deferred or not, and an ordinary open needs none of them");
+  /* An authored edit is written and ACCEPTED while that snapshot is in flight.
+     Client and server advance to R1 together, and the window is clean again. */
+  await vm.runInContext(`(async () => { P.meta.title = "authored and saved while the refresh was in flight"; dirty(); await flushPendingProjectSave(); await SAVE_CHAIN; })()`, context);
+  await settle();
+  const R1 = server.revisionOf(A);
+  assert.notStrictEqual(R1, R0, "precondition: the accepted write must have moved the stored revision");
+  assert.strictEqual(read(context, "PROJECT_REVISION"), R1, "precondition: and the window with it");
+  assert.strictEqual(read(context, "projectHasUnsavedEdits()"), false,
+    "precondition: THE WINDOW IS CLEAN — which is why the unsaved-work rule cannot be what catches this");
+  assert.strictEqual(saveIndicator(context), "Saved", "precondition: and truthfully says so");
+  assert.strictEqual(read(context, "PROJECT_SAVE_GENERATION"), generationAtOpen + 1,
+    "precondition: exactly one accepted write, so exactly one generation");
+  const atR1 = workspaceState(context);
+
+  /* The prepared R0 snapshot is released. */
+  server.releaseScanReads();
+  const outcome = JSON.parse(await read(context, "__refresh"));
+  await realDelay(PAST_BOTH_TIMERS_MS);
+  await settle();
+
+  assert.strictEqual(outcome.committed, false,
+    "THE BLOCKER: a snapshot read before this window's own accepted write must be discarded, not installed");
+  assert(/saved to storage while this refresh was in flight/.test(outcome.reason),
+    `and discarded for the freshness reason, not another: ${JSON.stringify(outcome.reason)}`);
+  assert(outcome.reason.includes(R0), `naming the revision it read: ${JSON.stringify(outcome.reason)}`);
+  assert.deepStrictEqual(workspaceState(context), atR1,
+    "the window must be exactly as the accepted write left it — record, revision, baseline and save truth");
+  assert.strictEqual(read(context, "PROJECT_REVISION"), R1, "still R1, never rolled back to R0");
+  assert.strictEqual(read(context, "P.meta.title"), "authored and saved while the refresh was in flight",
+    "with the authored record still on screen");
+  assert.strictEqual(read(context, "SAVED_PROJECT_BASELINE").meta.title, "authored and saved while the refresh was in flight",
+    "and the saved baseline still describing it");
+  assert.strictEqual(server.revisionOf(A), R1, "the server is unmoved");
+  assert.strictEqual(server.docs[A].meta.title, "authored and saved while the refresh was in flight",
+    "and still holds the authored document");
+
+  /* AND A REFRESH STILL WORKS AFTERWARDS. Without this the section could pass by
+     having broken refreshing outright. */
+  await vm.runInContext(`refreshFalGeneration("job-1", false)`, context);
+  await settle();
+  assert.deepStrictEqual(marks(context), ["completion-1"], "a refresh taken after the discard commits normally");
+  assert.strictEqual(read(context, "PROJECT_REVISION"), server.revisionOf(A), "and leaves the window level with the server");
+  console.log("  R0/R1 prepared-snapshot-freshness - a snapshot read before this window's own accepted write is discarded, the record stays at R1, and refreshing still works");
+}
+
+/* The control that makes the section above a claim about the ACCEPTED WRITE
+   rather than about parking a read: the same park, with no save inside it,
+   commits normally. */
+async function parkedRefreshWithoutSaveSection(options = {}) {
+  const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
+  const context = await openFixture(server, currentSchemaProject("Project A"), options);
+  const generationAtOpen = read(context, "PROJECT_SAVE_GENERATION");
+
+  server.holdNextScanRead();
+  vm.runInContext(`__refresh = load({ intent: "refresh" }).then((result) => JSON.stringify(result));`, context);
+  await settle();
+  assert.strictEqual(server.parkedScanReads, 1, "precondition: parked at exactly the same point");
+  server.releaseScanReads();
+  const outcome = JSON.parse(await read(context, "__refresh"));
+  await settle();
+
+  assert.strictEqual(outcome.committed, true, "with no write inside it, the same parked refresh commits");
+  assert.strictEqual(read(context, "PROJECT_SAVE_GENERATION"), generationAtOpen,
+    "and a refresh commit is not a save, so the generation does not move");
+  assert.strictEqual(read(context, "PROJECT_REFRESH_COMMITTED") > 0, true, "it takes its place in the refresh order instead");
+  console.log("  parked-refresh-without-save - the same park with no accepted write inside it commits, so the freshness rule is about the write");
+}
+
+/* AND THE FRESHNESS TOKEN IS NOT THE REVISION. Two overlapping refreshes both
+   commit even though the first moves PROJECT_REVISION out from under the
+   second's ticket — which is why the token is a save generation and not the
+   revision string. O1 proves the ordering; this proves the token choice. */
+async function refreshCommitDoesNotBreakFreshnessSection(options = {}) {
+  const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
+  const context = await openFixture(server, currentSchemaProject("Project A"), options);
+  const generationAtOpen = read(context, "PROJECT_SAVE_GENERATION");
+  const revisionAtOpen = read(context, "PROJECT_REVISION");
+
+  const r1 = await beginParkedRefresh(server, context, "__r1", "job-1");
+  const r2 = await beginParkedRefresh(server, context, "__r2", "job-2");
+  await releaseAndSettle(server, context, r1, "__r1");
+  assert.notStrictEqual(read(context, "PROJECT_REVISION"), revisionAtOpen,
+    "precondition: R1's commit moved the revision out from under R2's ticket");
+  assert.strictEqual(read(context, "PROJECT_SAVE_GENERATION"), generationAtOpen,
+    "precondition: and did NOT move the save generation, because a refresh commit is not a save");
+
+  await releaseAndSettle(server, context, r2, "__r2");
+  assert.strictEqual(read(context, "PROJECT_REVISION"), '"rev-project-a-2"',
+    "R2 must still commit: a revision moved by a refresh commit is not evidence that R2's snapshot is behind");
+  assert.deepStrictEqual(marks(context), ["completion-1", "completion-2"], "with both completions on screen");
+  console.log("  freshness-token-is-not-the-revision - a refresh commit moves the revision and not the generation, so overlapping refreshes still both commit");
 }
 
 /* ===========================================================================
@@ -1700,10 +1960,23 @@ const REPAIRED_PRE_INGEST_FLUSH = `    await flushPendingProjectSave();
 const NO_PRE_INGEST_FLUSH = `    const response = await fetch(\`/api/generation/fal/jobs/\${encodeURIComponent(jobId)}/refresh\`, { method: "POST" });`;
 const REPAIRED_REFRESH_INTENT = `      await load({ intent: "refresh" });`;
 const REPLACEMENT_INTENT = `      await load();`;
-/* The post-commit latch. */
-const REPAIRED_SAVE_STATE_LATCH = `  if (PROJECT_POST_COMMIT_DEPTH > 0) return refuseFromProjectDecoration();
-  /* Settings → Project has no save button`;
-const SAVE_STATE_WITHOUT_LATCH = `  /* Settings → Project has no save button`;
+/* THE PREPARED SNAPSHOT'S FRESHNESS PRECONDITION. */
+const REPAIRED_FRESHNESS = `  if (ticket.saveGeneration !== PROJECT_SAVE_GENERATION)
+    return "this window saved to storage while this refresh was in flight, so the snapshot it read at "
+      + (ticket.revision || "an unidentified revision") + " is behind the record";
+`;
+/* THE TAIL OF THE TRANSACTION GIVEN SOMETHING ASYNCHRONOUS TO FINISH. This is the
+   shape the removed latch pretended to prevent and could not: a chrome helper that
+   comes back later and restates the save state from data the commit handed it. */
+const REPAIRED_DECORATION_TAIL = `  if (typeof resumeFalGenerationPolling === "function")
+    setTimeout(() => resumeFalGenerationPolling(), 500);`;
+const DECORATION_OWNS_SAVE_TRUTH = `  if (typeof resumeFalGenerationPolling === "function")
+    setTimeout(() => resumeFalGenerationPolling(), 500);
+  setTimeout(() => {
+    SAVED_PROJECT_BASELINE = structuredClone(P);
+    SAVE_BLOCKED = false;
+    setSaveState("saved", "Saved");
+  }, 250);`;
 
 function sourceMutator(editsByFile) {
   const edits = Array.isArray(editsByFile) ? { "app.js": editsByFile } : editsByFile;
@@ -2047,21 +2320,34 @@ async function negativeControlsSection() {
     controls.push({ id: "NC-10", defect: "the dirty-view backstop is gone, so a refresh replaces a record that became dirty while it was in flight", detected });
   }
 
-  /* NC-11 — THE POST-COMMIT LATCH IS REMOVED from the save indicator, so
-     decoration can restate what the save state is. */
+  /* NC-11 — THE TRANSACTION'S TAIL IS GIVEN SOMETHING ASYNCHRONOUS TO FINISH,
+     which is the shape the removed depth counter pretended to prevent and could
+     not: a decoration step that comes back 250ms later and restates the save
+     state from data the commit handed it. It lands on top of a refusal that
+     arrived in the meantime — SAVE_BLOCKED cleared, the refused document adopted
+     as the saved baseline, and the indicator resting on Saved over an edit the
+     server explicitly would not write. */
   {
-    const edits = [[REPAIRED_SAVE_STATE_LATCH, SAVE_STATE_WITHOUT_LATCH]];
+    const edits = [[REPAIRED_DECORATION_TAIL, DECORATION_OWNS_SAVE_TRUTH]];
     const mutate = sourceMutator(edits);
-    const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
-    const context = await openFixture(server, currentSchemaProject("Project A"), { mutateSource: mutate });
-    vm.runInContext(`P.meta.title = "authored, and unsaved"; dirty();`, context);
-    assert.notStrictEqual(saveIndicator(context), "Saved", "NC-11 probe: the view must start out honestly unsaved");
-    vm.runInContext(`afterProjectCommit(() => { setSaveState("saved", "Saved"); });`, context);
+    const server = soloServer({
+      replyForWrite: () => ({ status: 422, body: { ok: false, code: "PROJECT_VALIDATION_FAILED", error: "Project validation failed.", issues: ["shots[0].dur must be a positive number"] } }),
+    });
+    const context = await openSolo(server, { mutateSource: mutate });
+    await vm.runInContext(`(async () => { P.meta.title = "refused while the decoration was queued"; dirty(); await flushPendingProjectSave(); await SAVE_CHAIN; })()`, context);
+    await settle();
     assert(mutate.applied.has("app.js"), "NC-11: app.js was never evaluated, so the defect never ran");
+    assert.strictEqual(read(context, "SAVE_BLOCKED"), true, "NC-11 probe: the typed 422 must have paused saving first");
+    await realDelay(500);
+    await settle();
+    assert.strictEqual(read(context, "SAVE_BLOCKED"), false,
+      "NC-11 probe: the defect must actually clear the save-blocked latch from the transaction's tail");
     assert.strictEqual(saveIndicator(context), "Saved",
-      "NC-11 probe: the defect must actually let post-commit decoration write Saved over unsaved authored work");
+      `NC-11 probe: and rest the indicator on Saved over an edit the server refused — it read ${JSON.stringify(saveIndicator(context))}`);
+    assert.strictEqual(read(context, "SAVED_PROJECT_BASELINE").meta.title, "refused while the decoration was queued",
+      "NC-11 probe: with the refused document adopted as the saved baseline, so the window believes storage holds it");
     const detected = await expectRed("NC-11", () => decorationCannotWriteSaveTruthSection({ mutateSource: sourceMutator(edits) }));
-    controls.push({ id: "NC-11", defect: "post-commit decoration can write the save indicator, so a chrome helper can report Saved over unsaved authored work", detected });
+    controls.push({ id: "NC-11", defect: "the transaction's tail is given asynchronous work that owns save truth, so a chrome helper clears a real refusal and reports Saved over it", detected });
   }
 
   /* NC-12 — THE RESPONSE-OWNER CHECK ALONE IS REMOVED, with the epoch binding
@@ -2089,9 +2375,47 @@ async function negativeControlsSection() {
     controls.push({ id: "NC-12", defect: "a refresh does not check the owner of the response, so a project switched elsewhere lands another project's document in this window", detected });
   }
 
+  /* NC-13 — THE PREPARED SNAPSHOT'S FRESHNESS PRECONDITION IS REMOVED. Every
+     other refusal passes: the epoch has not moved, the slugs agree, no later
+     refresh has committed, and the window is CLEAN — because the write that
+     overtook this snapshot was accepted. The R0 snapshot commits over R1 and the
+     client silently rolls back to a document the server no longer has. */
+  {
+    const edits = [[REPAIRED_FRESHNESS, ""]];
+    const mutate = sourceMutator(edits);
+    const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
+    const context = await openFixture(server, currentSchemaProject("Project A"), { mutateSource: mutate });
+    const R0 = server.revisionOf(A);
+    server.holdNextScanRead();
+    vm.runInContext(`__refresh = load({ intent: "refresh" });`, context);
+    await settle();
+    assert.strictEqual(server.parkedScanReads, 1, "NC-13 probe: the refresh must be parked holding an R0 snapshot");
+    await vm.runInContext(`(async () => { P.meta.title = "authored and saved while the refresh was in flight"; dirty(); await flushPendingProjectSave(); await SAVE_CHAIN; })()`, context);
+    await settle();
+    const R1 = server.revisionOf(A);
+    assert.notStrictEqual(R1, R0, "NC-13 probe: the accepted write must have moved the stored revision");
+    assert.strictEqual(read(context, "PROJECT_REVISION"), R1, "NC-13 probe: and the client with it");
+    server.releaseScanReads();
+    await read(context, "__refresh");
+    await settle();
+    assert(mutate.applied.has("app.js"), "NC-13: app.js was never evaluated, so the defect never ran");
+    assert.strictEqual(read(context, "PROJECT_REVISION"), R0,
+      `NC-13 probe: the defect must actually roll the client back from R1 to R0, and it is at ${read(context, "PROJECT_REVISION")}`);
+    assert.strictEqual(server.revisionOf(A), R1, "NC-13 probe: while the server is still at R1");
+    assert.notStrictEqual(read(context, "P.meta.title"), "authored and saved while the refresh was in flight",
+      "NC-13 probe: with the authored document gone from the screen");
+    assert.strictEqual(server.docs[A].meta.title, "authored and saved while the refresh was in flight",
+      "NC-13 probe: even though storage still holds it");
+    assert.strictEqual(saveIndicator(context), "Saved",
+      "NC-13 probe: and the indicator resting on Saved over a rollback, which is the silent part");
+    assert.strictEqual(read(context, "PROJECT_CONFLICT"), false, "NC-13 probe: with no conflict surface and nothing left in flight to correct it");
+    const detected = await expectRed("NC-13", () => preparedSnapshotFreshnessSection({ mutateSource: sourceMutator(edits) }));
+    controls.push({ id: "NC-13", defect: "a prepared snapshot is not checked for freshness, so one read before this window's own accepted write commits over it and rolls the record back from R1 to R0", detected });
+  }
+
   console.log("Project load transaction negative controls");
   for (const row of controls) console.log(`  ${row.id} - ${row.defect}\n        detected: ${row.detected}`);
-  assert.strictEqual(controls.length, 12, "every declared control must have produced a receipt");
+  assert.strictEqual(controls.length, 13, "every declared control must have produced a receipt");
   return controls.length;
 }
 
@@ -2100,6 +2424,9 @@ const SECTIONS = [
   refreshAnsweredForAnotherProjectSection,
   ledgerParkedDuringPrepareSection,
   decorationCannotWriteSaveTruthSection,
+  preparedSnapshotFreshnessSection,
+  parkedRefreshWithoutSaveSection,
+  refreshCommitDoesNotBreakFreshnessSection,
   deferredTriggerAcrossOpensSection,
   triggerBeforeSwitchSection,
   debounceInsideTransitionSection,
