@@ -1463,6 +1463,43 @@ async function prepareGenerationLedger(prepared) {
 /* ---------------------------------------------------------------------------
    VALIDATE. */
 
+/* THE ONE PLACE A DURABLE PROJECT WRITE THIS WINDOW DID NOT MAKE IS DECLARED.
+
+   `PROJECT_SAVE_GENERATION` means: THE DURABLE PROJECT TRUTH THIS WINDOW OWNS HAS
+   ADVANCED INDEPENDENTLY OF A REFRESH COMMIT. Two of those advances are declared
+   inline because they already run inside this file's own save chain — an accepted
+   write, and a rebase that re-points the saved baseline. The rest are not this
+   window's writes at all: a generation completion asks the SERVER to ingest, and
+   the server commits results into the open project's document without the browser
+   sending a single byte of it. A snapshot prepared before that ingest is behind
+   the record exactly as it would be behind an accepted save, and it has to be
+   recognised the same way — otherwise a refresh that was prepared before the
+   ingest, and whose follow-up refresh then failed, reinstalls the pre-ingest
+   document over the newer one and rests on "Saved".
+
+   ORDER IS THE CALLER'S RESPONSIBILITY, and it is the whole mechanism. Call this
+   only once the mutation has DEFINITELY succeeded, and BEFORE the follow-up
+   refresh starts. The follow-up then captures the new generation and commits
+   normally, while every snapshot prepared before the ingest is stale — including
+   when the follow-up itself fails.
+
+   OWNERSHIP. `owner` is the slug the mutation was issued FOR, captured before the
+   request went out. A completion for a project this window has since left changed
+   nothing about the project it is looking at now and must not perturb its
+   freshness. The open EPOCH is deliberately NOT compared as well: a mutation that
+   lands after the same project has been reopened really did advance that project's
+   durable truth, so counting it is right — and the worst it can do in the reopened
+   window is discard a snapshot that was already fresh, which fails toward reading
+   again rather than toward a silent rollback.
+
+   IT DOES NOTHING ELSE. No indicator, no baseline, no revision, no counters, no
+   record. One integer, on one condition. */
+function noteCurrentProjectDurableAdvance(owner) {
+  const slug = String(owner || "");
+  if (!slug || !ACTIVE_PROJECT_SLUG || slug !== ACTIVE_PROJECT_SLUG) return false;
+  PROJECT_SAVE_GENERATION += 1;
+  return true;
+}
 /* Authored work this window holds and storage does not. `SAVE_REVISION` counts
    local edits and `SAVED_REVISION` counts the ones a response has confirmed, so
    this is true from the moment of the edit until the write that carries it is

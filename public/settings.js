@@ -489,6 +489,10 @@ window.restoreProjectBackup = async (name) => {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Restore failed");
+      /* A confirmed restore replaces the open project's document. The reload
+         below settles it, but a refresh prepared before this point is stale from
+         the moment the restore is accepted and must not commit in the meantime. */
+      noteCurrentProjectDurableAdvance(slug);
       toast("Project restored — reloading");
       setTimeout(() => location.reload(), 350);
     };
@@ -663,6 +667,9 @@ async function persistWorkspaceSettings(scope) {
     if (note) note.textContent = reason;
     return toast(storage ? "Could not apply storage paths" : "Could not save naming rules");
   }
+  /* Moving the projects root rewrites every project document at the new
+     location, this window's included. The route says whether it did. */
+  if (data.migration?.movedRoot) noteCurrentProjectDurableAdvance(ACTIVE_PROJECT_SLUG);
   CONFIG = await fetch("/api/config").then((response) => response.json()).catch(() => ({ ...CONFIG, ...body }));
   updateFilenameTemplatePreview();
   const applied = data.migration?.movedRoot

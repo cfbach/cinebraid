@@ -67,6 +67,7 @@ function falUnresolvedExplanation(job) {
    and never times this out — waiting is not evidence that a request was refused. */
 window.reconcileFalGeneration = async (jobId, outcome) => {
   try {
+    const owner = ACTIVE_PROJECT_SLUG;
     const response = await fetch(`/api/generation/fal/jobs/${jobId}/reconcile`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -75,6 +76,9 @@ window.reconcileFalGeneration = async (jobId, outcome) => {
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || "Could not record what you found.");
     FAL_GENERATION_JOBS = [...(FAL_GENERATION_JOBS || []).filter((job) => job.id !== data.job.id), data.job];
+    /* Recording an outcome writes the entity's coverage-automation status into
+       the project document, on the same condition a cancel does. */
+    noteCurrentProjectDurableAdvance(owner);
     closeModal();
     route();
     toast(outcome === "not-accepted" ? "Recorded as not accepted — you can generate this again" : "Recorded as accepted at the provider");
@@ -734,16 +738,28 @@ window.refreshFalGeneration = async (jobId, manual = false) => {
        holding unsaved authored work. Flushing first means the filmmaker's edit
        is on disk before the ingest, so the re-read comes back carrying both. */
     await flushPendingProjectSave();
+    /* The project this refresh is being made FOR, captured before the request
+       goes out — a switch during the round-trip must not redirect the freshness
+       advance below onto whatever is open when it lands. */
+    const owner = ACTIVE_PROJECT_SLUG;
     const response = await fetch(`/api/generation/fal/jobs/${encodeURIComponent(jobId)}/refresh`, { method: "POST" });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || "Could not refresh generation");
     FAL_GENERATION_JOBS = [...(FAL_GENERATION_JOBS || []).filter((job) => job.id !== jobId), data.job];
     if (data.job.status === "COMPLETED") {
       const blockingIds = (data.job.outputs || []).filter((out) => out.type === "blocking").map((out) => out.assetId);
-      /* A SAME-PROJECT RE-READ, NOT A RECORD REPLACEMENT. The filmmaker has not
-         left the project they are editing; the server merely committed results
-         into it. */
-      await load({ intent: "refresh" });
+      /* THE INGEST DEFINITELY RAN. A COMPLETED job that this route answered has
+         had its results committed into the project document, which advanced the
+         stored revision without this window writing anything. Declared BEFORE the
+         refresh below, so that refresh captures the new generation and commits
+         normally while every snapshot prepared before the ingest is recognised as
+         behind the record — including if the refresh below fails outright. */
+      /* AND THE RE-READ IS GATED ON THAT ANSWER. A SAME-PROJECT RE-READ, NOT A
+         RECORD REPLACEMENT: the filmmaker has not left the project they are
+         editing, and the server merely committed results into it. If they HAVE
+         left it, the project on screen did not change because of this ingest and
+         there is nothing here for a refresh to collect. */
+      if (noteCurrentProjectDurableAdvance(owner)) await load({ intent: "refresh" });
       toast(`${(data.job.outputs || []).length} FAL image${(data.job.outputs || []).length === 1 ? "" : "s"} returned`);
       if (blockingIds.length) setTimeout(() => openBlockingNamingModal(data.job.shotId, blockingIds), 0);
       return data.job;
@@ -758,9 +774,16 @@ window.pollFalGeneration = async (jobId) => {
   if (job && falJobActive(job)) setTimeout(() => pollFalGeneration(jobId), 3500);
 };
 window.cancelFalGeneration = async (jobId) => {
+  const owner = ACTIVE_PROJECT_SLUG;
   const response = await fetch(`/api/generation/fal/jobs/${encodeURIComponent(jobId)}/cancel`, { method: "POST" });
   const data = await response.json();
   if (!response.ok) return toast(data.error || "Could not cancel generation");
+  /* An accepted cancel writes the entity's coverage-automation status into the
+     project document. Only for an entity-reference job with coverage automation
+     configured — which the browser cannot tell from here, so this is declared for
+     every accepted cancel. Over-declaring costs one discarded snapshot and a
+     re-read; under-declaring costs a silent rollback. */
+  noteCurrentProjectDurableAdvance(owner);
   FAL_GENERATION_JOBS = [...(FAL_GENERATION_JOBS || []).filter((job) => job.id !== jobId), data.job];
   route(); toast("Generation cancelled");
 };
