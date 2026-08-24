@@ -191,7 +191,12 @@ async function testFalLedgerOwnership() {
     "GET /api/generation/fal/jobs must state which project its ledger belongs to");
   /* The first read of the ledger is admitted the same way; it had no check at all. */
   const appSource = fs.readFileSync(path.join(ROOT, "public", "app.js"), "utf8");
-  assert(/v670AdmitActivityRows\(data, "jobs"\)/.test(appSource),
+  /* The call carries a third argument since the project load transaction moved
+     this read into its PREPARE phase: the owner it is admitted against is the
+     slug of the SNAPSHOT BEING PREPARED, because during a replacement the live
+     global is still the outgoing project. What is pinned is unchanged - the
+     first ledger read is admitted on the payload's own stated owner. */
+  assert(/v670AdmitActivityRows\(data, "jobs"(,|\))/.test(appSource),
     "load()'s first ledger read must be admitted on the payload's own owner too");
   record("P0-1b", "the generation ledger proves its own owner; same-project polling is unaffected; unprovable rows are refused");
 }

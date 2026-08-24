@@ -197,7 +197,9 @@ const CONTROLS = [
     id: "N2",
     title: "the drawer is not purged when the project changes",
     target: { file: "app.js" },
-    from: `      if (typeof v670ScopeActivityToProject === "function") v670ScopeActivityToProject(ACTIVE_PROJECT_SLUG);`,
+    /* Inside the project load transaction's commit, which is where the slug is
+       installed - so this is where the purge has to be asked for. */
+    from: `  if (typeof v670ScopeActivityToProject === "function") v670ScopeActivityToProject(ACTIVE_PROJECT_SLUG);`,
     to: `      /* control: the purge is removed */`,
     expect: /activity rows survived the switch/,
     async guard(run) {

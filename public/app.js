@@ -30,7 +30,22 @@ let P = null,
      because repeating a request that will be refused for the same reason is a
      retry loop, not a recovery. */
   SAVE_BLOCKED = false,
-  SAVED_PROJECT_BASELINE = null;
+  SAVED_PROJECT_BASELINE = null,
+  /* WHICH EXPLICIT OPEN THIS WINDOW IS. Advanced by a REPLACEMENT — boot, the
+     switcher, a rollback, a restore, an archive, a delete, an import, a
+     deliberate reopen, and the first-run terminal — and by nothing else. An
+     ordinary same-project refresh is the SAME open reading a newer copy of its
+     own record, so it must not move this. See the project load transaction. */
+  PROJECT_OPEN_EPOCH = 0,
+  /* And how the refreshes WITHIN one open are ordered against each other. The
+     sequence is taken when a refresh starts; the watermark moves only when a
+     refresh COMMITS, so a later request merely starting disqualifies nothing. */
+  PROJECT_REFRESH_SEQUENCE = 0,
+  PROJECT_REFRESH_COMMITTED = 0,
+  /* Raised while post-commit decoration runs. Every writer of authoritative save
+     or project state refuses while it is, and counts the refusal. */
+  PROJECT_POST_COMMIT_DEPTH = 0,
+  PROJECT_POST_COMMIT_REFUSALS = 0;
 let FILTER = { status: "", route: "", char: "", action: "unfinished" };
 const storedValue = (key, fallback = null) => localStorage.getItem(key) ?? fallback;
 FILTER.action = storedValue("cinebraid-shot-action-filter", "unfinished") || "unfinished";
@@ -1182,9 +1197,26 @@ function frameLabel(s, id) {
   return f ? `Frame ${f.label}` : "No frame";
 }
 async function showFirstRunWorkspace(message = "") {
+  /* PREPARE — this terminal's only asynchronous input. */
   const projectData = await fetch("/api/projects").then((r) => r.ok ? r.json() : ({ projects: [] })).catch(() => ({ projects: [] }));
+  /* COMMIT — A REPLACEMENT TERMINAL, reachable only from an explicit open. It
+     clears the record, so it is an open in every sense that matters and takes
+     the epoch with it: deferred save work written against the project that was
+     here dies rather than firing into an empty window. A refresh never arrives
+     here — a refresh answered 404 discards instead — because entering first-run
+     is a replacement and a refresh may not perform one. */
+  beginProjectOpen();
   ACTIVE_PROJECT_SLUG = "";
   P = null;
+  PROJECT_REVISION = "";
+  SAVE_REVISION = 0;
+  SAVED_REVISION = 0;
+  SAVED_PROJECT_BASELINE = null;
+  PROJECT_CONFLICT = false;
+  SAVE_BLOCKED = false;
+  AUTHORITY_SAVE_REFUSED = false;
+  clearTimeout(saveTimer);
+  saveTimer = null;
   const projectTitle = $("#project-title"), projectFormat = $("#project-format"), topbarProject = $("#topbar-project");
   if (projectTitle) projectTitle.textContent = "CineBraid";
   if (projectFormat) projectFormat.textContent = "No project open";
@@ -1235,47 +1267,111 @@ function renderProjectFailureScreen(failure, message) {
     : "";
   main.innerHTML = `<section class="empty-state project-failure-state" role="alert"><h2>${heading}</h2><p>${esc(message || (failure && failure.error) || "The project file could not be read.")}</p>${where}<p><small>Your project data has not been deleted or changed. Open another project to keep working, or repair this file and reload.</small></p><div class="modal-actions"><button class="add-btn" onclick="openProjectSwitcher()">Open a different project</button><button class="ghost-btn" onclick="location.reload()">Reload</button></div>${detail}</section>`;
 }
-async function load() {
-  applyTheme();
-  /* Every project open goes through here — boot, the switcher, a rollback, a
-     restore, a delete, an import — so this is the one place that can honestly
-     say "the record on screen is being replaced". Session-scoped derived
-     display state is discarded with it. The continuity map is additionally
-     keyed by project, so a leak is structurally impossible either way; this
-     also covers reopening the SAME project, where the slug never changes but
-     the record does. */
-  if (typeof resetContinuityWorkspaceState === "function") resetContinuityWorkspaceState();
+/* ===========================================================================
+   THE PROJECT LOAD TRANSACTION — PREPARE → VALIDATE → COMMIT.
+
+   TWO DIFFERENT ACTS USED TO SHARE ONE FUNCTION AND ONE SET OF ENDINGS.
+
+     A REPLACEMENT installs another record: boot, the switcher, a rollback, a
+     restore, an archive, a delete, an import, and a deliberate reopen of the
+     same project. Only a replacement may clear the workspace, enter first-run,
+     install another project identity or advance the project-open epoch.
+
+     A REFRESH re-reads the record that is already open, because the SERVER
+     committed something into it that the browser did not make — a finished
+     generation. A refresh has exactly two endings: COMMIT what it read, or
+     DISCARD it. It never installs another identity, never clears the workspace,
+     never enters first-run and never advances the epoch.
+
+   THE REQUESTED INTENT IS FIXED AT ENTRY AND CANNOT CHANGE. It is a parameter,
+   never a derivation. A refresh does not become a replacement because `P` went
+   null, because the slug emptied, because another load happened, because the
+   response named a different project, because the server answered 404, or
+   because any other runtime state moved. Every one of those is a reason to
+   DISCARD. The two intents are two lifecycles below, and the statements that
+   perform a replacement exist in only one of them.
+
+   THE THREE PHASES:
+
+     PREPARE   every asynchronous input, gathered before anything authoritative
+               is touched — the project document, the media scan, the prompt
+               library, the config, agent status, automation runs AND the
+               generation ledger, which used to be read AFTER the record had
+               already been installed. PREPARE mutates nothing a save depends on,
+               so there is no state in which the window has taken delivery of
+               half a project and is waiting on the other half.
+
+     VALIDATE  one synchronous decision, taken against the live state of the
+               window immediately before the commit, WITH NO AWAIT BETWEEN THEM.
+
+     COMMIT    one synchronous, await-free mutation section. Everything it
+               installs is already in hand.
+
+   WHAT ORDERS TWO REFRESHES IS NEITHER THE EPOCH NOR A REVISION STRING.
+   `PROJECT_OPEN_EPOCH` answers "which explicit open is this window", and an
+   ordinary refresh is not a new open — advancing it there would make the refresh
+   behind the one that just committed look like work from a previous open.
+   Refreshes are ordered against each other by `PROJECT_REFRESH_SEQUENCE`, taken
+   when the request STARTS, against `PROJECT_REFRESH_COMMITTED`, which moves only
+   when a refresh actually COMMITS. So a later request merely being started
+   disqualifies nothing: a response that is still the newest thing anyone
+   installed may commit, however many requests were begun behind it. Revision
+   tokens are opaque server strings and are never compared for order.
+   =========================================================================== */
+
+/* The requested intent, frozen here and read nowhere else. Anything that is not
+   the explicit refresh request is a replacement, which is the safe direction: a
+   caller that forgets to say gets the act that persists before it replaces. */
+function requestedProjectIntent(options) {
+  return options && options.intent === "refresh" ? "refresh" : "open";
+}
+async function load(options = {}) {
+  /* Session-scoped derived display state belongs to the record it describes, so
+     it is discarded by the replacement commit — see beginProjectOpen(), which
+     calls resetContinuityWorkspaceState(). It is deliberately NOT discarded by a
+     refresh: a same-project re-read is the same open reading a newer copy of its
+     own record, and purging there would delete the verdicts describing the very
+     work that just completed. */
+  return requestedProjectIntent(options) === "refresh"
+    ? runProjectRefresh()
+    : runProjectReplacement();
+}
+
+/* ---------------------------------------------------------------------------
+   PREPARE. */
+
+/* EVERY ASYNCHRONOUS INPUT, GATHERED BEFORE ANYTHING AUTHORITATIVE MOVES.
+   Nothing here writes `P`, the active slug, the project revision, the save
+   counters, the saved baseline, the save latches, the save indicator, the
+   continuity workspace, the project-open epoch or the refresh watermark. The
+   return value is a candidate snapshot and nothing else. */
+async function prepareProjectSnapshot() {
   const projectResponse = await fetch("/api/project", { cache: "no-store" });
   if (projectResponse.status === 404) {
     const data = await projectResponse.json().catch(() => ({}));
-    await showFirstRunWorkspace(data.error || "No project is available yet.");
-    return;
+    return { available: false, message: data.error || "No project is available yet." };
   }
   if (!projectResponse.ok) {
     const data = await projectResponse.json().catch(() => ({}));
     throw projectLoadError(data);
   }
+  const prepared = {
+    available: true,
+    /* The server's own answer about which project this document is, and the
+       revision of the exact document the view would be built from. Both are read
+       here and INSTALLED NOWHERE until the commit, so there is no window in
+       which the identity has moved and the record has not. */
+    slug: projectResponse.headers?.get?.("x-cinebraid-project-slug") || "",
+    revision:
+      projectResponse.headers?.get?.("x-cinebraid-project-revision") ||
+      projectResponse.headers?.get?.("etag") ||
+      "",
+    falJobs: [],
+    falLedgerLoaded: false,
+    backgroundRecovery: null,
+  };
   const loaded = await Promise.all([
-    (async () => {
-      ACTIVE_PROJECT_SLUG =
-        projectResponse.headers?.get?.("x-cinebraid-project-slug") ||
-        ACTIVE_PROJECT_SLUG ||
-        "fixture";
-      /* Session-scoped activity state follows the project the same way the
-         continuity map above does. It is scoped HERE rather than beside that call
-         because the slug is only known now, and it drops rows only when the slug
-         genuinely changes — load() is also the same-project refresh that runs when
-         a generation completes, and those rows describe that work. */
-      if (typeof v670ScopeActivityToProject === "function") v670ScopeActivityToProject(ACTIVE_PROJECT_SLUG);
-      /* The revision of the exact document this view was built from. Every save
-         echoes it, so a save from a view that has fallen behind is refused
-         rather than silently overwriting the newer project. */
-      PROJECT_REVISION =
-        projectResponse.headers?.get?.("x-cinebraid-project-revision") ||
-        projectResponse.headers?.get?.("etag") ||
-        "";
-      return projectResponse.json();
-    })(),
+    projectResponse.json(),
     fetch("/api/scan").then((r) => r.json()),
     fetch("/api/prompt/profiles")
       .then((r) => r.json())
@@ -1287,63 +1383,218 @@ async function load() {
       .then((r) => r.json())
       .catch(() => ({ enabled: false, runs: [], agents: [], index: {} })),
     fetch("/api/automation/runs")
-      .then((r) => r.ok ? r.json() : { runs: [] })
+      .then((r) => (r.ok ? r.json() : { runs: [] }))
       .catch(() => ({ runs: [] })),
   ]);
-  P = loaded[0];
+  prepared.project = loaded[0];
+  prepared.scan = loaded[1];
+  prepared.promptLibrary = loaded[2] || { profiles: [] };
+  prepared.config = loaded[3] || {};
+  prepared.agentStatus = loaded[4] || { enabled: false, runs: [], agents: [], index: {} };
+  prepared.automationRuns = loaded[5]?.runs || [];
+  await prepareGenerationLedger(prepared);
+  return prepared;
+}
+
+/* THE GENERATION LEDGER IS AN INPUT, NOT AN AFTERWARDS.
+
+   It used to be read AFTER the project had been installed and BEFORE the saved
+   baseline and the indicator were settled, which put a whole network round-trip
+   inside the commit. An edit made in that window could be refused by the server
+   — a typed 422, saving paused, "Not saved" on screen — and then the ledger
+   would land, the rest of the old load() would run, and it would overwrite that
+   refusal with `SAVED_PROJECT_BASELINE = P` and a resting "Saved". The window is
+   gone because the read happens here, where there is nothing yet to overwrite.
+
+   It reads `prepared.config`, so it is a second await rather than a seventh
+   entry in the Promise.all above. It is still entirely inside PREPARE. */
+async function prepareGenerationLedger(prepared) {
+  const falConfig = prepared.config.generation?.fal || {};
+  if (!(falConfig.enabled && falConfig.keySource !== "none")) return prepared;
+  /* What the server collected through its own background recovery rather than
+     through a refresh from here — which is all the server can know, and all it
+     says. The header marks THIS request as the one that takes delivery of the
+     notice, so the activity drawer's 3.5-second refresh of the same route
+     neither consumes it nor repeats it. The URL is unchanged on purpose: it is
+     matched exactly by route stubs and paid-call guards that have nothing to do
+     with this. */
+  await fetch("/api/generation/fal/jobs", { headers: { "x-cinebraid-claim-recovery": "1" } })
+    .then((r) => (r.ok ? r.json() : { jobs: [] }))
+    .then((data) => {
+      /* Loaded means the request was made AND answered. A refused or failed
+         fetch leaves the flag false, so a surface reading provenance says the
+         record is unavailable instead of claiming the project has no generation
+         history. */
+      prepared.falLedgerLoaded = Array.isArray(data.jobs);
+      prepared.backgroundRecovery = data.backgroundRecovery || null;
+      /* Admitted on the payload's own stated owner, exactly as the 3.5-second
+         poll admits it — and against THE OWNER OF THE SNAPSHOT BEING PREPARED
+         rather than whatever is installed at this instant. During a replacement
+         the live slug is still the OUTGOING project, so asking the live global
+         here would refuse the incoming project's own ledger. Refused rows leave
+         the ledger EMPTY and unloaded rather than foreign. */
+      const admitted = typeof v670AdmitActivityRows === "function"
+        ? v670AdmitActivityRows(data, "jobs", prepared.slug)
+        : { rows: data.jobs || [] };
+      if (!admitted.rows) prepared.falLedgerLoaded = false;
+      prepared.falJobs = admitted.rows || [];
+    })
+    .catch(() => {
+      prepared.falJobs = [];
+      prepared.falLedgerLoaded = false;
+    });
+  return prepared;
+}
+
+/* ---------------------------------------------------------------------------
+   VALIDATE. */
+
+/* Authored work this window holds and storage does not. `SAVE_REVISION` counts
+   local edits and `SAVED_REVISION` counts the ones a response has confirmed, so
+   this is true from the moment of the edit until the write that carries it is
+   accepted — debounce, in-flight and refused alike. */
+function projectHasUnsavedEdits() {
+  return !!P && SAVE_REVISION > SAVED_REVISION;
+}
+/* THE SINGLE FINAL AUTHORITY CHECK FOR A REFRESH.
+
+   Synchronous, and the lifecycle below calls it with NO await between this
+   answer and the commit that acts on it. Every failure returns a reason and the
+   prepared snapshot is discarded whole — a refresh never merges, never installs
+   part of what it read, and never escalates into a replacement. */
+function projectRefreshRefusal(ticket, prepared) {
+  if (!prepared || !prepared.available)
+    return "the server no longer has this project to read";
+  if (!P || !ACTIVE_PROJECT_SLUG)
+    return "no project is open for a refresh to refresh";
+  if (ticket.epoch !== PROJECT_OPEN_EPOCH)
+    return "the project was explicitly replaced while this refresh was in flight";
+  if (ticket.slug !== ACTIVE_PROJECT_SLUG)
+    return "the project this refresh was started for is no longer the one open";
+  if (!prepared.slug || prepared.slug !== ACTIVE_PROJECT_SLUG)
+    return "the response describes a different project than the one open";
+  if (ticket.sequence <= PROJECT_REFRESH_COMMITTED)
+    return "a newer refresh of this open has already installed its snapshot";
+  /* DIRTY AUTHORED WORK OUTRANKS REFRESH INSTALLATION, ALWAYS. Both shipped
+     completion paths persist before they ask the server to ingest, so this is a
+     backstop for an edit typed INSIDE the round-trip. It leaves the edit in the
+     tab and unsaved rather than replacing it with the server's copy. */
+  if (projectHasUnsavedEdits())
+    return "this view holds unsaved authored work a refresh would overwrite";
+  /* A refresh commit says "the record on screen is the record on disk" and rests
+     the indicator on Saved. A window that has stopped saving has not reconciled
+     anything, so that sentence would be false and the refusal on screen would be
+     erased by a background re-read nobody asked for. */
+  if (SAVE_BLOCKED || AUTHORITY_SAVE_REFUSED || PROJECT_CONFLICT)
+    return "this view is not saving, and a refresh commit would erase that";
+  return "";
+}
+
+/* ---------------------------------------------------------------------------
+   COMMIT. */
+
+/* A NEW OPEN. The only place the project-open epoch moves, and the only place
+   the session-scoped continuity workspace is discarded — both are replacement
+   acts. Refresh ordering is per-open, so the watermark starts again here; a
+   refresh left over from the previous open is refused by the epoch check long
+   before the watermark is consulted. */
+function beginProjectOpen() {
+  PROJECT_OPEN_EPOCH += 1;
+  PROJECT_REFRESH_COMMITTED = 0;
+  /* The record on screen is being replaced, so derived display state computed
+     against it goes with it. The continuity map is additionally keyed by
+     project, so a leak is structurally impossible either way; this also covers
+     reopening the SAME project, where the slug never changes but the record
+     does. */
+  if (typeof resetContinuityWorkspaceState === "function") resetContinuityWorkspaceState();
+  return { intent: "open", epoch: PROJECT_OPEN_EPOCH, sequence: 0, slug: "" };
+}
+/* A refresh's ticket, taken when the request STARTS. The sequence orders it
+   against the other refreshes of this open; the epoch and slug record which open
+   it was started under, so a response that outlived that open can be recognised
+   however many times the same project has been opened since. */
+function beginProjectRefresh() {
+  PROJECT_REFRESH_SEQUENCE += 1;
+  return {
+    intent: "refresh",
+    epoch: PROJECT_OPEN_EPOCH,
+    sequence: PROJECT_REFRESH_SEQUENCE,
+    slug: ACTIVE_PROJECT_SLUG,
+  };
+}
+/* ONE SYNCHRONOUS, AWAIT-FREE MUTATION SECTION.
+
+   There is no `await` in this function and none in anything it calls. Every
+   value it installs was gathered during PREPARE and validated a statement ago,
+   so the window moves from one whole project to another whole project with no
+   observable state in between. */
+function commitPreparedProject(prepared, ticket) {
+  if (PROJECT_POST_COMMIT_DEPTH > 0) return refuseFromProjectDecoration();
+  /* A DEBOUNCE ARMED AGAINST THE RECORD BEING REPLACED IS CANCELLED, and this is
+     deliberate rather than an omission.
+
+     Dispatching it instead would be worse, not better. queueProjectSave() sends
+     the LIVE `PROJECT_REVISION` whenever the job's slug matches the open project
+     — correct for an ordinary queued save, because the revision only ever moves
+     forward — so a save dispatched here would leave with the OUTGOING document
+     authorised by the INCOMING record's revision, be accepted, and overwrite the
+     record this commit just read. Cancelling leaves the edit in the tab; that is
+     the behaviour every replacement has always had, and every shipped
+     replacement caller — the switcher, archive, delete, rollback — flushes
+     before it opens, so nothing reaches here with a timer armed.
+
+     A REFRESH NEVER REACHES THIS LINE WITH ONE ARMED AT ALL: an armed timer
+     means unsaved authored work, and VALIDATE refuses a dirty view outright. */
   clearTimeout(saveTimer);
   saveTimer = null;
+  P = prepared.project;
+  ACTIVE_PROJECT_SLUG = prepared.slug || ACTIVE_PROJECT_SLUG || "fixture";
+  /* The revision of the exact document this view is being built from. Every save
+     echoes it, so a save from a view that has fallen behind is refused rather
+     than silently overwriting the newer project. */
+  PROJECT_REVISION = prepared.revision;
+  SCAN = prepared.scan;
+  PROMPT_LIBRARY = prepared.promptLibrary;
+  CONFIG = prepared.config;
+  AGENT_STATUS = prepared.agentStatus;
+  AUTOMATION_RUNS = prepared.automationRuns;
+  FAL_GENERATION_JOBS = prepared.falJobs;
+  FAL_GENERATION_LEDGER_LOADED = prepared.falLedgerLoaded;
   SAVE_REVISION = 0;
   SAVED_REVISION = 0;
-  PROJECT_CONFLICT = false; // a fresh load is in step with storage again
+  PROJECT_CONFLICT = false; // a fresh record is in step with storage again
   SAVE_BLOCKED = false; // and it carries the revision every save needs
-  SCAN = loaded[1];
-  PROMPT_LIBRARY = loaded[2] || { profiles: [] };
-  CONFIG = loaded[3] || {};
-  AGENT_STATUS = loaded[4] || {
-    enabled: false,
-    runs: [],
-    agents: [],
-    index: {},
-  };
-  AUTOMATION_RUNS = loaded[5]?.runs || [];
-  FAL_GENERATION_JOBS = [];
-  FAL_GENERATION_LEDGER_LOADED = false;
-  const falConfig = CONFIG.generation?.fal || {};
-  /* What the server collected through its own background recovery rather than through a
-     refresh from here — which is all the server can know, and all it says. The header marks THIS
-     request — the initial ledger load — as the one that takes delivery of the notice,
-     so the activity drawer's 3.5-second refresh of the same route neither consumes it
-     nor repeats it. The URL is unchanged on purpose: it is matched exactly by route
-     stubs and paid-call guards that have nothing to do with this. Announced through the
-     ordinary toast; nothing new. */
-  let backgroundRecovery = null;
-  if (falConfig.enabled && falConfig.keySource !== "none") {
-    /* Loaded means the request was made AND answered. A refused or failed fetch
-       leaves the flag false, so a surface reading provenance says the record is
-       unavailable instead of claiming the project has no generation history. */
-    FAL_GENERATION_JOBS = await fetch("/api/generation/fal/jobs", { headers: { "x-cinebraid-claim-recovery": "1" } })
-      .then((r) => r.ok ? r.json() : { jobs: [] })
-      .then((data) => {
-        FAL_GENERATION_LEDGER_LOADED = Array.isArray(data.jobs);
-        backgroundRecovery = data.backgroundRecovery || null;
-        /* Admitted on the payload's own stated owner, exactly as the 3.5-second
-           poll admits it. This is the FIRST read of the ledger and it had no check
-           at all: the project header and the ledger are two requests, and a switch
-           between them lands another project's jobs in the opening view. Refused
-           rows leave the ledger EMPTY and unloaded rather than foreign — a surface
-           reading provenance then says the record is unavailable, which is true. */
-        const admitted = typeof v670AdmitActivityRows === "function"
-          ? v670AdmitActivityRows(data, "jobs")
-          : { rows: data.jobs || [] };
-        if (!admitted.rows) FAL_GENERATION_LEDGER_LOADED = false;
-        return admitted.rows || [];
-      })
-      .catch(() => []);
-  }
-  applyTheme();
-  applyProductionFormat();
-  watchIntrinsicAspect();
+  AUTHORITY_SAVE_REFUSED = false;
+  /* Session-scoped activity state follows the project the same way the
+     continuity map does. It drops rows only when the slug genuinely changes,
+     which is why a same-project refresh — where the slug is unchanged — keeps
+     the live rows describing the work that just completed. */
+  if (typeof v670ScopeActivityToProject === "function") v670ScopeActivityToProject(ACTIVE_PROJECT_SLUG);
+  applyProjectRecordDefaults();
+  /* Read the stored markers before normalization rewrites them. Loading must
+     never persist on its own: the defaults applied above are display-only and
+     stay in memory until the user makes a real edit. Only a record whose stored
+     schema is genuinely older is written back, so opening an already-current
+     project leaves the file byte-identical. */
+  const schemaWasOlder = storedSchemaIsOlder(P.meta);
+  const migratedV5 = normalizeProjectV5();
+  SAVED_PROJECT_BASELINE = structuredClone(P);
+  /* This refresh becomes the one later arrivals are ordered against. A
+     replacement does not touch the watermark; beginProjectOpen() reset it. */
+  if (ticket.intent === "refresh") PROJECT_REFRESH_COMMITTED = ticket.sequence;
+  /* The project on screen is the project on disk, so the resting indicator is
+     honest again. Nothing after this point may say otherwise. */
+  setSaveState("saved", "Saved");
+  /* THE BROWSER'S ONLY AUTONOMOUS SAVE TRIGGER, scheduled by the commit that
+     decided a write is owed rather than by the decoration that follows it.
+     scheduleSaveTrigger() binds it to this open, so it cannot fire into the
+     next one. */
+  if (schemaWasOlder && migratedV5) scheduleSaveTrigger(() => dirty(), 50);
+  return true;
+}
+/* The display-only defaults every open applies in memory. Extracted so the
+   commit above stays one readable list of authoritative writes. */
+function applyProjectRecordDefaults() {
   P.meta.styleBlocks = P.meta.styleBlocks || [];
   P.meta.iterBudget = P.meta.iterBudget || { A: 12, B: 3 };
   P.meta.world = P.meta.world || { setting: "", include: "", reject: "" };
@@ -1358,51 +1609,138 @@ async function load() {
   P.meta.defaults = P.meta.defaults || { stillModel: "", videoModel: "" };
   P.meta.promptDefaults = P.meta.promptDefaults || {
     imageProfile: "gpt-image-2/t2i",
-    /* Kept in step with the new-project default in server.js: a video default this
-       build cannot dispatch is a dead end handed to every shot in the project. */
+    /* Kept in step with the new-project default in server.js: a video default
+       this build cannot dispatch is a dead end handed to every shot in the
+       project. */
     videoProfile: "minimax-h3/i2v",
   };
   (P.shots || []).forEach((s) => {
     s.promptBuilds = s.promptBuilds || [];
   });
-  /* Read the stored markers before normalization rewrites them. Loading must never persist
-     on its own: defaults applied above are display-only and stay in memory until the user
-     makes a real edit. Only a record whose stored schema is genuinely older is written back,
-     so opening an already-current project leaves the file byte-identical. */
-  const schemaWasOlder = storedSchemaIsOlder(P.meta);
-  const migratedV5 = normalizeProjectV5();
-  SAVED_PROJECT_BASELINE = structuredClone(P);
-  AUTHORITY_SAVE_REFUSED = false;
-  $("#project-title").textContent = P.meta.title;
-  $("#project-title").setAttribute("aria-label", `Open the project switcher — ${P.meta.title} is open`);
-  $("#project-format").textContent =
-    (P.meta.format || "") + (P.meta.version ? " · " + P.meta.version : "");
-  $("#topbar-project").textContent = P.meta.title;
-  /* The project on screen is the project on disk, so the resting indicator is honest again. */
-  setSaveState("saved", "Saved");
+}
+
+/* ---------------------------------------------------------------------------
+   POST-COMMIT. */
+
+/* POST-COMMIT WORK IS DECORATION AND CANNOT OWN SAVE TRUTH.
+
+   Chrome, rendering and the toasts that follow an open are presentational. They
+   run with `PROJECT_POST_COMMIT_DEPTH` raised, and every writer of authoritative
+   save or project state refuses while it is — the commit itself, the save
+   indicator, the dirty counter, the save-blocked latch and its release. A
+   refused write is COUNTED rather than merely ignored: an ordinary open must
+   produce zero refusals, so a renderer that genuinely needed to write would be
+   visible as a number rather than silently dropped.
+
+   Anything a chrome helper needs is gathered in PREPARE and handed to it. */
+function refuseFromProjectDecoration() {
+  PROJECT_POST_COMMIT_REFUSALS += 1;
+  return false;
+}
+function afterProjectCommit(run) {
+  PROJECT_POST_COMMIT_DEPTH += 1;
+  try {
+    return run();
+  } finally {
+    PROJECT_POST_COMMIT_DEPTH -= 1;
+  }
+}
+/* A deferred decoration callback carries the latch with it, so an asynchronous
+   post-commit path is bound by the same rule as the synchronous one. */
+function scheduleProjectDecoration(run, ms) {
+  return setTimeout(() => afterProjectCommit(run), ms);
+}
+function decorateProjectCommit(prepared) {
+  applyTheme();
+  applyProductionFormat();
+  watchIntrinsicAspect();
+  const heading = $("#project-title");
+  if (heading) {
+    heading.textContent = P.meta.title;
+    heading.setAttribute("aria-label", `Open the project switcher — ${P.meta.title} is open`);
+  }
+  const format = $("#project-format");
+  if (format)
+    format.textContent = (P.meta.format || "") + (P.meta.version ? " · " + P.meta.version : "");
+  const topbar = $("#topbar-project");
+  if (topbar) topbar.textContent = P.meta.title;
   if (!location.hash) location.hash = "#/production";
   route();
-  if ((P.meta?.dataIntegrityWarnings || []).length) setTimeout(() => toast(`${P.meta.dataIntegrityWarnings.length} project data-integrity warning${P.meta.dataIntegrityWarnings.length === 1 ? "" : "s"} found. Review Settings or Reports before relying on ambiguous IDs.`), 120);
+  const warnings = (P.meta?.dataIntegrityWarnings || []).length;
+  if (warnings)
+    scheduleProjectDecoration(
+      () => toast(`${warnings} project data-integrity warning${warnings === 1 ? "" : "s"} found. Review Settings or Reports before relying on ambiguous IDs.`),
+      120,
+    );
   /* Work the server collected through background recovery rather than through a
-     browser refresh. The results are already in the workspace; this is what says HOW
-     they got there. The sentence is the server's — it is the only side that knows
-     which collector won — and it deliberately makes no claim about what was open. */
-  if (backgroundRecovery?.message) setTimeout(() => toast(backgroundRecovery.message), 200);
-  /* The migration write-back is the browser's only autonomous save trigger, so
-     it is scheduled where a refusal can reach it. Left as a loose setTimeout it
-     survived the refusal that cancelled everything else and resent the refused
-     body once saving was resumed. */
-  if (schemaWasOlder && migratedV5) scheduleSaveTrigger(() => dirty(), 50);
-  if (
-    (AGENT_STATUS.runs || []).some((x) =>
-      ["QUEUED", "RUNNING"].includes(x.status),
-    )
-  )
-    setTimeout(() => refreshAgentStatus(false), 400);
+     browser refresh. The results are already in the workspace; this is what says
+     HOW they got there. The sentence is the server's — it is the only side that
+     knows which collector won — and it deliberately makes no claim about what
+     was open. */
+  if (prepared.backgroundRecovery?.message)
+    scheduleProjectDecoration(() => toast(prepared.backgroundRecovery.message), 200);
+  if ((AGENT_STATUS.runs || []).some((x) => ["QUEUED", "RUNNING"].includes(x.status)))
+    scheduleProjectDecoration(() => refreshAgentStatus(false), 400);
   if (typeof resumeFalGenerationPolling === "function")
-    setTimeout(() => resumeFalGenerationPolling(), 500);
+    scheduleProjectDecoration(() => resumeFalGenerationPolling(), 500);
+}
+
+/* ---------------------------------------------------------------------------
+   THE TWO LIFECYCLES. */
+
+/* A REPLACEMENT. This is the only lifecycle that contains the statements that
+   replace a project: beginProjectOpen(), which advances the epoch and discards
+   the continuity workspace, and showFirstRunWorkspace(), which clears the record
+   entirely. Neither appears in the refresh lifecycle at all. */
+async function runProjectReplacement() {
+  if (PROJECT_POST_COMMIT_DEPTH > 0)
+    return { intent: "open", committed: false, reason: "post-commit decoration may not begin a project transaction", refused: refuseFromProjectDecoration() };
+  applyTheme();
+  const prepared = await prepareProjectSnapshot();
+  if (!prepared.available) {
+    await showFirstRunWorkspace(prepared.message);
+    return { intent: "open", committed: false, reason: "no project is available to open" };
+  }
+  const ticket = beginProjectOpen();
+  commitPreparedProject(prepared, ticket);
+  afterProjectCommit(() => decorateProjectCommit(prepared));
+  return { intent: "open", committed: true, reason: "" };
+}
+/* A REFRESH. Every ending other than the commit is a discard, and a discard
+   mutates nothing. */
+async function runProjectRefresh() {
+  if (PROJECT_POST_COMMIT_DEPTH > 0)
+    return { intent: "refresh", committed: false, reason: "post-commit decoration may not begin a project transaction", refused: refuseFromProjectDecoration() };
+  /* NOTHING TO REFRESH. There is no installed project for this refresh to
+     re-read, so it returns. It does not open one, it does not clear anything and
+     it does not advance the epoch — the first-run screen belongs to an explicit
+     open. */
+  if (!P || !ACTIVE_PROJECT_SLUG)
+    return { intent: "refresh", committed: false, reason: "no project is open for a refresh to refresh" };
+  const ticket = beginProjectRefresh();
+  let prepared = null;
+  try {
+    prepared = await prepareProjectSnapshot();
+  } catch (error) {
+    /* A refresh that could not read the project changes nothing. The failure
+       screens belong to an explicit open, which is a request to see a project;
+       this was a background re-read of one already on screen. */
+    return { intent: "refresh", committed: false, reason: error?.message || "the project could not be re-read" };
+  }
+  /* VALIDATE, THEN COMMIT. THERE IS NO AWAIT BETWEEN THESE TWO STATEMENTS, and
+     tests/project-load-transaction.js reads this function's own source to prove
+     it. Everything the commit installs is already in hand. */
+  const refusal = projectRefreshRefusal(ticket, prepared);
+  if (refusal) return { intent: "refresh", committed: false, reason: refusal };
+  commitPreparedProject(prepared, ticket);
+  afterProjectCommit(() => decorateProjectCommit(prepared));
+  return { intent: "refresh", committed: true, reason: "" };
 }
 function setSaveState(state, label) {
+  /* THE SAVE INDICATOR IS NOT DECORATION'S TO WRITE. See the project load
+     transaction's post-commit rule: chrome and rendering that follow a commit
+     may not restate what the save state is. */
+  if (PROJECT_POST_COMMIT_DEPTH > 0) return refuseFromProjectDecoration();
   /* Settings → Project has no save button because the project record saves itself.
      Any panel that says so mirrors the real save chain, so the promise on screen and
      the state of the file on disk are the same statement. */
@@ -1450,8 +1788,18 @@ function currentAuthorityTransition() {
    filmmaker's own work rather than protect it. */
 const PENDING_SAVE_TRIGGERS = new Set();
 function scheduleSaveTrigger(run, ms) {
+  /* BOUND TO THE OPEN THAT CREATED IT, HERE RATHER THAN AT THE CALL SITE.
+     Deferred save-only work is written against ONE record. If the project is
+     replaced before the callback fires, that work describes a document that is
+     gone — and dirty() reads the LIVE `P`, slug and revision, so it would
+     produce a save of whatever project is open now, from work created for a
+     project nobody is looking at any more. The binding lives in this scheduler
+     rather than in each caller's callback, because a rule a caller supplies is a
+     rule the next caller can forget. */
+  const epoch = PROJECT_OPEN_EPOCH;
   const timer = setTimeout(() => {
     PENDING_SAVE_TRIGGERS.delete(timer);
+    if (epoch !== PROJECT_OPEN_EPOCH) return;
     run();
   }, ms);
   PENDING_SAVE_TRIGGERS.add(timer);
@@ -1461,6 +1809,7 @@ function scheduleSaveTrigger(run, ms) {
    through here, so a later refusal surface cannot forget the cancellation and
    reintroduce the retry. */
 function blockSaving() {
+  if (PROJECT_POST_COMMIT_DEPTH > 0) return refuseFromProjectDecoration();
   SAVE_BLOCKED = true;
   clearTimeout(saveTimer);
   saveTimer = null;
@@ -1468,6 +1817,7 @@ function blockSaving() {
   PENDING_SAVE_TRIGGERS.clear();
 }
 function dirty() {
+  if (PROJECT_POST_COMMIT_DEPTH > 0) return refuseFromProjectDecoration();
   clearTimeout(saveTimer);
   clearTimeout(SAVE_STATE_TIMER);
   SAVE_REVISION += 1;
@@ -1586,6 +1936,7 @@ function projectSaveRefusal(data) {
   );
 }
 window.resumeProjectSaving = () => {
+  if (PROJECT_POST_COMMIT_DEPTH > 0) return refuseFromProjectDecoration();
   SAVE_BLOCKED = false;
   closeModal();
   setSaveState("dirty", "Unsaved changes");

@@ -728,13 +728,22 @@ window.cancelCandidateCorrectionGeneration = async (jobId) => {
 
 window.refreshFalGeneration = async (jobId, manual = false) => {
   try {
+    /* PERSIST BEFORE THE SERVER INGESTS. The refresh route commits the finished
+       generation INTO the project document and advances the stored revision, and
+       the re-read that follows is a refresh: it declines to replace a record
+       holding unsaved authored work. Flushing first means the filmmaker's edit
+       is on disk before the ingest, so the re-read comes back carrying both. */
+    await flushPendingProjectSave();
     const response = await fetch(`/api/generation/fal/jobs/${encodeURIComponent(jobId)}/refresh`, { method: "POST" });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || "Could not refresh generation");
     FAL_GENERATION_JOBS = [...(FAL_GENERATION_JOBS || []).filter((job) => job.id !== jobId), data.job];
     if (data.job.status === "COMPLETED") {
       const blockingIds = (data.job.outputs || []).filter((out) => out.type === "blocking").map((out) => out.assetId);
-      await load();
+      /* A SAME-PROJECT RE-READ, NOT A RECORD REPLACEMENT. The filmmaker has not
+         left the project they are editing; the server merely committed results
+         into it. */
+      await load({ intent: "refresh" });
       toast(`${(data.job.outputs || []).length} FAL image${(data.job.outputs || []).length === 1 ? "" : "s"} returned`);
       if (blockingIds.length) setTimeout(() => openBlockingNamingModal(data.job.shotId, blockingIds), 0);
       return data.job;

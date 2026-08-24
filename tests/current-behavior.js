@@ -496,6 +496,7 @@ async function main() {
     "project-entry-negative-controls.js",
     "project-entry-real-browser.py",
     "project-entry.js",
+    "project-load-transaction.js",
     "project-path-containment.js",
     "project-save-revision-race-negative-controls.js",
     "project-save-revision-race.js",

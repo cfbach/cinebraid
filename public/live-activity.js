@@ -88,9 +88,16 @@ let V641_ACTIVITY_FOREIGN_PROJECT = "";
        is what keeps every route stub and any older server answering harmlessly
        instead of being silently trusted.
 
+   WHO "THE PROJECT ON SCREEN" IS can be stated by the caller. The drawer's poll
+   means the live global, which is the default. The project load transaction's
+   PREPARE phase means the OWNER OF THE SNAPSHOT IT IS BUILDING - during a
+   replacement the live global is still the OUTGOING project, so asking it there
+   would refuse the incoming project's own ledger. The admission rule itself is
+   unchanged; only who it is asked about is now explicit.
+
    Returns the rows to adopt, or null to leave the current ones alone. */
-function v670AdmitActivityRows(payload, key) {
-  const here = v670ActiveProjectSlug();
+function v670AdmitActivityRows(payload, key, expected = v670ActiveProjectSlug()) {
+  const here = String(expected || "");
   const rows = payload && Array.isArray(payload[key]) ? payload[key] : null;
   const owner = String((payload && payload.projectSlug) || "");
   if (owner && here && owner !== here) return { rows: null, foreign: owner };

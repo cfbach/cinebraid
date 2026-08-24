@@ -1480,12 +1480,16 @@ async function v626FindFalJob(jobId) {
   return job;
 }
 async function v626RefreshFalJob(jobId) {
+  /* Persist before the server ingests, for the same reason refreshFalGeneration()
+     does: the re-read that follows is a refresh and will decline to replace a
+     record that still holds unsaved authored work. */
+  await flushPendingProjectSave();
   const response = await fetch(`/api/generation/fal/jobs/${encodeURIComponent(jobId)}/refresh`, { method: "POST" });
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || "Could not refresh generation");
   const job = data.job;
   FAL_GENERATION_JOBS = [...(FAL_GENERATION_JOBS || []).filter((item) => item.id !== job.id), job];
-  if (job.status === "COMPLETED") await load();
+  if (job.status === "COMPLETED") await load({ intent: "refresh" });
   return job;
 }
 async function v626WaitFalJob(run, step, body) {

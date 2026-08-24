@@ -319,7 +319,22 @@ async function renderCheck(payload, options = {}) {
   assert.strictEqual(evaluate(rendered, `continuityRun("L1-01")`), null, "a run must not survive the project record being reloaded");
   const appSource = fs.readFileSync(path.join(ROOT, "public", "app.js"), "utf8");
   assert(/resetContinuityWorkspaceState/.test(appSource), "load() must discard continuity display state, so every open path is covered and not just the switcher");
-  assert(/async function load\(\)[\s\S]{0,600}resetContinuityWorkspaceState/.test(appSource), "the reset must happen inside load(), the funnel every project open goes through");
+  /* WHERE THE RESET LIVES NOW. load() is two lifecycles, not one act: a
+     REPLACEMENT, which installs another record, and a same-project REFRESH,
+     which re-reads the record already open because the server committed a
+     finished generation into it. Discarding continuity display state is a
+     replacement act - purging it on a refresh would delete the verdicts
+     describing the very work that just completed - so it is pinned to
+     beginProjectOpen(), the one function every replacement goes through,
+     including the first-run terminal. What is pinned is unchanged: no path that
+     replaces the record can skip the reset, and it is not reachable from any
+     path that does not. */
+  assert(/function beginProjectOpen\(\)[\s\S]{0,900}resetContinuityWorkspaceState/.test(appSource), "the reset must happen inside beginProjectOpen(), the funnel every project replacement goes through");
+  assert(/function beginProjectOpen\(\)\s*\{\s*PROJECT_OPEN_EPOCH \+= 1;/.test(appSource), "and it must sit with the epoch advance, so nothing can discard the workspace without declaring a new open");
+  const refreshStart = appSource.indexOf("async function runProjectRefresh()");
+  assert(refreshStart > 0, "the refresh lifecycle must exist to be checked");
+  const refreshLifecycle = appSource.slice(refreshStart, appSource.indexOf("function setSaveState", refreshStart));
+  assert(!/resetContinuityWorkspaceState|beginProjectOpen/.test(refreshLifecycle), "a same-project refresh must not be able to discard the continuity workspace");
 
   /* Writing under one project must never leave residue addressable by another. */
   evaluate(rendered, `setContinuityRun("L1-01", { status: "done", pairId: "x", data: null })`);

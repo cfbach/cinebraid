@@ -157,6 +157,7 @@ const nodeSuites = [
   "check:save-revision-race",
   "check:save-revision-race-negative",
   "check:save-truth",
+  "check:load-transaction",
   "check:generation-job-durability",
   "check:approval-references",
   "check:voice-ownership",

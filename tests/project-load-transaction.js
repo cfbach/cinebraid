@@ -1,0 +1,2149 @@
+/* THE PROJECT LOAD TRANSACTION — PREPARE → VALIDATE → COMMIT.
+ *
+ * WHAT THIS SUITE IS FOR. `load()` used to be one function with one set of
+ * endings, serving two different acts: replacing the record on screen, and
+ * re-reading the record already open because the SERVER committed a finished
+ * generation into it. Nine defects were reproduced against that shape by
+ * independent review. Every one of them is a case of the same thing — an act
+ * changing what it was part-way through, or authoritative state moving while an
+ * `await` was outstanding.
+ *
+ *   F1  a deferred save trigger created under project A dispatches into B
+ *   F2  a debounce dispatching inside the identity swap sends A's document to
+ *       B's URL at B's revision
+ *   F3  a same-project completion refresh silently deletes an authored edit
+ *   F4  a stale refresh from A's open reverses an explicit switch to B
+ *   F5  A -> B -> A revalidates the old A refresh, because the slug matches again
+ *   F6  overlapping refreshes become response-order dependent
+ *   F7  a delayed refresh 404 clears the workspace and loses authored work
+ *   F8  the post-commit generation-ledger await overwrites a real typed 422 /
+ *       SAVE_BLOCKED with a resting "Saved"
+ *   F9  a refresh with no `P` / no slug silently performs a replacement
+ *
+ * THE STRUCTURE THE REPAIR RESTS ON, which every section below is really about:
+ *
+ *   PREPARE   gathers every asynchronous input — the generation ledger included
+ *             — before anything authoritative moves.
+ *   VALIDATE  one synchronous decision against the live window.
+ *   COMMIT    one synchronous, await-free mutation section.
+ *
+ * ORDERING RULES CARRIED FORWARD, unchanged from the reproductions:
+ *   - older response, then newer: the newer may commit afterward
+ *   - newer response, then older: the older cannot roll the newer back
+ *   - a later request merely STARTING does not invalidate an older valid response
+ *   - an explicit replacement invalidates every refresh from the old open
+ *   - dirty authored work always outranks refresh installation
+ *   - no arbitrary client merge: a refresh commits whole or discards whole
+ *
+ * IT CARRIES ITS OWN NEGATIVE CONTROLS. Each removes one half of the mechanism
+ * from live production source IN MEMORY, through the render harness's
+ * `mutateSource` hook — nothing on disk is touched — observes the defect on the
+ * wire or on screen FIRST, and only then requires the guarding section to go red.
+ *
+ * NO PAID PROVIDER CALL IS POSSIBLE HERE. Every route is answered from memory.
+ */
+const assert = require("assert");
+const fs = require("fs");
+const path = require("path");
+const vm = require("vm");
+
+const { render, buildFixture } = require("./render-harness");
+
+const ROOT = path.join(__dirname, "..");
+const A = "project-a";
+const B = "project-b";
+const SOLO = "solo-project";
+
+/* Both product durations, stated here rather than inherited, so a section cannot
+   quietly stop reproducing if either is ever retuned. */
+const MIGRATION_TRIGGER_MS = 50;   // the commit's deferred migration write-back
+const AUTOSAVE_DEBOUNCE_MS = 500;  // dirty()'s debounce
+const PAST_BOTH_TIMERS_MS = MIGRATION_TRIGGER_MS + AUTOSAVE_DEBOUNCE_MS + 350;
+const realDelay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+async function settle(turns = 200) {
+  for (let turn = 0; turn < turns; turn++) await new Promise((resolve) => setImmediate(resolve));
+}
+const read = (context, expression) => vm.runInContext(expression, context);
+
+/* The stored schema older than this build, which is what makes the commit
+   schedule the migration write-back at all. */
+function olderSchemaProject(title) {
+  const project = buildFixture();
+  project.meta.title = title;
+  project.meta.hubVersion = "v5.5.0";
+  return project;
+}
+function currentSchemaProject(title) {
+  const project = buildFixture();
+  project.meta.title = title;
+  project.meta.hubVersion = "v6.0.0";
+  project.meta.schemaVersion = "6.7";
+  return project;
+}
+
+/* ===========================================================================
+   THE SERVERS.
+
+   One two-project server for the identity sections, one that INGESTS — commits
+   new durable project data into the document and advances its revision, exactly
+   as the shipped generation-refresh route does — for everything about refreshes.
+   Both enforce the exact revision on every write, so a section cannot pass by
+   quietly overwriting what it was supposed to preserve. */
+
+const REV = {
+  [A]: '"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"',
+  [B]: '"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"',
+};
+/* A two-project server with a transcript of every project write it received.
+   `hold` parks the loads that follow the project response, which is the only way
+   to stand inside the load's own identity window from out here. */
+function twoProjectServer({ a, b, replyFor = () => ({ status: 200 }) }) {
+  const projects = { [A]: a, [B]: b };
+  const writes = [];
+  let active = A;
+  let held = null;
+  return {
+    writes,
+    get active() { return active; },
+    hold() { held = []; },
+    release() {
+      const parked = held || [];
+      held = null;
+      for (const resume of parked) resume();
+    },
+    async fetch(url, options = {}, response) {
+      const write = /^\/api\/projects\/([^/]+)\/(project|canon-transition)$/.exec(url);
+      if (write && (options.method === "PUT" || options.method === "POST")) {
+        const body = JSON.parse(options.body || "{}");
+        const index = writes.length;
+        const record = {
+          index,
+          slug: write[1],
+          kind: write[2],
+          ifMatch: (options.headers || {})["If-Match"],
+          /* WHICH PROJECT'S DOCUMENT this request actually carried, which is a
+             different claim from which project's URL it was sent to. F2 is the
+             two disagreeing. */
+          title: (write[2] === "canon-transition" ? body.successor : body)?.meta?.title || "",
+        };
+        writes.push(record);
+        const reply = replyFor(index, record) || { status: 200 };
+        record.status = reply.status || 200;
+        if (record.status === 200) return response({ ok: true, revision: REV[write[1]] || REV[A] });
+        return response(reply.body || {}, record.status);
+      }
+      if (url === "/api/project")
+        return response(projects[active], 200, {
+          "x-cinebraid-project-slug": active,
+          "x-cinebraid-project-revision": REV[active],
+          etag: REV[active],
+        });
+      if (url === "/api/projects/switch" && options.method === "POST") {
+        active = JSON.parse(options.body || "{}").slug;
+        return response({ ok: true, slug: active });
+      }
+      if (url === "/api/projects")
+        return response({ active, projects: Object.keys(projects).map((slug) => ({ slug, title: projects[slug].meta.title })) });
+      /* Parked AFTER the project response has been read, so a suite can hold a
+         load open at the exact point the old code had already installed the
+         incoming slug and revision while `P` still belonged to the outgoing
+         project. In the repaired shape nothing has moved there at all, which is
+         precisely what the section proves. */
+      if (url === "/api/scan" && held) {
+        await new Promise((resolve) => held.push(resolve));
+        return null;
+      }
+      return null;
+    },
+  };
+}
+
+/* The refresh server. Two projects, per-project revisions, a generation refresh
+   that INGESTS, and parkable / failable / 404-able project reads. A parked
+   response carries the project and revision that were current when it was ASKED
+   FOR, because that is what a slow read is. */
+function refreshServer({ a, b, replyForWrite = () => ({ status: 200 }), ledger = null }) {
+  const docs = { [A]: structuredClone(a), [B]: structuredClone(b) };
+  const counters = { [A]: 0, [B]: 0 };
+  const revisionOf = (slug) => `"rev-${slug}-${counters[slug]}"`;
+  const writes = [];
+  let active = A;
+  let armed = 0;
+  let failNext = 0;
+  let missNext = 0;
+  let missAlways = false;
+  let heldWrites = null;
+  /* Parked reads in PARK ORDER, released individually — the only way to drive a
+     chosen response order over overlapping refreshes. */
+  let parked = [];
+  const server = {
+    writes,
+    completions: 0,
+    revisionOf,
+    get active() { return active; },
+    get docs() { return docs; },
+    get parkedReads() { return parked.filter((row) => !row.done).length; },
+    holdNextProjectRead() { armed += 1; },
+    failNextProjectRead() { failNext += 1; },
+    missNextProjectRead() { missNext += 1; },
+    removeProject() { missAlways = true; },
+    holdWrites() { heldWrites = []; },
+    releaseWrites() {
+      const waiting = heldWrites || [];
+      heldWrites = null;
+      for (const resume of waiting) resume();
+    },
+    releaseRead(index) {
+      const row = parked[index];
+      assert(row && !row.done, `no parked read at index ${index}`);
+      row.done = true;
+      row.resolve();
+    },
+    releaseProjectReads() {
+      for (const row of parked) if (!row.done) { row.done = true; row.resolve(); }
+    },
+    async fetch(url, options = {}, response) {
+      const write = /^\/api\/projects\/([^/]+)\/project$/.exec(url);
+      if (write && options.method === "PUT") {
+        if (heldWrites) await new Promise((resolve) => heldWrites.push(resolve));
+        const slug = write[1];
+        const ifMatch = (options.headers || {})["If-Match"];
+        const body = JSON.parse(options.body || "{}");
+        const record = {
+          slug,
+          ifMatch,
+          title: body?.meta?.title || "",
+          marks: [...(body?.meta?.completionMarks || [])],
+        };
+        writes.push(record);
+        const reply = replyForWrite(writes.length - 1, record) || { status: 200 };
+        if (reply.status && reply.status !== 200) {
+          record.status = reply.status;
+          return response(reply.body || {}, reply.status);
+        }
+        /* THE EXACT REVISION, ENFORCED. A write from a view that has fallen
+           behind the ingest is refused here rather than accepted. */
+        if (ifMatch !== revisionOf(slug)) {
+          record.status = 409;
+          return response({ ok: false, code: "PROJECT_REVISION_CONFLICT", action: "reload",
+            error: "The project changed before this write, so the entire operation was refused." }, 409);
+        }
+        docs[slug] = body;
+        counters[slug] += 1;
+        record.status = 200;
+        return response({ ok: true, revision: revisionOf(slug) });
+      }
+      if (url === "/api/project") {
+        /* Captured at REQUEST time. */
+        const slug = active;
+        const snapshot = structuredClone(docs[slug]);
+        const revision = revisionOf(slug);
+        if (failNext > 0) {
+          failNext -= 1;
+          return response({ error: "The project could not be read." }, 500);
+        }
+        if (missAlways || missNext > 0) {
+          if (!missAlways) missNext -= 1;
+          if (armed > 0) {
+            armed -= 1;
+            await new Promise((resolve) => parked.push({ resolve, done: false }));
+          }
+          return response({ error: "No project is available yet." }, 404);
+        }
+        if (armed > 0) {
+          armed -= 1;
+          await new Promise((resolve) => parked.push({ resolve, done: false }));
+        }
+        return response(snapshot, 200, {
+          "x-cinebraid-project-slug": slug,
+          "x-cinebraid-project-revision": revision,
+          etag: revision,
+        });
+      }
+      if (url === "/api/projects/switch" && options.method === "POST") {
+        active = JSON.parse(options.body || "{}").slug;
+        return response({ ok: true, slug: active });
+      }
+      if (url === "/api/projects")
+        return response({ active, projects: Object.keys(docs).map((slug) => ({ slug, title: docs[slug].meta.title })) });
+      const refresh = /^\/api\/generation\/fal\/jobs\/([^/]+)\/refresh$/.exec(url);
+      if (refresh && options.method === "POST") {
+        /* THE INGEST. The server takes delivery of the finished generation and
+           commits it into the project document, which advances the stored
+           revision — the whole reason a completion has to re-read at all. */
+        const slug = active;
+        server.completions += 1;
+        const mark = `completion-${server.completions}`;
+        docs[slug] = structuredClone(docs[slug]);
+        docs[slug].meta.completionMarks = [...(docs[slug].meta.completionMarks || []), mark];
+        counters[slug] += 1;
+        return response({ job: { id: refresh[1], status: "COMPLETED", shotId: "L1-01",
+          outputs: [{ type: "candidate", assetId: mark }] } });
+      }
+      if (url === "/api/generation/fal/jobs") return ledger ? ledger(response, active) : response({ jobs: [] });
+      return null;
+    },
+  };
+  return server;
+}
+
+/* ===========================================================================
+   READERS. */
+
+async function openFixture(server, project, options = {}) {
+  const rendered = await render("#/production", project, { ...options, fetch: server.fetch });
+  return rendered.context;
+}
+const saveIndicator = (context) =>
+  read(context, 'document.getElementById("save-state").querySelector("span:last-child").textContent');
+/* Null-safe on `P`, because a control that reproduces the first-run terminal has
+   to be able to describe the workspace it just cleared. */
+const marks = (context) => JSON.parse(read(context, "JSON.stringify(P ? (P.meta.completionMarks || []) : [])"));
+/* The state a discarded refresh must leave completely alone. */
+function projectIdentity(context) {
+  return {
+    slug: read(context, "ACTIVE_PROJECT_SLUG"),
+    revision: read(context, "PROJECT_REVISION"),
+    title: read(context, "P ? P.meta.title : null"),
+    epoch: read(context, "PROJECT_OPEN_EPOCH"),
+    continuity: read(context, "CONTINUITY_RUNS.size"),
+    topbar: read(context, 'document.getElementById("topbar-project").textContent'),
+  };
+}
+const clientState = (context) => ({
+  revision: read(context, "PROJECT_REVISION"),
+  marks: marks(context),
+  epoch: read(context, "PROJECT_OPEN_EPOCH"),
+  refreshCommitted: read(context, "PROJECT_REFRESH_COMMITTED"),
+  conflict: read(context, "PROJECT_CONFLICT"),
+  blocked: read(context, "SAVE_BLOCKED"),
+  indicator: saveIndicator(context),
+});
+function workspaceState(context) {
+  return {
+    ...clientState(context),
+    slug: read(context, "ACTIVE_PROJECT_SLUG"),
+    title: read(context, "P ? P.meta.title : null"),
+    dirty: read(context, "projectHasUnsavedEdits()"),
+    topbar: read(context, 'document.getElementById("topbar-project").textContent'),
+    projectTitle: read(context, 'document.getElementById("project-title").textContent'),
+    firstRun: read(context, 'document.getElementById("main").innerHTML.includes("WELCOME TO CINEBRAID")'),
+  };
+}
+/* Start a completion refresh whose read is parked, and hand back the park-order
+   index the suite releases it by. */
+async function beginParkedRefresh(server, context, handle, jobId, entry = "fal") {
+  const index = server.parkedReads;
+  server.holdNextProjectRead();
+  /* "generic" enters the refresh lifecycle DIRECTLY, with no completion in front
+     of it — the only way to reach a refresh terminal with the view still dirty,
+     because both shipped completion paths persist authored work before they ask
+     the server to ingest. */
+  vm.runInContext(entry === "generic"
+    ? `${handle} = load({ intent: "refresh" });`
+    : entry === "automation"
+      ? `${handle} = v626RefreshFalJob(${JSON.stringify(jobId)});`
+      : `${handle} = refreshFalGeneration(${JSON.stringify(jobId)}, false);`, context);
+  await settle();
+  assert.strictEqual(server.parkedReads, index + 1, `precondition: ${handle}'s read must be parked in flight`);
+  return index;
+}
+async function releaseAndSettle(server, context, index, handle) {
+  server.releaseRead(index);
+  await read(context, handle);
+  await settle();
+}
+
+/* ===========================================================================
+   PART 1 — INTENT IS IMMUTABLE.
+   =========================================================================== */
+
+/* F9. A refresh with no project open returns. It does not open one, it does not
+   clear anything, it does not advance the epoch, and an explicit open afterwards
+   still works normally. This is proof B from the brief. */
+async function refreshWithNoProjectSection(options = {}) {
+  const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
+  const context = await openFixture(server, currentSchemaProject("Project A"), options);
+  const epochWhenOpen = read(context, "PROJECT_OPEN_EPOCH");
+
+  /* The two shapes the defect took: no record, and no identity. Each is set from
+     out here rather than reached through a terminal, so the section is about the
+     refresh lifecycle's own entry condition and nothing else. */
+  for (const [label, setup] of [
+    ["P is null", `P = null;`],
+    ["the slug is empty", `ACTIVE_PROJECT_SLUG = "";`],
+  ]) {
+    vm.runInContext(`__saved = { P, slug: ACTIVE_PROJECT_SLUG }; ${setup}`, context);
+    const before = { epoch: read(context, "PROJECT_OPEN_EPOCH"), sequence: read(context, "PROJECT_REFRESH_SEQUENCE") };
+    const outcome = JSON.parse(await read(context, `load({ intent: "refresh" }).then((result) => JSON.stringify(result))`));
+    await settle();
+
+    assert.strictEqual(outcome.intent, "refresh", `${label}: the operation must still BE a refresh when it ends`);
+    assert.strictEqual(outcome.committed, false, `${label}: and it must have discarded rather than committed`);
+    assert.strictEqual(read(context, "PROJECT_OPEN_EPOCH"), before.epoch,
+      `${label}: a refresh with nothing to refresh must not advance the project-open epoch`);
+    assert.strictEqual(read(context, "PROJECT_REFRESH_SEQUENCE"), before.sequence,
+      `${label}: and must not even take a refresh ticket`);
+    assert.strictEqual(read(context, 'document.getElementById("main").innerHTML.includes("WELCOME TO CINEBRAID")'), false,
+      `${label}: the first-run screen belongs to an explicit open and must never appear here`);
+    vm.runInContext(`P = __saved.P; ACTIVE_PROJECT_SLUG = __saved.slug;`, context);
+  }
+
+  assert.strictEqual(read(context, "PROJECT_OPEN_EPOCH"), epochWhenOpen, "no refresh above installed anything");
+  /* AND THE EXPLICIT OPEN STILL WORKS. Without this the section could pass by
+     having broken loading altogether. */
+  await vm.runInContext(`load()`, context);
+  await settle();
+  assert.strictEqual(read(context, "ACTIVE_PROJECT_SLUG"), A, "an explicit open after the discards still installs the project");
+  assert.strictEqual(read(context, "P.meta.title"), "Project A", "with its record on screen");
+  assert.strictEqual(read(context, "PROJECT_OPEN_EPOCH") > epochWhenOpen, true, "and it advances the epoch, because it is a replacement");
+  console.log("  F9 refresh-with-no-project - a refresh with no record and a refresh with no slug both discard, and the explicit open still works");
+}
+
+/* A refresh whose response describes ANOTHER project discards. It does not adopt
+   the other project, and it does not escalate into a replacement of it. */
+async function refreshAnsweredForAnotherProjectSection(options = {}) {
+  const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
+  const context = await openFixture(server, currentSchemaProject("Project A"), options);
+
+  /* THE ACTIVE PROJECT IS CHANGED ON THE SERVER ONLY — a second tab, or another
+     machine on the LAN — so nothing on the client moves. The refresh that follows
+     is answered for a project this window was never told about. The epoch and the
+     ticket's own slug both still match, so the ONLY thing that can refuse this is
+     the response's own stated owner. */
+  await vm.runInContext(`fetch("/api/projects/switch", { method: "POST", headers: {}, body: JSON.stringify({ slug: ${JSON.stringify(B)} }) })`, context);
+  const before = workspaceState(context);
+  assert.strictEqual(server.active, B, "precondition: the server has moved to another project");
+  assert.strictEqual(before.slug, A, "precondition: and this window still believes it has A open");
+
+  const outcome = JSON.parse(await read(context, `load({ intent: "refresh" }).then((result) => JSON.stringify(result))`));
+  await settle();
+  assert.strictEqual(outcome.committed, false, "the refresh must have discarded");
+  assert.strictEqual(outcome.reason, "the response describes a different project than the one open",
+    "and for the response's own owner, not for staleness or dirtiness");
+  assert.deepStrictEqual(workspaceState(context), before,
+    "a refresh answered for another project must change nothing at all");
+  assert.strictEqual(read(context, "P.meta.title"), "Project A", "the record on screen is still A's");
+  console.log("  intent-immutable-foreign-response - a refresh answered for another project discards; it neither adopts it nor replaces with it");
+}
+
+/* THE STRUCTURAL HALF. The statements that perform a replacement exist only in
+   the replacement lifecycle. This is a source claim on purpose: it is what makes
+   the behavioural sections claims about a shape rather than about a set of
+   branches that all happen to be guarded today. */
+function intentIsStructuralSection() {
+  const appSource = fs.readFileSync(path.join(ROOT, "public", "app.js"), "utf8").replace(/\r\n/g, "\n");
+  const bodyOf = (signature, end = "\n}") => {
+    const start = appSource.indexOf(signature);
+    assert(start > 0, `${signature} must exist`);
+    const stop = appSource.indexOf(end, start);
+    assert(stop > start, `${signature} must terminate`);
+    return appSource.slice(start, stop);
+  };
+  const refresh = bodyOf("async function runProjectRefresh()");
+  const replacement = bodyOf("async function runProjectReplacement()");
+
+  /* The four replacement acts named in the brief. */
+  for (const [act, token] of [
+    ["advance the project-open epoch", "beginProjectOpen"],
+    ["enter first-run", "showFirstRunWorkspace"],
+    ["clear the current workspace", "resetContinuityWorkspaceState"],
+  ]) {
+    assert(!refresh.includes(token), `a refresh must have no way to ${act}: it names ${token}`);
+  }
+  assert(replacement.includes("beginProjectOpen"), "the replacement lifecycle must be the one that advances the epoch");
+  assert(replacement.includes("showFirstRunWorkspace"), "and the one that can enter first-run");
+  /* PROJECT_OPEN_EPOCH is written in exactly one place. */
+  const epochWrites = appSource.match(/PROJECT_OPEN_EPOCH\s*(\+=|=[^=])/g) || [];
+  assert.strictEqual(epochWrites.length, 2,
+    `the project-open epoch must be written by its declaration and by beginProjectOpen() and nowhere else, and it is written ${epochWrites.length} times`);
+  assert(/function beginProjectOpen\(\)\s*\{\s*PROJECT_OPEN_EPOCH \+= 1;/.test(appSource),
+    "and the one write must be beginProjectOpen()'s");
+  /* The intent is read once, at entry, from the caller's own argument. */
+  assert(/function requestedProjectIntent\(options\)\s*\{\s*return options && options\.intent === "refresh" \? "refresh" : "open";\s*\}/.test(appSource),
+    "the intent must be classified from the requested argument alone, with no runtime state in the expression");
+  const load = bodyOf("async function load(options = {})");
+  assert(!/\bP\b|ACTIVE_PROJECT_SLUG|PROJECT_REVISION|SAVE_/.test(load.replace(/\/\*[\s\S]*?\*\//g, "")),
+    "load() itself must only dispatch on the requested intent; it must not read project or save state to decide");
+  console.log("  intent-immutable-structure - the statements that replace a project exist only in the replacement lifecycle, and the epoch has one writer");
+}
+
+/* ===========================================================================
+   PART 2 — PREPARE, AND WHAT IT IS NOT ALLOWED TO TOUCH.
+   =========================================================================== */
+
+/* F8, AND PROOF A FROM THE BRIEF. The generation ledger read is PARKED while a
+   filmmaker edit is refused with a typed 422. Releasing the ledger must not turn
+   "Not saved — saving is paused" back into "Saved". */
+async function ledgerParkedDuringPrepareSection(options = {}) {
+  let releaseLedger = () => {};
+  const parkedLedger = new Promise((resolve) => { releaseLedger = resolve; });
+  let ledgerRequests = 0;
+  const server = refreshServer({
+    a: currentSchemaProject("Project A"),
+    b: currentSchemaProject("Project B"),
+    replyForWrite: () => ({
+      status: 422,
+      body: { ok: false, code: "PROJECT_VALIDATION_FAILED", error: "Project validation failed.",
+        issues: ["shots[0].dur must be a positive number"] },
+    }),
+    ledger: async (response) => {
+      ledgerRequests += 1;
+      if (ledgerRequests === 1) await parkedLedger;
+      return response({ jobs: [], projectSlug: A });
+    },
+  });
+  /* fal enabled and keyed, which is the only condition under which the ledger is
+     read at all — without it this section would park nothing. */
+  const withFal = async (url, requestOptions, response) => {
+    if (url === "/api/config")
+      return response({ generation: { fal: { enabled: true, apiKey: "test-key", keySource: "config" } } });
+    return server.fetch(url, requestOptions, response);
+  };
+
+  /* The open is started and left in flight, parked on the ledger read. */
+  let context = null;
+  const opening = render("#/production", currentSchemaProject("Project A"), { ...options, fetch: withFal })
+    .then((rendered) => { context = rendered.context; });
+  await realDelay(120);
+  assert.strictEqual(ledgerRequests, 1, "precondition: the ledger read must be in flight");
+  /* THE FIRST HALF OF THE CLAIM, not a precondition. The ledger is an INPUT to
+     the open, so an open cannot finish while it is still being read. When the
+     read sat after the commit instead, the open completed with a whole network
+     round-trip still outstanding inside the transaction — and whatever that
+     round-trip did on its way back was applied to a window that had already
+     moved on. */
+  assert.strictEqual(context, null,
+    "the open must not be able to finish while the generation ledger is still being read: a ledger read that lands after the commit is a round-trip inside the transaction");
+
+  /* THE WINDOW THE DEFECT LIVED IN. In the shipped shape the project was already
+     installed here, so an edit made now was real, was refused by the server, and
+     was then overwritten by the rest of load(). In the repaired shape nothing has
+     been installed yet — which is itself the first half of the claim. */
+  releaseLedger();
+  await opening;
+  await settle();
+  assert(context, "the open must complete once the ledger is released");
+  assert.strictEqual(read(context, "P.meta.title"), "Project A", "the project is installed by the commit, after the ledger");
+
+  /* Now the same collision from the other side, which is the half that has to
+     hold FOREVER rather than only during one open: a refused save, followed by a
+     refresh whose ledger read is parked. */
+  await vm.runInContext(`(async () => {
+    P.meta.title = "an edit the server will not accept";
+    dirty();
+    await flushPendingProjectSave();
+    await SAVE_CHAIN;
+  })()`, context);
+  await settle();
+  assert.strictEqual(read(context, "SAVE_BLOCKED"), true, "precondition: the typed 422 must have paused saving");
+  assert.strictEqual(saveIndicator(context), "Not saved — project failed validation",
+    "precondition: and the indicator must say so");
+  const refusedTruth = clientState(context);
+
+  let releaseSecond = () => {};
+  const parkedSecond = new Promise((resolve) => { releaseSecond = resolve; });
+  ledgerRequests = 1;
+  const secondLedger = async (url, requestOptions, response) => {
+    if (url === "/api/config")
+      return response({ generation: { fal: { enabled: true, apiKey: "test-key", keySource: "config" } } });
+    if (url === "/api/generation/fal/jobs") { await parkedSecond; return response({ jobs: [], projectSlug: A }); }
+    return server.fetch(url, requestOptions, response);
+  };
+  context.fetch = (input, requestOptions = {}) => {
+    const url = String(input);
+    const response = (body, status = 200, headers = {}) => ({
+      ok: status >= 200 && status < 300,
+      status,
+      headers: { get: (name) => headers[String(name).toLowerCase()] ?? null },
+      json: async () => structuredClone(body),
+      text: async () => JSON.stringify(body),
+    });
+    return secondLedger(url, requestOptions, response).then((result) => result || response({}));
+  };
+  vm.runInContext(`__refresh = load({ intent: "refresh" });`, context);
+  await settle();
+  assert.deepStrictEqual(clientState(context), refusedTruth,
+    "a refresh parked in PREPARE must not have touched save truth on its way in");
+  releaseSecond();
+  await read(context, "__refresh");
+  await realDelay(PAST_BOTH_TIMERS_MS);
+  await settle();
+
+  assert.strictEqual(read(context, "SAVE_BLOCKED"), true,
+    "THE BLOCKER: releasing a parked ledger read must not clear the save-blocked latch");
+  assert.notStrictEqual(saveIndicator(context), "Saved",
+    "and nothing may report Saved over an edit the server refused and never wrote");
+  assert.strictEqual(read(context, "P.meta.title"), "an edit the server will not accept",
+    "the refused edit is still in this tab, for the filmmaker to decide about");
+  assert.deepStrictEqual(clientState(context), refusedTruth,
+    "in fact the whole of save truth must be exactly as the refusal left it");
+  console.log("  F8 ledger-parked-in-prepare - a parked generation-ledger read cannot turn a typed 422 and a paused save back into Saved");
+}
+
+/* The structural half of the same claim: the ledger read happens in PREPARE, and
+   there is nothing between the commit and the end of the lifecycle that could
+   rewrite save truth. Proofs C and D from the brief. */
+function commitIsAwaitFreeSection() {
+  const appSource = fs.readFileSync(path.join(ROOT, "public", "app.js"), "utf8").replace(/\r\n/g, "\n");
+  const stripComments = (code) => code.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  const bodyOf = (signature) => {
+    const start = appSource.indexOf(signature);
+    assert(start > 0, `${signature} must exist`);
+    const stop = appSource.indexOf("\n}", start);
+    assert(stop > start, `${signature} must terminate`);
+    return appSource.slice(start, stop);
+  };
+
+  /* C — NO AWAIT BETWEEN THE FINAL VALIDATION AND THE COMMIT. */
+  const refresh = stripComments(bodyOf("async function runProjectRefresh()"));
+  const validateAt = refresh.indexOf("const refusal = projectRefreshRefusal(");
+  const commitAt = refresh.indexOf("commitPreparedProject(");
+  assert(validateAt > 0 && commitAt > validateAt, "the refresh must validate and then commit, in that order");
+  const between = refresh.slice(validateAt, commitAt);
+  assert(!/\bawait\b/.test(between),
+    `there must be no await between the final refresh validation and the commit, and there is:\n${between}`);
+  assert(!/\bawait\b/.test(refresh.slice(commitAt)),
+    "and none between the commit and the end of the lifecycle either");
+
+  /* THE COMMIT ITSELF IS AWAIT-FREE, and so is everything it calls. */
+  const commitChain = ["function commitPreparedProject(", "function applyProjectRecordDefaults(", "function beginProjectOpen(", "function beginProjectRefresh(", "function projectRefreshRefusal("];
+  for (const signature of commitChain) {
+    const body = stripComments(bodyOf(signature));
+    assert(!/\bawait\b/.test(body), `${signature} is part of the synchronous commit path and must contain no await`);
+    assert(!/^async /.test(signature.replace("function ", "")), `${signature} must not be async`);
+    assert(!appSource.includes(`async ${signature}`), `${signature} must not be declared async`);
+  }
+  /* And it is reached synchronously: the lifecycle does not await it, because
+     awaiting it would mean it could yield. */
+  assert(/\n  commitPreparedProject\(prepared, ticket\);/.test(refresh),
+    "the refresh must call the commit as a plain synchronous statement");
+
+  /* D — POST-COMMIT WORK CANNOT REACH A SAVE-TRUTH MUTATOR. */
+  const decoration = stripComments(bodyOf("function decorateProjectCommit("));
+  for (const forbidden of [
+    "SAVED_PROJECT_BASELINE", "SAVE_BLOCKED", "SAVE_REVISION", "SAVED_REVISION",
+    "PROJECT_REVISION", "ACTIVE_PROJECT_SLUG", "PROJECT_OPEN_EPOCH", "PROJECT_REFRESH_COMMITTED",
+    "setSaveState", "blockSaving", "dirty(", "commitPreparedProject", "beginProjectOpen",
+    "resetContinuityWorkspaceState", "P =",
+  ]) {
+    assert(!decoration.includes(forbidden),
+      `post-commit decoration must not name ${forbidden}; chrome that needs data takes it from the prepared snapshot`);
+  }
+  /* And the latch that makes it structural rather than a promise. */
+  for (const guarded of ["function setSaveState(state, label) {", "function blockSaving() {", "function dirty() {", "function commitPreparedProject("]) {
+    const body = bodyOf(guarded);
+    assert(/PROJECT_POST_COMMIT_DEPTH > 0\) return refuseFromProjectDecoration\(\);/.test(body),
+      `${guarded} must refuse while post-commit decoration is running`);
+  }
+  /* Every deferred decoration callback carries the latch. */
+  assert(/function scheduleProjectDecoration\(run, ms\) \{\s*return setTimeout\(\(\) => afterProjectCommit\(run\), ms\);/.test(appSource),
+    "a deferred decoration callback must run inside the same latch as the synchronous decoration");
+  assert(!/(?<!schedule)(?<!clear)setTimeout\(/.test(stripComments(bodyOf("function decorateProjectCommit("))),
+    "decoration must schedule through scheduleProjectDecoration(), never a bare setTimeout");
+
+  /* ORDERING IS INTEGERS, NEVER AN OPAQUE REVISION STRING. A revision is a
+     server token this window can only compare for equality; treating it as an
+     order would make the client's idea of "newer" depend on a format the server
+     is free to change. */
+  const validate = stripComments(bodyOf("function projectRefreshRefusal(ticket, prepared)"));
+  assert(!/revision/i.test(validate),
+    `the refresh decision must not consult a revision at all, and it names one:\n${validate}`);
+  assert(validate.includes("ticket.sequence <= PROJECT_REFRESH_COMMITTED"),
+    "refreshes must be ordered by their own integer sequence against the committed watermark");
+
+  /* NO ARBITRARY CLIENT MERGE. A refresh commits the prepared record whole or
+     discards it whole; it never reconciles two divergent documents. */
+  const commit = stripComments(bodyOf("function commitPreparedProject("));
+  assert(/\n  P = prepared\.project;/.test(commit), "the commit must install the prepared record whole");
+  for (const merge of ["Object.assign(P", "...P", "P.meta =", "merge"]) {
+    assert(!commit.includes(merge), `the commit must not reconcile documents; it names ${merge}`);
+  }
+
+  /* PREPARE touches nothing authoritative. */
+  for (const signature of ["async function prepareProjectSnapshot()", "async function prepareGenerationLedger(prepared)"]) {
+    const body = stripComments(bodyOf(signature));
+    for (const forbidden of [
+      "P =", "ACTIVE_PROJECT_SLUG =", "PROJECT_REVISION =", "SAVE_REVISION", "SAVED_REVISION",
+      "SAVED_PROJECT_BASELINE", "SAVE_BLOCKED", "setSaveState", "blockSaving", "dirty(",
+      "PROJECT_OPEN_EPOCH", "PROJECT_REFRESH_COMMITTED", "resetContinuityWorkspaceState",
+      "v670ScopeActivityToProject", "SCAN =", "CONFIG =", "FAL_GENERATION_JOBS =",
+    ]) {
+      assert(!body.includes(forbidden), `${signature} is PREPARE and must not write ${forbidden}`);
+    }
+  }
+  /* THE LEDGER IS AN INPUT. It is read by PREPARE and installed by the commit;
+     it is not read anywhere after a commit. */
+  assert(bodyOf("async function prepareGenerationLedger(prepared)").includes('fetch("/api/generation/fal/jobs"'),
+    "the generation ledger must be read during PREPARE");
+  assert(stripComments(bodyOf("function commitPreparedProject(")).includes("FAL_GENERATION_JOBS = prepared.falJobs;"),
+    "and installed by the commit from the prepared snapshot");
+  console.log("  C/D commit-shape - no await between validate and commit, the commit chain is synchronous, and post-commit decoration cannot name a save-truth mutator");
+}
+
+/* The runtime half of D: a decoration callback that TRIES to write save truth is
+   refused, and counted — and an ordinary open produces no refusals at all, so
+   the latch is not quietly suppressing something the product needs. */
+async function decorationCannotWriteSaveTruthSection(options = {}) {
+  const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
+  const context = await openFixture(server, currentSchemaProject("Project A"), options);
+  assert.strictEqual(read(context, "PROJECT_POST_COMMIT_REFUSALS"), 0,
+    "an ordinary open must not need to write save truth from its own decoration — a non-zero count here would mean the latch is suppressing real work");
+
+  vm.runInContext(`P.meta.title = "authored, and unsaved"; dirty();`, context);
+  const before = clientState(context);
+  assert.strictEqual(read(context, "projectHasUnsavedEdits()"), true, "precondition: there is save truth to protect");
+  const refusalsBefore = read(context, "PROJECT_POST_COMMIT_REFUSALS");
+
+  /* Every mutator the brief names, called from inside the post-commit latch. */
+  const attempts = [
+    `setSaveState("saved", "Saved")`,
+    `dirty()`,
+    `blockSaving()`,
+    `resumeProjectSaving()`,
+    `commitPreparedProject({ available: true, slug: "project-b", revision: '"x"', project: JSON.parse(JSON.stringify(P)), scan: SCAN, promptLibrary: PROMPT_LIBRARY, config: CONFIG, agentStatus: AGENT_STATUS, automationRuns: [], falJobs: [], falLedgerLoaded: false }, { intent: "open" })`,
+  ];
+  for (const attempt of attempts) {
+    vm.runInContext(`afterProjectCommit(() => { ${attempt}; });`, context);
+    await settle();
+    assert.deepStrictEqual(clientState(context), before, `post-commit decoration calling ${attempt.split("(")[0]} changed save truth`);
+    assert.strictEqual(read(context, "projectHasUnsavedEdits()"), true, `${attempt.split("(")[0]} must not have erased the unsaved edit`);
+  }
+  assert.strictEqual(read(context, "PROJECT_POST_COMMIT_REFUSALS") - refusalsBefore, attempts.length,
+    "every refused write must be counted, so a suppression is a number rather than a silence");
+  assert.strictEqual(read(context, "P.meta.title"), "authored, and unsaved", "and the record is untouched");
+
+  /* A DEFERRED decoration callback is bound the same way. */
+  vm.runInContext(`scheduleProjectDecoration(() => { setSaveState("saved", "Saved"); }, 5);`, context);
+  await realDelay(60);
+  await settle();
+  assert.deepStrictEqual(clientState(context), before, "a deferred decoration callback must be refused exactly as the synchronous one is");
+
+  /* AND THE LATCH IS NOT A GENERAL MUTE. Outside decoration, the same calls
+     work — otherwise this section would pass against a broken product. */
+  vm.runInContext(`setSaveState("saving", "Saving…");`, context);
+  assert.strictEqual(saveIndicator(context), "Saving…", "outside decoration the indicator still writes normally");
+  console.log("  D decoration-cannot-write-save-truth - every save-truth mutator refuses inside post-commit decoration, deferred or not, and an ordinary open needs none of them");
+}
+
+/* ===========================================================================
+   PART 3 — DEFERRED SAVE WORK BELONGS TO THE OPEN THAT CREATED IT (F1, F2).
+   =========================================================================== */
+
+/* F1. A's deferred migration write-back must not save B. */
+async function deferredTriggerAcrossOpensSection(options = {}) {
+  const server = twoProjectServer({ a: olderSchemaProject("Project A"), b: currentSchemaProject("Project B") });
+  const context = await openFixture(server, olderSchemaProject("Project A"), options);
+
+  /* The precondition the whole section rests on. If the trigger had already
+     fired, everything below would pass against nothing. */
+  assert.strictEqual(read(context, "ACTIVE_PROJECT_SLUG"), A, "the older-schema project must be the one open");
+  assert.strictEqual(read(context, "PENDING_SAVE_TRIGGERS.size"), 1,
+    "precondition: an older-schema open must have scheduled the migration write-back, and it must not have fired yet");
+  assert.strictEqual(server.writes.length, 0, "precondition: nothing has been written yet");
+
+  await context.switchProject(B);
+  assert.strictEqual(read(context, "ACTIVE_PROJECT_SLUG"), B, "the switch must have completed");
+  assert.strictEqual(read(context, "P.meta.title"), "Project B", "and the record on screen must be B's");
+
+  await realDelay(PAST_BOTH_TIMERS_MS);
+  await settle();
+
+  assert.deepStrictEqual(server.writes.filter((row) => row.slug === B).map((row) => row.title), [],
+    `THE DEFECT: project B received no edit, and A's deferred work saved it anyway: ${JSON.stringify(server.writes)}`);
+  assert.deepStrictEqual(server.writes.map((row) => row.slug), [],
+    `no save of any project may follow a switch nobody edited: ${JSON.stringify(server.writes)}`);
+  assert.strictEqual(read(context, "SAVE_REVISION"), 0, "and B must not even have been marked dirty by it");
+
+  /* AND SAVING IS NOT BROKEN. */
+  await vm.runInContext(`(async () => {
+    P.meta.title = "Project B, edited by the filmmaker";
+    dirty();
+    await flushPendingProjectSave();
+    await SAVE_CHAIN;
+  })()`, context);
+  await settle();
+  assert.deepStrictEqual(server.writes.map((row) => [row.slug, row.title, row.ifMatch]),
+    [[B, "Project B, edited by the filmmaker", REV[B]]],
+    "a genuine edit to B must save exactly once, as B, at B's own revision");
+  console.log("  F1 deferred-trigger-across-opens - A's migration write-back cannot save B, and B's own first edit still saves at B's revision");
+}
+
+/* The trigger fires just BEFORE the switch. Its save belongs to A, and the
+   switch must not turn it into a save of B. */
+async function triggerBeforeSwitchSection(options = {}) {
+  const server = twoProjectServer({ a: olderSchemaProject("Project A"), b: currentSchemaProject("Project B") });
+  const context = await openFixture(server, olderSchemaProject("Project A"), options);
+  assert.strictEqual(read(context, "PENDING_SAVE_TRIGGERS.size"), 1, "precondition: the write-back is queued");
+
+  await realDelay(MIGRATION_TRIGGER_MS + 120);
+  assert.strictEqual(read(context, "PENDING_SAVE_TRIGGERS.size"), 0, "the trigger must have fired by now");
+  assert.strictEqual(read(context, "SAVE_REVISION"), 1, "and it must have marked the migrated document dirty");
+  assert.strictEqual(server.writes.length, 0, "but the debounce must not have dispatched yet");
+
+  await context.switchProject(B);
+  await realDelay(PAST_BOTH_TIMERS_MS);
+  await settle();
+
+  assert.deepStrictEqual(server.writes.map((row) => [row.slug, row.ifMatch]), [[A, REV[A]]],
+    `A's pending migration must be written as A, once, and nothing may be written for B: ${JSON.stringify(server.writes)}`);
+  assert.strictEqual(server.writes[0].title, "Project A", "and the document it carried must be A's");
+  console.log("  trigger-before-switch - a trigger that fired first is flushed as A, and never re-dispatched as B");
+}
+
+/* F2. THE NON-ATOMIC IDENTITY WINDOW.
+ *
+ * The old shape set `ACTIVE_PROJECT_SLUG` and `PROJECT_REVISION` inside load()'s
+ * own Promise.all and assigned `P` only after it resolved. A debounce
+ * dispatching in between sent A's DOCUMENT to B's URL at B's revision.
+ *
+ * The window is gone because PREPARE installs nothing: the identity and the
+ * record move together, in one synchronous commit. So the invariant this pins is
+ * not "nothing is written" — it is the one that actually matters and that the
+ * defect broke: NO REQUEST MAY CARRY ONE PROJECT'S DOCUMENT UNDER ANOTHER
+ * PROJECT'S IDENTITY. A's own edit still reaches A, which is where the
+ * filmmaker's work is supposed to go. */
+async function debounceInsideTransitionSection(options = {}) {
+  const server = twoProjectServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
+  const context = await openFixture(server, currentSchemaProject("Project A"), options);
+  assert.strictEqual(read(context, "PENDING_SAVE_TRIGGERS.size"), 0,
+    "precondition: this section is about the debounce, so the project must queue no trigger");
+
+  vm.runInContext(`P.meta.title = "Project A, mid-edit"; dirty();`, context);
+  assert.strictEqual(read(context, "SAVE_REVISION"), 1, "precondition: A is dirty with a pending debounce");
+
+  /* A project open that does NOT flush first — the shape a rollback and an
+     import take — held open across the debounce. */
+  server.hold();
+  vm.runInContext(`__switching = fetch("/api/projects/switch", { method: "POST", headers: {}, body: JSON.stringify({ slug: ${JSON.stringify(B)} }) }).then(() => load());`, context);
+  await settle();
+  await realDelay(AUTOSAVE_DEBOUNCE_MS + 250);
+  const duringLoad = server.writes.slice();
+  server.release();
+  await read(context, "__switching");
+  await realDelay(PAST_BOTH_TIMERS_MS);
+  await settle();
+
+  assert.deepStrictEqual(duringLoad.map((row) => [row.slug, row.title, row.ifMatch]),
+    [[A, "Project A, mid-edit", REV[A]]],
+    `THE DEFECT: A's edit must go to A's URL carrying A's document at A's revision, and it went: ${JSON.stringify(duringLoad)}`);
+  assert.deepStrictEqual(server.writes.filter((row) => row.slug === B), [],
+    `nothing may be written for B, which received no edit: ${JSON.stringify(server.writes)}`);
+  assert.deepStrictEqual(server.writes.filter((row) => row.slug !== row.title.toLowerCase().replace(/[^a-z]+/g, "-").slice(0, 9)).map((row) => [row.slug, row.title]),
+    [], "and no request may carry one project's document under another project's identity");
+  assert.strictEqual(read(context, "P.meta.title"), "Project B", "B is the record on screen");
+
+  /* Still not suppression: B's own edit saves. */
+  await vm.runInContext(`(async () => { P.meta.title = "Project B, edited"; dirty(); await flushPendingProjectSave(); await SAVE_CHAIN; })()`, context);
+  await settle();
+  assert.deepStrictEqual(server.writes.slice(duringLoad.length).map((row) => [row.slug, row.title, row.ifMatch]),
+    [[B, "Project B, edited", REV[B]]], "B's own edit must save once, as B, at B's revision");
+  console.log("  F2 debounce-inside-transition - a debounce created under A carries A's document to A at A's revision, and B is never written by it");
+}
+
+/* A -> B -> A. Nothing is resurrected, and the reopen's own work is not
+   invalidated with it. */
+async function repeatedSwitchSection(options = {}) {
+  const server = twoProjectServer({ a: olderSchemaProject("Project A"), b: currentSchemaProject("Project B") });
+  const context = await openFixture(server, olderSchemaProject("Project A"), options);
+  assert.strictEqual(read(context, "PENDING_SAVE_TRIGGERS.size"), 1, "precondition: A's first open queued the write-back");
+
+  await context.switchProject(B);
+  await context.switchProject(A);
+  assert.strictEqual(read(context, "ACTIVE_PROJECT_SLUG"), A, "A is open again");
+  /* The harness's stored copy of A is never mutated by a write, so this reopen
+     genuinely migrates again — which is what makes the count below a claim.
+
+     TWO, NOT ONE, AND DELIBERATELY. A trigger from a previous open is made INERT
+     by the epoch it was bound to, not deleted out from under the timer: one
+     mechanism, in the scheduler, rather than a binding plus a sweep that would
+     mask each other. The first open's trigger is still queued here and will fire
+     into nothing; the reopen's own is queued beside it. The single write below is
+     what proves which of them acted. */
+  assert.strictEqual(read(context, "PENDING_SAVE_TRIGGERS.size"), 2,
+    "the reopen must schedule its OWN write-back beside the previous open's inert one; invalidating the new open's work would be the opposite defect");
+
+  await realDelay(PAST_BOTH_TIMERS_MS);
+  await settle();
+  assert.strictEqual(read(context, "PENDING_SAVE_TRIGGERS.size"), 0, "and both timers have fired and drained");
+
+  assert.deepStrictEqual(server.writes.map((row) => [row.slug, row.title, row.ifMatch]),
+    [[A, "Project A", REV[A]]],
+    `exactly one write, from the CURRENT open of A: two would mean the first open's dropped work came back: ${JSON.stringify(server.writes)}`);
+  assert.strictEqual(read(context, "PROJECT_OPEN_EPOCH") >= 3, true, "three opens must have advanced the epoch three times");
+  console.log("  repeated-switch - A -> B -> A resurrects nothing, and the reopen's own write-back still runs");
+}
+
+/* A blocked project, then a switch. The block does not follow the project. */
+async function blockedThenSwitchSection(options = {}) {
+  const server = twoProjectServer({
+    a: currentSchemaProject("Project A"),
+    b: currentSchemaProject("Project B"),
+    replyFor: (index) => (index === 0
+      ? { status: 422, body: { ok: false, code: "PROJECT_VALIDATION_FAILED", error: "Project validation failed.", issues: ["shots[0].dur must be a positive number"] } }
+      : { status: 200 }),
+  });
+  const context = await openFixture(server, currentSchemaProject("Project A"), options);
+
+  await vm.runInContext(`(async () => { P.meta.title = "Project A, refused"; dirty(); await flushPendingProjectSave(); await SAVE_CHAIN; })()`, context);
+  await settle();
+  assert.strictEqual(read(context, "SAVE_BLOCKED"), true, "precondition: A's refusal must have paused saving");
+  assert.strictEqual(server.writes.length, 1, "precondition: exactly the one refused write");
+
+  await context.switchProject(B);
+  assert.strictEqual(read(context, "ACTIVE_PROJECT_SLUG"), B, "the switch must complete even from a blocked project");
+  assert.strictEqual(read(context, "SAVE_BLOCKED"), false, "B must not inherit A's pause");
+  assert.strictEqual(read(context, "AUTHORITY_SAVE_REFUSED"), false, "nor A's authority latch");
+  assert.strictEqual(read(context, "PROJECT_CONFLICT"), false, "nor a conflict it never had");
+  assert.strictEqual(read(context, "PENDING_SAVE_TRIGGERS.size"), 0, "and nothing deferred may cross with it");
+
+  await realDelay(PAST_BOTH_TIMERS_MS);
+  await settle();
+  assert.strictEqual(server.writes.length, 1, `opening a new project must send nothing by itself: ${JSON.stringify(server.writes)}`);
+
+  await vm.runInContext(`(async () => { P.meta.title = "Project B, edited after A was blocked"; dirty(); await flushPendingProjectSave(); await SAVE_CHAIN; })()`, context);
+  await settle();
+  assert.deepStrictEqual(server.writes.slice(1).map((row) => [row.slug, row.title, row.ifMatch]),
+    [[B, "Project B, edited after A was blocked", REV[B]]], "and B's own edit must save normally");
+  console.log("  blocked-then-switch - a paused project does not export its pause, its latches or its deferred work to the next project");
+}
+
+/* The control: a current-schema A to B queues nothing and writes nothing, so the
+   sections above are claims about the deferred work rather than about switching. */
+async function currentSchemaControlSection(options = {}) {
+  const server = twoProjectServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
+  const context = await openFixture(server, currentSchemaProject("Project A"), options);
+  assert.strictEqual(read(context, "PENDING_SAVE_TRIGGERS.size"), 0, "a current-schema open queues no write-back");
+  await context.switchProject(B);
+  await realDelay(PAST_BOTH_TIMERS_MS);
+  await settle();
+  assert.deepStrictEqual(server.writes, [],
+    `a switch between two current-schema projects writes nothing at all: ${JSON.stringify(server.writes)}`);
+  console.log("  current-schema-control - with no deferred work to isolate, a switch writes nothing either way");
+}
+
+/* ===========================================================================
+   PART 4 — THE SAME-PROJECT COMPLETION (F3).
+   =========================================================================== */
+
+async function openSolo(server, options = {}) {
+  const rendered = await render("#/production", currentSchemaProject("Solo project"), { ...options, fetch: server.fetch });
+  return rendered.context;
+}
+/* The refresh server addressed as one project, so a completion section reads
+   like the shipped single-project case it is. */
+function soloServer(overrides = {}) {
+  const server = refreshServer({ a: currentSchemaProject("Solo project"), b: currentSchemaProject("Unused"), ...overrides });
+  return server;
+}
+
+/* F3, THROUGH THE SHIPPED FAL COMPLETION PATH. */
+async function completionWithLocalEditSection(options = {}) {
+  const server = soloServer();
+  const context = await openSolo(server, options);
+  const ownedRevision = server.revisionOf(A);
+
+  vm.runInContext(`P.meta.title = "The filmmaker's unsaved title"; dirty();`, context);
+  assert.strictEqual(read(context, "projectHasUnsavedEdits()"), true, "precondition: the edit is unsaved");
+  assert.strictEqual(read(context, "saveTimer !== null"), true, "precondition: its debounce is pending");
+  assert.strictEqual(server.writes.length, 0, "precondition: nothing has been written yet");
+
+  await context.refreshFalGeneration("job-1", false);
+  await realDelay(PAST_BOTH_TIMERS_MS);
+  await settle();
+
+  assert.strictEqual(server.completions, 1, "the server must actually have ingested, or this section is vacuous");
+  assert.strictEqual(read(context, "P.meta.title"), "The filmmaker's unsaved title",
+    "THE BLOCKER: a same-project completion refresh must not delete the filmmaker's unsaved edit");
+  assert.deepStrictEqual(marks(context), ["completion-1"], "and the provider's completion data must be on screen as well");
+  assert.strictEqual(server.docs[A].meta.title, "The filmmaker's unsaved title", "the stored document must hold the edit");
+  assert.deepStrictEqual(server.docs[A].meta.completionMarks, ["completion-1"],
+    "and the completion — neither side overwrote the other");
+  assert.strictEqual(server.writes.length, 1, "the edit must be durably saved exactly once");
+  assert.strictEqual(server.writes[0].ifMatch, ownedRevision,
+    "at the revision this view owned BEFORE the ingest, which is the only one it could truthfully carry");
+  assert.strictEqual(server.writes[0].status, 200, "and it must have been accepted, not refused as stale");
+  assert.strictEqual(read(context, "projectHasUnsavedEdits()"), false, "the counters must be truthful: nothing is unsaved now");
+  assert.strictEqual(saveIndicator(context), "Saved",
+    "and the indicator may say Saved, because the record on screen IS the stored one");
+  console.log("  F3 completion-with-local-edit - the shipped fal completion saves the edit first, ingests on top of it, and the re-read returns both");
+}
+
+/* The same completion with nothing unsaved writes nothing at all, so the section
+   above is a claim about the edit rather than about completions. */
+async function completionWithoutLocalEditSection(options = {}) {
+  const server = soloServer();
+  const context = await openSolo(server, options);
+  assert.strictEqual(read(context, "projectHasUnsavedEdits()"), false, "precondition: nothing is unsaved");
+
+  await context.refreshFalGeneration("job-1", false);
+  await realDelay(PAST_BOTH_TIMERS_MS);
+  await settle();
+
+  assert.deepStrictEqual(server.writes, [], `a completion with nothing unsaved must write nothing: ${JSON.stringify(server.writes)}`);
+  assert.deepStrictEqual(marks(context), ["completion-1"], "and the completion data must still arrive");
+  assert.strictEqual(saveIndicator(context), "Saved", "and the indicator is truthful");
+  console.log("  completion-without-local-edit - a clean view's completion refresh costs no write and still collects the results");
+}
+
+/* The completion arrives while a local save is still in flight. */
+async function completionDuringSaveSection(options = {}) {
+  const server = soloServer();
+  const context = await openSolo(server, options);
+
+  server.holdWrites();
+  vm.runInContext(`P.meta.title = "in flight when the job finished"; dirty(); __save = flushPendingProjectSave();`, context);
+  await settle();
+  assert.strictEqual(read(context, "projectHasUnsavedEdits()"), true, "precondition: the save is parked in flight");
+
+  vm.runInContext(`__completion = refreshFalGeneration("job-1", false);`, context);
+  await settle();
+  assert.strictEqual(server.completions, 0,
+    "the ingest must not begin while this view still has an unsent write in flight");
+
+  server.releaseWrites();
+  await read(context, "__save");
+  await read(context, "__completion");
+  await realDelay(PAST_BOTH_TIMERS_MS);
+  await settle();
+
+  assert.strictEqual(server.writes.length, 1, `exactly one write: ${JSON.stringify(server.writes)}`);
+  assert.strictEqual(server.writes[0].status, 200, "accepted, not refused as stale");
+  assert.strictEqual(read(context, "P.meta.title"), "in flight when the job finished", "the edit survived");
+  assert.deepStrictEqual(marks(context), ["completion-1"], "and the completion landed on top of it");
+  console.log("  completion-during-save - a completion waits for the in-flight local save instead of racing it");
+}
+
+/* A paused project receives a completion. Nothing is written, nothing is
+   overwritten, and nothing claims to be saved. */
+async function completionWhileBlockedSection(options = {}) {
+  const server = soloServer({
+    replyForWrite: (index) => (index === 0
+      ? { status: 422, body: { ok: false, code: "PROJECT_VALIDATION_FAILED", error: "Project validation failed.", issues: ["shots[0].dur must be a positive number"] } }
+      : { status: 200 }),
+  });
+  const context = await openSolo(server, options);
+
+  await vm.runInContext(`(async () => { P.meta.title = "refused, and still mine"; dirty(); await flushPendingProjectSave(); await SAVE_CHAIN; })()`, context);
+  await settle();
+  assert.strictEqual(read(context, "SAVE_BLOCKED"), true, "precondition: the refusal paused saving");
+  assert.strictEqual(server.writes.length, 1, "precondition: exactly the one refused write");
+
+  await context.refreshFalGeneration("job-1", false);
+  await realDelay(PAST_BOTH_TIMERS_MS);
+  await settle();
+
+  assert.strictEqual(server.completions, 1, "the server still ingested");
+  assert.strictEqual(read(context, "P.meta.title"), "refused, and still mine",
+    "a paused view's refused edit must stay in this tab across a completion refresh");
+  assert.strictEqual(server.writes.length, 1, `and a paused view must send nothing further: ${JSON.stringify(server.writes)}`);
+  assert.strictEqual(read(context, "SAVE_BLOCKED"), true, "the pause is frozen Save Truth behaviour and must survive");
+  assert.notStrictEqual(saveIndicator(context), "Saved",
+    "and nothing may report Saved over an edit that was refused and never written");
+  console.log("  completion-while-blocked - a paused project keeps its refused edit, sends nothing, and never claims to be saved");
+}
+
+/* Repeated completions while the filmmaker keeps editing. */
+async function repeatedCompletionsSection(options = {}) {
+  const server = soloServer();
+  const context = await openSolo(server, options);
+
+  vm.runInContext(`P.meta.title = "first edit"; dirty();`, context);
+  await context.refreshFalGeneration("job-1", false);
+  await settle();
+  vm.runInContext(`P.meta.title = "second edit"; dirty();`, context);
+  await context.refreshFalGeneration("job-2", false);
+  await realDelay(PAST_BOTH_TIMERS_MS);
+  await settle();
+
+  assert.strictEqual(server.completions, 2, "both completions must have ingested");
+  assert.strictEqual(read(context, "P.meta.title"), "second edit", "the latest edit is on screen");
+  assert.deepStrictEqual(marks(context), ["completion-1", "completion-2"], "and both completions with it");
+  assert.strictEqual(server.docs[A].meta.title, "second edit", "storage holds the latest edit");
+  assert.deepStrictEqual(server.docs[A].meta.completionMarks, ["completion-1", "completion-2"], "and both completions");
+  assert.deepStrictEqual(server.writes.map((row) => [row.title, row.status]),
+    [["first edit", 200], ["second edit", 200]],
+    `one accepted write per edit, and no refusals: ${JSON.stringify(server.writes)}`);
+  console.log("  repeated-completions - editing across two completions loses neither edit nor either set of results");
+}
+
+/* The automation half of the same shipped contract. */
+async function automationCompletionSection(options = {}) {
+  const server = soloServer();
+  const context = await openSolo(server, options);
+
+  vm.runInContext(`P.meta.title = "unsaved when the automation step finished"; dirty();`, context);
+  await vm.runInContext(`v626RefreshFalJob("job-1")`, context);
+  await realDelay(PAST_BOTH_TIMERS_MS);
+  await settle();
+
+  assert.strictEqual(server.completions, 1, "the automation path must have ingested");
+  assert.strictEqual(read(context, "P.meta.title"), "unsaved when the automation step finished",
+    "public/automation.js's completion refresh must preserve the edit exactly as fal-generation.js's does");
+  assert.deepStrictEqual(marks(context), ["completion-1"], "and collect the results");
+  assert.deepStrictEqual(server.writes.map((row) => [row.title, row.status]),
+    [["unsaved when the automation step finished", 200]], "with exactly one accepted write");
+  console.log("  automation-completion - v626RefreshFalJob keeps the same contract as refreshFalGeneration");
+}
+
+/* THE DIRTY-VIEW BACKSTOP, reached the only way the shipped path leaves open: an
+   edit typed INSIDE the completion round-trip, after the pre-ingest flush has
+   been and gone. The refresh declines, and what follows is truthful rather than
+   silent. */
+async function dirtyDuringRefreshSection(options = {}) {
+  const server = soloServer();
+  const context = await openSolo(server, options);
+  const ownedRevision = server.revisionOf(A);
+  const epochBefore = read(context, "PROJECT_OPEN_EPOCH");
+
+  const r1 = await beginParkedRefresh(server, context, "__completion", "job-1");
+  /* WITHOUT THIS THE SECTION IS VACUOUS: the edit has to land while the refresh
+     is genuinely in flight. */
+  vm.runInContext(`P.meta.title = "typed while the results were arriving"; dirty();`, context);
+  await releaseAndSettle(server, context, r1, "__completion");
+
+  assert.strictEqual(read(context, "P.meta.title"), "typed while the results were arriving",
+    "a refresh must not replace a record that became dirty while it was in flight");
+  assert.strictEqual(read(context, "projectHasUnsavedEdits()"), true, "the edit is still unsaved, and the view says so");
+  assert.notStrictEqual(saveIndicator(context), "Saved", "and nothing claims otherwise");
+  assert.strictEqual(read(context, "PROJECT_OPEN_EPOCH"), epochBefore,
+    "and a declining refresh advances nothing, so this decline is the dirty-view rule and not the staleness one");
+
+  /* AND WHAT FOLLOWS IS TRUTHFUL. The ingest advanced the stored revision and
+     this view declined to adopt it, so the save waiting behind the edit really IS
+     stale — and is refused as such, through the accepted conflict surface, rather
+     than succeeding by overwriting the results it never took delivery of. */
+  await realDelay(PAST_BOTH_TIMERS_MS);
+  await settle();
+  assert.deepStrictEqual(server.writes.map((row) => [row.ifMatch, row.status]), [[ownedRevision, 409]],
+    `the pending save must go out at the revision this view owns and be refused as stale: ${JSON.stringify(server.writes)}`);
+  assert.strictEqual(read(context, "PROJECT_CONFLICT"), true, "and the refusal must latch the accepted conflict surface");
+  assert.strictEqual(read(context, "P.meta.title"), "typed while the results were arriving",
+    "the edit is still in this tab, for the filmmaker to decide about");
+  assert.strictEqual(server.docs[A].meta.title, "Solo project", "storage never received it");
+  assert.deepStrictEqual(server.docs[A].meta.completionMarks, ["completion-1"],
+    "and, decisively, the completion data was NOT overwritten by the stale write");
+  console.log("  dirty-during-refresh - an edit typed inside the round-trip stops the refresh, and its stale save is refused rather than overwriting the results");
+}
+
+/* REOPEN IS NOT REFRESH. An explicit reopen of the SAME project is a replacement
+   — it advances the epoch and kills work deferred against the previous record —
+   and it is not the lossy path, because every reopen caller persists first. */
+async function explicitReopenSection(options = {}) {
+  const server = soloServer();
+  const context = await openSolo(server, options);
+  const ownedRevision = server.revisionOf(A);
+
+  vm.runInContext(`P.meta.title = "unsaved when the reopen began"; dirty();`, context);
+  assert.strictEqual(read(context, "projectHasUnsavedEdits()"), true, "precondition: the view is dirty");
+  const beforeReopen = read(context, "PROJECT_OPEN_EPOCH");
+
+  await context.switchProject(A);
+  await realDelay(PAST_BOTH_TIMERS_MS);
+  await settle();
+
+  assert.strictEqual(read(context, "PROJECT_OPEN_EPOCH") > beforeReopen, true,
+    "an explicit reopen advances the epoch, so work deferred against the previous record dies with it");
+  assert.deepStrictEqual(server.writes.map((row) => [row.title, row.ifMatch, row.status]),
+    [["unsaved when the reopen began", ownedRevision, 200]],
+    `the reopen persists the edit before replacing the record: ${JSON.stringify(server.writes)}`);
+  assert.strictEqual(read(context, "P.meta.title"), "unsaved when the reopen began", "which is what comes back");
+  assert.strictEqual(read(context, "projectHasUnsavedEdits()"), false, "with the counters truthful afterwards");
+  console.log("  explicit-reopen - a deliberate reopen replaces the record and advances the epoch, having persisted first");
+}
+
+/* ===========================================================================
+   PART 5 — A REFRESH THAT OUTLIVED ITS OPEN (F4, F5).
+   =========================================================================== */
+
+/* F4. An explicit switch outranks an older refresh. */
+async function staleRefreshAfterSwitchSection(options = {}) {
+  const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
+  const context = await openFixture(server, currentSchemaProject("Project A"), options);
+  assert.strictEqual(read(context, "ACTIVE_PROJECT_SLUG"), A, "precondition: project A is current");
+
+  const r1 = await beginParkedRefresh(server, context, "__refresh", "job-1");
+  assert.strictEqual(server.completions, 1, "precondition: A's completion ingested");
+
+  await context.switchProject(B);
+  /* Something project-local, established under B, that a stale refresh would
+     discard on its way past. */
+  vm.runInContext(`setContinuityRun("L1-01", { status: "done", pairId: "b-pair", data: null });`, context);
+  const afterSwitch = projectIdentity(context);
+  assert.strictEqual(afterSwitch.slug, B, "the switch must have completed on the client");
+  assert.strictEqual(afterSwitch.title, "Project B", "and installed B's record");
+  assert.strictEqual(server.active, B, "and on the server");
+  assert.strictEqual(afterSwitch.continuity, 1, "precondition: B has project-local display state of its own");
+  const writesBefore = server.writes.length;
+
+  await releaseAndSettle(server, context, r1, "__refresh");
+  await realDelay(PAST_BOTH_TIMERS_MS);
+  await settle();
+
+  const after = projectIdentity(context);
+  assert.strictEqual(after.slug, B,
+    `THE BLOCKER: a refresh that started under A must not reinstall A over an explicit switch to B — the slug is now ${after.slug}`);
+  assert.strictEqual(after.title, "Project B", "the record on screen must still be B's");
+  assert.strictEqual(after.revision, afterSwitch.revision, "and B's revision must be untouched");
+  assert.strictEqual(after.epoch, afterSwitch.epoch, "a stale refresh must not advance the project-open epoch either");
+  assert.strictEqual(after.continuity, 1, "nor discard B's project-local display state");
+  assert.strictEqual(after.topbar, "Project B", "and the workspace chrome must still name B");
+  assert.strictEqual(server.active, B, "the server's active project is unchanged, so client and server still agree");
+  assert.strictEqual(server.writes.length, writesBefore,
+    `and nothing may be written by a discarded refresh: ${JSON.stringify(server.writes.slice(writesBefore))}`);
+
+  const bRevision = server.revisionOf(B);
+  await vm.runInContext(`(async () => { P.meta.title = "Project B, edited after the stale refresh"; dirty(); await flushPendingProjectSave(); await SAVE_CHAIN; })()`, context);
+  await settle();
+  assert.deepStrictEqual(server.writes.slice(writesBefore).map((row) => [row.slug, row.title, row.ifMatch, row.status]),
+    [[B, "Project B, edited after the stale refresh", bRevision, 200]],
+    "a genuine later edit to B must save exactly once, as B, at B's exact revision");
+  console.log("  F4 stale-refresh-after-switch - an explicit switch outranks an older refresh, which installs nothing and advances nothing");
+}
+
+/* The control that makes the section above a claim about staleness rather than
+   about holding a read: the same held refresh, with no switch, commits normally. */
+async function heldRefreshWithoutSwitchSection(options = {}) {
+  const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
+  const context = await openFixture(server, currentSchemaProject("Project A"), options);
+  const before = projectIdentity(context);
+
+  const r1 = await beginParkedRefresh(server, context, "__refresh", "job-1");
+  await releaseAndSettle(server, context, r1, "__refresh");
+
+  assert.strictEqual(read(context, "ACTIVE_PROJECT_SLUG"), A, "the project is unchanged");
+  assert.deepStrictEqual(marks(context), ["completion-1"], "and a refresh nothing overtook must install its results normally");
+  assert.strictEqual(read(context, "PROJECT_OPEN_EPOCH"), before.epoch,
+    "a committing refresh must not advance the open's epoch: it is the same open reading a newer copy of its own record");
+  assert.strictEqual(read(context, "PROJECT_REFRESH_COMMITTED") > 0, true,
+    "it records its place in the refresh order instead, which is the token that orders overlapping refreshes");
+  console.log("  held-refresh-without-switch - a held refresh that nothing overtakes commits, orders itself, and does not advance the open's epoch");
+}
+
+/* F5. A -> B -> back to A. The old refresh does not become valid again merely
+   because its project is current once more. */
+async function staleRefreshAfterSwitchBackSection(options = {}) {
+  const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
+  const context = await openFixture(server, currentSchemaProject("Project A"), options);
+
+  const r1 = await beginParkedRefresh(server, context, "__refresh", "job-1");
+
+  await context.switchProject(B);
+  await context.switchProject(A);
+  const afterReturn = projectIdentity(context);
+  assert.strictEqual(afterReturn.slug, A, "A is current again");
+  assert.deepStrictEqual(marks(context), ["completion-1"], "and the reopen read A's CURRENT record, ingest included");
+
+  await releaseAndSettle(server, context, r1, "__refresh");
+  await realDelay(PAST_BOTH_TIMERS_MS);
+  await settle();
+
+  assert.strictEqual(read(context, "PROJECT_OPEN_EPOCH"), afterReturn.epoch,
+    "the old refresh must stay stale: matching slugs are not the same thing as the same open");
+  assert.strictEqual(read(context, "PROJECT_REVISION"), afterReturn.revision,
+    "and it must not install the revision it read three opens ago");
+  console.log("  F5 stale-refresh-after-switch-back - an old refresh does not become valid merely because its project is current again");
+}
+
+/* Repeated stale refreshes cannot advance anything between them. */
+async function repeatedStaleRefreshSection(options = {}) {
+  const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
+  const context = await openFixture(server, currentSchemaProject("Project A"), options);
+
+  await beginParkedRefresh(server, context, "__one", "job-1");
+  await beginParkedRefresh(server, context, "__two", "job-2");
+
+  await context.switchProject(B);
+  const afterSwitch = projectIdentity(context);
+
+  server.releaseProjectReads();
+  await read(context, "__one");
+  await read(context, "__two");
+  await realDelay(PAST_BOTH_TIMERS_MS);
+  await settle();
+
+  assert.deepStrictEqual(projectIdentity(context), afterSwitch,
+    "two stale refreshes must leave the project identity, the record and the epoch exactly as the switch left them");
+  console.log("  repeated-stale-refresh - stale refreshes cannot advance anything, however many of them return");
+}
+
+/* The automation completion path obeys the same invariant. */
+async function automationStaleRefreshSection(options = {}) {
+  const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
+  const context = await openFixture(server, currentSchemaProject("Project A"), options);
+
+  const r1 = await beginParkedRefresh(server, context, "__refresh", "job-1", "automation");
+
+  await context.switchProject(B);
+  const afterSwitch = projectIdentity(context);
+
+  await releaseAndSettle(server, context, r1, "__refresh");
+  await realDelay(PAST_BOTH_TIMERS_MS);
+  await settle();
+
+  assert.deepStrictEqual(projectIdentity(context), afterSwitch,
+    "public/automation.js's completion refresh must be outranked by an explicit switch exactly as fal-generation.js's is");
+  assert.strictEqual(server.active, B, "and the server is still on B");
+  console.log("  automation-stale-refresh - the invariant lives in the refresh lifecycle, not in either completion path");
+}
+
+/* ===========================================================================
+   PART 6 — OVERLAPPING SAME-PROJECT REFRESHES (F6).
+   =========================================================================== */
+
+/* O1. Older response first, then newer. Both commit, in order. */
+async function overlappingOlderThenNewerSection(options = {}) {
+  const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
+  const context = await openFixture(server, currentSchemaProject("Project A"), options);
+  const epoch = read(context, "PROJECT_OPEN_EPOCH");
+
+  const r1 = await beginParkedRefresh(server, context, "__r1", "job-1");
+  const r2 = await beginParkedRefresh(server, context, "__r2", "job-2");
+  assert.strictEqual(server.completions, 2, "precondition: two completions ingested, so the two snapshots differ");
+
+  await releaseAndSettle(server, context, r1, "__r1");
+  assert.strictEqual(read(context, "PROJECT_REVISION"), '"rev-project-a-1"', "R1's snapshot is installed when it lands first");
+  assert.deepStrictEqual(marks(context), ["completion-1"], "showing only the completion it read");
+
+  await releaseAndSettle(server, context, r2, "__r2");
+  assert.strictEqual(read(context, "PROJECT_REVISION"), '"rev-project-a-2"', "and R2's newer snapshot commits over it");
+  assert.deepStrictEqual(marks(context), ["completion-1", "completion-2"], "with both completions on screen");
+  assert.strictEqual(read(context, "PROJECT_REVISION"), server.revisionOf(A), "client and server agree on the revision");
+  assert.strictEqual(read(context, "PROJECT_OPEN_EPOCH"), epoch, "and neither refresh advanced the open's epoch");
+  assert.strictEqual(read(context, "PROJECT_CONFLICT"), false, "no conflict was manufactured");
+  assert.strictEqual(saveIndicator(context), "Saved", "and the indicator is truthful");
+  console.log("  O1 older-then-newer - both refreshes commit in order, and the client ends level with the server");
+}
+
+/* O2. Newer response first. The older one that follows changes nothing. */
+async function overlappingNewerThenOlderSection(options = {}) {
+  const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
+  const context = await openFixture(server, currentSchemaProject("Project A"), options);
+
+  const r1 = await beginParkedRefresh(server, context, "__r1", "job-1");
+  const r2 = await beginParkedRefresh(server, context, "__r2", "job-2");
+
+  await releaseAndSettle(server, context, r2, "__r2");
+  assert.strictEqual(read(context, "PROJECT_REVISION"), '"rev-project-a-2"', "R2's snapshot is installed");
+  assert.deepStrictEqual(marks(context), ["completion-1", "completion-2"], "with both completions");
+  const afterNewer = clientState(context);
+
+  await releaseAndSettle(server, context, r1, "__r1");
+  assert.deepStrictEqual(clientState(context), afterNewer,
+    "THE BLOCKER, from the other side: an older response must not roll the record back over a newer one that already committed");
+  assert.strictEqual(read(context, "PROJECT_REVISION"), server.revisionOf(A), "client and server still agree");
+  console.log("  O2 newer-then-older - an older response landing after a newer commit leaves the client byte-identical");
+}
+
+/* O3. Three refreshes, two out-of-order permutations. */
+async function overlappingThreeRefreshesSection(options = {}) {
+  for (const order of [[1, 0, 2], [2, 0, 1]]) {
+    const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
+    const context = await openFixture(server, currentSchemaProject("Project A"), options);
+    const handles = ["__a", "__b", "__c"];
+    const parked = [];
+    for (let index = 0; index < 3; index += 1)
+      parked.push(await beginParkedRefresh(server, context, handles[index], `job-${index + 1}`));
+    assert.strictEqual(server.completions, 3, "precondition: three distinct snapshots");
+
+    const seen = [];
+    for (const index of order) {
+      await releaseAndSettle(server, context, parked[index], handles[index]);
+      seen.push(read(context, "PROJECT_REVISION"));
+    }
+    assert.strictEqual(read(context, "PROJECT_REVISION"), '"rev-project-a-3"',
+      `release order ${order.join(" -> ")} must end on the newest snapshot, and the client is at ${read(context, "PROJECT_REVISION")} after ${JSON.stringify(seen)}`);
+    assert.deepStrictEqual(marks(context), ["completion-1", "completion-2", "completion-3"], "with every completion present");
+    assert.strictEqual(read(context, "PROJECT_REVISION"), server.revisionOf(A), "and level with the server");
+  }
+  console.log("  O3 three-refreshes - out-of-order responses converge on the newest snapshot, and an older one never rolls a newer commit back");
+}
+
+/* O4. A NEWER REQUEST THAT FAILED must not disqualify a valid older response.
+   "Latest started wins" is deliberately not the rule; what is ordered is what
+   actually committed. */
+async function newerRefreshFailedSection(options = {}) {
+  const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
+  const context = await openFixture(server, currentSchemaProject("Project A"), options);
+
+  const r1 = await beginParkedRefresh(server, context, "__r1", "job-1");
+  server.failNextProjectRead();
+  await vm.runInContext(`refreshFalGeneration("job-2", false)`, context);
+  await settle();
+  assert.strictEqual(read(context, "PROJECT_REFRESH_COMMITTED"), 0,
+    "precondition: the failed refresh must not have recorded itself as committed");
+  assert.strictEqual(read(context, "PROJECT_REFRESH_SEQUENCE") >= 2, true,
+    "precondition: but it must have TAKEN a later sequence number, or the section proves nothing");
+
+  await releaseAndSettle(server, context, r1, "__r1");
+  assert.strictEqual(read(context, "PROJECT_REVISION"), '"rev-project-a-1"',
+    "the older but valid response must still commit: a later request that FAILED cannot disqualify it");
+  assert.deepStrictEqual(marks(context), ["completion-1"], "installing what it actually read");
+  assert.strictEqual(read(context, "PROJECT_REFRESH_COMMITTED") > 0, true, "and taking its place in the refresh order");
+  console.log("  O4 newer-request-failed - a failed later request does not throw away a valid older response");
+}
+
+/* O5. An explicit replacement still dominates, whatever the refresh order. */
+async function overlappingRefreshesThenSwitchSection(options = {}) {
+  const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
+  const context = await openFixture(server, currentSchemaProject("Project A"), options);
+
+  const r1 = await beginParkedRefresh(server, context, "__r1", "job-1");
+  const r2 = await beginParkedRefresh(server, context, "__r2", "job-2");
+
+  await context.switchProject(B);
+  const afterSwitch = projectIdentity(context);
+  assert.strictEqual(afterSwitch.slug, B, "precondition: the switch completed");
+
+  await releaseAndSettle(server, context, r2, "__r2");
+  await releaseAndSettle(server, context, r1, "__r1");
+  await realDelay(PAST_BOTH_TIMERS_MS);
+  await settle();
+
+  assert.deepStrictEqual(projectIdentity(context), afterSwitch,
+    "an explicit replacement outranks every refresh of the previous open, in any order");
+  assert.strictEqual(server.active, B, "and client and server still agree");
+  console.log("  O5 replacement-dominates - refresh ordering never lets a previous open's read past the epoch check");
+}
+
+/* O6. The dirty-view backstop between two refresh commits. */
+async function dirtyBetweenRefreshCommitsSection(options = {}) {
+  const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
+  const context = await openFixture(server, currentSchemaProject("Project A"), options);
+
+  const r1 = await beginParkedRefresh(server, context, "__r1", "job-1");
+  const r2 = await beginParkedRefresh(server, context, "__r2", "job-2");
+
+  await releaseAndSettle(server, context, r1, "__r1");
+  assert.strictEqual(read(context, "PROJECT_REVISION"), '"rev-project-a-1"', "precondition: R1 committed");
+
+  const ownedRevision = read(context, "PROJECT_REVISION");
+  vm.runInContext(`P.meta.title = "edited between two refreshes"; dirty();`, context);
+  await releaseAndSettle(server, context, r2, "__r2");
+
+  assert.strictEqual(read(context, "P.meta.title"), "edited between two refreshes",
+    "R2 must not overwrite an authored edit made since R1 committed");
+  assert.strictEqual(read(context, "PROJECT_REVISION"), ownedRevision,
+    "and must not install its revision over a record it was not allowed to replace");
+  assert.notStrictEqual(saveIndicator(context), "Saved", "nothing claims to be saved");
+
+  await realDelay(PAST_BOTH_TIMERS_MS);
+  await settle();
+  assert.deepStrictEqual(server.writes.map((row) => [row.ifMatch, row.status]), [[ownedRevision, 409]],
+    `the stale save must be refused, not accepted: ${JSON.stringify(server.writes)}`);
+  assert.strictEqual(read(context, "PROJECT_CONFLICT"), true, "through the accepted conflict surface");
+  assert.deepStrictEqual(server.docs[A].meta.completionMarks, ["completion-1", "completion-2"],
+    "and, decisively, neither completion was overwritten by it");
+  console.log("  O6 dirty-between-commits - an edit made between two refresh commits survives, and its stale save is refused rather than overwriting either completion");
+}
+
+/* O7. The automation entry path runs the same lifecycle, including ordering. */
+async function overlappingAutomationRefreshSection(options = {}) {
+  const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
+  const context = await openFixture(server, currentSchemaProject("Project A"), options);
+  const epoch = read(context, "PROJECT_OPEN_EPOCH");
+
+  const r1 = await beginParkedRefresh(server, context, "__r1", "job-1", "automation");
+  const r2 = await beginParkedRefresh(server, context, "__r2", "job-2", "automation");
+
+  await releaseAndSettle(server, context, r2, "__r2");
+  const afterNewer = clientState(context);
+  assert.strictEqual(afterNewer.revision, '"rev-project-a-2"', "the newer automation refresh commits");
+
+  await releaseAndSettle(server, context, r1, "__r1");
+  assert.deepStrictEqual(clientState(context), afterNewer,
+    "and the older one that follows it changes nothing — the ordering lives in the refresh lifecycle, not in either entry path");
+  assert.strictEqual(read(context, "PROJECT_OPEN_EPOCH"), epoch, "with the epoch untouched throughout");
+  console.log("  O7 automation-ordering - v626RefreshFalJob inherits the same ordering as refreshFalGeneration, without either being special-cased");
+}
+
+/* ===========================================================================
+   PART 7 — A REFRESH'S FAILURE TERMINALS (F7).
+   =========================================================================== */
+
+/* L1. A refresh 404 landing after a newer refresh already committed. */
+async function refreshMissAfterNewerCommitSection(options = {}) {
+  const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
+  const context = await openFixture(server, currentSchemaProject("Project A"), options);
+
+  server.missNextProjectRead();
+  const r1 = await beginParkedRefresh(server, context, "__r1", "job-1");
+  const r2 = await beginParkedRefresh(server, context, "__r2", "job-2");
+
+  await releaseAndSettle(server, context, r2, "__r2");
+  assert.strictEqual(read(context, "PROJECT_REVISION"), '"rev-project-a-2"', "precondition: R2 committed");
+  const committed = workspaceState(context);
+  assert.strictEqual(committed.firstRun, false, "precondition: a real workspace is on screen");
+
+  await releaseAndSettle(server, context, r1, "__r1");
+  assert.deepStrictEqual(workspaceState(context), committed,
+    "THE BLOCKER: a refresh answered 404 must leave the committed workspace byte-identical, not clear it into first-run");
+  assert.strictEqual(read(context, "P") === null, false, "P must still hold the project");
+  assert.strictEqual(server.active, A, "and the server still has the project the client is showing");
+  console.log("  F7a refresh-404-after-commit - a delayed 404 cannot clear a workspace a newer refresh already committed");
+}
+
+/* L2. A refresh 404 while the filmmaker has unsaved work. */
+async function refreshMissWhileDirtySection(options = {}) {
+  /* L2a. THE TERMINAL ITSELF, through the generic lifecycle entry. */
+  {
+    const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
+    const context = await openFixture(server, currentSchemaProject("Project A"), options);
+    const ownedRevision = server.revisionOf(A);
+    vm.runInContext(`P.meta.title = "unsaved when the read went missing"; dirty();`, context);
+    assert.strictEqual(read(context, "projectHasUnsavedEdits()"), true, "precondition: the view is dirty");
+    assert.strictEqual(read(context, "saveTimer !== null"), true, "precondition: its debounce is armed");
+
+    server.missNextProjectRead();
+    const r1 = await beginParkedRefresh(server, context, "__r1", "job-1", "generic");
+    await releaseAndSettle(server, context, r1, "__r1");
+
+    assert.strictEqual(read(context, "P.meta.title"), "unsaved when the read went missing",
+      "THE BLOCKER: a refresh 404 must not clear a record that holds unsaved authored work");
+    assert.strictEqual(read(context, "projectHasUnsavedEdits()"), true, "and the dirty state must survive with it");
+    assert.strictEqual(read(context, "ACTIVE_PROJECT_SLUG"), A, "the project is still open");
+    assert.strictEqual(read(context, 'document.getElementById("main").innerHTML.includes("WELCOME TO CINEBRAID")'), false,
+      "and the first-run screen must never appear over an open project");
+
+    /* AND THE AUTHORED WORK STILL REACHES DISK. With `P` cleared,
+       captureProjectSave() answers null and the debounce expires writing nothing
+       — which is how the work was lost with nothing on the wire and nothing on
+       screen. Here the debounce finds a record and writes it. */
+    await realDelay(PAST_BOTH_TIMERS_MS);
+    await settle();
+    assert.deepStrictEqual(server.writes.map((row) => [row.title, row.ifMatch, row.status]),
+      [["unsaved when the read went missing", ownedRevision, 200]],
+      `the debounce must still write the edit, once, at the revision this view owns: ${JSON.stringify(server.writes)}`);
+    assert.strictEqual(server.docs[A].meta.title, "unsaved when the read went missing", "and it must reach storage");
+  }
+
+  /* L2b. THE SAME TERMINAL BEHIND A SHIPPED COMPLETION, where the ingest HAS
+     advanced the stored revision. The edit still survives; its save is then
+     truthfully refused as stale rather than overwriting the completion. */
+  {
+    const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
+    const context = await openFixture(server, currentSchemaProject("Project A"), options);
+    const ownedRevision = server.revisionOf(A);
+    server.missNextProjectRead();
+    const r1 = await beginParkedRefresh(server, context, "__r1", "job-1");
+    vm.runInContext(`P.meta.title = "typed while the read was missing"; dirty();`, context);
+    await releaseAndSettle(server, context, r1, "__r1");
+
+    assert.strictEqual(read(context, "P.meta.title"), "typed while the read was missing", "the edit survives");
+    assert.strictEqual(read(context, "projectHasUnsavedEdits()"), true, "and is still marked unsaved");
+    assert.strictEqual(read(context, 'document.getElementById("main").innerHTML.includes("WELCOME TO CINEBRAID")'), false,
+      "with no first-run screen");
+    await realDelay(PAST_BOTH_TIMERS_MS);
+    await settle();
+    assert.deepStrictEqual(server.writes.map((row) => [row.ifMatch, row.status]), [[ownedRevision, 409]],
+      `and its save is refused as the stale write it is: ${JSON.stringify(server.writes)}`);
+    assert.strictEqual(read(context, "PROJECT_CONFLICT"), true, "through the accepted conflict surface");
+    assert.deepStrictEqual(server.docs[A].meta.completionMarks, ["completion-1"], "without overwriting the completion");
+  }
+  console.log("  F7b refresh-404-while-dirty - authored work and the dirty state both survive a refresh 404, and the save that follows is truthful");
+}
+
+/* L3 + L4. A refresh 404 after an explicit switch, and after a switch back. */
+async function refreshMissAcrossReplacementSection(options = {}) {
+  for (const [label, switches] of [["A -> B", [B]], ["A -> B -> A", [B, A]]]) {
+    const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
+    const context = await openFixture(server, currentSchemaProject("Project A"), options);
+    server.missNextProjectRead();
+    const r1 = await beginParkedRefresh(server, context, "__r1", "job-1");
+    for (const slug of switches) await context.switchProject(slug);
+    const afterSwitches = workspaceState(context);
+    assert.strictEqual(afterSwitches.firstRun, false, `precondition (${label}): a real workspace is open`);
+
+    await releaseAndSettle(server, context, r1, "__r1");
+    await realDelay(PAST_BOTH_TIMERS_MS);
+    await settle();
+    assert.deepStrictEqual(workspaceState(context), afterSwitches,
+      `${label}: a 404 from an older open's refresh must change nothing about the current open`);
+    assert.strictEqual(server.active, switches[switches.length - 1], `${label}: client and server still agree`);
+  }
+  console.log("  F7c refresh-404-across-replacement - a previous open's 404 cannot touch the open that replaced it, or the one after that");
+}
+
+/* L5. The first-run terminal still belongs to an EXPLICIT open, and still works.
+   Without this, gating the branch could be passing by disabling it. */
+async function explicitOpenOfMissingProjectSection(options = {}) {
+  const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
+  const context = await openFixture(server, currentSchemaProject("Project A"), options);
+  assert.strictEqual(read(context, "ACTIVE_PROJECT_SLUG"), A, "precondition: a project is open");
+  const epochBefore = read(context, "PROJECT_OPEN_EPOCH");
+
+  server.removeProject();
+  await vm.runInContext(`load()`, context);
+  await settle();
+
+  assert.strictEqual(read(context, "P"), null, "an explicit open of a machine with no project clears the record");
+  assert.strictEqual(read(context, "ACTIVE_PROJECT_SLUG"), "", "and the slug");
+  assert.strictEqual(read(context, "PROJECT_REVISION"), "", "and the revision it can no longer identify");
+  assert.strictEqual(read(context, "PROJECT_OPEN_EPOCH") > epochBefore, true,
+    "the first-run terminal is a replacement, so it advances the epoch and kills work deferred against the record it cleared");
+  assert.strictEqual(read(context, 'document.getElementById("main").innerHTML.includes("WELCOME TO CINEBRAID")'), true,
+    "and installs the first-run screen, which is the intended behaviour of the branch the refresh is barred from");
+  assert.strictEqual(read(context, 'document.getElementById("topbar-project").textContent'), "CineBraid",
+    "with the chrome relabelled to match");
+  console.log("  F7d explicit-open-missing-project - the first-run terminal still belongs to an explicit open, still works, and still advances the epoch");
+}
+
+/* L8. A typed/network refresh failure is as non-destructive as the 404. */
+async function refreshFailureNonDestructiveSection(options = {}) {
+  const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
+  const context = await openFixture(server, currentSchemaProject("Project A"), options);
+  vm.runInContext(`P.meta.title = "unsaved when the read failed"; dirty();`, context);
+  const before = workspaceState(context);
+
+  server.failNextProjectRead();
+  await vm.runInContext(`load({ intent: "refresh" })`, context);
+  await settle();
+
+  assert.deepStrictEqual(workspaceState(context), before,
+    "a refresh whose read failed must change nothing at all — not the record, not the identity, not the dirty state");
+  await realDelay(PAST_BOTH_TIMERS_MS);
+  await settle();
+  assert.deepStrictEqual(server.writes.map((row) => [row.title, row.status]),
+    [["unsaved when the read failed", 200]], "and the authored work still saves itself");
+  console.log("  F7e refresh-failure-non-destructive - a failed refresh read mutates nothing and does not strand authored work");
+}
+
+/* ===========================================================================
+   NEGATIVE CONTROLS. Each removes one half of the mechanism from live production
+   source IN MEMORY, observes the defect first, and then requires the guarding
+   section to go red.
+   =========================================================================== */
+
+/* THE REPAIRED SHAPES, and the shapes the reproduced defects had. */
+const REPAIRED_TRIGGER_BINDING = `  const epoch = PROJECT_OPEN_EPOCH;
+  const timer = setTimeout(() => {
+    PENDING_SAVE_TRIGGERS.delete(timer);
+    if (epoch !== PROJECT_OPEN_EPOCH) return;
+    run();
+  }, ms);`;
+const TRIGGER_WITHOUT_BINDING = `  const timer = setTimeout(() => {
+    PENDING_SAVE_TRIGGERS.delete(timer);
+    run();
+  }, ms);`;
+/* The identity swap as it shipped: the slug and revision installed from the
+   response BEFORE the record, with an await still to come. */
+const REPAIRED_PREPARE_IDENTITY = `    slug: projectResponse.headers?.get?.("x-cinebraid-project-slug") || "",
+    revision:
+      projectResponse.headers?.get?.("x-cinebraid-project-revision") ||
+      projectResponse.headers?.get?.("etag") ||
+      "",`;
+const PREPARE_INSTALLS_IDENTITY = `    slug: (ACTIVE_PROJECT_SLUG = projectResponse.headers?.get?.("x-cinebraid-project-slug") || ACTIVE_PROJECT_SLUG || "fixture"),
+    revision: (PROJECT_REVISION =
+      projectResponse.headers?.get?.("x-cinebraid-project-revision") ||
+      projectResponse.headers?.get?.("etag") ||
+      ""),`;
+/* The ledger read where it used to be: after the record is installed and before
+   the baseline and the indicator are settled. */
+const REPAIRED_LEDGER_IN_PREPARE = `  prepared.automationRuns = loaded[5]?.runs || [];
+  await prepareGenerationLedger(prepared);
+  return prepared;`;
+const LEDGER_AFTER_COMMIT = `  prepared.automationRuns = loaded[5]?.runs || [];
+  return prepared;`;
+const REPAIRED_COMMIT_BASELINE = `  SAVED_PROJECT_BASELINE = structuredClone(P);`;
+const COMMIT_AWAITS_LEDGER = `  __ledgerAfterCommit = prepareGenerationLedger(prepared).then(() => {
+    FAL_GENERATION_JOBS = prepared.falJobs;
+    FAL_GENERATION_LEDGER_LOADED = prepared.falLedgerLoaded;
+    SAVED_PROJECT_BASELINE = structuredClone(P);
+    setSaveState("saved", "Saved");
+  });
+  SAVED_PROJECT_BASELINE = structuredClone(P);`;
+/* THE WHOLE BINDING TO THE OPEN A REFRESH STARTED UNDER — the epoch it was
+   taken in, the project it was taken for, and the project the response describes.
+   All three together are "this response is still about the open that asked for
+   it", and a control that removed only one of them would be caught by the other
+   two, which is a claim about defence in depth rather than about the defect. */
+const REPAIRED_OPEN_BINDING = `  if (ticket.epoch !== PROJECT_OPEN_EPOCH)
+    return "the project was explicitly replaced while this refresh was in flight";
+  if (ticket.slug !== ACTIVE_PROJECT_SLUG)
+    return "the project this refresh was started for is no longer the one open";
+  if (!prepared.slug || prepared.slug !== ACTIVE_PROJECT_SLUG)
+    return "the response describes a different project than the one open";
+`;
+/* And the response-owner half on its own, which is the one that answers a
+   different question: not "did this window move" but "is the server even
+   answering about the project this window has open". */
+const REPAIRED_RESPONSE_OWNER = `  if (!prepared.slug || prepared.slug !== ACTIVE_PROJECT_SLUG)
+    return "the response describes a different project than the one open";
+`;
+/* The refresh ordering token. */
+const REPAIRED_ORDER_CHECK = `  if (ticket.sequence <= PROJECT_REFRESH_COMMITTED)
+    return "a newer refresh of this open has already installed its snapshot";
+`;
+/* The dirty-view backstop. */
+const REPAIRED_DIRTY_CHECK = `  if (projectHasUnsavedEdits())
+    return "this view holds unsaved authored work a refresh would overwrite";
+`;
+/* The refresh's own terminal: a discard, not the first-run replacement. */
+const REPAIRED_REFRESH_MISS = `    return { intent: "refresh", committed: false, reason: error?.message || "the project could not be re-read" };
+  }`;
+const REFRESH_MISS_ESCALATES = `    return { intent: "refresh", committed: false, reason: error?.message || "the project could not be re-read" };
+  }
+  if (!prepared.available) {
+    await showFirstRunWorkspace(prepared.message);
+    return { intent: "refresh", committed: false, reason: "no project is available" };
+  }`;
+/* F9's shape: the refresh entry that falls through to a replacement when there
+   is no project to refresh. */
+const REPAIRED_NO_PROJECT_GUARD = `  if (!P || !ACTIVE_PROJECT_SLUG)
+    return { intent: "refresh", committed: false, reason: "no project is open for a refresh to refresh" };
+  const ticket = beginProjectRefresh();`;
+const NO_PROJECT_BECOMES_REPLACEMENT = `  if (!P || !ACTIVE_PROJECT_SLUG) return runProjectReplacement();
+  const ticket = beginProjectRefresh();`;
+/* The shipped completion path's two halves. */
+const REPAIRED_PRE_INGEST_FLUSH = `    await flushPendingProjectSave();
+    const response = await fetch(\`/api/generation/fal/jobs/\${encodeURIComponent(jobId)}/refresh\`, { method: "POST" });`;
+const NO_PRE_INGEST_FLUSH = `    const response = await fetch(\`/api/generation/fal/jobs/\${encodeURIComponent(jobId)}/refresh\`, { method: "POST" });`;
+const REPAIRED_REFRESH_INTENT = `      await load({ intent: "refresh" });`;
+const REPLACEMENT_INTENT = `      await load();`;
+/* The post-commit latch. */
+const REPAIRED_SAVE_STATE_LATCH = `  if (PROJECT_POST_COMMIT_DEPTH > 0) return refuseFromProjectDecoration();
+  /* Settings → Project has no save button`;
+const SAVE_STATE_WITHOUT_LATCH = `  /* Settings → Project has no save button`;
+
+function sourceMutator(editsByFile) {
+  const edits = Array.isArray(editsByFile) ? { "app.js": editsByFile } : editsByFile;
+  const applied = new Set();
+  const mutate = (file, original) => {
+    if (!edits[file]) return original;
+    let code = original.replace(/\r\n/g, "\n");
+    for (const [from, to] of edits[file]) {
+      assert(code.includes(from), `negative control anchor no longer exists in ${file}; update the control rather than deleting it:\n${from}`);
+      assert.strictEqual(code.split(from).length - 1, 1, `the anchor must be unique in ${file}:\n${from}`);
+      const before = code;
+      code = code.replace(from, to);
+      assert.notStrictEqual(code, before, `the edit did not change ${file}`);
+    }
+    applied.add(file);
+    return code;
+  };
+  mutate.applied = applied;
+  return mutate;
+}
+async function expectRed(label, run) {
+  try {
+    await run();
+  } catch (error) {
+    if (error instanceof assert.AssertionError) return error.message.split("\n")[0];
+    throw new Error(`${label}: the guard threw something that is not an assertion failure, so this is not a valid receipt:\n${error.stack || error.message}`);
+  }
+  throw new Error(`${label}: the guarded section PASSED with the defect reintroduced. The regression does not detect it.`);
+}
+
+/* NC-1's observation: with the binding uninstalled, does A's write-back really
+   put a B save on the wire? */
+async function observedForeignSave(mutate) {
+  const server = twoProjectServer({ a: olderSchemaProject("Project A"), b: currentSchemaProject("Project B") });
+  const context = await openFixture(server, olderSchemaProject("Project A"), { mutateSource: mutate });
+  assert.strictEqual(read(context, "PENDING_SAVE_TRIGGERS.size"), 1, "NC-1 probe: the write-back must be queued");
+  await context.switchProject(B);
+  await realDelay(PAST_BOTH_TIMERS_MS);
+  await settle();
+  return server.writes;
+}
+/* NC-2's observation: with the identity installed during PREPARE, does A's
+   document really reach B's URL at B's revision? */
+async function observedForeignBody(mutate) {
+  const server = twoProjectServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
+  const context = await openFixture(server, currentSchemaProject("Project A"), { mutateSource: mutate });
+  vm.runInContext(`P.meta.title = "Project A, mid-edit"; dirty();`, context);
+  server.hold();
+  vm.runInContext(`__switching = fetch("/api/projects/switch", { method: "POST", headers: {}, body: JSON.stringify({ slug: ${JSON.stringify(B)} }) }).then(() => load());`, context);
+  await settle();
+  await realDelay(AUTOSAVE_DEBOUNCE_MS + 250);
+  const duringLoad = server.writes.slice();
+  server.release();
+  await read(context, "__switching");
+  await settle();
+  return duringLoad;
+}
+/* NC-4 and NC-5's observation: drive the SHIPPED completion path with an unsaved
+   edit and report what happened to it, to the wire, and to the indicator. */
+async function observedCompletionWithEdit(mutate) {
+  const server = soloServer();
+  const context = await openSolo(server, { mutateSource: mutate });
+  vm.runInContext(`P.meta.title = "The filmmaker's unsaved title"; dirty();`, context);
+  assert.strictEqual(read(context, "projectHasUnsavedEdits()"), true, "probe: the edit must start out unsaved");
+  await context.refreshFalGeneration("job-1", false);
+  await realDelay(PAST_BOTH_TIMERS_MS);
+  await settle();
+  const after = {
+    title: read(context, "P.meta.title"),
+    marks: marks(context),
+    indicator: saveIndicator(context),
+    writes: server.writes.slice(),
+    stored: structuredClone(server.docs[A].meta),
+  };
+  /* And the proof that a lost edit is lost PERMANENTLY rather than merely late. */
+  await vm.runInContext(`(async () => { P.meta.title = "a later edit"; dirty(); await flushPendingProjectSave(); await SAVE_CHAIN; })()`, context);
+  await settle();
+  after.laterWrites = server.writes.slice(after.writes.length);
+  return after;
+}
+
+async function negativeControlsSection() {
+  const controls = [];
+
+  /* NC-1 — THE DEFERRED TRIGGER IS NOT BOUND TO ITS OPEN. F1 exactly: A's
+     migration write-back survives the switch and saves whatever is open when it
+     fires. */
+  {
+    const edits = [[REPAIRED_TRIGGER_BINDING, TRIGGER_WITHOUT_BINDING]];
+    const mutate = sourceMutator(edits);
+    const writes = await observedForeignSave(mutate);
+    assert(mutate.applied.has("app.js"), "NC-1: app.js was never evaluated, so the defect never ran");
+    assert.strictEqual(writes.length, 1,
+      `NC-1 probe: the defect must actually put one write on the wire, and it sent ${writes.length}: ${JSON.stringify(writes)}`);
+    assert.strictEqual(writes[0].slug, B,
+      `NC-1 probe: and that write must be addressed to project B, which received no edit: ${JSON.stringify(writes[0])}`);
+    assert.strictEqual(writes[0].ifMatch, REV[B],
+      "NC-1 probe: carrying B's revision — a save of B produced by work created for A");
+    const detected = await expectRed("NC-1", () => deferredTriggerAcrossOpensSection({ mutateSource: sourceMutator(edits) }));
+    controls.push({ id: "NC-1", defect: "a deferred save trigger is not bound to the open that created it, so A's migration write-back saves B", detected });
+  }
+
+  /* NC-2 — PREPARE INSTALLS THE IDENTITY, exactly as the shipped load() did:
+     the slug and revision move from the response while `P` is still the outgoing
+     project and an await is still to come. A debounce dispatching there sends A's
+     DOCUMENT to B's URL at B's revision. */
+  {
+    const edits = [[REPAIRED_PREPARE_IDENTITY, PREPARE_INSTALLS_IDENTITY]];
+    const mutate = sourceMutator(edits);
+    const writes = await observedForeignBody(mutate);
+    assert(mutate.applied.has("app.js"), "NC-2: app.js was never evaluated, so the defect never ran");
+    assert.strictEqual(writes.length, 1,
+      `NC-2 probe: the defect must actually dispatch inside the open, and it sent ${writes.length}: ${JSON.stringify(writes)}`);
+    assert.strictEqual(writes[0].slug, B, "NC-2 probe: to project B's URL");
+    assert.strictEqual(writes[0].title, "Project A, mid-edit",
+      `NC-2 probe: carrying project A's OWN document — one project's record written over another's: ${JSON.stringify(writes[0])}`);
+    assert.strictEqual(writes[0].ifMatch, REV[B], "NC-2 probe: authorised by B's revision");
+    const detected = await expectRed("NC-2", () => debounceInsideTransitionSection({ mutateSource: sourceMutator(edits) }));
+    controls.push({ id: "NC-2", defect: "PREPARE installs the project identity before the record, so a debounce dispatching in the gap sends A's document as B", detected });
+  }
+
+  /* NC-3 — THE LEDGER READ IS MOVED BACK AFTER THE COMMIT, where it was: an
+     await between installing the record and settling the baseline and the
+     indicator. A refusal that lands in that window is overwritten with "Saved". */
+  {
+    const edits = [
+      [REPAIRED_LEDGER_IN_PREPARE, LEDGER_AFTER_COMMIT],
+      [REPAIRED_COMMIT_BASELINE, COMMIT_AWAITS_LEDGER],
+    ];
+    const mutate = sourceMutator(edits);
+    /* Observed directly: a refusal, then the parked ledger landing on top of it. */
+    let releaseLedger = () => {};
+    const parked = new Promise((resolve) => { releaseLedger = resolve; });
+    let ledgerRequests = 0;
+    const server = refreshServer({
+      a: currentSchemaProject("Project A"),
+      b: currentSchemaProject("Project B"),
+      replyForWrite: () => ({ status: 422, body: { ok: false, code: "PROJECT_VALIDATION_FAILED", error: "Project validation failed.", issues: ["shots[0].dur must be a positive number"] } }),
+      ledger: async (response) => {
+        ledgerRequests += 1;
+        if (ledgerRequests > 1) await parked;
+        return response({ jobs: [], projectSlug: A });
+      },
+    });
+    const withFal = async (url, requestOptions, response) => {
+      if (url === "/api/config") return response({ generation: { fal: { enabled: true, apiKey: "test-key", keySource: "config" } } });
+      return server.fetch(url, requestOptions, response);
+    };
+    const rendered = await render("#/production", currentSchemaProject("Project A"), { mutateSource: mutate, fetch: withFal });
+    const context = rendered.context;
+    assert(mutate.applied.has("app.js"), "NC-3: app.js was never evaluated, so the defect never ran");
+    vm.runInContext(`__second = load({ intent: "refresh" });`, context);
+    await settle();
+    await vm.runInContext(`(async () => { P.meta.title = "an edit the server will not accept"; dirty(); await flushPendingProjectSave(); await SAVE_CHAIN; })()`, context);
+    await settle();
+    assert.strictEqual(read(context, "SAVE_BLOCKED"), true, "NC-3 probe: the typed 422 must have paused saving");
+    releaseLedger();
+    await read(context, "__second").catch(() => {});
+    await read(context, "__ledgerAfterCommit").catch(() => {});
+    await settle();
+    assert.strictEqual(saveIndicator(context), "Saved",
+      `NC-3 probe: the defect must actually overwrite the refusal with a resting Saved, and the indicator reads ${JSON.stringify(saveIndicator(context))}`);
+    assert.strictEqual(read(context, "SAVED_PROJECT_BASELINE").meta.title, "an edit the server will not accept",
+      "NC-3 probe: with the refused document adopted as the saved baseline, so the view believes storage holds it");
+    const detected = await expectRed("NC-3", () => ledgerParkedDuringPrepareSection({ mutateSource: sourceMutator(edits) }));
+    controls.push({ id: "NC-3", defect: "the generation-ledger read sits after the commit, so releasing it overwrites a real typed 422 and SAVE_BLOCKED with a resting Saved", detected });
+  }
+
+  /* NC-4 — THE COMPLETION PATH REPLACES INSTEAD OF REFRESHING and does not
+     persist first, which is F3 as reproduced: the pending debounce is cancelled,
+     the server's copy replaces `P`, and the indicator settles on "Saved" over an
+     edit that was never sent anywhere. */
+  {
+    const edits = { "fal-generation.js": [
+      [REPAIRED_PRE_INGEST_FLUSH, NO_PRE_INGEST_FLUSH],
+      [REPAIRED_REFRESH_INTENT, REPLACEMENT_INTENT],
+    ] };
+    const mutate = sourceMutator(edits);
+    const after = await observedCompletionWithEdit(mutate);
+    assert(mutate.applied.has("fal-generation.js"), "NC-4: fal-generation.js was never evaluated, so the defect never ran");
+    assert.notStrictEqual(after.title, "The filmmaker's unsaved title",
+      `NC-4 probe: the defect must actually delete the edit from memory, and P still holds ${JSON.stringify(after.title)}`);
+    assert.deepStrictEqual(after.writes, [],
+      `NC-4 probe: and nothing may have carried it to the server: ${JSON.stringify(after.writes)}`);
+    assert.notStrictEqual(after.stored.title, "The filmmaker's unsaved title", "NC-4 probe: storage must never have received it");
+    assert.strictEqual(after.indicator, "Saved",
+      `NC-4 probe: and the indicator must report Saved over the edit it just dropped, which is the silent part — it read ${JSON.stringify(after.indicator)}`);
+    assert.strictEqual(after.laterWrites.length, 1,
+      "NC-4 probe: a later edit saves normally, so the first one was permanently lost rather than merely delayed");
+    const detected = await expectRed("NC-4", () => completionWithLocalEditSection({ mutateSource: sourceMutator(edits) }));
+    controls.push({ id: "NC-4", defect: "the completion path replaces the record without persisting first, so a same-project refresh silently deletes the filmmaker's unsaved edit", detected });
+  }
+
+  /* NC-5 — THE PRE-INGEST FLUSH ALONE IS REMOVED, leaving the refresh intent in
+     place. The backstop holds — the edit is NOT lost — but the refresh has to
+     decline, so the results it came to collect never reach the record. That is
+     what makes the flush the fix rather than the guard. */
+  {
+    const edits = { "fal-generation.js": [[REPAIRED_PRE_INGEST_FLUSH, NO_PRE_INGEST_FLUSH]] };
+    const mutate = sourceMutator(edits);
+    const after = await observedCompletionWithEdit(mutate);
+    assert(mutate.applied.has("fal-generation.js"), "NC-5: fal-generation.js was never evaluated, so the defect never ran");
+    assert.strictEqual(after.title, "The filmmaker's unsaved title", "NC-5 probe: the backstop must still refuse to overwrite the edit");
+    assert.deepStrictEqual(after.marks, [],
+      `NC-5 probe: but the completion data must be missing, because the refresh declined: ${JSON.stringify(after.marks)}`);
+    assert.notStrictEqual(after.indicator, "Saved", "NC-5 probe: and nothing claims to be saved");
+    const detected = await expectRed("NC-5", () => completionWithLocalEditSection({ mutateSource: sourceMutator(edits) }));
+    controls.push({ id: "NC-5", defect: "without the pre-ingest flush the edit survives but the completion data cannot land, so both sides are never present", detected });
+  }
+
+  /* NC-6 — THE REFRESH IS NOT BOUND TO THE OPEN IT STARTED UNDER. An explicit
+     switch to B is reversed by a read that started under A: the workspace shows A
+     while every active-project route still answers as B. */
+  {
+    const edits = [[REPAIRED_OPEN_BINDING, ""]];
+    const mutate = sourceMutator(edits);
+    const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
+    const context = await openFixture(server, currentSchemaProject("Project A"), { mutateSource: mutate });
+    const r1 = await beginParkedRefresh(server, context, "__refresh", "job-1");
+    await context.switchProject(B);
+    const afterSwitch = projectIdentity(context);
+    assert.strictEqual(afterSwitch.slug, B, "NC-6 probe: the switch must have succeeded before the stale refresh returns");
+    await releaseAndSettle(server, context, r1, "__refresh");
+    const after = projectIdentity(context);
+    assert(mutate.applied.has("app.js"), "NC-6: app.js was never evaluated, so the defect never ran");
+    assert.strictEqual(after.slug, A,
+      `NC-6 probe: the defect must actually reinstall project A over the switch, and the slug is ${after.slug}`);
+    assert.strictEqual(after.title, "Project A", "NC-6 probe: with A's record back on screen");
+    assert.strictEqual(server.active, B,
+      "NC-6 probe: while the server is still on B — which is the split identity this control exists to show");
+    const detected = await expectRed("NC-6", () => staleRefreshAfterSwitchSection({ mutateSource: sourceMutator(edits) }));
+    controls.push({ id: "NC-6", defect: "a refresh is not bound to the open it started under, so one that outlived an explicit switch reinstalls the project the filmmaker left", detected });
+  }
+
+  /* NC-7 — THE REFRESH ORDER TOKEN IS REMOVED. Overlapping refreshes become
+     response-order dependent: an older response landing after a newer commit
+     rolls the record back, and the view rests on "Saved" a revision behind the
+     server with nothing left in flight to correct it. */
+  {
+    const edits = [[REPAIRED_ORDER_CHECK, ""]];
+    const mutate = sourceMutator(edits);
+    const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
+    const context = await openFixture(server, currentSchemaProject("Project A"), { mutateSource: mutate });
+    const r1 = await beginParkedRefresh(server, context, "__r1", "job-1");
+    const r2 = await beginParkedRefresh(server, context, "__r2", "job-2");
+    await releaseAndSettle(server, context, r2, "__r2");
+    assert.strictEqual(read(context, "PROJECT_REVISION"), '"rev-project-a-2"', "NC-7 probe: R2 must have committed first");
+    await releaseAndSettle(server, context, r1, "__r1");
+    assert(mutate.applied.has("app.js"), "NC-7: app.js was never evaluated, so the defect never ran");
+    assert.strictEqual(read(context, "PROJECT_REVISION"), '"rev-project-a-1"',
+      `NC-7 probe: the defect must actually roll the client back to the older snapshot, and it is at ${read(context, "PROJECT_REVISION")}`);
+    assert.deepStrictEqual(marks(context), ["completion-1"], "NC-7 probe: losing the second completion from the record on screen");
+    assert.strictEqual(server.revisionOf(A), '"rev-project-a-2"', "NC-7 probe: while the server is a revision ahead, with both completions");
+    assert.strictEqual(saveIndicator(context), "Saved",
+      "NC-7 probe: and the view rests on Saved over a record the server has moved past, which is the silent part");
+    assert.strictEqual(read(context, "PROJECT_CONFLICT"), false, "NC-7 probe: with no conflict surface and nothing left in flight to correct it");
+    const detected = await expectRed("NC-7", () => overlappingNewerThenOlderSection({ mutateSource: sourceMutator(edits) }));
+    controls.push({ id: "NC-7", defect: "the refresh order token is gone, so overlapping refreshes become response-order dependent and an older response rolls a newer commit back", detected });
+  }
+
+  /* NC-8 — A REFRESH PERFORMS THE FIRST-RUN REPLACEMENT TERMINAL. Answered 404,
+     it clears the workspace behind a newer refresh that already committed — and
+     with an unsaved edit in the tab, clearing `P` makes captureProjectSave()
+     answer null so the debounce expires writing nothing. */
+  {
+    const edits = [[REPAIRED_REFRESH_MISS, REFRESH_MISS_ESCALATES]];
+
+    /* NC-8a — the clean workspace is cleared into first-run. */
+    const mutate = sourceMutator(edits);
+    const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
+    const context = await openFixture(server, currentSchemaProject("Project A"), { mutateSource: mutate });
+    server.missNextProjectRead();
+    const r1 = await beginParkedRefresh(server, context, "__r1", "job-1");
+    const r2 = await beginParkedRefresh(server, context, "__r2", "job-2");
+    await releaseAndSettle(server, context, r2, "__r2");
+    const committed = workspaceState(context);
+    assert.strictEqual(committed.revision, '"rev-project-a-2"', "NC-8 probe: R2 must have committed first");
+    await releaseAndSettle(server, context, r1, "__r1");
+    assert(mutate.applied.has("app.js"), "NC-8: app.js was never evaluated, so the defect never ran");
+    assert.strictEqual(read(context, "P"), null,
+      "NC-8 probe: the defect must actually clear the record out from under the committed refresh");
+    assert.strictEqual(read(context, "ACTIVE_PROJECT_SLUG"), "", "NC-8 probe: and empty the active slug");
+    assert.strictEqual(workspaceState(context).firstRun, true, "NC-8 probe: installing the first-run screen over an open project");
+    assert.strictEqual(server.active, A, "NC-8 probe: and the server still has that project");
+
+    /* NC-8b — and with unsaved work, the work is lost with nothing on the wire. */
+    const mutateDirty = sourceMutator(edits);
+    const dirtyServer = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
+    const dirtyContext = await openFixture(dirtyServer, currentSchemaProject("Project A"), { mutateSource: mutateDirty });
+    vm.runInContext(`P.meta.title = "unsaved when the read went missing"; dirty();`, dirtyContext);
+    dirtyServer.missNextProjectRead();
+    const d1 = await beginParkedRefresh(dirtyServer, dirtyContext, "__d1", "job-1", "generic");
+    await releaseAndSettle(dirtyServer, dirtyContext, d1, "__d1");
+    await realDelay(PAST_BOTH_TIMERS_MS);
+    await settle();
+    assert.strictEqual(read(dirtyContext, "P"), null, "NC-8 probe: the dirty record is cleared too");
+    assert.deepStrictEqual(dirtyServer.writes, [],
+      `NC-8 probe: and nothing is written, because captureProjectSave() answers null with no record — the authored work is simply gone: ${JSON.stringify(dirtyServer.writes)}`);
+    assert.strictEqual(dirtyServer.docs[A].meta.title, "Project A", "NC-8 probe: storage never received it");
+    assert.strictEqual(read(dirtyContext, "projectHasUnsavedEdits()"), false, "NC-8 probe: with nothing left to say anything was unsaved");
+
+    const detected = await expectRed("NC-8", () => refreshMissAfterNewerCommitSection({ mutateSource: sourceMutator(edits) }));
+    controls.push({ id: "NC-8", defect: "a refresh answered 404 performs the first-run replacement terminal, clearing the workspace and losing unsaved authored work with nothing on the wire", detected });
+  }
+
+  /* NC-9 — A REFRESH WITH NO PROJECT BECOMES A REPLACEMENT. F9 exactly: the
+     intent changes because runtime state did. */
+  {
+    const edits = [[REPAIRED_NO_PROJECT_GUARD, NO_PROJECT_BECOMES_REPLACEMENT]];
+    const mutate = sourceMutator(edits);
+    const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
+    const context = await openFixture(server, currentSchemaProject("Project A"), { mutateSource: mutate });
+    const epochBefore = read(context, "PROJECT_OPEN_EPOCH");
+    vm.runInContext(`P = null;`, context);
+    await vm.runInContext(`load({ intent: "refresh" })`, context);
+    await settle();
+    assert(mutate.applied.has("app.js"), "NC-9: app.js was never evaluated, so the defect never ran");
+    assert.strictEqual(read(context, "PROJECT_OPEN_EPOCH") > epochBefore, true,
+      "NC-9 probe: the defect must actually turn the refresh into a replacement and advance the epoch");
+    assert.strictEqual(read(context, "P") === null, false, "NC-9 probe: installing a project a refresh was never entitled to install");
+    const detected = await expectRed("NC-9", () => refreshWithNoProjectSection({ mutateSource: sourceMutator(edits) }));
+    controls.push({ id: "NC-9", defect: "a refresh with no record falls through to the replacement lifecycle, so the requested intent changes because runtime state did", detected });
+  }
+
+  /* NC-10 — THE DIRTY-VIEW BACKSTOP IS REMOVED. An edit typed inside the
+     round-trip is replaced by the server's copy. */
+  {
+    const edits = [[REPAIRED_DIRTY_CHECK, ""]];
+    const mutate = sourceMutator(edits);
+    const server = soloServer();
+    const context = await openSolo(server, { mutateSource: mutate });
+    const r1 = await beginParkedRefresh(server, context, "__completion", "job-1");
+    vm.runInContext(`P.meta.title = "typed while the results were arriving"; dirty();`, context);
+    await releaseAndSettle(server, context, r1, "__completion");
+    assert(mutate.applied.has("app.js"), "NC-10: app.js was never evaluated, so the defect never ran");
+    assert.notStrictEqual(read(context, "P.meta.title"), "typed while the results were arriving",
+      "NC-10 probe: the defect must actually delete the edit typed inside the round-trip");
+    assert.strictEqual(saveIndicator(context), "Saved",
+      "NC-10 probe: and rest on Saved over it, which is the silent part");
+    const detected = await expectRed("NC-10", () => dirtyDuringRefreshSection({ mutateSource: sourceMutator(edits) }));
+    controls.push({ id: "NC-10", defect: "the dirty-view backstop is gone, so a refresh replaces a record that became dirty while it was in flight", detected });
+  }
+
+  /* NC-11 — THE POST-COMMIT LATCH IS REMOVED from the save indicator, so
+     decoration can restate what the save state is. */
+  {
+    const edits = [[REPAIRED_SAVE_STATE_LATCH, SAVE_STATE_WITHOUT_LATCH]];
+    const mutate = sourceMutator(edits);
+    const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
+    const context = await openFixture(server, currentSchemaProject("Project A"), { mutateSource: mutate });
+    vm.runInContext(`P.meta.title = "authored, and unsaved"; dirty();`, context);
+    assert.notStrictEqual(saveIndicator(context), "Saved", "NC-11 probe: the view must start out honestly unsaved");
+    vm.runInContext(`afterProjectCommit(() => { setSaveState("saved", "Saved"); });`, context);
+    assert(mutate.applied.has("app.js"), "NC-11: app.js was never evaluated, so the defect never ran");
+    assert.strictEqual(saveIndicator(context), "Saved",
+      "NC-11 probe: the defect must actually let post-commit decoration write Saved over unsaved authored work");
+    const detected = await expectRed("NC-11", () => decorationCannotWriteSaveTruthSection({ mutateSource: sourceMutator(edits) }));
+    controls.push({ id: "NC-11", defect: "post-commit decoration can write the save indicator, so a chrome helper can report Saved over unsaved authored work", detected });
+  }
+
+  /* NC-12 — THE RESPONSE-OWNER CHECK ALONE IS REMOVED, with the epoch binding
+     left in place. Nothing about this window moved, so no staleness check can
+     catch it: the ACTIVE PROJECT CHANGED SOMEWHERE ELSE — a second tab, another
+     machine on the LAN — and the refresh adopts a document belonging to a project
+     this window never opened, under the slug and revision of the one it did. */
+  {
+    const edits = [[REPAIRED_RESPONSE_OWNER, ""]];
+    const mutate = sourceMutator(edits);
+    const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
+    const context = await openFixture(server, currentSchemaProject("Project A"), { mutateSource: mutate });
+    await vm.runInContext(`fetch("/api/projects/switch", { method: "POST", headers: {}, body: JSON.stringify({ slug: ${JSON.stringify(B)} }) })`, context);
+    assert.strictEqual(read(context, "ACTIVE_PROJECT_SLUG"), A, "NC-12 probe: this window must still believe it has A open");
+    await vm.runInContext(`load({ intent: "refresh" })`, context);
+    await settle();
+    assert(mutate.applied.has("app.js"), "NC-12: app.js was never evaluated, so the defect never ran");
+    assert.strictEqual(read(context, "P.meta.title"), "Project B",
+      `NC-12 probe: the defect must actually install another project's document, and P holds ${JSON.stringify(read(context, "P.meta.title"))}`);
+    assert.strictEqual(read(context, "PROJECT_OPEN_EPOCH"), 1,
+      "NC-12 probe: with no replacement having happened — nothing about this window moved, so no staleness check could have caught it");
+    assert.strictEqual(saveIndicator(context), "Saved",
+      "NC-12 probe: and the indicator rests on Saved over a record from a project this window never opened");
+    const detected = await expectRed("NC-12", () => refreshAnsweredForAnotherProjectSection({ mutateSource: sourceMutator(edits) }));
+    controls.push({ id: "NC-12", defect: "a refresh does not check the owner of the response, so a project switched elsewhere lands another project's document in this window", detected });
+  }
+
+  console.log("Project load transaction negative controls");
+  for (const row of controls) console.log(`  ${row.id} - ${row.defect}\n        detected: ${row.detected}`);
+  assert.strictEqual(controls.length, 12, "every declared control must have produced a receipt");
+  return controls.length;
+}
+
+const SECTIONS = [
+  refreshWithNoProjectSection,
+  refreshAnsweredForAnotherProjectSection,
+  ledgerParkedDuringPrepareSection,
+  decorationCannotWriteSaveTruthSection,
+  deferredTriggerAcrossOpensSection,
+  triggerBeforeSwitchSection,
+  debounceInsideTransitionSection,
+  repeatedSwitchSection,
+  blockedThenSwitchSection,
+  currentSchemaControlSection,
+  completionWithLocalEditSection,
+  completionWithoutLocalEditSection,
+  completionDuringSaveSection,
+  completionWhileBlockedSection,
+  repeatedCompletionsSection,
+  automationCompletionSection,
+  dirtyDuringRefreshSection,
+  explicitReopenSection,
+  staleRefreshAfterSwitchSection,
+  heldRefreshWithoutSwitchSection,
+  staleRefreshAfterSwitchBackSection,
+  repeatedStaleRefreshSection,
+  automationStaleRefreshSection,
+  overlappingOlderThenNewerSection,
+  overlappingNewerThenOlderSection,
+  overlappingThreeRefreshesSection,
+  newerRefreshFailedSection,
+  overlappingRefreshesThenSwitchSection,
+  dirtyBetweenRefreshCommitsSection,
+  overlappingAutomationRefreshSection,
+  refreshMissAfterNewerCommitSection,
+  refreshMissWhileDirtySection,
+  refreshMissAcrossReplacementSection,
+  explicitOpenOfMissingProjectSection,
+  refreshFailureNonDestructiveSection,
+];
+
+async function main() {
+  console.log("Project load transaction - PREPARE, VALIDATE, COMMIT");
+  intentIsStructuralSection();
+  commitIsAwaitFreeSection();
+  for (const section of SECTIONS) await section();
+  const controls = await negativeControlsSection();
+  console.log(`Project load transaction passed - ${SECTIONS.length + 2} claims proven and ${controls} reintroduced defects detected. Provider calls made: 0.`);
+}
+
+module.exports = { main, SECTIONS, intentIsStructuralSection, commitIsAwaitFreeSection };
+if (require.main === module) main().catch((error) => {
+  console.error(error.stack || error.message || error);
+  process.exit(1);
+});

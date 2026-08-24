@@ -948,8 +948,15 @@ async function unobservableClaimChecks() {
 function browserClaimChecks() {
   const readLF = (file) => fs.readFileSync(path.join(ROOT, file), "utf8").replace(/\r\n/g, "\n");
   const app = readLF(path.join("public", "app.js"));
-  const call = app.match(/FAL_GENERATION_JOBS = await fetch\(([^\n]*)\)\n/);
+  /* The ledger read moved into the project load transaction's PREPARE phase: it
+     is an INPUT to the open, gathered before anything authoritative moves, rather
+     than an await sitting between the record being installed and the save
+     indicator being settled. What this section pins is unchanged - the URL is
+     byte-identical, the claim rides a header, and the drawer never claims. */
+  const call = app.match(/await fetch\((["'`]\/api\/generation\/fal\/jobs[^\n]*)\)\n/);
   assert(call, "public/app.js must still load the generation ledger on open");
+  assert(app.includes("FAL_GENERATION_JOBS = prepared.falJobs;"),
+    "and install what it read into the ledger the workspace reads");
   assert(call[1].startsWith('"/api/generation/fal/jobs"'), `the initial ledger load must keep its exact URL: ${call[1]}`);
   assert(!/["'`]\/api\/generation\/fal\/jobs\?/.test(app), "no query string may be added to the ledger route");
   assert(call[1].includes("x-cinebraid-claim-recovery"), `the initial load must carry the claim header: ${call[1]}`);
