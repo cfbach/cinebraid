@@ -89,15 +89,22 @@ function safeEnsureDirectory(dir) {
   fs.unlinkSync(probe);
   return dir;
 }
-/* `ledger`, when supplied, records the paths THIS call brought into existence, so a
-   caller that fails later can unwind exactly its own work. Ownership is decided by
-   observing absence immediately before creating — never by assuming — and a caller
-   that passes no ledger gets byte-identical behaviour to before. */
+/* `ledger`, when supplied, records what THIS call brought into existence so a caller
+   that fails later can unwind exactly its own work.
+
+   Under a ledger every creation goes through a primitive that FAILS rather than
+   overwrites, and the ledger entry is made from the success itself. The earlier
+   shape — ask whether the path is free, then create, then claim it because it now
+   exists — reads the filesystem twice and calls the gap between them ownership. It
+   is also what let a reparse point through: `existsSync` says false for a dangling
+   junction, and the copy then wrote through it. COPYFILE_EXCL refuses both.
+
+   A caller that passes no ledger gets byte-identical behaviour to before. */
 function copyMissingTree(source, destination, ledger = null) {
   if (!source || !destination || !fs.existsSync(source)) return { copied: 0, skipped: 0 };
-  const destinationExisted = fs.existsSync(destination);
-  fs.mkdirSync(destination, { recursive: true });
-  if (ledger && !destinationExisted) ledger.directory(destination);
+  if (!ledger) fs.mkdirSync(destination, { recursive: true });
+  else if (claimDirectory(destination).created) ledger.directory(destination);
+  else ledger.container(destination); /* found, not made — so prove it is really here */
   let copied = 0, skipped = 0;
   for (const entry of fs.readdirSync(source, { withFileTypes: true })) {
     const src = path.join(source, entry.name), dest = path.join(destination, entry.name);
@@ -107,8 +114,10 @@ function copyMissingTree(source, destination, ledger = null) {
     } else if (path.basename(entry.name).toLowerCase() === "project.json") {
       /* Project documents are enrolled separately through WORKSPACE_MIGRATION. */
       skipped += 1;
+    } else if (ledger) {
+      if (claimCopiedFile(src, dest).created) { ledger.file(dest); copied += 1; } else skipped += 1;
     } else if (!fs.existsSync(dest)) {
-      fs.copyFileSync(src, dest); if (ledger) ledger.file(dest); copied += 1;
+      fs.copyFileSync(src, dest); copied += 1;
     } else skipped += 1;
   }
   return { copied, skipped };
@@ -144,43 +153,153 @@ function insideDirectory(root, candidate) {
   if (path.isAbsolute(rel)) return false; /* a different volume or share */
   return rel !== ".." && !rel.startsWith(".." + path.sep) && !rel.startsWith("../");
 }
-/* Every path this migration created, in creation order, so cleanup can walk it
-   backwards. Two invariants are enforced when a path is admitted AND again when it is
-   deleted, and nothing that is passed in can switch either of them off:
+/* ---- physical, not lexical --------------------------------------------------
 
-     1. the path lies strictly inside the destination workspace root;
-     2. the path is not the source workspace root and not inside it.
+   insideDirectory() above compares STRINGS. That is the right tool for tidying a
+   path and the wrong one for deciding what may be written to or deleted, because a
+   junction makes the two disagree: `<destination>/alpha` can be a reparse point
+   whose real location is inside the SOURCE workspace. Every string test passes —
+   the path plainly begins with the destination root — and the write lands in the
+   source anyway. Measured on this branch before the correction: a migration through
+   `destination/alpha -> junction -> source/sink` answered 200 with movedRoot true
+   and created `source/sink/project.json`, which is a source-data write by a routine
+   that is not allowed to touch the source at all.
 
-   A path that fails either is refused outright, which fails the migration loudly
-   instead of deleting something this attempt does not own. */
-function createdPathLedger({ destinationRoot, sourceRoot }) {
-  const root = path.resolve(destinationRoot), source = path.resolve(sourceRoot);
+   So containment is settled on real paths, and a redirection anywhere in the chain
+   from the destination root down to the artifact is refused rather than followed. A
+   migration is a bulk copy into storage the user just nominated; it has no business
+   being clever about reparse topology, and refusing costs the user a message where
+   guessing costs them their originals. */
+function realDirectory(dir) {
+  return fs.realpathSync.native(dir);
+}
+function insideRealDirectory(root, candidate) {
+  /* Windows realpath casing is not stable enough to compare raw. */
+  const normalise = (value) => (process.platform === "win32" ? String(value).toLowerCase() : String(value));
+  return insideDirectory(normalise(root), normalise(candidate));
+}
+function sameRealPath(left, right) {
+  const normalise = (value) => (process.platform === "win32" ? String(value).toLowerCase() : String(value));
+  return normalise(path.resolve(left)) === normalise(path.resolve(right));
+}
+/* Resolves ONE name directly beneath the validated real destination root and says
+   whether it may be written to. `ENOENT` is the good case: nothing is there, so the
+   creation about to happen lands physically where the name says it will. Anything
+   already there must be a real directory that still resolves inside the destination
+   and outside the source — a reparse point is refused outright, live or dangling. */
+function destinationChild(realDestinationRoot, realSourceRoot, name) {
+  const target = path.join(realDestinationRoot, name);
+  let link = null;
+  try { link = fs.lstatSync(target); }
+  catch (error) {
+    if (error?.code === "ENOENT") return { ok: true, exists: false, real: target };
+    return { ok: false, reason: "UNREADABLE", detail: error?.message || "This destination could not be inspected." };
+  }
+  if (link.isSymbolicLink())
+    return { ok: false, reason: "REDIRECTED", detail: "This destination is a shortcut to somewhere else, so migrating into it would not put anything where it looks like it would." };
+  if (!link.isDirectory())
+    return { ok: false, reason: "NOT_A_FOLDER", detail: "Something that is not a folder already occupies this destination." };
+  let real;
+  try { real = realDirectory(target); }
+  catch (error) { return { ok: false, reason: "UNREADABLE", detail: error?.message || "This destination could not be resolved." }; }
+  if (!insideRealDirectory(realDestinationRoot, real))
+    return { ok: false, reason: "ESCAPES_DESTINATION", detail: "This destination folder physically lives outside the new project folder." };
+  if (sameRealPath(real, realSourceRoot) || insideRealDirectory(realSourceRoot, real))
+    return { ok: false, reason: "RESOLVES_INTO_SOURCE", detail: "This destination folder physically lives inside the current project folder." };
+  return { ok: true, exists: true, real };
+}
+/* Every object this migration CREATED, in creation order, so cleanup can walk it
+   backwards.
+
+   An entry is a receipt, not a path. The first version of this recorded a path and
+   admitted it when the path had been absent a moment earlier and was present now —
+   which is not a proof of anything: between those two observations another process
+   can create the very object being claimed, and cleanup then deletes a stranger's
+   file believing it was ours. So admission moved to the creation operations
+   themselves, all three of which fail rather than overwrite (mkdir, copyfile with
+   COPYFILE_EXCL, link), and only a call that actually succeeded may enter a receipt.
+
+   Deletion authority needs both halves, and BOTH are re-checked at delete time:
+
+     A. this attempt created this exact filesystem object — dev/ino still match the
+        receipt taken at creation;
+     B. the object still physically sits inside the destination root and outside the
+        source root — its real parent still resolves where it did.
+
+   If either has changed since creation, the object is left alone and reported. A
+   race is not a licence to delete; an owned leftover is the cheaper mistake. */
+function createdPathLedger({ realDestinationRoot, realSourceRoot }) {
   const entries = [];
-  const disowned = (target) =>
-    !insideDirectory(root, target) ? "is not inside the destination workspace"
-      : target === source || insideDirectory(source, target) ? "is inside the source workspace"
-        : "";
+  /* lstat, so a reparse point is measured as itself rather than as its target, and
+     bigint because an NTFS file index routinely exceeds Number.MAX_SAFE_INTEGER —
+     the plain-number form silently rounds and two distinct objects compare equal. */
+  function identify(target) {
+    const stats = fs.lstatSync(target, { bigint: true });
+    return { dev: String(stats.dev), ino: String(stats.ino), symbolic: stats.isSymbolicLink() };
+  }
+  function contained(target, realParent) {
+    if (!insideRealDirectory(realDestinationRoot, target)) return "is not inside the destination workspace";
+    if (sameRealPath(realParent, realSourceRoot) || insideRealDirectory(realSourceRoot, realParent))
+      return "physically resides inside the source workspace";
+    if (!insideRealDirectory(realDestinationRoot, realParent) && !sameRealPath(realParent, realDestinationRoot))
+      return "physically resides outside the destination workspace";
+    return "";
+  }
+  /* Only ever called from the success branch of an exclusive creation. */
   function admit(kind, candidate) {
-    const target = path.resolve(candidate), reason = disowned(target);
+    const target = path.resolve(candidate);
+    const realParent = realDirectory(path.dirname(target));
+    const identity = identify(target);
+    const reason = identity.symbolic ? "is a shortcut rather than something this migration made" : contained(target, realParent);
     if (reason) throw new Error(`Workspace migration cleanup refused a path it does not own: ${target} ${reason}.`);
-    entries.push({ kind, path: target });
+    entries.push({ kind, path: target, realParent, dev: identity.dev, ino: identity.ino });
   }
   return {
     file: (value) => admit("file", value),
     directory: (value) => admit("dir", value),
     paths: () => entries.map((entry) => entry.path),
+    receipts: () => entries.map((entry) => ({ ...entry })),
+    /* A folder this attempt did NOT create but is about to write inside. It is never
+       owned and never deleted, but it still has to be real: descending into a
+       reparse point would put the copy somewhere the destination root does not
+       cover, which is how a tree copy reaches the source workspace. */
+    container(value) {
+      const target = path.resolve(value);
+      const link = fs.lstatSync(target);
+      if (link.isSymbolicLink())
+        throw new Error(`Workspace migration refused to write through a shortcut at ${target}.`);
+      if (!link.isDirectory())
+        throw new Error(`Workspace migration cannot copy into ${target}, because something that is not a folder is already there.`);
+      const real = realDirectory(target);
+      if (!sameRealPath(real, realDestinationRoot) && !insideRealDirectory(realDestinationRoot, real))
+        throw new Error(`Workspace migration refused a destination folder that physically lives outside the new project folder: ${target}.`);
+      if (sameRealPath(real, realSourceRoot) || insideRealDirectory(realSourceRoot, real))
+        throw new Error(`Workspace migration refused a destination folder that physically lives inside the current project folder: ${target}.`);
+    },
     /* Reverse order, so a directory is only removed after whatever this attempt put
        inside it. Directories go through rmdir, NOT a recursive remove: a directory
        still holding something this attempt did not create survives and is reported. */
     unwind() {
       const removed = [], leftover = [], errors = [];
       for (let index = entries.length - 1; index >= 0; index -= 1) {
-        const { kind, path: target } = entries[index];
+        const entry = entries[index], target = entry.path;
         try {
-          const reason = disowned(target);
-          if (reason) throw new Error(`Refused: ${target} ${reason}`);
-          if (!fs.existsSync(target)) continue;
-          if (kind === "file") fs.unlinkSync(target);
+          let identity;
+          try { identity = identify(target); }
+          catch (error) {
+            if (error?.code === "ENOENT") continue; /* already gone; nothing to answer for */
+            throw error;
+          }
+          if (identity.symbolic)
+            throw new Error("a shortcut now occupies this path, so it is no longer the object this migration created");
+          if (identity.dev !== entry.dev || identity.ino !== entry.ino)
+            throw new Error("this is no longer the same filesystem object this migration created");
+          const realParent = realDirectory(path.dirname(target));
+          if (!sameRealPath(realParent, entry.realParent))
+            throw new Error("this path no longer resolves to the location it was created in");
+          const reason = contained(target, realParent);
+          if (reason) throw new Error(`refused: it ${reason}`);
+          if (entry.kind === "file") fs.unlinkSync(target);
           else fs.rmdirSync(target);
           removed.push(target);
         } catch (error) {
@@ -192,17 +311,66 @@ function createdPathLedger({ destinationRoot, sourceRoot }) {
     },
   };
 }
+/* The three exclusive creation primitives. Each returns whether THIS call created
+   the object; none of them can overwrite, and none can be talked into following a
+   reparse point, so "it succeeded" and "we made it" are the same statement. */
+function claimDirectory(target) {
+  try { fs.mkdirSync(target); return { created: true }; }
+  catch (error) {
+    if (error?.code === "EEXIST") return { created: false };
+    throw error;
+  }
+}
+function claimCopiedFile(source, target) {
+  try { fs.copyFileSync(source, target, fs.constants.COPYFILE_EXCL); return { created: true }; }
+  catch (error) {
+    /* EPERM is what Windows answers when the destination is a reparse point. Both it
+       and EEXIST mean the same thing here: something is already there, it is not
+       ours, and it is not to be written through or counted. */
+    if (error?.code === "EEXIST" || error?.code === "EPERM") return { created: false };
+    throw error;
+  }
+}
 function preflightWorkspaceMigration(previousRoot, nextRoot) {
   const refuse = (status, code, message, detail = {}) => ({ ok: false, refusal: { status, code, message, ...detail } });
-  if (insideDirectory(previousRoot, nextRoot))
+
+  /* Real roots first. Everything downstream — containment, the collision check, the
+     plan, and later the deletion authority — is decided against these and not
+     against the strings the user typed, which a junction can make lie. */
+  let realSourceRoot, realDestinationRoot;
+  try { realSourceRoot = realDirectory(previousRoot); realDestinationRoot = realDirectory(nextRoot); }
+  catch (error) {
+    return refuse(400, "WORKSPACE_MIGRATION_ROOT_UNREADABLE",
+      error?.message || "One of the project folders could not be resolved on disk.");
+  }
+  if (sameRealPath(realSourceRoot, realDestinationRoot))
+    return refuse(409, "WORKSPACE_MIGRATION_SAME_ROOT",
+      "The new project folder is the same folder as the current one, so there is nothing to move.",
+      { from: realSourceRoot, to: realDestinationRoot });
+  if (insideRealDirectory(realSourceRoot, realDestinationRoot))
     return refuse(409, "WORKSPACE_MIGRATION_NESTED_ROOT",
       "The new project folder is inside the current one, so migrating would copy the workspace into itself.",
-      { from: previousRoot, to: nextRoot });
+      { from: realSourceRoot, to: realDestinationRoot });
 
-  const sourceProjects = fs.readdirSync(previousRoot, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && fs.existsSync(path.join(previousRoot, entry.name, "project.json")))
+  const sourceProjects = fs.readdirSync(realSourceRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && fs.existsSync(path.join(realSourceRoot, entry.name, "project.json")))
     .map((entry) => entry.name);
-  const collisions = sourceProjects.filter((slug) => fs.existsSync(path.join(nextRoot, slug, "project.json")));
+
+  /* Each destination name is resolved physically before it is asked anything else,
+     so "is a document already there?" is asked of the folder the write will really
+     land in. A redirected name is refused rather than answered. */
+  const resolved = new Map(), redirected = [];
+  for (const slug of sourceProjects) {
+    const child = destinationChild(realDestinationRoot, realSourceRoot, slug);
+    if (!child.ok) redirected.push({ slug, reason: child.reason, detail: child.detail });
+    else resolved.set(slug, child);
+  }
+  if (redirected.length)
+    return refuse(409, "WORKSPACE_MIGRATION_DESTINATION_REDIRECTED",
+      "Workspace migration was refused because some destination folders do not physically live where they appear to.",
+      { problems: redirected });
+
+  const collisions = sourceProjects.filter((slug) => fs.existsSync(path.join(resolved.get(slug).real, "project.json")));
   if (collisions.length)
     return refuse(409, "WORKSPACE_PROJECT_COLLISION",
       "Workspace migration refused because destination project documents already exist.", { collisions });
@@ -211,17 +379,17 @@ function preflightWorkspaceMigration(previousRoot, nextRoot) {
      plan addresses the exact files the writes will address. */
   const projects = [], problems = [];
   for (const slug of sourceProjects) {
-    const sourceFile = path.join(previousRoot, slug, "project.json");
-    const contained = containedProjectSlug(slug, nextRoot);
+    const sourceFile = path.join(realSourceRoot, slug, "project.json");
+    const contained = containedProjectSlug(slug, realDestinationRoot);
     if (!contained) {
       problems.push({ slug, reason: "UNUSABLE_SLUG", detail: "This project folder name cannot address a folder inside the new location." });
       continue;
     }
-    const destinationFile = path.join(path.resolve(nextRoot), contained, "project.json");
-    if (fs.existsSync(destinationFile)) {
-      problems.push({ slug, reason: "DESTINATION_EXISTS", detail: "A project document is already stored at the destination." });
-      continue;
-    }
+    /* Built from the real root with the same join the seam's resolveFile uses, so
+       the plan, the write and the ledger all name one path. destinationChild has
+       already proved this name is not a redirection. */
+    const slugDirectory = path.join(realDestinationRoot, contained);
+    const destinationFile = path.join(slugDirectory, "project.json");
     let document;
     try { document = readJsonSync(sourceFile); }
     catch (error) {
@@ -233,13 +401,13 @@ function preflightWorkspaceMigration(previousRoot, nextRoot) {
       problems.push({ slug, reason: "SOURCE_INVALID", detail: (validation?.errors || []).slice(0, 5).join(" ") || "This project document did not validate." });
       continue;
     }
-    projects.push({ slug: contained, sourceFile, destinationFile, document });
+    projects.push({ slug: contained, sourceFile, slugDirectory, destinationFile, document });
   }
   if (problems.length)
     return refuse(422, "WORKSPACE_MIGRATION_PREFLIGHT_FAILED",
       "Workspace migration was refused before anything was copied, because some projects cannot be migrated.",
       { problems });
-  return { ok: true, refusal: null, projects };
+  return { ok: true, refusal: null, projects, realSourceRoot, realDestinationRoot };
 }
 /* Carries a seam refusal out of the copy loop so one place decides what a failed
    migration says, after cleanup has had its turn. */
@@ -648,7 +816,14 @@ function projectFailurePayload(inspected) {
   };
 }
 
-function atomicWriteJson(file, value, { backup = true } = {}) {
+/* `exclusive` publishes the finished bytes with link(), which fails EEXIST rather
+   than replacing whatever is at `file`. rename() cannot do this: it overwrites in
+   silence, so a writer that checked the destination was free a moment earlier will
+   destroy a document another process created in between and never learn it did.
+   That gap is only survivable for a write class that is allowed to create and
+   nothing else, which is exactly what CREATE_ONLY means — and it is what lets a
+   migration state that a destination document is its own to clean up. */
+function atomicWriteJson(file, value, { backup = true, exclusive = false } = {}) {
   const payload = JSON.stringify(value, null, 2),
     dir = path.dirname(file),
     temp = path.join(
@@ -665,7 +840,8 @@ function atomicWriteJson(file, value, { backup = true } = {}) {
     fs.closeSync(fd);
     fd = undefined;
     if (backup && fs.existsSync(file)) fs.copyFileSync(file, file + ".bak");
-    fs.renameSync(temp, file);
+    if (exclusive) { fs.linkSync(temp, file); fs.unlinkSync(temp); }
+    else fs.renameSync(temp, file);
   } catch (error) {
     if (fd !== undefined) {
       try { fs.closeSync(fd); } catch {}
@@ -769,7 +945,13 @@ const AuthorityWriteBoundary = createAuthorityWriteSeam({
       }, null, 2));
       metadata.evidence = evidenceName;
     }
-    atomicWriteJson(file, project, { backup: ![WRITE_CLASSES.UNTRUSTED_IMPORT, WRITE_CLASSES.WORKSPACE_MIGRATION].includes(context.writeClass) });
+    atomicWriteJson(file, project, {
+      backup: ![WRITE_CLASSES.UNTRUSTED_IMPORT, WRITE_CLASSES.WORKSPACE_MIGRATION].includes(context.writeClass),
+      /* Migration is the writer that has to be able to unwind its own copies, so it
+         is the one that has to know it made them. Publishing exclusively turns the
+         seam's `created` from a report into a proof. */
+      exclusive: context.writeClass === WRITE_CLASSES.WORKSPACE_MIGRATION,
+    });
   },
 });
 const persistProjectSuccessor = AuthorityWriteBoundary.persistProjectSuccessor;
@@ -2050,28 +2232,26 @@ app.post("/api/workspace/settings", (req, res) => {
     if (path.resolve(previousRoot) !== path.resolve(nextRoot) && fs.existsSync(previousRoot)) {
       const plan = preflightWorkspaceMigration(previousRoot, nextRoot);
       if (!plan.ok) return res.status(plan.refusal.status).json({ ok: false, ...plan.refusal, error: plan.refusal.message });
-      ledger = createdPathLedger({ destinationRoot: nextRoot, sourceRoot: previousRoot });
+      ledger = createdPathLedger({ realDestinationRoot: plan.realDestinationRoot, realSourceRoot: plan.realSourceRoot });
       for (const item of plan.projects) {
-        const slugDirectory = path.dirname(item.destinationFile);
-        /* Absence read immediately before the write is what makes the entries below
-           attempt-owned. A destination that appeared in the meantime belongs to
-           whoever put it there: CREATE_ONLY refuses the write, and it is not ours. */
-        const directoryExisted = fs.existsSync(slugDirectory), fileExisted = fs.existsSync(item.destinationFile);
-        let outcome;
-        try {
-          outcome = persistProjectSuccessor({
-            slug: item.slug, successor: item.document, writeClass: WRITE_CLASSES.WORKSPACE_MIGRATION,
-            expectedRevision: "", transitionMetadata: { destinationRoot: nextRoot },
-          });
-        } finally {
-          /* Observed, not inferred from the outcome: a write that failed part-way can
-             still have left behind the folder it made on the way in. */
-          if (!directoryExisted && fs.existsSync(slugDirectory)) ledger.directory(slugDirectory);
-          if (!fileExisted && fs.existsSync(item.destinationFile)) ledger.file(item.destinationFile);
-        }
+        /* Ownership comes from the creation operation, never from asking the
+           filesystem afterwards what is there. mkdir without `recursive` fails
+           EEXIST rather than succeeding quietly, so a folder another process put
+           here in the meantime is its folder and stays that way. */
+        if (claimDirectory(item.slugDirectory).created) ledger.directory(item.slugDirectory);
+        else ledger.container(item.slugDirectory);
+        const outcome = persistProjectSuccessor({
+          slug: item.slug, successor: item.document, writeClass: WRITE_CLASSES.WORKSPACE_MIGRATION,
+          expectedRevision: "", transitionMetadata: { destinationRoot: plan.realDestinationRoot },
+        });
+        /* The seam says whether IT created the document, and publishes it with a
+           link() that cannot overwrite — so this is a proof, not a reading. A
+           refusal or a failure claims nothing: an ambiguous outcome leaves the
+           document unowned rather than guessing from existsSync. */
+        if (outcome.ok && outcome.created === true) ledger.file(item.destinationFile);
         if (!outcome.ok) throw workspaceMigrationRefusal(outcome, item.slug);
       }
-      const result = copyMissingTree(previousRoot, nextRoot, ledger);
+      const result = copyMissingTree(plan.realSourceRoot, plan.realDestinationRoot, ledger);
       migration = { ...result, projectDocuments: plan.projects.length, movedRoot: true, from: previousRoot, to: nextRoot };
     }
     writeConfig(nextConfig);

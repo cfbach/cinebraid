@@ -165,7 +165,7 @@ function ledgerFrom(source) {
   const start = source.indexOf("function insideDirectory(");
   const end = source.indexOf("function workspaceStatus(");
   assert(start > 0 && end > start, "the F-11 migration helpers must be locatable");
-  const sandbox = { require, module: { exports: {} }, console, fs, path, exports: {} };
+  const sandbox = { require, module: { exports: {} }, console, fs, path, process, exports: {} };
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
   vm.runInContext(source.slice(start, end) + "\nmodule.exports = { createdPathLedger };",
@@ -177,9 +177,14 @@ function ledgerFrom(source) {
    THE CONTROLS
    ========================================================================== */
 
+/* A blocker preflight genuinely cannot see: `existsSync` follows reparse points, so
+   a dangling junction at a document path reads as absent. The migration therefore
+   gets as far as writing alpha before beta fails, which is the state every rollback
+   control needs. */
 const THREE_PROJECTS_ONE_BLOCKED = ({ source, dest }) => {
   for (const slug of ["alpha", "beta", "gamma"]) writeProjectAt(source, slug, baseProject(slug));
-  writeFileAt(path.join(dest, "beta"), "occupied by something else");
+  fs.mkdirSync(path.join(dest, "beta"), { recursive: true });
+  fs.symlinkSync(path.join(dest, "beta", "no-such-target"), path.join(dest, "beta", "project.json"), "junction");
 };
 
 const THREE_PROJECTS_COPY_BLOCKED = ({ source, dest }) => {
@@ -268,12 +273,9 @@ const CONTROLS = [
        shipped rule that folders are emptied, never forced. */
     mutations: [
       {
-        from: "if (!directoryExisted && fs.existsSync(slugDirectory)) ledger.directory(slugDirectory);",
-        to: "if (fs.existsSync(slugDirectory)) ledger.directory(slugDirectory);",
-      },
-      {
-        from: "if (!fileExisted && fs.existsSync(item.destinationFile)) ledger.file(item.destinationFile);",
-        to: "if (fs.existsSync(item.destinationFile)) ledger.file(item.destinationFile);",
+        from: "        if (claimDirectory(item.slugDirectory).created) ledger.directory(item.slugDirectory);\n"
+          + "        else ledger.container(item.slugDirectory);",
+        to: "        if (fs.existsSync(item.slugDirectory)) ledger.directory(item.slugDirectory);",
       },
     ],
     fixture: PRE_EXISTING_INSIDE_A_MIGRATED_SLUG,
@@ -315,6 +317,14 @@ const CONTROLS = [
    considered — and that removing the rule is what makes an unowned path admissible.
    ========================================================================== */
 
+const CONTAINMENT_RULE =
+  '    if (!insideRealDirectory(realDestinationRoot, target)) return "is not inside the destination workspace";\n'
+  + '    if (sameRealPath(realParent, realSourceRoot) || insideRealDirectory(realSourceRoot, realParent))\n'
+  + '      return "physically resides inside the source workspace";\n'
+  + '    if (!insideRealDirectory(realDestinationRoot, realParent) && !sameRealPath(realParent, realDestinationRoot))\n'
+  + '      return "physically resides outside the destination workspace";\n'
+  + '    return "";';
+
 function containmentControl() {
   const home = fs.mkdtempSync(path.join(TEMP, "containment-"));
   const source = path.join(home, "source"), dest = path.join(home, "dest");
@@ -325,19 +335,18 @@ function containmentControl() {
   const outside = path.join(home, "somewhere-else.bin");
   fs.writeFileSync(outside, "not the destination");
 
+  const roots = { realDestinationRoot: fs.realpathSync.native(dest), realSourceRoot: fs.realpathSync.native(source) };
   const shipped = ledgerFrom(SHIPPED);
-  assert.throws(() => shipped({ destinationRoot: dest, sourceRoot: source }).file(sourceDocument),
+  assert.throws(() => shipped(roots).file(sourceDocument),
     /does not own/, "the shipped ledger must refuse a source path");
-  assert.throws(() => shipped({ destinationRoot: dest, sourceRoot: source }).file(outside),
+  assert.throws(() => shipped(roots).file(outside),
     /does not own/, "the shipped ledger must refuse a path outside the destination");
 
-  const mutated = ledgerFrom(applyMutations(SHIPPED, [{
-    from: '    !insideDirectory(root, target) ? "is not inside the destination workspace"\n'
-      + '      : target === source || insideDirectory(source, target) ? "is inside the source workspace"\n'
-      + '        : "";',
-    to: '    "";',
-  }]));
-  const unguarded = mutated({ destinationRoot: dest, sourceRoot: source });
+  const mutated = ledgerFrom(applyMutations(SHIPPED, [{ from: CONTAINMENT_RULE, to: '    return "";' }]));
+  const unguarded = mutated({
+    realDestinationRoot: fs.realpathSync.native(dest),
+    realSourceRoot: fs.realpathSync.native(source),
+  });
   unguarded.file(sourceDocument);
   unguarded.file(outside);
   assert.deepStrictEqual([...unguarded.paths()], [path.resolve(sourceDocument), path.resolve(outside)],
@@ -347,6 +356,130 @@ function containmentControl() {
      stops this at admission, so nothing here ever reaches a delete. */
   assert.strictEqual(fs.existsSync(sourceDocument), true);
   assert.strictEqual(fs.existsSync(outside), true);
+}
+
+/* ==========================================================================
+   NC-F11-4 — lexical containment restored.
+
+   The independently-reported hold. `path.resolve`/`path.relative` say a junction
+   at `<destination>/alpha` is inside the destination, because as strings it is.
+   Put the reparse decisions back and the migration writes a project document into
+   the SOURCE workspace and calls itself a success.
+   ========================================================================== */
+
+/* Everything destinationChild decides from the real filesystem, replaced by the
+   lexical answer the path string gives — which is what the held candidate did. */
+const LEXICAL_ONLY = [
+  {
+    from: '  if (link.isSymbolicLink())\n'
+      + '    return { ok: false, reason: "REDIRECTED", detail: "This destination is a shortcut to somewhere else, so migrating into it would not put anything where it looks like it would." };\n'
+      + '  if (!link.isDirectory())\n'
+      + '    return { ok: false, reason: "NOT_A_FOLDER", detail: "Something that is not a folder already occupies this destination." };\n'
+      + '  let real;\n'
+      + '  try { real = realDirectory(target); }\n'
+      + '  catch (error) { return { ok: false, reason: "UNREADABLE", detail: error?.message || "This destination could not be resolved." }; }\n'
+      + '  if (!insideRealDirectory(realDestinationRoot, real))\n'
+      + '    return { ok: false, reason: "ESCAPES_DESTINATION", detail: "This destination folder physically lives outside the new project folder." };\n'
+      + '  if (sameRealPath(real, realSourceRoot) || insideRealDirectory(realSourceRoot, real))\n'
+      + '    return { ok: false, reason: "RESOLVES_INTO_SOURCE", detail: "This destination folder physically lives inside the current project folder." };\n'
+      + '  return { ok: true, exists: true, real };',
+    to: "  return { ok: true, exists: true, real: target };",
+  },
+  {
+    from: "      const link = fs.lstatSync(target);\n"
+      + "      if (link.isSymbolicLink())\n"
+      + "        throw new Error(`Workspace migration refused to write through a shortcut at ${target}.`);\n"
+      + "      if (!link.isDirectory())\n"
+      + "        throw new Error(`Workspace migration cannot copy into ${target}, because something that is not a folder is already there.`);\n"
+      + "      const real = realDirectory(target);",
+    to: "      const real = target;",
+  },
+  { from: CONTAINMENT_RULE, to: '    return insideDirectory(realDestinationRoot, target) ? "" : "is not inside the destination workspace";' },
+];
+
+async function junctionControl() {
+  const build = ({ source, dest }) => {
+    writeProjectAt(source, "alpha", baseProject("Alpha"));
+    fs.mkdirSync(path.join(source, "sink"), { recursive: true });
+    fs.mkdirSync(dest, { recursive: true });
+    fs.symlinkSync(path.join(source, "sink"), path.join(dest, "alpha"), "junction");
+  };
+  const run = async (source) => {
+    const result = await attemptAndRetry(source, build);
+    const sink = path.join(result.source, "sink");
+    return { ...result, sinkDocument: path.join(sink, "project.json"), wrote: fs.existsSync(path.join(sink, "project.json")) };
+  };
+
+  const shipped = await run(SHIPPED);
+  assert.strictEqual(shipped.first.status, 409, JSON.stringify(shipped.first.body));
+  assert.strictEqual(shipped.first.body.code, "WORKSPACE_MIGRATION_DESTINATION_REDIRECTED");
+  assert.strictEqual(shipped.wrote, false, "the shipped build must not write through the junction");
+
+  const mutated = await run(applyMutations(SHIPPED, LEXICAL_ONLY));
+  assert.strictEqual(mutated.wrote, true,
+    "lexical containment must let a project document land inside the SOURCE workspace: " + JSON.stringify(mutated.first.body));
+  assert.strictEqual(mutated.first.status, 200, "and say nothing was wrong: " + JSON.stringify(mutated.first.body));
+  assert.strictEqual(mutated.first.body.migration.movedRoot, true, "reporting a safe move over a source-directed write");
+}
+
+/* ==========================================================================
+   NC-F11-5 — creation ownership inferred instead of proved.
+
+   The other independently-reported hold. Both claim primitives are replaced with
+   their non-exclusive forms, which is what "absent before, present after" reduces
+   to once the gap is real: they report that this attempt created something it
+   found, and in the file case they destroy it on the way.
+   ========================================================================== */
+
+function creationOwnershipControl() {
+  const home = fs.mkdtempSync(path.join(TEMP, "ownership-"));
+  fs.mkdirSync(home, { recursive: true });
+  const load = (source) => {
+    const start = source.indexOf("function claimDirectory(");
+    const end = source.indexOf("function preflightWorkspaceMigration(");
+    assert(start > 0 && end > start, "the claim primitives must be locatable");
+    const sandbox = { require, module: { exports: {} }, console, fs, path, process, exports: {} };
+    sandbox.globalThis = sandbox;
+    vm.createContext(sandbox);
+    vm.runInContext(source.slice(start, end) + "\nmodule.exports = { claimDirectory, claimCopiedFile };",
+      sandbox, { filename: "server.js#f11-claims" });
+    return sandbox.module.exports;
+  };
+
+  const foreignDir = path.join(home, "their-folder"); fs.mkdirSync(foreignDir);
+  const payload = path.join(home, "ours.bin"); fs.writeFileSync(payload, "our bytes");
+  const foreignFile = path.join(home, "their-file.bin"); fs.writeFileSync(foreignFile, "their bytes");
+  const foreignBytes = sha(foreignFile);
+
+  const shipped = load(SHIPPED);
+  assert.strictEqual(shipped.claimDirectory(foreignDir).created, false,
+    "the shipped build must not claim a folder it found");
+  assert.strictEqual(shipped.claimCopiedFile(payload, foreignFile).created, false,
+    "the shipped build must not claim a file it found");
+  assert.strictEqual(sha(foreignFile), foreignBytes, "and must not have overwritten it");
+
+  const mutated = load(applyMutations(SHIPPED, [
+    {
+      from: "  try { fs.mkdirSync(target); return { created: true }; }\n"
+        + "  catch (error) {\n"
+        + "    if (error?.code === \"EEXIST\") return { created: false };\n"
+        + "    throw error;\n"
+        + "  }",
+      to: "  const absent = !fs.existsSync(target);\n"
+        + "  fs.mkdirSync(target, { recursive: true });\n"
+        + "  return { created: absent || fs.existsSync(target) };",
+    },
+    {
+      from: "  try { fs.copyFileSync(source, target, fs.constants.COPYFILE_EXCL); return { created: true }; }",
+      to: "  try { fs.copyFileSync(source, target); return { created: true }; }",
+    },
+  ]));
+  assert.strictEqual(mutated.claimDirectory(foreignDir).created, true,
+    "inferring ownership adopts a folder another actor created");
+  assert.strictEqual(mutated.claimCopiedFile(payload, foreignFile).created, true,
+    "and adopts a file another actor created");
+  assert.notStrictEqual(sha(foreignFile), foreignBytes,
+    "having destroyed its contents first — which is what a non-exclusive copy does");
 }
 
 /* ==========================================================================
@@ -387,8 +520,14 @@ function containmentControl() {
     console.log(`  caught     ${control.id}  ${control.title}`);
   }
 
-  try { containmentControl(); caught += 1; console.log("  caught     NC-F11-3b  ledger containment rule removed"); }
-  catch (error) { broken += 1; console.log(`  BROKEN     NC-F11-3b  ${error.message}`); }
+  for (const [id, title, fn] of [
+    ["NC-F11-3b", "ledger containment rule removed", containmentControl],
+    ["NC-F11-4 ", "lexical containment restored — writes into the source workspace", junctionControl],
+    ["NC-F11-5 ", "creation ownership inferred instead of proved", creationOwnershipControl],
+  ]) {
+    try { await fn(); caught += 1; console.log(`  caught     ${id}  ${title}`); }
+    catch (error) { broken += 1; console.log(`  BROKEN     ${id}  ${title}\n             ${error.message}`); }
+  }
 
   console.log(`\nF-11 negative controls: ${caught} caught · ${missed} missed · ${broken} broken; provider calls: 0.`);
   fs.rmSync(TEMP, { recursive: true, force: true });

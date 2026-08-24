@@ -414,9 +414,16 @@ function createAuthorityWriteSeam(io = {}) {
       if (denied) return { ok: false, revision: storedRevision, refusal: denied };
 
       if (exists && stableJson(current) === stableJson(successor))
-        return { ok: true, revision: storedRevision, refusal: null, unchanged: true, comparison, successor: clone(successor) };
+        return { ok: true, revision: storedRevision, refusal: null, unchanged: true, created: false, comparison, successor: clone(successor) };
       io.writeProject(file, successor, { slug, writeClass, transitionMetadata, current });
-      return { ok: true, revision: io.revisionFor(file), refusal: null, comparison, successor: clone(successor) };
+      /* `created` says THIS call brought the document into existence, rather than
+         replacing one that was already there. A caller that has to clean up after
+         itself cannot ask the filesystem afterwards — by then another writer's
+         document is indistinguishable from its own — so the one place that knows
+         says so. For a CREATE_ONLY class the destination was proven absent above
+         and io.writeProject publishes exclusively, which is what makes this a
+         proof rather than a report. */
+      return { ok: true, revision: io.revisionFor(file), refusal: null, created: !exists, comparison, successor: clone(successor) };
     } catch (error) {
       return {
         ok: false,

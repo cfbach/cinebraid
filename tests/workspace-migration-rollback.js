@@ -81,6 +81,11 @@ function snapshot(root) {
     if (!fs.existsSync(dir)) return;
     for (const entry of fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
       const full = path.join(dir, entry.name), rel = prefix ? prefix + "/" + entry.name : entry.name;
+      /* lstat, never stat: a reparse point is recorded as the link it is, with the
+         target it names. Following one would hash somebody else's bytes and call
+         the destination unchanged when it was not — and would crash outright on a
+         dangling junction, which several of these fixtures deliberately plant. */
+      if (fs.lstatSync(full).isSymbolicLink()) { out[rel] = "link:" + fs.readlinkSync(full); continue; }
       if (entry.isDirectory()) { out[rel + "/"] = "dir"; walk(full, rel); }
       else out[rel] = sha(full);
     }
@@ -123,16 +128,26 @@ async function scenario(id, fn) {
 /* The shipped ledger, evaluated from the shipped source in its own realm. The slice
    runs from the containment predicate to the workspace status reader, so what is
    under test is the code server.js runs and not a restatement of it. */
+/* The lexical test the shipped code uses for tidying, borrowed here only to prove a
+   fixture really is string-wise inside the destination before asserting it is
+   refused on physical grounds. */
+function insideDirectoryOf(root, candidate) {
+  const rel = path.relative(path.resolve(root), path.resolve(candidate));
+  return Boolean(rel) && !path.isAbsolute(rel) && rel !== ".." && !rel.startsWith(".." + path.sep);
+}
+
 function shippedMigrationHelpers(source = SERVER_SOURCE) {
   const start = source.indexOf("function insideDirectory(");
   const end = source.indexOf("function workspaceStatus(");
   assert(start > 0 && end > start, "the F-11 migration helpers must be locatable in server.js");
-  const sandbox = { require, module: { exports: {} }, console, fs, path, exports: {} };
+  const sandbox = { require, module: { exports: {} }, console, fs, path, process, exports: {} };
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
   vm.runInContext(
     source.slice(start, end) +
-    "\nmodule.exports = { insideDirectory, createdPathLedger, preflightWorkspaceMigration, workspaceMigrationRefusal, workspaceMigrationFailure };",
+    "\nmodule.exports = { insideDirectory, insideRealDirectory, sameRealPath, destinationChild,"
+    + " createdPathLedger, claimDirectory, claimCopiedFile, preflightWorkspaceMigration,"
+    + " workspaceMigrationRefusal, workspaceMigrationFailure };",
     sandbox, { filename: "server.js#f11-migration-helpers" },
   );
   return sandbox.module.exports;
@@ -166,13 +181,21 @@ async function f11_1() {
   });
 }
 
+/* An obstruction preflight genuinely cannot see, which is what a B-class failure
+   needs. `fs.existsSync` follows reparse points, so a dangling junction at a
+   document path reads as ABSENT — no collision, nothing to refuse — and only the
+   write itself discovers that something is there. It is also the deterministic
+   stand-in for the race: an object present at the creation operation that was not
+   visible to any check before it. */
+function blockDocumentInvisibly(dest, slug) {
+  fs.mkdirSync(path.join(dest, slug), { recursive: true });
+  fs.symlinkSync(path.join(dest, slug, "no-such-target"), path.join(dest, slug, "project.json"), "junction");
+}
+
 async function f11_2() {
   await withWorkspace(({ source, dest }) => {
     for (const slug of ["alpha", "beta", "gamma"]) writeProjectAt(source, slug, baseProject(slug));
-    /* A plain file where the second project's folder has to go. There is no
-       destination project document, so this is not a collision and preflight cannot
-       know about it; the write discovers it, by which time alpha is already copied. */
-    writeFileAt(path.join(dest, "beta"), "occupied by something else");
+    blockDocumentInvisibly(dest, "beta");
   }, async ({ source, dest, configuredRoot, migrate }) => {
     const beforeSource = snapshot(source), beforeDest = snapshot(dest);
     const result = await migrate();
@@ -315,15 +338,17 @@ async function f11_6() {
 
   await withWorkspace(({ source, dest }) => {
     for (const slug of ["alpha", "beta", "gamma"]) writeProjectAt(source, slug, baseProject(slug));
-    writeFileAt(path.join(dest, "beta"), "a transient obstruction");
+    blockDocumentInvisibly(dest, "beta");
   }, async ({ source, dest, configuredRoot, migrate }) => {
     const beforeSource = snapshot(source);
     const first = await migrate();
     assert.strictEqual(first.status, 500, JSON.stringify(first.body));
     assert.strictEqual(first.body.migration.rollback.complete, true);
 
-    /* The external cause is corrected; nothing else is cleaned up by hand. */
-    fs.unlinkSync(path.join(dest, "beta"));
+    /* The external cause is corrected; nothing else is cleaned up by hand. The
+       folder the obstruction sat in was NOT this attempt's, so it is still here —
+       which is exactly why the retry must not treat it as a collision. */
+    fs.unlinkSync(path.join(dest, "beta", "project.json"));
 
     const second = await migrate();
     assert.strictEqual(second.status, 200, JSON.stringify(second.body));
@@ -353,7 +378,7 @@ function f11_7() {
   fs.writeFileSync(document, "{}");
   fs.writeFileSync(copied, "frame");
 
-  const ledger = createdPathLedger({ destinationRoot: dest, sourceRoot: source });
+  const ledger = createdPathLedger({ realDestinationRoot: fs.realpathSync.native(dest), realSourceRoot: fs.realpathSync.native(source) });
   ledger.directory(slugDirectory);
   ledger.file(document);
   ledger.directory(mediaDirectory);
@@ -460,7 +485,172 @@ async function f11_8() {
 }
 
 /* ==========================================================================
-   SOURCE-LEVEL SAFETY. Five properties that have to hold by construction, not
+   OWNERSHIP AND PHYSICAL CONTAINMENT.
+
+   The four below exist because the first version of this slice got ownership
+   wrong in two ways: it inferred creation from "absent before, present after",
+   which another process can walk into, and it decided containment on strings,
+   which a junction can make lie.
+   ========================================================================== */
+
+/* RACE-1 — the artifact is there when the creation operation runs, and no check
+   before it could have seen it. That is what losing the race looks like from the
+   inside, and the requirement is that the migration notices rather than adopting
+   whatever it finds. */
+async function race1() {
+  await withWorkspace(({ source, dest }) => {
+    for (const slug of ["alpha", "beta", "gamma"]) writeProjectAt(source, slug, baseProject(slug));
+    blockDocumentInvisibly(dest, "beta");
+  }, async ({ source, dest, migrate }) => {
+    const foreign = path.join(dest, "beta", "project.json");
+    assert.strictEqual(fs.existsSync(foreign), false, "the fixture must be invisible to a stat-based check");
+    assert.strictEqual(fs.lstatSync(foreign).isSymbolicLink(), true, "…while genuinely being there");
+    const foreignTarget = fs.readlinkSync(foreign);
+    const beforeSource = snapshot(source), beforeDest = snapshot(dest);
+
+    const result = await migrate();
+    assert.strictEqual(result.ok, false, "the migration must remain failed");
+    assert.strictEqual(result.body.code, "PROJECT_PERSISTENCE_FAILED", JSON.stringify(result.body));
+    assert.strictEqual(result.body.slug, "beta");
+
+    /* Never adopted. The rollback that follows removes alpha's artifacts and stops
+       there — the object it did not create is not in the receipt list at all. */
+    const rollback = result.body.migration.rollback;
+    assert.strictEqual(rollback.complete, true, JSON.stringify(rollback));
+    assert.strictEqual(rollback.leftover.length, 0);
+    assert.strictEqual(fs.lstatSync(foreign).isSymbolicLink(), true, "the foreign object must survive cleanup");
+    assert.strictEqual(fs.readlinkSync(foreign), foreignTarget, "unchanged, not merely present");
+    assert.strictEqual(fs.existsSync(path.join(dest, "alpha", "project.json")), false, "this attempt's own copy still goes");
+
+    assert.deepStrictEqual(snapshot(dest), beforeDest, "the destination must equal its pre-attempt state");
+    assert.deepStrictEqual(snapshot(source), beforeSource, "the source must be untouched");
+
+    /* And the retry reports the real external cause rather than a collision with
+       the migration's own leftovers, because there are none. */
+    const retry = await migrate();
+    assert.notStrictEqual(retry.body.code, "WORKSPACE_PROJECT_COLLISION");
+    assert.strictEqual(retry.body.code, "PROJECT_PERSISTENCE_FAILED");
+  });
+}
+
+/* RACE-1b — the interleave itself, driven directly. The shipped claim primitives
+   are the whole ownership answer, so this pins what they say when another actor
+   got there first: not ours, and therefore never deleted. */
+function race1Interleaved() {
+  const { claimDirectory, claimCopiedFile } = shippedMigrationHelpers();
+  const home = fs.mkdtempSync(path.join(TEMP, "interleave-"));
+  fs.mkdirSync(home, { recursive: true });
+
+  const folder = path.join(home, "folder");
+  assert.strictEqual(claimDirectory(folder).created, true, "an absent folder is created by this call");
+  assert.strictEqual(claimDirectory(folder).created, false,
+    "a folder that already exists was NOT created by this call, however it got there");
+
+  const source = path.join(home, "src.bin"); fs.writeFileSync(source, "ours");
+  const target = path.join(home, "target.bin");
+  assert.strictEqual(claimCopiedFile(source, target).created, true, "an absent file is created by this call");
+  fs.writeFileSync(target, "another actor's bytes");
+  const foreignBytes = sha(target);
+  assert.strictEqual(claimCopiedFile(source, target).created, false,
+    "a file another actor put there was NOT created by this call");
+  assert.strictEqual(sha(target), foreignBytes,
+    "and the refusal is a refusal: the exclusive copy never overwrote it");
+}
+
+/* The independently-reported hold, end to end over HTTP. */
+async function junctionIntoSource() {
+  await withWorkspace(({ source, dest }) => {
+    writeProjectAt(source, "alpha", baseProject("Alpha"));
+    fs.mkdirSync(path.join(source, "sink"), { recursive: true });
+    fs.mkdirSync(dest, { recursive: true });
+    fs.symlinkSync(path.join(source, "sink"), path.join(dest, "alpha"), "junction");
+  }, async ({ source, dest, configuredRoot, migrate }) => {
+    const sink = path.join(source, "sink");
+    const beforeSource = snapshot(source);
+    /* The fixture is lexically beyond reproach — every string test passes. */
+    assert.strictEqual(insideDirectoryOf(dest, path.join(dest, "alpha", "project.json")), true);
+
+    const result = await migrate();
+    assert.strictEqual(result.status, 409, JSON.stringify(result.body));
+    assert.strictEqual(result.body.code, "WORKSPACE_MIGRATION_DESTINATION_REDIRECTED");
+    assert.strictEqual((result.body.problems || [])[0].slug, "alpha");
+    assert.strictEqual((result.body.problems || [])[0].reason, "REDIRECTED");
+
+    assert.strictEqual(fs.existsSync(path.join(sink, "project.json")), false,
+      "nothing may be written through the junction into the source workspace");
+    assert.deepStrictEqual(snapshot(source), beforeSource, "the source must be byte-identical");
+    assert.strictEqual(result.body.ok, false);
+    assert.strictEqual(result.body.migration, undefined, "no move, and no cleanup to report");
+    assert.strictEqual(configuredRoot(), path.resolve(source), "the workspace stays where it was");
+  });
+}
+
+async function junctionOutsideDestination() {
+  await withWorkspace(({ home, source, dest }) => {
+    writeProjectAt(source, "alpha", baseProject("Alpha"));
+    const outside = path.join(home, "unrelated");
+    fs.mkdirSync(outside, { recursive: true });
+    fs.writeFileSync(path.join(outside, "precious.bin"), "material outside both roots");
+    fs.mkdirSync(dest, { recursive: true });
+    fs.symlinkSync(outside, path.join(dest, "alpha"), "junction");
+  }, async ({ home, source, dest, migrate }) => {
+    const outside = path.join(home, "unrelated");
+    const beforeOutside = snapshot(outside), beforeSource = snapshot(source);
+
+    const result = await migrate();
+    assert.strictEqual(result.status, 409, JSON.stringify(result.body));
+    assert.strictEqual(result.body.code, "WORKSPACE_MIGRATION_DESTINATION_REDIRECTED");
+    assert.strictEqual(fs.existsSync(path.join(outside, "project.json")), false,
+      "nothing may be written outside the real destination root");
+    assert.deepStrictEqual(snapshot(outside), beforeOutside, "unrelated storage must be byte-identical");
+    assert.deepStrictEqual(snapshot(source), beforeSource);
+    assert.strictEqual(result.body.migration, undefined, "nothing was created, so nothing entered a ledger");
+  });
+}
+
+/* The object was legitimately created and receipted, and then became a different
+   object before cleanup ran. Deleting on the strength of the path alone would
+   destroy a stranger's file; the receipt is what stops it. */
+function replacementBeforeRollback() {
+  const { createdPathLedger } = shippedMigrationHelpers();
+  const home = fs.mkdtempSync(path.join(TEMP, "replaced-"));
+  const source = path.join(home, "source"), dest = path.join(home, "dest");
+  fs.mkdirSync(source, { recursive: true });
+  const slugDirectory = path.join(dest, "alpha");
+  const document = path.join(slugDirectory, "project.json");
+  const companion = path.join(slugDirectory, "kept.bin");
+  fs.mkdirSync(slugDirectory, { recursive: true });
+  fs.writeFileSync(document, "{}");
+  fs.writeFileSync(companion, "also ours");
+
+  const ledger = createdPathLedger({
+    realDestinationRoot: fs.realpathSync.native(dest),
+    realSourceRoot: fs.realpathSync.native(source),
+  });
+  ledger.directory(slugDirectory);
+  ledger.file(document);
+  ledger.file(companion);
+
+  /* Between creation and cleanup the path stops naming the object it named. */
+  fs.unlinkSync(document);
+  fs.writeFileSync(document, "a different actor's document");
+  const replacementBytes = sha(document);
+
+  const rollback = ledger.unwind();
+  assert.strictEqual(rollback.complete, false, "a changed identity must not report a clean cleanup");
+  assert(rollback.leftover.includes(document), JSON.stringify(rollback.leftover));
+  assert(rollback.errors.some((row) => /same filesystem object/.test(row.message)),
+    "the reason must name the identity mismatch: " + JSON.stringify(rollback.errors));
+  assert.strictEqual(fs.existsSync(document), true, "the replacement is not ours to delete");
+  assert.strictEqual(sha(document), replacementBytes, "and it is untouched");
+  assert.strictEqual(fs.existsSync(companion), false, "objects that are still ours are still cleaned up");
+  assert.strictEqual(fs.existsSync(slugDirectory), true,
+    "the folder cannot be removed while a stranger's file sits in it, and is reported instead");
+  assert(rollback.leftover.includes(slugDirectory));
+}
+
+/* ==========================================================================
+   SOURCE-LEVEL SAFETY. Properties that have to hold by construction, not
    because a scenario happened not to trip them.
    ========================================================================== */
 
@@ -470,6 +660,11 @@ function safetyChecks() {
   const source = path.join(home, "source"), dest = path.join(home, "dest");
   fs.mkdirSync(source, { recursive: true });
   fs.mkdirSync(dest, { recursive: true });
+  const realSource = fs.realpathSync.native(source), realDest = fs.realpathSync.native(dest);
+  /* The ledger only ever admits from a successful exclusive creation, so a test that
+     wants to offer it a path must genuinely create that path first. */
+  const ledger = () => createdPathLedger({ realDestinationRoot: realDest, realSourceRoot: realSource });
+  const made = (target, contents = "x") => { writeFileAt(target, contents); return target; };
 
   /* Comments are stripped first. Every property below is a claim about CODE, and
      this block is heavily commented about exactly the words being searched for —
@@ -496,36 +691,54 @@ function safetyChecks() {
   assert.strictEqual(occurrences(ledgerSource, "recursive"), 0,
     "cleanup must never remove a folder recursively");
 
-  /* S2 — no cleanup path can point outside the destination migration root. */
-  assert.throws(() => createdPathLedger({ destinationRoot: dest, sourceRoot: source }).file(path.join(home, "outside.bin")),
+  /* S2 — no cleanup path can point outside the destination migration root, and
+     containment is decided PHYSICALLY. */
+  assert.throws(() => ledger().file(made(path.join(home, "outside.bin"))),
     /does not own/, "a path outside the destination must be refused");
-  assert.throws(() => createdPathLedger({ destinationRoot: dest, sourceRoot: source }).directory(dest),
+  assert.throws(() => ledger().directory(dest),
     /does not own/, "the destination root itself must be refused");
-  assert.throws(() => createdPathLedger({ destinationRoot: dest, sourceRoot: source }).file(path.join(dest, "..", "escape.bin")),
-    /does not own/, "a traversal out of the destination must be refused");
+  assert.throws(() => ledger().file(made(path.join(home, "escape.bin"))),
+    /does not own/, "a path resolving out of the destination must be refused");
 
-  /* S3 — no source path can enter the ledger. */
-  assert.throws(() => createdPathLedger({ destinationRoot: dest, sourceRoot: source }).file(path.join(source, "alpha", "project.json")),
+  /* S3 — no source path can enter the ledger, by real location and not by prefix. */
+  assert.throws(() => ledger().file(made(path.join(source, "alpha", "project.json"), "{}")),
     /does not own/, "a source document must be refused");
-  assert.throws(() => createdPathLedger({ destinationRoot: dest, sourceRoot: source }).directory(source),
+  assert.throws(() => ledger().directory(source),
     /does not own/, "the source root must be refused");
-  /* And when the destination is nested inside the source, so that containment alone
-     would not have caught it, the route refuses before a ledger even exists. */
-  const nested = createdPathLedger({ destinationRoot: path.join(source, "inner"), sourceRoot: source });
-  assert.throws(() => nested.file(path.join(source, "inner", "alpha", "project.json")), /does not own/);
+  /* The one that a string test cannot catch: a name under the destination whose real
+     location is inside the source. Lexically it is impeccable. */
+  const sink = path.join(source, "sink"); fs.mkdirSync(sink, { recursive: true });
+  const redirected = path.join(dest, "looks-fine");
+  fs.symlinkSync(sink, redirected, "junction");
+  writeFileAt(path.join(sink, "planted.bin"), "source bytes");
+  assert.strictEqual(insideDirectoryOf(realDest, path.join(redirected, "planted.bin")), true,
+    "the fixture must be lexically inside the destination, or it proves nothing");
+  assert.throws(() => ledger().file(path.join(redirected, "planted.bin")),
+    /does not own/, "a destination-looking path whose real home is the source must be refused");
+  assert.strictEqual(fs.existsSync(path.join(sink, "planted.bin")), true, "and nothing was deleted proving it");
   assert(preflightSource.includes("WORKSPACE_MIGRATION_NESTED_ROOT"),
     "a destination inside the source must be refused by preflight, before any ledger exists");
+  assert(preflightSource.includes("realDirectory(previousRoot)") && preflightSource.includes("realDirectory(nextRoot)"),
+    "both roots must be resolved to real paths before anything is decided against them");
 
-  /* S4 — a pre-existing destination artifact can never be entered. Ownership is read
-     from the filesystem immediately before the write, never assumed. */
-  assert.strictEqual(occurrences(route, "!fileExisted && fs.existsSync(item.destinationFile)"), 1,
-    "the document may only be owned when it was proven absent first");
-  assert.strictEqual(occurrences(route, "!directoryExisted && fs.existsSync(slugDirectory)"), 1,
-    "the folder may only be owned when it was proven absent first");
-  assert.strictEqual(occurrences(SERVER_SOURCE, "if (ledger && !destinationExisted) ledger.directory(destination);"), 1,
-    "the tree copy may only own a folder it created");
-  assert.strictEqual(occurrences(SERVER_SOURCE, "fs.copyFileSync(src, dest); if (ledger) ledger.file(dest); copied += 1;"), 1,
-    "the tree copy may only own a file it copied into a path that did not exist");
+  /* S4 — ownership comes from the creation operation. The post-hoc pattern that
+     admitted whatever existed afterwards must not be anywhere in the route. */
+  assert.strictEqual(occurrences(route, "fs.existsSync(item.destinationFile)"), 0,
+    "the document must never be owned by asking the filesystem what is there afterwards");
+  assert.strictEqual(occurrences(route, "fs.existsSync(slugDirectory)"), 0,
+    "the folder must never be owned by asking the filesystem what is there afterwards");
+  assert.strictEqual(occurrences(route, "if (outcome.ok && outcome.created === true) ledger.file(item.destinationFile);"), 1,
+    "the document is owned only on the seam's own proof that this call created it");
+  assert.strictEqual(occurrences(route, "if (claimDirectory(item.slugDirectory).created) ledger.directory(item.slugDirectory);"), 1,
+    "the folder is owned only on an exclusive mkdir that succeeded");
+  assert.strictEqual(occurrences(SERVER_SOURCE, "else if (claimDirectory(destination).created) ledger.directory(destination);"), 1,
+    "the tree copy may only own a folder its own exclusive mkdir created");
+  assert.strictEqual(occurrences(SERVER_SOURCE, "if (claimCopiedFile(src, dest).created) { ledger.file(dest); copied += 1; } else skipped += 1;"), 1,
+    "the tree copy may only own a file its own exclusive copy created");
+  assert(codeOnly(SERVER_SOURCE).includes("fs.copyFileSync(source, target, fs.constants.COPYFILE_EXCL)"),
+    "the copy claim must be exclusive");
+  assert(codeOnly(SERVER_SOURCE).includes("fs.linkSync(temp, file); fs.unlinkSync(temp);"),
+    "the document must be published with a primitive that cannot overwrite");
 
   /* S5 — every failure terminal after the first creation unwinds. Once the ledger
      exists there is exactly one way out of the route, and it is the one that cleans
@@ -556,13 +769,19 @@ function safetyChecks() {
   await scenario("F11-6  retry after the transient cause is corrected", f11_6);
   await scenario("F11-7  cleanup itself fails", async () => f11_7());
   await scenario("F11-8  success path", f11_8);
+  await scenario("RACE-1 foreign artifact present at the creation operation", race1);
+  await scenario("RACE-1b the interleave, driven directly", async () => race1Interleaved());
+  await scenario("F11-J1 destination junction into the source workspace", junctionIntoSource);
+  await scenario("F11-J2 destination junction outside both roots", junctionOutsideDestination);
+  await scenario("F11-R1 object replaced between creation and cleanup", async () => replacementBeforeRollback());
   await scenario("F11-S  source-level safety properties", async () => safetyChecks());
 
   /* The exact set, so a scenario that quietly stopped running cannot pass as a
      smaller green suite. */
-  assert.deepStrictEqual(passed.map((line) => line.slice(0, 5)),
-    ["F11-1", "F11-2", "F11-3", "F11-4", "F11-5", "F11-6", "F11-7", "F11-8", "F11-S"]);
-  console.log(`\nF-11 workspace migration cleanup: ${passed.length}/9 scenarios passed; provider calls: 0.`);
+  assert.deepStrictEqual(passed.map((line) => line.split(" ")[0]),
+    ["F11-1", "F11-2", "F11-3", "F11-4", "F11-5", "F11-6", "F11-7", "F11-8",
+      "RACE-1", "RACE-1b", "F11-J1", "F11-J2", "F11-R1", "F11-S"]);
+  console.log(`\nF-11 workspace migration cleanup: ${passed.length}/14 scenarios passed; provider calls: 0.`);
   fs.rmSync(TEMP, { recursive: true, force: true });
 })().catch((error) => {
   console.error("\nF-11 FAILED\n", error);
