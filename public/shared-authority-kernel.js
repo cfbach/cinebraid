@@ -92,8 +92,14 @@ const AUTHORITY_TARGET_KINDS = [
 ];
 
 /* Every durable entity collection that can own an entity-state authority
-   pointer. Keep this aligned with shared-entity-ownership.js. */
-const AUTHORITY_ENTITY_LISTS = ["characters", "locations", "props", "vehicles", "audio"];
+   pointer. Keep this aligned with shared-entity-ownership.js.
+
+   THIS IS THE CANONICAL LIST AND IT IS EXPORTED. An independent safety layer
+   that re-declares the entity set is not independent — it is a second copy that
+   drifts, and the copy that drifts silently is the one that stops enumerating a
+   list the kernel still resolves. Frozen because a canonical set an ordinary
+   caller can shorten is the "installer" failure mode this file exists to end. */
+const AUTHORITY_ENTITY_LISTS = Object.freeze(["characters", "locations", "props", "vehicles", "audio"]);
 
 const AUTHORITY_COMMANDS = [
   "approve-shot-frame",
@@ -1474,6 +1480,7 @@ function authorityWriteTransition(current, successor) {
 
 const AUTHORITY_KERNEL_EXPORTS = {
   AUTHORITY_TARGET_KINDS,
+  AUTHORITY_ENTITY_LISTS,
   AUTHORITY_COMMANDS,
   AUTHORITY_COMMAND_FOR_KIND,
   AUTHORITY_RECEIPT_STATES,

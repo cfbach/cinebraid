@@ -314,11 +314,21 @@ function enumerateAuthorityEdges(project) {
     for (const unitKey of unitKeys) if (shotId) targets.push(Authority.authorityTarget({ kind: "shot-motion", shotId, unitKey }));
     if (shotId) targets.push(Authority.authorityTarget({ kind: "shot-delivery", shotId }));
   }
-  for (const name of ["characters", "locations", "props", "vehicles"]) {
+  /* THE KERNEL'S LIST, NOT A COPY OF IT. This enumeration is the import-policy
+     half of a two-layer defence; a private four-list literal here made it a
+     restatement of the builder stripper instead, and silently omitted `audio`,
+     which the kernel has always resolved entity-state edges for. */
+  for (const name of Authority.AUTHORITY_ENTITY_LISTS) {
     for (const entityValue of list(object(project)[name])) {
       const entity = object(entityValue), entityId = text(entity.id);
       const stateIds = new Set(list(entity.continuityStates).map((row) => text(object(row).id)).filter(Boolean));
-      if (!stateIds.size && (text(entity.approvedFile) || text(entity.approvedAssetId))) stateIds.add("state-default");
+      /* The kernel resolves an addressed `#state-default` through the ENTITY-level
+         pointer whenever no state of that id is declared. Declared siblings do NOT
+         suppress it, so gating this on an empty state list missed a live edge on
+         every entity that carries its own approved pointer alongside named states.
+         A declared default with no own file needs nothing extra: its own id is
+         already enumerated, and the kernel falls back through it. */
+      if (text(entity.approvedFile) || text(entity.approvedAssetId)) stateIds.add("state-default");
       for (const stateId of stateIds)
         if (entityId) targets.push(Authority.authorityTarget({ kind: "entity-state", list: name, entityId, stateId }));
     }
