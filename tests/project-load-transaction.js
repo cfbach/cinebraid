@@ -182,6 +182,16 @@ function refreshServer({ a, b, replyForWrite = () => ({ status: 200 }), ledger =
   let parkedScan = [];
   let armedJobRefresh = 0;
   let parkedJobRefresh = [];
+  let armedCancel = 0;
+  let parkedCancel = [];
+  /* THE SERVER'S BACKGROUND-RECOVERY NOTICE, modelled exactly as the shipped one
+     is: appended when the reaper collects, returned to EVERY reader of the ledger
+     route, and consumed only by the request that carries the claim header. */
+  let recoveryNotice = null;
+  let recoveryOwner = null;
+  /* Whether an accepted cancel actually commits the project document — the
+     condition the browser cannot see and the route now answers. */
+  let cancelWritesProject = false;
   /* Parked reads in PARK ORDER, released individually — the only way to drive a
      chosen response order over overlapping refreshes. */
   let parked = [];
@@ -204,13 +214,38 @@ function refreshServer({ a, b, replyForWrite = () => ({ status: 200 }), ledger =
        makes the ordering sections below claims about ORDER rather than about
        freshness: two refreshes read different snapshots without either of them
        declaring anything. */
-    serverSideIngest(slug = active) {
+    serverSideIngest(slug = active, { announce = false } = {}) {
       server.completions += 1;
       const mark = `completion-${server.completions}`;
       docs[slug] = structuredClone(docs[slug]);
       docs[slug].meta.completionMarks = [...(docs[slug].meta.completionMarks || []), mark];
       counters[slug] += 1;
+      /* The reaper records what it collected, per project, for the life of the
+         process. `announce` is off by default so the ordering sections keep using
+         an advance the browser genuinely cannot see. */
+      if (announce) {
+        const rows = [...((recoveryNotice && recoveryNotice.collections) || []), { jobId: mark, at: `t-${server.completions}` }];
+        recoveryNotice = {
+          jobs: rows.length,
+          results: rows.length,
+          collections: rows,
+          message: `Collected ${rows.length} result${rows.length === 1 ? "" : "s"} through background recovery.`,
+        };
+        recoveryOwner = slug;
+      }
       return mark;
+    },
+    /* Pin which project the ledger payload claims the notice belongs to, for the
+       case where the server has moved on and a window has not. */
+    announceRecoveryFor(slug) { recoveryOwner = slug; },
+    get recoveryNotice() { return recoveryNotice; },
+    setCancelWritesProject(value) { cancelWritesProject = !!value; },
+    holdNextCancel() { armedCancel += 1; },
+    get parkedCancels() { return parkedCancel.length; },
+    releaseCancels() {
+      const waiting = parkedCancel;
+      parkedCancel = [];
+      for (const resume of waiting) resume();
     },
     /* Park the REFRESH ROUTE's own response, which is the only way to stand
        between a completed ingest and the browser learning that it happened. */
@@ -334,7 +369,42 @@ function refreshServer({ a, b, replyForWrite = () => ({ status: 200 }), ledger =
         return response({ job: { id: refresh[1], status: "COMPLETED", shotId: "L1-01",
           outputs: [{ type: "candidate", assetId: mark }] } });
       }
-      if (url === "/api/generation/fal/jobs") return ledger ? ledger(response, active) : response({ jobs: [] });
+      const cancel = /^\/api\/generation\/fal\/jobs\/([^/]+)\/cancel$/.exec(url);
+      if (cancel && options.method === "POST") {
+        const slug = active;
+        /* The route writes the entity's coverage-automation status into the
+           project document ONLY for an entity-reference job whose entity has
+           coverage automation configured, and states which happened. */
+        if (cancelWritesProject) {
+          docs[slug] = structuredClone(docs[slug]);
+          docs[slug].meta.coverageStatus = "cancelled";
+          counters[slug] += 1;
+        }
+        if (armedCancel > 0) {
+          armedCancel -= 1;
+          await new Promise((resolve) => parkedCancel.push(resolve));
+        }
+        return response({ ok: true, job: { id: cancel[1], status: "CANCELLED" }, projectUpdated: cancelWritesProject });
+      }
+      /* RECONCILE WRITES THE LEDGER AND NOTHING ELSE. No project mutation, and so
+         no `projectUpdated` to report. */
+      const reconcile = /^\/api\/generation\/fal\/jobs\/([^/]+)\/reconcile$/.exec(url);
+      if (reconcile && options.method === "POST")
+        return response({ ok: true, job: { id: reconcile[1], status: "FAILED", reconciliation: { outcome: "not-accepted" } } });
+      if (url === "/api/generation/fal/jobs") {
+        if (ledger) return ledger(response, active);
+        const claim = String((options.headers || {})["x-cinebraid-claim-recovery"] || "") === "1";
+        /* A JOB THE SWEEP COULD STILL COLLECT. The reaper can only produce a
+           notice by collecting one, and the browser only watches for a notice
+           while its own ledger holds one — so a fixture with an empty ledger
+           would be testing the watch against a condition it is scoped out of. */
+        const payload = { jobs: [{ id: "watch-job", status: "UNRESOLVED", shotId: "L1-01" }], projectSlug: recoveryOwner || active };
+        if (recoveryNotice) payload.backgroundRecovery = recoveryNotice;
+        /* Claimed once, by the browser's initial ledger load. Every other reader —
+           the activity poll included — leaves it where it is. */
+        if (claim) { recoveryNotice = null; recoveryOwner = null; }
+        return response(payload);
+      }
       return null;
     },
   };
@@ -345,7 +415,19 @@ function refreshServer({ a, b, replyForWrite = () => ({ status: 200 }), ledger =
    READERS. */
 
 async function openFixture(server, project, options = {}) {
-  const rendered = await render("#/production", project, { ...options, fetch: server.fetch });
+  /* `fal: true` puts the generation ledger in play — enabled and keyed on both
+     sides. It is the condition the server's ingest reaper sweeps under, and
+     therefore the condition the browser's recovery watch runs under. */
+  const { fal = false, fetch: override, ...renderOptions } = options;
+  const base = override || server.fetch;
+  const fetchImpl = fal
+    ? async (url, requestOptions, response) => {
+        if (url === "/api/config")
+          return response({ generation: { fal: { enabled: true, apiKey: "test-key", keySource: "config" } } });
+        return base(url, requestOptions, response);
+      }
+    : base;
+  const rendered = await render("#/production", project, { ...renderOptions, fetch: fetchImpl });
   return rendered.context;
 }
 const saveIndicator = (context) =>
@@ -781,7 +863,7 @@ function commitIsAwaitFreeSection() {
   }
 
   /* PREPARE touches nothing authoritative. */
-  for (const signature of ["async function prepareProjectSnapshot()", "async function prepareGenerationLedger(prepared)"]) {
+  for (const signature of ["async function prepareProjectSnapshot(", "async function prepareGenerationLedger(prepared,"]) {
     const body = stripComments(bodyOf(signature));
     for (const forbidden of [
       "P =", "ACTIVE_PROJECT_SLUG =", "PROJECT_REVISION =", "SAVE_REVISION", "SAVED_REVISION",
@@ -794,7 +876,7 @@ function commitIsAwaitFreeSection() {
   }
   /* THE LEDGER IS AN INPUT. It is read by PREPARE and installed by the commit;
      it is not read anywhere after a commit. */
-  assert(bodyOf("async function prepareGenerationLedger(prepared)").includes('fetch("/api/generation/fal/jobs"'),
+  assert(bodyOf("async function prepareGenerationLedger(prepared,").includes('fetch("/api/generation/fal/jobs"'),
     "the generation ledger must be read during PREPARE");
   assert(stripComments(bodyOf("function commitPreparedProject(")).includes("FAL_GENERATION_JOBS = prepared.falJobs;"),
     "and installed by the commit from the prepared snapshot");
@@ -1227,9 +1309,323 @@ async function overlappingCompletionIngestsSection(options = {}) {
   console.log("  E6 overlapping-completion-ingests - each ingest is accounted for once, and the window still converges on the newest snapshot");
 }
 
+/* ===========================================================================
+   THE SERVER'S OWN INGEST REAPER.
+
+   generation-poller.js sweeps on its own schedule and commits finished
+   generations into the project document with NO BROWSER INVOLVED. Nothing in the
+   browser can see that happen: no request was made, no response came back, and
+   the window is clean — so a refresh prepared before the sweep looks fresh,
+   commits the pre-ingest record over the newer one, and rests on "Saved" while
+   the results sit on the server.
+
+   THE SIGNAL IS THE ONE THE SERVER ALREADY PUBLISHES. The ledger route carries
+   `backgroundRecovery` to every reader; only the load that sends the claim header
+   consumes it. What was missing was a reader that runs when no load is happening.
+   The activity poll — the timer that was already there — now reads the ledger
+   whenever the generation ledger is in play, which is exactly the condition the
+   reaper sweeps under, so a live window learns within one tick. */
+
+async function reaperNoticeFixture(options = {}) {
+  const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
+  const context = await openFixture(server, currentSchemaProject("Project A"), { ...options, fal: true });
+  assert.strictEqual(read(context, "FAL_GENERATION_LEDGER_LOADED"), true,
+    "precondition: the generation ledger is in play, which is when the reaper can act and when the watch runs");
+  assert.strictEqual(read(context, "V641_ACTIVITY_DRAWER_OPEN"), false,
+    "precondition: the drawer is CLOSED, so the poll below runs only because of the recovery watch");
+  return { server, context };
+}
+/* One unforced tick of the activity poll, then everything it started. */
+async function pollForRecovery(context) {
+  await vm.runInContext(`refreshGlobalAutomationActivity(false)`, context);
+  await settle();
+  await read(context, "PROJECT_RECOVERY_REFRESH");
+  await settle();
+}
+
+/* R1 — the notice lands BEFORE the old snapshot is released. */
+async function reaperRecoveryBeforeCommitSection(options = {}) {
+  const { server, context } = await reaperNoticeFixture(options);
+  const R0 = server.revisionOf(A);
+  const generationAtOpen = read(context, "PROJECT_SAVE_GENERATION");
+  await beginScanParkedRefresh(server, context, "__old");
+
+  server.serverSideIngest(A, { announce: true });
+  const R1 = server.revisionOf(A);
+  assert.notStrictEqual(R1, R0, "precondition: the sweep moved the stored revision");
+  assert.strictEqual(read(context, "PROJECT_SAVE_GENERATION"), generationAtOpen,
+    "precondition: and the browser cannot possibly know yet — no request was made here");
+
+  await pollForRecovery(context);
+  assert.strictEqual(read(context, "PROJECT_SAVE_GENERATION"), generationAtOpen + 1,
+    "THE SIGNAL: a reaper notice for this project is a durable advance, declared exactly once");
+  assert.strictEqual(read(context, "PROJECT_REVISION"), R1,
+    "and the recovery refresh it starts installs the record the sweep produced");
+  assert.deepStrictEqual(marks(context), ["completion-1"], "with the collected result on screen");
+  assert.strictEqual(saveIndicator(context), "Saved", "settling truthfully, because the record on screen IS the stored one");
+
+  const oldOutcome = await releaseScanParked(server, context, "__old");
+  assert.strictEqual(oldOutcome.committed, false,
+    "THE BLOCKER: the snapshot prepared before the sweep must not install over it");
+  assert.strictEqual(read(context, "PROJECT_REVISION"), R1, "the window stays on the record the sweep produced");
+  assert.deepStrictEqual(marks(context), ["completion-1"], "and keeps the result");
+  console.log("  R1 reaper-recovery-before-commit - a reaper notice declares a durable advance, refreshes, and makes the pre-sweep snapshot stale");
+}
+
+/* R2 — the notice lands AFTER the old snapshot has already committed. The window
+   is transiently wrong; what matters is that it does not STAY wrong, and that no
+   user action is needed to correct it. */
+async function reaperRecoveryAfterCommitSection(options = {}) {
+  const { server, context } = await reaperNoticeFixture(options);
+  const R0 = server.revisionOf(A);
+  await beginScanParkedRefresh(server, context, "__old");
+  server.serverSideIngest(A, { announce: true });
+  const R1 = server.revisionOf(A);
+
+  const oldOutcome = await releaseScanParked(server, context, "__old");
+  assert.strictEqual(oldOutcome.committed, true,
+    "precondition: with the notice not yet delivered, the pre-sweep snapshot is indistinguishable from a fresh one and commits");
+  assert.strictEqual(read(context, "PROJECT_REVISION"), R0, "so the window is briefly at R0 while the server is at R1");
+  assert.deepStrictEqual(marks(context), [], "without the collected result");
+
+  /* NO USER ACTION. One tick of the poll that was already running. */
+  await pollForRecovery(context);
+  assert.strictEqual(read(context, "PROJECT_REVISION"), R1,
+    "the recovery refresh converges the window on the record the sweep produced, with nobody doing anything");
+  assert.deepStrictEqual(marks(context), ["completion-1"], "collecting the result");
+  assert.strictEqual(read(context, "PROJECT_REVISION"), server.revisionOf(A), "level with the server");
+  assert.strictEqual(saveIndicator(context), "Saved", "and now Saved is true");
+  console.log("  R2 reaper-recovery-after-commit - a false R0/Saved state is not stable: the next poll converges the window on R1 with no user action");
+}
+
+/* R3 — the recovery refresh itself fails. The window must not go back to resting
+   on "Saved", and the stale snapshot must still be refused. */
+async function reaperRecoveryRefreshFailsSection(options = {}) {
+  {
+    const { server, context } = await reaperNoticeFixture(options);
+    const R0 = server.revisionOf(A);
+    await beginScanParkedRefresh(server, context, "__old");
+    server.serverSideIngest(A, { announce: true });
+    const R1 = server.revisionOf(A);
+
+    server.failNextProjectRead();
+    await pollForRecovery(context);
+    assert.strictEqual(read(context, "PROJECT_REVISION"), R0, "the failed recovery refresh installed nothing");
+    assert.notStrictEqual(saveIndicator(context), "Saved",
+      "THE BLOCKER: a window known to be behind the record must not go back to resting on Saved");
+    assert.strictEqual(saveIndicator(context), "Project changed — refresh required",
+      "it says what is true and what would fix it");
+
+    const oldOutcome = await releaseScanParked(server, context, "__old");
+    assert.strictEqual(oldOutcome.committed, false,
+      "and the pre-sweep snapshot is still refused — the declaration invalidated it generically, not the failed refresh");
+    assert.strictEqual(read(context, "PROJECT_REVISION"), R0, "nothing was installed by it");
+    assert.notStrictEqual(saveIndicator(context), "Saved", "and the recovery surface survives it");
+    assert.strictEqual(server.revisionOf(A), R1, "with the server still holding the newer record");
+  }
+
+  /* R3b — AND IT NEVER SPEAKS OVER SOMETHING TRUER. A window holding unsaved work
+     keeps saying so; the recovery presentation is not allowed to replace it. */
+  {
+    const { server, context } = await reaperNoticeFixture(options);
+    vm.runInContext(`P.meta.title = "authored, and unsaved"; dirty();`, context);
+    const dirtyTruth = clientState(context);
+    server.serverSideIngest(A, { announce: true });
+    await pollForRecovery(context);
+    assert.strictEqual(read(context, "P.meta.title"), "authored, and unsaved",
+      "authored work survives a reaper notice untouched");
+    assert.strictEqual(read(context, "projectHasUnsavedEdits()"), true, "and is still marked unsaved");
+    assert.strictEqual(saveIndicator(context), dirtyTruth.indicator,
+      "with the window still saying the most important thing about itself");
+    assert.strictEqual(read(context, "PROJECT_SAVE_GENERATION"), dirtyTruth.saveGeneration + 1,
+      "even though the advance was still declared, so no stale snapshot can slip past");
+  }
+  console.log("  R3 reaper-recovery-refresh-fails - a failed recovery refresh leaves an explicit refresh-required surface, never Saved, and never speaks over unsaved work");
+}
+
+/* R4 — a reaper notice for a project this window has LEFT. */
+async function reaperRecoveryForLeftProjectSection(options = {}) {
+  const { server, context } = await reaperNoticeFixture(options);
+  await context.switchProject(B);
+  const afterSwitch = clientState(context);
+  const identityAfterSwitch = projectIdentity(context);
+  assert.strictEqual(identityAfterSwitch.slug, B, "precondition: the switch completed");
+
+  /* The sweep collected for A, and the payload states A as its owner. */
+  server.serverSideIngest(A, { announce: true });
+  server.announceRecoveryFor(A);
+  await pollForRecovery(context);
+
+  assert.strictEqual(read(context, "PROJECT_SAVE_GENERATION"), afterSwitch.saveGeneration,
+    "THE BLOCKER: a reaper notice for a project this window has left must not perturb the new project's freshness");
+  assert.deepStrictEqual(clientState(context), afterSwitch, "and must change nothing else about B");
+  assert.deepStrictEqual(projectIdentity(context), identityAfterSwitch, "B's identity and record are untouched");
+  assert.strictEqual(saveIndicator(context), afterSwitch.indicator, "with no recovery presentation over B");
+  console.log("  R4 reaper-recovery-for-left-project - a notice owned by a project the window has left advances nothing and refreshes nothing here");
+}
+
+/* ===========================================================================
+   A ROUTE THAT WRITES THE PROJECT ONLY SOMETIMES.
+
+   Cancel, a failed submission and a failed collection all set an entity's
+   coverage-automation status — and only when the job is an entity-reference job
+   whose entity has coverage automation configured. The browser cannot see that
+   condition. Guessing YES from a 2xx discards a perfectly good prepared refresh
+   on every cancel; guessing NO lets a prepared snapshot reinstall the pre-cancel
+   status. The route answers `projectUpdated` and one handler reads it. */
+
+async function cancelFixture(options = {}, writes) {
+  const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
+  const context = await openFixture(server, currentSchemaProject("Project A"), options);
+  server.setCancelWritesProject(writes);
+  return { server, context };
+}
+/* The automation button reaches the same route through a run record. The run is
+   stubbed rather than built, because what is under test is the RESULT HANDLING
+   the two callers share, not the automation run store. */
+function stubAutomationProviderJob(context) {
+  vm.runInContext(`v626RefreshRun = async () => ({ id: "run-1", current: { stepKey: "generate" }, steps: { generate: { key: "generate", childJobId: "job-1" } } });`, context);
+}
+
+async function cancelWithoutProjectWriteSection(options = {}) {
+  for (const entry of ["fal", "automation"]) {
+    const label = entry === "fal" ? "C1" : "C3";
+    const { server, context } = await cancelFixture(options, false);
+    const generationAtOpen = read(context, "PROJECT_SAVE_GENERATION");
+    await beginScanParkedRefresh(server, context, "__parked");
+
+    if (entry === "automation") stubAutomationProviderJob(context);
+    await vm.runInContext(entry === "automation" ? `cancelAutomationProviderJob("run-1")` : `cancelFalGeneration("job-1")`, context);
+    await settle();
+
+    assert.strictEqual(read(context, "PROJECT_SAVE_GENERATION"), generationAtOpen,
+      `${label}: a cancel that wrote no project document must not declare a durable advance`);
+    const outcome = await releaseScanParked(server, context, "__parked");
+    assert.strictEqual(outcome.committed, true,
+      `${label}: and a valid prepared refresh must remain valid — the job ledger changing is not the project changing`);
+    assert.deepStrictEqual(server.writes, [], `${label}: with nothing written by any of it`);
+  }
+  console.log("  C1/C3 cancel-without-project-write - projectUpdated:false declares nothing, and a parked current-project refresh is still valid");
+}
+
+async function cancelWithProjectWriteSection(options = {}) {
+  for (const entry of ["fal", "automation"]) {
+    const label = entry === "fal" ? "C2" : "C4";
+    const { server, context } = await cancelFixture(options, true);
+    const generationAtOpen = read(context, "PROJECT_SAVE_GENERATION");
+    const R0 = server.revisionOf(A);
+    await beginScanParkedRefresh(server, context, "__parked");
+
+    if (entry === "automation") stubAutomationProviderJob(context);
+    await vm.runInContext(entry === "automation" ? `cancelAutomationProviderJob("run-1")` : `cancelFalGeneration("job-1")`, context);
+    await settle();
+
+    assert.notStrictEqual(server.revisionOf(A), R0, `${label}: the cancel must actually have written the project`);
+    assert.strictEqual(read(context, "PROJECT_SAVE_GENERATION"), generationAtOpen + 1,
+      `${label}: declared exactly once`);
+    assert.strictEqual(read(context, "P.meta.coverageStatus"), "cancelled",
+      `${label}: and the follow-up refresh installed the cancelled coverage status`);
+    assert.strictEqual(read(context, "PROJECT_REVISION"), server.revisionOf(A), `${label}: level with the server`);
+
+    const outcome = await releaseScanParked(server, context, "__parked");
+    assert.strictEqual(outcome.committed, false,
+      `${label}: THE BLOCKER: the snapshot prepared before the cancel must not reinstall the pre-cancel status`);
+    assert.strictEqual(read(context, "P.meta.coverageStatus"), "cancelled", `${label}: which it did not`);
+  }
+  console.log("  C2/C4 cancel-with-project-write - projectUpdated:true declares once, refreshes, and the pre-cancel snapshot cannot reinstall the old status");
+}
+
+/* C5 — a cancel issued for A that lands after an explicit switch to B. */
+async function cancelForLeftProjectSection(options = {}) {
+  const { server, context } = await cancelFixture(options, true);
+  server.holdNextCancel();
+  vm.runInContext(`__cancel = cancelFalGeneration("job-1");`, context);
+  await settle();
+  assert.strictEqual(server.parkedCancels, 1, "precondition: A's cancel is parked on the wire");
+
+  await context.switchProject(B);
+  const afterSwitch = clientState(context);
+  const identityAfterSwitch = projectIdentity(context);
+  assert.strictEqual(identityAfterSwitch.slug, B, "precondition: the switch completed");
+
+  server.releaseCancels();
+  await read(context, "__cancel");
+  await settle();
+
+  assert.strictEqual(read(context, "PROJECT_SAVE_GENERATION"), afterSwitch.saveGeneration,
+    "THE BLOCKER: the captured owner is A, so B's freshness is untouched by A's cancel");
+  assert.deepStrictEqual(clientState(context), afterSwitch, "and nothing else about B moved either");
+  assert.deepStrictEqual(projectIdentity(context), identityAfterSwitch, "B's identity and record are untouched");
+  console.log("  C5 cancel-for-left-project - the owner captured before the request keeps A's cancel out of B's freshness");
+}
+
+/* Q1 — RECONCILE WRITES NO PROJECT DOCUMENT, so it must declare nothing. */
+async function reconcileDeclaresNothingSection(options = {}) {
+  const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
+  const context = await openFixture(server, currentSchemaProject("Project A"), options);
+  /* Client and server already level at a durable R1. */
+  server.serverSideIngest(A);
+  await vm.runInContext(`load({ intent: "refresh" })`, context);
+  await settle();
+  const R1 = server.revisionOf(A);
+  assert.strictEqual(read(context, "PROJECT_REVISION"), R1, "precondition: client and server are level at R1");
+  const generationAtR1 = read(context, "PROJECT_SAVE_GENERATION");
+
+  await beginScanParkedRefresh(server, context, "__parked");
+  await vm.runInContext(`reconcileFalGeneration("job-1", "not-accepted")`, context);
+  await settle();
+
+  assert.strictEqual(read(context, "PROJECT_SAVE_GENERATION"), generationAtR1,
+    "THE BLOCKER: reconcile records an outcome on the job row and never touches project.json, so it must declare no durable advance");
+  assert.strictEqual(server.revisionOf(A), R1, "and the stored revision is unmoved, which is why");
+  const outcome = await releaseScanParked(server, context, "__parked");
+  assert.strictEqual(outcome.committed, true,
+    "so a refresh reading the CURRENT record stays valid and installs it");
+  assert.strictEqual(read(context, "PROJECT_REVISION"), R1, "leaving the window level with the server");
+  console.log("  Q1 reconcile-declares-nothing - a route that writes only the job ledger invalidates no refresh");
+}
+
+/* The workspace migration's owner, captured before the request. */
+async function workspaceMigrationOwnerSection(options = {}) {
+  const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
+  let releaseSettings = () => {};
+  const parked = new Promise((resolve) => { releaseSettings = resolve; });
+  const context = await openFixture(server, currentSchemaProject("Project A"), {
+    ...options,
+    fetch: async (url, requestOptions, response) => {
+      if (url === "/api/workspace/settings" && requestOptions.method === "POST") {
+        await parked;
+        return response({ ok: true, migration: { movedRoot: true, copied: 1, skipped: 0 } });
+      }
+      return server.fetch(url, requestOptions, response);
+    },
+  });
+  vm.runInContext(`__settings = persistWorkspaceSettings("storage");`, context);
+  await settle();
+
+  await context.switchProject(B);
+  const afterSwitch = clientState(context);
+  assert.strictEqual(read(context, "ACTIVE_PROJECT_SLUG"), B, "precondition: the switch completed while the request was in flight");
+
+  releaseSettings();
+  await read(context, "__settings").catch(() => {});
+  await settle();
+
+  assert.strictEqual(read(context, "PROJECT_SAVE_GENERATION"), afterSwitch.saveGeneration,
+    "a migration started under A must not declare a durable advance against B");
+  assert.deepStrictEqual(clientState(context), afterSwitch, "and must not perturb B in any other way");
+  console.log("  migration-owner - the workspace migration declares against the owner captured before its request, not the live slug");
+}
+
 /* THE HELPER IS THE ONLY WAY IN, and it does nothing else. */
 function durableAdvanceIsSharedSection() {
   const appSource = fs.readFileSync(path.join(ROOT, "public", "app.js"), "utf8").replace(/\r\n/g, "\n");
+  const stripComments = (code) => code.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  const bodyOf = (signature) => {
+    const at = appSource.indexOf(signature);
+    assert(at > 0, `${signature} must exist`);
+    return appSource.slice(at, appSource.indexOf("\n}", at));
+  };
   const start = appSource.indexOf("function noteCurrentProjectDurableAdvance(owner)");
   assert(start > 0, "the shared durable-advance helper must exist");
   const body = appSource.slice(start, appSource.indexOf("\n}", start));
@@ -1246,6 +1642,61 @@ function durableAdvanceIsSharedSection() {
     assert(!/PROJECT_SAVE_GENERATION\s*(\+=|=[^=])/.test(source),
       `${file} must declare a durable advance through noteCurrentProjectDurableAdvance(), not by writing the generation itself`);
   }
+  /* ONE RESULT HANDLER FOR THE ROUTES THAT SAY WHETHER THEY WROTE. Both cancel
+     callers read the same flag through the same function; neither carries its own
+     opinion about what a 2xx meant. */
+  for (const [file, caller] of [["fal-generation.js", "cancelFalGeneration"], ["automation.js", "cancelAutomationProviderJob"]]) {
+    const source = fs.readFileSync(path.join(ROOT, "public", file), "utf8").replace(/\r\n/g, "\n");
+    const start = source.indexOf(`window.${caller} = async`);
+    assert(start > 0, `${caller} must exist`);
+    const body = source.slice(start, source.indexOf("\n};", start));
+    assert(body.includes("applyProjectMutationResult("),
+      `${caller} must read the route's own answer through the shared handler`);
+    assert(body.includes("const owner = ACTIVE_PROJECT_SLUG;"),
+      `${caller} must capture the owning project before the request goes out`);
+    assert(!body.includes("noteCurrentProjectDurableAdvance("),
+      `${caller} must not declare directly — that is a second opinion about the same route`);
+  }
+  const handler = stripComments(bodyOf("async function applyProjectMutationResult(owner, data)"));
+  assert(/data\.projectUpdated !== true\) return false;/.test(handler),
+    "the handler must act only on the route's explicit projectUpdated, never on the HTTP status");
+
+  /* AND RECONCILE DECLARES NOTHING, because it writes no project document. */
+  const falBrowser = fs.readFileSync(path.join(ROOT, "public", "fal-generation.js"), "utf8").replace(/\r\n/g, "\n");
+  const reconcileStart = falBrowser.indexOf("window.reconcileFalGeneration = async");
+  assert(reconcileStart > 0, "reconcileFalGeneration must exist");
+  const reconcileBody = falBrowser.slice(reconcileStart, falBrowser.indexOf("\n};", reconcileStart));
+  for (const forbidden of ["noteCurrentProjectDurableAdvance", "applyProjectMutationResult"]) {
+    assert(!reconcileBody.includes(forbidden),
+      `reconcile writes only the job ledger and must declare no durable advance; it names ${forbidden}`);
+  }
+
+  /* THE RECOVERY WATCH IS SCOPED TO WHAT THE REAPER CAN COLLECT, and the two
+     files have to agree about that set — a browser watching a narrower set would
+     stop asking about exactly the rows the sweep is most likely to act on. */
+  const activity = fs.readFileSync(path.join(ROOT, "public", "live-activity.js"), "utf8").replace(/\r\n/g, "\n");
+  const browserSet = /const V670_RECOVERY_COLLECTABLE = \[([^\]]*)\]/.exec(activity);
+  assert(browserSet, "the recovery watch must state which job states it watches");
+  const poller = fs.readFileSync(path.join(ROOT, "generation-poller.js"), "utf8").replace(/\r\n/g, "\n");
+  const serverSet = /const COLLECTABLE_STATUSES = new Set\(\[([^\]]*)\]\)/.exec(poller);
+  assert(serverSet, "generation-poller.js must state which job states it collects");
+  const names = (text) => [...text.matchAll(/"([A-Z_]+)"/g)].map((m) => m[1]).sort();
+  assert.deepStrictEqual(names(browserSet[1]).filter((s) => s !== "UNRESOLVED"), names(serverSet[1]),
+    "the browser's recovery watch and the server's sweep must agree on what is still collectable");
+  assert(names(browserSet[1]).includes("UNRESOLVED"),
+    "including UNRESOLVED, which the server names through Lifecycle rather than as a literal");
+  assert(/if \(!job \|\| job\.ingestedAt \|\| job\.reconciliation\) return false;/.test(activity),
+    "and on the two facts that end it: delivered, and reconciled by hand");
+
+  /* THE NOTICE'S OWNER IS THE ONE THE PAYLOAD STATES. */
+  const recovery = stripComments(bodyOf("function noteBackgroundRecoveryAdvance(payload)"));
+  assert(recovery.includes("noteCurrentProjectDurableAdvance(payload.projectSlug)"),
+    "a reaper notice must be declared against the owner the payload states, not the live global");
+  assert(/BACKGROUND_RECOVERY_DECLARED/.test(recovery),
+    "and declared once per notice, because the poll does not consume it");
+  assert(recovery.includes('load({ intent: "refresh" })'),
+    "and followed by a normal refresh through the front door");
+
   /* And both completion paths declare it, in the right order: after the ingest
      has definitely succeeded, before the follow-up refresh starts. */
   for (const [file, fn] of [["fal-generation.js", "refreshFalGeneration"], ["automation.js", "v626RefreshFalJob"]]) {
@@ -2199,12 +2650,12 @@ const PREPARE_INSTALLS_IDENTITY = `    slug: (ACTIVE_PROJECT_SLUG = projectRespo
 /* The ledger read where it used to be: after the record is installed and before
    the baseline and the indicator are settled. */
 const REPAIRED_LEDGER_IN_PREPARE = `  prepared.automationRuns = loaded[5]?.runs || [];
-  await prepareGenerationLedger(prepared);
+  await prepareGenerationLedger(prepared, { claimRecovery });
   return prepared;`;
 const LEDGER_AFTER_COMMIT = `  prepared.automationRuns = loaded[5]?.runs || [];
   return prepared;`;
 const REPAIRED_COMMIT_BASELINE = `  SAVED_PROJECT_BASELINE = structuredClone(P);`;
-const COMMIT_AWAITS_LEDGER = `  __ledgerAfterCommit = prepareGenerationLedger(prepared).then(() => {
+const COMMIT_AWAITS_LEDGER = `  __ledgerAfterCommit = prepareGenerationLedger(prepared, { claimRecovery: true }).then(() => {
     FAL_GENERATION_JOBS = prepared.falJobs;
     FAL_GENERATION_LEDGER_LOADED = prepared.falLedgerLoaded;
     SAVED_PROJECT_BASELINE = structuredClone(P);
@@ -2261,6 +2712,20 @@ const REPAIRED_PRE_INGEST_FLUSH = `    await flushPendingProjectSave();
 const NO_PRE_INGEST_FLUSH = `    /* The project this refresh is being made FOR`;
 const REPAIRED_REFRESH_INTENT = `      if (noteCurrentProjectDurableAdvance(owner)) await load({ intent: "refresh" });`;
 const REPLACEMENT_INTENT = `      await load();`;
+/* THE REAPER'S NOTICE REACHING THE FRESHNESS RULE. Removing the hand-over leaves
+   the poll running and the notice in the payload, and nothing listening. */
+const REPAIRED_RECOVERY_SIGNAL = `    if (typeof noteBackgroundRecoveryAdvance === "function") noteBackgroundRecoveryAdvance(falData);`;
+const RECOVERY_SIGNAL_IGNORED = `    /* control: the notice is received and dropped */`;
+/* THE CANCEL RESULT HANDLER. The route still answers projectUpdated; the browser
+   stops reading it. */
+const REPAIRED_CANCEL_RESULT = `is not inferred from the 2xx. */
+  await applyProjectMutationResult(owner, data);`;
+const CANCEL_RESULT_IGNORED = `is not inferred from the 2xx. */
+  /* control: what the route said it wrote is ignored */`;
+/* THE RECONCILE DECLARATION, restored to the false shape the held candidate had. */
+const REPAIRED_RECONCILE = `    /* RECONCILE WRITES NO PROJECT DOCUMENT.`;
+const RECONCILE_DECLARES_FALSELY = `    noteCurrentProjectDurableAdvance(ACTIVE_PROJECT_SLUG);
+    /* RECONCILE WRITES NO PROJECT DOCUMENT.`;
 /* THE COMPLETION INGEST'S DECLARATION OF ITS OWN DURABLE ADVANCE. The control
    removes the DECLARATION and keeps the re-read, which is exactly the shape the
    held candidate had: the ingest moves the record and nothing says so. */
@@ -2766,9 +3231,105 @@ async function negativeControlsSection() {
     controls.push({ id: "NC-14", defect: "a completion ingest does not declare its durable advance, so a snapshot prepared before it commits over the result and the client silently loses the completion it paid for", detected });
   }
 
+  /* NC-15 — THE REAPER'S NOTICE NEVER REACHES THE FRESHNESS RULE. The poll still
+     runs and the payload still carries the notice; nothing listens. There is no
+     request behind the sweep, so nothing else in the browser can know it happened:
+     the pre-sweep snapshot commits, and the window sits at R0 with the completion
+     missing, resting on Saved, with no conflict, no block, no refusal and nothing
+     scheduled to correct it. */
+  {
+    const edits = { "live-activity.js": [[REPAIRED_RECOVERY_SIGNAL, RECOVERY_SIGNAL_IGNORED]] };
+    const mutate = sourceMutator(edits);
+    const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
+    const context = await openFixture(server, currentSchemaProject("Project A"), { mutateSource: mutate, fal: true });
+    const R0 = server.revisionOf(A);
+    const generationAtOpen = read(context, "PROJECT_SAVE_GENERATION");
+    await beginScanParkedRefresh(server, context, "__old");
+    server.serverSideIngest(A, { announce: true });
+    const R1 = server.revisionOf(A);
+    await pollForRecovery(context);
+    assert(mutate.applied.has("live-activity.js"), "NC-15: live-activity.js was never evaluated, so the defect never ran");
+    assert.strictEqual(read(context, "PROJECT_SAVE_GENERATION"), generationAtOpen,
+      "NC-15 probe: the defect must actually leave the sweep undeclared");
+    const oldOutcome = await releaseScanParked(server, context, "__old");
+    await realDelay(PAST_BOTH_TIMERS_MS);
+    await settle();
+    assert.strictEqual(oldOutcome.committed, true,
+      `NC-15 probe: and the pre-sweep snapshot must actually commit: ${JSON.stringify(oldOutcome.reason)}`);
+    assert.strictEqual(read(context, "PROJECT_REVISION"), R0,
+      `NC-15 probe: leaving the client at R0 while the server is at R1 — it is at ${read(context, "PROJECT_REVISION")}`);
+    assert.strictEqual(server.revisionOf(A), R1, "NC-15 probe: with the server unmoved");
+    assert.deepStrictEqual(marks(context), [], "NC-15 probe: and the completion missing from the client");
+    assert.strictEqual(server.docs[A].meta.completionMarks.length, 1, "NC-15 probe: even though the server holds it");
+    assert.strictEqual(saveIndicator(context), "Saved",
+      "NC-15 probe: with the indicator resting on Saved over it, which is the silent part");
+    assert.strictEqual(read(context, "PROJECT_CONFLICT"), false, "NC-15 probe: and no conflict surface to correct it");
+    /* AND IT IS STABLE. A second poll changes nothing, so nothing is coming. */
+    await pollForRecovery(context);
+    assert.strictEqual(read(context, "PROJECT_REVISION"), R0, "NC-15 probe: and it stays that way — nothing is scheduled to fix it");
+    const detected = await expectRed("NC-15", () => reaperRecoveryBeforeCommitSection({ mutateSource: sourceMutator(edits) }));
+    controls.push({ id: "NC-15", defect: "the server reaper's recovery notice never reaches the freshness rule, so a pre-sweep snapshot commits and the window sits stably at R0 with the completion missing and Saved on screen", detected });
+  }
+
+  /* NC-16 — THE CANCEL ROUTE SAYS IT WROTE AND THE BROWSER IGNORES IT. The
+     coverage status the cancel committed is reinstalled from a snapshot prepared
+     before it. */
+  {
+    const edits = { "fal-generation.js": [[REPAIRED_CANCEL_RESULT, CANCEL_RESULT_IGNORED]] };
+    const mutate = sourceMutator(edits);
+    const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
+    const context = await openFixture(server, currentSchemaProject("Project A"), { mutateSource: mutate });
+    server.setCancelWritesProject(true);
+    const generationAtOpen = read(context, "PROJECT_SAVE_GENERATION");
+    await beginScanParkedRefresh(server, context, "__parked");
+    await vm.runInContext(`cancelFalGeneration("job-1")`, context);
+    await settle();
+    assert(mutate.applied.has("fal-generation.js"), "NC-16: fal-generation.js was never evaluated, so the defect never ran");
+    assert.strictEqual(server.docs[A].meta.coverageStatus, "cancelled", "NC-16 probe: the route must actually have written the project");
+    assert.strictEqual(read(context, "PROJECT_SAVE_GENERATION"), generationAtOpen,
+      "NC-16 probe: and the defect must actually leave that write undeclared");
+    const outcome = await releaseScanParked(server, context, "__parked");
+    assert.strictEqual(outcome.committed, true, "NC-16 probe: so the pre-cancel snapshot commits");
+    assert.strictEqual(read(context, "P.meta.coverageStatus"), undefined,
+      "NC-16 probe: reinstalling the pre-cancel coverage status over the cancelled one");
+    assert.strictEqual(server.docs[A].meta.coverageStatus, "cancelled", "NC-16 probe: while storage still says cancelled");
+    const detected = await expectRed("NC-16", () => cancelWithProjectWriteSection({ mutateSource: sourceMutator(edits) }));
+    controls.push({ id: "NC-16", defect: "the browser ignores what the cancel route says it wrote, so a snapshot prepared before the cancel reinstalls the pre-cancel coverage status", detected });
+  }
+
+  /* NC-17 — RECONCILE DECLARES A DURABLE ADVANCE IT DID NOT MAKE. The project
+     document never changed, and a refresh reading the CURRENT record is thrown
+     away for it — leaving the window behind for a change that never happened. */
+  {
+    const edits = { "fal-generation.js": [[REPAIRED_RECONCILE, RECONCILE_DECLARES_FALSELY]] };
+    const mutate = sourceMutator(edits);
+    const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
+    const context = await openFixture(server, currentSchemaProject("Project A"), { mutateSource: mutate });
+    server.serverSideIngest(A);
+    const R1 = server.revisionOf(A);
+    const R0 = read(context, "PROJECT_REVISION");
+    assert.notStrictEqual(R0, R1, "NC-17 probe: the window starts behind a record it is entitled to read");
+    const generationBefore = read(context, "PROJECT_SAVE_GENERATION");
+    await beginScanParkedRefresh(server, context, "__parked");
+    await vm.runInContext(`reconcileFalGeneration("job-1", "not-accepted")`, context);
+    await settle();
+    assert(mutate.applied.has("fal-generation.js"), "NC-17: fal-generation.js was never evaluated, so the defect never ran");
+    assert.strictEqual(read(context, "PROJECT_SAVE_GENERATION"), generationBefore + 1,
+      "NC-17 probe: the defect must actually declare an advance the project never received");
+    assert.strictEqual(server.revisionOf(A), R1, "NC-17 probe: the stored revision is unmoved by the reconcile");
+    const outcome = await releaseScanParked(server, context, "__parked");
+    assert.strictEqual(outcome.committed, false,
+      "NC-17 probe: so a refresh reading the CURRENT record is discarded");
+    assert.strictEqual(read(context, "PROJECT_REVISION"), R0,
+      "NC-17 probe: leaving the window stale at R0 while the server is at R1");
+    assert.strictEqual(saveIndicator(context), "Saved", "NC-17 probe: and still saying Saved about it");
+    const detected = await expectRed("NC-17", () => reconcileDeclaresNothingSection({ mutateSource: sourceMutator(edits) }));
+    controls.push({ id: "NC-17", defect: "reconcile declares a durable advance although it writes only the job ledger, discarding a refresh that was reading the current record", detected });
+  }
+
   console.log("Project load transaction negative controls");
   for (const row of controls) console.log(`  ${row.id} - ${row.defect}\n        detected: ${row.detected}`);
-  assert.strictEqual(controls.length, 14, "every declared control must have produced a receipt");
+  assert.strictEqual(controls.length, 17, "every declared control must have produced a receipt");
   return controls.length;
 }
 
@@ -2784,6 +3345,15 @@ const SECTIONS = [
   completionFollowUpFailsSection,
   completionForLeftProjectSection,
   overlappingCompletionIngestsSection,
+  reaperRecoveryBeforeCommitSection,
+  reaperRecoveryAfterCommitSection,
+  reaperRecoveryRefreshFailsSection,
+  reaperRecoveryForLeftProjectSection,
+  cancelWithoutProjectWriteSection,
+  cancelWithProjectWriteSection,
+  cancelForLeftProjectSection,
+  reconcileDeclaresNothingSection,
+  workspaceMigrationOwnerSection,
   deferredTriggerAcrossOpensSection,
   triggerBeforeSwitchSection,
   debounceInsideTransitionSection,

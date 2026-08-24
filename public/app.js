@@ -59,7 +59,9 @@ let P = null,
      Compared for EQUALITY and never for order. "Newer" is not a thing a client can
      ask of it or of an opaque revision string: a prepared snapshot is either from
      the generation its refresh began in, or it is not. */
-  PROJECT_SAVE_GENERATION = 0;
+  PROJECT_SAVE_GENERATION = 0,
+  /* The re-read a background-recovery notice started, so a suite can wait on it. */
+  PROJECT_RECOVERY_REFRESH = null;
 let FILTER = { status: "", route: "", char: "", action: "unfinished" };
 const storedValue = (key, fallback = null) => localStorage.getItem(key) ?? fallback;
 FILTER.action = storedValue("cinebraid-shot-action-filter", "unfinished") || "unfinished";
@@ -1359,7 +1361,7 @@ async function load(options = {}) {
    counters, the saved baseline, the save latches, the save indicator, the
    continuity workspace, the project-open epoch or the refresh watermark. The
    return value is a candidate snapshot and nothing else. */
-async function prepareProjectSnapshot() {
+async function prepareProjectSnapshot({ claimRecovery = false } = {}) {
   const projectResponse = await fetch("/api/project", { cache: "no-store" });
   if (projectResponse.status === 404) {
     const data = await projectResponse.json().catch(() => ({}));
@@ -1406,7 +1408,7 @@ async function prepareProjectSnapshot() {
   prepared.config = loaded[3] || {};
   prepared.agentStatus = loaded[4] || { enabled: false, runs: [], agents: [], index: {} };
   prepared.automationRuns = loaded[5]?.runs || [];
-  await prepareGenerationLedger(prepared);
+  await prepareGenerationLedger(prepared, { claimRecovery });
   return prepared;
 }
 
@@ -1422,17 +1424,24 @@ async function prepareProjectSnapshot() {
 
    It reads `prepared.config`, so it is a second await rather than a seventh
    entry in the Promise.all above. It is still entirely inside PREPARE. */
-async function prepareGenerationLedger(prepared) {
+async function prepareGenerationLedger(prepared, { claimRecovery = false } = {}) {
   const falConfig = prepared.config.generation?.fal || {};
   if (!(falConfig.enabled && falConfig.keySource !== "none")) return prepared;
   /* What the server collected through its own background recovery rather than
      through a refresh from here — which is all the server can know, and all it
      says. The header marks THIS request as the one that takes delivery of the
-     notice, so the activity drawer's 3.5-second refresh of the same route
-     neither consumes it nor repeats it. The URL is unchanged on purpose: it is
-     matched exactly by route stubs and paid-call guards that have nothing to do
-     with this. */
-  await fetch("/api/generation/fal/jobs", { headers: { "x-cinebraid-claim-recovery": "1" } })
+     notice; the activity poll reads the same route and deliberately leaves it
+     where it is. The URL is unchanged on purpose: it is matched exactly by route
+     stubs and paid-call guards that have nothing to do with this.
+
+     ONLY A REPLACEMENT CLAIMS IT. A refresh cannot honestly take delivery: its
+     snapshot may have been read BEFORE the sweep that produced the notice, and
+     consuming it there destroys the only browser-visible evidence that the record
+     moved — which is exactly how a window ended up resting on a pre-sweep record
+     with the notice already spent. So a refresh reads the ledger plainly, the
+     notice stays on the server, and noteBackgroundRecoveryAdvance() finds it on
+     the next poll. */
+  await fetch("/api/generation/fal/jobs", claimRecovery ? { headers: { "x-cinebraid-claim-recovery": "1" } } : {})
     .then((r) => (r.ok ? r.json() : { jobs: [] }))
     .then((data) => {
       /* Loaded means the request was made AND answered. A refused or failed
@@ -1440,7 +1449,11 @@ async function prepareGenerationLedger(prepared) {
          record is unavailable instead of claiming the project has no generation
          history. */
       prepared.falLedgerLoaded = Array.isArray(data.jobs);
-      prepared.backgroundRecovery = data.backgroundRecovery || null;
+      /* Announced only by the load that actually took delivery of it. A refresh
+         leaves the notice where it is, so it must not announce it either — it
+         would repeat the same sentence on every completion until some later open
+         finally claimed it. */
+      prepared.backgroundRecovery = claimRecovery ? (data.backgroundRecovery || null) : null;
       /* Admitted on the payload's own stated owner, exactly as the 3.5-second
          poll admits it — and against THE OWNER OF THE SNAPSHOT BEING PREPARED
          rather than whatever is installed at this instant. During a replacement
@@ -1498,6 +1511,92 @@ function noteCurrentProjectDurableAdvance(owner) {
   const slug = String(owner || "");
   if (!slug || !ACTIVE_PROJECT_SLUG || slug !== ACTIVE_PROJECT_SLUG) return false;
   PROJECT_SAVE_GENERATION += 1;
+  return true;
+}
+/* ONE RESULT HANDLER FOR A ROUTE THAT SAYS WHETHER IT WROTE THE PROJECT.
+
+   Three generation routes touch project.json only CONDITIONALLY — a cancel, a
+   failed submission, a failed collection all write an entity's coverage-automation
+   status, and only when the job is an entity-reference job whose entity has
+   coverage automation configured. The browser cannot see that condition, so it
+   must not infer it from a 2xx: guessing YES discards a perfectly good prepared
+   refresh on every cancel, and guessing NO lets a prepared snapshot reinstall the
+   pre-cancel coverage status. The routes answer `projectUpdated` and this is the
+   one place that reads it, so both shipped cancel callers behave identically.
+
+   THE REFRESH IS PART OF THE ANSWER. If the project really did move, this window
+   is behind it; declaring that and then not going to look would leave the record
+   on screen knowingly stale. */
+async function applyProjectMutationResult(owner, data) {
+  if (!data || data.projectUpdated !== true) return false;
+  if (!noteCurrentProjectDurableAdvance(owner)) return false;
+  await load({ intent: "refresh" });
+  return true;
+}
+
+/* THE SERVER'S OWN INGEST REAPER IS A DURABLE ADVANCE NOBODY HERE ASKED FOR.
+
+   generation-poller.js sweeps on its own schedule, collects finished generations
+   and commits them into the project document with no browser involved at all. No
+   request was made here and no response came back, so nothing in this file can see
+   it happen — and a refresh prepared before the sweep looks perfectly fresh. It
+   commits the pre-ingest record over the newer one, silently, resting on "Saved",
+   with results the filmmaker paid for sitting on the server and no conflict,
+   refusal or scheduled re-read anywhere. The first truthful surface used to be a
+   409 on some later edit.
+
+   THE SIGNAL IS THE ONE THE SERVER ALREADY PUBLISHES. GET /api/generation/fal/jobs
+   carries `backgroundRecovery` to EVERY reader; only the request that sends the
+   claim header consumes it. What was missing was a reader that runs when no load
+   is happening — so the activity poll, the 3.5-second timer that was already
+   there, now reads the ledger whenever the generation ledger is in play and hands
+   the payload here. That is the same condition under which the reaper can act at
+   all (it sweeps only when fal is enabled and keyed), so a live window learns
+   within one tick of any sweep that could have moved its project.
+
+   IT USES THE OWNER THE PAYLOAD STATES. `projectSlug` is the server's own answer
+   for which project this ledger and this notice belong to — the same value the
+   rows are admitted on — rather than whatever this window happens to have open.
+
+   DECLARED ONCE PER NOTICE. The poll does not consume the notice, so the same
+   collections come back every tick until a load claims them; the identity of what
+   was collected is the key, and a later sweep produces a different one. */
+let BACKGROUND_RECOVERY_DECLARED = "";
+function backgroundRecoveryKey(notice) {
+  const rows = Array.isArray(notice.collections) ? notice.collections : [];
+  return rows.map((row) => `${row.jobId}@${row.at}`).join("|")
+    || `${notice.jobs || 0}:${notice.results || 0}`;
+}
+function noteBackgroundRecoveryAdvance(payload) {
+  const notice = payload && payload.backgroundRecovery;
+  if (!notice) return false;
+  const key = backgroundRecoveryKey(notice);
+  if (!key || key === BACKGROUND_RECOVERY_DECLARED) return false;
+  BACKGROUND_RECOVERY_DECLARED = key;
+  if (!noteCurrentProjectDurableAdvance(payload.projectSlug)) return false;
+  /* EVERY PREPARED SNAPSHOT IS NOW STALE — generically, through the declaration
+     above, without this path knowing anything about the refreshes in flight.
+
+     THE PRESENTATION IS TRUTHFUL, AND IT NEVER SPEAKS OVER SOMETHING TRUER. A
+     window holding unsaved work, a refusal, a paused save or a latched conflict is
+     already saying the most important thing about itself; the re-read below will
+     decline for exactly that reason and its existing surface stays. */
+  const speakable = !projectHasUnsavedEdits() && !SAVE_BLOCKED && !AUTHORITY_SAVE_REFUSED && !PROJECT_CONFLICT;
+  if (speakable) setSaveState("loading", "Project changed — updating…");
+  PROJECT_RECOVERY_REFRESH = load({ intent: "refresh" })
+    .then((outcome) => {
+      /* A committed refresh settles the indicator itself. Anything else means this
+         window is known to be behind the record and must NOT go back to resting on
+         "Saved" — it says what is true and what would fix it. */
+      if (!outcome || !outcome.committed) {
+        if (speakable) setSaveState("error", "Project changed — refresh required");
+      }
+      return outcome;
+    })
+    .catch(() => {
+      if (speakable) setSaveState("error", "Project changed — refresh required");
+      return null;
+    });
   return true;
 }
 /* Authored work this window holds and storage does not. `SAVE_REVISION` counts
@@ -1768,7 +1867,7 @@ function decorateProjectCommit(prepared) {
    entirely. Neither appears in the refresh lifecycle at all. */
 async function runProjectReplacement() {
   applyTheme();
-  const prepared = await prepareProjectSnapshot();
+  const prepared = await prepareProjectSnapshot({ claimRecovery: true });
   if (!prepared.available) {
     await showFirstRunWorkspace(prepared.message);
     return { intent: "open", committed: false, reason: "no project is available to open" };

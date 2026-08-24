@@ -67,7 +67,6 @@ function falUnresolvedExplanation(job) {
    and never times this out — waiting is not evidence that a request was refused. */
 window.reconcileFalGeneration = async (jobId, outcome) => {
   try {
-    const owner = ACTIVE_PROJECT_SLUG;
     const response = await fetch(`/api/generation/fal/jobs/${jobId}/reconcile`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -76,9 +75,11 @@ window.reconcileFalGeneration = async (jobId, outcome) => {
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || "Could not record what you found.");
     FAL_GENERATION_JOBS = [...(FAL_GENERATION_JOBS || []).filter((job) => job.id !== data.job.id), data.job];
-    /* Recording an outcome writes the entity's coverage-automation status into
-       the project document, on the same condition a cancel does. */
-    noteCurrentProjectDurableAdvance(owner);
+    /* RECONCILE WRITES NO PROJECT DOCUMENT. It records what the filmmaker found at
+       the provider onto the job row in generation-jobs.json and nothing else — it
+       never reaches updateEntityCoverageRun() or commitProject(). Declaring a
+       durable advance here discarded a refresh that was reading the CURRENT record
+       and left the window stale for a change the project never received. */
     closeModal();
     route();
     toast(outcome === "not-accepted" ? "Recorded as not accepted — you can generate this again" : "Recorded as accepted at the provider");
@@ -635,9 +636,16 @@ window.startFalEntityGeneration = async () => {
   try {
     await flushPendingProjectSave();
     closeModal();
+    const submissionOwner = ACTIVE_PROJECT_SLUG;
     const response = await fetch("/api/generation/fal/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(gatedBody) });
     const data = await response.json();
-    if (!response.ok) throw new Error(data.error || "Could not start entity generation");
+    /* A REFUSED ENTITY SUBMISSION CAN STILL HAVE WRITTEN. The route sets the
+       entity's coverage-automation status to needs-attention before answering
+       502, on the same condition a cancel writes under, and says whether it did. */
+    if (!response.ok) {
+      await applyProjectMutationResult(submissionOwner, data);
+      throw new Error(data.error || "Could not start entity generation");
+    }
     FAL_GENERATION_JOBS = [...(FAL_GENERATION_JOBS || []).filter((job) => job.id !== data.job.id), data.job];
     // Keep the open reference builder stable; polling will refresh job state without collapsing or shifting the workspace.
     toast("FAL entity reference generation queued");
@@ -744,7 +752,13 @@ window.refreshFalGeneration = async (jobId, manual = false) => {
     const owner = ACTIVE_PROJECT_SLUG;
     const response = await fetch(`/api/generation/fal/jobs/${encodeURIComponent(jobId)}/refresh`, { method: "POST" });
     const data = await response.json();
-    if (!response.ok) throw new Error(data.error || "Could not refresh generation");
+    /* A FAILED COLLECTION CAN STILL HAVE WRITTEN. The route sets the entity's
+       coverage-automation status to needs-attention before answering 502, on the
+       same condition a cancel writes under, and says so. */
+    if (!response.ok) {
+      await applyProjectMutationResult(owner, data);
+      throw new Error(data.error || "Could not refresh generation");
+    }
     FAL_GENERATION_JOBS = [...(FAL_GENERATION_JOBS || []).filter((job) => job.id !== jobId), data.job];
     if (data.job.status === "COMPLETED") {
       const blockingIds = (data.job.outputs || []).filter((out) => out.type === "blocking").map((out) => out.assetId);
@@ -774,16 +788,16 @@ window.pollFalGeneration = async (jobId) => {
   if (job && falJobActive(job)) setTimeout(() => pollFalGeneration(jobId), 3500);
 };
 window.cancelFalGeneration = async (jobId) => {
+  /* Captured before the request, so a switch during the round-trip cannot
+     redirect the declaration onto whatever is open when it lands. */
   const owner = ACTIVE_PROJECT_SLUG;
   const response = await fetch(`/api/generation/fal/jobs/${encodeURIComponent(jobId)}/cancel`, { method: "POST" });
   const data = await response.json();
   if (!response.ok) return toast(data.error || "Could not cancel generation");
-  /* An accepted cancel writes the entity's coverage-automation status into the
-     project document. Only for an entity-reference job with coverage automation
-     configured — which the browser cannot tell from here, so this is declared for
-     every accepted cancel. Over-declaring costs one discarded snapshot and a
-     re-read; under-declaring costs a silent rollback. */
-  noteCurrentProjectDurableAdvance(owner);
+  /* A cancel writes the project document only for an entity-reference job whose
+     entity has coverage automation configured. The route says which happened; this
+     is not inferred from the 2xx. */
+  await applyProjectMutationResult(owner, data);
   FAL_GENERATION_JOBS = [...(FAL_GENERATION_JOBS || []).filter((job) => job.id !== jobId), data.job];
   route(); toast("Generation cancelled");
 };

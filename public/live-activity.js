@@ -48,6 +48,35 @@ function v670ManualActivityRows() {
   const slug = v670ActiveProjectSlug();
   return [...V641_MANUAL_ACTIVITIES.values()].filter((row) => String(row.projectSlug || "") === slug);
 }
+/* WHEN THE RECOVERY WATCH IS ON, AND NO WIDER.
+
+   The reaper can only advance a project by COLLECTING A JOB, and it sweeps only
+   when fal is enabled and keyed — which is when this window has a loaded
+   generation ledger. So the watch needs all three: a project open, a loaded
+   ledger, and at least one job in it the sweep could still collect. A window with
+   nothing in flight has nothing to be told about, and does not poll for it.
+
+   THE RESIDUAL THIS LEAVES, stated rather than hidden: a job created in another
+   window that this one has never seen. The sweep could collect it and this window
+   would not ask — but it has also never shown that job, and the next open reads
+   the ledger and takes delivery of the notice in the ordinary way. */
+function v670RecoveryWatchEnabled() {
+  if (typeof P === "undefined" || !P) return false;
+  if (typeof FAL_GENERATION_LEDGER_LOADED === "undefined" || !FAL_GENERATION_LEDGER_LOADED) return false;
+  return (typeof FAL_GENERATION_JOBS !== "undefined" ? FAL_GENERATION_JOBS || [] : []).some(v670RecoveryCollectable);
+}
+/* WHAT THE SWEEP COULD STILL COLLECT, mirroring generation-poller.js
+   pollEligibility() rather than the browser's own polling predicate. They are not
+   the same set: falJobActive() drives THIS window's per-job poll and stops at
+   IN_PROGRESS, while the reaper also collects a COMPLETED row it has not ingested
+   and an UNRESOLVED one it still has a handle for. Watching the narrower set would
+   leave exactly the rows the sweep is most likely to act on unwatched. Delivered
+   and hand-reconciled are the two facts that end it, on the server and here. */
+const V670_RECOVERY_COLLECTABLE = ["SUBMITTING", "SUBMITTED", "IN_QUEUE", "IN_PROGRESS", "COMPLETED", "UNRESOLVED"];
+function v670RecoveryCollectable(job) {
+  if (!job || job.ingestedAt || job.reconciliation) return false;
+  return V670_RECOVERY_COLLECTABLE.includes(String(job.status || ""));
+}
 window.v670ScopeActivityToProject = (slug = v670ActiveProjectSlug()) => {
   const next = String(slug || "");
   if (next === V641_ACTIVITY_PROJECT_SLUG) return false;
@@ -1138,7 +1167,15 @@ window.refreshGlobalAutomationActivity = async (force = false) => {
   /* Unsettled, not active: a run parked at an approval gate must keep being polled so
      an approval made in another window lands here. */
   const openExists = (AUTOMATION_RUNS || []).some(v670RunUnsettled);
-  if (!force && !V641_ACTIVITY_DRAWER_OPEN && !openExists) return;
+  /* AND THE RECOVERY WATCH. This poll runs with the drawer closed and nothing
+     unsettled, because this route's payload is the ONLY browser-visible signal
+     that the server's own ingest reaper advanced the open project's document —
+     see noteBackgroundRecoveryAdvance() in public/app.js. A window that stopped
+     asking is a window that can commit a snapshot prepared before a completion it
+     never heard about. Scoped to the condition the reaper itself is scoped to: it
+     sweeps only when fal is enabled and keyed, which is exactly when this window
+     has a loaded generation ledger. */
+  if (!force && !V641_ACTIVITY_DRAWER_OPEN && !openExists && !v670RecoveryWatchEnabled()) return;
   V641_ACTIVITY_REFRESHING = true;
   try {
     const [runData, falData] = await Promise.all([
@@ -1156,6 +1193,10 @@ window.refreshGlobalAutomationActivity = async (force = false) => {
     if (runs.rows) AUTOMATION_RUNS = runs.rows;
     if (jobs.rows) FAL_GENERATION_JOBS = jobs.rows;
     V641_ACTIVITY_FOREIGN_PROJECT = runs.foreign || jobs.foreign || "";
+    /* The payload also carries the server's background-recovery notice. Handing it
+       over is the whole of this file's part: what it MEANS to the project record is
+       decided in public/app.js, beside the freshness generation it declares. */
+    if (typeof noteBackgroundRecoveryAdvance === "function") noteBackgroundRecoveryAdvance(falData);
   } catch {}
   finally {
     V641_ACTIVITY_REFRESHING = false;

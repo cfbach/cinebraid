@@ -1527,9 +1527,14 @@ async function v626WaitFalJob(run, step, body) {
       system: "FAL · GPT IMAGE 2", providerAccepted: false,
       outputCount: count, quality: String(body.quality || ""), resolution: String(body.resolution || ""),
     });
+    const submissionOwner = ACTIVE_PROJECT_SLUG;
     const response = await fetch("/api/generation/fal/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...body, automationRunId: run.id, automationStepKey: durableOperationKey, automationRunnerId: V627_AUTOMATION_RUNNER_ID }) });
     const data = await response.json();
     if (!response.ok) {
+    /* A REFUSED ENTITY SUBMISSION CAN STILL HAVE WRITTEN. The route sets the
+       entity's coverage-automation status to needs-attention before answering
+       502, on the same condition a cancel writes under, and says whether it did. */
+      await applyProjectMutationResult(submissionOwner, data);
       step.activity = { ...(step.activity || {}), state: "request rejected", detail: `${data.error || `FAL submission returned HTTP ${response.status}` } No paid request was accepted.`, system: "FAL · GPT IMAGE 2", providerAccepted: false, paidRequestSubmitted: false, httpStatus: response.status, errorCode: data.code || "", updatedAt: v626Now() };
       step.error = data.error || `FAL submission returned HTTP ${response.status}`;
       await v626SaveRun(run, false, false);
@@ -2934,8 +2939,13 @@ window.cancelAutomationRun = window.pauseAutomationRun;
 window.cancelAutomationProviderJob = async (runId) => {
   const run = await v626RefreshRun(runId, false), current = run.steps?.[run.current?.stepKey || ""];
   if (!current?.childJobId) return toast("No active provider job is attached to this step");
+  /* Captured before the request, exactly as cancelFalGeneration() captures it. */
+  const owner = ACTIVE_PROJECT_SLUG;
   const response = await fetch(`/api/generation/fal/jobs/${encodeURIComponent(current.childJobId)}/cancel`, { method: "POST" });
   const data = await response.json().catch(() => ({}));
+  /* The SAME result handler as the ordinary cancel button. This route is the same
+     route; the two callers must not develop two opinions about what it did. */
+  if (response.ok) await applyProjectMutationResult(owner, data);
   toast(response.ok ? "Provider cancellation requested" : data.error || "Could not cancel provider job");
 };
 window.archiveAutomationRun = async (runId) => {

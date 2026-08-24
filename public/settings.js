@@ -648,6 +648,11 @@ async function persistWorkspaceSettings(scope) {
   const note = $("#workspace-settings-note");
   setSettingsPanelState("saving");
   if (note) note.textContent = "Applying paths and checking write access…";
+  /* THE OWNER, CAPTURED BEFORE THE REQUEST. Moving the projects root rewrites every
+     project document at the new location, this window's included — and a switch
+     while that is in flight must not redirect the declaration onto the project the
+     migration did not write from this window's point of view. */
+  const migrationOwner = ACTIVE_PROJECT_SLUG;
   let r;
   try {
     r = await fetch("/api/workspace/settings", {
@@ -667,9 +672,8 @@ async function persistWorkspaceSettings(scope) {
     if (note) note.textContent = reason;
     return toast(storage ? "Could not apply storage paths" : "Could not save naming rules");
   }
-  /* Moving the projects root rewrites every project document at the new
-     location, this window's included. The route says whether it did. */
-  if (data.migration?.movedRoot) noteCurrentProjectDurableAdvance(ACTIVE_PROJECT_SLUG);
+  /* The route says whether it actually rewrote anything. */
+  if (data.migration?.movedRoot) noteCurrentProjectDurableAdvance(migrationOwner);
   CONFIG = await fetch("/api/config").then((response) => response.json()).catch(() => ({ ...CONFIG, ...body }));
   updateFilenameTemplatePreview();
   const applied = data.migration?.movedRoot

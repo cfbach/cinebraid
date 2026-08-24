@@ -1047,11 +1047,21 @@ function registerFalGeneration(app, context) {
      defect, reached from an error path instead of a success path. It still never
      throws: a coverage annotation that cannot be written is not a reason to fail the
      response its caller is already sending. */
+  /* WHETHER THE PROJECT DOCUMENT WAS ACTUALLY WRITTEN, answered rather than
+     implied. This runs on three routes that mostly do NOT touch project.json —
+     a cancel, a failed submission, a failed collection — and only writes when the
+     job is an entity-reference job whose entity has coverage automation
+     configured. A browser cannot see that condition, so it used to have to guess
+     from the HTTP status, and a guess in either direction is wrong: guessing YES
+     invalidates a perfectly good prepared refresh on every cancel, and guessing NO
+     lets a prepared snapshot reinstall the pre-cancel coverage status. The answer
+     is cheap here and unknowable there, so it travels in the response. */
   async function updateEntityCoverageRun(owner, job, status, error = "") {
-    if (job?.purpose !== "entity-reference" || !job.entityList || !job.entityId) return;
+    if (job?.purpose !== "entity-reference" || !job.entityList || !job.entityId) return false;
     try {
       const known = (ownerProject(owner)[job.entityList] || []).find((item) => String(item.id) === String(job.entityId));
-      if (!known?.coverageAutomation) return;
+      if (!known?.coverageAutomation) return false;
+      let wrote = false;
       await commitProject(owner, (project) => {
         const entity = (project[job.entityList] || []).find((item) => String(item.id) === String(job.entityId));
         if (!entity?.coverageAutomation) return;
@@ -1059,8 +1069,13 @@ function registerFalGeneration(app, context) {
         entity.coverageAutomation.updatedAt = now();
         if (error) entity.coverageAutomation.error = String(error);
         if (["failed", "cancelled", "needs-attention"].includes(status)) entity.coverageAutomation.needsAttentionAt = now();
+        /* Inside the committing turn, so it is true only for a turn that reached
+           the mutation — commitProject() re-reads and writes around this callback,
+           and a callback that returns early leaves the document as it found it. */
+        wrote = true;
       });
-    } catch {}
+      return wrote;
+    } catch { return false; }
   }
   function entityRole(list) {
     return { characters: "character-reference", locations: "location-reference", props: "prop-reference", vehicles: "vehicle-reference" }[list] || "planning-reference";
@@ -2057,11 +2072,12 @@ function registerFalGeneration(app, context) {
           Object.assign(job, row);
         }
       }).catch(() => {});
-      await updateEntityCoverageRun(owner, job, "needs-attention", error.message);
+      const projectUpdated = await updateEntityCoverageRun(owner, job, "needs-attention", error.message);
       res.status(502).json({
         error: error.message,
         ...(verdict.status === Lifecycle.UNRESOLVED ? { code: "GENERATION_UNRESOLVED" } : {}),
         job: publicJob(job),
+        projectUpdated,
       });
     }
   });
@@ -2211,8 +2227,8 @@ function registerFalGeneration(app, context) {
       if (result.outcome === "not-found") return res.status(404).json({ error: result.error });
       if (result.outcome === "no-handle")
         return res.status(409).json({ error: result.error, code: result.code, job: publicJob(result.job) });
-      await updateEntityCoverageRun(owner, result.job, "needs-attention", result.error);
-      res.status(502).json({ error: result.error, job: publicJob(result.job) });
+      const projectUpdated = await updateEntityCoverageRun(owner, result.job, "needs-attention", result.error);
+      res.status(502).json({ error: result.error, job: publicJob(result.job), projectUpdated });
     }));
   });
   app.post("/api/generation/fal/jobs/:id/cancel", async (req, res) => {
@@ -2257,8 +2273,8 @@ function registerFalGeneration(app, context) {
       } catch (error) {
         return res.status(ledgerFailureStatus(error)).json(ledgerFailurePayload(error));
       }
-      await updateEntityCoverageRun(owner, job, "cancelled", "Provider job cancelled by user.");
-      res.json({ ok: true, job: publicJob(job) });
+      const projectUpdated = await updateEntityCoverageRun(owner, job, "cancelled", "Provider job cancelled by user.");
+      res.json({ ok: true, job: publicJob(job), projectUpdated });
     }));
   });
 
