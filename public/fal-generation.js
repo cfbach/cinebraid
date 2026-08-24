@@ -636,16 +636,9 @@ window.startFalEntityGeneration = async () => {
   try {
     await flushPendingProjectSave();
     closeModal();
-    const submissionOwner = ACTIVE_PROJECT_SLUG;
     const response = await fetch("/api/generation/fal/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(gatedBody) });
     const data = await response.json();
-    /* A REFUSED ENTITY SUBMISSION CAN STILL HAVE WRITTEN. The route sets the
-       entity's coverage-automation status to needs-attention before answering
-       502, on the same condition a cancel writes under, and says whether it did. */
-    if (!response.ok) {
-      await applyProjectMutationResult(submissionOwner, data);
-      throw new Error(data.error || "Could not start entity generation");
-    }
+    if (!response.ok) throw new Error(data.error || "Could not start entity generation");
     FAL_GENERATION_JOBS = [...(FAL_GENERATION_JOBS || []).filter((job) => job.id !== data.job.id), data.job];
     // Keep the open reference builder stable; polling will refresh job state without collapsing or shifting the workspace.
     toast("FAL entity reference generation queued");

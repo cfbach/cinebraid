@@ -192,6 +192,15 @@ function refreshServer({ a, b, replyForWrite = () => ({ status: 200 }), ledger =
   /* Whether an accepted cancel actually commits the project document — the
      condition the browser cannot see and the route now answers. */
   let cancelWritesProject = false;
+  /* The refresh route answering 502 AFTER it has committed the project — a
+     durable mutation and a failed request, which are two separate truths. */
+  let refreshFailsAfterWrite = false;
+  let armedRevision = 0;
+  let parkedRevision = [];
+  let failRevision = 0;
+  /* Every request this fixture answered, so a section can prove what was NOT
+     asked for as well as what was. */
+  const requests = [];
   /* Parked reads in PARK ORDER, released individually — the only way to drive a
      chosen response order over overlapping refreshes. */
   let parked = [];
@@ -240,6 +249,28 @@ function refreshServer({ a, b, replyForWrite = () => ({ status: 200 }), ledger =
     announceRecoveryFor(slug) { recoveryOwner = slug; },
     get recoveryNotice() { return recoveryNotice; },
     setCancelWritesProject(value) { cancelWritesProject = !!value; },
+    setRefreshFailsAfterWrite(value) { refreshFailsAfterWrite = !!value; },
+    /* A DURABLE CHANGE WITH NO GENERATION ANYWHERE NEAR IT. Another window, an
+       automation run, a restore, a writer that does not exist yet: the point of
+       the revision watch is that it does not care which, so the fixture's
+       stand-in for "somebody else wrote the project" is deliberately not a
+       generation. */
+    foreignWrite(slug = active, title = "changed by another window") {
+      docs[slug] = structuredClone(docs[slug]);
+      docs[slug].meta.title = title;
+      counters[slug] += 1;
+      return revisionOf(slug);
+    },
+    failNextRevisionRead() { failRevision += 1; },
+    holdNextRevisionRead() { armedRevision += 1; },
+    get parkedRevisionReads() { return parkedRevision.length; },
+    releaseRevisionReads() {
+      const waiting = parkedRevision;
+      parkedRevision = [];
+      for (const resume of waiting) resume();
+    },
+    get requests() { return requests; },
+    countRequests(match) { return requests.filter((row) => row.includes(match)).length; },
     holdNextCancel() { armedCancel += 1; },
     get parkedCancels() { return parkedCancel.length; },
     releaseCancels() {
@@ -278,6 +309,23 @@ function refreshServer({ a, b, replyForWrite = () => ({ status: 200 }), ledger =
       for (const row of parked) if (!row.done) { row.done = true; row.resolve(); }
     },
     async fetch(url, options = {}, response) {
+      requests.push(`${options.method || "GET"} ${url}`);
+      /* THE SMALLEST READ. Byte-hash equality and nothing else: no document, no
+         parse, no activity. */
+      const revision = /^\/api\/projects\/([^/]+)\/revision$/.exec(url);
+      if (revision && (options.method || "GET") === "GET") {
+        if (failRevision > 0) {
+          failRevision -= 1;
+          return response({ error: "The project revision could not be read." }, 500);
+        }
+        const slug = revision[1];
+        if (armedRevision > 0) {
+          armedRevision -= 1;
+          await new Promise((resolve) => parkedRevision.push(resolve));
+        }
+        if (!docs[slug]) return response({ error: `No such project: ${slug}`, slug }, 404);
+        return response({ slug, revision: revisionOf(slug) });
+      }
       const write = /^\/api\/projects\/([^/]+)\/project$/.exec(url);
       if (write && options.method === "PUT") {
         if (heldWrites) await new Promise((resolve) => heldWrites.push(resolve));
@@ -366,6 +414,9 @@ function refreshServer({ a, b, replyForWrite = () => ({ status: 200 }), ledger =
           armedJobRefresh -= 1;
           await new Promise((resolve) => parkedJobRefresh.push(resolve));
         }
+        /* The route wrote and then failed. It says both. */
+        if (refreshFailsAfterWrite)
+          return response({ error: "The provider did not answer.", job: { id: refresh[1], status: "IN_PROGRESS" }, projectUpdated: true }, 502);
         return response({ job: { id: refresh[1], status: "COMPLETED", shotId: "L1-01",
           outputs: [{ type: "candidate", assetId: mark }] } });
       }
@@ -394,11 +445,7 @@ function refreshServer({ a, b, replyForWrite = () => ({ status: 200 }), ledger =
       if (url === "/api/generation/fal/jobs") {
         if (ledger) return ledger(response, active);
         const claim = String((options.headers || {})["x-cinebraid-claim-recovery"] || "") === "1";
-        /* A JOB THE SWEEP COULD STILL COLLECT. The reaper can only produce a
-           notice by collecting one, and the browser only watches for a notice
-           while its own ledger holds one — so a fixture with an empty ledger
-           would be testing the watch against a condition it is scoped out of. */
-        const payload = { jobs: [{ id: "watch-job", status: "UNRESOLVED", shotId: "L1-01" }], projectSlug: recoveryOwner || active };
+        const payload = { jobs: [], projectSlug: recoveryOwner || active };
         if (recoveryNotice) payload.backgroundRecovery = recoveryNotice;
         /* Claimed once, by the browser's initial ledger load. Every other reader —
            the activity poll included — leaves it where it is. */
@@ -1310,161 +1357,6 @@ async function overlappingCompletionIngestsSection(options = {}) {
 }
 
 /* ===========================================================================
-   THE SERVER'S OWN INGEST REAPER.
-
-   generation-poller.js sweeps on its own schedule and commits finished
-   generations into the project document with NO BROWSER INVOLVED. Nothing in the
-   browser can see that happen: no request was made, no response came back, and
-   the window is clean — so a refresh prepared before the sweep looks fresh,
-   commits the pre-ingest record over the newer one, and rests on "Saved" while
-   the results sit on the server.
-
-   THE SIGNAL IS THE ONE THE SERVER ALREADY PUBLISHES. The ledger route carries
-   `backgroundRecovery` to every reader; only the load that sends the claim header
-   consumes it. What was missing was a reader that runs when no load is happening.
-   The activity poll — the timer that was already there — now reads the ledger
-   whenever the generation ledger is in play, which is exactly the condition the
-   reaper sweeps under, so a live window learns within one tick. */
-
-async function reaperNoticeFixture(options = {}) {
-  const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
-  const context = await openFixture(server, currentSchemaProject("Project A"), { ...options, fal: true });
-  assert.strictEqual(read(context, "FAL_GENERATION_LEDGER_LOADED"), true,
-    "precondition: the generation ledger is in play, which is when the reaper can act and when the watch runs");
-  assert.strictEqual(read(context, "V641_ACTIVITY_DRAWER_OPEN"), false,
-    "precondition: the drawer is CLOSED, so the poll below runs only because of the recovery watch");
-  return { server, context };
-}
-/* One unforced tick of the activity poll, then everything it started. */
-async function pollForRecovery(context) {
-  await vm.runInContext(`refreshGlobalAutomationActivity(false)`, context);
-  await settle();
-  await read(context, "PROJECT_RECOVERY_REFRESH");
-  await settle();
-}
-
-/* R1 — the notice lands BEFORE the old snapshot is released. */
-async function reaperRecoveryBeforeCommitSection(options = {}) {
-  const { server, context } = await reaperNoticeFixture(options);
-  const R0 = server.revisionOf(A);
-  const generationAtOpen = read(context, "PROJECT_SAVE_GENERATION");
-  await beginScanParkedRefresh(server, context, "__old");
-
-  server.serverSideIngest(A, { announce: true });
-  const R1 = server.revisionOf(A);
-  assert.notStrictEqual(R1, R0, "precondition: the sweep moved the stored revision");
-  assert.strictEqual(read(context, "PROJECT_SAVE_GENERATION"), generationAtOpen,
-    "precondition: and the browser cannot possibly know yet — no request was made here");
-
-  await pollForRecovery(context);
-  assert.strictEqual(read(context, "PROJECT_SAVE_GENERATION"), generationAtOpen + 1,
-    "THE SIGNAL: a reaper notice for this project is a durable advance, declared exactly once");
-  assert.strictEqual(read(context, "PROJECT_REVISION"), R1,
-    "and the recovery refresh it starts installs the record the sweep produced");
-  assert.deepStrictEqual(marks(context), ["completion-1"], "with the collected result on screen");
-  assert.strictEqual(saveIndicator(context), "Saved", "settling truthfully, because the record on screen IS the stored one");
-
-  const oldOutcome = await releaseScanParked(server, context, "__old");
-  assert.strictEqual(oldOutcome.committed, false,
-    "THE BLOCKER: the snapshot prepared before the sweep must not install over it");
-  assert.strictEqual(read(context, "PROJECT_REVISION"), R1, "the window stays on the record the sweep produced");
-  assert.deepStrictEqual(marks(context), ["completion-1"], "and keeps the result");
-  console.log("  R1 reaper-recovery-before-commit - a reaper notice declares a durable advance, refreshes, and makes the pre-sweep snapshot stale");
-}
-
-/* R2 — the notice lands AFTER the old snapshot has already committed. The window
-   is transiently wrong; what matters is that it does not STAY wrong, and that no
-   user action is needed to correct it. */
-async function reaperRecoveryAfterCommitSection(options = {}) {
-  const { server, context } = await reaperNoticeFixture(options);
-  const R0 = server.revisionOf(A);
-  await beginScanParkedRefresh(server, context, "__old");
-  server.serverSideIngest(A, { announce: true });
-  const R1 = server.revisionOf(A);
-
-  const oldOutcome = await releaseScanParked(server, context, "__old");
-  assert.strictEqual(oldOutcome.committed, true,
-    "precondition: with the notice not yet delivered, the pre-sweep snapshot is indistinguishable from a fresh one and commits");
-  assert.strictEqual(read(context, "PROJECT_REVISION"), R0, "so the window is briefly at R0 while the server is at R1");
-  assert.deepStrictEqual(marks(context), [], "without the collected result");
-
-  /* NO USER ACTION. One tick of the poll that was already running. */
-  await pollForRecovery(context);
-  assert.strictEqual(read(context, "PROJECT_REVISION"), R1,
-    "the recovery refresh converges the window on the record the sweep produced, with nobody doing anything");
-  assert.deepStrictEqual(marks(context), ["completion-1"], "collecting the result");
-  assert.strictEqual(read(context, "PROJECT_REVISION"), server.revisionOf(A), "level with the server");
-  assert.strictEqual(saveIndicator(context), "Saved", "and now Saved is true");
-  console.log("  R2 reaper-recovery-after-commit - a false R0/Saved state is not stable: the next poll converges the window on R1 with no user action");
-}
-
-/* R3 — the recovery refresh itself fails. The window must not go back to resting
-   on "Saved", and the stale snapshot must still be refused. */
-async function reaperRecoveryRefreshFailsSection(options = {}) {
-  {
-    const { server, context } = await reaperNoticeFixture(options);
-    const R0 = server.revisionOf(A);
-    await beginScanParkedRefresh(server, context, "__old");
-    server.serverSideIngest(A, { announce: true });
-    const R1 = server.revisionOf(A);
-
-    server.failNextProjectRead();
-    await pollForRecovery(context);
-    assert.strictEqual(read(context, "PROJECT_REVISION"), R0, "the failed recovery refresh installed nothing");
-    assert.notStrictEqual(saveIndicator(context), "Saved",
-      "THE BLOCKER: a window known to be behind the record must not go back to resting on Saved");
-    assert.strictEqual(saveIndicator(context), "Project changed — refresh required",
-      "it says what is true and what would fix it");
-
-    const oldOutcome = await releaseScanParked(server, context, "__old");
-    assert.strictEqual(oldOutcome.committed, false,
-      "and the pre-sweep snapshot is still refused — the declaration invalidated it generically, not the failed refresh");
-    assert.strictEqual(read(context, "PROJECT_REVISION"), R0, "nothing was installed by it");
-    assert.notStrictEqual(saveIndicator(context), "Saved", "and the recovery surface survives it");
-    assert.strictEqual(server.revisionOf(A), R1, "with the server still holding the newer record");
-  }
-
-  /* R3b — AND IT NEVER SPEAKS OVER SOMETHING TRUER. A window holding unsaved work
-     keeps saying so; the recovery presentation is not allowed to replace it. */
-  {
-    const { server, context } = await reaperNoticeFixture(options);
-    vm.runInContext(`P.meta.title = "authored, and unsaved"; dirty();`, context);
-    const dirtyTruth = clientState(context);
-    server.serverSideIngest(A, { announce: true });
-    await pollForRecovery(context);
-    assert.strictEqual(read(context, "P.meta.title"), "authored, and unsaved",
-      "authored work survives a reaper notice untouched");
-    assert.strictEqual(read(context, "projectHasUnsavedEdits()"), true, "and is still marked unsaved");
-    assert.strictEqual(saveIndicator(context), dirtyTruth.indicator,
-      "with the window still saying the most important thing about itself");
-    assert.strictEqual(read(context, "PROJECT_SAVE_GENERATION"), dirtyTruth.saveGeneration + 1,
-      "even though the advance was still declared, so no stale snapshot can slip past");
-  }
-  console.log("  R3 reaper-recovery-refresh-fails - a failed recovery refresh leaves an explicit refresh-required surface, never Saved, and never speaks over unsaved work");
-}
-
-/* R4 — a reaper notice for a project this window has LEFT. */
-async function reaperRecoveryForLeftProjectSection(options = {}) {
-  const { server, context } = await reaperNoticeFixture(options);
-  await context.switchProject(B);
-  const afterSwitch = clientState(context);
-  const identityAfterSwitch = projectIdentity(context);
-  assert.strictEqual(identityAfterSwitch.slug, B, "precondition: the switch completed");
-
-  /* The sweep collected for A, and the payload states A as its owner. */
-  server.serverSideIngest(A, { announce: true });
-  server.announceRecoveryFor(A);
-  await pollForRecovery(context);
-
-  assert.strictEqual(read(context, "PROJECT_SAVE_GENERATION"), afterSwitch.saveGeneration,
-    "THE BLOCKER: a reaper notice for a project this window has left must not perturb the new project's freshness");
-  assert.deepStrictEqual(clientState(context), afterSwitch, "and must change nothing else about B");
-  assert.deepStrictEqual(projectIdentity(context), identityAfterSwitch, "B's identity and record are untouched");
-  assert.strictEqual(saveIndicator(context), afterSwitch.indicator, "with no recovery presentation over B");
-  console.log("  R4 reaper-recovery-for-left-project - a notice owned by a project the window has left advances nothing and refreshes nothing here");
-}
-
-/* ===========================================================================
    A ROUTE THAT WRITES THE PROJECT ONLY SOMETIMES.
 
    Cancel, a failed submission and a failed collection all set an entity's
@@ -1617,6 +1509,325 @@ async function workspaceMigrationOwnerSection(options = {}) {
   console.log("  migration-owner - the workspace migration declares against the owner captured before its request, not the live slug");
 }
 
+/* ===========================================================================
+   THE UNIVERSAL REVISION WATCH.
+
+   Everything above this point taught the browser about one writer at a time — an
+   accepted save, a completion ingest, a cancel, a restore, a migration, the ingest
+   reaper. That list only ever grows, and the writer it has not been taught about
+   is the one that leaves a window resting on "Saved" over a record the server has
+   moved past. The reaper watch was the worst of them: it depended on THIS window
+   having seen the job the sweep collected, so a generation started anywhere else
+   was invisible to it by construction.
+
+   The server's current revision answers all of them at once. It is a hash of the
+   stored bytes, so whatever changed the file changed the revision, and comparing
+   it needs no knowledge of who wrote or why. The sections below prove the CLASS —
+   an unknown writer, an unknown job — rather than another table of known ones. */
+
+/* One tick of the watch, and everything it starts. */
+async function tickRevisionWatch(context) {
+  await vm.runInContext(`watchProjectRevision()`, context);
+  await settle();
+}
+/* The state a window must not silently sit in: behind the record, and saying
+   Saved about it. */
+function currentAgainstServer(context, server, slug = A) {
+  return {
+    clientRevision: read(context, "PROJECT_REVISION"),
+    serverRevision: server.revisionOf(slug),
+    indicator: saveIndicator(context),
+  };
+}
+
+/* V3-1 — A WRITER THIS WINDOW HAS NEVER HEARD OF. No generation, no job, no
+   local operation: another window simply wrote the project. */
+async function unknownWriterConvergenceSection(options = {}) {
+  const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
+  const context = await openFixture(server, currentSchemaProject("Project A"), options);
+  const R0 = server.revisionOf(A);
+  const generationAtOpen = read(context, "PROJECT_SAVE_GENERATION");
+  assert.strictEqual(read(context, "PROJECT_REVISION"), R0, "precondition: the window is current at R0");
+  assert.strictEqual(saveIndicator(context), "Saved", "and says so truthfully");
+
+  const R1 = server.foreignWrite(A, "changed by a window this one has never heard of");
+  assert.notStrictEqual(R1, R0, "precondition: the stored revision moved");
+  assert.strictEqual(read(context, "PROJECT_SAVE_GENERATION"), generationAtOpen,
+    "precondition: and nothing in this window could possibly know — no request was made here");
+  assert.deepStrictEqual(read(context, "JSON.stringify(FAL_GENERATION_JOBS)"), "[]",
+    "precondition: with no generation job anywhere in this window, so nothing writer-specific can be doing the work");
+
+  await tickRevisionWatch(context);
+  assert.strictEqual(read(context, "PROJECT_REVISION"), R1,
+    "THE INVARIANT: one watch interval is enough to notice and converge, with no user action and no knowledge of the writer");
+  assert.strictEqual(read(context, "P.meta.title"), "changed by a window this one has never heard of",
+    "installing the record the other window wrote");
+  assert.strictEqual(read(context, "PROJECT_SAVE_GENERATION"), generationAtOpen + 1,
+    "declared exactly once, through the same helper every other writer uses");
+  assert.strictEqual(saveIndicator(context), "Saved", "and Saved is true again only now");
+  const state = currentAgainstServer(context, server);
+  assert.strictEqual(state.clientRevision, state.serverRevision, "client and server agree");
+  console.log("  V3-1 unknown-writer-convergence - a change made by a writer this window has never heard of is detected and converged within one watch interval");
+}
+
+/* V3-2 — THE PRIOR HOLD, EXACTLY. An empty ledger, a job created elsewhere, the
+   reaper ingesting it. The window is told by the revision, not by the job. */
+async function unknownReaperJobSection(options = {}) {
+  const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
+  const context = await openFixture(server, currentSchemaProject("Project A"), { ...options, fal: true });
+  const R0 = server.revisionOf(A);
+  assert.strictEqual(read(context, "FAL_GENERATION_LEDGER_LOADED"), true, "precondition: the ledger loaded");
+  assert.deepStrictEqual(read(context, "JSON.stringify(FAL_GENERATION_JOBS)"), "[]",
+    "precondition: AND IT IS EMPTY — this window has never seen the job the sweep is about to collect");
+
+  /* A refresh prepared before the sweep, parked. */
+  await beginScanParkedRefresh(server, context, "__old");
+  /* The reaper collects a job created in another window and ingests it. */
+  server.serverSideIngest(A);
+  const R1 = server.revisionOf(A);
+
+  /* The old snapshot lands first and commits, because nothing has told this
+     window otherwise yet. That transient wrongness is allowed; staying wrong is
+     not. */
+  const oldOutcome = await releaseScanParked(server, context, "__old");
+  assert.strictEqual(oldOutcome.committed, true, "precondition: the pre-sweep snapshot is indistinguishable from a fresh one and commits");
+  assert.strictEqual(read(context, "PROJECT_REVISION"), R0, "so the window is briefly behind");
+  assert.deepStrictEqual(marks(context), [], "without the collected result");
+
+  await tickRevisionWatch(context);
+  assert.strictEqual(read(context, "PROJECT_REVISION"), R1,
+    "THE BLOCKER: the watch converges on the sweep's record with no dependency on this window having seen the job");
+  assert.deepStrictEqual(marks(context), ["completion-1"], "collecting the result");
+  assert.strictEqual(saveIndicator(context), "Saved", "and only now is Saved true");
+  console.log("  V3-2 unknown-reaper-job - a sweep of a job this window never saw is caught by the revision, not by the ledger");
+}
+
+/* V3-3 — the mismatch is noticed BEFORE the stale snapshot is released. */
+async function staleSnapshotAfterWatchSection(options = {}) {
+  const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
+  const context = await openFixture(server, currentSchemaProject("Project A"), options);
+  const R0 = server.revisionOf(A);
+  await beginScanParkedRefresh(server, context, "__old");
+  const R1 = server.foreignWrite(A, "written while a refresh was in flight");
+
+  await tickRevisionWatch(context);
+  assert.strictEqual(read(context, "PROJECT_REVISION"), R1, "precondition: the watch converged on R1");
+
+  const oldOutcome = await releaseScanParked(server, context, "__old");
+  assert.strictEqual(oldOutcome.committed, false,
+    "THE INVARIANT: the R0 snapshot must fail freshness validation, because the watch declared the advance");
+  assert(/saved to storage while this refresh was in flight|newer refresh of this open has already installed/.test(oldOutcome.reason),
+    `and for a freshness reason: ${JSON.stringify(oldOutcome.reason)}`);
+  assert.strictEqual(read(context, "PROJECT_REVISION"), R1, "the window stays on the current record");
+  assert.notStrictEqual(R1, R0, "which is not the one the snapshot held");
+  console.log("  V3-3 stale-snapshot-after-watch - a declaration from the watch invalidates an already-prepared snapshot generically");
+}
+
+/* V3-4 — the stale snapshot commits FIRST, and the watch corrects it. */
+async function staleCommitThenWatchSection(options = {}) {
+  const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
+  const context = await openFixture(server, currentSchemaProject("Project A"), options);
+  const R0 = server.revisionOf(A);
+  await beginScanParkedRefresh(server, context, "__old");
+  const R1 = server.foreignWrite(A, "written while a refresh was in flight");
+
+  const oldOutcome = await releaseScanParked(server, context, "__old");
+  assert.strictEqual(oldOutcome.committed, true, "precondition: it commits, because nothing has told this window otherwise");
+  assert.strictEqual(read(context, "PROJECT_REVISION"), R0, "leaving the window at R0 while the server is at R1");
+  assert.strictEqual(saveIndicator(context), "Saved", "and briefly saying Saved about it");
+
+  await tickRevisionWatch(context);
+  assert.strictEqual(read(context, "PROJECT_REVISION"), R1,
+    "THE INVARIANT: a false R0/Saved is not STABLE — the next tick converges it with no user action");
+  assert.strictEqual(read(context, "P.meta.title"), "written while a refresh was in flight", "installing the current record");
+  assert.strictEqual(saveIndicator(context), "Saved", "and Saved is true again");
+  console.log("  V3-4 stale-commit-then-watch - a stale commit is transient, never stable: the next tick converges it");
+}
+
+/* V3-5 — authored work is never overwritten. */
+async function dirtyWindowMismatchSection(options = {}) {
+  const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
+  const context = await openFixture(server, currentSchemaProject("Project A"), options);
+  const R0 = server.revisionOf(A);
+  vm.runInContext(`P.meta.title = "authored, and unsaved"; dirty();`, context);
+  const generationBefore = read(context, "PROJECT_SAVE_GENERATION");
+  await beginScanParkedRefresh(server, context, "__old");
+  const R1 = server.foreignWrite(A, "written by somebody else while this window was mid-edit");
+
+  await tickRevisionWatch(context);
+  assert.strictEqual(read(context, "P.meta.title"), "authored, and unsaved",
+    "THE BLOCKER: the authored edit is preserved exactly — the server snapshot is not installed over it");
+  assert.strictEqual(read(context, "PROJECT_REVISION"), R0, "and nothing was installed");
+  assert.strictEqual(read(context, "PROJECT_CONFLICT"), true,
+    "the existing conflict surface says the project changed while this view was open");
+  assert.notStrictEqual(saveIndicator(context), "Saved", "and nothing claims to be saved");
+  assert.strictEqual(read(context, "PROJECT_SAVE_GENERATION"), generationBefore + 1,
+    "with the advance still declared, so prepared snapshots are invalidated either way");
+
+  const oldOutcome = await releaseScanParked(server, context, "__old");
+  assert.strictEqual(oldOutcome.committed, false, "which the parked R0 snapshot then fails");
+  assert.strictEqual(read(context, "P.meta.title"), "authored, and unsaved", "leaving the edit exactly where it was");
+  assert.strictEqual(server.revisionOf(A), R1, "and the server unmoved");
+  console.log("  V3-5 dirty-window-mismatch - authored work survives, the conflict surface is truthful, and prepared snapshots are still invalidated");
+}
+
+/* V3-5b — a window that has ALREADY stopped saving keeps what it is saying. */
+async function blockedWindowMismatchSection(options = {}) {
+  const server = refreshServer({
+    a: currentSchemaProject("Project A"),
+    b: currentSchemaProject("Project B"),
+    replyForWrite: () => ({ status: 422, body: { ok: false, code: "PROJECT_VALIDATION_FAILED", error: "Project validation failed.", issues: ["shots[0].dur must be a positive number"] } }),
+  });
+  const context = await openFixture(server, currentSchemaProject("Project A"), options);
+  await vm.runInContext(`(async () => { P.meta.title = "refused, and still mine"; dirty(); await flushPendingProjectSave(); await SAVE_CHAIN; })()`, context);
+  await settle();
+  assert.strictEqual(read(context, "SAVE_BLOCKED"), true, "precondition: the typed 422 paused saving");
+  const blocked = clientState(context);
+
+  server.foreignWrite(A, "written by somebody else while this window was paused");
+  await tickRevisionWatch(context);
+
+  assert.strictEqual(read(context, "SAVE_BLOCKED"), true, "the pause survives — it is the truest thing this window can say");
+  assert.strictEqual(saveIndicator(context), blocked.indicator, "and its surface is not replaced by a second one");
+  assert.strictEqual(read(context, "P.meta.title"), "refused, and still mine", "with the refused edit still in this tab");
+  assert.strictEqual(read(context, "PROJECT_SAVE_GENERATION"), blocked.saveGeneration + 1,
+    "while the advance is still declared, so nothing prepared before it can commit");
+  console.log("  V3-5b blocked-window-mismatch - a window already refusing keeps its own surface, and the advance is still declared");
+}
+
+/* V3-6 — this window's own save is not a foreign change. */
+async function saveInFlightWatchSection(options = {}) {
+  const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
+  const context = await openFixture(server, currentSchemaProject("Project A"), options);
+  const R0 = server.revisionOf(A);
+  const generationAtOpen = read(context, "PROJECT_SAVE_GENERATION");
+
+  server.holdWrites();
+  vm.runInContext(`P.meta.title = "saved by this very window"; dirty(); __save = flushPendingProjectSave();`, context);
+  await settle();
+  assert.strictEqual(read(context, "projectHasUnsavedEdits()"), true, "precondition: this window's own save is in flight");
+
+  /* The watch fires while the write is parked. It must wait rather than race. */
+  vm.runInContext(`__watch = watchProjectRevision();`, context);
+  await settle();
+  assert.strictEqual(read(context, "PROJECT_CONFLICT"), false,
+    "a watch that fired mid-save must not manufacture a conflict out of this window's own write");
+
+  server.releaseWrites();
+  await read(context, "__save");
+  await read(context, "__watch");
+  await settle();
+
+  const R1 = server.revisionOf(A);
+  assert.notStrictEqual(R1, R0, "the accepted save moved the stored revision");
+  assert.strictEqual(read(context, "PROJECT_REVISION"), R1, "and this window's with it");
+  assert.strictEqual(read(context, "projectHasUnsavedEdits()"), false, "nothing is unsaved");
+  assert.strictEqual(read(context, "PROJECT_CONFLICT"), false, "and no conflict was invented");
+  assert.strictEqual(read(context, "PROJECT_SAVE_GENERATION"), generationAtOpen + 1,
+    "exactly one advance — the save's own, not a second one from the watch");
+
+  /* AND THE NEXT COMPARISON NATURALLY AGREES. */
+  const before = clientState(context);
+  await tickRevisionWatch(context);
+  assert.deepStrictEqual(clientState(context), before, "the next tick finds the two in agreement and does nothing");
+  assert.strictEqual(saveIndicator(context), "Saved", "resting truthfully");
+  console.log("  V3-6 save-in-flight - the watch waits for this window's own save rather than racing it into a conflict");
+}
+
+/* V3-7 — the revision could not be read. */
+async function revisionReadFailureSection(options = {}) {
+  const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
+  const context = await openFixture(server, currentSchemaProject("Project A"), options);
+  vm.runInContext(`P.meta.title = "authored, and unsaved"; dirty();`, context);
+  const before = workspaceState(context);
+  const toastBefore = read(context, 'document.getElementById("toast").textContent');
+
+  server.failNextRevisionRead();
+  await tickRevisionWatch(context);
+  assert.deepStrictEqual(workspaceState(context), before,
+    "a revision that could not be read is not evidence of anything and must change nothing");
+  assert.strictEqual(read(context, "PROJECT_CONFLICT"), false, "no conflict is invented out of a failed read");
+  assert.strictEqual(read(context, 'document.getElementById("toast").textContent'), toastBefore, "and nothing is announced");
+
+  /* A later tick simply asks again. */
+  const R1 = server.foreignWrite(A, "written after the failed read");
+  vm.runInContext(`clearTimeout(saveTimer); saveTimer = null; SAVE_REVISION = 0; SAVED_REVISION = 0; P.meta.title = "Project A";`, context);
+  await tickRevisionWatch(context);
+  assert.strictEqual(read(context, "PROJECT_REVISION"), R1, "the next interval retries and converges normally");
+  console.log("  V3-7 revision-read-failure - a failed revision read destroys nothing, invents no conflict, and simply asks again");
+}
+
+/* V3-8 — nothing changed. The watch must be silent. */
+async function noChangeWatchSection(options = {}) {
+  const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
+  const context = await openFixture(server, currentSchemaProject("Project A"), options);
+  const before = clientState(context);
+  const requestsBefore = server.requests.length;
+
+  for (let tick = 0; tick < 3; tick += 1) await tickRevisionWatch(context);
+
+  assert.deepStrictEqual(clientState(context), before,
+    "three ticks against an unchanged server must move nothing — not the revision, not the generation, not the indicator");
+  /* AND THE COST IS THREE CHEAP READS AND NOTHING ELSE. Not the project document,
+     not the ledger, not the scan: an agreeing revision is the whole answer. */
+  assert.deepStrictEqual(server.requests.slice(requestsBefore),
+    Array.from({ length: 3 }, () => `GET /api/projects/${A}/revision`),
+    `an agreeing revision must cost one revision read per tick and nothing else: ${JSON.stringify(server.requests.slice(requestsBefore))}`);
+  assert.strictEqual(saveIndicator(context), "Saved", "with no indicator churn");
+  console.log("  V3-8 no-change - an agreeing revision costs one cheap read and moves nothing");
+}
+
+/* V3-9 — a revision answer that outlived its open. */
+async function revisionWatchAcrossSwitchSection(options = {}) {
+  const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
+  const context = await openFixture(server, currentSchemaProject("Project A"), options);
+  server.foreignWrite(A, "A moved while this window was asking about it");
+
+  server.holdNextRevisionRead();
+  vm.runInContext(`__watch = watchProjectRevision();`, context);
+  await settle();
+  assert.strictEqual(server.parkedRevisionReads, 1, "precondition: A's revision read is parked on the wire");
+
+  await context.switchProject(B);
+  const afterSwitch = clientState(context);
+  const identityAfterSwitch = projectIdentity(context);
+  assert.strictEqual(identityAfterSwitch.slug, B, "precondition: the switch completed");
+
+  server.releaseRevisionReads();
+  await read(context, "__watch");
+  await settle();
+
+  assert.deepStrictEqual(clientState(context), afterSwitch,
+    "THE BLOCKER: a revision answer begun under A must not touch B's freshness, record or indicator");
+  assert.deepStrictEqual(projectIdentity(context), identityAfterSwitch, "B's identity is untouched");
+  assert.strictEqual(read(context, "P.meta.title"), "Project B", "and B's record is still B's");
+  console.log("  V3-9 revision-watch-across-switch - the answer is bound to the open that asked, and a late one is dropped");
+}
+
+/* V3-10 — the automation refresh answers 502 AFTER committing the project. */
+async function automationRefreshFailureWritesSection(options = {}) {
+  const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
+  const context = await openFixture(server, currentSchemaProject("Project A"), options);
+  const generationAtOpen = read(context, "PROJECT_SAVE_GENERATION");
+  await beginScanParkedRefresh(server, context, "__old");
+
+  server.setRefreshFailsAfterWrite(true);
+  const thrown = await vm.runInContext(
+    `v626RefreshFalJob("job-1").then(() => "", (error) => String(error && error.message || ""))`, context);
+  await settle();
+
+  assert(thrown && /did not answer/.test(thrown),
+    `THE FAILURE IS STILL SURFACED, truthfully: ${JSON.stringify(thrown)}`);
+  assert.strictEqual(read(context, "PROJECT_SAVE_GENERATION"), generationAtOpen + 1,
+    "THE BLOCKER: the payload said projectUpdated, so the mutation is processed BEFORE the failure is thrown");
+  assert.deepStrictEqual(marks(context), ["completion-1"],
+    "and the follow-up refresh installed what the route committed");
+
+  const oldOutcome = await releaseScanParked(server, context, "__old");
+  assert.strictEqual(oldOutcome.committed, false, "so the snapshot prepared before it is invalid");
+  console.log("  V3-10 automation-502-writes - a failed request and a durable mutation are two truths, and the payload is read before the throw");
+}
+
 /* THE HELPER IS THE ONLY WAY IN, and it does nothing else. */
 function durableAdvanceIsSharedSection() {
   const appSource = fs.readFileSync(path.join(ROOT, "public", "app.js"), "utf8").replace(/\r\n/g, "\n");
@@ -1671,31 +1882,42 @@ function durableAdvanceIsSharedSection() {
       `reconcile writes only the job ledger and must declare no durable advance; it names ${forbidden}`);
   }
 
-  /* THE RECOVERY WATCH IS SCOPED TO WHAT THE REAPER CAN COLLECT, and the two
-     files have to agree about that set — a browser watching a narrower set would
-     stop asking about exactly the rows the sweep is most likely to act on. */
-  const activity = fs.readFileSync(path.join(ROOT, "public", "live-activity.js"), "utf8").replace(/\r\n/g, "\n");
-  const browserSet = /const V670_RECOVERY_COLLECTABLE = \[([^\]]*)\]/.exec(activity);
-  assert(browserSet, "the recovery watch must state which job states it watches");
-  const poller = fs.readFileSync(path.join(ROOT, "generation-poller.js"), "utf8").replace(/\r\n/g, "\n");
-  const serverSet = /const COLLECTABLE_STATUSES = new Set\(\[([^\]]*)\]\)/.exec(poller);
-  assert(serverSet, "generation-poller.js must state which job states it collects");
-  const names = (text) => [...text.matchAll(/"([A-Z_]+)"/g)].map((m) => m[1]).sort();
-  assert.deepStrictEqual(names(browserSet[1]).filter((s) => s !== "UNRESOLVED"), names(serverSet[1]),
-    "the browser's recovery watch and the server's sweep must agree on what is still collectable");
-  assert(names(browserSet[1]).includes("UNRESOLVED"),
-    "including UNRESOLVED, which the server names through Lifecycle rather than as a literal");
-  assert(/if \(!job \|\| job\.ingestedAt \|\| job\.reconciliation\) return false;/.test(activity),
-    "and on the two facts that end it: delivered, and reconciled by hand");
+  /* THE REVISION READ IS READ-ONLY, AND CHEAP. It exists so a live window can ask
+     every few seconds; a route that parsed the document, recorded activity or took
+     a backup would be a page-load's worth of work and a mutation on a timer. */
+  const serverSource = fs.readFileSync(path.join(ROOT, "server.js"), "utf8").replace(/\r\n/g, "\n");
+  const routeAt = serverSource.indexOf('app.get("/api/projects/:slug/revision"');
+  assert(routeAt > 0, "the lightweight revision route must exist");
+  const routeBody = stripComments(serverSource.slice(routeAt, serverSource.indexOf("\n});", routeAt)));
+  for (const forbidden of ["writeProject", "persistProjectSuccessor", "noteProjectActivity", "createProjectBackup", "inspectProjectFile", "normalizePromptBuildHistory", "JSON.parse", "readJsonSync"]) {
+    assert(!routeBody.includes(forbidden),
+      `the revision route must read bytes and hash them and nothing else; it names ${forbidden}`);
+  }
+  assert(routeBody.includes("projectRevisionFor(file)"), "answering from the stored bytes");
 
-  /* THE NOTICE'S OWNER IS THE ONE THE PAYLOAD STATES. */
-  const recovery = stripComments(bodyOf("function noteBackgroundRecoveryAdvance(payload)"));
-  assert(recovery.includes("noteCurrentProjectDurableAdvance(payload.projectSlug)"),
-    "a reaper notice must be declared against the owner the payload states, not the live global");
-  assert(/BACKGROUND_RECOVERY_DECLARED/.test(recovery),
-    "and declared once per notice, because the poll does not consume it");
-  assert(recovery.includes('load({ intent: "refresh" })'),
-    "and followed by a normal refresh through the front door");
+  /* AND THE WATCH RIDES THE TIMER THE APPLICATION ALREADY RUNS. */
+  const activitySource = fs.readFileSync(path.join(ROOT, "public", "live-activity.js"), "utf8").replace(/\r\n/g, "\n");
+  assert(/V641_ACTIVITY_TIMER = setInterval\(\(\) => \{[\s\S]{0,400}watchProjectRevision\(\);/.test(activitySource),
+    "the universal revision watch must ride the existing activity interval rather than starting a second one");
+  assert((activitySource.match(/setInterval\(/g) || []).length === 1,
+    "and there must still be exactly one interval in this file");
+  /* THE WATCH DEPENDS ON NOTHING WRITER-SPECIFIC. This is what makes it able to
+     see a change made by a window it has never heard of. */
+  const watch = stripComments(bodyOf("window.watchProjectRevision = async () =>"));
+  for (const forbidden of ["FAL_GENERATION_JOBS", "FAL_GENERATION_LEDGER_LOADED", "V641_ACTIVITY_DRAWER_OPEN", "AUTOMATION_RUNS", "backgroundRecovery", "falJobActive"]) {
+    assert(!watch.includes(forbidden),
+      `the revision watch must not depend on ${forbidden} — a writer-specific dependency is what made the previous watch blind cross-window`);
+  }
+  assert(watch.includes("/revision"), "it asks the lightweight revision route");
+  assert(watch.includes("await SAVE_CHAIN"), "and lets this window's own save settle before asking");
+  assert(/serverRevision === PROJECT_REVISION\) return null;/.test(watch),
+    "comparing for exact equality");
+  assert(!/serverRevision\s*[<>]/.test(watch), "and never for order");
+  /* The reaper-specific watch is gone from both files. */
+  for (const gone of ["noteBackgroundRecoveryAdvance", "backgroundRecoveryKey", "BACKGROUND_RECOVERY_DECLARED", "v670RecoveryWatchEnabled", "V670_RECOVERY_COLLECTABLE", "v670RecoveryCollectable"]) {
+    assert(!appSource.includes(gone) && !activitySource.includes(gone),
+      `${gone} was the writer-specific recovery watch and the universal one replaces it`);
+  }
 
   /* And both completion paths declare it, in the right order: after the ingest
      has definitely succeeded, before the follow-up refresh starts. */
@@ -2712,10 +2934,24 @@ const REPAIRED_PRE_INGEST_FLUSH = `    await flushPendingProjectSave();
 const NO_PRE_INGEST_FLUSH = `    /* The project this refresh is being made FOR`;
 const REPAIRED_REFRESH_INTENT = `      if (noteCurrentProjectDurableAdvance(owner)) await load({ intent: "refresh" });`;
 const REPLACEMENT_INTENT = `      await load();`;
-/* THE REAPER'S NOTICE REACHING THE FRESHNESS RULE. Removing the hand-over leaves
-   the poll running and the notice in the payload, and nothing listening. */
-const REPAIRED_RECOVERY_SIGNAL = `    if (typeof noteBackgroundRecoveryAdvance === "function") noteBackgroundRecoveryAdvance(falData);`;
-const RECOVERY_SIGNAL_IGNORED = `    /* control: the notice is received and dropped */`;
+/* THE UNIVERSAL WATCH'S TWO HALVES: acting on a mismatch, and being bound to the
+   open that asked. */
+const REPAIRED_WATCH_ACTION = `      if (serverRevision === PROJECT_REVISION) return null;
+      return applyForeignProjectRevision(owner);`;
+const WATCH_OBSERVES_NOTHING = `      if (serverRevision === PROJECT_REVISION) return null;
+      return null;`;
+const REPAIRED_WATCH_BINDING = `      if (owner.epoch !== PROJECT_OPEN_EPOCH || owner.slug !== ACTIVE_PROJECT_SLUG) return null;
+      if (owner.revision !== PROJECT_REVISION) return null;
+      if (serverRevision === PROJECT_REVISION) return null;
+      return applyForeignProjectRevision(owner);`;
+const WATCH_READS_LIVE_STATE = `      if (serverRevision === PROJECT_REVISION) return null;
+      return applyForeignProjectRevision({ slug: ACTIVE_PROJECT_SLUG, epoch: PROJECT_OPEN_EPOCH, revision: PROJECT_REVISION });`;
+/* THE AUTOMATION 502 FAST PATH, and the response-ordering mistake it corrects. */
+const REPAIRED_AUTOMATION_502 = `  if (!response.ok) {
+    await applyProjectMutationResult(owner, data);
+    throw new Error(data.error || "Could not refresh generation");
+  }`;
+const AUTOMATION_502_THROWS_FIRST = `  if (!response.ok) throw new Error(data.error || "Could not refresh generation");`;
 /* THE CANCEL RESULT HANDLER. The route still answers projectUpdated; the browser
    stops reading it. */
 const REPAIRED_CANCEL_RESULT = `is not inferred from the 2xx. */
@@ -3231,46 +3467,6 @@ async function negativeControlsSection() {
     controls.push({ id: "NC-14", defect: "a completion ingest does not declare its durable advance, so a snapshot prepared before it commits over the result and the client silently loses the completion it paid for", detected });
   }
 
-  /* NC-15 — THE REAPER'S NOTICE NEVER REACHES THE FRESHNESS RULE. The poll still
-     runs and the payload still carries the notice; nothing listens. There is no
-     request behind the sweep, so nothing else in the browser can know it happened:
-     the pre-sweep snapshot commits, and the window sits at R0 with the completion
-     missing, resting on Saved, with no conflict, no block, no refusal and nothing
-     scheduled to correct it. */
-  {
-    const edits = { "live-activity.js": [[REPAIRED_RECOVERY_SIGNAL, RECOVERY_SIGNAL_IGNORED]] };
-    const mutate = sourceMutator(edits);
-    const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
-    const context = await openFixture(server, currentSchemaProject("Project A"), { mutateSource: mutate, fal: true });
-    const R0 = server.revisionOf(A);
-    const generationAtOpen = read(context, "PROJECT_SAVE_GENERATION");
-    await beginScanParkedRefresh(server, context, "__old");
-    server.serverSideIngest(A, { announce: true });
-    const R1 = server.revisionOf(A);
-    await pollForRecovery(context);
-    assert(mutate.applied.has("live-activity.js"), "NC-15: live-activity.js was never evaluated, so the defect never ran");
-    assert.strictEqual(read(context, "PROJECT_SAVE_GENERATION"), generationAtOpen,
-      "NC-15 probe: the defect must actually leave the sweep undeclared");
-    const oldOutcome = await releaseScanParked(server, context, "__old");
-    await realDelay(PAST_BOTH_TIMERS_MS);
-    await settle();
-    assert.strictEqual(oldOutcome.committed, true,
-      `NC-15 probe: and the pre-sweep snapshot must actually commit: ${JSON.stringify(oldOutcome.reason)}`);
-    assert.strictEqual(read(context, "PROJECT_REVISION"), R0,
-      `NC-15 probe: leaving the client at R0 while the server is at R1 — it is at ${read(context, "PROJECT_REVISION")}`);
-    assert.strictEqual(server.revisionOf(A), R1, "NC-15 probe: with the server unmoved");
-    assert.deepStrictEqual(marks(context), [], "NC-15 probe: and the completion missing from the client");
-    assert.strictEqual(server.docs[A].meta.completionMarks.length, 1, "NC-15 probe: even though the server holds it");
-    assert.strictEqual(saveIndicator(context), "Saved",
-      "NC-15 probe: with the indicator resting on Saved over it, which is the silent part");
-    assert.strictEqual(read(context, "PROJECT_CONFLICT"), false, "NC-15 probe: and no conflict surface to correct it");
-    /* AND IT IS STABLE. A second poll changes nothing, so nothing is coming. */
-    await pollForRecovery(context);
-    assert.strictEqual(read(context, "PROJECT_REVISION"), R0, "NC-15 probe: and it stays that way — nothing is scheduled to fix it");
-    const detected = await expectRed("NC-15", () => reaperRecoveryBeforeCommitSection({ mutateSource: sourceMutator(edits) }));
-    controls.push({ id: "NC-15", defect: "the server reaper's recovery notice never reaches the freshness rule, so a pre-sweep snapshot commits and the window sits stably at R0 with the completion missing and Saved on screen", detected });
-  }
-
   /* NC-16 — THE CANCEL ROUTE SAYS IT WROTE AND THE BROWSER IGNORES IT. The
      coverage status the cancel committed is reinstalled from a snapshot prepared
      before it. */
@@ -3327,9 +3523,101 @@ async function negativeControlsSection() {
     controls.push({ id: "NC-17", defect: "reconcile declares a durable advance although it writes only the job ledger, discarding a refresh that was reading the current record", detected });
   }
 
+  /* NC-18 — THE UNIVERSAL WATCH OBSERVES AND DOES NOTHING. The read still
+     happens; the mismatch is simply not acted on. Nothing else in the browser can
+     see a change made by a window it has never heard of, so the window sits at R0
+     while the server is at R1, saying Saved, and stays there. */
+  {
+    const edits = [[REPAIRED_WATCH_ACTION, WATCH_OBSERVES_NOTHING]];
+    const mutate = sourceMutator(edits);
+    const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
+    const context = await openFixture(server, currentSchemaProject("Project A"), { mutateSource: mutate });
+    const R0 = server.revisionOf(A);
+    const generationAtOpen = read(context, "PROJECT_SAVE_GENERATION");
+    const R1 = server.foreignWrite(A, "changed by a window this one has never heard of");
+    for (let tick = 0; tick < 3; tick += 1) await tickRevisionWatch(context);
+    assert(mutate.applied.has("app.js"), "NC-18: app.js was never evaluated, so the defect never ran");
+    assert.strictEqual(read(context, "PROJECT_SAVE_GENERATION"), generationAtOpen,
+      "NC-18 probe: the defect must actually leave the mismatch undeclared");
+    assert.strictEqual(read(context, "PROJECT_REVISION"), R0,
+      `NC-18 probe: leaving the client at R0 while the server is at R1 — it is at ${read(context, "PROJECT_REVISION")}`);
+    assert.strictEqual(server.revisionOf(A), R1, "NC-18 probe: with the server unmoved");
+    assert.notStrictEqual(read(context, "P.meta.title"), "changed by a window this one has never heard of",
+      "NC-18 probe: and the other window's record never arriving");
+    assert.strictEqual(saveIndicator(context), "Saved",
+      "NC-18 probe: with the indicator resting on Saved over it — and three ticks prove it is STABLE, not merely slow");
+    assert.strictEqual(read(context, "PROJECT_CONFLICT"), false, "NC-18 probe: with no conflict surface to correct it");
+    const detected = await expectRed("NC-18", () => unknownWriterConvergenceSection({ mutateSource: sourceMutator(edits) }));
+    controls.push({ id: "NC-18", defect: "the universal revision watch observes a mismatch and does nothing, so a change by an unknown writer leaves the client stably at R0 saying Saved while the server is at R1", detected });
+  }
+
+  /* NC-19 — THE WATCH READS LIVE STATE INSTEAD OF WHAT IT CAPTURED. An answer
+     about A, arriving after an explicit switch to B, is applied to B. */
+  {
+    const edits = [[REPAIRED_WATCH_BINDING, WATCH_READS_LIVE_STATE]];
+    const mutate = sourceMutator(edits);
+    const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
+    const context = await openFixture(server, currentSchemaProject("Project A"), { mutateSource: mutate });
+    server.foreignWrite(A, "A moved while this window was asking about it");
+    server.holdNextRevisionRead();
+    vm.runInContext(`__watch = watchProjectRevision();`, context);
+    await settle();
+    await context.switchProject(B);
+    const afterSwitch = clientState(context);
+    server.releaseRevisionReads();
+    await read(context, "__watch");
+    await settle();
+    assert(mutate.applied.has("app.js"), "NC-19: app.js was never evaluated, so the defect never ran");
+    assert.strictEqual(read(context, "PROJECT_SAVE_GENERATION"), afterSwitch.saveGeneration + 1,
+      "NC-19 probe: the defect must actually let A's late answer advance B's freshness");
+    assert.notDeepStrictEqual(clientState(context), afterSwitch,
+      "NC-19 probe: and perturb B's state with it");
+    const detected = await expectRed("NC-19", () => revisionWatchAcrossSwitchSection({ mutateSource: sourceMutator(edits) }));
+    controls.push({ id: "NC-19", defect: "the revision watch reads live state instead of the owner and epoch it captured, so an answer about A is applied to B", detected });
+  }
+
+  /* NC-20 — THE AUTOMATION 502 THROWS BEFORE READING THE PAYLOAD, treating
+     `!response.ok` as proof that project.json did not change. The immediate
+     consequence is that a snapshot prepared before the write stays valid.
+
+     AND THEN THE POINT OF V3: with the universal watch still enabled, the stale
+     state is corrected anyway. The fast path buys immediacy; the watch provides
+     completeness, and losing one does not lose the other. */
+  {
+    const edits = { "automation.js": [[REPAIRED_AUTOMATION_502, AUTOMATION_502_THROWS_FIRST]] };
+    const mutate = sourceMutator(edits);
+    const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
+    const context = await openFixture(server, currentSchemaProject("Project A"), { mutateSource: mutate });
+    const R0 = server.revisionOf(A);
+    const generationAtOpen = read(context, "PROJECT_SAVE_GENERATION");
+    await beginScanParkedRefresh(server, context, "__old");
+    server.setRefreshFailsAfterWrite(true);
+    await vm.runInContext(`v626RefreshFalJob("job-1").catch(() => null)`, context);
+    await settle();
+    assert(mutate.applied.has("automation.js"), "NC-20: automation.js was never evaluated, so the defect never ran");
+    const R1 = server.revisionOf(A);
+    assert.notStrictEqual(R1, R0, "NC-20 probe: the route must actually have committed before failing");
+    assert.strictEqual(read(context, "PROJECT_SAVE_GENERATION"), generationAtOpen,
+      "NC-20 probe: and the defect must actually leave that write undeclared");
+    const oldOutcome = await releaseScanParked(server, context, "__old");
+    assert.strictEqual(oldOutcome.committed, true,
+      "NC-20 probe: so the snapshot prepared before the write is still treated as valid");
+    assert.strictEqual(read(context, "PROJECT_REVISION"), R0, "NC-20 probe: leaving the window at R0");
+
+    /* THE COMPLETENESS HALF. Nothing was taught about this route; the revision
+       simply disagrees, and one tick is enough. */
+    await tickRevisionWatch(context);
+    assert.strictEqual(read(context, "PROJECT_REVISION"), R1,
+      "NC-20 probe: and the universal watch corrects it anyway — the fast path is immediacy, not correctness");
+    assert.strictEqual(saveIndicator(context), "Saved", "NC-20 probe: truthfully");
+
+    const detected = await expectRed("NC-20", () => automationRefreshFailureWritesSection({ mutateSource: sourceMutator(edits) }));
+    controls.push({ id: "NC-20", defect: "the automation refresh throws on 502 before reading projectUpdated, so a durable write goes undeclared — recovered by the universal watch, which is why it is immediacy and not correctness", detected });
+  }
+
   console.log("Project load transaction negative controls");
   for (const row of controls) console.log(`  ${row.id} - ${row.defect}\n        detected: ${row.detected}`);
-  assert.strictEqual(controls.length, 17, "every declared control must have produced a receipt");
+  assert.strictEqual(controls.length, 19, "every declared control must have produced a receipt");
   return controls.length;
 }
 
@@ -3345,10 +3633,17 @@ const SECTIONS = [
   completionFollowUpFailsSection,
   completionForLeftProjectSection,
   overlappingCompletionIngestsSection,
-  reaperRecoveryBeforeCommitSection,
-  reaperRecoveryAfterCommitSection,
-  reaperRecoveryRefreshFailsSection,
-  reaperRecoveryForLeftProjectSection,
+  unknownWriterConvergenceSection,
+  unknownReaperJobSection,
+  staleSnapshotAfterWatchSection,
+  staleCommitThenWatchSection,
+  dirtyWindowMismatchSection,
+  blockedWindowMismatchSection,
+  saveInFlightWatchSection,
+  revisionReadFailureSection,
+  noChangeWatchSection,
+  revisionWatchAcrossSwitchSection,
+  automationRefreshFailureWritesSection,
   cancelWithoutProjectWriteSection,
   cancelWithProjectWriteSection,
   cancelForLeftProjectSection,

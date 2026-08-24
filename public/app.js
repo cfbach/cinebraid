@@ -59,9 +59,7 @@ let P = null,
      Compared for EQUALITY and never for order. "Newer" is not a thing a client can
      ask of it or of an opaque revision string: a prepared snapshot is either from
      the generation its refresh began in, or it is not. */
-  PROJECT_SAVE_GENERATION = 0,
-  /* The re-read a background-recovery notice started, so a suite can wait on it. */
-  PROJECT_RECOVERY_REFRESH = null;
+  PROJECT_SAVE_GENERATION = 0;
 let FILTER = { status: "", route: "", char: "", action: "unfinished" };
 const storedValue = (key, fallback = null) => localStorage.getItem(key) ?? fallback;
 FILTER.action = storedValue("cinebraid-shot-action-filter", "unfinished") || "unfinished";
@@ -1434,13 +1432,14 @@ async function prepareGenerationLedger(prepared, { claimRecovery = false } = {})
      where it is. The URL is unchanged on purpose: it is matched exactly by route
      stubs and paid-call guards that have nothing to do with this.
 
-     ONLY A REPLACEMENT CLAIMS IT. A refresh cannot honestly take delivery: its
-     snapshot may have been read BEFORE the sweep that produced the notice, and
-     consuming it there destroys the only browser-visible evidence that the record
-     moved — which is exactly how a window ended up resting on a pre-sweep record
-     with the notice already spent. So a refresh reads the ledger plainly, the
-     notice stays on the server, and noteBackgroundRecoveryAdvance() finds it on
-     the next poll. */
+     ONLY A REPLACEMENT CLAIMS IT. The notice explains work that is already in the
+     record being installed, and an open is the moment to say so. A refresh cannot
+     honestly take delivery: its snapshot may have been read BEFORE the sweep that
+     produced the notice, so announcing it would attach the sentence to a record
+     that does not contain the results. It reads the ledger plainly and leaves the
+     notice for the next open. Nothing about FRESHNESS depends on this either way
+     — that is watchProjectRevision()'s job, and it asks the server rather than
+     waiting to be told. */
   await fetch("/api/generation/fal/jobs", claimRecovery ? { headers: { "x-cinebraid-claim-recovery": "1" } } : {})
     .then((r) => (r.ok ? r.json() : { jobs: [] }))
     .then((data) => {
@@ -1534,70 +1533,101 @@ async function applyProjectMutationResult(owner, data) {
   return true;
 }
 
-/* THE SERVER'S OWN INGEST REAPER IS A DURABLE ADVANCE NOBODY HERE ASKED FOR.
+/* THE UNIVERSAL FRESHNESS CHECK: IS THIS WINDOW STILL CURRENT?
 
-   generation-poller.js sweeps on its own schedule, collects finished generations
-   and commits them into the project document with no browser involved at all. No
-   request was made here and no response came back, so nothing in this file can see
-   it happen — and a refresh prepared before the sweep looks perfectly fresh. It
-   commits the pre-ingest record over the newer one, silently, resting on "Saved",
-   with results the filmmaker paid for sitting on the server and no conflict,
-   refusal or scheduled re-read anywhere. The first truthful surface used to be a
-   409 on some later edit.
+   This replaces a watch that listened for the ingest reaper specifically, and it
+   is here because that shape could not work. The reaper is one of many things
+   that write project.json — another window, an automation run, a restore, a
+   cancel, a writer nobody has thought of yet — and a browser taught about each of
+   them in turn is a list that only ever grows. The one it has not been taught
+   about is the one that leaves it resting on "Saved" over a record the server has
+   moved past. Worse, the reaper watch depended on THIS window having seen the job
+   the sweep collected, so a generation started in another window was invisible to
+   it by construction.
 
-   THE SIGNAL IS THE ONE THE SERVER ALREADY PUBLISHES. GET /api/generation/fal/jobs
-   carries `backgroundRecovery` to EVERY reader; only the request that sends the
-   claim header consumes it. What was missing was a reader that runs when no load
-   is happening — so the activity poll, the 3.5-second timer that was already
-   there, now reads the ledger whenever the generation ledger is in play and hands
-   the payload here. That is the same condition under which the reaper can act at
-   all (it sweeps only when fal is enabled and keyed), so a live window learns
-   within one tick of any sweep that could have moved its project.
+   THE SERVER'S CURRENT REVISION ANSWERS ALL OF THEM AT ONCE. It is a hash of the
+   stored bytes: whatever changed the file changed the revision, and no knowledge
+   of who wrote or why is needed to compare it. GET /api/projects/:slug/revision
+   reads the bytes and hashes them — no parse, no activity, no write.
 
-   IT USES THE OWNER THE PAYLOAD STATES. `projectSlug` is the server's own answer
-   for which project this ledger and this notice belong to — the same value the
-   rows are admitted on — rather than whatever this window happens to have open.
+   EXACT EQUALITY, NEVER ORDER. Two revisions are the same document or they are
+   not. Nothing here asks which is newer, because a content hash cannot say.
 
-   DECLARED ONCE PER NOTICE. The poll does not consume the notice, so the same
-   collections come back every tick until a load claims them; the identity of what
-   was collected is the key, and a later sweep produces a different one. */
-let BACKGROUND_RECOVERY_DECLARED = "";
-function backgroundRecoveryKey(notice) {
-  const rows = Array.isArray(notice.collections) ? notice.collections : [];
-  return rows.map((row) => `${row.jobId}@${row.at}`).join("|")
-    || `${notice.jobs || 0}:${notice.results || 0}`;
-}
-function noteBackgroundRecoveryAdvance(payload) {
-  const notice = payload && payload.backgroundRecovery;
-  if (!notice) return false;
-  const key = backgroundRecoveryKey(notice);
-  if (!key || key === BACKGROUND_RECOVERY_DECLARED) return false;
-  BACKGROUND_RECOVERY_DECLARED = key;
-  if (!noteCurrentProjectDurableAdvance(payload.projectSlug)) return false;
-  /* EVERY PREPARED SNAPSHOT IS NOW STALE — generically, through the declaration
-     above, without this path knowing anything about the refreshes in flight.
+   WHAT IT DEPENDS ON, AND WHAT IT DELIBERATELY DOES NOT. A project open and a
+   revision this window can name — nothing else. Not the generation ledger, not
+   the activity drawer, not whether this window submitted anything. That is the
+   whole point: it has to see a change made by a window it has never heard of.
 
-     THE PRESENTATION IS TRUTHFUL, AND IT NEVER SPEAKS OVER SOMETHING TRUER. A
-     window holding unsaved work, a refusal, a paused save or a latched conflict is
-     already saying the most important thing about itself; the re-read below will
-     decline for exactly that reason and its existing surface stays. */
-  const speakable = !projectHasUnsavedEdits() && !SAVE_BLOCKED && !AUTHORITY_SAVE_REFUSED && !PROJECT_CONFLICT;
-  if (speakable) setSaveState("loading", "Project changed — updating…");
-  PROJECT_RECOVERY_REFRESH = load({ intent: "refresh" })
-    .then((outcome) => {
-      /* A committed refresh settles the indicator itself. Anything else means this
-         window is known to be behind the record and must NOT go back to resting on
-         "Saved" — it says what is true and what would fix it. */
-      if (!outcome || !outcome.committed) {
-        if (speakable) setSaveState("error", "Project changed — refresh required");
-      }
-      return outcome;
-    })
-    .catch(() => {
-      if (speakable) setSaveState("error", "Project changed — refresh required");
-      return null;
-    });
-  return true;
+   THIS WINDOW'S OWN SAVE IS NOT A FOREIGN CHANGE. An accepted write moves the
+   stored revision AND this one, together. The chain is allowed to settle first,
+   and the answer is then only acted on if this window's revision is still the one
+   it asked about — so a save that lands mid-flight aborts the comparison instead
+   of racing it, and the next tick simply agrees. */
+let PROJECT_REVISION_WATCH = null;
+window.watchProjectRevision = async () => {
+  /* One in flight at a time; the interval is not a queue. */
+  if (PROJECT_REVISION_WATCH) return PROJECT_REVISION_WATCH;
+  if (!P || !ACTIVE_PROJECT_SLUG || !PROJECT_REVISION) return null;
+  PROJECT_REVISION_WATCH = (async () => {
+    try {
+      /* Let this window's own save settle before asking, so its own accepted
+         write is never read back as somebody else's change. */
+      await SAVE_CHAIN.catch(() => {});
+      if (!P || !ACTIVE_PROJECT_SLUG || !PROJECT_REVISION) return null;
+      const owner = { slug: ACTIVE_PROJECT_SLUG, epoch: PROJECT_OPEN_EPOCH, revision: PROJECT_REVISION };
+      const response = await fetch(`/api/projects/${encodeURIComponent(owner.slug)}/revision`, { cache: "no-store" });
+      /* A REVISION THAT COULD NOT BE READ IS NOT A CHANGE. A network failure, a
+         500, a 404 from a machine mid-restore: none of them is evidence that this
+         window is stale, and inventing a conflict out of one would be the same
+         untruth in the other direction. Say nothing and ask again next tick. */
+      if (!response.ok) return null;
+      const data = await response.json().catch(() => ({}));
+      const serverRevision = String(data?.revision || "");
+      if (!serverRevision) return null;
+      /* BOUND TO THE OPEN THAT ASKED. A switch, a reopen or a save landing while
+         this was on the wire makes the answer about a window that no longer
+         exists; it must not be applied to the one that does. */
+      if (owner.epoch !== PROJECT_OPEN_EPOCH || owner.slug !== ACTIVE_PROJECT_SLUG) return null;
+      if (owner.revision !== PROJECT_REVISION) return null;
+      if (serverRevision === PROJECT_REVISION) return null;
+      return applyForeignProjectRevision(owner);
+    } catch { return null; }
+    finally { PROJECT_REVISION_WATCH = null; }
+  })();
+  return PROJECT_REVISION_WATCH;
+};
+/* WHAT A MISMATCH MEANS, AND THE THREE THINGS IT CAN MEAN.
+
+   In every case the durable advance is declared first, through the same helper
+   every other writer uses: that is what makes an already-prepared refresh stale,
+   generically, without this path knowing anything about the refreshes in flight.
+   What differs afterwards is only what this window is entitled to say. */
+async function applyForeignProjectRevision(owner) {
+  if (!noteCurrentProjectDurableAdvance(owner.slug)) return null;
+  /* ALREADY NOT SAVING. A paused, refused or conflicted window is already telling
+     the truest thing about itself, and a second surface on top of it would only
+     bury the first. */
+  if (SAVE_BLOCKED || AUTHORITY_SAVE_REFUSED || PROJECT_CONFLICT) return "already-refusing";
+  /* AUTHORED WORK IS NEVER OVERWRITTEN. The stored document has moved under an
+     edit this window still holds, so the save behind that edit is now genuinely
+     stale — which is exactly what the accepted conflict surface says, and it says
+     it before a doomed write goes out rather than after. `P` is untouched; the
+     edit stays in this tab for the filmmaker to decide about. */
+  if (projectHasUnsavedEdits()) {
+    projectConflict({ error: "This project changed while this view was open. Reload to continue from the current project." });
+    return "conflict";
+  }
+  /* CLEAN, so the honest thing is to go and get it. */
+  setSaveState("loading", "Project changed — updating…");
+  const outcome = await load({ intent: "refresh" }).catch(() => null);
+  /* A committed refresh settles the indicator itself, and only then is Saved true
+     again. Anything else leaves a window that is known to be behind the record,
+     saying so and naming what would fix it. */
+  if (!outcome || !outcome.committed) {
+    setSaveState("error", "Project changed — refresh required");
+    return "refresh-failed";
+  }
+  return "refreshed";
 }
 /* Authored work this window holds and storage does not. `SAVE_REVISION` counts
    local edits and `SAVED_REVISION` counts the ones a response has confirmed, so

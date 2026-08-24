@@ -227,16 +227,9 @@
       sourceCandidate: primary?.name || "",
       clientRequestId: options.clientRequestId || coverageClientRequestId(list, entity.id, options.coverageJobType || "sheet", options.slot?.id || options.coverageSheetType || ""),
     };
-    const submissionOwner = ACTIVE_PROJECT_SLUG;
     const response = await fetch("/api/generation/fal/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     const data = await response.json().catch(() => ({}));
-    /* A REFUSED ENTITY SUBMISSION CAN STILL HAVE WRITTEN. The route sets the
-       entity's coverage-automation status to needs-attention before answering
-       502, on the same condition a cancel writes under, and says whether it did. */
-    if (!response.ok) {
-      await applyProjectMutationResult(submissionOwner, data);
-      throw new Error(data.error || "Could not start coverage generation");
-    }
+    if (!response.ok) throw new Error(data.error || "Could not start coverage generation");
     FAL_GENERATION_JOBS = [...(FAL_GENERATION_JOBS || []).filter((job) => job.id !== data.job.id), data.job];
     pollFalGeneration(data.job.id);
     return data.job;

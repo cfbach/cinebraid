@@ -1487,8 +1487,16 @@ async function v626RefreshFalJob(jobId) {
   /* Captured before the request, exactly as refreshFalGeneration() captures it. */
   const owner = ACTIVE_PROJECT_SLUG;
   const response = await fetch(`/api/generation/fal/jobs/${encodeURIComponent(jobId)}/refresh`, { method: "POST" });
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.error || "Could not refresh generation");
+  const data = await response.json().catch(() => ({}));
+  /* A DURABLE MUTATION AND A FAILED REQUEST ARE TWO SEPARATE TRUTHS. This route
+     sets the entity's coverage-automation status before answering 502, and says
+     so in the body — so the payload is read and acted on BEFORE the failure is
+     surfaced. Throwing first treated `!response.ok` as proof that project.json
+     had not changed, which it never was. */
+  if (!response.ok) {
+    await applyProjectMutationResult(owner, data);
+    throw new Error(data.error || "Could not refresh generation");
+  }
   const job = data.job;
   FAL_GENERATION_JOBS = [...(FAL_GENERATION_JOBS || []).filter((item) => item.id !== job.id), job];
   if (job.status === "COMPLETED") {
@@ -1527,14 +1535,9 @@ async function v626WaitFalJob(run, step, body) {
       system: "FAL · GPT IMAGE 2", providerAccepted: false,
       outputCount: count, quality: String(body.quality || ""), resolution: String(body.resolution || ""),
     });
-    const submissionOwner = ACTIVE_PROJECT_SLUG;
     const response = await fetch("/api/generation/fal/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...body, automationRunId: run.id, automationStepKey: durableOperationKey, automationRunnerId: V627_AUTOMATION_RUNNER_ID }) });
     const data = await response.json();
     if (!response.ok) {
-    /* A REFUSED ENTITY SUBMISSION CAN STILL HAVE WRITTEN. The route sets the
-       entity's coverage-automation status to needs-attention before answering
-       502, on the same condition a cancel writes under, and says whether it did. */
-      await applyProjectMutationResult(submissionOwner, data);
       step.activity = { ...(step.activity || {}), state: "request rejected", detail: `${data.error || `FAL submission returned HTTP ${response.status}` } No paid request was accepted.`, system: "FAL · GPT IMAGE 2", providerAccepted: false, paidRequestSubmitted: false, httpStatus: response.status, errorCode: data.code || "", updatedAt: v626Now() };
       step.error = data.error || `FAL submission returned HTTP ${response.status}`;
       await v626SaveRun(run, false, false);

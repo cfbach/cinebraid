@@ -2072,12 +2072,11 @@ function registerFalGeneration(app, context) {
           Object.assign(job, row);
         }
       }).catch(() => {});
-      const projectUpdated = await updateEntityCoverageRun(owner, job, "needs-attention", error.message);
+      await updateEntityCoverageRun(owner, job, "needs-attention", error.message);
       res.status(502).json({
         error: error.message,
         ...(verdict.status === Lifecycle.UNRESOLVED ? { code: "GENERATION_UNRESOLVED" } : {}),
         job: publicJob(job),
-        projectUpdated,
       });
     }
   });

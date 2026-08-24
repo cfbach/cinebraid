@@ -1031,6 +1031,41 @@ app.get("/api/project", (req, res) => {
     res.status(500).json({ error: "Could not open the active project — " + e.message });
   }
 });
+/* THE SMALLEST TRUE ANSWER TO "IS THIS WINDOW STILL CURRENT?".
+ *
+ * A browser can be made stale by anything that writes project.json — another
+ * window, the ingest reaper, an automation run, a restore, a cancel, a writer
+ * that does not exist yet. Teaching the browser about each of those in turn is a
+ * list that only ever grows, and the one it has not been taught about is the one
+ * that leaves it resting on "Saved" over a record the server has moved past.
+ *
+ * The revision already answers all of them at once. It is a hash of the stored
+ * BYTES, so whatever changed the file changed the revision, and comparing it for
+ * equality needs no knowledge of who wrote or why.
+ *
+ * WHY THIS IS ITS OWN ROUTE. GET /api/project reads the file, JSON-parses it,
+ * normalises prompt history and records project activity — a page-load's worth of
+ * work, and a mutation, on something a live window wants to ask every few
+ * seconds. GET /api/projects/:slug/project parses and returns the whole document.
+ * This reads the bytes, hashes them, and answers. Nothing is parsed, nothing is
+ * written, no backup is taken, no activity is recorded, and no project or
+ * authority state moves.
+ *
+ * OPAQUE AND COMPARED FOR EQUALITY ONLY. It is a content hash: two revisions are
+ * the same document or they are not, and no client can order them. */
+app.get("/api/projects/:slug/revision", (req, res) => {
+  try {
+    const { slug, file } = projectDirForSlug(req.params.slug, false);
+    const revision = projectRevisionFor(file);
+    /* No stored document is not a revision, and must not be answered as one. */
+    if (!revision) return res.status(404).json({ error: `No such project: ${slug}`, slug });
+    res.setHeader("ETag", revision);
+    res.setHeader("X-CineBraid-Project-Revision", revision);
+    res.json({ slug, revision });
+  } catch (error) {
+    res.status(400).json({ error: error.message || "Could not read the project revision." });
+  }
+});
 app.get("/api/projects/:slug/project", (req, res) => {
   try {
     const inspected = inspectProjectFile(req.params.slug);
