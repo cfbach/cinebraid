@@ -561,6 +561,8 @@ async function main() {
     "voice-runtime-ownership-negative-controls.js",
     "voice-runtime-ownership.js",
     "windows-shutdown.js",
+    "workspace-migration-rollback-negative-controls.js",
+    "workspace-migration-rollback.js",
     "workspace-shell-negative-controls.js",
     "workspace-shell-real-browser.py",
     "workspace-shell.js",

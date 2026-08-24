@@ -681,7 +681,12 @@ async function persistWorkspaceSettings(scope) {
     : storage ? "These folders exist and are writable." : "";
   settingsPanelSaved(applied);
   if (note && storage) note.textContent = applied;
-  toast(data.migration?.movedRoot ? "Project folder moved safely" : storage ? "Storage paths applied" : "Naming rules saved");
+  /* "moved safely" was the one line here that was not true. Migration copies into the
+     new location and leaves the old one exactly as it was — deliberately, and the
+     note directly above already says so in the same breath. A failure never reaches
+     this line at all: a non-ok response returns above, so a partly-copied destination
+     can never be announced as a workspace that moved. */
+  toast(data.migration?.movedRoot ? "Projects copied to the new folder" : storage ? "Storage paths applied" : "Naming rules saved");
 }
 window.saveStorageSettings = () => persistWorkspaceSettings("workspace");
 window.saveNamingSettings = () => persistWorkspaceSettings("naming");

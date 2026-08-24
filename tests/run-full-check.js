@@ -194,6 +194,8 @@ const nodeSuites = [
   "check:data-safety",
   "check:intent-loss",
   "check:project-switch",
+  "check:workspace-migration",
+  "check:workspace-migration-negative",
   "check:brand-logo",
 ];
 

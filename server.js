@@ -89,23 +89,180 @@ function safeEnsureDirectory(dir) {
   fs.unlinkSync(probe);
   return dir;
 }
-function copyMissingTree(source, destination) {
+/* `ledger`, when supplied, records the paths THIS call brought into existence, so a
+   caller that fails later can unwind exactly its own work. Ownership is decided by
+   observing absence immediately before creating — never by assuming — and a caller
+   that passes no ledger gets byte-identical behaviour to before. */
+function copyMissingTree(source, destination, ledger = null) {
   if (!source || !destination || !fs.existsSync(source)) return { copied: 0, skipped: 0 };
+  const destinationExisted = fs.existsSync(destination);
   fs.mkdirSync(destination, { recursive: true });
+  if (ledger && !destinationExisted) ledger.directory(destination);
   let copied = 0, skipped = 0;
   for (const entry of fs.readdirSync(source, { withFileTypes: true })) {
     const src = path.join(source, entry.name), dest = path.join(destination, entry.name);
     if (entry.isDirectory()) {
-      const nested = copyMissingTree(src, dest);
+      const nested = copyMissingTree(src, dest, ledger);
       copied += nested.copied; skipped += nested.skipped;
     } else if (path.basename(entry.name).toLowerCase() === "project.json") {
       /* Project documents are enrolled separately through WORKSPACE_MIGRATION. */
       skipped += 1;
     } else if (!fs.existsSync(dest)) {
-      fs.copyFileSync(src, dest); copied += 1;
+      fs.copyFileSync(src, dest); if (ledger) ledger.file(dest); copied += 1;
     } else skipped += 1;
   }
   return { copied, skipped };
+}
+/* ---- F-11 workspace migration: preflight + created-paths rollback ledger ----
+
+   Migration is CREATE_ONLY and always has been: it refuses rather than overwrite a
+   destination project document, and it never touches the source. That guarantee was
+   intact, and it is the reason the rest of this is possible — but on its own it made
+   a failed attempt UNRETRYABLE. Copying is per project, so a failure on the fourth
+   left the first three at the destination; the next attempt then enumerated the
+   migration's OWN leftovers and answered WORKSPACE_PROJECT_COLLISION. The user was
+   told the destination was occupied by exactly the copies CineBraid had just put
+   there, and had no way forward that did not involve deleting files by hand.
+
+   Two additions, and neither weakens the refusal:
+
+   PREFLIGHT decides everything that is knowable before a single destination byte
+   exists — that the roots are not nested, that no destination document is already
+   there, and that every source document can be read, addressed and validated. Those
+   last three used to be discovered one project at a time, mid-copy.
+
+   The LEDGER records what THIS attempt actually brought into existence, so a failure
+   that is not knowable in advance can be unwound to exactly that. Ownership is
+   established by observing a path absent immediately before creating it — never
+   assumed — which is what makes "delete only what we made" a fact rather than a
+   hope. */
+function insideDirectory(root, candidate) {
+  if (!root || !candidate) return false;
+  const base = path.resolve(root), target = path.resolve(candidate);
+  const rel = path.relative(base, target);
+  if (!rel) return false; /* the directory itself is not inside itself */
+  if (path.isAbsolute(rel)) return false; /* a different volume or share */
+  return rel !== ".." && !rel.startsWith(".." + path.sep) && !rel.startsWith("../");
+}
+/* Every path this migration created, in creation order, so cleanup can walk it
+   backwards. Two invariants are enforced when a path is admitted AND again when it is
+   deleted, and nothing that is passed in can switch either of them off:
+
+     1. the path lies strictly inside the destination workspace root;
+     2. the path is not the source workspace root and not inside it.
+
+   A path that fails either is refused outright, which fails the migration loudly
+   instead of deleting something this attempt does not own. */
+function createdPathLedger({ destinationRoot, sourceRoot }) {
+  const root = path.resolve(destinationRoot), source = path.resolve(sourceRoot);
+  const entries = [];
+  const disowned = (target) =>
+    !insideDirectory(root, target) ? "is not inside the destination workspace"
+      : target === source || insideDirectory(source, target) ? "is inside the source workspace"
+        : "";
+  function admit(kind, candidate) {
+    const target = path.resolve(candidate), reason = disowned(target);
+    if (reason) throw new Error(`Workspace migration cleanup refused a path it does not own: ${target} ${reason}.`);
+    entries.push({ kind, path: target });
+  }
+  return {
+    file: (value) => admit("file", value),
+    directory: (value) => admit("dir", value),
+    paths: () => entries.map((entry) => entry.path),
+    /* Reverse order, so a directory is only removed after whatever this attempt put
+       inside it. Directories go through rmdir, NOT a recursive remove: a directory
+       still holding something this attempt did not create survives and is reported. */
+    unwind() {
+      const removed = [], leftover = [], errors = [];
+      for (let index = entries.length - 1; index >= 0; index -= 1) {
+        const { kind, path: target } = entries[index];
+        try {
+          const reason = disowned(target);
+          if (reason) throw new Error(`Refused: ${target} ${reason}`);
+          if (!fs.existsSync(target)) continue;
+          if (kind === "file") fs.unlinkSync(target);
+          else fs.rmdirSync(target);
+          removed.push(target);
+        } catch (error) {
+          leftover.push(target);
+          errors.push({ path: target, code: String(error?.code || ""), message: error?.message || "Cleanup failed." });
+        }
+      }
+      return { attempted: true, complete: leftover.length === 0, removed: removed.length, leftover, errors };
+    },
+  };
+}
+function preflightWorkspaceMigration(previousRoot, nextRoot) {
+  const refuse = (status, code, message, detail = {}) => ({ ok: false, refusal: { status, code, message, ...detail } });
+  if (insideDirectory(previousRoot, nextRoot))
+    return refuse(409, "WORKSPACE_MIGRATION_NESTED_ROOT",
+      "The new project folder is inside the current one, so migrating would copy the workspace into itself.",
+      { from: previousRoot, to: nextRoot });
+
+  const sourceProjects = fs.readdirSync(previousRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && fs.existsSync(path.join(previousRoot, entry.name, "project.json")))
+    .map((entry) => entry.name);
+  const collisions = sourceProjects.filter((slug) => fs.existsSync(path.join(nextRoot, slug, "project.json")));
+  if (collisions.length)
+    return refuse(409, "WORKSPACE_PROJECT_COLLISION",
+      "Workspace migration refused because destination project documents already exist.", { collisions });
+
+  /* Resolved through the same rule the Authority Write Seam resolves with, so the
+     plan addresses the exact files the writes will address. */
+  const projects = [], problems = [];
+  for (const slug of sourceProjects) {
+    const sourceFile = path.join(previousRoot, slug, "project.json");
+    const contained = containedProjectSlug(slug, nextRoot);
+    if (!contained) {
+      problems.push({ slug, reason: "UNUSABLE_SLUG", detail: "This project folder name cannot address a folder inside the new location." });
+      continue;
+    }
+    const destinationFile = path.join(path.resolve(nextRoot), contained, "project.json");
+    if (fs.existsSync(destinationFile)) {
+      problems.push({ slug, reason: "DESTINATION_EXISTS", detail: "A project document is already stored at the destination." });
+      continue;
+    }
+    let document;
+    try { document = readJsonSync(sourceFile); }
+    catch (error) {
+      problems.push({ slug, reason: "SOURCE_UNREADABLE", detail: error?.message || "This project document could not be read." });
+      continue;
+    }
+    const validation = validateProjectForSave(document);
+    if (!validation || validation.ok !== true) {
+      problems.push({ slug, reason: "SOURCE_INVALID", detail: (validation?.errors || []).slice(0, 5).join(" ") || "This project document did not validate." });
+      continue;
+    }
+    projects.push({ slug: contained, sourceFile, destinationFile, document });
+  }
+  if (problems.length)
+    return refuse(422, "WORKSPACE_MIGRATION_PREFLIGHT_FAILED",
+      "Workspace migration was refused before anything was copied, because some projects cannot be migrated.",
+      { problems });
+  return { ok: true, refusal: null, projects };
+}
+/* Carries a seam refusal out of the copy loop so one place decides what a failed
+   migration says, after cleanup has had its turn. */
+function workspaceMigrationRefusal(outcome, slug) {
+  const failure = outcome.refusal || { status: 500, code: "PROJECT_PERSISTENCE_FAILED", message: "Project persistence failed." };
+  const error = new Error(failure.message);
+  error.workspaceMigration = { ...failure, slug, revision: outcome.revision || "" };
+  return error;
+}
+/* The failure that actually happened, plus what cleanup did about it. Cleanup never
+   turns a failure into a success, and an incomplete cleanup is named — with the paths
+   still sitting at the destination — rather than quietly dropped. */
+function workspaceMigrationFailure(res, error, rollback) {
+  const failure = error?.workspaceMigration || {
+    status: 400, code: "WORKSPACE_MIGRATION_FAILED",
+    message: error?.message || "Could not apply workspace settings",
+  };
+  const body = { ok: false, ...failure, error: failure.message, migration: { movedRoot: false, rollback } };
+  if (!rollback.complete) {
+    body.cleanupIncomplete = true;
+    body.error = `${failure.message} Removing the copies this attempt made at the new location did not finish, so ${rollback.leftover.length} of them are still there.`;
+  }
+  return res.status(failure.status || 400).json(body);
 }
 function workspaceStatus(config = readConfig()) {
   const root = projectsRoot(config);
@@ -1875,6 +2032,10 @@ app.get("/api/workspace/status", (req, res) => {
   catch (error) { res.status(500).json({ error: error.message }); }
 });
 app.post("/api/workspace/settings", (req, res) => {
+  /* Non-null only while migration-owned destination artifacts may exist, so every
+     failure terminal from the first copy onwards — including the ones after the copy
+     loop — unwinds, and no failure before it pretends to. */
+  let ledger = null;
   try {
     const current = readConfig();
     const incoming = req.body && typeof req.body === "object" ? req.body : {};
@@ -1887,28 +2048,38 @@ app.post("/api/workspace/settings", (req, res) => {
     paths.forEach(safeEnsureDirectory);
     let migration = { copied: 0, skipped: 0, movedRoot: false };
     if (path.resolve(previousRoot) !== path.resolve(nextRoot) && fs.existsSync(previousRoot)) {
-      const sourceProjects = fs.readdirSync(previousRoot, { withFileTypes: true })
-        .filter((entry) => entry.isDirectory() && fs.existsSync(path.join(previousRoot, entry.name, "project.json")))
-        .map((entry) => entry.name);
-      const collisions = sourceProjects.filter((slug) => fs.existsSync(path.join(nextRoot, slug, "project.json")));
-      if (collisions.length) return res.status(409).json({
-        error: "Workspace migration refused because destination project documents already exist.",
-        code: "WORKSPACE_PROJECT_COLLISION", collisions,
-      });
-      for (const slug of sourceProjects) {
-        const metadata = { destinationRoot: nextRoot };
-        const outcome = persistProjectSuccessor({
-          slug, successor: readJsonSync(path.join(previousRoot, slug, "project.json")),
-          writeClass: WRITE_CLASSES.WORKSPACE_MIGRATION, expectedRevision: "", transitionMetadata: metadata,
-        });
-        if (!outcome.ok) return seamFailure(res, outcome, slug);
+      const plan = preflightWorkspaceMigration(previousRoot, nextRoot);
+      if (!plan.ok) return res.status(plan.refusal.status).json({ ok: false, ...plan.refusal, error: plan.refusal.message });
+      ledger = createdPathLedger({ destinationRoot: nextRoot, sourceRoot: previousRoot });
+      for (const item of plan.projects) {
+        const slugDirectory = path.dirname(item.destinationFile);
+        /* Absence read immediately before the write is what makes the entries below
+           attempt-owned. A destination that appeared in the meantime belongs to
+           whoever put it there: CREATE_ONLY refuses the write, and it is not ours. */
+        const directoryExisted = fs.existsSync(slugDirectory), fileExisted = fs.existsSync(item.destinationFile);
+        let outcome;
+        try {
+          outcome = persistProjectSuccessor({
+            slug: item.slug, successor: item.document, writeClass: WRITE_CLASSES.WORKSPACE_MIGRATION,
+            expectedRevision: "", transitionMetadata: { destinationRoot: nextRoot },
+          });
+        } finally {
+          /* Observed, not inferred from the outcome: a write that failed part-way can
+             still have left behind the folder it made on the way in. */
+          if (!directoryExisted && fs.existsSync(slugDirectory)) ledger.directory(slugDirectory);
+          if (!fileExisted && fs.existsSync(item.destinationFile)) ledger.file(item.destinationFile);
+        }
+        if (!outcome.ok) throw workspaceMigrationRefusal(outcome, item.slug);
       }
-      const result = copyMissingTree(previousRoot, nextRoot);
-      migration = { ...result, projectDocuments: sourceProjects.length, movedRoot: true, from: previousRoot, to: nextRoot };
+      const result = copyMissingTree(previousRoot, nextRoot, ledger);
+      migration = { ...result, projectDocuments: plan.projects.length, movedRoot: true, from: previousRoot, to: nextRoot };
     }
     writeConfig(nextConfig);
-    res.json({ ok: true, migration, ...workspaceStatus(nextConfig) });
+    const status = workspaceStatus(nextConfig);
+    ledger = null; /* the move is recorded; the copies are the workspace now, not spoil */
+    res.json({ ok: true, migration, ...status });
   } catch (error) {
+    if (ledger) return workspaceMigrationFailure(res, error, ledger.unwind());
     res.status(400).json({ error: error.message || "Could not apply workspace settings" });
   }
 });
