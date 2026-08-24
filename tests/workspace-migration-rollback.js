@@ -135,6 +135,13 @@ function insideDirectoryOf(root, candidate) {
   const rel = path.relative(path.resolve(root), path.resolve(candidate));
   return Boolean(rel) && !path.isAbsolute(rel) && rel !== ".." && !rel.startsWith(".." + path.sep);
 }
+/* Real paths come back from `realpathSync.native` in the filesystem's own casing,
+   which on Windows need not match the casing a fixture happened to build. */
+function samePath(left, right) {
+  const normalise = (value) => (process.platform === "win32"
+    ? path.resolve(String(value)).toLowerCase() : path.resolve(String(value)));
+  return normalise(left) === normalise(right);
+}
 
 function shippedMigrationHelpers(source = SERVER_SOURCE) {
   const start = source.indexOf("function insideDirectory(");
@@ -650,6 +657,224 @@ function replacementBeforeRollback() {
 }
 
 /* ==========================================================================
+   F11-A1 / F11-A2 / F11-P1 — the correction.
+
+   A1 is the class the design review named and Node cannot prevent on Windows:
+   there is no handle-relative mkdir or open, so an actor that replaces an
+   already-validated ancestor between the check and the syscall gets followed.
+   What CineBraid owes in that case is not prevention but honesty — detect it,
+   OWN what it exclusively created, remove exactly that, touch nothing else.
+   ========================================================================== */
+
+/* The shipped publish, from the shipped source, in its own realm. */
+function shippedExclusivePublish(source = SERVER_SOURCE) {
+  const start = source.indexOf("function atomicWriteJson(");
+  const end = source.indexOf("/* ---- project save revision");
+  assert(start > 0 && end > start, "atomicWriteJson must be locatable in server.js");
+  const sandbox = { require, module: { exports: {} }, exports: {}, console, fs, path, crypto, process, JSON };
+  sandbox.globalThis = sandbox;
+  vm.createContext(sandbox);
+  vm.runInContext(source.slice(start, end) + "\nmodule.exports = { atomicWriteJson };",
+    sandbox, { filename: "server.js#atomic-write-json" });
+  return sandbox.module.exports.atomicWriteJson;
+}
+
+/* Deterministic by construction rather than by winning a race: the interleave is
+   driven directly, so this proves the same thing a timing fixture would and proves
+   it on every run, on every machine. */
+function ancestorSwapOwnedEscape(helpers = shippedMigrationHelpers(), publish = shippedExclusivePublish()) {
+  const { createdPathLedger, claimDirectory, workspaceMigrationFailure } = helpers;
+  const home = fs.mkdtempSync(path.join(TEMP, "escape-"));
+  const source = path.join(home, "source"), dest = path.join(home, "dest");
+  fs.mkdirSync(source); fs.mkdirSync(dest);
+  const sink = path.join(source, "sink"); fs.mkdirSync(sink);
+  /* Material that was in the source workspace before any of this. Whatever else
+     happens, not one byte of it may change. */
+  writeFileAt(path.join(sink, "pre-existing.bin"), "source bytes that predate the migration");
+  const preExistingBytes = sha(path.join(sink, "pre-existing.bin"));
+
+  const ledger = createdPathLedger({
+    realDestinationRoot: fs.realpathSync.native(dest), realSourceRoot: fs.realpathSync.native(source),
+  });
+
+  /* 1 — the ancestor is created by this attempt and validates as an ordinary
+     destination folder, exactly as it does in the route. */
+  const slugDirectory = path.join(dest, "alpha");
+  assert.strictEqual(claimDirectory(slugDirectory).created, true);
+  ledger.directory(slugDirectory);
+  assert.strictEqual(ledger.receipts()[0].escaped, false, "it was in bounds when it was made");
+
+  /* 2 — another actor replaces that validated ancestor with a junction into the
+     source workspace. This is the window no path-based Node API can close. */
+  fs.rmdirSync(slugDirectory);
+  fs.symlinkSync(sink, slugDirectory, "junction");
+  const junctionTarget = fs.readlinkSync(slugDirectory);
+
+  /* 3 — the publish runs and is followed through the replacement. */
+  const document = path.join(slugDirectory, "project.json");
+  publish(document, { migrated: true }, { backup: false, exclusive: true });
+  const escapedFile = path.join(sink, "project.json");
+  assert.strictEqual(fs.existsSync(escapedFile), true,
+    "the fixture must actually escape, or the rest of this proves nothing");
+  const escapedIdentity = fs.lstatSync(escapedFile, { bigint: true });
+  assert.deepStrictEqual(fs.readdirSync(sink).filter((name) => name.endsWith(".tmp")), [],
+    "and the publish still cleans its own temp, even where it landed");
+
+  /* 4 — the exclusive creation is proof of OWNERSHIP even though the PLACEMENT is
+     wrong. Those are different questions, and the receipt survives the second. */
+  assert.throws(() => ledger.file(document), /physically created at/, "the migration must fail");
+  const receipt = ledger.receipts().find((row) => row.kind === "file");
+  assert(receipt, "the proof that this attempt created it must be kept, not discarded");
+  assert.strictEqual(receipt.escaped, true, JSON.stringify(receipt));
+  assert.strictEqual(samePath(receipt.realPath, escapedFile), true,
+    "the receipt must name where the object PHYSICALLY is: " + receipt.realPath);
+  assert.strictEqual(receipt.dev, String(escapedIdentity.dev), "captured by filesystem identity");
+  assert.strictEqual(receipt.ino, String(escapedIdentity.ino));
+  assert(/inside the source workspace/.test(receipt.reason), receipt.reason);
+
+  /* 5 — cleanup removes exactly that object, at the place it really occupies. */
+  const rollback = ledger.unwind();
+  assert.strictEqual(fs.existsSync(escapedFile), false, "the escaped copy must be removed");
+  assert.strictEqual(rollback.escaped.length, 1, JSON.stringify(rollback.escaped));
+  assert.strictEqual(rollback.escaped[0].removed, true);
+  assert.strictEqual(samePath(rollback.escaped[0].realPath, escapedFile), true);
+
+  /* 6 — and nothing else. The junction belongs to the other actor; the source
+     material that predates this attempt is byte-identical; nothing was recursive. */
+  assert.strictEqual(fs.lstatSync(slugDirectory).isSymbolicLink(), true, "the foreign junction survives");
+  assert.strictEqual(fs.readlinkSync(slugDirectory), junctionTarget, "unchanged, not merely present");
+  assert.strictEqual(sha(path.join(sink, "pre-existing.bin")), preExistingBytes,
+    "pre-existing source bytes are untouched");
+  assert.strictEqual(rollback.complete, false,
+    "the ancestor receipt cannot be honoured, and that is reported rather than forced");
+  assert(rollback.leftover.includes(slugDirectory), JSON.stringify(rollback.leftover));
+
+  /* 7 — the response says all of it: failed, not moved, what escaped, what is left. */
+  let sent = null;
+  const res = { status(code) { sent = { status: code }; return this; }, json(body) { sent.body = body; return sent; } };
+  workspaceMigrationFailure(res, new Error("Workspace migration stopped."), rollback);
+  assert.strictEqual(sent.body.ok, false);
+  assert.strictEqual(sent.body.migration.movedRoot, false, "nothing may describe this as a workspace that moved");
+  assert.strictEqual(sent.body.escapedCreations.length, 1, JSON.stringify(sent.body));
+  assert.strictEqual(sent.body.escapedCreations[0].removed, true);
+  assert(/created outside the new project folder has been removed/.test(sent.body.error), sent.body.error);
+  assert.strictEqual(sent.body.cleanupIncomplete, true, "and what it could not remove is still reported");
+  assert(/did not finish/.test(sent.body.error), sent.body.error);
+  return { escapedFile, rollback };
+}
+
+/* Escaped cleanup deletes at a real path with NO containment check to fall back on —
+   by definition the object is out of bounds. Filesystem identity is therefore the
+   only thing between it and a stranger's file at that location, so it is exercised
+   on its own rather than assumed from the in-bounds case. */
+function escapedIdentitySubstitution(helpers = shippedMigrationHelpers(), publish = shippedExclusivePublish()) {
+  const { createdPathLedger, claimDirectory } = helpers;
+  const home = fs.mkdtempSync(path.join(TEMP, "escape-swapped-"));
+  const source = path.join(home, "source"), dest = path.join(home, "dest");
+  fs.mkdirSync(source); fs.mkdirSync(dest);
+  const sink = path.join(source, "sink"); fs.mkdirSync(sink);
+
+  const ledger = createdPathLedger({
+    realDestinationRoot: fs.realpathSync.native(dest), realSourceRoot: fs.realpathSync.native(source),
+  });
+  const slugDirectory = path.join(dest, "alpha");
+  assert.strictEqual(claimDirectory(slugDirectory).created, true);
+  ledger.directory(slugDirectory);
+  fs.rmdirSync(slugDirectory);
+  fs.symlinkSync(sink, slugDirectory, "junction");
+  const document = path.join(slugDirectory, "project.json");
+  publish(document, { migrated: true }, { backup: false, exclusive: true });
+  assert.throws(() => ledger.file(document), /physically created at/);
+
+  /* Between the escape and the cleanup, the escaped path stops naming our object. */
+  const escapedFile = path.join(sink, "project.json");
+  fs.unlinkSync(escapedFile);
+  fs.writeFileSync(escapedFile, "a different actor's file, at the same place");
+  const strangerBytes = sha(escapedFile);
+
+  const rollback = ledger.unwind();
+  assert.strictEqual(fs.existsSync(escapedFile), true, "the replacement is not ours to delete");
+  assert.strictEqual(sha(escapedFile), strangerBytes, "and it is untouched");
+  assert.strictEqual(rollback.escaped.length, 1, JSON.stringify(rollback.escaped));
+  assert.strictEqual(rollback.escaped[0].removed, false,
+    "and the report says so rather than claiming a clean escape: " + JSON.stringify(rollback.escaped));
+  assert.strictEqual(rollback.complete, false);
+  assert(rollback.leftover.some((row) => samePath(row, escapedFile)),
+    "the escaped path must be named as leftover: " + JSON.stringify(rollback.leftover));
+  assert(rollback.errors.some((row) => /same filesystem object/.test(row.message)),
+    "the reason must be the identity mismatch: " + JSON.stringify(rollback.errors));
+}
+
+/* A source project folder represented through a junction. It used to be invisible
+   to planning — not refused, just absent — and the migration answered 200 with the
+   project missing from the new workspace. */
+async function f11_a2() {
+  await withWorkspace(({ home, source }) => {
+    writeProjectAt(source, "alpha", baseProject("Alpha"));
+    const elsewhere = path.join(home, "big-drive");
+    writeProjectAt(elsewhere, "beta", baseProject("Beta"));
+    writeFileAt(path.join(elsewhere, "beta", "media", "frame.bin"), "beta-frame-bytes");
+    fs.symlinkSync(path.join(elsewhere, "beta"), path.join(source, "beta"), "junction");
+  }, async ({ home, source, dest, configuredRoot, migrate }) => {
+    const elsewhere = path.join(home, "big-drive");
+    const beforeSource = snapshot(source), beforeElsewhere = snapshot(elsewhere);
+
+    const result = await migrate();
+    assert.strictEqual(result.status, 409, JSON.stringify(result.body));
+    assert.strictEqual(result.body.code, "WORKSPACE_MIGRATION_SOURCE_ENTRY_UNSUPPORTED");
+    assert.strictEqual(result.body.ok, false);
+    const problem = (result.body.problems || []).find((row) => row.name === "beta");
+    assert(problem, "the refusal must name the entry it cannot carry: " + JSON.stringify(result.body.problems));
+    assert.strictEqual(problem.reason, "REDIRECTED");
+    assert(/shortcut/.test(problem.detail), problem.detail);
+
+    /* The point of the scenario: loudly, and with nothing written. */
+    assert.strictEqual(result.body.migration, undefined, "a preflight refusal performs no cleanup");
+    assert.strictEqual(fs.existsSync(path.join(dest, "alpha", "project.json")), false,
+      "not even the project it could have carried is written");
+    assert.deepStrictEqual(fs.readdirSync(dest), [], "the destination stays empty");
+    assert.strictEqual(configuredRoot(), path.resolve(source), "the workspace stays where it was");
+    assert.deepStrictEqual(snapshot(source), beforeSource, "the source must be untouched");
+    assert.deepStrictEqual(snapshot(elsewhere), beforeElsewhere, "and so must what the shortcut points at");
+  });
+}
+
+/* A dangling reparse point sitting at the exact path the document must be published
+   to. `existsSync` reports it as absent, so nothing before the publish can see it;
+   the publish is what has to refuse, and it must not create the thing it points at. */
+async function f11_p1() {
+  await withWorkspace(({ source, dest }) => {
+    writeProjectAt(source, "alpha", baseProject("Alpha"));
+    blockDocumentInvisibly(dest, "alpha");
+  }, async ({ source, dest, configuredRoot, migrate }) => {
+    const blocker = path.join(dest, "alpha", "project.json");
+    const pointsAt = path.join(dest, "alpha", "no-such-target");
+    assert.strictEqual(fs.existsSync(blocker), false, "the blocker must be invisible to a stat-based check");
+    assert.strictEqual(fs.lstatSync(blocker).isSymbolicLink(), true, "…while genuinely being there");
+    const beforeSource = snapshot(source), beforeDest = snapshot(dest);
+
+    const result = await migrate();
+    assert.strictEqual(result.status, 500, JSON.stringify(result.body));
+    assert.strictEqual(result.body.code, "PROJECT_PERSISTENCE_FAILED");
+    assert.strictEqual(result.body.slug, "alpha");
+
+    assert.strictEqual(fs.existsSync(pointsAt), false,
+      "nothing may be brought into existence at the far end of the reparse point");
+    assert.strictEqual(fs.lstatSync(blocker).isSymbolicLink(), true, "and the blocker itself is untouched");
+    assert.deepStrictEqual(fs.readdirSync(path.join(dest, "alpha")).filter((name) => name.endsWith(".tmp")), [],
+      "a refused publish leaves no temp behind to collide with the retry");
+
+    const rollback = result.body.migration.rollback;
+    assert.strictEqual(rollback.complete, true, JSON.stringify(rollback));
+    assert.deepStrictEqual(rollback.escaped, [], "nothing escaped: this was refused at the publish");
+    assert.strictEqual(result.body.escapedCreations, undefined);
+    assert.deepStrictEqual(snapshot(dest), beforeDest, "the destination must equal its pre-attempt state");
+    assert.deepStrictEqual(snapshot(source), beforeSource, "the source must be untouched");
+    assert.strictEqual(configuredRoot(), path.resolve(source));
+  });
+}
+
+/* ==========================================================================
    SOURCE-LEVEL SAFETY. Properties that have to hold by construction, not
    because a scenario happened not to trip them.
    ========================================================================== */
@@ -691,20 +916,34 @@ function safetyChecks() {
   assert.strictEqual(occurrences(ledgerSource, "recursive"), 0,
     "cleanup must never remove a folder recursively");
 
-  /* S2 — no cleanup path can point outside the destination migration root, and
-     containment is decided PHYSICALLY. */
-  assert.throws(() => ledger().file(made(path.join(home, "outside.bin"))),
-    /does not own/, "a path outside the destination must be refused");
-  assert.throws(() => ledger().directory(dest),
-    /does not own/, "the destination root itself must be refused");
-  assert.throws(() => ledger().file(made(path.join(home, "escape.bin"))),
-    /does not own/, "a path resolving out of the destination must be refused");
+  /* S2 — an object outside the destination migration root still stops the migration,
+     and containment is decided PHYSICALLY.
 
-  /* S3 — no source path can enter the ledger, by real location and not by prefix. */
-  assert.throws(() => ledger().file(made(path.join(source, "alpha", "project.json"), "{}")),
-    /does not own/, "a source document must be refused");
-  assert.throws(() => ledger().directory(source),
-    /does not own/, "the source root must be refused");
+     What changed with the escape correction: stopping is no longer the same act as
+     disowning. Admission only ever follows an exclusive creation, so the object IS
+     this attempt's; the receipt is kept and marked escaped, and the throw is what
+     fails the migration. Every assertion below therefore checks BOTH halves — it
+     refused, and it kept the proof — because keeping only one of them is exactly how
+     an escaped artifact ends up orphaned where it landed. */
+  const escapes = (act, realHome) => {
+    const led = ledger();
+    assert.throws(act(led), /physically created at/, "an out-of-bounds creation must stop the migration");
+    const [receipt] = led.receipts();
+    assert(receipt, "and the proof that this attempt created it must be kept");
+    assert.strictEqual(receipt.escaped, true, "marked escaped: " + JSON.stringify(receipt));
+    assert(receipt.reason, "with a reason a person can read");
+    assert.strictEqual(samePath(receipt.realPath, realHome), true,
+      `and pointing at where the object PHYSICALLY is, which is the only path cleanup may use: ${receipt.realPath} vs ${realHome}`);
+    return receipt;
+  };
+  escapes((led) => () => led.file(made(path.join(home, "outside.bin"))), path.join(home, "outside.bin"));
+  escapes((led) => () => led.directory(dest), dest);
+  escapes((led) => () => led.file(made(path.join(home, "escape.bin"))), path.join(home, "escape.bin"));
+
+  /* S3 — a source path is judged by its real location and never by prefix. */
+  escapes((led) => () => led.file(made(path.join(source, "alpha", "project.json"), "{}")),
+    path.join(source, "alpha", "project.json"));
+  escapes((led) => () => led.directory(source), source);
   /* The one that a string test cannot catch: a name under the destination whose real
      location is inside the source. Lexically it is impeccable. */
   const sink = path.join(source, "sink"); fs.mkdirSync(sink, { recursive: true });
@@ -713,8 +952,7 @@ function safetyChecks() {
   writeFileAt(path.join(sink, "planted.bin"), "source bytes");
   assert.strictEqual(insideDirectoryOf(realDest, path.join(redirected, "planted.bin")), true,
     "the fixture must be lexically inside the destination, or it proves nothing");
-  assert.throws(() => ledger().file(path.join(redirected, "planted.bin")),
-    /does not own/, "a destination-looking path whose real home is the source must be refused");
+  escapes((led) => () => led.file(path.join(redirected, "planted.bin")), path.join(sink, "planted.bin"));
   assert.strictEqual(fs.existsSync(path.join(sink, "planted.bin")), true, "and nothing was deleted proving it");
   assert(preflightSource.includes("WORKSPACE_MIGRATION_NESTED_ROOT"),
     "a destination inside the source must be refused by preflight, before any ledger exists");
@@ -737,8 +975,26 @@ function safetyChecks() {
     "the tree copy may only own a file its own exclusive copy created");
   assert(codeOnly(SERVER_SOURCE).includes("fs.copyFileSync(source, target, fs.constants.COPYFILE_EXCL)"),
     "the copy claim must be exclusive");
-  assert(codeOnly(SERVER_SOURCE).includes("fs.linkSync(temp, file); fs.unlinkSync(temp);"),
+  assert(codeOnly(SERVER_SOURCE).includes("fs.copyFileSync(temp, file, fs.constants.COPYFILE_EXCL);"),
     "the document must be published with a primitive that cannot overwrite");
+  assert.strictEqual(occurrences(codeOnly(SERVER_SOURCE), "fs.linkSync("), 0,
+    "and not with a hard link, which does not exist on exFAT or FAT32");
+
+  /* S6 — the invariant the escaped receipt rests on. admit() may now record a
+     receipt for an object that is not where it should be, which is only safe while
+     every admission follows a proven exclusive creation. So the call sites are
+     counted, not just sampled: four, and every one of them is a line already pinned
+     above as guarded by its own creation proof. */
+  const code = codeOnly(SERVER_SOURCE);
+  assert.strictEqual(occurrences(code, "ledger.file(") + occurrences(code, "ledger.directory("), 4,
+    "a fifth admission would be an admission nobody proved: "
+    + JSON.stringify((code.match(/ledger\.(file|directory)\([^)]*\)/g) || [])));
+  for (const guarded of [
+    "if (outcome.ok && outcome.created === true) ledger.file(item.destinationFile);",
+    "if (claimDirectory(item.slugDirectory).created) ledger.directory(item.slugDirectory);",
+    "else if (claimDirectory(destination).created) ledger.directory(destination);",
+    "if (claimCopiedFile(src, dest).created) { ledger.file(dest); copied += 1; } else skipped += 1;",
+  ]) assert.strictEqual(occurrences(code, guarded), 1, "every admission must be guarded: " + guarded);
 
   /* S5 — every failure terminal after the first creation unwinds. Once the ledger
      exists there is exactly one way out of the route, and it is the one that cleans
@@ -774,14 +1030,20 @@ function safetyChecks() {
   await scenario("F11-J1 destination junction into the source workspace", junctionIntoSource);
   await scenario("F11-J2 destination junction outside both roots", junctionOutsideDestination);
   await scenario("F11-R1 object replaced between creation and cleanup", async () => replacementBeforeRollback());
+  await scenario("F11-A1 ancestor swapped mid-write: owned escape, cleaned by identity", async () => {
+    ancestorSwapOwnedEscape();
+    escapedIdentitySubstitution();
+  });
+  await scenario("F11-A2 source project folder is a junction", f11_a2);
+  await scenario("F11-P1 dangling reparse at the destination document path", f11_p1);
   await scenario("F11-S  source-level safety properties", async () => safetyChecks());
 
   /* The exact set, so a scenario that quietly stopped running cannot pass as a
      smaller green suite. */
   assert.deepStrictEqual(passed.map((line) => line.split(" ")[0]),
     ["F11-1", "F11-2", "F11-3", "F11-4", "F11-5", "F11-6", "F11-7", "F11-8",
-      "RACE-1", "RACE-1b", "F11-J1", "F11-J2", "F11-R1", "F11-S"]);
-  console.log(`\nF-11 workspace migration cleanup: ${passed.length}/14 scenarios passed; provider calls: 0.`);
+      "RACE-1", "RACE-1b", "F11-J1", "F11-J2", "F11-R1", "F11-A1", "F11-A2", "F11-P1", "F11-S"]);
+  console.log(`\nF-11 workspace migration cleanup: ${passed.length}/17 scenarios passed; provider calls: 0.`);
   fs.rmSync(TEMP, { recursive: true, force: true });
 })().catch((error) => {
   console.error("\nF-11 FAILED\n", error);

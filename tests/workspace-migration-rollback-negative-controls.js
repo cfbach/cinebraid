@@ -159,6 +159,18 @@ async function attemptAndRetry(source, build) {
   });
 }
 
+/* One region of a build — shipped or mutated — evaluated in its own realm, so a
+   control can exercise mutated code without writing a server to disk. */
+function slice(source, from, to, exportsExpression, label) {
+  const start = source.indexOf(from), end = source.indexOf(to, start);
+  assert(start > 0 && end > start, `${label}: could not locate ${from}`);
+  const sandbox = { require, module: { exports: {} }, exports: {}, console, fs, path, crypto, process, JSON };
+  sandbox.globalThis = sandbox;
+  vm.createContext(sandbox);
+  vm.runInContext(`${source.slice(start, end)}\nmodule.exports = ${exportsExpression};`, sandbox, { filename: label });
+  return sandbox.module.exports;
+}
+
 /* The shipped ledger, evaluated from source in its own realm so a control can load a
    mutated copy without writing anything to disk. */
 function ledgerFrom(source) {
@@ -336,11 +348,18 @@ function containmentControl() {
   fs.writeFileSync(outside, "not the destination");
 
   const roots = { realDestinationRoot: fs.realpathSync.native(dest), realSourceRoot: fs.realpathSync.native(source) };
+  /* The shipped ledger stops the migration for both, and — since the escape
+     correction — keeps the receipt while doing so, marked as out of bounds. Refusing
+     to PROCEED and refusing to OWN are different things, and only the first is what
+     the containment rule decides. */
   const shipped = ledgerFrom(SHIPPED);
-  assert.throws(() => shipped(roots).file(sourceDocument),
-    /does not own/, "the shipped ledger must refuse a source path");
-  assert.throws(() => shipped(roots).file(outside),
-    /does not own/, "the shipped ledger must refuse a path outside the destination");
+  for (const [target, label] of [[sourceDocument, "a source path"], [outside, "a path outside the destination"]]) {
+    const led = shipped(roots);
+    assert.throws(() => led.file(target), /physically created at/, `the shipped ledger must refuse to proceed on ${label}`);
+    const [receipt] = led.receipts();
+    assert.strictEqual(receipt.escaped, true, `${label} must be marked out of bounds: ` + JSON.stringify(receipt));
+    assert(receipt.reason, `${label} must carry a reason`);
+  }
 
   const mutated = ledgerFrom(applyMutations(SHIPPED, [{ from: CONTAINMENT_RULE, to: '    return "";' }]));
   const unguarded = mutated({
@@ -351,6 +370,11 @@ function containmentControl() {
   unguarded.file(outside);
   assert.deepStrictEqual([...unguarded.paths()], [path.resolve(sourceDocument), path.resolve(outside)],
     "without the rule, a source path and a path outside the destination are both admitted");
+  /* Spread first: `receipts()` is built inside the vm realm, and a realm array fails
+     deepStrictEqual against a host literal while printing identically. */
+  assert.deepStrictEqual([...unguarded.receipts()].map((row) => row.escaped), [false, false],
+    "and admitted as ORDINARY entries — nothing marks them, nothing stops the migration, "
+    + "and cleanup would go at a source document in place");
 
   /* Deliberately never unwound. The control's whole claim is that the shipped code
      stops this at admission, so nothing here ever reaches a delete. */
@@ -483,6 +507,200 @@ function creationOwnershipControl() {
 }
 
 /* ==========================================================================
+   NC-F11-6 — EPERM read as "already there".
+
+   On Windows COPYFILE_EXCL answers EPERM for four different situations, and one of
+   them is that the SOURCE could not be copied at all — which is what a junction
+   answers. Treating EPERM as occupied therefore turns a source project this
+   migration cannot carry into a silent omission: a completed move, a switched
+   workspace root, and the project simply not there.
+
+   Three edits, because that behaviour has three parts now: the lenient classifier,
+   the tree-copy Dirent guard, and the preflight top-level guard. Removing any one
+   alone leaves another to catch it, which is the point of having all three.
+   ========================================================================== */
+
+const EPERM_AS_SKIP = [
+  {
+    from: '    if (error?.code === "EEXIST") return { created: false };\n'
+      + '    if (error?.code === "EPERM")\n'
+      + "      throw new Error(`Workspace migration could not create ${target} as an ordinary file, because something that is not one already occupies that name or the path is redirected.`);",
+    to: '    if (error?.code === "EEXIST" || error?.code === "EPERM") return { created: false };',
+  },
+  {
+    from: "    if (ledger && !entry.isDirectory() && !entry.isFile()) throw unsupportedSourceEntry(src, entry);",
+    to: "    if (false) throw unsupportedSourceEntry(src, entry);",
+  },
+  {
+    from: '  if (unsupported.length)\n    return refuse(409, "WORKSPACE_MIGRATION_SOURCE_ENTRY_UNSUPPORTED",',
+    to: '  if (false)\n    return refuse(409, "WORKSPACE_MIGRATION_SOURCE_ENTRY_UNSUPPORTED",',
+  },
+];
+
+const SOURCE_PROJECT_IS_A_JUNCTION = ({ source, dest }) => {
+  writeProjectAt(source, "alpha", baseProject("Alpha"));
+  const elsewhere = path.join(path.dirname(source), "big-drive");
+  writeProjectAt(elsewhere, "beta", baseProject("Beta"));
+  writeFileAt(path.join(elsewhere, "beta", "media", "frame.bin"), "beta-frame-bytes");
+  fs.mkdirSync(dest, { recursive: true });
+  fs.symlinkSync(path.join(elsewhere, "beta"), path.join(source, "beta"), "junction");
+};
+
+async function epermAsSkipControl() {
+  const shipped = await attemptAndRetry(SHIPPED, SOURCE_PROJECT_IS_A_JUNCTION);
+  assert.strictEqual(shipped.first.status, 409, JSON.stringify(shipped.first.body));
+  assert.strictEqual(shipped.first.body.code, "WORKSPACE_MIGRATION_SOURCE_ENTRY_UNSUPPORTED",
+    "the shipped build must refuse loudly: " + JSON.stringify(shipped.first.body));
+  assert.deepStrictEqual(shipped.documentsAfterFirst, [], "and write nothing");
+
+  const mutated = await attemptAndRetry(applyMutations(SHIPPED, EPERM_AS_SKIP), SOURCE_PROJECT_IS_A_JUNCTION);
+  assert.strictEqual(mutated.first.status, 200,
+    "reading EPERM as occupied must let the migration report success: " + JSON.stringify(mutated.first.body));
+  assert.strictEqual(mutated.first.body.migration.movedRoot, true, "…as a completed move");
+  assert.deepStrictEqual(mutated.documentsAfterFirst, ["alpha"],
+    "…with the junctioned project silently absent from the new workspace");
+  assert.strictEqual(fs.existsSync(path.join(mutated.dest, "beta")), false,
+    "beta never arrives, and nothing in the response says so");
+  assert.strictEqual(JSON.stringify(mutated.first.body).includes("beta"), false,
+    "which is the defect: the omission is not reported anywhere: " + JSON.stringify(mutated.first.body));
+}
+
+/* ==========================================================================
+   NC-F11-7 — admit() throwing INSTEAD of recording.
+
+   The held candidate discarded the creation proof whenever placement was
+   unexpected, so an object it had exclusively created — and could therefore prove
+   was its own — became unowned and stayed where it landed. Deterministic: the
+   interleave is driven, not raced.
+   ========================================================================== */
+
+const OWNERSHIP_DISCARDED_ON_ESCAPE = [{
+  from: "    entries.push({\n"
+    + "      kind, path: target, realPath, realParent,\n"
+    + "      dev: identity.dev, ino: identity.ino, escaped: Boolean(reason), reason,\n"
+    + "    });\n"
+    + "    if (reason)\n"
+    + "      throw new Error(`Workspace migration stopped because ${target} was physically created at ${realPath}, which ${reason}. The destination was redirected after it had been checked.`);",
+  to: "    if (reason) throw new Error(`Workspace migration cleanup refused a path it does not own: ${target} ${reason}.`);\n"
+    + "    entries.push({\n"
+    + "      kind, path: target, realPath, realParent,\n"
+    + '      dev: identity.dev, ino: identity.ino, escaped: false, reason: "",\n'
+    + "    });",
+}];
+
+/* Runs the ancestor swap against whichever source is given and reports what was left
+   behind. Nothing here races: the topology is changed between the two calls. */
+function escapeRun(source, label) {
+  const helpers = slice(source, "function insideDirectory(", "function workspaceStatus(",
+    "{ createdPathLedger, claimDirectory }", `${label}#ledger`);
+  const publish = slice(source, "function atomicWriteJson(", "/* ---- project save revision",
+    "{ atomicWriteJson }", `${label}#publish`).atomicWriteJson;
+
+  const home = fs.mkdtempSync(path.join(TEMP, "escape-" + label + "-"));
+  const workspace = path.join(home, "source"), dest = path.join(home, "dest");
+  fs.mkdirSync(workspace); fs.mkdirSync(dest);
+  const sink = path.join(workspace, "sink"); fs.mkdirSync(sink);
+  const ledger = helpers.createdPathLedger({
+    realDestinationRoot: fs.realpathSync.native(dest), realSourceRoot: fs.realpathSync.native(workspace),
+  });
+  const slugDirectory = path.join(dest, "alpha");
+  assert.strictEqual(helpers.claimDirectory(slugDirectory).created, true);
+  ledger.directory(slugDirectory);
+
+  fs.rmdirSync(slugDirectory);
+  fs.symlinkSync(sink, slugDirectory, "junction");
+  publish(path.join(slugDirectory, "project.json"), { migrated: true }, { backup: false, exclusive: true });
+  const escapedFile = path.join(sink, "project.json");
+  assert.strictEqual(fs.existsSync(escapedFile), true, `${label}: the fixture must actually escape`);
+
+  let admitted = true;
+  try { ledger.file(path.join(slugDirectory, "project.json")); } catch { admitted = false; }
+  const receipts = [...ledger.receipts()];
+  const rollback = ledger.unwind();
+  return { escapedFile, admitted, receipts, rollback, orphaned: fs.existsSync(escapedFile) };
+}
+
+function escapedOwnershipControl() {
+  const shipped = escapeRun(SHIPPED, "shipped");
+  assert.strictEqual(shipped.receipts.length, 2,
+    "the shipped build keeps the proof it created the escaped object: " + JSON.stringify(shipped.receipts));
+  assert.strictEqual(shipped.receipts[1].escaped, true, "marked, not discarded");
+  assert.strictEqual(shipped.orphaned, false, "and cleanup removes it");
+  assert.strictEqual(shipped.rollback.escaped.length, 1);
+  assert.strictEqual(shipped.rollback.escaped[0].removed, true);
+
+  const mutated = escapeRun(applyMutations(SHIPPED, OWNERSHIP_DISCARDED_ON_ESCAPE), "mutated");
+  assert.strictEqual(mutated.receipts.length, 1,
+    "throwing before recording loses the receipt: " + JSON.stringify(mutated.receipts));
+  assert.strictEqual(mutated.orphaned, true,
+    "and the object this attempt provably created is orphaned where it landed");
+  assert.deepStrictEqual([...(mutated.rollback.escaped || [])], [],
+    "with nothing in the report to say it is there");
+}
+
+/* ==========================================================================
+   NC-F11-8 — the exclusive publish, behaviourally.
+
+   Until now this was pinned only by a source-text assertion, and on Windows that
+   gap is invisible: renameSync also fails EPERM on a dangling reparse point, so the
+   suite's own blocker fixtures cannot tell an exclusive publish from an overwriting
+   one. The discriminating fixture is a destination document that is simply THERE.
+   ========================================================================== */
+
+function publishFrom(source, label) {
+  return slice(source, "function atomicWriteJson(", "/* ---- project save revision",
+    "{ atomicWriteJson }", label).atomicWriteJson;
+}
+
+function exclusivePublishControl() {
+  const home = fs.mkdtempSync(path.join(TEMP, "publish-"));
+  const occupied = (name) => {
+    const dir = path.join(home, name); fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, "project.json");
+    fs.writeFileSync(file, "ANOTHER WRITER'S DOCUMENT");
+    return { dir, file };
+  };
+
+  /* Shipped: a destination document that already exists is never replaced, and the
+     failed publish leaves no temp behind. */
+  const shippedTarget = occupied("shipped");
+  let refused = null;
+  try { publishFrom(SHIPPED, "shipped#publish")(shippedTarget.file, { mine: true }, { backup: false, exclusive: true }); }
+  catch (error) { refused = error; }
+  assert(refused, "the shipped publish must refuse an occupied destination");
+  assert.strictEqual(refused.code, "EEXIST", refused.message);
+  assert.strictEqual(fs.readFileSync(shippedTarget.file, "utf8"), "ANOTHER WRITER'S DOCUMENT",
+    "and must not have overwritten it");
+  assert.deepStrictEqual(fs.readdirSync(shippedTarget.dir), ["project.json"],
+    "and must not leave a temp beside it");
+
+  /* Shipped: a dangling reparse point at the destination is refused rather than
+     followed, and what it points at is never brought into existence. */
+  const reparseDir = path.join(home, "reparse"); fs.mkdirSync(reparseDir, { recursive: true });
+  const reparse = path.join(reparseDir, "project.json"), pointsAt = path.join(reparseDir, "no-such-target");
+  fs.symlinkSync(pointsAt, reparse, "junction");
+  let followed = null;
+  try { publishFrom(SHIPPED, "shipped#reparse")(reparse, { mine: true }, { backup: false, exclusive: true }); }
+  catch (error) { followed = error; }
+  assert(followed, "the shipped publish must refuse a dangling reparse point");
+  assert.strictEqual(fs.existsSync(pointsAt), false, "and must not create what it points at");
+  assert.strictEqual(fs.lstatSync(reparse).isSymbolicLink(), true, "the reparse point itself is untouched");
+  assert.deepStrictEqual(fs.readdirSync(reparseDir), ["project.json"], "and no temp survives");
+
+  /* Mutated: drop the exclusivity and the guarantee goes with it. */
+  const mutatedTarget = occupied("mutated");
+  const mutated = publishFrom(applyMutations(SHIPPED, [{
+    from: "      fs.copyFileSync(temp, file, fs.constants.COPYFILE_EXCL);",
+    to: "      fs.copyFileSync(temp, file);",
+  }]), "mutated#publish");
+  mutated(mutatedTarget.file, { mine: true }, { backup: false, exclusive: true });
+  assert.notStrictEqual(fs.readFileSync(mutatedTarget.file, "utf8"), "ANOTHER WRITER'S DOCUMENT",
+    "a non-exclusive publish destroys a document it was never allowed to touch");
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(mutatedTarget.file, "utf8")), { mine: true },
+    "replacing it with its own");
+}
+
+/* ==========================================================================
    RUN
    ========================================================================== */
 
@@ -524,6 +742,9 @@ function creationOwnershipControl() {
     ["NC-F11-3b", "ledger containment rule removed", containmentControl],
     ["NC-F11-4 ", "lexical containment restored — writes into the source workspace", junctionControl],
     ["NC-F11-5 ", "creation ownership inferred instead of proved", creationOwnershipControl],
+    ["NC-F11-6 ", "EPERM read as occupied — a junctioned source project vanishes silently", epermAsSkipControl],
+    ["NC-F11-7 ", "ownership discarded when a creation escapes — the object is orphaned", escapedOwnershipControl],
+    ["NC-F11-8 ", "project document publish not exclusive — an existing document is destroyed", exclusivePublishControl],
   ]) {
     try { await fn(); caught += 1; console.log(`  caught     ${id}  ${title}`); }
     catch (error) { broken += 1; console.log(`  BROKEN     ${id}  ${title}\n             ${error.message}`); }

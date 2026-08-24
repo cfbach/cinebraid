@@ -108,6 +108,16 @@ function copyMissingTree(source, destination, ledger = null) {
   let copied = 0, skipped = 0;
   for (const entry of fs.readdirSync(source, { withFileTypes: true })) {
     const src = path.join(source, entry.name), dest = path.join(destination, entry.name);
+    /* Classified from the Dirent, at every depth. A migration tree member is a real
+       directory or a regular file and nothing else; a shortcut, a device, a pipe or
+       a socket is material this migration cannot carry, and it is named rather than
+       passed over. Silently skipping it is how a source project represented through
+       a junction turned into a completed move with the project missing.
+
+       Scoped to the migration. The other caller of this function is assisted media
+       sync, which is not a migration, has never had a ledger, and is not what this
+       slice is correcting — it keeps the behaviour it shipped with. */
+    if (ledger && !entry.isDirectory() && !entry.isFile()) throw unsupportedSourceEntry(src, entry);
     if (entry.isDirectory()) {
       const nested = copyMissingTree(src, dest, ledger);
       copied += nested.copied; skipped += nested.skipped;
@@ -152,6 +162,19 @@ function insideDirectory(root, candidate) {
   if (!rel) return false; /* the directory itself is not inside itself */
   if (path.isAbsolute(rel)) return false; /* a different volume or share */
   return rel !== ".." && !rel.startsWith(".." + path.sep) && !rel.startsWith("../");
+}
+/* What a directory entry actually is, in the words a refusal can use. Windows
+   reports a junction as a symbolic link, which is the answer we want: it is a
+   shortcut, and this migration follows shortcuts in neither direction. */
+function direntKind(entry) {
+  if (entry.isSymbolicLink()) return "a shortcut to somewhere else";
+  if (entry.isBlockDevice() || entry.isCharacterDevice()) return "a device";
+  if (entry.isFIFO()) return "a pipe";
+  if (entry.isSocket()) return "a socket";
+  return "neither an ordinary file nor a folder";
+}
+function unsupportedSourceEntry(source, entry) {
+  return new Error(`Workspace migration stopped at ${source}, because it is ${direntKind(entry)} and cannot be copied. Nothing is copied through a shortcut, so this has to be resolved before the workspace can move.`);
 }
 /* ---- physical, not lexical --------------------------------------------------
 
@@ -226,8 +249,37 @@ function destinationChild(realDestinationRoot, realSourceRoot, name) {
      B. the object still physically sits inside the destination root and outside the
         source root — its real parent still resolves where it did.
 
-   If either has changed since creation, the object is left alone and reported. A
-   race is not a licence to delete; an owned leftover is the cheaper mistake. */
+   If A has changed since creation, the object is left alone and reported. A race is
+   not a licence to delete; an owned leftover is the cheaper mistake.
+
+   ---- what this can and cannot promise ------------------------------------------
+
+   Every creation here goes through a path-based syscall, and on Windows Node offers
+   no handle-relative form of any of them — no mkdirat, no openat, and no way to
+   refuse to traverse a reparse point that appears in the middle of a path. So a
+   local actor with write access to the destination CAN replace an ancestor between
+   the moment it was checked and the moment the creation beneath it runs, and the
+   creation will follow the replacement. That class is not preventable from here and
+   is not claimed to be.
+
+   What IS guaranteed, and is what the alpha contract rests on:
+
+     * Nothing pre-existing is overwritten or deleted. Every creation primitive fails
+       rather than replaces — mkdir without `recursive`, COPYFILE_EXCL for both the
+       tree copy and the document publish — so an escaped write can only ever CREATE.
+     * A pre-existing reparse point anywhere relevant is refused outright, in the
+       source tree and at every destination ancestor this migration touches.
+     * Anything this migration exclusively created, it owns — including an object
+       that turned out to land somewhere unexpected. Placement decides whether the
+       migration SUCCEEDS; it never decides ownership. An escaped creation is
+       detected, marked, the migration fails, and cleanup removes exactly that object
+       by filesystem identity at the location it really occupies.
+     * The actor's own junction is never deleted, never followed at delete time, and
+       nothing is ever removed recursively.
+     * No source workspace data is deleted by migration under any outcome.
+
+   The residual is honest and stated: this is detection plus owned cleanup, not
+   prevention. */
 function createdPathLedger({ realDestinationRoot, realSourceRoot }) {
   const entries = [];
   /* lstat, so a reparse point is measured as itself rather than as its target, and
@@ -235,7 +287,10 @@ function createdPathLedger({ realDestinationRoot, realSourceRoot }) {
      the plain-number form silently rounds and two distinct objects compare equal. */
   function identify(target) {
     const stats = fs.lstatSync(target, { bigint: true });
-    return { dev: String(stats.dev), ino: String(stats.ino), symbolic: stats.isSymbolicLink() };
+    return {
+      dev: String(stats.dev), ino: String(stats.ino),
+      symbolic: stats.isSymbolicLink(), directory: stats.isDirectory(),
+    };
   }
   function contained(target, realParent) {
     if (!insideRealDirectory(realDestinationRoot, target)) return "is not inside the destination workspace";
@@ -245,14 +300,40 @@ function createdPathLedger({ realDestinationRoot, realSourceRoot }) {
       return "physically resides outside the destination workspace";
     return "";
   }
-  /* Only ever called from the success branch of an exclusive creation. */
+  /* ONLY EVER CALLED FROM THE SUCCESS BRANCH OF AN EXCLUSIVE CREATION. That is the
+     whole basis of ownership and the reason this function may record a receipt for an
+     object sitting somewhere unexpected: the caller has already proved, by a syscall
+     that fails rather than overwrites, that this object did not exist a moment ago
+     and that this call is what brought it into being. F11-S pins every call site.
+
+     Placement and ownership are SEPARATE questions, and the previous shape conflated
+     them: it threw here when the object turned out not to sit where it should, which
+     discarded the proof that this migration had created it. The object could then be
+     neither owned nor cleaned up, and stayed where it landed. Now an unexpected
+     physical location marks the receipt `escaped`, fails the migration, and leaves
+     cleanup able to remove exactly what we made.
+
+     One case genuinely is not ours: a reparse point. mkdir and an exclusive copy both
+     create real objects, so if a shortcut occupies the path now, our object has been
+     replaced and whatever is there belongs to somebody else. */
   function admit(kind, candidate) {
     const target = path.resolve(candidate);
     const realParent = realDirectory(path.dirname(target));
     const identity = identify(target);
-    const reason = identity.symbolic ? "is a shortcut rather than something this migration made" : contained(target, realParent);
-    if (reason) throw new Error(`Workspace migration cleanup refused a path it does not own: ${target} ${reason}.`);
-    entries.push({ kind, path: target, realParent, dev: identity.dev, ino: identity.ino });
+    if (identity.symbolic)
+      throw new Error(`Workspace migration cleanup refused a path it does not own: ${target} is a shortcut rather than something this migration made.`);
+    /* Where the bytes REALLY went. For an escaped object this is the only path
+       cleanup may use: the name it was created under now leads through somebody
+       else's reparse point, and following that at delete time would remove whatever
+       sits at the far end today rather than the object this attempt made. */
+    const realPath = path.join(realParent, path.basename(target));
+    const reason = contained(target, realParent);
+    entries.push({
+      kind, path: target, realPath, realParent,
+      dev: identity.dev, ino: identity.ino, escaped: Boolean(reason), reason,
+    });
+    if (reason)
+      throw new Error(`Workspace migration stopped because ${target} was physically created at ${realPath}, which ${reason}. The destination was redirected after it had been checked.`);
   }
   return {
     file: (value) => admit("file", value),
@@ -280,34 +361,55 @@ function createdPathLedger({ realDestinationRoot, realSourceRoot }) {
        inside it. Directories go through rmdir, NOT a recursive remove: a directory
        still holding something this attempt did not create survives and is reported. */
     unwind() {
-      const removed = [], leftover = [], errors = [];
+      const removed = [], leftover = [], errors = [], escaped = [];
       for (let index = entries.length - 1; index >= 0; index -= 1) {
-        const entry = entries[index], target = entry.path;
+        const entry = entries[index];
+        /* An escaped object is removed where it PHYSICALLY sits, never through the
+           name it was created under. That name now runs through somebody else's
+           reparse point; following it would delete whatever is at the far end today,
+           and the reparse point itself is theirs and is never touched. */
+        const target = entry.escaped ? entry.realPath : entry.path;
+        let cleared = false;
         try {
-          let identity;
+          let identity = null;
           try { identity = identify(target); }
           catch (error) {
-            if (error?.code === "ENOENT") continue; /* already gone; nothing to answer for */
-            throw error;
+            if (error?.code !== "ENOENT") throw error;
+            cleared = true; /* already gone; nothing to answer for */
           }
-          if (identity.symbolic)
-            throw new Error("a shortcut now occupies this path, so it is no longer the object this migration created");
-          if (identity.dev !== entry.dev || identity.ino !== entry.ino)
-            throw new Error("this is no longer the same filesystem object this migration created");
-          const realParent = realDirectory(path.dirname(target));
-          if (!sameRealPath(realParent, entry.realParent))
-            throw new Error("this path no longer resolves to the location it was created in");
-          const reason = contained(target, realParent);
-          if (reason) throw new Error(`refused: it ${reason}`);
-          if (entry.kind === "file") fs.unlinkSync(target);
-          else fs.rmdirSync(target);
-          removed.push(target);
+          if (identity) {
+            if (identity.symbolic)
+              throw new Error("a shortcut now occupies this path, so it is no longer the object this migration created");
+            if (identity.dev !== entry.dev || identity.ino !== entry.ino)
+              throw new Error("this is no longer the same filesystem object this migration created");
+            if (identity.directory !== (entry.kind === "dir"))
+              throw new Error("this is no longer the kind of object this migration created");
+            /* Containment is a condition of SUCCESS, not of ownership, so it is
+               re-checked only for an object that was in bounds when it was made. An
+               escaped receipt has already been judged out of bounds; requiring it
+               again would be requiring the object to be somewhere it provably is
+               not, and would strand exactly the artifact that most needs removing.
+               Its authority is identity at the recorded real path, and that alone. */
+            if (!entry.escaped) {
+              const realParent = realDirectory(path.dirname(target));
+              if (!sameRealPath(realParent, entry.realParent))
+                throw new Error("this path no longer resolves to the location it was created in");
+              const reason = contained(target, realParent);
+              if (reason) throw new Error(`refused: it ${reason}`);
+            }
+            if (entry.kind === "file") fs.unlinkSync(target);
+            else fs.rmdirSync(target);
+            removed.push(target);
+            cleared = true;
+          }
         } catch (error) {
           leftover.push(target);
           errors.push({ path: target, code: String(error?.code || ""), message: error?.message || "Cleanup failed." });
         }
+        if (entry.escaped)
+          escaped.push({ path: entry.path, realPath: entry.realPath, reason: entry.reason, removed: cleared });
       }
-      return { attempted: true, complete: leftover.length === 0, removed: removed.length, leftover, errors };
+      return { attempted: true, complete: leftover.length === 0, removed: removed.length, leftover, errors, escaped };
     },
   };
 }
@@ -321,13 +423,26 @@ function claimDirectory(target) {
     throw error;
   }
 }
+/* Only EEXIST means "a file is already there". Nothing else does.
+
+   The earlier form also treated EPERM as occupied, and on Windows that is four
+   different situations wearing one code: the destination is a directory, the
+   destination is a reparse point live or dangling, AND — the one that made this a
+   data defect — the SOURCE could not be copied at all, which is what a junction or
+   any non-regular source entry answers. Counting that as `skipped` turned a source
+   project this migration could not carry into a silent omission, reported as a
+   completed move with the project simply absent from the new workspace.
+
+   Callers now prove the source is a regular file through its Dirent before calling,
+   so an EPERM here can only be about the destination: something occupies the name
+   that is not an ordinary file, or the path is redirected. That is a topology
+   problem, it is named, and it fails the migration rather than being counted. */
 function claimCopiedFile(source, target) {
   try { fs.copyFileSync(source, target, fs.constants.COPYFILE_EXCL); return { created: true }; }
   catch (error) {
-    /* EPERM is what Windows answers when the destination is a reparse point. Both it
-       and EEXIST mean the same thing here: something is already there, it is not
-       ours, and it is not to be written through or counted. */
-    if (error?.code === "EEXIST" || error?.code === "EPERM") return { created: false };
+    if (error?.code === "EEXIST") return { created: false };
+    if (error?.code === "EPERM")
+      throw new Error(`Workspace migration could not create ${target} as an ordinary file, because something that is not one already occupies that name or the path is redirected.`);
     throw error;
   }
 }
@@ -352,7 +467,31 @@ function preflightWorkspaceMigration(previousRoot, nextRoot) {
       "The new project folder is inside the current one, so migrating would copy the workspace into itself.",
       { from: realSourceRoot, to: realDestinationRoot });
 
-  const sourceProjects = fs.readdirSync(realSourceRoot, { withFileTypes: true })
+  /* Top-level classification, before a plan exists. This enumeration used to filter
+     on `entry.isDirectory()` alone, and a reparse point answers false to that — so a
+     project folder represented through a junction never entered the plan at all. It
+     was not refused and it was not reported; it simply was not there, and the
+     migration went on to answer 200 with the project absent from the new workspace.
+
+     A project may not disappear from planning for being a shortcut. Anything at this
+     level that is neither a regular file nor a real directory is named and refused,
+     because we cannot tell from here whether it stands for project material and must
+     not guess that it does not. */
+  const sourceEntries = fs.readdirSync(realSourceRoot, { withFileTypes: true });
+  const unsupported = sourceEntries.filter((entry) => !entry.isDirectory() && !entry.isFile()).map((entry) => ({
+    name: entry.name,
+    reason: entry.isSymbolicLink() ? "REDIRECTED" : "SPECIAL",
+    detail: `This entry is ${direntKind(entry)}, so the migration can neither carry it nor see what it stands for.`,
+  }));
+  /* The message names them. A refusal a person cannot act on is barely better than
+     the silence it replaced, and the settings panel shows this string and not the
+     `problems` list beside it. */
+  if (unsupported.length)
+    return refuse(409, "WORKSPACE_MIGRATION_SOURCE_ENTRY_UNSUPPORTED",
+      `Workspace migration was refused because these entries in the current project folder are not ordinary files or folders: ${unsupported.slice(0, 5).map((row) => row.name).join(", ")}${unsupported.length > 5 ? ", and others" : ""}.`,
+      { problems: unsupported });
+
+  const sourceProjects = sourceEntries
     .filter((entry) => entry.isDirectory() && fs.existsSync(path.join(realSourceRoot, entry.name, "project.json")))
     .map((entry) => entry.name);
 
@@ -426,9 +565,19 @@ function workspaceMigrationFailure(res, error, rollback) {
     message: error?.message || "Could not apply workspace settings",
   };
   const body = { ok: false, ...failure, error: failure.message, migration: { movedRoot: false, rollback } };
+  /* An escaped creation is the one outcome a user cannot infer from the rest of the
+     message, so it is said plainly: something this attempt made landed outside the
+     new project folder, and here is whether it is still there. */
+  const escaped = Array.isArray(rollback.escaped) ? rollback.escaped : [];
+  if (escaped.length) {
+    body.escapedCreations = escaped;
+    body.error = `${body.error} ${escaped.every((row) => row.removed)
+      ? `What this attempt created outside the new project folder has been removed.`
+      : `Some of what this attempt created outside the new project folder could not be removed.`}`;
+  }
   if (!rollback.complete) {
     body.cleanupIncomplete = true;
-    body.error = `${failure.message} Removing the copies this attempt made at the new location did not finish, so ${rollback.leftover.length} of them are still there.`;
+    body.error = `${body.error} Removing the copies this attempt made at the new location did not finish, so ${rollback.leftover.length} of them are still there.`;
   }
   return res.status(failure.status || 400).json(body);
 }
@@ -816,13 +965,24 @@ function projectFailurePayload(inspected) {
   };
 }
 
-/* `exclusive` publishes the finished bytes with link(), which fails EEXIST rather
+/* `exclusive` publishes the finished bytes with COPYFILE_EXCL, which fails rather
    than replacing whatever is at `file`. rename() cannot do this: it overwrites in
    silence, so a writer that checked the destination was free a moment earlier will
    destroy a document another process created in between and never learn it did.
    That gap is only survivable for a write class that is allowed to create and
    nothing else, which is exactly what CREATE_ONLY means — and it is what lets a
-   migration state that a destination document is its own to clean up. */
+   migration state that a destination document is its own to clean up.
+
+   Deliberately a copy and NOT link(). A hard link is equally exclusive, but it does
+   not exist on exFAT or FAT32 — the filesystems an external drive arrives formatted
+   with, and therefore a destination a user moving their workspace is likely to pick.
+   Publishing with link() there fails outright, so migration to that drive becomes
+   impossible; COPYFILE_EXCL needs nothing but ordinary exclusive file creation.
+
+   The temp file is spoil once the copy has landed, so removing it is BEST EFFORT.
+   It must never be able to fail the publish: `file` exists at that point, the caller
+   is about to be told this call created it, and a leftover `.tmp` beside it is
+   harmless where a false "not created" would strand a document nothing owns. */
 function atomicWriteJson(file, value, { backup = true, exclusive = false } = {}) {
   const payload = JSON.stringify(value, null, 2),
     dir = path.dirname(file),
@@ -840,8 +1000,10 @@ function atomicWriteJson(file, value, { backup = true, exclusive = false } = {})
     fs.closeSync(fd);
     fd = undefined;
     if (backup && fs.existsSync(file)) fs.copyFileSync(file, file + ".bak");
-    if (exclusive) { fs.linkSync(temp, file); fs.unlinkSync(temp); }
-    else fs.renameSync(temp, file);
+    if (exclusive) {
+      fs.copyFileSync(temp, file, fs.constants.COPYFILE_EXCL);
+      try { fs.unlinkSync(temp); } catch { /* published; the leftover temp is not the caller's problem */ }
+    } else fs.renameSync(temp, file);
   } catch (error) {
     if (fd !== undefined) {
       try { fs.closeSync(fd); } catch {}
