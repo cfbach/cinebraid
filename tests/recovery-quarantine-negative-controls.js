@@ -6,6 +6,8 @@
  * which claims to catch it actually goes red. A control that only proves an
  * assertion fires has proved nothing about whether the danger was real.
  *
+ * NC-RQ-0  the mutator itself: every anchor these controls use resolves exactly
+ *          once whether the checkout is LF, CRLF or lone-CR.
  * NC-RQ-1  remove the quarantine write-block: an ordinary save writes the unsafe project.
  * NC-RQ-2  allow a normal project install after failed validation: the unsafe project
  *          enters the writable UI.
@@ -17,15 +19,68 @@
  * Nothing on disk is touched. Provider/model calls: 0.
  */
 const assert = require("assert");
+const fs = require("fs");
+const path = require("path");
 const { render, buildFixture, HARNESS_PROJECT_REVISION } = require("./render-harness");
 const { QUARANTINE_FAILURE_KEYS } = require("./recovery-quarantine");
 
+const PUBLIC = path.join(__dirname, "..", "public");
 const SLUG = "control-broken";
 const results = [];
 function pass(id, what) {
   results.push(id);
   console.log(`[NC-RQ] ${id} PASS — ${what}`);
 }
+
+/* THE LINE ENDING IS A PROPERTY OF THE CHECKOUT, NOT OF THE CODE.
+ *
+ * This repository is `* text=auto` with `core.autocrlf=true`, so public/app.js is
+ * stored with LF and arrives on a Windows working tree with CRLF — while the same
+ * commit on Linux, in a release archive, or in a working tree an editor has already
+ * normalised, arrives with LF. A mutation anchor written with "\n" therefore matched
+ * in one checkout of the identical commit and matched NOTHING in another.
+ *
+ * That is the worst possible failure mode for a negative control. A control whose
+ * anchor silently stops matching does not fail quietly — it aborts before it has
+ * tested anything, and the suites after it in `check:ci` never run at all. And an
+ * anchor that failed OPEN instead would be worse still: the control would report
+ * that the product survived a mutation that was never applied.
+ *
+ * So both sides are normalised to one internal convention before anything is counted
+ * or replaced, and neither side is allowed to depend on which checkout this is. */
+const NEWLINE = /\r\n|\r/g;
+function normalizeNewlines(text) {
+  return String(text).replace(NEWLINE, "\n");
+}
+
+/* EVERY MUTATION THIS SUITE MAKES, IN ONE PLACE.
+   Hoisted so NC-RQ-0 can enumerate them: a portability proof that only checked the
+   anchors it happened to know about would go green the day someone adds a fifth. */
+const EDITS = {
+  "NC-RQ-1": [
+    { label: "queueProjectSave quarantine guard", file: "app.js", from: "    if (PROJECT_QUARANTINE) return;", to: "    if (false) return;" },
+    { label: "dirty() quarantine guard", file: "app.js", from: `  if (PROJECT_QUARANTINE) return setSaveState("error", "Not saved — this project is in Recovery mode");`, to: "  if (false) return;" },
+    { label: "entry write-block", file: "app.js", from: "  blockSaving();\n  /* THE INDICATOR'S OWN PENDING WORK", to: "  /* THE INDICATOR'S OWN PENDING WORK" },
+  ],
+  "NC-RQ-2": [
+    { label: "revalidation gate", file: "app.js", from: "  if (PROJECT_QUARANTINE && projectReplacementRefusal(prepared)) return false;", to: "  if (false) return false;" },
+  ],
+  "NC-RQ-3": [
+    { label: "deferred-work cancellation", file: "app.js", from: "  for (const timer of PENDING_SAVE_TRIGGERS) clearTimeout(timer);\n  PENDING_SAVE_TRIGGERS.clear();", to: "  /* control: deferred work survives */" },
+    { label: "queueProjectSave quarantine guard", file: "app.js", from: "    if (PROJECT_QUARANTINE) return;", to: "    if (false) return;" },
+    { label: "SAVE_BLOCKED latch", file: "app.js", from: "  SAVE_BLOCKED = true;\n  clearTimeout(saveTimer);", to: "  SAVE_BLOCKED = false;\n  clearTimeout(saveTimer);" },
+  ],
+  /* The shape of the mistake: a screen changed, so the mode must be over. */
+  "NC-RQ-4": [
+    {
+      label: "clear Recovery mode from navigation",
+      file: "app.js",
+      from: "async function route(recoveryAttempt = false) {\n  if (!P) return;",
+      to: "async function route(recoveryAttempt = false) {\n  PROJECT_QUARANTINE = null;\n  if (document.body?.dataset) delete document.body.dataset.projectQuarantine;\n  if (!P) return;",
+    },
+  ],
+};
+const ALL_EDITS = Object.values(EDITS).flat();
 
 /* The refusal the server sends for an unparseable project. Its field list is
    asserted against the running server in tests/recovery-quarantine.js A2, so this
@@ -51,11 +106,21 @@ assert.deepStrictEqual(
   "the control's payload must be the shape the server actually sends",
 );
 
-/* A mutation that does not apply is a control that ran against the shipped code
-   and reported success. Every edit is required to match exactly once, and the
-   tally is checked after the render rather than inside it. */
+/* A mutation that does not apply is a control that ran against the shipped code and
+   reported success, so every way that can happen is loud:
+
+     BROKEN      an anchor that matches zero times, or more times than expected — the
+                 code moved under the control and it no longer describes anything.
+     NOT ARMED   an anchor that matched but changed nothing, because `from` and `to`
+                 became the same text.
+     MISSED      an edit whose file never came past, so it was never applied at all;
+                 verify() catches that after the render rather than inside it.
+
+   The counting and the replacement both happen on normalised text, and so does the
+   anchor, so none of the three answers can change with the checkout. */
 function mutator(edits) {
   const applied = new Map(edits.map((edit) => [edit.label, 0]));
+  const targets = new Set(edits.map((edit) => edit.file));
   return {
     applied,
     verify() {
@@ -63,12 +128,19 @@ function mutator(edits) {
         assert.strictEqual(count, 1, `the control did not apply its mutation "${label}" — it ran against the shipped code`);
     },
     fn(file, source) {
-      let out = source;
+      /* A file this control does not touch keeps its bytes exactly as the checkout
+         has them. Only what is being mutated is normalised, and only so that the
+         mutation can be found. */
+      if (!targets.has(file)) return source;
+      let out = normalizeNewlines(source);
       for (const edit of edits) {
         if (edit.file !== file) continue;
-        const occurrences = out.split(edit.from).length - 1;
+        const from = normalizeNewlines(edit.from), to = normalizeNewlines(edit.to);
+        const occurrences = out.split(from).length - 1;
         assert.strictEqual(occurrences, 1, `"${edit.label}" must match exactly once in ${file}, found ${occurrences}`);
-        out = out.replace(edit.from, edit.to);
+        const before = out;
+        out = out.replace(from, to);
+        assert.notStrictEqual(out, before, `"${edit.label}" matched but changed nothing — the control is not armed`);
         applied.set(edit.label, applied.get(edit.label) + 1);
       }
       return out;
@@ -81,7 +153,7 @@ function recorder() {
   return {
     calls,
     writes: () => calls.filter((call) =>
-      /^(PUT|POST)$/.test(call.method)
+        /^(PUT|POST)$/.test(call.method)
       && /\/api\/(project|projects\/[^/]+\/(project|canon-transition))$/.test(call.url)),
     hook: (url, options) => {
       calls.push({ url, method: String(options?.method || "GET").toUpperCase(), body: options?.body || "" });
@@ -132,13 +204,101 @@ async function mustFail(what, check) {
   return threw;
 }
 
+/* NC-RQ-0 — THE CONTROLS' OWN PORTABILITY, PROVED WHEREVER THIS RUNS.
+ *
+ * Three checkout shapes are built in memory from the real public/app.js and every
+ * anchor the four controls use is resolved against each of them. Nothing on disk is
+ * touched and no checkout is required to be in any particular state, so this proof
+ * is the same proof on a CRLF Windows working tree, an LF one, and CI. */
+function ncrq0MutatorPortability() {
+  const raw = fs.readFileSync(path.join(PUBLIC, "app.js"), "utf8");
+  const lf = normalizeNewlines(raw);
+  const crlf = lf.replace(/\n/g, "\r\n");
+  const cr = lf.replace(/\n/g, "\r");
+  assert.ok(lf.includes("\n"), "the fixture source must have line breaks to be worth normalising");
+  assert.strictEqual(normalizeNewlines(crlf), lf, "CRLF must normalise to the same text as LF");
+  assert.strictEqual(normalizeNewlines(cr), lf, "a lone CR must normalise to the same text as LF");
+
+  const anchors = ALL_EDITS.filter((edit) => edit.file === "app.js");
+  assert.ok(anchors.length >= 6, `the portability proof must cover every anchor, found ${anchors.length}`);
+  const multiline = anchors.filter((edit) => edit.from.includes("\n"));
+  assert.ok(multiline.length >= 3, `the controls must still contain the multiline anchors this proof exists for, found ${multiline.length}`);
+
+  /* THE HAZARD, DEMONSTRATED. Without normalisation a multiline anchor finds nothing
+     at all in a CRLF checkout — not a wrong count, zero — which is what aborted this
+     suite and everything behind it in check:ci on an ordinary Windows working tree. */
+  for (const edit of multiline) {
+    assert.strictEqual(
+      crlf.split(edit.from).length - 1, 0,
+      `"${edit.label}": the un-normalised multiline anchor must be shown to find nothing under CRLF`,
+    );
+    assert.strictEqual(
+      lf.split(edit.from).length - 1, 1,
+      `"${edit.label}": ...and to find exactly one under LF, which is why this was invisible`,
+    );
+  }
+
+  /* THE FIX, DEMONSTRATED. Every anchor, single-line and multiline, resolves exactly
+     once in all three shapes once both sides are normalised. */
+  for (const [label, text] of [["LF", lf], ["CRLF", crlf], ["lone CR", cr]]) {
+    const normalized = normalizeNewlines(text);
+    for (const edit of anchors)
+      assert.strictEqual(
+        normalized.split(normalizeNewlines(edit.from)).length - 1, 1,
+        `${label}: "${edit.label}" must resolve exactly once after normalisation`,
+      );
+  }
+
+  /* AND THE REAL MUTATOR, END TO END, PER CONTROL, ON ALL THREE. One mutator with one
+     output — not a Windows branch and a Linux branch that happen to agree today. Each
+     control's own edit list is run, so this proves the thing each control actually
+     does rather than an arrangement of anchors no control uses. */
+  const SHAPES = [["LF", lf], ["CRLF", crlf], ["lone CR", cr]];
+  for (const [id, edits] of Object.entries(EDITS)) {
+    const outputs = SHAPES.map(([label, text]) => {
+      const control = mutator(edits);
+      const out = control.fn("app.js", text);
+      control.verify();
+      assert.notStrictEqual(out, normalizeNewlines(text), `${id} under ${label}: the mutator must actually change the source`);
+      return [label, out];
+    });
+    for (const [label, out] of outputs)
+      assert.strictEqual(out, outputs[0][1], `${id} under ${label}: the mutated source must be identical to the ${outputs[0][0]} result`);
+  }
+
+  /* A file the control does not target is handed back untouched, bytes and all. */
+  const untouched = mutator(EDITS["NC-RQ-2"]).fn("settings.js", crlf);
+  assert.strictEqual(untouched, crlf, "a file with no edits must be returned exactly as the checkout has it");
+
+  /* AND THE HONESTY PROPERTIES STILL BITE. Each of these is a way a control could
+     quietly stop testing anything, and each must throw. */
+  assert.throws(
+    () => mutator([{ label: "absent", file: "app.js", from: "this text is not in app.js at all", to: "x" }]).fn("app.js", crlf),
+    /must match exactly once in app\.js, found 0/,
+    "BROKEN: an anchor that matches nothing must fail loudly",
+  );
+  assert.throws(
+    () => mutator([{ label: "ambiguous", file: "app.js", from: "function ", to: "function " }]).fn("app.js", crlf),
+    /must match exactly once in app\.js, found (?:[2-9]|\d\d+)/,
+    "BROKEN: an anchor that matches more than once must fail loudly",
+  );
+  assert.throws(
+    () => mutator([{ label: "inert", file: "app.js", from: "  blockSaving();\r\n  /* THE INDICATOR'S OWN PENDING WORK", to: "  blockSaving();\n  /* THE INDICATOR'S OWN PENDING WORK" }]).fn("app.js", crlf),
+    /matched but changed nothing — the control is not armed/,
+    "NOT ARMED: an anchor whose replacement is the same text must fail loudly",
+  );
+  const missed = mutator(EDITS["NC-RQ-2"]);
+  assert.throws(
+    () => missed.verify(),
+    /did not apply its mutation "revalidation gate"/,
+    "MISSED: an edit whose file never came past must fail loudly",
+  );
+  pass("NC-RQ-0", "every anchor these controls use resolves exactly once under LF, CRLF and lone-CR, the real mutator produces byte-identical output from all three, an un-normalised multiline anchor is shown to find nothing under CRLF, and BROKEN / NOT ARMED / MISSED all still throw");
+}
+
 /* NC-RQ-1 — the quarantine write-block. */
 async function ncrq1() {
-  const control = mutator([
-    { label: "queueProjectSave quarantine guard", file: "app.js", from: "    if (PROJECT_QUARANTINE) return;", to: "    if (false) return;" },
-    { label: "dirty() quarantine guard", file: "app.js", from: `  if (PROJECT_QUARANTINE) return setSaveState("error", "Not saved — this project is in Recovery mode");`, to: "  if (false) return;" },
-    { label: "entry write-block", file: "app.js", from: "  blockSaving();\n  /* THE INDICATOR'S OWN PENDING WORK", to: "  /* THE INDICATOR'S OWN PENDING WORK" },
-  ]);
+  const control = mutator(EDITS["NC-RQ-1"]);
   const { view, log } = await quarantinedWindow({ mutate: control.fn });
   control.verify();
 
@@ -158,12 +318,22 @@ async function ncrq1() {
   view.context.dirty();
   const label = view.map.get("save-state").querySelector("span:last-child").textContent;
   await mustFail("the indicator names Recovery mode", () => assert.match(label, /Recovery mode/i));
+
+  /* The shipped build, same script: the same job reaches nothing. */
+  const shipped = await quarantinedWindow();
+  await shipped.view.context.queueProjectSave(saveJob());
+  assert.strictEqual(shipped.log.writes().length, 0, "the shipped build must write nothing");
+  shipped.view.context.dirty();
+  assert.match(
+    shipped.view.map.get("save-state").querySelector("span:last-child").textContent,
+    /Recovery mode/i,
+    "the shipped build must name Recovery mode",
+  );
   pass("NC-RQ-1", "with the write-block removed an ordinary save PUTs the unsafe project at its own quarantined slug, and the indicator stops naming Recovery mode");
 }
 
 /* NC-RQ-2 — installing a project the safety gate refused. */
 async function ncrq2() {
-  const gate = "  if (PROJECT_QUARANTINE && projectReplacementRefusal(prepared)) return false;";
   const unvalidated = {
     /* Exactly what a load of the broken project could hand a commit: the server
        answered, but with no revision this window could write against. */
@@ -185,7 +355,7 @@ async function ncrq2() {
   assert.strictEqual(shipped.view.context.captureProjectSave(), null, "the shipped build must install nothing");
   assert.strictEqual(shipped.view.document.body.dataset.projectQuarantine, SLUG);
 
-  const control = mutator([{ label: "revalidation gate", file: "app.js", from: gate, to: "  if (false) return false;" }]);
+  const control = mutator(EDITS["NC-RQ-2"]);
   const { view } = await quarantinedWindow({ mutate: control.fn });
   control.verify();
 
@@ -210,12 +380,7 @@ async function ncrq2() {
 
 /* NC-RQ-3 — deferred work armed before the transition. */
 async function ncrq3() {
-  const cancellation = "  for (const timer of PENDING_SAVE_TRIGGERS) clearTimeout(timer);\n  PENDING_SAVE_TRIGGERS.clear();";
-  const control = mutator([
-    { label: "deferred-work cancellation", file: "app.js", from: cancellation, to: "  /* control: deferred work survives */" },
-    { label: "queueProjectSave quarantine guard", file: "app.js", from: "    if (PROJECT_QUARANTINE) return;", to: "    if (false) return;" },
-    { label: "SAVE_BLOCKED latch", file: "app.js", from: "  SAVE_BLOCKED = true;\n  clearTimeout(saveTimer);", to: "  SAVE_BLOCKED = false;\n  clearTimeout(saveTimer);" },
-  ]);
+  const control = mutator(EDITS["NC-RQ-3"]);
   const { view, log } = await openWindow({ mutate: control.fn });
   control.verify();
   const context = view.context;
@@ -256,14 +421,7 @@ async function ncrq3() {
 
 /* NC-RQ-4 — leaving Recovery mode on UI state instead of revalidation. */
 async function ncrq4() {
-  /* The control clears the latch from navigation, which is the shape of the
-     mistake: a screen changed, so the mode must be over. */
-  const control = mutator([{
-    label: "clear Recovery mode from navigation",
-    file: "app.js",
-    from: "async function route(recoveryAttempt = false) {\n  if (!P) return;",
-    to: "async function route(recoveryAttempt = false) {\n  PROJECT_QUARANTINE = null;\n  if (document.body?.dataset) delete document.body.dataset.projectQuarantine;\n  if (!P) return;",
-  }]);
+  const control = mutator(EDITS["NC-RQ-4"]);
   const unvalidated = {
     available: true, project: buildFixture(), slug: SLUG, revision: "",
     scan: { characters: [], locations: [], props: [], audio: [], shots: {} },
@@ -317,12 +475,15 @@ async function main() {
   }, 180000);
   watchdog.unref?.();
   try {
+    /* First, because every control below is only worth what its anchors are worth. */
+    ncrq0MutatorPortability();
     await ncrq1();
     await ncrq2();
     await ncrq3();
     await ncrq4();
     console.log(
-      `Recovery / Quarantine V1 negative controls passed: ${results.length}/4 — each removed guarantee reproduced the real unsafe behaviour `
+      `Recovery / Quarantine V1 negative controls passed: ${results.length}/5 — the mutator resolves its anchors identically under LF, CRLF and lone-CR, `
+      + "and each removed guarantee reproduced the real unsafe behaviour "
       + "(a write at the quarantined slug, an unvalidated project installed as writable, deferred work firing after the transition, "
       + "and navigation ending the protected mode) and turned the corresponding assertion red. Provider/model calls: 0.",
     );
@@ -336,3 +497,5 @@ if (require.main === module)
     console.error(error.stack || error.message || error);
     process.exitCode = 1;
   });
+
+module.exports = { normalizeNewlines, EDITS };
