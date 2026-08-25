@@ -95,6 +95,8 @@
   const BIBLE_EXPORT_PRESETS = ["canon", "canon-appendix"];
   /* Why a canon item has no publishable prompt. Each is a different repair. */
   const BIBLE_REPRESENTATION_ABSENCES = ["no-candidate-record", "no-recorded-build", "build-unavailable", "no-prompt-recorded"];
+  /* What a canon item IS, so the sentence about it can use the right noun. */
+  const BIBLE_MEDIA_FORMS = ["image", "video", "audio"];
   const BIBLE_ENTITY_LISTS = ["characters", "locations", "props", "vehicles", "audio"];
   const APPENDIX_HEADING = "## SUPPORTING MATERIAL — NOT CANON";
 
@@ -204,6 +206,31 @@
     return { representation: null, absence: "build-unavailable" };
   }
 
+  /* ONE SENTENCE, WRITTEN ONCE.
+
+     `no-candidate-record`, `build-unavailable` and the rest are diagnostic codes:
+     precise, auditable, and not something a filmmaker should ever read. Every
+     surface that has to say "there is approved media here but we cannot tell you
+     what produced it" says it in these words, and the projection composes the
+     sentence rather than each renderer translating a code its own way. Four
+     surfaces used to answer this question and only two of them answered it at all. */
+  function mediaFormOf(fileName, fallback) {
+    const name = text(fileName).toLowerCase();
+    if (/\.(mp4|webm|mov|m4v)$/.test(name)) return "video";
+    if (/\.(wav|mp3|m4a|aac|ogg|flac)$/.test(name)) return "audio";
+    if (/\.(png|jpe?g|webp|gif|avif)$/.test(name)) return "image";
+    return BIBLE_MEDIA_FORMS.includes(text(fallback)) ? text(fallback) : "image";
+  }
+  function missingProvenanceNote(form) {
+    const noun = BIBLE_MEDIA_FORMS.includes(text(form)) ? text(form) : "image";
+    return `The prompt behind this approved ${noun} was not recorded.`;
+  }
+  /* Empty when there is a prompt to publish, or when there is no approved media to
+     be missing a prompt FOR — silence is only wrong where a claim was made. */
+  function representationNoteFor(hasMedia, representation, form) {
+    return hasMedia && !representation ? missingProvenanceNote(form) : "";
+  }
+
   /* ======================================================================== */
   /* 2. AUTHORITY — asked, never answered, here                               */
   /* ======================================================================== */
@@ -284,6 +311,7 @@
       const file = text(row.value);
       const item = visible(file);
       const resolved = approvedRepresentation(project, x, file);
+      const form = mediaFormOf(file, listName === "audio" ? "audio" : "image");
       states.push({
         id: text(row.stateId),
         name: text(row.stateName) || nameOfState(row.stateId),
@@ -293,9 +321,11 @@
         approvedFile: file,
         media: item,
         authority: facts,
+        form,
         package: resolved.representation,
         representationStatus: resolved.representation ? "current" : "absent",
         representationAbsence: resolved.absence,
+        representationNote: representationNoteFor(!!file, resolved.representation, form),
       });
       if (item && !media.some((m) => text(m.name) === text(item.name))) media.push(item);
     }
@@ -332,25 +362,31 @@
        swamp the one thing this section exists to say. The section means exactly
        one thing: MATERIAL THE CANON FILTER REMOVED, AND WHY. */
 
-    /* A hand-authored generation record enters canon only when the file it names is
-       one of this entity's canon files. Otherwise it describes something else. */
-    const canonFiles = new Set(states.map((state) => text(state.approvedFile)).filter(Boolean));
-    const namesCanon = (files) => text(files).split(/[,;\s]+/).filter(Boolean).some((name) => canonFiles.has(name));
-    const made = [];
+    /* `made[]` IS NEVER A PRODUCING PROMPT, and the reason is worth stating because
+       the first version of this file got it wrong in a way that reads as careful.
+
+       It filename-matched: a hand-authored record naming one of this entity's canon
+       files was promoted into the canon body as that file's provenance. So a record
+       saying `KAI_DEFAULT.png` could publish "Kai in a RED jumpsuit" beside the
+       candidate row's true "Kai in a clean work coat", and CANON ONLY carried BOTH.
+       Two current-canon prompts for one approved image, disagreeing.
+
+       A FILENAME IS NOT PROVENANCE. It is a string a person typed into a free-text
+       box next to a prompt they also typed; nothing checked that the generation
+       described is the generation that made those bytes. The producing prompt comes
+       from the same chain everything else uses — the approved candidate row and the
+       build it names — or it does not come at all.
+
+       These records are still kept. They are the filmmaker's own notes about how
+       work was made, and they go where non-canon material goes. */
     for (const entry of list(x.made).map(record)) {
       if (!text(entry.prompt)) continue;
-      if (namesCanon(entry.files)) {
-        made.push({ model: text(entry.model), files: text(entry.files), prompt: text(entry.prompt), date: text(entry.date) });
-        continue;
-      }
       appendix.push({
         material: "generation-record",
-        status: text(entry.files) ? "historic" : "draft",
+        status: "historic",
         label: text(entry.files) || "Unfiled generation record",
         detail: text(entry.prompt),
-        why: text(entry.files)
-          ? "A generation record for a file that is not this entity's approved canon."
-          : "A generation record that names no file.",
+        why: "A generation record somebody wrote by hand. It names a file, which is not proof it produced one.",
       });
     }
 
@@ -378,7 +414,6 @@
       driftNotes: text(x.driftNotes),
       media,
       continuityStates: states,
-      made,
       canonStateCount: states.length,
       appendix,
     };
@@ -408,6 +443,8 @@
           why: "A frame selection with no current approval behind it.",
         });
       }
+      const winner = receipt ? find(file) : null;
+      const form = mediaFormOf(file, "image");
       return {
         id: frameId,
         label,
@@ -415,11 +452,13 @@
         description: text(f.description),
         notes: text(f.notes),
         required: f.required !== false,
-        winner: receipt ? find(file) : null,
+        winner,
         authority: receipt ? authorityFacts(receipt, target) : null,
+        form,
         package: resolved.representation,
         representationStatus: resolved.representation ? "current" : "absent",
         representationAbsence: resolved.absence,
+        representationNote: representationNoteFor(!!winner, resolved.representation, form),
       };
     });
 
@@ -441,8 +480,34 @@
           why: "A motion selection with no current approval behind it.",
         });
       }
+      /* THE MOTION DRAFT IS NOT THE MOTION'S CANON, and it is one field wearing two
+         names: public/v607-composer.js writes `unit.motionPrompt = unit.note = value`
+         from the one direction editor, so both are the same unapproved generation
+         draft. The first version of this file copied it straight into the canon body
+         as `direction`, which meant a shot with ZERO receipts published a motion
+         prompt under a heading that says approved. Recency was gone and rawness had
+         taken its place.
+
+         What may be published is what published everything else: the recorded
+         producing representation of a CURRENT motion approval. The draft is kept,
+         subordinate, in supporting material — unless it is word for word the
+         approved prompt, in which case repeating it says nothing. */
+      const draft = text(c.motionPrompt) || text(c.note);
+      if (draft && draft !== text(record(resolved.representation).prompt)) {
+        appendix.push({
+          material: "motion-draft",
+          status: "draft",
+          label: `Motion ${label} direction`,
+          detail: draft,
+          why: receipt
+            ? "A motion direction draft. It is not the prompt that produced the approved output."
+            : "A motion direction draft. Nothing approved was made from it.",
+        });
+      }
       const fromFrame = keyframes.find((frame) => frame.id === text(c.fromFrame));
       const toFrame = keyframes.find((frame) => frame.id === text(c.toFrame));
+      const winner = receipt ? find(file) : null;
+      const form = mediaFormOf(file, "video");
       return {
         id: unitKey || `motion-${index + 1}`,
         label,
@@ -451,15 +516,20 @@
         from: text(record(fromFrame).label) || text(record(keyframes[0]).label),
         to: text(record(toFrame).label),
         dur: +c.dur || 0,
-        direction: text(c.motionPrompt) || text(c.note),
+        /* DIALOGUE AND VOICE NOTES STAY. They are script the filmmaker wrote about
+           the shot, the same class as a title or an identity block, and no
+           generation claims to have produced them. Only the prompt-class field
+           left. */
         line: text(c.line),
         speakerId: text(c.speakerId),
         audioNote: text(c.audioNote) || text(c.vo),
-        winner: receipt ? find(file) : null,
+        winner,
         authority: receipt ? authorityFacts(receipt, target) : null,
+        form,
         package: resolved.representation,
         representationStatus: resolved.representation ? "current" : "absent",
         representationAbsence: resolved.absence,
+        representationNote: representationNoteFor(!!winner, resolved.representation, form),
       };
     });
 
@@ -469,18 +539,48 @@
     const deliveryResolved = deliveryReceipt
       ? approvedRepresentation(project, s, deliveryFile)
       : { representation: null, absence: "" };
+    /* A DELIVERABLE NOBODY CURRENTLY VOUCHES FOR IS STILL REPORTED, the same way a
+       frame or a motion selection is. Without this a withdrawn or stale deliverable
+       left the document in silence, which is the one outcome worse than showing it:
+       the person who approved it has no way to see that it is gone. The edge is
+       read through the kernel because a deliverable lives across several fields and
+       this file does not get to know which. */
+    if (!deliveryReceipt && AUTHORITY && typeof AUTHORITY.liveAuthorityValue === "function") {
+      const stale = record(AUTHORITY.liveAuthorityValue(project, deliveryTarget));
+      if (text(stale.value)) {
+        appendix.push({
+          material: "delivery",
+          status: "historic",
+          label: "Approved deliverable",
+          detail: text(stale.value),
+          why: "A deliverable with no current approval behind it.",
+        });
+      }
+    }
+    const deliveryWinner = deliveryReceipt ? find(deliveryFile) : null;
+    const deliveryForm = mediaFormOf(deliveryFile, "video");
     const delivery = deliveryReceipt
       ? {
-          winner: find(deliveryFile),
+          winner: deliveryWinner,
           authority: authorityFacts(deliveryReceipt, deliveryTarget),
+          form: deliveryForm,
           package: deliveryResolved.representation,
           representationStatus: deliveryResolved.representation ? "current" : "absent",
           representationAbsence: deliveryResolved.absence,
+          representationNote: representationNoteFor(!!deliveryWinner, deliveryResolved.representation, deliveryForm),
         }
       : null;
 
     /* `locked[0]` and "the newest package" are BOTH deleted. The headline is the
-       opening frame's canon, or the shot's approved deliverable, or nothing. */
+       opening frame's canon, or the shot's approved deliverable, or nothing.
+
+       IT IS A PICTURE, NOT A FACT, and that distinction is the whole of the second
+       review finding. A shot can hold three current approvals at once — a frame, a
+       motion unit, and its deliverable — and they are three separate things a
+       person decided. `winner` picks ONE of them to show at the top so the page has
+       a hero image. Every surface that renders it must still publish the other two;
+       when a headline is allowed to stand in for the set, approving a frame silently
+       deletes the deliverable from the document. */
     const primaryFrame = keyframes.find((frame) => frame.winner);
     const winner = (primaryFrame && primaryFrame.winner) || (delivery && delivery.winner) || null;
 
@@ -494,10 +594,26 @@
         why: "A saved draft prompt. Nothing approved was made from it.",
       });
     }
+    /* The shot-level motion draft, held to the same rule as the per-unit one. It
+       used to leave here as `motionPrompt` and render under MOTION PROMPT on a shot
+       with no approvals at all. */
+    const shotDraft = text(s.motionPrompt);
+    if (shotDraft && shotDraft !== text(record(delivery && delivery.package).prompt)) {
+      appendix.push({
+        material: "motion-draft",
+        status: "draft",
+        label: "Shot motion direction",
+        detail: shotDraft,
+        why: delivery
+          ? "A motion direction draft. It is not the prompt that produced the approved deliverable."
+          : "A motion direction draft. Nothing approved was made from it.",
+      });
+    }
 
-    /* The shot-level prompt exists for shots that declare no frames. Its truth is
-       the deliverable's — not a package list's last row. */
-    const headline = delivery ? delivery.package : null;
+    /* THERE IS NO SEPARATE `prompt` FIELD ANY MORE. It existed for shots that
+       declare no frames, and it was a second copy of the deliverable's prompt — the
+       shape that let a surface publish delivery truth without ever mentioning
+       delivery authority. One deliverable, one place: `delivery.package`. */
     return {
       id: text(s.id),
       title: text(s.title),
@@ -505,19 +621,9 @@
       dur: motions.length ? motions.reduce((total, m) => total + m.dur, 0) : +s.dur || 0,
       route: text(s.route),
       winner,
-      motionPrompt: text(s.motionPrompt),
       keyframes,
       motions,
       delivery,
-      prompt: headline
-        ? {
-            text: headline.prompt,
-            refs: headline.references.map((ref, i) => `#image${i + 1} = ${ref.label || ref.role}`),
-            profileName: headline.profileName,
-            profileVersion: headline.profileVersion,
-            boundTo: headline.boundTo,
-          }
-        : null,
       appendix,
     };
   }
@@ -551,10 +657,7 @@
           appendix.push({ ...item, scope: "entity", list: listName, subjectId: row.id, subjectName: row.name });
         }
       }
-      for (const row of entities[listName]) {
-        row.made = row.made.map((entry) => ({ ...entry, modelName: modelName(entry.model) }));
-        delete row.appendix;
-      }
+      for (const row of entities[listName]) delete row.appendix;
     }
 
     const declaredShots = list(P.shots).map(record);
@@ -619,12 +722,10 @@
       if (row.block) out.push("", "**Identity block**", ...fence(row.block));
       if (row.driftNotes) out.push("", `**Continuity / drift** — ${oneLine(row.driftNotes)}`);
       for (const state of row.continuityStates) {
-        out.push("", `**${state.name}${state.isDefault ? " (default)" : ""}** — approved image \`${state.approvedFile}\`${state.appliesTo ? ` · ${oneLine(state.appliesTo)}` : ""}`);
+        out.push("", `**${state.name}${state.isDefault ? " (default)" : ""}** — approved ${state.form} \`${state.approvedFile}\`${state.appliesTo ? ` · ${oneLine(state.appliesTo)}` : ""}`);
         if (state.notes) out.push(oneLine(state.notes));
         if (state.package) out.push("", `_Approved prompt for \`${state.package.boundTo}\`_`, ...fence(state.package.prompt));
-      }
-      for (const entry of row.made) {
-        out.push("", `**Made with ${entry.modelName || entry.model || "an unrecorded model"}** — \`${entry.files}\``, ...fence(entry.prompt));
+        else if (state.representationNote) out.push("", `_${state.representationNote}_`);
       }
       out.push("");
     }
@@ -640,25 +741,34 @@
     for (const shot of rows) {
       out.push(`### ${shot.id} — ${shot.title}`);
       out.push(`${shot.scene}${shot.dur ? ` · ${shot.dur}s` : ""}${shot.route ? ` · ${shot.route}` : ""}`);
-      /* The shot headline IS the opening frame's canon when there are frames, so
-         printing it again above the frame that owns it says the same thing twice.
-         It earns its line only when it is the shot's approved deliverable. */
-      const namedByFrame = shot.keyframes.some((frame) => frame.winner && shot.winner && frame.winner.name === shot.winner.name);
-      if (shot.winner && !namedByFrame) out.push("", `Approved deliverable: \`${shot.winner.name}\``);
+      /* THREE INDEPENDENT AUTHORITY FACTS, SERIALISED AS THREE. There is no
+         headline line here at all: the shot's hero image is a presentation choice
+         and every canonical fact below names its own file. The version that printed
+         one line for `shot.winner` let an approved frame stand in for an approved
+         deliverable, and a shot holding all three approvals exported only two. */
       for (const frame of shot.keyframes) {
         out.push("", `**Frame ${frame.label} — ${frame.title}**${frame.required ? "" : " (optional)"}`);
         if (frame.description) out.push(oneLine(frame.description));
         out.push(frame.winner ? `Approved image: \`${frame.winner.name}\`` : "No approved image.");
         if (frame.package) out.push("", `_Approved prompt for \`${frame.package.boundTo}\`_`, ...fence(frame.package.prompt));
-        else if (frame.winner) out.push("", "_The prompt behind this approved image was not recorded._");
+        else if (frame.representationNote) out.push("", `_${frame.representationNote}_`);
       }
       for (const motion of shot.motions) {
         out.push("", `**Motion ${motion.label} — ${motion.title}** · ${motion.from || "?"}${motion.to ? ` → ${motion.to}` : ""} · ${motion.dur}s`);
-        if (motion.direction) out.push(oneLine(motion.direction));
+        if (motion.line) out.push(`Dialogue — ${oneLine(motion.line)}`);
+        if (motion.audioNote) out.push(`Voice note — ${oneLine(motion.audioNote)}`);
         out.push(motion.winner ? `Approved output: \`${motion.winner.name}\`` : "No approved output.");
         if (motion.package) out.push("", `_Approved prompt for \`${motion.package.boundTo}\`_`, ...fence(motion.package.prompt));
+        else if (motion.representationNote) out.push("", `_${motion.representationNote}_`);
       }
-      if (!shot.keyframes.length && shot.prompt) out.push("", `_Approved prompt for \`${shot.prompt.boundTo}\`_`, ...fence(shot.prompt.text));
+      if (shot.delivery) {
+        out.push("", "**Approved deliverable**");
+        out.push(shot.delivery.winner
+          ? `Approved ${shot.delivery.form}: \`${shot.delivery.winner.name}\``
+          : `Approved ${shot.delivery.form}: \`${shot.delivery.authority.value}\` (not on disk)`);
+        if (shot.delivery.package) out.push("", `_Approved prompt for \`${shot.delivery.package.boundTo}\`_`, ...fence(shot.delivery.package.prompt));
+        else if (shot.delivery.representationNote) out.push("", `_${shot.delivery.representationNote}_`);
+      }
       out.push("");
     }
     return out;
@@ -748,11 +858,16 @@
     BIBLE_MATERIAL_STATUSES,
     BIBLE_EXPORT_PRESETS,
     BIBLE_REPRESENTATION_ABSENCES,
+    BIBLE_MEDIA_FORMS,
     BIBLE_ENTITY_LISTS,
     BIBLE_APPENDIX_HEADING: APPENDIX_HEADING,
     bibleCanonProjection,
     bibleCanonMarkdown,
     bibleExportFilename,
     approvedRepresentation,
+    /* Exported so the page prints the same sentence rather than composing its own
+       from a diagnostic code. */
+    missingProvenanceNote,
+    mediaFormOf,
   };
 });

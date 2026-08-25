@@ -55,8 +55,20 @@ function anchorIn(file, needle, label, expected = 1) {
 
 /* A source mutation of the shipped projection, applied at load. */
 function mutating(needle, replacement, label) {
-  anchorIn("public/shared-bible-canon.js", needle, label);
-  return Suite.loadBibleCanon((source) => source.split(needle).join(replacement));
+  return mutatingMany([[needle, replacement]], label);
+}
+/* Some defects take more than one edit to restore honestly — a channel that both
+   collects a value and returns it, say. Every anchor gets its own probe receipt. */
+function mutatingMany(edits, label) {
+  edits.forEach(([needle], index) => anchorIn("public/shared-bible-canon.js", needle, `${label}[${index}]`));
+  return Suite.loadBibleCanon((source) =>
+    edits.reduce((text, [needle, replacement]) => text.split(needle).join(replacement), source));
+}
+/* The same, against the shipped page renderer. A control that reproduced a
+   rendering defect by writing its own renderer would be testing the control. */
+function mutatingPage(needle, replacement, label) {
+  anchorIn("public/bible.js", needle, label);
+  return Suite.loadBiblePage((source) => source.split(needle).join(replacement));
 }
 
 /* Runs the body and requires it to throw, mentioning `because`. */
@@ -71,7 +83,8 @@ function mustFail(label, because, body) {
 
 /* The positive suite's own fixtures, so a control cannot pass by testing a
    different project than the guarantee it is attacking. */
-const { approve, frameShot, entityProject, SHOT_MEDIA, ANCHOR_POOL, P1, P2_REPAIR, P3 } = Suite;
+const { approve, frameShot, entityProject, motionShot, SHOT_MEDIA, MOTION_MEDIA, ANCHOR_POOL, P1, P2_REPAIR, P3, CLIP_DRAFT, SHOT_DRAFT } = Suite;
+const Canon = Suite.loadBibleCanon();
 
 function projectWith(Canon, P, options = {}) {
   return Canon.bibleCanonProjection(P, {
@@ -351,11 +364,25 @@ function ncBible6() {
 /* NC-BIBLE7 — publish a generation record for a file that is not canon.       */
 /* =========================================================================== */
 
+/* RE-POINTED, NOT WEAKENED. This control used to attack the rule "a made[] record
+   enters canon only when it names a canon file" — filename matching, which the
+   independent review found was itself a second prompt-truth path. The rule is now
+   "made[] never enters canon", so the control restores the whole channel and proves
+   hand-written provenance lands under an approved heading. NC-BIBLE13 attacks the
+   sharper case: the same file, contradicted. */
 function ncBible7() {
-  const Canon = mutating(
-    "      if (namesCanon(entry.files)) {",
-    "      if (true) {",
-    "NC-BIBLE7");
+  const Canon = mutatingMany([
+    [
+      "    for (const entry of list(x.made).map(record)) {\n      if (!text(entry.prompt)) continue;\n      appendix.push({",
+      "    const made = [];\n"
+      + "    for (const entry of list(x.made).map(record)) {\n"
+      + "      if (!text(entry.prompt)) continue;\n"
+      + "      made.push({ model: text(entry.model), files: text(entry.files), prompt: text(entry.prompt) });\n"
+      + "      appendix.push({",
+    ],
+    ["      continuityStates: states,\n      canonStateCount: states.length,",
+     "      continuityStates: states,\n      made,\n      canonStateCount: states.length,"],
+  ], "NC-BIBLE7");
 
   const P = entityProject();
   P.characters[0].made = [
@@ -365,14 +392,239 @@ function ncBible7() {
   const doc = projectWith(Canon, P, { media: { characters: ANCHOR_POOL }, shotMedia: () => [] });
   const kai = doc.characters.find((row) => row.id === "CHAR-KAI");
 
-  equal(kai.made.length, 2, "NC-BIBLE7: a generation record for a non-canon file is published in the canon body");
-  ok(Canon.bibleCanonMarkdown(doc, { preset: "canon" }).includes("The record for a file that is not canon."),
-    "NC-BIBLE7: and CANON ONLY exports it under an approved heading");
+  equal(kai.made.length, 2, "NC-BIBLE7: hand-written generation records are published in the canon body");
+  mustFail("NC-BIBLE7", "no `made` channel at all",
+    () => assert.strictEqual(kai.made, undefined, "E1: and the canon body has no `made` channel at all"));
+  note("NC-BIBLE7 restoring the made[] channel puts hand-written provenance in the canon body and E1 goes red");
+}
 
-  mustFail("NC-BIBLE7", "only the generation record naming a canon file",
-    () => assert.deepStrictEqual(kai.made.map((row) => row.files), ["KAI_DEFAULT.png"],
-      "coherence: only the generation record naming a canon file is in the canon body"));
-  note("NC-BIBLE7 publishing every generation record puts non-canon provenance under an approved heading");
+/* =========================================================================== */
+/* NC-BIBLE9 — a raw shot motion draft, with zero authority, enters canon.     */
+/* =========================================================================== */
+
+function ncBible9() {
+  const Canon = mutating(
+    "      route: text(s.route),\n      winner,\n      keyframes,",
+    "      route: text(s.route),\n      winner,\n      motionPrompt: text(s.motionPrompt),\n      keyframes,",
+    "NC-BIBLE9");
+  /* And a serializer that prints it, so the bad state is rendered rather than
+     merely present in a payload. */
+  const Serialised = (doc) => {
+    const body = Canon.bibleCanonMarkdown(doc, { preset: "canon" });
+    const draft = doc.shots.map((s) => s.motionPrompt).filter(Boolean);
+    return draft.length ? body.replace("## WHAT APPROVED MEANS", `**Motion prompt**\n\`\`\`\n${draft.join("\n")}\n\`\`\`\n\n## WHAT APPROVED MEANS`) : body;
+  };
+
+  const P = motionShot({ draft: "" });
+  const doc = projectWith(Canon, P, { shotMedia: MOTION_MEDIA });
+
+  equal(P.productionAuthority.receipts.length, 0, "NC-BIBLE9: the fixture holds no approval of any kind");
+  equal(doc.shots[0].motionPrompt, SHOT_DRAFT,
+    "NC-BIBLE9: and a raw shot motion draft is carried in current canon anyway");
+  ok(Serialised(doc).includes(SHOT_DRAFT),
+    "NC-BIBLE9: and it serialises above WHAT APPROVED MEANS, in a document that says everything in it is approved");
+
+  mustFail("NC-BIBLE9", "no canon field to live in",
+    () => assert.strictEqual(doc.shots[0].motionPrompt, undefined,
+      "M1: the raw shot draft has no canon field to live in"));
+  note("NC-BIBLE9 a raw shot motion draft with zero authority reaches canon and M1 goes red");
+}
+
+/* =========================================================================== */
+/* NC-BIBLE10 — a raw clip motion draft, zero authority, enters Canon Only.    */
+/* =========================================================================== */
+
+function ncBible10() {
+  const Canon = mutating(
+    "        dur: +c.dur || 0,\n        /* DIALOGUE AND VOICE NOTES STAY.",
+    "        dur: +c.dur || 0,\n        direction: text(c.motionPrompt) || text(c.note),\n        /* DIALOGUE AND VOICE NOTES STAY.",
+    "NC-BIBLE10");
+  const Markdown = mutating(
+    "        if (motion.line) out.push(`Dialogue — ${oneLine(motion.line)}`);",
+    "        if (motion.direction) out.push(oneLine(motion.direction));\n"
+    + "        if (motion.line) out.push(`Dialogue — ${oneLine(motion.line)}`);",
+    "NC-BIBLE10-markdown");
+
+  const P = motionShot({ shotDraft: "" });
+  const doc = projectWith(Canon, P, { shotMedia: MOTION_MEDIA });
+  /* The projection mutation supplies the field; the serializer mutation prints it.
+     Applying them separately keeps each anchor honest about what it restores. */
+  const withDirection = { ...doc, shots: doc.shots.map((s) => ({ ...s, motions: s.motions.map((m) => ({ ...m, direction: CLIP_DRAFT })) })) };
+  const canon = Markdown.bibleCanonMarkdown(withDirection, { preset: "canon" });
+
+  equal(doc.shots[0].motions[0].direction, CLIP_DRAFT,
+    "NC-BIBLE10: the raw clip draft is carried as the motion unit's canon description");
+  equal(doc.shots[0].motions[0].winner, null, "NC-BIBLE10: while the unit holds no approved output at all");
+  ok(canon.includes(CLIP_DRAFT), "NC-BIBLE10: and CANON ONLY exports it under LOCKED SHOTS");
+
+  mustFail("NC-BIBLE10", "no canon field to live in",
+    () => assert.strictEqual(doc.shots[0].motions[0].direction, undefined,
+      "M2: the raw clip draft has no canon field to live in"));
+  mustFail("NC-BIBLE10-export", "CANON ONLY does not export it",
+    () => assert(!canon.includes(CLIP_DRAFT), "M2: CANON ONLY does not export it"));
+  note("NC-BIBLE10 a raw clip motion draft with zero authority reaches CANON ONLY and M2 goes red");
+}
+
+/* =========================================================================== */
+/* NC-BIBLE11 — three current authorities, and the serializer omits delivery.  */
+/* =========================================================================== */
+
+function ncBible11() {
+  const Canon = mutating(
+    "      if (shot.delivery) {\n        out.push(\"\", \"**Approved deliverable**\");",
+    "      if (false) {\n        out.push(\"\", \"**Approved deliverable**\");",
+    "NC-BIBLE11");
+
+  const P = frameShot();
+  P.shots[0].clips = [{ id: "seg-a", suffix: "a", label: "A", title: "Primary motion", dur: 5, videoWinner: "M1.mp4" }];
+  P.shots[0].creationBrief = { approvedMotionFile: "D1.mp4" };
+  P.shots[0].candidateFiles.push({ stored: "M1.mp4", sourceBuildId: "b-p1" });
+  P.shots[0].candidateFiles.push({ stored: "D1.mp4", sourceBuildId: "b-p3" });
+  approve(P, { kind: "shot-frame", shotId: "S-01", frameId: "frame-a" }, "R1.png");
+  approve(P, { kind: "shot-motion", shotId: "S-01", unitKey: "seg-a" }, "M1.mp4");
+  approve(P, { kind: "shot-delivery", shotId: "S-01" }, "D1.mp4");
+  const doc = projectWith(Canon, P, { shotMedia: SHOT_MEDIA(["R1.png", "M1.mp4", "D1.mp4"]) });
+  const canon = Canon.bibleCanonMarkdown(doc, { preset: "canon" });
+
+  ok(doc.shots[0].keyframes[0].authority && doc.shots[0].motions[0].authority && doc.shots[0].delivery.authority,
+    "NC-BIBLE11: three current receipts exist and the projection retains all three");
+  ok(canon.includes("R1.png") && canon.includes("M1.mp4"),
+    "NC-BIBLE11: the export represents two of them");
+  ok(!canon.includes("D1.mp4"),
+    "NC-BIBLE11: and silently drops the third — a deliverable somebody approved is nowhere in the document");
+
+  mustFail("NC-BIBLE11", "CANON ONLY represents delivery authority",
+    () => assert(canon.includes("D1.mp4"), "D6: CANON ONLY represents delivery authority"));
+  note("NC-BIBLE11 a serializer that skips delivery erases one of three approvals and D6 goes red");
+}
+
+/* =========================================================================== */
+/* NC-BIBLE12 — the approved audio prompt exports but does not render.         */
+/* =========================================================================== */
+
+function ncBible12() {
+  /* AN AUDIO-SPECIFIC PATH THROUGH THE REAL RENDERER. The shipped defect was a
+     bespoke audio card that read id, name, notes and media and nothing the
+     projection had resolved about approval; this restores the same behaviour inside
+     entityCard() itself, so the control drives the function the page actually calls
+     rather than a copy of it written here. */
+  const Page = mutatingPage(
+    "${st.approvedFile ? `<code>${esc(st.approvedFile)}</code>` : \"\"}${approvedPromptBlock(st)}",
+    "${st.approvedFile ? `<code>${esc(st.approvedFile)}</code>` : \"\"}${type === \"AUDIO\" ? \"\" : approvedPromptBlock(st)}",
+    "NC-BIBLE12");
+
+  const P = Suite.audioProject();
+  const doc = Suite.audioDoc(P);
+  const screen = Suite.screenText(doc.audio.map((x) => Page.entityCard(x, "AUDIO")).join("\n"));
+  const exported = Canon.bibleCanonMarkdown(doc, { preset: "canon" });
+
+  ok(exported.includes(Suite.AUDIO_PROMPT),
+    "NC-BIBLE12: CANON ONLY carries the approved audio's producing prompt");
+  ok(!screen.includes(Suite.AUDIO_PROMPT),
+    "NC-BIBLE12: and the screen does not — the same approval says two different things");
+  ok(screen.includes("RAIN_BED.wav"),
+    "NC-BIBLE12: while both agree the media is approved, which is what makes the gap invisible");
+
+  mustFail("NC-BIBLE12", "the screen represents the audio producing prompt",
+    () => assert(screen.includes(Suite.AUDIO_PROMPT), "equivalence: the screen represents the audio producing prompt"));
+  note("NC-BIBLE12 a bespoke audio renderer drops the approved prompt the export prints, and equivalence goes red");
+}
+
+/* =========================================================================== */
+/* NC-BIBLE13 — a conflicting same-file made[] prompt joins current canon.     */
+/* =========================================================================== */
+
+function ncBible13() {
+  const Canon = mutatingMany([
+    [
+      "    for (const entry of list(x.made).map(record)) {\n      if (!text(entry.prompt)) continue;\n      appendix.push({",
+      "    const canonFiles = new Set(states.map((state) => text(state.approvedFile)).filter(Boolean));\n"
+      + "    const made = [];\n"
+      + "    for (const entry of list(x.made).map(record)) {\n"
+      + "      if (!text(entry.prompt)) continue;\n"
+      + "      if (text(entry.files).split(/[,;\\s]+/).some((name) => canonFiles.has(name))) made.push({ model: text(entry.model), files: text(entry.files), prompt: text(entry.prompt) });\n"
+      + "      appendix.push({",
+    ],
+    ["      continuityStates: states,\n      canonStateCount: states.length,",
+     "      continuityStates: states,\n      made,\n      canonStateCount: states.length,"],
+  ], "NC-BIBLE13");
+  const Markdown = mutating(
+    "        else if (state.representationNote) out.push(\"\", `_${state.representationNote}_`);\n      }",
+    "        else if (state.representationNote) out.push(\"\", `_${state.representationNote}_`);\n"
+    + "      }\n"
+    + "      for (const entry of list(row.made)) out.push(\"\", `**Made with ${entry.model}** — \\`${entry.files}\\``, ...fence(entry.prompt));",
+    "NC-BIBLE13-markdown");
+
+  const P = entityProject();
+  P.characters = [P.characters[0]];
+  P.characters[0].continuityStates = [P.characters[0].continuityStates[0]];
+  P.characters[0].made = [{
+    model: "m-img", files: "KAI_DEFAULT.png", date: "2026-08-19",
+    prompt: "CONFLICTING: Kai in a RED jumpsuit, full-length, harsh overhead light.",
+  }];
+  const doc = projectWith(Canon, P, { media: { characters: ANCHOR_POOL }, shotMedia: () => [] });
+  const kai = doc.characters[0];
+  const canon = Markdown.bibleCanonMarkdown(doc, { preset: "canon" });
+
+  equal(kai.continuityStates[0].package.prompt,
+    "Kai in a clean work coat, three-quarter portrait, neutral studio light.",
+    "NC-BIBLE13: the true producing prompt is still resolved from the candidate chain");
+  equal(kai.made.length, 1, "NC-BIBLE13: and a filename match has minted a second one beside it");
+  ok(canon.includes("clean work coat") && canon.includes("CONFLICTING"),
+    "NC-BIBLE13: CANON ONLY now states two contradictory prompts for one approved image");
+
+  mustFail("NC-BIBLE13", "CANON ONLY carries only one prompt for one image",
+    () => assert(!canon.includes("CONFLICTING"), "E2: and CANON ONLY carries only one prompt for one image"));
+  note("NC-BIBLE13 filename matching mints a second, contradicting canon prompt and E2 goes red");
+}
+
+/* =========================================================================== */
+/* NC-BIBLE14 — missing provenance is silently omitted again.                  */
+/* =========================================================================== */
+
+function ncBible14() {
+  const Canon = mutating(
+    "  function representationNoteFor(hasMedia, representation, form) {\n    return hasMedia && !representation ? missingProvenanceNote(form) : \"\";",
+    "  function representationNoteFor(hasMedia, representation, form) {\n    return \"\";",
+    "NC-BIBLE14");
+
+  /* Motion, deliverable and entity state — the three surfaces the review found
+     silent. Each holds current approved media whose producing prompt is unknown. */
+  const Pm = motionShot({ draft: "", shotDraft: "", videoWinner: "M1.mp4", candidates: [] });
+  approve(Pm, { kind: "shot-motion", shotId: "S-01", unitKey: "seg-a" }, "M1.mp4");
+  const dm = projectWith(Canon, Pm, { shotMedia: MOTION_MEDIA });
+
+  const Pd = motionShot({ draft: "", shotDraft: "", candidates: [] });
+  Pd.shots[0].creationBrief = { approvedMotionFile: "D1.mp4" };
+  approve(Pd, { kind: "shot-delivery", shotId: "S-01" }, "D1.mp4");
+  const dd = projectWith(Canon, Pd, { shotMedia: MOTION_MEDIA });
+
+  const Pe = entityProject();
+  Pe.characters[0].candidateFiles = [];
+  const de = projectWith(Canon, Pe, { media: { characters: ANCHOR_POOL }, shotMedia: () => [] });
+
+  const NOTE = "was not recorded";
+  for (const [what, item, doc] of [
+    ["motion", dm.shots[0].motions[0], dm],
+    ["deliverable", dd.shots[0].delivery, dd],
+    ["entity state", de.characters[0].continuityStates[0], de],
+  ]) {
+    ok(item.winner || item.media, `NC-BIBLE14: the ${what} holds current approved media`);
+    equal(item.representationAbsence, "no-candidate-record", `NC-BIBLE14: whose provenance is known to be missing`);
+    equal(item.representationNote, "", `NC-BIBLE14: and the ${what} says nothing about it`);
+    ok(!Canon.bibleCanonMarkdown(doc, { preset: "canon" }).includes(NOTE),
+      `NC-BIBLE14: so CANON ONLY presents the ${what} as if no prompt were expected`);
+  }
+
+  mustFail("NC-BIBLE14", "a motion unit says so, with the video noun",
+    () => assert.strictEqual(dm.shots[0].motions[0].representationNote,
+      "The prompt behind this approved video was not recorded.",
+      "provenance: a motion unit says so, with the video noun"));
+  mustFail("NC-BIBLE14-entity", "an entity state says so",
+    () => assert.strictEqual(de.characters[0].continuityStates[0].representationNote,
+      "The prompt behind this approved image was not recorded.",
+      "provenance: an entity state says so"));
+  note("NC-BIBLE14 silent absence makes an unrecorded prompt look like an unremarkable one, and the provenance gate goes red");
 }
 
 /* =========================================================================== */
@@ -416,9 +668,15 @@ function main() {
   ncBible5();
   ncBible6();
   ncBible7();
+  ncBible9();
+  ncBible10();
+  ncBible11();
+  ncBible12();
+  ncBible13();
+  ncBible14();
   ncBible8();
   for (const line of notes) console.log("  " + line);
-  console.log(`Bible canon negative controls passed ${checks} checks: 8 controls, each reproducing the literal bad state a filmmaker would read and then requiring the positive guarantee to go red against the same build.`);
+  console.log(`Bible canon negative controls passed ${checks} checks: 14 controls, each reproducing the literal bad state a filmmaker would read and then requiring the positive guarantee to go red against the same build.`);
 }
 
 main();

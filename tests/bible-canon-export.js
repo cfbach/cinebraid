@@ -93,6 +93,48 @@ function loadBibleCanon(mutate) {
 const BibleCanon = loadBibleCanon();
 
 /* ===========================================================================
+   LOADING THE SHIPPED PAGE RENDERER.
+
+   public/bible.js ends in an async IIFE that fetches /api/bible and writes to the
+   DOM. Everything above it is pure string building — entityCard(), shotCard(),
+   appendixRow() and the helpers they call — so the IIFE is sliced off and the rest
+   is evaluated. What comes back is the REAL renderer, not a re-implementation of
+   it, which is what lets a control mutate the page and watch the screen and the
+   exported file disagree.
+
+   A test that compared two things this suite wrote itself would prove they agree
+   with each other and nothing about the product.
+   =========================================================================== */
+function loadBiblePage(mutate) {
+  let source = readLF("public/bible.js");
+  if (mutate) source = mutate(source);
+  const boundary = source.indexOf("(async () => {");
+  assert(boundary > 0, "public/bible.js no longer ends in the async bootstrap this loader slices off");
+  const pure = source.slice(0, boundary);
+  const factory = new Function(
+    `${pure}\nreturn { entityCard, shotCard, appendixRow, strip, block, approvedPromptBlock, provenanceNote, esc };`,
+  );
+  return factory();
+}
+const BiblePage = loadBiblePage();
+
+/* Strips tags and unescapes, so an assertion reads what a person would read rather
+   than what the markup happens to look like. */
+function screenText(html) {
+  return String(html)
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+    .replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+/* Everything a shot card and the Markdown both claim, as text. */
+const shotScreenText = (page, doc) => screenText(doc.shots.map(page.shotCard).join("\n"));
+const entityScreenText = (page, doc) => screenText(
+  BibleCanon.BIBLE_ENTITY_LISTS.flatMap((listName) => doc[listName].map((x) => page.entityCard(x, listName.toUpperCase()))).join("\n"),
+);
+
+/* ===========================================================================
    FIXTURES.
 
    Every approval is a full, valid receipt whose live edge agrees with it, because
@@ -294,9 +336,8 @@ function bibleCases() {
     note("BIBLE1  approved revision publishes its own prompt, bound to its own bytes");
   }
 
-  /* ---- BIBLE1b. THE SAME RULE AT THE DELIVERY EDGE. A shot that declares no
-     frames publishes its deliverable's prompt as the shot headline. That headline
-     used to be `latestPackage -> latestBuild -> promptOptions.favorite ->
+  /* ---- BIBLE1b. THE SAME RULE AT THE DELIVERY EDGE. The deliverable's prompt used
+     to be `latestPackage -> latestBuild -> promptOptions.favorite ->
      promptOptions[0]`: four fallbacks, not one of them an approval. */
   {
     const P = frameShot();
@@ -309,13 +350,16 @@ function bibleCases() {
     const shot = doc.shots[0];
     equal(shot.delivery.winner.name, "DELIVERY.mp4", "BIBLE1b: the approved deliverable is canon media");
     equal(shot.winner.name, "DELIVERY.mp4", "BIBLE1b: and is the shot headline when no frame holds canon");
-    equal(shot.prompt.text, P1, "BIBLE1b: the headline prompt is the deliverable's, not the favourite draft");
-    equal(shot.prompt.boundTo, "DELIVERY.mp4", "BIBLE1b: bound to the approved bytes");
+    equal(shot.delivery.package.prompt, P1, "BIBLE1b: the deliverable's prompt is its own, not the favourite draft");
+    equal(shot.delivery.package.boundTo, "DELIVERY.mp4", "BIBLE1b: bound to the approved bytes");
+    equal(shot.delivery.form, "video", "BIBLE1b: and knows what form the approved media takes");
+    equal(shot.prompt, undefined,
+      "BIBLE1b: there is no second shot-level prompt field — delivery truth has exactly one home");
     absent(JSON.stringify(shot), "A favourite draft", "BIBLE1b: a favourited draft is not canon");
     ok(doc.appendix.some((row) => row.material === "saved-prompt" && row.label === "OPT-1"),
       "BIBLE1b: it is supporting material instead");
-    present(BibleCanon.bibleCanonMarkdown(doc, { preset: "canon" }), "Approved deliverable: `DELIVERY.mp4`",
-      "BIBLE1b: and the export names it as the deliverable rather than repeating a frame");
+    present(BibleCanon.bibleCanonMarkdown(doc, { preset: "canon" }), "Approved video: `DELIVERY.mp4`",
+      "BIBLE1b: and the export names the deliverable under its own heading");
     note("BIBLE1b the delivery edge publishes its own prompt, and a favourited draft is not an approval");
   }
 
@@ -553,20 +597,113 @@ function coherenceCases() {
     equal(frame.representationAbsence, "build-unavailable", "coherence: and is reported as unavailable, not published");
   }
 
-  /* A generation record enters canon only when it names a canon file. */
+  /* ===========================================================================
+     E1 - E5. `made[]` IS NOT A SECOND PROMPT-TRUTH ALGORITHM.
+
+     It used to be one. A hand-authored record naming one of the entity's canon
+     files was promoted into the canon body as that file's provenance, on the
+     strength of a filename somebody typed next to a prompt they also typed. The
+     adversarial case is the one that matters: the same approved image, two
+     current-canon prompts, disagreeing about what it shows.
+     =========================================================================== */
   {
+    /* E1. The approved candidate and its build produce exactly one prompt. */
     const P = entityProject();
-    P.characters[0].made = [
-      { model: "m-img", files: "KAI_DEFAULT.png", prompt: "The record for the approved default.", date: "2026-08-19" },
-      { model: "m-img", files: "KAI_SCRATCH.png", prompt: "The record for a file that is not canon.", date: "2026-08-19" },
-    ];
     const doc = project(P, { media: { characters: ANCHOR_POOL }, shotMedia: () => [] });
     const kai = doc.characters.find((row) => row.id === "CHAR-KAI");
-    deepEqual(kai.made.map((row) => row.files), ["KAI_DEFAULT.png"],
-      "coherence: only the generation record naming a canon file is in the canon body");
-    equal(kai.made[0].modelName, "GPT Image 2", "coherence: and it resolves its model name");
-    ok(doc.appendix.some((row) => row.material === "generation-record" && row.label === "KAI_SCRATCH.png"),
-      "coherence: the other is supporting material");
+    const state = kai.continuityStates.find((row) => row.id === "state-default");
+    equal(state.package.prompt, "Kai in a clean work coat, three-quarter portrait, neutral studio light.",
+      "E1: the producing prompt comes from the approved candidate");
+    equal(state.package.source, "candidate-record", "E1: through the one provenance chain");
+    equal(kai.made, undefined, "E1: and the canon body has no `made` channel at all");
+    const canon = BibleCanon.bibleCanonMarkdown(doc, { preset: "canon" });
+    equal(canon.split("clean work coat").length - 1, 1, "E1: exactly one producing prompt is exported");
+  }
+  {
+    /* E2. THE ADVERSARIAL CASE. Same approved file, conflicting hand-written
+       record. The conflicting prompt must not be current canon. */
+    const P = entityProject();
+    P.characters[0].made = [{
+      model: "m-img", files: "KAI_DEFAULT.png", date: "2026-08-19",
+      prompt: "CONFLICTING: Kai in a RED jumpsuit, full-length, harsh overhead light.",
+    }];
+    const doc = project(P, { media: { characters: ANCHOR_POOL }, shotMedia: () => [] });
+    const kai = doc.characters.find((row) => row.id === "CHAR-KAI");
+    absent(JSON.stringify(kai), "CONFLICTING",
+      "E2: a made[] record naming the canon file does not become that file's prompt");
+    const canon = BibleCanon.bibleCanonMarkdown(doc, { preset: "canon" });
+    present(canon, "clean work coat", "E2: the true producing prompt is still exported");
+    absent(canon, "CONFLICTING", "E2: and CANON ONLY carries only one prompt for one image");
+    ok(doc.appendix.some((row) => row.material === "generation-record" && String(row.detail).includes("CONFLICTING")),
+      "E2: the record is kept as supporting material, not deleted");
+  }
+  {
+    /* E3. A made[] record and canon authority, but no candidate/build provenance.
+       Fail closed: do not infer a producing prompt from a filename. */
+    const P = entityProject();
+    P.characters[0].candidateFiles = [];
+    P.characters[0].made = [{
+      model: "m-img", files: "KAI_DEFAULT.png", date: "2026-08-19",
+      prompt: "The only prompt anywhere in this project for this file.",
+    }];
+    const doc = project(P, { media: { characters: ANCHOR_POOL }, shotMedia: () => [] });
+    const kai = doc.characters.find((row) => row.id === "CHAR-KAI");
+    const state = kai.continuityStates.find((row) => row.id === "state-default");
+    ok(state.media, "E3: the approved image is still canon");
+    equal(state.package, null, "E3: with no producing prompt inferred from the filename");
+    equal(state.representationAbsence, "no-candidate-record", "E3: and the reason is recorded");
+    absent(BibleCanon.bibleCanonMarkdown(doc, { preset: "canon" }), "The only prompt anywhere",
+      "E3: CANON ONLY does not fall back to it");
+  }
+  {
+    /* E4. Supporting material keeps every record, explicitly non-canon. */
+    const P = entityProject();
+    P.characters[0].made = [
+      { model: "m-img", files: "KAI_DEFAULT.png", prompt: "Names a canon file.", date: "2026-08-19" },
+      { model: "m-img", files: "KAI_SCRATCH.png", prompt: "Names something else.", date: "2026-08-19" },
+      { model: "m-img", files: "", prompt: "Names nothing at all.", date: "2026-08-19" },
+    ];
+    const doc = project(P, { media: { characters: ANCHOR_POOL }, shotMedia: () => [] });
+    const records = doc.appendix.filter((row) => row.material === "generation-record");
+    equal(records.length, 3, "E4: every generation record is kept");
+    deepEqual([...new Set(records.map((row) => row.status))], ["historic"],
+      "E4: all of them explicitly non-canon, whatever filename they name");
+    const withAppendix = BibleCanon.bibleCanonMarkdown(doc, { preset: "canon-appendix" });
+    present(withAppendix, "Names a canon file.", "E4: and they survive into the appendix");
+    absent(BibleCanon.bibleCanonMarkdown(doc, { preset: "canon" }), "Names a canon file.",
+      "E4: while the canonical body carries none of them");
+  }
+  {
+    /* E5. Exact ownership across all five lists, with a made[] record present on
+       each, so the repair cannot have loosened matching anywhere. */
+    const P = baseProject();
+    for (const [listName, id, file] of [
+      ["characters", "CHAR-A", "CHAR-A_V1.png"], ["locations", "LOC-A", "LOC-A_V1.png"],
+      ["props", "PROP-A", "PROP-A_V1.png"], ["vehicles", "VEH-A", "VEH-A_V1.png"],
+      ["audio", "AUD-A", "AUD-A_V1.wav"],
+    ]) {
+      P[listName].push({
+        id, name: id, approvedFile: file,
+        continuityStates: [{ id: "state-default", name: "Default", isDefault: true, approvedFile: file }],
+        candidateFiles: [{ stored: file, prompt: `The true prompt for ${id}.` }],
+        made: [{ model: "m-img", files: file, prompt: `A hand-written note about ${id}.` }],
+      });
+      approve(P, { kind: "entity-state", list: listName, entityId: id, stateId: "state-default" }, file);
+    }
+    const pools = Object.fromEntries(BibleCanon.BIBLE_ENTITY_LISTS.map((listName) => [
+      listName, P[listName].map((x) => ({ name: x.approvedFile, url: `/assets/${listName}/${x.approvedFile}` })),
+    ]));
+    const doc = project(P, { media: pools, shotMedia: () => [] });
+    for (const listName of BibleCanon.BIBLE_ENTITY_LISTS) {
+      const row = doc[listName][0];
+      equal(row.continuityStates.length, 1, `E5: ${listName} publishes its one approved state`);
+      equal(row.continuityStates[0].package.prompt, `The true prompt for ${row.id}.`,
+        `E5: ${listName} takes its prompt from the candidate chain`);
+      absent(JSON.stringify(row), "hand-written note", `E5: ${listName} publishes no made[] prompt`);
+      deepEqual(row.media.map((m) => m.name), [row.continuityStates[0].approvedFile],
+        `E5: ${listName} carries only its own approved media`);
+    }
+    note("E1-E5 made[] is no longer a prompt-truth path; ownership across all five lists is unchanged");
   }
 
   /* Saved draft prompts have no output edge at all and are never canon. */
@@ -610,6 +747,564 @@ function coherenceCases() {
 /* ===========================================================================
    EXP1 - EXP8
    =========================================================================== */
+
+/* ===========================================================================
+   M1 - M7. A MOTION PROMPT IS NOT A MOTION DRAFT.
+
+   `clip.motionPrompt`, `clip.note` and shot-level `motionPrompt` used to be copied
+   straight into the canon body as `direction` and `motionPrompt`, gated on nothing.
+   public/v607-composer.js writes `unit.motionPrompt = unit.note = value` from the
+   one direction editor, so both names are the same unapproved draft. A shot with
+   ZERO receipts published a motion prompt under a heading that says approved.
+   =========================================================================== */
+
+const CLIP_DRAFT = "CLIP DRAFT: the worker turns and walks out of frame, nobody approved this.";
+const SHOT_DRAFT = "SHOT DRAFT: slow push-in on the panel, nobody approved this.";
+const MOTION_P1 = "Locked hull camera. The worker turns from the panel and walks out of frame left over five seconds.";
+const MOTION_P2 = "Locked hull camera, faster turn, the worker exits frame RIGHT over five seconds.";
+
+/* A shot with one motion unit and no frames. `draft` seeds both raw fields. */
+function motionShot(options = {}) {
+  const P = baseProject();
+  addBuild(P, "b-m1", "S-01-A-MOTION-R01", MOTION_P1, { kind: "guided-motion", scope: "segment:seg-a" });
+  addBuild(P, "b-m2", "S-01-A-MOTION-R02", MOTION_P2, { kind: "guided-motion", scope: "segment:seg-a", revision: 2 });
+  P.shots.push({
+    id: "S-01", scene: "SC-01", title: "Hull check", status: "LOCKED", workflowStatus: "APPROVED",
+    dur: 5, keyframes: [], route: "t2v",
+    motionPrompt: options.shotDraft === undefined ? SHOT_DRAFT : options.shotDraft,
+    clips: [{
+      id: "seg-a", suffix: "a", label: "A", title: "Primary motion", dur: 5, kind: "plan",
+      motionPrompt: options.draft === undefined ? CLIP_DRAFT : options.draft,
+      note: options.draft === undefined ? CLIP_DRAFT : options.draft,
+      videoWinner: options.videoWinner || "",
+      line: options.line || "",
+      generationPackages: (options.packages || []).map((buildId) => ({ buildId, scope: "segment:seg-a" })),
+    }],
+    candidateFiles: options.candidates || [],
+    promptBuilds: [], generationPackages: [], creationBrief: {},
+  });
+  return P;
+}
+const MOTION_MEDIA = SHOT_MEDIA(["M1.mp4", "M2.mp4", "D1.mp4"]);
+const motionOf = (doc) => doc.shots[0].motions[0];
+
+function motionCases() {
+  const canonOf = (doc) => BibleCanon.bibleCanonMarkdown(doc, { preset: "canon" });
+
+  /* ---- M1. Raw shot.motionPrompt, zero authority. */
+  {
+    const P = motionShot({ draft: "" });
+    const doc = project(P, { shotMedia: MOTION_MEDIA });
+    equal(doc.shots[0].motionPrompt, undefined, "M1: the raw shot draft has no canon field to live in");
+    absent(JSON.stringify(doc.shots), SHOT_DRAFT, "M1: and is absent from the shot's current canon");
+    absent(canonOf(doc), SHOT_DRAFT, "M1: CANON ONLY does not export it");
+    ok(doc.appendix.some((row) => row.material === "motion-draft" && row.detail === SHOT_DRAFT && row.status === "draft"),
+      "M1: it is supporting material, labelled draft");
+    note("M1  a raw shot motion draft with no authority never reaches canon");
+  }
+
+  /* ---- M2. Raw clip.motionPrompt / note, zero authority. */
+  {
+    const P = motionShot({ shotDraft: "" });
+    const doc = project(P, { shotMedia: MOTION_MEDIA });
+    equal(motionOf(doc).direction, undefined, "M2: the raw clip draft has no canon field to live in");
+    absent(JSON.stringify(doc.shots), CLIP_DRAFT, "M2: and is absent from the motion unit's current canon");
+    absent(canonOf(doc), CLIP_DRAFT, "M2: CANON ONLY does not export it");
+    equal(motionOf(doc).winner, null, "M2: with no approval there is no canon output either");
+    ok(doc.appendix.some((row) => row.material === "motion-draft" && row.detail === CLIP_DRAFT),
+      "M2: the draft is supporting material");
+    note("M2  a raw clip motion draft with no authority never reaches canon");
+  }
+
+  /* ---- M3. Approved motion produced by P1. */
+  {
+    const P = motionShot({
+      videoWinner: "M1.mp4", packages: ["b-m1"],
+      candidates: [{ stored: "M1.mp4", sourceBuildId: "b-m1" }],
+    });
+    approve(P, { kind: "shot-motion", shotId: "S-01", unitKey: "seg-a" }, "M1.mp4");
+    const doc = project(P, { shotMedia: MOTION_MEDIA });
+    const motion = motionOf(doc);
+    equal(motion.winner.name, "M1.mp4", "M3: the approved output is canon media");
+    equal(motion.package.prompt, MOTION_P1, "M3: published beside the prompt that produced it");
+    equal(motion.package.boundTo, "M1.mp4", "M3: bound to those bytes");
+    equal(motion.form, "video", "M3: and knows it is a video");
+    present(canonOf(doc), MOTION_P1, "M3: CANON ONLY exports the pair");
+    note("M3  an approved motion publishes the recorded prompt that produced it");
+  }
+
+  /* ---- M4. Approved M1/P1 plus a newer unexecuted motion draft P2. */
+  {
+    const P = motionShot({
+      draft: MOTION_P2, videoWinner: "M1.mp4", packages: ["b-m1", "b-m2"],
+      candidates: [{ stored: "M1.mp4", sourceBuildId: "b-m1" }],
+    });
+    approve(P, { kind: "shot-motion", shotId: "S-01", unitKey: "seg-a" }, "M1.mp4");
+    const doc = project(P, { shotMedia: MOTION_MEDIA });
+    equal(motionOf(doc).package.prompt, MOTION_P1, "M4: canon stays on the approved prompt");
+    absent(JSON.stringify(doc.shots), "exits frame RIGHT", "M4: the newer draft is not canon");
+    absent(canonOf(doc), "exits frame RIGHT", "M4: nor exported");
+    ok(doc.appendix.some((row) => row.material === "motion-draft" && row.detail === MOTION_P2),
+      "M4: the newer draft is supporting material");
+    note("M4  a newer unexecuted motion draft does not displace approved motion canon");
+  }
+
+  /* ---- M5. Generated but unapproved M2/P2. */
+  {
+    const P = motionShot({
+      draft: "", videoWinner: "M1.mp4", packages: ["b-m1", "b-m2"],
+      candidates: [
+        { stored: "M1.mp4", sourceBuildId: "b-m1" },
+        { stored: "M2.mp4", sourceBuildId: "b-m2", decision: "unreviewed" },
+      ],
+    });
+    approve(P, { kind: "shot-motion", shotId: "S-01", unitKey: "seg-a" }, "M1.mp4");
+    const doc = project(P, { shotMedia: MOTION_MEDIA });
+    equal(motionOf(doc).winner.name, "M1.mp4", "M5: an unapproved output does not become canon media");
+    equal(motionOf(doc).package.prompt, MOTION_P1, "M5: nor its prompt");
+    absent(canonOf(doc), "M2.mp4", "M5: and CANON ONLY names only the approved output");
+    note("M5  a generated but unapproved motion leaves canon untouched");
+  }
+
+  /* ---- M6. Rejected M2/P2. */
+  {
+    const P = motionShot({
+      draft: "", videoWinner: "M1.mp4", packages: ["b-m1", "b-m2"],
+      candidates: [
+        { stored: "M1.mp4", sourceBuildId: "b-m1" },
+        { stored: "M2.mp4", sourceBuildId: "b-m2", decision: "rejected" },
+      ],
+    });
+    approve(P, { kind: "shot-motion", shotId: "S-01", unitKey: "seg-a" }, "M1.mp4");
+    const doc = project(P, { shotMedia: MOTION_MEDIA });
+    equal(motionOf(doc).winner.name, "M1.mp4", "M6: a rejected output does not become canon media");
+    equal(motionOf(doc).package.prompt, MOTION_P1, "M6: nor its prompt");
+    note("M6  a rejected motion leaves canon untouched");
+  }
+
+  /* ---- M7. Motion authority withdrawn. Nothing may be manufactured from the raw
+     draft fields to fill the hole. */
+  {
+    const P = motionShot({
+      videoWinner: "M1.mp4", packages: ["b-m1"],
+      candidates: [{ stored: "M1.mp4", sourceBuildId: "b-m1" }],
+    });
+    approve(P, { kind: "shot-motion", shotId: "S-01", unitKey: "seg-a" }, "M1.mp4",
+      { status: "revoked", revokedAt: "2026-08-22T00:00:00.000Z", revocationReason: "withdrawn" });
+    const doc = project(P, { shotMedia: MOTION_MEDIA });
+    const motion = motionOf(doc);
+    equal(motion.winner, null, "M7: a withdrawn motion approval leaves no canon output");
+    equal(motion.package, null, "M7: and no canon prompt");
+    absent(JSON.stringify(doc.shots), CLIP_DRAFT, "M7: the raw draft does not fill the hole");
+    absent(JSON.stringify(doc.shots), MOTION_P1, "M7: nor does the revoked revision's prompt");
+    absent(canonOf(doc), CLIP_DRAFT, "M7: and CANON ONLY manufactures nothing");
+    ok(doc.appendix.some((row) => row.material === "motion" && row.detail === "M1.mp4"),
+      "M7: the withdrawn selection is reported as supporting material");
+    note("M7  a withdrawn motion approval is not backfilled from raw draft fields");
+  }
+
+  /* Dialogue and voice notes are script the filmmaker wrote, not a generation
+     claiming approval, and they stay — the same class as a title or an identity
+     block. A repair that swept them out would be over-correction. */
+  {
+    const P = motionShot({ draft: "", shotDraft: "", line: "Nothing on this deck is worth dying for." });
+    const doc = project(P, { shotMedia: MOTION_MEDIA });
+    equal(motionOf(doc).line, "Nothing on this deck is worth dying for.",
+      "motion: authored dialogue survives the prompt gate");
+    present(canonOf(doc), "Nothing on this deck is worth dying for.",
+      "motion: and is exported as the script fact it is");
+  }
+}
+
+/* ===========================================================================
+   D1 - D8. FRAME, MOTION AND DELIVERY ARE THREE FACTS.
+
+   The headline picks one approved image to show at the top. It used to be the only
+   thing serialised at shot level, so a shot holding all three current approvals
+   exported two of them and silently dropped the deliverable.
+   =========================================================================== */
+
+function deliveryCases() {
+  const canonOf = (doc) => BibleCanon.bibleCanonMarkdown(doc, { preset: "canon" });
+
+  /* Builds one shot carrying any combination of the three approvals. */
+  function combo({ frame, motion, delivery, deliveryPointerOnly, revokeDelivery } = {}) {
+    const P = baseProject();
+    addBuild(P, "b-f1", "S-01-A-R01", P1);
+    addBuild(P, "b-m1", "S-01-A-MOTION-R01", MOTION_P1, { kind: "guided-motion" });
+    addBuild(P, "b-d1", "S-01-DELIVERY-R01", "Final grade and conform of the approved motion.", { kind: "delivery" });
+    P.shots.push({
+      id: "S-01", scene: "SC-01", title: "Hull check", status: "LOCKED", workflowStatus: "APPROVED", dur: 5,
+      keyframes: frame ? [{ id: "frame-a", label: "A", title: "Opening frame", required: true, winner: "R1.png", generationPackages: [] }] : [],
+      clips: motion ? [{ id: "seg-a", suffix: "a", label: "A", title: "Primary motion", dur: 5, videoWinner: "M1.mp4" }] : [],
+      creationBrief: (delivery || deliveryPointerOnly || revokeDelivery) ? { approvedMotionFile: "D1.mp4" } : {},
+      candidateFiles: [
+        { stored: "R1.png", sourceBuildId: "b-f1" },
+        { stored: "M1.mp4", sourceBuildId: "b-m1" },
+        { stored: "D1.mp4", sourceBuildId: "b-d1" },
+      ],
+      promptBuilds: [], generationPackages: [],
+    });
+    if (frame) approve(P, { kind: "shot-frame", shotId: "S-01", frameId: "frame-a" }, "R1.png");
+    if (motion) approve(P, { kind: "shot-motion", shotId: "S-01", unitKey: "seg-a" }, "M1.mp4");
+    if (delivery) approve(P, { kind: "shot-delivery", shotId: "S-01" }, "D1.mp4");
+    if (revokeDelivery) {
+      approve(P, { kind: "shot-delivery", shotId: "S-01" }, "D1.mp4",
+        { status: "revoked", revokedAt: "2026-08-22T00:00:00.000Z", revocationReason: "withdrawn" });
+    }
+    return project(P, { shotMedia: SHOT_MEDIA(["R1.png", "M1.mp4", "D1.mp4"]) });
+  }
+
+  const seen = (doc, name) => {
+    const shot = doc.shots[0];
+    return {
+      projection: JSON.stringify([shot.keyframes, shot.motions, shot.delivery]).includes(name),
+      exported: canonOf(doc).includes(name),
+    };
+  };
+
+  /* ---- D1. Frame only. */
+  {
+    const doc = combo({ frame: true });
+    ok(seen(doc, "R1.png").exported, "D1: frame canon is exported");
+    ok(!seen(doc, "M1.mp4").exported && !seen(doc, "D1.mp4").exported, "D1: and nothing else is invented");
+    equal(doc.shots[0].delivery, null, "D1: there is no delivery fact to represent");
+    note("D1  frame authority alone yields frame canon alone");
+  }
+  /* ---- D2. Motion only. */
+  {
+    const doc = combo({ motion: true });
+    ok(seen(doc, "M1.mp4").exported, "D2: motion canon is exported");
+    ok(!seen(doc, "R1.png").exported && !seen(doc, "D1.mp4").exported, "D2: and nothing else is invented");
+    note("D2  motion authority alone yields motion canon alone");
+  }
+  /* ---- D3. Delivery only — the fact that used to vanish. */
+  {
+    const doc = combo({ delivery: true });
+    ok(doc.shots[0].delivery, "D3: the delivery fact is projected");
+    equal(doc.shots[0].delivery.winner.name, "D1.mp4", "D3: with its approved media");
+    ok(seen(doc, "D1.mp4").exported, "D3: and CANON ONLY names it");
+    present(canonOf(doc), "**Approved deliverable**", "D3: under its own heading");
+    note("D3  delivery authority alone is visible and exported");
+  }
+  /* ---- D4. Frame + delivery. The exact shape of the review finding. */
+  {
+    const doc = combo({ frame: true, delivery: true });
+    equal(doc.shots[0].winner.name, "R1.png", "D4: the headline picks the frame image");
+    ok(seen(doc, "R1.png").exported, "D4: frame authority is still represented");
+    ok(seen(doc, "D1.mp4").exported, "D4: and so is delivery authority, which the headline used to erase");
+    note("D4  a frame headline no longer hides an approved deliverable");
+  }
+  /* ---- D5. Motion + delivery. */
+  {
+    const doc = combo({ motion: true, delivery: true });
+    ok(seen(doc, "M1.mp4").exported, "D5: motion authority is represented");
+    ok(seen(doc, "D1.mp4").exported, "D5: and delivery authority beside it");
+    note("D5  motion and delivery are both represented");
+  }
+  /* ---- D6. All three at once. */
+  {
+    const doc = combo({ frame: true, motion: true, delivery: true });
+    const shot = doc.shots[0];
+    ok(shot.keyframes[0].authority && shot.motions[0].authority && shot.delivery.authority,
+      "D6: the projection retains three independent receipts");
+    const exported = canonOf(doc);
+    for (const [name, what] of [["R1.png", "frame"], ["M1.mp4", "motion"], ["D1.mp4", "delivery"]]) {
+      ok(exported.includes(name), `D6: CANON ONLY represents ${what} authority`);
+    }
+    present(exported, P1, "D6: with the frame's producing prompt");
+    present(exported, MOTION_P1, "D6: the motion's");
+    present(exported, "Final grade and conform", "D6: and the deliverable's");
+    note("D6  three current authorities remain three represented facts, none hiding another");
+  }
+  /* ---- D7. A stale delivery pointer with no current authority. */
+  {
+    const doc = combo({ frame: true, deliveryPointerOnly: true });
+    equal(doc.shots[0].delivery, null, "D7: a delivery pointer nobody approved yields no delivery canon");
+    absent(canonOf(doc), "D1.mp4", "D7: and nothing about it is exported");
+    absent(canonOf(doc), "**Approved deliverable**", "D7: the heading does not appear either");
+    note("D7  a stale delivery pointer produces no delivery canon");
+  }
+  /* ---- D8. Delivery authority withdrawn. */
+  {
+    const doc = combo({ frame: true, revokeDelivery: true });
+    equal(doc.shots[0].delivery, null, "D8: a withdrawn delivery approval leaves no delivery canon");
+    absent(canonOf(doc), "Final grade and conform", "D8: nor its prompt");
+    ok(seen(doc, "R1.png").exported, "D8: while the frame's own authority is untouched");
+    ok(doc.appendix.some((row) => row.detail === "D1.mp4"),
+      "D8: the withdrawn deliverable is reported as supporting material");
+    note("D8  delivery presentation follows current authority");
+  }
+}
+
+/* ===========================================================================
+   A1 - A5. AUDIO IS THE SAME TRUTH ON BOTH SURFACES.
+
+   The Audio section had a bespoke renderer reading only id, name, notes and media,
+   so an approved audio state's producing prompt reached the exported file and never
+   the screen. There is one entity card now.
+   =========================================================================== */
+
+const AUDIO_PROMPT = "Steady rain on a steel hull, no wind, thirty seconds, seamless loop.";
+
+function audioProject(options = {}) {
+  const P = baseProject();
+  P.audio.push({
+    id: "AUD-RAIN", name: "Rain on hull", notes: "Continuous exterior bed.",
+    approvedFile: options.pointer === undefined ? "RAIN_BED.wav" : options.pointer,
+    continuityStates: [{ id: "state-default", name: "Default", isDefault: true, approvedFile: options.pointer === undefined ? "RAIN_BED.wav" : options.pointer }],
+    candidateFiles: options.candidates === undefined
+      ? [{ stored: "RAIN_BED.wav", prompt: AUDIO_PROMPT, generationModel: "audio-model" }]
+      : options.candidates,
+    prompts: options.saved || [],
+  });
+  if (options.approve !== false) {
+    approve(P, { kind: "entity-state", list: "audio", entityId: "AUD-RAIN", stateId: "state-default" },
+      options.pointer === undefined ? "RAIN_BED.wav" : options.pointer, options.receipt || {});
+  }
+  return P;
+}
+const AUDIO_POOL = [{ name: "RAIN_BED.wav", url: "/assets/audio/RAIN_BED.wav" }];
+const audioDoc = (P) => project(P, { media: { audio: AUDIO_POOL }, shotMedia: () => [] });
+
+function audioCases() {
+  const canonOf = (doc) => BibleCanon.bibleCanonMarkdown(doc, { preset: "canon" });
+
+  /* ---- A1. Approved audio with a recorded producing prompt. */
+  {
+    const doc = audioDoc(audioProject());
+    const state = doc.audio[0].continuityStates[0];
+    equal(state.approvedFile, "RAIN_BED.wav", "A1: the approved audio is canon media");
+    equal(state.package.prompt, AUDIO_PROMPT, "A1: with its producing prompt");
+    equal(state.form, "audio", "A1: and the projection knows it is audio");
+    present(canonOf(doc), AUDIO_PROMPT, "A1: CANON ONLY carries it");
+    present(canonOf(doc), "approved audio `RAIN_BED.wav`", "A1: and names it as audio, not as an image");
+    note("A1  approved audio publishes its producing prompt");
+  }
+
+  /* ---- A2. Approved audio with no prompt provenance. Both surfaces must say so,
+     and the noun must be right. */
+  {
+    const doc = audioDoc(audioProject({ candidates: [] }));
+    const state = doc.audio[0].continuityStates[0];
+    equal(state.package, null, "A2: no prompt is inferred");
+    equal(state.representationAbsence, "no-candidate-record", "A2: the reason is recorded");
+    equal(state.representationNote, "The prompt behind this approved audio was not recorded.",
+      "A2: and the sentence a person reads uses the right noun");
+    present(canonOf(doc), state.representationNote, "A2: the export prints exactly that sentence");
+  }
+
+  /* ---- A3. A saved but unapproved audio prompt. */
+  {
+    const doc = audioDoc(audioProject({ saved: [{ id: "PR-AUD-1", text: "A saved audio draft nothing was made from." }] }));
+    absent(JSON.stringify(doc.audio), "A saved audio draft", "A3: a saved audio prompt is not canon");
+    absent(canonOf(doc), "A saved audio draft", "A3: nor exported as canon");
+    ok(doc.appendix.some((row) => row.material === "saved-prompt" && row.subjectId === "AUD-RAIN"),
+      "A3: it is supporting material against the right subject");
+  }
+
+  /* ---- A4. Historic audio material. */
+  {
+    const doc = audioDoc(audioProject({ approve: false }));
+    equal(doc.audio.length, 0, "A4: audio with no current approval is not in the canon body");
+    equal(doc.pending.audio, 1, "A4: it is counted as in progress");
+    ok(doc.appendix.some((row) => row.subjectId === "AUD-RAIN" && row.status === "historic"),
+      "A4: and its pointer is reported as historic supporting material");
+  }
+
+  /* ---- A5. Withdrawn audio authority. */
+  {
+    const doc = audioDoc(audioProject({
+      receipt: { status: "revoked", revokedAt: "2026-08-22T00:00:00.000Z", revocationReason: "withdrawn" },
+    }));
+    equal(doc.audio.length, 0, "A5: withdrawn audio authority leaves the canon body");
+    absent(canonOf(doc), AUDIO_PROMPT, "A5: and its prompt is no longer exported");
+    note("A2-A5 audio absence, drafts, history and withdrawal behave as every other entity list does");
+  }
+
+  /* And the other four lists still behave, so the audio repair did not reshape
+     them on the way past. */
+  {
+    const doc = project(entityProject(), { media: { characters: ANCHOR_POOL }, shotMedia: () => [] });
+    equal(doc.characters.length, 2, "audio repair: characters unchanged");
+    equal(doc.characters[0].continuityStates.length, 2, "audio repair: their states unchanged");
+    equal(doc.characters[0].continuityStates[0].form, "image", "audio repair: and still described as images");
+  }
+}
+
+/* ===========================================================================
+   MISSING-PROVENANCE PRESENTATION MATRIX.
+
+   Projection-level absence already passed review; presentation did not. Frame said
+   so, motion said so on screen only, entity and delivery said nothing at all — so
+   "no prompt was recorded" and "there is nothing here" looked identical on three
+   surfaces out of four.
+   =========================================================================== */
+
+function provenanceCopyCases() {
+  const canonOf = (doc) => BibleCanon.bibleCanonMarkdown(doc, { preset: "canon" });
+  const IMAGE = "The prompt behind this approved image was not recorded.";
+  const VIDEO = "The prompt behind this approved video was not recorded.";
+  const AUDIO = "The prompt behind this approved audio was not recorded.";
+
+  /* Frame. */
+  {
+    const P = frameShot({ candidates: [] });
+    approve(P, { kind: "shot-frame", shotId: "S-01", frameId: "frame-a" }, "R1.png");
+    const doc = project(P);
+    equal(frameOf(doc).representationNote, IMAGE, "provenance: a frame says so");
+    present(canonOf(doc), IMAGE, "provenance: and the export prints it");
+  }
+  /* Motion. */
+  {
+    const P = motionShot({ draft: "", shotDraft: "", videoWinner: "M1.mp4", candidates: [] });
+    approve(P, { kind: "shot-motion", shotId: "S-01", unitKey: "seg-a" }, "M1.mp4");
+    const doc = project(P, { shotMedia: MOTION_MEDIA });
+    equal(motionOf(doc).representationNote, VIDEO, "provenance: a motion unit says so, with the video noun");
+    present(canonOf(doc), VIDEO, "provenance: and the export prints it — it used to print nothing");
+  }
+  /* Delivery. */
+  {
+    const P = motionShot({ draft: "", shotDraft: "", candidates: [] });
+    P.shots[0].creationBrief = { approvedMotionFile: "D1.mp4" };
+    approve(P, { kind: "shot-delivery", shotId: "S-01" }, "D1.mp4");
+    const doc = project(P, { shotMedia: MOTION_MEDIA });
+    equal(doc.shots[0].delivery.representationNote, VIDEO, "provenance: a deliverable says so");
+    present(canonOf(doc), VIDEO, "provenance: and the export prints it — it used to print nothing");
+  }
+  /* Entity state. */
+  {
+    const P = entityProject();
+    P.characters[0].candidateFiles = [];
+    const doc = project(P, { media: { characters: ANCHOR_POOL }, shotMedia: () => [] });
+    equal(doc.characters[0].continuityStates[0].representationNote, IMAGE, "provenance: an entity state says so");
+    present(canonOf(doc), IMAGE, "provenance: and the export prints it — it used to print nothing");
+  }
+  /* Audio entity state, for the noun. */
+  {
+    const doc = audioDoc(audioProject({ candidates: [] }));
+    equal(doc.audio[0].continuityStates[0].representationNote, AUDIO, "provenance: audio says so, with the audio noun");
+    present(canonOf(doc), AUDIO, "provenance: and the export prints it");
+  }
+  /* SILENCE IS ONLY WRONG WHERE A CLAIM WAS MADE. A frame with no approved media
+     has no prompt to be missing, and must not accuse the project of losing one. */
+  {
+    const P = frameShot({ candidates: [] });
+    const doc = project(P);
+    equal(frameOf(doc).representationNote, "", "provenance: nothing approved means nothing to explain");
+    absent(canonOf(doc), IMAGE, "provenance: and the export stays quiet");
+  }
+  /* One formatter, exported, so no surface composes its own wording. */
+  equal(BibleCanon.missingProvenanceNote("video"), VIDEO, "provenance: one formatter writes the sentence");
+  equal(BibleCanon.missingProvenanceNote("nonsense"), IMAGE, "provenance: and falls back to a real noun");
+  deepEqual(BibleCanon.BIBLE_MEDIA_FORMS, ["image", "video", "audio"], "provenance: three forms, declared once");
+  note("provenance: frame, motion, deliverable, entity and audio all speak the same sentence on both surfaces");
+}
+
+/* ===========================================================================
+   SCREEN == CANON ONLY, FACT BY FACT.
+
+   Not byte for byte — a card and a Markdown heading differ for good reasons. What
+   must match is WHICH CANONICAL FACTS each surface represents: the approved file,
+   the producing prompt, and the sentence that stands in for a prompt nobody
+   recorded. Every divergence the review found was a fact present on one surface and
+   missing from the other.
+   =========================================================================== */
+
+function equivalenceCases() {
+  /* One project carrying every canon-bearing shape at once. */
+  const P = baseProject();
+  addBuild(P, "b-f1", "S-01-A-R01", P1);
+  addBuild(P, "b-m1", "S-01-A-MOTION-R01", MOTION_P1, { kind: "guided-motion" });
+  addBuild(P, "b-d1", "S-01-DELIVERY-R01", "Final grade and conform of the approved motion.", { kind: "delivery" });
+  P.shots.push({
+    id: "S-01", scene: "SC-01", title: "Hull check", status: "LOCKED", workflowStatus: "APPROVED", dur: 5,
+    keyframes: [{ id: "frame-a", label: "A", title: "Opening frame", required: true, winner: "R1.png", generationPackages: [] }],
+    clips: [{ id: "seg-a", suffix: "a", label: "A", title: "Primary motion", dur: 5, videoWinner: "M1.mp4", motionPrompt: CLIP_DRAFT, note: CLIP_DRAFT }],
+    creationBrief: { approvedMotionFile: "D1.mp4" },
+    motionPrompt: SHOT_DRAFT,
+    candidateFiles: [
+      { stored: "R1.png", sourceBuildId: "b-f1" },
+      { stored: "M1.mp4", sourceBuildId: "b-m1" },
+      { stored: "D1.mp4", sourceBuildId: "b-d1" },
+    ],
+    promptBuilds: [], generationPackages: [],
+  });
+  approve(P, { kind: "shot-frame", shotId: "S-01", frameId: "frame-a" }, "R1.png");
+  approve(P, { kind: "shot-motion", shotId: "S-01", unitKey: "seg-a" }, "M1.mp4");
+  approve(P, { kind: "shot-delivery", shotId: "S-01" }, "D1.mp4");
+  P.characters.push({
+    id: "CHAR-KAI", name: "Kai", block: "KAI — 34.",
+    continuityStates: [{ id: "state-default", name: "Work coat", isDefault: true, approvedFile: "KAI_DEFAULT.png" }],
+    candidateFiles: [{ stored: "KAI_DEFAULT.png", prompt: "Kai in a clean work coat, three-quarter portrait, neutral studio light." }],
+    made: [{ model: "m-img", files: "KAI_DEFAULT.png", prompt: "CONFLICTING hand-written note." }],
+  });
+  approve(P, { kind: "entity-state", list: "characters", entityId: "CHAR-KAI", stateId: "state-default" }, "KAI_DEFAULT.png");
+  P.audio.push({
+    id: "AUD-RAIN", name: "Rain on hull", approvedFile: "RAIN_BED.wav",
+    continuityStates: [{ id: "state-default", name: "Default", isDefault: true, approvedFile: "RAIN_BED.wav" }],
+    candidateFiles: [{ stored: "RAIN_BED.wav", prompt: AUDIO_PROMPT }],
+  });
+  approve(P, { kind: "entity-state", list: "audio", entityId: "AUD-RAIN", stateId: "state-default" }, "RAIN_BED.wav");
+  /* A second character whose approved image has no recorded prompt, so the absence
+     sentence is one of the facts under comparison rather than a special case. */
+  P.characters.push({
+    id: "CHAR-VESS", name: "Vess", block: "VESS — 28.",
+    continuityStates: [{ id: "state-default", name: "Dispatch", isDefault: true, approvedFile: "VESS_V1.png" }],
+    candidateFiles: [],
+  });
+  approve(P, { kind: "entity-state", list: "characters", entityId: "CHAR-VESS", stateId: "state-default" }, "VESS_V1.png");
+
+  const doc = project(P, {
+    media: {
+      characters: [{ name: "KAI_DEFAULT.png", url: "/assets/anchors/KAI_DEFAULT.png" }, { name: "VESS_V1.png", url: "/assets/anchors/VESS_V1.png" }],
+      audio: [{ name: "RAIN_BED.wav", url: "/assets/audio/RAIN_BED.wav" }],
+    },
+    shotMedia: SHOT_MEDIA(["R1.png", "M1.mp4", "D1.mp4"]),
+  });
+  const exported = BibleCanon.bibleCanonMarkdown(doc, { preset: "canon" });
+  const shots = shotScreenText(BiblePage, doc);
+  const entities = entityScreenText(BiblePage, doc);
+
+  /* THE FACTS, one row per canonical claim, each named by the surface it belongs
+     to so a failure says which of the five diverged. */
+  const FACTS = [
+    ["frame", "approved image", "R1.png", shots],
+    ["frame", "producing prompt", P1, shots],
+    ["motion", "approved output", "M1.mp4", shots],
+    ["motion", "producing prompt", MOTION_P1, shots],
+    ["delivery", "approved deliverable", "D1.mp4", shots],
+    ["delivery", "producing prompt", "Final grade and conform of the approved motion.", shots],
+    ["entity", "approved image", "KAI_DEFAULT.png", entities],
+    ["entity", "producing prompt", "Kai in a clean work coat", entities],
+    ["entity", "missing-provenance sentence", "The prompt behind this approved image was not recorded.", entities],
+    ["audio", "approved media", "RAIN_BED.wav", entities],
+    ["audio", "producing prompt", AUDIO_PROMPT, entities],
+  ];
+  for (const [surface, what, fact, screen] of FACTS) {
+    ok(screen.includes(fact), `equivalence: the screen represents the ${surface} ${what}`);
+    ok(exported.includes(fact), `equivalence: CANON ONLY represents the ${surface} ${what}`);
+  }
+
+  /* AND THE SAME IN THE NEGATIVE. A fact absent from canon must be absent from
+     BOTH, or one surface is publishing something the other refuses to. */
+  const NON_FACTS = [
+    ["the raw clip motion draft", CLIP_DRAFT],
+    ["the raw shot motion draft", SHOT_DRAFT],
+    ["a conflicting hand-written record", "CONFLICTING hand-written note."],
+  ];
+  for (const [what, fact] of NON_FACTS) {
+    ok(!shots.includes(fact) && !entities.includes(fact), `equivalence: the screen publishes no ${what}`);
+    ok(!exported.includes(fact), `equivalence: and neither does CANON ONLY`);
+  }
+
+  /* The supporting section keeps all three, so nothing was destroyed to get here. */
+  const supporting = screenText(doc.appendix.map(BiblePage.appendixRow).join("\n"));
+  for (const [what, fact] of NON_FACTS) {
+    ok(supporting.includes(fact), `equivalence: supporting material still carries ${what}`);
+  }
+  note(`equivalence: ${FACTS.length} canonical facts represented on screen and in CANON ONLY, across frame, motion, deliverable, entity and audio`);
+}
 
 function exportCases() {
   const markdown = (P, preset, options) => BibleCanon.bibleCanonMarkdown(project(P, options), { preset });
@@ -756,15 +1451,36 @@ function writeRouteFixture(dir) {
   for (const folder of ["anchors", "plates", "props", "audio", "media", "docs", path.join("shots", "S-01", "takes")]) {
     fs.mkdirSync(path.join(dir, folder), { recursive: true });
   }
-  fs.writeFileSync(path.join(dir, "shots", "S-01", "takes", "R1.png"), "r1");
-  fs.writeFileSync(path.join(dir, "shots", "S-01", "takes", "R2.png"), "r2");
+  for (const name of ["R1.png", "R2.png", "M1.mp4", "D1.mp4"]) {
+    fs.writeFileSync(path.join(dir, "shots", "S-01", "takes", name), name);
+  }
   fs.writeFileSync(path.join(dir, "anchors", "KAI_DEFAULT.png"), "kai");
   fs.writeFileSync(path.join(dir, "anchors", "KAI_BURNED.png"), "kai-burned");
+  fs.writeFileSync(path.join(dir, "audio", "RAIN_BED.wav"), "rain");
 
   const P = frameShot({ packages: ["b-p1", "b-repair"] });
   P.shots[0].candidateFiles[0].currentCorrectionBuildId = "b-repair";
   P.shots[0].candidateFiles[0].correctionBuildIds = ["b-repair"];
   approve(P, { kind: "shot-frame", shotId: "S-01", frameId: "frame-a" }, "R1.png");
+  /* EVERY SHAPE THE INDEPENDENT REVIEW FOUND, in the one project both the route
+     suite and the real-browser suite drive: a raw motion draft with no authority
+     behind it, an approved motion, an approved deliverable that a frame headline
+     must no longer hide, and approved audio whose prompt has to reach the screen. */
+  addBuild(P, "b-m1", "S-01-A-MOTION-R01", MOTION_P1, { kind: "guided-motion" });
+  addBuild(P, "b-d1", "S-01-DELIVERY-R01", "Final grade and conform of the approved motion.", { kind: "delivery" });
+  P.shots[0].motionPrompt = SHOT_DRAFT;
+  P.shots[0].clips = [{
+    id: "seg-a", suffix: "a", label: "A", title: "Primary motion", dur: 5, kind: "plan",
+    motionPrompt: CLIP_DRAFT, note: CLIP_DRAFT, videoWinner: "M1.mp4",
+    line: "Nothing on this deck is worth dying for.",
+    generationPackages: [],
+  }];
+  P.shots[0].creationBrief = { approvedMotionFile: "D1.mp4" };
+  P.shots[0].candidateFiles.push({ stored: "M1.mp4", sourceBuildId: "b-m1" });
+  P.shots[0].candidateFiles.push({ stored: "D1.mp4", sourceBuildId: "b-d1" });
+  approve(P, { kind: "shot-motion", shotId: "S-01", unitKey: "seg-a" }, "M1.mp4");
+  approve(P, { kind: "shot-delivery", shotId: "S-01" }, "D1.mp4");
+
   const entities = entityProject();
   P.characters = entities.characters.filter((row) => row.id === "CHAR-KAI");
   for (const receipt of entities.productionAuthority.receipts) {
@@ -774,6 +1490,15 @@ function writeRouteFixture(dir) {
   /* A declared state with a pointer nobody approved — the shape that used to print
      its filename under an approved heading. */
   P.characters[0].continuityStates.push({ id: "state-wet", name: "Wet coat", approvedFile: "KAI_REJECTED.png" });
+  /* And a hand-written record naming the canon file, contradicting it. */
+  P.characters[0].made = [{
+    model: "m-img", files: "KAI_DEFAULT.png", date: "2026-08-19",
+    prompt: "CONFLICTING: Kai in a RED jumpsuit, full-length, harsh overhead light.",
+  }];
+  P.audio = audioProject().audio;
+  for (const receipt of audioProject().productionAuthority.receipts) {
+    approve(P, { kind: "entity-state", list: "audio", entityId: receipt.entityId, stateId: receipt.stateId }, receipt.value);
+  }
   fs.writeFileSync(path.join(dir, "project.json"), JSON.stringify(P, null, 2));
   return P;
 }
@@ -813,6 +1538,16 @@ async function routeCases() {
     absent(JSON.stringify(screen.shots), "oxide red", "route: the repair draft is absent from shot canon");
     absent(JSON.stringify(screen.characters), "KAI_REJECTED.png", "route: an unapproved state pointer is absent from entity canon");
     ok(screen.appendix.some((row) => row.label === "Wet coat"), "route: it is in supporting material instead");
+    /* The four review findings, at the route the browser actually calls. */
+    absent(JSON.stringify(screen.shots), CLIP_DRAFT, "route: the raw clip motion draft is absent from shot canon");
+    absent(JSON.stringify(screen.shots), SHOT_DRAFT, "route: and so is the raw shot motion draft");
+    equal(screen.shots[0].motions[0].package.prompt, MOTION_P1, "route: the approved motion publishes its own prompt");
+    equal(screen.shots[0].delivery.winner.name, "D1.mp4", "route: the approved deliverable survives a frame headline");
+    equal(screen.shots[0].winner.name, "R1.png", "route: which the headline still shows");
+    equal(screen.audio[0].continuityStates[0].package.prompt, AUDIO_PROMPT, "route: approved audio carries its producing prompt");
+    absent(JSON.stringify(screen.characters), "CONFLICTING", "route: a conflicting made[] record is not entity canon");
+    ok(screen.appendix.some((row) => row.material === "motion-draft"), "route: motion drafts are supporting material");
+    ok(screen.appendix.some((row) => row.material === "generation-record"), "route: as are hand-written generation records");
 
     /* ---- EXP6. The exported canon is not "equivalent to" the screen's canon —
        it is the screen's own payload, serialised. Any second export-side truth
@@ -911,18 +1646,32 @@ function architectureCases() {
     "copy: 'Latest approved' is gone — 'latest' is the word that invited newest-wins");
   ok(/Current approved canon/.test(page), "copy: the page says CURRENT approved canon");
 
-  /* EVERY PROMPT THE PAGE PRINTS NAMES THE BYTES IT PRODUCED, and it names them
-     from `boundTo` — the projection's own record of the binding — rather than from
-     a filename the renderer picked up somewhere else. That heading is the whole
-     invariant, stated where a filmmaker reads it, in the same words the export
-     writes. Four surfaces print a prompt; all four say it. */
-  const boundLabels = [...page.matchAll(/block\("APPROVED PROMPT FOR " \+ ([\w.]+)/g)].map((match) => match[1]);
-  deepEqual(boundLabels.sort(), ["f.package.boundTo", "m.package.boundTo", "s.prompt.boundTo", "st.package.boundTo"],
-    "copy: every prompt the page publishes is headed with the approved file it produced");
-  ok(!/block\("APPROVED PROMPT"/.test(page) && !/block\("APPROVED PROMPT · /.test(page),
-    "copy: no prompt heading claims approval without naming what it approved");
+  /* ONE PLACE COMPOSES A PROMPT HEADING, AND ONE PLACE PRINTS THE ABSENCE.
+
+     Every surface that can publish a prompt — frame, motion, deliverable, entity
+     state — calls approvedPromptBlock(), which either heads the prompt with the
+     bytes it produced or prints the projection's own missing-provenance sentence.
+     Four surfaces used to answer this question separately and two of them answered
+     "say nothing", which is how an approved image with no recorded prompt looked
+     identical to an approved image with no prompt worth mentioning. */
+  equal((page.match(/function approvedPromptBlock\(/g) || []).length, 1,
+    "copy: exactly one function composes an approved-prompt heading");
+  equal((page.match(/"APPROVED PROMPT FOR "/g) || []).length, 1,
+    "copy: and the heading text is written once");
+  const promptSurfaces = [...page.matchAll(/approvedPromptBlock\((?!item)([\w.]+)\)/g)].map((match) => match[1]);
+  deepEqual(promptSurfaces.sort(), ["f", "m", "s.delivery", "st"],
+    "copy: frame, motion, deliverable and entity state all publish through it");
+  /* Comments stripped: the note explaining this rule NAMES the field the rule
+     forbids, which is what a reader needs and exactly what an absence check must
+     not trip over. */
+  const pageCode = page.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:'"\\])\/\/[^\n]*/g, "$1");
+  ok(/item\.representationNote/.test(pageCode) && !/representationAbsence/.test(pageCode),
+    "copy: the page prints the projection's sentence and never reads a diagnostic code");
+  for (const code of BibleCanon.BIBLE_REPRESENTATION_ABSENCES) {
+    ok(!pageCode.includes(code), `copy: "${code}" is a diagnostic code and must never reach the page`);
+  }
   note("architecture: one projection, two routes, a page that only renders");
-  note("copy: every published prompt is headed 'APPROVED PROMPT FOR <the file it produced>', on screen and in the file");
+  note("copy: one formatter heads every published prompt and speaks every absence, on screen and in the file");
 }
 
 /* ===========================================================================
@@ -950,6 +1699,11 @@ function bureaucracyCases() {
 async function main() {
   bibleCases();
   coherenceCases();
+  motionCases();
+  deliveryCases();
+  audioCases();
+  provenanceCopyCases();
+  equivalenceCases();
   exportCases();
   architectureCases();
   bureaucracyCases();
@@ -959,7 +1713,10 @@ async function main() {
 }
 
 module.exports = {
-  loadBibleCanon, approve, baseProject, addBuild, frameShot, entityProject, project, frameOf,
+  loadBibleCanon, loadBiblePage, screenText, shotScreenText, entityScreenText,
+  approve, baseProject, addBuild, frameShot, entityProject, project, frameOf,
+  motionShot, motionOf, MOTION_MEDIA, CLIP_DRAFT, SHOT_DRAFT, MOTION_P1, MOTION_P2,
+  audioProject, audioDoc, AUDIO_POOL, AUDIO_PROMPT,
   SHOT_MEDIA, ANCHOR_POOL, P1, P2_REPAIR, P3, targetKey, COMMAND_FOR_KIND, freePort, writeRouteFixture,
 };
 

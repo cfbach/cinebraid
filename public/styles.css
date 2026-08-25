@@ -1065,6 +1065,12 @@ body:not([data-help="minimal"]) [data-tip]:focus-visible::before{content:"";posi
 .bible-motion-head{display:grid;grid-template-columns:24px minmax(0,1fr) auto;gap:8px;align-items:center}.bible-motion-head>span{display:grid;place-items:center;width:24px;height:24px;border-radius:5px;background:rgba(125,201,138,.1);font:700 10px var(--mono);color:var(--green)}
 .bible-motion-head strong{font-size:12px}.bible-motion-head code{font:500 8px var(--mono);color:var(--faint)}.bible-motion-list p{margin:8px 0 0;font-size:11px;line-height:1.5;color:var(--muted)}.bible-motion-list small{display:block;margin-top:6px;color:var(--amber)}
 .bible-motion-winner{display:inline-block;margin-top:8px;font:600 8px var(--mono);color:var(--green)}
+/* The deliverable is a peer of the frame sequence and the motion plan, not a
+   footnote to either — same weight, its own row. */
+.bible-delivery{display:grid;gap:8px;margin:13px 0}
+.bible-delivery>article{padding:11px 12px;border:1px solid var(--line);border-radius:7px;background:rgba(255,255,255,.015)}
+.bible-delivery code{font:500 10px var(--mono);color:var(--muted)}
+.bible-delivery small{display:block;margin-top:4px;font-size:11px;color:var(--muted)}
 @media(max-width:680px){.bible-frame-sequence>article{flex-basis:150px}.bible-motion-head{grid-template-columns:24px 1fr}.bible-motion-head code{grid-column:2}}
 .reference-policy-note{display:inline-block!important;width:max-content;max-width:100%;padding:3px 7px;border:1px solid var(--line);border-radius:999px;background:var(--surface-2);font:600 9px var(--mono)!important;text-transform:uppercase;letter-spacing:.05em;cursor:help}
 

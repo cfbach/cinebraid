@@ -55,6 +55,19 @@ APPROVED_PROMPT = "Wide hull-camera composition. The worker stands at the open p
 UNAPPROVED_POINTER = "KAI_REJECTED.png"
 CANON_SECTIONS = ["overview", "world", "characters", "locations", "props", "vehicles", "audio", "shots", "review-standard"]
 
+# The four findings the independent review held the first candidate on. Each is a
+# string that must appear on exactly one side of the canon boundary.
+MOTION_DRAFTS = [
+    "CLIP DRAFT: the worker turns and walks out of frame, nobody approved this.",
+    "SHOT DRAFT: slow push-in on the panel, nobody approved this.",
+]
+APPROVED_MOTION_PROMPT = "Locked hull camera. The worker turns from the panel and walks out of frame left over five seconds."
+APPROVED_DELIVERY_PROMPT = "Final grade and conform of the approved motion."
+APPROVED_AUDIO_PROMPT = "Steady rain on a steel hull, no wind, thirty seconds, seamless loop."
+CONFLICTING_MADE = "CONFLICTING: Kai in a RED jumpsuit"
+# Authored script facts, which are NOT prompts and must survive the gate.
+AUTHORED_DIALOGUE = "Nothing on this deck is worth dying for."
+
 
 def free_port():
     s = socket.socket()
@@ -121,6 +134,13 @@ try:
         page.wait_for_selector("#shots .bible-shot", timeout=30000)
 
         body = page.evaluate("() => document.getElementById('bible').textContent")
+        # Everything the page presents AS CANON — every section above Supporting
+        # material. Drafts belong on the page; they do not belong in here.
+        canon_body = page.evaluate(
+            "ids => ids.map(id => (document.getElementById(id) || {}).textContent || '').join(' ')",
+            CANON_SECTIONS,
+        )
+        supporting = page.evaluate("() => document.getElementById('supporting').textContent")
 
         # 1. THE P0, ON THE PAGE. The approved prompt is shown; the unexecuted
         #    repair draft is shown nowhere at all.
@@ -141,17 +161,47 @@ try:
         check(APPROVED_PROMPT in frame_text, "and must be the prompt that produced the approved image")
         check("R1.png" in frame_text, "beside the approved image it produced")
 
+        # 3b. FINDING 1 — raw motion drafts render nowhere on the page, while the
+        #     approved motion's own prompt does.
+        for draft in MOTION_DRAFTS:
+            check(draft not in canon_body, f"a raw motion draft must not be presented as canon: {draft[:24]!r}")
+        motion_text = page.evaluate("() => document.querySelector('#shots .bible-motion-list article').textContent")
+        check(APPROVED_MOTION_PROMPT in motion_text, "the approved motion must publish the prompt that produced it")
+        check("M1.mp4" in motion_text, "beside the approved output it produced")
+        check(AUTHORED_DIALOGUE in motion_text, "and authored dialogue must survive the prompt gate")
+
+        # 3c. FINDING 2 — the deliverable is its own row, not something a frame
+        #     headline can stand in for. The hero image here IS the frame.
+        hero = page.evaluate("() => document.querySelector('#shots .bible-shot-media').innerHTML")
+        check("R1.png" in hero, "the hero image is the approved frame")
+        delivery = page.evaluate("() => (document.querySelector('#shots .bible-delivery') || {}).textContent || ''")
+        check("D1.mp4" in delivery, "and the approved deliverable is represented independently of it")
+        check(APPROVED_DELIVERY_PROMPT in delivery, "with its own producing prompt")
+
+        # 3d. FINDING 3 — approved audio publishes the prompt the export prints.
+        audio_text = page.evaluate("() => document.getElementById('audio').textContent")
+        check("RAIN_BED.wav" in audio_text, "approved audio must be on the page")
+        check(APPROVED_AUDIO_PROMPT in audio_text, "with the producing prompt the export also carries")
+        check(page.evaluate("() => !!document.querySelector('#audio audio')"), "and a player rather than a broken thumbnail")
+
+        # 3e. FINDING 4 — a hand-written record naming the canon file is not canon.
+        check(CONFLICTING_MADE not in canon_body,
+              "a conflicting made[] record must not appear beside the approved image")
+
         # 4. A pointer nobody approved is in the supporting section and in no
         #    canon section. This is the separation the whole slice rests on.
-        supporting = page.evaluate("() => document.getElementById('supporting').textContent")
         check(UNAPPROVED_POINTER in supporting, "the unapproved state pointer must be kept as supporting material")
         check("Historic — no current approval" in supporting, "and must carry a truthful status label")
         check("None of this is approved canon" in supporting, "the supporting section must say plainly that it is not canon")
         for section in CANON_SECTIONS:
             text = page.evaluate("id => (document.getElementById(id) || {}).textContent || ''", section)
             check(UNAPPROVED_POINTER not in text, f"the unapproved pointer must not appear in the {section} section")
-            for marker in REPAIR_MARKERS:
-                check(marker not in text, f"the repair draft must not appear in the {section} section")
+            for marker in REPAIR_MARKERS + MOTION_DRAFTS + [CONFLICTING_MADE]:
+                check(marker not in text, f"non-canon material must not appear in the {section} section: {marker[:24]!r}")
+
+        # 4b. And all of it survives, subordinate, where non-canon material belongs.
+        for kept in MOTION_DRAFTS + [CONFLICTING_MADE]:
+            check(kept in supporting, f"supporting material must keep it rather than delete it: {kept[:24]!r}")
 
         # 5. The approved continuity state IS in the canon section, so the
         #    separation is a filter and not a blanket.
@@ -186,10 +236,17 @@ try:
                 check(marker not in text, f"{expected_name} must not carry the repair draft: {marker!r}")
             if preset == "bible-export-canon":
                 check(UNAPPROVED_POINTER not in text, "Canon Only must not carry the unapproved pointer")
+                # The same four facts the screen showed, in the downloaded file.
+                for present_fact in (APPROVED_MOTION_PROMPT, APPROVED_DELIVERY_PROMPT, APPROVED_AUDIO_PROMPT, "D1.mp4"):
+                    check(present_fact in text, f"Canon Only must carry {present_fact[:30]!r}")
+                for absent_fact in MOTION_DRAFTS + [CONFLICTING_MADE]:
+                    check(absent_fact not in text, f"Canon Only must not carry {absent_fact[:24]!r}")
                 canon_bytes = text
             else:
                 check(UNAPPROVED_POINTER in text, "Canon + Appendix must carry it, labelled")
                 check(text.startswith(canon_bytes), "and must share the canonical body byte for byte")
+                for kept in MOTION_DRAFTS + [CONFLICTING_MADE]:
+                    check(kept in text, f"Canon + Appendix must keep {kept[:24]!r}, labelled")
 
         # 8. What the screen shows and what the file says are the same canon.
         exported = urllib.request.urlopen(base + "/api/bible/export?preset=canon").read().decode("utf-8")
@@ -197,10 +254,11 @@ try:
         check(("R1.png" in exported) == ("R1.png" in body), "screen and export agree on the approved image")
         browser.close()
 
-    print(f"Bible canon real-browser suite passed {checks} checks: the approved prompt renders, the unexecuted repair "
-          "draft renders nowhere, unapproved pointers sit only in a subordinate supporting section with truthful "
-          "labels, the heading says current rather than latest, and both export presets download in one click "
-          "carrying exactly the canon the screen is showing.")
+    print(f"Bible canon real-browser suite passed {checks} checks: approved frame, motion, deliverable and audio each "
+          "publish the prompt that produced them; unexecuted repair drafts, raw motion drafts and hand-written "
+          "generation records render in no canon section and survive in a subordinate supporting one; a frame "
+          "headline no longer hides an approved deliverable; the heading says current rather than latest; and "
+          "both export presets download in one click carrying exactly the canon the screen is showing.")
 finally:
     server.terminate()
     try:
