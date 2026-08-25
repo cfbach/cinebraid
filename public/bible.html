@@ -13,9 +13,14 @@
   <aside class="bible-sidebar">
     <a class="bible-brand" href="/"><img src="/cinebraid-logo-xs.png" alt="" width="80" height="103"><span>Cine<b>Braid</b></span></a>
     <div id="bible-project-mini" class="bible-project-mini">Loading…</div>
-    <div class="bible-sidebar-actions"><button id="bible-visual-toggle" type="button" aria-pressed="false">Visual mode</button><a href="/" class="bible-back-link">Back to workspace</a></div><div class="bible-search-wrap"><input id="bible-search" placeholder="Search approved canon"><kbd>/</kbd></div>
+    <div class="bible-sidebar-actions"><button id="bible-visual-toggle" type="button" aria-pressed="false">Visual mode</button><a href="/" class="bible-back-link">Back to workspace</a></div>
+    <!-- Two presets, no configuration and no filename to type. Both are plain
+         links: the server names the file and sends it, so the export needs no
+         script and makes no call off this machine. -->
+    <div class="bible-export-actions" aria-label="Export this Bible"><span>Export</span><a id="bible-export-canon" class="bible-back-link" href="/api/bible/export?preset=canon">Canon only</a><a id="bible-export-appendix" class="bible-back-link" href="/api/bible/export?preset=canon-appendix">Canon + supporting material</a></div>
+    <div class="bible-search-wrap"><input id="bible-search" placeholder="Search approved canon"><kbd>/</kbd></div>
     <nav id="bible-toc" class="bible-toc" aria-label="Bible sections"></nav>
-    <div class="bible-sidebar-foot">YOUR PRODUCTION, YOUR CONTROL<br><span>Latest approved material</span></div>
+    <div class="bible-sidebar-foot">YOUR PRODUCTION, YOUR CONTROL<br><span>Current approved material</span></div>
   </aside>
   <main id="bible" class="bible-main">Loading project bible…</main>
 </div>

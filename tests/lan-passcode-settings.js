@@ -377,6 +377,11 @@ async function partC(server) {
   const viewerCookie = cookieFrom(viewerLogin.setCookie);
   assert.strictEqual((await call("/api/bible", { cookie: viewerCookie })).status, 200,
     "a viewer must still read the Project Bible");
+  /* And take it away with them. The export is the same canon the viewer can already
+     read on screen, so gating it behind the editor passcode would refuse a person a
+     copy of a document they are looking at. */
+  assert.strictEqual((await call("/api/bible/export?preset=canon", { cookie: viewerCookie })).status, 200,
+    "a viewer must be able to export the Project Bible they can read");
   const viewerWrite = await call("/api/projects", { cookie: viewerCookie });
   assert.strictEqual(viewerWrite.status, 403, "a viewer must not reach the editor API");
   assert(/editor only/i.test(viewerWrite.json?.error || ""), "and must be told why");

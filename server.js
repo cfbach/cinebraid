@@ -38,6 +38,7 @@ const ProductionAuthority = require("./public/shared-production-authority");
 const AuthorityKernel = require("./public/shared-authority-kernel");
 const { WRITE_CLASSES, isCreateOnlyWriteClass, createAuthorityWriteSeam, canonComparison } = require("./authority-write-seam");
 const ShotReadiness = require("./public/shared-shot-readiness");
+const BibleCanon = require("./public/shared-bible-canon");
 /* There is nothing to wire. The Canon kernel depends on
    public/shared-entity-ownership.js directly — by `require` in Node, by name in
    the browser's shared scope — so the ownership veto cannot be handed over,
@@ -1533,6 +1534,7 @@ app.use((req, res, next) => {
     p === "/bible.html" ||
     p === "/bible.js" ||
     p === "/api/bible" ||
+    p === "/api/bible/export" ||
     p.startsWith("/assets/");
   if (bibleScope) {
     if (req.role || !c.viewerPass) return next(); // open bible if no viewer pass set
@@ -8916,204 +8918,74 @@ app.post("/api/search", async (req, res) => {
   }
 });
 
-/* ---- the Bible: only approved / locked canon ---- */
+/* ---- the Bible: only approved / locked canon ----
+
+   ONE PROJECTION, TWO ROUTES. `bibleProjection()` is the only thing in this file
+   that decides what the Bible may call current canon, and both the screen
+   (GET /api/bible) and the file (GET /api/bible/export) read its answer. The rules
+   themselves live in public/shared-bible-canon.js, which consumes the authority
+   kernel and defines no authority of its own.
+
+   WHAT WAS DELETED HERE, because it was the P0. Media was gated on the ledger and
+   prompts were chosen by recency —
+
+       resolvePromptBuildList(P, f.generationPackages).reverse().find(g => g.prompt)
+
+   — and openCandidateCorrection() registers a targeted-repair draft into
+   `frame.generationPackages` the moment the repair modal opens. So merely LOOKING
+   at a repair published its instructions ("Edit #image1 rather than creating a new
+   composition") under FRAME PACKAGE, beneath an image approved for the previous
+   revision. A prompt now reaches the Bible only through the approved bytes it
+   produced. */
+function bibleProjection(P) {
+  /* KEYED BY ENTITY LIST, not by disk folder. server.js already states the
+     list-to-folder map, and a suite requires every copy of it to agree; a fourth
+     copy here would be a fourth place for it to drift. */
+  const media = {
+    characters: listMedia("anchors"),
+    locations: listMedia("plates"),
+    props: listMedia("props"),
+    vehicles: listMedia("vehicles"),
+    audio: listMedia("audio"),
+  };
+  const ownerIndexes = {};
+  return BibleCanon.bibleCanonProjection(P, {
+    media,
+    shotMedia: (shotId) => {
+      const takes = listMedia(path.join("shots", shotId, "takes"));
+      const locked = listMedia(path.join("shots", shotId, "locked"));
+      return [...takes, ...locked.filter((x) => !takes.some((t) => t.name === x.name))];
+    },
+    /* Same exact-ownership rule as the review pool and the entity workspace. A
+       Bible that still matched by prefix would publish a child entity's reference
+       under its parent's name. */
+    ownedMedia: (listName, entityId) => {
+      if (!ownerIndexes[listName]) ownerIndexes[listName] = EntityOwnership.buildEntityOwnerIndex(P, listName);
+      const pool = media[listName] || [];
+      return new Set(EntityOwnership.filterEntityMedia(ownerIndexes[listName], entityId, pool).map((row) => row.name));
+    },
+    modelName: (id) => (P.meta.models || []).find((m) => m.id === id)?.name || "",
+  });
+}
 app.get("/api/bible", (req, res) => {
   try {
-    const P = readJsonSync(DATA());
-    /* MB-PT-02 — THE BIBLE PUBLISHES CANON, AND CANON IS A RECEIPT.
-        `x.status === "APPROVED"` is a WORKFLOW word a run can write. An entity
-        is in the Bible's approved set when the creator approved at least one of
-        its states, which is a question only the ledger answers. */
-    const entityCanonFiles = (listName, entity) => new Set(
-      (ProductionAuthority.entityProductionTruth(P, listName, entity && entity.id).canon || [])
-        .map((row) => row.value).filter(Boolean),
-    );
-    const approvedIn = (listName) => (x) => entityCanonFiles(listName, x).size > 0;
-    const media = {
-      anchors: listMedia("anchors"),
-      plates: listMedia("plates"),
-      props: listMedia("props"),
-      vehicles: listMedia("vehicles"),
-      audio: listMedia("audio"),
-    };
-    const modelName = (id) =>
-      (P.meta.models || []).find((m) => m.id === id)?.name || "";
-    /* Same exact-ownership rule as the review pool and the entity workspace. A
-       Bible export that still matched by prefix would publish a child entity's
-       reference under its parent's name. */
-    const withMedia = (listName, list, pool) => {
-      const ownerIndex = EntityOwnership.buildEntityOwnerIndex(P, listName);
-      return list.map((e) => {
-        const matched = EntityOwnership.filterEntityMedia(ownerIndex, e.id, pool);
-        /* CANON ONLY. This fell back to EVERY owned file when the entity had no
-            raw pointer, so a supporting image entered a document that describes
-            itself as approved production truth. An entity with no canon
-            contributes no approved media, which is the honest answer. */
-        const canonFiles = entityCanonFiles(listName, e);
-        const selected = matched.filter((m) => canonFiles.has(m.name));
-        return {
-          ...e,
-          made: (e.made || []).map((g) => ({
-            ...g,
-            modelName: modelName(g.model),
-          })),
-          media: selected,
-        };
-      });
-    };
-    const shots = P.shots
-      .filter((s) => s.status === "LOCKED" || s.workflowStatus === "APPROVED")
-      .map((s) => {
-        const takes = listMedia(path.join("shots", s.id, "takes"));
-        const locked = listMedia(path.join("shots", s.id, "locked"));
-        const allMedia = [
-          ...takes,
-          ...locked.filter((x) => !takes.some((t) => t.name === x.name)),
-        ];
-        const findMedia = (name) =>
-          name ? allMedia.find((t) => t.name === name) || null : null;
-        const keyframes = (s.keyframes || []).map((f, i) => ({
-          id: f.id || `frame-${i + 1}`,
-          label: f.label || String.fromCharCode(65 + i),
-          title: f.title || `Frame ${String.fromCharCode(65 + i)}`,
-          description: f.description || "",
-          notes: f.notes || "",
-          required: f.required !== false,
-          /* CANON ONLY. `f.winner` is a pointer; the Bible publishes decisions. */
-          winner: ProductionAuthority.hasCurrentHumanAuthority(P, { kind: "shot-frame", shotId: s.id, frameId: f.id })
-            ? findMedia(f.winner)
-            : null,
-          package:
-            resolvePromptBuildList(P, f.generationPackages || [])
-              .slice()
-              .reverse()
-              .find((g) => g.prompt) || null,
-        }));
-        const motions = (s.clips || []).map((c, i) => {
-          const from =
-            keyframes.find((f) => f.id === c.fromFrame)?.label ||
-            keyframes[0]?.label ||
-            "";
-          const to = keyframes.find((f) => f.id === c.toFrame)?.label || "";
-          return {
-            id: c.id || `motion-${i + 1}`,
-            label: c.label || c.suffix || String.fromCharCode(65 + i),
-            title: c.title || "Motion unit",
-            kind: c.kind || "plan",
-            from,
-            to,
-            dur: +c.dur || 0,
-            direction: c.motionPrompt || c.note || "",
-            line: c.line || "",
-            speakerId: c.speakerId || "",
-            audioNote: c.audioNote || c.vo || "",
-            winner: ProductionAuthority.hasCurrentHumanAuthority(P, { kind: "shot-motion", shotId: s.id, unitKey: c.id || c.suffix || "" })
-              ? findMedia(c.videoWinner)
-              : null,
-            package:
-              resolvePromptBuildList(P, c.generationPackages || [])
-                .slice()
-                .reverse()
-                .find((g) => g.prompt) || null,
-          };
-        });
-        /* `locked[0]` IS DELETED. It promoted the first file that happened to be
-            on disk into a document that says these media are approved — file
-            presence standing in for a decision. The shot headline is the opening
-            frame's canon, or the shot's canon deliverable, or nothing. */
-        const primaryFrame = keyframes.find((f) => f.winner)?.winner;
-        const deliveryCanon = ProductionAuthority.hasCurrentHumanAuthority(P, { kind: "shot-delivery", shotId: s.id })
-          ? findMedia(s.finalStillFile || (s.creationBrief || {}).finalStillFile || (s.creationBrief || {}).approvedMotionFile)
-          : null;
-        const winner = primaryFrame || deliveryCanon || null;
-        const latestPackage = [
-          ...keyframes.map((f) => f.package),
-          ...motions.map((m) => m.package),
-        ]
-          .filter(Boolean)
-          .at(-1);
-        const latestBuild = resolvePromptBuildList(P, s.promptBuilds || [])
-          .slice()
-          .reverse()
-          .find((b) => b.prompt);
-        const fav = latestPackage
-          ? {
-              text: latestPackage.prompt,
-              refs: (latestPackage.references || []).map(
-                (r, i) =>
-                  "#image" + (i + 1) + " = " + (r.label || r.key || r.role),
-              ),
-              profileName: latestPackage.profileName,
-              profileVersion: latestPackage.profileVersion,
-            }
-          : latestBuild
-            ? {
-                text: latestBuild.prompt,
-                refs: (latestBuild.references || []).map(
-                  (r, i) =>
-                    "#image" + (i + 1) + " = " + (r.label || r.key || r.role),
-                ),
-                profileName: latestBuild.profileName,
-                profileVersion: latestBuild.profileVersion,
-              }
-            : (s.promptOptions || []).find((o) => o.favorite) ||
-              (s.promptOptions || [])[0] ||
-              null;
-        const scene = P.scenes.find((x) => x.id === s.scene);
-        const mid = s.stillModel || (P.meta.defaults || {}).stillModel;
-        const vid = s.videoModel || (P.meta.defaults || {}).videoModel;
-        return {
-          id: s.id,
-          title: s.title,
-          scene: scene?.title || s.scene,
-          dur: motions.length
-            ? motions.reduce((n, m) => n + m.dur, 0)
-            : +s.dur || 0,
-          route: s.route,
-          winner,
-          stillModel: modelName(mid),
-          videoModel: modelName(vid),
-          motionPrompt: s.motionPrompt || "",
-          keyframes,
-          motions,
-          prompt: fav
-            ? {
-                text: fav.text,
-                refs: fav.refs || [],
-                profileName: fav.profileName || "",
-                profileVersion: fav.profileVersion || "",
-              }
-            : null,
-        };
-      });
-    res.json({
-      meta: {
-        title: P.meta.title,
-        format: P.meta.format,
-        version: P.meta.version,
-        hubVersion: P.meta.hubVersion || "v5.0",
-      },
-      models: P.meta.models || [],
-      world: P.meta.world || null,
-      styleBlocks: P.meta.styleBlocks || [],
-      qcChecklist: P.qcChecklist || [],
-      characters: withMedia("characters", P.characters.filter(approvedIn("characters")), media.anchors),
-      locations: withMedia("locations", P.locations.filter(approvedIn("locations")), media.plates),
-      props: withMedia("props", P.props.filter(approvedIn("props")), media.props),
-      vehicles: withMedia("vehicles", (P.vehicles || []).filter(approvedIn("vehicles")), media.vehicles || []),
-      audio: withMedia("audio", (P.audio || []).filter(approvedIn("audio")), media.audio),
-      shots,
-      pending: {
-        characters: P.characters.filter((x) => !approvedIn("characters")(x)).length,
-        locations: P.locations.filter((x) => !approvedIn("locations")(x)).length,
-        props: P.props.filter((x) => !approvedIn("props")(x)).length,
-        vehicles: (P.vehicles || []).filter((x) => !approvedIn("vehicles")(x)).length,
-        audio: (P.audio || []).filter((x) => !approvedIn("audio")(x)).length,
-        shots: P.shots.filter(
-          (s) => s.status !== "LOCKED" && s.workflowStatus !== "APPROVED",
-        ).length,
-      },
-    });
+    res.json(bibleProjection(readJsonSync(DATA())));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+/* The filmmaker-facing export. Same convention as every other export in this
+   product — GET, a preset, `text/markdown`, and a filename the person never has to
+   type. Local only: it reads the project already on this disk and calls nothing. */
+app.get("/api/bible/export", (req, res) => {
+  try {
+    const requested = String(req.query?.preset || "canon").toLowerCase();
+    if (!BibleCanon.BIBLE_EXPORT_PRESETS.includes(requested))
+      return res.status(400).json({ error: `Unknown Bible export preset. Accepted values: ${BibleCanon.BIBLE_EXPORT_PRESETS.join(", ")}` });
+    const doc = bibleProjection(readJsonSync(DATA()));
+    res.setHeader("Content-Type", "text/markdown; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${BibleCanon.bibleExportFilename(doc, requested)}"`);
+    res.send(BibleCanon.bibleCanonMarkdown(doc, { preset: requested }));
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

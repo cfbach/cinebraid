@@ -3364,6 +3364,20 @@ button:disabled,
 .bible-sidebar-actions{display:grid;grid-template-columns:1fr;gap:7px;margin:12px 0}
 .bible-sidebar-actions button,.bible-back-link{width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:10px;background:var(--panel-2);color:var(--ink);font:700 10px var(--body);text-align:center}
 .bible-sidebar-actions button[aria-pressed="true"]{border-color:var(--acc);background:var(--acc-soft);color:var(--acc)}
+.bible-export-actions{display:grid;grid-template-columns:1fr;gap:7px;margin:12px 0}
+.bible-export-actions>span{font:600 8.5px var(--mono);letter-spacing:.09em;text-transform:uppercase;color:var(--muted)}
+/* Supporting material is deliberately quieter than every canon section: same page,
+   plainly subordinate, and never mistakable for an approved heading. */
+.bible-appendix-law{margin:0 0 14px;font-size:12px;line-height:1.6;color:var(--muted)}
+.bible-appendix-list{display:grid;gap:9px}
+.bible-appendix-row{padding:12px 13px;border:1px solid var(--line-2);border-radius:9px;background:rgba(255,255,255,.012)}
+.bible-appendix-head{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.bible-appendix-head b{font:600 12px var(--body);color:var(--ink)}
+.bible-appendix-head code,.bible-appendix-detail{font:500 10px var(--mono);color:var(--muted)}
+.bible-appendix-status{padding:3px 8px;border:1px solid rgba(231,173,74,.20);border-radius:999px;background:rgba(231,173,74,.05);font:500 8.5px var(--mono);letter-spacing:.07em;text-transform:uppercase;color:var(--amber)}
+.bible-appendix-row p{margin:7px 0 0;font-size:12px;line-height:1.55;color:var(--muted)}
+.bible-appendix-detail{display:block;margin-top:7px;word-break:break-word}
+.bible-frame-note{margin:8px 0 0;font-size:11px;line-height:1.5;color:var(--muted)}
 .bible-visual .bible-main{max-width:1600px}
 .bible-visual .bible-overview{position:relative;overflow:hidden;min-height:320px;padding:42px;background:linear-gradient(135deg,color-mix(in srgb,var(--panel) 92%,transparent),color-mix(in srgb,var(--acc) 14%,var(--panel-2)))}
 .bible-visual .bible-overview::after{content:"";position:absolute;right:-8%;bottom:-45%;width:460px;height:460px;border-radius:50%;background:radial-gradient(circle,color-mix(in srgb,var(--acc) 18%,transparent),transparent 65%);pointer-events:none}

@@ -203,6 +203,8 @@ const nodeSuites = [
   "check:recovery-quarantine",
   "check:recovery-quarantine-negative",
   "check:brand-logo",
+  "check:bible-canon",
+  "check:bible-canon-negative",
 ];
 
 /* Suites that assert something about the whole machine and therefore cannot share it.
@@ -224,7 +226,8 @@ const browserSuites = ["check:manual-browser", "check:browser-real", "check:h3-b
   "check:focused-browser", "check:alpha-loop-browser", "check:entity-truth-browser",
   "check:shot-readiness-browser", "check:founder-p0-browser", "check:quiet-shell-browser",
   "check:project-entry-browser", "check:reference-reframe-browser", "check:simple-advanced-browser",
-  "check:shot-intent-browser", "check:authority-browser", "check:save-truth-browser"];
+  "check:shot-intent-browser", "check:authority-browser", "check:save-truth-browser",
+  "check:bible-canon-browser"];
 const releaseSuites = ["check:environment", "check:package"];
 /* How a suite is launched, without a shell.
 

@@ -1,0 +1,758 @@
+/* CineBraid — THE ONE CANON-SAFE PROJECT BIBLE PROJECTION.
+
+   Shared by browser and Node the same way public/shared-production-media.js and
+   public/shared-build-history.js are. Today its consumers are both server routes:
+   GET /api/bible (the screen) and GET /api/bible/export (the file). That is the
+   point — see "ONE PROJECTION, TWO RENDERINGS" below.
+
+   ---------------------------------------------------------------------------
+   THE DEFECT THIS ENDS (Public Alpha UX convergence, Slice 2, P0).
+
+   The Bible gated its MEDIA on the authority ledger and chose its PROMPTS by
+   recency:
+
+       package: resolvePromptBuildList(P, f.generationPackages).reverse().find(g => g.prompt)
+
+   openCandidateCorrection() registers a targeted-repair draft into
+   `frame.generationPackages` the moment the repair modal OPENS. So merely looking
+   at a repair — generating nothing, approving nothing — moved the newest entry to
+   the end of that list, and the Bible published
+
+       "CORRECT THE EXISTING FRAME / Edit #image1 rather than creating a new
+        composition. / CORRECTIONS / The left glove is the wrong colour."
+
+   under FRAME PACKAGE, directly beneath an image whose only approval was for the
+   PREVIOUS revision. Instructional draft text read as approved production truth,
+   and the same draft became the shot's headline `prompt`.
+
+   Three smaller members of the same class travelled with it. `continuityStates`
+   was passed through raw, so every declared state printed its `approvedFile`
+   pointer whether or not a receipt stood behind it. `made[]` published every
+   hand-authored generation record regardless of which file it named. Entities
+   published every saved Phase 1 draft prompt.
+
+   ---------------------------------------------------------------------------
+   THE INVARIANT, stated once so no surface has to infer it.
+
+       ONLY MATERIAL SUPPORTED BY CURRENT APPROVED AUTHORITY MAY BE PRESENTED AS
+       CURRENT BIBLE CANON.
+
+   Existence is not authority. Recency is not authority. A pointer is not
+   authority. A draft is not authority. A generation is not authority. Only a
+   current human receipt is, and this module never decides that question itself:
+   every canon answer below comes from public/shared-production-authority.js, which
+   is the kernel's reader. This file CONSUMES authority and defines none.
+
+   ---------------------------------------------------------------------------
+   PROMPT / PACKAGE COHERENCE, which is the whole of the P0.
+
+   A prompt may appear under current approved canon only when it is the prompt that
+   PRODUCED THE APPROVED BYTES. The chain is a chain, and every link is a record
+   that already exists:
+
+       current receipt  ->  receipt.value is a filename
+       filename         ->  the candidate row that files it (stored | name | original)
+       candidate row    ->  sourceBuildId / sourcePackageId, written at generation
+       build id         ->  promptBuildsById, or the row's own frozen snapshot
+
+   If any link is missing the answer is ABSENT, never "the newest package". Fail
+   closed, and say why: absence is reported with a reason a person can act on.
+
+   `row.correctionBuildIds` and `row.currentCorrectionBuildId` are DELIBERATELY NOT
+   CONSULTED. They record repairs authored AGAINST an approved candidate, not the
+   build that made it — reading them is the defect with a different field name.
+
+   ---------------------------------------------------------------------------
+   ONE PROJECTION, TWO RENDERINGS.
+
+   bibleCanonProjection() answers what is canon. bibleCanonMarkdown() serialises
+   it. The CANON ONLY body is built by canonBodyLines(), which is not given the
+   preset and therefore cannot vary by it; CANON + APPENDIX is that same body with
+   appendix lines concatenated after a delimiter. So the exported canon is not
+   "equivalent to" the screen's canon — it is the same values, and the two presets
+   share one body byte for byte.
+
+   No clock, no filesystem, no network, no DOM. The caller supplies the media
+   listing it already has. Nothing here writes, normalises, or caches: a Bible read
+   must not canonicalise a legacy project merely by looking at it. And nothing here
+   is time-dependent, so the same project exports the same bytes every time. */
+(function (root, factory) {
+  const api = factory(root);
+  if (typeof module === "object" && module.exports) module.exports = api;
+  if (root) root.CineBraidBibleCanon = api;
+})(typeof window !== "undefined" ? window : globalThis, function (root) {
+  const AUTHORITY = (typeof module === "object" && module.exports)
+    ? require("./shared-production-authority.js")
+    : root;
+  const HISTORY = (typeof module === "object" && module.exports)
+    ? require("./shared-build-history.js")
+    : root;
+
+  const BIBLE_CANON_CONTRACT = { version: 1, name: "bible-canon" };
+  /* The five answers to "what is this material?". Nothing in the canon body may
+     carry anything but "current". */
+  const BIBLE_MATERIAL_STATUSES = ["current", "historic", "draft", "rejected", "absent"];
+  const BIBLE_EXPORT_PRESETS = ["canon", "canon-appendix"];
+  /* Why a canon item has no publishable prompt. Each is a different repair. */
+  const BIBLE_REPRESENTATION_ABSENCES = ["no-candidate-record", "no-recorded-build", "build-unavailable", "no-prompt-recorded"];
+  const BIBLE_ENTITY_LISTS = ["characters", "locations", "props", "vehicles", "audio"];
+  const APPENDIX_HEADING = "## SUPPORTING MATERIAL — NOT CANON";
+
+  function text(value) { return String(value == null ? "" : value).trim(); }
+  function list(value) { return Array.isArray(value) ? value : []; }
+  function record(value) { return value && typeof value === "object" && !Array.isArray(value) ? value : {}; }
+  function clone(value) { return value == null ? value : JSON.parse(JSON.stringify(value)); }
+
+  /* ======================================================================== */
+  /* 1. THE COHERENCE LINK — approved bytes back to the prompt that made them  */
+  /* ======================================================================== */
+
+  function candidateRowFor(owner, fileName) {
+    const wanted = text(fileName);
+    if (!wanted) return null;
+    return list(record(owner).candidateFiles).map(record).find((row) =>
+      text(row.stored) === wanted || text(row.name) === wanted || text(row.original) === wanted) || null;
+  }
+
+  function buildFromLibrary(project, buildId) {
+    const id = text(buildId);
+    if (!id) return null;
+    const library = record(record(project).promptBuildsById);
+    if (!library[id]) return null;
+    if (HISTORY && typeof HISTORY.resolvePromptBuild === "function") {
+      /* Through the shipped resolver, so composition and motion snapshots rehydrate
+         exactly as they do everywhere else. A build the library has lost comes back
+         as a `missing: true` placeholder, which is not a prompt. */
+      const resolved = HISTORY.resolvePromptBuild(project, { buildId: id });
+      if (resolved && !resolved.missing) return resolved;
+      return null;
+    }
+    return library[id];
+  }
+
+  /* The frozen copy a candidate row carries. It is only usable when it IS the row's
+     recorded build — a snapshot whose id names some other package is somebody
+     else's provenance. A snapshot with no id at all predates the id convention and
+     is accepted, because the row is the only thing that ever pointed at it. */
+  function snapshotFor(row, buildId) {
+    for (const snapshot of [record(row).sourcePackageSnapshot, record(row).packageSnapshot]) {
+      const it = record(snapshot);
+      if (!text(it.prompt)) continue;
+      const named = text(it.id) || text(it.packageId);
+      if (!named || named === text(buildId)) return it;
+    }
+    return null;
+  }
+
+  function representationOf(build, boundTo, source) {
+    const it = record(build);
+    const prompt = text(it.prompt);
+    if (!prompt) return null;
+    return {
+      prompt,
+      buildId: text(it.id),
+      packageId: text(it.packageId),
+      profileId: text(it.profileId),
+      profileName: text(it.profileName),
+      profileVersion: text(it.profileVersion),
+      kind: text(it.kind),
+      references: list(it.references).map((ref, index) => ({
+        token: text(record(ref).token) || "#image" + (index + 1),
+        label: text(record(ref).label) || text(record(ref).key) || text(record(ref).role),
+        role: text(record(ref).role),
+      })),
+      /* THE WHOLE POINT, carried on the record rather than assumed by the reader:
+         these bytes are what this prompt produced, and this is how we know. */
+      boundTo: text(boundTo),
+      source,
+    };
+  }
+
+  /* THE ONE ANSWER to "what approved prompt belongs to THIS approved revision?".
+     Used for shot frames, motion units, shot delivery and entity states alike, so
+     no surface can grow its own weaker version. */
+  function approvedRepresentation(project, owner, approvedFile) {
+    const boundTo = text(approvedFile);
+    if (!boundTo) return { representation: null, absence: "no-candidate-record" };
+    const row = candidateRowFor(owner, boundTo);
+    if (!row) return { representation: null, absence: "no-candidate-record" };
+    /* An entity candidate records the request as sent, verbatim, at generation.
+       That IS the prompt these bytes came from — the strongest link there is. */
+    const recorded = text(row.prompt);
+    if (recorded) {
+      return {
+        representation: representationOf(
+          {
+            prompt: recorded,
+            id: text(row.sourceBuildId),
+            packageId: text(row.sourcePackageLabel) || text(row.sourcePackageId),
+            profileName: text(row.generationModel),
+          },
+          boundTo, "candidate-record"),
+        absence: "",
+      };
+    }
+    const buildId = text(row.sourceBuildId) || text(row.sourcePackageId);
+    if (!buildId) return { representation: null, absence: "no-recorded-build" };
+    const built = buildFromLibrary(project, buildId);
+    if (built) {
+      const representation = representationOf(built, boundTo, "prompt-build");
+      return representation ? { representation, absence: "" } : { representation: null, absence: "no-prompt-recorded" };
+    }
+    const frozen = snapshotFor(row, buildId);
+    if (frozen) return { representation: representationOf(frozen, boundTo, "frozen-snapshot"), absence: "" };
+    return { representation: null, absence: "build-unavailable" };
+  }
+
+  /* ======================================================================== */
+  /* 2. AUTHORITY — asked, never answered, here                               */
+  /* ======================================================================== */
+
+  function receiptFor(project, target) {
+    if (!AUTHORITY || typeof AUTHORITY.currentHumanAuthority !== "function") return null;
+    return AUTHORITY.currentHumanAuthority(project, target) || null;
+  }
+
+  function targetKeyOf(target) {
+    const it = record(target);
+    if (it.kind === "shot-frame") return `shot-frame:${text(it.shotId)}#${text(it.frameId)}`;
+    if (it.kind === "shot-motion") return `shot-motion:${text(it.shotId)}#${text(it.unitKey)}`;
+    if (it.kind === "shot-delivery") return `shot-delivery:${text(it.shotId)}`;
+    return `entity-state:${text(it.list)}:${text(it.entityId)}#${text(it.stateId)}`;
+  }
+
+  function authorityFacts(receipt, target) {
+    const it = record(receipt);
+    return {
+      targetKey: targetKeyOf(target),
+      receiptId: text(it.id),
+      at: text(it.at),
+      value: text(it.value),
+      assetId: text(it.assetId),
+    };
+  }
+
+  function entityTruth(project, listName, entityId) {
+    if (!AUTHORITY || typeof AUTHORITY.entityProductionTruth !== "function") {
+      return { list: listName, entityId, canon: [], references: [], historic: [] };
+    }
+    return AUTHORITY.entityProductionTruth(project, listName, entityId);
+  }
+
+  /* ======================================================================== */
+  /* 3. THE PROJECTION                                                        */
+  /* ======================================================================== */
+
+  function mediaFinder(pool) {
+    const index = new Map();
+    for (const item of list(pool)) if (text(record(item).name)) index.set(text(record(item).name), record(item));
+    return (name) => index.get(text(name)) || null;
+  }
+
+  function entityProjection(project, listName, entity, pool, ownedNames) {
+    const x = record(entity);
+    const truth = entityTruth(project, listName, x.id);
+    const find = mediaFinder(pool);
+    const owned = ownedNames instanceof Set ? ownedNames : null;
+    /* Exact ownership, unchanged from the shipped route: a Bible that matched media
+       by prefix would publish a child entity's reference under its parent's name. */
+    const visible = (name) => (!owned || owned.has(text(name))) ? find(name) : null;
+    const appendix = [];
+
+    const declared = list(x.continuityStates).map(record);
+    const nameOfState = (stateId) => {
+      const found = declared.find((state) => text(state.id) === text(stateId));
+      return text(record(found).name) || (text(stateId) === "state-default" ? "Default" : text(stateId));
+    };
+
+    /* CANON STATES ONLY, and each one's file is the RECEIPT's value — never the
+       state's own `approvedFile` pointer, which is what a stale pointer would ride
+       in on. A declared state with no receipt is history, and says so. */
+    const states = [];
+    const media = [];
+    for (const row of list(truth.canon).map(record)) {
+      /* The canon row already carries the receipt entityProductionTruth read, so
+         this cites it rather than revalidating the whole ledger once per state. */
+      const facts = {
+        targetKey: targetKeyOf({ kind: "entity-state", list: listName, entityId: text(x.id), stateId: text(row.stateId) }),
+        receiptId: text(row.receiptId),
+        at: text(row.at),
+        value: text(row.value),
+        assetId: text(row.assetId),
+      };
+      const declaredState = declared.find((state) => text(state.id) === text(row.stateId)) || {};
+      const file = text(row.value);
+      const item = visible(file);
+      const resolved = approvedRepresentation(project, x, file);
+      states.push({
+        id: text(row.stateId),
+        name: text(row.stateName) || nameOfState(row.stateId),
+        isDefault: row.isDefault === true,
+        appliesTo: text(declaredState.appliesTo),
+        notes: text(declaredState.notes),
+        approvedFile: file,
+        media: item,
+        authority: facts,
+        package: resolved.representation,
+        representationStatus: resolved.representation ? "current" : "absent",
+        representationAbsence: resolved.absence,
+      });
+      if (item && !media.some((m) => text(m.name) === text(item.name))) media.push(item);
+    }
+
+    for (const row of list(truth.historic).map(record)) {
+      appendix.push({
+        material: "state",
+        status: "historic",
+        label: text(row.stateName) || nameOfState(row.stateId),
+        detail: text(row.value),
+        basis: text(row.basis),
+        why: "A selection nobody currently vouches for. It is not canon until a person approves it.",
+      });
+    }
+    for (const state of declared) {
+      const stateId = text(state.id);
+      if (!stateId) continue;
+      if (states.some((row) => row.id === stateId)) continue;
+      if (list(truth.historic).map(record).some((row) => text(row.stateId) === stateId)) continue;
+      appendix.push({
+        material: "state",
+        status: "absent",
+        label: text(state.name) || stateId,
+        detail: "",
+        why: "Declared, with no approved image behind it.",
+      });
+    }
+
+    /* COVERAGE AND EXPRESSION SLOTS ARE DELIBERATELY NOT LISTED, and this is worth
+       stating because entityProductionTruth hands them over and it would be easy.
+       They are supporting selections — a third thing, never canon — but the Bible
+       has never published them, so putting them here would be new product surface
+       rather than preserved material, and there are enough of them per entity to
+       swamp the one thing this section exists to say. The section means exactly
+       one thing: MATERIAL THE CANON FILTER REMOVED, AND WHY. */
+
+    /* A hand-authored generation record enters canon only when the file it names is
+       one of this entity's canon files. Otherwise it describes something else. */
+    const canonFiles = new Set(states.map((state) => text(state.approvedFile)).filter(Boolean));
+    const namesCanon = (files) => text(files).split(/[,;\s]+/).filter(Boolean).some((name) => canonFiles.has(name));
+    const made = [];
+    for (const entry of list(x.made).map(record)) {
+      if (!text(entry.prompt)) continue;
+      if (namesCanon(entry.files)) {
+        made.push({ model: text(entry.model), files: text(entry.files), prompt: text(entry.prompt), date: text(entry.date) });
+        continue;
+      }
+      appendix.push({
+        material: "generation-record",
+        status: text(entry.files) ? "historic" : "draft",
+        label: text(entry.files) || "Unfiled generation record",
+        detail: text(entry.prompt),
+        why: text(entry.files)
+          ? "A generation record for a file that is not this entity's approved canon."
+          : "A generation record that names no file.",
+      });
+    }
+
+    /* Saved Phase 1 prompts are working drafts with no output edge at all. */
+    for (const saved of list(x.prompts).map(record)) {
+      if (!text(saved.text)) continue;
+      appendix.push({
+        material: "saved-prompt",
+        status: "draft",
+        label: text(saved.id) || "Saved prompt",
+        detail: text(saved.text),
+        why: "A saved draft prompt. Nothing approved was made from it.",
+      });
+    }
+
+    return {
+      id: text(x.id),
+      name: text(x.name),
+      notes: text(x.notes),
+      role: text(x.role),
+      /* FACTUAL CANON THE FILMMAKER AUTHORED. Not derived from a generation and not
+         a draft of one: the identity block and its drift note are the description
+         itself, and they survive an entity having no approved image. */
+      block: text(x.block),
+      driftNotes: text(x.driftNotes),
+      media,
+      continuityStates: states,
+      made,
+      canonStateCount: states.length,
+      appendix,
+    };
+  }
+
+  function shotProjection(project, shot, pool) {
+    const s = record(shot);
+    const find = mediaFinder(pool);
+    const appendix = [];
+
+    const declaredFrames = list(s.keyframes).map(record);
+    const keyframes = declaredFrames.map((f, index) => {
+      const label = text(f.label) || String.fromCharCode(65 + index);
+      const frameId = text(f.id) || `frame-${index + 1}`;
+      const target = { kind: "shot-frame", shotId: text(s.id), frameId };
+      const receipt = receiptFor(project, target);
+      const file = text(record(receipt).value);
+      const resolved = receipt
+        ? approvedRepresentation(project, s, file)
+        : { representation: null, absence: "" };
+      if (!receipt && text(f.winner)) {
+        appendix.push({
+          material: "frame",
+          status: "historic",
+          label: `Frame ${label}`,
+          detail: text(f.winner),
+          why: "A frame selection with no current approval behind it.",
+        });
+      }
+      return {
+        id: frameId,
+        label,
+        title: text(f.title) || `Frame ${label}`,
+        description: text(f.description),
+        notes: text(f.notes),
+        required: f.required !== false,
+        winner: receipt ? find(file) : null,
+        authority: receipt ? authorityFacts(receipt, target) : null,
+        package: resolved.representation,
+        representationStatus: resolved.representation ? "current" : "absent",
+        representationAbsence: resolved.absence,
+      };
+    });
+
+    const motions = list(s.clips).map(record).map((c, index) => {
+      const label = text(c.label) || text(c.suffix) || String.fromCharCode(65 + index);
+      const unitKey = text(c.id) || text(c.suffix);
+      const target = { kind: "shot-motion", shotId: text(s.id), unitKey };
+      const receipt = unitKey ? receiptFor(project, target) : null;
+      const file = text(record(receipt).value);
+      const resolved = receipt
+        ? approvedRepresentation(project, s, file)
+        : { representation: null, absence: "" };
+      if (!receipt && text(c.videoWinner)) {
+        appendix.push({
+          material: "motion",
+          status: "historic",
+          label: `Motion ${label}`,
+          detail: text(c.videoWinner),
+          why: "A motion selection with no current approval behind it.",
+        });
+      }
+      const fromFrame = keyframes.find((frame) => frame.id === text(c.fromFrame));
+      const toFrame = keyframes.find((frame) => frame.id === text(c.toFrame));
+      return {
+        id: unitKey || `motion-${index + 1}`,
+        label,
+        title: text(c.title) || "Motion unit",
+        kind: text(c.kind) || "plan",
+        from: text(record(fromFrame).label) || text(record(keyframes[0]).label),
+        to: text(record(toFrame).label),
+        dur: +c.dur || 0,
+        direction: text(c.motionPrompt) || text(c.note),
+        line: text(c.line),
+        speakerId: text(c.speakerId),
+        audioNote: text(c.audioNote) || text(c.vo),
+        winner: receipt ? find(file) : null,
+        authority: receipt ? authorityFacts(receipt, target) : null,
+        package: resolved.representation,
+        representationStatus: resolved.representation ? "current" : "absent",
+        representationAbsence: resolved.absence,
+      };
+    });
+
+    const deliveryTarget = { kind: "shot-delivery", shotId: text(s.id) };
+    const deliveryReceipt = receiptFor(project, deliveryTarget);
+    const deliveryFile = text(record(deliveryReceipt).value);
+    const deliveryResolved = deliveryReceipt
+      ? approvedRepresentation(project, s, deliveryFile)
+      : { representation: null, absence: "" };
+    const delivery = deliveryReceipt
+      ? {
+          winner: find(deliveryFile),
+          authority: authorityFacts(deliveryReceipt, deliveryTarget),
+          package: deliveryResolved.representation,
+          representationStatus: deliveryResolved.representation ? "current" : "absent",
+          representationAbsence: deliveryResolved.absence,
+        }
+      : null;
+
+    /* `locked[0]` and "the newest package" are BOTH deleted. The headline is the
+       opening frame's canon, or the shot's approved deliverable, or nothing. */
+    const primaryFrame = keyframes.find((frame) => frame.winner);
+    const winner = (primaryFrame && primaryFrame.winner) || (delivery && delivery.winner) || null;
+
+    for (const entry of list(s.promptOptions).map(record)) {
+      if (!text(entry.text)) continue;
+      appendix.push({
+        material: "saved-prompt",
+        status: "draft",
+        label: text(entry.id) || "Saved shot prompt",
+        detail: text(entry.text),
+        why: "A saved draft prompt. Nothing approved was made from it.",
+      });
+    }
+
+    /* The shot-level prompt exists for shots that declare no frames. Its truth is
+       the deliverable's — not a package list's last row. */
+    const headline = delivery ? delivery.package : null;
+    return {
+      id: text(s.id),
+      title: text(s.title),
+      sceneId: text(s.scene),
+      dur: motions.length ? motions.reduce((total, m) => total + m.dur, 0) : +s.dur || 0,
+      route: text(s.route),
+      winner,
+      motionPrompt: text(s.motionPrompt),
+      keyframes,
+      motions,
+      delivery,
+      prompt: headline
+        ? {
+            text: headline.prompt,
+            refs: headline.references.map((ref, i) => `#image${i + 1} = ${ref.label || ref.role}`),
+            profileName: headline.profileName,
+            profileVersion: headline.profileVersion,
+            boundTo: headline.boundTo,
+          }
+        : null,
+      appendix,
+    };
+  }
+
+  /* options: { media: {characters, locations, props, vehicles, audio}, shotMedia(shotId) -> [],
+               ownedMedia(list, entityId) -> Set<string> | null, modelName(id) -> string }
+
+     `media` is keyed by ENTITY LIST, not by disk folder. Which folder a list's
+     media lives in is the server's business and it already states that map; a
+     second copy here would be a second place to get it wrong. */
+  function bibleCanonProjection(project, options = {}) {
+    const P = record(project);
+    const opts = record(options);
+    const pools = record(opts.media);
+    const shotMedia = typeof opts.shotMedia === "function" ? opts.shotMedia : () => [];
+    const ownedMedia = typeof opts.ownedMedia === "function" ? opts.ownedMedia : () => null;
+    const modelName = typeof opts.modelName === "function" ? opts.modelName : () => "";
+
+    const entities = {};
+    const pending = {};
+    const appendix = [];
+    for (const listName of BIBLE_ENTITY_LISTS) {
+      const rows = list(P[listName]).map(record).map((entity) =>
+        entityProjection(P, listName, entity, list(pools[listName]), ownedMedia(listName, text(entity.id))));
+      /* An entity is in the canon body when the creator approved at least one of
+         its states. Unchanged: this is the shipped gate, and it is the right one. */
+      entities[listName] = rows.filter((row) => row.canonStateCount > 0);
+      pending[listName] = rows.length - entities[listName].length;
+      for (const row of rows) {
+        for (const item of row.appendix) {
+          appendix.push({ ...item, scope: "entity", list: listName, subjectId: row.id, subjectName: row.name });
+        }
+      }
+      for (const row of entities[listName]) {
+        row.made = row.made.map((entry) => ({ ...entry, modelName: modelName(entry.model) }));
+        delete row.appendix;
+      }
+    }
+
+    const declaredShots = list(P.shots).map(record);
+    const locked = declaredShots.filter((s) => text(s.status) === "LOCKED" || text(s.workflowStatus) === "APPROVED");
+    const scenes = list(P.scenes).map(record);
+    const defaults = record(record(P.meta).defaults);
+    const shots = locked.map((source) => {
+      const row = shotProjection(P, source, shotMedia(text(source.id)));
+      const scene = scenes.find((x) => text(x.id) === row.sceneId);
+      for (const item of row.appendix) {
+        appendix.push({ ...item, scope: "shot", subjectId: row.id, subjectName: row.title });
+      }
+      const { appendix: dropped, sceneId, ...rest } = row;
+      return {
+        ...rest,
+        scene: text(record(scene).title) || sceneId,
+        stillModel: modelName(text(source.stillModel) || text(defaults.stillModel)),
+        videoModel: modelName(text(source.videoModel) || text(defaults.videoModel)),
+      };
+    });
+    pending.shots = declaredShots.length - locked.length;
+
+    return {
+      contractVersion: BIBLE_CANON_CONTRACT.version,
+      meta: {
+        title: text(record(P.meta).title),
+        format: text(record(P.meta).format),
+        version: text(record(P.meta).version),
+        hubVersion: text(record(P.meta).hubVersion) || "v5.0",
+      },
+      models: clone(list(record(P.meta).models)),
+      world: record(P.meta).world ? clone(record(P.meta).world) : null,
+      styleBlocks: clone(list(record(P.meta).styleBlocks)),
+      qcChecklist: clone(list(P.qcChecklist)),
+      characters: entities.characters,
+      locations: entities.locations,
+      props: entities.props,
+      vehicles: entities.vehicles,
+      audio: entities.audio,
+      shots,
+      pending,
+      appendix,
+    };
+  }
+
+  /* ======================================================================== */
+  /* 4. THE EXPORT — one body, two presets                                    */
+  /* ======================================================================== */
+
+  function oneLine(value) { return text(value).replace(/\s+/g, " "); }
+  function fence(value) { return ["```", text(value), "```"]; }
+
+  function entitySection(heading, rows) {
+    const out = [`## ${heading}`, ""];
+    if (!rows.length) {
+      out.push(`_No approved ${heading.toLowerCase()} yet._`, "");
+      return out;
+    }
+    for (const row of rows) {
+      out.push(`### ${row.name || row.id}`);
+      if (row.notes || row.role) out.push(oneLine(row.notes || row.role));
+      if (row.block) out.push("", "**Identity block**", ...fence(row.block));
+      if (row.driftNotes) out.push("", `**Continuity / drift** — ${oneLine(row.driftNotes)}`);
+      for (const state of row.continuityStates) {
+        out.push("", `**${state.name}${state.isDefault ? " (default)" : ""}** — approved image \`${state.approvedFile}\`${state.appliesTo ? ` · ${oneLine(state.appliesTo)}` : ""}`);
+        if (state.notes) out.push(oneLine(state.notes));
+        if (state.package) out.push("", `_Approved prompt for \`${state.package.boundTo}\`_`, ...fence(state.package.prompt));
+      }
+      for (const entry of row.made) {
+        out.push("", `**Made with ${entry.modelName || entry.model || "an unrecorded model"}** — \`${entry.files}\``, ...fence(entry.prompt));
+      }
+      out.push("");
+    }
+    return out;
+  }
+
+  function shotSection(rows) {
+    const out = ["## LOCKED SHOTS", ""];
+    if (!rows.length) {
+      out.push("_No locked shots yet._", "");
+      return out;
+    }
+    for (const shot of rows) {
+      out.push(`### ${shot.id} — ${shot.title}`);
+      out.push(`${shot.scene}${shot.dur ? ` · ${shot.dur}s` : ""}${shot.route ? ` · ${shot.route}` : ""}`);
+      /* The shot headline IS the opening frame's canon when there are frames, so
+         printing it again above the frame that owns it says the same thing twice.
+         It earns its line only when it is the shot's approved deliverable. */
+      const namedByFrame = shot.keyframes.some((frame) => frame.winner && shot.winner && frame.winner.name === shot.winner.name);
+      if (shot.winner && !namedByFrame) out.push("", `Approved deliverable: \`${shot.winner.name}\``);
+      for (const frame of shot.keyframes) {
+        out.push("", `**Frame ${frame.label} — ${frame.title}**${frame.required ? "" : " (optional)"}`);
+        if (frame.description) out.push(oneLine(frame.description));
+        out.push(frame.winner ? `Approved image: \`${frame.winner.name}\`` : "No approved image.");
+        if (frame.package) out.push("", `_Approved prompt for \`${frame.package.boundTo}\`_`, ...fence(frame.package.prompt));
+        else if (frame.winner) out.push("", "_The prompt behind this approved image was not recorded._");
+      }
+      for (const motion of shot.motions) {
+        out.push("", `**Motion ${motion.label} — ${motion.title}** · ${motion.from || "?"}${motion.to ? ` → ${motion.to}` : ""} · ${motion.dur}s`);
+        if (motion.direction) out.push(oneLine(motion.direction));
+        out.push(motion.winner ? `Approved output: \`${motion.winner.name}\`` : "No approved output.");
+        if (motion.package) out.push("", `_Approved prompt for \`${motion.package.boundTo}\`_`, ...fence(motion.package.prompt));
+      }
+      if (!shot.keyframes.length && shot.prompt) out.push("", `_Approved prompt for \`${shot.prompt.boundTo}\`_`, ...fence(shot.prompt.text));
+      out.push("");
+    }
+    return out;
+  }
+
+  /* THE CANON BODY. It is not given the preset, so it cannot vary by it — which is
+     what makes "Canon Only and Canon + Appendix say the same thing" structural
+     rather than a promise. */
+  function canonBodyLines(doc) {
+    const it = record(doc);
+    const meta = record(it.meta);
+    const out = [
+      `# ${meta.title || "Untitled project"} — Project Bible`,
+      "",
+      `**Format:** ${meta.format || "—"}  `,
+      `**Version:** ${meta.version || "—"}`,
+      "",
+      "Every entry below is current approved canon: a person approved it, and the approval still stands. Nothing draft, rejected, superseded or merely generated appears in this section.",
+      "",
+    ];
+    const world = record(it.world);
+    if (world.setting || world.include || world.reject || list(it.styleBlocks).length) {
+      out.push("## WORLD & STYLE", "");
+      if (world.setting) out.push("**Setting & era**", ...fence(world.setting), "");
+      if (world.include) out.push("**Include**", ...fence(world.include), "");
+      if (world.reject) out.push("**Reject on sight**", ...fence(world.reject), "");
+      for (const style of list(it.styleBlocks).map(record)) {
+        if (!text(style.text)) continue;
+        out.push(`**${text(style.name)}${text(style.stage) ? ` · stage ${text(style.stage)}` : ""}**`, ...fence(style.text), "");
+      }
+    }
+    out.push(...entitySection("CHARACTERS", list(it.characters)));
+    out.push(...entitySection("LOCATIONS", list(it.locations)));
+    out.push(...entitySection("PROPS", list(it.props)));
+    out.push(...entitySection("VEHICLES", list(it.vehicles)));
+    out.push(...entitySection("AUDIO", list(it.audio)));
+    out.push(...shotSection(list(it.shots)));
+    if (list(it.qcChecklist).length) {
+      out.push("## WHAT APPROVED MEANS", "");
+      list(it.qcChecklist).forEach((check, index) => out.push(`${index + 1}. ${oneLine(check)}`));
+      out.push("");
+    }
+    return out;
+  }
+
+  const APPENDIX_STATUS_LABEL = {
+    historic: "Historic — no current approval",
+    draft: "Draft — never approved",
+    rejected: "Rejected",
+    absent: "Nothing approved",
+  };
+
+  function appendixLines(doc) {
+    const rows = list(record(doc).appendix).map(record);
+    const out = [APPENDIX_HEADING, ""];
+    if (!rows.length) {
+      out.push("_Nothing to report. Every piece of material in this project is current approved canon._", "");
+      return out;
+    }
+    out.push("This section is NOT canon. It is kept so useful production material is not lost, and every entry carries the reason it is not canon. Nothing here may be treated as approved.", "");
+    for (const row of rows) {
+      const subject = text(row.subjectName) || text(row.subjectId);
+      const detail = text(row.detail);
+      out.push(`- **${APPENDIX_STATUS_LABEL[text(row.status)] || "Not canon"}** · ${subject ? `${subject} · ` : ""}${text(row.label)}${detail && detail.length <= 120 ? ` — \`${oneLine(detail)}\`` : ""}`);
+      out.push(`  ${text(row.why)}`);
+    }
+    out.push("");
+    return out;
+  }
+
+  function bibleCanonMarkdown(doc, options = {}) {
+    const requested = text(record(options).preset);
+    const preset = BIBLE_EXPORT_PRESETS.includes(requested) ? requested : "canon";
+    const body = canonBodyLines(doc);
+    if (preset === "canon") return body.join("\n") + "\n";
+    return body.concat(appendixLines(doc)).join("\n") + "\n";
+  }
+
+  function bibleExportFilename(doc, preset) {
+    const title = text(record(record(doc).meta).title) || "project";
+    const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "project";
+    return text(preset) === "canon-appendix" ? `${slug}-bible-with-appendix.md` : `${slug}-bible.md`;
+  }
+
+  return {
+    BIBLE_CANON_CONTRACT,
+    BIBLE_MATERIAL_STATUSES,
+    BIBLE_EXPORT_PRESETS,
+    BIBLE_REPRESENTATION_ABSENCES,
+    BIBLE_ENTITY_LISTS,
+    BIBLE_APPENDIX_HEADING: APPENDIX_HEADING,
+    bibleCanonProjection,
+    bibleCanonMarkdown,
+    bibleExportFilename,
+    approvedRepresentation,
+  };
+});

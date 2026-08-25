@@ -1,4 +1,11 @@
-/* CineBraid live Bible — read-only, latest approved canon */
+/* CineBraid live Bible — read-only.
+
+   IT RENDERS, IT NEVER JUDGES. Every "is this canon?" question is already answered
+   by public/shared-bible-canon.js before /api/bible responds, so nothing on this
+   page picks a prompt, ranks a revision or reads a raw pointer. The one rule this
+   file has to keep is that material the projection filed under `appendix` renders
+   in the supporting section and NOWHERE ELSE — that separation is what stops draft
+   text from wearing an approved heading. */
 const esc = (t) =>
   String(t ?? "").replace(
     /[&<>\"]/g,
@@ -40,8 +47,11 @@ function section(id, kicker, title, count, body, pending = 0) {
 }
 function entityCard(x, type) {
   const desc = x.notes || x.role || "";
+  /* Only states the creator approved arrive here, and `approvedFile` is the
+     receipt's value rather than the state's own pointer. A declared state with no
+     approval is in the supporting section instead. */
   const states = (x.continuityStates || []).length
-    ? `<div class="bible-states"><b>CONTINUITY STATES</b>${x.continuityStates.map((st) => `<div><span>${esc(st.name || st.id || "State")}</span>${st.appliesTo ? `<small>${esc(st.appliesTo)}</small>` : ""}${st.notes ? `<p>${esc(st.notes)}</p>` : ""}${st.approvedFile ? `<code>${esc(st.approvedFile)}</code>` : ""}</div>`).join("")}</div>`
+    ? `<div class="bible-states"><b>CONTINUITY STATES</b>${x.continuityStates.map((st) => `<div><span>${esc(st.name || st.id || "State")}</span>${st.appliesTo ? `<small>${esc(st.appliesTo)}</small>` : ""}${st.notes ? `<p>${esc(st.notes)}</p>` : ""}${st.approvedFile ? `<code>${esc(st.approvedFile)}</code>` : ""}${st.package ? block("APPROVED PROMPT FOR " + st.package.boundTo, st.package.prompt) : ""}</div>`).join("")}</div>`
     : "";
   return `<article class="bible-entity-card" data-search="${attr([x.id, x.name, desc, x.block, x.driftNotes, (x.continuityStates || []).map((st) => [st.name, st.appliesTo, st.notes].join(" ")).join(" ")].join(" "))}">
     ${strip(x.media || [])}
@@ -57,19 +67,43 @@ function shotCard(s) {
   const frames = s.keyframes || [];
   const motions = s.motions || [];
   const frameStrip = frames.length
-    ? `<div class="bible-frame-sequence">${frames.map((f) => `<article><header><b>${esc(f.label)}</b><span>${f.required ? "KEYFRAME" : "OPTIONAL"}</span></header>${f.winner ? `<a href="${f.winner.url}" target="_blank">${isVideo(f.winner.name) ? `<video muted preload="metadata" src="${f.winner.url}#t=0.1"></video>` : `<img src="${f.winner.url}" alt="">`}</a>` : '<div class="bible-frame-missing">NO FILE</div>'}<strong>${esc(f.title || "Frame")}</strong>${f.description ? `<p>${esc(f.description)}</p>` : ""}${f.package?.prompt ? block("FRAME PACKAGE · " + (f.package.profileName || f.package.profileId || "GENERAL"), f.package.prompt) : ""}</article>`).join("<i>→</i>")}</div>`
+    ? `<div class="bible-frame-sequence">${frames.map((f) => `<article><header><b>${esc(f.label)}</b><span>${f.required ? "KEYFRAME" : "OPTIONAL"}</span></header>${f.winner ? `<a href="${f.winner.url}" target="_blank">${isVideo(f.winner.name) ? `<video muted preload="metadata" src="${f.winner.url}#t=0.1"></video>` : `<img src="${f.winner.url}" alt="">`}</a>` : '<div class="bible-frame-missing">NO FILE</div>'}<strong>${esc(f.title || "Frame")}</strong>${f.description ? `<p>${esc(f.description)}</p>` : ""}${f.package?.prompt ? block("APPROVED PROMPT FOR " + f.package.boundTo + (f.package.profileName ? " · " + f.package.profileName : ""), f.package.prompt) : f.winner ? '<p class="bible-frame-note">The prompt behind this approved image was not recorded.</p>' : ""}</article>`).join("<i>→</i>")}</div>`
     : "";
   const motionList = motions.length
-    ? `<div class="bible-motion-list"><b class="bible-subhead">MOTION PLAN</b>${motions.map((m) => `<article><div class="bible-motion-head"><span>${esc(m.label)}</span><strong>${esc(m.title)}</strong><code>${esc(String(m.kind || "plan").toUpperCase())} · ${esc(m.from || "?")}${m.to ? " → " + esc(m.to) : ""} · ${esc(m.dur)}s</code></div>${m.direction ? `<p>${esc(m.direction)}</p>` : ""}${m.line ? `<small>DIALOGUE · ${esc(m.line)}</small>` : ""}${m.audioNote ? `<small>VOICE NOTE · ${esc(m.audioNote)}</small>` : ""}${m.winner ? `<a class="bible-motion-winner" href="${m.winner.url}" target="_blank">Approved output · ${esc(m.winner.name)}</a>` : ""}${m.package?.prompt ? block("MOTION PACKAGE · " + (m.package.profileName || m.package.profileId || "GENERAL"), m.package.prompt) : ""}</article>`).join("")}</div>`
+    ? `<div class="bible-motion-list"><b class="bible-subhead">MOTION PLAN</b>${motions.map((m) => `<article><div class="bible-motion-head"><span>${esc(m.label)}</span><strong>${esc(m.title)}</strong><code>${esc(String(m.kind || "plan").toUpperCase())} · ${esc(m.from || "?")}${m.to ? " → " + esc(m.to) : ""} · ${esc(m.dur)}s</code></div>${m.direction ? `<p>${esc(m.direction)}</p>` : ""}${m.line ? `<small>DIALOGUE · ${esc(m.line)}</small>` : ""}${m.audioNote ? `<small>VOICE NOTE · ${esc(m.audioNote)}</small>` : ""}${m.winner ? `<a class="bible-motion-winner" href="${m.winner.url}" target="_blank">Approved output · ${esc(m.winner.name)}</a>` : ""}${m.package?.prompt ? block("APPROVED PROMPT FOR " + m.package.boundTo + (m.package.profileName ? " · " + m.package.profileName : ""), m.package.prompt) : m.winner ? '<p class="bible-frame-note">The prompt behind this approved output was not recorded.</p>' : ""}</article>`).join("")}</div>`
     : "";
   return `<article class="bible-shot" data-search="${attr([s.id, s.title, s.scene, s.route, s.prompt?.text, s.motionPrompt, frames.map((f) => [f.title, f.description].join(" ")).join(" "), motions.map((m) => [m.title, m.direction, m.kind].join(" ")).join(" ")].join(" "))}">
     <div class="bible-shot-media">${s.winner ? `<a href="${s.winner.url}" target="_blank">${isVideo(s.winner.name) ? `<video muted preload="metadata" src="${s.winner.url}#t=0.1"></video>` : `<img src="${s.winner.url}" alt="">`}<span>APPROVED</span></a>` : '<div class="bible-media-empty">Locked record has no preview</div>'}</div>
     <div class="bible-shot-body"><div class="bible-shot-top"><code>${esc(s.id)}</code><span>${esc(s.scene)}</span><span>${s.dur ? esc(s.dur) + "s" : ""}</span></div>
       <h3>${esc(s.title)}</h3><div class="bible-shot-meta">${esc(s.route || "")}${s.stillModel ? " · STILL " + esc(s.stillModel) : ""}${s.videoModel ? " · VIDEO " + esc(s.videoModel) : ""}</div>
       ${frameStrip}${motionList}
-      ${!frames.length && s.prompt ? block((s.prompt.profileName ? "MODEL-READY PROMPT · " + s.prompt.profileName + (s.prompt.profileVersion ? " · " + s.prompt.profileVersion : "") : "APPROVED STILL PROMPT") + (s.prompt.refs.length ? " · ATTACH " + s.prompt.refs.join(", ") : ""), s.prompt.text) : ""}
+      ${!frames.length && s.prompt ? block("APPROVED PROMPT FOR " + s.prompt.boundTo + (s.prompt.profileName ? " · " + s.prompt.profileName + (s.prompt.profileVersion ? " · " + s.prompt.profileVersion : "") : "") + (s.prompt.refs.length ? " · ATTACH " + s.prompt.refs.join(", ") : ""), s.prompt.text) : ""}
       ${!motions.length && s.motionPrompt ? block("MOTION PROMPT", s.motionPrompt) : ""}
     </div></article>`;
+}
+/* SUPPORTING MATERIAL, and the reason it has a section rather than being deleted.
+
+   Making the canon body honest removes real production material from the page —
+   repair drafts, states nobody has approved yet, generation records for files that
+   are not canon. That material is useful and the filmmaker wrote most of it, so it
+   is kept. What it may never do is wear an approved heading, so it lives here,
+   below every canon section, with the reason it is not canon on every row. The
+   status words come from the projection; this function only prints them. */
+const APPENDIX_LABEL = {
+  historic: "Historic — no current approval",
+  draft: "Draft — never approved",
+  rejected: "Rejected",
+  absent: "Nothing approved",
+};
+function appendixRow(row) {
+  const label = APPENDIX_LABEL[row.status] || "Not canon";
+  const subject = row.subjectName || row.subjectId || "";
+  const detail = row.detail || "";
+  return `<article class="bible-appendix-row" data-search="${attr([label, subject, row.label, detail, row.why].join(" "))}">
+    <div class="bible-appendix-head"><span class="bible-appendix-status">${esc(label)}</span>${subject ? `<b>${esc(subject)}</b>` : ""}<code>${esc(row.label || "")}</code></div>
+    <p>${esc(row.why || "")}</p>
+    ${detail.length > 120 ? block("MATERIAL", detail) : detail ? `<code class="bible-appendix-detail">${esc(detail)}</code>` : ""}
+  </article>`;
 }
 function buildToc(items) {
   document.getElementById("bible-toc").innerHTML = items
@@ -168,6 +202,11 @@ function wireSearch() {
       label: "Review standard",
       count: (B.qcChecklist || []).length,
     },
+    {
+      id: "supporting",
+      label: "Supporting material",
+      count: (B.appendix || []).length,
+    },
   ];
   buildToc(toc);
   const worldBody = `${B.world ? `<div class="bible-world-grid">${block("SETTING & ERA", B.world.setting)}${block("INCLUDE", B.world.include)}${block("REJECT ON SIGHT", B.world.reject)}</div>` : ""}
@@ -186,17 +225,17 @@ function wireSearch() {
     ? `<div class="bible-entity-grid">${B.vehicles.map((x) => entityCard(x, "VEHICLE")).join("")}</div>`
     : emptyState("vehicles", B.pending.vehicles || 0);
   const audioBody = (B.audio || []).length
-    ? `<div class="bible-entity-grid">${B.audio.map((x) => `<article class="bible-entity-card" data-search="${attr([x.id, x.name, x.notes].join(" "))}"><div class="bible-entity-body"><div class="bible-entity-meta"><span>AUDIO</span><code>${esc(x.id)}</code></div><h3>${esc(x.name)}</h3><p>${esc(x.notes || "")}</p>${(x.media || []).map((m) => `<div class="bible-audio"><audio controls src="${m.url}"></audio><a href="${m.url}" download="${attr(m.name)}">${esc(m.name)} ↓</a></div>`).join("")}${(x.prompts || []).map((pr) => block("GENERATION PROMPT · " + pr.id, pr.text)).join("")}</div></article>`).join("")}</div>`
+    ? `<div class="bible-entity-grid">${B.audio.map((x) => `<article class="bible-entity-card" data-search="${attr([x.id, x.name, x.notes].join(" "))}"><div class="bible-entity-body"><div class="bible-entity-meta"><span>AUDIO</span><code>${esc(x.id)}</code></div><h3>${esc(x.name)}</h3><p>${esc(x.notes || "")}</p>${(x.media || []).map((m) => `<div class="bible-audio"><audio controls src="${m.url}"></audio><a href="${m.url}" download="${attr(m.name)}">${esc(m.name)} ↓</a></div>`).join("")}</div></article>`).join("")}</div>`
     : emptyState("audio assets", B.pending.audio);
   const shotBody = B.shots.length
     ? `<div class="bible-shot-list">${B.shots.map(shotCard).join("")}</div>`
     : emptyState("locked shots", B.pending.shots);
   document.getElementById("bible").innerHTML = `
     <section id="overview" class="bible-overview">
-      <div class="bible-live-row"><span class="live-dot"></span><b>LIVE PROJECT BIBLE</b><span>Latest approved canon</span></div>
+      <div class="bible-live-row"><span class="live-dot"></span><b>LIVE PROJECT BIBLE</b><span>Current approved canon</span></div>
       <h1>${esc(B.meta.title)}</h1>
       <div class="bible-overview-sub">${esc(B.meta.format || "")} ${B.meta.version ? "· " + esc(B.meta.version) : ""}</div>
-      <p class="bible-overview-law">Only approved characters, locations, props, vehicles, audio, prompts, and locked shots appear here. Anything absent from this Bible is not production canon.</p>
+      <p class="bible-overview-law">Everything above Supporting material is current approved canon — someone approved it and that approval still stands. A prompt appears only beside the approved image or video it produced. Anything absent from this Bible is not production canon.</p>
       <div class="bible-metrics"><div><b>${B.characters.length + B.locations.length + B.props.length + (B.vehicles || []).length + (B.audio || []).length}</b><span>approved assets</span></div><div><b>${B.shots.length}</b><span>locked shots</span></div><div><b>${B.pending.shots}</b><span>shots in progress</span></div><div><b>${refreshed}</b><span>view refreshed</span></div></div>
     </section>
     ${section("world", "Project language", "World, models & style", (B.styleBlocks || []).length, worldBody)}
@@ -207,6 +246,7 @@ function wireSearch() {
     ${section("audio", "Approved canon", "Audio", (B.audio || []).length, audioBody, B.pending.audio || 0)}
     ${section("shots", "Production canon", "Locked shots", B.shots.length, shotBody, B.pending.shots)}
     ${section("review-standard", "Quality control", "What approved means", (B.qcChecklist || []).length, (B.qcChecklist || []).length ? `<ol class="bible-qc">${B.qcChecklist.map((q) => `<li data-search="${attr(q)}">${esc(q)}</li>`).join("")}</ol>` : emptyState("review checks", 0))}
+    ${section("supporting", "Not canon", "Supporting material", (B.appendix || []).length, (B.appendix || []).length ? `<p class="bible-appendix-law">None of this is approved canon. It is kept so nothing useful is lost, and every entry says why it is not canon.</p><div class="bible-appendix-list">${B.appendix.map(appendixRow).join("")}</div>` : `<div class="bible-empty"><b>Nothing outside canon.</b><span>Every piece of material in this project is current approved canon.</span></div>`)}
     <footer class="bible-footer">CINEBRAID · FROMBACH STUDIOS</footer>`;
   wireBibleMode();
   wireSearch();

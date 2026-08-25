@@ -230,7 +230,12 @@ const stripComments = (source) => source.replace(/\/\*[\s\S]*?\*\//g, "").replac
 const server = stripComments(read("server.js"));
 ok(/EntityOwnership\.filterEntityFileNames/.test(server), "the server's batch reviewer uses it");
 ok(!/f\.toUpperCase\(\)\.startsWith\(prefix\)/.test(server), "and no longer filters its directory read by prefix");
-ok(/EntityOwnership\.filterEntityMedia\(ownerIndex, e\.id, pool\)/.test(server),
+/* The anchor moved with the code, not the rule. Public Alpha Slice 2 lifted the
+   Bible's canon derivation into public/shared-bible-canon.js, so the route now
+   supplies ownership through a callback and its locals are named for a list rather
+   than for one entity. Still exactly one call, still pinned exactly, and the line
+   below still forbids the prefix match this guard exists for. */
+ok(/EntityOwnership\.filterEntityMedia\(ownerIndexes\[listName\], entityId, pool\)/.test(server),
   "and the Bible export, which held a third copy");
 ok(!/\.startsWith\(\s*\(\(e\.prefix \|\| e\.anchorPrefix \|\| e\.id\)/.test(server), "with its prefix match removed");
 
