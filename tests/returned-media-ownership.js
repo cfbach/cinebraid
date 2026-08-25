@@ -72,6 +72,14 @@ const codeOnly = (source) => String(source)
   .replace(/\/\*[\s\S]*?\*\//g, "")
   .replace(/(^|[^:'"\\])\/\/[^\n]*/g, "$1");
 
+/* Read out of the shipped surface rather than restated: the four readiness codes that
+   claim a shot can move on, which are the only ones an unaccounted-for result refuses. */
+const RETURNED_MEDIA_MOVE_ON_CODES = (() => {
+  const source = readLF("public/creation-studio.js");
+  const line = source.split(String.fromCharCode(10)).find((row) => row.includes("const RETURNED_MEDIA_MOVE_ON_ACTIONS"));
+  return line ? [...line.matchAll(/"([a-z-]+)"/g)].map((match) => match[1]) : [];
+})();
+
 const evaluate = (context, expression) =>
   JSON.parse(vm.runInContext(`JSON.stringify((() => { ${expression} })())`, context));
 const evaluateAsync = async (context, expression) =>
@@ -112,6 +120,9 @@ function shotOf(template, spec) {
     })),
     clips: spec.clips || [],
     candidateFiles: spec.candidates || [],
+    /* A shot may declare no cast, so a case can have a readiness action that is purely
+       about producing rather than about confirming somebody's reference. */
+    ...(spec.bare ? { characters: [], codes: [] } : {}),
     creationBrief: spec.creationBrief || undefined,
     promptBuilds: [],
     promptOptions: [],
@@ -199,6 +210,15 @@ function cardOf(html) {
     repair: attribute("data-returned-review-repair") === "1",
     readinessStatus: attribute("data-shot-readiness"),
     secondaryCode: attribute("data-returned-review-secondary"),
+    stale: attribute("data-returned-review-stale") === "1",
+    claim: attribute("data-returned-review-claim"),
+    claimState: attribute("data-returned-review-claim-state"),
+    next: attribute("data-returned-review-next"),
+    unavailable: attribute("data-returned-review-unavailable") === "1",
+    blocked: attribute("data-returned-review-blocked"),
+    primaryCall: (markup.match(/class="assemble-btn shot-primary-action"[^>]*onclick="([^"]*)"/) || [])[1] || "",
+    primaryLabel: (markup.match(/class="assemble-btn shot-primary-action"[^>]*>([^<]*)/) || [])[1] || "",
+    actionSources: [...markup.matchAll(/data-returned-review-action="([a-z]+)" data-returned-review-action-source="([a-z]+)"/g)].map((m) => [m[1], m[2]]),
     headline: (markup.match(/<h2>([^<]*)<\/h2>/) || [])[1] || "",
     kicker: (markup.match(/<span>([^<]*)<\/span>/) || [])[1] || "",
     primary: (markup.match(/class="assemble-btn shot-primary-action"[^>]*onclick="([^"]*)"[^>]*>([^<]*)/) || []).slice(1),
@@ -465,7 +485,8 @@ async function rm6_orderAndRouting() {
   deepEqual(acrossSeen.queue, ["L1-02:L1-02_NEW.png", "L1-03:L1-03_NEW.png"],
     "RM7: the project's own shot order decides between shots, not the newest file");
   equal(acrossSeen.next.shotId, "L1-02", "RM7: Production routes to the owning shot");
-  equal(acrossSeen.next.href, "#/shot/L1-02", "RM7: through the existing shot route");
+  equal(acrossSeen.next.href, "#/shot/L1-02/review/path%3Ashots%2FL1-02%2Ftakes%2FL1-02_NEW.png",
+    "RM7: through the existing shot route, carrying the candidate it named");
   equal(acrossSeen.next.reviewKey, "path:shots/L1-02/takes/L1-02_NEW.png", "RM7: naming the exact candidate that owns the review");
   const owningPage = await render("#/shot/L1-02", across, {
     scan: scanWith(across, { "L1-01": ["L1-01_OK.png"], "L1-02": ["L1-02_NEW.png"], "L1-03": ["L1-03_NEW.png"] }),
@@ -474,33 +495,156 @@ async function rm6_orderAndRouting() {
   equal(owningCard.key, acrossSeen.next.reviewKey,
     "RM7: and the shot workspace lands on that same candidate — the route and the card cannot disagree");
 
-  /* RM12 — A REPAIR RETURNS WHILE THE PARENT IS ALREADY CANON. Canon does not move
-     because a repair came back; it moves when a person approves the repair. */
-  const canonised = projectOf([{
+  note("RM6/7 order comes from declared production facts, and the route and the card resolve the same candidate");
+}
+
+/* ===========================================================================
+   CR1–CR6 — A PICK SETTLES WHAT IT WAS CHOSEN AMONG, AND NOTHING THAT CAME AFTER.
+
+   THE P0 THE INDEPENDENT REVIEW FOUND, and the reason it mattered: settlement was
+   FRAME-WIDE. A repair that came back after the filmmaker had picked its parent reported
+   `unit-already-picked`, the queue emptied, and the project said MARK SHOT FINAL — about
+   a result nobody had looked at. Money had been spent and CineBraid had quietly decided
+   the answer did not need reading.
+
+   Every case below is the same fixture shape with one fact changed, so the rule can be
+   read off the table rather than inferred from prose.
+   =========================================================================== */
+
+function canonParentProject(spec = {}) {
+  return projectOf([{
     id: "L1-01",
-    frames: [{ id: "frame-a", label: "A", winner: "C1.png" }],
+    frames: [{ id: "frame-a", label: "A", winner: spec.winner === undefined ? "C1.png" : spec.winner, canon: spec.canon !== false }],
     candidates: [
-      candidate("C1.png", { correctionResultNames: ["C2.png"] }),
-      candidate("C2.png", { addedAt: "2026-08-20T11:00:00.000Z", correctionOf: "C1.png", sourceBuildId: "build-corr" }),
+      candidate("C1.png", { decision: spec.c1Decision || "unreviewed", ...(spec.repair === false ? {} : { correctionResultNames: ["C2.png"] }) }),
+      ...(spec.c2 === false ? [] : [candidate("C2.png", {
+        addedAt: spec.c2AddedAt || "2026-08-20T11:00:00.000Z",
+        decision: spec.c2Decision || "unreviewed",
+        ...(spec.repair === false ? {} : { correctionOf: "C1.png", sourceBuildId: "build-corr" }),
+      })]),
     ],
   }]);
-  const canonPage = await render("#/shot/L1-01", canonised, { scan: scanWith(canonised, { "L1-01": ["C1.png", "C2.png"] }) });
-  const canonSeen = evaluate(canonPage.context, `
+}
+const CANON_SCAN = (project, spec = {}) => scanWith(project, { "L1-01": spec.c2 === false ? ["C1.png"] : ["C1.png", "C2.png"] });
+
+async function cr_pickSettlesOnlyItsOwnAlternates() {
+  /* CR1 — C1 PICKED, NO C2. The ordinary case, unchanged. */
+  const one = canonParentProject({ c2: false });
+  const onePage = await render("#/shot/L1-01", one, { scan: CANON_SCAN(one, { c2: false }) });
+  const oneSeen = evaluate(onePage.context, `
+    const projection = returnedReviewProjectionForBrowser();
+    return { awaiting: projection.counts.awaiting, settled: projection.items.map((row) => row.candidate.name + ":" + (row.settled || "waiting")) };
+  `);
+  equal(oneSeen.awaiting, 0, "CR1: a picked frame with no later candidate asks for nothing");
+  deepEqual(oneSeen.settled, ["C1.png:human-approved"], "CR1: and the picked file reports its own approval");
+
+  /* CR2 — C1 PICKED AND CANON, C2 AN UNDECIDED REPAIR. The reproduction. */
+  const two = canonParentProject();
+  const twoPage = await render("#/shot/L1-01", two, { scan: CANON_SCAN(two) });
+  const twoSeen = evaluate(twoPage.context, `
     const projection = returnedReviewProjectionForBrowser();
     return {
       awaiting: projection.counts.awaiting,
+      queue: projection.queue.map((row) => row.candidate.name),
       canon: hasCurrentHumanAuthority(P, { kind: "shot-frame", shotId: "L1-01", frameId: "frame-a" }),
-      canonFile: (P.shots[0].keyframes[0].winner || ""),
+      canonFile: P.shots[0].keyframes[0].winner || "",
+      settled: projection.items.map((row) => row.candidate.name + ":" + (row.settled || "waiting")),
+      next: projectNextProductionAction(),
+    };
+  `);
+  equal(twoSeen.canon, true, "CR2: the parent holds Canon");
+  equal(twoSeen.canonFile, "C1.png", "CR2: and Canon does not move because a repair came back");
+  equal(twoSeen.awaiting, 1, "CR2: the undecided repair is still a returned review");
+  deepEqual(twoSeen.queue, ["C2.png"], "CR2: and it is the repair, not the picked parent");
+  deepEqual(twoSeen.settled, ["C2.png:waiting", "C1.png:human-approved"],
+    "CR2: each candidate reports its own reason, and the pick settles only itself");
+  equal(twoSeen.next.kind, "returned-result", "CR2: Production routes to the review");
+  equal(twoSeen.next.reviewKey, "path:shots/L1-01/takes/C2.png", "CR2: naming the repair");
+  ok(!/MARK SHOT FINAL/.test(twoSeen.next.actionLabel), "CR2: and never offers to finish the shot over it: " + twoSeen.next.actionLabel);
+  const twoCard = cardOf(twoPage.context.document.getElementById("main").innerHTML);
+  ok(twoCard.returnedReview && twoCard.file === "C2.png", "CR2: and the shot workspace opens on the repair");
+
+  /* CR3 — C2 REJECTED. Its own decision settles it; Canon is untouched. */
+  const three = canonParentProject({ c2Decision: "rejected" });
+  const threePage = await render("#/shot/L1-01", three, { scan: CANON_SCAN(three) });
+  const threeSeen = evaluate(threePage.context, `
+    const projection = returnedReviewProjectionForBrowser();
+    return {
+      awaiting: projection.counts.awaiting,
+      settled: projection.items.map((row) => row.candidate.name + ":" + (row.settled || "waiting")),
+      canonFile: P.shots[0].keyframes[0].winner || "",
+    };
+  `);
+  equal(threeSeen.awaiting, 0, "CR3: a rejected repair asks for nothing");
+  deepEqual(threeSeen.settled, ["C2.png:human-rejected", "C1.png:human-approved"], "CR3: by its own decision, not the pick");
+  equal(threeSeen.canonFile, "C1.png", "CR3: and Canon remains the parent");
+
+  /* CR4 — C2 APPROVED THROUGH THE SHIPPED CONTROL. Existing authority decides Canon. */
+  const four = canonParentProject();
+  const fourPage = await render("#/shot/L1-01", four, { scan: CANON_SCAN(four) });
+  fourPage.context.approveGuidedFrame("L1-01", "frame-a", "C2.png");
+  fourPage.context.document.getElementById("approve-name").value = "C2.png";
+  await fourPage.gesture.act(() => fourPage.context.confirmApproveTake());
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const fourSeen = evaluate(fourPage.context, `
+    const projection = returnedReviewProjectionForBrowser();
+    return {
+      awaiting: projection.counts.awaiting,
+      receipts: (P.productionAuthority.receipts || []).filter((row) => row.kind === "shot-frame" && row.status === "current").map((row) => row.value),
       settled: projection.items.map((row) => row.candidate.name + ":" + (row.settled || "waiting")),
     };
   `);
-  equal(canonSeen.canon, true, "RM12: the parent holds Canon");
-  equal(canonSeen.canonFile, "C1.png", "RM12: and it is still the parent's file");
-  equal(canonSeen.awaiting, 0, "RM12: the frame is picked, so the unreviewed repair does not silently claim the unit");
-  deepEqual(canonSeen.settled, ["C2.png:unit-already-picked", "C1.png:human-approved"],
-    "RM12: each candidate reports its own reason, and neither is a claim that the repair was approved");
+  deepEqual(fourSeen.receipts, ["C2.png"], "CR4: approving the repair moves Canon through the shipped receipt");
+  equal(fourSeen.awaiting, 0, "CR4: and nothing is left waiting");
+  ok(fourSeen.settled.includes("C2.png:human-approved"), "CR4: the repair reports its own approval");
 
-  note("RM6/7/12 order comes from declared production facts, the route and the card resolve the same candidate, and a returning repair moves no Canon");
+  /* CR5 — THE PARENT WAS NEVER PICKED. Nothing settles anything. */
+  const five = canonParentProject({ winner: "", c1Decision: "rejected" });
+  const fivePage = await render("#/shot/L1-01", five, { scan: CANON_SCAN(five) });
+  const fiveSeen = evaluate(fivePage.context, `
+    const projection = returnedReviewProjectionForBrowser();
+    return { queue: projection.queue.map((row) => row.candidate.name), settled: projection.items.map((row) => row.candidate.name + ":" + (row.settled || "waiting")) };
+  `);
+  deepEqual(fiveSeen.queue, ["C2.png"], "CR5: an undecided repair of a rejected parent is pending");
+  ok(fiveSeen.settled.includes("C1.png:human-rejected"), "CR5: and the parent keeps its own rejection");
+
+  /* CR6 — TWO UNRELATED CANDIDATES, ONE PICKED, ONE GENUINELY RETURNED AFTERWARDS.
+     No lineage links them, so only chronology can tell them apart — and it must. */
+  const six = projectOf([{
+    id: "L1-01",
+    frames: [{ id: "frame-a", label: "A", winner: "PICKED.png" }],
+    candidates: [
+      candidate("PICKED.png", { addedAt: "2026-08-20T10:00:00.000Z" }),
+      candidate("ALTERNATE.png", { addedAt: "2026-08-20T10:00:00.000Z" }),
+      candidate("LATER.png", { addedAt: "2026-08-21T09:00:00.000Z" }),
+    ],
+  }]);
+  const sixPage = await render("#/shot/L1-01", six, { scan: scanWith(six, { "L1-01": ["PICKED.png", "ALTERNATE.png", "LATER.png"] }) });
+  const sixSeen = evaluate(sixPage.context, `
+    const projection = returnedReviewProjectionForBrowser();
+    return { queue: projection.queue.map((row) => row.candidate.name), settled: projection.items.map((row) => row.candidate.name + ":" + (row.settled || "waiting")) };
+  `);
+  deepEqual(sixSeen.queue, ["LATER.png"], "CR6: only the candidate that arrived after the pick is still a review");
+  ok(sixSeen.settled.includes("ALTERNATE.png:unit-already-picked"),
+    "CR6: the alternate the pick was chosen over is settled by it, exactly as before");
+  ok(sixSeen.settled.includes("PICKED.png:human-approved"), "CR6: and the picked file reports its own approval");
+
+  /* AND A LEGACY ALTERNATE WITH NO TIMESTAMP IS STILL SETTLED. The new pending state
+     appears only when the record positively shows the candidate came later; defaulting
+     the other way would put every old project's discarded takes back on screen. */
+  const legacy = projectOf([{
+    id: "L1-01",
+    frames: [{ id: "frame-a", label: "A", winner: "PICKED.png" }],
+    candidates: [
+      { stored: "PICKED.png", original: "PICKED.png", decision: "unreviewed", notes: "", labels: [], frameId: "frame-a" },
+      { stored: "OLD.png", original: "OLD.png", decision: "unreviewed", notes: "", labels: [], frameId: "frame-a" },
+    ],
+  }]);
+  const legacyPage = await render("#/shot/L1-01", legacy, { scan: scanWith(legacy, { "L1-01": ["PICKED.png", "OLD.png"] }) });
+  const legacySeen = evaluate(legacyPage.context, `return returnedReviewProjectionForBrowser().counts.awaiting;`);
+  equal(legacySeen, 0, "CR: an untimestamped legacy alternate stays settled by the pick");
+
+  note("CR1-6 a pick settles the alternates it was chosen over and nothing that arrived afterwards; lineage first, chronology second, and a legacy alternate is unaffected");
 }
 
 /* ===========================================================================
@@ -508,14 +652,14 @@ async function rm6_orderAndRouting() {
    =========================================================================== */
 
 async function rm8_failsClosed() {
-  /* A candidate ROW whose file is not in the scan produces no record at all — the queue
-     is built from what is actually there, so a stale row cannot become a phantom
-     review. */
+  /* A candidate ROW whose file is not in the scan claims NO REVIEW — nothing can be
+     approved, rejected or revised about bytes that are not there — but it does not
+     vanish either. See MF1-MF6 for why that distinction is a P0. */
   const stale = projectOf([{ id: "L1-01", candidates: [candidate("GONE.png"), candidate("HERE.png", { addedAt: "2026-08-20T10:05:00.000Z" })] }]);
   const stalePage = await render("#/shot/L1-01", stale, { scan: scanWith(stale, { "L1-01": ["HERE.png"] }) });
   const staleSeen = evaluate(stalePage.context, QUEUE_EXPR);
-  deepEqual(staleSeen.queue.map((row) => row.file), ["HERE.png"], "RM8: a candidate row with no file on disk is not in the queue");
-  ok(!staleSeen.items.some((row) => row.file === "GONE.png"), "RM8: and no record is invented for it");
+  deepEqual(staleSeen.queue.map((row) => row.file), ["HERE.png"], "RM8: a candidate row with no file on disk is not in the review queue");
+  ok(!staleSeen.queue.some((row) => row.file === "GONE.png"), "RM8: and no review action is offered for it");
 
   /* A candidate stamped for a frame this shot no longer declares belongs to NO frame. It
      is reported rather than re-homed onto frame one, because re-homing would put a
@@ -841,6 +985,475 @@ async function archive_reviewIsNotAStore() {
 }
 
 /* ===========================================================================
+   SR1–SR6 — A ROUTE THAT CLAIMS A CANDIDATE MUST FAIL CLOSED WHEN THE CLAIM IS STALE.
+
+   THE SECOND P0. Production named candidate A and navigated to `#/shot/S`. If A was
+   decided in between, the workspace re-derived and presented candidate B — a different
+   image and a different decision — under an action that had said A, with nothing on
+   screen to say so. The next decision the filmmaker took would have been about a file
+   they never asked to see.
+
+   The repair carries the claim in the route. These cases are about what happens when the
+   claim is true, when it is stale, when it names nothing, and when there is no claim at
+   all — because the last of those is ordinary navigation and must not change.
+   =========================================================================== */
+
+async function sr_staleRouteClaims() {
+  const twoCandidates = () => projectOf([{
+    id: "L1-01",
+    frames: [{ id: "frame-a", label: "A" }, { id: "frame-b", label: "B" }],
+    candidates: [candidate("A.png"), candidate("B.png", { frameId: "frame-b", addedAt: "2026-08-20T10:05:00.000Z" })],
+  }]);
+  const SCAN = (project) => scanWith(project, { "L1-01": ["A.png", "B.png"] });
+  const keyOf = (name) => `path:shots/L1-01/takes/${name}`;
+  const route = (name) => `#/shot/L1-01/review/${encodeURIComponent(keyOf(name))}`;
+
+  /* THE MECHANISM ITSELF, before any behaviour: the claim survives the hash and the id
+     does not change, which is why nothing else in the product had to learn about it. */
+  const parsing = await render("#/production", twoCandidates(), { scan: SCAN(twoCandidates()) });
+  const parsed = evaluate(parsing.context, `
+    const hash = "#/shot/L1-01/review/" + encodeURIComponent("path:shots/L1-01/takes/A.png");
+    return {
+      claim: routeReviewClaim(hash),
+      view: hash.split("/")[1],
+      id: decodeURIComponent(hash.split("/")[2] || ""),
+      parts: hash.split("/").length,
+      plain: routeReviewClaim("#/shot/L1-01"),
+      built: shotReviewHref("L1-01", "path:shots/L1-01/takes/A.png"),
+    };
+  `);
+  equal(parsed.claim, keyOf("A.png"), "SR: the route carries the candidate identity");
+  equal(parsed.view, "shot", "SR: while the view every other hash reader parses is unchanged");
+  equal(parsed.id, "L1-01", "SR: and so is the shot id");
+  equal(parsed.parts, 5, "SR: the key is encoded, so it adds no segments of its own");
+  equal(parsed.plain, "", "SR: a plain shot route claims nothing");
+  equal(parsed.built, route("A.png"), "SR: and one builder makes the link Production uses");
+
+  /* SR1 — THE CLAIM IS STILL TRUE. */
+  const live = twoCandidates();
+  const livePage = await render(route("A.png"), live, { scan: SCAN(live) });
+  const liveCard = cardOf(livePage.context.document.getElementById("main").innerHTML);
+  ok(liveCard.returnedReview, "SR1: an honoured claim renders the review");
+  equal(liveCard.file, "A.png", "SR1: of the candidate the route named");
+
+  /* AND A CLAIM ON A CANDIDATE THAT IS NOT THE HEAD OF THE QUEUE IS STILL HONOURED — the
+     route is the authority on WHICH review this is, not the queue order. */
+  const second = twoCandidates();
+  const secondPage = await render(route("B.png"), second, { scan: SCAN(second) });
+  equal(cardOf(secondPage.context.document.getElementById("main").innerHTML).file, "B.png",
+    "SR1: a claim on the second pending candidate opens that one, not the first");
+
+  /* SR2 — A SETTLES BEFORE THE ROUTE OPENS, B IS STILL PENDING. The defect exactly. */
+  const settled = twoCandidates();
+  settled.shots[0].candidateFiles[0].decision = "rejected";
+  const settledPage = await render(route("A.png"), settled, { scan: SCAN(settled) });
+  const settledHtml = settledPage.context.document.getElementById("main").innerHTML;
+  const staleCard = cardOf(settledHtml);
+  const staleSeen = evaluate(settledPage.context, `
+    const projection = returnedReviewProjectionForBrowser();
+    return { pending: projection.queue.map((row) => row.candidate.name) };
+  `);
+  deepEqual(staleSeen.pending, ["B.png"], "SR2: precondition — B is genuinely pending");
+  equal(staleCard.returnedReview, false, "SR2: the workspace does not present a review it was not asked for");
+  equal(staleCard.stale, true, "SR2: it says the claim is stale");
+  equal(staleCard.claimState, "human-rejected", "SR2: and what happened to the candidate that was claimed");
+  ok(/already been reviewed/i.test(staleCard.headline), "SR2: in words: " + staleCard.headline);
+  ok(/A\.png was the result this link was for/.test(staleCard.markup), "SR2: naming A rather than B");
+  ok(/Nothing has been applied/.test(staleCard.markup), "SR2: and saying nothing was applied to anything else");
+  ok(!/data-returned-review-action=/.test(staleCard.markup), "SR2: no candidate decision is offered on a stale card");
+  /* CONTINUING IS EXPLICIT, and it claims B by name the same way Production does. */
+  equal(staleCard.next, keyOf("B.png"), "SR2: the pending review is named");
+  ok(staleCard.primaryCall.includes(encodeURIComponent(keyOf("B.png"))),
+    "SR2: and continuing to it is a fresh navigation that claims it: " + staleCard.primaryCall);
+  ok(/Review the next returned result/.test(staleCard.primaryLabel), "SR2: labelled as a new act");
+  equal(primaryCount(settledHtml), 1, "SR2: still exactly one primary action");
+
+  /* SR3 — THE CLAIMED CANDIDATE IS GONE ENTIRELY. */
+  const missing = twoCandidates();
+  const missingPage = await render(`#/shot/L1-01/review/${encodeURIComponent("path:shots/L1-01/takes/NEVER.png")}`, missing, { scan: SCAN(missing) });
+  const missingCard = cardOf(missingPage.context.document.getElementById("main").innerHTML);
+  equal(missingCard.stale, true, "SR3: a claim naming nothing is stale, not silently replaced");
+  equal(missingCard.claimState, "not-found", "SR3: reported as not found");
+  ok(/no longer in this project/.test(missingCard.markup), "SR3: in words");
+  ok(!missingCard.returnedReview, "SR3: and no review is substituted for it");
+
+  /* SR4 — A FRESH PRODUCTION ACTION FOR B ROUTES TO B. */
+  const fresh = twoCandidates();
+  fresh.shots[0].candidateFiles[0].decision = "rejected";
+  const freshPage = await render("#/production", fresh, { scan: SCAN(fresh) });
+  const freshNext = evaluate(freshPage.context, `return projectNextProductionAction();`);
+  equal(freshNext.reviewKey, keyOf("B.png"), "SR4: the next Production action names B");
+  equal(freshNext.href, route("B.png"), "SR4: and routes to it");
+  const freshShot = await render(freshNext.href, fresh, { scan: SCAN(fresh) });
+  const freshCard = cardOf(freshShot.context.document.getElementById("main").innerHTML);
+  ok(freshCard.returnedReview && freshCard.file === "B.png", "SR4: which opens B's review");
+
+  /* SR5 — A MALFORMED CLAIM FAILS CLOSED. */
+  for (const bad of ["%%%", "not-a-key", "asset:deadbeef"]) {
+    const project = twoCandidates();
+    const page = await render(`#/shot/L1-01/review/${bad}`, project, { scan: SCAN(project) });
+    const card = cardOf(page.context.document.getElementById("main").innerHTML);
+    equal(card.stale, true, `SR5: ${bad} is refused as a stale claim`);
+    ok(!card.returnedReview, `SR5: ${bad} substitutes no review`);
+  }
+  /* AND A KEY THAT BELONGS TO A DIFFERENT SHOT IS AS STALE AS A DECIDED ONE. */
+  const crossed = twoCandidates();
+  const crossedPage = await render(`#/shot/L1-01/review/${encodeURIComponent("path:shots/L1-02/takes/A.png")}`, crossed, { scan: SCAN(crossed) });
+  ok(cardOf(crossedPage.context.document.getElementById("main").innerHTML).stale,
+    "SR5: a key from another shot's queue is refused here");
+
+  /* SR6 — ORDINARY NAVIGATION IS UNCHANGED. */
+  const plain = twoCandidates();
+  const plainPage = await render("#/shot/L1-01", plain, { scan: SCAN(plain) });
+  const plainCard = cardOf(plainPage.context.document.getElementById("main").innerHTML);
+  ok(plainCard.returnedReview, "SR6: a route with no claim resolves the shot's current pending review");
+  equal(plainCard.file, "A.png", "SR6: which is the head of the queue");
+  equal(plainCard.stale, false, "SR6: and is not a stale state");
+
+  note("SR1-6 the route carries the candidate it names, an honoured claim opens it, a stale one explains itself and substitutes nothing, and plain navigation is untouched");
+}
+
+/* ===========================================================================
+   MF1–MF6 — A RECORDED RESULT WITH NO BYTES IS AN INTEGRITY STATE.
+
+   THE THIRD P0. The projection built everything from the media answer, which is built
+   from the scan, so a candidate row the project still recorded as undecided whose file
+   had gone produced no record and disappeared. The shot then read as having nothing
+   outstanding, and Production and the workspace both promoted PRODUCE THE FRAME —
+   CineBraid offering to spend money because it had lost track of something it had.
+   =========================================================================== */
+
+async function mf_missingReturnedMedia() {
+  const withRow = (extra = {}) => projectOf([{
+    id: "L1-01",
+    frames: [{ id: "frame-a", label: "A" }],
+    candidates: [candidate("GONE.png", extra)],
+  }]);
+
+  /* MF1 — THE FILE IS THERE. Ordinary pending review, unchanged. */
+  const present = withRow();
+  const presentPage = await render("#/shot/L1-01", present, { scan: scanWith(present, { "L1-01": ["GONE.png"] }) });
+  const presentSeen = evaluate(presentPage.context, `
+    const p = returnedReviewProjectionForBrowser();
+    return { awaiting: p.counts.awaiting, unavailable: p.counts.unavailable };
+  `);
+  equal(presentSeen.awaiting, 1, "MF1: a present file is an ordinary pending review");
+  equal(presentSeen.unavailable, 0, "MF1: and nothing is blocking");
+
+  /* MF2 — THE FILE IS GONE AND THE ROW IS UNDECIDED. */
+  const gone = withRow();
+  const gonePage = await render("#/shot/L1-01", gone, { scan: scanWith(gone, { "L1-01": [] }) });
+  const goneHtml = gonePage.context.document.getElementById("main").innerHTML;
+  const goneCard = cardOf(goneHtml);
+  const goneSeen = evaluate(gonePage.context, `
+    const p = returnedReviewProjectionForBrowser();
+    return {
+      awaiting: p.counts.awaiting,
+      unavailable: p.counts.unavailable,
+      blockers: p.blockers.map((row) => row.candidate.name + ":" + row.unreviewable + ":" + row.blocking),
+      actions: p.blockers.map((row) => row.actions.length + row.workflows.length),
+      readiness: shotReadinessFor(shotById("L1-01")).nextAction.code,
+      next: projectNextProductionAction(),
+    };
+  `);
+  equal(goneSeen.readiness, "produce-frame", "MF2: precondition — readiness would have said produce another frame");
+  equal(goneSeen.awaiting, 0, "MF2: no phantom review is offered on media nobody can see");
+  equal(goneSeen.unavailable, 1, "MF2: but the record does not disappear");
+  deepEqual(goneSeen.blockers, ["GONE.png:media-not-available:true"], "MF2: it is reported as a blocking integrity condition");
+  deepEqual(goneSeen.actions, [0], "MF2: with no action of any kind, because there is nothing to judge");
+  /* AND NEITHER SURFACE PROMOTES A GENERATION. */
+  equal(goneSeen.next.kind, "returned-media-unavailable", "MF2: Production names the integrity condition");
+  ok(!/produce/i.test(goneSeen.next.actionLabel), "MF2: and never says produce: " + goneSeen.next.actionLabel);
+  equal(goneCard.unavailable, true, "MF2: the shot workspace card is the integrity state");
+  ok(/file is missing/i.test(goneCard.headline), "MF2: in words: " + goneCard.headline);
+  ok(/GONE\.png/.test(goneCard.markup), "MF2: naming the result it cannot show");
+  ok(!/produce/i.test(goneCard.primaryLabel), "MF2: and its primary action is not a generation: " + goneCard.primaryLabel);
+  ok(!/data-returned-review-action=/.test(goneCard.markup), "MF2: with no candidate decision offered");
+  equal(primaryCount(goneHtml), 1, "MF2: exactly one primary action");
+  /* The readiness action is still there, secondary, exactly as on the review card. */
+  equal(goneCard.secondaryCode, "produce-frame", "MF2: the readiness action survives as secondary context");
+
+  /* MF2b — AND IT DISPLACES A MOVE-ON ACTION AND NOTHING ELSE.
+     The harm named was PRODUCE THE FRAME promoted because the media vanished. Every other
+     readiness action is real outstanding work, and burying THAT behind an integrity notice
+     would be the identical defect pointing the other way — so the readiness action keeps
+     the card and the integrity condition is stated on it. */
+  const outstanding = projectOf([{
+    id: "L1-01",
+    frames: [{ id: "frame-a", label: "A" }],
+    candidates: [candidate("GONE.png")],
+  }], { canon: CAST_CANON.filter((row) => row.entityId !== "KAI") });
+  const outstandingPage = await render("#/shot/L1-01", outstanding, { scan: scanWith(outstanding, { "L1-01": [] }) });
+  const outstandingHtml = outstandingPage.context.document.getElementById("main").innerHTML;
+  const outstandingCard = cardOf(outstandingHtml);
+  const outstandingSeen = evaluate(outstandingPage.context, `
+    const p = returnedReviewProjectionForBrowser();
+    return { unavailable: p.counts.unavailable, readiness: shotReadinessFor(shotById("L1-01")).nextAction.code };
+  `);
+  equal(outstandingSeen.readiness, "confirm-existing-reference", "MF2b: precondition — the shot has real outstanding work");
+  equal(outstandingSeen.unavailable, 1, "MF2b: and a returned result it cannot show");
+  equal(outstandingCard.unavailable, false, "MF2b: the real work keeps the card");
+  ok(/Confirm existing reference/.test(outstandingCard.headline), "MF2b: as the headline: " + outstandingCard.headline);
+  ok(/cannot be shown/.test(outstandingCard.markup), "MF2b: while the integrity condition is stated on it");
+  equal(outstandingCard.blocked, "1", "MF2b: with its count");
+  equal(primaryCount(outstandingHtml), 1, "MF2b: exactly one primary action");
+  for (const code of ["mark-shot-final", "nothing-outstanding", "produce-motion"])
+    ok(RETURNED_MEDIA_MOVE_ON_CODES.includes(code), `MF2b: ${code} is declared a move-on action`);
+
+  /* MF3 — THE FILE COMES BACK. Derived, so it simply resumes. */
+  const restored = withRow();
+  const restoredPage = await render("#/shot/L1-01", restored, { scan: scanWith(restored, { "L1-01": ["GONE.png"] }) });
+  const restoredSeen = evaluate(restoredPage.context, `
+    const p = returnedReviewProjectionForBrowser();
+    return { awaiting: p.counts.awaiting, unavailable: p.counts.unavailable };
+  `);
+  equal(restoredSeen.awaiting, 1, "MF3: ordinary review resumes when the media is resolvable again");
+  equal(restoredSeen.unavailable, 0, "MF3: and the blocker is gone, because it was derived rather than stored");
+
+  /* MF4 — THE ROW WAS ALREADY DISPOSED OF. Historical media going missing is ordinary. */
+  for (const decision of ["rejected", "shortlist"]) {
+    const disposed = withRow({ decision });
+    const disposedPage = await render("#/shot/L1-01", disposed, { scan: scanWith(disposed, { "L1-01": [] }) });
+    const disposedSeen = evaluate(disposedPage.context, `
+      const p = returnedReviewProjectionForBrowser();
+      return { unavailable: p.counts.unavailable, next: projectNextProductionAction().kind };
+    `);
+    equal(disposedSeen.unavailable, 0, `MF4: a ${decision} row whose media is gone raises no blocker`);
+    ok(disposedSeen.next !== "returned-media-unavailable", `MF4: and Production does not name one for it`);
+  }
+
+  /* MF5 — THE FRAME ITSELF WAS REMOVED. The missing UNIT is the more specific fact, and
+     the two reasons stay distinguishable. */
+  const undeclared = projectOf([{
+    id: "L1-01",
+    frames: [{ id: "frame-a", label: "A" }],
+    candidates: [candidate("ORPHAN.png", { frameId: "frame-deleted" })],
+  }]);
+  const undeclaredPage = await render("#/shot/L1-01", undeclared, { scan: scanWith(undeclared, { "L1-01": [] }) });
+  const undeclaredSeen = evaluate(undeclaredPage.context, `
+    const p = returnedReviewProjectionForBrowser();
+    return { reasons: p.items.map((row) => row.candidate.name + ":" + row.unreviewable + ":" + row.blocking + ":" + row.mediaAvailable), unavailable: p.counts.unavailable };
+  `);
+  deepEqual(undeclaredSeen.reasons, ["ORPHAN.png:frame-no-longer-declared:false:false"],
+    "MF5: a row for a frame the shot no longer declares reports THAT, and does not block");
+  equal(undeclaredSeen.unavailable, 0, "MF5: an undeclared unit is not a missing-media integrity condition");
+  /* And with the frame still declared, the same file missing reports the other reason —
+     which is what makes them distinguishable rather than one token doing both jobs. */
+  const declaredButGone = withRow();
+  const declaredPage = await render("#/shot/L1-01", declaredButGone, { scan: scanWith(declaredButGone, { "L1-01": [] }) });
+  const declaredSeen = evaluate(declaredPage.context, `
+    return returnedReviewProjectionForBrowser().items.map((row) => row.unreviewable + ":" + row.mediaAvailable);
+  `);
+  deepEqual(declaredSeen, ["media-not-available:false"], "MF5: while a declared frame with missing bytes reports the other");
+
+  /* MF6 — A BLOCKER BESIDE A REVIEWABLE RESULT. Existing priority is preserved: work a
+     filmmaker can actually do comes first, and the project repair still outranks both. */
+  const both = projectOf([{
+    id: "L1-01",
+    frames: [{ id: "frame-a", label: "A" }, { id: "frame-b", label: "B" }],
+    candidates: [candidate("GONE.png"), candidate("HERE.png", { frameId: "frame-b", addedAt: "2026-08-20T10:05:00.000Z" })],
+  }]);
+  const bothPage = await render("#/shot/L1-01", both, { scan: scanWith(both, { "L1-01": ["HERE.png"] }) });
+  const bothCard = cardOf(bothPage.context.document.getElementById("main").innerHTML);
+  const bothSeen = evaluate(bothPage.context, `
+    const p = returnedReviewProjectionForBrowser();
+    return { awaiting: p.counts.awaiting, unavailable: p.counts.unavailable, next: projectNextProductionAction().kind };
+  `);
+  equal(bothSeen.awaiting, 1, "MF6: the reviewable result is still a review");
+  equal(bothSeen.unavailable, 1, "MF6: and the blocker is still reported");
+  equal(bothSeen.next.length > 0 && bothSeen.next, "returned-result", "MF6: the actionable review is offered first");
+  ok(bothCard.returnedReview, "MF6: and the shot workspace opens on it");
+  ok(/cannot be shown/.test(bothCard.markup), "MF6: while still naming the result it cannot show");
+  /* THE PROJECT REPAIR STILL OUTRANKS BOTH. */
+  const corrupt = withRow();
+  corrupt.productionAuthority.receipts[0].command = "not-a-command";
+  const corruptPage = await render("#/production", corrupt, { scan: scanWith(corrupt, { "L1-01": [] }) });
+  const corruptSeen = evaluate(corruptPage.context, `
+    const feed = projectShotReadiness();
+    return { trusted: feed.authority.trusted, kind: projectNextProductionAction(feed).kind };
+  `);
+  equal(corruptSeen.trusted, false, "MF6: precondition — the ledger cannot be read");
+  equal(corruptSeen.kind, "repair", "MF6: and the project repair still outranks the missing-media condition");
+
+  note("MF1-6 a recorded result with no bytes is reported, blocks, offers no action and never lets Produce take the first line; a disposed row and an undeclared unit are distinguished from it");
+}
+
+/* ===========================================================================
+   ORDERING — NEVER A FILENAME.
+   =========================================================================== */
+
+async function ordering_neverFilename() {
+  /* The reproduction: two candidates stamped at the same instant, returned in the order
+     the production returned them. Alphabetical ordering reversed them. */
+  const project = projectOf([{
+    id: "L1-01",
+    frames: [{ id: "frame-a", label: "A" }],
+    candidates: [
+      candidate("Z.png", { addedAt: "2026-08-20T10:00:00.000Z" }),
+      candidate("A.png", { addedAt: "2026-08-20T10:00:00.000Z" }),
+    ],
+  }]);
+  const scan = scanWith(project, { "L1-01": ["Z.png", "A.png"] });
+  const page = await render("#/shot/L1-01", project, { scan });
+  const seen = evaluate(page.context, `
+    const media = productionMediaRecords({ project: P, scan: SCAN, jobs: [] });
+    const projection = returnedReviewProjectionForBrowser();
+    return {
+      source: media.records.filter((row) => row.scope === "shot").map((row) => row.file.name),
+      queue: projection.queue.map((row) => row.candidate.name),
+      again: returnedReviewProjectionForBrowser().queue.map((row) => row.candidate.name),
+      addedAt: projection.items.map((row) => row.candidate.addedAt),
+    };
+  `);
+  deepEqual(seen.addedAt, ["2026-08-20T10:00:00.000Z", "2026-08-20T10:00:00.000Z"], "ORDER: precondition — the timestamps are exactly equal");
+  deepEqual(seen.source, ["Z.png", "A.png"], "ORDER: precondition — the authoritative input returned Z first");
+  deepEqual(seen.queue, ["Z.png", "A.png"], "ORDER: a true tie keeps the source order, and never sorts by name");
+  deepEqual(seen.again, seen.queue, "ORDER: and repeating the derivation over unchanged data is deterministic");
+
+  /* Chronology still decides when it can. */
+  const dated = projectOf([{
+    id: "L1-01",
+    frames: [{ id: "frame-a", label: "A" }],
+    candidates: [
+      candidate("Z.png", { addedAt: "2026-08-20T11:00:00.000Z" }),
+      candidate("A.png", { addedAt: "2026-08-20T10:00:00.000Z" }),
+    ],
+  }]);
+  const datedPage = await render("#/shot/L1-01", dated, { scan: scanWith(dated, { "L1-01": ["Z.png", "A.png"] }) });
+  deepEqual(evaluate(datedPage.context, `return returnedReviewProjectionForBrowser().queue.map((row) => row.candidate.name);`),
+    ["A.png", "Z.png"], "ORDER: an earlier candidate still leads when the timestamps differ");
+
+  /* And the repair still leads its parent, which is the one rule that is not chronology. */
+  const repaired = projectOf([{
+    id: "L1-01",
+    frames: [{ id: "frame-a", label: "A" }],
+    candidates: [
+      candidate("C1.png", { addedAt: "2026-08-20T10:00:00.000Z", correctionResultNames: ["C2.png"] }),
+      candidate("C2.png", { addedAt: "2026-08-20T11:00:00.000Z", correctionOf: "C1.png" }),
+    ],
+  }]);
+  const repairedPage = await render("#/shot/L1-01", repaired, { scan: scanWith(repaired, { "L1-01": ["C1.png", "C2.png"] }) });
+  deepEqual(evaluate(repairedPage.context, `return returnedReviewProjectionForBrowser().queue.map((row) => row.candidate.name);`),
+    ["C2.png", "C1.png"], "ORDER: the repair still leads its parent");
+
+  /* The source of the rule, structurally: no filename comparison survives in the file. */
+  const source = codeOnly(readLF("public/shared-returned-review.js"));
+  ok(!/root <|name <|\.name\.localeCompare|root\.localeCompare/.test(source),
+    "ORDER: the projection contains no lexical comparison of candidate names");
+
+  note("ORDER equal timestamps keep the authoritative source order, chronology still decides when it can, the repair still leads, and no filename comparison survives");
+}
+
+/* ===========================================================================
+   ACTION SOURCE, MOTION REFUSAL, AND THE MACHINE-SELECTED LABEL.
+   =========================================================================== */
+
+async function actions_declaredNotSynthesised() {
+  /* A. `revise` IS NOT A DECLARED CANDIDATE DECISION, and the projection no longer says
+     it is. production-media declares approve, reject, restore, view-review, open-owner
+     and open-full-preview; none of them authorises building a correction, so translating
+     `view-review` into a decision called `revise` was the projection inventing one. */
+  deepEqual([...RR.RETURNED_REVIEW_DECISION_ACTIONS], ["approve", "reject"], "ACTIONS: two declared decisions");
+  deepEqual([...RR.RETURNED_REVIEW_WORKFLOWS], ["revise"], "ACTIONS: revise is a workflow");
+  ok(RR.RETURNED_REVIEW_ACTION_LIMITATIONS.revise, "ACTIONS: and the gap is declared rather than filled");
+  ok(/none of them authorises/i.test(RR.RETURNED_REVIEW_ACTION_LIMITATIONS.revise.why),
+    "ACTIONS: naming why: " + RR.RETURNED_REVIEW_ACTION_LIMITATIONS.revise.why);
+  const media = require("../public/shared-production-media.js");
+  const declared = media.PRODUCTION_MEDIA_ACTIONS.map((row) => row.id);
+  ok(!declared.includes("revise"), "ACTIONS: production-media genuinely declares no revise, so this is not a stale note");
+  for (const id of RR.RETURNED_REVIEW_DECISION_ACTIONS)
+    ok(declared.includes(id), `ACTIONS: ${id} is narrowed from a declared production-media action`);
+
+  const frameProject = projectOf([{ id: "L1-01", candidates: [candidate("FRAME_A.png")] }]);
+  const framePage = await render("#/shot/L1-01", frameProject, { scan: scanWith(frameProject, { "L1-01": ["FRAME_A.png"] }) });
+  const frameSeen = evaluate(framePage.context, `
+    const item = returnedReviewProjectionForBrowser().queue[0];
+    return { actions: item.actions, workflows: item.workflows, refusal: returnedReviewActionRefusal(item, "revise") };
+  `);
+  deepEqual(frameSeen.actions, ["approve", "reject"], "ACTIONS: a frame candidate declares two decisions");
+  deepEqual(frameSeen.workflows, ["revise"], "ACTIONS: and one workflow");
+  equal(frameSeen.refusal.allowed, true, "ACTIONS: which the refusal resolver permits on a frame");
+  /* The surface says which list authorised each control, so it cannot be inferred from
+     position. */
+  const frameCard = cardOf(framePage.context.document.getElementById("main").innerHTML);
+  deepEqual(frameCard.actionSources, [["approve", "decision"], ["revise", "workflow"], ["reject", "decision"]],
+    "ACTIONS: and every control on the card declares the list it came from");
+
+  /* B. MOTION REFUSES `revise` DETERMINISTICALLY, IN WORDS, AND DISPATCHES NOTHING. */
+  const motionProject = projectOf([{
+    id: "L1-01",
+    frames: [{ id: "frame-a", label: "A", winner: "FRAME_A.png" }],
+    clips: [{ id: "motion-a", label: "A", suffix: "a", title: "Panel check", kind: "i2v", fromFrame: "frame-a", toFrame: "", dur: 5, motionPrompt: "He checks the panel.", generationPackages: [] }],
+    candidates: [candidate("FRAME_A.png"), candidate("SHOT_MOTION_1.mp4", { frameId: "", addedAt: "2026-08-20T12:00:00.000Z" })],
+  }]);
+  const motionPage = await render("#/shot/L1-01", motionProject, { scan: scanWith(motionProject, { "L1-01": ["FRAME_A.png", "SHOT_MOTION_1.mp4"] }) });
+  const motionSeen = evaluate(motionPage.context, `
+    const item = returnedReviewProjectionForBrowser().queue[0];
+    return { owner: item.owner.kind, actions: item.actions, workflows: item.workflows, refusal: returnedReviewActionRefusal(item, "revise") };
+  `);
+  equal(motionSeen.owner, "shot-motion", "ACTIONS: precondition — the returned video owns the review");
+  deepEqual(motionSeen.actions, ["approve", "reject"], "ACTIONS: a video can be used or passed on");
+  deepEqual(motionSeen.workflows, [], "ACTIONS: and declares no revise workflow");
+  equal(motionSeen.refusal.allowed, false, "ACTIONS: so asking to revise it is refused");
+  equal(motionSeen.refusal.reason, "revise-motion", "ACTIONS: with the reason named as a token");
+  ok(RR.RETURNED_REVIEW_ACTION_LIMITATIONS["revise-motion"], "ACTIONS: and the limitation is declared");
+  /* AT RUNTIME: the caller is told, and no dialog is opened. A silent no-op would leave a
+     filmmaker pressing a button and concluding the product was broken. */
+  let spoken = "";
+  motionPage.context.toast = (message) => { spoken = message; };
+  const motionKey = evaluate(motionPage.context, `return returnedReviewProjectionForBrowser().queue[0].key;`);
+  motionPage.context.reviseReturnedResult("L1-01", motionKey);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  equal(spoken, "Revise is not available for Motion results.", "ACTIONS: in the filmmaker's words");
+  equal(motionPage.context.document.getElementById("modal").innerHTML, "", "ACTIONS: and nothing is opened");
+  /* The words are the surface's, not the projection's. */
+  const projectionSource = codeOnly(readLF("public/shared-returned-review.js"));
+  ok(!/Revise is not available/.test(projectionSource), "ACTIONS: the projection carries the token, never the sentence");
+
+  /* A stale key refuses too, rather than opening whatever is pending. */
+  let staleSpoken = "";
+  motionPage.context.toast = (message) => { staleSpoken = message; };
+  motionPage.context.reviseReturnedResult("L1-01", "path:shots/L1-01/takes/NOPE.png");
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  ok(/no longer waiting/i.test(staleSpoken), "ACTIONS: an unknown key is refused rather than substituted: " + staleSpoken);
+
+  note("ACTIONS revise is a workflow gated on a declared action rather than a decision the projection invented, and Motion refuses it deterministically in words while dispatching nothing");
+}
+
+async function label_machineSelectedIsNotHumanApproved() {
+  /* A pick whose only recorded actor is automation. shared-production-media.js already
+     reports `machine-selected` for exactly this, separately from `approved`, and this
+     module used to collapse the two into `human-approved` — asserting a decision nobody
+     took, on the surface whose whole subject is who decided what. */
+  const project = projectOf([{
+    id: "L1-01",
+    frames: [{ id: "frame-a", label: "A", winner: "AUTO.png", canon: true }],
+    candidates: [candidate("AUTO.png")],
+  }]);
+  project.shots[0].generationRecords = [{ file: "AUTO.png", approval: "automatic" }];
+  const page = await render("#/shot/L1-01", project, { scan: scanWith(project, { "L1-01": ["AUTO.png"] }) });
+  const seen = evaluate(page.context, `
+    const projection = returnedReviewProjectionForBrowser();
+    const media = productionMediaRecords({ project: P, scan: SCAN, jobs: [] });
+    const row = media.records.find((r) => r.file.name === "AUTO.png");
+    return {
+      mediaState: row.humanDecision.state,
+      settled: projection.items.map((r) => r.candidate.name + ":" + r.settled),
+      humanDecision: projection.items.map((r) => r.humanDecision),
+      awaiting: projection.counts.awaiting,
+    };
+  `);
+  equal(seen.mediaState, "machine-selected", "LABEL: precondition — production-media reports machine selection");
+  deepEqual(seen.settled, ["AUTO.png:machine-selected"], "LABEL: and the returned-review reason says the same thing");
+  ok(!seen.settled.some((row) => /human-approved/.test(row)), "LABEL: never human-approved");
+  deepEqual(seen.humanDecision, ["machine-selected"], "LABEL: the state travels unchanged");
+  equal(seen.awaiting, 0, "LABEL: the pick still settles the unit — authority semantics are untouched");
+  ok(RR.RETURNED_REVIEW_SETTLED_REASONS.includes("machine-selected"), "LABEL: and the reason is declared vocabulary");
+  ok(RR.RETURNED_REVIEW_SETTLED_REASONS.includes("human-approved"), "LABEL: alongside the one it must not be confused with");
+
+  note("LABEL a machine-selected pick settles its unit and is never reported as a human approval");
+}
+/* ===========================================================================
    THE FIXTURE THE REAL-BROWSER HALF DRIVES.
 
    Written HERE rather than restated in Python, so the two halves cannot drift into
@@ -859,26 +1472,46 @@ async function archive_reviewIsNotAStore() {
 const BROWSER_FIXTURE = {
   shotA: "SH-A",
   shotB: "SH-B",
+  shotC: "SH-C",
   candidateA: "SH-A_FRAME_A_FAL_1.png",
-  parentB: "SH-B_FRAME_A_FAL_1.png",
-  repairB: "SH-B_FRAME_A_CORRECTION_FAL_1.png",
+  /* A SECOND pending candidate in the same shot, so the stale-claim workflow has
+     something for a substitution to substitute. */
+  candidateA2: "SH-A_FRAME_B_FAL_1.png",
+  /* DELIBERATELY LONG, and realistic: this is the shape a generated candidate filename
+     actually has. It is the PARENT, because the parent's name is the string the compact
+     Before card carries — and that is where the independent review found it clipped into
+     an unusable token at 1280. */
+  parentB: "SH-B_FRAME_A_GPT_IMAGE_2_HIGH_2048x1152_ROUND_01_FAL_1.png",
+  repairB: "SH-B_FRAME_A_CORRECTION_GPT_IMAGE_2_HIGH_2048x1152_ROUND_02_FAL_1.png",
+  /* A row the project still records as undecided, whose file is never written. */
+  missingC: "SH-C_FRAME_A_FAL_1.png",
   unconfirmedReference: "KAI-ANCHOR.png",
 };
 
 function writeBrowserFixture(dir) {
-  for (const folder of ["anchors", "plates", "props", "media", "docs", path.join("shots", "SH-A", "takes"), path.join("shots", "SH-B", "takes")])
+  for (const folder of ["anchors", "plates", "props", "media", "docs", path.join("shots", "SH-A", "takes"), path.join("shots", "SH-B", "takes"), path.join("shots", "SH-C", "takes")])
     fs.mkdirSync(path.join(dir, folder), { recursive: true });
   fs.writeFileSync(path.join(dir, "anchors", "KAI-ANCHOR.png"), "kai");
   fs.writeFileSync(path.join(dir, "plates", "LOC-HULL-PLATE.png"), "hull");
   fs.writeFileSync(path.join(dir, "props", "PR-TOOL-PLATE.png"), "tool");
   fs.writeFileSync(path.join(dir, "shots", "SH-A", "takes", BROWSER_FIXTURE.candidateA), "a1");
+  fs.writeFileSync(path.join(dir, "shots", "SH-A", "takes", BROWSER_FIXTURE.candidateA2), "a2");
   fs.writeFileSync(path.join(dir, "shots", "SH-B", "takes", BROWSER_FIXTURE.parentB), "b1");
   fs.writeFileSync(path.join(dir, "shots", "SH-B", "takes", BROWSER_FIXTURE.repairB), "b2");
+  /* SH-C's take is NOT written. That absence is the fixture. */
 
   /* KAI is deliberately NOT in the receipt list: the shot points at KAI-ANCHOR.png and
      nobody has approved it, which is the `confirm-existing-reference` shape exactly. */
   const project = projectOf([
-    { id: "SH-A", title: "Hull check", candidates: [candidate(BROWSER_FIXTURE.candidateA)] },
+    {
+      id: "SH-A",
+      title: "Hull check",
+      frames: [{ id: "frame-a", label: "A" }, { id: "frame-b", label: "B" }],
+      candidates: [
+        candidate(BROWSER_FIXTURE.candidateA),
+        candidate(BROWSER_FIXTURE.candidateA2, { frameId: "frame-b", addedAt: "2026-08-20T10:05:00.000Z" }),
+      ],
+    },
     {
       id: "SH-B",
       title: "Panel repair",
@@ -887,6 +1520,9 @@ function writeBrowserFixture(dir) {
         candidate(BROWSER_FIXTURE.repairB, { addedAt: "2026-08-20T11:00:00.000Z", correctionOf: BROWSER_FIXTURE.parentB, sourceBuildId: "build-corr" }),
       ],
     },
+    /* No cast, so its readiness action is PRODUCE THE FRAME — which is the promotion an
+       unaccounted-for result has to refuse, and the only thing it refuses. */
+    { id: "SH-C", title: "Lost result", bare: true, candidates: [candidate(BROWSER_FIXTURE.missingC)] },
   ], { canon: CAST_CANON.filter((row) => row.entityId !== "KAI") });
   project.meta.title = "Returned Review Project";
   /* EVERY ENTITY DECLARES ITS DEFAULT STATE EXPLICITLY, which is what a project looks
@@ -931,19 +1567,31 @@ async function browserFixtureIsTheShapeItClaims() {
   const temp = fs.mkdtempSync(path.join(require("os").tmpdir(), "cinebraid-returned-fixture-"));
   const project = writeBrowserFixture(temp);
   const scan = scanWith(project, {
-    "SH-A": [BROWSER_FIXTURE.candidateA],
+    "SH-A": [BROWSER_FIXTURE.candidateA, BROWSER_FIXTURE.candidateA2],
     "SH-B": [BROWSER_FIXTURE.parentB, BROWSER_FIXTURE.repairB],
+    "SH-C": [],
   });
   const page = await render("#/shot/SH-A", project, { scan });
   const cardA = cardOf(page.context.document.getElementById("main").innerHTML);
   ok(cardA.returnedReview, "FIXTURE: SH-A opens on its returned candidate");
   equal(cardA.file, BROWSER_FIXTURE.candidateA, "FIXTURE: which is the seeded one");
+  equal(cardA.waiting, "2", "FIXTURE: with a second pending candidate behind it, for the stale-claim workflow");
   equal(cardA.secondaryCode, "confirm-existing-reference", "FIXTURE: with the unconfirmed reference as secondary context");
   const pageB = await render("#/shot/SH-B", project, { scan });
   const cardB = cardOf(pageB.context.document.getElementById("main").innerHTML);
   equal(cardB.file, BROWSER_FIXTURE.repairB, "FIXTURE: SH-B opens on the repair");
   equal(cardB.repair, true, "FIXTURE: declared as a repair");
   ok(cardB.markup.includes(BROWSER_FIXTURE.parentB), "FIXTURE: with its parent on the card");
+  ok(BROWSER_FIXTURE.parentB.length >= 55, "FIXTURE: and the parent filename — the one the Before card carries — is long enough to be worth measuring at 1280");
+  const pageC = await render("#/shot/SH-C", project, { scan });
+  const cardC = cardOf(pageC.context.document.getElementById("main").innerHTML);
+  equal(cardC.unavailable, true, "FIXTURE: SH-C is the missing-media integrity state");
+  const projectionSeen = evaluate(pageC.context, `
+    const p = returnedReviewProjectionForBrowser();
+    return { awaiting: p.counts.awaiting, unavailable: p.counts.unavailable, blockers: p.blockers.map((row) => row.shotId) };
+  `);
+  equal(projectionSeen.awaiting, 4, "FIXTURE: four candidates are genuinely waiting across the project");
+  deepEqual(projectionSeen.blockers, ["SH-C"], "FIXTURE: and exactly one integrity blocker, in SH-C");
   fs.rmSync(temp, { recursive: true, force: true });
   note("FIXTURE the project the real-browser half drives is the shape it claims, checked here rather than only in Chromium");
 }
@@ -956,6 +1604,12 @@ async function main() {
   await rm4_returnedMotionOwnsReview();
   await rm5_reviewedCandidatesLeaveTheQueue();
   await rm6_orderAndRouting();
+  await cr_pickSettlesOnlyItsOwnAlternates();
+  await sr_staleRouteClaims();
+  await mf_missingReturnedMedia();
+  await ordering_neverFilename();
+  await actions_declaredNotSynthesised();
+  await label_machineSelectedIsNotHumanApproved();
   await rm8_failsClosed();
   await rm9_repairLineage();
   await rm10_historyIsDurable();

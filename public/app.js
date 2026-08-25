@@ -4062,25 +4062,31 @@ function projectNextProductionAction(feed = projectShotReadiness()) {
    * scope is candidates awaiting review, and changes no filmmaker-decision count.
    * A project can truthfully show 0 decisions and still be told to review a
    * returned result, because those are two different questions. */
-  const returned = returnedResultsAwaitingReview();
+  /* One derivation, read twice: the review queue and the integrity blockers are two
+     answers from the same projection, and asking for it twice would be two answers. */
+  const returnedReview = returnedReviewProjectionForBrowser();
+  const returned = returnedResultsAwaitingReview(returnedReview);
   if (returned.length) {
     const first = returned[0];
     const total = returnedResultCount(returned);
     const href = first.shot
-      ? `#/shot/${first.shot.id}`
+      ? shotReviewHref(first.shot.id, first.reviewKey)
       : `#/${first.route}/${encodeURIComponent(first.entity?.id || "")}`;
     const shot = first.shot ? shotById(first.shot.id) : null;
     return {
       kind: "returned-result",
       shotId: first.shot ? first.shot.id : "",
-      /* THE CANDIDATE THIS ACTION IS ABOUT, named rather than implied.
+      /* THE CANDIDATE THIS ACTION IS ABOUT, CARRIED IN THE ROUTE.
        *
-       * The route stays `#/shot/<id>` — this slice adds no router — because the shot
-       * workspace resolves its own returned review from the SAME ordered projection and
-       * therefore lands on the same candidate by construction, with no key to go stale
-       * between the click and the render. The key travels anyway so the two can be
-       * proved to agree instead of assumed to. Empty for an entity reference row, which
-       * has a per-entity route and no candidate identity. */
+       * It used to be reported here and dropped from the href, on the reasoning that the
+       * shot workspace re-derives the same head of the same ordered queue. That holds
+       * only while nothing changes in between — and the case that matters is exactly the
+       * one where something did. With A decided between the render and the click, a
+       * workspace that re-derived would put candidate B in front of the filmmaker under
+       * an action that said A, and the next decision they took would be about a file
+       * they never asked to see. The claim travels so the workspace can tell the
+       * difference and say so. Empty for an entity reference row, which has a per-entity
+       * route and no candidate identity. */
       reviewKey: first.reviewKey || "",
       href,
       returned: total,
@@ -4092,6 +4098,33 @@ function projectNextProductionAction(feed = projectShotReadiness()) {
         ? `${plural(total, "returned result")} are waiting for review across this project.`
         : "It is waiting for your review — approve it, keep it as an alternate, or reject it."}`,
       actionLabel: "REVIEW RETURNED RESULT",
+    };
+  }
+  /* RETURNED MEDIA THE PROJECT STILL OWES A DECISION ON AND CANNOT FIND.
+   *
+   * The third finding, and it is a routing one again rather than a counting one: a
+   * candidate row the project records as undecided, whose bytes are no longer on disk,
+   * used to leave the projection entirely — so the shot read as having nothing
+   * outstanding and this function fell through to READY and said PRODUCE THE FRAME.
+   * CineBraid offering to spend money because it had lost track of something it already
+   * had is the worst version of the defect this whole tier exists to prevent.
+   *
+   * It sits BELOW an actionable returned review — a result you can actually judge is
+   * better work than an integrity notice — and ABOVE READY, which is the position that
+   * stops the promotion. The project repair still outranks both, unchanged. */
+  const unavailable = (returnedReview && returnedReview.blockers) || [];
+  if (unavailable.length) {
+    const first = unavailable[0];
+    const shot = shotById(first.shotId);
+    return {
+      kind: "returned-media-unavailable",
+      shotId: first.shotId,
+      reviewKey: first.key || "",
+      unavailable: unavailable.length,
+      href: shotReviewHref(first.shotId, first.key),
+      title: `${first.shotId}${shot?.title ? ` · ${shot.title}` : ""}`,
+      message: `${first.candidate.name} is recorded as a returned result nobody has decided about, and the file is no longer in this project. ${unavailable.length > 1 ? `${plural(unavailable.length, "returned result")} are in this state.` : "Restore the file or dispose of the record before generating more."}`,
+      actionLabel: "OPEN THE SHOT",
     };
   }
   const ready = (feed.shots || []).find((shot) => shot.status === "READY");
@@ -4508,6 +4541,37 @@ window.refreshAgentStatus = async (render = false) => {
   } catch (_) {}
   if (render) route();
 };
+
+/* THE CANDIDATE A ROUTE CLAIMS, and the smallest mechanism that could carry it.
+ *
+ * `#/shot/<id>/review/<encoded projection key>`. A fourth and fifth path segment,
+ * because route() reads the view at `split("/")[1]` and the id at `[2]` and every other
+ * hash reader in the product does the same — public/focused-workspaces.js,
+ * public/stage-surfaces.js, public/creator-surfaces.js, public/creator-state and
+ * public/library-tools.js all stop at [2]. Nothing has to learn about the extra
+ * segments, and the link is bookmarkable and shareable, which a hidden ownership store
+ * would not be. A QUERY was not an option and public/live-activity.js says why: `?` is
+ * not stripped before the id is read, so `#/shot/L1-01?review=x` resolves to no shot.
+ *
+ * The key is encodeURIComponent'd, so the `:` and `/` inside `path:shots/…` cannot add
+ * segments of their own and the split stays exactly five parts.
+ *
+ * WHY THE ROUTE CARRIES IT AT ALL, since the shot workspace can derive the pending
+ * review itself: because deriving it is exactly what must NOT happen when the claim is
+ * stale. Production names candidate A; if A is decided before the link is opened, a
+ * workspace that simply re-derived would present candidate B with no explanation and the
+ * filmmaker's next decision would be about a file they never asked to see. */
+function routeReviewClaim(hash = location.hash) {
+  const parts = String(hash || "").split("/");
+  if ((parts[1] || "") !== "shot" || (parts[3] || "") !== "review") return "";
+  const raw = parts.slice(4).join("/");
+  if (!raw) return "";
+  try { return decodeURIComponent(raw); } catch { return raw; }
+}
+function shotReviewHref(shotId, reviewKey) {
+  const base = `#/shot/${encodeURIComponent(shotId || "")}`;
+  return reviewKey ? `${base}/review/${encodeURIComponent(reviewKey)}` : base;
+}
 
 /* THE ONE CALL INTO THE RETURNED-REVIEW PROJECTION.
 

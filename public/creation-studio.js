@@ -2208,15 +2208,48 @@ window.setGuidedDeliveryIntent = (id, value) => {
    * NO SECOND PRIMARY. The card renders exactly one `shot-primary-action`, because a
      screen with two primary actions has none. */
 const RETURNED_REVIEW_INTEGRITY_BLOCKERS = ["repair-authority-ledger", "awaiting-project-repair"];
-function shotReturnedReview(s) {
+/* The readiness actions that claim this shot can MOVE ON — generate more, or be called
+   finished. A returned result the project cannot account for refuses exactly these, and
+   leaves every other outstanding action alone. */
+const RETURNED_MEDIA_MOVE_ON_ACTIONS = ["produce-frame", "produce-motion", "mark-shot-final", "nothing-outstanding"];
+/* WHAT THIS SHOT SHOULD SHOW ABOUT RETURNED MEDIA, and there are four answers.
+ *
+ *   review       a candidate is waiting, and this is the one that owns the decision
+ *   stale        the ROUTE claimed a candidate that no longer owns a review
+ *   unavailable  the project owes a decision on a returned result whose file has gone
+ *   null         nothing about returned media belongs on this card
+ *
+ * THE STALE ANSWER IS THE ONE THE INDEPENDENT REVIEW ADDED, and its whole point is that
+ * the workspace must NOT quietly re-derive. Production names candidate A; between the
+ * render that drew that action and the click that followed it, A can be approved,
+ * rejected or removed. A workspace that answered by resolving whatever is pending now
+ * would put candidate B on screen under an action that said A — and the next decision
+ * the filmmaker took would be about a file they never asked to see.
+ *
+ * A route that claims NOTHING is ordinary navigation and keeps the ordinary behaviour:
+ * the shot's currently pending review. The stale contract applies only when navigation
+ * claimed a candidate identity. */
+function shotReturnedReview(s, claim = typeof routeReviewClaim === "function" ? routeReviewClaim() : "") {
   if (!s) return null;
   if (typeof returnedReviewProjectionForBrowser !== "function") return null;
   if (typeof pendingReturnedReview !== "function") return null;
   const projection = returnedReviewProjectionForBrowser();
   if (!projection || !projection.available) return null;
-  const item = pendingReturnedReview(projection, s.id);
-  if (!item) return null;
-  return { projection, item, waiting: projection.queue.filter((row) => row.shotId === s.id).length };
+  const waiting = projection.queue.filter((row) => row.shotId === s.id).length;
+  const next = pendingReturnedReview(projection, s.id);
+  const blockers = (projection.blockers || []).filter((row) => row.shotId === s.id);
+  if (claim) {
+    const claimed = typeof candidateReviewContext === "function" ? candidateReviewContext(projection, claim) : null;
+    /* THE CLAIM IS HONOURED ONLY WHEN IT IS STILL TRUE, and only for this shot: a key
+       from another shot's queue is as stale here as a decided one. */
+    if (claimed && claimed.shotId === s.id && claimed.awaitingReview)
+      return { kind: "review", projection, item: claimed, waiting, next: null };
+    return { kind: "stale", projection, item: null, claim, claimed, waiting, next };
+  }
+  if (next) return { kind: "review", projection, item: next, waiting, next: null };
+  /* Nothing is reviewable, and something is unaccounted for. */
+  if (blockers.length) return { kind: "unavailable", projection, item: blockers[0], blockers, waiting, next: null };
+  return null;
 }
 /* The words for one returned-review action. They are the shipped ones: "Use this take"
    and "Keep looking" are what the product already calls accepting and passing on a
@@ -2226,20 +2259,48 @@ const RETURNED_REVIEW_ACTION_WORDS = {
   revise: "Revise this take",
   reject: "Keep looking",
 };
+/* AND THE SENTENCE FOR EACH REFUSAL THE PROJECTION CAN RETURN. The projection returns a
+   token; the words are here, for the same reason STAGE_STATUS is in the UI layer. A
+   refusal with no sentence would be the silent no-op this exists to prevent, so an
+   unrecognised reason still says something true. */
+const RETURNED_REVIEW_REFUSAL_WORDS = {
+  "revise-motion": "Revise is not available for Motion results.",
+  "no-item": "That returned result is no longer waiting for review.",
+  "not-available": "That action is not available for this returned result.",
+  "unknown-action": "That is not a returned-review action.",
+};
+function returnedReviewRefusalWords(reason) {
+  return RETURNED_REVIEW_REFUSAL_WORDS[reason] || "That action is not available for this returned result.";
+}
+/* THE DECISIONS COME FROM `actions`; `revise` COMES FROM `workflows`, AND THE TWO LISTS
+   ARE NOT INTERCHANGEABLE.
+
+   The independent review's point: production-media declares approve and reject as
+   decisions on a candidate and declares nothing that authorises building a correction.
+   `revise` opens the shipped review dialog — a workflow — so it is rendered from the
+   workflow list, and the projection never calls it a candidate decision. What a
+   filmmaker reads is unchanged; what the contract claims is not. */
 function returnedReviewActionMarkup(item) {
   const shotId = attr(item.shotId);
   const name = attr(item.candidate.name);
   const frameId = attr(item.owner.frameId);
+  const key = attr(item.key);
   const calls = {
     approve: item.owner.kind === "shot-motion"
       ? `approveGuidedMotion('${shotId}','${name}')`
       : `approveGuidedFrame('${shotId}','${frameId}','${name}')`,
-    revise: `reviseReturnedResult('${shotId}','${frameId}','${name}')`,
+    revise: `reviseReturnedResult('${shotId}','${key}')`,
     reject: `rejectReturnedResult('${shotId}','${name}')`,
   };
-  return item.actions
-    .filter((id) => calls[id])
-    .map((id) => `<button type="button" class="chip returned-review-action${id === "reject" ? " danger" : ""}" data-returned-review-action="${attr(id)}" onclick="${calls[id]}">${esc(RETURNED_REVIEW_ACTION_WORDS[id])}</button>`)
+  /* Reading order is a presentation choice and stays what it was; the SOURCE of each
+     control is declared on the control, so which list authorised it is readable rather
+     than inferred from where it happens to sit. */
+  return ["approve", "revise", "reject"]
+    .map((id) => {
+      const source = item.actions.includes(id) ? "decision" : (item.workflows || []).includes(id) ? "workflow" : "";
+      if (!source || !calls[id]) return "";
+      return `<button type="button" class="chip returned-review-action${id === "reject" ? " danger" : ""}" data-returned-review-action="${attr(id)}" data-returned-review-action-source="${attr(source)}" onclick="${calls[id]}">${esc(RETURNED_REVIEW_ACTION_WORDS[id])}</button>`;
+    })
     .join("");
 }
 /* A candidate this decision is taken AGAINST — the take being repaired, or the take
@@ -2251,6 +2312,77 @@ function returnedReviewComparisonThumb(ref, kicker, note) {
     ? `<video muted preload="metadata" src="${attr(ref.url)}#t=0.1"></video>`
     : `<img src="${attr(ref.url)}" alt="">`;
   return `<button type="button" class="returned-review-compare" data-returned-review-compare="${attr(kicker.toLowerCase())}" onclick="openMediaTheatre('${attr(encodeURIComponent(ref.url))}','${attr(encodeURIComponent(title))}','${ref.mediaType === "video" ? "video" : "image"}')" aria-label="View ${attr(title)} larger"><span class="returned-review-compare-media">${media}</span><span><b>${esc(kicker)}</b><small>${esc(ref.name)}</small>${note ? `<em>${esc(note)}</em>` : ""}</span></button>`;
+}
+/* THE SECONDARY BLOCK, shared by all three returned-media cards.
+
+   The readiness action, demoted and still working: its canonical label, its canonical
+   message and a control that performs it. tests/shot-truth-cohesion.js reads all three
+   off this card, which is the property that keeps "secondary" from drifting into
+   "deleted". */
+function returnedReviewSecondaryMarkup(s, readiness, next) {
+  if (!readiness) return "";
+  const code = attr(readiness.nextAction?.code || "");
+  return `<div class="returned-review-secondary" data-returned-review-secondary="${code}"><span>ALSO OUTSTANDING FOR THIS SHOT</span><b>${esc(next.label)}</b><small>${esc(next.detail)}</small><button type="button" class="chip" onclick="openShotReadinessAction('${attr(s.id)}','${code}')">${esc(next.label)}</button></div>`;
+}
+/* THE ROUTE CLAIMED A CANDIDATE THAT NO LONGER OWNS A REVIEW.
+ *
+ * The independent review's second P0, from the filmmaker's side: Production named
+ * candidate A, A was decided before the link was opened, and the workspace presented
+ * candidate B as though that had been the plan. B is a different image, a different
+ * decision, and nothing on screen said so.
+ *
+ * So this card SAYS what happened, names A when A is still knowable, and never applies
+ * anything to B. Continuing is an explicit act: the primary action is a fresh navigation
+ * that claims B by name, which is the same contract Production's own action follows.
+ * When nothing else is pending the readiness action takes the primary instead, because
+ * inventing a review to continue to would be the substitution this card exists to stop. */
+const RETURNED_REVIEW_STALE_WORDS = {
+  "human-approved": "it has been approved",
+  "machine-selected": "it was selected by automation",
+  "human-rejected": "it has been rejected",
+  "kept-as-alternate": "it was kept as an alternate",
+  "unit-already-picked": "another take was picked for that unit",
+};
+function returnedReviewStaleCardMarkup(s, neighbors, review, readiness, next) {
+  const claimed = review.claimed;
+  const nextItem = review.next;
+  const named = claimed ? claimed.candidate.name : "";
+  const why = claimed
+    ? (RETURNED_REVIEW_STALE_WORDS[claimed.settled] || (claimed.unreviewable ? "its media is no longer available" : "it is no longer waiting"))
+    : "";
+  const sentence = claimed
+    ? `${named} was the result this link was for, and ${why}.`
+    : "The result this link was for is no longer in this project.";
+  const action = nextItem
+    ? `<button class="assemble-btn shot-primary-action" onclick="location.hash='${attr(shotReviewHref(s.id, nextItem.key))}'">Review the next returned result</button>`
+    : readiness
+      ? `<button class="assemble-btn shot-primary-action" onclick="openShotReadinessAction('${attr(s.id)}','${attr(readiness.nextAction?.code || "")}')">${esc(next.label)}</button>`
+      : `<button class="assemble-btn shot-primary-action" onclick="location.hash='#/production'">Open Production</button>`;
+  const queued = nextItem
+    ? `<span class="returned-review-more">${esc(nextItem.candidate.name)} is waiting${review.waiting > 1 ? `, with ${plural(review.waiting - 1, "other")}` : ""}</span>`
+    : `<span class="returned-review-more">Nothing else in this shot is waiting for review</span>`;
+  const previous = neighbors.prev ? `<a href="#/shot/${neighbors.prev.id}">Previous</a>` : "";
+  const following = neighbors.next ? `<a href="#/shot/${neighbors.next.id}">Next</a>` : "";
+  return `<section class="guided-next-action returned-review-card returned-review-stale state-readiness-${attr(String(readiness?.status || "unavailable").toLowerCase())}" data-shot-readiness="${attr(readiness?.status || "UNAVAILABLE")}" data-returned-review="0" data-returned-review-stale="1" data-returned-review-claim="${attr(review.claim)}" data-returned-review-claim-state="${attr(claimed ? (claimed.settled || claimed.unreviewable || "not-waiting") : "not-found")}" data-returned-review-next="${attr(nextItem ? nextItem.key : "")}" data-returned-review-waiting="${attr(String(review.waiting))}" style="${attr(shotCanvasStyle(s))}"><div class="guided-lifecycle-preview"><div class="guided-lifecycle-empty"><span>ALREADY REVIEWED</span></div></div><div><span>RETURNED RESULT · NO LONGER WAITING</span><h2>That returned result has already been reviewed</h2><p>${esc(sentence)} Nothing has been applied to any other result.</p><div class="guided-next-actions">${action}${queued}</div>${returnedReviewSecondaryMarkup(s, readiness, next)}</div><nav>${previous}${following}</nav></section>`;
+}
+/* THE PROJECT OWES A DECISION ON A RESULT IT CANNOT SHOW.
+ *
+ * The third P0. A candidate row the project still records as undecided, whose file is
+ * gone: it used to disappear from the projection, so the shot read as having nothing
+ * outstanding and the workspace offered to produce another frame.
+ *
+ * This is an INTEGRITY state, not a review. No candidate decision is offered — there is
+ * nothing to judge — and the primary action deliberately is not a generation: it is the
+ * shipped Generated Media destination, where the durable record of this result lives.
+ * The readiness action stays where it belongs, as secondary context, which is also what
+ * keeps "Produce the frame" from taking the first line of the card. */
+function returnedMediaUnavailableCardMarkup(s, neighbors, review, readiness, next) {
+  const item = review.item;
+  const others = review.blockers.length - 1;
+  const previous = neighbors.prev ? `<a href="#/shot/${neighbors.prev.id}">Previous</a>` : "";
+  const following = neighbors.next ? `<a href="#/shot/${neighbors.next.id}">Next</a>` : "";
+  const unit = item.owner.kind === "shot-motion" ? "Motion" : `Frame ${item.owner.frameLabel || item.owner.frameId || "A"}`;
+  return `<section class="guided-next-action returned-review-card returned-review-unavailable state-readiness-${attr(String(readiness?.status || "unavailable").toLowerCase())}" data-shot-readiness="${attr(readiness?.status || "UNAVAILABLE")}" data-returned-review="0" data-returned-review-unavailable="1" data-returned-review-file="${attr(item.candidate.name)}" data-returned-review-owner="${attr(item.owner.kind)}" data-returned-review-blocked="${attr(String(review.blockers.length))}" style="${attr(shotCanvasStyle(s))}"><div class="guided-lifecycle-preview"><div class="guided-lifecycle-empty"><span>MEDIA NOT AVAILABLE</span></div></div><div><span>RETURNED RESULT · ${esc(unit.toUpperCase())} · MEDIA NOT AVAILABLE</span><h2>A returned result is recorded but its file is missing</h2><p>${esc(item.candidate.name)} is recorded as a returned result nobody has decided about, and the file is no longer in this project. Restore it, or dispose of the record, before generating more.${others > 0 ? ` ${plural(others, "other returned result")} in this shot ${others === 1 ? "is" : "are"} in the same state.` : ""}</p><div class="guided-next-actions"><button class="assemble-btn shot-primary-action" onclick="location.hash='#/results'">Open Generated Media</button></div>${returnedReviewSecondaryMarkup(s, readiness, next)}</div><nav>${previous}${following}</nav></section>`;
 }
 function returnedReviewCardMarkup(s, neighbors, review, readiness, next) {
   const item = review.item;
@@ -2286,16 +2418,14 @@ function returnedReviewCardMarkup(s, neighbors, review, readiness, next) {
   const context = repair || current
     ? `<div class="returned-review-context" data-returned-review-context="1">${repair}${current}</div>`
     : "";
-  const more = review.waiting > 1
-    ? `<span class="returned-review-more">${plural(review.waiting - 1, "more returned result")} in this shot</span>`
-    : "";
-  /* THE READINESS ACTION, DEMOTED AND STILL WORKING. Its canonical label, its canonical
-     message and a control that performs it. tests/shot-truth-cohesion.js reads all three
-     off this card, which is the property that keeps "secondary" from drifting into
-     "deleted". */
-  const secondary = readiness
-    ? `<div class="returned-review-secondary" data-returned-review-secondary="${attr(readiness.nextAction?.code || "")}"><span>ALSO OUTSTANDING FOR THIS SHOT</span><b>${esc(next.label)}</b><small>${esc(next.detail)}</small><button type="button" class="chip" onclick="openShotReadinessAction('${attr(s.id)}','${attr(readiness.nextAction?.code || "")}')">${esc(next.label)}</button></div>`
-    : "";
+  const blocked = (review.projection?.blockers || []).filter((row) => row.shotId === s.id).length;
+  const more = [
+    review.waiting > 1 ? `${plural(review.waiting - 1, "more returned result")} in this shot` : "",
+    /* An unaccounted-for result is named even while a reviewable one owns the card, so
+       the integrity condition is never invisible behind work that can proceed. */
+    blocked ? `${plural(blocked, "returned result")} in this shot cannot be shown` : "",
+  ].filter(Boolean).map((line) => `<span class="returned-review-more">${esc(line)}</span>`).join("");
+  const secondary = returnedReviewSecondaryMarkup(s, readiness, next);
   const previous = neighbors.prev ? `<a href="#/shot/${neighbors.prev.id}">Previous</a>` : "";
   const following = neighbors.next ? `<a href="#/shot/${neighbors.next.id}">Next</a>` : "";
   return `<section class="guided-next-action returned-review-card is-ready state-readiness-${attr(String(readiness?.status || "unavailable").toLowerCase())}" data-shot-readiness="${attr(readiness?.status || "UNAVAILABLE")}" data-returned-review="1" data-returned-review-key="${attr(item.key)}" data-returned-review-owner="${attr(item.owner.kind)}" data-returned-review-unit="${attr(item.owner.unitId)}" data-returned-review-file="${attr(candidate.name)}" data-returned-review-waiting="${attr(String(review.waiting))}" data-returned-review-repair="${item.repairOf ? "1" : "0"}" style="${attr(shotCanvasStyle(s))}"><div class="guided-lifecycle-preview">${media}</div><div><span>RETURNED RESULT · ${esc(unitWords.toUpperCase())}</span><h2>Review this returned result</h2><p>This is the result that came back and needs your decision. ${esc(candidate.name)}${item.repairOf ? ` — a repair of ${esc(item.repairOf.name)}` : ""}.</p>${context}<div class="guided-next-actions"><button class="assemble-btn shot-primary-action" onclick="openReturnedResultReview('${attr(s.id)}','${attr(item.key)}')">Review this result</button>${returnedReviewActionMarkup(item)}${more}</div>${secondary}</div><nav>${previous}${following}</nav></section>`;
@@ -2321,10 +2451,23 @@ window.openReturnedResultReview = (shotId, key) => {
    modal — which is where a correction has always been built, and the only place the
    issues a correction prompt is made of are recorded. Starting a repair anywhere else
    would mean a correction with no recorded reason, which is what the provenance
-   requirement in fal-generation.js already refuses. */
-window.reviseReturnedResult = (shotId, frameId, name) => {
-  if (typeof openCandidateReview !== "function") return;
-  openCandidateReview(shotId, frameId, name);
+   requirement in fal-generation.js already refuses.
+
+   IT ASKS THE PROJECTION FIRST, AND A REFUSAL IS SPOKEN. `revise` is not available for a
+   returned video: the correction builder reads a frame review and the model has nothing
+   that could describe what to repair about a clip. A control that quietly did nothing
+   there would leave a filmmaker pressing a button and concluding the product was broken,
+   so the refusal is deterministic and it says which rule refused. */
+window.reviseReturnedResult = (shotId, key) => {
+  const s = shotById(shotId);
+  if (!s || typeof openCandidateReview !== "function") return;
+  const projection = typeof returnedReviewProjectionForBrowser === "function" ? returnedReviewProjectionForBrowser() : null;
+  const item = projection && typeof candidateReviewContext === "function" ? candidateReviewContext(projection, key) : null;
+  const verdict = typeof returnedReviewActionRefusal === "function"
+    ? returnedReviewActionRefusal(item, "revise")
+    : { allowed: false, reason: "not-available" };
+  if (!verdict.allowed) return toast(returnedReviewRefusalWords(verdict.reason));
+  openCandidateReview(shotId, item.owner.frameId, item.candidate.name);
   toast("Record what is wrong, then BUILD CORRECTION to revise this take");
 };
 /* KEEP LOOKING disposes of this exact candidate through the shipped decision writer.
@@ -2338,14 +2481,14 @@ window.rejectReturnedResult = (shotId, name) => {
   if (row.decision === "rejected") return toast("That candidate is already rejected");
   setCandidateDecision(shotId, name, "rejected");
 };
-function canonicalShotReadinessCardMarkup(s, neighbors, readiness, next, action, media, available, status) {
+function canonicalShotReadinessCardMarkup(s, neighbors, readiness, next, action, media, available, status, note = "") {
   const previous = neighbors.prev
     ? `<a href="#/shot/${neighbors.prev.id}">Previous</a>`
     : "";
   const following = neighbors.next
     ? `<a href="#/shot/${neighbors.next.id}">Next</a>`
     : "";
-  return `<section class="guided-next-action state-readiness-${attr(String(readiness.status || "").toLowerCase())} ${available ? "is-ready" : ""}" data-shot-readiness="${attr(readiness.status)}" style="${attr(shotCanvasStyle(s))}"><div class="guided-lifecycle-preview">${media}</div><div><span>${esc(status)} - NEXT ACTION</span><h2>${esc(next.label)}</h2><p>${esc(next.detail)}</p><div class="guided-next-actions">${action}</div></div><nav>${previous}${following}</nav></section>`;
+  return `<section class="guided-next-action state-readiness-${attr(String(readiness.status || "").toLowerCase())} ${available ? "is-ready" : ""}" data-shot-readiness="${attr(readiness.status)}" style="${attr(shotCanvasStyle(s))}"><div class="guided-lifecycle-preview">${media}</div><div><span>${esc(status)} - NEXT ACTION</span><h2>${esc(next.label)}</h2><p>${esc(next.detail)}</p><div class="guided-next-actions">${action}${note}</div></div><nav>${previous}${following}</nav></section>`;
 }
 function guidedShotStatusCard(s, takes, neighbors) {
   const life = guidedShotLifecycle(s, takes);
@@ -2377,8 +2520,29 @@ function guidedShotStatusCard(s, takes, neighbors) {
    * projection excludes it and says why, so there is no card pointing at nothing. */
   const returnedReview = shotReturnedReview(s);
   if (returnedReview && !RETURNED_REVIEW_INTEGRITY_BLOCKERS.includes(readiness?.nextAction?.code || "")) {
-    return returnedReviewCardMarkup(s, neighbors, returnedReview, readiness, shotProductionNextAction(s, readiness));
+    const projected = shotProductionNextAction(s, readiness);
+    /* Three answers, one card slot. `stale` and `unavailable` are not reviews and offer
+       no candidate decision; what they share with `review` is that none of them lets a
+       generation promotion take the first line of a shot that has returned media
+       outstanding. */
+    if (returnedReview.kind === "stale") return returnedReviewStaleCardMarkup(s, neighbors, returnedReview, readiness, projected);
+    /* AN UNACCOUNTED-FOR RESULT DISPLACES A MOVE-ON ACTION AND NOTHING ELSE.
+     *
+     * The harm the independent review named is precise: PRODUCE THE FRAME promoted
+     * because the media vanished. `mark-shot-final` and `nothing outstanding` are the
+     * same claim in different words — this shot can move on — and are refused for the
+     * same reason. Every other readiness action is REAL outstanding work, and burying
+     * it behind an integrity notice would be the identical defect pointing the other
+     * way, so it keeps the card and the integrity condition is stated on it. */
+    if (returnedReview.kind === "unavailable") {
+      if (RETURNED_MEDIA_MOVE_ON_ACTIONS.includes(readiness?.nextAction?.code || ""))
+        return returnedMediaUnavailableCardMarkup(s, neighbors, returnedReview, readiness, projected);
+    } else return returnedReviewCardMarkup(s, neighbors, returnedReview, readiness, projected);
   }
+  /* The note the readiness card carries when it keeps the card over a blocker. */
+  const unavailableNote = returnedReview && returnedReview.kind === "unavailable"
+    ? `<span class="returned-review-more" data-returned-review-blocked="${attr(String(returnedReview.blockers.length))}">${esc(`${plural(returnedReview.blockers.length, "returned result")} in this shot cannot be shown`)}</span>`
+    : "";
   /* Non-final cards never fall back to media-derived lifecycle progression. When
      readiness is unavailable, saying so is safer than inventing Add motion/Create. */
   if (life.key !== "final") {
@@ -2389,7 +2553,7 @@ function guidedShotStatusCard(s, takes, neighbors) {
     const action = !readiness
       ? `<button class="assemble-btn shot-primary-action" onclick="location.hash='#/production'">${esc(next.label)}</button>`
       : `<button class="assemble-btn shot-primary-action" onclick="openShotReadinessAction('${attr(s.id)}','${attr(truth.nextAction?.code || "")}')">${esc(next.label)}</button>`;
-    return canonicalShotReadinessCardMarkup(s, neighbors, truth, next, action, media, available, status);
+    return canonicalShotReadinessCardMarkup(s, neighbors, truth, next, action, media, available, status, unavailableNote);
   }
   const ready = ["still-ready", "animate", "motion-approved", "final"].includes(life.key);
   const kicker = life.key === "final" ? "✓ SHOT COMPLETE" : ready ? "✓ PREVIOUS STEP COMPLETE · NEXT ACTION" : "NEXT ACTION";

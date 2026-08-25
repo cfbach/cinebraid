@@ -5443,10 +5443,18 @@ body[data-focused-workspace="1"] .guided-frame-body,
    the fold it was put above. */
 .returned-review-card{border-left-color:var(--accent)}
 .returned-review-context{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 10px}
-.returned-review-compare{display:flex;gap:8px;align-items:center;text-align:left;padding:5px 8px 5px 5px;border:1px solid var(--line);border-radius:9px;background:var(--surface-2);color:inherit;max-width:100%}
+/* THE CHIP KEEPS A READABLE MEASURE. `overflow-wrap:anywhere` on the filename drops the
+   text column's min-content width to a single character, so a flex item left to shrink
+   freely collapses to a ribbon and the name wraps eleven times. A basis and a floor keep
+   it compact AND legible; the max keeps it a chip rather than a comparison editor. */
+.returned-review-compare{display:flex;gap:8px;align-items:center;text-align:left;padding:5px 8px 5px 5px;border:1px solid var(--line);border-radius:9px;background:var(--surface-2);color:inherit;flex:1 1 200px;min-width:0;max-width:340px}
 .returned-review-compare>span:last-child{display:grid;gap:1px;min-width:0}
 .returned-review-compare b{font:700 9px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
-.returned-review-compare small{font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:220px}
+/* THE BEFORE FILENAME WRAPS. It carried nowrap + ellipsis, which at 1280 turned a
+   generated name into "SH-B_FRAME_A_CORRE…" — an unusable token in the one place whose
+   whole job is telling a filmmaker WHICH take is being repaired. It stays compact; it
+   just breaks. */
+.returned-review-compare small{font-size:10px;overflow-wrap:anywhere;line-height:1.35}
 .returned-review-compare em{font-style:normal;font-size:9px;color:var(--muted);line-height:1.4}
 .returned-review-compare-media{width:46px;height:46px;border-radius:7px;overflow:hidden;background:var(--img-well-bg);display:grid;place-items:center;flex:0 0 auto}
 .returned-review-compare-media img,.returned-review-compare-media video{width:100%;height:100%;object-fit:cover}
@@ -5459,7 +5467,25 @@ body[data-focused-workspace="1"] .guided-frame-body,
 .returned-review-secondary>b{font-size:11px}
 .returned-review-secondary>small{color:var(--muted);font-size:9.5px;line-height:1.45}
 .returned-review-secondary>.chip{margin-top:5px}
-@media(max-width:900px){.returned-review-compare small{max-width:150px}}
+/* THE CARD KEEPS A MEASURE FOR ITS SENTENCE.
+ *
+ * `.guided-next-action` declares its preview track as `fit-content(438px)`, which cannot
+ * shrink below the preview's own minimum — so on a shot page at 1280, where the card is
+ * about 660px wide, the preview took 438 and the text column was left with 104. A
+ * sentence carrying a generated filename then wrapped to sixteen lines: unclipped, and
+ * exactly as unreadable as the ellipsis this slice removed.
+ *
+ * The fix is the one the rail-aware rule above already uses: apply the card's own
+ * declaration where the card actually becomes narrow, and invent no new layout. The
+ * preview track may shrink (`minmax(0,…)` rather than `fit-content(…)`, and the preview
+ * is already `width:min(100%,…)`), and the body is given a floor. Scoped to this card and
+ * to the band where three columns apply, so the shipped stacking rule below 901px and the
+ * readiness card's own geometry are both untouched. */
+@media(min-width:901px){
+  .returned-review-card{grid-template-columns:minmax(0,var(--cb-selection-w,438px)) minmax(260px,1fr) auto}
+}
+.returned-review-stale .guided-lifecycle-empty,.returned-review-unavailable .guided-lifecycle-empty{font:800 9px var(--mono);letter-spacing:.12em;color:var(--muted);text-align:center;padding:0 10px}
+.returned-review-unavailable{border-left-color:var(--warn,var(--accent))}
 /* A RETURNED RESULT IS NAMED BY ITS FILENAME, and a generated filename has no spaces in
    it — `SH010_FRAME_A_CORRECTION_FAL_1.png` is one unbreakable token. Left to the default
    wrapping rule it pushes the card's middle column wider than its track and the sentence

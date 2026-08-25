@@ -506,7 +506,11 @@ async function nc5() {
    still sitting unreviewed.
    =========================================================================== */
 
-const NC6_ANCHOR = `  const returned = returnedResultsAwaitingReview();
+/* Slice 3 threads the shared projection into the queue call so the review queue and the
+   integrity blockers come from one derivation. The anchor moved with it; what this
+   control breaks — the returned queue reading empty while a candidate is genuinely
+   waiting — is unchanged. */
+const NC6_ANCHOR = `  const returned = returnedResultsAwaitingReview(returnedReview);
   if (returned.length) {`;
 const NC6_BREAK = `  const returned = [];
   if (returned.length) {`;

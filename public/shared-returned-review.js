@@ -72,33 +72,50 @@
  * Anything else is undecided, including a candidate with a full AI triage attached.
  *
  * ---------------------------------------------------------------------------
- * THE UNIT SETTLES, AND SLICE 1'S RULE FOR THAT IS CARRIED THROUGH UNCHANGED.
+ * A PICK SETTLES WHAT IT WAS CHOSEN AMONG, AND NOTHING THAT CAME AFTERWARDS.
  *
- * A frame whose pick has been made stops asking about its candidates, whoever made the
- * pick and whether or not anybody approved it — that was already the shipped rule in
- * returnedResultsAwaitingReview(), stated there as "has this frame already been
- * picked", and it is a WORKFLOW QUEUE question rather than an authority one. It is
- * restated here, once, and public/app.js now reads it from here rather than keeping a
- * second copy.
+ * A frame whose pick has been made stops asking about the alternates that pick was taken
+ * over — whoever made it and whether or not anybody approved it. That is Slice 1's
+ * workflow-queue rule, carried through: it makes no claim about authority.
  *
- * Motion settles at the SHOT, not per clip, for the same reason and from the same three
- * shipped pointers. That asymmetry is Slice 1's and is preserved deliberately: changing
- * it would change the Returned Results count on projects nobody edited.
+ * WHAT IT IS NOT is frame-wide. A repair that came back AFTER the pick was never one of
+ * the alternates, and settling it as though it had been is how a returned result nobody
+ * had looked at could leave the queue empty and the project saying MARK SHOT FINAL. See
+ * arrivedAfterPick(): lineage first, chronology second, filenames never.
+ *
+ * Motion settles at the SHOT, not per clip, and by the same candidate-specific rule. The
+ * shot-level asymmetry is Slice 1's and is preserved deliberately: changing it would
+ * change the Returned Results count on projects nobody edited.
  *
  * ---------------------------------------------------------------------------
- * ORDER COMES FROM PRODUCTION FACTS. THERE IS NO PRIORITY SCORE.
+ * ORDER COMES FROM PRODUCTION FACTS. THERE IS NO PRIORITY SCORE, AND NO FILENAME.
  *
  *   1. the project's own shot order
  *   2. within a shot: declared frame order, then motion
  *   3. within a unit: lineage groups, oldest root first — generation completion order
  *   4. within a lineage group: THE REPAIR LEADS
+ *   5. for a true tie: the position the authoritative input already had
  *
- * (4) is the only ordering rule that is not simply "as recorded", and it is not a
- * heuristic: a repair is generated FROM a candidate, so the candidate it repairs is the
- * Before of a decision that has already moved on. It is read from `correction-of`,
- * which ingest stamps from the job's own sourceCandidate — never from recency and never
- * from a similar filename. tests/returned-media-ownership-negative-controls.js
- * constructs a newest-file-wins parent and requires the suite to go red for it.
+ * (4) is not a heuristic: a repair is generated FROM a candidate, so the candidate it
+ * repairs is the Before of a decision that has already moved on. It is read from
+ * `correction-of`, which ingest stamps from the job's own sourceCandidate — never from
+ * recency and never from a similar filename.
+ *
+ * (5) replaced an alphabetical tie-break, which was a real defect rather than a tidy-up:
+ * a production that returned [Z.png, A.png] at the same instant was presented as
+ * [A.png, Z.png], an order nothing in the project had stated.
+ * tests/returned-media-ownership-negative-controls.js puts both rules back and requires
+ * the suite to go red for each.
+ *
+ * ---------------------------------------------------------------------------
+ * A RECORDED RESULT WITH NO BYTES IS AN INTEGRITY STATE, NOT AN ABSENCE.
+ *
+ * Everything above is derived from the media answer, which is derived from the scan — so
+ * a candidate row the project still records as undecided, whose file has gone, would
+ * produce no record and vanish. The shot would then read as having nothing outstanding
+ * and CineBraid would offer to produce another frame: spending money because it had lost
+ * track of something it already had. Those rows are reported, marked `blocking`, given
+ * no actions, and kept out of `queue`.
  *
  * ---------------------------------------------------------------------------
  * WHAT IT DELIBERATELY DOES NOT DO.
@@ -150,22 +167,68 @@
      reject   dispose of this candidate; it stays in history */
   const RETURNED_REVIEW_ACTIONS = deepFreeze(["approve", "revise", "reject"]);
 
+  /* THE DECISIONS THE PROJECTION MAY DECLARE VALID ON A CANDIDATE, and they are exactly
+     the ones public/shared-production-media.js already declares. `revise` is NOT here:
+     see RETURNED_REVIEW_ACTION_LIMITATIONS. */
+  const RETURNED_REVIEW_DECISION_ACTIONS = deepFreeze(["approve", "reject"]);
+
+  /* SHIPPED WORKFLOWS A SURFACE MAY OPEN FROM A CANDIDATE. Opening one is not taking a
+     decision, and this list is not a second decision vocabulary. */
+  const RETURNED_REVIEW_WORKFLOWS = deepFreeze(["revise"]);
+
+  /* WHAT THIS PROJECTION CANNOT DECLARE, in the shape shared-production-media.js's
+     PRODUCTION_MEDIA_UNAVAILABLE uses: the question, why not, and the record that would
+     have to exist first. A gap that is declared cannot be quietly filled with a guess.
+
+     THE INDEPENDENT REVIEW CAUGHT EXACTLY THAT HAPPENING HERE. This module used to read
+     production-media's `view-review` — which declares that a surface may OPEN the review
+     dialog — and emit `revise` as though it were a candidate DECISION the projection had
+     narrowed from a declared one. It had not: no production-media action authorises
+     starting a correction, and opening a workflow is not deciding anything. `revise` is
+     now a WORKFLOW, gated on the same `view-review`, and it is never in `actions`. */
+  const RETURNED_REVIEW_ACTION_LIMITATIONS = deepFreeze({
+    revise: {
+      question: "Is starting a targeted repair a decision this candidate declares?",
+      why: "PRODUCTION_MEDIA_ACTIONS declares open-full-preview, open-owner, view-review, approve, reject and restore. None of them authorises building a correction, so a `revise` in `actions` would be a decision this projection invented.",
+      wouldNeed: "a declared correction action on the production-media contract",
+      surfacedAs: "a workflow, gated on the declared view-review action",
+    },
+    "revise-motion": {
+      question: "Can a returned video be revised?",
+      why: "A targeted repair is built FROM a recorded candidate review, and the recorded candidate review is a frame review — its categories, its numbered-reference diagnosis and its blocking-guide comparison are all statements about a still. There is nothing in the model that could describe what to repair about a clip.",
+      wouldNeed: "a motion-shaped structured review the correction builder could read",
+      surfacedAs: "a deterministic refusal from returnedReviewActionRefusal()",
+    },
+  });
+
   /* Why a returned candidate is not asking for a decision. Reported rather than
-     silently dropped, so a surface can say which of these happened. */
+     silently dropped, so a surface can say which of these happened.
+
+     `machine-selected` IS NOT `human-approved`, and the difference is the whole reason
+     it is listed separately. An automation-written pick settles the unit — that is the
+     shipped pick semantics and this module does not touch it — but calling it a human
+     approval would assert a decision nobody took. */
   const RETURNED_REVIEW_SETTLED_REASONS = deepFreeze([
     "unit-already-picked",
     "human-approved",
+    "machine-selected",
     "human-rejected",
     "kept-as-alternate",
   ]);
 
   /* Why a returned candidate cannot be reviewed even though a row exists for it.
-     These FAIL CLOSED — the candidate is excluded from the queue and named here. */
+     These FAIL CLOSED — the candidate is excluded from the queue and named here.
+
+     `media-not-available` is a BLOCKER and the other two are not. A project that still
+     says a result is undecided while its bytes have gone is in an integrity state; a
+     candidate whose frame was deleted, or whose kind takes no decision, is simply not a
+     review anybody owes. */
   const RETURNED_REVIEW_UNREVIEWABLE_REASONS = deepFreeze([
     "media-not-available",
     "frame-no-longer-declared",
     "decision-not-supported",
   ]);
+  const RETURNED_REVIEW_BLOCKING_REASONS = deepFreeze(["media-not-available"]);
 
   /* ==========================================================================
      THE INPUT.
@@ -186,15 +249,66 @@
     });
   }
 
-  /* HAS THE FILMMAKER ALREADY DECIDED ABOUT THIS EXACT CANDIDATE.
-     Three states, all durable, none of them a timestamp. */
+  /* HAS THIS EXACT CANDIDATE ALREADY BEEN DECIDED, and BY WHAT.
+     All durable, none of them a timestamp, and each named for what actually happened. */
   function decidedReason(row) {
     const decision = record(row.humanDecision);
     const state = text(decision.state);
-    if (state === "approved" || state === "machine-selected") return "human-approved";
+    if (state === "approved") return "human-approved";
+    /* NOT `human-approved`. shared-production-media.js reports `machine-selected` when
+       an approved edge's only recorded actor is automation, and it reports it separately
+       precisely so nothing downstream can collapse the two. This is the downstream. */
+    if (state === "machine-selected") return "machine-selected";
     if (state === "rejected") return "human-rejected";
     if (valueOf(decision.decision) === "shortlist") return "kept-as-alternate";
     return "";
+  }
+
+  /* WHEN THE UNIT'S PICK SETTLES A CANDIDATE, AND WHEN IT MUST NOT.
+   *
+   * THE P0 THE INDEPENDENT REVIEW FOUND. This was frame-wide: any pick on a unit settled
+   * every undecided candidate in it. So a repair that came back AFTER the filmmaker had
+   * picked its parent reported `unit-already-picked`, left the queue empty, and the
+   * project said MARK SHOT FINAL — about a result nobody had looked at.
+   *
+   * Settlement is CANDIDATE-SPECIFIC. A pick settles the file that was picked, and it
+   * settles the alternates it was chosen OVER — those are the ones the decision was
+   * taken among. It settles nothing that arrived afterwards.
+   *
+   * "Arrived afterwards" is answered from durable facts, in this order, and never from a
+   * filename:
+   *
+   *   1. LINEAGE. A candidate whose correction-of chain reaches the picked file was
+   *      generated FROM it, so it cannot have been an alternate the pick chose over.
+   *      This is structural and outranks any timestamp.
+   *   2. CHRONOLOGY. The candidate is stamped later than the moment of the pick — the
+   *      picked row's own recorded decision time, or its arrival when it records none.
+   *
+   * WHEN NEITHER CAN BE ESTABLISHED THE PICK STILL SETTLES, deliberately. Every candidate
+   * ingest writes carries `addedAt`; a row with none is legacy, and treating legacy
+   * alternates as newly returned would put every old project's discarded takes back in
+   * front of its filmmaker. The new pending state appears only when the record positively
+   * shows the candidate came later. */
+  function candidateDescendsFrom(name, ancestor, byName) {
+    const seen = new Set([name]);
+    let current = name;
+    for (;;) {
+      const parent = correctionParentName(byName.get(current));
+      if (!parent || seen.has(parent)) return false;
+      if (parent === ancestor) return true;
+      if (!byName.has(parent)) return false;
+      seen.add(parent);
+      current = parent;
+    }
+  }
+  function arrivedAfterPick(row, pickRow, byName) {
+    const name = text(record(row.file).name);
+    const pickName = text(record(pickRow.file).name);
+    if (!name || !pickName || name === pickName) return false;
+    if (candidateDescendsFrom(name, pickName, byName)) return true;
+    const pickAt = valueOf(record(pickRow.humanDecision).decidedAt) || valueOf(record(pickRow.file).addedAt);
+    const rowAt = valueOf(record(row.file).addedAt);
+    return !!pickAt && !!rowAt && rowAt > pickAt;
   }
 
   /* WHICH FRAME A RETURNED STILL BELONGS TO.
@@ -305,14 +419,19 @@
      rejected; there is nothing in the model that could describe what to repair about it.
      Saying that here rather than letting the surface quietly omit the button is the
      difference between a declared gap and a missing control. */
-  function reviewActionsFor(row, ownerKind) {
+  function reviewActionsFor(row) {
     const actions = list(row.actions).map((id) => text(id));
-    const decidable = actions.includes("view-review");
-    const out = [];
-    if (actions.includes("approve")) out.push("approve");
-    if (decidable && ownerKind === "shot-frame") out.push("revise");
-    if (actions.includes("reject")) out.push("reject");
-    return deepFreeze(out);
+    return deepFreeze(RETURNED_REVIEW_DECISION_ACTIONS.filter((id) => actions.includes(id)));
+  }
+  /* WHICH SHIPPED WORKFLOWS THIS CANDIDATE CAN OPEN. `revise` is gated on the declared
+     `view-review` action — which is what authorises opening the review dialog — and on
+     the owner kind, because the correction builder reads a frame review. It is reported
+     here rather than in `actions` so nothing can read it as a decision. */
+  function reviewWorkflowsFor(row, ownerKind) {
+    const actions = list(row.actions).map((id) => text(id));
+    if (!actions.includes("view-review")) return deepFreeze([]);
+    if (ownerKind !== "shot-frame") return deepFreeze([]);
+    return deepFreeze(["revise"]);
   }
 
   /* ==========================================================================
@@ -321,7 +440,7 @@
      `rows` are already narrowed to this unit. Everything below is ordering and
      context; nothing here reclassifies a candidate. */
   function unitItems(context) {
-    const { rows, unitSettled, settleReason, owner, shot, comparison, describeCorrection } = context;
+    const { rows, pickRow, owner, shot, comparison, describeCorrection, ordinalOf } = context;
 
     const byName = new Map();
     for (const row of rows) byName.set(text(record(row.file).name), row);
@@ -344,7 +463,17 @@
         root = parent;
         depth += 1;
       }
-      const answer = { root, addedAt: valueOf(record(byName.get(root).file).addedAt), depth };
+      const answer = {
+        root,
+        addedAt: valueOf(record(byName.get(root).file).addedAt),
+        /* THE STABLE SOURCE ORDINAL, and it exists because the alternative was a
+           filename. Two candidates stamped at the same instant used to be ordered
+           alphabetically, so a production that returned [Z.png, A.png] was presented as
+           [A.png, Z.png] — an order nothing in the project stated. This is the position
+           the authoritative input already had. */
+        ordinal: ordinalOf(root),
+        depth,
+      };
       lineageCache.set(name, answer);
       return answer;
     }
@@ -353,7 +482,8 @@
     decorated.sort((a, b) => {
       if (a.group.root !== b.group.root) {
         if (a.group.addedAt !== b.group.addedAt) return a.group.addedAt < b.group.addedAt ? -1 : 1;
-        return a.group.root < b.group.root ? -1 : 1;
+        /* Chronology tied. The source order decides — never the name. */
+        return a.group.ordinal - b.group.ordinal;
       }
       /* THE REPAIR LEADS. Deeper in the correction chain is the newer decision. */
       if (a.group.depth !== b.group.depth) return b.group.depth - a.group.depth;
@@ -367,7 +497,8 @@
       const parentName = correctionParentName(row);
       const parentRow = parentName ? byName.get(parentName) || null : null;
       const decided = decidedReason(row);
-      const actions = reviewActionsFor(row, owner.kind);
+      const actions = reviewActionsFor(row);
+      const workflows = reviewWorkflowsFor(row, owner.kind);
       const unreviewable = !text(file.url)
         ? "media-not-available"
         : !actions.length
@@ -375,9 +506,10 @@
           : "";
       /* THE CANDIDATE'S OWN DECISION IS THE MORE SPECIFIC FACT and is reported first: a
          file somebody approved says `human-approved`, not `unit-already-picked`, even
-         though both are true of it. The unit's pick is the reason its ALTERNATES stopped
-         asking, which is a different sentence about a different file. */
-      const settled = decided || (unitSettled ? settleReason : "");
+         though both are true of it. The unit's pick is the reason the alternates it was
+         chosen OVER stopped asking — and only those. */
+      const settledByPick = !decided && !!pickRow && !arrivedAfterPick(row, pickRow, byName);
+      const settled = decided || (settledByPick ? "unit-already-picked" : "");
       items.push(deepFreeze({
         contract: RETURNED_REVIEW_CONTRACT,
         /* The candidate's durable projection key. It is the deep-link identity and it
@@ -392,6 +524,11 @@
         awaitingReview: !settled && !unreviewable,
         settled: settled || "",
         unreviewable,
+        /* Reported separately from `unreviewable` so the two facts never have to be
+           inferred from one token: a frame can be undeclared while its media is present,
+           and media can be gone while the frame is still declared. */
+        mediaAvailable: !!text(file.url),
+        blocking: RETURNED_REVIEW_BLOCKING_REASONS.includes(unreviewable),
         humanDecision: text(record(row.humanDecision).state) || "undecided",
         /* WHAT THIS IS A REPAIR OF. `recorded` is the name ingest stamped; `available`
            is whether that file is still here to compare against. A recorded parent that
@@ -424,6 +561,7 @@
            something rather than in the abstract. Null when nothing is. */
         comparison: comparison || null,
         actions,
+        workflows,
       }));
     }
     return items;
@@ -443,10 +581,14 @@
         reason: "production-media-unavailable",
         items: deepFreeze([]),
         queue: deepFreeze([]),
-        counts: deepFreeze({ items: 0, awaiting: 0, shots: 0, repairs: 0, unreviewable: 0 }),
+        blockers: deepFreeze([]),
+        counts: deepFreeze({ items: 0, awaiting: 0, shots: 0, repairs: 0, unreviewable: 0, unavailable: 0 }),
       });
     }
 
+    /* THE AUTHORITATIVE INPUT ORDER, captured once. Every ordering tie in this module
+       resolves to a position in this list rather than to a filename. */
+    const ordinals = new Map();
     const shotRows = new Map();
     for (const row of list(media.records)) {
       if (text(row.scope) !== "shot") continue;
@@ -455,18 +597,23 @@
       const shotId = valueOf(record(row.context).shotId);
       if (!shotId) continue;
       if (!shotRows.has(shotId)) shotRows.set(shotId, []);
-      shotRows.get(shotId).push(row);
+      const bucket = shotRows.get(shotId);
+      ordinals.set(`${shotId} ${text(record(row.file).name)}`, ordinals.size);
+      bucket.push(row);
     }
 
     const items = [];
     for (const shot of list(project.shots)) {
       const shotId = text(record(shot).id);
       const rows = shotRows.get(shotId) || [];
-      if (!rows.length) continue;
       const frames = list(record(shot).keyframes);
       const stills = rows.filter((row) => text(row.kind) === "shot-still");
       const videos = rows.filter((row) => text(row.kind) === "shot-motion");
       const shotPick = shotPickedName(stills);
+      const ordinalOf = (name) => {
+        const found = ordinals.get(`${shotId} ${name}`);
+        return found === undefined ? Number.MAX_SAFE_INTEGER : found;
+      };
 
       /* Frames, in declared order. */
       for (const frame of frames) {
@@ -477,6 +624,7 @@
         });
         if (!unitRows.length) continue;
         const pickedName = framePickedName(unitRows, frameId);
+        const pickRow = pickedName ? unitRows.find((row) => text(record(row.file).name) === pickedName) || null : null;
         const comparisonName = pickedName || (frames[0] === frame ? shotPick : "");
         const comparisonRow = comparisonName
           ? unitRows.find((row) => text(record(row.file).name) === comparisonName)
@@ -484,8 +632,7 @@
           : null;
         items.push(...unitItems({
           rows: unitRows,
-          unitSettled: !!pickedName,
-          settleReason: "unit-already-picked",
+          pickRow,
           shot,
           owner: {
             kind: "shot-frame",
@@ -496,6 +643,7 @@
           },
           comparison: mediaRef(comparisonRow),
           describeCorrection: input.describeCorrection,
+          ordinalOf,
         }));
       }
 
@@ -521,25 +669,33 @@
           awaitingReview: false,
           settled: "",
           unreviewable: "frame-no-longer-declared",
+          mediaAvailable: !!text(record(row.file).url),
+          blocking: false,
           humanDecision: text(record(row.humanDecision).state) || "undecided",
           repairOf: null,
           repairedInto: deepFreeze([]),
           correction: deepFreeze({ state: "not-a-repair", buildId: "", intent: "" }),
           comparison: null,
           actions: deepFreeze([]),
+          workflows: deepFreeze([]),
         }));
       }
 
       /* Motion, at the shot, exactly as Slice 1 counts it. */
       if (videos.length) {
         const approved = approvedMotionName(shot);
-        const comparisonRow = approved
+        const pickRow = approved
           ? videos.find((row) => text(record(row.file).name) === approved) || null
           : null;
         items.push(...unitItems({
           rows: videos,
-          unitSettled: !!approved,
-          settleReason: "unit-already-picked",
+          /* THE SAME CANDIDATE-SPECIFIC RULE. An approved motion settles the videos it
+             was chosen among; a video that came back afterwards is still a returned
+             review, exactly as it is for a frame. When the shot names an approved video
+             the projection cannot see — the pointer resolves to no returned file — there
+             is no row to compare against, so the pick settles nothing and every returned
+             video is judged on its own record. */
+          pickRow,
           shot,
           owner: {
             kind: "shot-motion",
@@ -548,8 +704,75 @@
             frameLabel: "",
             picked: approved,
           },
-          comparison: mediaRef(comparisonRow),
+          comparison: mediaRef(pickRow),
           describeCorrection: input.describeCorrection,
+          ordinalOf,
+        }));
+      }
+
+      /* ======================================================================
+         DURABLE ROWS WHOSE MEDIA IS NOT THERE.
+
+         THE P0 THE INDEPENDENT REVIEW FOUND. Everything above is built from the media
+         answer, which is built from the scan — so a candidate row the project still
+         records as undecided, whose file has gone, produced no record and vanished from
+         this projection entirely. The shot then looked like it had nothing outstanding
+         and PRODUCE THE FRAME became the primary action: CineBraid offering to spend
+         money because it had lost track of something it already had.
+
+         An undecided row with no bytes is an INTEGRITY condition, not a review and not
+         permission to generate. It is reported, it is non-actionable, and it blocks.
+
+         A row somebody already disposed of is NOT a blocker — its media being gone is
+         ordinary history — and a row whose frame the shot no longer declares reports
+         that instead, because the missing unit is the more specific fact. */
+      const present = new Set(rows.map((row) => text(record(row.file).name)));
+      for (const candidateRow of list(record(shot).candidateFiles)) {
+        const row = record(candidateRow);
+        const name = text(row.stored) || text(row.name);
+        if (!name || present.has(name)) continue;
+        const decision = text(row.decision);
+        if (decision === "rejected" || decision === "shortlist") continue;
+        const stamped = text(row.frameId);
+        const frame = stamped ? frames.find((item) => text(record(item).id) === stamped) || null : frames[0] || null;
+        const kind = MEDIA.productionMediaTypeOf ? MEDIA.productionMediaTypeOf(name) : "image";
+        const motion = kind === "video";
+        const undeclared = !motion && !frame;
+        items.push(deepFreeze({
+          contract: RETURNED_REVIEW_CONTRACT,
+          /* The path key production-media would have minted for this file, so a stale
+             route naming it resolves to THIS item rather than to nothing. */
+          key: typeof MEDIA.productionMediaKeyForFile === "function"
+            ? MEDIA.productionMediaKeyForFile({ url: `/assets/shots/${shotId}/takes/${name}` })
+            : "",
+          shotId,
+          sceneId: text(record(shot).scene),
+          shotTitle: text(record(shot).title),
+          owner: deepFreeze({
+            kind: motion ? "shot-motion" : "shot-frame",
+            unitId: motion ? "" : text(record(frame).id),
+            frameId: motion ? "" : text(record(frame).id),
+            frameLabel: motion ? "" : text(record(frame).label),
+            picked: "",
+          }),
+          candidate: deepFreeze({
+            key: "", name, url: "", mediaType: kind, addedAt: text(row.addedAt),
+            assetId: "", disposition: "candidate", receiptBacked: false,
+          }),
+          awaitingReview: false,
+          settled: "",
+          unreviewable: undeclared ? "frame-no-longer-declared" : "media-not-available",
+          mediaAvailable: false,
+          blocking: !undeclared,
+          humanDecision: "undecided",
+          repairOf: text(row.correctionOf)
+            ? deepFreeze({ state: present.has(text(row.correctionOf)) ? "available" : "recorded-not-available", name: text(row.correctionOf), candidate: null })
+            : null,
+          repairedInto: deepFreeze([]),
+          correction: deepFreeze({ state: text(row.correctionOf) ? "recorded" : "not-a-repair", buildId: text(row.correctionBuildId) || text(row.sourceBuildId), intent: "" }),
+          comparison: null,
+          actions: deepFreeze([]),
+          workflows: deepFreeze([]),
         }));
       }
     }
@@ -565,14 +788,52 @@
          it: a surface that shows "N waiting" and a surface that opens the next one read
          the same array, so they cannot disagree about what N was. */
       queue: deepFreeze(queue),
+      /* RETURNED MEDIA THE PROJECT STILL OWES A DECISION ON AND CANNOT SHOW. Its own
+         list, because it is not a review: nothing can be approved, rejected or revised
+         here, and a surface that folded it into `queue` would offer actions with nowhere
+         to write. What it MUST do is stop the shot reading as ready for more. */
+      blockers: deepFreeze(items.filter((item) => item.blocking)),
       counts: deepFreeze({
         items: items.length,
         awaiting: queue.length,
         shots: shots.size,
         repairs: queue.filter((item) => !!item.repairOf).length,
         unreviewable: items.filter((item) => !!item.unreviewable).length,
+        unavailable: items.filter((item) => item.blocking).length,
       }),
     });
+  }
+
+  /* THE RUNTIME REFUSAL, and it is deterministic rather than a silent no-op.
+   *
+   * A caller asks for an action by name and gets back whether it may run and, when it
+   * may not, the sentence to show. Motion is the case the review named: `revise` is not
+   * available for a returned video, and a control that quietly did nothing would leave a
+   * filmmaker pressing a button and concluding the product was broken.
+   *
+   * It refuses on the item's OWN declared lists, so a surface cannot reach a decision
+   * this projection did not declare by calling it directly. */
+  /* THE REFUSAL REASONS ARE TOKENS, and the sentences are the surface's, for the same
+     reason shared-stage-model.js leaves STAGE_STATUS in the UI layer. A projection that
+     wrote the words would be a projection a translation had to edit. */
+  const RETURNED_REVIEW_REFUSAL_REASONS = deepFreeze([
+    "unknown-action",
+    "no-item",
+    "revise-motion",
+    "not-available",
+  ]);
+  function refusal(reason) {
+    return deepFreeze({ allowed: false, reason });
+  }
+  function returnedReviewActionRefusal(item, action) {
+    const id = text(action);
+    const row = record(item);
+    if (!RETURNED_REVIEW_ACTIONS.includes(id)) return refusal("unknown-action");
+    if (!row.contract) return refusal("no-item");
+    if (id === "revise" && text(record(row.owner).kind) === "shot-motion") return refusal("revise-motion");
+    const permitted = id === "revise" ? list(row.workflows) : list(row.actions);
+    if (!permitted.includes(id)) return refusal("not-available");
+    return deepFreeze({ allowed: true, reason: "" });
   }
 
   /* The next returned review, project-wide or for one shot. `null` when there is none,
@@ -598,9 +859,15 @@
     RETURNED_REVIEW_CONTRACT,
     RETURNED_REVIEW_OWNER_KINDS,
     RETURNED_REVIEW_ACTIONS,
+    RETURNED_REVIEW_DECISION_ACTIONS,
+    RETURNED_REVIEW_WORKFLOWS,
+    RETURNED_REVIEW_ACTION_LIMITATIONS,
+    RETURNED_REVIEW_REFUSAL_REASONS,
     RETURNED_REVIEW_SETTLED_REASONS,
     RETURNED_REVIEW_UNREVIEWABLE_REASONS,
+    RETURNED_REVIEW_BLOCKING_REASONS,
     returnedReviewProjection,
+    returnedReviewActionRefusal,
     pendingReturnedReview,
     candidateReviewContext,
   };

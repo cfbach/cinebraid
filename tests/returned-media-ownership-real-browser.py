@@ -13,10 +13,13 @@ THE FIXTURE IS THE NODE SUITE'S OWN. It is written by calling `writeBrowserFixtu
 of tests/returned-media-ownership.js rather than being restated here, so the two halves
 cannot drift into testing different projects and both report green.
 
-    SH-A   one returned candidate, and a reference nobody has confirmed
-           — the shot that used to open asking to confirm the reference
-    SH-B   a candidate and the targeted repair of it
+    SH-A   two returned candidates, and a reference nobody has confirmed
+           — the shot that used to open asking to confirm the reference, and the shot
+             a stale link can go stale against
+    SH-B   a candidate and the targeted repair of it, both under long generated names
            — the two peers that used to arrive with no relationship between them
+    SH-C   a candidate row the project records as undecided whose file was never written
+           — the result that used to vanish and let PRODUCE THE FRAME take the card
 
 WHAT IT ASSERTS, and every one is about the rendered DOM or a real click:
 
@@ -26,8 +29,18 @@ WHAT IT ASSERTS, and every one is about the rendered DOM or a real click:
     B. SH-B opens on the REPAIR, declares itself a repair, and carries the take it
        repaired as Before — with that take's own image, comparable without leaving
        the page.
-    C. Deciding the returned result through the shipped control advances the queue
-       truthfully: SH-A's card hands back to readiness, and Production's count drops.
+    D. At 1280 the compact Before filename stays readable: nothing clipped, no
+       ellipsis, and wrapped to a measure rather than a ribbon. Includes NC-RM17,
+       a behavioural control that puts nowrap + ellipsis back through real CSS and
+       measures how much of the name it hides.
+    E. Production's action carries the candidate it names, in the route, and clicking
+       it lands on that exact candidate.
+    F. Deciding that candidate stops the claim being honoured IN PLACE — no reload —
+       and the stale link explains itself instead of substituting the other pending
+       candidate. The decision is written to the exact row and stays in history.
+    G. Continuing is an explicit act that claims the next candidate by name.
+    H. A recorded result with no bytes renders the integrity state: no candidate
+       decision, no generation promoted, and the readiness action still secondary.
 
 Text is read with textContent, never from a screenshot: several of these headings are
 uppercased by CSS, so the rendered casing and the DOM casing differ and only one of them
@@ -41,6 +54,7 @@ root. NO PROVIDER OR PAID CALL IS MADE.
 """
 
 import json
+import urllib.parse
 import os
 import pathlib
 import shutil
@@ -59,9 +73,12 @@ sync_playwright = require_browser(LABEL)
 
 SHOT_A = "SH-A"
 SHOT_B = "SH-B"
+SHOT_C = "SH-C"
 CANDIDATE_A = "SH-A_FRAME_A_FAL_1.png"
-PARENT_B = "SH-B_FRAME_A_FAL_1.png"
-REPAIR_B = "SH-B_FRAME_A_CORRECTION_FAL_1.png"
+CANDIDATE_A2 = "SH-A_FRAME_B_FAL_1.png"
+PARENT_B = "SH-B_FRAME_A_GPT_IMAGE_2_HIGH_2048x1152_ROUND_01_FAL_1.png"
+REPAIR_B = "SH-B_FRAME_A_CORRECTION_GPT_IMAGE_2_HIGH_2048x1152_ROUND_02_FAL_1.png"
+MISSING_C = "SH-C_FRAME_A_FAL_1.png"
 
 
 def free_port():
@@ -165,6 +182,8 @@ def card_state(page):
             secondary: (card.querySelector('.returned-review-secondary') || {}).dataset?.returnedReviewSecondary || '',
             secondaryText: (card.querySelector('.returned-review-secondary') || {}).textContent || '',
             secondaryControl: (card.querySelector('.returned-review-secondary .chip') || {}).getAttribute?.('onclick') || '',
+            stale: card.dataset.returnedReviewStale === '1',
+            unavailable: card.dataset.returnedReviewUnavailable === '1',
             compares: [...card.querySelectorAll('[data-returned-review-compare]')].map((el) => ({
                 kicker: el.dataset.returnedReviewCompare,
                 text: el.textContent,
@@ -201,20 +220,29 @@ try:
         production = page.evaluate("""() => {
             const next = projectNextProductionAction();
             const projection = returnedReviewProjectionForBrowser();
+            const keyFor = (name) => (projection.items.find((row) => row.candidate.name === name) || {}).key || '';
             return {
                 label: next.actionLabel, href: next.href, shotId: next.shotId, reviewKey: next.reviewKey,
                 awaiting: projection.counts.awaiting,
                 queue: projection.queue.map((row) => row.shotId + ':' + row.candidate.name),
                 readiness: (shotReadinessFor(shotById('SH-A')) || {}).nextAction?.code || '',
+                // IDENTITY-FIRST. Against a real server these files carry LEDGER ids, so a
+                // hardcoded `path:` key would be asserting the fallback domain rather than
+                // the one the projection actually mints. Read what it minted.
+                headKey: keyFor('SH-A_FRAME_A_FAL_1.png'),
+                secondKey: keyFor('SH-A_FRAME_B_FAL_1.png'),
             };
         }""")
-        check(production["awaiting"] == 3, f"precondition: three returned candidates are waiting, saw {production['awaiting']}")
+        check(production["awaiting"] == 4, f"precondition: four returned candidates are waiting, saw {production['awaiting']}")
         check(production["readiness"] == "confirm-existing-reference",
               f"precondition: SH-A's readiness is the reference confirmation, was {production['readiness']!r}")
         check(production["label"] == "REVIEW RETURNED RESULT",
               f"A. Production's primary action must be to review the returned result, read {production['label']!r}")
-        check(production["shotId"] == SHOT_A and production["href"] == f"#/shot/{SHOT_A}",
-              f"A. and it must route to the owning shot: {production}")
+        check(production["shotId"] == SHOT_A, f"A. and it must route to the owning shot: {production}")
+        check(production["reviewKey"] == production["headKey"],
+              f"A. naming the candidate that owns the review: {production['reviewKey']!r}")
+        check(production["href"] == f"#/shot/{SHOT_A}/review/" + urllib.parse.quote(production["headKey"], safe=""),
+              f"A. and carrying that identity in the route: {production['href']!r}")
 
         open_shot(page, base, SHOT_A)
         card = card_state(page)
@@ -271,45 +299,201 @@ try:
             f"B. {SHOT_B} opened on the repair {repair['file']} with {PARENT_B} shown as Before "
             f"and the recorded correction intent beside it")
 
-        # ---- C. DECIDING ADVANCES THE QUEUE TRUTHFULLY ---------------------------
-        # Through the shipped control, with a real click, and the wait is on the state
-        # that proves the re-render happened rather than on a timer.
-        open_shot(page, base, SHOT_A)
+        # ---- D. 1280 WIDE: THE BEFORE FILENAME STAYS READABLE ------------------
+        # The independent review found the compact Before card carrying nowrap +
+        # ellipsis, which at a realistic 1280 turns a generated correction filename into
+        # an unusable token in the one place whose entire job is saying WHICH take is
+        # being repaired. Measured against real shipped CSS, not against source text.
+        page.set_viewport_size({"width": 1280, "height": 900})
+        open_shot(page, base, SHOT_B)
+        before_metrics = page.evaluate("""() => {
+            const el = document.querySelector('[data-returned-review-compare="before"] small');
+            if (!el) return null;
+            const s = getComputedStyle(el);
+            return {
+                text: el.textContent,
+                whiteSpace: s.whiteSpace,
+                textOverflow: s.textOverflow,
+                overflowWrap: s.overflowWrap,
+                clippedBy: el.scrollWidth - el.clientWidth,
+                lines: Math.round(el.getBoundingClientRect().height / parseFloat(s.lineHeight || '14')),
+                cardWidth: Math.round(document.querySelector('[data-returned-review-compare="before"]').getBoundingClientRect().width),
+                // The card's own geometry, because a filename that wraps inside a 104px
+                // column is unclipped and still unreadable.
+                bodyWidth: Math.round(document.querySelector('.guided-next-action').children[1].getBoundingClientRect().width),
+                chipRight: Math.round(document.querySelector('[data-returned-review-compare="before"]').getBoundingClientRect().right),
+                cardRight: Math.round(document.querySelector('.guided-next-action').getBoundingClientRect().right),
+                sentenceLines: Math.round(document.querySelector('.guided-next-action p').getBoundingClientRect().height / parseFloat(getComputedStyle(document.querySelector('.guided-next-action p')).lineHeight)),
+                docOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+            };
+        }""")
+        check(before_metrics is not None, "D. the Before card must render at 1280")
+        check(before_metrics["text"] == PARENT_B,
+              f"D. and must carry the whole filename, read {before_metrics['text']!r}")
+        check(before_metrics["clippedBy"] <= 1,
+              f"D. with nothing clipped horizontally, over by {before_metrics['clippedBy']}px")
+        check(before_metrics["whiteSpace"] != "nowrap",
+              f"D. it must not be nowrap, computed {before_metrics['whiteSpace']!r}")
+        check(before_metrics["textOverflow"] != "ellipsis",
+              f"D. and must not ellipsise, computed {before_metrics['textOverflow']!r}")
+        check(before_metrics["overflowWrap"] in ("anywhere", "break-word"),
+              f"D. it wraps instead, computed {before_metrics['overflowWrap']!r}")
+        check(before_metrics["lines"] >= 2,
+              f"D. so a long name genuinely occupies more than one line ({before_metrics['lines']})")
+        # AND IT WRAPS TO A READABLE MEASURE, not to a ribbon. `overflow-wrap:anywhere`
+        # drops the text column's min-content width to one character, so a chip left to
+        # shrink freely collapses and the name wraps eleven times — technically unclipped
+        # and just as unreadable as the ellipsis it replaced.
+        check(before_metrics["lines"] <= 4,
+              f"D. and wraps to a readable measure rather than a ribbon ({before_metrics['lines']} lines)")
+        check(before_metrics["bodyWidth"] >= 240,
+              f"D. because the card keeps a measure for its text, {before_metrics['bodyWidth']}px")
+        check(before_metrics["sentenceLines"] <= 9,
+              f"D. so the sentence beside it is not a ribbon either ({before_metrics['sentenceLines']} lines)")
+        check(before_metrics["chipRight"] <= before_metrics["cardRight"],
+              f"D. and the Before chip stays inside the card ({before_metrics['chipRight']} vs {before_metrics['cardRight']})")
+        check(before_metrics["docOverflow"] <= 0,
+              f"D. with nothing pushed off the page ({before_metrics['docOverflow']}px)")
+        # AND THE CARD IS STILL COMPACT. Wrapping must not have turned the Before chip
+        # into a comparison editor.
+        check(before_metrics["cardWidth"] <= 400,
+              f"D. while the Before card stays compact at {before_metrics['cardWidth']}px")
+
+        # ---- NC-RM17: THE SAME MEASUREMENT, WITH THE CLIPPING PUT BACK ----------
+        # A behavioural control against real CSS: apply the rule the review found, prove
+        # the filename becomes unreadable, then prove the shipped rule does not.
+        clipped = page.evaluate("""() => {
+            const el = document.querySelector('[data-returned-review-compare="before"] small');
+            const before = el.getAttribute('style') || '';
+            el.style.whiteSpace = 'nowrap';
+            el.style.textOverflow = 'ellipsis';
+            el.style.overflow = 'hidden';
+            el.style.overflowWrap = 'normal';
+            const over = el.scrollWidth - el.clientWidth;
+            const shown = Math.round(el.clientWidth);
+            el.setAttribute('style', before);
+            const restored = el.scrollWidth - el.clientWidth;
+            return { over, shown, restored, full: Math.round(el.scrollWidth) };
+        }""")
+        check(clipped["over"] > 40,
+              f"NC-RM17: nowrap + ellipsis must genuinely clip this filename, over by {clipped['over']}px")
+        check(clipped["restored"] <= 1,
+              f"NC-RM17: and the shipped rule must not, over by {clipped['restored']}px")
+        findings.append(
+            f"D. at 1280 the Before filename wraps to {before_metrics['lines']} lines with nothing clipped, "
+            f"while nowrap+ellipsis would have hidden {clipped['over']}px of it")
+        page.set_viewport_size({"width": 1440, "height": 1000})
+
+        # ---- E. THE PRODUCTION ACTION CARRIES THE CANDIDATE IT NAMES ------------
+        page.goto(f"{base}/#/production", wait_until="domcontentloaded", timeout=30000)
+        page.wait_for_selector(".production-next", timeout=30000)
+        claim = page.evaluate("""() => {
+            const next = projectNextProductionAction();
+            return { href: next.href, reviewKey: next.reviewKey, shotId: next.shotId, label: next.actionLabel };
+        }""")
+        check(claim["reviewKey"] == production["headKey"],
+              f"E. Production names the candidate: {claim['reviewKey']!r}")
+        check(claim["href"].startswith(f"#/shot/{SHOT_A}/review/"),
+              f"E. and the route carries it: {claim['href']!r}")
+        check(claim["reviewKey"] == page.evaluate("(h) => routeReviewClaim(h)", claim["href"]),
+              "E. the route round-trips the identity it carries")
+        # Following the link a filmmaker would actually click.
+        page.click('.production-next a.assemble-btn')
+        page.wait_for_selector('[data-returned-review="1"]', timeout=30000)
+        landed = card_state(page)
+        check(landed["key"] == claim["reviewKey"],
+              f"E. and clicking it lands on that exact candidate: {landed['key']!r}")
+        findings.append(f"E. Production's action carried {CANDIDATE_A} through the route and landed on it")
+
+        # ---- F. THE CLAIM GOES STALE: NO SILENT SUBSTITUTION -------------------
+        stale_href = claim["href"]
         page.click('[data-returned-review-action="reject"]')
-        page.wait_for_function(
-            "() => !document.querySelector('.guided-next-action[data-returned-review=\"1\"]')",
-            timeout=30000,
-        )
-        after = card_state(page)
-        check(not after["returnedReview"], "C. once decided, the returned review releases the workspace")
-        check("Confirm existing reference" in after["headline"],
-              f"C. and the shot's real next action takes the card: {after['headline']!r}")
-        check(after["primaryCount"] == 1, f"C. still exactly one primary action, saw {after['primaryCount']}")
-        state = page.evaluate("""() => {
+        # The wait is on the REQUESTED THING — the card naming a different candidate —
+        # rather than on a timer, which reads a stale DOM on a slow machine and looks like
+        # a product bug. SH-A holds a second pending candidate, so the card does not go
+        # away: it advances.
+        # The page is standing on the route that CLAIMED A, so the moment A is decided the
+        # workspace must stop presenting a review here — in situ, without a reload. That is
+        # the substitution window, and this is it closing.
+        page.wait_for_selector("[data-returned-review-stale='1']", timeout=30000)
+        advanced = card_state(page)
+        check(advanced["stale"] and not advanced["returnedReview"],
+              f"F. deciding the claimed candidate stops the claim being honoured, in place: {advanced['headline']!r}")
+        check(advanced["primaryCount"] == 1, f"F. with exactly one primary action, saw {advanced['primaryCount']}")
+        decided = page.evaluate("""() => {
             const projection = returnedReviewProjectionForBrowser();
             const shot = P.shots.find((row) => row.id === 'SH-A');
             const row = (shot.candidateFiles || []).find((item) => (item.stored || item.name) === 'SH-A_FRAME_A_FAL_1.png');
             return {
                 awaiting: projection.counts.awaiting,
-                queue: projection.queue.map((r) => r.shotId + ':' + r.candidate.name),
                 rows: (shot.candidateFiles || []).length,
                 decision: row ? row.decision : '(row gone)',
                 returned: returnedResultsAwaitingReview().reduce((sum, r) => sum + (r.shot ? r.count : 0), 0),
-                next: projectNextProductionAction(),
+                pending: projection.queue.filter((row) => row.shotId === 'SH-A').map((row) => row.candidate.name),
             };
         }""")
-        check(state["decision"] == "rejected", f"C. the decision was written to the exact candidate: {state['decision']!r}")
-        check(state["rows"] == 1, f"C. and the candidate stays in history rather than being deleted: {state['rows']}")
-        check(state["awaiting"] == 2, f"C. the queue drops by exactly one, to {state['awaiting']}")
-        check(state["returned"] == state["awaiting"],
-              f"C. and Returned Results agrees, because it reads the same array: {state['returned']} vs {state['awaiting']}")
-        check(all(not row.startswith("SH-A:") for row in state["queue"]),
-              f"C. the decided candidate does not come back round: {state['queue']}")
-        check(state["next"]["shotId"] == SHOT_B,
-              f"C. and Production moves on to the next legitimate review: {state['next']['shotId']!r}")
+        check(decided["decision"] == "rejected", f"F. the decision was written to the exact candidate: {decided['decision']!r}")
+        check(decided["rows"] == 2, f"F. and it stays in history rather than being deleted: {decided['rows']}")
+        check(decided["awaiting"] == 3, f"F. the queue drops by exactly one, to {decided['awaiting']}")
+        check(decided["returned"] == decided["awaiting"],
+              f"F. and Returned Results agrees, because it reads the same array: {decided['returned']} vs {decided['awaiting']}")
+        check(decided["pending"] == [CANDIDATE_A2],
+              f"F. precondition — the claimed candidate is decided and another is pending: {decided['pending']}")
+        # Now open the stale link exactly as a bookmark or a stale tab would.
+        page.goto(f"{base}/{stale_href}", wait_until="domcontentloaded", timeout=30000)
+        page.wait_for_selector("[data-returned-review-stale='1']", timeout=30000)
+        stale = card_state(page)
+        check(not stale["returnedReview"], "F. the stale link presents no review")
+        check(stale["file"] == "", "F. and claims no candidate of its own")
+        check(CANDIDATE_A in stale["body"], f"F. it names the candidate that was asked for: {stale['body']!r}")
+        check(CANDIDATE_A2 not in stale["body"], "F. and does not present the other one as though it had been")
+        check("already been reviewed" in stale["headline"], f"F. saying what happened: {stale['headline']!r}")
+        check(stale["primaryCount"] == 1, f"F. exactly one primary action, saw {stale['primaryCount']}")
+        check(not page.query_selector("[data-returned-review-action]"),
+              "F. and no candidate decision is offered on a stale card")
+        findings.append(f"F. the stale link explained itself and never substituted {CANDIDATE_A2}")
+
+        # ---- G. CONTINUING IS EXPLICIT, AND IT WORKS ---------------------------
+        page.click(".shot-primary-action")
+        page.wait_for_selector('[data-returned-review="1"]', timeout=30000)
+        continued = card_state(page)
+        check(continued["file"] == CANDIDATE_A2,
+              f"G. continuing reaches the pending candidate: {continued['file']!r}")
+        check(page.evaluate("() => routeReviewClaim()") == production["secondKey"],
+              "G. through a route that claims it by name, the same way Production's does")
+        findings.append(f"G. the explicit continue reached {CANDIDATE_A2} through a route that named it")
+
+        # ---- H. A RECORDED RESULT WITH NO BYTES ---------------------------------
+        open_shot(page, base, SHOT_C)
+        missing = card_state(page)
+        missing_state = page.evaluate("""() => {
+            const p = returnedReviewProjectionForBrowser();
+            const shot = P.shots.find((row) => row.id === 'SH-C');
+            return {
+                unavailable: p.counts.unavailable,
+                blockers: p.blockers.map((row) => row.candidate.name + ':' + row.unreviewable),
+                recorded: (shot.candidateFiles || []).map((row) => (row.stored || row.name) + ':' + row.decision),
+                readiness: (shotReadinessFor(shot) || {}).nextAction?.code || '',
+                actions: document.querySelectorAll('[data-returned-review-action]').length,
+            };
+        }""")
+        check(missing_state["recorded"] == [f"{MISSING_C}:unreviewed"],
+              f"H. the project still records an undecided returned result: {missing_state['recorded']}")
+        check(missing_state["readiness"] == "produce-frame",
+              f"H. precondition: readiness would have promoted a generation, said {missing_state['readiness']!r}")
+        check(missing_state["blockers"] == [f"{MISSING_C}:media-not-available"],
+              f"H. it is reported as an integrity condition: {missing_state['blockers']}")
+        check(missing["unavailable"], "H. and the shot workspace renders that state")
+        check(MISSING_C in missing["body"], f"H. naming the result it cannot show: {missing['body']!r}")
+        check("produce" not in missing["primaryLabel"].lower(),
+              f"H. its primary action is not a generation: {missing['primaryLabel']!r}")
+        check(missing_state["actions"] == 0, "H. and no candidate decision is offered on media nobody can see")
+        check(missing["primaryCount"] == 1, f"H. exactly one primary action, saw {missing['primaryCount']}")
+        check(missing["secondary"] == missing_state["readiness"],
+              f"H. while the readiness action survives as secondary context: {missing['secondary']!r}")
         findings.append(
-            f"C. rejecting through the shipped control left the row in history as {state['decision']!r}, "
-            f"dropped the queue to {state['awaiting']} and moved Production on to {state['next']['shotId']}")
+            f"H. {SHOT_C} rendered the missing-media integrity state with primary {missing['primaryLabel']!r} "
+            "rather than a generation")
 
         context.close()
         browser.close()

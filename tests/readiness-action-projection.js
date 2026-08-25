@@ -937,7 +937,14 @@ async function ux1_10_returnedResultRouting() {
   equal(aSeen.shotStatus, "READY", "A: precondition — the shot could also be told to produce another frame");
   equal(aSeen.next.kind, "returned-result", "A: the primary action reviews the returned result instead");
   equal(aSeen.next.actionLabel, "REVIEW RETURNED RESULT", "A: and says so");
-  equal(aSeen.next.href, "#/shot/L1-01", "A: routing to the shot the candidate came back for");
+  /* The route resolves to the shot the candidate came back for, and since Slice 3 it also
+     CARRIES that candidate: `#/shot/<id>/review/<encoded key>`. The extra segments are
+     invisible to every hash reader in the product, all of which stop at `[2]` — what they
+     buy is that a link naming candidate A cannot silently open candidate B when A is
+     decided in between. Asserted on the shot rather than on the exact string, because the
+     Slice 1 guarantee here is WHERE it routes. */
+  ok(aSeen.next.href.startsWith("#/shot/L1-01"), "A: routing to the shot the candidate came back for");
+  equal(aSeen.next.href.split("/")[2], "L1-01", "A: which is the id every hash reader parses");
   ok(!/produce/i.test(aSeen.next.actionLabel), "A: it never tells the filmmaker to generate another candidate first");
   equal(aSeen.homeKind, "returned-result", "A: and Production renders that action, not a second opinion");
 

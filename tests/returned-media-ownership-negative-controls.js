@@ -159,9 +159,12 @@ function cardOf(html) {
     owner: attribute("data-returned-review-owner"),
     repair: attribute("data-returned-review-repair") === "1",
     secondaryCode: attribute("data-returned-review-secondary"),
+    stale: attribute("data-returned-review-stale") === "1",
+    unavailable: attribute("data-returned-review-unavailable") === "1",
     headline: (markup.match(/<h2>([^<]*)<\/h2>/) || [])[1] || "",
     primary: (markup.match(/class="assemble-btn shot-primary-action"[^>]*>([^<]*)/) || [])[1] || "",
     actions: [...markup.matchAll(/data-returned-review-action="([a-z]+)"/g)].map((m) => m[1]),
+    actionSources: [...markup.matchAll(/data-returned-review-action="([a-z]+)" data-returned-review-action-source="([a-z]+)"/g)].map((m) => [m[1], m[2]]),
   };
 }
 
@@ -242,42 +245,6 @@ async function ncRM2() {
     () => requireReviewOwnsWorkspace(card, "NC-RM2 positive"));
 
   note(`NC-RM2 restored produce-over-review: 2 candidates waiting beside a primary action reading "${card.primary}"`);
-}
-
-/* ===========================================================================
-   NC-RM3 — THE ROUTE OPENS THE SHOT BUT NOT THE INTENDED CANDIDATE.
-
-   The subtler failure, and the reason the route carries no candidate key: if the shot
-   workspace resolved its own returned review by a DIFFERENT rule from the one Production
-   used to name it, the filmmaker would arrive at a shot whose card is about some other
-   file. Here the workspace picks the last of the queue instead of the first.
-   =========================================================================== */
-
-const NC3_ANCHOR = `  const item = pendingReturnedReview(projection, s.id);`;
-const NC3_BREAK = `  const item = projection.queue.filter((row) => row.shotId === s.id).at(-1) || null;`;
-
-async function ncRM3() {
-  anchorIn(CARD_FILE, NC3_ANCHOR, "NC-RM3");
-  const project = projectOf([{
-    id: "L1-01",
-    frames: [{ id: "frame-a", label: "A" }, { id: "frame-b", label: "B" }],
-    candidates: [candidate("FIRST.png"), candidate("SECOND.png", { frameId: "frame-b", addedAt: "2026-08-20T11:00:00.000Z" })],
-  }]);
-  const scan = scanWith(project, { "L1-01": ["FIRST.png", "SECOND.png"] });
-  const broken = await render("#/shot/L1-01", project, { scan, mutateSource: replacing(CARD_FILE, NC3_ANCHOR, NC3_BREAK) });
-  const card = cardOf(broken.context.document.getElementById("main").innerHTML);
-  const named = evaluate(broken.context, `return projectNextProductionAction().reviewKey;`);
-
-  equal(named, "path:shots/L1-01/takes/FIRST.png", "NC-RM3: Production names the head of the queue");
-  equal(card.file, "SECOND.png", "NC-RM3: and the shot workspace opens on a different candidate");
-  ok(card.key !== named, "NC-RM3: so the route and the card disagree about what the decision is about");
-
-  await mustFail("NC-RM3", "the shot workspace opens on the same candidate", () => {
-    assert.strictEqual(card.key, named,
-      "the shot workspace opens on the same candidate Production named");
-  });
-
-  note(`NC-RM3 restored route/candidate divergence: Production named FIRST.png and the shot card offered ${card.file}`);
 }
 
 /* ===========================================================================
@@ -479,15 +446,12 @@ async function ncRM6() {
    back to it.
    =========================================================================== */
 
-const NC7_ANCHOR = `  function decidedReason(row) {
-    const decision = record(row.humanDecision);
-    const state = text(decision.state);
-    if (state === "approved" || state === "machine-selected") return "human-approved";
-    if (state === "rejected") return "human-rejected";
+const NC7_ANCHOR = `    if (state === "rejected") return "human-rejected";
     if (valueOf(decision.decision) === "shortlist") return "kept-as-alternate";
     return "";
   }`;
-const NC7_BREAK = `  function decidedReason(row) {
+const NC7_BREAK = `    if (state === "rejected") return "";
+    if (valueOf(decision.decision) === "shortlist") return "";
     return "";
   }`;
 
@@ -622,11 +586,8 @@ async function ncRM9() {
    to do with it and the returned candidate is silently dropped.
    =========================================================================== */
 
-const NC10_ANCHOR = `  const item = pendingReturnedReview(projection, s.id);
-  if (!item) return null;`;
-const NC10_BREAK = `  const item = pendingReturnedReview(projection, s.id);
-  if (!item) return null;
-  if ((shotReadinessFor(s)?.nextAction?.code || "") !== "confirm-existing-reference") return null;`;
+const NC10_ANCHOR = `  if (next) return { kind: "review", projection, item: next, waiting, next: null };`;
+const NC10_BREAK = `  if (next && (shotReadinessFor(s)?.nextAction?.code || "") === "confirm-existing-reference") return { kind: "review", projection, item: next, waiting, next: null };`;
 
 async function ncRM10() {
   anchorIn(CARD_FILE, NC10_ANCHOR, "NC-RM10");
@@ -657,6 +618,330 @@ async function ncRM10() {
   note("NC-RM10 restored the cross-scope leak: confirming a reference removed a returned review that was still waiting");
 }
 
+/* ===========================================================================
+   NC-RM11 — FRAME-WIDE SETTLEMENT ERASES AN UNDECIDED REPAIR.
+
+   The independent review's first P0, restored: a pick on the unit settles every
+   undecided candidate in it, including one that came back afterwards. The queue empties,
+   the repair reports `unit-already-picked`, and the project offers to finish the shot.
+   =========================================================================== */
+
+const NC11_ANCHOR = `  function arrivedAfterPick(row, pickRow, byName) {
+    const name = text(record(row.file).name);
+    const pickName = text(record(pickRow.file).name);
+    if (!name || !pickName || name === pickName) return false;
+    if (candidateDescendsFrom(name, pickName, byName)) return true;`;
+const NC11_BREAK = `  function arrivedAfterPick(row, pickRow, byName) {
+    if (row || pickRow || byName) return false;`;
+
+function canonParentProject() {
+  return projectOf([{
+    id: "L1-01",
+    frames: [{ id: "frame-a", label: "A", winner: "C1.png" }],
+    candidates: [
+      candidate("C1.png", { correctionResultNames: ["C2.png"] }),
+      candidate("C2.png", { addedAt: "2026-08-20T11:00:00.000Z", correctionOf: "C1.png" }),
+    ],
+  }]);
+}
+
+async function ncRM11() {
+  anchorIn(PROJECTION_FILE, NC11_ANCHOR, "NC-RM11");
+  const project = canonParentProject();
+  const scan = scanWith(project, { "L1-01": ["C1.png", "C2.png"] });
+  const broken = await render("#/production", project, { scan, mutateSource: replacing(PROJECTION_FILE, NC11_ANCHOR, NC11_BREAK) });
+  const seen = await evaluateAsync(broken.context, `
+    const projection = returnedReviewProjectionForBrowser();
+    return {
+      awaiting: projection.counts.awaiting,
+      settled: projection.items.map((row) => row.candidate.name + ":" + (row.settled || "waiting")),
+      next: projectNextProductionAction(),
+      inbox: (productionResultInbox().split("<h2>")[1] || "").split("</h2>")[0],
+    };
+  `);
+  const shotPage = await render("#/shot/L1-01", project, { scan, mutateSource: replacing(PROJECTION_FILE, NC11_ANCHOR, NC11_BREAK) });
+  const card = cardOf(shotPage.context.document.getElementById("main").innerHTML);
+
+  /* 1. THE LITERAL BAD STATE. A repair came back, nobody looked at it, and CineBraid
+        says the shot is finished. */
+  equal(seen.awaiting, 0, "NC-RM11: the queue is empty");
+  ok(seen.settled.includes("C2.png:unit-already-picked"),
+    "NC-RM11: the undecided repair reports the parent's pick as its own settlement: " + seen.settled.join(", "));
+  equal(seen.inbox, "No returned result is waiting for review", "NC-RM11: Returned Results says nothing is waiting");
+  equal(seen.next.actionLabel, "MARK SHOT FINAL", "NC-RM11: and the project offers to finish the shot");
+  ok(!card.returnedReview, "NC-RM11: with no review anywhere on the shot workspace");
+  ok(!/C2\.png/.test(card.markup), "NC-RM11: the repair is not even named");
+
+  await mustFail("NC-RM11", "the undecided repair is still a returned review", () => {
+    assert.strictEqual(seen.awaiting, 1, "the undecided repair is still a returned review");
+  });
+
+  note(`NC-RM11 restored frame-wide settlement: an unreviewed repair reported ${seen.settled.find((row) => row.startsWith("C2")) } and the project said ${seen.next.actionLabel}`);
+}
+
+/* ===========================================================================
+   NC-RM12 — A STALE PRODUCTION CLAIM SILENTLY SUBSTITUTES THE NEXT CANDIDATE.
+
+   The second P0, restored: the workspace ignores the candidate the route claimed and
+   resolves whatever is pending now. A is decided; the filmmaker is shown B, under an
+   action that said A, with nothing on screen to say so.
+   =========================================================================== */
+
+const CLAIM_ANCHOR = `  if (claim) {
+    const claimed = typeof candidateReviewContext === "function" ? candidateReviewContext(projection, claim) : null;`;
+const CLAIM_BREAK = `  if (false) {
+    const claimed = typeof candidateReviewContext === "function" ? candidateReviewContext(projection, claim) : null;`;
+
+function twoPendingProject() {
+  return projectOf([{
+    id: "L1-01",
+    frames: [{ id: "frame-a", label: "A" }, { id: "frame-b", label: "B" }],
+    candidates: [candidate("A.png"), candidate("B.png", { frameId: "frame-b", addedAt: "2026-08-20T10:05:00.000Z" })],
+  }]);
+}
+const claimRoute = (name) => `#/shot/L1-01/review/${encodeURIComponent(`path:shots/L1-01/takes/${name}`)}`;
+
+async function ncRM12() {
+  anchorIn(CARD_FILE, CLAIM_ANCHOR, "NC-RM12");
+  const project = twoPendingProject();
+  project.shots[0].candidateFiles[0].decision = "rejected";
+  const scan = scanWith(project, { "L1-01": ["A.png", "B.png"] });
+  const broken = await render(claimRoute("A.png"), project, { scan, mutateSource: replacing(CARD_FILE, CLAIM_ANCHOR, CLAIM_BREAK) });
+  const html = broken.context.document.getElementById("main").innerHTML;
+  const card = cardOf(html);
+
+  equal(card.returnedReview, true, "NC-RM12: a review is presented");
+  equal(card.file, "B.png", "NC-RM12: and it is a candidate the route never named");
+  equal(card.stale, false, "NC-RM12: with nothing saying the claim was stale");
+  ok(!/already been reviewed/i.test(html), "NC-RM12: and no explanation anywhere on the page");
+  ok(/data-returned-review-action="approve"/.test(card.markup),
+    "NC-RM12: while offering to approve the substituted candidate");
+
+  await mustFail("NC-RM12", "the workspace does not present a review it was not asked for", () => {
+    assert.strictEqual(card.returnedReview, false,
+      "the workspace does not present a review it was not asked for");
+  });
+
+  note("NC-RM12 restored silent substitution: a link that named A.png opened B.png with no explanation and offered to approve it");
+}
+
+/* ===========================================================================
+   NC-RM3B — AND THE SAME BREAK, WITH BOTH CANDIDATES STILL PENDING.
+
+   The original NC-RM3 in its repaired form: the route claims the SECOND pending
+   candidate and the workspace opens the first, so the link and the card disagree about
+   what the decision is about.
+   =========================================================================== */
+
+async function ncRM3() {
+  anchorIn(CARD_FILE, CLAIM_ANCHOR, "NC-RM3");
+  const project = twoPendingProject();
+  const scan = scanWith(project, { "L1-01": ["A.png", "B.png"] });
+  const broken = await render(claimRoute("B.png"), project, { scan, mutateSource: replacing(CARD_FILE, CLAIM_ANCHOR, CLAIM_BREAK) });
+  const card = cardOf(broken.context.document.getElementById("main").innerHTML);
+  const named = "path:shots/L1-01/takes/B.png";
+
+  equal(card.file, "A.png", "NC-RM3: the shot workspace opens a different candidate from the one the route named");
+  ok(card.key !== named, "NC-RM3: so the route and the card disagree about what the decision is about");
+
+  await mustFail("NC-RM3", "the shot workspace opens the candidate the route named", () => {
+    assert.strictEqual(card.key, named, "the shot workspace opens the candidate the route named");
+  });
+
+  note("NC-RM3 restored route/candidate divergence: the link named B.png and the shot card offered " + card.file);
+}
+
+/* ===========================================================================
+   NC-RM13 — AN UNDECIDED ROW WHOSE MEDIA IS GONE DISAPPEARS, AND PRODUCE IS PROMOTED.
+
+   The third P0, restored: the projection is built from the scan alone, so a result the
+   project still owes a decision on simply stops existing and the shot reads as ready for
+   another generation.
+   =========================================================================== */
+
+const NC13_ANCHOR = `      for (const candidateRow of list(record(shot).candidateFiles)) {`;
+const NC13_BREAK = `      for (const candidateRow of []) {`;
+
+async function ncRM13() {
+  anchorIn(PROJECTION_FILE, NC13_ANCHOR, "NC-RM13");
+  const project = projectOf([{ id: "L1-01", frames: [{ id: "frame-a", label: "A" }], candidates: [candidate("GONE.png")] }]);
+  const scan = scanWith(project, { "L1-01": [] });
+  const broken = await render("#/production", project, { scan, mutateSource: replacing(PROJECTION_FILE, NC13_ANCHOR, NC13_BREAK) });
+  const seen = evaluate(broken.context, `
+    const projection = returnedReviewProjectionForBrowser();
+    return {
+      items: projection.counts.items,
+      unavailable: projection.counts.unavailable,
+      recorded: P.shots[0].candidateFiles.map((row) => row.stored + ":" + row.decision),
+      next: projectNextProductionAction(),
+    };
+  `);
+  const shotPage = await render("#/shot/L1-01", project, { scan, mutateSource: replacing(PROJECTION_FILE, NC13_ANCHOR, NC13_BREAK) });
+  const card = cardOf(shotPage.context.document.getElementById("main").innerHTML);
+
+  deepEqualLoose(seen.recorded, ["GONE.png:unreviewed"], "NC-RM13: the project still records an undecided returned result");
+  equal(seen.items, 0, "NC-RM13: and the projection has lost it entirely");
+  equal(seen.unavailable, 0, "NC-RM13: reporting no integrity condition for it");
+  equal(seen.next.actionLabel, "PRODUCE THE FRAME", "NC-RM13: so the project offers to generate another one");
+  ok(/Produce the frame/.test(card.headline), "NC-RM13: and so does the shot: " + card.headline);
+  ok(!/GONE\.png/.test(card.markup), "NC-RM13: with the lost result named nowhere");
+
+  await mustFail("NC-RM13", "but the record does not disappear", () => {
+    assert.strictEqual(seen.unavailable, 1, "but the record does not disappear");
+  });
+
+  note(`NC-RM13 restored the vanishing record: an undecided GONE.png left the projection and the project said ${seen.next.actionLabel}`);
+}
+
+/* ===========================================================================
+   NC-RM14 — EQUAL TIMESTAMPS FALL BACK TO THE FILENAME.
+   =========================================================================== */
+
+const NC14_ANCHOR = `        return a.group.ordinal - b.group.ordinal;`;
+const NC14_BREAK = `        return a.group.root < b.group.root ? -1 : 1;`;
+
+async function ncRM14() {
+  anchorIn(PROJECTION_FILE, NC14_ANCHOR, "NC-RM14");
+  const project = projectOf([{
+    id: "L1-01",
+    frames: [{ id: "frame-a", label: "A" }],
+    candidates: [
+      candidate("Z.png", { addedAt: "2026-08-20T10:00:00.000Z" }),
+      candidate("A.png", { addedAt: "2026-08-20T10:00:00.000Z" }),
+    ],
+  }]);
+  const scan = scanWith(project, { "L1-01": ["Z.png", "A.png"] });
+  const broken = await render("#/shot/L1-01", project, { scan, mutateSource: replacing(PROJECTION_FILE, NC14_ANCHOR, NC14_BREAK) });
+  const seen = evaluate(broken.context, `
+    const media = productionMediaRecords({ project: P, scan: SCAN, jobs: [] });
+    return {
+      source: media.records.filter((row) => row.scope === "shot").map((row) => row.file.name),
+      queue: returnedReviewProjectionForBrowser().queue.map((row) => row.candidate.name),
+    };
+  `);
+  const card = cardOf(broken.context.document.getElementById("main").innerHTML);
+
+  deepEqualLoose(seen.source, ["Z.png", "A.png"], "NC-RM14: the authoritative input returned Z first");
+  deepEqualLoose(seen.queue, ["A.png", "Z.png"], "NC-RM14: and the queue reversed it alphabetically");
+  equal(card.file, "A.png", "NC-RM14: so the workspace opens the wrong one first");
+
+  await mustFail("NC-RM14", "a true tie keeps the source order", () => {
+    assert.deepStrictEqual(seen.queue, ["Z.png", "A.png"], "a true tie keeps the source order, and never sorts by name");
+  });
+
+  note("NC-RM14 restored filename ordering: source [Z.png, A.png] became queue [A.png, Z.png]");
+}
+
+/* ===========================================================================
+   NC-RM15 — `view-review` IS SYNTHESISED INTO A CANDIDATE DECISION.
+   =========================================================================== */
+
+const NC15_ANCHOR = `  function reviewActionsFor(row) {
+    const actions = list(row.actions).map((id) => text(id));
+    return deepFreeze(RETURNED_REVIEW_DECISION_ACTIONS.filter((id) => actions.includes(id)));
+  }`;
+const NC15_BREAK = `  function reviewActionsFor(row) {
+    const actions = list(row.actions).map((id) => text(id));
+    const out = RETURNED_REVIEW_DECISION_ACTIONS.filter((id) => actions.includes(id));
+    if (actions.includes("view-review")) out.splice(1, 0, "revise");
+    return deepFreeze(out);
+  }`;
+
+async function ncRM15() {
+  anchorIn(PROJECTION_FILE, NC15_ANCHOR, "NC-RM15");
+  const project = projectOf([{ id: "L1-01", candidates: [candidate("FRAME_A.png")] }]);
+  const scan = scanWith(project, { "L1-01": ["FRAME_A.png"] });
+  const broken = await render("#/shot/L1-01", project, { scan, mutateSource: replacing(PROJECTION_FILE, NC15_ANCHOR, NC15_BREAK) });
+  const seen = evaluate(broken.context, `
+    const item = returnedReviewProjectionForBrowser().queue[0];
+    return { actions: item.actions, declared: PRODUCTION_MEDIA_ACTIONS.map((row) => row.id) };
+  `);
+  const card = cardOf(broken.context.document.getElementById("main").innerHTML);
+
+  ok(!seen.declared.includes("revise"), "NC-RM15: production-media declares no revise action");
+  ok(seen.actions.includes("revise"), "NC-RM15: yet the projection claims it as a candidate decision: " + seen.actions.join(", "));
+  ok(card.actionSources.some(([id, source]) => id === "revise" && source === "decision"),
+    "NC-RM15: and the surface presents it as one");
+
+  await mustFail("NC-RM15", "two declared decisions", () => {
+    assert.deepStrictEqual(seen.actions, ["approve", "reject"], "a frame candidate declares two declared decisions");
+  });
+
+  note("NC-RM15 restored the synthesised action: view-review became a candidate decision called revise, which production-media never declared");
+}
+
+/* ===========================================================================
+   NC-RM16 — A MOTION REVISE REQUEST SILENTLY NO-OPS.
+   =========================================================================== */
+
+const NC16_ANCHOR = `  if (!verdict.allowed) return toast(returnedReviewRefusalWords(verdict.reason));`;
+const NC16_BREAK = `  if (!verdict.allowed) return;`;
+
+async function ncRM16() {
+  anchorIn(CARD_FILE, NC16_ANCHOR, "NC-RM16");
+  const project = projectOf([{
+    id: "L1-01",
+    frames: [{ id: "frame-a", label: "A", winner: "FRAME_A.png" }],
+    clips: [{ id: "motion-a", label: "A", suffix: "a", title: "Panel check", kind: "i2v", fromFrame: "frame-a", toFrame: "", dur: 5, motionPrompt: "He checks the panel.", generationPackages: [] }],
+    candidates: [candidate("FRAME_A.png"), candidate("SHOT_MOTION_1.mp4", { frameId: "", addedAt: "2026-08-20T12:00:00.000Z" })],
+  }]);
+  const scan = scanWith(project, { "L1-01": ["FRAME_A.png", "SHOT_MOTION_1.mp4"] });
+  const broken = await render("#/shot/L1-01", project, { scan, mutateSource: replacing(CARD_FILE, NC16_ANCHOR, NC16_BREAK) });
+  let spoken = "";
+  broken.context.toast = (message) => { spoken = message; };
+  const key = evaluate(broken.context, `return returnedReviewProjectionForBrowser().queue[0].key;`);
+  broken.context.reviseReturnedResult("L1-01", key);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const modal = broken.context.document.getElementById("modal").innerHTML;
+
+  equal(spoken, "", "NC-RM16: asking to revise a returned video says nothing at all");
+  equal(modal, "", "NC-RM16: and opens nothing, so the control is indistinguishable from a broken one");
+
+  await mustFail("NC-RM16", "in the filmmaker's words", () => {
+    assert.strictEqual(spoken, "Revise is not available for Motion results.", "the refusal is spoken in the filmmaker's words");
+  });
+
+  note("NC-RM16 restored the silent no-op: a Motion revise request produced no message and no dialog");
+}
+
+/* ===========================================================================
+   NC-RM18 — `machine-selected` IS REPORTED AS `human-approved`.
+   =========================================================================== */
+
+const NC18_ANCHOR = `    if (state === "machine-selected") return "machine-selected";`;
+const NC18_BREAK = `    if (state === "machine-selected") return "human-approved";`;
+
+async function ncRM18() {
+  anchorIn(PROJECTION_FILE, NC18_ANCHOR, "NC-RM18");
+  const project = projectOf([{
+    id: "L1-01",
+    frames: [{ id: "frame-a", label: "A", winner: "AUTO.png" }],
+    candidates: [candidate("AUTO.png")],
+  }]);
+  project.shots[0].generationRecords = [{ file: "AUTO.png", approval: "automatic" }];
+  const scan = scanWith(project, { "L1-01": ["AUTO.png"] });
+  const broken = await render("#/shot/L1-01", project, { scan, mutateSource: replacing(PROJECTION_FILE, NC18_ANCHOR, NC18_BREAK) });
+  const seen = evaluate(broken.context, `
+    const media = productionMediaRecords({ project: P, scan: SCAN, jobs: [] });
+    return {
+      mediaState: media.records.find((row) => row.file.name === "AUTO.png").humanDecision.state,
+      settled: returnedReviewProjectionForBrowser().items.map((row) => row.candidate.name + ":" + row.settled),
+      actor: media.records.find((row) => row.file.name === "AUTO.png").humanDecision.actor.value,
+    };
+  `);
+
+  equal(seen.mediaState, "machine-selected", "NC-RM18: production-media knows a machine selected it");
+  equal(seen.actor, "automation", "NC-RM18: and names automation as the actor");
+  deepEqualLoose(seen.settled, ["AUTO.png:human-approved"],
+    "NC-RM18: yet the returned-review reason calls it a human approval");
+
+  await mustFail("NC-RM18", "the returned-review reason says the same thing", () => {
+    assert.deepStrictEqual(seen.settled, ["AUTO.png:machine-selected"],
+      "the returned-review reason says the same thing production-media does");
+  });
+
+  note("NC-RM18 restored the untruthful label: an automation pick reported human-approved while the actor on record was automation");
+}
 /* ===========================================================================
    AND THE SHIPPED BUILD IS GREEN ON EVERY CLAIM THE CONTROLS BROKE.
    =========================================================================== */
@@ -695,6 +980,13 @@ async function main() {
   await ncRM8();
   await ncRM9();
   await ncRM10();
+  await ncRM11();
+  await ncRM12();
+  await ncRM13();
+  await ncRM14();
+  await ncRM15();
+  await ncRM16();
+  await ncRM18();
   await shippedBuildIsGreen();
 
   for (const line of notes) console.log(line);

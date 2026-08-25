@@ -1479,6 +1479,11 @@
     PRODUCTION_MEDIA_ACTIONS,
     productionMediaKey,
     productionMediaKeyForFile,
+    /* WHAT KIND OF FILE A NAME IS, exported so a consumer that has a NAME but no record
+       — public/shared-returned-review.js, reasoning about a candidate row whose media is
+       no longer on disk — can ask the owner instead of restating the rule. Reading is
+       all it does; it decides no disposition and touches no project. */
+    productionMediaTypeOf: mediaTypeOf,
     productionMediaRecords,
     productionMediaByKey,
   edgesAreReceiptBacked,
