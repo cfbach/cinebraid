@@ -465,11 +465,37 @@ window.createManualProjectBackup = async () => {
     toast("Could not create project backup");
   }
 };
+/* WHICH PROJECT A RESTORE IS FOR, AND WHICH DOCUMENT IT REPLACES.
+ *
+ * Ordinarily both come from the open project: the active slug, and the revision
+ * this view loaded. A QUARANTINED project has neither — nothing was loaded, so
+ * there is no active slug and no PROJECT_REVISION — and yet it is the project
+ * that most needs restoring. The server sent both in its refusal, so Recovery
+ * mode answers with those instead.
+ *
+ * This is the whole of the reuse. Everything below is the shipped restore: the
+ * same route, the same preview, the same authority-delta review, the same
+ * resurrection confirmation, the same exact If-Match, the same restore-first
+ * checkpoint on the server. Recovery mode is a front door to it, not a second
+ * copy of it. */
+function projectRestoreIdentity() {
+  if (typeof PROJECT_QUARANTINE !== "undefined" && PROJECT_QUARANTINE)
+    return { slug: PROJECT_QUARANTINE.slug, revision: PROJECT_QUARANTINE.revision };
+  return { slug: activeProjectSlug(), revision: PROJECT_REVISION };
+}
 window.restoreProjectBackup = async (name) => {
-  const slug = activeProjectSlug();
+  const { slug, revision } = projectRestoreIdentity();
   if (!slug || !name) return toast("No active project to restore into");
+  /* Without the exact revision of the document being replaced the server answers
+     428 and nothing is written — which is correct, but it is worth saying so on
+     the screen that asked rather than only in the network tab. */
+  if (!revision) {
+    if (typeof noteProjectRecoveryOutcome === "function")
+      noteProjectRecoveryOutcome("CineBraid could not identify the stored project file, so nothing was restored.");
+    return toast("Could not identify the project file to restore into");
+  }
   try {
-    const headers = { "Content-Type": "application/json", "If-Match": PROJECT_REVISION };
+    const headers = { "Content-Type": "application/json", "If-Match": revision };
     const previewResponse = await fetch("/api/projects/" + encodeURIComponent(slug) + "/restore", {
       method: "POST", headers, body: JSON.stringify({ name }),
     });
@@ -493,23 +519,53 @@ window.restoreProjectBackup = async (name) => {
          below settles it, but a refresh prepared before this point is stale from
          the moment the restore is accepted and must not commit in the meantime. */
       noteCurrentProjectDurableAdvance(slug);
+      /* A RESTORE DOES NOT ITSELF LEAVE RECOVERY MODE. It replaced the bytes; only
+         an open can say whether what is there now is a project CineBraid will
+         serve, and the reload below is that open. Until it commits, the latch and
+         every guard behind it stay exactly where they are. */
+      if (typeof noteProjectRecoveryOutcome === "function")
+        noteProjectRecoveryOutcome("Backup restored. Re-opening the project to check it…");
       toast("Project restored — reloading");
       setTimeout(() => location.reload(), 350);
     };
+    /* A RESTORE THAT FAILED CHANGED NOTHING, AND MUST SAY SO WHERE IT WAS ASKED
+       FOR. On the Recovery screen this is the only sentence between "my project is
+       broken" and "my project is broken and I have just been told it is fine" —
+       so the failure lands in the note line as well as in a toast, and nothing
+       about the protected state moves. */
+    const restoreFailed = (error) => {
+      const message = error?.message || "Could not restore project";
+      if (typeof noteProjectRecoveryOutcome === "function")
+        noteProjectRecoveryOutcome(message + " Nothing was restored and the original project is unchanged.");
+      toast(message);
+    };
     const confirmRestore = () => {
-      if (!preview.resurrection) return perform(false).catch((error) => toast(error.message || "Could not restore project"));
+      if (!preview.resurrection) return perform(false).catch(restoreFailed);
       confirmModal(
         "This snapshot would resurrect previously non-current production authority. Restore it as current Canon?",
-        () => perform(true).catch((error) => toast(error.message || "Could not restore project")),
+        () => perform(true).catch(restoreFailed),
         { title: "Confirm Canon resurrection", confirmLabel: "RESURRECT & RESTORE", danger: true },
       );
     };
+    /* A quarantined project's stored document could not be read, so CineBraid
+       cannot say which of its authorities were current before this restore. The
+       server already treats that as "none", which makes every current authority in
+       the snapshot a resurrection needing explicit confirmation; the review says so
+       rather than presenting an empty delta as though nothing changed. */
+    const unreadable = preview.currentUnreadable
+      ? "<p><b>CineBraid could not read the project this would replace</b>, so it cannot show what changes. The current file is preserved before anything is written.</p>"
+      : "";
     confirmModal(
-      "<p>" + esc(trust) + "</p>" + deltaMarkup + "<p>CineBraid will first preserve the current project and write a restore audit beside the backups.</p>",
+      "<p>" + esc(trust) + "</p>" + unreadable + deltaMarkup + "<p>CineBraid will first preserve the current project and write a restore audit beside the backups.</p>",
       confirmRestore,
       { title: "Review restore authority change", confirmLabel: preview.resurrection ? "CONTINUE" : "RESTORE", danger: false, html: true },
     );
-  } catch (error) { toast(error.message || "Could not preview project restore"); }
+  } catch (error) {
+    const message = error?.message || "Could not preview project restore";
+    if (typeof noteProjectRecoveryOutcome === "function")
+      noteProjectRecoveryOutcome(message + " Nothing was restored and the original project is unchanged.");
+    toast(message);
+  }
 };
 
 /* ---------- studio appearance / workspace settings ---------- */

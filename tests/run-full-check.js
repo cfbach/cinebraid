@@ -198,6 +198,8 @@ const nodeSuites = [
   "check:workspace-migration-negative",
   "check:untrusted-import",
   "check:untrusted-import-negative",
+  "check:recovery-quarantine",
+  "check:recovery-quarantine-negative",
   "check:brand-logo",
 ];
 

@@ -393,7 +393,35 @@ function createAuthorityWriteSeam(io = {}) {
          keeps CREATE_ONLY; see the EEXIST arm of the catch below. */
       if (isCreateOnlyWriteClass(writeClass) && exists)
         return { ok: false, revision: io.revisionFor(file), refusal: refusal(409, "PROJECT_DESTINATION_EXISTS", "The destination project document already exists.", { slug: text(slug) }) };
-      current = exists ? io.readProject(file) : {};
+      /* THE STORED DOCUMENT, AND THE ONE CLASS THAT MAY REPLACE ONE IT CANNOT READ.
+
+         Every write class compares its successor against what is stored, so every
+         class but one requires the stored document to be readable — and a class
+         that cannot read it must fail rather than write past it, which is what
+         letting this throw does.
+
+         RESTORE_SNAPSHOT is the exception, and it is the exception because it is
+         the operation whose entire purpose is to replace a document that has gone
+         bad. Refusing it there would make the recovery path unreachable in exactly
+         the situation recovery exists for.
+
+         WHAT IS NOT WEAKENED. `storedRevision` is a hash of the BYTES and is taken
+         either way, so the exact-If-Match precondition on RESTORE_SNAPSHOT still
+         holds: the caller must still name the unreadable document it read. The
+         successor is still validated. `{}` holds no authority, so canonComparison
+         reports every current authority in the snapshot as an addition and the
+         restore policy's resurrection confirmation is REQUIRED rather than skipped —
+         the fail-closed direction. And io.writeProject still takes its
+         before-restore backup of the unreadable bytes first. */
+      current = {};
+      if (exists) {
+        try {
+          current = io.readProject(file);
+        } catch (error) {
+          if (writeClass !== WRITE_CLASSES.RESTORE_SNAPSHOT) throw error;
+          current = {};
+        }
+      }
       storedRevision = exists ? io.revisionFor(file) : "";
       if (typeof io.prepareSuccessor === "function")
         successor = io.prepareSuccessor(successor, current, { slug, writeClass, transitionMetadata });

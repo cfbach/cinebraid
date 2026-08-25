@@ -30,6 +30,19 @@ let P = null,
      because repeating a request that will be refused for the same reason is a
      retry loop, not a recovery. */
   SAVE_BLOCKED = false,
+  /* RECOVERY MODE. Null in ordinary operation; otherwise the server's description
+     of the document this window refused to open, and the single fact that makes
+     this window a protected one. It is not a display flag: while it is set no
+     project write may leave this window, no revision change may install anything,
+     and no commit may install a record — see the guards on dirty(),
+     queueProjectSave(), watchProjectRevision() and commitPreparedProject().
+
+     IT IS NEVER PERSISTED AND NEVER RESTORED FROM ANYWHERE. Quarantine is
+     RE-DERIVED, on every open, from the server's own verdict about the stored
+     bytes. A broken project is still broken after a reload, so the verdict is
+     still the same one — and a repaired project simply opens, with nothing to
+     clear, because there was never a stored flag saying otherwise. */
+  PROJECT_QUARANTINE = null,
   SAVED_PROJECT_BASELINE = null,
   /* WHICH EXPLICIT OPEN THIS WINDOW IS. Advanced by a REPLACEMENT — boot, the
      switcher, a rollback, a restore, an archive, a delete, an import, a
@@ -1266,7 +1279,234 @@ function markProjectLoadFailure(failure) {
       : "No project open";
   if (topbarProject) topbarProject.textContent = "CineBraid";
 }
+/* ===========================================================================
+   RECOVERY MODE — THE PROTECTED FRONT DOOR TO THE RECOVERY MACHINERY.
+
+   WHAT IT IS FOR. CineBraid refused to open a project because the stored
+   document is not one it can safely trust. The filmmaker's work is in those
+   bytes and nowhere else, so the only acceptable behaviours are: preserve them,
+   say what is wrong, and offer the bounded set of operations that cannot make it
+   worse. Opening into ordinary writable mode, discarding what could not be
+   understood, repairing in place over the only copy, or showing a first-run
+   screen as though the project never existed are all ways of losing it.
+
+   WHICH FAILURES ENTER, AND WHY THAT LIST AND NOT ANOTHER. Quarantine is for
+   PROJECT-INTEGRITY failures: the server read the stored bytes and could not turn
+   them into a project it would serve. Those are the four 422 verdicts
+   inspectProjectFile() produces, and they are the only conditions in which a
+   document exists, holds the filmmaker's work, and must not be written.
+
+   A MISSING or misnamed project (404) is deliberately NOT one of them: there are
+   no bytes to protect, and the existing first-run screen with the project
+   switcher beside it is the honest answer. Neither is a network failure, a 500,
+   or any provider, account or setup problem — none of them is a verdict about
+   the stored document, and routing them here would turn Recovery mode into the
+   place CineBraid goes whenever anything at all goes wrong.
+
+   HOW IT ENDS. Only a validated open. commitPreparedProject() is the one place
+   the latch is cleared, and it clears it only after the server has served a
+   document that passed its own open gate. Nothing here clears it because a
+   screen changed, a route ran or a button was pressed.
+   =========================================================================== */
+
+/* The server's own reason codes for "the stored bytes are not a project I will
+   serve" — exactly inspectProjectFile()'s 422 arms, with its two 404 arms absent
+   on purpose. tests/recovery-quarantine.js drives the real server into every
+   failure mode it has and asserts this classification for each, so the two sides
+   cannot drift apart quietly. */
+const PROJECT_QUARANTINE_REASONS = ["invalid-json", "invalid-shape", "invalid-structure", "unreadable"];
+function projectFailureEntersQuarantine(failure) {
+  return !!failure
+    && PROJECT_QUARANTINE_REASONS.includes(String(failure.reason || ""))
+    && !!String(failure.slug || "").trim();
+}
+/* ENTERING IS AN ACT, NOT A RENDER. The surface is the last thing this does; the
+   first things are the ones that make the window safe. */
+function enterProjectQuarantine(failure, message) {
+  PROJECT_QUARANTINE = {
+    slug: String(failure.slug || ""),
+    title: String(failure.title || failure.slug || ""),
+    path: String(failure.path || ""),
+    reason: String(failure.reason || ""),
+    detail: String(failure.detail || ""),
+    issues: Array.isArray(failure.issues) ? failure.issues.slice() : [],
+    revision: String(failure.revision || ""),
+    size: Number.isFinite(failure.size) ? failure.size : null,
+    modifiedAt: String(failure.modifiedAt || ""),
+    message: String(message || failure.error || ""),
+  };
+  /* THE EXISTING WRITE-BLOCK, NOT A NEW ONE. blockSaving() is this product's one
+     way to stop a view saving: it latches SAVE_BLOCKED, cancels the debounce and
+     drops every deferred save-only callback armed before this moment — which is
+     precisely the work that would otherwise fire half a second from now and write
+     into the document being protected. */
+  blockSaving();
+  /* THE INDICATOR'S OWN PENDING WORK, WHICH THE SAVE LATCH DOES NOT REACH.
+     An accepted save arms a timer that re-asserts "Saved" 1.6 seconds later. If
+     the project is quarantined inside that window — a save lands, the file is
+     replaced underneath it, the reopen refuses — the timer fires onto the
+     Recovery screen and puts the word Saved above a project CineBraid has just
+     said it could not open. That is the fake success state this mode exists to
+     prevent, so the transition cancels it and states the truth in its place. */
+  clearTimeout(SAVE_STATE_TIMER);
+  setSaveState("error", "Not saved — this project is in Recovery mode");
+  /* NO ORDINARY WRITABLE RECORD IS INSTALLED, because there is none to install:
+     the document could not be read. Clearing these is what makes
+     captureProjectSave() answer null and route() decline to render an ordinary
+     workspace, so the protection does not rest on the latch alone. */
+  P = null;
+  ACTIVE_PROJECT_SLUG = "";
+  PROJECT_REVISION = "";
+  SAVED_PROJECT_BASELINE = null;
+  SAVE_REVISION = 0;
+  SAVED_REVISION = 0;
+  if (document.body?.dataset) document.body.dataset.projectQuarantine = PROJECT_QUARANTINE.slug || "1";
+  renderProjectQuarantineSurface();
+}
+function projectQuarantineDiagnostics() {
+  const q = PROJECT_QUARANTINE;
+  if (!q) return "";
+  return JSON.stringify({
+    project: { slug: q.slug, title: q.title },
+    file: { path: q.path, size: q.size, modifiedAt: q.modifiedAt, revision: q.revision },
+    refusal: { reason: q.reason, message: q.message, detail: q.detail, issues: q.issues },
+  }, null, 2);
+}
+/* The note line every recovery action reports into, so an outcome lands where the
+   filmmaker is looking rather than only in a toast that disappears. Reachable
+   from settings.js, which owns the restore flow this surface reuses. */
+function noteProjectRecoveryOutcome(message) {
+  const note = document.getElementById("project-recovery-note");
+  if (note) note.textContent = String(message || "");
+}
+/* SYNCHRONOUS, THEN PROGRESSIVELY COMPLETED. Everything needed to understand the
+   refusal is in hand at the moment of the refusal and is written in one go; only
+   the list of restorable backups needs the network, and it fills a slot that is
+   already on screen. A surface that waited for that request would be blank for as
+   long as it took, on the one screen that must never look like nothing happened. */
+function renderProjectQuarantineSurface(note = "") {
+  const main = document.getElementById("main");
+  const q = PROJECT_QUARANTINE;
+  if (!main || !q) return;
+  const name = q.title || q.slug;
+  const heading = name
+    ? `CineBraid could not open “${esc(name)}”`
+    : "CineBraid could not open this project";
+  const stamp = [
+    q.size != null ? `${q.size} bytes` : "",
+    q.modifiedAt ? `last changed ${esc(q.modifiedAt)}` : "",
+    q.revision ? `fingerprint ${esc(q.revision.replace(/"/g, "").slice(0, 12))}` : "",
+  ].filter(Boolean).join(" · ");
+  const where = q.path
+    ? `<p class="project-failure-path">The project file is at <code>${esc(q.path)}</code>${stamp ? `<br><span>${stamp}</span>` : ""}</p>`
+    : "";
+  const issues = q.issues.length
+    ? `<ul class="project-recovery-issues">${q.issues.slice(0, 8).map((issue) => `<li>${esc(issue)}</li>`).join("")}</ul>`
+    : "";
+  const detail = `<details class="project-failure-detail project-recovery-detail"><summary>Technical detail</summary><pre id="project-recovery-diagnostics">${esc(projectQuarantineDiagnostics())}</pre><div class="modal-actions"><button class="ghost-btn" onclick="copyProjectRecoveryDiagnostics()">Copy technical details</button></div></details>`;
+  main.innerHTML = `<section class="empty-state project-failure-state project-recovery-state" role="alert" data-project-recovery="${attr(q.reason)}">`
+    + `<span class="project-recovery-mark">RECOVERY MODE</span>`
+    + `<h2>${heading}</h2>`
+    + `<p>${esc(q.message || "The project file could not be read.")}</p>`
+    + issues
+    + `<p class="project-recovery-preserved"><b>The original project has not been modified.</b> CineBraid has not saved, repaired or deleted anything in it, and it will not until you choose one of the actions below.</p>`
+    + where
+    /* ONLY THE ACTIONS THAT ARE GENUINELY SUPPORTED FOR THIS FAILURE.
+       `revision` is the hash of the stored bytes, so having one is the same fact
+       as "CineBraid could read this file at all". Without it there is nothing to
+       download and nothing a restore could name in its If-Match — offering either
+       would be a button that answers with an error, which on this screen reads as
+       a second failure rather than as an unavailable action. */
+    + `<div class="modal-actions">`
+    + `<button class="add-btn" onclick="retryQuarantinedProject()">Retry validation</button>`
+    + (q.revision
+      ? `<a class="ghost-btn" href="/api/projects/${encodeURIComponent(q.slug)}/project-file" download="${attr(q.slug)}-project.json">Download the original file</a>`
+      : "")
+    + `<button class="ghost-btn" onclick="openProjectSwitcher()">Open a different project</button>`
+    + `</div>`
+    + (q.revision
+      ? `<p class="project-recovery-hint"><small>Downloading gives you a copy to keep or repair outside CineBraid. Restoring replaces the original with a backup, after preserving the current file first.</small></p>`
+      : `<p class="project-recovery-hint"><small>CineBraid could not read this file at all, so it cannot copy it or replace it. Close anything else that has the project open, check the folder's permissions, then retry.</small></p>`)
+    + `<div id="project-recovery-note" class="project-recovery-note" role="status">${esc(note)}</div>`
+    + `<div id="project-recovery-backups" class="project-recovery-backups">Looking for backups…</div>`
+    + detail
+    + `</section>`;
+  loadQuarantineBackups();
+}
+window.copyProjectRecoveryDiagnostics = () => {
+  const text = projectQuarantineDiagnostics();
+  if (!text) return;
+  if (navigator?.clipboard?.writeText)
+    navigator.clipboard.writeText(text).then(
+      () => noteProjectRecoveryOutcome("Technical details copied."),
+      () => noteProjectRecoveryOutcome("Could not copy — select the text below and copy it manually."),
+    );
+  else noteProjectRecoveryOutcome("Select the text below and copy it manually.");
+};
+/* THE EXISTING BACKUP LIST, ASKED FOR BY THE PROJECT THAT CANNOT BE OPENED.
+   GET /api/projects/:slug/backups reads a directory and never parses the project,
+   so it answers for a quarantined document exactly as it does for a healthy one.
+   Nothing here is a second backup store. */
+async function loadQuarantineBackups() {
+  const slot = document.getElementById("project-recovery-backups");
+  const q = PROJECT_QUARANTINE;
+  if (!slot || !q || !q.slug) return;
+  let backups = null;
+  try {
+    const response = await fetch(`/api/projects/${encodeURIComponent(q.slug)}/backups`, { cache: "no-store" });
+    if (response.ok) backups = (await response.json()).backups || [];
+  } catch { backups = null; }
+  /* The window may have left Recovery mode, or entered it for another project,
+     while this was on the wire. Either way this answer is about a screen that is
+     no longer there. */
+  if (!PROJECT_QUARANTINE || PROJECT_QUARANTINE.slug !== q.slug) return;
+  if (backups === null)
+    return void (slot.innerHTML = `<p><small>CineBraid could not read this project's backup folder.</small></p>`);
+  if (!backups.length)
+    return void (slot.innerHTML = `<p><small>No CineBraid backups were found for this project. Downloading the original file is the way to keep a copy.</small></p>`);
+  /* A restore must name the exact document it replaces. Without a revision the
+     server would refuse it, so the backups are listed as information — they exist,
+     and they are where they always were — with no control that cannot work. */
+  const restorable = !!q.revision;
+  slot.innerHTML = `<h3>${restorable ? "Restore a backup" : "Backups found for this project"}</h3>`
+    + `<p><small>${restorable
+      ? "CineBraid preserves the current file before restoring, so this is reversible."
+      : "CineBraid cannot restore into a file it could not read. These backups are untouched and are in the project's backups folder."}</small></p>`
+    + `<div class="project-recovery-backup-list">${backups.slice(0, 10).map((backup) => `<article class="project-recovery-backup-row"><div><b>${esc(backup.name)}</b><small>${esc(backup.modifiedAt || "")}${backup.size != null ? ` · ${backup.size} bytes` : ""}</small></div>${restorable ? `<button class="approve-btn" onclick="restoreProjectBackup('${attr(backup.name)}')">Restore</button>` : ""}</article>`).join("")}</div>`;
+}
+/* RE-ASK THE SERVER. There is nothing to re-check locally: the verdict belongs to
+   the stored bytes, so a retry is an ORDINARY OPEN and it is the same open every
+   other caller performs. A repaired file therefore leaves Recovery mode through
+   the ordinary gate rather than through anything this screen knows. */
+window.retryQuarantinedProject = async () => {
+  if (!PROJECT_QUARANTINE) return;
+  noteProjectRecoveryOutcome("Re-checking the project…");
+  try {
+    const outcome = await load();
+    if (outcome && outcome.committed) {
+      if (typeof toast === "function") toast("Project opened");
+      return;
+    }
+    renderProjectQuarantineSurface(
+      ("The project still cannot be opened safely. " + ((outcome && outcome.reason) || "")).trim(),
+    );
+  } catch (error) {
+    /* The same two statements bootstrap.js runs, so a retry that fails is
+       indistinguishable from the failure that started this. */
+    if (error?.projectFailure) {
+      markProjectLoadFailure(error.projectFailure);
+      renderProjectFailureScreen(error.projectFailure, error.message);
+      noteProjectRecoveryOutcome("The project still cannot be opened safely.");
+      return;
+    }
+    noteProjectRecoveryOutcome(error?.message || "CineBraid could not re-check this project.");
+  }
+};
+/* The plain refusal screen, for a failure that is NOT a project-integrity verdict
+   and therefore has no protected mode to enter. Unchanged, and still the ending
+   for a refused switch that has a readable project to fall back to. */
 function renderProjectFailureScreen(failure, message) {
+  if (projectFailureEntersQuarantine(failure)) return enterProjectQuarantine(failure, message);
   const main = document.getElementById("main");
   if (!main) return;
   const name = (failure && (failure.title || failure.slug)) || "";
@@ -1567,6 +1807,15 @@ let PROJECT_REVISION_WATCH = null;
 window.watchProjectRevision = async () => {
   /* One in flight at a time; the interval is not a queue. */
   if (PROJECT_REVISION_WATCH) return PROJECT_REVISION_WATCH;
+  /* A CHANGED REVISION IS NOT A REASON TO LEAVE RECOVERY MODE. This watch exists
+     to notice that the stored document moved and to go and get it — which is the
+     right instinct for a window holding a project and exactly the wrong one for a
+     window protecting a document it refused to open. The bytes moving says nothing
+     about whether they parse now; only an open can answer that, and only the
+     filmmaker asks for one. The activity timer runs this every few seconds
+     regardless of what is on screen, so the refusal is stated here rather than
+     inferred from `P` being null a line later. */
+  if (PROJECT_QUARANTINE) return null;
   if (!P || !ACTIVE_PROJECT_SLUG || !PROJECT_REVISION) return null;
   PROJECT_REVISION_WATCH = (async () => {
     try {
@@ -1728,7 +1977,40 @@ function beginProjectRefresh() {
    value it installs was gathered during PREPARE and validated a statement ago,
    so the window moves from one whole project to another whole project with no
    observable state in between. */
+/* THE ORDINARY PROJECT-OPEN SAFETY GATE, STATED AS ONE SYNCHRONOUS ANSWER.
+
+   The server already refuses to serve a document that does not pass
+   inspectProjectFile(), so a 200 with a document IS the validation — there is no
+   second opinion this window could form that would be worth more. What is left
+   for this side is the part the server cannot answer: whether a WRITABLE CONTEXT
+   can actually be established from what arrived.
+
+   A record with no slug cannot be addressed, and a record with no revision cannot
+   be written at all — queueProjectSave() refuses a save with no revision, so a
+   window opened without one is a window that silently cannot save. Neither is
+   "normal mode", and leaving Recovery mode for either would be the same untruth
+   the mode exists to prevent. */
+function projectReplacementRefusal(prepared) {
+  if (!prepared || prepared.available !== true)
+    return "the server did not serve a project document";
+  if (!prepared.project || typeof prepared.project !== "object" || Array.isArray(prepared.project))
+    return "the server's answer did not contain a project";
+  if (!prepared.slug)
+    return "the server did not name the project this document belongs to";
+  if (!prepared.revision)
+    return "the server did not identify the revision of the document it served, so this view could not save";
+  return "";
+}
 function commitPreparedProject(prepared, ticket) {
+  /* LEAVING RECOVERY MODE IS THE COMMIT, AND ONLY THE COMMIT.
+
+     This is the single place PROJECT_QUARANTINE is cleared, and the statement
+     below is what earns it: the server served this document through its own open
+     gate, and it arrived with the identity and revision a writable window needs.
+     A quarantined window that reaches here without those keeps the latch and
+     installs nothing — so no route, no hash change, no re-render and no button
+     can put an unsafe project into a writable workspace by clearing a flag. */
+  if (PROJECT_QUARANTINE && projectReplacementRefusal(prepared)) return false;
   /* A DEBOUNCE ARMED AGAINST THE RECORD BEING REPLACED IS CANCELLED, and this is
      deliberate rather than an omission.
 
@@ -1764,6 +2046,11 @@ function commitPreparedProject(prepared, ticket) {
   PROJECT_CONFLICT = false; // a fresh record is in step with storage again
   SAVE_BLOCKED = false; // and it carries the revision every save needs
   AUTHORITY_SAVE_REFUSED = false;
+  /* Recovery mode ends here and nowhere else, on the far side of the gate at the
+     top of this function — so the latch is dropped by the act of installing a
+     validated record, not by anything that merely wanted it dropped. */
+  PROJECT_QUARANTINE = null;
+  if (document.body?.dataset) delete document.body.dataset.projectQuarantine;
   /* Session-scoped activity state follows the project the same way the
      continuity map does. It drops rows only when the slug genuinely changes,
      which is why a same-project refresh — where the slug is unchanged — keeps
@@ -1899,11 +2186,29 @@ async function runProjectReplacement() {
   applyTheme();
   const prepared = await prepareProjectSnapshot({ claimRecovery: true });
   if (!prepared.available) {
+    /* FIRST RUN IS NOT AN EXIT FROM RECOVERY MODE. "There is no project to open"
+       is what the server says when the active project's file has gone missing —
+       which, for a quarantined project, may mean nothing worse than a rename, with
+       the folder and its backups still sitting there. Clearing the workspace and
+       offering to create a new project would drop the one screen that can still
+       reach them. The mode ends when a document is served and validated, and this
+       is not that. */
+    if (PROJECT_QUARANTINE) {
+      renderProjectQuarantineSurface(
+        "The project still cannot be opened safely. " + (prepared.message || "The server no longer has this project to read."),
+      );
+      return { intent: "open", committed: false, reason: prepared.message || "no project is available to open" };
+    }
     await showFirstRunWorkspace(prepared.message);
     return { intent: "open", committed: false, reason: "no project is available to open" };
   }
   const ticket = beginProjectOpen();
-  commitPreparedProject(prepared, ticket);
+  /* THE COMMIT IS ALLOWED TO REFUSE, and a refusal is not a commit. The only
+     refusal it has is the Recovery-mode gate, so a window that has not been
+     through one stays exactly where it was rather than being decorated as though
+     a project had been installed. */
+  if (!commitPreparedProject(prepared, ticket))
+    return { intent: "open", committed: false, reason: projectReplacementRefusal(prepared) || "the project could not be installed safely" };
   decorateProjectCommit(prepared);
   return { intent: "open", committed: true, reason: "" };
 }
@@ -2012,6 +2317,12 @@ function blockSaving() {
 }
 function dirty() {
   clearTimeout(saveTimer);
+  /* RECOVERY MODE REFUSES BEFORE IT COUNTS. Everything below this line describes
+     a window that holds a project: it advances the local edit counter, says
+     "Unsaved changes", and arms a write. A quarantined window holds no project at
+     all, so all three would be untrue — and the third would be a write into a
+     document CineBraid has just promised not to touch. */
+  if (PROJECT_QUARANTINE) return setSaveState("error", "Not saved — this project is in Recovery mode");
   clearTimeout(SAVE_STATE_TIMER);
   SAVE_REVISION += 1;
   setSaveState("dirty", "Unsaved changes");
@@ -2189,6 +2500,16 @@ function queueProjectSave(job) {
   if (!job) return SAVE_CHAIN;
   const run = SAVE_CHAIN.catch(() => {}).then(async () => {
     if (PROJECT_CONFLICT || SAVE_BLOCKED) return; // this view is known stale or blocked; stop writing
+    /* THE LAST GATE BEFORE ANY PROJECT WRITE LEAVES THIS WINDOW, and the reason it
+       is stated separately from SAVE_BLOCKED even though quarantine sets that too.
+
+       SAVE_BLOCKED is cleared by every commit — a window that opens a project is
+       saving again, which is correct. Quarantine is not a save refusal that a
+       later open resolves; it is a statement that a specific stored document must
+       not be written, and it is cleared in exactly one place, by the commit that
+       proved the document is safe. Both endpoints below are behind this line, so
+       an ordinary save AND a Canon transition are refused by the same statement. */
+    if (PROJECT_QUARANTINE) return;
     if (ACTIVE_PROJECT_SLUG === job.slug)
       setSaveState("saving", "Saving…");
     const headers = { "Content-Type": "application/json" };

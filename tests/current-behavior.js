@@ -506,6 +506,8 @@ async function main() {
     "quiet-shell.js",
     "readiness-feedback.js",
     "real-browser-workflow.py",
+    "recovery-quarantine-negative-controls.js",
+    "recovery-quarantine.js",
     "reference-angle-routing.js",
     "reference-aspect-consistency.js",
     "reference-authority-deep-dive.js",

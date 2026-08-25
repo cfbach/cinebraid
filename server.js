@@ -951,7 +951,29 @@ function inspectProjectFile(value) {
     };
   return { ok: true, slug, title, file, project };
 }
+/* WHAT A REFUSED OPEN TELLS THE INTERFACE ABOUT THE DOCUMENT IT COULD NOT OPEN.
+
+   The named fields are the ones that were always here. The three added below
+   describe the STORED BYTES rather than their contents, so they are answerable
+   for exactly the documents this payload exists for — one that could not be
+   parsed still has a size, a modification time and a content hash.
+
+   `revision` is the same token every ordinary read and write uses. A window that
+   never loaded the project has no PROJECT_REVISION of its own, so without this it
+   could not name the document it is looking at, and the one operation Recovery
+   mode is allowed to perform — a restore, which requires an exact If-Match —
+   would be unreachable. It is read here rather than guessed, and it is the proof
+   that the bytes the filmmaker was shown are the bytes a restore replaces. */
 function projectFailurePayload(inspected) {
+  let revision = "", size = null, modifiedAt = "";
+  try {
+    if (inspected.file && fs.existsSync(inspected.file)) {
+      revision = projectRevisionFor(inspected.file);
+      const stat = fs.statSync(inspected.file);
+      size = stat.isFile() ? stat.size : null;
+      modifiedAt = stat.mtime.toISOString();
+    }
+  } catch { /* describing the file is best effort; failing to must never replace the real refusal */ }
   return {
     error: inspected.error,
     projectFailure: {
@@ -961,6 +983,9 @@ function projectFailurePayload(inspected) {
       reason: inspected.reason,
       detail: inspected.detail || "",
       issues: inspected.issues || [],
+      revision,
+      size,
+      modifiedAt,
     },
   };
 }
@@ -1613,6 +1638,38 @@ app.get("/api/projects/:slug/revision", (req, res) => {
     res.status(400).json({ error: error.message || "Could not read the project revision." });
   }
 });
+/* THE STORED BYTES, EXACTLY AS THEY ARE, FOR A DOCUMENT THAT MAY NOT PARSE.
+ *
+ * Every other project read on this server parses first and refuses what it
+ * cannot parse — which is correct for reading a project, and useless for keeping
+ * a copy of one that is broken. Recovery mode needs the second thing: the
+ * filmmaker's only copy of work that CineBraid will not open, in their hands,
+ * before anything is restored over it.
+ *
+ * IT IS A READ AND NOTHING ELSE. No parse, no validation, no backup rotation, no
+ * activity record, no write. Deliberately NOT `createProjectBackup()`: that copies
+ * into the rotation, and the rotation keeps ten entries and deletes the eleventh —
+ * so ten "back up the broken project" clicks would delete every good backup the
+ * filmmaker has, which is the opposite of what the button says.
+ *
+ * The revision is returned as the ETag so the copy that leaves here can be
+ * matched against the document a later restore replaces. */
+app.get("/api/projects/:slug/project-file", (req, res) => {
+  try {
+    const { slug, file } = projectDirForSlug(req.params.slug);
+    const stat = fs.statSync(file);
+    if (!stat.isFile()) return res.status(422).json({ error: "The stored project is not a file.", slug });
+    const revision = projectRevisionFor(file);
+    if (revision) res.setHeader("ETag", revision);
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${slug}-project.json"`);
+    res.setHeader("X-CineBraid-Project-Slug", slug);
+    res.send(fs.readFileSync(file));
+  } catch (error) {
+    res.status(/No such project|Invalid project slug/.test(error.message) ? 404 : 500)
+      .json({ error: error.message || "Could not read the stored project file." });
+  }
+});
 app.get("/api/projects/:slug/project", (req, res) => {
   try {
     const inspected = inspectProjectFile(req.params.slug);
@@ -1875,11 +1932,36 @@ app.post("/api/projects/:slug/restore", (req, res) => {
     const backupFile = path.join(projectBackupDir(file), name);
     if (!backupFile.startsWith(projectBackupDir(file) + path.sep) || !fs.existsSync(backupFile))
       return res.status(404).json({ error: "Backup not found." });
-    const restored = normalizeProjectCollections(readJsonSync(backupFile));
+    /* A BACKUP THAT CANNOT BE READ IS A REFUSED RESTORE, NOT A CRASH. This used to
+       throw out of readJsonSync into the generic catch below and answer 500, which
+       reads as "CineBraid broke" for something that is simply a bad file — and the
+       one place that matters most is Recovery mode, where the sentence on screen is
+       the only thing telling the filmmaker whether their original is still safe. */
+    let restored;
+    try {
+      restored = normalizeProjectCollections(readJsonSync(backupFile));
+    } catch (error) {
+      return res.status(422).json({
+        error: "That backup could not be read, so nothing was restored and the project was not changed.",
+        code: "BACKUP_UNREADABLE", detail: error.message || "",
+      });
+    }
     normalizePromptBuildHistory(restored, { applyRetention: false });
     const validation = validateProjectForSave(restored);
     if (!validation.ok) return res.status(422).json({ error: "Backup validation failed.", issues: validation.errors });
-    const current = readJsonSync(file), comparison = canonComparison(current, restored);
+    /* THE DOCUMENT BEING REPLACED MAY BE THE REASON A RESTORE IS HAPPENING AT ALL.
+       Restore is the one operation whose whole purpose is to replace a project that
+       is broken, so it is the one read here that must survive a document it cannot
+       parse. An unreadable current is treated as HOLDING NO AUTHORITY — every
+       current authority in the snapshot then reads as a resurrection and needs the
+       filmmaker's explicit confirmation, which is the fail-closed direction. The
+       exact-revision precondition above is unaffected: it is a hash of the stored
+       bytes and never needed them parsed. */
+    let current = {}, currentUnreadable = false;
+    try {
+      current = readJsonSync(file);
+    } catch { current = {}; currentUnreadable = true; }
+    const comparison = canonComparison(current, restored);
     const trustView = AuthorityKernel.validateAuthorityLedger(restored);
     const authorityDelta = comparison.targets.map((row) => ({
       targetKey: row.targetKey, before: row.before, after: row.after,
@@ -1890,7 +1972,7 @@ app.post("/api/projects/:slug/restore", (req, res) => {
     const previewHash = crypto.createHash("sha256").update(JSON.stringify(restored)).digest("hex");
     const preview = {
       trust: { trusted: trustView.trusted, diagnostics: trustView.diagnostics },
-      authorityDelta, resurrection, previewHash, revision: storedRevision,
+      authorityDelta, resurrection, previewHash, revision: storedRevision, currentUnreadable,
     };
     if (req.body?.confirm !== true) return res.json({ ok: true, preview: true, slug, restored: name, ...preview });
     if (String(req.body?.previewHash || "") !== previewHash)
