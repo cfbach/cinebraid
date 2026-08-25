@@ -134,11 +134,18 @@
 (function (root, factory) {
   const nodeModule = typeof module !== "undefined" && module.exports;
   const mediaOwner = nodeModule ? require("./shared-production-media.js") : root;
-  const api = factory({ media: mediaOwner });
+  /* P4's shot-media reader, the same one shared-production-media.js partitions with. It
+     is asked ONLY for a candidate row whose file the scan no longer reports, where there
+     is no media record to read a disposition off — see missingRowFact(). Loaded before
+     shared-production-media.js in public/index.html and in the render harness, so it is
+     on the global by the time this file evaluates. */
+  const dispositionOwner = nodeModule ? require("./shared-media-disposition.js") : root;
+  const api = factory({ media: mediaOwner, disposition: dispositionOwner });
   if (nodeModule) module.exports = api;
   if (root) Object.assign(root, api);
 })(typeof window !== "undefined" ? window : globalThis, function (OWNERS) {
   const MEDIA = OWNERS.media || {};
+  const DISPOSITION = OWNERS.disposition || {};
 
   function deepFreeze(value) {
     if (value && typeof value === "object" && !Object.isFrozen(value)) {
@@ -154,6 +161,9 @@
      as a bare value everywhere else would mean forgetting the difference between
      "not recorded" and "", which is the distinction O3 introduced them for. */
   const valueOf = (envelope) => text(record(envelope).value);
+  /* The same envelope, built locally, for the one path that has a durable fact and no
+     production-media record to read it off. */
+  const envelopeOf = (value) => deepFreeze({ state: text(value) ? "known" : "not-recorded", value: text(value) });
 
   const RETURNED_REVIEW_CONTRACT = "cinebraid.returned-review/1";
 
@@ -309,6 +319,58 @@
     const pickAt = valueOf(record(pickRow.humanDecision).decidedAt) || valueOf(record(pickRow.file).addedAt);
     const rowAt = valueOf(record(row.file).addedAt);
     return !!pickAt && !!rowAt && rowAt > pickAt;
+  }
+
+  /* IS THIS CANDIDATE STILL UNSETTLED CURRENT WORK — THE ONE ANSWER, ASKED BY BOTH PATHS.
+   *
+   * THE P0 THE SECOND INDEPENDENT REVIEW FOUND. The media-present path asked the full
+   * question — the candidate's own decision, then the unit's pick, candidate by
+   * candidate. The synthetic path for a row whose bytes had gone asked two string checks
+   * instead (`rejected` and `shortlist`), so a candidate the project had ALREADY settled
+   * — one that was picked, or that a later approval superseded — was resurrected as a
+   * current integrity blocker the moment its historical file was cleaned up. Missing
+   * bytes are not a decision, and they must not undo one.
+   *
+   * So the decision lives here, once, and the two paths differ only in where the FACTS
+   * come from: production-media's record when the file is present, the durable candidate
+   * row and the shipped disposition owner when it is not. Returns the settled reason, or
+   * "" for genuinely unsettled current work. */
+  function candidateSettlement(fact, pickRow, byName) {
+    const decided = decidedReason(fact);
+    if (decided) return decided;
+    if (!pickRow) return "";
+    return arrivedAfterPick(fact, pickRow, byName) ? "" : "unit-already-picked";
+  }
+
+  /* THE SAME FACTS, FOR A ROW WHOSE FILE IS NOT THERE.
+   *
+   * Shaped exactly like a production-media record so candidateSettlement() cannot tell
+   * the two apart, and assembled only from things that are durable without the bytes:
+   * the candidate row itself, and P4's shotMediaDisposition() — the same reader
+   * production-media partitions with, asked here rather than restated.
+   *
+   * WHAT IT DELIBERATELY DOES NOT SYNTHESISE is the difference between a human approval,
+   * a machine selection and an unreceipted pointer. That distinction is
+   * humanDecisionOf()'s, it needs the media record, and guessing at it is what the
+   * `machine-selected` repair existed to stop. When an edge names this file the fact says
+   * so by standing in as its OWN pick, which settles it as `unit-already-picked` — true
+   * whoever wrote the edge, and a claim about nobody. */
+  function missingRowFact(shot, row, name) {
+    const claimed = DISPOSITION && typeof DISPOSITION.shotMediaDisposition === "function"
+      ? record(DISPOSITION.shotMediaDisposition(shot, name))
+      : {};
+    const role = text(claimed.role);
+    return deepFreeze({
+      file: deepFreeze({ name, addedAt: envelopeOf(row.addedAt) }),
+      humanDecision: deepFreeze({
+        state: role === "rejected" ? "rejected" : "undecided",
+        decision: envelopeOf(row.decision),
+        decidedAt: envelopeOf(text(row.decidedAt) || text(row.approvedAt)),
+      }),
+      provenance: deepFreeze({ lineage: deepFreeze(text(row.correctionOf) ? [deepFreeze({ relation: "correction-of", value: text(row.correctionOf) })] : []) }),
+      /* An approval edge names this file, so the unit's pick IS this file. */
+      pickedByEdge: role === "approved",
+    });
   }
 
   /* WHICH FRAME A RETURNED STILL BELONGS TO.
@@ -491,12 +553,14 @@
     });
 
     const items = [];
+    /* The unit's own pick and lineage lookup, handed back so the missing-media path can
+       ask candidateSettlement() with exactly the inputs this unit used. */
+    if (context.units) context.units.push({ owner, pickRow, byName });
     for (const { row } of decorated) {
       const file = record(row.file);
       const name = text(file.name);
       const parentName = correctionParentName(row);
       const parentRow = parentName ? byName.get(parentName) || null : null;
-      const decided = decidedReason(row);
       const actions = reviewActionsFor(row);
       const workflows = reviewWorkflowsFor(row, owner.kind);
       const unreviewable = !text(file.url)
@@ -507,9 +571,9 @@
       /* THE CANDIDATE'S OWN DECISION IS THE MORE SPECIFIC FACT and is reported first: a
          file somebody approved says `human-approved`, not `unit-already-picked`, even
          though both are true of it. The unit's pick is the reason the alternates it was
-         chosen OVER stopped asking — and only those. */
-      const settledByPick = !decided && !!pickRow && !arrivedAfterPick(row, pickRow, byName);
-      const settled = decided || (settledByPick ? "unit-already-picked" : "");
+         chosen OVER stopped asking — and only those. The decision itself is
+         candidateSettlement(), which the missing-media path below asks in the same words. */
+      const settled = candidateSettlement(row, pickRow, byName);
       items.push(deepFreeze({
         contract: RETURNED_REVIEW_CONTRACT,
         /* The candidate's durable projection key. It is the deep-link identity and it
@@ -598,7 +662,13 @@
       if (!shotId) continue;
       if (!shotRows.has(shotId)) shotRows.set(shotId, []);
       const bucket = shotRows.get(shotId);
-      ordinals.set(`${shotId} ${text(record(row.file).name)}`, ordinals.size);
+      /* THE SEPARATOR IS THE ESCAPE, NEVER THE RAW BYTE. A composite key needs a
+         separator that cannot occur in a shot id or a filename, and shared-authority-kernel.js
+         already uses `\u0000` for exactly that. Written as a literal NUL, the byte makes git
+         classify this file as binary, `* text=auto` skips normalisation, CRLF is committed
+         verbatim and every added line becomes a trailing-whitespace violation. Same key, same
+         semantics, and the file stays text. */
+      ordinals.set(`${shotId}\u0000${text(record(row.file).name)}`, ordinals.size);
       bucket.push(row);
     }
 
@@ -607,11 +677,14 @@
       const shotId = text(record(shot).id);
       const rows = shotRows.get(shotId) || [];
       const frames = list(record(shot).keyframes);
+      /* Each unit reports the pick and the lineage lookup it settled with, so the
+         missing-media pass below decides with the same inputs rather than its own. */
+      const units = [];
       const stills = rows.filter((row) => text(row.kind) === "shot-still");
       const videos = rows.filter((row) => text(row.kind) === "shot-motion");
       const shotPick = shotPickedName(stills);
       const ordinalOf = (name) => {
-        const found = ordinals.get(`${shotId} ${name}`);
+        const found = ordinals.get(`${shotId}\u0000${name}`);
         return found === undefined ? Number.MAX_SAFE_INTEGER : found;
       };
 
@@ -644,6 +717,7 @@
           comparison: mediaRef(comparisonRow),
           describeCorrection: input.describeCorrection,
           ordinalOf,
+          units,
         }));
       }
 
@@ -707,6 +781,7 @@
           comparison: mediaRef(pickRow),
           describeCorrection: input.describeCorrection,
           ordinalOf,
+          units,
         }));
       }
 
@@ -731,13 +806,24 @@
         const row = record(candidateRow);
         const name = text(row.stored) || text(row.name);
         if (!name || present.has(name)) continue;
-        const decision = text(row.decision);
-        if (decision === "rejected" || decision === "shortlist") continue;
         const stamped = text(row.frameId);
         const frame = stamped ? frames.find((item) => text(record(item).id) === stamped) || null : frames[0] || null;
         const kind = MEDIA.productionMediaTypeOf ? MEDIA.productionMediaTypeOf(name) : "image";
         const motion = kind === "video";
         const undeclared = !motion && !frame;
+        /* THE SAME SETTLEMENT DECISION THE MEDIA-PRESENT PATH MAKES, with the same
+           inputs: this row's unit, the pick that unit settled with, and that unit's
+           lineage lookup — plus this row itself, so a repair whose own bytes are gone can
+           still be recognised as descending from the pick. A candidate the project has
+           already settled is history, and history is what the media answer omits when the
+           bytes are gone; synthesising a row for it would resurrect a decision as work. */
+        const fact = missingRowFact(shot, row, name);
+        const unit = units.find((entry) => (motion
+          ? entry.owner.kind === "shot-motion"
+          : entry.owner.kind === "shot-frame" && entry.owner.unitId === text(record(frame).id))) || null;
+        const lineage = new Map(unit ? unit.byName : []);
+        lineage.set(name, fact);
+        if (candidateSettlement(fact, fact.pickedByEdge ? fact : (unit && unit.pickRow), lineage)) continue;
         items.push(deepFreeze({
           contract: RETURNED_REVIEW_CONTRACT,
           /* The path key production-media would have minted for this file, so a stale

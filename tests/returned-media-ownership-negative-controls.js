@@ -943,6 +943,73 @@ async function ncRM18() {
   note("NC-RM18 restored the untruthful label: an automation pick reported human-approved while the actor on record was automation");
 }
 /* ===========================================================================
+   NC-RM19 — A HISTORICALLY SETTLED CANDIDATE COMES BACK AS CURRENT WORK.
+
+   The second independent review's P0, restored exactly: the missing-media path asks two
+   string checks instead of the settlement question the media-present path asks. C1 was
+   picked, C2 later superseded it, somebody cleaned up C1's old file — and a decision
+   taken long ago reappears as a current integrity blocker that Production reports as the
+   thing to do next.
+   =========================================================================== */
+
+const NC19_ANCHOR = `        if (candidateSettlement(fact, fact.pickedByEdge ? fact : (unit && unit.pickRow), lineage)) continue;`;
+const NC19_BREAK = `        if (text(row.decision) === "rejected" || text(row.decision) === "shortlist") continue;`;
+
+async function ncRM19() {
+  anchorIn(PROJECTION_FILE, NC19_ANCHOR, "NC-RM19");
+  /* 1. C1 was historically picked, and 2. C2 subsequently became current. Both facts are
+        written by withCanon() through the shipped receipt shape, not asserted here. */
+  const project = projectOf([{
+    id: "L1-01",
+    frames: [{ id: "frame-a", label: "A", winner: "C2.png" }],
+    candidates: [
+      candidate("C1.png"),
+      candidate("C2.png", { addedAt: "2026-08-20T11:00:00.000Z" }),
+    ],
+  }]);
+  /* 3. Only C1's bytes are removed. C2 is still on disk and still current. */
+  const scan = scanWith(project, { "L1-01": ["C2.png"] });
+  const broken = await render("#/production", project, { scan, mutateSource: replacing(PROJECTION_FILE, NC19_ANCHOR, NC19_BREAK) });
+  const seen = evaluate(broken.context, `
+    const projection = returnedReviewProjectionForBrowser();
+    return {
+      blockers: projection.blockers.map((row) => row.candidate.name + ":" + row.unreviewable + ":" + row.blocking),
+      unavailable: projection.counts.unavailable,
+      items: projection.items.map((row) => row.candidate.name + ":" + (row.settled || "waiting")),
+      winner: P.shots[0].keyframes[0].winner || "",
+      canon: hasCurrentHumanAuthority(P, { kind: "shot-frame", shotId: "L1-01", frameId: "frame-a" }),
+      rows: P.shots[0].candidateFiles.map((row) => row.stored + ":" + row.decision),
+      next: projectNextProductionAction(),
+    };
+  `);
+  const shotPage = await render("#/shot/L1-01", project, { scan, mutateSource: replacing(PROJECTION_FILE, NC19_ANCHOR, NC19_BREAK) });
+  const card = cardOf(shotPage.context.document.getElementById("main").innerHTML);
+
+  /* 4. THE LITERAL BAD STATE. C2 is current and approved; C1 was decided long ago; and
+        the project is being told its next act is about C1. */
+  equal(seen.winner, "C2.png", "NC-RM19: C2 is the current pick");
+  equal(seen.canon, true, "NC-RM19: and holds Canon");
+  ok(seen.items.includes("C2.png:human-approved"), "NC-RM19: which the projection reports");
+  deepEqualLoose(seen.rows, ["C1.png:unreviewed", "C2.png:unreviewed"],
+    "NC-RM19: and neither row carries a rejected/shortlist word for the string checks to catch");
+  deepEqualLoose(seen.blockers, ["C1.png:media-not-available:true"],
+    "NC-RM19: yet the superseded historical candidate is a current integrity blocker");
+  equal(seen.unavailable, 1, "NC-RM19: counted as unaccounted-for current work");
+  equal(seen.next.kind, "returned-media-unavailable",
+    "NC-RM19: and Production reports it as the thing to do next");
+  ok(/C1\.png/.test(seen.next.message), "NC-RM19: naming a file that was settled two decisions ago");
+  equal(card.unavailable, true, "NC-RM19: while the shot workspace gives it the card");
+  ok(/file is missing/i.test(card.headline), "NC-RM19: reading " + JSON.stringify(card.headline));
+
+  /* 5. AND THE HISTORICAL-SETTLEMENT INVARIANT GOES RED FOR IT. */
+  await mustFail("NC-RM19", "the superseded historical candidate raises no current blocker", () => {
+    assert.deepStrictEqual(seen.blockers, [],
+      "the superseded historical candidate raises no current blocker");
+  });
+
+  note(`NC-RM19 restored settled-history resurrection: C2 held Canon while Production reported ${seen.blockers[0]} as current work`);
+}
+/* ===========================================================================
    AND THE SHIPPED BUILD IS GREEN ON EVERY CLAIM THE CONTROLS BROKE.
    =========================================================================== */
 
@@ -964,7 +1031,7 @@ async function shippedBuildIsGreen() {
   equal(repairCard.repair, true, "shipped: and is declared as one");
   ok(repairCard.markup.includes("Before"), "shipped: with its parent on the card");
 
-  note("the shipped build is green on every claim the ten controls broke");
+  note("the shipped build is green on every claim the nineteen controls broke");
 }
 
 /* =========================================================================== */
@@ -987,6 +1054,7 @@ async function main() {
   await ncRM15();
   await ncRM16();
   await ncRM18();
+  await ncRM19();
   await shippedBuildIsGreen();
 
   for (const line of notes) console.log(line);

@@ -1279,6 +1279,178 @@ async function mf_missingReturnedMedia() {
 }
 
 /* ===========================================================================
+   HM1–HM10 — MISSING BYTES DO NOT RESURRECT A SETTLED CANDIDATE.
+
+   THE P0 THE SECOND INDEPENDENT REVIEW FOUND, and it is the mirror image of MF1-MF6.
+   That pass made a returned result the project could not show stop disappearing. This
+   pass makes it stop appearing when the project has ALREADY DECIDED about it.
+
+   The synthetic path asked two string checks — `rejected` and `shortlist` — where the
+   media-present path asks the full candidate-specific question. So the moment somebody
+   cleaned up an old file, a candidate that had been picked, or that a later approval had
+   superseded, came back as a CURRENT integrity blocker: a settled decision resurrected as
+   outstanding work, and Production reporting it as the thing to do next.
+
+   The repair is one predicate. candidateSettlement() is asked by both paths with the same
+   inputs — the candidate's own decision, then the unit's pick, then that unit's lineage —
+   and the paths differ only in where the facts come from: production-media's record when
+   the file is there, the durable candidate row plus P4's shotMediaDisposition() when it
+   is not. They cannot drift apart again without the shared function moving.
+   =========================================================================== */
+
+const HM_SCAN = (project, takes) => scanWith(project, { "L1-01": takes });
+function hmProject(spec) {
+  const project = projectOf([{
+    id: "L1-01",
+    frames: [{ id: "frame-a", label: "A", winner: spec.winner || "", canon: spec.canon !== false }],
+    candidates: spec.candidates,
+  }]);
+  if (spec.records) project.shots[0].generationRecords = spec.records;
+  return project;
+}
+const HM_READ = `
+  const projection = returnedReviewProjectionForBrowser();
+  return {
+    blockers: projection.blockers.map((row) => row.candidate.name + ":" + row.unreviewable),
+    unavailable: projection.counts.unavailable,
+    items: projection.items.map((row) => row.candidate.name + ":" + (row.settled || "waiting") + ":" + (row.blocking ? "blocking" : "-")),
+    queue: projection.queue.map((row) => row.candidate.name),
+    winner: P.shots[0].keyframes[0].winner || "",
+    canon: hasCurrentHumanAuthority(P, { kind: "shot-frame", shotId: "L1-01", frameId: "frame-a" }),
+    next: projectNextProductionAction(),
+  };
+`;
+async function hmSeen(spec, takes) {
+  const project = hmProject(spec);
+  const page = await render("#/shot/L1-01", project, { scan: HM_SCAN(project, takes) });
+  return { seen: evaluate(page.context, HM_READ), card: cardOf(page.context.document.getElementById("main").innerHTML), page };
+}
+
+async function hm_settledMissingMediaIsNotCurrentWork() {
+  /* HM1 — GENUINELY UNSETTLED AND MISSING. The MF2 behaviour, unchanged: this is the one
+     case that MUST still block, and it is checked first so the repair cannot be a blanket
+     removal of the blocker. */
+  const one = await hmSeen({ candidates: [candidate("GONE.png")] }, []);
+  deepEqual(one.seen.blockers, ["GONE.png:media-not-available"], "HM1: an undecided returned result with no bytes still blocks");
+  equal(one.seen.unavailable, 1, "HM1: and is counted");
+  equal(one.card.unavailable, true, "HM1: and the workspace still renders the integrity state");
+
+  /* HM2 / HM3 — ALREADY DISPOSED OF. Its media being gone is ordinary history. */
+  for (const [decision, label] of [["rejected", "HM2"], ["shortlist", "HM3"]]) {
+    const seen = await hmSeen({ candidates: [candidate("GONE.png", { decision })] }, []);
+    deepEqual(seen.seen.blockers, [], `${label}: a ${decision} row whose media is gone raises no current blocker`);
+    equal(seen.seen.unavailable, 0, `${label}: and is not counted as unaccounted-for work`);
+    ok(seen.seen.next.kind !== "returned-media-unavailable", `${label}: Production names no integrity condition for it`);
+  }
+
+  /* HM4 — THE PICK'S OWN BYTES ARE GONE. An approval edge still names the file, so the
+     candidate is settled by that edge. Whether the edge came from a person, from
+     automation or from a legacy pointer is NOT asserted here — that distinction needs the
+     media record, and guessing at it is what the machine-selected repair exists to stop. */
+  const picked = await hmSeen({ winner: "C1.png", candidates: [candidate("C1.png")] }, []);
+  deepEqual(picked.seen.blockers, [], "HM4: a picked candidate whose media is gone is not current work");
+  equal(picked.seen.unavailable, 0, "HM4: and raises no integrity blocker");
+  equal(picked.seen.winner, "C1.png", "HM4: the pick itself is untouched");
+  equal(picked.card.unavailable, false, "HM4: and the workspace shows no missing-media card");
+
+  /* HM5 — THE REPRODUCTION. C1 was picked, C2 later became current, and C1's historical
+     file is removed. C1 is history; the project's current truth is C2. */
+  const superseded = await hmSeen({
+    winner: "C2.png",
+    candidates: [candidate("C1.png"), candidate("C2.png", { addedAt: "2026-08-20T11:00:00.000Z" })],
+  }, ["C2.png"]);
+  deepEqual(superseded.seen.blockers, [], "HM5: the superseded historical candidate raises no current blocker");
+  equal(superseded.seen.unavailable, 0, "HM5: and is not counted");
+  ok(!superseded.seen.items.some((row) => row.startsWith("C1.png")),
+    "HM5: it is not resurrected into the projection at all: " + superseded.seen.items.join(", "));
+  deepEqual(superseded.seen.items, ["C2.png:human-approved:-"], "HM5: current production truth remains C2");
+  equal(superseded.seen.winner, "C2.png", "HM5: the pick is C2");
+  equal(superseded.seen.canon, true, "HM5: and it holds Canon");
+  ok(superseded.seen.next.kind !== "returned-media-unavailable",
+    "HM5: Production does not report a returned result that was decided long ago: " + superseded.seen.next.kind);
+  equal(superseded.card.unavailable, false, "HM5: and neither does the shot workspace");
+
+  /* HM6 — A MACHINE-SELECTED PICK whose media is gone. No bogus blocker, and the label
+     itself is untouched: with the bytes present the same fixture still reports
+     `machine-selected`, which is the truth this must not overwrite. */
+  const machineSpec = { winner: "AUTO.png", candidates: [candidate("AUTO.png")], records: [{ file: "AUTO.png", approval: "automatic" }] };
+  const machineGone = await hmSeen(machineSpec, []);
+  deepEqual(machineGone.seen.blockers, [], "HM6: a machine-selected pick whose media is gone raises no current blocker");
+  ok(!machineGone.seen.items.some((row) => /human-approved/.test(row)),
+    "HM6: and nothing claims a person approved it: " + machineGone.seen.items.join(", "));
+  const machinePresent = await hmSeen(machineSpec, ["AUTO.png"]);
+  deepEqual(machinePresent.seen.items, ["AUTO.png:machine-selected:-"],
+    "HM6: while with the bytes present the machine-selected label is exactly as it was");
+
+  /* HM7 — AN UNDECIDED REPAIR whose own bytes are gone. Still unresolved, so it still
+     blocks — and Canon does not move because of it. This is the case a blanket
+     "anything missing is history" rule would have broken. */
+  const repairGone = await hmSeen({
+    winner: "C1.png",
+    candidates: [candidate("C1.png"), candidate("C2.png", { addedAt: "2026-08-20T11:00:00.000Z", correctionOf: "C1.png" })],
+  }, ["C1.png"]);
+  deepEqual(repairGone.seen.blockers, ["C2.png:media-not-available"], "HM7: an undecided repair with no bytes is still unresolved");
+  equal(repairGone.seen.unavailable, 1, "HM7: and still blocks");
+  equal(repairGone.seen.winner, "C1.png", "HM7: while Canon stays where it was");
+  equal(repairGone.seen.canon, true, "HM7: and stays approved");
+  ok(repairGone.seen.items.includes("C1.png:human-approved:-"), "HM7: the parent keeps its own settled reason");
+
+  /* AND THE LINEAGE HALF OF THAT DECISION WORKS FOR A MISSING FILE TOO. With no
+     timestamps at all, the only thing that can tell the repair apart from an alternate is
+     `correction-of` — and a row with no media record has to be able to carry it. */
+  const untimed = await hmSeen({
+    winner: "C1.png",
+    candidates: [
+      { stored: "C1.png", original: "C1.png", decision: "unreviewed", notes: "", labels: [], frameId: "frame-a" },
+      { stored: "C2.png", original: "C2.png", decision: "unreviewed", notes: "", labels: [], frameId: "frame-a", correctionOf: "C1.png" },
+    ],
+  }, ["C1.png"]);
+  deepEqual(untimed.seen.blockers, ["C2.png:media-not-available"],
+    "HM7: an untimestamped repair of the pick is still recognised, from lineage alone");
+
+  /* HM8 — A SETTLED MISSING FILE BESIDE A LEGITIMATE CURRENT REVIEW. The historical one
+     must neither block nor displace the review a filmmaker can actually do. */
+  const beside = await hmSeen({
+    winner: "C2.png",
+    candidates: [
+      candidate("C1.png"),
+      candidate("C2.png", { addedAt: "2026-08-20T11:00:00.000Z" }),
+      candidate("NEW.png", { addedAt: "2026-08-21T09:00:00.000Z" }),
+    ],
+  }, ["C2.png", "NEW.png"]);
+  deepEqual(beside.seen.blockers, [], "HM8: the settled historical file raises no blocker");
+  deepEqual(beside.seen.queue, ["NEW.png"], "HM8: and the genuine current review is untouched");
+  equal(beside.seen.next.kind, "returned-result", "HM8: which is what Production offers");
+  ok(beside.card.returnedReview && beside.card.file === "NEW.png",
+    "HM8: and what the shot workspace opens on: " + beside.card.file);
+
+  /* HM9 — SETTLED, MISSING, AND NOTHING ELSE OUTSTANDING. It must not be promoted into
+     current work by being the only thing left. */
+  ok(!picked.card.returnedReview, "HM9: a settled missing candidate is not offered as a review");
+  equal(picked.seen.queue.length, 0, "HM9: and is in no queue");
+  ok(!/media-not-available/.test(picked.card.markup), "HM9: with no integrity notice raised for it");
+  ok(picked.seen.next.kind !== "returned-media-unavailable",
+    "HM9: and Production moves on to real work instead: " + picked.seen.next.kind);
+
+  /* HM10 — AND THE UNDECLARED-UNIT DISTINCTION IS UNCHANGED. A row whose frame the shot
+     no longer declares still reports THAT, and still does not block. */
+  const orphan = await hmSeen({ candidates: [{ ...candidate("ORPHAN.png"), frameId: "frame-deleted" }] }, []);
+  deepEqual(orphan.seen.items, ["ORPHAN.png:waiting:-"], "HM10: an undeclared unit is reported and does not block");
+  deepEqual(orphan.seen.blockers, [], "HM10: it is not a missing-media integrity condition");
+  const orphanReason = evaluate(orphan.page.context, `return returnedReviewProjectionForBrowser().items.map((row) => row.unreviewable);`);
+  deepEqual(orphanReason, ["frame-no-longer-declared"], "HM10: and keeps its own distinct reason");
+
+  /* AND THE TWO PATHS ASK ONE FUNCTION, structurally. A future edit that gives the
+     missing-media path a settlement rule of its own has to delete this call to do it. */
+  const source = codeOnly(readLF("public/shared-returned-review.js"));
+  equal(source.split("candidateSettlement(").length - 1, 3,
+    "HM: candidateSettlement is declared once and called by both paths, and nowhere else");
+  ok(!/decision === "rejected" \|\| decision === "shortlist"/.test(source),
+    "HM: the missing-media path carries no settlement string checks of its own");
+
+  note("HM1-10 one settlement predicate serves both paths: missing bytes still block genuinely unsettled work, and never resurrect a candidate a pick, an approval or a disposition already settled");
+}
+/* ===========================================================================
    ORDERING — NEVER A FILENAME.
    =========================================================================== */
 
@@ -1607,6 +1779,7 @@ async function main() {
   await cr_pickSettlesOnlyItsOwnAlternates();
   await sr_staleRouteClaims();
   await mf_missingReturnedMedia();
+  await hm_settledMissingMediaIsNotCurrentWork();
   await ordering_neverFilename();
   await actions_declaredNotSynthesised();
   await label_machineSelectedIsNotHumanApproved();
