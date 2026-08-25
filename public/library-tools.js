@@ -308,9 +308,13 @@ window.approveTake = (id, name) => {
     targets[0]?.v ||
     "shot";
   openModal(
-    `<h3>Approve version — ${esc(id)}</h3><div class="modal-sub">ASSIGN THIS ${video ? "VIDEO" : "IMAGE"} TO ITS EXACT PLACE IN THE SHOT PLAN</div><div class="approval-preview"><b>${esc(name)}</b><span>${video ? "Motion output" : "Approved keyframe"}</span></div>${targets.length ? `<div class="form-field"><label>Approve as</label><select id="approve-target" class="status-select" onchange="updateApprovalName()">${targets.map((o) => `<option value="${o.v}" ${o.v === target ? "selected" : ""}>${esc(o.l)}</option>`).join("")}<option value="shot">Primary shot output</option></select></div>` : `<input type="hidden" id="approve-target" value="shot">`}<div class="form-field"><label>Generated canonical filename</label><input id="approve-name" value="${attr(canonicalSuggestion(id, name, target))}"><div class="hint">CineBraid generates this automatically. Edit only for an exceptional naming requirement.</div></div><div class="approval-note">${s.submissionNote ? `Submitter note: ${esc(s.submissionNote)}` : "No submission note."}</div><div class="modal-actions"><button class="changes-btn" onclick="closeModal();requestShotChanges('${id}')">Request changes</button><button class="cancel" onclick="closeModal()">Cancel</button><button class="approve-btn large" onclick="confirmApproveTake()">APPROVE VERSION</button></div>`,
+    `<h3>Approve version — ${esc(id)}</h3><div class="modal-sub">ASSIGN THIS ${video ? "VIDEO" : "IMAGE"} TO ITS EXACT PLACE IN THE SHOT PLAN</div><div class="approval-preview"><b>${esc(name)}</b><span>${video ? "Motion output" : "Approved keyframe"}</span></div>${targets.length ? `<div class="form-field"><label>Approve as</label><select id="approve-target" class="status-select" onchange="updateApprovalName()">${targets.map((o) => `<option value="${o.v}" ${o.v === target ? "selected" : ""}>${esc(o.l)}</option>`).join("")}<option value="shot">Primary shot output</option></select></div>` : `<input type="hidden" id="approve-target" value="shot">`}<input type="hidden" id="approve-name" value="${attr(canonicalSuggestion(id, name, target))}"><div class="approval-note">${s.submissionNote ? `Submitter note: ${esc(s.submissionNote)}` : "No submission note."}</div><div class="modal-actions"><button class="changes-btn" onclick="closeModal();requestShotChanges('${id}')">Request changes</button><button class="cancel" onclick="closeModal()">Cancel</button><button class="approve-btn large" onclick="confirmApproveTake()">APPROVE VERSION</button></div>`,
   );
 };
+/* THE CARRIED NAME FOLLOWS THE TARGET. This modal is the one that lets the filmmaker
+   retarget the approval, and the canonical name depends on which target it is, so the
+   hidden value is recomputed when they change it. It updates a value the dialog holds
+   on the filmmaker's behalf; there is nothing here for them to read or type. */
 window.updateApprovalName = () => {
   const a = window._approval;
   if (!a) return;
@@ -323,6 +327,26 @@ window.confirmApproveTake = async () => {
   if (!id) return;
   const s = shotById(id),
     target = document.getElementById("approve-target")?.value || "shot",
+    /* THE FILENAME IS BOOKKEEPING, AND CINEBRAID DOES IT.
+
+       This still reads the value the dialog carries. What changed is that the dialog
+       no longer ASKS for it. All three approval modals used to put a visible,
+       editable text field here -- captioned "Canonical filename" and nothing else on
+       two of the three -- between the image and the APPROVE button, in a dialog whose
+       only real question is whether these are the right bytes. A storage decision
+       presented as a decision is still a decision.
+
+       The convention is not lost, and it was never per-approval. It is
+       CONFIG.naming.filenameTemplate -- a project setting with its own live preview in
+       Settings -- and canonicalSuggestion() is the shipped reader of it. A studio
+       naming requirement belongs there, where it applies to every approval, rather
+       than in a field somebody has to retype correctly each time.
+
+       NOTHING ABOUT STORAGE CHANGED, and that is deliberate. The value is the one
+       every filmmaker who left the field alone was already sending; the rename call
+       below, its failure toast, the receipt repair that follows the bytes, and the
+       order of all three are byte-for-byte as they were. This slice removed a
+       question, not a mechanism. */
     requested = document.getElementById("approve-name")?.value.trim();
   /* THE CANON WRITE IS THE FIRST THING THAT HAPPENS, AND IT IS SYNCHRONOUS.
    *
@@ -568,7 +592,7 @@ window.approveEntityFile = (list, id, name, stateId = "") => {
     || media[media.length - 1];
   window._entityApproval = { list, id, name: selected.name, stateId: requestedState?.id || "state-default" };
   openModal(
-    `<div class="entity-approval-modal"><h3>Approve reference — ${esc(x.name || id)}</h3><div class="modal-sub">ASSIGN ONE CANDIDATE TO ONE CONTINUITY STATE</div><div class="entity-approval-modal-layout"><figure><div id="entity-approval-preview">${isVideo(selected.name) ? `<video muted controls src="${attr(selected.url)}"></video>` : `<img src="${attr(selected.url)}" alt="Candidate to approve">`}</div><figcaption id="entity-approval-file-caption">${esc(selected.name)}</figcaption></figure><div class="entity-approval-fields"><div class="form-field"><label>Candidate file</label><select id="entity-approve-file" onchange="syncEntityApprovalModal()">${media.map((item) => `<option value="${attr(item.name)}" ${item.name === selected.name ? "selected" : ""}>${esc(item.name)}</option>`).join("")}</select></div><div class="form-field"><label>Approve for continuity state</label><select id="entity-approve-target" onchange="syncEntityApprovalModal()">${states.map((st) => `<option value="${attr(st.id)}" ${String(requestedState?.id || "state-default") === String(st.id) ? "selected" : ""}>${esc(st.name || "Default")}${st.appliesTo ? ` · ${esc(st.appliesTo)}` : ""}</option>`).join("")}</select></div><div class="entity-approval-target-summary" id="entity-approval-target-summary"></div><div class="form-field"><label>Generated canonical filename</label><input id="entity-approve-name" value="${attr(entityCanonicalSuggestion(list, id, selected.name, requestedState?.id || "state-default"))}"></div><p class="hint">The selected state will show this image in the live Project Bible. Other states and candidates are unchanged.</p><div class="form-field entity-approval-continuation"><label>Continue to another version after approval</label><select id="entity-approve-next" onchange="syncEntityApprovalContinuation()"></select><small id="entity-approve-next-note">Approve only, or continue directly into another continuity-state editor.</small></div></div></div><div class="modal-actions entity-approval-actions"><button class="changes-btn" onclick="closeModal();requestEntityChanges('${list}','${id}')">Request changes</button><div><button class="cancel" onclick="closeModal()">Cancel</button><button class="ghost-btn" onclick="confirmEntityApproval(false)">APPROVE ONLY</button><button id="entity-approve-continue" class="approve-btn large" onclick="confirmEntityApproval(true)">APPROVE & EDIT NEXT STATE</button></div></div></div>`,
+    `<div class="entity-approval-modal"><h3>Approve reference — ${esc(x.name || id)}</h3><div class="modal-sub">ASSIGN ONE CANDIDATE TO ONE CONTINUITY STATE</div><div class="entity-approval-modal-layout"><figure><div id="entity-approval-preview">${isVideo(selected.name) ? `<video muted controls src="${attr(selected.url)}"></video>` : `<img src="${attr(selected.url)}" alt="Candidate to approve">`}</div><figcaption id="entity-approval-file-caption">${esc(selected.name)}</figcaption></figure><div class="entity-approval-fields"><div class="form-field"><label>Candidate file</label><select id="entity-approve-file" onchange="syncEntityApprovalModal()">${media.map((item) => `<option value="${attr(item.name)}" ${item.name === selected.name ? "selected" : ""}>${esc(item.name)}</option>`).join("")}</select></div><div class="form-field"><label>Approve for continuity state</label><select id="entity-approve-target" onchange="syncEntityApprovalModal()">${states.map((st) => `<option value="${attr(st.id)}" ${String(requestedState?.id || "state-default") === String(st.id) ? "selected" : ""}>${esc(st.name || "Default")}${st.appliesTo ? ` · ${esc(st.appliesTo)}` : ""}</option>`).join("")}</select></div><div class="entity-approval-target-summary" id="entity-approval-target-summary"></div><input type="hidden" id="entity-approve-name" value="${attr(entityCanonicalSuggestion(list, id, selected.name, requestedState?.id || "state-default"))}"><p class="hint">The selected state will show this image in the live Project Bible. Other states and candidates are unchanged.</p><div class="form-field entity-approval-continuation"><label>Continue to another version after approval</label><select id="entity-approve-next" onchange="syncEntityApprovalContinuation()"></select><small id="entity-approve-next-note">Approve only, or continue directly into another continuity-state editor.</small></div></div></div><div class="modal-actions entity-approval-actions"><button class="changes-btn" onclick="closeModal();requestEntityChanges('${list}','${id}')">Request changes</button><div><button class="cancel" onclick="closeModal()">Cancel</button><button class="ghost-btn" onclick="confirmEntityApproval(false)">APPROVE ONLY</button><button id="entity-approve-continue" class="approve-btn large" onclick="confirmEntityApproval(true)">APPROVE & EDIT NEXT STATE</button></div></div></div>`,
   );
   syncEntityApprovalModal();
 };
@@ -589,6 +613,10 @@ window.syncEntityApprovalModal = () => {
   if (caption) caption.textContent = fileName;
   const summary = document.getElementById("entity-approval-target-summary");
   if (summary) summary.innerHTML = `<span>APPROVAL TARGET</span><b>${esc(state?.name || "Default")}</b><small>${esc(state?.appliesTo || (state?.isDefault ? "Primary project-wide state" : "No scene/shot range assigned"))}</small>`;
+  /* The carried name follows the candidate and the state, and it carries one real
+     rule with it: a candidate ALREADY approved somewhere on this reference keeps the
+     name it has, because renaming it would move bytes another approved state points
+     at. That rule lives here rather than in a field nobody should be reading. */
   const nameInput = document.getElementById("entity-approve-name");
   const alreadyApproved = entityApprovalBadges(x, fileName).length > 0;
   if (nameInput) nameInput.value = alreadyApproved ? fileName : entityCanonicalSuggestion(current.list, current.id, fileName, stateId);
@@ -656,6 +684,8 @@ window.confirmEntityApproval = async (continueToNext = false) => {
        cannot open an editor the lineage rule forbids. */
     nextStateId = requestedNextStateId && isValidContinuation(entityStateListRead(x, true), targetStateId, requestedNextStateId) ? requestedNextStateId : "",
     nextState = nextStateId ? entityStateById(x, nextStateId) : null,
+    /* Carried, not asked -- the shot-side twin at confirmApproveTake() carries the
+       argument, and the shape is identical here. */
     to = document.getElementById("entity-approve-name")?.value.trim();
   const originalApprovalRow = entityCandidateRow(x, name, false);
   const approvedIsCoverageSheet = typeof entityCandidateIsCoverageSheet === "function" && entityCandidateIsCoverageSheet(x, name);

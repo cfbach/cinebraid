@@ -226,7 +226,10 @@ try:
         if finish_panel.count():
             finish_panel.first.evaluate("node => node.open = true")
             page.wait_for_timeout(80)
-        page.get_by_role("button", name="Finalize", exact=True).click()
+        # Slice 4 named this control for the decision it takes. It is the same control,
+        # the same handler and the same receipt; only the word changed, and a generic
+        # "Finalize" beside an equally generic "Finish" was the defect that slice removed.
+        page.get_by_role("button", name="Mark shot final", exact=True).click()
         page.wait_for_timeout(250)
         assert page.evaluate("id => P.shots.find(x=>x.id===id).finalVideoFile", shot_id) == "MANUAL-FINISHED-VIDEO.mp4"
         if SCREENSHOT_DIR:

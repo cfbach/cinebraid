@@ -61,6 +61,7 @@ const SUITES = [
   "check:save-truth-browser",
   "check:bible-canon-browser",
   "check:returned-review-browser",
+  "check:launch-language-browser",
 ];
 
 /* Suites that launch a browser and are known to fail, pinned to the reason.

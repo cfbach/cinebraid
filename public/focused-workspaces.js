@@ -131,7 +131,7 @@
       blocking: ["Blocking", "Camera, scale and staging"],
       composer: ["Reference review", "Appearance authorities"],
       motion: ["Motion & audio", "Movement, dialogue and sound"],
-      finish: ["Finish", "Delivery and final approval"],
+      finish: ["Finish & Delivery", "Optional finishing, then the final decision"],
     };
     if (known[panel]) return known[panel];
     if (element?.classList?.contains("automation-card")) return ["Automation", "Durable still generation"];
