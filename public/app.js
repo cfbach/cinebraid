@@ -4065,7 +4065,7 @@ function projectNextProductionAction(feed = projectShotReadiness()) {
   const returned = returnedResultsAwaitingReview();
   if (returned.length) {
     const first = returned[0];
-    const total = returned.reduce((sum, item) => sum + (Number(item.count) || 1), 0);
+    const total = returnedResultCount(returned);
     const href = first.shot
       ? `#/shot/${first.shot.id}`
       : `#/${first.route}/${encodeURIComponent(first.entity?.id || "")}`;
@@ -4073,14 +4073,23 @@ function projectNextProductionAction(feed = projectShotReadiness()) {
     return {
       kind: "returned-result",
       shotId: first.shot ? first.shot.id : "",
+      /* THE CANDIDATE THIS ACTION IS ABOUT, named rather than implied.
+       *
+       * The route stays `#/shot/<id>` — this slice adds no router — because the shot
+       * workspace resolves its own returned review from the SAME ordered projection and
+       * therefore lands on the same candidate by construction, with no key to go stale
+       * between the click and the render. The key travels anyway so the two can be
+       * proved to agree instead of assumed to. Empty for an entity reference row, which
+       * has a per-entity route and no candidate identity. */
+      reviewKey: first.reviewKey || "",
       href,
       returned: total,
       title: first.shot
         ? `${first.shot.id}${shot?.title ? ` · ${shot.title}` : ""}`
         : (first.entity?.name || first.entity?.id || "Returned result"),
       /* The queue's own sentence, then the scope, never a rewritten verdict. */
-      message: `${first.label}. ${returned.length > 1
-        ? `${plural(returned.length, "returned result")} are waiting for review across this project.`
+      message: `${first.label}. ${total > 1
+        ? `${plural(total, "returned result")} are waiting for review across this project.`
         : "It is waiting for your review — approve it, keep it as an alternate, or reject it."}`,
       actionLabel: "REVIEW RETURNED RESULT",
     };
@@ -4500,6 +4509,48 @@ window.refreshAgentStatus = async (render = false) => {
   if (render) route();
 };
 
+/* THE ONE CALL INTO THE RETURNED-REVIEW PROJECTION.
+
+   public/shared-returned-review.js is the single answer to "what returned media is
+   waiting for a person, and which exact candidate owns that decision". It derives from
+   public/shared-production-media.js — durable disposition, human decision, correction
+   lineage — and from nothing else, so this function's whole job is assembling the same
+   four inputs public/media-inspector.js assembles, from the app's own lexical bindings.
+
+   THE BINDINGS ARE READ THROUGH `typeof`, NOT OFF `window`. P, SCAN and the generation
+   ledger flags are lexical `let`s in this file; a module that read `window.P` would find
+   undefined in a real browser and fail in total silence. */
+function returnedReviewProjectionForBrowser() {
+  if (typeof returnedReviewProjection !== "function") return null;
+  return returnedReviewProjection({
+    project: P,
+    scan: typeof SCAN === "undefined" ? {} : SCAN,
+    jobs: typeof FAL_GENERATION_JOBS === "undefined" ? [] : FAL_GENERATION_JOBS,
+    /* The honest flag rather than `jobs.length`: the ledger is only requested when
+       generation is enabled and keyed. */
+    jobsAvailable: typeof FAL_GENERATION_LEDGER_LOADED === "undefined" ? false : FAL_GENERATION_LEDGER_LOADED === true,
+    entityMedia: typeof entityMedia === "function" ? entityMedia : undefined,
+    describeCorrection: describeReturnedCorrectionIntent,
+  });
+}
+/* WHAT THE FILMMAKER ASKED FOR WHEN THEY SENT THIS BACK, and only if it was recorded.
+
+   The correction package freezes the review that produced it as `reviewSnapshot`, and
+   the shipped candidateCorrectionIssues() is what turns that into the list a correction
+   prompt is built from. Reusing it is the point: the summary a filmmaker reads beside a
+   repaired candidate names the same failures the repair was actually asked to fix. A
+   build that cannot be resolved returns "", which the projection reports as no recorded
+   intent rather than as an empty one. */
+function describeReturnedCorrectionIntent(buildId) {
+  if (!buildId || typeof resolvePromptBuild !== "function") return "";
+  const build = resolvePromptBuild(P, buildId);
+  if (!build || build.missing) return "";
+  if (typeof candidateCorrectionIssues !== "function") return "";
+  const issues = candidateCorrectionIssues(build.reviewSnapshot);
+  if (!issues.length) return "";
+  return issues.map((issue) => issue.referenceLabel || issue.label).filter(Boolean).join(", ");
+}
+
 /* RETURNED RESULTS, AND NOTHING ELSE. THE NAME IS THE FIX.
  *
  * This used to be called `projectDecisionItems`, and it fed two surfaces: the
@@ -4514,46 +4565,75 @@ window.refreshAgentStatus = async (render = false) => {
  * ARE SITTING UNREVIEWED. It is a workflow queue over media that came back, it
  * makes no claim about authority, and it is not the filmmaker-decision count —
  * that is projectFilmmakerDecisions(), derived from readiness and from nothing
- * else. The word "decision" does not appear in what this renders. */
-function returnedResultsAwaitingReview() {
+ * else. The word "decision" does not appear in what this renders.
+ *
+ * SLICE 3 CHANGED WHERE THE SHOT ROWS COME FROM AND NOTHING ELSE ABOUT THEM.
+ *
+ * The per-frame and per-shot-motion arithmetic that used to live here is now
+ * public/shared-returned-review.js's, verbatim — including the deliberate asymmetry
+ * that a FRAME settles on its own pick while MOTION settles at the shot. This function
+ * GROUPS that queue into the rows the Returned Results inbox has always rendered.
+ *
+ * The reason is not tidiness. The shot workspace has to open on the exact candidate
+ * that owns the review, and a second derivation of "which candidate is that" would be
+ * free to disagree with the number Production is showing — a filmmaker told two results
+ * are waiting, sent to a shot that offers a decision about neither. They now read one
+ * array, so the count and the thing you are taken to cannot come apart.
+ *
+ * ENTITY REFERENCE ROWS ARE UNTOUCHED. Reference approval is a per-entity queue with
+ * its own route and its own words, and the reference-demand model is out of scope for
+ * this slice, so it is composed here rather than folded into the projection. */
+function returnedResultsAwaitingReview(projection = returnedReviewProjectionForBrowser()) {
   const items = [];
+  const queue = (projection && projection.queue) || [];
   for (const shot of P.shots || []) {
-    const takes = takesFor(shot.id) || [];
-    const frames = typeof guidedFrames === "function" ? guidedFrames(shot) : (shot.keyframes || []);
-    let framePending = 0;
-    for (let i = 0; i < frames.length; i++) {
-      const rows = typeof guidedFrameCandidateRows === "function"
-        ? guidedFrameCandidateRows(shot, frames[i], takes, i)
-        : takes.filter((take) => !isVideo(take.name) && !isAudio(take.name));
-      /* WORKFLOW QUEUE, NOT AUTHORITY. "has this frame already been picked" is
-         what decides whether its candidates still read as unreviewed; it makes
-         no claim that anybody approved the pick. */
-      const alreadyPicked = rows.some((row) => row.name === frames[i]?.winner);
-      if (rows.length && !alreadyPicked) framePending += rows.length;
-    }
-    const videos = takes.filter((take) => isVideo(take.name));
-    const approvedVideo = (shot.creationBrief?.approvedMotionFile || shot.creationBrief?.finalVideoFile || (shot.clips || []).find((clip) => clip.videoWinner)?.videoWinner);
-    if (framePending) items.push({ shot, type: "image", count: framePending, label: `${framePending} frame candidate${framePending === 1 ? "" : "s"} to review` });
-    if (videos.length && !approvedVideo) items.push({ shot, type: "video", count: videos.length, label: `${videos.length} video candidate${videos.length === 1 ? "" : "s"} to review` });
+    const mine = queue.filter((row) => row.shotId === shot.id);
+    const frames = mine.filter((row) => row.owner.kind === "shot-frame");
+    const videos = mine.filter((row) => row.owner.kind === "shot-motion");
+    /* `reviewKey` is the projection's own key for the FIRST candidate of this row, in
+       the projection's own order. It is what makes Production's REVIEW RETURNED RESULT
+       land on a named candidate instead of on a shot page. */
+    if (frames.length) items.push({ shot, type: "image", count: frames.length, reviewKey: frames[0].key, label: `${frames.length} frame candidate${frames.length === 1 ? "" : "s"} to review` });
+    if (videos.length) items.push({ shot, type: "video", count: videos.length, reviewKey: videos[0].key, label: `${videos.length} video candidate${videos.length === 1 ? "" : "s"} to review` });
   }
   for (const [list, route, label] of [["characters","character","Character"],["locations","location","Location"],["props","prop","Prop"],["audio","sound","Audio"]]) {
     for (const entity of P[list] || []) {
       const media = entityMedia(list, entity);
       const approved = entityApprovedFileForState(entity, "");
-      if (media.length && !approved) items.push({ entity, route, type: "reference", count: media.length, label: `${label} reference needs approval` });
+      if (media.length && !approved) items.push({ entity, route, type: "reference", count: media.length, reviewKey: "", label: `${label} reference needs approval` });
     }
   }
   return items;
 }
+/* HOW MANY RESULTS THESE ROWS ADD UP TO, and it is the number the rows themselves state.
+ *
+ * A shot row says "3 frame candidates to review" and stands for three decisions. An
+ * entity row says "Character reference needs approval" and stands for ONE, whatever the
+ * number of unapproved files behind it — that queue is per-entity and its own label
+ * never claims otherwise. Summing `count` across both would put a number on screen that
+ * no row underneath it accounts for, which is the divergence this slice exists to
+ * remove. Both the Returned Results headline and Production's action read this. */
+function returnedResultCount(items) {
+  return (items || []).reduce((sum, item) => sum + (item.shot ? Number(item.count) || 1 : 1), 0);
+}
 function productionResultInbox(limit = 6) {
   const items = returnedResultsAwaitingReview();
+  /* THE HEADLINE COUNTS WHAT THE ROWS ADD UP TO.
+   *
+   * Slice 3. This counted GROUPED ROWS while every row underneath it stated its own
+   * candidate count, so a project with three candidates in one shot and one in another
+   * read "2 returned results waiting for review" above rows reading "3 frame candidates
+   * to review" and "1 frame candidate to review". Both numbers were derived from the
+   * same array and neither was wrong about its own scope, which is precisely the class
+   * of divergence Slice 1 removed everywhere else. */
+  const waiting = returnedResultCount(items);
   /* THE HEADLINE NAMES ITS OWN SCOPE, IN BOTH DIRECTIONS. "Nothing waiting for
      review" was true of this queue and read as a statement about the whole
      production; "N decisions waiting" borrowed the word the Production summary
      uses for something else. Both now say `returned result`, which is the only
      thing this section has ever been about, so an empty inbox can sit beside an
      outstanding filmmaker decision without the two contradicting each other. */
-  return `<section class="production-inbox"><header><div><span>RETURNED RESULTS</span><h2>${items.length ? `${plural(items.length, "returned result")} waiting for review` : "No returned result is waiting for review"}</h2><p>Results uploaded inside a frame or motion step appear here automatically. Decisions about approved work are shown above, in Production.</p></div></header>${items.length ? `<div class="production-inbox-list">${items.map((item) => {
+  return `<section class="production-inbox"><header><div><span>RETURNED RESULTS</span><h2>${items.length ? `${plural(waiting, "returned result")} waiting for review` : "No returned result is waiting for review"}</h2><p>Results uploaded inside a frame or motion step appear here automatically. Decisions about approved work are shown above, in Production.</p></div></header>${items.length ? `<div class="production-inbox-list">${items.map((item) => {
     if (item.shot) {
       const takes = takesFor(item.shot.id), media = item.type === "video" ? takes.filter((take) => isVideo(take.name)).at(-1) : takes.filter((take) => !isVideo(take.name) && !isAudio(take.name)).at(-1);
       const preview = media ? (isVideo(media.name) ? `<video muted preload="metadata" src="${attr(media.url)}#t=0.1"></video>` : `<img src="${attr(media.url)}" alt="">`) : `<span>${item.type === "video" ? "VIDEO" : "FRAME"}</span>`;

@@ -117,6 +117,11 @@
      must load after all three. public/creation-studio.js and the shot workspace draw
      through it. -->
 <script src="shared-shot-intent.js?v=6.7.0-private.1"></script>
+<!-- Slice 3. The returned-review projection reads the frozen answer of
+     shared-production-media.js and nothing else, so it must load after it. The shot
+     workspace and the Production summary both draw the returned-result decision
+     through it. -->
+<script src="shared-returned-review.js?v=6.7.0-private.1"></script>
 <script src="shared-workspace-shell.js?v=6.7.0-private.1"></script>
 <script src="shared-creator-state.js?v=6.7.0-private.1"></script>
 <script src="shared-stage-actions.js?v=6.7.0-private.1"></script>

@@ -2175,6 +2175,169 @@ window.setGuidedDeliveryIntent = (id, value) => {
   dirty();
   route();
 };
+/* ===========================================================================
+   THE RETURNED RESULT OWNS THE DECISION IT CAME BACK FOR.
+
+   Slice 3's whole product change lives in this block, and the shape of it matters more
+   than the markup: NOTHING HERE DECIDES WHAT IS WAITING. It asks
+   public/shared-returned-review.js, which asks public/shared-production-media.js, which
+   asks the disposition partition and the authority kernel. This file renders the answer
+   and offers the SHIPPED controls for it.
+
+   WHY THE CARD EXISTS AT ALL. The shot workspace answered "what needs me here" from
+   readiness alone, and readiness deliberately knows nothing about candidates — it
+   answers "can this be produced now". So a shot that Production had just routed to with
+   REVIEW RETURNED RESULT opened saying `Confirm existing reference`, and a shot with two
+   unreviewed candidates opened saying `Produce the frame`: an instruction to spend money
+   generating a third. Both sentences were true in their own scope. Neither was the thing
+   the filmmaker had been sent there to do.
+
+   WHAT IS NOT DONE HERE, deliberately:
+
+   * THE READINESS ACTION IS NOT REMOVED. It keeps its canonical words, its canonical
+     message, its canonical status attribute and a working control — it is demoted from
+     primary to secondary, not hidden. A reference still needing confirmation is real and
+     still matters to the NEXT generation; what it is not is a reason to ignore a result
+     that has already come back.
+
+   * AN INTEGRITY BLOCKER STILL WINS. When the approval ledger cannot be read, no review
+     taken against it could be recorded, so `repair-authority-ledger` and
+     `awaiting-project-repair` keep the card. This is the same precedence Slice 1 gave
+     the project-level action, restated at the shot rather than invented here.
+
+   * NO SECOND PRIMARY. The card renders exactly one `shot-primary-action`, because a
+     screen with two primary actions has none. */
+const RETURNED_REVIEW_INTEGRITY_BLOCKERS = ["repair-authority-ledger", "awaiting-project-repair"];
+function shotReturnedReview(s) {
+  if (!s) return null;
+  if (typeof returnedReviewProjectionForBrowser !== "function") return null;
+  if (typeof pendingReturnedReview !== "function") return null;
+  const projection = returnedReviewProjectionForBrowser();
+  if (!projection || !projection.available) return null;
+  const item = pendingReturnedReview(projection, s.id);
+  if (!item) return null;
+  return { projection, item, waiting: projection.queue.filter((row) => row.shotId === s.id).length };
+}
+/* The words for one returned-review action. They are the shipped ones: "Use this take"
+   and "Keep looking" are what the product already calls accepting and passing on a
+   candidate, and "Revise this take" is what the correction flow is called. */
+const RETURNED_REVIEW_ACTION_WORDS = {
+  approve: "Use this take",
+  revise: "Revise this take",
+  reject: "Keep looking",
+};
+function returnedReviewActionMarkup(item) {
+  const shotId = attr(item.shotId);
+  const name = attr(item.candidate.name);
+  const frameId = attr(item.owner.frameId);
+  const calls = {
+    approve: item.owner.kind === "shot-motion"
+      ? `approveGuidedMotion('${shotId}','${name}')`
+      : `approveGuidedFrame('${shotId}','${frameId}','${name}')`,
+    revise: `reviseReturnedResult('${shotId}','${frameId}','${name}')`,
+    reject: `rejectReturnedResult('${shotId}','${name}')`,
+  };
+  return item.actions
+    .filter((id) => calls[id])
+    .map((id) => `<button type="button" class="chip returned-review-action${id === "reject" ? " danger" : ""}" data-returned-review-action="${attr(id)}" onclick="${calls[id]}">${esc(RETURNED_REVIEW_ACTION_WORDS[id])}</button>`)
+    .join("");
+}
+/* A candidate this decision is taken AGAINST — the take being repaired, or the take
+   currently in place. Small, and it opens the real file rather than describing it. */
+function returnedReviewComparisonThumb(ref, kicker, note) {
+  if (!ref || !ref.url) return "";
+  const title = `${kicker} · ${ref.name}`;
+  const media = ref.mediaType === "video"
+    ? `<video muted preload="metadata" src="${attr(ref.url)}#t=0.1"></video>`
+    : `<img src="${attr(ref.url)}" alt="">`;
+  return `<button type="button" class="returned-review-compare" data-returned-review-compare="${attr(kicker.toLowerCase())}" onclick="openMediaTheatre('${attr(encodeURIComponent(ref.url))}','${attr(encodeURIComponent(title))}','${ref.mediaType === "video" ? "video" : "image"}')" aria-label="View ${attr(title)} larger"><span class="returned-review-compare-media">${media}</span><span><b>${esc(kicker)}</b><small>${esc(ref.name)}</small>${note ? `<em>${esc(note)}</em>` : ""}</span></button>`;
+}
+function returnedReviewCardMarkup(s, neighbors, review, readiness, next) {
+  const item = review.item;
+  const candidate = item.candidate;
+  const unitWords = item.owner.kind === "shot-motion"
+    ? "Motion"
+    : `Frame ${item.owner.frameLabel || item.owner.frameId || "A"}`;
+  /* THE HERO INSPECTS RATHER THAN MERELY ENLARGING, for O5's reason and more so here:
+     "what made this, what did it cost, and has anybody approved it" is exactly the
+     question a filmmaker asks of a result that has just come back. It hands off through
+     the shipped inspectMediaFile(), identity-first, the same call the card it replaced
+     made — so the shot workspace keeps one media-handoff convention rather than growing
+     a second one for this card. */
+  const inspect = `inspectMediaFile('${attr(encodeURIComponent(candidate.url))}','${attr(candidate.assetId || "")}','${attr(encodeURIComponent(`${unitWords} · ${candidate.name}`))}','${candidate.mediaType === "video" ? "video" : "image"}')`;
+  const media = candidate.url
+    ? candidate.mediaType === "video"
+      ? `<div class="guided-lifecycle-media"><video controls muted preload="metadata" src="${attr(candidate.url)}#t=0.1"></video><button class="media-enlarge-btn" onclick="${inspect}">Larger preview</button></div>`
+      : `<button class="guided-lifecycle-media image" onclick="${inspect}" aria-label="Inspect the returned ${attr(unitWords)} result"><img src="${attr(candidate.url)}" alt=""><span>View larger</span></button>`
+    : `<div class="guided-lifecycle-empty"><span>RETURNED RESULT</span></div>`;
+  /* THE REPAIR'S BEFORE. Read from `correction-of`, which ingest stamped from the job's
+     own source candidate — so a filmmaker never has to remember what was being fixed,
+     and CineBraid never guesses at it from a neighbouring filename. A parent that was
+     recorded and is no longer on disk SAYS SO rather than vanishing. */
+  const repair = item.repairOf
+    ? item.repairOf.state === "available"
+      ? returnedReviewComparisonThumb(item.repairOf.candidate, "Before", item.correction.intent ? `Asked to fix: ${item.correction.intent}` : "")
+      : `<div class="returned-review-compare missing" data-returned-review-compare="before"><span><b>Before</b><small>${esc(item.repairOf.name)}</small><em>Recorded as the take this repaired; the file is no longer in this project.</em></span></div>`
+    : "";
+  /* WHAT IS CURRENTLY IN PLACE, when that is a different file. */
+  const current = item.comparison && item.comparison.name !== candidate.name
+    ? returnedReviewComparisonThumb(item.comparison, "Current", item.comparison.receiptBacked ? "Approved" : "Selected, not approved")
+    : "";
+  const context = repair || current
+    ? `<div class="returned-review-context" data-returned-review-context="1">${repair}${current}</div>`
+    : "";
+  const more = review.waiting > 1
+    ? `<span class="returned-review-more">${plural(review.waiting - 1, "more returned result")} in this shot</span>`
+    : "";
+  /* THE READINESS ACTION, DEMOTED AND STILL WORKING. Its canonical label, its canonical
+     message and a control that performs it. tests/shot-truth-cohesion.js reads all three
+     off this card, which is the property that keeps "secondary" from drifting into
+     "deleted". */
+  const secondary = readiness
+    ? `<div class="returned-review-secondary" data-returned-review-secondary="${attr(readiness.nextAction?.code || "")}"><span>ALSO OUTSTANDING FOR THIS SHOT</span><b>${esc(next.label)}</b><small>${esc(next.detail)}</small><button type="button" class="chip" onclick="openShotReadinessAction('${attr(s.id)}','${attr(readiness.nextAction?.code || "")}')">${esc(next.label)}</button></div>`
+    : "";
+  const previous = neighbors.prev ? `<a href="#/shot/${neighbors.prev.id}">Previous</a>` : "";
+  const following = neighbors.next ? `<a href="#/shot/${neighbors.next.id}">Next</a>` : "";
+  return `<section class="guided-next-action returned-review-card is-ready state-readiness-${attr(String(readiness?.status || "unavailable").toLowerCase())}" data-shot-readiness="${attr(readiness?.status || "UNAVAILABLE")}" data-returned-review="1" data-returned-review-key="${attr(item.key)}" data-returned-review-owner="${attr(item.owner.kind)}" data-returned-review-unit="${attr(item.owner.unitId)}" data-returned-review-file="${attr(candidate.name)}" data-returned-review-waiting="${attr(String(review.waiting))}" data-returned-review-repair="${item.repairOf ? "1" : "0"}" style="${attr(shotCanvasStyle(s))}"><div class="guided-lifecycle-preview">${media}</div><div><span>RETURNED RESULT · ${esc(unitWords.toUpperCase())}</span><h2>Review this returned result</h2><p>This is the result that came back and needs your decision. ${esc(candidate.name)}${item.repairOf ? ` — a repair of ${esc(item.repairOf.name)}` : ""}.</p>${context}<div class="guided-next-actions"><button class="assemble-btn shot-primary-action" onclick="openReturnedResultReview('${attr(s.id)}','${attr(item.key)}')">Review this result</button>${returnedReviewActionMarkup(item)}${more}</div>${secondary}</div><nav>${previous}${following}</nav></section>`;
+}
+/* Open the shipped candidate review on the EXACT candidate the projection named. The key
+   is re-resolved here rather than trusted: between the render that drew the button and
+   the click, the candidate can have been approved, rejected or removed, and opening a
+   review of something that is no longer waiting is the phantom this slice exists to
+   prevent. It fails closed, in words, and re-renders. */
+window.openReturnedResultReview = (shotId, key) => {
+  const s = shotById(shotId);
+  if (!s) return;
+  const projection = typeof returnedReviewProjectionForBrowser === "function" ? returnedReviewProjectionForBrowser() : null;
+  const item = projection && typeof candidateReviewContext === "function" ? candidateReviewContext(projection, key) : null;
+  if (!item || !item.awaitingReview) {
+    route();
+    return toast("That returned result is no longer waiting for review");
+  }
+  if (item.owner.kind === "shot-motion") return openGuidedPanel(shotId, "motion");
+  return openCandidateReview(shotId, item.owner.frameId, item.candidate.name);
+};
+/* REVISE THIS TAKE starts the repair FROM THIS CANDIDATE, through the shipped review
+   modal — which is where a correction has always been built, and the only place the
+   issues a correction prompt is made of are recorded. Starting a repair anywhere else
+   would mean a correction with no recorded reason, which is what the provenance
+   requirement in fal-generation.js already refuses. */
+window.reviseReturnedResult = (shotId, frameId, name) => {
+  if (typeof openCandidateReview !== "function") return;
+  openCandidateReview(shotId, frameId, name);
+  toast("Record what is wrong, then BUILD CORRECTION to revise this take");
+};
+/* KEEP LOOKING disposes of this exact candidate through the shipped decision writer.
+   It is a rejection, not a deletion: the row keeps its file, its provenance and its
+   lineage, and Generated Media keeps showing it. */
+window.rejectReturnedResult = (shotId, name) => {
+  const s = shotById(shotId);
+  if (!s) return;
+  const row = typeof candidateRecord === "function" ? candidateRecord(s, name, false) : null;
+  if (!row) return toast("That candidate is no longer in this shot");
+  if (row.decision === "rejected") return toast("That candidate is already rejected");
+  setCandidateDecision(shotId, name, "rejected");
+};
 function canonicalShotReadinessCardMarkup(s, neighbors, readiness, next, action, media, available, status) {
   const previous = neighbors.prev
     ? `<a href="#/shot/${neighbors.prev.id}">Previous</a>`
@@ -2199,6 +2362,23 @@ function guidedShotStatusCard(s, takes, neighbors) {
       : `<button class="guided-lifecycle-media image" onclick="${previewAction}" aria-label="View ${attr(previewTitle)} larger"><img src="${attr(preview.url)}" alt=""><span>View larger</span></button>`
     : `<div class="guided-lifecycle-empty"><span>NO SHOT MEDIA</span></div>`;
   const readiness = typeof shotReadinessFor === "function" ? shotReadinessFor(s) : null;
+  /* SLICE 3 — RETURNED MEDIA BEATS NON-BLOCKING READINESS, AND IT BEATS THE LIFECYCLE.
+   *
+   * This is the whole priority rule, in one place, above every branch below it. A
+   * returned candidate waiting for a person outranks reference confirmation, optional
+   * preparation, generic readiness guidance and the Create Frame / Add motion
+   * promotions — because all of those are about producing the NEXT thing, and something
+   * has already come back that nobody has looked at.
+   *
+   * The two exceptions are literal rather than judged. An unreadable approval ledger
+   * (`repair-authority-ledger` / `awaiting-project-repair`) keeps the card, because a
+   * review recorded against a ledger nobody can read could not be trusted afterwards.
+   * And a candidate whose media cannot be resolved never reaches here at all — the
+   * projection excludes it and says why, so there is no card pointing at nothing. */
+  const returnedReview = shotReturnedReview(s);
+  if (returnedReview && !RETURNED_REVIEW_INTEGRITY_BLOCKERS.includes(readiness?.nextAction?.code || "")) {
+    return returnedReviewCardMarkup(s, neighbors, returnedReview, readiness, shotProductionNextAction(s, readiness));
+  }
   /* Non-final cards never fall back to media-derived lifecycle progression. When
      readiness is unavailable, saying so is safer than inventing Add motion/Create. */
   if (life.key !== "final") {

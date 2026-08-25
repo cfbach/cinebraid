@@ -55,6 +55,11 @@ const SCRIPT_ORDER = [
      It reads shared-shot-route.js, shared-generation-options.js and readiness's
      ANIMATE_METHOD_PROBES, all three of which are already above it here. */
   "shared-shot-intent.js",
+  /* Slice 3. The returned-review projection. It reads shared-production-media.js —
+     already above it here — and public/app.js derives the Returned Results queue
+     through it, so a harness without it would render a shot workspace that could not
+     tell whether a returned candidate was waiting. */
+  "shared-returned-review.js",
   "bounded-rendering.js",
   "app.js",
   "media.js",

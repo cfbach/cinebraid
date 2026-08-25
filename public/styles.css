@@ -5432,3 +5432,37 @@ body[data-focused-workspace="1"] .guided-frame-body,
 .gen-view-unsupported li span{font-size:10px}
 .gen-view-unsupported li small,.gen-view-unsupported>small{color:var(--muted);font-size:9px;line-height:1.45}
 @media (prefers-reduced-motion:no-preference){.gen-view-tab{transition:background .12s ease,color .12s ease}}
+
+/* SLICE 3 — THE RETURNED-RESULT CARD.
+
+   It reuses .guided-next-action wholesale rather than introducing a second hero shape:
+   the same grid, the same preview well, the same aspect handling, the same one primary
+   button. What it adds is the context a decision about returned media needs — the take
+   this repairs, the take currently in place, and the readiness action it is standing in
+   front of — and all three are compact by construction so the card does not grow past
+   the fold it was put above. */
+.returned-review-card{border-left-color:var(--accent)}
+.returned-review-context{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 10px}
+.returned-review-compare{display:flex;gap:8px;align-items:center;text-align:left;padding:5px 8px 5px 5px;border:1px solid var(--line);border-radius:9px;background:var(--surface-2);color:inherit;max-width:100%}
+.returned-review-compare>span:last-child{display:grid;gap:1px;min-width:0}
+.returned-review-compare b{font:700 9px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.returned-review-compare small{font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:220px}
+.returned-review-compare em{font-style:normal;font-size:9px;color:var(--muted);line-height:1.4}
+.returned-review-compare-media{width:46px;height:46px;border-radius:7px;overflow:hidden;background:var(--img-well-bg);display:grid;place-items:center;flex:0 0 auto}
+.returned-review-compare-media img,.returned-review-compare-media video{width:100%;height:100%;object-fit:cover}
+.returned-review-compare.missing{align-items:flex-start;padding:7px 9px}
+.returned-review-more{align-self:center;font-size:10px;color:var(--muted)}
+/* SECONDARY, NOT HIDDEN. The readiness action keeps its own words, its own message and
+   a working control; what it loses is the first line of the card. */
+.returned-review-secondary{display:grid;gap:2px;margin-top:11px;padding:8px 10px;border:1px solid var(--line);border-radius:9px;background:var(--surface-2);justify-items:start}
+.returned-review-secondary>span{font:700 8px var(--mono);letter-spacing:.12em;color:var(--muted)}
+.returned-review-secondary>b{font-size:11px}
+.returned-review-secondary>small{color:var(--muted);font-size:9.5px;line-height:1.45}
+.returned-review-secondary>.chip{margin-top:5px}
+@media(max-width:900px){.returned-review-compare small{max-width:150px}}
+/* A RETURNED RESULT IS NAMED BY ITS FILENAME, and a generated filename has no spaces in
+   it — `SH010_FRAME_A_CORRECTION_FAL_1.png` is one unbreakable token. Left to the default
+   wrapping rule it pushes the card's middle column wider than its track and the sentence
+   is clipped, which the shipped visual audit in tests/production-media-real-browser.py
+   catches at 1280px. The name has to be in the sentence, so the sentence has to break. */
+.returned-review-card p,.returned-review-secondary>small,.returned-review-compare em{overflow-wrap:anywhere}
