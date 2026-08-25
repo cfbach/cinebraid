@@ -2003,12 +2003,25 @@ function guidedPromptModeLabel(mode) {
     "multi-reference": "Compose approved references",
   }[mode] || "Create shot image";
 }
+/* WHICH VIDEO THIS SHOT IS WORKING FROM. A pointer question, deliberately — the
+   candidate list is a workflow fact — but `final` is NOT a pointer question, so it
+   is the one field here that comes from the shared delivery projection instead of
+   from `finalVideoFile`. A stale pointer used to mark a take `final: true` with no
+   receipt behind it. */
 function guidedApprovedMotion(s, takes = takesFor(s.id)) {
   const c = ensureShotCreation(s);
-  const names = [c.finalVideoFile, c.approvedMotionFile, ...(s.clips || []).map((clip) => clip.videoWinner)].filter(Boolean);
+  const delivery = shotDeliveryAuthority(P, s);
+  /* `finalVideoFile` IS NOT IN THIS LIST, and its absence is the point. It is a
+     DELIVERY pointer, and reading it here answered a MOTION question with it: a
+     stale one made a returned video read as the approved motion take, which made
+     the lifecycle say "Motion approved" and the Motion stage say Complete with no
+     `approve-shot-motion` receipt anywhere. `approvedMotionFile` — which the kernel
+     itself writes when a video is finalised — and the units' own `videoWinner`
+     remain, so a genuinely delivered video still resolves. */
+  const names = [c.approvedMotionFile, ...(s.clips || []).map((clip) => clip.videoWinner)].filter(Boolean);
   for (const name of [...new Set(names)]) {
     const take = takes.find((item) => item.name === name && isVideo(item.name));
-    if (take) return { ...take, final: c.finalVideoFile === name };
+    if (take) return { ...take, final: delivery.final && delivery.value === name };
   }
   return null;
 }
@@ -2018,11 +2031,22 @@ function guidedShotLifecycle(s, takes = takesFor(s.id)) {
   const motion = guidedApprovedMotion(s, takes);
   const images = takes.filter((take) => !isVideo(take.name) && !isAudio(take.name));
   const videos = takes.filter((take) => isVideo(take.name));
-  const finalStill = c.finalStillFile && images.find((take) => take.name === c.finalStillFile);
-  const finalVideo = c.finalVideoFile && videos.find((take) => take.name === c.finalVideoFile);
+  /* THE ONE ANSWER TO "IS THIS SHOT FINAL", ASKED OF THE ONE OWNER.
+     These two used to read `c.finalStillFile` / `c.finalVideoFile` directly, which
+     is how a stale pointer with no `approve-shot-delivery` receipt behind it put
+     "Shot delivered" and "The final still is locked for delivery" on the screen
+     while readiness beside it said Mark shot final. The pointer still says which
+     FILE; only the projection says whether anybody decided. */
+  const delivery = shotDeliveryAuthority(P, s);
+  const finalStill = delivery.final && delivery.form !== "video"
+    ? images.find((take) => take.name === delivery.value) || null
+    : null;
+  const finalVideo = delivery.final && delivery.form === "video"
+    ? videos.find((take) => take.name === delivery.value) || null
+    : null;
   const motionPlanned = !!String(c.motionDirection || s.motionPrompt || "").trim() || (s.clips || []).length > 0;
   const intent = c.deliveryIntent === "auto" ? (motionPlanned ? "motion" : "undecided") : c.deliveryIntent;
-  if (finalVideo || finalStill) return { key: "final", label: "Final", title: "Shot delivered", note: finalVideo ? "The final video is locked for delivery." : "The final still is locked for delivery.", panel: "finish", current, motion, finalStill, finalVideo, intent, images, videos };
+  if (delivery.final && (finalVideo || finalStill)) return { key: "final", label: "Final", title: "Shot delivered", note: finalVideo ? "The final video is locked for delivery." : "The final still is locked for delivery.", panel: "finish", current, motion, finalStill, finalVideo, intent, images, videos };
   if (motion) return { key: "motion-approved", label: "Motion approved", title: "Finish the approved video", note: "The motion take is approved. Upscale, clean up, or mark it final.", panel: "finish", current, motion, intent, images, videos };
   if (videos.length) return { key: "review-motion", label: "Video returned", title: "Review the returned video", note: "Choose the motion take to approve, or upload another version.", panel: "motion", current, motion, intent, images, videos };
   if (current && intent === "motion") return { key: "animate", label: "Still approved", title: "Animate the approved still", note: "The opening image is ready. Add movement and audio only if this shot needs video.", panel: "motion", current, motion, intent, images, videos };
@@ -3365,7 +3389,9 @@ function guidedMotionPanel(s, current, takes, open = false) {
 function guidedFinishPanel(s, approved, current, open = false) {
   const c = ensureShotCreation(s), source = approved || current;
   const jobs = shotFinishJobs(s.id).filter((job) => !source || job.sourceFile === source.name || (approved && isVideo(job.sourceFile || "")));
-  const isFinal = !!(c.finalVideoFile || c.finalStillFile), media = approved || current;
+  /* One owner, again: FINAL / "Final delivery locked" / "Marked final" are three
+     renderings of a decision, not of a pointer. */
+  const isFinal = shotDeliveryAuthority(P, s).final, media = approved || current;
   return `<details class="guided-work-panel guided-finish-card" data-guided-panel="finish" ${guidedPanelOpen(s, "finish", open) ? "open" : ""} ontoggle="rememberGuidedPanel('${s.id}','finish',this.open)"><summary><div><span>FINISH & DELIVERY</span><b>${isFinal ? "Final delivery locked" : approved ? "Approved video ready to finish" : current ? "Approved still ready" : "No approved result yet"}</b><small>Upscale, repair, or mark the approved still or video final.</small></div><span class="guided-mode-pill ${isFinal ? "ready" : ""}">${isFinal ? "FINAL" : jobs.length ? `${jobs.length} JOB${jobs.length === 1 ? "" : "S"}` : "OPTIONAL"}</span><i>⌄</i></summary><div class="guided-work-panel-body">${media ? `<div class="guided-finish-current"><div class="guided-finish-preview">${isVideo(media.name) ? `<video controls preload="metadata" src="${attr(media.url)}#t=0.1"></video>` : `<button class="guided-thumb-preview" onclick="openMediaTheatre('${attr(encodeURIComponent(media.url))}','${attr(encodeURIComponent(media.name))}','image')"><img src="${attr(media.url)}" alt=""><span>View larger</span></button>`}<button class="media-enlarge-btn" onclick="openMediaTheatre('${attr(encodeURIComponent(media.url))}','${attr(encodeURIComponent(media.name))}','${isVideo(media.name) ? "video" : "image"}')">Larger preview</button></div><div><b>${esc(media.name)}</b><small>${approved ? "Approved motion take" : "Approved shot still"}</small><div><button class="ghost-btn" onclick="${approved ? `queueGuidedVideoFinish('${s.id}','${attr(media.name)}')` : `markCandidateForFinish('${s.id}','${attr(media.name)}')`}">Finish</button>${isFinal ? `<span class="prompt-check ok">Marked final</span>` : approved ? `<button class="approve-btn" onclick="markGuidedVideoFinal('${s.id}','${attr(media.name)}')">Finalize</button>` : `<button class="approve-btn" onclick="markGuidedStillFinal('${s.id}','${attr(media.name)}')">Finalize</button>`}</div></div></div>` : `<div class="guided-empty-inline"><b>No approved result yet.</b><span>Upload and approve a still or video first.</span></div>`}${jobs.length ? `<div class="guided-finish-jobs">${jobs.map((job) => `<button onclick="editFinishJob('${job.id}')"><b>${esc(job.type || "finish")}</b><span>${esc(job.status || "ready")} · ${esc(job.targetResolution || "no target set")}</span></button>`).join("")}</div>` : ""}</div></details>`;
 }
 

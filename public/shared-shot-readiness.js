@@ -411,6 +411,11 @@
   const historicSelection = requireOwner(AUTHORITY && AUTHORITY.historicSelection, "historicSelection", "shared-production-authority.js");
   const authorityTargetOf = requireOwner(AUTHORITY && AUTHORITY.authorityTarget, "authorityTarget", "shared-production-authority.js");
   const validateAuthorityLedger = requireOwner(KERNEL && KERNEL.validateAuthorityLedger, "validateAuthorityLedger", "shared-authority-kernel.js");
+  /* Asked ONLY for `form` — which half of the delivery pointer a value occupies —
+     because the kernel decides that with its own extension rule and a second rule
+     here would disagree about .m4v, .avi and .mkv. It is never asked whether the
+     shot is final; that is currentHumanAuthority()'s answer and nothing else's. */
+  const liveAuthorityEdgeOwner = requireOwner(KERNEL && KERNEL.liveAuthorityEdge, "liveAuthorityEdge", "shared-authority-kernel.js");
   const resolveApprovalMediaOwner = requireOwner(DISPOSITION && DISPOSITION.resolveApprovalMedia, "resolveApprovalMedia", "shared-media-disposition.js");
   const shotDependencyRecordsOwner = requireOwner(ENTITIES && ENTITIES.shotDependencyRecords, "shotDependencyRecords", "shared-entities.js");
   const shotStateBearingEntityRecordsOwner = requireOwner(ENTITIES && ENTITIES.shotStateBearingEntityRecords, "shotStateBearingEntityRecords", "shared-entities.js");
@@ -1291,15 +1296,13 @@
      so inventing a second code would have split one destination in two. The
      message says which situation this is; the code says what to do about it. */
   function deliveryDecision(project, shot) {
-    const shotId = text(record(shot).id);
-    if (!shotId) return null;
-    const target = { kind: "shot-delivery", shotId };
-    if (currentHumanAuthority(project, target)) return null;
-    const historic = historicSelection(project, target);
-    if (historic && text(historic.value)) {
+    const delivery = shotDeliveryAuthority(project, shot);
+    if (!text(delivery.shotId)) return null;
+    if (delivery.final) return null;
+    if (delivery.stale) {
       return action(
         "mark-shot-final",
-        `This shot points at ${text(historic.value)} as its finished result, but nobody has marked the shot final. Mark it final to record the decision, or choose a different result.`,
+        `This shot points at ${delivery.pointer} as its finished result, but nobody has marked the shot final. Mark it final to record the decision, or choose a different result.`,
         1,
       );
     }
@@ -1308,6 +1311,74 @@
       "The approved result is ready. Mark this shot final to record that it is finished — sending it to finishing first is optional.",
       1,
     );
+  }
+
+  /* ==========================================================================
+     IS THIS SHOT FINAL? THE ONE ANSWER, AND EVERY SURFACE THAT SHOWS THE WORD
+     FINAL, DELIVERED, LOCKED OR COMPLETE ABOUT A SHOT READS IT FROM HERE.
+
+     THE DEFECT THIS EXISTS TO END. `finalStillFile`, `finalVideoFile` and
+     `approvedMotionFile` are POINTERS. They say which file the shot's finished
+     result is, and they are written and cleared by several things — a rename
+     repair, a duplicate, a legacy project, a migration. They have never meant
+     that a person decided the shot was done; `approve-shot-delivery` means that.
+     A shot carrying a stale pointer with no receipt behind it therefore reported,
+     simultaneously and truthfully-per-surface:
+
+         authority kernel   no current delivery authority
+         readiness          NEEDS_DECISION / mark-shot-final
+         shot board         not delivered
+         lifecycle          "Shot delivered"
+         Deliver stage      "Complete"
+         Finish panel       "Final delivery locked" / FINAL / "Marked final"
+
+     Six answers, one shot, and the three loudest were wrong. Fixing the strings
+     one at a time would have left the sixth surface to be found later, so there
+     is one projection instead and the strings are its renderings.
+
+     WHAT IT RETURNS, and why `pointer` is in it. A caller sometimes has to SAY
+     that a pointer exists — the readiness message names the file so a filmmaker
+     recognises it — so the pointer is reported, under a name that cannot be
+     mistaken for authority, beside `stale: true`. `value` is the receipt's file
+     and is empty unless `final` is true. A surface that renders `value` can never
+     accidentally render an unvouched pointer, because there is nothing there.
+
+     IT ASKS THE KERNEL AND READS NO EDGE. `currentHumanAuthority` decides;
+     `historicSelection` names the unvouched pointer when there is one and states
+     why it is unvouched; `liveAuthorityEdge` is asked only which HALF of the
+     delivery pointer holds the value, because that rule is the kernel's. Nothing
+     here reads `finalStillFile`, and a test forbids the name. */
+  function shotDeliveryAuthority(project, shot) {
+    const P = record(project);
+    const shotId = text(record(shot).id);
+    const empty = { shotId, final: false, form: "", value: "", assetId: "", stale: false, pointer: "", basis: "" };
+    if (!shotId) return deepFreeze(empty);
+    const target = { kind: "shot-delivery", shotId };
+    const edge = record(liveAuthorityEdgeOwner(P, target));
+    const receipt = record(currentHumanAuthority(P, target));
+    if (text(receipt.id)) {
+      return deepFreeze({
+        ...empty,
+        final: true,
+        form: text(edge.form),
+        value: text(receipt.value),
+        assetId: text(receipt.assetId),
+      });
+    }
+    /* NO CURRENT AUTHORITY. Whether a pointer is sitting there unvouched changes
+       the SENTENCE and never the verdict. `historicSelection` also states which
+       kind of unvouched it is — never approved, approval withdrawn, or a ledger
+       nobody can read — which is the difference between "confirm this" and
+       "repair the project first". */
+    const historic = record(historicSelection(P, target));
+    const pointer = text(historic.value) || text(edge.value);
+    return deepFreeze({
+      ...empty,
+      form: pointer ? text(edge.form) : "",
+      stale: !!pointer,
+      pointer,
+      basis: text(historic.basis),
+    });
   }
 
   /* ==========================================================================
@@ -1604,6 +1675,7 @@
     ANIMATE_METHOD_PROBES,
     shotRouteInputNeeds,
     productionInputSatisfaction,
+    shotDeliveryAuthority,
     evaluateShotReadiness,
     evaluateProjectReadiness,
     historicConfirmationQueue,

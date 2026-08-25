@@ -390,6 +390,216 @@ async function nc4() {
 }
 
 /* ===========================================================================
+   NC-UX1-5 — RESTORE THE STALE-POINTER RIVAL FINAL AUTHORITY.
+
+   The independent review's P0. `guidedShotLifecycle` goes back to reading
+   `creationBrief.finalStillFile` directly, which is what every visible final /
+   delivered / locked surface used to be derived from. The shot has that pointer and
+   NO `approve-shot-delivery` receipt, so the kernel, readiness and the shot board
+   all say it is not delivered — and three louder surfaces say it is.
+   =========================================================================== */
+
+const NC5_ANCHOR = `  const delivery = shotDeliveryAuthority(P, s);
+  const finalStill = delivery.final && delivery.form !== "video"
+    ? images.find((take) => take.name === delivery.value) || null
+    : null;
+  const finalVideo = delivery.final && delivery.form === "video"
+    ? videos.find((take) => take.name === delivery.value) || null
+    : null;`;
+const NC5_BREAK = `  const delivery = { final: false, form: "", value: "", stale: false, pointer: "", basis: "" };
+  const finalStill = c.finalStillFile && images.find((take) => take.name === c.finalStillFile);
+  const finalVideo = c.finalVideoFile && videos.find((take) => take.name === c.finalVideoFile);`;
+const NC5_GATE = `  if (delivery.final && (finalVideo || finalStill)) return { key: "final",`;
+const NC5_GATE_BREAK = `  if (finalVideo || finalStill) return { key: "final",`;
+const NC5_PANEL = `  const isFinal = shotDeliveryAuthority(P, s).final, media = approved || current;`;
+const NC5_PANEL_BREAK = `  const isFinal = !!(c.finalVideoFile || c.finalStillFile), media = approved || current;`;
+
+/* A shot carrying a delivery pointer that no receipt vouches for. */
+function stalePointerProject() {
+  const project = rawFixture();
+  const shot = stillShot(project.shots[0], "L1-01", "SC-01", "FRAME_A.png");
+  shot.finalStillFile = "FRAME_A.png";
+  shot.creationBrief.finalStillFile = "FRAME_A.png";
+  project.shots = [shot];
+  return withCanon(project, [...CAST_CANON, { kind: "shot-frame", shotId: "L1-01", frameId: "frame-a", value: "FRAME_A.png" }]);
+}
+
+async function nc5() {
+  anchorIn("public/creation-studio.js", NC5_ANCHOR, "NC-UX1-5 lifecycle");
+  anchorIn("public/creation-studio.js", NC5_GATE, "NC-UX1-5 gate");
+  anchorIn("public/creation-studio.js", NC5_PANEL, "NC-UX1-5 panel");
+
+  const project = stalePointerProject();
+  const page = await render("#/shot/L1-01", project, {
+    scan: scanWith(project, { "L1-01": ["FRAME_A.png"] }),
+    mutateSource: (name, contents) => {
+      if (name !== "creation-studio.js") return contents;
+      return String(contents).replace(/\r\n/g, "\n")
+        .split(NC5_ANCHOR).join(NC5_BREAK)
+        .split(NC5_GATE).join(NC5_GATE_BREAK)
+        .split(NC5_PANEL).join(NC5_PANEL_BREAK);
+    },
+  });
+
+  /* 1. THE DEFECT — SIX SURFACES, ONE SHOT, THREE OF THEM WRONG. */
+  const seen = await evaluateAsync(page.context, `
+    const shot = P.shots[0];
+    const takes = takesFor(shot.id);
+    const readiness = shotReadinessFor(shot);
+    const life = guidedShotLifecycle(shot, takes);
+    const facts = shotStageModelFacts(shot, takes);
+    const deliver = shotStageState("deliver", facts);
+    const panel = guidedFinishPanel(shot, guidedApprovedMotion(shot, takes), guidedCurrentShotStill(shot, takes));
+    return ({
+      kernel: !!currentHumanAuthority(P, { kind: "shot-delivery", shotId: shot.id }),
+      readinessStatus: readiness.status,
+      readinessCode: readiness.nextAction.code,
+      board: shotBoardActionCategory(shot, readiness),
+      lifecycleKey: life.key,
+      lifecycleLabel: life.label,
+      lifecycleTitle: life.title,
+      lifecycleNote: life.note,
+      deliverCompletion: deliver.completion,
+      deliverWord: STAGE_STATUS[deliver.statusKey] || deliver.statusKey,
+      finishSummary: (panel.split("<b>")[1] || "").split("</b>")[0],
+      finishBadge: (panel.split('guided-mode-pill ready">')[1] || "").split("<")[0],
+      finishMarkedFinal: panel.includes("Marked final"),
+    });
+  `);
+
+  equal(seen.kernel, false, "NC-UX1-5 precondition: no current shot-delivery authority exists");
+  equal(seen.readinessCode, "mark-shot-final", "NC-UX1-5 precondition: readiness still asks for the decision");
+  equal(seen.board, "review", "NC-UX1-5 precondition: and the shot board still says it is not delivered");
+  /* …while three surfaces derived from the pointer say the opposite, in words. */
+  equal(seen.lifecycleKey, "final", "NC-UX1-5 reproduces the rival lifecycle verdict");
+  equal(seen.lifecycleLabel, "Final", "labelled Final");
+  equal(seen.lifecycleTitle, "Shot delivered", "titled Shot delivered");
+  ok(seen.lifecycleNote.includes("locked for delivery"), "and noted as locked for delivery: " + seen.lifecycleNote);
+  equal(seen.deliverCompletion, "complete", "the Deliver stage reports complete");
+  equal(seen.deliverWord, "Complete", "and renders the word Complete");
+  equal(seen.finishSummary, "Final delivery locked", "Finish & Delivery says the delivery is locked");
+  equal(seen.finishBadge, "FINAL", "with a FINAL badge");
+  equal(seen.finishMarkedFinal, true, "and a Marked final state");
+
+  /* 2. AND THE INVARIANT GOES RED. */
+  await mustFail("NC-UX1-5 lifecycle", "no visible surface may claim the shot is delivered", () => {
+    assert.notStrictEqual(seen.lifecycleKey, "final",
+      "with no current shot-delivery authority, no visible surface may claim the shot is delivered");
+  });
+  await mustFail("NC-UX1-5 deliver stage", "may claim the shot is delivered", () => {
+    assert.notStrictEqual(seen.deliverCompletion, "complete",
+      "with no current shot-delivery authority, no stage may claim the shot is delivered");
+  });
+  await mustFail("NC-UX1-5 finish panel", "may claim the shot is delivered", () => {
+    assert(!seen.finishMarkedFinal && seen.finishSummary !== "Final delivery locked",
+      "with no current shot-delivery authority, Finish & Delivery may claim the shot is delivered nowhere");
+  });
+
+  note(`NC-UX1-5 restored the stale-pointer rival: kernel=no authority, readiness=${seen.readinessCode}, board=${seen.board} — beside "${seen.lifecycleTitle}", Deliver=${seen.deliverWord}, "${seen.finishSummary}", badge ${seen.finishBadge}`);
+}
+
+/* ===========================================================================
+   NC-UX1-6 — RESTORE PRODUCE-BEFORE-REVIEW ROUTING.
+
+   The returned-review tier is removed from the canonical ordering, so the project
+   recommends generating a second candidate for a frame whose first candidate is
+   still sitting unreviewed.
+   =========================================================================== */
+
+const NC6_ANCHOR = `  const returned = returnedResultsAwaitingReview();
+  if (returned.length) {`;
+const NC6_BREAK = `  const returned = [];
+  if (returned.length) {`;
+
+async function nc6() {
+  anchorIn("public/app.js", NC6_ANCHOR, "NC-UX1-6");
+
+  const project = rawFixture();
+  project.shots = [stillShot(project.shots[0], "L1-01", "SC-01", "")];
+  withCanon(project, CAST_CANON);
+
+  const page = await render("#/production", project, {
+    scan: scanWith(project, { "L1-01": ["FRAME_A.png"] }),
+    mutateSource: replacing("app.js", NC6_ANCHOR, NC6_BREAK),
+  });
+
+  /* 1. THE DEFECT: THE INBOX AND THE PRIMARY ACTION DISAGREE ABOUT WHAT TO DO. */
+  const seen = await evaluateAsync(page.context, `
+    const feed = projectShotReadiness();
+    const home = await productionHomeView();
+    const inbox = productionResultInbox();
+    return ({
+      returned: returnedResultsAwaitingReview().length,
+      decisions: projectFilmmakerDecisions(feed).count,
+      inboxHeadline: (inbox.split("<h2>")[1] || "").split("</h2>")[0],
+      next: projectNextProductionAction(feed),
+      homeCta: (home.split('class="assemble-btn" href="#/shot/L1-01">')[1] || "").split(" ")[0],
+    });
+  `);
+
+  equal(seen.returned, 1, "NC-UX1-6 precondition: one returned candidate is awaiting review");
+  equal(seen.decisions, 0, "NC-UX1-6 precondition: and no filmmaker decision is outstanding");
+  equal(seen.inboxHeadline, "1 returned result waiting for review",
+    "Returned Results correctly says a result is waiting");
+  equal(seen.next.kind, "shot", "NC-UX1-6 reproduces the routing defect");
+  equal(seen.next.actionLabel, "PRODUCE THE FRAME",
+    "the primary action tells the filmmaker to generate another candidate for the frame whose first candidate nobody has looked at");
+
+  /* 2. AND THE GUARANTEE GOES RED. */
+  await mustFail("NC-UX1-6", "must route to reviewing it", () => {
+    assert.strictEqual(seen.next.kind, "returned-result",
+      "with returned media awaiting review and no higher-priority blocker, the primary action must route to reviewing it");
+  });
+  await mustFail("NC-UX1-6 wording", "must not tell the filmmaker to produce more", () => {
+    assert(!/produce/i.test(seen.next.actionLabel),
+      "the primary action must not tell the filmmaker to produce more media while a returned result waits");
+  });
+
+  note(`NC-UX1-6 restored produce-before-review: "${seen.inboxHeadline}" beside a primary action reading ${seen.next.actionLabel}`);
+}
+
+/* ===========================================================================
+   NC-UX1-7 — RESTORE THE DELIVERED -> FINAL TERMINOLOGY EXPANSION.
+
+   The board filter taxonomy is renamed, which is what the corrective commit
+   reverted. The shipped clarity contract pins the not-delivered filter, so this
+   control proves the rename is visible AND that the contract catches it.
+   =========================================================================== */
+
+const NC7_ANCHOR = `[["unfinished","Not delivered"]`;
+const NC7_BREAK = `[["unfinished","Not final"]`;
+
+async function nc7() {
+  anchorIn("public/app.js", NC7_ANCHOR, "NC-UX1-7");
+
+  const project = rawFixture();
+  project.shots = [stillShot(project.shots[0], "L1-01", "SC-01", "FRAME_A.png")];
+  withCanon(project, CAST_CANON);
+
+  const page = await render("#/shots/board", project, {
+    scan: scanWith(project, { "L1-01": ["FRAME_A.png"] }),
+    mutateSource: replacing("app.js", NC7_ANCHOR, NC7_BREAK),
+  });
+  const seen = await evaluateAsync(page.context, `
+    const filters = shotBoardActionFilters();
+    return ({ labels: [...filters.matchAll(/<span>([^<]*)<\\/span>/g)].map((m) => m[1]) });
+  `);
+
+  /* 1. THE DEFECT, AS A READER SEES IT. */
+  ok(seen.labels.includes("Not final"), "NC-UX1-7 reproduces the renamed filter: " + seen.labels.join(" · "));
+  ok(!seen.labels.includes("Not delivered"), "and the shipped label is gone");
+
+  /* 2. AND THE SHIPPED CONTRACT GOES RED. The mutated source is checked against the
+     assertion clarity-consolidation.js actually makes, rather than a paraphrase. */
+  const mutated = readLF("public/app.js").split(NC7_ANCHOR).join(NC7_BREAK);
+  await mustFail("NC-UX1-7", "shot board must offer the not-delivered filter", () => {
+    assert(mutated.includes("Not delivered"), "shot board must offer the not-delivered filter");
+  });
+
+  note("NC-UX1-7 restored the Delivered -> Final rename: filters read " + seen.labels.join(" · "));
+}
+
+/* ===========================================================================
    THE CONTROLS THEMSELVES ARE NOT SELF-DEFEATING.
 
    Each anchor above must be absent from the shipped source once mutated and present
@@ -421,7 +631,7 @@ async function shippedBuildIsGreen() {
   assert.deepStrictEqual([...new Set(seen.numbers)], [1],
     "and renders that one number wherever the page says decision: " + JSON.stringify(seen.numbers));
   checks += 1;
-  note("the shipped build is green on every claim the four controls broke");
+  note("the shipped build is green on every claim the seven controls broke");
 }
 
 /* ========================================================================== */
@@ -431,6 +641,9 @@ async function main() {
   await nc2();
   await nc3();
   await nc4();
+  await nc5();
+  await nc6();
+  await nc7();
   await shippedBuildIsGreen();
 }
 

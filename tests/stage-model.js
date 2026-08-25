@@ -273,11 +273,18 @@ async function checkRepresentativeStates() {
   assert.strictEqual(S5.byId.frames.completion, "complete", "required frames are approved even though an optional frame is not");
   record("S5 reference-rich: optional Frame B unapproved, motion still available", S5.byId);
 
-  /* S6 — delivered. A final still is recorded on the shot. */
+  /* S6 — delivered. A final still is recorded on the shot AND the filmmaker's
+     decision to deliver it is on the ledger. Both halves, because the pointer alone
+     is not the state: the Deliver stage reads `lifecycleKey`, the lifecycle asks
+     shotDeliveryAuthority(), and that asks the kernel for an `approve-shot-delivery`
+     receipt. A fixture with the pointer and no receipt is the RIVAL-AUTHORITY case,
+     which tests/readiness-action-projection.js owns and asserts is NOT delivered. */
   const delivered = authoritativeFixture("i2v");
   delivered.shots[0].keyframes = [delivered.shots[0].keyframes[0]];
   delivered.shots[0].clips = [];
   delivered.shots[0].creationBrief = { finalStillFile: "FRAME_A.png" };
+  delivered.shots[0].finalStillFile = "FRAME_A.png";
+  withCanon(delivered, [{ kind: "shot-delivery", shotId: delivered.shots[0].id, value: "FRAME_A.png" }]);
   const S6 = await stagesFor(delivered, ["FRAME_A.png"]);
   assert.strictEqual(S6.facts.lifecycleKey, "final", "the fixture must actually reach the delivered lifecycle");
   assert.strictEqual(S6.byId.deliver.completion, "complete");

@@ -281,9 +281,9 @@ async function ux1_2_markFinal() {
       cardKicker: (card.split("<div><span>")[1] || "").split("</span>")[0],
       cardPromotesWork: /Mark shot final|Produce the|Prepare |Approve /.test(card),
       decisions: decisions.count,
-      final: decisions.final,
+      delivered: decisions.delivered,
       next: projectNextProductionAction(),
-      homeComplete: home.includes("All 1 shot are marked final") || home.includes("marked final"),
+      homeComplete: home.includes("All 1 shot are delivered") || home.includes("delivered"),
       home,
     };
   `);
@@ -296,9 +296,9 @@ async function ux1_2_markFinal() {
   equal(after.cardPromotesWork, false, "no primary card promotes ordinary unfinished work on a final shot");
   ok(after.cardKicker.includes("SHOT COMPLETE"), "the shot card states completion instead: " + after.cardKicker);
   equal(after.decisions, 0, "the project's decision count drops to zero");
-  deepEqual(after.final, ["L1-01"], "and the shot is reported as final by the one projection");
+  deepEqual(after.delivered, ["L1-01"], "and the shot is reported as delivered by the one projection");
   equal(after.next, null, "the project has no next production action");
-  ok(after.homeComplete, "and Production says every shot is marked final");
+  ok(after.homeComplete, "and Production says every shot is delivered");
   deepEqual([...new Set(decisionNumbersIn(after.home))], [0],
     "and every decision number rendered on the page is zero: " + JSON.stringify(decisionNumbersIn(after.home)));
 
@@ -539,12 +539,12 @@ async function ux1_6_sceneCompletion() {
     };
   `);
 
-  deepEqual(payload.complete, { available: true, total: 2, count: 0, blocked: 0, final: 2, unanswerable: 0 },
+  deepEqual(payload.complete, { available: true, total: 2, count: 0, blocked: 0, delivered: 2, unanswerable: 0 },
     "a scene whose active shots are all final has no outstanding filmmaker decision");
   equal(payload.open.count, 1, "the neighbouring scene's own decision is unaffected");
   ok(payload.completeCardClass.includes("is-complete"), "the finished scene's card is marked complete");
   ok(/Scene complete/.test(payload.cards[0]), "and says so: " + payload.cards[0]);
-  ok(/2\/2 final/.test(payload.cards[0]), "with the count that makes it true");
+  ok(/2\/2 delivered/.test(payload.cards[0]), "with the count that makes it true");
   equal(payload.approveScene, false, "and no separate Approve Scene step is invented anywhere on the page");
   ok(!/1 shot needs a decision/.test(payload.cards[0]),
     "the complete scene fabricates no pending decision of its own");
@@ -707,6 +707,369 @@ async function noParallelProjection() {
   note("no parallel projection survives: one vocabulary, one destination each, one owner, and the rollup never reads a delivery edge");
 }
 
+/* ===========================================================================
+   UX1-9 — ONE FINAL / DELIVERY AUTHORITY.
+
+   The review's P0. `finalStillFile`, `finalVideoFile` and `approvedMotionFile` are
+   pointers: a rename repair, a duplicate, a legacy project or a migration can leave
+   one standing with no `approve-shot-delivery` receipt behind it. Six surfaces read
+   them and three of those said the shot was delivered while the kernel, readiness
+   and the shot board said it was not.
+
+   THE INVARIANT, in both directions:
+
+     no current shot-delivery authority
+       => no visible surface claims final / delivered / locked / complete
+     current shot-delivery authority
+       => every final/delivery surface agrees
+
+   Eight fixtures, each read through EVERY surface at once, in one realm, at one
+   moment — because the defect was never one surface being wrong, it was six
+   surfaces being asked separately.
+   =========================================================================== */
+
+/* Every consumer of shot-final truth, read together. */
+const DELIVERY_SURFACES = `
+  const shot = P.shots[0];
+  const takes = takesFor(shot.id);
+  const readiness = shotReadinessFor(shot);
+  const life = guidedShotLifecycle(shot, takes);
+  const facts = shotStageModelFacts(shot, takes);
+  const deliver = shotStageState("deliver", facts);
+  const motion = shotStageState("motion", facts);
+  const panel = guidedFinishPanel(shot, guidedApprovedMotion(shot, takes), guidedCurrentShotStill(shot, takes));
+  const card = guidedShotStatusCard(shot, takes, { prev: null, next: null });
+  const projection = shotDeliveryAuthority(P, shot);
+  return ({
+    kernel: !!currentHumanAuthority(P, { kind: "shot-delivery", shotId: shot.id }),
+    projection,
+    readinessStatus: readiness.status,
+    readinessCode: readiness.nextAction.code,
+    readinessMessage: readiness.nextAction.message,
+    board: shotBoardActionCategory(shot, readiness),
+    shotIsDelivered: shotIsDelivered(shot),
+    lifecycleKey: life.key,
+    lifecycleLabel: life.label,
+    lifecycleTitle: life.title,
+    lifecycleNote: life.note,
+    motionFinalFlag: !!(life.motion && life.motion.final),
+    deliverCompletion: deliver.completion,
+    deliverWord: STAGE_STATUS[deliver.statusKey] || deliver.statusKey,
+    motionCompletion: motion.completion,
+    panel,
+    card,
+    decisions: projectFilmmakerDecisions().count,
+    delivered: projectFilmmakerDecisions().delivered,
+  });
+`;
+
+/* THE CLAIM WORDS, hunted in the rendered markup rather than asserted per string —
+   a surface added later cannot escape this by using a phrase nobody listed. */
+const FINAL_CLAIMS = ["Final delivery locked", "Marked final", "Shot delivered", "locked for delivery", "SHOT COMPLETE"];
+
+function deliveryFixture({ pointer = "", form = "still", receipt = false, motionApproved = false, frame = "FRAME_A.png", clips = false } = {}) {
+  const project = rawFixture();
+  const shot = stillShot(project.shots[0], "L1-01", { winner: frame });
+  if (clips) {
+    shot.clips = [{ id: "motion-a", label: "A", suffix: "a", title: "Move", kind: "i2v", fromFrame: "frame-a", toFrame: "", dur: 5, motionPrompt: "He moves.", generationPackages: [] }];
+    shot.deliveryRoute = "i2v";
+    shot.creationBrief.deliveryIntent = "motion";
+  }
+  if (motionApproved) shot.creationBrief.approvedMotionFile = pointer;
+  else if (pointer && form === "still") { shot.finalStillFile = pointer; shot.creationBrief.finalStillFile = pointer; }
+  else if (pointer && form === "video") shot.creationBrief.finalVideoFile = pointer;
+  project.shots = [shot];
+  const rows = [...CAST_CANON];
+  if (frame) rows.push({ kind: "shot-frame", shotId: "L1-01", frameId: "frame-a", value: frame });
+  if (receipt) rows.push({ kind: "shot-delivery", shotId: "L1-01", value: pointer });
+  return withCanon(project, rows);
+}
+
+async function readDelivery(project, takes) {
+  const page = await render("#/shot/L1-01", project, { scan: scanWith(project, { "L1-01": takes }) });
+  return { seen: await evaluateAsync(page.context, DELIVERY_SURFACES), page };
+}
+
+function assertNoFinalClaim(seen, label) {
+  equal(seen.kernel, false, `${label}: precondition — the kernel holds no current delivery authority`);
+  equal(seen.projection.final, false, `${label}: the one projection says the shot is not delivered`);
+  equal(seen.shotIsDelivered, false, `${label}: and so does the shipped predicate every count reads`);
+  ok(seen.board !== "complete", `${label}: the shot board never files it as delivered, got ${seen.board}`);
+  ok(seen.readinessStatus !== "COMPLETE", `${label}: readiness never reports it complete, got ${seen.readinessStatus}`);
+  ok(seen.lifecycleKey !== "final", `${label}: the lifecycle does not reach the delivered state, got ${seen.lifecycleKey}`);
+  ok(seen.motionCompletion !== "complete",
+    `${label}: and no stage reads a delivery pointer as a completed stage, got motion=${seen.motionCompletion}`);
+  ok(seen.deliverCompletion !== "complete", `${label}: the Deliver stage is not complete, got ${seen.deliverCompletion}`);
+  equal(seen.motionFinalFlag, false, `${label}: no take is flagged final`);
+  deepEqual(seen.delivered, [], `${label}: and the project counts it in nothing delivered`);
+  for (const claim of FINAL_CLAIMS) {
+    ok(!seen.panel.includes(claim), `${label}: Finish & Delivery never renders "${claim}"`);
+    ok(!seen.card.includes(claim), `${label}: the shot card never renders "${claim}"`);
+    ok(!seen.lifecycleTitle.includes(claim) && !seen.lifecycleNote.includes(claim),
+      `${label}: the lifecycle words never say "${claim}"`);
+  }
+}
+
+function assertFinalAgreement(seen, label, form) {
+  equal(seen.kernel, true, `${label}: precondition — a current delivery receipt exists`);
+  equal(seen.projection.final, true, `${label}: the one projection says the shot is delivered`);
+  equal(seen.projection.form, form, `${label}: and names which half of the pointer holds it`);
+  equal(seen.shotIsDelivered, true, `${label}: the shipped predicate agrees`);
+  equal(seen.board, "complete", `${label}: the shot board files it as delivered`);
+  equal(seen.readinessStatus, "COMPLETE", `${label}: readiness reports the shot complete`);
+  equal(seen.readinessCode, "nothing-outstanding", `${label}: with nothing outstanding`);
+  equal(seen.lifecycleKey, "final", `${label}: the lifecycle reaches the delivered state`);
+  equal(seen.deliverCompletion, "complete", `${label}: the Deliver stage is complete`);
+  ok(seen.panel.includes("Final delivery locked"), `${label}: Finish & Delivery says the delivery is locked`);
+  ok(seen.panel.includes("Marked final"), `${label}: and shows the decision that locked it`);
+  deepEqual(seen.delivered, ["L1-01"], `${label}: the project counts it delivered exactly once`);
+}
+
+async function ux1_9_oneDeliveryAuthority() {
+  /* A — STALE finalStillFile, NO CURRENT AUTHORITY. The review's reproduction. */
+  const a = await readDelivery(deliveryFixture({ pointer: "FRAME_A.png", form: "still" }), ["FRAME_A.png"]);
+  assertNoFinalClaim(a.seen, "A stale finalStillFile");
+  equal(a.seen.readinessCode, "mark-shot-final", "A: readiness names the outstanding decision");
+  equal(a.seen.board, "review", "A: and the board files the shot as needing a decision");
+  equal(a.seen.projection.stale, true, "A: the projection reports the pointer as stale rather than hiding it");
+  equal(a.seen.projection.pointer, "FRAME_A.png", "A: and names the file, so a filmmaker recognises it");
+  equal(a.seen.projection.value, "", "A: while `value` — the receipt's file — stays empty, so no surface can render an unvouched pointer");
+  ok(a.seen.readinessMessage.includes("FRAME_A.png"), "A: readiness names the stale pointer in its sentence");
+  ok(a.seen.readinessMessage.includes("nobody has marked the shot final"), "A: and says exactly why it confers nothing");
+
+  /* B — STALE finalVideoFile, NO CURRENT AUTHORITY. A pointer the kernel's delivery
+     edge does not even read, which is why it could only ever have been a rival. */
+  const b = await readDelivery(
+    deliveryFixture({ pointer: "SHOT_FINAL.mp4", form: "video", clips: true }),
+    ["FRAME_A.png", "SHOT_FINAL.mp4"],
+  );
+  assertNoFinalClaim(b.seen, "B stale finalVideoFile");
+  equal(b.seen.projection.stale, false, "B: the kernel's delivery edge does not read finalVideoFile, so there is no pointer to report");
+
+  /* C — CURRENT STILL DELIVERY AUTHORITY. */
+  const c = await readDelivery(deliveryFixture({ pointer: "FRAME_A.png", form: "still", receipt: true }), ["FRAME_A.png"]);
+  assertFinalAgreement(c.seen, "C current still delivery", "still");
+  equal(c.seen.projection.value, "FRAME_A.png", "C: and the projection reports the receipt's own file");
+
+  /* D — CURRENT MOTION DELIVERY AUTHORITY. */
+  const dProject = deliveryFixture({ pointer: "SHOT_FINAL.mp4", motionApproved: true, receipt: true, clips: true });
+  withCanon(dProject, [{ kind: "shot-motion", shotId: "L1-01", unitKey: "motion-a", value: "SHOT_FINAL.mp4" }]);
+  dProject.shots[0].clips[0].videoWinner = "SHOT_FINAL.mp4";
+  const d = await readDelivery(dProject, ["FRAME_A.png", "SHOT_FINAL.mp4"]);
+  assertFinalAgreement(d.seen, "D current motion delivery", "video");
+  equal(d.seen.motionFinalFlag, true, "D: and the approved take is the one flagged final");
+
+  /* E — WITHDRAWN DELIVERY AUTHORITY. The receipt existed and was revoked. */
+  const eProject = deliveryFixture({ pointer: "FRAME_A.png", form: "still", receipt: true });
+  for (const row of eProject.productionAuthority.receipts) {
+    if (row.kind !== "shot-delivery") continue;
+    row.status = "revoked";
+    row.revokedAt = "2026-08-15T00:00:00.000Z";
+    row.revocationReason = "withdrawn by the filmmaker";
+  }
+  const e = await readDelivery(eProject, ["FRAME_A.png"]);
+  assertNoFinalClaim(e.seen, "E withdrawn delivery authority");
+  equal(e.seen.readinessCode, "mark-shot-final", "E: readiness asks for the decision again");
+  equal(e.seen.projection.basis, "authority-revoked",
+    "E: and the projection states that the approval was withdrawn rather than never made");
+
+  /* F — THE AUTHORITY EDGE WAS REPLACED. The receipt still names the old file. The
+     kernel fails closed on a mismatch, and every surface must fail closed with it. */
+  const fProject = deliveryFixture({ pointer: "FRAME_A.png", form: "still", receipt: true });
+  fProject.shots[0].finalStillFile = "SOMETHING_ELSE.png";
+  fProject.shots[0].creationBrief.finalStillFile = "SOMETHING_ELSE.png";
+  const f = await readDelivery(fProject, ["FRAME_A.png", "SOMETHING_ELSE.png"]);
+  assertNoFinalClaim(f.seen, "F replaced delivery edge");
+  equal(f.seen.readinessCode, "mark-shot-final", "F: readiness asks for a decision about what the edge now names");
+  equal(f.seen.projection.pointer, "SOMETHING_ELSE.png", "F: the projection names the file the edge now points at");
+
+  /* G — OPTIONAL FINISHING PRESENT BUT NOT PERFORMED. A finish job on the shot is
+     not a delivery decision and must not become one, in either direction. */
+  const gProject = deliveryFixture({ frame: "FRAME_A.png" });
+  gProject.finishJobs = [{ id: "finish-1", shotId: "L1-01", sourceFile: "FRAME_A.png", status: "ready", type: "upscale", targetResolution: "4K", notes: "" }];
+  const g = await readDelivery(gProject, ["FRAME_A.png"]);
+  assertNoFinalClaim(g.seen, "G optional finishing not performed");
+  equal(g.seen.readinessCode, "mark-shot-final", "G: the delivery decision is what is outstanding");
+  ok(g.seen.readinessMessage.includes("optional"),
+    "G: and the handoff still says finishing first is optional rather than required");
+
+  /* H — REQUIRED MOTION STILL INCOMPLETE. The delivery decision is a ROLLUP gate and
+     must never jump the queue ahead of a declared unit that is not satisfied. */
+  const h = await readDelivery(deliveryFixture({ frame: "FRAME_A.png", clips: true }), ["FRAME_A.png"]);
+  equal(h.seen.kernel, false, "H: precondition — no delivery authority");
+  equal(h.seen.readinessCode, "produce-motion",
+    "H: an unsatisfied required motion unit is the next action, not the delivery decision");
+  equal(h.seen.projection.final, false, "H: and the shot is not delivered");
+  equal(h.seen.shotIsDelivered, false, "H: on any surface");
+  ok(h.seen.motionCompletion !== "complete", "H: with Motion reporting incomplete");
+
+  note("UX1-9 eight delivery fixtures, every final/delivery surface read together: a pointer with no receipt claims nothing, a receipt makes all of them agree");
+}
+
+/* ===========================================================================
+   UX1-10 — RETURNED-RESULT ROUTING.
+
+   The review's second finding. The scope LABELS were already right; the routing
+   was not. One candidate sitting unreviewed and no filmmaker decision produced
+   "1 returned result waiting for review" beside a primary action reading PRODUCE
+   THE FRAME — an instruction to generate a second candidate for the frame whose
+   first candidate nobody had looked at.
+   =========================================================================== */
+
+async function ux1_10_returnedResultRouting() {
+  /* A — RETURNED RESULT ONLY. */
+  const a = projectOf([{ id: "L1-01" }]);
+  const aPage = await render("#/production", a, { scan: scanWith(a, { "L1-01": ["FRAME_A.png"] }) });
+  const aSeen = await evaluateAsync(aPage.context, `
+    const feed = projectShotReadiness();
+    const next = projectNextProductionAction(feed);
+    const home = await productionHomeView();
+    return ({
+      returned: returnedResultsAwaitingReview().length,
+      decisions: projectFilmmakerDecisions(feed).count,
+      shotStatus: feed.shots[0].status,
+      next,
+      homeKind: (home.split('data-next-action-kind="')[1] || "").split('"')[0],
+    });
+  `);
+  equal(aSeen.returned, 1, "A: one returned candidate is awaiting review");
+  equal(aSeen.decisions, 0, "A: and no filmmaker decision is outstanding — the two scopes stay separate");
+  equal(aSeen.shotStatus, "READY", "A: precondition — the shot could also be told to produce another frame");
+  equal(aSeen.next.kind, "returned-result", "A: the primary action reviews the returned result instead");
+  equal(aSeen.next.actionLabel, "REVIEW RETURNED RESULT", "A: and says so");
+  equal(aSeen.next.href, "#/shot/L1-01", "A: routing to the shot the candidate came back for");
+  ok(!/produce/i.test(aSeen.next.actionLabel), "A: it never tells the filmmaker to generate another candidate first");
+  equal(aSeen.homeKind, "returned-result", "A: and Production renders that action, not a second opinion");
+
+  /* B — RETURNED RESULT PLUS A SEPARATE REFERENCE CONFIRMATION. Two scopes, two
+     numbers, and the existing priority order is followed rather than merged. */
+  const b = projectOf([{ id: "L1-01" }, { id: "L1-02", winner: "FRAME_B.png" }]);
+  b.productionAuthority.receipts = b.productionAuthority.receipts
+    .filter((row) => row.targetKey !== "entity-state:props:PR-TOOL#state-default");
+  const bPage = await render("#/production", b, { scan: scanWith(b, { "L1-01": ["FRAME_A.png"], "L1-02": ["FRAME_B.png"] }) });
+  const bSeen = await evaluateAsync(bPage.context, `
+    const feed = projectShotReadiness();
+    const home = await productionHomeView();
+    const inbox = productionResultInbox();
+    return ({
+      returned: returnedResultsAwaitingReview().length,
+      decisions: projectFilmmakerDecisions(feed).count,
+      next: projectNextProductionAction(feed),
+      inboxHeadline: (inbox.split("<h2>")[1] || "").split("</h2>")[0],
+      tile: (((home.split('<article class="review"')[1] || home.split('<article class=""')[1] || "").split("</article>")[0]).split(">").slice(1).join(">")).replace(/<[^>]*>/g, " ").trim(),
+    });
+  `);
+  equal(bSeen.returned, 1, "B: one returned candidate");
+  ok(bSeen.decisions >= 1, "B: and at least one genuinely separate filmmaker decision");
+  equal(bSeen.next.kind, "returned-result", "B: available returned media is still offered first");
+  ok(/returned result waiting for review/i.test(bSeen.inboxHeadline), "B: Returned Results keeps its own words");
+  ok(/decision/i.test(bSeen.tile) && !/returned/i.test(bSeen.tile),
+    "B: and the decision tile keeps its own, borrowing neither number nor word: " + bSeen.tile);
+
+  /* C — NO RETURNED RESULT. */
+  const c = projectOf([{ id: "L1-01", winner: "FRAME_A.png" }]);
+  const cPage = await render("#/production", c, { scan: scanWith(c, { "L1-01": ["FRAME_A.png"] }) });
+  const cSeen = await evaluateAsync(cPage.context, `
+    return ({ returned: returnedResultsAwaitingReview().length, next: projectNextProductionAction() });
+  `);
+  equal(cSeen.returned, 0, "C: nothing is awaiting review");
+  ok(cSeen.next.kind !== "returned-result", "C: so no returned-review action is invented");
+  equal(cSeen.next.actionLabel, "MARK SHOT FINAL", "C: the real outstanding decision is offered instead");
+
+  /* D — THE RETURNED RESULT HAS BEEN REVIEWED. Routing must stop, and it must stop
+     because the queue emptied rather than because a flag was set. */
+  const d = projectOf([{ id: "L1-01" }]);
+  const dPage = await render("#/shot/L1-01", d, { scan: scanWith(d, { "L1-01": ["FRAME_A.png"] }) });
+  const before = evaluate(dPage.context, `
+    return { returned: returnedResultsAwaitingReview().length, kind: projectNextProductionAction().kind };
+  `);
+  equal(before.kind, "returned-result", "D: precondition — the unreviewed candidate is being routed to");
+  dPage.context.approveGuidedFrame("L1-01", "frame-a", "FRAME_A.png");
+  dPage.context.document.getElementById("approve-name").value = "FRAME_A.png";
+  await dPage.gesture.act(() => dPage.context.confirmApproveTake());
+  const after = evaluate(dPage.context, `
+    return { returned: returnedResultsAwaitingReview().length, next: projectNextProductionAction() };
+  `);
+  equal(after.returned, 0, "D: reviewing the candidate empties the queue");
+  ok(after.next.kind !== "returned-result", "D: so the primary action stops routing to it");
+  equal(after.next.actionLabel, "MARK SHOT FINAL", "D: and moves on to what is genuinely outstanding");
+
+  /* E — AN INTEGRITY BLOCKER PLUS A RETURNED RESULT. Blocker priority is preserved:
+     a project whose approval records cannot be read is repaired first, because no
+     review made against an unreadable ledger could be recorded. */
+  const e = projectOf([{ id: "L1-01" }]);
+  e.productionAuthority.receipts[0].command = "not-a-command";
+  const ePage = await render("#/production", e, { scan: scanWith(e, { "L1-01": ["FRAME_A.png"] }) });
+  const eSeen = await evaluateAsync(ePage.context, `
+    const feed = projectShotReadiness();
+    return ({
+      returned: returnedResultsAwaitingReview().length,
+      trusted: feed.authority.trusted,
+      next: projectNextProductionAction(feed),
+    });
+  `);
+  equal(eSeen.returned, 1, "E: a returned candidate is genuinely waiting");
+  equal(eSeen.trusted, false, "E: and the ledger cannot be read");
+  equal(eSeen.next.kind, "repair", "E: the integrity blocker still outranks it");
+
+  /* AND THE SHARED-BLOCKER BRANCH IS UNTOUCHED. Its condition was, and still is, no
+     ready work — the new tier sits above READY and changed nothing below it. */
+  const f = projectOf([{ id: "L1-01", winner: "FRAME_A.png" }, { id: "L1-02", winner: "FRAME_B.png" }]);
+  f.productionAuthority.receipts = f.productionAuthority.receipts
+    .filter((row) => row.targetKey !== "entity-state:characters:KAI#state-default");
+  const fPage = await render("#/production", f, { scan: scanWith(f, { "L1-01": ["FRAME_A.png"], "L1-02": ["FRAME_B.png"] }) });
+  const fSeen = await evaluateAsync(fPage.context, `
+    const feed = projectShotReadiness();
+    return ({ returned: returnedResultsAwaitingReview().length, next: projectNextProductionAction(feed) });
+  `);
+  equal(fSeen.returned, 0, "F: no returned candidate, so the new tier does not fire");
+  ok(["shot", "blocker"].includes(fSeen.next.kind),
+    "F: and the existing ready/blocker branches decide, exactly as before: " + fSeen.next.kind);
+
+  note("UX1-10 returned media is reviewed before more is generated, the two counts stay separate, and the integrity blocker still outranks both");
+}
+
+/* ===========================================================================
+   UX1-11 — THE DELIVERED TAXONOMY IS NOT RENAMED.
+
+   "Mark shot final" is the name of an ACTION this slice introduced. The board and
+   its filters have always called the STATE Delivered, tests/clarity-consolidation.js
+   pins that, and naming an action is not a licence to rename a state.
+   =========================================================================== */
+
+async function ux1_11_deliveredTaxonomy() {
+  const project = projectOf([{ id: "L1-01", winner: "FRAME_A.png", final: true }]);
+  const page = await render("#/shots/board", project, { scan: scanWith(project, { "L1-01": ["FRAME_A.png"] }) });
+  const seen = await evaluateAsync(page.context, `
+    const filters = shotBoardActionFilters();
+    const home = await productionHomeView();
+    return ({
+      labels: [...filters.matchAll(/<span>([^<]*)<\\/span>/g)].map((m) => m[1]),
+      actionWord: READINESS_ACTION_WORDS["mark-shot-final"],
+      home,
+    });
+  `);
+  deepEqual(seen.labels, ["Not delivered", "Needs a decision", "Missing inputs", "Ready for media", "Delivered", "All shots"],
+    "the shipped board taxonomy is unchanged apart from the one decision label this slice owns");
+  equal(seen.actionWord, "Mark shot final", "while the filmmaker ACTION keeps the name this slice gave it");
+  ok(/shots? delivered/.test(seen.home), "the Production tile counts shots delivered");
+  ok(/NOT YET DELIVERED/.test(seen.home), "and the not-yet-delivered section keeps its heading");
+  /* The exact strings the slice wrongly introduced, named one by one rather than
+     matched by a pattern — "Mark shot final" is the ACTION and legitimately contains
+     the word, so a loose regex would forbid the very thing the slice is allowed to
+     keep. Each of these named a STATE the board has always called Delivered. */
+  for (const renamed of ["Not final", "NOT FINAL YET", "shots final", "shots not final", "are marked final"]) {
+    ok(!seen.home.includes(renamed),
+      `Production must not rename the delivered state: found "${renamed}"`);
+  }
+
+  const clarity = readLF("tests/clarity-consolidation.js");
+  ok(clarity.includes('assert(app.includes("Not delivered")'),
+    "and the shipped clarity contract that pins it is untouched");
+
+  note("UX1-11 Delivered / Not delivered survives as the board taxonomy; Mark shot final stays the name of the action");
+}
+
 /* ========================================================================== */
 
 async function main() {
@@ -718,6 +1081,9 @@ async function main() {
   await ux1_6_sceneCompletion();
   await ux1_7_nonLinear();
   await ux1_8_blockerDominance();
+  await ux1_9_oneDeliveryAuthority();
+  await ux1_10_returnedResultRouting();
+  await ux1_11_deliveredTaxonomy();
   await noParallelProjection();
 }
 
