@@ -140,6 +140,8 @@ const nodeSuites = [
   "check:shot-route-negative",
   "check:shot-intent",
   "check:shot-intent-negative",
+  "check:action-projection",
+  "check:action-projection-negative",
   "check:stage-surfaces",
   "check:stage-surfaces-negative",
   "check:production-media",

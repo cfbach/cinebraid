@@ -43,9 +43,31 @@
 
    COMPLETE exists only in the SHOT ROLLUP and never on a unit. It is not a fourth
    readiness state — it is the existing done semantics, carried through: every
-   declared unit already holds Canon. "Is it ready" is not a question about
-   finished work, and a feed that counted finished shots as READY would keep
-   offering work that does not exist.
+   declared unit already holds Canon AND the filmmaker has marked the shot final.
+   "Is it ready" is not a question about finished work, and a feed that counted
+   finished shots as READY would keep offering work that does not exist.
+
+   THE SECOND HALF OF THAT SENTENCE IS NOT DECORATION, AND IT IS THE ONE THIS
+   MODULE USED TO GET WRONG.
+
+   Approving a take and finishing a shot are two decisions, and CineBraid has
+   always modelled them as two: `approve-shot-frame` / `approve-shot-motion` say a
+   person accepted these bytes, and `approve-shot-delivery` — the Finalize control
+   in Finish & Delivery — says a person decided this shot is done. Only the second
+   one ends the filmmaker's journey.
+
+   This rollup used to stop at the first: a still-only shot whose one required
+   frame held Canon reported COMPLETE and "Every declared unit of this shot already
+   holds approved authority", while the Deliver stage beside it said Not started
+   and the shot's workflow status said In progress. Three surfaces, one shot, and
+   the loudest of the three was the one claiming there was nothing left to do.
+
+   So the last thing the rollup asks is the kernel: does a CURRENT `shot-delivery`
+   receipt exist for this shot. Not `finalStillFile`, not `shotIsDelivered`, not
+   the lifecycle key — the receipt, through currentHumanAuthority(), for the same
+   reason nothing else here reads an edge. A pointer with no receipt behind it is a
+   selection nobody vouched for, and it produces the same `mark-shot-final`
+   decision rather than a silent COMPLETE.
 
    DELIBERATELY NOT IN THIS MODEL: `nearly-ready`, `75%-ready`, `almost-there`,
    `2 of 3 references`, `automation-ready`. Each of the first four is a
@@ -337,6 +359,10 @@
     "approve-required-frames",
     "produce-frame",
     "produce-motion",
+    /* THE DURABLE FILMMAKER DECISION THAT ENDS A SHOT. Emitted only by the rollup,
+       never by a unit: no unit produces it, and it becomes the shot's next action
+       exactly when every declared unit is satisfied and nobody has finalised it. */
+    "mark-shot-final",
     "nothing-outstanding",
   ]);
 
@@ -1244,6 +1270,47 @@
   }
 
   /* ==========================================================================
+     THE ONE DECISION THAT IS NOT A UNIT.
+
+     Marking a shot final is a durable filmmaker decision over a shot that is
+     already produced. It is deliberately NOT a producible unit: a unit is
+     something CineBraid can be asked to make, it carries execution methods and a
+     generation gate, and adding a sixth pseudo-unit with neither would have made
+     `READY` mean "a person could click Finalize" everywhere a surface reads it to
+     decide whether generation may start.
+
+     So it is asked once, at the rollup, of the kernel — and only after every
+     declared unit is satisfied, because a shot with an unapproved frame is not
+     being asked to finalise anything.
+
+     `null` means the shot IS final. Anything else is the action.
+
+     TWO SITUATIONS, ONE ACTION, TWO SENTENCES. A shot with no delivery pointer at
+     all and a shot pointing at a file no `shot-delivery` receipt vouches for both
+     end in the same gesture — the Finalize control writes the receipt either way —
+     so inventing a second code would have split one destination in two. The
+     message says which situation this is; the code says what to do about it. */
+  function deliveryDecision(project, shot) {
+    const shotId = text(record(shot).id);
+    if (!shotId) return null;
+    const target = { kind: "shot-delivery", shotId };
+    if (currentHumanAuthority(project, target)) return null;
+    const historic = historicSelection(project, target);
+    if (historic && text(historic.value)) {
+      return action(
+        "mark-shot-final",
+        `This shot points at ${text(historic.value)} as its finished result, but nobody has marked the shot final. Mark it final to record the decision, or choose a different result.`,
+        1,
+      );
+    }
+    return action(
+      "mark-shot-final",
+      "The approved result is ready. Mark this shot final to record that it is finished — sending it to finishing first is optional.",
+      1,
+    );
+  }
+
+  /* ==========================================================================
      ONE SHOT. */
 
   /* `projectTruth` is an INTERNAL pass-down, and evaluateProjectReadiness() is its
@@ -1300,9 +1367,20 @@
       status = "NEEDS_DECISION";
       next = action("declare-producible-unit", "This shot declares no frame, no motion unit and no motion intent, so there is nothing to produce yet.", 0);
     } else if (!outstanding.length) {
-      /* THE EXISTING DONE SEMANTICS, CARRIED THROUGH. Not a readiness state. */
-      status = "COMPLETE";
-      next = action("nothing-outstanding", "Every declared unit of this shot already holds approved authority.", 0);
+      /* EVERY DECLARED UNIT IS SATISFIED. That is the *media* question answered,
+         and it is not the same question as "is this shot finished". */
+      const delivery = deliveryDecision(P, s);
+      if (delivery) {
+        /* NEEDS_DECISION by this module's own definition: a requirement that
+           cannot be resolved truthfully without a person, and which CineBraid
+           must not guess. Nobody but the filmmaker can say a shot is done. */
+        status = "NEEDS_DECISION";
+        next = delivery;
+      } else {
+        /* THE EXISTING DONE SEMANTICS, CARRIED THROUGH. Not a readiness state. */
+        status = "COMPLETE";
+        next = action("nothing-outstanding", "Every declared unit of this shot holds approved authority and the shot is marked final.", 0);
+      }
     } else {
       const unit = outstanding[0];
       status = unit.status;

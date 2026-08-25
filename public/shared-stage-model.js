@@ -253,7 +253,22 @@
       task: { scope: SHOT_STAGE_SCOPE, id: "deliver" },
       navigation: { kind: "task-selection", route: "#/shot/:shotId" },
       panels: ["finish"],
-      readinessActions: [{ code: "nothing-outstanding", surface: "shot-deliver", renderer: "guidedFinishPanel", control: "guidedFinishPanel" }],
+      /* Both of Deliver's readiness actions land on the same panel, and that is the
+         point: Finish & Delivery is where the shot is finalised and where a finished
+         shot is inspected. `mark-shot-final` names the Finalize control specifically,
+         because the claim the completeness test makes about it — that the declared
+         renderer really contains the declared control — is only worth anything when
+         the control is the one the filmmaker has to press.
+
+         It names the STILL arm because the panel renders exactly one Finalize button
+         and picks its arm from what the shot has: markGuidedVideoFinal for an
+         approved motion take, markGuidedStillFinal otherwise. Both write the same
+         `approve-shot-delivery` receipt through the same kernel command, so the
+         destination is one control with two spellings rather than two destinations. */
+      readinessActions: [
+        { code: "mark-shot-final", surface: "shot-deliver", renderer: "guidedFinishPanel", control: "markGuidedStillFinal" },
+        { code: "nothing-outstanding", surface: "shot-deliver", renderer: "guidedFinishPanel", control: "guidedFinishPanel" },
+      ],
       panelViews: {},
       legacyTaskIds: ["finish"],
       optional: false,

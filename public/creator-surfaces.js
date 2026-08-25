@@ -449,7 +449,9 @@
     "machine-active": "WORKING",
     "stage-blocked": "BLOCKED",
     "next-action": "NEXT",
-    "all-quiet": "ALL QUIET",
+    /* Run-scoped, like the sentence beneath it. "ALL QUIET" is a claim about the
+       whole production, and this projection has only ever seen run activity. */
+    "all-quiet": "NO ACTIVITY",
   };
   const STAGE_COMPLETION_SENTENCE = {
     "not-started": "Not started",
@@ -458,6 +460,20 @@
     complete: "Complete",
   };
 
+  /* THE ASSISTANT DESCRIBES RUN ACTIVITY, AND ITS SENTENCES MAY NOT REACH FURTHER.
+   *
+   * Every fact behind `state` is an ACTIVITY fact — an automation run, a manual
+   * generation, a provider job. The projection has never been able to see a
+   * filmmaker decision and must not start: canonical readiness owns that question
+   * and Production renders its answer.
+   *
+   * Which is why the quiet sentence used to be false. "Nothing is running and
+   * nothing is waiting on you" is two claims, and the second one is about a scope
+   * this file cannot observe: a project with three outstanding decisions and no
+   * running job produced it verbatim. The first half was always true. The second
+   * half is now stated at the scope it is true at — no run and no generation job —
+   * and the reader is pointed at the surface that owns the other question rather
+   * than being told there is nothing there. */
   function headlineSentence(state) {
     const kind = state.headline.kind;
     if (kind === "needs-attention")
@@ -472,7 +488,7 @@
         : `${plural(state.counts.working, "operation is", "operations are")} running.`;
     if (kind === "stage-blocked") return `${state.stage.label} cannot start yet.`;
     if (kind === "next-action") return `Ready to move to ${state.recommendation.label || state.recommendation.stageId}.`;
-    return "Nothing is running and nothing is waiting on you.";
+    return "No runs or generation jobs are active.";
   }
 
   function contextLine(state) {
@@ -555,7 +571,7 @@
     const waiting = state.waiting.map((fact) => assistantRow(fact, WAITING_SENTENCE[fact.reason] || ""));
     const working = state.working.map((fact) => assistantRow(fact, ""));
     const quiet = !attention.length && !waiting.length && !working.length
-      ? `<section class="cb-assistant-section tone-quiet" data-cb-section="quiet"><article class="cb-assistant-row cb-assistant-quiet"><p>Nothing is running and nothing is waiting on you.</p></article></section>`
+      ? `<section class="cb-assistant-section tone-quiet" data-cb-section="quiet"><article class="cb-assistant-row cb-assistant-quiet"><p>No runs or generation jobs are active. Decisions that need you are shown in Production.</p></article></section>`
       : "";
     const omitted = state.omitted.attention
       ? `<p class="cb-assistant-omitted">${esc(`${state.omitted.attention} older item${state.omitted.attention === 1 ? "" : "s"} needing attention are not shown here.`)}</p>`

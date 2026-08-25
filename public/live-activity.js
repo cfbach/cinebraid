@@ -1018,7 +1018,10 @@ function v641RenderActivityDrawer(focusRunId = "") {
      a list that answers both at once is the thing that read as a stalled machine. */
   const content = [
     section("ACTIVE NOW", [...activeManual.map(v641ManualActivityMarkup), ...standaloneFal.map(v641StandaloneFalMarkup), ...activeRuns.map(v641DrawerRunMarkup)], "No operation is currently running."),
-    section("WAITING FOR YOU", waitingRuns.map((run) => v641DrawerRunMarkup(run)), "Nothing is waiting on you."),
+    /* The empty phrase names the section's scope, exactly as ACTIVE NOW's does. This
+       drawer lists runs; "Nothing is waiting on you" was a claim about the whole
+       production, made by a surface that cannot see a filmmaker decision. */
+    section("WAITING FOR YOU", waitingRuns.map((run) => v641DrawerRunMarkup(run)), "No run is waiting on you."),
     section("PREVIOUS FAILURES / NEEDS ATTENTION", [...recentManual.filter((row) => row.status === "failed").map(v641ManualActivityMarkup), ...attentionGroups.map((group) => v641DrawerRunMarkup(group.run, group.count))], "No blocked or failed work."),
     section("RECENT COMPLETED", [...recentManual.filter((row) => row.status === "completed").map(v641ManualActivityMarkup), ...completedRuns.map(v641DrawerRunMarkup)].slice(0, 12), "No completed activity yet."),
   ].join("");

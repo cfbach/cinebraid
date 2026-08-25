@@ -504,6 +504,8 @@ async function main() {
     "provider-health.js",
     "quiet-shell-real-browser.py",
     "quiet-shell.js",
+    "readiness-action-projection-negative-controls.js",
+    "readiness-action-projection.js",
     "readiness-feedback.js",
     "real-browser-workflow.py",
     "recovery-quarantine-negative-controls.js",

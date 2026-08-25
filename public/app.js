@@ -3999,7 +3999,16 @@ function nextActionTargetHref(target) {
 function projectSharedBlockers(feed) {
   const groups = new Map();
   for (const shot of feed?.shots || []) {
-    const rows = [...(shot.requirements || []), ...(shot.units || []).flatMap((unit) => unit.requirements || [])];
+    /* ONLY OUTSTANDING UNITS. A unit that already holds Canon still carries the
+       requirement rows it was evaluated against, and one of those rows can be a
+       reference nobody has confirmed — true, recorded, and blocking nothing, because
+       the work it guarded is done. Reading them made the project name "Resolve this
+       input · Kai — Default" as the next action for a shot whose only remaining
+       decision was to mark it final, and put the mark-final sentence under a heading
+       pointing at a character page. A blocker is something that is blocking. */
+    const rows = [...(shot.requirements || []), ...(shot.units || [])
+      .filter((unit) => !unit.complete && unit.required)
+      .flatMap((unit) => unit.requirements || [])];
     for (const row of rows) {
       if (row.state !== "missing" && row.state !== "needs-decision") continue;
       const key = row.targetKey || `${row.kind}:${row.label}`;
@@ -4066,7 +4075,7 @@ function projectNextProductionAction(feed = projectShotReadiness()) {
 }
 window.continueProduction = () => {
   const next = projectNextProductionAction();
-  if (!next) return toast("Every shot is complete");
+  if (!next) return toast("Every shot is marked final");
   location.hash = next.href;
 };
 function slate(s, sceneId, readiness = null) {
@@ -4442,7 +4451,22 @@ window.refreshAgentStatus = async (render = false) => {
   if (render) route();
 };
 
-function projectDecisionItems() {
+/* RETURNED RESULTS, AND NOTHING ELSE. THE NAME IS THE FIX.
+ *
+ * This used to be called `projectDecisionItems`, and it fed two surfaces: the
+ * Returned Results inbox, where it is exactly right, and the Production summary
+ * tile labelled "N decisions waiting", where it was a rival answer to a question
+ * canonical readiness already owns. A project with three outstanding filmmaker
+ * decisions and no unreviewed candidate rendered "0 decisions waiting" beside
+ * "1 DECISION · 0 BLOCKED" beside "3 existing selections need your confirmation",
+ * in one viewport, and every one of those numbers was correct about its own scope.
+ *
+ * The scope this answers is narrow and worth answering: WHICH RETURNED CANDIDATES
+ * ARE SITTING UNREVIEWED. It is a workflow queue over media that came back, it
+ * makes no claim about authority, and it is not the filmmaker-decision count —
+ * that is projectFilmmakerDecisions(), derived from readiness and from nothing
+ * else. The word "decision" does not appear in what this renders. */
+function returnedResultsAwaitingReview() {
   const items = [];
   for (const shot of P.shots || []) {
     const takes = takesFor(shot.id) || [];
@@ -4473,8 +4497,14 @@ function projectDecisionItems() {
   return items;
 }
 function productionResultInbox(limit = 6) {
-  const items = projectDecisionItems();
-  return `<section class="production-inbox"><header><div><span>RETURNED RESULTS</span><h2>${items.length ? `${plural(items.length, "decision")} waiting` : "Nothing waiting for review"}</h2><p>Results uploaded inside a frame or motion step appear here automatically.</p></div></header>${items.length ? `<div class="production-inbox-list">${items.map((item) => {
+  const items = returnedResultsAwaitingReview();
+  /* THE HEADLINE NAMES ITS OWN SCOPE, IN BOTH DIRECTIONS. "Nothing waiting for
+     review" was true of this queue and read as a statement about the whole
+     production; "N decisions waiting" borrowed the word the Production summary
+     uses for something else. Both now say `returned result`, which is the only
+     thing this section has ever been about, so an empty inbox can sit beside an
+     outstanding filmmaker decision without the two contradicting each other. */
+  return `<section class="production-inbox"><header><div><span>RETURNED RESULTS</span><h2>${items.length ? `${plural(items.length, "returned result")} waiting for review` : "No returned result is waiting for review"}</h2><p>Results uploaded inside a frame or motion step appear here automatically. Decisions about approved work are shown above, in Production.</p></div></header>${items.length ? `<div class="production-inbox-list">${items.map((item) => {
     if (item.shot) {
       const takes = takesFor(item.shot.id), media = item.type === "video" ? takes.filter((take) => isVideo(take.name)).at(-1) : takes.filter((take) => !isVideo(take.name) && !isAudio(take.name)).at(-1);
       const preview = media ? (isVideo(media.name) ? `<video muted preload="metadata" src="${attr(media.url)}#t=0.1"></video>` : `<img src="${attr(media.url)}" alt="">`) : `<span>${item.type === "video" ? "VIDEO" : "FRAME"}</span>`;
@@ -4520,6 +4550,74 @@ function projectShotReadiness() {
     return { error: error.message || "Readiness could not be derived", counts: null, shots: [], historic: { items: [], uniqueTargets: 0, occurrences: 0 } };
   }
 }
+/* ===========================================================================
+   ONE FILMMAKER-DECISION PROJECTION.
+
+   "What meaningful decision needs me now?" had four answers on one screen, and
+   three of them were derived somewhere other than canonical readiness. This is the
+   only place that question is answered, and every surface that shows a number under
+   the word DECISION reads it from here: the Production summary tile, the readiness
+   pill, the scene cards and the shot board filters.
+
+   IT DERIVES NOTHING. Every row is a shot readiness row the shared module already
+   produced, filtered by the status that module already assigned. There is no
+   threshold here, no ranking, no priority number and no second predicate — if this
+   file ever decides on its own that something is a decision, the defect is back.
+
+   ONE CORRUPT LEDGER IS ONE DECISION, not one per shot. When the project carries a
+   truth problem every shot reports NEEDS_DECISION with `awaiting-project-repair`,
+   because no shot's readiness can be answered — and counting those as N filmmaker
+   decisions would be the same lie of aggregation shared-shot-readiness.js removed
+   when one broken file produced one repair action per shot. The project's own
+   single action is what is counted, and the shots are reported as unanswerable.
+
+   WHAT IS DELIBERATELY NOT COUNTED HERE, each because it has its own named scope:
+     returned candidates awaiting review   returnedResultsAwaitingReview()
+     existing selections to confirm        feed.historic — grouped by authority
+                                           target, so N shots sharing one reference
+                                           are one confirmation, not N
+     project setup items                   /api/project/readiness `setup`
+     generation jobs and runs              the activity layer
+   Each is a real, useful count. None of them is "decisions", and none of them may
+   be rendered with that word. */
+const FILMMAKER_DECISION_LABEL = "decision";
+function projectFilmmakerDecisions(feed = projectShotReadiness()) {
+  const rows = feed && !feed.error ? (feed.shots || []) : [];
+  const final = rows.filter((row) => row.status === "COMPLETE").map((row) => row.shotId);
+  const blocked = rows.filter((row) => row.status === "BLOCKED").map((row) => row.shotId);
+  if (!feed || feed.error) return { available: false, count: 0, shots: [], blocked, final, unanswerable: [], project: null };
+  if (feed.truthProblem) {
+    return {
+      available: true,
+      count: 1,
+      shots: [],
+      blocked,
+      final,
+      unanswerable: rows.map((row) => row.shotId),
+      project: { code: feed.nextAction?.code || "repair-authority-ledger", message: feed.truthProblem.message },
+    };
+  }
+  const shots = rows
+    .filter((row) => row.status === "NEEDS_DECISION")
+    .map((row) => ({ shotId: row.shotId, code: row.nextAction?.code || "", message: row.nextAction?.message || "" }));
+  return { available: true, count: shots.length, shots, blocked, final, unanswerable: [], project: null };
+}
+/* The same projection, narrowed to one scene's shots. Scene cards summarise by
+   READING THIS, never by re-deriving a scene-local status vocabulary of their own —
+   which is how "1 shot waiting for review" came to sit under a summary tile
+   reporting a different number for the same production. */
+function sceneFilmmakerDecisions(sceneId, decisions = projectFilmmakerDecisions()) {
+  const ids = new Set(P.shots.filter((shot) => shot.scene === sceneId).map((shot) => shot.id));
+  const within = (list) => (list || []).filter((id) => ids.has(id));
+  return {
+    available: decisions.available,
+    total: ids.size,
+    count: decisions.shots.filter((row) => ids.has(row.shotId)).length,
+    blocked: within(decisions.blocked).length,
+    final: within(decisions.final).length,
+    unanswerable: within(decisions.unanswerable).length,
+  };
+}
 /* THE WORDS. A bare READY badge implies the shot will finish; it will not — it will
    run to its next human gate. So the status never appears without the action it is
    the status OF. The tokens come from the shared module; only the wording is here,
@@ -4549,6 +4647,10 @@ const READINESS_ACTION_WORDS = {
   "approve-required-frames": "Approve required frames",
   "produce-frame": "Produce the frame",
   "produce-motion": "Produce the motion",
+  /* The durable decision, in the filmmaker's words rather than the ledger's. It is
+     deliberately not "Approve" — this project already uses that word for accepting
+     bytes, and the whole point of this action is that it is the OTHER decision. */
+  "mark-shot-final": "Mark shot final",
   "nothing-outstanding": "Nothing outstanding",
 };
 function readinessActionWords(action) {
@@ -4586,7 +4688,7 @@ function historicConfirmationMarkup(feed) {
      of a film's production page. One click is the whole list back. */
   return `<details class="production-readiness historic-confirm" data-readiness-action-surface="production-historic-confirmation"><summary><div><span>EXISTING SELECTIONS</span><b>${plural(queue.uniqueTargets, "existing selection")} need${queue.uniqueTargets === 1 ? "s" : ""} your confirmation</b></div><span>${queue.occurrences} REQUIREMENT${queue.occurrences === 1 ? "" : "S"}</span></summary><div class="historic-confirm-body"><p>These references are already in the project and nobody has approved them. Confirming one approves it everywhere it is used.</p><ul class="historic-confirm-list">${rows}</ul>${bulk}</div></details>`;
 }
-function shotReadinessFeedMarkup(feed) {
+function shotReadinessFeedMarkup(feed, decisions = null) {
   if (!feed) return "";
   if (feed.error) return `<details class="production-readiness"><summary><div><span>PRODUCTION READINESS</span><b>Readiness could not be derived</b></div><span>UNAVAILABLE</span></summary><div class="production-readiness-list"><p>${esc(feed.error)}</p></div></details>`;
   const counts = feed.counts || { ready: 0, blocked: 0, needsDecision: 0, complete: 0 };
@@ -4610,7 +4712,16 @@ function shotReadinessFeedMarkup(feed) {
   const headline = feed.truthProblem
     ? "Readiness cannot be answered yet"
     : `${plural(counts.ready, "shot")} ${counts.ready === 1 ? "has" : "have"} work that can start now`;
-  return `<details class="production-readiness shot-readiness" data-readiness-verdict="1" ${counts.ready || feed.truthProblem ? "open" : ""}><summary><div><span>PRODUCTION READINESS</span><b>${esc(headline)}</b></div><span>${counts.needsDecision} DECISION${counts.needsDecision === 1 ? "" : "S"} · ${counts.blocked} BLOCKED</span></summary>${problem}<div class="production-readiness-list shot-readiness-list">${rows || "<p>This project has no shots yet.</p>"}</div>${feed.mediaCheck === "not-checked" ? `<p class="readiness-media-note">Readiness has not been given a media listing, so every approval's file is reported as unverified rather than assumed present.</p>` : ""}</details>`;
+  /* THE PILL READS THE ONE DECISION PROJECTION, NOT `counts.needsDecision`.
+     They agree on an ordinary project and deliberately do not agree on a broken
+     one: when the ledger cannot be read, every shot reports NEEDS_DECISION about
+     the SAME single repair, and a pill saying "12 DECISIONS" there would send a
+     filmmaker looking for twelve things to decide. */
+  const decided = decisions || projectFilmmakerDecisions(feed);
+  const pill = decided.available
+    ? `${decided.count} ${FILMMAKER_DECISION_LABEL.toUpperCase()}${decided.count === 1 ? "" : "S"} · ${counts.blocked} BLOCKED`
+    : "UNAVAILABLE";
+  return `<details class="production-readiness shot-readiness" data-readiness-verdict="1" data-filmmaker-decisions="${attr(String(decided.count))}" ${counts.ready || feed.truthProblem ? "open" : ""}><summary><div><span>PRODUCTION READINESS</span><b>${esc(headline)}</b></div><span>${esc(pill)}</span></summary>${problem}<div class="production-readiness-list shot-readiness-list">${rows || "<p>This project has no shots yet.</p>"}</div>${feed.mediaCheck === "not-checked" ? `<p class="readiness-media-note">Readiness has not been given a media listing, so every approval's file is reported as unverified rather than assumed present.</p>` : ""}</details>`;
 }
 /* THE LEGACY PROJECTION, AS WHAT IT ACTUALLY IS.
  *
@@ -4709,36 +4820,61 @@ async function productionHomeView() {
   const shotReadiness = projectShotReadiness();
   /* THE SAME ANSWER #/create SHOWS. One derivation, two screens. */
   const next = projectNextProductionAction(shotReadiness);
-  const decisions = projectDecisionItems();
+  /* ONE COUNT, ONE MEANING, AND THE SAME OBJECT EVERY SUMMARY ON THIS PAGE READS.
+     Derived once from the readiness answer already in hand, and handed down to the
+     summary tile, the readiness pill and every scene card below. */
+  const decisions = projectFilmmakerDecisions(shotReadiness);
   const hasShots = P.shots.length > 0;
   /* Three different states of a shot, counted three different ways, so each tile is
      labelled with the one it actually reports:
        delivered — a final still or video file is recorded on the shot
        approved  — the shot's workflow status is APPROVED (it may still need delivery)
        waiting   — a returned result is sitting unreviewed in the inbox           */
-  const deliveredCount = P.shots.filter(shotIsDelivered).length;
+  /* `final` comes from the canonical projection, not from `shotIsDelivered`: the
+     pointer and the receipt can disagree, and when they do the receipt is the
+     production truth — which is exactly why a shot pointing at an unvouched final
+     file still shows Mark shot final one card away. The pointer remains the
+     fallback for a project whose readiness could not be derived at all. */
+  const finalCount = decisions.available ? decisions.final.length : P.shots.filter(shotIsDelivered).length;
   const approvedCount = P.shots.filter(shotIsApproved).length;
   const readinessByShot = new Map((shotReadiness?.shots || []).map((row) => [row.shotId, row]));
+  const finalIds = new Set(decisions.final || []);
+  const isFinal = (shot) => (decisions.available ? finalIds.has(shot.id) : shotIsDelivered(shot));
   const activeRows = P.shots.map((shot) => ({ shot, next: shotProductionNextAction(shot, readinessByShot.get(shot.id)) }))
-    .filter((row) => !shotIsDelivered(row.shot)).slice(0, 8);
-  return `<div class="view-head production-home-head"><div><div class="eyebrow">Production</div><span class="view-title">${esc(P.meta.title)}</span><div class="view-sub">Continue the film from the next unfinished decision. Detailed tools stay inside each shot.</div></div><div class="production-home-actions"><button class="assemble-btn" onclick="continueProduction()">${next ? "CONTINUE PRODUCTION" : hasShots ? "NOTHING OUTSTANDING" : "ADD THE FIRST SHOT"}</button><button class="add-btn" onclick="openGlobalAdd('shot')">＋ Add shot</button></div></div>
-  <div class="production-summary"><article title="A shot is delivered once a final still or video file is recorded on it."><b>${deliveredCount}/${P.shots.length}</b><span>${pluralWord(P.shots.length, "shot")} delivered</span></article><article title="A shot is signed off once its workflow status reaches Signed off. Signing a shot off is not the same as delivering it, and neither one approves an image."><b>${approvedCount}/${P.shots.length}</b><span>${pluralWord(P.shots.length, "shot")} signed off</span></article><article class="review" title="Returned results that are waiting for you to choose or approve."><b>${decisions.length}</b><span>${pluralWord(decisions.length, "decision")} waiting</span></article><article><b>${mmss(P.shots.reduce((sum, shot) => sum + shotDur(shot), 0))}</b><span>planned runtime across ${plural(P.scenes.length, "scene")}</span></article></div>
+    .filter((row) => !isFinal(row.shot)).slice(0, 8);
+  return `<div class="view-head production-home-head"><div><div class="eyebrow">Production</div><span class="view-title">${esc(P.meta.title)}</span><div class="view-sub">Continue the film from the next unfinished decision. Detailed tools stay inside each shot.</div></div><div class="production-home-actions"><button class="${next ? "ghost-btn" : "assemble-btn"}" onclick="continueProduction()">${next ? "CONTINUE PRODUCTION" : hasShots ? "NOTHING OUTSTANDING" : "ADD THE FIRST SHOT"}</button><button class="add-btn" onclick="openGlobalAdd('shot')">＋ Add shot</button></div></div>
+  <div class="production-summary"><article title="A shot is final once you have marked it final in Finish &amp; Delivery. That decision is recorded as a production approval you can withdraw later."><b>${finalCount}/${P.shots.length}</b><span>${pluralWord(P.shots.length, "shot")} final</span></article><article title="A shot is signed off once its workflow status reaches Signed off. Signing a shot off is not the same as marking it final, and neither one approves an image."><b>${approvedCount}/${P.shots.length}</b><span>${pluralWord(P.shots.length, "shot")} signed off</span></article><article class="${decisions.available && decisions.count ? "review" : ""}" title="Shots that cannot move without a decision only you can make. This is the one decision count in CineBraid: the readiness list, the scene cards and the shot filters all report this same number.">${decisions.available ? `<b>${decisions.count}</b><span>${pluralWord(decisions.count, FILMMAKER_DECISION_LABEL)} ${decisions.count === 1 ? "needs" : "need"} you</span>` : `<b>—</b><span>decisions unavailable</span>`}</article><article><b>${mmss(P.shots.reduce((sum, shot) => sum + shotDur(shot), 0))}</b><span>planned runtime across ${plural(P.scenes.length, "scene")}</span></article></div>
   <!-- THE ORDER OF THIS PAGE IS THE POINT.
        What to do now, then the outstanding decisions behind it, then the detail.
        The next action used to render THIRD, below a four-row confirmation backlog
        that filled the first viewport with administration -- and the backlog's own
        first row is usually this very action, so the page led with the long form of
        its own answer. Nothing is derived differently; the card is the same card. -->
-  ${next ? `<section class="production-next" data-next-action-kind="${attr(next.kind)}"${next.shotId ? ` data-next-action-shot="${attr(next.shotId)}"` : ""}${next.unblocks ? ` data-next-action-unblocks="${attr(String(next.unblocks))}"` : ""}><div><span>NEXT ACTION</span><h2>${esc(next.title)}</h2><p>${esc(next.message)}</p></div><a class="assemble-btn" href="${attr(next.href)}">${esc(next.actionLabel)} →</a></section>` : hasShots ? `<section class="production-next complete"><div><span>NOTHING OUTSTANDING</span><h2>Every declared unit of all ${plural(P.shots.length, "shot")} holds approved authority</h2><p>Readiness has nothing left to ask for. Open Shots to inspect or deliver the approved media, or add another shot.</p></div><a class="ghost-btn" href="#/shots/board">Open Shots →</a></section>` : `<section class="production-next"><div><span>NO SHOTS YET</span><h2>This project has no shots</h2><p>Add the first shot to start tracking scenes, frames and deliveries.</p></div><a class="assemble-btn" href="#/shots/board">Open Shots →</a></section>`}
-  ${shotReadinessFeedMarkup(shotReadiness)}
+  ${next ? `<section class="production-next" data-next-action-kind="${attr(next.kind)}"${next.shotId ? ` data-next-action-shot="${attr(next.shotId)}"` : ""}${next.unblocks ? ` data-next-action-unblocks="${attr(String(next.unblocks))}"` : ""}><div><span>NEXT ACTION</span><h2>${esc(next.title)}</h2><p>${esc(next.message)}</p></div><a class="assemble-btn" href="${attr(next.href)}">${esc(next.actionLabel)} →</a></section>` : hasShots ? `<section class="production-next complete"><div><span>NOTHING OUTSTANDING</span><h2>All ${plural(P.shots.length, "shot")} are marked final</h2><p>Every declared unit holds approved authority and you have marked every shot final. Open Shots to inspect the finished media, or add another shot.</p></div><a class="ghost-btn" href="#/shots/board">Open Shots →</a></section>` : `<section class="production-next"><div><span>NO SHOTS YET</span><h2>This project has no shots</h2><p>Add the first shot to start tracking scenes, frames and deliveries.</p></div><a class="assemble-btn" href="#/shots/board">Open Shots →</a></section>`}
+  ${shotReadinessFeedMarkup(shotReadiness, decisions)}
   ${historicConfirmationMarkup(shotReadiness)}
   ${projectSetupIssuesMarkup(setup)}
   ${productionResultInbox()}
-  <section class="production-active"><header><div><span>NOT YET DELIVERED</span><h2>Shots and their next action</h2></div><a href="#/shots/board">View all shots →</a></header>${activeRows.length ? `<div class="production-active-list">${activeRows.map(({shot,next}) => `<a href="#/shot/${shot.id}"><span class="next-${next.key}" title="Next action for this shot">${esc(next.label)}</span><div><b>${esc(shot.id)} · ${esc(shot.title)}</b><small>${esc(sceneById(shot.scene)?.title || shot.scene)} · ${esc(next.detail)}</small></div><i>→</i></a>`).join("")}</div>` : `<div class="production-inbox-empty">${hasShots ? "Every shot has been delivered." : "No shots have been added yet."}</div>`}</section>
+  <section class="production-active"><header><div><span>NOT FINAL YET</span><h2>Shots and their next action</h2></div><a href="#/shots/board">View all shots →</a></header>${activeRows.length ? `<div class="production-active-list">${activeRows.map(({shot,next}) => `<a href="#/shot/${shot.id}"><span class="next-${next.key}" title="Next action for this shot">${esc(next.label)}</span><div><b>${esc(shot.id)} · ${esc(shot.title)}</b><small>${esc(sceneById(shot.scene)?.title || shot.scene)} · ${esc(next.detail)}</small></div><i>→</i></a>`).join("")}</div>` : `<div class="production-inbox-empty">${hasShots ? "Every shot is marked final." : "No shots have been added yet."}</div>`}</section>
   <section class="production-scenes"><header><div><span>SCENES</span><h2>Production progress</h2></div><a href="#/shots/scenes">Manage scenes →</a></header>${P.scenes.length ? `<div class="scene-progress-grid">${P.scenes.map((scene) => {
-    const shots = P.shots.filter((shot) => shot.scene === scene.id), done = shots.filter(shotIsDelivered).length, pct = shots.length ? Math.round(done / shots.length * 100) : 0;
-    const waiting = shots.filter((shot) => readinessByShot.get(shot.id)?.status === "NEEDS_DECISION").length;
-    return `<a href="#/scene/${scene.id}" class="scene-progress-card"><header><b>${esc(scene.title)}</b><span title="Shots delivered in this scene">${done}/${shots.length} delivered</span></header><div class="progress-line"><i style="width:${pct}%"></i></div><footer><span>${plural(waiting, "shot")} waiting for review</span><span>${plural(shots.length - done, "shot")} not delivered</span></footer></a>`;
+    /* THE SCENE CARD SUMMARISES THE SAME PROJECTION THE TILE ABOVE IT COUNTS.
+       It used to say "N shots waiting for review" from its own scene-local read of
+       NEEDS_DECISION — a third vocabulary for the same fact, and one that collided
+       head-on with the Returned Results section's very different "waiting for
+       review". A scene reports only what it is: how many of its shots are final,
+       how many need a decision, and how many are blocked by a real prerequisite.
+       There is no Approve Scene step, so a scene whose shots are all final is
+       complete by saying so and asks for nothing. */
+    const shots = P.shots.filter((shot) => shot.scene === scene.id);
+    const scene_ = sceneFilmmakerDecisions(scene.id, decisions);
+    const pct = shots.length ? Math.round(scene_.final / shots.length * 100) : 0;
+    const complete = shots.length > 0 && scene_.final === shots.length;
+    const parts = [];
+    if (scene_.count) parts.push(`${plural(scene_.count, "shot")} ${scene_.count === 1 ? "needs" : "need"} a ${FILMMAKER_DECISION_LABEL}`);
+    if (scene_.blocked) parts.push(`${plural(scene_.blocked, "shot")} blocked`);
+    if (scene_.unanswerable) parts.push(`${plural(scene_.unanswerable, "shot")} unanswerable until the project is repaired`);
+    const remaining = shots.length - scene_.final;
+    return `<a href="#/scene/${scene.id}" class="scene-progress-card${complete ? " is-complete" : ""}" data-scene-decisions="${attr(String(scene_.count))}"><header><b>${esc(scene.title)}</b><span title="A shot is final once you have marked it final.">${scene_.final}/${shots.length} final</span></header><div class="progress-line"><i style="width:${pct}%"></i></div><footer>${complete ? `<span>Scene complete</span><span>Nothing outstanding</span>` : `<span>${esc(parts[0] || (decisions.available ? "No decision waiting" : "Decisions unavailable"))}</span><span>${esc(parts[1] || `${plural(remaining, "shot")} not final`)}</span>`}</footer></a>`;
   }).join("")}</div>` : `<div class="production-inbox-empty">No scenes have been added yet.</div>`}</section>`;
 }
 window.openGlobalAdd = (preferred = "") => {
@@ -4765,12 +4901,26 @@ window.runGlobalAdd = (key) => {
 };
 
 
+/* THE BOARD FILTERS ARE A THIRD READING OF THE SAME PROJECTION, so they read it.
+ *
+ * `complete` used to be decided by `shotIsDelivered` — the raw delivery pointer —
+ * one branch ABOVE the readiness status, so a shot whose pointer was set without a
+ * receipt filed under Delivered while the readiness list beside it still named a
+ * decision. Canonical readiness answers both halves now: COMPLETE means marked
+ * final, NEEDS_DECISION means one decision is outstanding, and the pointer is only
+ * consulted when readiness could not be derived at all. */
 function shotBoardActionCategory(shot, readiness = shotReadinessFor(shot)) {
-  if (shotIsDelivered(shot)) return "complete";
-  if (readiness?.status === "NEEDS_DECISION") return "review";
-  if (readiness?.status === "BLOCKED") return "missing-inputs";
-  if (readiness?.status === "READY") return "ready";
+  if (!readiness) return shotIsDelivered(shot) ? "complete" : "unfinished";
+  if (readiness.status === "COMPLETE") return "complete";
+  if (readiness.status === "NEEDS_DECISION") return "review";
+  if (readiness.status === "BLOCKED") return "missing-inputs";
+  if (readiness.status === "READY") return "ready";
   return "unfinished";
+}
+/* "Not final" is every shot the Production page's own NOT FINAL YET list shows,
+   which is the complement of the Final filter and nothing else. */
+function shotBoardNotFinal(shot, readiness = shotReadinessFor(shot)) {
+  return shotBoardActionCategory(shot, readiness) !== "complete";
 }
 window.setShotActionFilter = (value) => {
   FILTER.action = value || "unfinished";
@@ -4781,12 +4931,15 @@ window.setShotActionFilter = (value) => {
 function shotBoardActionMatches(shot, feed = projectShotReadiness()) {
   const category = shotBoardActionCategory(shot, shotReadinessFor(shot, feed));
   if (!FILTER.action || FILTER.action === "all") return true;
-  if (FILTER.action === "unfinished") return !shotIsDelivered(shot);
+  if (FILTER.action === "unfinished") return shotBoardNotFinal(shot, shotReadinessFor(shot, feed));
   return category === FILTER.action;
 }
 function shotBoardActionFilters(feed = projectShotReadiness()) {
-  const defs = [["unfinished","Not delivered"],["review","Needs review"],["missing-inputs","Missing inputs"],["ready",manualFirstWorkflow() ? "Ready for media" : "Ready to generate"],["complete","Delivered"],["all","All shots"]];
-  const counts = Object.fromEntries(defs.map(([id]) => [id, P.shots.filter((shot) => id === "all" ? true : id === "unfinished" ? !shotIsDelivered(shot) : shotBoardActionCategory(shot, shotReadinessFor(shot, feed)) === id).length]));
+  /* "Needs a decision" is the same word the Production summary tile and the scene
+     cards use, over the same rows. It used to read "Needs review", which is the
+     phrase Returned Results uses for its own much narrower queue. */
+  const defs = [["unfinished","Not final"],["review",`Needs a ${FILMMAKER_DECISION_LABEL}`],["missing-inputs","Missing inputs"],["ready",manualFirstWorkflow() ? "Ready for media" : "Ready to generate"],["complete","Final"],["all","All shots"]];
+  const counts = Object.fromEntries(defs.map(([id]) => [id, P.shots.filter((shot) => id === "all" ? true : id === "unfinished" ? shotBoardNotFinal(shot, shotReadinessFor(shot, feed)) : shotBoardActionCategory(shot, shotReadinessFor(shot, feed)) === id).length]));
   return `<nav class="board-action-filters" aria-label="Shot next-action filters">${defs.map(([id,label]) => `<button type="button" class="${FILTER.action===id?"selected":""}" onclick="setShotActionFilter('${id}')"><span>${esc(label)}</span><b>${counts[id]}</b></button>`).join("")}</nav>`;
 }
 function productionView(tab = "board") {

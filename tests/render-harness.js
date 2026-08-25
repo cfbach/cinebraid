@@ -828,7 +828,7 @@ async function main() {
   for (const [hash, project, expected, options] of cases) {
     const { html, context } = await render(hash, project, options || {});
     for (const text of expected) assert(html.includes(text), `${hash} did not render expected text: ${text}`);
-    for (const fn of ["route","productionHomeView","productionView","creationStudioView","buildGuidedFramePrompt","guidedShotWorkspaceView","projectDecisionItems"]) {
+    for (const fn of ["route","productionHomeView","productionView","creationStudioView","buildGuidedFramePrompt","guidedShotWorkspaceView","returnedResultsAwaitingReview","projectFilmmakerDecisions","sceneFilmmakerDecisions"]) {
       assert.strictEqual(typeof context[fn], "function", `${fn} is not available after script load`);
     }
   }

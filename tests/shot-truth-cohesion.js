@@ -253,8 +253,12 @@ async function actionableNextActionPanels() {
     };
   })()`, page.context);
 
-  equal(payload.status, "COMPLETE", "precondition: the still-only shot has no outstanding declared unit");
-  equal(payload.action, "nothing-outstanding", "complete readiness selects the delivery next action");
+  /* The still-only shot has no outstanding declared unit AND has not been marked
+     final, which is the state this fixture has always been in — what changed is that
+     readiness now says so. Both codes land on the same Deliver panel, so the
+     destination claims below are unaffected; only the word the filmmaker reads is. */
+  equal(payload.status, "NEEDS_DECISION", "precondition: no outstanding declared unit, and the shot is not final yet");
+  equal(payload.action, "mark-shot-final", "an approved-but-unfinished shot selects the delivery decision, not a completion claim");
   deepEqual([...payload.declaredVocabulary].sort(), [...payload.actionVocabulary].sort(),
     "declared destinations plus explicit project-only exceptions exhaust the canonical NEXT ACTION vocabulary");
   equal(new Set(payload.declaredVocabulary).size, payload.declaredVocabulary.length,
@@ -288,10 +292,11 @@ async function actionableNextActionPanels() {
       equal(routed?.selected, "look", row.code + " route navigation does not counterfeit a shot-stage selection");
     }
   }
-  equal(payload.targetPanel, "finish", "complete-shot NEXT ACTION passes the Deliver panel, not the Deliver stage id");
-  equal(payload.after, "deliver", "complete-shot NEXT ACTION selects the Deliver workspace");
-  ok(payload.before !== payload.after, "the complete-shot primary action changes the selected workspace");
-  ok(payload.card.includes("openShotReadinessAction('L1-01','nothing-outstanding')"), "the surfaced primary action delegates to the declared action router");
+  equal(payload.targetPanel, "finish", "the delivery NEXT ACTION passes the Deliver panel, not the Deliver stage id");
+  equal(payload.after, "deliver", "the delivery NEXT ACTION selects the Deliver workspace");
+  ok(payload.before !== payload.after, "the delivery primary action changes the selected workspace");
+  ok(payload.card.includes("openShotReadinessAction('L1-01','mark-shot-final')"), "the surfaced primary action delegates to the declared action router");
+  ok(!payload.card.includes("Nothing outstanding"), "and an approved-but-unfinished shot never claims nothing is outstanding");
   ok(!payload.card.includes("openGuidedPanel('L1-01','deliver')"), "the stage id is never consumed as a panel key");
   equal(payload.unknownDestination, null, "an unknown action has no declared destination");
   deepEqual(payload.unknownAfter, payload.unknownBefore, "an unknown action changes neither route nor selected stage");

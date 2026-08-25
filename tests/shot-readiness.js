@@ -122,6 +122,12 @@ function approveEntityState(P, list, entityId, stateId, value, identity = "") {
 function approveFrame(P, shotId, frameId, value, identity = "") {
   return GESTURE.gesture(() => Kernel.approveFrameCanon(P, { shotId, frameId, value, assetId: identity, at: AT, via: "readiness-suite" }));
 }
+/* MARKING A SHOT FINAL, THROUGH THE SHIPPED COMMAND. Approving the frame and
+   finalising the shot are two receipts because they are two decisions, and this
+   suite writes each one the way the product does. */
+function markShotFinal(P, shotId, value, identity = "") {
+  return GESTURE.gesture(() => Kernel.approveDeliveryCanon(P, { shotId, value, assetId: identity, at: AT, via: "readiness-suite" }));
+}
 function approveWholeCast(P) {
   approveEntityState(P, "characters", "CHAR-KAI", "state-default", KAI_FILE);
   approveEntityState(P, "locations", "LOC-DOCK", "state-default", DOCK_FILE);
@@ -895,12 +901,30 @@ function requirementOf(row, needle) {
       `deliveryIntent "${intent}" declares a motion unit`);
   }
 
-  /* COMPLETE IS THE EXISTING DONE SEMANTICS, AND ONLY IN THE ROLLUP. */
+  /* COMPLETE IS THE EXISTING DONE SEMANTICS, AND ONLY IN THE ROLLUP.
+   *
+   * "Done" is TWO receipts, not one. Approving the last declared unit answers the
+   * media question and leaves the durable filmmaker decision — mark this shot final
+   * — outstanding; this rollup used to call that state COMPLETE and say "Nothing
+   * outstanding" while the Deliver stage beside it read Not started. So the shot is
+   * driven through both steps here, and the intermediate state is asserted rather
+   * than skipped over: it is the one this suite previously got wrong. */
   const done = castProject({ shots: [castShot("SH-DONE")] });
   approveWholeCast(done);
   approveFrame(done, "SH-DONE", "frame-a", "SH-DONE-A.png");
-  const doneRow = shotOf(done, "SH-DONE", oracleFor(undefined, { "SH-DONE": [{ name: "SH-DONE-A.png" }] }));
-  equal(doneRow.status, "COMPLETE", "every declared unit holds Canon");
+  const oracleDone = () => oracleFor(undefined, { "SH-DONE": [{ name: "SH-DONE-A.png" }] });
+  const approvedRow = shotOf(done, "SH-DONE", oracleDone());
+  equal(approvedRow.status, "NEEDS_DECISION", "every declared unit holds Canon, and the shot is not final yet");
+  equal(approvedRow.nextAction.code, "mark-shot-final", "so the shot hands off to the durable filmmaker decision");
+  ok(!approvedRow.units.filter((unit) => unit.required).some((unit) => !unit.complete),
+    "and it does so with no outstanding declared unit — this is a rollup decision, not a unit one");
+  ok(!approvedRow.units.some((unit) => unit.nextAction && unit.nextAction.code === "mark-shot-final"),
+    "no unit ever emits the delivery decision");
+
+  markShotFinal(done, "SH-DONE", "SH-DONE-A.png");
+  const doneRow = shotOf(done, "SH-DONE", oracleDone());
+  equal(doneRow.status, "COMPLETE", "every declared unit holds Canon and the filmmaker marked the shot final");
+  equal(doneRow.nextAction.code, "nothing-outstanding", "and only then is nothing outstanding");
   ok(!Readiness.SHOT_READINESS_STATUSES.includes("COMPLETE"), "COMPLETE is not a unit readiness state");
   ok(Readiness.SHOT_ROLLUP_STATUSES.includes("COMPLETE"), "it exists only in the rollup vocabulary");
   ok(doneRow.units.every((unit) => Readiness.SHOT_READINESS_STATUSES.includes(unit.status)), "and no unit ever reports it");
@@ -1210,7 +1234,19 @@ async function renderedSurfaceSection() {
     ],
   }));
   equal(unitOf(manual, "motion:shot").complete, true, "receipt-backed imported motion is accepted as existing production media");
-  equal(manual.status, "COMPLETE", "manual-first approved motion satisfies the declared motion unit without generation");
+  /* The claim under test is about the UNIT, and it is made on the line above. The
+     rollup answers a wider question: every declared unit is satisfied without
+     generation, and what is left is the one decision no import can make for a
+     filmmaker. */
+  equal(manual.nextAction.code, "mark-shot-final",
+    "manual-first approved motion satisfies the declared motion unit without generation, leaving only the delivery decision");
+  markShotFinal(r2vProject, r2vShot.id, "IMPORTED-MOTION.mp4", "asset-imported-motion");
+  equal(shotOf(r2vProject, r2vShot.id, oracleFor([], {
+    [r2vShot.id]: [
+      { name: "EXISTING-STILL.png", url: "/shots/EXISTING-STILL.png" },
+      { name: "IMPORTED-MOTION.mp4", url: "/shots/IMPORTED-MOTION.mp4", assetId: "asset-imported-motion" },
+    ],
+  })).status, "COMPLETE", "and marking it final completes the shot");
 }
 
 renderedSurfaceSection().then(
