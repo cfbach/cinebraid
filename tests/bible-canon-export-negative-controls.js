@@ -367,11 +367,20 @@ function ncBible6() {
 /* RE-POINTED, NOT WEAKENED. This control used to attack the rule "a made[] record
    enters canon only when it names a canon file" — filename matching, which the
    independent review found was itself a second prompt-truth path. The rule is now
-   "made[] never enters canon", so the control restores the whole channel and proves
-   hand-written provenance lands under an approved heading. NC-BIBLE13 attacks the
-   sharper case: the same file, contradicted. */
+   "made[] never enters canon", so the control restores the whole shipped channel:
+   the projection collects the records, the Markdown serialiser prints them under
+   "Made with", and the entity card prints them under "MADE WITH". All three halves
+   existed together before the repair, and restoring only the first proves nothing a
+   filmmaker could see — which is what the second review round caught here.
+
+   THE DISTINCT FAILURE MODE, and it is not NC-BIBLE13's. NC-BIBLE13 is about ONE
+   approved file acquiring a SECOND, contradicting prompt. This is about a record
+   that names a file which is not canon at all — `KAI_SCRATCH.png` — being published
+   in a document whose opening line says every entry in it was approved. Both are
+   real; neither implies the other. */
 function ncBible7() {
   const Canon = mutatingMany([
+    /* 1. the projection collects them again */
     [
       "    for (const entry of list(x.made).map(record)) {\n      if (!text(entry.prompt)) continue;\n      appendix.push({",
       "    const made = [];\n"
@@ -380,22 +389,68 @@ function ncBible7() {
       + "      made.push({ model: text(entry.model), files: text(entry.files), prompt: text(entry.prompt) });\n"
       + "      appendix.push({",
     ],
+    /* 2. and returns them in the canon body */
     ["      continuityStates: states,\n      canonStateCount: states.length,",
      "      continuityStates: states,\n      made,\n      canonStateCount: states.length,"],
+    /* 3. and the shipped Markdown serialiser prints them, exactly as it did */
+    [
+      "        else if (state.representationNote) out.push(\"\", `_${state.representationNote}_`);\n      }",
+      "        else if (state.representationNote) out.push(\"\", `_${state.representationNote}_`);\n"
+      + "      }\n"
+      + "      for (const entry of list(row.made)) {\n"
+      + "        out.push(\"\", `**Made with ${entry.model || \"an unrecorded model\"}** — \\`${entry.files}\\``, ...fence(entry.prompt));\n"
+      + "      }",
+    ],
   ], "NC-BIBLE7");
+  /* 4. and so does the shipped entity card, through the real renderer */
+  const Page = mutatingPage(
+    "      ${states}\n    </div></article>`;",
+    "      ${states}\n"
+    + "      ${(x.made || []).map((g) => (g.prompt ? block(\"MADE WITH · \" + (g.modelName || \"?\") + (g.files ? \" · \" + g.files : \"\"), g.prompt) : \"\")).join(\"\")}\n"
+    + "    </div></article>`;",
+    "NC-BIBLE7-page");
 
+  const NOT_CANON_FILE = "KAI_SCRATCH.png";
+  const NOT_CANON_RECORD = "The record for a file that is not canon.";
   const P = entityProject();
   P.characters[0].made = [
     { model: "m-img", files: "KAI_DEFAULT.png", prompt: "The record for the approved default.", date: "2026-08-19" },
-    { model: "m-img", files: "KAI_SCRATCH.png", prompt: "The record for a file that is not canon.", date: "2026-08-19" },
+    { model: "m-img", files: NOT_CANON_FILE, prompt: NOT_CANON_RECORD, date: "2026-08-19" },
   ];
   const doc = projectWith(Canon, P, { media: { characters: ANCHOR_POOL }, shotMedia: () => [] });
   const kai = doc.characters.find((row) => row.id === "CHAR-KAI");
 
-  equal(kai.made.length, 2, "NC-BIBLE7: hand-written generation records are published in the canon body");
+  /* THE FILE IS NOT CANON, which is what makes publishing its record a lie rather
+     than a duplication. Stated before the bad state, so the bad state means
+     something. */
+  ok(!kai.continuityStates.some((state) => state.approvedFile === NOT_CANON_FILE),
+    "NC-BIBLE7: KAI_SCRATCH.png is not any approved state's file");
+  equal(kai.made.length, 2, "NC-BIBLE7: every hand-written record is collected into the canon body");
+
+  /* 1. THE LITERAL BAD STATE, IN WHAT A FILMMAKER READS — both surfaces. */
+  const exported = Canon.bibleCanonMarkdown(doc, { preset: "canon" });
+  const canonBody = exported.slice(0, exported.indexOf(Canon.BIBLE_APPENDIX_HEADING) + 1 || exported.length);
+  ok(canonBody.includes(NOT_CANON_RECORD),
+    "NC-BIBLE7: CANON ONLY publishes a generation record for a file that is not canon");
+  ok(canonBody.includes(`\`${NOT_CANON_FILE}\``),
+    "NC-BIBLE7: naming that file under a heading in a document that says everything in it was approved");
+  ok(/\*\*Made with m-img\*\* — `KAI_SCRATCH\.png`/.test(canonBody),
+    "NC-BIBLE7: as a Made with line, which is how the defect actually read");
+
+  const rendered = Suite.screenText(Page.entityCard(kai, "CHARACTER"));
+  ok(rendered.includes("MADE WITH · ? · " + NOT_CANON_FILE),
+    "NC-BIBLE7: and the shipped entity card prints it on screen too");
+  ok(rendered.includes(NOT_CANON_RECORD),
+    "NC-BIBLE7: with the prompt text a person would copy out of it");
+
+  /* 2. THE GUARANTEES MUST GO RED — the projection one and the output one. */
   mustFail("NC-BIBLE7", "no `made` channel at all",
     () => assert.strictEqual(kai.made, undefined, "E1: and the canon body has no `made` channel at all"));
-  note("NC-BIBLE7 restoring the made[] channel puts hand-written provenance in the canon body and E1 goes red");
+  mustFail("NC-BIBLE7-output", "while the canonical body carries none of them",
+    () => assert(!Canon.bibleCanonMarkdown(doc, { preset: "canon" }).includes("Names a canon file.")
+      && !Canon.bibleCanonMarkdown(doc, { preset: "canon" }).includes(NOT_CANON_RECORD),
+      "E4: while the canonical body carries none of them"));
+  note("NC-BIBLE7 restoring the made[] channel publishes a record for a NON-CANON file in CANON ONLY and on the entity card; E1 and E4 go red");
 }
 
 /* =========================================================================== */
