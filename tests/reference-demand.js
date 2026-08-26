@@ -41,6 +41,10 @@
  *   9  copy — required-now vs available vs satisfied vs not currently needed
  *  10  no Slice 1/2/3/4 regression and no new persisted field
  *  11  every filmmaker-authored optional relation has a reachable clear path
+ *  12  FD1-FD7 — the dependency reading is three-valued and fails closed
+ *  13  VEH1-VEH7 — one vehicle relation, two encodings, one truthful control
+ *  14  AG1-AG10 — current work equals what readiness actually owes
+ *  15  LOC1-LOC7 — an explicit clear survives normalisation and a round trip
  *
  * Provider calls: 0. Paid calls: 0. Nothing is written to any project on disk.
  */
@@ -111,7 +115,8 @@ function demandCounts(html) {
   return {
     required: Number(value("required")), missing: Number(value("missing")),
     recommended: Number(value("recommended")), notNeeded: Number(value("not-needed")),
-    now: Number(value("now")), dormant: Number(value("dormant")),
+    now: Number(value("now")), plan: Number(value("plan")), dormant: Number(value("dormant")),
+    lead: value("lead"), obligations: value("obligations"),
     production: value("production"),
   };
 }
@@ -284,10 +289,18 @@ async function demandMatrixSection(options = {}) {
   const cast = await referenceSurface(demandFixture({ cast: true }), options);
   const castCounts = demandCounts(cast.html);
   assert.strictEqual(castCounts.production, "demanded", "RD5: a cast reference is demanded");
-  assert.ok(castCounts.now > 0, "RD5: and its required references become current work");
-  assert.strictEqual(castCounts.now, castCounts.missing,
-    "RD5: every unmet required item is now outstanding, because the production is asking for all of them");
-  assert.strictEqual(castCounts.dormant, 0, "RD5: and nothing is standing by");
+  assert.ok(castCounts.now > 0, "RD5: and the reference work the production actually owes becomes current");
+  /* CURRENT WORK IS WHAT READINESS OWES, NOT THE WHOLE TEMPLATE. An independent
+     review found this suite's earlier expectation — `now === missing` — asserting
+     the very defect the slice exists to remove: casting a character made all
+     eight of its seeded coverage slots "required now" while Production owed only
+     the primary reference. Section AG holds the agreement; this holds the shape. */
+  assert.ok(castCounts.now < castCounts.missing,
+    `RD5: and it is the production's obligation, not the entity's whole coverage template `
+    + `(now=${castCounts.now} of missing=${castCounts.missing})`);
+  assert.strictEqual(castCounts.plan, castCounts.missing,
+    "RD5: with the rest of the template present and counted as coverage plan");
+  assert.strictEqual(castCounts.dormant, 0, "RD5: and nothing standing by for want of a shot");
 
   /* RD6 · un-casting it makes the work disappear again, and deletes nothing. */
   const uncast = demandFixture({ cast: true });
@@ -326,10 +339,13 @@ async function demandMatrixSection(options = {}) {
     slot.status = "selected";
   }
   const satisfiedCounts = demandCounts((await referenceSurface(satisfied, options)).html);
-  assert.strictEqual(satisfiedCounts.now, satisfiedCounts.missing,
-    "RD8: current work is exactly the unmet required items, never the satisfied ones");
   assert.ok(satisfiedCounts.required > satisfiedCounts.missing,
-    "RD8: (and the fixture must actually satisfy some, or the equality above proves nothing)");
+    "RD8: (the fixture must actually satisfy some, or the counts below prove nothing)");
+  assert.ok(satisfiedCounts.plan < satisfiedCounts.required,
+    "RD8: a satisfied requirement leaves the coverage plan, because it is covered");
+  assert.ok(!/data-demand-id="front"[^>]*>[\s\S]{0,200}?Nothing selected yet/.test(
+    (await referenceSurface(satisfied, options)).html),
+    "RD8: and a covered slot never reads as outstanding");
 
   /* RD9 · a historic/superseded declaration is not current demand. */
   const historic = demandFixture({ cast: false });
@@ -371,6 +387,8 @@ async function agreementSection(options = {}) {
     `4: and must say why, got "${task.note}"`);
   assert.ok(!/\d+ required view/.test(task.note),
     `4: the strip must not count required views for a reference nothing uses, got "${task.note}"`);
+  assert.strictEqual(counts.obligations, "readiness",
+    "4: and the surface must say the current-work number came from readiness rather than from the template");
 
   /* PRODUCTION AGREES: a dormant reference contributes no readiness requirement
      and no shared blocker. Asked of the shipped derivations, not restated. */
@@ -715,7 +733,7 @@ async function copySection(options = {}) {
   const richHtml = (await referenceSurface(rich, options)).html;
   const richCounts = demandCounts(richHtml);
   assert.ok(richCounts.now >= 1, "9: REQUIRED NOW is present");
-  assert.ok(richCounts.recommended >= 1, "9: OPTIONAL / AVAILABLE is present");
+  assert.ok(richCounts.plan >= 1, "9: OPTIONAL / AVAILABLE is present");
   assert.ok(richCounts.notNeeded >= 1, "9: NOT CURRENTLY NEEDED is present");
   assert.ok(/data-demand-id="profile"[\s\S]{0,400}?Selected/.test(richHtml), "9: SATISFIED is present and says so");
 
@@ -890,6 +908,529 @@ async function reversibilitySurvey(options = {}) {
     + `shot's location, and chooseShotContinuityState is still the only entry point for its state declaration`);
 }
 
+/* ================================================ 12 · FD1-FD7 · FAIL CLOSED
+   ONLY A POSITIVELY-KNOWN ABSENCE MAY STAND REQUIRED WORK DOWN.
+
+   The independent review's reproduction, and the reason this section exists:
+
+       characters:  CHAR  and  CHAR-A
+       shot codes:  ["CHAR-A"]
+
+   shotEntityTokenMatches accepts an id followed by "-", so both entities match
+   the one token; classifyShotCodeTokens calls it AMBIGUOUS and names both;
+   shotDependencyRecords resolves the first. Asking about CHAR-A therefore
+   returned `known: true, demanded: false` — a positive claim of absence about an
+   entity the project's own classifier had just listed as a candidate — and
+   CHAR-A's required reference work was stood down.
+
+   Every case below is the same project with one fact changed, and the invariant
+   is one-way: uncertainty may only ever ADD work back. */
+function failClosedSection() {
+  const Coverage2 = Coverage;
+  const collision = (mutate) => {
+    const project = buildFixture();
+    project.characters = [
+      { id: "CHAR", name: "Char", continuityStates: [], coverageSlots: slotSet(["front"]) },
+      { id: "CHAR-A", name: "Char A", continuityStates: [], coverageSlots: slotSet(["front"]) },
+    ];
+    project.shots[0].characters = [];
+    project.shots[0].codes = [];
+    project.shots[0].creationBrief = { propIds: [] };
+    mutate(project.shots[0], project);
+    return project;
+  };
+  const ask = (project, id = "CHAR-A") => Entities.entityReferenceDemand(project, "character", id);
+
+  /* FD1 · exact, unambiguous use. */
+  const fd1 = collision((shot, project) => { project.characters = [project.characters[1]]; shot.codes = ["CHAR-A"]; });
+  assert.deepStrictEqual({ known: ask(fd1).known, demanded: ask(fd1).demanded }, { known: true, demanded: true },
+    "FD1: an unambiguous relationship is definitely used");
+
+  /* FD2 · known dormant, on data that reads cleanly. */
+  const fd2 = collision(() => {});
+  assert.deepStrictEqual({ known: ask(fd2).known, demanded: ask(fd2).demanded }, { known: true, demanded: false },
+    "FD2: clean data with no relationship is definitely unused, and may stand work down");
+
+  /* FD3 · THE REPRODUCED CASE. */
+  const fd3 = collision((shot) => { shot.codes = ["CHAR-A"]; });
+  const classified = Entities.classifyShotCodeTokens(fd3, fd3.shots[0]);
+  assert.strictEqual(classified[0].status, "ambiguous",
+    "FD3: (precondition) the shipped classifier must call this token ambiguous");
+  assert.deepStrictEqual(classified[0].matches.map((row) => row.id), ["CHAR", "CHAR-A"],
+    "FD3: (precondition) and name both candidates, CHAR-A among them");
+  assert.deepStrictEqual(Entities.shotDependencyRecords(fd3, fd3.shots[0]).filter((r) => r.type === "character").map((r) => r.id), ["CHAR"],
+    "FD3: (precondition) while the resolver takes the first — which is what made the false certainty");
+  assert.strictEqual(ask(fd3).known, false,
+    "FD3: so CHAR-A's use CANNOT be known, and the answer must say so rather than claim absence");
+  assert.ok(ask(fd3).uncertain.some((row) => /ambiguous/.test(row)),
+    `FD3: naming the reason, got ${JSON.stringify(ask(fd3).uncertain)}`);
+  assert.strictEqual(ask(fd3, "CHAR").demanded, true,
+    "FD3: and the entity the resolver DID pick is still definitely used — uncertainty is per-entity");
+
+  /* FD4 · every collection the resolver reads, one malformation each. */
+  const malformations = [
+    ["characters as a string", (shot) => { shot.characters = "CHAR-A"; }],
+    ["codes as a string", (shot) => { shot.codes = "CHAR-A"; }],
+    ["clips as a string", (shot) => { shot.clips = "nope"; }],
+    ["audio as an array", (shot) => { shot.audio = []; }],
+    ["continuityStateSelections as a string", (shot) => { shot.continuityStateSelections = "nope"; }],
+    ["creationBrief as a string", (shot) => { shot.creationBrief = "nope"; }],
+    ["creationBrief.propIds as a string", (shot) => { shot.creationBrief = { propIds: "nope" }; }],
+    ["creationBrief.vehicleIds as a string", (shot) => { shot.creationBrief = { vehicleIds: "nope" }; }],
+  ];
+  for (const [label, mutate] of malformations) {
+    const answer = ask(collision(mutate));
+    assert.strictEqual(answer.known, false, `FD4: ${label} must not produce a known absence`);
+    assert.ok(answer.uncertain.some((row) => /malformed/.test(row)), `FD4: ${label} must say why`);
+  }
+  /* And the whole shot list. */
+  const fd4b = collision(() => {});
+  fd4b.shots = "not an array";
+  assert.strictEqual(ask(fd4b).known, false,
+    "FD4: a project whose shot list is not a list cannot support a claim about production structure");
+  /* An ABSENT collection is not a malformation — there is nothing to misread. */
+  const fd4c = collision((shot) => { delete shot.codes; delete shot.clips; delete shot.audio; });
+  assert.strictEqual(ask(fd4c).known, true,
+    "FD4: an absent collection is absence, not damage, and must still permit a confident answer");
+
+  /* FD5 · a token whose type is known and which names nothing. */
+  const fd5 = collision((shot) => { shot.codes = ["CHARACTER-NOPE"]; });
+  assert.strictEqual(Entities.classifyShotCodeTokens(fd5, fd5.shots[0])[0].status, "unresolved",
+    "FD5: (precondition) the classifier must call this token unresolved");
+  assert.strictEqual(ask(fd5).known, false,
+    "FD5: a relationship CineBraid cannot read is not evidence that some other reference is unused");
+  /* ...and the one case where shipped semantics DO prove absence: a token that
+     lost specificity but demonstrably resolved to a different entity, and could
+     not have named this one. */
+  const fd5b = collision((shot) => { shot.codes = ["CHAR-GHOST"]; });
+  assert.strictEqual(Entities.classifyShotCodeTokens(fd5b, fd5b.shots[0])[0].status, "reinterpreted",
+    "FD5: (precondition) a token that resolves to exactly one entity with specificity discarded");
+  assert.strictEqual(ask(fd5b).known, true,
+    "FD5: CHAR-GHOST cannot match CHAR-A under the shipped matcher, so absence IS provable here");
+  /* ...and the mirror: a lossy token that COULD have named it. */
+  const fd5c = collision((shot) => { shot.codes = ["CHAR-A-01"]; });
+  assert.strictEqual(ask(fd5c).known, false,
+    "FD5: a lossy token that the shipped matcher accepts for this entity makes the answer unknown");
+
+  /* FD6 · a stale declaration is not demand, and does not make the answer unknown. */
+  const fd6 = collision((shot) => { shot.continuityStateSelections = { "CHAR-A": "state-default" }; });
+  assert.deepStrictEqual({ known: ask(fd6).known, demanded: ask(fd6).demanded }, { known: true, demanded: false },
+    "FD6: a superseded declaration creates no demand and clouds nothing");
+
+  /* FD7 · removing a clean dependency returns a known dormant answer. */
+  const fd7a = collision((shot) => { shot.characters = ["CHAR-A"]; });
+  const fd7b = collision((shot) => { shot.characters = []; });
+  assert.strictEqual(ask(fd7a).demanded, true, "FD7: (precondition) attached");
+  assert.deepStrictEqual({ known: ask(fd7b).known, demanded: ask(fd7b).demanded }, { known: true, demanded: false },
+    "FD7: and detaching returns a confident dormant answer rather than an unknown");
+
+  /* ESTABLISHED USE OUTRANKS UNCERTAINTY. Once one shot definitely uses the
+     reference, an unreadable shot elsewhere cannot turn `demanded` into unknown. */
+  const both = collision((shot, project) => {
+    shot.characters = ["CHAR-A"];
+    project.shots.push({ ...JSON.parse(JSON.stringify(shot)), id: "L1-02", characters: "broken" });
+  });
+  assert.deepStrictEqual({ known: ask(both).known, demanded: ask(both).demanded }, { known: true, demanded: true },
+    "FD: uncertainty may only ever block the NEGATIVE answer — it can never unmake an established use");
+
+  /* AND THE PROJECTION HONOURS IT. `known: false` keeps required work required. */
+  assert.strictEqual(
+    Coverage2.referenceDemandState(Coverage2.coverageDemand({ requirement: "required" }),
+      { satisfied: false, production: ask(fd3) }).state,
+    "required-now", "FD: an unknown production answer must leave required work required");
+
+  note("12. FD1-FD7 · the dependency reading is three-valued. The reproduced CHAR/CHAR-A collision, eight "
+    + "malformed collections, a non-array shot list, an unresolved token and a lossy token that could have named "
+    + "the entity all answer `known: false`; an absent collection, a stale declaration and a lossy token that "
+    + "demonstrably resolved elsewhere still answer confidently; established use outranks uncertainty everywhere; "
+    + "and an unknown answer leaves required work required");
+}
+
+/* ============================================ 13 · VEH1-VEH7 · ONE VEHICLE,
+   TWO DIALECTS, AND THE CONTROL MUST TELL THE TRUTH ABOUT BOTH.
+
+   SEMANTIC DISPOSITION, stated because the brief asks for it before anything is
+   changed: `creationBrief.propIds` and `creationBrief.vehicleIds` do NOT have
+   different meanings. shotDependencyRecords() produces the identical
+   `type: "vehicle"` row from either, both are members of
+   SHOT_STATE_BEARING_RELATIONSHIP_SOURCES, and no reader in the repository
+   treats them differently. `propIds` is the union namespace the picker writes;
+   `vehicleIds` is a type-narrowed spelling no shipped control has ever written —
+   only import, a structure-duplicate clear, and a relink rewrite touch it. One
+   relation, two encodings, and this section holds that reading. */
+async function vehicleDialectSection(options = {}) {
+  const INPUTS = { "cinebraid-focused:fixture:shot-task:L1-01": "inputs" };
+  const fixture = (brief) => {
+    const project = withCanon(buildFixture(), [
+      { kind: "entity-state", list: "vehicles", entityId: "VEH-CENSUS", stateId: "state-default", value: "VEH-CENSUS.png" },
+    ]);
+    project.vehicles = [{
+      id: "VEH-CENSUS", name: "Census tug", approvedFile: "VEH-CENSUS.png",
+      continuityStates: [{ id: "state-default", name: "Default", isDefault: true, approvedFile: "VEH-CENSUS.png" }],
+      coverageSlots: slotSet(["front"]),
+      made: [{ model: "fixture-model", files: "VEH-CENSUS.png", prompt: "p", date: "2026-08-01" }],
+    }];
+    project.shots[0].codes = [];
+    project.shots[0].characters = [];
+    project.shots[0].creationBrief = { locationId: "", propIds: [], vehicleIds: [], ...brief };
+    return project;
+  };
+  const inspect = (context) => JSON.parse(vm.runInContext(`JSON.stringify({
+    propIds: P.shots[0].creationBrief.propIds, vehicleIds: P.shots[0].creationBrief.vehicleIds,
+    codes: P.shots[0].codes,
+    demanded: entityReferenceDemand(P, "vehicle", "VEH-CENSUS").demanded,
+    canon: !!currentHumanAuthority(P, { kind: "entity-state", list: "vehicles", entityId: "VEH-CENSUS", stateId: "state-default" }),
+    receipts: ((P.productionAuthority || {}).receipts || []).length,
+    approvedFile: P.vehicles[0].approvedFile, history: (P.vehicles[0].made || []).length,
+    states: (P.vehicles[0].continuityStates || []).length,
+  })`, context));
+  const selected = (html) => {
+    const m = /class="guided-asset-choice ([^"]*)"[^>]*onclick="toggleShotCreationProp\('L1-01','VEH-CENSUS'\)"/.exec(html);
+    assert.ok(m, "the vehicle must render in the Props & Vehicles picker");
+    return /\bon\b/.test(m[1]);
+  };
+
+  /* VEH1 · a vehicleIds-only relation renders attached. */
+  const one = await render("#/shot/L1-01", fixture({ vehicleIds: ["VEH-CENSUS"] }), { ...options, storage: INPUTS });
+  assert.ok(selected(one.html),
+    "VEH1: a vehicle the document attaches through `vehicleIds` must render as selected");
+  const beforeOne = inspect(one.context);
+  assert.strictEqual(beforeOne.demanded, true, "VEH1: (precondition) and reference demand must already count it");
+
+  /* VEH2 · one click through the shipped control clears the relationship. */
+  vm.runInContext("toggleShotCreationProp('L1-01','VEH-CENSUS')", one.context);
+  const afterOne = inspect(one.context);
+  assert.deepStrictEqual(afterOne.vehicleIds, [], "VEH2: the vehicleIds relationship is gone");
+  assert.deepStrictEqual(afterOne.propIds, [], "VEH2: and no second encoding was left behind");
+  assert.strictEqual(afterOne.demanded, false, "VEH2: so the vehicle no longer demands its references");
+
+  /* VEH5 · and nothing about the vehicle itself was touched. */
+  for (const key of ["canon", "receipts", "approvedFile", "history", "states"]) {
+    assert.deepStrictEqual(afterOne[key], beforeOne[key],
+      `VEH5: clearing a relationship must not change the vehicle's ${key}`);
+  }
+
+  /* VEH7 · and normalization does not put it back. */
+  vm.runInContext("normalizeShotV5(P.shots[0])", one.context);
+  assert.strictEqual(inspect(one.context).demanded, false,
+    "VEH7: normalization must not resurrect a cleared vehicle relationship");
+
+  /* VEH6 · re-selecting works, through the dialect the UI owns. */
+  vm.runInContext("toggleShotCreationProp('L1-01','VEH-CENSUS')", one.context);
+  const again = inspect(one.context);
+  assert.strictEqual(again.demanded, true, "VEH6: re-selecting restores the relationship");
+  assert.deepStrictEqual(again.propIds, ["VEH-CENSUS"],
+    "VEH6: written to the union namespace the picker has always owned");
+  assert.deepStrictEqual(again.vehicleIds, [],
+    "VEH6: and NOT to the legacy dialect — a third writer of a two-encoding relation would make this worse");
+
+  /* VEH3 · the propIds path is unchanged. */
+  const prop = await render("#/shot/L1-01", fixture({ propIds: ["VEH-CENSUS"] }), { ...options, storage: INPUTS });
+  assert.ok(selected(prop.html), "VEH3: a propIds vehicle still renders attached");
+  vm.runInContext("toggleShotCreationProp('L1-01','VEH-CENSUS')", prop.context);
+  assert.strictEqual(inspect(prop.context).demanded, false, "VEH3: and still clears in one click");
+
+  /* VEH4 · both dialects naming the same vehicle is ONE removal and no ghost. */
+  const both = await render("#/shot/L1-01", fixture({ propIds: ["VEH-CENSUS"], vehicleIds: ["VEH-CENSUS"] }),
+    { ...options, storage: INPUTS });
+  assert.ok(selected(both.html), "VEH4: (precondition) it renders attached");
+  vm.runInContext("toggleShotCreationProp('L1-01','VEH-CENSUS')", both.context);
+  const cleared = inspect(both.context);
+  assert.deepStrictEqual([cleared.propIds, cleared.vehicleIds], [[], []],
+    "VEH4: one removal must clear both encodings — a surviving one is the ghost relation");
+  assert.strictEqual(cleared.demanded, false, "VEH4: and nothing may still demand the vehicle");
+
+  /* THE CENSUS CLAIM, MADE HONEST. The earlier pass said all seven authored
+     relations were reversible while this one was not; it is now, and the source
+     says which fields the picker reads so the claim can be checked. */
+  const studio = codeOnly(read("public/creation-studio.js"));
+  assert.ok(/function guidedAttachedBriefPropVehicleIds/.test(studio),
+    "VEH: the picker must resolve its attached set through one named reader");
+  const reader = studio.slice(studio.indexOf("function guidedAttachedBriefPropVehicleIds"));
+  assert.ok(/brief\.propIds/.test(reader.slice(0, 600)) && /brief\.vehicleIds/.test(reader.slice(0, 600)),
+    "VEH: and that reader must consult BOTH dialects");
+
+  note("13. VEH1-VEH7 · `propIds` and `vehicleIds` are one relation with two encodings — same dependency row, "
+    + "both state-bearing, no reader distinguishes them — so the picker reads both. A vehicleIds-only vehicle "
+    + "renders attached, clears in one click, stops demanding its references, survives normalization cleared, and "
+    + "re-attaches through the union namespace the UI owns; both dialects together take ONE removal and leave no "
+    + "ghost; and the vehicle's canon, receipts, approved file, states and history are untouched throughout");
+}
+
+/* ================================================= 14 · AG1-AG10 · AGREEMENT
+   NO SURFACE MAY CLAIM CURRENT REQUIRED REFERENCE WORK WHEN READINESS OWES NONE.
+
+   The defect this holds: an active character whose primary reference was already
+   Canon, with eight empty seeded coverage rows, read "8 required references still
+   needed" on its reference surface while shot readiness was satisfied,
+   projectSharedBlockers was empty and Production said MARK SHOT FINAL. The
+   surface was counting the entity's COVERAGE PLAN and calling it the production's
+   CURRENT REQUIREMENT.
+
+   Every case below compares the reference surface against the shipped
+   derivations, and the comparison is an equality against a recomputation rather
+   than against a number chosen here. */
+async function agreementMatrixSection(options = {}) {
+  const canonFor = (project, rows) => withCanon(project, rows);
+  const allCanon = (project) => canonFor(project, [
+    { kind: "entity-state", list: "characters", entityId: "KAI", stateId: "state-default", value: "KAI-ANCHOR.png" },
+    { kind: "entity-state", list: "locations", entityId: "LOC-HULL", stateId: "state-default", value: "LOC-HULL-PLATE.png" },
+    { kind: "entity-state", list: "props", entityId: "PR-TOOL", stateId: "state-default", value: "PR-TOOL-PLATE.png" },
+  ]);
+  const withoutKai = (project) => canonFor(project, [
+    { kind: "entity-state", list: "locations", entityId: "LOC-HULL", stateId: "state-default", value: "LOC-HULL-PLATE.png" },
+    { kind: "entity-state", list: "props", entityId: "PR-TOOL", stateId: "state-default", value: "PR-TOOL-PLATE.png" },
+  ]);
+  const oneState = (project) => {
+    project.characters[0].continuityStates = [
+      { id: "state-default", name: "Clean", isDefault: true, approvedFile: "KAI-ANCHOR.png" },
+    ];
+    return project;
+  };
+  const twoStates = (project) => {
+    project.characters[0].continuityStates = [
+      { id: "state-default", name: "Clean", isDefault: true, approvedFile: "KAI-ANCHOR.png" },
+      { id: "state-soot", name: "Sooty", isDefault: false, parentStateId: "state-default" },
+    ];
+    project.shots[0].continuityStateSelections = { KAI: "state-soot" };
+    return project;
+  };
+
+  /* The shipped derivations, asked inside the page and recomputed independently
+     of anything this suite decides. */
+  async function compare(label, project, { list = "characters", id = "KAI" } = {}) {
+    const surface = await referenceSurface(project, { ...options, list, id });
+    const counts = demandCounts(surface.html);
+    const production = await render("#/production", project, options);
+    const truth = JSON.parse(vm.runInContext(`JSON.stringify((() => {
+      const feed = projectShotReadiness();
+      const owed = (feed.shots || []).flatMap((shot) => outstandingReadinessRows(shot))
+        .filter((row) => row.target && row.target.kind === "entity-state"
+          && row.target.list === ${JSON.stringify(list)} && row.target.entityId === ${JSON.stringify(id)});
+      return {
+        entityOwed: [...new Set(owed.map((row) => row.targetKey))].length,
+        blockers: projectSharedBlockers(feed).map((row) => row.key),
+        next: (projectNextProductionAction() || {}).actionLabel || "",
+        historic: ((feed.historic || {}).items || []).map((row) => row.key),
+        shotStatus: (feed.shots[0] || {}).status || "",
+      };
+    })())`, production.context));
+    assert.strictEqual(counts.obligations, "readiness",
+      `${label}: the surface must derive current work from readiness, not from the template`);
+    assert.strictEqual(counts.now, truth.entityOwed,
+      `${label}: the reference surface claims ${counts.now} current required reference(s) `
+      + `while readiness owes ${truth.entityOwed}`);
+    return { counts, truth, html: surface.html };
+  }
+
+  /* AG1 · dormant entity. */
+  const dormant = allCanon(oneState(buildFixture()));
+  dormant.characters.push({ id: "AG-DORM", name: "Dormant", continuityStates: [], coverageSlots: slotSet(["front", "profile"]) });
+  const ag1 = await compare("AG1", dormant, { id: "AG-DORM" });
+  assert.strictEqual(ag1.counts.now, 0, "AG1: a dormant entity owes zero current reference work");
+  assert.ok(ag1.counts.plan > 0, "AG1: and its coverage plan is still on the screen");
+
+  /* AG2 · THE REPRODUCED CASE. Active, Canon satisfies readiness, seeded coverage empty. */
+  const ag2 = await compare("AG2", allCanon(oneState(buildFixture())));
+  assert.strictEqual(ag2.counts.now, 0,
+    "AG2: an active entity whose Canon already satisfies readiness owes no current reference work");
+  assert.ok(ag2.counts.missing >= 8,
+    `AG2: (and the entity must really carry unmet template rows, got ${ag2.counts.missing})`);
+  assert.strictEqual(ag2.counts.plan, ag2.counts.missing,
+    "AG2: every one of them is coverage plan");
+  assert.deepStrictEqual(ag2.truth.blockers, [], "AG2: while Production is blocked by nothing");
+  assert.ok(!/required reference/.test(demandHeadline(ag2.html)),
+    `AG2: and the headline must not count a backlog, got "${demandHeadline(ag2.html)}"`);
+
+  /* AG3 · a genuinely unresolved readiness requirement. */
+  const ag3 = await compare("AG3", allCanon(twoStates(buildFixture())));
+  assert.strictEqual(ag3.counts.now, 1, "AG3: one unresolved requirement is one current obligation");
+  assert.ok(ag3.truth.blockers.some((key) => key.includes("state-soot")),
+    "AG3: and Production names the same target");
+
+  /* AG4 · a historic reference awaiting confirmation. */
+  const ag4 = await compare("AG4", withoutKai(oneState(buildFixture())));
+  assert.strictEqual(ag4.counts.now, 1, "AG4: an unconfirmed primary is a current decision");
+  assert.ok(ag4.truth.historic.some((key) => key.includes("characters:KAI")),
+    "AG4: and the confirmation queue holds the same target — the two surfaces agree a decision is owed");
+  assert.ok(/data-demand-family="primary"/.test(ag4.html),
+    "AG4: the obligation on the primary must appear on the panel even though the primary has its own stage");
+  assert.ok(/Chosen but never approved/.test(ag4.html),
+    "AG4: in readiness's own words rather than a second vocabulary");
+
+  /* AG5 · confirming it clears the obligation. */
+  const ag5 = await compare("AG5", allCanon(oneState(buildFixture())));
+  assert.strictEqual(ag5.counts.now, 0, "AG5: confirming the reference clears the current obligation");
+  assert.deepStrictEqual(ag5.truth.historic, [], "AG5: and empties the confirmation queue");
+
+  /* AG6 · removing structural demand clears it too. */
+  const detached = withoutKai(oneState(buildFixture()));
+  detached.shots[0].characters = [];
+  const ag6 = await compare("AG6", detached);
+  assert.strictEqual(ag6.counts.now, 0, "AG6: removing the structural use clears the obligation");
+  assert.strictEqual(ag6.counts.production, "dormant", "AG6: and the surface says the reference is dormant");
+
+  /* AG7 · the plan is still there, visible and counted, in every case above. */
+  for (const [label, row] of [["AG1", ag1], ["AG2", ag2], ["AG5", ag5], ["AG6", ag6]]) {
+    assert.ok(row.counts.plan > 0, `AG7: ${label} must keep its unfilled coverage on screen`);
+    assert.ok(/data-demand-lead="available"/.test(row.html),
+      `AG7: ${label} must lead with it rather than hide it`);
+  }
+
+  /* AG8 · the count is obligations, never the number of possible slots. */
+  assert.ok(ag3.counts.now < ag3.counts.missing,
+    `AG8: current work must be the production's obligations (${ag3.counts.now}), not the slot catalogue `
+    + `(${ag3.counts.missing})`);
+
+  /* AG9 · a satisfied shared reference across two shots is not duplicated. */
+  const shared = allCanon(oneState(buildFixture()));
+  shared.shots.push({ ...JSON.parse(JSON.stringify(shared.shots[0])), id: "L1-02" });
+  const ag9 = await compare("AG9", shared);
+  assert.strictEqual(ag9.counts.now, 0, "AG9: a satisfied shared reference owes nothing, once or twice");
+  const sharedUnsatisfied = withoutKai(oneState(buildFixture()));
+  sharedUnsatisfied.shots.push({ ...JSON.parse(JSON.stringify(sharedUnsatisfied.shots[0])), id: "L1-02" });
+  const ag9b = await compare("AG9b", sharedUnsatisfied);
+  assert.strictEqual(ag9b.counts.now, 1,
+    "AG9: and an unsatisfied one shared by two shots is ONE decision, not two");
+
+  /* AG10 · returned-result review is a different scope and stays one. */
+  const entities = codeOnly(read("public/entities.js"));
+  const region = entities.slice(entities.indexOf("function entityReadinessObligationsGuard") >= 0
+    ? entities.indexOf("function entityReadinessObligationsGuard")
+    : entities.indexOf("function entityCurrentObligations"), entities.indexOf("function entityDemandActionMarkup"));
+  assert.ok(region.length > 400, "AG10: (the obligation region must actually have been located)");
+  assert.ok(!/returnedResultsAwaitingReview|returnedReview|awaitingReview/.test(region),
+    "AG10: returned-result review must never be counted as reference demand");
+
+  note(`14. AG1-AG10 · the reference surface's current-work number equals an independent recomputation of the `
+    + `SHIPPED readiness rows for the same entity, in every case: dormant 0, active-and-satisfied 0 with `
+    + `${ag2.counts.plan} coverage-plan rows still on screen, one unresolved requirement 1 (and Production names `
+    + `the same target), an unconfirmed primary 1 (and the confirmation queue holds it), confirming it 0, `
+    + `detaching it 0, two shots sharing one unsatisfied reference 1. The plan is visible and counted in every `
+    + `case, and returned-result review is not merged into it`);
+}
+
+/* ================================================ 15 · LOC1-LOC7 · AN EXPLICIT
+   CLEAR MUST SURVIVE NORMALISATION.
+
+   Clearing a primary Location on a shot that also had a SUPPORTING location left
+   `locationId` empty with the support still in `codes[]`, and the very next
+   normalisation promoted the support into primary. The filmmaker's clear
+   survived one render.
+
+   WHY A RECORDED DECISION RATHER THAN PRESENCE/ABSENCE, measured rather than
+   assumed. Both existing shapes already mean "please infer": of 611 shots across
+   77 project documents in this repository, 533 carry no `locationId` key and 23
+   carry it PRESENT AND EMPTY — 16 of those being real sanitized Overfit shots
+   whose `codes[]` name a location and which depend on the inference. Reading
+   present-and-empty as "explicitly cleared" would silently take the primary plate
+   away from those 16. LOC3b holds that. */
+async function locationDurabilitySection(options = {}) {
+  const INPUTS = { "cinebraid-focused:fixture:shot-task:L1-01": "inputs" };
+  const fixture = ({ codes, brief }) => {
+    const project = withCanon(buildFixture(), [
+      { kind: "entity-state", list: "locations", entityId: "LOC-HULL", stateId: "state-default", value: "LOC-HULL-PLATE.png" },
+    ]);
+    project.locations.push({
+      id: "LOC-SUPPORT", name: "Support bay", status: "APPROVED", workflowStatus: "APPROVED",
+      notes: "", approvedFile: "LOC-SUPPORT-PLATE.png", continuityStates: [],
+    });
+    project.shots[0].codes = codes;
+    project.shots[0].creationBrief = { propIds: [], promptBuilds: [], mode: "auto", ...brief };
+    return project;
+  };
+  const state = (context) => JSON.parse(vm.runInContext(`JSON.stringify({
+    locationId: P.shots[0].creationBrief.locationId || "",
+    codes: P.shots[0].codes,
+    resolved: resolveShotEntities(P, P.shots[0]).locations.map((row) => row.id),
+    receipts: ((P.productionAuthority || {}).receipts || []).length,
+    plate: P.locations[0].approvedFile,
+    winners: P.shots[0].keyframes.map((frame) => frame.winner),
+    canon: !!currentHumanAuthority(P, { kind: "entity-state", list: "locations", entityId: "LOC-HULL", stateId: "state-default" }),
+  })`, context));
+  /* LOC7 · the round trip a real save/load performs: serialise the document the
+     page holds and hand it back to a fresh page, which normalises it on the way
+     in exactly as a load does. */
+  const roundTrip = async (context) =>
+    render("#/shot/L1-01", JSON.parse(vm.runInContext("JSON.stringify(P)", context)), { ...options, storage: INPUTS });
+
+  /* LOC1 · primary only. */
+  const one = await render("#/shot/L1-01", fixture({ codes: ["LOC-HULL", "PR-TOOL"], brief: { locationId: "LOC-HULL" } }),
+    { ...options, storage: INPUTS });
+  const beforeOne = state(one.context);
+  assert.strictEqual(beforeOne.locationId, "LOC-HULL", "LOC1: (precondition) the shot has a primary");
+  vm.runInContext("setShotCreationLocation('L1-01','')", one.context);
+  vm.runInContext("normalizeShotV5(P.shots[0])", one.context);
+  assert.strictEqual(state(one.context).locationId, "", "LOC1: the clear survives normalisation");
+  assert.strictEqual(state(await roundTrip(one.context).then((page) => page.context)).locationId, "",
+    "LOC1: and a save/load round trip");
+
+  /* LOC2 · primary + support, clear primary. THE REPRODUCED CASE. */
+  const two = await render("#/shot/L1-01",
+    fixture({ codes: ["LOC-HULL", "LOC-SUPPORT", "PR-TOOL"], brief: { locationId: "LOC-HULL" } }),
+    { ...options, storage: INPUTS });
+  const beforeTwo = state(two.context);
+  assert.deepStrictEqual(beforeTwo.resolved, ["LOC-HULL", "LOC-SUPPORT"],
+    "LOC2: (precondition) the shot has a primary and a supporting location");
+  vm.runInContext("setShotCreationLocation('L1-01','')", two.context);
+  vm.runInContext("normalizeShotV5(P.shots[0])", two.context);
+  const clearedTwo = state(two.context);
+  assert.strictEqual(clearedTwo.locationId, "",
+    "LOC2: the explicitly cleared primary must remain cleared through normalisation");
+  assert.deepStrictEqual(clearedTwo.resolved, ["LOC-SUPPORT"],
+    "LOC2: and the supporting location must remain, as support — it is not deleted to keep the primary empty");
+  const reloaded = state(await roundTrip(two.context).then((page) => page.context));
+  assert.strictEqual(reloaded.locationId, "", "LOC2: and the clear survives a save/load round trip");
+  assert.deepStrictEqual(reloaded.resolved, ["LOC-SUPPORT"], "LOC2: with the support still attached after it");
+
+  /* LOC3 · a legacy shot with no key at all still infers. */
+  const legacy = await render("#/shot/L1-01", fixture({ codes: ["LOC-HULL", "PR-TOOL"], brief: {} }),
+    { ...options, storage: INPUTS });
+  assert.strictEqual(state(legacy.context).locationId, "LOC-HULL",
+    "LOC3: an imported shot that never stored a primary must still have one inferred");
+
+  /* LOC3b · and so must the 16 real Overfit shots that store it present-and-empty. */
+  const legacyEmpty = await render("#/shot/L1-01", fixture({ codes: ["LOC-HULL", "PR-TOOL"], brief: { locationId: "" } }),
+    { ...options, storage: INPUTS });
+  assert.strictEqual(state(legacyEmpty.context).locationId, "LOC-HULL",
+    "LOC3b: a legacy shot storing an empty primary must keep inferring — 16 real corpus shots depend on it");
+
+  /* LOC4 · the support can be chosen as primary explicitly. */
+  vm.runInContext("setShotCreationLocation('L1-01','LOC-SUPPORT')", two.context);
+  vm.runInContext("normalizeShotV5(P.shots[0])", two.context);
+  assert.strictEqual(state(two.context).locationId, "LOC-SUPPORT",
+    "LOC4: choosing the support as primary works, and withdraws the cleared decision");
+
+  /* LOC5 · and so can the former primary. */
+  vm.runInContext("setShotCreationLocation('L1-01','LOC-HULL')", two.context);
+  vm.runInContext("normalizeShotV5(P.shots[0])", two.context);
+  assert.strictEqual(state(two.context).locationId, "LOC-HULL", "LOC5: re-selecting the former primary works");
+
+  /* LOC6 · none of it touched authority, media or history. */
+  const finalTwo = state(two.context);
+  for (const key of ["receipts", "plate", "canon"]) {
+    assert.deepStrictEqual(finalTwo[key], beforeTwo[key],
+      `LOC6: the clear/reselect round trip must not change ${key}`);
+  }
+  assert.deepStrictEqual(finalTwo.winners, beforeTwo.winners, "LOC6: nor the shot's approved frames");
+
+  /* AND THE DECISION IS RECORDED BY ONE WRITER AND READ BY ONE READER. */
+  const app = codeOnly(read("public/app.js"));
+  const studio = codeOnly(read("public/creation-studio.js"));
+  assert.strictEqual((app.match(/SHOT_NO_PRIMARY_LOCATION_KEY\s*=\s*"/g) || []).length, 1,
+    "LOC: the key must be declared exactly once");
+  assert.strictEqual((studio.match(/\[SHOT_NO_PRIMARY_LOCATION_KEY\]\s*=/g) || []).length, 1,
+    "LOC: written by exactly one control");
+  assert.strictEqual((app.match(/creationBrief\[SHOT_NO_PRIMARY_LOCATION_KEY\]/g) || []).length, 1,
+    "LOC: and read by exactly one reader — the inference guard");
+
+  note("15. LOC1-LOC7 · an explicitly cleared primary Location stays cleared through normalizeShotV5 AND a "
+    + "save/load round trip, with a supporting location left attached as support rather than promoted or deleted. "
+    + "Legacy inference is untouched for BOTH legacy shapes — 533 corpus shots with no key and the 16 real Overfit "
+    + "shots that store it present-and-empty, which is why the decision is recorded rather than inferred from "
+    + "presence. Re-selecting either location works, and canon, receipts, plate and approved frames are unchanged");
+}
+
 async function main(options = {}) {
   projectionSection();
   ownerSection();
@@ -902,6 +1443,10 @@ async function main(options = {}) {
   await copySection(options);
   await invariantSection(options);
   await reversibilitySurvey(options);
+  failClosedSection();
+  await vehicleDialectSection(options);
+  await agreementMatrixSection(options);
+  await locationDurabilitySection(options);
   console.log("Reference demand + reversible structure suite passed:");
   for (const line of notes) console.log(`  ${line}`);
 }
@@ -910,6 +1455,7 @@ module.exports = {
   main, projectionSection, ownerSection, demandMatrixSection, agreementSection,
   locationSection, stateDeclarationSection, authoritySection, routeSection, copySection,
   reversibilitySurvey, invariantSection,
+  failClosedSection, vehicleDialectSection, agreementMatrixSection, locationDurabilitySection,
   demandFixture, referenceSurface, demandCounts, demandHeadline, coverageTaskButton, slotSet,
 };
 

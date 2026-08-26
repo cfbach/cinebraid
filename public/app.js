@@ -709,7 +709,34 @@ function normalizeShotV5(s) {
   const resolvedLocationId = resolvedEntities.locations[0]?.id || "";
   // Preserve stale explicit IDs so the Inputs workspace can show and repair them.
   // Only infer a location when the project has no explicit location relationship.
-  if (!String(s.creationBrief.locationId || "").trim() && resolvedLocationId) {
+  /* AND NEVER OVER A DECISION THE FILMMAKER ALREADY MADE.
+   *
+   * This inference exists for imported and legacy documents, where a location
+   * lives in `codes[]` and no primary was ever stored. It reads the first
+   * resolvable location, which is a guess — harmless while the only alternative
+   * is nothing, and wrong the moment a person has said "no primary plate".
+   *
+   * Clearing the primary on a shot that also has a SUPPORTING location left
+   * `locationId` empty with the support still in `codes[]`, so the very next
+   * normalisation promoted the support into primary. The filmmaker's clear
+   * survived one render and was gone by the next load.
+   *
+   * WHY PRESENCE/ABSENCE CANNOT CARRY THIS, measured rather than assumed. The
+   * obvious encoding — "key present and empty means explicitly cleared, key
+   * absent means never decided" — was tested against the corpus in this
+   * repository: 611 shots across 77 project documents. 533 carry no
+   * `locationId` key at all, and 23 carry it PRESENT AND EMPTY — of which 16 are
+   * real sanitized Overfit shots whose `codes[]` do name a location and which
+   * depend on this inference to show a plate at all. Both existing shapes
+   * already mean "please infer", so neither is free to mean "explicitly
+   * cleared", and adopting that encoding would silently take the primary plate
+   * away from 16 real shots on load.
+   *
+   * So the decision is recorded, additively, by the writer that makes it. It is
+   * ABSENT on every one of those 611 shots, which is why no document changes
+   * behaviour: absence reads exactly as it always did. */
+  if (!String(s.creationBrief.locationId || "").trim() && resolvedLocationId
+      && s.creationBrief[SHOT_NO_PRIMARY_LOCATION_KEY] !== true) {
     s.creationBrief.locationId = resolvedLocationId;
     changed = true;
   }
@@ -722,6 +749,19 @@ function normalizeShotV5(s) {
   }
   return changed;
 }
+
+/* THE ONE KEY THAT RECORDS "THIS SHOT HAS NO PRIMARY LOCATION, DELIBERATELY".
+ *
+ * Written by exactly one control — the picker's No-location choice, through
+ * setShotCreationLocation — and deleted by any explicit location selection. Read
+ * by exactly one reader, the inference guard above. It is not authority, it is
+ * not a relationship, and it carries no state of its own: it is the difference
+ * between "nobody has decided" and "somebody decided none", which is the only
+ * fact the document did not already hold.
+ *
+ * Named here rather than spelled at each site so a reader, a writer and a test
+ * cannot each invent their own. */
+const SHOT_NO_PRIMARY_LOCATION_KEY = "noPrimaryLocation";
 
 function projectCoverageTemplate(list) {
   const templates = {
@@ -4002,21 +4042,104 @@ function nextActionTargetHref(target) {
    that would satisfy them. `shotIds` is the leverage: one entity state named by six
    shots is one approval that unblocks six. Shot-scoped targets group too — a parent
    frame blocks only its own shot, so it simply never wins the count. */
+/* WHAT A SHOT IS ACTUALLY WAITING ON, AND THE ONE PLACE IT IS DECIDED.
+ *
+ * ONLY OUTSTANDING UNITS. A unit that already holds Canon still carries the
+ * requirement rows it was evaluated against, and one of those rows can be a
+ * reference nobody has confirmed — true, recorded, and blocking nothing, because
+ * the work it guarded is done. Reading them made the project name "Resolve this
+ * input · Kai — Default" as the next action for a shot whose only remaining
+ * decision was to mark it final, and put the mark-final sentence under a heading
+ * pointing at a character page. A blocker is something that is blocking.
+ *
+ * LIFTED OUT SO THE REFERENCE SURFACE CANNOT DISAGREE. `projectSharedBlockers`
+ * below and entityReadinessObligations() both ask what a shot currently owes, and
+ * an independent review found the reference surface answering a DIFFERENT
+ * question — reading the entity's coverage template instead of the production's
+ * requirements, and reporting "8 required references still needed" for a shot
+ * whose next action was MARK SHOT FINAL. Two readers of one question is how that
+ * happens, so there is one. */
+function outstandingReadinessRows(shot) {
+  const rows = [...(shot?.requirements || []), ...(shot?.units || [])
+    .filter((unit) => !unit.complete && unit.required)
+    .flatMap((unit) => unit.requirements || [])];
+  return rows.filter((row) => row && (row.state === "missing" || row.state === "needs-decision"));
+}
+
+/* THE CURRENT PRODUCTION OBLIGATIONS THAT NAME ONE REFERENCE.
+ *
+ * This is the A of the A/B split the reference surface needs:
+ *
+ *   A  CURRENT PRODUCTION REQUIREMENT   what the shots actually owe now. Rows
+ *                                       produced by shared-shot-readiness.js,
+ *                                       filtered by the predicate above, and
+ *                                       nothing else. No threshold, no ranking,
+ *                                       no second predicate.
+ *   B  COVERAGE PLAN                    the entity's own template of useful
+ *                                       material. Real, visible, and not work.
+ *
+ * Readiness raises exactly one kind of row about an entity — `entity-state`, one
+ * per declared state per outstanding unit — and it raises NONE for coverage or
+ * expression slots. That is the whole reason the two numbers could differ: the
+ * surface was counting B and calling it A.
+ *
+ * EVALUATED ONLY FOR THE SHOTS THAT USE THIS REFERENCE, which
+ * entityReferenceDemand() has already identified, rather than by deriving the
+ * whole project feed on a reference page. A dormant reference costs nothing at
+ * all; a used one costs its own shots. Same module, same oracle, same rows the
+ * production feed would contain.
+ *
+ * FAILS CLOSED. `known: false` whenever the derivation cannot run or the demand
+ * answer itself is uncertain, and the caller then keeps required work required. */
+function entityReadinessObligations(list, entityId, demand) {
+  const empty = { known: false, rows: [] };
+  const wanted = String(entityId || "");
+  if (!wanted || typeof evaluateShotReadiness !== "function") return empty;
+  const answer = demand && typeof demand === "object" ? demand : null;
+  if (!answer || answer.known !== true) return empty;
+  if (!answer.demanded) return { known: true, rows: [] };
+  const oracle = readinessOracleForBrowser();
+  const shots = Array.isArray(P.shots) ? P.shots : [];
+  const byTarget = new Map();
+  try {
+    for (const shotId of answer.shotIds || []) {
+      const shot = shots.find((row) => row && String(row.id) === String(shotId));
+      if (!shot) continue;
+      const evaluated = evaluateShotReadiness(P, shot, oracle);
+      for (const row of outstandingReadinessRows(evaluated)) {
+        const target = row.target;
+        if (!target || target.kind !== "entity-state") continue;
+        if (String(target.list) !== String(list) || String(target.entityId) !== wanted) continue;
+        const key = String(row.targetKey || target.key || "");
+        const existing = byTarget.get(key);
+        if (existing) {
+          if (!existing.shotIds.includes(String(shot.id))) existing.shotIds.push(String(shot.id));
+          continue;
+        }
+        byTarget.set(key, {
+          key,
+          stateId: String(target.stateId || ""),
+          label: String(row.label || ""),
+          state: String(row.state || ""),
+          reason: String(row.reason || ""),
+          shotIds: [String(shot.id)],
+        });
+      }
+    }
+  } catch {
+    /* A derivation that cannot run must not be read as "nothing is owed". */
+    return empty;
+  }
+  /* ONE ROW PER AUTHORITY TARGET, exactly as the Historic confirmation queue
+     groups: six shots naming one reference is one decision, not six. */
+  return { known: true, rows: [...byTarget.values()] };
+}
+
 function projectSharedBlockers(feed) {
   const groups = new Map();
   for (const shot of feed?.shots || []) {
-    /* ONLY OUTSTANDING UNITS. A unit that already holds Canon still carries the
-       requirement rows it was evaluated against, and one of those rows can be a
-       reference nobody has confirmed — true, recorded, and blocking nothing, because
-       the work it guarded is done. Reading them made the project name "Resolve this
-       input · Kai — Default" as the next action for a shot whose only remaining
-       decision was to mark it final, and put the mark-final sentence under a heading
-       pointing at a character page. A blocker is something that is blocking. */
-    const rows = [...(shot.requirements || []), ...(shot.units || [])
-      .filter((unit) => !unit.complete && unit.required)
-      .flatMap((unit) => unit.requirements || [])];
+    const rows = outstandingReadinessRows(shot);
     for (const row of rows) {
-      if (row.state !== "missing" && row.state !== "needs-decision") continue;
       const key = row.targetKey || `${row.kind}:${row.label}`;
       const group = groups.get(key) || { key, row, shotIds: [], occurrences: 0 };
       group.occurrences += 1;

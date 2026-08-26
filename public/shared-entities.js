@@ -345,24 +345,148 @@ function unresolvedShotDependencies(project, shot) {
    which is the same refusal entityProductionUse() already makes for an
    unrecognised collection.
 
+   ------------------------------------------------------------------------
+   THREE ANSWERS, NOT TWO, AND WHY THE THIRD IS LOAD-BEARING.
+
+   The first version of this asked one question per shot — "does the
+   state-bearing projection resolve this entity here?" — and read every `no` as
+   a positive absence. An independent review reproduced what that costs:
+
+       characters:  CHAR  and  CHAR-A
+       shot codes:  ["CHAR-A"]
+
+   `shotEntityTokenMatches` accepts an id followed by "-", so BOTH entities
+   match the one token. classifyShotCodeTokens() already calls that AMBIGUOUS
+   and names both candidates; shotDependencyRecords() resolves the first, CHAR.
+   Asking this function about CHAR-A therefore got `known: true, demanded:
+   false` — a POSITIVE claim of absence about an entity the project's own
+   classifier had just listed as a candidate — and CHAR-A's required reference
+   work was stood down. A malformed `shot.characters` (a string rather than an
+   array) produced the same false certainty, because a collection the resolver
+   silently skips looks exactly like a collection that named nothing.
+
+   So a shot is read as one of three things, per entity:
+
+       used     the state-bearing projection resolves this entity here
+       unused   it does not, AND everything this shot says can be read
+       unknown  the shot's relationship data cannot be read confidently
+                enough to support a claim of absence
+
+   Only `unused` — everywhere, on every shot — may stand required work down.
+   One `unknown` makes the whole answer `known: false`, and
+   referenceDemandState() then keeps the work required. The rule is one-way:
+   uncertainty can only ever ADD work back, never remove it.
+
+   Deliberately NOT special-cased to CHAR/CHAR-A. What is fixed is the
+   interpretation of the dependency data, so any token, malformation or
+   collision that could hide a relationship produces the same refusal.
+
    DERIVED, NEVER STORED, and pure: no clock, no filesystem, no network, and no
    write of any kind to the project it reads. */
+
+/* The shapes shotDependencyRecords() reads. A value of the wrong shape is
+   SKIPPED there — quietly, and correctly, because a resolver must not throw on
+   a damaged document — which is exactly why it cannot also be read as "this
+   collection named nothing". Listed once so the reader and the confidence check
+   cannot drift apart. */
+const SHOT_DEPENDENCY_COLLECTIONS = Object.freeze([
+  { path: "characters", shape: "array" },
+  { path: "codes", shape: "array" },
+  { path: "clips", shape: "array" },
+  { path: "audio", shape: "object" },
+  { path: "continuityStateSelections", shape: "object" },
+  { path: "creationBrief", shape: "object" },
+  { path: "creationBrief.propIds", shape: "array" },
+  { path: "creationBrief.vehicleIds", shape: "array" },
+]);
+function shotDependencyValueAt(shot, path) {
+  let value = shot;
+  for (const key of String(path).split(".")) {
+    if (value === undefined || value === null) return undefined;
+    if (typeof value !== "object") return undefined;
+    value = value[key];
+  }
+  return value;
+}
+/* ABSENT IS FINE. A shot that does not declare `codes` has nothing to
+   misread; a shot that declares `codes: "LOC-A"` has a relationship this build
+   cannot see. Only the second is a confidence problem. */
+function shotDependencyReadingIsWellFormed(shot) {
+  if (!shot || typeof shot !== "object" || Array.isArray(shot)) return false;
+  for (const { path, shape } of SHOT_DEPENDENCY_COLLECTIONS) {
+    const value = shotDependencyValueAt(shot, path);
+    if (value === undefined || value === null) continue;
+    if (shape === "array" ? !Array.isArray(value) : !(typeof value === "object" && !Array.isArray(value))) return false;
+  }
+  return true;
+}
+
+/* Could this shot's uncertain tokens have named this entity, or is its
+   relationship set incomplete? Asked through the SHIPPED classifier rather than
+   through a second matcher, so a change to how tokens resolve cannot leave this
+   check believing the old rules. */
+function shotEntityUseReading(project, shot, type, entityId) {
+  const wanted = String(entityId || "").trim();
+  const kind = String(type || "").trim();
+  if (!wanted || !SHOT_STATE_BEARING_ENTITY_TYPES.includes(kind)) return { reading: "unknown", reason: "unrecognised-request" };
+  if (!shotDependencyReadingIsWellFormed(shot)) return { reading: "unknown", reason: "malformed-dependency-collection" };
+
+  const uses = shotStateBearingEntityRecords(project, shot).some((row) =>
+    row && row.resolved && row.type === kind && String((row.entity && row.entity.id) || row.id) === wanted);
+  if (uses) return { reading: "used", reason: "state-bearing-relationship" };
+
+  /* A relationship this build cannot resolve at all. The shot's own readiness
+     already reports it as a decision the filmmaker owes; until it is settled,
+     nothing about this shot supports a claim that some OTHER entity is unused. */
+  if (unresolvedShotDependencies(project, shot).length) return { reading: "unknown", reason: "unresolved-relationship" };
+
+  /* A token whose specificity did not survive resolution. `ambiguous` means the
+     classifier itself found more than one candidate; `reinterpreted` means it
+     found one and threw specificity away. Either can hide THIS entity, and the
+     test for that is the same matcher the resolver used. */
+  for (const code of lossyShotCodeTokens(project, shot)) {
+    const status = String(code && code.status);
+    if (status !== "ambiguous" && status !== "reinterpreted" && status !== "unresolved") continue;
+    const matches = Array.isArray(code.matches) ? code.matches : [];
+    const namesThis = matches.some((match) => String((match && match.id) || "") === wanted)
+      || shotEntityTokenMatches(code.token, wanted);
+    /* An `unresolved` token names nothing, so it cannot be hiding this entity by
+       id — but it IS a relationship the shot records and CineBraid cannot read,
+       and reading around it would be the same false certainty in another form. */
+    if (status === "unresolved" || namesThis) return { reading: "unknown", reason: `lossy-code-token:${status}` };
+  }
+  return { reading: "unused", reason: "no-state-bearing-relationship" };
+}
+
 function entityReferenceDemand(project, type, entityId) {
   const P = project && typeof project === "object" ? project : {};
   const wanted = String(entityId || "").trim();
   const kind = String(type || "").trim();
+  const shotsValue = P.shots;
   if (!wanted || !SHOT_STATE_BEARING_ENTITY_TYPES.includes(kind)) {
-    return { known: false, demanded: false, shotIds: [], total: (Array.isArray(P.shots) ? P.shots : []).length };
+    return { known: false, demanded: false, shotIds: [], uncertain: [], total: Array.isArray(shotsValue) ? shotsValue.length : 0 };
   }
-  const shots = Array.isArray(P.shots) ? P.shots : [];
+  /* A project whose shot list is not a list is a project whose production
+     structure cannot be read. Reporting zero shots and therefore "nothing uses
+     this" would be the malformation defect at the widest possible scope. */
+  if (shotsValue !== undefined && shotsValue !== null && !Array.isArray(shotsValue)) {
+    return { known: false, demanded: false, shotIds: [], uncertain: ["*"], total: 0 };
+  }
+  const shots = Array.isArray(shotsValue) ? shotsValue : [];
   const shotIds = [];
+  const uncertain = [];
   for (const shot of shots) {
-    if (!shot || typeof shot !== "object") continue;
-    const uses = shotStateBearingEntityRecords(P, shot).some((row) =>
-      row && row.resolved && row.type === kind && String((row.entity && row.entity.id) || row.id) === wanted);
-    if (uses) shotIds.push(String(shot.id || ""));
+    const answer = shotEntityUseReading(P, shot, kind, wanted);
+    if (answer.reading === "used") shotIds.push(String((shot && shot.id) || ""));
+    else if (answer.reading === "unknown") uncertain.push(`${String((shot && shot.id) || "?")}:${answer.reason}`);
   }
-  return { known: true, demanded: shotIds.length > 0, shotIds, total: shots.length };
+  /* ESTABLISHED USE OUTRANKS UNCERTAINTY. Once one shot definitely uses the
+     entity the answer is settled, and an unreadable shot elsewhere cannot make
+     a true `demanded` into an unknown. Uncertainty only ever blocks the
+     NEGATIVE answer, which is the only one that removes work. */
+  if (shotIds.length) return { known: true, demanded: true, shotIds, uncertain, total: shots.length };
+  if (uncertain.length) return { known: false, demanded: false, shotIds: [], uncertain, total: shots.length };
+  return { known: true, demanded: false, shotIds: [], uncertain: [], total: shots.length };
 }
 
 if (typeof window !== "undefined") {
@@ -376,6 +500,8 @@ if (typeof window !== "undefined") {
   window.shotDependencyTokenType = shotDependencyTokenType;
   window.shotDependencyRecords = shotDependencyRecords;
   window.shotStateBearingEntityRecords = shotStateBearingEntityRecords;
+  window.shotDependencyReadingIsWellFormed = shotDependencyReadingIsWellFormed;
+  window.shotEntityUseReading = shotEntityUseReading;
   window.entityReferenceDemand = entityReferenceDemand;
   window.unresolvedShotDependencies = unresolvedShotDependencies;
 }
@@ -396,6 +522,9 @@ if (typeof module !== "undefined" && module.exports) {
     SHOT_STATE_BEARING_RELATIONSHIP_SOURCES,
     shotDependencySourceIsStateBearing,
     shotStateBearingEntityRecords,
+    SHOT_DEPENDENCY_COLLECTIONS,
+    shotDependencyReadingIsWellFormed,
+    shotEntityUseReading,
     entityReferenceDemand,
     unresolvedShotDependencies,
   };

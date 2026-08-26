@@ -22,6 +22,13 @@ a filmmaker would actually notice:
      interaction rather than at the next reload.
   F  THE APPROVED MEDIA AND HISTORY ARE STILL REACHABLE after both clears. A pointer
      surviving in JSON is not the same as a filmmaker still being able to get to it.
+  G  A vehicleIds-ONLY VEHICLE IS VISIBLY ATTACHED AND CAN BE CLEARED. "Renders
+     selected" is a class in Node and a hit-testable control here.
+  H  A SATISFIED REFERENCE DOES NOT PRESENT ITS TEMPLATE AS BLOCKING WORK, and the
+     template stays reachable. Both halves are geometry, not strings.
+  I  A CLEARED PRIMARY LOCATION SURVIVES THE SAVE/NORMALISE/RE-RENDER PATH with a
+     supporting location present, and the support is offered rather than promoted.
+     Only a real page runs that path end to end.
 
 IT CARRIES ITS OWN NEGATIVE CONTROLS, because a detector that can only ever report one
 answer is worth nothing. Both work by changing the PROJECT rather than the code, so the
@@ -79,10 +86,35 @@ CHARACTER = {
     "continuityStates": [
         {"id": "state-default", "name": "Clean", "isDefault": True,
          "approvedFile": f"{CHAR}-PRIMARY.png", "notes": "Primary identity."},
+        # A state with no approved image. When a shot DECLARES it the production
+        # genuinely owes it, which is what section B measures; when no shot uses
+        # the character it is coverage plan like everything else.
+        {"id": "state-soot", "name": "Sooty", "isDefault": False,
+         "parentStateId": "state-default", "notes": "Soot over every surface."},
     ],
     # Real history, so section F has something that must survive both clears.
     "made": [{"model": "fixture-model", "files": f"{CHAR}-PRIMARY.png",
               "prompt": "a compiled provenance prompt", "date": "2026-08-20"}],
+}
+
+# A SUPPORTING location, for the multi-location clear. It reaches the shot
+# through `codes[]` only, which is exactly how a supporting location is recorded.
+SUPPORT = {
+    "id": "LOC-SUPPORT", "name": "Support bay", "status": "APPROVED", "workflowStatus": "APPROVED",
+    "notes": "Secondary plate.", "approvedFile": "LOC-SUPPORT-PLATE.png",
+    "coverageSlots": [],
+    "continuityStates": [{"id": "state-default", "name": "Default", "isDefault": True,
+                          "approvedFile": "LOC-SUPPORT-PLATE.png"}],
+}
+
+# A vehicle attached the way an imported document attaches one: through
+# `creationBrief.vehicleIds`, which no shipped control has ever written.
+VEHICLE = {
+    "id": "VEH-DOCK", "name": "Dock tug", "status": "APPROVED", "workflowStatus": "APPROVED",
+    "notes": "Yard tug.", "approvedFile": "VEH-DOCK-PLATE.png",
+    "coverageSlots": [{"id": "front", "label": "Front", "requirement": "required", "selectedFile": ""}],
+    "continuityStates": [{"id": "state-default", "name": "Default", "isDefault": True,
+                          "approvedFile": "VEH-DOCK-PLATE.png"}],
 }
 
 LOCATION = {
@@ -103,11 +135,23 @@ SHOT_RECORD = {
     "desc": "A supervisor walks the dock.", "positioning": "Locked wide.",
     "workflowStatus": "IN PROGRESS", "status": "BUILT", "reviewStatus": "PENDING",
     "characters": [], "codes": [LOC], "risks": [], "notes": "",
+    # frame-a is APPROVED and stays approved through every clear below, which is
+    # what section F proves. frame-b is NOT, so the shot has an outstanding unit —
+    # without one the shot owes nothing at all and section B would have no
+    # obligation to measure, because a completed unit's requirement rows are not
+    # blocking anything.
     "keyframes": [{"id": "frame-a", "label": "A", "title": "Opening frame",
                    "winner": f"{SHOT}-FRAME_A.png", "description": "Supervisor at the rail.",
+                   "required": True, "generationPackages": []},
+                  {"id": "frame-b", "label": "B", "title": "Closing frame",
+                   "winner": "", "description": "Supervisor walks out of frame.",
                    "required": True, "generationPackages": []}],
     "clips": [], "promptBuilds": [], "promptOptions": [],
-    "creationBrief": {"locationId": LOC, "propIds": [], "promptBuilds": [], "mode": "auto"},
+    "creationBrief": {"locationId": LOC, "propIds": [], "vehicleIds": ["VEH-DOCK"],
+                      "promptBuilds": [], "mode": "auto"},
+    # The shot's continuity decision for the character. It is STALE while no shot
+    # relationship carries the character, and live the moment one does.
+    "continuityStateSelections": {CHAR: "state-soot"},
 }
 
 # Only what a person actually approved. The location plate and the character's primary
@@ -193,25 +237,31 @@ try:
         page.wait_for_selector("#main", timeout=20000)
         page.wait_for_function("() => typeof P === 'object' && P && Array.isArray(P.characters)", timeout=20000)
 
-        def install():
+        def install(shot_overrides=None, character_overrides=None):
             """Install the fixture into the live document. The character is dormant: the
             one shot names the location and no character at all."""
+            shot = json.loads(json.dumps(SHOT_RECORD))
+            shot.update(shot_overrides or {})
+            character = json.loads(json.dumps(CHARACTER))
+            character.update(character_overrides or {})
             page.evaluate(
                 """(payload) => {
                     P.characters = [payload.character];
-                    P.locations = [payload.location];
-                    P.props = []; P.vehicles = []; P.audio = [];
+                    P.locations = [payload.location, payload.support];
+                    P.props = []; P.vehicles = [payload.vehicle]; P.audio = [];
                     P.scenes = [{ id: 'SC-01', title: 'Dock', tier: 'A', whatHappens: '', howItFeels: '' }];
                     P.shots = [payload.shot];
                     P.productionAuthority = { version: 1, receipts: payload.receipts };
                     SCAN.anchors = payload.anchors;
                     SCAN.plates = payload.plates;
+                    SCAN.vehicles = payload.vehicleMedia;
                     SCAN.shots = payload.shotMedia;
                 }""",
-                {"character": CHARACTER, "location": LOCATION,
-                 "shot": json.loads(json.dumps(SHOT_RECORD)), "receipts": RECEIPTS,
+                {"character": character, "location": LOCATION, "support": SUPPORT, "vehicle": VEHICLE,
+                 "shot": shot, "receipts": RECEIPTS,
                  "anchors": [{"name": f"{CHAR}-PRIMARY.png", "url": TINY}],
-                 "plates": [{"name": f"{LOC}-PLATE.png", "url": TINY}],
+                 "plates": [{"name": f"{LOC}-PLATE.png", "url": TINY}, {"name": "LOC-SUPPORT-PLATE.png", "url": TINY}],
+                 "vehicleMedia": [{"name": "VEH-DOCK-PLATE.png", "url": TINY}],
                  "shotMedia": {SHOT: {"takes": [{"name": f"{SHOT}-FRAME_A.png", "url": TINY}], "locked": []}}})
 
         def open_reference(entity_id, kind="character", task=None):
@@ -231,8 +281,11 @@ try:
                 const open = node.querySelector('.entity-demand-rows.entity-demand-open');
                 return {
                     required: Number(node.dataset.demandRequired),
+                    missing: Number(node.dataset.demandMissing),
                     now: Number(node.dataset.demandNow),
                     dormant: Number(node.dataset.demandDormant),
+                    plan: Number(node.dataset.demandPlan),
+                    obligations: node.dataset.demandObligations || "",
                     production: node.dataset.demandProduction,
                     lead: node.dataset.demandLead || '',
                     caption: ((node.querySelector('.entity-demand-lead-note') || {}).textContent || '').trim(),
@@ -457,8 +510,20 @@ try:
         cast = demand_panel()
         assert cast["production"] == "demanded", \
             f"B. once a shot casts the character it must read demanded, got {cast['production']!r}"
-        assert cast["now"] == cast["required"], \
-            f"B. and every unmet required view becomes current work, got {cast['now']} of {cast['required']}"
+        # WHAT THE PRODUCTION OWES, NOT THE WHOLE TEMPLATE. An independent review
+        # found the earlier expectation here — every unmet template row becomes
+        # current work — asserting the defect the slice exists to remove. What
+        # casting the character makes current is the continuity state the shot
+        # DECLARES and has no approved image for; the four seeded coverage views
+        # stay coverage plan.
+        assert cast["now"] == 1, \
+            f"B. casting must raise exactly the production's own obligation, got {cast['now']}"
+        assert cast["now"] < cast["required"], \
+            f"B. and it must be fewer than the entity's template ({cast['now']} of {cast['required']})"
+        assert cast["obligations"] == "readiness", \
+            f"B. derived from readiness rather than from the template, got {cast['obligations']!r}"
+        assert cast["plan"] == cast["missing"] - cast["now"], \
+            f"B. with everything else still counted as coverage plan ({cast['plan']})"
         assert cast["openRows"] == cast["now"], \
             f"B. listed where a filmmaker can see them, got {cast['openRows']} rows"
         assert cast["openHeight"] > 0, "B. and occupying real space on screen"
@@ -469,7 +534,8 @@ try:
         assert not cast["caption"], \
             f"B. so the \"nothing here is required now\" caption must be gone, got {cast['caption']!r}"
         findings.append(f"B. clicking the shot's cast control makes the same reference read demanded and raises "
-                        f"{cast['now']} required references — \"{cast['headline']}\" — over a {cast['openHeight']}px list")
+                        f"exactly {cast['now']} current obligation — \"{cast['headline']}\" — over a "
+                        f"{cast['openHeight']}px list, while its other {cast['plan']} template rows stay coverage plan")
 
         # ---- C. un-casting it removes the demand and deletes nothing --------------------
         before_bible = bible_state(CHAR)
@@ -568,7 +634,7 @@ try:
                 frameCanon: !!currentHumanAuthority(P, { kind: 'shot-frame', shotId: id, frameId: 'frame-a' }),
             };
         }""", SHOT)
-        assert shot_media["winners"] == [f"{SHOT}-FRAME_A.png"], \
+        assert shot_media["winners"] == [f"{SHOT}-FRAME_A.png", ""], \
             f"F. the shot's approved frame survived both clears, got {shot_media['winners']!r}"
         assert shot_media["frameCanon"] is True, "F. and the kernel still recognises the approval"
 
@@ -599,9 +665,135 @@ try:
                         f"{location_bible['receipts']}-receipt ledger is intact, the shot's approved frame is "
                         f"still its winner, the kernel still recognises it, and it still renders on the shot")
 
-        # ---- N1. the backlog CAN appear, so section A's zero means something -------------
+        # ---- G. a vehicleIds-only vehicle is visibly attached and can be cleared --------
+        # The dialect no shipped control has ever written. Before this repair the
+        # vehicle rendered UNSELECTED while readiness and reference demand both
+        # counted it, so a filmmaker could neither see the attachment nor remove it.
         install()
-        page.evaluate("(id) => { P.shots[0].characters = [id]; }", CHAR)
+        open_shot_inputs()
+        vehicle = page.evaluate(r"""() => {
+            const button = [...document.querySelectorAll('.guided-asset-picker-grid button.guided-asset-choice')]
+                .find((node) => /toggleShotCreationProp\('RD1-01','VEH-DOCK'\)/.test(node.getAttribute('onclick') || ''));
+            if (!button) return null;
+            const box = button.getBoundingClientRect();
+            return { on: button.classList.contains('on'), w: Math.round(box.width), h: Math.round(box.height),
+                     label: ((button.querySelector('b') || {}).textContent || '').trim() };
+        }""")
+        assert vehicle, "G. the vehicle must render in the Props & Vehicles picker"
+        assert vehicle["on"], \
+            f"G. a vehicle attached through `vehicleIds` must render as selected, got {vehicle!r}"
+        assert vehicle["w"] > 0 and vehicle["h"] > 0, "G. and be a real, hit-testable control"
+        before_vehicle = page.evaluate("""() => ({
+            vehicleIds: P.shots[0].creationBrief.vehicleIds, propIds: P.shots[0].creationBrief.propIds,
+            demanded: entityReferenceDemand(P, 'vehicle', 'VEH-DOCK').demanded,
+            receipts: ((P.productionAuthority || {}).receipts || []).length,
+            plate: P.vehicles[0].approvedFile,
+        })""")
+        assert before_vehicle["demanded"], "G. (precondition) and reference demand must already count it"
+        click_in_cast("button.guided-asset-choice[onclick*=\"toggleShotCreationProp('RD1-01','VEH-DOCK')\"]",
+                      "G. clearing the vehicle")
+        page.wait_for_function("() => !(P.shots[0].creationBrief.vehicleIds || []).length", timeout=10000)
+        after_vehicle = page.evaluate("""() => ({
+            vehicleIds: P.shots[0].creationBrief.vehicleIds, propIds: P.shots[0].creationBrief.propIds,
+            demanded: entityReferenceDemand(P, 'vehicle', 'VEH-DOCK').demanded,
+            receipts: ((P.productionAuthority || {}).receipts || []).length,
+            plate: P.vehicles[0].approvedFile,
+        })""")
+        assert after_vehicle["vehicleIds"] == [] and after_vehicle["propIds"] == [], \
+            f"G. one click must clear the relationship in every dialect, got {after_vehicle!r}"
+        assert not after_vehicle["demanded"], "G. so the vehicle no longer demands its references"
+        assert after_vehicle["receipts"] == before_vehicle["receipts"], "G. and no receipt was touched"
+        assert after_vehicle["plate"] == before_vehicle["plate"], "G. nor the vehicle's approved plate"
+        findings.append(f"G. a vehicle attached only through the legacy `vehicleIds` dialect renders as a "
+                        f"{vehicle['w']}x{vehicle['h']}px SELECTED control and one click clears it in both "
+                        f"dialects — demanded {before_vehicle['demanded']} -> {after_vehicle['demanded']}, "
+                        f"{after_vehicle['receipts']} receipts and its plate untouched")
+
+        # ---- H. a satisfied reference does not present its template as blocking work ----
+        # The headline defect of the independent review: an active character whose
+        # primary was already Canon reported "8 required references still needed"
+        # while Production said MARK SHOT FINAL.
+        install(shot_overrides={"characters": [CHAR], "continuityStateSelections": {}})
+        open_reference(CHAR, "character", "What this production needs")
+        satisfied = demand_panel()
+        production_says = page.evaluate("""() => {
+            const feed = projectShotReadiness();
+            return {
+                blockers: projectSharedBlockers(feed).map((row) => row.key)
+                    .filter((key) => key.indexOf('RD-BROWSER') >= 0),
+                next: (projectNextProductionAction() || {}).actionLabel || '',
+            };
+        }""")
+        assert satisfied["production"] == "demanded", "H. (precondition) the character is in use"
+        assert production_says["blockers"] == [], \
+            f"H. (precondition) and Production must owe nothing on it, got {production_says['blockers']!r}"
+        assert satisfied["now"] == 0, \
+            f"H. so the reference surface must claim no current work either, got {satisfied['now']}"
+        assert satisfied["plan"] > 0, \
+            "H. while its unfilled coverage is still counted as plan rather than lost"
+        assert "required reference" not in satisfied["headline"], \
+            f"H. and the headline must not count a backlog, got {satisfied['headline']!r}"
+        assert satisfied["lead"] == "available" and not satisfied["leadInDisclosure"], \
+            "H. the coverage remains ACCESSIBLE — leading the screen, outside any disclosure"
+        assert satisfied["leadButtons"] > 0, "H. with its controls hit-testable"
+        satisfied_strip = coverage_strip()
+        assert satisfied_strip["status"] == "Nothing waiting", \
+            f"H. and the strip must agree, got {satisfied_strip['status']!r}"
+        findings.append(f"H. an active character whose Canon already satisfies readiness reports 0 current work "
+                        f"and \"{satisfied['headline']}\" while Production owes nothing on it and says "
+                        f"{production_says['next']}; its {satisfied['plan']} unfilled coverage rows stay on screen "
+                        f"with {satisfied['leadButtons']} reachable controls, and the strip reads "
+                        f"\"{satisfied_strip['status']}\"")
+
+        # ---- I. a cleared primary Location survives the save/normalise/re-render path ---
+        install(shot_overrides={"codes": [LOC, "LOC-SUPPORT"]})
+        open_shot_inputs()
+        before_locations = page.evaluate("(id) => resolveShotEntities(P, P.shots.find((s) => s.id === id)).locations.map((x) => x.id)", SHOT)
+        assert before_locations == [LOC, "LOC-SUPPORT"], \
+            f"I. (precondition) the shot must have a primary and a supporting location, got {before_locations!r}"
+        click_in_cast(f'button[data-clear-location="{SHOT}"]', "I. clearing the primary with a support present")
+        page.wait_for_function("(id) => !((P.shots.find((s) => s.id === id).creationBrief || {}).locationId || '')",
+                               arg=SHOT, timeout=10000)
+        # THE REAL PATH: serialise what the page holds, hand it back through the
+        # shipped load, and re-render. This is what a save and a reopen do, and it
+        # is where the cleared primary used to be silently replaced.
+        page.evaluate("""() => {
+            const saved = JSON.parse(JSON.stringify(P));
+            for (const key of Object.keys(P)) delete P[key];
+            Object.assign(P, saved);
+            normalizeProjectV5(P);
+            location.hash = '#/shot/' + P.shots[0].id;
+            route();
+        }""")
+        page.wait_for_selector(".bounded-shot-workspace", timeout=15000)
+        open_shot_inputs()
+        reloaded = page.evaluate("""(id) => {
+            const shot = P.shots.find((s) => s.id === id);
+            return {
+                locationId: (shot.creationBrief || {}).locationId || '',
+                resolved: resolveShotEntities(P, shot).locations.map((x) => x.id),
+                codes: shot.codes,
+            };
+        }""", SHOT)
+        assert reloaded["locationId"] == "", \
+            f"I. the explicitly cleared primary must survive save/normalise/re-render, got {reloaded['locationId']!r}"
+        assert reloaded["resolved"] == ["LOC-SUPPORT"], \
+            f"I. and the supporting location must remain, as support, got {reloaded['resolved']!r}"
+        reloaded_grid = location_grid()
+        assert not any(row["note"] == "primary plate" for row in reloaded_grid), \
+            f"I. with nothing shown as this shot's primary plate, got {reloaded_grid!r}"
+        support_row = next((row for row in reloaded_grid if row["label"] == "Support bay"), None)
+        assert support_row and not support_row["on"], \
+            "I. the support is available to choose and is not silently promoted"
+        assert next((row for row in reloaded_grid if row["clear"]), {}).get("on"), \
+            "I. and the no-location choice reads chosen"
+        findings.append(f"I. clearing the primary on a shot that also has a SUPPORTING location survives a full "
+                        f"save/normalise/re-render: locationId stays empty, {reloaded['resolved']} remains attached "
+                        f"as support, nothing is shown as the primary plate, and the support is offered rather "
+                        f"than promoted")
+
+        # ---- N1. the backlog CAN appear, so section A's zero means something -------------
+        install(shot_overrides={"characters": [CHAR]})
         open_reference(CHAR, "character", "What this production needs")
         armed = demand_panel()
         assert armed["now"] > 0, \

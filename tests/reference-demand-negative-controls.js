@@ -33,6 +33,12 @@
  *   NC-REF12  the derived demand answer is persisted onto the slot
  *   NC-REF13  a relation that already shipped a way out becomes one-way, and the
  *             reversibility census must notice
+ *   NC-REF14  an ambiguous CHAR / CHAR-A dependency becomes false-known dormant
+ *   NC-REF15  a malformed dependency collection becomes known dormant
+ *   NC-REF16  a vehicleIds-only vehicle renders unselected and cannot be cleared
+ *   NC-REF17  a satisfied entity still claims its whole coverage template is due
+ *   NC-REF18  a confirmation the queue holds is dropped from reference demand
+ *   NC-REF19  a cleared primary Location is overwritten by a supporting one
  *
  * Nothing here contacts a provider, spends anything, or writes to a project.
  */
@@ -144,6 +150,26 @@ async function browserControl({ id, defect, editsByFile, probe, guard }) {
   });
 }
 
+/* A FILE control. The render harness's `mutateSource` hook reaches only code the
+   PAGE evaluates; a detector that asserts on a module through `require` — as the
+   fail-closed section does on public/shared-entities.js — would judge the
+   unpatched copy and report a caught defect that never ran. So the file is
+   patched on disk for the duration, its original bytes restored in a finally, and
+   both the probe and the guard see the same broken product. */
+async function fileControl({ id, defect, file, edits, probe, guard }) {
+  await control({
+    id,
+    defect,
+    run: async () => {
+      await patchedFile(file, edits, async () => {
+        const literal = await probe();
+        if (literal) literals.push(`${id} → ${literal}`);
+        await expectRed(id, () => guard());
+      });
+    },
+  });
+}
+
 /* Re-require the suite so it is bound to whatever the patched modules now say.
    Without this a file-level control judges a detector that closed over the
    unpatched copy. */
@@ -161,12 +187,23 @@ async function nc1() {
   await browserControl({
     id: "NC-REF1",
     defect: "the demand gate is removed, so a dormant character owes a mandatory backlog",
+    /* BOTH GATES, because there are two now and either one alone holds the line.
+       shared-coverage.js decides whether a reference nothing uses may be stood
+       down; entities.js decides whether a coverage slot may be current work at
+       all. The defect this control is named for — existence read as demand — takes
+       both, and arming only one would report a caught defect that never ran. */
     editsByFile: {
       "shared-coverage.js": [[
         `    if (production.known === true && production.demanded !== true)
       return { state: "available", tier, basis: "no-current-production-demand", demanded: false };`,
         `    if (false)
       return { state: "available", tier, basis: "no-current-production-demand", demanded: false };`,
+      ]],
+      "entities.js": [[
+        `  const owed = obligations && obligations.known === true
+    ? new Set((obligations.rows || []).map((row) => String(row.stateId || "")))
+    : null;`,
+        `  const owed = null; void obligations;`,
       ]],
     },
     probe: async (mutate) => {
@@ -193,8 +230,8 @@ async function nc2() {
     defect: "the demand owner claims every reference is used, so a dormant Location owes a backlog",
     editsByFile: {
       "shared-entities.js": [[
-        `  return { known: true, demanded: shotIds.length > 0, shotIds, total: shots.length };`,
-        `  return { known: true, demanded: true, shotIds, total: shots.length };`,
+        `  if (shotIds.length) return { known: true, demanded: true, shotIds, uncertain, total: shots.length };`,
+        `  if (true) return { known: true, demanded: true, shotIds, uncertain, total: shots.length };`,
       ]],
     },
     probe: async (mutate) => {
@@ -202,10 +239,17 @@ async function nc2() {
         { list: "locations", id: "RD-LOC", mutateSource: mutate });
       const counts = suite.demandCounts(rendered.html);
       const headline = suite.demandHeadline(rendered.html);
-      assert.ok(counts.now > 0, "NC-REF2 probe: the dormant location was expected to report current work");
+      /* The obligation gate keeps the COUNT honest even here — readiness owes
+         nothing for a location no shot uses — so what this defect produces is a
+         surface claiming usage the project does not support, in its own words. */
       assert.strictEqual(counts.production, "demanded",
-        "NC-REF2 probe: on a claim of usage no shot supports");
-      return `dormant location reports "${headline}" (now=${counts.now}, production=demanded, shots=0)`;
+        "NC-REF2 probe: the dormant location was expected to be reported as used");
+      assert.ok(!/No shot uses this location yet/.test(headline),
+        `NC-REF2 probe: and to stop saying nothing uses it, got "${headline}"`);
+      assert.ok(/Used by 0 shots\./.test(rendered.html),
+        "NC-REF2 probe: printing a usage sentence no shot supports");
+      return `a location no shot uses reports production="demanded" and the sentence "Used by 0 shots." beside `
+        + `the headline "${headline}"`;
     },
     guard: (mutate) => freshSuite().demandMatrixSection({ mutateSource: mutate }),
   });
@@ -252,13 +296,11 @@ async function nc4() {
     defect: "clearing a Location revokes the location's Canon receipt",
     editsByFile: {
       "creation-studio.js": [[
-        `  c.locationId = value;
-  if (value && !s.codes.some((code) => shotEntityTokenMatches(code, value))) s.codes.push(value);`,
+        `  c.locationId = value;`,
         `  c.locationId = value;
   if (!value && previous && P.productionAuthority && Array.isArray(P.productionAuthority.receipts)) {
     P.productionAuthority.receipts = P.productionAuthority.receipts.filter((row) => row && row.entityId !== previous);
-  }
-  if (value && !s.codes.some((code) => shotEntityTokenMatches(code, value))) s.codes.push(value);`,
+  }`,
       ]],
     },
     probe: async (mutate) => {
@@ -320,8 +362,8 @@ async function nc6() {
     defect: "a stale declaration keeps a removed relationship's required reference work alive",
     editsByFile: {
       "shared-entities.js": [[
-        `    const uses = shotStateBearingEntityRecords(P, shot).some((row) =>`,
-        `    const uses = shotDependencyRecords(P, shot).some((row) =>`,
+        `  const uses = shotStateBearingEntityRecords(project, shot).some((row) =>`,
+        `  const uses = shotDependencyRecords(project, shot).some((row) =>`,
       ]],
     },
     probe: async (mutate) => {
@@ -329,10 +371,15 @@ async function nc6() {
       project.shots[0].continuityStateSelections = { "RD-CHAR": "state-default" };
       const rendered = await suite.referenceSurface(project, { mutateSource: mutate });
       const counts = suite.demandCounts(rendered.html);
+      /* The obligation gate keeps the COUNT honest — readiness raises nothing for
+         a declaration-only entity — so what the wider record produces is a surface
+         asserting a relationship the project does not have. */
       assert.strictEqual(counts.production, "demanded",
         "NC-REF6 probe: the declaration-only reference was expected to read as demanded");
-      assert.ok(counts.now > 0, "NC-REF6 probe: and to owe current work");
-      return `no shot relates to RD-CHAR, yet a leftover continuityStateSelections key produces "${suite.demandHeadline(rendered.html)}"`;
+      assert.ok(!/No shot uses this character yet/.test(suite.demandHeadline(rendered.html)),
+        "NC-REF6 probe: and to stop reporting itself dormant");
+      return `no shot relates to RD-CHAR, yet a leftover continuityStateSelections key makes the surface claim `
+        + `it is used — headline "${suite.demandHeadline(rendered.html)}", production=demanded`;
     },
     guard: (mutate) => freshSuite().demandMatrixSection({ mutateSource: mutate }),
   });
@@ -343,33 +390,35 @@ async function nc6() {
 async function nc7() {
   await browserControl({
     id: "NC-REF7",
-    defect: "one satisfied-once reference used by two shots is asked for once per shot",
+    defect: "one reference used by two shots is asked for once per shot",
+    /* Grouped by shot instead of by authority target. Six shots naming one
+       reference is one decision, and the Historic confirmation queue has grouped
+       it that way since Slice 1; this makes the reference surface disagree. */
     editsByFile: {
-      "entities.js": [[
-        `  return rows.map((row) => {
-    const resolved = referenceDemandState({ tier: row.tier, requirement: row.requirement }, {`,
-        `  const fanOut = Math.max(1, (production.shotIds || []).length);
-  rows = [].concat(...Array.from({ length: fanOut }, (_, n) => rows.map((row) => n ? { ...row, id: row.id + "#" + n } : row)));
-  return rows.map((row) => {
-    const resolved = referenceDemandState({ tier: row.tier, requirement: row.requirement }, {`,
-      ], [
-        `  const truth = entityStateTruth(list, entity);
-  const rows = [];`,
-        `  const truth = entityStateTruth(list, entity);
-  let rows = [];`,
+      "app.js": [[
+        `        const key = String(row.targetKey || target.key || "");`,
+        `        const key = \`\${shot.id}:\${String(row.targetKey || target.key || "")}\`;`,
       ]],
     },
     probe: async (mutate) => {
-      const single = suite.demandFixture({ cast: true });
-      const twice = suite.demandFixture({ cast: true });
-      twice.shots.push({ ...JSON.parse(JSON.stringify(twice.shots[0])), id: "L1-02" });
-      const one = suite.demandCounts((await suite.referenceSurface(single, { mutateSource: mutate })).html);
-      const two = suite.demandCounts((await suite.referenceSurface(twice, { mutateSource: mutate })).html);
+      const shared = require("./render-harness").withCanon(buildFixture(), [
+        { kind: "entity-state", list: "locations", entityId: "LOC-HULL", stateId: "state-default", value: "LOC-HULL-PLATE.png" },
+        { kind: "entity-state", list: "props", entityId: "PR-TOOL", stateId: "state-default", value: "PR-TOOL-PLATE.png" },
+      ]);
+      shared.characters[0].continuityStates = [
+        { id: "state-default", name: "Clean", isDefault: true, approvedFile: "KAI-ANCHOR.png" },
+      ];
+      const single = JSON.parse(JSON.stringify(shared));
+      shared.shots.push({ ...JSON.parse(JSON.stringify(shared.shots[0])), id: "L1-02" });
+      const one = suite.demandCounts((await suite.referenceSurface(single, { id: "KAI", mutateSource: mutate })).html);
+      const two = suite.demandCounts((await suite.referenceSurface(shared, { id: "KAI", mutateSource: mutate })).html);
+      assert.strictEqual(one.now, 1, "NC-REF7 probe: (precondition) one shot owes one decision");
       assert.ok(two.now > one.now,
-        `NC-REF7 probe: the second shot was expected to duplicate the work (${one.now} -> ${two.now})`);
-      return `one shot asks for ${one.now} required references; two shots sharing the same reference ask for ${two.now}`;
+        `NC-REF7 probe: the second shot was expected to duplicate the decision (${one.now} -> ${two.now})`);
+      return `one unconfirmed reference owed by one shot reads ${one.now} decision; the SAME reference shared by `
+        + `two shots reads ${two.now}`;
     },
-    guard: (mutate) => freshSuite().demandMatrixSection({ mutateSource: mutate }),
+    guard: (mutate) => freshSuite().agreementMatrixSection({ mutateSource: mutate }),
   });
 }
 
@@ -381,8 +430,8 @@ async function nc8() {
     defect: "the reference strip labels a dormant capability Incomplete and counts missing required views",
     editsByFile: {
       "entities.js": [[
-        `    const dormant = missing > 0 && demanded.known && !demanded.demanded;`,
-        `    const dormant = false; void demanded;`,
+        `    if (owed !== null) {`,
+        `    if (false) {`,
       ]],
     },
     probe: async (mutate) => {
@@ -513,9 +562,9 @@ async function nc12() {
     defect: "the derived demand answer is persisted onto the slot beside the fact it came from",
     run: async () => {
       await patchedFile("public/entities.js", [[
-        `    return { ...row, demandState: resolved.state, demandBasis: resolved.basis, productionDemanded: resolved.demanded };`,
-        `    row.demandState = resolved.state;
-    return { ...row, demandState: resolved.state, demandBasis: resolved.basis, productionDemanded: resolved.demanded };`,
+        `    return { ...row, demandState: state, demandBasis: basis, productionDemanded: resolved.demanded };`,
+        `    row.demandState = state;
+    return { ...row, demandState: state, demandBasis: basis, productionDemanded: resolved.demanded };`,
       ]], async () => {
         const patched = readLF("public/entities.js");
         assert.ok(/row\.demandState\s*=(?!=)/.test(patched),
@@ -574,6 +623,233 @@ async function nc13() {
   });
 }
 
+/* =================================================================== NC-REF14
+   FAIL-CLOSED, ENTERED THROUGH THE AMBIGUITY THE PROJECT ITSELF REPORTS.
+   The reproduced defect: with CHAR and CHAR-A both present and a shot code of
+   "CHAR-A", the resolver takes CHAR and the demand owner used to read that as a
+   positive absence for CHAR-A. This restores exactly that reading. */
+async function nc14() {
+  await fileControl({
+    id: "NC-REF14",
+    defect: "an ambiguous CHAR / CHAR-A dependency becomes a false-known dormant answer",
+    file: "public/shared-entities.js",
+    edits: [[
+      `    if (status === "unresolved" || namesThis) return { reading: "unknown", reason: \`lossy-code-token:\${status}\` };`,
+      `    void namesThis; void status;`,
+    ]],
+    probe: async () => {
+      const project = suite.demandFixture({ cast: false, id: "CHAR-A" });
+      project.characters = [
+        { id: "CHAR", name: "Char", continuityStates: [], coverageSlots: suite.slotSet(["front"]) },
+        { id: "CHAR-A", name: "Char A", continuityStates: [], coverageSlots: suite.slotSet(["front"]) },
+      ];
+      project.shots[0].characters = [];
+      project.shots[0].codes = ["CHAR-A"];
+      const rendered = await freshSuite().referenceSurface(project, { id: "CHAR-A" });
+      const counts = freshSuite().demandCounts(rendered.html);
+      const headline = freshSuite().demandHeadline(rendered.html);
+      assert.strictEqual(counts.production, "dormant",
+        "NC-REF14 probe: CHAR-A was expected to be reported as positively unused");
+      assert.ok(/No shot uses this character yet/.test(headline),
+        `NC-REF14 probe: and told so in as many words, got "${headline}"`);
+      return `the project's own classifier calls the token AMBIGUOUS between CHAR and CHAR-A, and the surface `
+        + `answers "${headline}" (production=dormant)`;
+    },
+    guard: () => freshSuite().failClosedSection(),
+  });
+}
+
+/* =================================================================== NC-REF15
+   The other half: a collection the resolver silently skips read as a collection
+   that named nothing. */
+async function nc15() {
+  await fileControl({
+    id: "NC-REF15",
+    defect: "a malformed dependency collection becomes a known dormant answer",
+    file: "public/shared-entities.js",
+    edits: [[
+      `  if (!shotDependencyReadingIsWellFormed(shot)) return { reading: "unknown", reason: "malformed-dependency-collection" };`,
+      `  void shotDependencyReadingIsWellFormed;`,
+    ]],
+    probe: async () => {
+      const fresh = freshSuite();
+      const project = fresh.demandFixture({ cast: true });
+      /* The relationship is real and the collection holding it is damaged. */
+      project.shots[0].characters = "RD-CHAR";
+      const rendered = await fresh.referenceSurface(project);
+      const counts = fresh.demandCounts(rendered.html);
+      assert.strictEqual(counts.production, "dormant",
+        "NC-REF15 probe: the damaged collection was expected to read as a positive absence");
+      return `shot.characters is the string "RD-CHAR" rather than a list, the resolver skips it, and the surface `
+        + `answers "${fresh.demandHeadline(rendered.html)}"`;
+    },
+    guard: () => freshSuite().failClosedSection(),
+  });
+}
+
+/* =================================================================== NC-REF16
+   The sticky vehicle, restored: the picker reads one dialect again. */
+async function nc16() {
+  await browserControl({
+    id: "NC-REF16",
+    defect: "a vehicleIds-only vehicle renders unselected and cannot be cleared",
+    editsByFile: {
+      /* BOTH HALVES, which is exactly the pre-repair state: the picker could not
+         SEE the vehicleIds relationship and could not WRITE to it either, so the
+         attachment was invisible and the control that looked like it removed the
+         vehicle removed a different encoding. */
+      "creation-studio.js": [[
+        `  for (const id of Array.isArray(brief.vehicleIds) ? brief.vehicleIds : []) ids.add(String(id));`,
+        `  void brief.vehicleIds;`,
+      ], [
+        `    if (vehicleIds.length) c.vehicleIds = vehicleIds.filter((x) => x !== propId);`,
+        `    void vehicleIds;`,
+      ]],
+    },
+    probe: async (mutate) => {
+      const project = buildFixture();
+      project.vehicles = [{ id: "VEH-CENSUS", name: "Census tug", continuityStates: [], coverageSlots: [] }];
+      project.shots[0].codes = [];
+      project.shots[0].characters = [];
+      project.shots[0].creationBrief = { locationId: "", propIds: [], vehicleIds: ["VEH-CENSUS"] };
+      const rendered = await render("#/shot/L1-01", project, {
+        mutateSource: mutate,
+        storage: { "cinebraid-focused:fixture:shot-task:L1-01": "inputs" },
+      });
+      const cls = /class="guided-asset-choice ([^"]*)"[^>]*onclick="toggleShotCreationProp\('L1-01','VEH-CENSUS'\)"/.exec(rendered.html);
+      assert.ok(cls, "NC-REF16 probe: the vehicle must still render");
+      assert.ok(!/\bon\b/.test(cls[1]),
+        `NC-REF16 probe: it was expected to render UNSELECTED, got class "${cls[1]}"`);
+      vm.runInContext("toggleShotCreationProp('L1-01','VEH-CENSUS')", rendered.context);
+      vm.runInContext("toggleShotCreationProp('L1-01','VEH-CENSUS')", rendered.context);
+      const after = JSON.parse(vm.runInContext(`JSON.stringify({
+        propIds: P.shots[0].creationBrief.propIds, vehicleIds: P.shots[0].creationBrief.vehicleIds,
+        demanded: entityReferenceDemand(P, "vehicle", "VEH-CENSUS").demanded })`, rendered.context));
+      assert.ok(after.vehicleIds.includes("VEH-CENSUS") && after.demanded,
+        "NC-REF16 probe: and two clicks were expected to leave the real relationship untouched");
+      return `renders class="${cls[1]}" (not selected); after two clicks vehicleIds=${JSON.stringify(after.vehicleIds)} `
+        + `and the vehicle is still demanded`;
+    },
+    guard: (mutate) => freshSuite().vehicleDialectSection({ mutateSource: mutate }),
+  });
+}
+
+/* =================================================================== NC-REF17
+   THE HEADLINE CONTRADICTION. The surface counts the entity's coverage template
+   again while Production owes nothing. */
+async function nc17() {
+  await browserControl({
+    id: "NC-REF17",
+    defect: "an active entity whose readiness is satisfied still claims its whole coverage template is required now",
+    editsByFile: {
+      "entities.js": [[
+        `  const owed = obligations && obligations.known === true
+    ? new Set((obligations.rows || []).map((row) => String(row.stateId || "")))
+    : null;`,
+        `  const owed = null; void obligations;`,
+      ]],
+    },
+    probe: async (mutate) => {
+      const project = require("./render-harness").withCanon(buildFixture(), [
+        { kind: "entity-state", list: "characters", entityId: "KAI", stateId: "state-default", value: "KAI-ANCHOR.png" },
+        { kind: "entity-state", list: "locations", entityId: "LOC-HULL", stateId: "state-default", value: "LOC-HULL-PLATE.png" },
+        { kind: "entity-state", list: "props", entityId: "PR-TOOL", stateId: "state-default", value: "PR-TOOL-PLATE.png" },
+      ]);
+      project.characters[0].continuityStates = [
+        { id: "state-default", name: "Clean", isDefault: true, approvedFile: "KAI-ANCHOR.png" },
+      ];
+      const rendered = await suite.referenceSurface(project, { id: "KAI", mutateSource: mutate });
+      const counts = suite.demandCounts(rendered.html);
+      const headline = suite.demandHeadline(rendered.html);
+      assert.ok(counts.now >= 8,
+        `NC-REF17 probe: the whole template was expected to read as current work, got ${counts.now}`);
+      const production = await render("#/production", project, { mutateSource: mutate });
+      const next = vm.runInContext("(projectNextProductionAction() || {}).actionLabel || ''", production.context);
+      const blockers = vm.runInContext("JSON.stringify(projectSharedBlockers(projectShotReadiness()).map((r) => r.key))", production.context);
+      assert.strictEqual(blockers, "[]",
+        "NC-REF17 probe: while Production must genuinely be blocked by nothing, or there is no contradiction");
+      return `the reference surface says "${headline}" while Production says ${next} with blockers ${blockers}`;
+    },
+    guard: (mutate) => freshSuite().agreementMatrixSection({ mutateSource: mutate }),
+  });
+}
+
+/* =================================================================== NC-REF18
+   The mirror: an obligation the confirmation queue holds is dropped from the
+   reference surface, so the two disagree in the other direction. */
+async function nc18() {
+  await browserControl({
+    id: "NC-REF18",
+    defect: "a historic reference awaiting confirmation is omitted from current reference demand",
+    editsByFile: {
+      "entities.js": [[
+        `  const covered = new Set(rows.filter((row) => row.family === "state").map((row) => String(row.id)));`,
+        `  const covered = new Set((obligations.rows || []).map((row) => String(row.stateId || ""))); void rows;`,
+      ]],
+    },
+    probe: async (mutate) => {
+      const project = require("./render-harness").withCanon(buildFixture(), [
+        { kind: "entity-state", list: "locations", entityId: "LOC-HULL", stateId: "state-default", value: "LOC-HULL-PLATE.png" },
+        { kind: "entity-state", list: "props", entityId: "PR-TOOL", stateId: "state-default", value: "PR-TOOL-PLATE.png" },
+      ]);
+      project.characters[0].continuityStates = [
+        { id: "state-default", name: "Clean", isDefault: true, approvedFile: "KAI-ANCHOR.png" },
+      ];
+      const rendered = await suite.referenceSurface(project, { id: "KAI", mutateSource: mutate });
+      const counts = suite.demandCounts(rendered.html);
+      const production = await render("#/production", project, { mutateSource: mutate });
+      const queue = JSON.parse(vm.runInContext(
+        "JSON.stringify(((projectShotReadiness().historic || {}).items || []).map((r) => r.key))", production.context));
+      assert.strictEqual(counts.now, 0,
+        `NC-REF18 probe: the reference surface was expected to claim no current work, got ${counts.now}`);
+      assert.ok(queue.some((key) => key.includes("characters:KAI")),
+        "NC-REF18 probe: while the confirmation queue still holds the very same decision");
+      return `reference surface says 0 current required references — "${suite.demandHeadline(rendered.html)}" — `
+        + `while the confirmation queue holds ${JSON.stringify(queue)}`;
+    },
+    guard: (mutate) => freshSuite().agreementMatrixSection({ mutateSource: mutate }),
+  });
+}
+
+/* =================================================================== NC-REF19
+   The cleared primary, promoted back by the next normalisation. */
+async function nc19() {
+  await browserControl({
+    id: "NC-REF19",
+    defect: "an explicitly cleared primary Location is overwritten by a supporting location on normalisation",
+    editsByFile: {
+      "app.js": [[
+        `      && s.creationBrief[SHOT_NO_PRIMARY_LOCATION_KEY] !== true) {`,
+        `      && true) {`,
+      ]],
+    },
+    probe: async (mutate) => {
+      const project = buildFixture();
+      project.locations.push({
+        id: "LOC-SUPPORT", name: "Support bay", status: "APPROVED", workflowStatus: "APPROVED",
+        notes: "", approvedFile: "LOC-SUPPORT-PLATE.png", continuityStates: [],
+      });
+      project.shots[0].codes = ["LOC-HULL", "LOC-SUPPORT", "PR-TOOL"];
+      project.shots[0].creationBrief = { locationId: "LOC-HULL", propIds: [], promptBuilds: [], mode: "auto" };
+      const rendered = await render("#/shot/L1-01", project, {
+        mutateSource: mutate,
+        storage: { "cinebraid-focused:fixture:shot-task:L1-01": "inputs" },
+      });
+      const read = () => vm.runInContext("P.shots[0].creationBrief.locationId || ''", rendered.context);
+      const before = read();
+      vm.runInContext("setShotCreationLocation('L1-01','')", rendered.context);
+      const cleared = read();
+      vm.runInContext("normalizeShotV5(P.shots[0])", rendered.context);
+      const after = read();
+      assert.strictEqual(cleared, "", "NC-REF19 probe: the clear must land before normalisation undoes it");
+      assert.strictEqual(after, "LOC-SUPPORT",
+        `NC-REF19 probe: the support was expected to be promoted into the cleared primary, got ${after || "(empty)"}`);
+      return `primary "${before}" -> cleared to "" -> normalizeShotV5 promotes the SUPPORTING location to "${after}"`;
+    },
+    guard: (mutate) => freshSuite().locationDurabilitySection({ mutateSource: mutate }),
+  });
+}
+
 async function main() {
   await nc1();
   await nc2();
@@ -588,13 +864,19 @@ async function main() {
   await nc11();
   await nc12();
   await nc13();
+  await nc14();
+  await nc15();
+  await nc16();
+  await nc17();
+  await nc18();
+  await nc19();
 
   /* THE TREE IS CLEAN. Every file a control can reach, checked for the exact
      text that control introduces. */
   const restored = [
-    ["public/entities.js", [/row\.demandState\s*=(?!=)/, /const dormant = false; void demanded;/]],
+    ["public/entities.js", [/row\.demandState\s*=(?!=)/, /const owed = null; void obligations;/, /if \(false\) \{/]],
     ["public/shared-coverage.js", [/if \(false\)\s*\n\s*return \{ state: "available"/]],
-    ["public/shared-entities.js", [/demanded: true, shotIds, total/]],
+    ["public/shared-entities.js", [/if \(true\) return \{ known: true, demanded: true/, /void namesThis; void status;/, /void shotDependencyReadingIsWellFormed;/]],
     /* Each pattern is the EXACT text one control introduces, and each was checked
        against pristine source so a clean tree cannot fail this. `frame.winner = ""`
        alone would: the shipped file already contains that line elsewhere, and a
@@ -605,6 +887,7 @@ async function main() {
       /P\.productionAuthority\.receipts\.filter\(\(row\) => row && row\.entityId !== previous\)/,
     ]],
     ["public/shared-shot-readiness.js", [/void namedMode;/]],
+    ["public/app.js", [/&& true\) \{/, /const key = `\$\{shot\.id\}:/]],
   ];
   for (const [file, patterns] of restored) {
     const source = readLF(file);
@@ -615,10 +898,20 @@ async function main() {
   /* And the real thing is still there, so "clean" is not "emptied". */
   assert.ok(readLF("public/shared-coverage.js").includes(`if (production.known === true && production.demanded !== true)`),
     "public/shared-coverage.js lost the demand gate");
-  assert.ok(readLF("public/shared-entities.js").includes(`return { known: true, demanded: shotIds.length > 0, shotIds, total: shots.length };`),
-    "public/shared-entities.js lost the demand owner");
+  assert.ok(readLF("public/shared-entities.js").includes(`if (shotIds.length) return { known: true, demanded: true, shotIds, uncertain, total: shots.length };`),
+    "public/shared-entities.js lost the established-use branch of the demand owner");
+  assert.ok(readLF("public/shared-entities.js").includes(`if (uncertain.length) return { known: false, demanded: false, shotIds: [], uncertain, total: shots.length };`),
+    "public/shared-entities.js lost the fail-closed branch of the demand owner");
   assert.ok(readLF("public/creation-studio.js").includes(`function guidedLocationClearButton(s, c) {`),
     "public/creation-studio.js lost the location clear control");
+  assert.ok(readLF("public/creation-studio.js").includes(`for (const id of Array.isArray(brief.vehicleIds) ? brief.vehicleIds : []) ids.add(String(id));`),
+    "public/creation-studio.js lost the vehicleIds half of the picker's attached set");
+  assert.ok(readLF("public/shared-entities.js").includes(`if (!shotDependencyReadingIsWellFormed(shot)) return { reading: "unknown", reason: "malformed-dependency-collection" };`),
+    "public/shared-entities.js lost the malformed-collection guard");
+  assert.ok(readLF("public/app.js").includes(`s.creationBrief[SHOT_NO_PRIMARY_LOCATION_KEY] !== true`),
+    "public/app.js lost the explicit no-primary-location guard");
+  assert.ok(readLF("public/entities.js").includes(`const owed = obligations && obligations.known === true`),
+    "public/entities.js lost the current-obligation gate");
 
   console.log(`Reference demand negative controls passed — ${results.length} defects introduced, ${results.length} caught:`);
   for (const line of results) console.log("  " + line);

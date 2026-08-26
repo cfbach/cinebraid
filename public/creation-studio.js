@@ -1969,12 +1969,48 @@ function guidedStaleShotStateDeclarations(s) {
   return `<section class="guided-stale-shot-state-declarations" data-readiness-action-surface="shot-stale-state-declaration"><header><div><span>STALE CONTINUITY DECLARATIONS</span><b>${stale.length} declaration${stale.length === 1 ? "" : "s"} no longer has a state-bearing relationship</b><small>State declarations never create shot relationships. Remove only these orphaned keys.</small></div></header><div>${rows}</div></section>`;
 }
 
+/* WHICH PROPS AND VEHICLES THIS SHOT'S BRIEF ATTACHES — BOTH SPELLINGS.
+ *
+ * TWO ENCODINGS OF ONE RELATION. `creationBrief.propIds` is the union namespace
+ * the picker writes — shotDependencyRecords() offers each id to the prop list and
+ * the vehicle list and narrows by whichever holds it — and
+ * `creationBrief.vehicleIds` is a type-narrowed spelling that only imported and
+ * legacy documents carry: no shipped control has ever written it, and the only
+ * code that touches it clears it on a structure-duplicate or rewrites it on a
+ * relink. Both produce the SAME row from shotDependencyRecords (`type:
+ * "vehicle"`), both are listed in SHOT_STATE_BEARING_RELATIONSHIP_SOURCES, and
+ * neither carries a meaning the other does not. One relation, two encodings.
+ *
+ * The picker read only `propIds`, so a vehicle a document attached through
+ * `vehicleIds` rendered UNSELECTED while readiness and reference demand both
+ * counted it as used — and two clicks on it added and then removed a `propIds`
+ * entry while the real relationship sat untouched underneath. A filmmaker could
+ * neither see the attachment nor remove it.
+ *
+ * DELIBERATELY THE TWO BRIEF FIELDS AND NOT THE WHOLE PROJECTION.
+ *
+ * shotStateBearingEntityRecords() would also report a prop attached through a
+ * `codes[]` token, and reading it here would change what a click on that prop
+ * MEANS — an attach would become a detach, and detaching strips the token, which
+ * throws away the view suffix a code like `PR-TOOL-REAR` carries. That is a real,
+ * separate, pre-existing inconsistency between the picker and the resolver, and
+ * tests/composer-motion.js pins the current behaviour on purpose. It is not this
+ * repair's to change. The two brief fields are the two the reported defect names,
+ * they are the two the picker already owns, and widening to exactly them is what
+ * makes the control tell the truth about what it can write. */
+function guidedAttachedBriefPropVehicleIds(s) {
+  const brief = s && typeof s.creationBrief === "object" && s.creationBrief ? s.creationBrief : {};
+  const ids = new Set();
+  for (const id of Array.isArray(brief.propIds) ? brief.propIds : []) ids.add(String(id));
+  for (const id of Array.isArray(brief.vehicleIds) ? brief.vehicleIds : []) ids.add(String(id));
+  return ids;
+}
 function guidedShotAttachmentPicker(s) {
   const c = ensureShotCreation(s);
   const resolved = resolveShotEntities(P, s);
   const attachedLocationIds = new Set(resolved.locations.map((x) => x.id));
   const characterIds = new Set(s.characters || []);
-  const propIds = new Set(c.propIds || []);
+  const propIds = guidedAttachedBriefPropVehicleIds(s);
   const selectedCount = characterIds.size + propIds.size + attachedLocationIds.size;
   const locationNote = attachedLocationIds.size > 1
     ? `<small class="guided-location-disclosure">${attachedLocationIds.size} locations are attached. The primary plate drives the composer base; supporting locations remain available to prompting.</small>`
@@ -5088,6 +5124,14 @@ window.setShotCreationLocation = (id, value) => {
   if (previous && previous !== value && !selectingAttachedLocation)
     s.codes = s.codes.filter((code) => !shotEntityTokenMatches(code, previous));
   c.locationId = value;
+  /* THE DECISION, RECORDED WHERE IT IS MADE. An empty value here is a person
+     saying "no primary plate", and public/app.js's legacy inference would
+     otherwise promote a supporting location into the space they just emptied on
+     the next normalisation. Choosing any location withdraws the decision, so the
+     key exists only while it is true and no document that never used the control
+     ever grows it. */
+  if (value) delete c[SHOT_NO_PRIMARY_LOCATION_KEY];
+  else c[SHOT_NO_PRIMARY_LOCATION_KEY] = true;
   if (value && !s.codes.some((code) => shotEntityTokenMatches(code, value))) s.codes.push(value);
   if (previous && typeof clearDetachedShotStateDeclaration === "function")
     clearDetachedShotStateDeclaration(P, { shotId: id, entityId: previous });
@@ -5098,13 +5142,28 @@ window.toggleShotCreationCharacter = (id, charId) => {
   toggleShotChar(id, charId);
 };
 window.toggleShotCreationProp = (id, propId) => {
-  const s = shotById(id), c = ensureShotCreation(s), selected = c.propIds.includes(propId);
+  const s = shotById(id), c = ensureShotCreation(s);
+  /* SELECTED MEANS WHAT THE PICKER SHOWS, and the picker now shows every dialect.
+     Reading `c.propIds` alone made the control disagree with its own rendering: a
+     vehicle drawn as attached through `vehicleIds` was read as unselected, so the
+     click ADDED a second encoding of a relationship that already existed. */
+  const attached = guidedAttachedBriefPropVehicleIds(s);
+  const selected = attached.has(String(propId));
+  const vehicleIds = Array.isArray(c.vehicleIds) ? c.vehicleIds : [];
   s.codes = Array.isArray(s.codes) ? s.codes : [];
   if (selected) {
-    c.propIds = c.propIds.filter((x) => x !== propId);
+    /* REMOVE MEANS REMOVE, in every dialect the document uses. Clearing one and
+       leaving the other is the ghost relation this repair exists for: the id
+       vanishes from the field the UI writes and readiness goes on demanding the
+       reference from the field it does not. */
+    c.propIds = (Array.isArray(c.propIds) ? c.propIds : []).filter((x) => x !== propId);
+    if (vehicleIds.length) c.vehicleIds = vehicleIds.filter((x) => x !== propId);
     s.codes = s.codes.filter((code) => !shotEntityTokenMatches(code, propId));
   } else {
-    c.propIds = [...c.propIds, propId];
+    /* ATTACH keeps writing the union namespace the UI has always owned. Nothing
+       here starts writing `vehicleIds`: adding a third writer of a relation that
+       already has two encodings would make the problem worse. */
+    c.propIds = [...(Array.isArray(c.propIds) ? c.propIds : []), propId];
     if (!s.codes.some((code) => shotEntityTokenMatches(code, propId))) s.codes.push(propId);
   }
   if (typeof clearDetachedShotStateDeclaration === "function")
