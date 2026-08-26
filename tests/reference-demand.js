@@ -45,6 +45,7 @@
  *  13  VEH1-VEH7 — one vehicle relation, two encodings, one truthful control
  *  14  AG1-AG10 — current work equals what readiness actually owes
  *  15  LOC1-LOC7 — an explicit clear survives normalisation and a round trip
+ *  16  PV/VV/LCO — a picker may take back only what it could put back
  *
  * Provider calls: 0. Paid calls: 0. Nothing is written to any project on disk.
  */
@@ -1431,6 +1432,253 @@ async function locationDurabilitySection(options = {}) {
     + "presence. Re-selecting either location works, and canon, receipts, plate and approved frames are unchanged");
 }
 
+/* ================================ 16 · PV / VV / LCO · RELATIONSHIP OWNERSHIP
+   A PICKER MAY TAKE BACK ONLY WHAT IT COULD PUT BACK.
+
+   `shot.codes[]` is an undeclared union namespace and shotEntityTokenMatches
+   accepts an id followed by "-", so one token can name an entity AND say
+   something the entity id does not:
+
+       VEH-X          names VEH-X, says nothing else        EXACT
+       VEH-X-REAR     names VEH-X, says REAR                LOSSY
+
+   normalizeShotV5 bridges a code-resolved id into `creationBrief.propIds` — the
+   bridge the generation reference set and the motion director depend on, proven
+   and left alone here — and the picker then showed an ordinary selected entity
+   whose Clear deleted the bridged id AND the token behind it. `-REAR` is not
+   recoverable: ofp/ofp-migrate-rules.js emits a `disputed` statement saying so,
+   server.js reports it as `code-reinterpreted`. A control was deleting a
+   specificity it had never represented.
+
+   THE RULE, and it is one sentence: an EXACT token is a relationship the picker
+   expresses completely and may remove; a LOSSY token is not, so the picker shows
+   the entity as attached-not-owned and its click ADDS. An explicit selection over
+   a lossy token records itself as its own exact token, which is what makes it
+   something the filmmaker can later take back without touching the legacy one.
+
+   ONE CLASSIFIER. shotEntityCodeTokens() reads classifyShotCodeTokens() — the
+   same output readiness, the server issue list and the OFP migration read. There
+   is no second prefix parser, and section 9 of this suite holds that.
+
+   The corpus decides which case matters: 0 suffixed prop/vehicle code tokens,
+   276 suffixed LOCATION tokens. The location half is not a bonus, it is where the
+   data is. */
+async function ownershipSection(options = {}) {
+  const INPUTS = { "cinebraid-focused:fixture:shot-task:L1-01": "inputs" };
+  const fixture = ({ codes = [], brief = {} } = {}) => {
+    const project = withCanon(buildFixture(), [
+      { kind: "entity-state", list: "props", entityId: "PROP-Y", stateId: "state-default", value: "PROP-Y.png" },
+      { kind: "entity-state", list: "vehicles", entityId: "VEH-X", stateId: "state-default", value: "VEH-X.png" },
+      { kind: "entity-state", list: "locations", entityId: "LOC-HULL", stateId: "state-default", value: "LOC-HULL-PLATE.png" },
+    ]);
+    project.props = [{ id: "PROP-Y", name: "Crate", approvedFile: "PROP-Y.png",
+      continuityStates: [{ id: "state-default", name: "Default", isDefault: true, approvedFile: "PROP-Y.png" }],
+      coverageSlots: [], made: [{ model: "m", files: "PROP-Y.png", prompt: "p", date: "2026-01-01" }] }];
+    project.vehicles = [{ id: "VEH-X", name: "Yard tug", approvedFile: "VEH-X.png",
+      continuityStates: [{ id: "state-default", name: "Default", isDefault: true, approvedFile: "VEH-X.png" }],
+      coverageSlots: [], made: [{ model: "m", files: "VEH-X.png", prompt: "p", date: "2026-01-01" }] }];
+    project.locations.push({ id: "LOC-SUPPORT", name: "Support bay", approvedFile: "LOC-SUPPORT-PLATE.png", continuityStates: [] });
+    project.shots[0].characters = [];
+    project.shots[0].codes = codes;
+    project.shots[0].creationBrief = { locationId: "", propIds: [], vehicleIds: [], promptBuilds: [], mode: "auto", ...brief };
+    return project;
+  };
+  const open = (project) => render("#/shot/L1-01", project, { ...options, storage: INPUTS });
+  const read = (context) => JSON.parse(vm.runInContext(`JSON.stringify({
+    codes: P.shots[0].codes,
+    propIds: P.shots[0].creationBrief.propIds,
+    vehicleIds: P.shots[0].creationBrief.vehicleIds || [],
+    locationId: P.shots[0].creationBrief.locationId || "",
+    noPrimary: P.shots[0].creationBrief.noPrimaryLocation === true,
+    receipts: ((P.productionAuthority || {}).receipts || []).length,
+    propCanon: !!currentHumanAuthority(P, { kind: "entity-state", list: "props", entityId: "PROP-Y", stateId: "state-default" }),
+    vehCanon: !!currentHumanAuthority(P, { kind: "entity-state", list: "vehicles", entityId: "VEH-X", stateId: "state-default" }),
+    locCanon: !!currentHumanAuthority(P, { kind: "entity-state", list: "locations", entityId: "LOC-HULL", stateId: "state-default" }),
+    propFile: P.props[0].approvedFile, vehFile: P.vehicles[0].approvedFile,
+    propHistory: (P.props[0].made || []).length, vehHistory: (P.vehicles[0].made || []).length,
+    winners: P.shots[0].keyframes.map((frame) => frame.winner),
+  })`, context));
+  const pickerState = (html, id) => {
+    const m = new RegExp(`class="guided-asset-choice ([^"]*)"[^>]*onclick="toggleShotCreationProp\\('L1-01','${id}'\\)`).exec(html);
+    if (!m) return "absent";
+    return /\bon\b/.test(m[1]) ? "selected" : /code-backed/.test(m[1]) ? "code-backed" : "unattached";
+  };
+  const pickerNote = (html, id) => {
+    const m = new RegExp(`onclick="toggleShotCreationProp\\('L1-01','${id}'\\)"[\\s\\S]*?<small>([^<]*)</small>`).exec(html);
+    return m ? m[1] : "";
+  };
+  const locationNote = (html, id) => {
+    const m = new RegExp(`onclick="setShotCreationLocation\\('L1-01','${id}'\\)"[\\s\\S]*?<small>([^<]*)</small>`).exec(html);
+    return m ? m[1] : "";
+  };
+  /* Every step goes through the shipped writer AND the shipped load: the mutated
+     document is serialised and handed to a fresh page, which normalises it on the
+     way in exactly as opening the project does. A repair that only survived one
+     render would pass a weaker test than this. */
+  const act = async (page, code) => {
+    vm.runInContext(code, page.context);
+    return open(JSON.parse(vm.runInContext("JSON.stringify(P)", page.context)));
+  };
+  const untouched = (before, after, label) => {
+    for (const key of ["receipts", "propCanon", "vehCanon", "locCanon", "propFile", "vehFile", "propHistory", "vehHistory"]) {
+      assert.deepStrictEqual(after[key], before[key], `${label}: ${key} must be untouched by a structural edit`);
+    }
+    assert.deepStrictEqual(after.winners, before.winners, `${label}: nor the shot's approved frames`);
+  };
+
+  /* ---------------------------------------------------------------- PROPS ---- */
+  /* PV1 · an EXACT codes-only prop is losslessly representable, so it stays
+     ordinary: selected, and one Clear removes the whole relationship. */
+  let page = await open(fixture({ codes: ["PROP-Y"] }));
+  const pv1Before = read(page.context);
+  assert.strictEqual(pickerState(page.html, "PROP-Y"), "selected", "PV1: an exact codes-only prop is picker-owned");
+  page = await act(page, "toggleShotCreationProp('L1-01','PROP-Y')");
+  assert.deepStrictEqual(read(page.context).codes, [], "PV1: and Clear removes the exact token");
+  assert.deepStrictEqual(read(page.context).propIds, [], "PV1: and the brief entry with it");
+  untouched(pv1Before, read(page.context), "PV1/PV9");
+
+  /* PV2 · a SUFFIXED codes-only prop is NOT picker-owned, however the bridge
+     filled the brief. THE REPRODUCED DEFECT'S PROP HALF. */
+  page = await open(fixture({ codes: ["PROP-Y-LEFT"] }));
+  const pv2Before = read(page.context);
+  assert.deepStrictEqual(pv2Before.propIds, ["PROP-Y"],
+    "PV2: (precondition) normalization has bridged the id into the brief");
+  assert.strictEqual(pickerState(page.html, "PROP-Y"), "code-backed",
+    "PV2: yet the picker must not present it as its own selection");
+  assert.strictEqual(pickerNote(page.html, "PROP-Y"), "attached by a shot code · select to choose it here",
+    "PV2: it must say what it is and what a click does, in filmmaker language");
+
+  /* PV5 · an explicit selection layers ON, and preserves the suffix. */
+  page = await act(page, "toggleShotCreationProp('L1-01','PROP-Y')");
+  let now = read(page.context);
+  assert.ok(now.codes.includes("PROP-Y-LEFT"), `PV5: the suffixed token must survive, got ${JSON.stringify(now.codes)}`);
+  assert.ok(now.codes.includes("PROP-Y"), "PV5: and the selection must record its own exact token");
+  assert.strictEqual(pickerState(page.html, "PROP-Y"), "selected", "PV5: so the picker may now truthfully own it");
+
+  /* PV6 · clearing the explicit layer removes only that layer. */
+  page = await act(page, "toggleShotCreationProp('L1-01','PROP-Y')");
+  now = read(page.context);
+  assert.deepStrictEqual(now.codes, ["PROP-Y-LEFT"],
+    `PV6: only the exact token it added may go, got ${JSON.stringify(now.codes)}`);
+  assert.strictEqual(pickerState(page.html, "PROP-Y"), "code-backed",
+    "PV6: and the prop returns to attached-not-owned rather than disappearing from a shot that still names it");
+  untouched(pv2Before, now, "PV6/PV9");
+
+  /* PV7 · and it can be selected again. */
+  page = await act(page, "toggleShotCreationProp('L1-01','PROP-Y')");
+  assert.strictEqual(pickerState(page.html, "PROP-Y"), "selected", "PV7: re-selecting works");
+
+  /* PV3 · an explicit brief-only prop is ordinary. */
+  page = await open(fixture({ brief: { propIds: ["PROP-Y"] } }));
+  assert.strictEqual(pickerState(page.html, "PROP-Y"), "selected", "PV3: a brief-only prop is picker-owned");
+  page = await act(page, "toggleShotCreationProp('L1-01','PROP-Y')");
+  assert.deepStrictEqual(read(page.context).propIds, [], "PV3: and clears");
+
+  /* PV4 · exact code AND brief entry: still one Clear, still no ghost. */
+  page = await open(fixture({ codes: ["PROP-Y"], brief: { propIds: ["PROP-Y"] } }));
+  page = await act(page, "toggleShotCreationProp('L1-01','PROP-Y')");
+  now = read(page.context);
+  assert.deepStrictEqual([now.codes, now.propIds], [[], []], "PV4: both encodings go in one act");
+
+  /* PV8 · clearing one entity may not disturb another's code-backed relation. */
+  page = await open(fixture({ codes: ["PROP-Y-LEFT", "VEH-X"] }));
+  page = await act(page, "toggleShotCreationProp('L1-01','VEH-X')");
+  now = read(page.context);
+  assert.deepStrictEqual(now.codes, ["PROP-Y-LEFT"],
+    `PV8: the unrelated prop's token must survive, got ${JSON.stringify(now.codes)}`);
+  assert.deepStrictEqual(now.propIds, ["PROP-Y"], "PV8: and its bridged brief entry with it");
+
+  /* -------------------------------------------------------------- VEHICLES --- */
+  /* VV1 · exact codes-only vehicle: ordinary. */
+  page = await open(fixture({ codes: ["VEH-X"] }));
+  assert.strictEqual(pickerState(page.html, "VEH-X"), "selected", "VV1: an exact codes-only vehicle is picker-owned");
+  page = await act(page, "toggleShotCreationProp('L1-01','VEH-X')");
+  assert.deepStrictEqual(read(page.context).codes, [], "VV1: and clears");
+
+  /* VV2/VV6 · suffixed codes-only vehicle. THE REPORTED DEFECT. */
+  page = await open(fixture({ codes: ["VEH-X-REAR"] }));
+  const vv2Before = read(page.context);
+  assert.deepStrictEqual(vv2Before.propIds, ["VEH-X"], "VV6: (precondition) the bridge has filled propIds");
+  assert.strictEqual(pickerState(page.html, "VEH-X"), "code-backed",
+    "VV6: a promoted brief entry must NOT make it ordinary picker-owned");
+
+  /* VV7 · explicit selection over the suffix. */
+  page = await act(page, "toggleShotCreationProp('L1-01','VEH-X')");
+  now = read(page.context);
+  assert.ok(now.codes.includes("VEH-X-REAR"), `VV7: VEH-X-REAR must survive, got ${JSON.stringify(now.codes)}`);
+  assert.ok(now.codes.includes("VEH-X"), "VV7: with the selection recorded as its own exact token");
+  assert.strictEqual(pickerState(page.html, "VEH-X"), "selected", "VV7: and the picker owns it now");
+
+  /* VV8 · clearing the explicit layer returns to code-backed. */
+  page = await act(page, "toggleShotCreationProp('L1-01','VEH-X')");
+  now = read(page.context);
+  assert.deepStrictEqual(now.codes, ["VEH-X-REAR"], `VV8: got ${JSON.stringify(now.codes)}`);
+  assert.strictEqual(pickerState(page.html, "VEH-X"), "code-backed", "VV8: attached, not owned");
+  untouched(vv2Before, now, "VV8/VV9");
+
+  /* VV3/VV4/VV5 · the explicit dialects, unchanged by this pass. */
+  for (const [label, brief] of [
+    ["VV3 vehicleIds only", { vehicleIds: ["VEH-X"] }],
+    ["VV4 propIds only", { propIds: ["VEH-X"] }],
+    ["VV5 both dialects", { propIds: ["VEH-X"], vehicleIds: ["VEH-X"] }],
+  ]) {
+    page = await open(fixture({ brief }));
+    assert.strictEqual(pickerState(page.html, "VEH-X"), "selected", `${label}: renders attached`);
+    page = await act(page, "toggleShotCreationProp('L1-01','VEH-X')");
+    now = read(page.context);
+    assert.deepStrictEqual([now.propIds, now.vehicleIds], [[], []], `${label}: one Clear, no ghost`);
+  }
+
+  /* -------------------------------------------------------------- LOCATION --- */
+  /* LCO1-LCO6 · the half with 276 real instances behind it. */
+  page = await open(fixture({ codes: ["LOC-HULL-A", "PR-TOOL"] }));
+  const lcoBefore = read(page.context);
+  assert.strictEqual(lcoBefore.locationId, "LOC-HULL",
+    "LCO1: the suffixed token still infers a primary, exactly as it always did");
+
+  page = await act(page, "setShotCreationLocation('L1-01','')");
+  now = read(page.context);
+  assert.ok(now.codes.includes("LOC-HULL-A"),
+    `LCO2: No location must preserve the suffixed token, got ${JSON.stringify(now.codes)}`);
+  assert.strictEqual(now.locationId, "", "LCO3: with no primary");
+  assert.strictEqual(now.noPrimary, true,
+    "LCO3: recorded through the marker Slice 5 already ships, so normalisation cannot promote the survivor back");
+  assert.strictEqual(locationNote(page.html, "LOC-HULL"), "supporting location · select to make primary",
+    "LCO4: and the location remains visible as support, in the words this picker already uses");
+
+  page = await act(page, "setShotCreationLocation('L1-01','LOC-HULL')");
+  now = read(page.context);
+  assert.strictEqual(now.locationId, "LOC-HULL", "LCO5: an explicit reselect works");
+  assert.strictEqual(now.noPrimary, false, "LCO5: and withdraws the cleared decision");
+  assert.ok(now.codes.includes("LOC-HULL-A") && now.codes.includes("LOC-HULL"),
+    `LCO5: preserving the suffix and recording its own exact token, got ${JSON.stringify(now.codes)}`);
+  assert.strictEqual(locationNote(page.html, "LOC-HULL"), "primary plate", "LCO5: shown as the primary");
+
+  page = await act(page, "setShotCreationLocation('L1-01','')");
+  now = read(page.context);
+  assert.deepStrictEqual(now.codes.filter((code) => String(code).startsWith("LOC-HULL")), ["LOC-HULL-A"],
+    `LCO6: a second clear removes only the exact layer, got ${JSON.stringify(now.codes)}`);
+  assert.strictEqual(locationNote(page.html, "LOC-HULL"), "supporting location · select to make primary",
+    "LCO6: back to support");
+  untouched(lcoBefore, now, "LCO8");
+
+  /* LCO7 · an EXACT location token keeps the accepted Slice 5 behaviour exactly. */
+  page = await open(fixture({ codes: ["LOC-HULL", "PR-TOOL"] }));
+  page = await act(page, "setShotCreationLocation('L1-01','')");
+  now = read(page.context);
+  assert.ok(!now.codes.includes("LOC-HULL"),
+    "LCO7: an exact token is losslessly representable, so clearing still removes it");
+  assert.strictEqual(now.noPrimary, true, "LCO7: with the same marker");
+
+  note("16. PV1-PV9 / VV1-VV9 / LCO1-LCO9 · an EXACT code token is a relationship the picker expresses "
+    + "completely and may remove; a SUFFIXED one is not, so the entity renders \"attached by a shot code · select "
+    + "to choose it here\" and its click ADDS. An explicit selection over a suffixed token records its own exact "
+    + "token and preserves the legacy one; clearing removes only what it added and returns to attached-not-owned. "
+    + "Locations use the supporting state they already had, and the cleared primary is held by the marker Slice 5 "
+    + "already ships. Every step goes through the shipped writer AND a real save/normalise/reload, and canon, "
+    + "receipts, approved files, history and approved frames are untouched throughout");
+}
+
 async function main(options = {}) {
   projectionSection();
   ownerSection();
@@ -1447,6 +1695,7 @@ async function main(options = {}) {
   await vehicleDialectSection(options);
   await agreementMatrixSection(options);
   await locationDurabilitySection(options);
+  await ownershipSection(options);
   console.log("Reference demand + reversible structure suite passed:");
   for (const line of notes) console.log(`  ${line}`);
 }
@@ -1456,6 +1705,7 @@ module.exports = {
   locationSection, stateDeclarationSection, authoritySection, routeSection, copySection,
   reversibilitySurvey, invariantSection,
   failClosedSection, vehicleDialectSection, agreementMatrixSection, locationDurabilitySection,
+  ownershipSection,
   demandFixture, referenceSurface, demandCounts, demandHeadline, coverageTaskButton, slotSet,
 };
 

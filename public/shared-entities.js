@@ -312,6 +312,77 @@ function unresolvedShotDependencies(project, shot) {
 }
 
 /* ==========================================================================
+   WHICH OF THIS SHOT'S CODE TOKENS NAME THIS ENTITY, AND WHICH OF THEM CARRY
+   MORE THAN THE PICKER CAN SAY.
+
+   `codes[]` is an undeclared union namespace and shotEntityTokenMatches accepts
+   an id followed by "-" or "_", so one token can name an entity while ALSO
+   carrying something the entity id does not:
+
+       VEH-X          names VEH-X and says nothing else
+       VEH-X-REAR     names VEH-X and says REAR
+
+   The second is a LOSSY token. What the suffix meant is not recoverable from
+   the document — ofp/ofp-migrate-rules.js emits a `disputed` statement saying so
+   in as many words ("it may be a coverage view, a variant location or a
+   reference sheet"), server.js reports it as `code-reinterpreted`, and
+   classifyShotCodeTokens records the thrown-away part as `discarded`.
+
+   WHY THIS EXISTS. A prop or vehicle picker cannot express REAR. When
+   normalizeShotV5 bridges a code-resolved id into creationBrief.propIds the
+   picker starts showing an ordinary selected entity, and its Clear removes both
+   the bridged id AND the token behind it — deleting a specificity the control
+   never represented and cannot put back. This partition is what lets a control
+   tell the difference between a relationship it can losslessly remove and one it
+   can only add to.
+
+   DERIVED FROM THE SHIPPED CLASSIFIER AND NOTHING ELSE. There is deliberately no
+   prefix parsing here: readiness, the server issue list and the OFP migration all
+   read classifyShotCodeTokens(), and a second reading of the same tokens is how
+   two surfaces come to disagree about what a token meant.
+
+   Pure. No clock, no filesystem, no network, and no write of any kind. */
+function shotEntityCodeTokens(project, shot, entityId) {
+  const wanted = String(entityId || "").trim();
+  const empty = { exact: [], lossy: [], any: false };
+  if (!wanted) return empty;
+  const exact = [];
+  const lossy = [];
+  for (const row of classifyShotCodeTokens(project, shot)) {
+    if (!row || !Array.isArray(row.matches)) continue;
+    /* `matches` is the classifier's own candidate list, so an AMBIGUOUS token
+       that could have meant this entity counts here for the same reason it makes
+       reference demand fail closed: the control must not act on a reading the
+       project itself calls uncertain. */
+    if (!row.matches.some((match) => String((match && match.id) || "") === wanted)) continue;
+    if (row.token === wanted) exact.push(row.token);
+    else lossy.push({ token: row.token, status: String(row.status || ""), discarded: String(row.discarded || "") });
+  }
+  return { exact, lossy, any: exact.length > 0 || lossy.length > 0 };
+}
+
+/* IS THIS RELATIONSHIP ONE A PICKER MAY REMOVE?
+ *
+ * No, when the only thing naming the entity on this shot is a token that says
+ * more than the entity id. Yes in every other case — including an entity named
+ * by an exact token, which the picker represents exactly, and an entity named
+ * only by the creation brief, which the picker authored.
+ *
+ * ONE EXACT TOKEN IS ENOUGH. Once an exact token exists beside a lossy one the
+ * filmmaker has made an explicit picker-level choice, and removing the exact
+ * layer takes back only that choice: the lossy token stays and the entity falls
+ * back to being attached by it.
+ *
+ * This deliberately does NOT ask whether creationBrief names the entity.
+ * normalizeShotV5 bridges code-resolved ids into creationBrief.propIds, so brief
+ * presence is not evidence of authorship and reading it as such is the whole
+ * defect. */
+function shotEntityRelationIsLossyCodeBacked(project, shot, entityId) {
+  const tokens = shotEntityCodeTokens(project, shot, entityId);
+  return tokens.lossy.length > 0 && tokens.exact.length === 0;
+}
+
+/* ==========================================================================
    IS THIS REFERENCE CURRENTLY DEMANDED BY PRODUCTION?
 
    THE QUESTION THIS ANSWERS, and the one it deliberately does not.
@@ -500,6 +571,8 @@ if (typeof window !== "undefined") {
   window.shotDependencyTokenType = shotDependencyTokenType;
   window.shotDependencyRecords = shotDependencyRecords;
   window.shotStateBearingEntityRecords = shotStateBearingEntityRecords;
+  window.shotEntityCodeTokens = shotEntityCodeTokens;
+  window.shotEntityRelationIsLossyCodeBacked = shotEntityRelationIsLossyCodeBacked;
   window.shotDependencyReadingIsWellFormed = shotDependencyReadingIsWellFormed;
   window.shotEntityUseReading = shotEntityUseReading;
   window.entityReferenceDemand = entityReferenceDemand;
@@ -522,6 +595,8 @@ if (typeof module !== "undefined" && module.exports) {
     SHOT_STATE_BEARING_RELATIONSHIP_SOURCES,
     shotDependencySourceIsStateBearing,
     shotStateBearingEntityRecords,
+    shotEntityCodeTokens,
+    shotEntityRelationIsLossyCodeBacked,
     SHOT_DEPENDENCY_COLLECTIONS,
     shotDependencyReadingIsWellFormed,
     shotEntityUseReading,

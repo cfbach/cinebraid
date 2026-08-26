@@ -29,6 +29,13 @@ a filmmaker would actually notice:
   I  A CLEARED PRIMARY LOCATION SURVIVES THE SAVE/NORMALISE/RE-RENDER PATH with a
      supporting location present, and the support is offered rather than promoted.
      Only a real page runs that path end to end.
+  J  A SUFFIXED PROP/VEHICLE RELATION IS ATTACHED, NOT PICKER-OWNED. "Renders
+     dashed" is a class in Node and a hit-testable control here.
+  K  AN EXPLICIT SELECTION LAYERS ON without deleting the suffix, clicked through
+     the real event path.
+  L  CLEARING THAT LAYER LEAVES THE CODE-BACKED ATTACHMENT VISIBLE, after a full
+     save/normalise/re-render.
+  M  THE SUFFIXED LOCATION ROUND TRIP — the half with 276 real corpus instances.
 
 IT CARRIES ITS OWN NEGATIVE CONTROLS, because a detector that can only ever report one
 answer is worth nothing. Both work by changing the PROJECT rather than the code, so the
@@ -109,6 +116,17 @@ SUPPORT = {
 
 # A vehicle attached the way an imported document attaches one: through
 # `creationBrief.vehicleIds`, which no shipped control has ever written.
+# A prop reached ONLY through a suffixed code token. `shotEntityTokenMatches`
+# accepts an id followed by "-", so PROP-CRATE-LEFT names PROP-CRATE and also says
+# LEFT — and what LEFT meant is not recoverable from the document.
+PROP = {
+    "id": "PROP-CRATE", "name": "Dock crate", "status": "APPROVED", "workflowStatus": "APPROVED",
+    "notes": "Stacked crate.", "approvedFile": "PROP-CRATE-PLATE.png",
+    "coverageSlots": [{"id": "hero", "label": "Front / hero", "requirement": "required", "selectedFile": ""}],
+    "continuityStates": [{"id": "state-default", "name": "Default", "isDefault": True,
+                          "approvedFile": "PROP-CRATE-PLATE.png"}],
+}
+
 VEHICLE = {
     "id": "VEH-DOCK", "name": "Dock tug", "status": "APPROVED", "workflowStatus": "APPROVED",
     "notes": "Yard tug.", "approvedFile": "VEH-DOCK-PLATE.png",
@@ -248,20 +266,22 @@ try:
                 """(payload) => {
                     P.characters = [payload.character];
                     P.locations = [payload.location, payload.support];
-                    P.props = []; P.vehicles = [payload.vehicle]; P.audio = [];
+                    P.props = [payload.prop]; P.vehicles = [payload.vehicle]; P.audio = [];
                     P.scenes = [{ id: 'SC-01', title: 'Dock', tier: 'A', whatHappens: '', howItFeels: '' }];
                     P.shots = [payload.shot];
                     P.productionAuthority = { version: 1, receipts: payload.receipts };
                     SCAN.anchors = payload.anchors;
                     SCAN.plates = payload.plates;
                     SCAN.vehicles = payload.vehicleMedia;
+                    SCAN.props = payload.propMedia;
                     SCAN.shots = payload.shotMedia;
                 }""",
-                {"character": character, "location": LOCATION, "support": SUPPORT, "vehicle": VEHICLE,
+                {"character": character, "location": LOCATION, "support": SUPPORT, "vehicle": VEHICLE, "prop": PROP,
                  "shot": shot, "receipts": RECEIPTS,
                  "anchors": [{"name": f"{CHAR}-PRIMARY.png", "url": TINY}],
                  "plates": [{"name": f"{LOC}-PLATE.png", "url": TINY}, {"name": "LOC-SUPPORT-PLATE.png", "url": TINY}],
                  "vehicleMedia": [{"name": "VEH-DOCK-PLATE.png", "url": TINY}],
+                 "propMedia": [{"name": "PROP-CRATE-PLATE.png", "url": TINY}],
                  "shotMedia": {SHOT: {"takes": [{"name": f"{SHOT}-FRAME_A.png", "url": TINY}], "locked": []}}})
 
         def open_reference(entity_id, kind="character", task=None):
@@ -413,6 +433,66 @@ try:
                     box: (() => { const r = b.getBoundingClientRect(); return { w: Math.round(r.width), h: Math.round(r.height) }; })(),
                 }));
             }""")
+
+        def prop_vehicle_state(entity_id):
+            """The picker's own three-state answer for one prop or vehicle, plus the
+            geometry that proves the control is real. `code-backed` is the state a
+            suffixed token produces: attached, visibly not picker-owned, and its
+            click ADDS rather than clears."""
+            return page.evaluate(
+                "(id) => {"
+                " const button = [...document.querySelectorAll('.guided-asset-picker-grid button.guided-asset-choice')]"
+                "   .find(function (node) { return (node.getAttribute('onclick') || '').indexOf(\"toggleShotCreationProp('RD1-01','\" + id + \"')\") >= 0; });"
+                " if (!button) return null;"
+                " const box = button.getBoundingClientRect();"
+                " return { state: button.classList.contains('on') ? 'selected'"
+                "   : button.classList.contains('code-backed') ? 'code-backed' : 'unattached',"
+                "   note: ((button.querySelector('small') || {}).textContent || '').trim(),"
+                "   w: Math.round(box.width), h: Math.round(box.height) }; }", entity_id)
+
+        def wait_for_picker_state(entity_id, css_class, why):
+            """Wait for the picker to REPAINT into a state, never for a delay. The
+            click re-renders the panel, so reading the class straight after it reads
+            whichever paint the browser happened to be on."""
+            reveal_cast()
+            probe = ("(args) => {"
+                     " const b = [...document.querySelectorAll('.guided-asset-picker-grid button.guided-asset-choice')]"
+                     "   .find(function (n) { return (n.getAttribute('onclick') || '')"
+                     "     .indexOf(\"toggleShotCreationProp('RD1-01','\" + args[0] + \"')\") >= 0; });"
+                     " if (!b) return false;"
+                     " const on = b.classList.contains('on');"
+                     " return args[1] === 'on' ? on : (!on && b.classList.contains('code-backed')); }")
+            try:
+                page.wait_for_function(probe, arg=[entity_id, css_class], timeout=10000)
+            except Exception as error:                      # noqa: BLE001 - re-raised with context
+                raise AssertionError(f"{why} (waiting for {css_class} on {entity_id}) - {error}")
+
+        def shot_codes():
+            return page.evaluate("(id) => (P.shots.find(function (s) { return s.id === id; }).codes || []).slice()", SHOT)
+
+        def location_state(entity_id):
+            return page.evaluate(
+                "(id) => {"
+                " const button = [...document.querySelectorAll('.guided-asset-picker-grid button.guided-asset-choice')]"
+                "   .find(function (node) { return (node.getAttribute('onclick') || '').indexOf(\"setShotCreationLocation('RD1-01','\" + id + \"')\") >= 0; });"
+                " if (!button) return null;"
+                " return { note: ((button.querySelector('small') || {}).textContent || '').trim(),"
+                "   on: button.classList.contains('on') }; }", entity_id)
+
+        def reload_through_normalise():
+            """Serialise what the page holds and hand it back through the shipped
+            load, which normalises on the way in exactly as reopening the project
+            does. A repair that only survived one render would pass a weaker test."""
+            page.evaluate("""() => {
+                const saved = JSON.parse(JSON.stringify(P));
+                for (const key of Object.keys(P)) delete P[key];
+                Object.assign(P, saved);
+                normalizeProjectV5(P);
+                location.hash = '#/shot/' + P.shots[0].id;
+                route();
+            }""")
+            page.wait_for_selector(".bounded-shot-workspace", timeout=15000)
+            open_shot_inputs()
 
         def shot_structure():
             return page.evaluate("""(id) => {
@@ -791,6 +871,117 @@ try:
                         f"save/normalise/re-render: locationId stays empty, {reloaded['resolved']} remains attached "
                         f"as support, nothing is shown as the primary plate, and the support is offered rather "
                         f"than promoted")
+
+        # ---- J. a suffixed relation is attached, NOT ordinary picker-owned --------------
+        # normalizeShotV5 bridges the code-resolved id into creationBrief.propIds, so
+        # the brief says the entity is there; what the picker must not do is read that
+        # bridge as its own selection and offer to delete the token behind it.
+        install(shot_overrides={"codes": [LOC, "VEH-DOCK-REAR", "PROP-CRATE-LEFT"],
+                                "creationBrief": {"locationId": LOC, "propIds": [], "vehicleIds": [],
+                                                  "promptBuilds": [], "mode": "auto"}})
+        open_shot_inputs()
+        bridged = page.evaluate("(id) => (P.shots.find(function (s) { return s.id === id; }).creationBrief.propIds || []).slice()", SHOT)
+        assert sorted(bridged) == ["PROP-CRATE", "VEH-DOCK"], \
+            f"J. (precondition) normalization must have bridged both ids into the brief, got {bridged!r}"
+        for entity_id, token in (("VEH-DOCK", "VEH-DOCK-REAR"), ("PROP-CRATE", "PROP-CRATE-LEFT")):
+            state = prop_vehicle_state(entity_id)
+            assert state, f"J. {entity_id} must render in the picker"
+            assert state["state"] == "code-backed", \
+                f"J. {entity_id} is named only by {token}, so it must not read as an ordinary selection, got {state!r}"
+            assert state["note"] == "attached by a shot code · select to choose it here", \
+                f"J. and must say what it is and what a click does, got {state['note']!r}"
+            assert state["w"] > 0 and state["h"] > 0, f"J. {entity_id} must be a real, hit-testable control"
+        findings.append("J. a vehicle and a prop reached only through the suffixed tokens VEH-DOCK-REAR and "
+                        "PROP-CRATE-LEFT render as dashed, hit-testable \"attached by a shot code · select to "
+                        "choose it here\" controls, even though normalization has bridged both ids into "
+                        "creationBrief.propIds")
+
+        # ---- K. the explicit layer goes ON, and the suffix survives ---------------------
+        before_codes = shot_codes()
+        click_in_cast("button.guided-asset-choice[onclick*=\"toggleShotCreationProp('RD1-01','VEH-DOCK')\"]",
+                      "K. choosing the code-backed vehicle")
+        page.wait_for_function("(id) => (P.shots.find(function (s) { return s.id === id; }).codes || []).indexOf('VEH-DOCK') >= 0",
+                               arg=SHOT, timeout=10000)
+        layered = shot_codes()
+        assert "VEH-DOCK-REAR" in layered, \
+            f"K. the suffixed token must survive an explicit selection, got {layered!r}"
+        assert "VEH-DOCK" in layered, \
+            "K. and the selection must record its own exact token, or it could never be taken back"
+        wait_for_picker_state("VEH-DOCK", "on", "K. the picker must repaint as owning it")
+        assert prop_vehicle_state("VEH-DOCK")["state"] == "selected", \
+            "K. so the picker may now truthfully own it"
+        findings.append(f"K. selecting the code-backed vehicle takes codes {before_codes} -> {layered}: the legacy "
+                        f"suffixed token is untouched and the explicit choice records its own exact token")
+
+        # ---- L. clearing that layer leaves the code-backed attachment visible ----------
+        click_in_cast("button.guided-asset-choice[onclick*=\"toggleShotCreationProp('RD1-01','VEH-DOCK')\"]",
+                      "L. clearing the explicit layer")
+        page.wait_for_function("(id) => (P.shots.find(function (s) { return s.id === id; }).codes || []).indexOf('VEH-DOCK') < 0",
+                               arg=SHOT, timeout=10000)
+        reload_through_normalise()
+        wait_for_picker_state("VEH-DOCK", "code-backed", "L. the picker must repaint as attached-not-owned")
+        after_clear = shot_codes()
+        assert "VEH-DOCK-REAR" in after_clear, \
+            f"L. clearing the picker's own layer must leave the suffixed token alone, got {after_clear!r}"
+        assert "VEH-DOCK" not in after_clear, "L. removing only the exact token it added"
+        restored = prop_vehicle_state("VEH-DOCK")
+        assert restored["state"] == "code-backed", \
+            f"L. and the vehicle returns to attached-not-owned rather than vanishing from a shot that names it, got {restored!r}"
+        assert restored["w"] > 0 and restored["h"] > 0, "L. still a real control"
+        findings.append(f"L. clearing the explicit layer leaves codes {after_clear} through a full "
+                        f"save/normalise/re-render, and the vehicle is visibly attached-not-owned again")
+
+        # ---- M. the suffixed Location, which is where the real data is ------------------
+        # 276 suffixed location tokens exist in this repository's corpus and zero
+        # suffixed prop/vehicle ones, so this is the half a filmmaker would hit.
+        install(shot_overrides={"codes": ["LOC-RD-A", "LOC-SUPPORT"],
+                                "creationBrief": {"propIds": [], "vehicleIds": [], "promptBuilds": [], "mode": "auto"}})
+        open_shot_inputs()
+        inferred = page.evaluate("(id) => (P.shots.find(function (s) { return s.id === id; }).creationBrief || {}).locationId || ''", SHOT)
+        assert inferred == LOC, \
+            f"M. (precondition) the suffixed token must still infer a primary, got {inferred!r}"
+        assert location_state(LOC)["note"] == "primary plate", "M. (precondition) shown as the primary"
+
+        click_in_cast(f'button[data-clear-location="{SHOT}"]', "M. No location over a suffixed token")
+        page.wait_for_function("(id) => !((P.shots.find(function (s) { return s.id === id; }).creationBrief || {}).locationId || '')",
+                               arg=SHOT, timeout=10000)
+        reload_through_normalise()
+        cleared_codes = shot_codes()
+        cleared_primary = page.evaluate("(id) => (P.shots.find(function (s) { return s.id === id; }).creationBrief || {}).locationId || ''", SHOT)
+        assert "LOC-RD-A" in cleared_codes, \
+            f"M. No location must preserve the suffixed token, got {cleared_codes!r}"
+        assert cleared_primary == "", \
+            f"M. and the primary must stay explicitly empty through normalise and re-render, got {cleared_primary!r}"
+        assert location_state(LOC)["note"] == "supporting location · select to make primary", \
+            "M. with the location visibly attached as SUPPORT, in the words this picker already uses"
+        assert next((row for row in location_grid() if row["clear"]), {}).get("on"), \
+            "M. and the no-location choice reading chosen"
+
+        click_in_cast(f'button.guided-asset-choice[onclick*="setShotCreationLocation(\'{SHOT}\',\'{LOC}\')"]',
+                      "M. explicit reselect")
+        page.wait_for_function("(id) => ((P.shots.find(function (s) { return s.id === id; }).creationBrief || {}).locationId || '') !== ''",
+                               arg=SHOT, timeout=10000)
+        reload_through_normalise()
+        reselected = shot_codes()
+        assert "LOC-RD-A" in reselected and LOC in reselected, \
+            f"M. an explicit reselect preserves the suffix and records its own exact token, got {reselected!r}"
+        assert location_state(LOC)["note"] == "primary plate", "M. and reads as the primary again"
+
+        click_in_cast(f'button[data-clear-location="{SHOT}"]', "M. second clear")
+        page.wait_for_function("(id) => !((P.shots.find(function (s) { return s.id === id; }).creationBrief || {}).locationId || '')",
+                               arg=SHOT, timeout=10000)
+        reload_through_normalise()
+        final_codes = shot_codes()
+        assert "LOC-RD-A" in final_codes and LOC not in final_codes, \
+            f"M. a second clear removes only the exact layer, got {final_codes!r}"
+        assert location_state(LOC)["note"] == "supporting location · select to make primary", \
+            "M. back to support"
+        ledger = page.evaluate("() => ((P.productionAuthority || {}).receipts || []).length")
+        assert ledger == len(RECEIPTS), f"M. and the whole round trip wrote no receipt, got {ledger}"
+        findings.append(f"M. a suffixed Location survives the whole round trip: No location keeps LOC-RD-A and "
+                        f"leaves the primary explicitly empty through normalise and re-render, the location shows "
+                        f"as support, an explicit reselect adds its own exact token without touching the suffix, a "
+                        f"second clear removes only that token, and the {ledger}-receipt ledger is untouched")
 
         # ---- N1. the backlog CAN appear, so section A's zero means something -------------
         install(shot_overrides={"characters": [CHAR]})

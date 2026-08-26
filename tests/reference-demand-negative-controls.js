@@ -39,6 +39,12 @@
  *   NC-REF17  a satisfied entity still claims its whole coverage template is due
  *   NC-REF18  a confirmation the queue holds is dropped from reference demand
  *   NC-REF19  a cleared primary Location is overwritten by a supporting one
+ *   NC-REF20  a suffixed Vehicle code reads as picker-owned and Clear destroys it
+ *   NC-REF21  a suffixed Prop code loses its suffix through picker Clear
+ *   NC-REF22  an explicit selection over a suffixed code overwrites it
+ *   NC-REF23  clearing the explicit layer takes the code-backed relation too
+ *   NC-REF24  No location deletes LOC-HULL-A
+ *   NC-REF25  the surviving suffixed Location is promoted back to primary
  *
  * Nothing here contacts a provider, spends anything, or writes to a project.
  */
@@ -458,9 +464,9 @@ async function nc9() {
     editsByFile: {
       "creation-studio.js": [[
         `  if (previous && previous !== value && !selectingAttachedLocation)
-    s.codes = s.codes.filter((code) => !shotEntityTokenMatches(code, previous));`,
+    s.codes = guidedCodesWithoutExactToken(s, previous);`,
         `  if (previous && previous !== value && !selectingAttachedLocation && value)
-    s.codes = s.codes.filter((code) => !shotEntityTokenMatches(code, previous));`,
+    s.codes = guidedCodesWithoutExactToken(s, previous);`,
       ]],
     },
     probe: async (mutate) => {
@@ -597,8 +603,8 @@ async function nc13() {
   { const only = shotById(id); if (only && !(only.characters || []).includes(cid)) { only.characters = [...(only.characters || []), cid]; dirty(); route(); } return; }`,
       ]],
       "creation-studio.js": [[
-        `  return \`<button class="guided-asset-choice \${selected ? "on" : ""} \${ref?.url ? "approved" : "missing"}" onclick="\${list === "characters" ? \`toggleShotCreationCharacter('\${s.id}','\${x.id}')\` : \`toggleShotCreationProp('\${s.id}','\${x.id}')\`}"`,
-        `  return \`<button class="guided-asset-choice \${selected ? "on" : ""} \${ref?.url ? "approved" : "missing"}" onclick="\${list === "characters" ? \`attachShotCreationCharacter('\${s.id}','\${x.id}')\` : \`toggleShotCreationProp('\${s.id}','\${x.id}')\`}"`,
+        `onclick="\${list === "characters" ? \`toggleShotCreationCharacter('\${s.id}','\${x.id}')\``,
+        `onclick="\${list === "characters" ? \`attachShotCreationCharacter('\${s.id}','\${x.id}')\``,
       ]],
     },
     probe: async (mutate) => {
@@ -850,6 +856,208 @@ async function nc19() {
   });
 }
 
+/* ------------------------------------------- relationship-ownership fixtures */
+const OWNERSHIP_CANON = [
+  { kind: "entity-state", list: "props", entityId: "PROP-Y", stateId: "state-default", value: "PROP-Y.png" },
+  { kind: "entity-state", list: "vehicles", entityId: "VEH-X", stateId: "state-default", value: "VEH-X.png" },
+  { kind: "entity-state", list: "locations", entityId: "LOC-HULL", stateId: "state-default", value: "LOC-HULL-PLATE.png" },
+];
+function ownershipProject({ codes = [], brief = {} } = {}) {
+  const project = require("./render-harness").withCanon(buildFixture(), OWNERSHIP_CANON);
+  project.props = [{ id: "PROP-Y", name: "Crate", approvedFile: "PROP-Y.png",
+    continuityStates: [{ id: "state-default", name: "Default", isDefault: true, approvedFile: "PROP-Y.png" }], coverageSlots: [] }];
+  project.vehicles = [{ id: "VEH-X", name: "Yard tug", approvedFile: "VEH-X.png",
+    continuityStates: [{ id: "state-default", name: "Default", isDefault: true, approvedFile: "VEH-X.png" }], coverageSlots: [] }];
+  project.locations.push({ id: "LOC-SUPPORT", name: "Support bay", approvedFile: "LOC-SUPPORT-PLATE.png", continuityStates: [] });
+  project.shots[0].characters = [];
+  project.shots[0].codes = codes;
+  project.shots[0].creationBrief = { locationId: "", propIds: [], vehicleIds: [], promptBuilds: [], mode: "auto", ...brief };
+  return project;
+}
+const INPUTS_STORAGE = { "cinebraid-focused:fixture:shot-task:L1-01": "inputs" };
+const ownershipCodes = (context) => JSON.parse(vm.runInContext("JSON.stringify(P.shots[0].codes)", context));
+
+/* =================================================================== NC-REF20
+   THE REPORTED DEFECT, RESTORED. The picker treats a bridged brief entry as its
+   own selection again, and its Clear takes the suffixed token with it. */
+async function nc20() {
+  await browserControl({
+    id: "NC-REF20",
+    defect: "a suffixed Vehicle code is treated as ordinary picker-owned, and Clear deletes VEH-X-REAR",
+    editsByFile: {
+      "creation-studio.js": [[
+        `  if (typeof shotEntityRelationIsLossyCodeBacked === "function" && shotEntityRelationIsLossyCodeBacked(P, s, id))
+    return "code-backed";`,
+        `  void shotEntityRelationIsLossyCodeBacked;`,
+      ], [
+        `    s.codes = guidedCodesWithoutExactToken(s, propId);`,
+        `    s.codes = s.codes.filter((code) => !shotEntityTokenMatches(code, propId));`,
+      ]],
+    },
+    probe: async (mutate) => {
+      const rendered = await render("#/shot/L1-01", ownershipProject({ codes: ["VEH-X-REAR"] }),
+        { mutateSource: mutate, storage: INPUTS_STORAGE });
+      const cls = /class="guided-asset-choice ([^"]*)"[^>]*onclick="toggleShotCreationProp\('L1-01','VEH-X'\)/.exec(rendered.html);
+      assert.ok(cls && /\bon\b/.test(cls[1]),
+        `NC-REF20 probe: the vehicle was expected to render as an ordinary selection, got class "${cls && cls[1]}"`);
+      const before = ownershipCodes(rendered.context);
+      vm.runInContext("toggleShotCreationProp('L1-01','VEH-X')", rendered.context);
+      const after = ownershipCodes(rendered.context);
+      assert.ok(before.includes("VEH-X-REAR") && !after.includes("VEH-X-REAR"),
+        "NC-REF20 probe: and the suffixed token was expected to be destroyed by the Clear");
+      return `renders class="${cls[1]}" (ordinary selected); Clear takes codes ${JSON.stringify(before)} -> `
+        + `${JSON.stringify(after)}, discarding the "-REAR" that ofp-migrate-rules calls unrecoverable`;
+    },
+    guard: (mutate) => freshSuite().ownershipSection({ mutateSource: mutate }),
+  });
+}
+
+/* =================================================================== NC-REF21
+   The prop half, entered through the token filter alone. */
+async function nc21() {
+  await browserControl({
+    id: "NC-REF21",
+    defect: "a suffixed Prop code loses its suffix through picker Clear",
+    editsByFile: {
+      "creation-studio.js": [[
+        `  return codes.filter((code) => String(code) !== id);`,
+        `  return codes.filter((code) => !shotEntityTokenMatches(code, id));`,
+      ]],
+    },
+    probe: async (mutate) => {
+      const rendered = await render("#/shot/L1-01", ownershipProject({ codes: ["PROP-Y-LEFT"] }),
+        { mutateSource: mutate, storage: INPUTS_STORAGE });
+      /* Select first, so the Clear below is the one a filmmaker would reach. */
+      vm.runInContext("toggleShotCreationProp('L1-01','PROP-Y')", rendered.context);
+      const selected = ownershipCodes(rendered.context);
+      vm.runInContext("toggleShotCreationProp('L1-01','PROP-Y')", rendered.context);
+      const after = ownershipCodes(rendered.context);
+      assert.ok(selected.includes("PROP-Y-LEFT") && !after.includes("PROP-Y-LEFT"),
+        `NC-REF21 probe: the suffixed prop token was expected to be destroyed, got ${JSON.stringify(after)}`);
+      return `after selecting then clearing: codes ${JSON.stringify(selected)} -> ${JSON.stringify(after)} — the `
+        + `legacy "-LEFT" is gone with the layer the picker added`;
+    },
+    guard: (mutate) => freshSuite().ownershipSection({ mutateSource: mutate }),
+  });
+}
+
+/* =================================================================== NC-REF22
+   The attach half: the explicit layer overwrites instead of layering. */
+async function nc22() {
+  await browserControl({
+    id: "NC-REF22",
+    defect: "an explicit picker selection over a suffixed code deletes the original suffixed code",
+    editsByFile: {
+      "creation-studio.js": [[
+        `    if (!s.codes.some((code) => String(code) === String(propId))) s.codes.push(propId);`,
+        `    s.codes = [...s.codes.filter((code) => !shotEntityTokenMatches(code, propId)), propId];`,
+      ]],
+    },
+    probe: async (mutate) => {
+      const rendered = await render("#/shot/L1-01", ownershipProject({ codes: ["VEH-X-REAR"] }),
+        { mutateSource: mutate, storage: INPUTS_STORAGE });
+      const before = ownershipCodes(rendered.context);
+      vm.runInContext("toggleShotCreationProp('L1-01','VEH-X')", rendered.context);
+      const after = ownershipCodes(rendered.context);
+      assert.ok(before.includes("VEH-X-REAR") && !after.includes("VEH-X-REAR"),
+        `NC-REF22 probe: choosing the vehicle was expected to overwrite the suffixed token, got ${JSON.stringify(after)}`);
+      return `selecting VEH-X takes codes ${JSON.stringify(before)} -> ${JSON.stringify(after)} — an ADD destroyed `
+        + `the relationship it was layering on`;
+    },
+    guard: (mutate) => freshSuite().ownershipSection({ mutateSource: mutate }),
+  });
+}
+
+/* =================================================================== NC-REF23
+   The round trip: clearing the explicit layer takes the survivor with it. */
+async function nc23() {
+  await browserControl({
+    id: "NC-REF23",
+    defect: "clearing the explicit layer also deletes the surviving code-backed relation",
+    editsByFile: {
+      "creation-studio.js": [[
+        `    s.codes = guidedCodesWithoutExactToken(s, propId);`,
+        `    s.codes = s.codes.filter((code) => !shotEntityTokenMatches(code, propId));`,
+      ]],
+    },
+    probe: async (mutate) => {
+      const rendered = await render("#/shot/L1-01", ownershipProject({ codes: ["VEH-X-REAR"] }),
+        { mutateSource: mutate, storage: INPUTS_STORAGE });
+      vm.runInContext("toggleShotCreationProp('L1-01','VEH-X')", rendered.context);
+      const layered = ownershipCodes(rendered.context);
+      assert.ok(layered.includes("VEH-X-REAR") && layered.includes("VEH-X"),
+        `NC-REF23 probe: (precondition) the layer must land beside the survivor, got ${JSON.stringify(layered)}`);
+      vm.runInContext("toggleShotCreationProp('L1-01','VEH-X')", rendered.context);
+      const after = ownershipCodes(rendered.context);
+      assert.ok(!after.includes("VEH-X-REAR"),
+        `NC-REF23 probe: taking back the layer was expected to take the survivor too, got ${JSON.stringify(after)}`);
+      return `layered codes ${JSON.stringify(layered)}; clearing the picker's own layer leaves `
+        + `${JSON.stringify(after)} — the code-backed relation went with it`;
+    },
+    guard: (mutate) => freshSuite().ownershipSection({ mutateSource: mutate }),
+  });
+}
+
+/* =================================================================== NC-REF24
+   The 276-instance case: No location destroys LOC-HULL-A. */
+async function nc24() {
+  await browserControl({
+    id: "NC-REF24",
+    defect: "No location deletes the suffixed Location token LOC-HULL-A",
+    editsByFile: {
+      "creation-studio.js": [[
+        `  if (previous && previous !== value && !selectingAttachedLocation)
+    s.codes = guidedCodesWithoutExactToken(s, previous);`,
+        `  if (previous && previous !== value && !selectingAttachedLocation)
+    s.codes = s.codes.filter((code) => !shotEntityTokenMatches(code, previous));`,
+      ]],
+    },
+    probe: async (mutate) => {
+      const rendered = await render("#/shot/L1-01", ownershipProject({ codes: ["LOC-HULL-A", "PR-TOOL"] }),
+        { mutateSource: mutate, storage: INPUTS_STORAGE });
+      const before = ownershipCodes(rendered.context);
+      const primary = vm.runInContext("P.shots[0].creationBrief.locationId || ''", rendered.context);
+      vm.runInContext("setShotCreationLocation('L1-01','')", rendered.context);
+      const after = ownershipCodes(rendered.context);
+      assert.strictEqual(primary, "LOC-HULL", "NC-REF24 probe: (precondition) the suffixed token infers a primary");
+      assert.ok(before.includes("LOC-HULL-A") && !after.includes("LOC-HULL-A"),
+        `NC-REF24 probe: the suffixed location token was expected to be destroyed, got ${JSON.stringify(after)}`);
+      return `primary inferred as "${primary}" from LOC-HULL-A; No location takes codes ${JSON.stringify(before)} `
+        + `-> ${JSON.stringify(after)} — one of the 276 suffixed location tokens in this repository's corpus`;
+    },
+    guard: (mutate) => freshSuite().ownershipSection({ mutateSource: mutate }),
+  });
+}
+
+/* =================================================================== NC-REF25
+   The survivor is promoted straight back to primary. */
+async function nc25() {
+  await browserControl({
+    id: "NC-REF25",
+    defect: "a surviving suffixed Location is silently promoted back to primary after Clear",
+    editsByFile: {
+      "app.js": [[
+        `      && s.creationBrief[SHOT_NO_PRIMARY_LOCATION_KEY] !== true) {`,
+        `      && true) {`,
+      ]],
+    },
+    probe: async (mutate) => {
+      const rendered = await render("#/shot/L1-01", ownershipProject({ codes: ["LOC-HULL-A", "PR-TOOL"] }),
+        { mutateSource: mutate, storage: INPUTS_STORAGE });
+      vm.runInContext("setShotCreationLocation('L1-01','')", rendered.context);
+      const cleared = vm.runInContext("P.shots[0].creationBrief.locationId || ''", rendered.context);
+      vm.runInContext("normalizeShotV5(P.shots[0])", rendered.context);
+      const after = vm.runInContext("P.shots[0].creationBrief.locationId || ''", rendered.context);
+      assert.strictEqual(cleared, "", "NC-REF25 probe: the clear must land before normalisation undoes it");
+      assert.strictEqual(after, "LOC-HULL",
+        `NC-REF25 probe: the surviving suffixed token was expected to be promoted back, got ${after || "(empty)"}`);
+      return `No location clears the primary to "", then normalizeShotV5 promotes the surviving LOC-HULL-A back to `
+        + `primary "${after}" — the filmmaker's clear lasts one render`;
+    },
+    guard: (mutate) => freshSuite().ownershipSection({ mutateSource: mutate }),
+  });
+}
+
 async function main() {
   await nc1();
   await nc2();
@@ -870,6 +1078,12 @@ async function main() {
   await nc17();
   await nc18();
   await nc19();
+  await nc20();
+  await nc21();
+  await nc22();
+  await nc23();
+  await nc24();
+  await nc25();
 
   /* THE TREE IS CLEAN. Every file a control can reach, checked for the exact
      text that control introduces. */
@@ -882,6 +1096,9 @@ async function main() {
        alone would: the shipped file already contains that line elsewhere, and a
        tree-clean probe that fires on untouched source is a probe nobody can act on. */
     ["public/creation-studio.js", [
+      /void shotEntityRelationIsLossyCodeBacked;/,
+      /return codes\.filter\(\(code\) => !shotEntityTokenMatches\(code, id\)\);/,
+      /s\.codes = \[\.\.\.s\.codes\.filter\(\(code\) => !shotEntityTokenMatches\(code, propId\)\), propId\]/,
       /if \(!String\(value \|\| ""\)\.trim\(\)\) return;/,
       /if \(!value\) for \(const frame of \(s\.keyframes \|\| \[\]\)\) frame\.winner = "";/,
       /P\.productionAuthority\.receipts\.filter\(\(row\) => row && row\.entityId !== previous\)/,
@@ -904,6 +1121,12 @@ async function main() {
     "public/shared-entities.js lost the fail-closed branch of the demand owner");
   assert.ok(readLF("public/creation-studio.js").includes(`function guidedLocationClearButton(s, c) {`),
     "public/creation-studio.js lost the location clear control");
+  assert.ok(readLF("public/creation-studio.js").includes(`return codes.filter((code) => String(code) !== id);`),
+    "public/creation-studio.js lost the exact-token-only filter");
+  assert.ok(readLF("public/creation-studio.js").includes(`shotEntityRelationIsLossyCodeBacked(P, s, id))`),
+    "public/creation-studio.js lost the code-backed ownership decision");
+  assert.ok(readLF("public/shared-entities.js").includes(`function shotEntityRelationIsLossyCodeBacked(project, shot, entityId) {`),
+    "public/shared-entities.js lost the lossy-code predicate");
   assert.ok(readLF("public/creation-studio.js").includes(`for (const id of Array.isArray(brief.vehicleIds) ? brief.vehicleIds : []) ids.add(String(id));`),
     "public/creation-studio.js lost the vehicleIds half of the picker's attached set");
   assert.ok(readLF("public/shared-entities.js").includes(`if (!shotDependencyReadingIsWellFormed(shot)) return { reading: "unknown", reason: "malformed-dependency-collection" };`),

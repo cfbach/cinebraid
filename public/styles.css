@@ -1466,8 +1466,13 @@ body:not([data-help="minimal"]) [data-tip]:focus-visible::before{content:"";posi
 .guided-production-risks ul{margin:0;padding-left:18px;font-size:10px;line-height:1.5}
 .guided-production-risks li+li{margin-top:4px}
 .guided-frame-return>.guided-production-risks,.guided-motion-results>.guided-production-risks{margin:0 0 10px}
-.guided-asset-choice.supporting-location{border-style:dashed}
-.guided-asset-choice.supporting-location small{color:var(--blue)}
+/* Slice 5 - `code-backed` is the props/vehicles twin of `supporting-location`:
+   attached to the shot, visibly not picker-owned, and a click ADDS. One rule for
+   both so the two pickers cannot drift into two visual languages. */
+.guided-asset-choice.supporting-location,
+.guided-asset-choice.code-backed{border-style:dashed}
+.guided-asset-choice.supporting-location small,
+.guided-asset-choice.code-backed small{color:var(--blue)}
 /* Slice 5 — "No location" is a peer choice in the single-select grid, not an
    asset. It carries no thumbnail, so its glyph well is drawn as an empty slot
    rather than as a picture that failed to load. */

@@ -529,9 +529,26 @@ async function testPickerAndLocalNudge() {
   context.toggleShotCreationProp("L1-01", "PR-TOOL");
   const codes = require("vm").runInContext(`P.shots[0].codes.slice()`, context);
   assert(codes.includes("PR-TOOL-REAR"), "attaching a prop should preserve its existing suffixed code");
-  assert(!codes.includes("PR-TOOL"), "attaching a prop with a suffixed code should not add a duplicate bare ID");
+  /* AND IT NOW WRITES ITS OWN EXACT TOKEN BESIDE IT.
+   *
+   * This line used to require the opposite — that no bare `PR-TOOL` be added —
+   * and that expectation is superseded by the relationship-ownership fix. A
+   * suffixed token says more than the picker can express, so the picker must not
+   * be able to delete it; but then an explicit selection over one has to be
+   * recorded somewhere the picker CAN take back, or clearing it later would be
+   * indistinguishable from deleting the suffixed relationship itself. The exact
+   * token is that record. Nothing is duplicated in meaning: `PR-TOOL-REAR` is the
+   * shot's legacy code, `PR-TOOL` is the filmmaker's picker selection, and
+   * clearing removes only the second. */
+  assert(codes.includes("PR-TOOL"), "an explicit picker selection must record itself as an exact token it can take back");
   const routeCount = require("vm").runInContext(`window.__routeCount`, context);
   assert.strictEqual(routeCount, 1, "the attachment mutation should rerender once");
+  /* The round trip, measured after the render-count claim above so a second
+     deliberate mutation cannot be mistaken for a stray re-render. */
+  require("vm").runInContext(`toggleShotCreationProp("L1-01","PR-TOOL")`, context);
+  const afterClear = require("vm").runInContext(`P.shots[0].codes.slice()`, context);
+  assert(afterClear.includes("PR-TOOL-REAR"), "and clearing that selection must leave the suffixed code alone");
+  assert(!afterClear.includes("PR-TOOL"), "removing only the exact token it added");
   assert.strictEqual(typeof context.nudgeComposerElement, "undefined", "legacy staging nudge controls must be removed");
 }
 

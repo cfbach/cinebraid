@@ -1790,10 +1790,31 @@ function guidedReferenceRoleLabel(ref) {
     "continuity-state": "Continuity state",
   }[ref.role] || ref.role || "Reference";
 }
-function guidedEntityPickerButton(list, x, s, selected) {
+/* THREE STATES, THE SAME THREE THE LOCATION PICKER HAS ALWAYS HAD.
+ *
+ *   selected     the picker owns this relationship and can take it back
+ *   code-backed  the shot names this entity through a code token that says MORE
+ *                than the entity id, so the picker did not author the whole
+ *                relationship and must not present a Clear for it
+ *   unattached   nothing on the shot names it
+ *
+ * The middle one is new for props and vehicles and old for locations, where a
+ * plate reached through `codes[]` has always rendered as
+ * "supporting location · select to make primary" — attached, visibly not
+ * picker-owned, and clicking it ADDS rather than removes. This is that state,
+ * for the pickers that never grew it.
+ *
+ * The click on a code-backed entity is an ADD, never a clear:
+ * toggleShotCreationProp reads the same predicate and takes its attach branch. */
+function guidedEntityPickerButton(list, x, s, status) {
   const role = list === "characters" ? "identity" : "prop";
   const ref = creationEntityReference(list, x, s, role);
-  return `<button class="guided-asset-choice ${selected ? "on" : ""} ${ref?.url ? "approved" : "missing"}" onclick="${list === "characters" ? `toggleShotCreationCharacter('${s.id}','${x.id}')` : `toggleShotCreationProp('${s.id}','${x.id}')`}">${ref?.url ? `<img src="${attr(ref.url)}" alt="" loading="lazy" decoding="async">` : `<span>${esc((x.name || x.id).slice(0, 1))}</span>`}<b>${esc(x.name || x.id)}</b><small>${ref?.url ? "approved" : ref?.approved ? "approved image missing" : "no approved image"}</small></button>`;
+  const selected = status === true || status === "selected";
+  const codeBacked = status === "code-backed";
+  const note = codeBacked
+    ? "attached by a shot code · select to choose it here"
+    : ref?.url ? "approved" : ref?.approved ? "approved image missing" : "no approved image";
+  return `<button class="guided-asset-choice ${selected ? "on" : ""} ${codeBacked ? "code-backed" : ""} ${ref?.url ? "approved" : "missing"}" onclick="${list === "characters" ? `toggleShotCreationCharacter('${s.id}','${x.id}')` : `toggleShotCreationProp('${s.id}','${x.id}')`}">${ref?.url ? `<img src="${attr(ref.url)}" alt="" loading="lazy" decoding="async">` : `<span>${esc((x.name || x.id).slice(0, 1))}</span>`}<b>${esc(x.name || x.id)}</b><small>${esc(note)}</small></button>`;
 }
 /* CLEARING A LOCATION IS A STRUCTURAL EDIT, NOT AN APPROVAL EDIT.
  *
@@ -1987,17 +2008,15 @@ function guidedStaleShotStateDeclarations(s) {
  * entry while the real relationship sat untouched underneath. A filmmaker could
  * neither see the attachment nor remove it.
  *
- * DELIBERATELY THE TWO BRIEF FIELDS AND NOT THE WHOLE PROJECTION.
+ * AND BRIEF PRESENCE IS NOT EVIDENCE OF AUTHORSHIP.
  *
- * shotStateBearingEntityRecords() would also report a prop attached through a
- * `codes[]` token, and reading it here would change what a click on that prop
- * MEANS — an attach would become a detach, and detaching strips the token, which
- * throws away the view suffix a code like `PR-TOOL-REAR` carries. That is a real,
- * separate, pre-existing inconsistency between the picker and the resolver, and
- * tests/composer-motion.js pins the current behaviour on purpose. It is not this
- * repair's to change. The two brief fields are the two the reported defect names,
- * they are the two the picker already owns, and widening to exactly them is what
- * makes the control tell the truth about what it can write. */
+ * normalizeShotV5 bridges a code-resolved id into `creationBrief.propIds` so the
+ * generation reference set and the motion director can see it. That bridge is
+ * load-bearing and stays. What it means is that a `propIds` entry may have been
+ * put there by a person OR by normalization, and the field cannot tell you which
+ * — so ownership is decided by the CODE side, where the difference is visible:
+ * an exact token is a relationship the picker represents completely, a suffixed
+ * one is not. guidedShotPropVehicleStatus() below is the one place that decides. */
 function guidedAttachedBriefPropVehicleIds(s) {
   const brief = s && typeof s.creationBrief === "object" && s.creationBrief ? s.creationBrief : {};
   const ids = new Set();
@@ -2005,17 +2024,62 @@ function guidedAttachedBriefPropVehicleIds(s) {
   for (const id of Array.isArray(brief.vehicleIds) ? brief.vehicleIds : []) ids.add(String(id));
   return ids;
 }
+
+/* REMOVE THE TOKENS THIS CONTROL CAN PUT BACK, AND ONLY THOSE.
+ *
+ * `codes.filter(code => !shotEntityTokenMatches(code, id))` was the shape every
+ * detach used, and it removes `VEH-X-REAR` along with `VEH-X` because the matcher
+ * accepts an id followed by "-". The exact token is a relationship the picker can
+ * re-create from the id alone; the suffixed one is not, and deleting it throws
+ * away a specificity nothing in the product can reconstruct.
+ *
+ * The partition comes from shotEntityCodeTokens(), which reads the shipped
+ * classifier — the same one readiness and the OFP migration read. */
+function guidedCodesWithoutExactToken(s, entityId) {
+  const codes = Array.isArray(s.codes) ? s.codes : [];
+  const id = String(entityId || "");
+  if (!id) return codes;
+  /* The exact token for an entity IS the token equal to its id — there is no
+     parsing to do and deliberately none done here. Every other token that
+     mentions this id says something more than the id does, and that is the
+     something this control cannot restore. */
+  return codes.filter((code) => String(code) !== id);
+}
+
+/* THE ONE OWNERSHIP DECISION FOR A PROP OR VEHICLE ON A SHOT.
+ *
+ *   "code-backed"  the only thing naming it is a token that says more than its
+ *                  id. Attached, not picker-owned, and not picker-removable.
+ *   "selected"     the brief names it, or an exact token does. Picker-owned.
+ *   ""             nothing names it.
+ *
+ * Every consumer — the button, the count and the writer — asks this, so the
+ * control cannot render one answer and act on another. */
+function guidedShotPropVehicleStatus(s, entityId, attachedBriefIds) {
+  const id = String(entityId || "");
+  if (typeof shotEntityRelationIsLossyCodeBacked === "function" && shotEntityRelationIsLossyCodeBacked(P, s, id))
+    return "code-backed";
+  const brief = attachedBriefIds || guidedAttachedBriefPropVehicleIds(s);
+  if (brief.has(id)) return "selected";
+  const tokens = typeof shotEntityCodeTokens === "function" ? shotEntityCodeTokens(P, s, id) : { exact: [] };
+  return tokens.exact.length ? "selected" : "";
+}
 function guidedShotAttachmentPicker(s) {
   const c = ensureShotCreation(s);
   const resolved = resolveShotEntities(P, s);
   const attachedLocationIds = new Set(resolved.locations.map((x) => x.id));
   const characterIds = new Set(s.characters || []);
-  const propIds = guidedAttachedBriefPropVehicleIds(s);
-  const selectedCount = characterIds.size + propIds.size + attachedLocationIds.size;
+  const briefPropIds = guidedAttachedBriefPropVehicleIds(s);
+  const propVehicleStatus = (x) => guidedShotPropVehicleStatus(s, x.id, briefPropIds);
+  /* Counted as ATTACHED, not as picker-owned, so the summary matches what the
+     locations line has always counted and a code-backed entity is not reported
+     missing from a shot that plainly has it. */
+  const attachedPropVehicles = [...(P.props || []), ...(P.vehicles || [])].filter((x) => propVehicleStatus(x)).length;
+  const selectedCount = characterIds.size + attachedPropVehicles + attachedLocationIds.size;
   const locationNote = attachedLocationIds.size > 1
     ? `<small class="guided-location-disclosure">${attachedLocationIds.size} locations are attached. The primary plate drives the composer base; supporting locations remain available to prompting.</small>`
     : "";
-  return `<details class="guided-source-manager guided-cast-assets" ${selectedCount ? "" : "open"}><summary>Cast and assets attached to this shot <span>${selectedCount}</span></summary><div class="guided-asset-picker-section"><b>LOCATION PLATE</b>${locationNote}<div class="guided-asset-picker-grid">${(P.locations || []).length ? `${guidedLocationClearButton(s, c)}${(P.locations || []).map((x) => guidedLocationPickerButton(x, s, c.locationId === x.id ? "primary" : attachedLocationIds.has(x.id) ? "supporting" : "")).join("")}` : `<div class="guided-empty-inline"><b>No location records yet.</b><span>Add a location in References first.</span></div>`}</div></div><div class="guided-asset-picker-section"><b>CHARACTERS</b><div class="guided-asset-picker-grid">${(P.characters || []).map((x) => guidedEntityPickerButton("characters", x, s, characterIds.has(x.id))).join("") || `<div class="guided-empty-inline"><b>No character records yet.</b><span>Add a character in References first.</span></div>`}</div></div><div class="guided-asset-picker-section"><b>PROPS & VEHICLES</b><div class="guided-asset-picker-grid">${[...(P.props || []).map((x) => guidedEntityPickerButton("props", x, s, propIds.has(x.id))), ...(P.vehicles || []).map((x) => guidedEntityPickerButton("vehicles", x, s, propIds.has(x.id)))].join("") || `<div class="guided-empty-inline"><b>No prop or vehicle records yet.</b><span>Add one in References first.</span></div>`}</div></div></details>`;
+  return `<details class="guided-source-manager guided-cast-assets" ${selectedCount ? "" : "open"}><summary>Cast and assets attached to this shot <span>${selectedCount}</span></summary><div class="guided-asset-picker-section"><b>LOCATION PLATE</b>${locationNote}<div class="guided-asset-picker-grid">${(P.locations || []).length ? `${guidedLocationClearButton(s, c)}${(P.locations || []).map((x) => guidedLocationPickerButton(x, s, c.locationId === x.id ? "primary" : attachedLocationIds.has(x.id) ? "supporting" : "")).join("")}` : `<div class="guided-empty-inline"><b>No location records yet.</b><span>Add a location in References first.</span></div>`}</div></div><div class="guided-asset-picker-section"><b>CHARACTERS</b><div class="guided-asset-picker-grid">${(P.characters || []).map((x) => guidedEntityPickerButton("characters", x, s, characterIds.has(x.id))).join("") || `<div class="guided-empty-inline"><b>No character records yet.</b><span>Add a character in References first.</span></div>`}</div></div><div class="guided-asset-picker-section"><b>PROPS & VEHICLES</b><div class="guided-asset-picker-grid">${[...(P.props || []).map((x) => guidedEntityPickerButton("props", x, s, propVehicleStatus(x))), ...(P.vehicles || []).map((x) => guidedEntityPickerButton("vehicles", x, s, propVehicleStatus(x)))].join("") || `<div class="guided-empty-inline"><b>No prop or vehicle records yet.</b><span>Add one in References first.</span></div>`}</div></div></details>`;
 }
 
 function guidedShotStateEntityRows(s) {
@@ -5121,8 +5185,15 @@ window.setShotCreationLocation = (id, value) => {
   s.codes = Array.isArray(s.codes) ? s.codes : [];
   const attachedBefore = resolveShotEntities(P, s).locations;
   const selectingAttachedLocation = attachedBefore.some((location) => location.id === value);
+  /* THE SAME RULE FOR THE PLATE, and this is the version with real data behind
+     it: the corpus carries 276 suffixed LOCATION tokens and zero suffixed
+     prop/vehicle ones. `LOC-HULL-A` used to be deleted along with `LOC-HULL` when
+     the primary was cleared or swapped, discarding an "-A" that
+     ofp/ofp-migrate-rules.js calls unrecoverable. The exact token goes; the
+     suffixed one stays and the location remains attached as SUPPORT, which is a
+     state this picker has always been able to draw. */
   if (previous && previous !== value && !selectingAttachedLocation)
-    s.codes = s.codes.filter((code) => !shotEntityTokenMatches(code, previous));
+    s.codes = guidedCodesWithoutExactToken(s, previous);
   c.locationId = value;
   /* THE DECISION, RECORDED WHERE IT IS MADE. An empty value here is a person
      saying "no primary plate", and public/app.js's legacy inference would
@@ -5132,7 +5203,10 @@ window.setShotCreationLocation = (id, value) => {
      ever grows it. */
   if (value) delete c[SHOT_NO_PRIMARY_LOCATION_KEY];
   else c[SHOT_NO_PRIMARY_LOCATION_KEY] = true;
-  if (value && !s.codes.some((code) => shotEntityTokenMatches(code, value))) s.codes.push(value);
+  /* ITS OWN EXACT TOKEN, for the same reason the prop picker writes one: a
+     primary chosen over a surviving `LOC-HULL-A` must be distinguishable from one
+     inferred from it, or clearing it again could not tell the two apart. */
+  if (value && !s.codes.some((code) => String(code) === String(value))) s.codes.push(value);
   if (previous && typeof clearDetachedShotStateDeclaration === "function")
     clearDetachedShotStateDeclaration(P, { shotId: id, entityId: previous });
   dirty();
@@ -5143,28 +5217,34 @@ window.toggleShotCreationCharacter = (id, charId) => {
 };
 window.toggleShotCreationProp = (id, propId) => {
   const s = shotById(id), c = ensureShotCreation(s);
-  /* SELECTED MEANS WHAT THE PICKER SHOWS, and the picker now shows every dialect.
-     Reading `c.propIds` alone made the control disagree with its own rendering: a
-     vehicle drawn as attached through `vehicleIds` was read as unselected, so the
-     click ADDED a second encoding of a relationship that already existed. */
-  const attached = guidedAttachedBriefPropVehicleIds(s);
-  const selected = attached.has(String(propId));
-  const vehicleIds = Array.isArray(c.vehicleIds) ? c.vehicleIds : [];
   s.codes = Array.isArray(s.codes) ? s.codes : [];
-  if (selected) {
-    /* REMOVE MEANS REMOVE, in every dialect the document uses. Clearing one and
-       leaving the other is the ghost relation this repair exists for: the id
-       vanishes from the field the UI writes and readiness goes on demanding the
-       reference from the field it does not. */
+  /* THE CONTROL ACTS ON THE STATE IT RENDERED. One predicate, asked by the button,
+     the count and this writer, so a click can never mean something the filmmaker
+     was not shown. `code-backed` is not selected, so its click falls to the attach
+     branch — which is what the Location picker's supporting plate has always
+     done. */
+  const status = guidedShotPropVehicleStatus(s, propId);
+  const vehicleIds = Array.isArray(c.vehicleIds) ? c.vehicleIds : [];
+  if (status === "selected") {
+    /* REMOVE MEANS REMOVE, in every dialect the document uses — and it means
+       ONLY what this control can put back. Both brief encodings go, and the EXACT
+       code token goes; a suffixed token stays, because the picker cannot
+       reconstruct what its suffix said. The entity then falls back to the
+       code-backed state rather than vanishing from a shot that still names it. */
     c.propIds = (Array.isArray(c.propIds) ? c.propIds : []).filter((x) => x !== propId);
     if (vehicleIds.length) c.vehicleIds = vehicleIds.filter((x) => x !== propId);
-    s.codes = s.codes.filter((code) => !shotEntityTokenMatches(code, propId));
+    s.codes = guidedCodesWithoutExactToken(s, propId);
   } else {
     /* ATTACH keeps writing the union namespace the UI has always owned. Nothing
        here starts writing `vehicleIds`: adding a third writer of a relation that
-       already has two encodings would make the problem worse. */
-    c.propIds = [...(Array.isArray(c.propIds) ? c.propIds : []), propId];
-    if (!s.codes.some((code) => shotEntityTokenMatches(code, propId))) s.codes.push(propId);
+       already has two encodings would make the problem worse.
+
+       AND IT WRITES ITS OWN EXACT TOKEN even when a suffixed one is already
+       present. Without that the explicit choice would be indistinguishable from
+       the promotion that produced the code-backed state, and the control could
+       never be taken back. `VEH-X-REAR` is untouched; `VEH-X` joins it. */
+    c.propIds = [...new Set([...(Array.isArray(c.propIds) ? c.propIds : []), propId])];
+    if (!s.codes.some((code) => String(code) === String(propId))) s.codes.push(propId);
   }
   if (typeof clearDetachedShotStateDeclaration === "function")
     clearDetachedShotStateDeclaration(P, { shotId: id, entityId: propId });
