@@ -304,6 +304,86 @@
         : "Required";
   }
 
+  /* -------------------------------------------------------------------------
+     SLICE 5 — CURRENT DEMAND, WHICH IS A DIFFERENT QUESTION FROM REQUIREMENT.
+
+     Slice 3 established the tier as a ONE-TO-ONE RENAME of the requirement, and
+     that has not changed here: coverageDemand() still answers exactly what it
+     answered, `tier` is still computed from coverageRequirement() alone, and a
+     required slot is still presented under Required. tests/reference-reframe.js
+     holds that line and must keep holding it.
+
+     What this adds is the SECOND axis the reframe deliberately did not have.
+     "Required" is a statement about the slot: this production would want this
+     view of this reference. It is not a statement about now. A character
+     nobody has cast into a shot has four required views and zero current work,
+     and the surface was reporting the first number as the second — the fake
+     backlog the Public Alpha audit found.
+
+         tier            what KIND of material this is, per the requirement.
+                         Authored, durable, unchanged by anything here.
+         demand state    whether the production is ASKING FOR IT NOW.
+                         Derived, never stored, and gone the moment the
+                         structure that produced it is cleared.
+
+     The two are orthogonal on purpose. Collapsing them would either delete the
+     filmmaker's authored "this view is required" the moment a shot changed, or
+     put the backlog straight back.
+
+     FOUR STATES, and they are the four the alpha brief names:
+
+       required-now           tier `required`, production demands this entity,
+                              and nothing satisfies it yet. THE ONLY STATE THAT
+                              IS WORK.
+       satisfied              something already answers it, at any tier.
+       available              real capability, not current work: a recommended
+                              item, or a required item on a reference no shot
+                              currently uses. It is not "not needed" — the day a
+                              shot casts the reference it becomes required-now
+                              with no edit at all.
+       not-currently-needed   the requirement itself says so. Unchanged meaning.
+
+     `basis` records WHY, so a surface can say "no shot uses this yet" rather
+     than leaving a filmmaker to wonder where their required view went.
+
+     PRODUCTION IS ASKED, NEVER ASSUMED. With no production fact supplied, or
+     with one that reports `known: false`, a required item stays required-now:
+     a caller that cannot establish demand must not be able to silently suppress
+     work. Suppression requires a positive, knowing answer of "nothing uses
+     this". */
+  const REFERENCE_DEMAND_STATES = ["required-now", "satisfied", "available", "not-currently-needed"];
+
+  /* Total over the four states. A fifth member would fail loudly here rather
+     than render as a blank label. */
+  const REFERENCE_DEMAND_LABELS = {
+    "required-now": "Required now",
+    satisfied: "Satisfied",
+    available: "Available",
+    "not-currently-needed": "Not currently needed",
+  };
+
+  function referenceDemandState(demand, context = {}) {
+    const it = demand && typeof demand === "object" ? demand : {};
+    const ctx = context && typeof context === "object" ? context : {};
+    const tier = COVERAGE_DEMAND_TIERS.includes(it.tier) ? it.tier : "required";
+    const production = ctx.production && typeof ctx.production === "object" ? ctx.production : {};
+    /* SATISFIED OUTRANKS EVERYTHING. A covered item is not work at any tier, and
+       reporting a satisfied required view as outstanding is the same lie in the
+       other direction. */
+    if (ctx.satisfied === true) return { state: "satisfied", tier, basis: "already-satisfied", demanded: production.demanded === true };
+    if (tier === "not-currently-needed") return { state: "not-currently-needed", tier, basis: "requirement", demanded: production.demanded === true };
+    if (tier === "recommended") return { state: "available", tier, basis: "requirement", demanded: production.demanded === true };
+    /* tier === "required". The one place the production fact can change an
+       answer, and only ever in the direction of claiming LESS. */
+    if (production.known === true && production.demanded !== true)
+      return { state: "available", tier, basis: "no-current-production-demand", demanded: false };
+    return { state: "required-now", tier, basis: "current-production-demand", demanded: production.demanded === true };
+  }
+
+  function referenceDemandStateLabel(state) {
+    return REFERENCE_DEMAND_LABELS[state] || REFERENCE_DEMAND_LABELS["required-now"];
+  }
+
   return {
     COVERAGE_REQUIREMENTS,
     LEGACY_FALSE_REQUIREMENT,
@@ -323,5 +403,9 @@
     CONFIRMED_DEMAND_SOURCES,
     coverageDemand,
     coverageDemandLabel,
+    REFERENCE_DEMAND_STATES,
+    REFERENCE_DEMAND_LABELS,
+    referenceDemandState,
+    referenceDemandStateLabel,
   };
 });

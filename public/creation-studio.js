@@ -1795,6 +1795,34 @@ function guidedEntityPickerButton(list, x, s, selected) {
   const ref = creationEntityReference(list, x, s, role);
   return `<button class="guided-asset-choice ${selected ? "on" : ""} ${ref?.url ? "approved" : "missing"}" onclick="${list === "characters" ? `toggleShotCreationCharacter('${s.id}','${x.id}')` : `toggleShotCreationProp('${s.id}','${x.id}')`}">${ref?.url ? `<img src="${attr(ref.url)}" alt="" loading="lazy" decoding="async">` : `<span>${esc((x.name || x.id).slice(0, 1))}</span>`}<b>${esc(x.name || x.id)}</b><small>${ref?.url ? "approved" : ref?.approved ? "approved image missing" : "no approved image"}</small></button>`;
 }
+/* CLEARING A LOCATION IS A STRUCTURAL EDIT, NOT AN APPROVAL EDIT.
+ *
+ * The picker grid used to offer one button per location and nothing else, so
+ * `setShotCreationLocation` could only ever be called with an id: a plate chosen
+ * once could be swapped, and could not be taken off the shot at all. Characters
+ * and props have always been reversible — both go through a `toggle...` writer —
+ * and a location was the one attachment in this section that was not.
+ *
+ * The writer already supported it. `setShotCreationLocation(id, "")` clears
+ * `creationBrief.locationId`, drops the location's own token from `s.codes` so
+ * normalization cannot infer it straight back, and asks
+ * clearDetachedShotStateDeclaration() to remove a continuity declaration that no
+ * longer has a relationship to hang on. Nothing here is a new mutation path; this
+ * is the empty value the grid never offered.
+ *
+ * WHAT IT DOES NOT TOUCH, and the reason it needs no destructive confirmation:
+ * the location record, its Canon, its approved references, this shot's candidates
+ * and its media history are all somewhere else entirely. The shot stops naming
+ * the plate. Naming it again tomorrow restores exactly the relationship that was
+ * there, because nothing about the location was edited.
+ *
+ * It is a peer of the location choices rather than a chip beside them, because
+ * the grid is a single-select and "none" is one of the options a single-select
+ * has. Rendered first so the way out is not at the end of a long list. */
+function guidedLocationClearButton(s, c) {
+  const cleared = !String(c.locationId || "").trim();
+  return `<button type="button" class="guided-asset-choice guided-asset-none ${cleared ? "on" : ""}" data-clear-location="${attr(s.id)}" aria-pressed="${cleared ? "true" : "false"}" onclick="setShotCreationLocation('${attr(s.id)}','')"><span>—</span><b>No location</b><small>${cleared ? "no plate on this shot" : "clear the selected plate"}</small></button>`;
+}
 function guidedLocationPickerButton(x, s, status = "") {
   const ref = creationEntityReference("locations", x, s, "base");
   const primary = status === "primary";
@@ -1951,7 +1979,7 @@ function guidedShotAttachmentPicker(s) {
   const locationNote = attachedLocationIds.size > 1
     ? `<small class="guided-location-disclosure">${attachedLocationIds.size} locations are attached. The primary plate drives the composer base; supporting locations remain available to prompting.</small>`
     : "";
-  return `<details class="guided-source-manager guided-cast-assets" ${selectedCount ? "" : "open"}><summary>Cast and assets attached to this shot <span>${selectedCount}</span></summary><div class="guided-asset-picker-section"><b>LOCATION PLATE</b>${locationNote}<div class="guided-asset-picker-grid">${(P.locations || []).map((x) => guidedLocationPickerButton(x, s, c.locationId === x.id ? "primary" : attachedLocationIds.has(x.id) ? "supporting" : "")).join("") || `<div class="guided-empty-inline"><b>No location records yet.</b><span>Add a location in References first.</span></div>`}</div></div><div class="guided-asset-picker-section"><b>CHARACTERS</b><div class="guided-asset-picker-grid">${(P.characters || []).map((x) => guidedEntityPickerButton("characters", x, s, characterIds.has(x.id))).join("") || `<div class="guided-empty-inline"><b>No character records yet.</b><span>Add a character in References first.</span></div>`}</div></div><div class="guided-asset-picker-section"><b>PROPS & VEHICLES</b><div class="guided-asset-picker-grid">${[...(P.props || []).map((x) => guidedEntityPickerButton("props", x, s, propIds.has(x.id))), ...(P.vehicles || []).map((x) => guidedEntityPickerButton("vehicles", x, s, propIds.has(x.id)))].join("") || `<div class="guided-empty-inline"><b>No prop or vehicle records yet.</b><span>Add one in References first.</span></div>`}</div></div></details>`;
+  return `<details class="guided-source-manager guided-cast-assets" ${selectedCount ? "" : "open"}><summary>Cast and assets attached to this shot <span>${selectedCount}</span></summary><div class="guided-asset-picker-section"><b>LOCATION PLATE</b>${locationNote}<div class="guided-asset-picker-grid">${(P.locations || []).length ? `${guidedLocationClearButton(s, c)}${(P.locations || []).map((x) => guidedLocationPickerButton(x, s, c.locationId === x.id ? "primary" : attachedLocationIds.has(x.id) ? "supporting" : "")).join("")}` : `<div class="guided-empty-inline"><b>No location records yet.</b><span>Add a location in References first.</span></div>`}</div></div><div class="guided-asset-picker-section"><b>CHARACTERS</b><div class="guided-asset-picker-grid">${(P.characters || []).map((x) => guidedEntityPickerButton("characters", x, s, characterIds.has(x.id))).join("") || `<div class="guided-empty-inline"><b>No character records yet.</b><span>Add a character in References first.</span></div>`}</div></div><div class="guided-asset-picker-section"><b>PROPS & VEHICLES</b><div class="guided-asset-picker-grid">${[...(P.props || []).map((x) => guidedEntityPickerButton("props", x, s, propIds.has(x.id))), ...(P.vehicles || []).map((x) => guidedEntityPickerButton("vehicles", x, s, propIds.has(x.id)))].join("") || `<div class="guided-empty-inline"><b>No prop or vehicle records yet.</b><span>Add one in References first.</span></div>`}</div></div></details>`;
 }
 
 function guidedShotStateEntityRows(s) {
@@ -1988,8 +2016,17 @@ function guidedShotStateDeclarations(s) {
         : `No shot declaration · follows ${fallback?.name || "the reference default"}`;
     const options = states.map((state) =>
       `<option data-continuity-state-option="${attr(state.id)}" value="${attr(state.id)}" ${selected?.id === state.id ? "selected" : ""}>${esc(state.name || state.id)} · ${esc(state.id)}</option>`).join("");
+    /* THE EMPTY OPTION IS A REAL CHOICE, AND IT ALWAYS WAS EVERYWHERE EXCEPT HERE.
+       applyShotStateDeclaration() accepts an empty stateId and answers
+       `operation: "cleared"`; public/app.js already has the toast for it. The
+       rendered control disabled the one option that reached it, so a declaration
+       made once could be changed and never withdrawn — even though "no shot
+       declaration · follows the reference default" is a state this very row knows
+       how to describe. Clearing removes a shot-scoped selection and nothing else:
+       the state stays on the reference, with its own images and its own
+       authority. */
     const chooser = states.length
-      ? `<select aria-label="State for ${attr(entity.name || entity.id)} on this shot" onchange="chooseShotContinuityState('${attr(s.id)}','${attr(entity.id)}',this.value)"><option value="" disabled ${selected ? "" : "selected"}>Choose continuity state</option>${options}</select>`
+      ? `<select aria-label="State for ${attr(entity.name || entity.id)} on this shot" onchange="chooseShotContinuityState('${attr(s.id)}','${attr(entity.id)}',this.value)"><option value="" ${selected ? "" : "selected"}>${selected || invalid ? `Clear — follow ${esc(fallback?.name || "the reference default")}` : "Choose continuity state"}</option>${options}</select>`
       : `<span class="shot-state-no-options">No continuity states authored</span>`;
     return `<article data-shot-state-entity="${attr(entity.id)}" data-shot-state-declaration-invalid="${invalid ? "1" : "0"}" class="${invalid ? "is-invalid" : ""}"><div><span>STATE FOR ${esc(entity.name || entity.id)}</span><b>${esc(kind)} · ${esc(entity.id)}</b><small>${esc(current)}</small></div>${chooser}<button type="button" class="chip" onclick="openShotStateAuthoring('${attr(s.id)}','${attr(list)}','${attr(entity.id)}')">Add or edit states</button></article>`;
   }).join("");

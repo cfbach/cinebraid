@@ -1474,6 +1474,11 @@ function referenceCreationHub(list, entity) {
 function referenceAssistedToolsMarkup(list, entity) {
   if (list === "audio") return "";
   const coverage = typeof ensureCoverageSlots === "function" ? ensureCoverageSlots(list, entity) : (entity.coverageSlots || []);
+  /* COUNTED THE SAME WAY, REPORTED THROUGH THE SAME GATE. The tools themselves are
+     unchanged and every one of them still runs: what changes is that a dormant
+     reference no longer advertises a number of outstanding required views. */
+  const assistedDemand = entityReferenceDemandFor(list, entity);
+  const assistedDormant = assistedDemand.known && !assistedDemand.demanded;
   const missingRequired = coverage.filter((slot) => referenceRequirement(slot) === "required" && !slotSelectedFile(slot) && !slot.retired).length;
   /* The assisted tools are gated on CANON, which is also what coverage
      automation itself requires — so the button and the action now agree instead
@@ -1485,7 +1490,7 @@ function referenceAssistedToolsMarkup(list, entity) {
   const expressionButton = list === "characters" ? `<button class="ghost-btn" onclick="openCoverageExpressionAutomation('${attr(entity.id)}')"><span>Generate expression sheet</span><small>Optional faces and performance coverage</small></button>` : "";
   const sectionKey = `reference-assisted:${list}:${entity.id}`;
   const open = workspaceSectionOpen(sectionKey, !manualFirstWorkflow());
-  return `<details class="reference-assisted-tools" data-ui-state-key="${attr(sectionKey)}" ${open ? "open" : ""} ontoggle="rememberWorkspaceSection('${attr(sectionKey)}',this.open)"><summary><div><span>OPTIONAL ASSISTED TOOLS</span><b>Prompt building, generation, and automation</b><small>Open this only when CineBraid should help create material you do not already have.</small></div><span>${primaryReady ? `${missingRequired + missingStates} missing` : "primary first"}</span></summary><div class="reference-assisted-tools-body"><div class="reference-creation-actions reference-creation-actions-expanded"><button class="ghost-btn" onclick="openEntityCreationSection('${attr(list)}','${attr(entity.id)}')"><span>Build primary prompt</span><small>Compile a prompt without submitting generation</small></button><button class="ghost-btn" ${primaryReady ? "" : "disabled"} onclick="openCoverageAutomationModal('${attr(list)}','${attr(entity.id)}','hybrid')"><span>Generate angle / viewpoint coverage</span><small>${missingRequired ? `${missingRequired} required view${missingRequired === 1 ? "" : "s"} remain` : "Coverage is already complete or optional"}</small></button>${expressionButton}<button class="ghost-btn" ${primaryReady ? "" : "disabled"} onclick="openContinuityStateVariantHub('${attr(list)}','${attr(entity.id)}')"><span>Generate continuity-state variant</span><small>${missingStates ? `${missingStates} state reference${missingStates === 1 ? "" : "s"} remain` : "No required state reference is missing"}</small></button></div>${assetPromptStudio(list, entity)}</div></details>`;
+  return `<details class="reference-assisted-tools" data-ui-state-key="${attr(sectionKey)}" ${open ? "open" : ""} ontoggle="rememberWorkspaceSection('${attr(sectionKey)}',this.open)"><summary><div><span>OPTIONAL ASSISTED TOOLS</span><b>Prompt building, generation, and automation</b><small>Open this only when CineBraid should help create material you do not already have.</small></div><span>${!primaryReady ? "primary first" : assistedDormant ? "optional" : `${missingRequired + missingStates} missing`}</span></summary><div class="reference-assisted-tools-body"><div class="reference-creation-actions reference-creation-actions-expanded"><button class="ghost-btn" onclick="openEntityCreationSection('${attr(list)}','${attr(entity.id)}')"><span>Build primary prompt</span><small>Compile a prompt without submitting generation</small></button><button class="ghost-btn" ${primaryReady ? "" : "disabled"} onclick="openCoverageAutomationModal('${attr(list)}','${attr(entity.id)}','hybrid')"><span>Generate angle / viewpoint coverage</span><small>${assistedDormant ? `${plural(missingRequired, "view")} available when a shot needs ${pluralWord(missingRequired, "it", "them")}` : missingRequired ? `${missingRequired} required view${missingRequired === 1 ? "" : "s"} remain` : "Coverage is already complete or optional"}</small></button>${expressionButton}<button class="ghost-btn" ${primaryReady ? "" : "disabled"} onclick="openContinuityStateVariantHub('${attr(list)}','${attr(entity.id)}')"><span>Generate continuity-state variant</span><small>${assistedDormant ? `${plural(missingStates, "state reference")} available when a shot needs ${pluralWord(missingStates, "it", "them")}` : missingStates ? `${missingStates} state reference${missingStates === 1 ? "" : "s"} remain` : "No required state reference is missing"}</small></button></div>${assetPromptStudio(list, entity)}</div></details>`;
 }
 /* SECTIONS A AND B, in the order they are asked.
 
@@ -1577,7 +1582,17 @@ function boundedEntityTaskStatus(list, entity, taskId, activeCandidates, states)
     const planned = states.filter((state)=>!state.isDefault && referenceRequirement(state) === "planned" && taskTruth.of(state).standing !== "canon").length + coverage.planned + expressions.planned;
     const active = entityCoverageActiveJobs(list,entity.id,"angles").length + (list === "characters" ? entityCoverageActiveJobs("characters",entity.id,"expressions").length : 0);
     const missing = coverage.missingRequired + expressions.missingRequired + missingStates;
-    return active ? {tone:"active",label:STAGE_STATUS.running} : missing ? {tone:"attention",label:STAGE_STATUS.incomplete,note:`${plural(missing, "required view")} missing`} : planned ? {tone:"pending",label:STAGE_STATUS.inProgress,note:`${plural(planned, "view")} planned`} : {tone:"complete",label:STAGE_STATUS.complete};
+    /* THE SAME DEMAND GATE THE PANEL BELOW APPLIES. The taskbar used to read the
+       requirement count straight off the slot template, so a reference no shot had
+       cast reported "Incomplete · 8 required views missing" — the fake backlog,
+       stated in the one place a filmmaker reads before opening anything. The
+       requirement is unchanged and the panel still lists every item; what the strip
+       stops doing is calling a dormant capability outstanding work. */
+    const demanded = entityReferenceDemandFor(list, entity);
+    const dormant = missing > 0 && demanded.known && !demanded.demanded;
+    if (active) return {tone:"active",label:STAGE_STATUS.running};
+    if (dormant) return {tone:"optional",label:STAGE_STATUS.nothingWaiting,note:`no shot uses this ${entityKindLabel(list).toLowerCase()} yet`};
+    return missing ? {tone:"attention",label:STAGE_STATUS.incomplete,note:`${plural(missing, "required view")} missing`} : planned ? {tone:"pending",label:STAGE_STATUS.inProgress,note:`${plural(planned, "view")} planned`} : {tone:"complete",label:STAGE_STATUS.complete};
   }
   if (taskId === "details") {
     const hasDetails = entityVisualDescription(entity, list) || String(entity.notes || "").trim() || (entity.planningMedia || []).length;
@@ -1672,7 +1687,17 @@ function entityAuthoritySummaryMarkup(list, entity, states, mediaByName, selecte
    Three families are gathered because a filmmaker does not think of them as
    three filing systems: a missing costume state and a missing rear angle are the
    same sentence, "this production still needs a picture of that". */
-function entityDemandRows(list, entity) {
+function entityReferenceDemandFor(list, entity) {
+  const type = entityDependencyType(list);
+  if (!type || !entity || typeof entityReferenceDemand !== "function") return { known: false, demanded: false, shotIds: [], total: 0 };
+  return entityReferenceDemand(P, type, entity.id);
+}
+/* `production` is a parameter with a default rather than a lookup, because the
+   panel below already has the answer and asking twice would walk every shot in
+   the project a second time for a fact that cannot have changed between the two
+   calls. Demand is a fact about the REFERENCE, never about a slot, so it is
+   resolved once per render and handed down. */
+function entityDemandRows(list, entity, production = entityReferenceDemandFor(list, entity)) {
   if (list === "audio" || !entity) return [];
   const truth = entityStateTruth(list, entity);
   const rows = [];
@@ -1705,7 +1730,16 @@ function entityDemandRows(list, entity) {
     const demand = coverageDemand(slot);
     rows.push({ family: "expression", id: slot.id, label: slot.label || slot.id, tier: demand.tier, confirmed: demand.confirmed, requirement: demand.requirement, satisfied: !!slotSelectedFile(slot) });
   }
-  return rows;
+  /* THE SECOND AXIS, applied in ONE place over all three families, so no family
+     can acquire its own idea of what "needed now" means. Every `tier` above is
+     untouched: this adds a field, it does not re-file one. */
+  return rows.map((row) => {
+    const resolved = referenceDemandState({ tier: row.tier, requirement: row.requirement }, {
+      satisfied: row.family === "state" ? row.standing === "canon" : row.satisfied,
+      production,
+    });
+    return { ...row, demandState: resolved.state, demandBasis: resolved.basis, productionDemanded: resolved.demanded };
+  });
 }
 
 /* SECTION F — the contextual action, and the four answers it can give.
@@ -1764,25 +1798,71 @@ function entityDemandRowMarkup(list, entity, row) {
    catalogue of conceivable angles and expressions no longer arrives uninvited. */
 function entityDemandMarkup(list, entity) {
   if (list === "audio") return "";
-  const rows = entityDemandRows(list, entity);
+  const production = entityReferenceDemandFor(list, entity);
+  const rows = entityDemandRows(list, entity, production);
+  /* THE SLICE 3 GROUPS, UNCHANGED AND STILL PUBLISHED. `tier` is the rename of
+     coverageRequirement() and these four counts are what a reader — and
+     tests/reference-reframe.js — may keep reading them as. Slice 5 adds a
+     second axis beside them; it does not re-file the first one. */
   const required = rows.filter((row) => row.tier === "required");
   const missing = required.filter((row) => !row.satisfied);
   const covered = required.filter((row) => row.satisfied);
   const recommended = rows.filter((row) => row.tier === "recommended");
   const notNeeded = rows.filter((row) => row.tier === "not-currently-needed");
-  const use = entityProductionUse(list, entity);
-  const headline = missing.length
-    ? `${plural(missing.length, "required reference")} still needed`
-    : required.length
-      ? `Everything this production requires is covered`
-      : `This production has not asked for anything beyond the primary reference`;
-  const usage = use.known
-    ? (use.shots ? `Used by ${plural(use.shots, "shot")}.` : `No shot references this yet.`)
+  /* SLICE 5 — WHAT IS WORK RIGHT NOW. `required-now` is the only state that is,
+     and a required item on a reference no shot uses is not in it. */
+  const now = rows.filter((row) => row.demandState === "required-now");
+  const dormant = missing.filter((row) => row.demandState === "available" && row.demandBasis === "no-current-production-demand");
+  const kind = entityKindLabel(list).toLowerCase();
+  const headline = now.length
+    ? `${plural(now.length, "required reference")} still needed`
+    : dormant.length
+      /* NOT "everything is covered", which would be false, and not a count of
+         work, which would be the backlog this slice removes. The requirement is
+         real and it is listed below; what is absent is the demand. */
+      ? `No shot uses this ${kind} yet, so nothing is required now`
+      : required.length
+        ? `Everything this production requires is covered`
+        : `This production has not asked for anything beyond the primary reference`;
+  /* THE USAGE SENTENCE COMES FROM THE SAME DERIVATION AS THE HEADLINE.
+     This section answers "what does production need", so both halves of it read
+     the demand projection rather than one reading it and the other reading the
+     broader relationship count that drives the primary-reference hero. */
+  const usage = production.known
+    ? (production.demanded ? `Used by ${plural(production.shotIds.length, "shot")}.` : `No shot uses this ${kind} yet.`)
     : "";
   const group = (label, items, tone) => items.length
     ? `<details class="entity-demand-group tone-${tone}" data-demand-group="${attr(tone)}"><summary>${esc(label)} <span>${items.length}</span></summary><div class="entity-demand-rows">${items.map((row) => entityDemandRowMarkup(list, entity, row)).join("")}</div></details>`
     : "";
-  return `<section class="entity-demand" data-demand-required="${required.length}" data-demand-missing="${missing.length}" data-demand-recommended="${recommended.length}" data-demand-not-needed="${notNeeded.length}"><header><div><span>WHAT THIS PRODUCTION NEEDS</span><b>${esc(headline)}</b><small>${esc(`${coverageDemandLabel("required")} material is listed first. ${coverageDemandLabel("recommended")} and ${coverageDemandLabel("not-currently-needed")} material stays available below.`)}${usage ? ` ${esc(usage)}` : ""}</small></div></header>${missing.length ? `<div class="entity-demand-rows entity-demand-open">${missing.map((row) => entityDemandRowMarkup(list, entity, row)).join("")}</div>` : `<div class="entity-demand-clear">Nothing required is outstanding.</div>`}${group(`${coverageDemandLabel("required")} · already covered`, covered, "covered")}${group(coverageDemandLabel("recommended"), recommended, "recommended")}${group(coverageDemandLabel("not-currently-needed"), notNeeded, "not-needed")}</section>`;
+  /* WHAT LEADS, AND WHY DORMANT MATERIAL IS NOT PUT BEHIND A DISCLOSURE.
+   *
+   * `now` and `dormant` are mutually exclusive by construction — demand is a fact
+   * about the reference, so either the production is asking for this reference's
+   * material or it is not — which means exactly one of them can lead, and there is
+   * never a second list competing with it.
+   *
+   * The first version of this collapsed the dormant list, on the reasoning that
+   * Slice 3 collapses Recommended. That was the wrong reading of the audit. The
+   * defect was a FALSE CLAIM OF URGENCY, not the presence of the material: a
+   * filmmaker building their Project Bible before the shot list exists has a
+   * reference where everything is dormant, and folding their whole workspace shut
+   * answers "you owe 8 required references" with "there is nothing here". The
+   * real-browser gate found this immediately — the contextual "Use approved
+   * <parent> reference to generate <state>" button, which is the most useful
+   * control on the screen, became unclickable behind the disclosure.
+   *
+   * So the list leads either way, and the HONESTY MOVES INTO THE LABEL rather than
+   * into visibility: the caption says this material is Available and says when it
+   * becomes required, the headline does not count a backlog, and the reference
+   * strip says Nothing waiting. Recommended and Not-currently-needed keep the
+   * Slice 3 treatment, unchanged, because those are statements about the
+   * REQUIREMENT and this is a statement about the DEMAND. */
+  const leading = now.length ? now : dormant;
+  const leadingState = now.length ? "required-now" : dormant.length ? "available" : "";
+  const leadCaption = leadingState === "available"
+    ? `<p class="entity-demand-lead-note">${esc(`${referenceDemandStateLabel("available")} — this is what the production will need once a shot uses this ${kind}. None of it is required now.`)}</p>`
+    : "";
+  return `<section class="entity-demand" data-demand-required="${required.length}" data-demand-missing="${missing.length}" data-demand-recommended="${recommended.length}" data-demand-not-needed="${notNeeded.length}" data-demand-now="${now.length}" data-demand-dormant="${dormant.length}" data-demand-lead="${attr(leadingState)}" data-demand-production="${production.known ? (production.demanded ? "demanded" : "dormant") : "unknown"}"><header><div><span>WHAT THIS PRODUCTION NEEDS</span><b>${esc(headline)}</b><small>${esc(`${coverageDemandLabel("required")} material is listed first. ${coverageDemandLabel("recommended")} and ${coverageDemandLabel("not-currently-needed")} material stays available below.`)}${usage ? ` ${esc(usage)}` : ""}</small></div></header>${leading.length ? `${leadCaption}<div class="entity-demand-rows entity-demand-open">${leading.map((row) => entityDemandRowMarkup(list, entity, row)).join("")}</div>` : `<div class="entity-demand-clear">Nothing required is outstanding.</div>`}${group(`${coverageDemandLabel("required")} · already covered`, covered, "covered")}${group(coverageDemandLabel("recommended"), recommended, "recommended")}${group(coverageDemandLabel("not-currently-needed"), notNeeded, "not-needed")}</section>`;
 }
 
 function entityCoverageStatesMarkup(list, entity, mediaByName, media) {

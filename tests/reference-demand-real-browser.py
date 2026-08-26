@@ -1,0 +1,653 @@
+#!/usr/bin/env python3
+"""Public Alpha UX Slice 5 — REFERENCE DEMAND + REVERSIBLE STRUCTURE, in a real Chromium.
+
+WHY A BROWSER IS NEEDED AT ALL. tests/reference-demand.js proves everything semantic in
+Node: that the demand projection is total and fails closed, that RD1-RD10 hold, that the
+authority ledger is byte-identical across a structural clear, and that no shipped route
+narrows entity reference demand. Six claims cannot be proven there, and they are the six
+a filmmaker would actually notice:
+
+  A  A DORMANT REFERENCE DOES NOT GREET YOU WITH A BACKLOG. The Node harness reads a
+     string; this reads what a person sees on the reference strip and in the panel body
+     after a real navigation.
+  B  CASTING THE REFERENCE MAKES THE WORK APPEAR, through the shipped cast control,
+     clicked rather than called.
+  C  UN-CASTING IT MAKES THE WORK DISAPPEAR AGAIN and deletes nothing from the Project
+     Bible — asserted against the live document after the click, not against a fixture.
+  D  THE LOCATION CAN BE CLEARED THROUGH THE SHIPPED UI. "A control exists" is a string
+     claim in Node. Here the button is found by what it says, hit-tested, and CLICKED
+     through the real event path.
+  E  THE SHOT'S VISIBLE STATE UPDATES IMMEDIATELY. app.js re-renders on the mutation, and
+     only a browser can show that the plate stops being presented as primary in the same
+     interaction rather than at the next reload.
+  F  THE APPROVED MEDIA AND HISTORY ARE STILL REACHABLE after both clears. A pointer
+     surviving in JSON is not the same as a filmmaker still being able to get to it.
+
+IT CARRIES ITS OWN NEGATIVE CONTROLS, because a detector that can only ever report one
+answer is worth nothing. Both work by changing the PROJECT rather than the code, so the
+same shipped renderer is asked two questions with opposite correct answers:
+
+  N1 casts the dormant character into a shot and requires the backlog to APPEAR — so
+     section A's zero is a measurement, not an element that never exists.
+  N2 re-selects the cleared location and requires "primary plate" to COME BACK — so
+     section E's absence is a measurement, not a selector that never matched.
+
+WAIT FOR THE REQUESTED THING, never for a fixed delay. Every mutation below is followed
+by a wait on the specific DOM the mutation was supposed to produce; a fixed sleep reads
+the page the browser was on a moment ago and is green on a fast machine and red on CI.
+
+NOTHING HERE IS PAID AND NOTHING LEAVES THE MACHINE. Config and projects live in a
+temporary directory reached through CINEBRAID_CONFIG_PATH and CINEBRAID_PROJECTS_ROOT, so
+data/ and the shipped sample are never touched; the route guard aborts the paid route and
+anything off-loopback.
+"""
+
+import json, os, pathlib, shutil, socket, subprocess, sys, tempfile, time
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "tests"))
+from browser_runtime import require_browser, launch_chromium
+
+LABEL = "Reference demand + reversible structure real-browser audit"
+sync_playwright = require_browser(LABEL)
+
+PAID_ROUTE = "/api/generation/fal/jobs"
+
+page_errors, offsite, paid_calls = [], [], []
+findings = []
+
+CHAR = "RD-BROWSER"
+LOC = "LOC-RD"
+SHOT = "RD1-01"
+
+TINY = ("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='48'"
+        "%3E%3Crect width='32' height='48' fill='%23343c44'/%3E%3C/svg%3E")
+
+# A newly added character, exactly as public/mutations.js seeds one: a template's worth
+# of required coverage slots and nothing selected. NOTHING in the project references it.
+CHARACTER = {
+    "id": CHAR, "prefix": CHAR, "anchorPrefix": CHAR, "name": "Rennick Dock",
+    "status": "IN PROGRESS", "workflowStatus": "IN PROGRESS",
+    "block": "A dock supervisor.", "approvedFile": f"{CHAR}-PRIMARY.png",
+    "coverageSlots": [
+        {"id": "front", "label": "Front", "requirement": "required", "selectedFile": ""},
+        {"id": "front-three-quarter", "label": "3/4 front", "requirement": "required", "selectedFile": ""},
+        {"id": "profile", "label": "Profile", "requirement": "required", "selectedFile": ""},
+        {"id": "rear", "label": "Rear", "requirement": "required", "selectedFile": ""},
+    ],
+    "expressionSlots": [],
+    "continuityStates": [
+        {"id": "state-default", "name": "Clean", "isDefault": True,
+         "approvedFile": f"{CHAR}-PRIMARY.png", "notes": "Primary identity."},
+    ],
+    # Real history, so section F has something that must survive both clears.
+    "made": [{"model": "fixture-model", "files": f"{CHAR}-PRIMARY.png",
+              "prompt": "a compiled provenance prompt", "date": "2026-08-20"}],
+}
+
+LOCATION = {
+    "id": LOC, "name": "Dock exterior", "status": "APPROVED", "workflowStatus": "APPROVED",
+    "notes": "Wide dock plate.", "approvedFile": f"{LOC}-PLATE.png",
+    "coverageSlots": [
+        {"id": "establishing", "label": "Master establishing", "requirement": "required", "selectedFile": ""},
+        {"id": "reverse", "label": "Reverse angle", "requirement": "required", "selectedFile": ""},
+    ],
+    "continuityStates": [
+        {"id": "state-default", "name": "Default", "isDefault": True,
+         "approvedFile": f"{LOC}-PLATE.png", "notes": "Docking camera."},
+    ],
+}
+
+SHOT_RECORD = {
+    "id": SHOT, "scene": "SC-01", "title": "Dock arrival",
+    "desc": "A supervisor walks the dock.", "positioning": "Locked wide.",
+    "workflowStatus": "IN PROGRESS", "status": "BUILT", "reviewStatus": "PENDING",
+    "characters": [], "codes": [LOC], "risks": [], "notes": "",
+    "keyframes": [{"id": "frame-a", "label": "A", "title": "Opening frame",
+                   "winner": f"{SHOT}-FRAME_A.png", "description": "Supervisor at the rail.",
+                   "required": True, "generationPackages": []}],
+    "clips": [], "promptBuilds": [], "promptOptions": [],
+    "creationBrief": {"locationId": LOC, "propIds": [], "promptBuilds": [], "mode": "auto"},
+}
+
+# Only what a person actually approved. The location plate and the character's primary
+# are canon; the shot's frame is canon too, so section F has an approval to lose.
+def receipt(n, kind, **fields):
+    row = {"id": f"authority-{n:06d}", "sequence": n, "actor": "human", "act": "explicit-approval",
+           "command": {"entity-state": "approve-entity-state", "shot-frame": "approve-shot-frame"}[kind],
+           "kind": kind, "shotId": "", "frameId": "", "unitKey": "", "list": "", "entityId": "",
+           "stateId": "", "slotId": "", "assetId": "", "at": "2026-08-20T00:00:00.000Z",
+           "status": "current", "supersededBy": "", "supersededAt": "", "revokedAt": "",
+           "revocationReason": "", "note": "",
+           "provenance": {"manualAction": f"gesture-browser-{n}", "via": "real-browser-fixture", "gesture": "click"}}
+    row.update(fields)
+    return row
+
+
+RECEIPTS = [
+    receipt(1, "entity-state", list="characters", entityId=CHAR, stateId="state-default",
+            value=f"{CHAR}-PRIMARY.png", targetKey=f"entity-state:characters:{CHAR}#state-default"),
+    receipt(2, "entity-state", list="locations", entityId=LOC, stateId="state-default",
+            value=f"{LOC}-PLATE.png", targetKey=f"entity-state:locations:{LOC}#state-default"),
+    receipt(3, "shot-frame", shotId=SHOT, frameId="frame-a", value=f"{SHOT}-FRAME_A.png",
+            targetKey=f"shot-frame:{SHOT}#frame-a"),
+]
+
+
+# The shipped plate control, addressed by the exact call it makes. Built by
+# concatenation rather than as an f-string: the selector needs single quotes
+# INSIDE a double-quoted attribute value, which an f-string cannot carry.
+PLATE_BUTTON = ('button.guided-asset-choice[onclick*="setShotCreationLocation('
+                + chr(39) + SHOT + chr(39) + "," + chr(39) + LOC + chr(39) + ')"]')
+
+
+def free_port():
+    sock = socket.socket(); sock.bind(("127.0.0.1", 0)); port = sock.getsockname()[1]; sock.close(); return port
+
+
+sandbox = pathlib.Path(tempfile.mkdtemp(prefix="cinebraid-reference-demand-"))
+subprocess.run(["node", "scripts/qa-sandbox.js", "--out", str(sandbox / "env"), "--demo", "--force"],
+               cwd=ROOT, check=True, stdout=subprocess.DEVNULL)
+config_path = sandbox / "env" / "config.json"
+projects_root = sandbox / "env" / "projects"
+
+port = free_port()
+server = subprocess.Popen(
+    ["node", "server.js"], cwd=ROOT,
+    env={**os.environ, "PORT": str(port), "CINEBRAID_CONFIG_PATH": str(config_path),
+         "CINEBRAID_PROJECTS_ROOT": str(projects_root)},
+    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+try:
+    deadline = time.time() + 25
+    while time.time() < deadline:
+        try:
+            with socket.create_connection(("127.0.0.1", port), .25): break
+        except OSError: time.sleep(.1)
+    else:
+        raise RuntimeError("CineBraid server did not start")
+
+    base = f"http://127.0.0.1:{port}"
+    with sync_playwright() as pw:
+        browser = launch_chromium(pw, label=LABEL)
+        findings.append("0. Chromium launched against a sandboxed CineBraid server")
+        context = browser.new_context(viewport={"width": 1600, "height": 1000})
+
+        def guard(route):
+            """No request leaves this machine, and the paid route is never called."""
+            url = route.request.url
+            if PAID_ROUTE in url and route.request.method == "POST":
+                paid_calls.append(f"{route.request.method} {url}")
+                return route.abort("failed")
+            if url.startswith(base) or url.startswith("data:") or url.startswith("blob:"):
+                return route.continue_()
+            if url.startswith("https://fonts."):
+                return route.fulfill(status=200, content_type="text/css", body="")
+            offsite.append(f"{route.request.method} {url}")
+            return route.abort("failed")
+
+        context.route("**/*", guard)
+        page = context.new_page()
+        page.on("pageerror", lambda e: page_errors.append(str(e)))
+        page.goto(f"{base}/#/production", wait_until="domcontentloaded")
+        page.wait_for_selector("#main", timeout=20000)
+        page.wait_for_function("() => typeof P === 'object' && P && Array.isArray(P.characters)", timeout=20000)
+
+        def install():
+            """Install the fixture into the live document. The character is dormant: the
+            one shot names the location and no character at all."""
+            page.evaluate(
+                """(payload) => {
+                    P.characters = [payload.character];
+                    P.locations = [payload.location];
+                    P.props = []; P.vehicles = []; P.audio = [];
+                    P.scenes = [{ id: 'SC-01', title: 'Dock', tier: 'A', whatHappens: '', howItFeels: '' }];
+                    P.shots = [payload.shot];
+                    P.productionAuthority = { version: 1, receipts: payload.receipts };
+                    SCAN.anchors = payload.anchors;
+                    SCAN.plates = payload.plates;
+                    SCAN.shots = payload.shotMedia;
+                }""",
+                {"character": CHARACTER, "location": LOCATION,
+                 "shot": json.loads(json.dumps(SHOT_RECORD)), "receipts": RECEIPTS,
+                 "anchors": [{"name": f"{CHAR}-PRIMARY.png", "url": TINY}],
+                 "plates": [{"name": f"{LOC}-PLATE.png", "url": TINY}],
+                 "shotMedia": {SHOT: {"takes": [{"name": f"{SHOT}-FRAME_A.png", "url": TINY}], "locked": []}}})
+
+        def open_reference(entity_id, kind="character", task=None):
+            """Navigate to a reference and, when asked, click through to one of its
+            declared tasks. Waits on the surface each step is supposed to produce."""
+            page.evaluate("(hash) => { location.hash = hash; }", f"#/{kind}/{entity_id}")
+            page.evaluate("() => route()")
+            page.wait_for_selector(".bounded-entity-page[data-selected-task]", timeout=15000)
+            if task:
+                page.locator(".bounded-entity-taskbar .focused-task-button", has_text=task).click()
+                page.wait_for_selector("#main section.entity-demand", timeout=15000)
+
+        def demand_panel():
+            return page.evaluate("""() => {
+                const node = document.querySelector('section.entity-demand');
+                if (!node) return null;
+                const open = node.querySelector('.entity-demand-rows.entity-demand-open');
+                return {
+                    required: Number(node.dataset.demandRequired),
+                    now: Number(node.dataset.demandNow),
+                    dormant: Number(node.dataset.demandDormant),
+                    production: node.dataset.demandProduction,
+                    lead: node.dataset.demandLead || '',
+                    caption: ((node.querySelector('.entity-demand-lead-note') || {}).textContent || '').trim(),
+                    /* Is the leading list inside a disclosure? The first design put
+                       dormant material behind one and made its generate action
+                       unclickable, so this is measured rather than assumed. */
+                    leadInDisclosure: (() => {
+                        const open = node.querySelector('.entity-demand-rows.entity-demand-open');
+                        if (!open) return false;
+                        for (let n = open; n && n !== node; n = n.parentElement) if (n.tagName === 'DETAILS') return true;
+                        return false;
+                    })(),
+                    /* Every control the leading list offers, hit-tested. */
+                    leadButtons: [...(node.querySelectorAll('.entity-demand-rows.entity-demand-open button') || [])]
+                        .filter((b) => { const r = b.getBoundingClientRect(); return r.width > 0 && r.height > 0; }).length,
+                    headline: (node.querySelector('header b') || {}).textContent || '',
+                    openRows: open ? open.querySelectorAll('.entity-demand-row').length : 0,
+                    /* Real geometry: does the outstanding list occupy space on screen? */
+                    openHeight: open ? Math.round(open.getBoundingClientRect().height) : 0,
+                    groupLabels: [...node.querySelectorAll('.entity-demand-group > summary')]
+                        .map((s) => s.textContent.replace(/\\s+/g, ' ').trim()),
+                    groupsOpen: [...node.querySelectorAll('.entity-demand-group')].filter((d) => d.open).length,
+                };
+            }""")
+
+        def coverage_strip():
+            return page.evaluate("""() => {
+                const button = [...document.querySelectorAll('.bounded-entity-taskbar .focused-task-button')]
+                    .find((b) => /What this production needs/.test(b.textContent || ''));
+                if (!button) return null;
+                return {
+                    tone: [...button.classList].find((c) => c.startsWith('tone-')) || '',
+                    status: ((button.querySelector('em') || {}).textContent || '').trim(),
+                    note: ((button.querySelector('small') || {}).textContent || '').trim(),
+                };
+            }""")
+
+        def open_shot_inputs():
+            """Reach the shot's Source & References panel and OPEN the cast manager.
+
+            The manager is a `<details>` that ships closed once anything is attached, so
+            every control inside it is present in the markup and invisible to a person.
+            Opened by clicking its own summary rather than by setting `.open`, so what
+            the rest of this suite hit-tests is what a filmmaker would actually be
+            looking at."""
+            page.evaluate("(hash) => { location.hash = hash; }", f"#/shot/{SHOT}")
+            page.evaluate("() => route()")
+            # WAIT FOR THE SHOT WORKSPACE, not for `#main`: that element already exists
+            #  from the previous route, so waiting on it resolves against the DOM the
+            #  browser was on a moment ago.
+            page.wait_for_selector(".bounded-shot-workspace", timeout=15000)
+            page.evaluate("(id) => selectBoundedTask('shot-task', id, 'inputs')", SHOT)
+            page.wait_for_selector(".guided-cast-assets", state="attached", timeout=15000)
+            reveal_cast()
+
+        def reveal_cast():
+            """Open every closed `<details>` between the page and the cast manager.
+
+            Both the Source & References panel and the cast manager itself remember
+            their own open state, so which of them is shut depends on what the
+            filmmaker last did rather than on anything this slice changed. Each is
+            opened by dispatching a click on its own summary — the real control through
+            the real event path, which is what makes the `ontoggle` bookkeeping run.
+
+            This is SCAFFOLDING, not the thing under test: every control this suite
+            actually judges is clicked with Playwright, hit-tested and measured."""
+            for _ in range(5):
+                remaining = page.evaluate("""() => {
+                    const node = document.querySelector('.guided-cast-assets');
+                    if (!node) return -1;
+                    const shut = [];
+                    for (let n = node; n; n = n.parentElement) if (n.tagName === 'DETAILS' && !n.open) shut.unshift(n);
+                    if (!shut.length) return 0;
+                    const summary = shut[0].querySelector('summary');
+                    if (summary) summary.click();
+                    return shut.length;
+                }""")
+                if remaining == 0:
+                    return
+                assert remaining > 0, "the cast manager must be on the page at all"
+
+        def click_in_cast(selector, description):
+            """Reveal the cast manager and click one of its controls, as ONE retried unit.
+
+            THE PAGE RE-RENDERS ON ITS OWN. app.js polls, and a poll landing between
+            "the control is visible" and "click it" rebuilds the panel with its
+            disclosures back at their remembered state — the same 3.5s-poll race that has
+            already made another browser suite flaky on a warm machine. Waiting longer
+            does not fix that; re-establishing the precondition does. Each attempt
+            re-opens the disclosures and then gives the click a short window, so a lost
+            race costs one retry instead of the whole suite."""
+            failure = None
+            for _ in range(8):
+                try:
+                    reveal_cast()
+                    page.locator(selector).click(timeout=2500)
+                    return
+                except Exception as error:      # noqa: BLE001 - re-raised below with context
+                    failure = error
+            raise AssertionError(f"{description}: could not click {selector} after 8 attempts - {failure}")
+
+        def cast_state():
+            """Picker state read from classes and text rather than from geometry, so a
+            poll landing mid-read cannot turn a correct answer into a flake. The
+            geometry claims are made separately, by location_grid()."""
+            return page.evaluate("""(shot) => {
+                const clear = document.querySelector('button[data-clear-location="' + shot + '"]');
+                const notes = [...document.querySelectorAll('.guided-asset-picker-section')]
+                    .filter((s) => /LOCATION PLATE/.test((s.querySelector('b') || {}).textContent || ''))
+                    .flatMap((s) => [...s.querySelectorAll('button.guided-asset-choice small')].map((n) => n.textContent.trim()));
+                return { clearPresent: !!clear, clearOn: !!clear && clear.classList.contains('on'), notes };
+            }""", SHOT)
+
+        def location_grid():
+            return page.evaluate("""() => {
+                const section = [...document.querySelectorAll('.guided-asset-picker-section')]
+                    .find((s) => /LOCATION PLATE/.test((s.querySelector('b') || {}).textContent || ''));
+                if (!section) return null;
+                return [...section.querySelectorAll('button.guided-asset-choice')].map((b) => ({
+                    label: ((b.querySelector('b') || {}).textContent || '').trim(),
+                    note: ((b.querySelector('small') || {}).textContent || '').trim(),
+                    on: b.classList.contains('on'),
+                    clear: b.dataset.clearLocation || '',
+                    /* Hit-testable, not merely present in the markup. */
+                    box: (() => { const r = b.getBoundingClientRect(); return { w: Math.round(r.width), h: Math.round(r.height) }; })(),
+                }));
+            }""")
+
+        def shot_structure():
+            return page.evaluate("""(id) => {
+                const shot = (P.shots || []).find((row) => row.id === id);
+                return {
+                    locationId: (shot.creationBrief || {}).locationId || '',
+                    codes: shot.codes || [],
+                    characters: shot.characters || [],
+                    resolvedLocations: resolveShotEntities(P, shot).locations.map((row) => row.id),
+                };
+            }""", SHOT)
+
+        def bible_state(entity_id):
+            """What the Project Bible still holds for this reference, and whether the
+            kernel still recognises its approval."""
+            return page.evaluate("""(id) => {
+                const entity = (P.characters || []).concat(P.locations || []).find((row) => row.id === id);
+                const list = (P.characters || []).some((row) => row.id === id) ? 'characters' : 'locations';
+                return {
+                    present: !!entity,
+                    approvedFile: entity ? entity.approvedFile || '' : '',
+                    states: entity ? (entity.continuityStates || []).map((s) => s.id) : [],
+                    slots: entity ? (entity.coverageSlots || []).length : 0,
+                    history: entity ? (entity.made || []).length : 0,
+                    canon: !!currentHumanAuthority(P, { kind: 'entity-state', list, entityId: id, stateId: 'state-default' }),
+                    receipts: ((P.productionAuthority || {}).receipts || []).length,
+                };
+            }""", entity_id)
+
+        install()
+
+        # ---- A. a dormant reference does not greet a filmmaker with a backlog ----------
+        open_reference(CHAR, "character", "What this production needs")
+        assert not page_errors, f"the reference page raised uncaught errors: {page_errors}"
+
+        panel = demand_panel()
+        assert panel, "A. the demand panel must render"
+        assert panel["required"] > 0, \
+            "A. (the fixture must actually carry required coverage, or the zero below proves nothing)"
+        assert panel["now"] == 0, \
+            f"A. a character no shot uses must owe ZERO current reference work, got {panel['now']}"
+        assert panel["production"] == "dormant", \
+            f"A. and the surface must say why, got data-demand-production={panel['production']!r}"
+        assert "required reference" not in panel["headline"], \
+            f"A. the headline must not count required references nothing is asking for: {panel['headline']!r}"
+        assert panel["headline"].startswith("No shot uses this character yet"), \
+            f"A. it must say what is actually true, got {panel['headline']!r}"
+        # WHAT IS ABSENT IS THE CLAIM, NOT THE MATERIAL.
+        # The first version of this slice collapsed the dormant list, and this gate
+        # caught what that cost: the contextual "Use approved <parent> reference to
+        # generate <state>" control — the most useful thing on the screen — went
+        # behind a disclosure and stopped being clickable. A filmmaker building
+        # their Project Bible before the shot list exists has a reference where
+        # everything is dormant, so folding the workspace shut answers a false
+        # backlog with an empty screen. The list leads either way and the honesty
+        # lives in the label.
+        assert panel["lead"] == "available", \
+            f"A. with nothing required now, the available material must lead, got {panel['lead']!r}"
+        assert panel["openHeight"] > 0, \
+            "A. and it must occupy real space — a dormant reference is still where the work gets done"
+        assert not panel["leadInDisclosure"], \
+            "A. and must not sit inside a disclosure, which is what made its controls unclickable"
+        assert panel["leadButtons"] > 0, \
+            "A. so every control it offers is hit-testable rather than merely present"
+        assert panel["caption"].startswith("Available") and "None of it is required now" in panel["caption"], \
+            f"A. and the label must carry what the headline no longer claims, got {panel['caption']!r}"
+
+        strip = coverage_strip()
+        assert strip, "A. the reference strip must render the coverage task"
+        assert strip["status"] == "Nothing waiting", \
+            f"A. the strip must not call a dormant capability Incomplete, got {strip['status']!r}"
+        assert "required view" not in strip["note"], \
+            f"A. nor count required views, got {strip['note']!r}"
+        assert strip["tone"] != "tone-attention", \
+            f"A. nor draw attention to work that does not exist, got {strip['tone']!r}"
+
+        # NOTHING WAS DELETED and nothing was quietly dropped.
+        assert panel["dormant"] == panel["required"], \
+            f"A. every required item must still be filed, got {panel['dormant']} of {panel['required']}"
+        assert panel["openRows"] == panel["dormant"], \
+            f"A. and every one of them must be in the list a person can see, got {panel['openRows']}"
+        assert panel["groupsOpen"] == 0, \
+            "A. while Recommended and Not-currently-needed keep the Slice 3 collapsed treatment"
+        findings.append(f"A. a character no shot uses reports \"{panel['headline']}\" with 0 current work; all "
+                        f"{panel['required']} required views still LEAD the screen over {panel['openHeight']}px with "
+                        f"{panel['leadButtons']} hit-testable controls, outside any disclosure, under "
+                        f"\"{panel['caption']}\"; the strip reads \"{strip['status']} · {strip['note']}\"")
+
+        # ---- B. casting the character through the shipped control makes work appear -----
+        open_shot_inputs()
+        click_in_cast(f'.guided-cast-assets button[onclick*="toggleShotCreationCharacter"][onclick*="{CHAR}"]',
+                      "B. casting the character")
+        page.wait_for_function("(id) => (P.shots[0].characters || []).includes(id)", arg=CHAR, timeout=10000)
+        open_reference(CHAR, "character", "What this production needs")
+        cast = demand_panel()
+        assert cast["production"] == "demanded", \
+            f"B. once a shot casts the character it must read demanded, got {cast['production']!r}"
+        assert cast["now"] == cast["required"], \
+            f"B. and every unmet required view becomes current work, got {cast['now']} of {cast['required']}"
+        assert cast["openRows"] == cast["now"], \
+            f"B. listed where a filmmaker can see them, got {cast['openRows']} rows"
+        assert cast["openHeight"] > 0, "B. and occupying real space on screen"
+        assert "required reference" in cast["headline"], \
+            f"B. with a headline that says so, got {cast['headline']!r}"
+        assert cast["lead"] == "required-now", \
+            f"B. and the leading list is now genuinely required work, got {cast['lead']!r}"
+        assert not cast["caption"], \
+            f"B. so the \"nothing here is required now\" caption must be gone, got {cast['caption']!r}"
+        findings.append(f"B. clicking the shot's cast control makes the same reference read demanded and raises "
+                        f"{cast['now']} required references — \"{cast['headline']}\" — over a {cast['openHeight']}px list")
+
+        # ---- C. un-casting it removes the demand and deletes nothing --------------------
+        before_bible = bible_state(CHAR)
+        open_shot_inputs()
+        click_in_cast(f'.guided-cast-assets button[onclick*="toggleShotCreationCharacter"][onclick*="{CHAR}"]',
+                      "C. un-casting the character")
+        page.wait_for_function("(id) => !(P.shots[0].characters || []).includes(id)", arg=CHAR, timeout=10000)
+        open_reference(CHAR, "character", "What this production needs")
+        released = demand_panel()
+        after_bible = bible_state(CHAR)
+        assert released["now"] == 0, \
+            f"C. removing the shot's use must remove the demand, got {released['now']}"
+        assert released["production"] == "dormant", "C. and the surface must say so again"
+        assert after_bible == before_bible, \
+            f"C. and NOTHING about the reference may change: {before_bible} -> {after_bible}"
+        assert after_bible["canon"] is True, \
+            "C. its approved primary is still Canon — the kernel says so, not a pointer"
+        assert after_bible["history"] > 0, "C. and its generation history is still on it"
+        findings.append(f"C. un-casting the character returns it to 0 current work with the Project Bible record "
+                        f"byte-identical — {after_bible['slots']} coverage slots, {after_bible['states']} states, "
+                        f"{after_bible['history']} history record(s), canon intact, "
+                        f"{after_bible['receipts']} receipts unchanged")
+
+        # ---- D. the Location can be cleared through the shipped UI ----------------------
+        open_shot_inputs()
+        grid = location_grid()
+        assert grid, "D. the location picker must render"
+        clear = next((row for row in grid if row["clear"]), None)
+        assert clear, f"D. the picker must offer a way to select no location, got {grid!r}"
+        assert clear["label"] == "No location", f"D. named for what it does, got {clear['label']!r}"
+        assert clear["box"]["w"] > 0 and clear["box"]["h"] > 0, \
+            f"D. and it must be a real, hit-testable control, measured {clear['box']!r}"
+        assert not clear["on"], "D. and read as not chosen while a location IS selected"
+        primary = next((row for row in grid if row["note"] == "primary plate"), None)
+        assert primary and primary["label"] == "Dock exterior", \
+            f"D. (precondition) the shot must have a primary plate, got {grid!r}"
+
+        before_structure = shot_structure()
+        assert before_structure["locationId"] == LOC, "D. (precondition) the shot names the location"
+        click_in_cast(f'button[data-clear-location="{SHOT}"]', "D. clearing the location")
+        page.wait_for_function("(id) => !((P.shots.find((s) => s.id === id).creationBrief || {}).locationId || '')",
+                               arg=SHOT, timeout=10000)
+        after_structure = shot_structure()
+        assert after_structure["locationId"] == "", "D. the shot's location selection is gone"
+        assert LOC not in after_structure["codes"], \
+            f"D. and its code token with it, so nothing infers it back: {after_structure['codes']!r}"
+        assert after_structure["resolvedLocations"] == [], \
+            f"D. so the shot structurally uses no location, got {after_structure['resolvedLocations']!r}"
+        findings.append(f"D. the shipped \"No location\" control is a {clear['box']['w']}x{clear['box']['h']}px "
+                        f"button in the same grid the plate was chosen in; clicking it takes the shot from "
+                        f"{before_structure['resolvedLocations']} to {after_structure['resolvedLocations']}")
+
+        # ---- E. the shot's visible state updates in the same interaction ----------------
+        # No re-navigation: this is the SAME interaction. app.js re-renders on the
+        # mutation, so the only wait here is for the repainted control to be visible
+        # again — a fixed delay would read the pre-click DOM on a slow machine.
+        page.wait_for_selector(".guided-cast-assets", state="attached", timeout=15000)
+        page.wait_for_function(
+            "(shot) => { const c = document.querySelector('button[data-clear-location=\"' + shot + '\"]');"
+            " return !!c && c.classList.contains('on'); }", arg=SHOT, timeout=10000)
+        immediate = cast_state()
+        assert immediate["clearOn"], "E. the cleared state must be visible on the control that produced it"
+        assert "primary plate" not in immediate["notes"], \
+            f"E. and no plate may still be presented as this shot's primary, got {immediate['notes']!r}"
+        reveal_cast()
+        after_grid = location_grid()
+        cleared_choice = next((row for row in after_grid if row["clear"]), None)
+        assert cleared_choice and cleared_choice["on"], \
+            "E. the cleared state must be visible on the control that produced it, without a reload"
+        assert not any(row["note"] == "primary plate" for row in after_grid), \
+            f"E. and no plate may still be presented as this shot's primary, got {after_grid!r}"
+        assert any(row["label"] == "Dock exterior" for row in after_grid), \
+            "E. while the same plate stays selectable — clearing is a change of mind, not a deletion"
+
+        # ...and the released location goes dormant on its OWN surface, immediately.
+        open_reference(LOC, "location", "What this production needs")
+        location_panel = demand_panel()
+        assert location_panel["production"] == "dormant", \
+            f"E. the released location must now read dormant, got {location_panel['production']!r}"
+        assert location_panel["now"] == 0, "E. and owe no current reference work"
+        findings.append(f"E. the picker repaints in the same interaction — the no-location choice reads chosen, "
+                        f"nothing is presented as the primary plate, the plate stays selectable, and the released "
+                        f"location's own surface reads \"{location_panel['headline']}\"")
+
+        # ---- F. approved media and history survive both clears --------------------------
+        location_bible = bible_state(LOC)
+        assert location_bible["canon"] is True, \
+            "F. the location's approved plate is still Canon after the shot released it"
+        assert location_bible["approvedFile"] == f"{LOC}-PLATE.png", "F. and still on the record"
+        assert location_bible["receipts"] == len(RECEIPTS), \
+            f"F. with the whole receipt ledger intact, got {location_bible['receipts']}"
+        shot_media = page.evaluate("""(id) => {
+            const shot = (P.shots || []).find((row) => row.id === id);
+            return {
+                winners: (shot.keyframes || []).map((f) => f.winner || ''),
+                frameCanon: !!currentHumanAuthority(P, { kind: 'shot-frame', shotId: id, frameId: 'frame-a' }),
+            };
+        }""", SHOT)
+        assert shot_media["winners"] == [f"{SHOT}-FRAME_A.png"], \
+            f"F. the shot's approved frame survived both clears, got {shot_media['winners']!r}"
+        assert shot_media["frameCanon"] is True, "F. and the kernel still recognises the approval"
+
+        # REACHABLE, not merely present: the shot workspace still RENDERS the approved
+        # frame's media after the clear. Waited on the shot shell rather than on `#main`,
+        # which survives every route and would resolve against the previous page.
+        page.evaluate("(hash) => { location.hash = hash; }", f"#/shot/{SHOT}")
+        page.evaluate("() => route()")
+        page.wait_for_selector(".bounded-shot-workspace", timeout=15000)
+        page.wait_for_function("(id) => (document.querySelector('.bounded-shot-workspace') || {}).textContent !== undefined",
+                               arg=SHOT, timeout=10000)
+        reachable = page.evaluate("""(name) => {
+            const shell = document.querySelector('.bounded-shot-workspace');
+            if (!shell) return { shell: false };
+            const html = shell.innerHTML;
+            return {
+                shell: true,
+                named: html.includes(name),
+                /* And it is a rendered picture, not only a filename in an attribute. */
+                pictured: [...shell.querySelectorAll('img[src], video[src]')]
+                    .some((node) => (node.getAttribute('src') || '').startsWith('data:image')),
+            };
+        }""", f"{SHOT}-FRAME_A.png")
+        assert reachable["shell"], "F. the shot workspace must render at all"
+        assert reachable["named"],             "F. and the approved frame must still be named on it after the clear"
+        assert reachable["pictured"],             "F. and its media must still be rendered, not merely recorded"
+        findings.append(f"F. after both clears the location keeps its Canon plate, the whole "
+                        f"{location_bible['receipts']}-receipt ledger is intact, the shot's approved frame is "
+                        f"still its winner, the kernel still recognises it, and it still renders on the shot")
+
+        # ---- N1. the backlog CAN appear, so section A's zero means something -------------
+        install()
+        page.evaluate("(id) => { P.shots[0].characters = [id]; }", CHAR)
+        open_reference(CHAR, "character", "What this production needs")
+        armed = demand_panel()
+        assert armed["now"] > 0, \
+            "N1: with a shot casting the character the backlog MUST appear — section A's zero is vacuous otherwise"
+        assert armed["lead"] == "required-now", \
+            f"N1: and the lead marker MUST flip, so section A's 'available' is a measurement, got {armed['lead']!r}"
+        findings.append(f"N1. the same detectors report {armed['now']} required references and a lead marker of "
+                        f"{armed['lead']!r} once a shot casts the character — so section A's 0 and its 'available' "
+                        f"lead are measurements rather than an element that never changes")
+
+        # ---- N2. "primary plate" CAN come back, so section E's absence means something ---
+        install()
+        open_shot_inputs()
+        click_in_cast(f'button[data-clear-location="{SHOT}"]', "N2. clearing the location")
+        page.wait_for_function("(id) => !((P.shots.find((s) => s.id === id).creationBrief || {}).locationId || '')",
+                               arg=SHOT, timeout=10000)
+        click_in_cast(PLATE_BUTTON, "N2. re-selecting the plate")
+        page.wait_for_function("(id) => ((P.shots.find((s) => s.id === id).creationBrief || {}).locationId || '') !== ''",
+                               arg=SHOT, timeout=10000)
+        page.wait_for_function(
+            "(shot) => { const c = document.querySelector('button[data-clear-location=\"' + shot + '\"]');"
+            " return !!c && !c.classList.contains('on'); }", arg=SHOT, timeout=10000)
+        reveal_cast()
+        restored_grid = location_grid()
+        assert any(row["note"] == "primary plate" for row in restored_grid), \
+            f"N2: re-selecting the plate MUST restore it as primary — section E's absence is vacuous otherwise, got {restored_grid!r}"
+        restored_clear = next((row for row in restored_grid if row["clear"]), None)
+        assert restored_clear and not restored_clear["on"], \
+            "N2: and the no-location choice must read as not chosen again"
+        restored_receipts = page.evaluate("() => ((P.productionAuthority || {}).receipts || []).length")
+        assert restored_receipts == len(RECEIPTS), \
+            f"N2: and the round trip must write no receipt, got {restored_receipts}"
+        findings.append("N2. the same detector reports \"primary plate\" back once the plate is re-selected, and the "
+                        "round trip writes no receipt — so section E's absence is a measurement, and clearing a "
+                        "location is genuinely reversible")
+
+        assert not page_errors, f"the audit raised uncaught page errors: {page_errors}"
+        assert not offsite, f"requests attempted to leave the machine: {offsite}"
+        assert not paid_calls, f"a paid route was called: {paid_calls}"
+
+    print(f"{LABEL} passed:")
+    for line in findings:
+        print("  " + line)
+    print("  provider calls: 0 · paid calls: 0 · off-site requests: 0")
+finally:
+    server.terminate()
+    try: server.wait(timeout=10)
+    except Exception: server.kill()
+    shutil.rmtree(sandbox, ignore_errors=True)

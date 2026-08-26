@@ -311,6 +311,60 @@ function unresolvedShotDependencies(project, shot) {
   return shotDependencyRecords(project, shot).filter((row) => !row.resolved);
 }
 
+/* ==========================================================================
+   IS THIS REFERENCE CURRENTLY DEMANDED BY PRODUCTION?
+
+   THE QUESTION THIS ANSWERS, and the one it deliberately does not.
+
+     answers      does any shot in this project currently relate to this entity
+                  in a way that makes its visual reference an input?
+     does not     is that reference approved, required, satisfied, or good.
+                  Those are requirement and authority questions and they have
+                  their own owners — public/shared-coverage.js and the kernel.
+
+   WHY IT EXISTS. Reference requirements were being read off EXISTENCE. Adding a
+   character seeded four required coverage slots, and the reference surface
+   immediately reported "4 required references still needed" — in the same
+   sentence as "No shot references this yet". Two true facts, and the loud one
+   was a backlog the production had never asked for.
+
+   WHY IT IS THE STATE-BEARING PROJECTION AND NOT shotDependencyRecords().
+
+   public/shared-shot-readiness.js gates every entity-state requirement it
+   raises on exactly this set — `context.attachedIds` is
+   shotStateBearingEntityRecords() filtered to resolved rows. So a reference
+   surface that asks the same question can never disagree with Production about
+   which entities are dormant, which is the whole of the agreement requirement.
+   The broader dependency record deliberately includes sources that readiness
+   refuses as inputs — a continuity declaration is "a stale relationship
+   decision, not an input to every unit" — and a demand derived from those would
+   manufacture the backlog again through a second door.
+
+   `known: false` for a type this build does not recognise. The caller then says
+   nothing about demand rather than asserting an absence it cannot support,
+   which is the same refusal entityProductionUse() already makes for an
+   unrecognised collection.
+
+   DERIVED, NEVER STORED, and pure: no clock, no filesystem, no network, and no
+   write of any kind to the project it reads. */
+function entityReferenceDemand(project, type, entityId) {
+  const P = project && typeof project === "object" ? project : {};
+  const wanted = String(entityId || "").trim();
+  const kind = String(type || "").trim();
+  if (!wanted || !SHOT_STATE_BEARING_ENTITY_TYPES.includes(kind)) {
+    return { known: false, demanded: false, shotIds: [], total: (Array.isArray(P.shots) ? P.shots : []).length };
+  }
+  const shots = Array.isArray(P.shots) ? P.shots : [];
+  const shotIds = [];
+  for (const shot of shots) {
+    if (!shot || typeof shot !== "object") continue;
+    const uses = shotStateBearingEntityRecords(P, shot).some((row) =>
+      row && row.resolved && row.type === kind && String((row.entity && row.entity.id) || row.id) === wanted);
+    if (uses) shotIds.push(String(shot.id || ""));
+  }
+  return { known: true, demanded: shotIds.length > 0, shotIds, total: shots.length };
+}
+
 if (typeof window !== "undefined") {
   window.shotEntityTokenMatches = shotEntityTokenMatches;
   window.entityVisualDescription = entityVisualDescription;
@@ -322,6 +376,7 @@ if (typeof window !== "undefined") {
   window.shotDependencyTokenType = shotDependencyTokenType;
   window.shotDependencyRecords = shotDependencyRecords;
   window.shotStateBearingEntityRecords = shotStateBearingEntityRecords;
+  window.entityReferenceDemand = entityReferenceDemand;
   window.unresolvedShotDependencies = unresolvedShotDependencies;
 }
 if (typeof module !== "undefined" && module.exports) {
@@ -341,6 +396,7 @@ if (typeof module !== "undefined" && module.exports) {
     SHOT_STATE_BEARING_RELATIONSHIP_SOURCES,
     shotDependencySourceIsStateBearing,
     shotStateBearingEntityRecords,
+    entityReferenceDemand,
     unresolvedShotDependencies,
   };
 }

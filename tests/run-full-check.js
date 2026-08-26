@@ -209,6 +209,8 @@ const nodeSuites = [
   "check:returned-review-negative",
   "check:launch-language",
   "check:launch-language-negative",
+  "check:reference-demand",
+  "check:reference-demand-negative",
 ];
 
 /* Suites that assert something about the whole machine and therefore cannot share it.
@@ -231,7 +233,8 @@ const browserSuites = ["check:manual-browser", "check:browser-real", "check:h3-b
   "check:shot-readiness-browser", "check:founder-p0-browser", "check:quiet-shell-browser",
   "check:project-entry-browser", "check:reference-reframe-browser", "check:simple-advanced-browser",
   "check:shot-intent-browser", "check:authority-browser", "check:save-truth-browser",
-  "check:bible-canon-browser", "check:returned-review-browser", "check:launch-language-browser"];
+  "check:bible-canon-browser", "check:returned-review-browser", "check:launch-language-browser",
+  "check:reference-demand-browser"];
 const releaseSuites = ["check:environment", "check:package"];
 /* How a suite is launched, without a shell.
 

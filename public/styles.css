@@ -1468,6 +1468,11 @@ body:not([data-help="minimal"]) [data-tip]:focus-visible::before{content:"";posi
 .guided-frame-return>.guided-production-risks,.guided-motion-results>.guided-production-risks{margin:0 0 10px}
 .guided-asset-choice.supporting-location{border-style:dashed}
 .guided-asset-choice.supporting-location small{color:var(--blue)}
+/* Slice 5 — "No location" is a peer choice in the single-select grid, not an
+   asset. It carries no thumbnail, so its glyph well is drawn as an empty slot
+   rather than as a picture that failed to load. */
+.guided-asset-choice.guided-asset-none{border-style:dashed}
+.guided-asset-choice.guided-asset-none>span{background:transparent;border:1px dashed var(--line);font-size:14px}
 .guided-location-disclosure{display:block;margin:4px 0 8px;color:var(--muted);font-size:9px;line-height:1.45}
 
 /* v6.0.8.2 blocking frames — disposable planning scaffolds, never production takes. */
@@ -2716,6 +2721,10 @@ body.automation-activity-open{overflow:hidden}
 .entity-demand-row.is-open{box-shadow:inset 2px 0 0 color-mix(in srgb,var(--accent) 70%,transparent);background:color-mix(in srgb,var(--accent) 5%,var(--surface))}
 .entity-demand-row.is-satisfied{opacity:.78}
 .entity-demand-row button{white-space:normal;overflow-wrap:anywhere;text-align:left}
+/* Slice 5 - the caption that carries the honesty when the leading list is
+   material the production has not asked for yet. Quiet: it qualifies the
+   list below it, it is not a warning. */
+.entity-demand-lead-note{margin:0 0 8px;color:var(--muted);font-size:10px;line-height:1.5}
 .entity-demand-group{border:1px solid var(--line);border-radius:10px;background:var(--surface)}
 .entity-demand-group>summary{cursor:pointer;padding:10px 12px;display:flex;justify-content:space-between;gap:12px;align-items:center;list-style:none}
 .entity-demand-group>summary::-webkit-details-marker{display:none}

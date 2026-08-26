@@ -335,7 +335,15 @@ async function n6() {
     editsByFile: {
       "entities.js": [[
         `  const defaultTask = specs[0].id;`,
-        `  const defaultTask = specs.find((spec)=>boundedEntityTaskStatus(list,it,spec.id,activeCandidates,states).tone === "attention" && spec.id !== "reference")?.id || specs[0].id;`,
+        /* Slice 5 note: this used to select the first non-reference task whose tone
+           was "attention", and on this fixture the coverage task no longer has that
+           tone — the reference is dormant, and the demand gate stops a dormant
+           reference reporting outstanding required work. The MUTATION was coupled to
+           that tone; the CONTROL never was. It manufactures the same defect through
+           the same shape of plausible mistake — "open on the first unfinished
+           stage" — so the guard still faces a front door that is the coverage
+           matrix. */
+        `  const defaultTask = specs.find((spec)=>spec.id !== "reference" && boundedEntityTaskStatus(list,it,spec.id,activeCandidates,states).tone !== "complete")?.id || specs[0].id;`,
       ]],
     },
     probe: async (mutate) => {
