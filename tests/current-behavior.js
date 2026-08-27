@@ -546,6 +546,8 @@ async function main() {
     "settings-consistency.js",
     "shot-execution-tier0-negative-controls.js",
     "shot-execution-tier0.js",
+    "shot-intent-compiler-integrity-negative-controls.js",
+    "shot-intent-compiler-integrity.js",
     "shot-intent-ux-negative-controls.js",
     "shot-intent-ux-real-browser.py",
     "shot-intent-ux.js",

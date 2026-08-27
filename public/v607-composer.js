@@ -88,45 +88,40 @@
   const mediaTypeForRef = (ref) => ref?.mediaType || (isAudio(ref?.file || ref?.url || "") ? "audio" : isVideo(ref?.file || ref?.url || "") ? "video" : "image");
   const actualEntity = (id) => [...(P.characters || []), ...(P.locations || []), ...(P.props || []), ...(P.vehicles || [])].find((item) => item.id === id) || null;
 
+  /* THE NORMALIZER AND THE DECLARATION TEST READ ONE TABLE.
+   *
+   * These values are the definition of "the filmmaker said nothing", and
+   * public/shared-motion-intent.js is the module that has to recognise them again in
+   * order to keep a blank control from speaking. Two hand-kept copies of the same
+   * dozen literals would eventually disagree, and the failure mode of that disagreement
+   * is silent: a field the normalizer defaults one way and the reader defaults another
+   * reads as DECLARED forever, and the manufactured stillness comes back. */
+  function motionPlanDefaults607(dimension) {
+    return motionPlanDefaults(dimension) || {};
+  }
+  function applyMotionDefaults607(target, dimension) {
+    const defaults = motionPlanDefaults607(dimension);
+    for (const [key, value] of Object.entries(defaults)) {
+      if (typeof value === "boolean") target[key] = value ? target[key] !== false : target[key] === true;
+      else target[key] = target[key] || value;
+    }
+    return target;
+  }
   function normalizeMotionPlan607(plan) {
     const out = plan && typeof plan === "object" ? plan : {};
-    out.camera = out.camera && typeof out.camera === "object" ? out.camera : {};
-    out.camera.move = out.camera.move || "locked";
-    out.camera.direction = out.camera.direction || "";
-    out.camera.intensity = out.camera.intensity || "subtle";
-    out.camera.style = out.camera.style || "smooth";
-    out.camera.framing = out.camera.framing || "preserve";
+    out.camera = applyMotionDefaults607(out.camera && typeof out.camera === "object" ? out.camera : {}, "camera");
     out.subjects = out.subjects && typeof out.subjects === "object" ? out.subjects : {};
     out.props = out.props && typeof out.props === "object" ? out.props : {};
     for (const item of Object.values(out.subjects)) {
       if (!item || typeof item !== "object") continue;
-      item.action = item.action || "still";
-      item.direction = item.direction || "";
-      item.intensity = item.intensity || "subtle";
-      item.look = item.look || "";
-      item.targetId = item.targetId || "";
-      item.targetLabel = item.targetLabel || "";
-      item.destination = item.destination || "";
-      item.notes = item.notes || "";
+      applyMotionDefaults607(item, "subject");
     }
     for (const item of Object.values(out.props)) {
       if (!item || typeof item !== "object") continue;
-      item.action = item.action || "static";
-      item.direction = item.direction || "";
-      item.targetId = item.targetId || "";
-      item.targetLabel = item.targetLabel || "";
-      item.destination = item.destination || "";
-      item.notes = item.notes || "";
+      applyMotionDefaults607(item, "prop");
     }
-    out.environment = out.environment && typeof out.environment === "object" ? out.environment : {};
-    out.environment.action = out.environment.action || "static";
-    out.environment.intensity = out.environment.intensity || "subtle";
-    out.environment.notes = out.environment.notes || "";
-    out.timing = out.timing && typeof out.timing === "object" ? out.timing : {};
-    out.timing.onset = out.timing.onset || "immediate";
-    out.timing.pacing = out.timing.pacing || "natural";
-    out.timing.holdEnd = out.timing.holdEnd !== false;
-    out.timing.secondary = out.timing.secondary || "";
+    out.environment = applyMotionDefaults607(out.environment && typeof out.environment === "object" ? out.environment : {}, "environment");
+    out.timing = applyMotionDefaults607(out.timing && typeof out.timing === "object" ? out.timing : {}, "timing");
     out.audio = out.audio && typeof out.audio === "object" ? out.audio : {};
     out.audio.referenceKey = out.audio.referenceKey || "";
     out.audio.speakerId = out.audio.speakerId || "";
@@ -694,42 +689,65 @@
   motionSubjectPlan = window.motionSubjectPlan = function motionSubjectPlan607(holder, id) {
     holder.motionPlan = holder.motionPlan || holder;
     const plan = normalizeMotionPlan607(holder.motionPlan);
-    plan.subjects[id] = plan.subjects[id] && typeof plan.subjects[id] === "object" ? plan.subjects[id] : { action: "still", direction: "", intensity: "subtle", look: "", targetId: "", targetLabel: "", destination: "", notes: "" };
+    plan.subjects[id] = plan.subjects[id] && typeof plan.subjects[id] === "object" ? plan.subjects[id] : { ...motionPlanDefaults607("subject") };
     return plan.subjects[id];
   };
   motionPropPlan = window.motionPropPlan = function motionPropPlan607(holder, id) {
     holder.motionPlan = holder.motionPlan || holder;
     const plan = normalizeMotionPlan607(holder.motionPlan);
-    plan.props[id] = plan.props[id] && typeof plan.props[id] === "object" ? plan.props[id] : { action: "static", direction: "", targetId: "", targetLabel: "", destination: "", notes: "" };
+    plan.props[id] = plan.props[id] && typeof plan.props[id] === "object" ? plan.props[id] : { ...motionPlanDefaults607("prop") };
     return plan.props[id];
   };
+  /* THE SUMMARY STATES WHAT WAS DIRECTED, AND NOTHING ELSE.
+   *
+   * Every line here used to be unconditional. A character with no entry in
+   * `plan.subjects` at all — the state of every cast member until someone touches a
+   * control — printed "<name> remains still except for natural breathing and blinking",
+   * and an untouched camera, environment and timing row each printed their defaults as
+   * though a filmmaker had asked for them.
+   *
+   * That is not a display problem. buildGuidedMotionPrompt writes this text into the
+   * motion unit's `note` whenever there is no free-text direction, buildContext() reads
+   * `note` as BOTH the shot's description and its motionDirection, and defaultSpec()
+   * turns that into `actions[0]` — so a shot whose declared action was a swamp walk
+   * compiled to a stillness directive with no assistant anywhere in the path. On the
+   * Improve path the same sentence is sent verbatim as the directive instead.
+   *
+   * A DECLARED stillness still prints in full: "Remain still" chosen on purpose is
+   * direction, and public/shared-motion-intent.js is what tells the two apart. When
+   * nothing at all has been directed this returns "", and buildGuidedMotionPrompt's
+   * existing "Choose at least one motion direction" refusal becomes reachable — which is
+   * the honest outcome for a shot nobody has directed yet. */
   structuredMotionSummary = window.structuredMotionSummary = function structuredMotionSummary607(s) {
     const c = ensureShotCreation(s), unit = activeMotionUnit(s), plan = effectiveMotionPlan(s, unit), camera = plan.camera || {}, lines = [];
-    if (camera.move && camera.move !== "none") lines.push(`Camera: ${textLabel(camera.move)}${camera.direction ? ` ${textLabel(camera.direction)}` : ""}, ${camera.intensity || "subtle"}, ${camera.style || "smooth"}; ${camera.framing === "allow-reframe" ? "reframing allowed" : "preserve the staged composition"}.`);
+    const declaration = motionPlanDeclaration(plan);
+    if (declaration.camera.declared && camera.move && camera.move !== "none") lines.push(`Camera: ${textLabel(camera.move)}${camera.direction ? ` ${textLabel(camera.direction)}` : ""}, ${camera.intensity || "subtle"}, ${camera.style || "smooth"}; ${camera.framing === "allow-reframe" ? "reframing allowed" : "preserve the staged composition"}.`);
     for (const id of s.characters || []) {
+      if (!declaration.subjects[id]?.declared) continue;
       const x = P.characters.find((item) => item.id === id), p = plan.subjects[id] || { action: "still" }, target = p.targetLabel || targetLabelFor(s, p.targetId);
       if (p.action && p.action !== "still") lines.push(`${x?.name || id}: ${textLabel(p.action)}${target ? ` toward or in relation to ${target}` : p.direction ? ` toward ${textLabel(p.direction)}` : ""}${p.destination ? `, ending ${p.destination}` : ""}, ${p.intensity || "natural"}${p.look ? `; looks ${textLabel(p.look)}` : ""}${p.notes ? `; ${p.notes}` : ""}.`);
       else lines.push(`${x?.name || id} remains still except for natural breathing and blinking${p.notes ? `; ${p.notes}` : ""}.`);
     }
     for (const id of c.propIds || []) {
+      if (!declaration.props[id]?.declared) continue;
       const x = [...(P.props || []), ...(P.vehicles || [])].find((item) => item.id === id), p = plan.props[id] || { action: "static" }, target = p.targetLabel || targetLabelFor(s, p.targetId);
       lines.push(`${x?.name || id}: ${textLabel(p.action || "static")}${target ? ` in relation to ${target}` : p.direction ? ` ${textLabel(p.direction)}` : ""}${p.destination ? `, ending ${p.destination}` : ""}${p.notes ? `; ${p.notes}` : ""}.`);
     }
     const env = plan.environment || {};
-    lines.push(env.action && env.action !== "static" ? `Environment: ${textLabel(env.action)}, ${env.intensity || "subtle"}${env.notes ? `; ${env.notes}` : ""}.` : "Environment remains stable unless explicitly animated above.");
+    if (declaration.environment.declared) lines.push(env.action && env.action !== "static" ? `Environment: ${textLabel(env.action)}, ${env.intensity || "subtle"}${env.notes ? `; ${env.notes}` : ""}.` : "Environment remains stable unless explicitly animated above.");
     const timing = plan.timing || {};
-    lines.push(`Timing: ${timing.onset || "immediate"} onset, ${timing.pacing || "natural"} pacing${timing.holdEnd ? "; settle and hold the final state" : ""}${timing.secondary ? `; secondary action: ${timing.secondary}` : ""}.`);
+    if (declaration.timing.declared) lines.push(`Timing: ${timing.onset || "immediate"} onset, ${timing.pacing || "natural"} pacing${timing.holdEnd ? "; settle and hold the final state" : ""}${timing.secondary ? `; secondary action: ${timing.secondary}` : ""}.`);
     const audio = plan.audio || {};
     if (audio.mode === "lip-sync-reference" && audio.referenceKey) { const ref = shotPlanningGenerationReferences(s, ["audio"]).find((item) => item.key === audio.referenceKey), speaker = P.characters.find((item) => item.id === audio.speakerId); lines.push(`${speaker?.name || audio.speakerId || "The selected character"} is the only speaking character and lip-syncs the dialogue from ${ref?.label || "the linked audio reference"}${audio.direction ? ` with ${audio.direction}` : ""}.`); }
     return lines.join("\n");
   };
   motionSubjectControls = window.motionSubjectControls = function motionSubjectControls607(s) {
     const plan = effectiveMotionPlan(s), targets = targetOptions(s);
-    return (s.characters || []).map((id) => { const x = P.characters.find((item) => item.id === id), p = plan.subjects[id] || { action: "still", direction: "", intensity: "subtle", look: "", targetId: "", destination: "", notes: "" }; return `<article class="motion-director-subject"><header><b>${esc(x?.name || id)}</b><span>CHARACTER</span></header><div class="motion-director-grid"><label><span>Action</span><select onchange="setMotionSubject('${s.id}','${id}','action',this.value)">${composerOptions([["still","Remain still"],["idle","Subtle idle"],["head-turn","Head turn"],["look","Eye / gaze move"],["gesture","Gesture"],["walk","Walk"],["run","Run"],["sit","Sit"],["stand","Stand"],["enter-frame","Enter frame"],["exit-frame","Exit frame"],["interact-prop","Interact with target"]], p.action)}</select></label><label><span>Direction</span><select onchange="setMotionSubject('${s.id}','${id}','direction',this.value)">${composerOptions([["","Not specified"],["screen-left","Screen left"],["screen-right","Screen right"],["toward-camera","Toward camera"],["away-camera","Away from camera"]], p.direction)}</select></label><label><span>Target</span><select onchange="setMotionSubject('${s.id}','${id}','targetId',this.value)"><option value="">No direct target</option>${targets.filter((target) => target.id !== id).map((target) => `<option value="${attr(target.id)}" ${p.targetId === target.id ? "selected" : ""}>${esc(target.label)}</option>`).join("")}</select></label><label><span>Intensity</span><select onchange="setMotionSubject('${s.id}','${id}','intensity',this.value)">${composerOptions([["subtle","Subtle"],["natural","Natural"],["energetic","Energetic"]], p.intensity)}</select></label><label><span>Look</span><select onchange="setMotionSubject('${s.id}','${id}','look',this.value)">${composerOptions([["","Unspecified"],["camera-left","Camera left"],["camera-right","Camera right"],["toward-camera","Toward camera"],["away-camera","Away from camera"],["at-target","At selected target"]], p.look)}</select></label><label><span>End position</span><input value="${attr(p.destination || "")}" onchange="setMotionSubject('${s.id}','${id}','destination',this.value)" placeholder="at the driver-side door"></label><label class="wide"><span>Custom direction</span><input value="${attr(p.notes || "")}" onchange="setMotionSubject('${s.id}','${id}','notes',this.value)" placeholder="Reaches for the handle without crossing in front of the car…"></label></div></article>`; }).join("") || `<div class="guided-empty-inline"><b>No character assigned to this shot.</b><span>Add characters in Source & References before directing character movement.</span></div>`;
+    return (s.characters || []).map((id) => { const x = P.characters.find((item) => item.id === id), p = plan.subjects[id] || { action: "still", direction: "", intensity: "subtle", look: "", targetId: "", destination: "", notes: "" }; return `<article class="motion-director-subject"><header><b>${esc(x?.name || id)}</b><span>CHARACTER</span></header><div class="motion-director-grid"><label><span>Action</span><select onchange="setMotionSubject('${s.id}','${id}','action',this.value)">${composerOptions([["still","Remain still"],["idle","Subtle idle"],["head-turn","Head turn"],["look","Eye / gaze move"],["gesture","Gesture"],["walk","Walk"],["run","Run"],["sit","Sit"],["stand","Stand"],["enter-frame","Enter frame"],["exit-frame","Exit frame"],["interact-prop","Interact with target"]], p.action)}</select></label><label><span>Direction</span><select onchange="setMotionSubject('${s.id}','${id}','direction',this.value)">${composerOptions([["","Not specified"],["screen-left","Screen left"],["screen-right","Screen right"],["toward-camera","Toward camera"],["away-camera","Away from camera"]], p.direction)}</select></label><label><span>Target</span><select onchange="setMotionSubject('${s.id}','${id}','targetId',this.value)"><option value="">No direct target</option>${targets.filter((target) => target.id !== id).map((target) => `<option value="${attr(target.id)}" ${p.targetId === target.id ? "selected" : ""}>${esc(target.label)}</option>`).join("")}</select></label><label><span>Intensity</span><select onchange="setMotionSubject('${s.id}','${id}','intensity',this.value)">${composerOptions([["subtle","Subtle"],["natural","Natural"],["energetic","Energetic"]], p.intensity)}</select></label><label><span>Look</span><select onchange="setMotionSubject('${s.id}','${id}','look',this.value)">${composerOptions([["","Unspecified"],["camera-left","Camera left"],["camera-right","Camera right"],["toward-camera","Toward camera"],["away-camera","Away from camera"],["at-target","At selected target"]], p.look)}</select></label><label><span>End position</span><input value="${attr(p.destination || "")}" onchange="setMotionSubject('${s.id}','${id}','destination',this.value)" placeholder="e.g. at the driver-side door"></label><label class="wide"><span>Custom direction</span><input value="${attr(p.notes || "")}" onchange="setMotionSubject('${s.id}','${id}','notes',this.value)" placeholder="e.g. reaches for the handle without crossing in front of the car…"></label></div></article>`; }).join("") || `<div class="guided-empty-inline"><b>No character assigned to this shot.</b><span>Add characters in Source & References before directing character movement.</span></div>`;
   };
   motionPropControls = window.motionPropControls = function motionPropControls607(s) {
     const c = ensureShotCreation(s), plan = effectiveMotionPlan(s), targets = targetOptions(s);
-    return (c.propIds || []).map((id) => { const x = [...(P.props || []), ...(P.vehicles || [])].find((item) => item.id === id), p = plan.props[id] || { action: "static", direction: "", targetId: "", destination: "", notes: "" }; return `<article class="motion-director-subject"><header><b>${esc(x?.name || id)}</b><span>PROP / VEHICLE</span></header><div class="motion-director-grid"><label><span>Action</span><select onchange="setMotionProp('${s.id}','${id}','action',this.value)">${composerOptions([["static","Static"],["move","Move"],["picked-up","Picked up"],["set-down","Set down"],["open","Open"],["close","Close"],["start","Start"],["stop","Stop"],["pass-frame","Pass through frame"]], p.action)}</select></label><label><span>Direction</span><select onchange="setMotionProp('${s.id}','${id}','direction',this.value)">${composerOptions([["","Not specified"],["screen-left","Screen left"],["screen-right","Screen right"],["toward-camera","Toward camera"],["away-camera","Away from camera"]], p.direction)}</select></label><label><span>Target</span><select onchange="setMotionProp('${s.id}','${id}','targetId',this.value)"><option value="">No direct target</option>${targets.filter((target) => target.id !== id).map((target) => `<option value="${attr(target.id)}" ${p.targetId === target.id ? "selected" : ""}>${esc(target.label)}</option>`).join("")}</select></label><label><span>End position</span><input value="${attr(p.destination || "")}" onchange="setMotionProp('${s.id}','${id}','destination',this.value)" placeholder="stops at the curb"></label><label class="wide"><span>Custom direction</span><input value="${attr(p.notes || "")}" onchange="setMotionProp('${s.id}','${id}','notes',this.value)" placeholder="Car remains parked; headlights turn on…"></label></div></article>`; }).join("");
+    return (c.propIds || []).map((id) => { const x = [...(P.props || []), ...(P.vehicles || [])].find((item) => item.id === id), p = plan.props[id] || { action: "static", direction: "", targetId: "", destination: "", notes: "" }; return `<article class="motion-director-subject"><header><b>${esc(x?.name || id)}</b><span>PROP / VEHICLE</span></header><div class="motion-director-grid"><label><span>Action</span><select onchange="setMotionProp('${s.id}','${id}','action',this.value)">${composerOptions([["static","Static"],["move","Move"],["picked-up","Picked up"],["set-down","Set down"],["open","Open"],["close","Close"],["start","Start"],["stop","Stop"],["pass-frame","Pass through frame"]], p.action)}</select></label><label><span>Direction</span><select onchange="setMotionProp('${s.id}','${id}','direction',this.value)">${composerOptions([["","Not specified"],["screen-left","Screen left"],["screen-right","Screen right"],["toward-camera","Toward camera"],["away-camera","Away from camera"]], p.direction)}</select></label><label><span>Target</span><select onchange="setMotionProp('${s.id}','${id}','targetId',this.value)"><option value="">No direct target</option>${targets.filter((target) => target.id !== id).map((target) => `<option value="${attr(target.id)}" ${p.targetId === target.id ? "selected" : ""}>${esc(target.label)}</option>`).join("")}</select></label><label><span>End position</span><input value="${attr(p.destination || "")}" onchange="setMotionProp('${s.id}','${id}','destination',this.value)" placeholder="e.g. stops at the curb"></label><label class="wide"><span>Custom direction</span><input value="${attr(p.notes || "")}" onchange="setMotionProp('${s.id}','${id}','notes',this.value)" placeholder="e.g. car remains parked; headlights turn on…"></label></div></article>`; }).join("");
   };
   motionDirectorMap = window.motionDirectorMap = function motionDirectorMap607(s) {
     const c = ensureShotCreation(s), plan = c.composition, motion = effectiveMotionPlan(s), camera = motion.camera || {};
@@ -821,9 +839,23 @@
   window.resetMotionUnitPlan = (id, unitId) => { const s = shotById(id), unit = (s.clips || []).find((item) => item.id === unitId); if (!unit) return; unit.motionPlan = null; unit.motionProfileId = ""; unit.motionIntensity = ""; unit.preserveComposition = null; dirty(); route(); toast("Motion unit reset to shot defaults"); };
   window.setMotionUnitAsDefaults = (id, unitId) => { const s = shotById(id), c = ensureShotCreation(s), unit = (s.clips || []).find((item) => item.id === unitId); if (!unit) return; c.motionPlan = clone(effectiveMotionPlan(s, unit)); dirty(); route(); toast("This unit is now the shot motion default"); };
   function activeUnitPlanForEdit(s) { const unit = activeMotionUnit(s); return ensureUnitMotionPlan(s, unit); }
-  window.setMotionPlanField = (id, group, key, value) => { const s = shotById(id), c = ensureShotCreation(s), plan = activeUnitPlanForEdit(s); plan[group] = plan[group] && typeof plan[group] === "object" ? plan[group] : {}; plan[group][key] = value; c.deliveryIntent = "motion"; keepGuidedPanelOpen(s, "motion", "motionDirector"); dirty(); route(); };
-  window.setMotionSubject = (id, subjectId, key, value) => { const s = shotById(id), c = ensureShotCreation(s), plan = activeUnitPlanForEdit(s); plan.subjects[subjectId] = plan.subjects[subjectId] || { action: "still", direction: "", intensity: "subtle", look: "", targetId: "", targetLabel: "", destination: "", notes: "" }; plan.subjects[subjectId][key] = value; if (key === "targetId") plan.subjects[subjectId].targetLabel = targetLabelFor(s, value); c.deliveryIntent = "motion"; keepGuidedPanelOpen(s, "motion", "motionDirector"); dirty(); route(); };
-  window.setMotionProp = (id, propId, key, value) => { const s = shotById(id), c = ensureShotCreation(s), plan = activeUnitPlanForEdit(s); plan.props[propId] = plan.props[propId] || { action: "static", direction: "", targetId: "", targetLabel: "", destination: "", notes: "" }; plan.props[propId][key] = value; if (key === "targetId") plan.props[propId].targetLabel = targetLabelFor(s, value); c.deliveryIntent = "motion"; keepGuidedPanelOpen(s, "motion", "motionDirector"); dirty(); route(); };
+  /* THE ONE MOMENT AT WHICH A DECLARATION IS A FACT.
+   *
+   * A stored value that equals the default is ambiguous forever afterwards — "Remain
+   * still" chosen deliberately and a dropdown nobody opened are byte-identical. The
+   * writer is the only place that ambiguity does not exist, so each setter records the
+   * key it just wrote. public/shared-motion-intent.js hears a marked field even when its
+   * value is the default, and falls back to comparing against the default for every
+   * project written before this mark existed. Nothing needs migrating. */
+  function markMotionDeclaration607(dimension, entry, key) {
+    if (!entry || typeof entry !== "object") return entry;
+    const marks = motionDeclaredFieldsWith(dimension, entry, key);
+    if (marks.length) entry[MOTION_INTENT_DECLARED_KEY] = marks;
+    return entry;
+  }
+  window.setMotionPlanField = (id, group, key, value) => { const s = shotById(id), c = ensureShotCreation(s), plan = activeUnitPlanForEdit(s); plan[group] = plan[group] && typeof plan[group] === "object" ? plan[group] : {}; plan[group][key] = value; markMotionDeclaration607(group, plan[group], key); c.deliveryIntent = "motion"; keepGuidedPanelOpen(s, "motion", "motionDirector"); dirty(); route(); };
+  window.setMotionSubject = (id, subjectId, key, value) => { const s = shotById(id), c = ensureShotCreation(s), plan = activeUnitPlanForEdit(s); plan.subjects[subjectId] = plan.subjects[subjectId] || { ...motionPlanDefaults607("subject") }; plan.subjects[subjectId][key] = value; markMotionDeclaration607("subject", plan.subjects[subjectId], key); if (key === "targetId") plan.subjects[subjectId].targetLabel = targetLabelFor(s, value); c.deliveryIntent = "motion"; keepGuidedPanelOpen(s, "motion", "motionDirector"); dirty(); route(); };
+  window.setMotionProp = (id, propId, key, value) => { const s = shotById(id), c = ensureShotCreation(s), plan = activeUnitPlanForEdit(s); plan.props[propId] = plan.props[propId] || { ...motionPlanDefaults607("prop") }; plan.props[propId][key] = value; markMotionDeclaration607("prop", plan.props[propId], key); if (key === "targetId") plan.props[propId].targetLabel = targetLabelFor(s, value); c.deliveryIntent = "motion"; keepGuidedPanelOpen(s, "motion", "motionDirector"); dirty(); route(); };
   window.setSimpleMotionAudio = (id, key, value) => { const s = shotById(id), c = ensureShotCreation(s), plan = activeUnitPlanForEdit(s), audio = plan.audio; audio[key] = value; if (key === "mode") { audio.lipSync = value === "lip-sync-reference"; if (value !== "lip-sync-reference") audio.referenceKey = ""; } if (key === "referenceKey" && !value && audio.mode === "lip-sync-reference") audio.lipSync = false; c.deliveryIntent = "motion"; keepGuidedPanelOpen(s, "motion", "motionAudio"); dirty(); route(); };
   const setGuidedMotionField606 = window.setGuidedMotionField;
   window.setGuidedMotionField = (id, key, value) => {

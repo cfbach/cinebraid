@@ -18,6 +18,11 @@ const SCRIPT_ORDER = [
   "shared-voice.js",
   "shared-camera.js",
   "shared-lip-sync.js",
+  /* Declared motion versus defaulted motion. public/v607-composer.js normalizes,
+     summarises and writes the motion plan through it, so a harness without it would
+     throw on the first shot workspace render rather than produce one. Pure, and with
+     no dependency of its own. */
+  "shared-motion-intent.js",
   "shared-aspect.js",
   "shared-reference-views.js",
   "shared-coverage.js",

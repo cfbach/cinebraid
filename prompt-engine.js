@@ -9,6 +9,10 @@ const { parseAspectRatio } = require("./public/shared-aspect");
 /* Frame-specific presence. The compiler is where whole-shot membership stopped
    overriding a frame's declared absence — see resolveFramePresenceContext. */
 const FramePresence = require("./public/shared-frame-presence");
+/* Declared motion versus defaulted motion. Its sibling above decides whether an entity
+   is in the frame; this one decides whether a statement about how it MOVES was made by a
+   filmmaker or manufactured by a control nobody touched — see applyStructuredDirection. */
+const MotionIntent = require("./public/shared-motion-intent");
 
 const PROFILE_FILE = path.join(__dirname, "data", "model-profiles.json");
 
@@ -838,17 +842,56 @@ function applyStructuredDirection(spec, composition, motionPlan, refs = []) {
   }
   const plan = motionPlan && typeof motionPlan === "object" ? motionPlan : null;
   if (plan) {
+    /* DEFAULTS FILL UNKNOWNS. THEY DO NOT MAKE STATEMENTS.
+     *
+     * Every branch below used to run on the mere EXISTENCE of a plan, and a plan exists
+     * the moment the composer is opened. So an untouched subject row compiled to
+     * "<id> still", an untouched camera compiled to "locked-off camera with no drift"
+     * over whatever the shot had actually established, and an untouched timing row
+     * compiled to a must-preserve requirement to settle and hold the final state. A shot
+     * whose declared action was a travelling walk therefore reached MiniMax H3 with a
+     * stillness directive standing in front of it as `action.primary`, and the model
+     * did as it was told. Nothing in the project ever said "stand still".
+     *
+     * public/shared-motion-intent.js is the one owner of the distinction. It is asked
+     * per dimension, and what it withholds is RECORDED rather than dropped, so the plan
+     * shows a decision instead of a gap. */
+    const declaration = MotionIntent.motionPlanDeclaration(plan);
+    const provenance = { contract: MotionIntent.CINEBRAID_MOTION_INTENT_CONTRACT, declared: [], withheld: [] };
+    const took = (dimension, id) => provenance.declared.push({ dimension, id: cleanText(id), source: "current-shot-motion-plan" });
+    const withheld = (dimension, id, reason) => provenance.withheld.push({ dimension, id: cleanText(id), reason });
     const camera = plan.camera || {};
-    out.camera.movement = camera.move === "locked" ? "locked-off camera with no drift" : [normalizedLabel(camera.move), normalizedLabel(camera.direction)].filter(Boolean).join(" ") || out.camera.movement;
-    out.camera.stability = [normalizedLabel(camera.style), normalizedLabel(camera.intensity), camera.framing === "allow-reframe" ? "reframing allowed" : "preserve staged framing"].filter(Boolean).join(", ");
+    /* A DEFAULTED CAMERA MAY NOT OVERWRITE A DECLARED ONE. The plan's camera used to be
+       written over `out.camera` unconditionally, so an untouched control silently
+       replaced a movement the shot record, the media analysis or the assistant spec had
+       established. It may still FILL the gap where nothing else answered — that is a
+       default doing its job — and `meaningfulCamera()` in generation-compiler.js already
+       knows defaultSpec's placeholder sentence is not an answer. */
+    if (declaration.camera.declared) {
+      out.camera.movement = camera.move === "locked" ? "locked-off camera with no drift" : [normalizedLabel(camera.move), normalizedLabel(camera.direction)].filter(Boolean).join(" ") || out.camera.movement;
+      out.camera.stability = [normalizedLabel(camera.style), normalizedLabel(camera.intensity), camera.framing === "allow-reframe" ? "reframing allowed" : "preserve staged framing"].filter(Boolean).join(", ");
+      took("camera", "");
+    } else if (declaration.camera.present) {
+      withheld("camera", "", "camera-plan-carries-no-declaration");
+    }
     const actions = [];
     for (const [id, item] of Object.entries(plan.subjects || {})) {
+      if (!declaration.subjects[id]?.declared) {
+        withheld("subject", id, "subject-plan-carries-no-declaration");
+        continue;
+      }
       const target = cleanText(item.targetLabel || item.targetId || "");
       actions.push(`${id} ${normalizedLabel(item.action || "still")}${target ? ` toward or in relation to ${target}` : item.direction ? ` toward ${normalizedLabel(item.direction)}` : ""}${item.destination ? `, ending ${cleanText(item.destination)}` : ""}${item.look ? ` while looking ${normalizedLabel(item.look)}` : ""}${item.notes ? `; ${item.notes}` : ""}`);
+      took("subject", id);
     }
     for (const [id, item] of Object.entries(plan.props || {})) {
+      if (!declaration.props[id]?.declared) {
+        withheld("prop", id, "prop-plan-carries-no-declaration");
+        continue;
+      }
       const target = cleanText(item.targetLabel || item.targetId || "");
       actions.push(`${id} ${normalizedLabel(item.action || "static")}${target ? ` in relation to ${target}` : item.direction ? ` ${normalizedLabel(item.direction)}` : ""}${item.destination ? `, ending ${cleanText(item.destination)}` : ""}${item.notes ? `; ${item.notes}` : ""}`);
+      took("prop", id);
     }
     if (actions.length) {
       const structuredAction = actions.join(". ");
@@ -894,10 +937,28 @@ function applyStructuredDirection(spec, composition, motionPlan, refs = []) {
       out.audio = { ...out.audio, mode: "none", dialogue: "", transcript: "", referenceKey: "", referenceLabel: "", delivery: "" };
     }
     const env = plan.environment || {};
-    if (env.action && env.action !== "static") out.environmentMotion = unique([...out.environmentMotion, `${normalizedLabel(env.action)}, ${normalizedLabel(env.intensity || "subtle")}${env.notes ? `; ${env.notes}` : ""}`]);
+    if (declaration.environment.declared) {
+      if (env.action && env.action !== "static") out.environmentMotion = unique([...out.environmentMotion, `${normalizedLabel(env.action)}, ${normalizedLabel(env.intensity || "subtle")}${env.notes ? `; ${env.notes}` : ""}`]);
+      took("environment", "");
+    } else if (declaration.environment.present) {
+      withheld("environment", "", "environment-plan-carries-no-declaration");
+    }
     const timing = plan.timing || {};
-    if (timing.secondary) out.actions.push({ start: Math.max(0, out.durationSeconds * .5), end: out.durationSeconds, action: timing.secondary });
-    if (timing.holdEnd) out.mustPreserve = unique([...out.mustPreserve, "settle into and briefly hold the final state"]);
+    if (declaration.timing.declared) {
+      if (timing.secondary) out.actions.push({ start: Math.max(0, out.durationSeconds * .5), end: out.durationSeconds, action: timing.secondary });
+      /* `holdEnd` normalizes to TRUE, so every plan that had ever been opened added a
+         must-preserve requirement to settle and hold the final state — the same
+         manufactured stillness as the subject row above, in the requirement list rather
+         than the beats, and directly opposed to a shot that has to end mid-stride. */
+      if (timing.holdEnd) out.mustPreserve = unique([...out.mustPreserve, "settle into and briefly hold the final state"]);
+      took("timing", "");
+    } else if (declaration.timing.present) {
+      withheld("timing", "", "timing-plan-carries-no-declaration");
+    }
+    /* WHERE EVERY MOTION VALUE CAME FROM, carried on the spec beside the values
+       themselves. validateSpec() preserves unknown keys through `{...fallback, ...s}`,
+       which is how the record survives applyMotionAudioBrief's revalidation. */
+    out.motionIntent = provenance;
   }
   return out;
 }
@@ -1090,6 +1151,12 @@ function validateSpec(raw, fallback) {
      declaration; it is production truth read from the project, and the fallback
      is the only source of it. */
   out.framePresence = fallback.framePresence || { frameId: "", declarations: [], absent: [], withheldNarrative: [] };
+  /* NOR IS THE PROVENANCE. Which motion values were declared by the filmmaker and which
+     were withheld as defaults is a fact about the project, recorded by
+     applyStructuredDirection() from the stored plan. An assistant returning a spec is
+     not a witness to it, and a fabricated record would read as accounted for. Same rule
+     and same reason as the declaration above. */
+  out.motionIntent = fallback.motionIntent || null;
   out.schemaVersion = 1;
   out.shotId = fallback.shotId;
   out.durationWasDefaulted = !!fallback.durationWasDefaulted;

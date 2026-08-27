@@ -213,6 +213,8 @@ const nodeSuites = [
   "check:reference-demand-negative",
   "check:dogfood-truth",
   "check:dogfood-truth-negative",
+  "check:shot-intent-compiler",
+  "check:shot-intent-compiler-negative",
 ];
 
 /* Suites that assert something about the whole machine and therefore cannot share it.

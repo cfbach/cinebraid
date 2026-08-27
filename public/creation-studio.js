@@ -3409,23 +3409,42 @@ function motionPropPlan(c, id) {
   c.motionPlan.props[id] = c.motionPlan.props[id] && typeof c.motionPlan.props[id] === "object" ? c.motionPlan.props[id] : { action: "static", direction: "", notes: "" };
   return c.motionPlan.props[id];
 }
+/* THE SAME RULE AS THE 6.0.7 COMPOSER'S, AND IT HAS TO BE HERE TOO.
+ *
+ * public/v607-composer.js replaces this function on every normal page, so repairing it
+ * there alone would look complete and leave the defect live on two real paths: safe mode
+ * (`?safe=1`, or the `cinebraid-disable-v607-composer` preference) returns before any
+ * override is installed, and restoreComposerOriginals607() puts THIS implementation back
+ * whenever the enhanced composer fails a load-time check or a caller disables it. A
+ * filmmaker on either path was compiling motion prompts through the code below.
+ *
+ * A defaulted control makes no statement. Read through public/shared-motion-intent.js so
+ * the two composers cannot answer that question differently — and READ rather than
+ * create: motionSubjectPlan()/motionPropPlan() write a blank entry into the project as a
+ * side effect of being asked, so deciding "nobody directed this" through them would have
+ * meant writing a record in order to discover it was empty. */
 function structuredMotionSummary(s) {
   const c = ensureShotCreation(s), plan = c.motionPlan, camera = plan.camera || {}, lines = [];
-  if (camera.move && camera.move !== "none") lines.push(`Camera: ${camera.move.replace(/-/g," ")}${camera.direction ? ` ${camera.direction.replace(/-/g," ")}` : ""}, ${camera.intensity || "subtle"}, ${camera.style || "smooth"}; ${camera.framing === "allow-reframe" ? "reframing allowed" : "preserve the staged composition"}.`);
+  const declaration = motionPlanDeclaration(plan);
+  if (declaration.camera.declared && camera.move && camera.move !== "none") lines.push(`Camera: ${camera.move.replace(/-/g," ")}${camera.direction ? ` ${camera.direction.replace(/-/g," ")}` : ""}, ${camera.intensity || "subtle"}, ${camera.style || "smooth"}; ${camera.framing === "allow-reframe" ? "reframing allowed" : "preserve the staged composition"}.`);
   for (const id of s.characters || []) {
-    const x = P.characters.find((item) => item.id === id), p = motionSubjectPlan(c, id);
+    if (!declaration.subjects[id]?.declared) continue;
+    const x = P.characters.find((item) => item.id === id), p = (plan.subjects || {})[id] || {};
     if (p.action && p.action !== "still") lines.push(`${x?.name || id}: ${p.action.replace(/-/g," ")}${p.direction ? ` toward ${p.direction.replace(/-/g," ")}` : ""}, ${p.intensity || "natural"}${p.look ? `; looks ${p.look.replace(/-/g," ")}` : ""}${p.notes ? `; ${p.notes}` : ""}.`);
     else lines.push(`${x?.name || id} remains still except for natural breathing and blinking${p.notes ? `; ${p.notes}` : ""}.`);
   }
   for (const id of c.propIds || []) {
-    const x = [...(P.props || []), ...(P.vehicles || [])].find((item) => item.id === id), p = motionPropPlan(c, id);
+    if (!declaration.props[id]?.declared) continue;
+    const x = [...(P.props || []), ...(P.vehicles || [])].find((item) => item.id === id), p = (plan.props || {})[id] || {};
     lines.push(`${x?.name || id}: ${String(p.action || "static").replace(/-/g," ")}${p.direction ? ` ${p.direction.replace(/-/g," ")}` : ""}${p.notes ? `; ${p.notes}` : ""}.`);
   }
   const env = plan.environment || {};
-  if (env.action && env.action !== "static") lines.push(`Environment: ${env.action.replace(/-/g," ")}, ${env.intensity || "subtle"}${env.notes ? `; ${env.notes}` : ""}.`);
-  else lines.push("Environment remains stable unless explicitly animated above.");
+  if (declaration.environment.declared) {
+    if (env.action && env.action !== "static") lines.push(`Environment: ${env.action.replace(/-/g," ")}, ${env.intensity || "subtle"}${env.notes ? `; ${env.notes}` : ""}.`);
+    else lines.push("Environment remains stable unless explicitly animated above.");
+  }
   const timing = plan.timing || {};
-  lines.push(`Timing: ${timing.onset || "immediate"} onset, ${timing.pacing || "natural"} pacing${timing.holdEnd ? "; settle and hold the final state" : ""}${timing.secondary ? `; secondary action: ${timing.secondary}` : ""}.`);
+  if (declaration.timing.declared) lines.push(`Timing: ${timing.onset || "immediate"} onset, ${timing.pacing || "natural"} pacing${timing.holdEnd ? "; settle and hold the final state" : ""}${timing.secondary ? `; secondary action: ${timing.secondary}` : ""}.`);
   const audio = plan.audio || {};
   if (audio.lipSync && audio.referenceKey) {
     const ref = shotPlanningGenerationReferences(s, ["audio"]).find((item) => item.key === audio.referenceKey);
@@ -4390,10 +4409,20 @@ window.useApprovedBaseAsShot = async (id) => {
     toast("Could not use plate: " + e.message);
   }
 };
+/* THE MOMENT A DECLARATION BECOMES A FACT, on the base composer's writers too.
+ * A stored value equal to the default is ambiguous forever afterwards; the setter is the
+ * only place it is not. Mirrors public/v607-composer.js — see public/shared-motion-intent.js. */
+function markMotionDeclaration(dimension, entry, key) {
+  if (!entry || typeof entry !== "object") return entry;
+  const marks = motionDeclaredFieldsWith(dimension, entry, key);
+  if (marks.length) entry[MOTION_INTENT_DECLARED_KEY] = marks;
+  return entry;
+}
 window.setMotionPlanField = (id, group, key, value) => {
   const s = shotById(id), c = ensureShotCreation(s);
   c.motionPlan[group] = c.motionPlan[group] && typeof c.motionPlan[group] === "object" ? c.motionPlan[group] : {};
   c.motionPlan[group][key] = value;
+  markMotionDeclaration(group, c.motionPlan[group], key);
   c.deliveryIntent = "motion";
   keepGuidedPanelOpen(s, "motion", "motionDirector");
   dirty(); route();
@@ -4401,6 +4430,7 @@ window.setMotionPlanField = (id, group, key, value) => {
 window.setMotionSubject = (id, subjectId, key, value) => {
   const s = shotById(id), c = ensureShotCreation(s);
   motionSubjectPlan(c, subjectId)[key] = value;
+  markMotionDeclaration("subject", c.motionPlan.subjects[subjectId], key);
   c.deliveryIntent = "motion";
   keepGuidedPanelOpen(s, "motion", "motionDirector");
   dirty(); route();
@@ -4408,6 +4438,7 @@ window.setMotionSubject = (id, subjectId, key, value) => {
 window.setMotionProp = (id, propId, key, value) => {
   const s = shotById(id), c = ensureShotCreation(s);
   motionPropPlan(c, propId)[key] = value;
+  markMotionDeclaration("prop", c.motionPlan.props[propId], key);
   c.deliveryIntent = "motion";
   keepGuidedPanelOpen(s, "motion", "motionDirector");
   dirty(); route();
