@@ -384,6 +384,124 @@
     return REFERENCE_DEMAND_LABELS[state] || REFERENCE_DEMAND_LABELS["required-now"];
   }
 
+  /* -------------------------------------------------------------------------
+     DOGFOOD SLICE 0 — WHAT A COVERAGE RUN RECORD IS ALLOWED TO SAY NOW.
+
+     `entity.coverageAutomation` is a DURABLE RECORD OF A MACHINE'S OWN REPORT:
+     which mode was submitted, which jobs it queued, and what it last knew about
+     the requirement it was launched against. Two of those are history and stay
+     history. The third — `status`, and the `missingRequired` count beside it —
+     is a claim about the PROJECT, and the project moves without telling the
+     record.
+
+     The Aug 26 dogfood pass is the whole argument for this function. A creator
+     satisfied the last required view by cropping a sheet by hand. The coverage
+     board, which counts through summariseCoverage(), said 0 missing. The run
+     banner, which read `run.status` and `run.missingRequired`, said NEEDS
+     ATTENTION and offered RESUME MISSING VIEWS — a button whose destination is a
+     paid generation dialog. One screen, two numbers, and the wrong one had the
+     money attached to it.
+
+     THE RULE, and it is the same rule the run-gate reconciliation in
+     public/shared-production-authority.js applies to approval gates: a stored
+     run state may never contradict current authoritative truth about the goal it
+     was launched to reach. It does not matter whether the automation is what
+     closed the gap; a goal satisfied by hand is satisfied.
+
+     THREE PROPERTIES, structural rather than merely tested:
+
+     * NOTHING IS MUTATED. Like every other resolver in this file, this returns a
+       fresh value and writes nothing. The one durable writer that exists
+       (updateCoverageTerminalState in public/coverage-automation.js) calls this
+       and copies the answer; it is not a second opinion.
+
+     * THE RECORDED STATUS IS NEVER DESTROYED. `recordedStatus` carries what the
+       machine actually last said, so Activity and history keep their evidence
+       while the live surface stops asserting it.
+
+     * COVERAGE IS ASKED, NEVER ASSUMED. With no knowable coverage answer, the
+       recorded status is passed through unchanged and the paid action is NOT
+       suppressed — exactly the discipline referenceDemandState() applies to
+       production demand. Suppressing work requires a positive, knowing "nothing
+       is missing"; a caller that cannot establish coverage must not be able to
+       silently hide the run or the action.
+
+     The statuses below are public/coverage-automation.js's own vocabulary, named
+     here so the reconciliation and the writer cannot drift apart. */
+  const COVERAGE_RUN_GOALS = ["satisfied", "outstanding", "unknown"];
+  /* A recorded status that means "the machine handed something back and a person
+     still owes it a decision". These are the ones a satisfied goal must clear,
+     and the ones updateCoverageTerminalState has always downgraded. */
+  const COVERAGE_RUN_REVIEW_STATUSES = ["sheet-ready-for-review", "slot-candidates-ready", "ready-for-review"];
+  /* A recorded status that says the machine is still executing. A run in flight is
+     not reconciled to "completed" by this function even when the requirement is
+     already met: the record belongs to a runner that has not finished writing it,
+     and overwriting it here would be the same race automation-runs.js refuses for
+     `running`. The GOAL is still reported satisfied, so no surface has to pretend
+     work is owed — it simply does not restate the machine's own status. */
+  const COVERAGE_RUN_ACTIVE_STATUSES = ["starting", "sheet-running", "individual-running"];
+
+  function coverageRunReconciliation(run, coverage) {
+    const record = coverageSlotObject(run);
+    const it = coverageSlotObject(coverage);
+    const recordedStatus = coverageText(record.status);
+    const recordedMissing = Number.isFinite(Number(record.missingRequired)) && Number(record.missingRequired) >= 0
+      ? Math.floor(Number(record.missingRequired))
+      : null;
+    const missing = Number(it.missingRequired);
+    /* KNOWN means a caller positively supplied a current count. `known: false`
+       forces unknown even when a number came with it, so a surface that is
+       rendering from a partial projection can say so. */
+    const known = it.known !== false && Number.isFinite(missing) && missing >= 0;
+    if (!known) {
+      return {
+        known: false,
+        goal: "unknown",
+        status: recordedStatus,
+        recordedStatus,
+        missingRequired: recordedMissing,
+        reconciled: false,
+        /* Neither suppressed nor asserted: the caller could not establish the
+           requirement, so nothing here narrows what it may offer. */
+        actionable: COVERAGE_RUN_REVIEW_STATUSES.includes(recordedStatus) || recordedStatus === "needs-attention",
+        offersGeneration: true,
+      };
+    }
+    const live = Math.floor(missing);
+    if (live === 0) {
+      /* THE SATISFIED CASE. The machine's own word is kept in `recordedStatus`
+         and replaced everywhere it would be read as a live claim. A run still
+         executing keeps its executing status — see COVERAGE_RUN_ACTIVE_STATUSES
+         — because "a machine is working" and "the goal is met" are different
+         facts and this function only owns the second. */
+      const active = COVERAGE_RUN_ACTIVE_STATUSES.includes(recordedStatus);
+      const status = active ? recordedStatus : "completed";
+      return {
+        known: true,
+        goal: "satisfied",
+        status,
+        recordedStatus,
+        missingRequired: 0,
+        reconciled: recordedStatus !== status || recordedMissing !== 0,
+        actionable: false,
+        offersGeneration: false,
+      };
+    }
+    return {
+      known: true,
+      goal: "outstanding",
+      /* The machine's status still governs how the outstanding work is described
+         — it is the only thing that knows whether a sheet came back or a slot
+         request failed — but the COUNT beside it is the live one. */
+      status: recordedStatus,
+      recordedStatus,
+      missingRequired: live,
+      reconciled: recordedMissing !== live,
+      actionable: COVERAGE_RUN_REVIEW_STATUSES.includes(recordedStatus) || recordedStatus === "needs-attention",
+      offersGeneration: true,
+    };
+  }
+
   return {
     COVERAGE_REQUIREMENTS,
     LEGACY_FALSE_REQUIREMENT,
@@ -407,5 +525,9 @@
     REFERENCE_DEMAND_LABELS,
     referenceDemandState,
     referenceDemandStateLabel,
+    COVERAGE_RUN_GOALS,
+    COVERAGE_RUN_REVIEW_STATUSES,
+    COVERAGE_RUN_ACTIVE_STATUSES,
+    coverageRunReconciliation,
   };
 });

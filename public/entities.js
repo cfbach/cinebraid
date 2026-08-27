@@ -296,15 +296,53 @@ function entityCoverageSectionKey(list, id, group = "angles") {
 function entityCoverageActiveJobs(list, id, group = "angles") {
   return (Array.isArray(FAL_GENERATION_JOBS) ? FAL_GENERATION_JOBS : []).filter((job) => job.entityList === list && job.entityId === id && job.purpose === "entity-reference" && !["COMPLETED", "FAILED", "CANCELLED"].includes(String(job.status || "").toUpperCase()) && (group === "expressions" ? job.coverageSheetType === "expressions" : job.coverageSheetType !== "expressions"));
 }
+/* THE COVERAGE RUN, SAID IN THE PRESENT TENSE.
+ *
+ * This banner used to render `run.status` and `run.missingRequired` — two fields a
+ * machine wrote when it last looked. The coverage board three inches away counts
+ * through summariseCoverage() on every render. On Aug 26 a creator satisfied the
+ * last required view by hand: the board said 0 missing, this banner said NEEDS
+ * ATTENTION, and the button it drew opened a paid generation dialog for work that
+ * no longer existed.
+ *
+ * There is one answer now and it is the reconciliation in public/shared-coverage.js,
+ * asked through public/coverage-automation.js so the run's own slot set (angles vs
+ * expressions) is the one that decides. What the machine actually recorded is not
+ * thrown away — it is named underneath when it differs, because the run happening
+ * is still history and history is evidence.
+ *
+ * RESUME MISSING VIEWS IS DRAWN FROM THE LIVE ANSWER, never from the stored status.
+ * A satisfied goal has no missing views to resume, so there is no control to press
+ * and no paid dialog behind it. */
 function entityCoverageRunStatusMarkup(list, entity, group = "angles") {
   const run = entity?.coverageAutomation;
   if (!run || (group === "expressions") !== (run.sheetType === "expressions")) return "";
-  const status = String(run.status || "").toLowerCase();
+  const live = typeof coverageRunState === "function" ? coverageRunState(list, entity, run) : null;
+  const status = String((live ? live.status : run.status) || "").toLowerCase();
+  const recorded = String((live ? live.recordedStatus : run.status) || "").toLowerCase();
   if (!status || ["starting","sheet-running","individual-running"].includes(status)) return "";
-  const tone = status === "completed" ? "complete" : ["failed","cancelled","needs-attention"].includes(status) ? "attention" : "pending";
-  const label = status.replace(/-/g, " ");
-  const detail = status === "sheet-ready-for-review" ? "Sheet returned. Review it, then extract useful panels." : status === "slot-candidates-ready" ? "Individual view candidates returned and await review." : status === "completed" ? "All required slots are approved." : run.error || `${run.missingRequired ?? "Some"} required slots still need attention.`;
-  return `<div class="coverage-run-status tone-${attr(tone)}"><div><span>COVERAGE RUN</span><b>${esc(label.toUpperCase())}</b><small>${esc(detail)}</small></div>${status === "needs-attention" ? `<button class="ghost-btn" onclick="openCoverageAutomationModal('${attr(list)}','${attr(entity.id)}','individual')">RESUME MISSING VIEWS</button>` : ""}</div>`;
+  const satisfied = live?.goal === "satisfied";
+  const tone = satisfied || status === "completed" ? "complete" : ["failed","cancelled","needs-attention"].includes(status) ? "attention" : "pending";
+  const label = satisfied ? "goal satisfied" : status.replace(/-/g, " ");
+  const missing = live?.known ? live.missingRequired : run.missingRequired;
+  const detail = satisfied
+    ? "Every required view has an image selected. No action is needed here."
+    : status === "sheet-ready-for-review" ? "Sheet returned. Review it, then extract useful panels."
+      : status === "slot-candidates-ready" ? "Individual view candidates returned and await review."
+        : status === "completed" ? "Every required view has an image selected."
+          : run.error || `${missing ?? "Some"} required ${missing === 1 ? "slot still needs" : "slots still need"} attention.`;
+  /* Reconciled, and it says so. A creator who watched this banner say NEEDS
+     ATTENTION five minutes ago is owed the sentence that explains why it does not
+     any more, rather than a silent swap. */
+  const history = live?.reconciled && recorded && recorded !== status
+    ? `<small class="coverage-run-recorded" data-coverage-run-recorded="${attr(recorded)}">This run last recorded ${esc(recorded.replace(/-/g, " "))}. Current coverage has moved past it.</small>`
+    : "";
+  /* THE CONTROL IS DRAWN FROM THE LIVE GOAL. With no live answer, or one that
+     could not be established, the recorded status governs exactly as it always
+     did — withholding a repair action on an unknown is the wrong direction to be
+     wrong in. */
+  const resume = status === "needs-attention" && (!live || !live.known || live.goal === "outstanding");
+  return `<div class="coverage-run-status tone-${attr(tone)}" data-coverage-run-goal="${attr(live?.goal || "unknown")}"><div><span>COVERAGE RUN</span><b>${esc(label.toUpperCase())}</b><small>${esc(detail)}</small>${history}</div>${resume ? `<button class="ghost-btn" onclick="openCoverageAutomationModal('${attr(list)}','${attr(entity.id)}','individual')">RESUME MISSING VIEWS</button>` : ""}</div>`;
 }
 function entityCoverageActivityMarkup(list, entity, group = "angles") {
   const jobs = entityCoverageActiveJobs(list, entity.id, group);

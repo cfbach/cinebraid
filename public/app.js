@@ -179,6 +179,19 @@ const STAGE_STATUS = {
      unmet prerequisite and the model states it, so the strip says so and shows the
      reason beside it. */
   blocked: "Blocked",
+  /* DOGFOOD SLICE 0. Two words for two things the strip previously had to say with
+     "Not started", which reads as a debt.
+
+     `notRequired` is the DECLARED ROUTE's answer: this shot asked for no authored
+     frame, so Frames is not owed one. It is emphatically NOT the not-applicable
+     distinction shared-stage-model.js declares it cannot make — that is about a
+     stage being irrelevant to a shot forever, and this is a live reading of a route
+     the filmmaker declared and can change back at any time.
+
+     `optional` is the answer for a stage the production visibly moved past: the work
+     is still available, still reachable, and not outstanding. */
+  notRequired: "Not required",
+  optional: "Optional",
 };
 
 /* One name per production concept, used everywhere that concept is counted. "Delivered"

@@ -121,6 +121,31 @@
   const COMPLETION = ["not-started", "in-progress", "needs-review", "complete"];
   const ACTIVITY = ["", "running", "awaiting-review", "failed", "interrupted"];
 
+  /* HOW THE RUN BEHIND `activityStatus` IS DOING, which is a different question
+     from what it last did.
+
+     DOGFOOD SLICE 0. `activityStatus` is a status STRING mirrored off an
+     automation run, and a status string cannot distinguish "this failed and
+     nobody is coming" from "this failed and its parent is already retrying it".
+     The Aug 26 pass produced the second and CineBraid painted the first: a child
+     stage failure went red on a shot whose automation was continuing normally.
+
+     So severity is asked as its own fact, supplied by the caller from the same
+     shipped run predicates every other activity surface uses:
+
+       ""            not stated. The status alone decides, exactly as before.
+       "healthy"     the machine is working and nothing is wrong.
+       "recovering"  it stopped, and automatic recovery is in progress or a
+                     healthy parent owns it. NEUTRAL, never attention: no person
+                     is being asked for anything.
+       "stopped"     it stopped and a person has to act. Attention.
+
+     This narrows severity ONLY. A stage that would already be attention can be
+     reported neutral when recovery is active; nothing here can make a healthy
+     stage look worse than its status says, and an unstated health leaves the
+     shipped answer untouched. */
+  const ACTIVITY_HEALTH = ["", "healthy", "recovering", "stopped"];
+
   /* ==========================================================================
      THE DECLARATION.
 
@@ -412,6 +437,26 @@
     "motionReadinessReason",
     "motionCandidateCount",
     "activityStatus",
+    /* DOGFOOD SLICE 0. Two facts, both supplied by the caller from shipped
+       authorities, both narrowing-only.
+
+       `activityHealth` is severity — see ACTIVITY_HEALTH above.
+
+       `downstreamAuthorityApproved` is "has the production moved past this point
+       on approved work". It is the evidence an OPTIONAL stage needs before it can
+       stop asking: a shot with approved required frames or an approved delivery
+       has demonstrably not been waiting for a blocking guide, so leaving Look &
+       blocking amber for candidates nobody chose describes work that is not
+       owed. It never makes a stage look MORE complete than it is — the stage
+       still reports `not-started`, because nothing was started. */
+    "activityHealth",
+    "downstreamAuthorityApproved",
+    /* IS THERE A RESULT TO DELIVER. Supplied by the caller from the shot's own
+       approved still and approved motion take — the two values the lifecycle itself
+       is built from — because Deliver's declared prerequisite is "Approve a still or
+       a video first" and that is a question about RESULTS, not about which lifecycle
+       label the shot happens to be wearing. See deliverState. */
+    "approvedResultAvailable",
     "lifecycleKey",
     "deliveryIntent",
     /* The canonical route token remains in the fact record for truthful storage
@@ -429,6 +474,7 @@
   function normaliseShotStageFacts(facts) {
     const raw = facts && typeof facts === "object" ? facts : {};
     const activity = stageText(raw.activityStatus);
+    const health = stageText(raw.activityHealth);
     return {
       referenceCount: stageCount(raw.referenceCount),
       missingReferenceCount: stageCount(raw.missingReferenceCount),
@@ -445,6 +491,9 @@
       motionReadinessReason: stageText(raw.motionReadinessReason),
       motionCandidateCount: stageCount(raw.motionCandidateCount),
       activityStatus: ACTIVITY.includes(activity) ? activity : "",
+      activityHealth: ACTIVITY_HEALTH.includes(health) ? health : "",
+      downstreamAuthorityApproved: !!raw.downstreamAuthorityApproved,
+      approvedResultAvailable: !!raw.approvedResultAvailable,
       lifecycleKey: stageText(raw.lifecycleKey),
       deliveryIntent: stageText(raw.deliveryIntent),
       deliveryRoute: stageText(raw.deliveryRoute),
@@ -506,6 +555,36 @@
     if (facts.blockingGuideActive)
       return stageResult(stage, { availability: "available", completion: "complete", statusKey: "complete", tone: "complete" });
     if (facts.blockingGuideCandidateCount) {
+      /* DOGFOOD SLICE 0 — A SKIPPED OPTIONAL STAGE STOPS ASKING.
+
+         Blocking attempts that nobody chose used to make this stage NEEDS REVIEW,
+         in attention tone, for the rest of the shot's life. On Aug 26 that left
+         earlier stage buttons amber on shots whose frames were approved and whose
+         motion had already been generated — the workflow reporting outstanding
+         work on a decision the production had visibly made by proceeding.
+
+         This stage is DECLARED optional: it may be skipped outright. So where
+         approved downstream authority exists, the candidates are still here, still
+         reachable and still counted — they are simply not a claim on the director.
+         Completion stays `not-started`, because nothing was completed; only the
+         claim on attention is withdrawn. A stage that is NOT declared optional is
+         untouched by this, and so is a shot with no downstream approval yet. */
+      if (stage.optional && facts.downstreamAuthorityApproved) {
+        return stageResult(stage, {
+          availability: "available",
+          completion: "not-started",
+          statusKey: "optional",
+          /* `pending`, NOT `optional`, and the difference is navigation rather than
+             colour — both paint the same muted dot. recommendedShotStageId() scans
+             active, then attention, then PENDING, so a stage dropped to `optional`
+             would also drop out of "where should this shot open", and withdrawing a
+             false claim on attention must not quietly move the filmmaker somewhere
+             else. The stage is not started and not owed: pending says the first and
+             the status word says the second. */
+          tone: "pending",
+          note: { key: "blocking-guides-available", count: facts.blockingGuideCandidateCount },
+        });
+      }
       return stageResult(stage, {
         availability: "available",
         completion: "needs-review",
@@ -533,25 +612,79 @@
           : facts.frameApprovedCount
             ? "in-progress"
             : "not-started";
-    if (facts.activityStatus) {
-      const attention = facts.activityStatus === "failed" || facts.activityStatus === "interrupted";
+    /* DOGFOOD SLICE 0 — APPROVED PRODUCTION TRUTH DOMINATES A RUN RECORD.
+
+       This branch used to come FIRST and unconditionally, so whatever an
+       automation run last said became the stage's headline. On Aug 26 a creator
+       approved a returned frame and the workflow went on saying RUNNING: the
+       approval had satisfied the stage, and a stale run status was still being
+       preferred for the status slot.
+
+       The order is now the invariant. A stage whose work is COMPLETE reports
+       complete — the human decision is the authority and a machine cannot outrank
+       it — and the run is still reported, in `activity`, as the secondary detail
+       it is. Whatever background work remains is genuinely background: it is not
+       what the shot is waiting for.
+
+       Nothing else about the run branch changed except severity, below. */
+    if (completion === "complete" && facts.activityStatus)
       return stageResult(stage, {
         availability: "available",
         completion,
         activity: facts.activityStatus,
-        statusKey: facts.activityStatus === "failed" ? "failed" : facts.activityStatus === "awaiting-review" ? "needsReview" : "running",
+        statusKey: "approved",
+        tone: "complete",
+        note,
+      });
+    if (facts.activityStatus) {
+      /* SEVERITY IS THE RUN'S HEALTH, NOT ITS LAST WORD.
+
+         `failed` and `interrupted` used to be attention outright. Both are
+         reachable while automatic recovery is in progress — a step being retried,
+         or a child run a healthy parent is already re-driving — and neither is
+         asking a person for anything in that state. `recovering` reads neutral;
+         `stopped` and an unstated health keep the shipped answer exactly. */
+      const recovering = facts.activityHealth === "recovering" || facts.activityHealth === "healthy";
+      /* NARROWING ONLY, AND DELIBERATELY NOTHING ELSE.
+
+         `awaiting-review` is NOT moved into this set even though a run parked at a
+         gate is waiting for a person. tests/stage-model.js pins it as machine
+         activity with a stated rationale, no dogfood observation reported it, and
+         re-severitising a shipped state is a decision about the taskbar rather
+         than a stale-truth repair. `interrupted` is not reinterpreted either — it
+         is overloaded upstream and this module still passes it through rather than
+         choosing one of its two meanings. The only change is that a run under
+         active recovery stops claiming attention it has no basis for. */
+      const attention = !recovering && (facts.activityStatus === "failed" || facts.activityStatus === "interrupted");
+      return stageResult(stage, {
+        availability: "available",
+        completion,
+        activity: facts.activityStatus,
+        statusKey: attention && facts.activityStatus === "failed" ? "failed" : facts.activityStatus === "awaiting-review" ? "needsReview" : "running",
         tone: attention ? "attention" : "active",
       });
     }
     if (facts.frameNeedsReview)
       return stageResult(stage, { availability: "available", completion, statusKey: "needsReview", tone: "attention", note });
     if (noFramesRequired)
+      /* THE DECLARED ROUTE ASKED FOR NO FRAME, so this stage is not owed one.
+
+         A shot delivered from references alone reported "Not started · 0 of 2
+         frames approved" — a fraction of a requirement that does not exist, on a
+         stage the model itself marks optional two functions down. The retained
+         frames are still here and still reachable; the stage simply says what it
+         is rather than counting a debt. */
       return stageResult(stage, {
         availability: "available",
         completion,
-        statusKey: retainedFramesComplete ? "approved" : facts.frameApprovedCount ? "inProgress" : "notStarted",
-        tone: retainedFramesComplete ? "complete" : "pending",
-        note,
+        statusKey: retainedFramesComplete ? "approved" : facts.frameApprovedCount ? "inProgress" : "notRequired",
+        tone: retainedFramesComplete ? "complete" : facts.frameApprovedCount ? "pending" : "optional",
+        /* "0 of 2 frames approved" is a FRACTION OF A REQUIREMENT, and printing it
+           beside "Not required" is the amber the alpha pass objected to said in
+           words. Where nothing has been approved and nothing is required, the note
+           reports what the shot is CARRYING instead — the frames are still there,
+           and none of them is owed. */
+        note: retainedFramesComplete || facts.frameApprovedCount ? note : facts.frameTotal ? { key: "frames-retained", count: facts.frameTotal } : null,
       });
     if (facts.requiredFramesApproved)
       return stageResult(stage, { availability: "available", completion, statusKey: "approved", tone: "complete", note });
@@ -594,7 +727,21 @@
   function deliverState(stage, facts) {
     if (facts.lifecycleKey === "final")
       return stageResult(stage, { availability: "available", completion: "complete", statusKey: "complete", tone: "complete" });
-    if (facts.lifecycleKey === "motion-approved" || facts.lifecycleKey === "still-ready")
+    /* DOGFOOD SLICE 0 — THE PREREQUISITE IS ASKED, NOT INFERRED FROM A LABEL.
+
+       This used to admit exactly two lifecycle keys, `motion-approved` and
+       `still-ready`, and block everything else with "Approve a still or a video
+       first". Two reachable states have an approved result and neither of those
+       labels: `animate` (an approved still on a shot that wants motion) and
+       `review-motion` (an approved still with returned video candidates). Both
+       therefore told a filmmaker to approve a still they had already approved,
+       which is the same shape of lie this slice exists to end — a secondary
+       projection contradicting authoritative production truth.
+
+       The prerequisite is `approved-result`. It is now answered by whether a
+       result exists. `motion-approved` and `still-ready` are unchanged by this,
+       because a shot in either has one by construction. */
+    if (facts.approvedResultAvailable || facts.lifecycleKey === "motion-approved" || facts.lifecycleKey === "still-ready")
       return stageResult(stage, { availability: "available", completion: "not-started", statusKey: "notStarted", tone: "pending" });
     const blockedReason = stage.prerequisites[0].reason;
     return stageResult(stage, {
@@ -652,6 +799,15 @@
      so adding a sixth stage cannot leave this pointing at the fifth. */
   function recommendedShotStageId(facts) {
     const states = shotStageProgress(facts);
+    /* "THE FIRST ONE A MACHINE IS WORKING ON" IS ASKED OF `activity`, NOT OF THE
+       COLOUR. The two used to coincide because the activity branch always painted
+       `active`; now that approved work outranks a run for the STATUS WORD (see
+       framesState), a stage can carry a live run and report complete — and reading
+       navigation off the tone would have moved the filmmaker away from the stage
+       holding that run's controls. The status word changed; where the work is did
+       not. */
+    const working = states.find((state) => state.activity);
+    if (working) return working.id;
     for (const tone of ["active", "attention", "pending"]) {
       const match = states.find((state) => state.tone === tone);
       if (match) return match.id;

@@ -3762,7 +3762,13 @@ function guidedMotionPromptResult(s, build) {
     ? `<div class="package-stale" data-package-freshness="unknown"><b>NOT CHECKED</b><span>This prompt was compiled before CineBraid recorded what it was built from, so it cannot be checked against the shot as it stands now. Rebuild it to make it verifiable.</span></div>`
     : freshness.current
       ? `<div class="package-current" data-package-freshness="current"><b>CURRENT</b><span>Every input this prompt was compiled from still matches the shot.</span></div>`
-      : `<div class="package-stale" data-package-freshness="stale"><b>OUT OF DATE — REBUILD BEFORE GENERATING</b><span>${esc(freshness.reasons.join("; "))}.</span><button class="ghost-btn" onclick="buildGuidedMotionPrompt('${attr(s.id)}',false)">REBUILD MOTION PROMPT</button></div>`;
+      /* DOGFOOD SLICE 0. The verdict was already right and already here; what was
+         missing was that anything obeyed it. Generation is now withheld while a
+         recorded snapshot says the package is stale — see falH3MotionPromptAction
+         in public/fal-generation.js — so this block states the consequence rather
+         than only the advice, and carries the PRIMARY action that lifts it, beside
+         the exact reasons it is stale. */
+      : `<div class="package-stale" data-package-freshness="stale"><b>OUT OF DATE — REBUILD BEFORE GENERATING</b><span>${esc(freshness.reasons.join("; "))}. Generation stays unavailable until this package is rebuilt.</span><button class="approve-btn" onclick="buildGuidedMotionPrompt('${attr(s.id)}',false)">REBUILD MOTION PROMPT</button></div>`;
   return `<article class="guided-prompt-result motion ${profile?.family === "minimax-h3" ? "h3" : ""}${freshness.recorded && !freshness.current ? " is-stale" : ""}"><header><div><span>READY-TO-USE MOTION PROMPT</span><b>${esc(build.profileName || build.profileId)}</b><small>${esc(inputSummary)}${build.durationSeconds ? ` · ${build.durationSeconds}s` : ""}${build.packageId ? ` · ${esc(build.packageId)}` : ""}${build.manualEdited ? " · MANUAL REVISION" : ""}</small></div><div>${h3Action}<button class="ghost-btn motion-prompt-edit-btn" onclick="openGuidedMotionPromptEditor('${s.id}','${build.id}')">EDIT PROMPT</button><button class="copy-btn" onclick="copyText(${JSON.stringify(build.prompt || "").replace(/"/g, "&quot;")})">COPY</button><button class="chip" onclick="downloadGuidedMotionPrompt('${s.id}','${build.id}')">Download</button></div></header>${freshnessMarkup}${unsupported}${h3Job}<pre class="guided-ready-motion-prompt">${esc(build.prompt || "")}</pre>${revision}${guidedPromptWarningsMarkup(build.warnings)}${guidedProductionRisksMarkup(build.productionRisks)}</article>`;
 }
 function guidedMotionCandidatePanel(s, takes, approved) {
@@ -4089,6 +4095,15 @@ function shotStageModelFacts(s, takes) {
   const references = shotCreationReferences(s);
   const automationRows = (typeof AUTOMATION_RUNS !== "undefined" ? AUTOMATION_RUNS : window.AUTOMATION_RUNS) || [];
   const activeRun = automationRows.find((row) => row.targetId === s.id && ["running","awaiting-review","failed","interrupted"].includes(row.status));
+  /* HOW THAT RUN IS DOING, asked of the shipped activity predicates rather than
+     re-derived from its status string. `activityStatus` alone cannot tell a run
+     that stopped and needs a person from one a healthy parent is already
+     re-driving, and the Aug 26 pass produced the second while the stage painted the
+     first. v670RunRecovering answers exactly that and nothing else. */
+  const activityHealth = !activeRun ? ""
+    : typeof v670MachineActiveRun === "function" && v670MachineActiveRun(activeRun) ? "healthy"
+      : typeof v670RunRecovering === "function" && v670RunRecovering(activeRun) ? "recovering"
+        : typeof v670AttentionRun === "function" && v670AttentionRun(activeRun) ? "stopped" : "";
   const frameStates = progress.frames.map((frame,index) => guidedFrameStepState(s,frame,index,takes));
   return {
     referenceCount: references.length,
@@ -4106,6 +4121,19 @@ function shotStageModelFacts(s, takes) {
     motionReadinessReason: motionUnit?.complete ? "" : motionUnit?.nextAction?.message || readiness?.nextAction?.message || "",
     motionCandidateCount: takes.filter((take) => isVideo(take.name)).length,
     activityStatus: activeRun ? activeRun.status : "",
+    activityHealth,
+    /* HAS THE PRODUCTION MOVED PAST THE OPTIONAL STAGES ON APPROVED WORK.
+       Both halves are receipts, not pointers: `requiredFramesApproved` is the same
+       fact the Frames stage derives, and `guidedShotLifecycle` reads delivery
+       through shotDeliveryAuthority(). A shot with either has demonstrably not been
+       held up waiting for a blocking guide. */
+    downstreamAuthorityApproved: (frameStates.some((row) => row.key === "approved")
+      && (routeNeeds.known ? routeRequiredFramesApproved : !!progress.requiredApproved))
+      || ["final", "motion-approved", "still-ready"].includes(life.key),
+    /* The two values guidedShotLifecycle() is itself built from, handed to the model
+       directly so Deliver can ask whether a result exists rather than infer it from
+       which label the lifecycle happened to reach. */
+    approvedResultAvailable: !!life.current || !!life.motion,
     lifecycleKey: life.key,
     deliveryIntent: life.intent,
     /* Slice 5a. Read straight off the shot record through the one vocabulary owner, and
@@ -4134,7 +4162,9 @@ function boundedShotTaskStatus(s, takes, taskId, facts = shotStageModelFacts(s, 
     note.key === "references-missing" ? `${plural(note.count, "reference")} missing` :
     note.key === "references-linked" ? plural(note.count, "reference") :
     note.key === "blocking-guides-to-choose" ? `${plural(note.count, "guide")} to choose from` :
+    note.key === "blocking-guides-available" ? `${plural(note.count, "guide")} available` :
     note.key === "frames-approved" ? `${note.count} of ${plural(note.total, "frame")} approved` :
+    note.key === "frames-retained" ? `${plural(note.count, "frame")} retained` :
     note.key === "blocked-reason" ? note.reason : "";
   return { tone:state.tone, label:STAGE_STATUS[state.statusKey] || STAGE_STATUS.notStarted, ...(text ? { note:text } : {}) };
 }

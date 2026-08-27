@@ -826,6 +826,40 @@ function falH3MotionPromptAction(shotId, buildId, profile) {
   const refusal = typeof guidedMotionIntentRefusal === "function" ? guidedMotionIntentRefusal(shot, profile) : "";
   if (refusal)
     return `<p class="prompt-check warn h3-generate-intent-blocked" data-h3-intent-blocked="${attr(shotId)}">${esc(refusal)}</p>`;
+  /* DOGFOOD SLICE 0 — AN OUT-OF-DATE PACKAGE DOES NOT GET A PAID BUTTON.
+
+     packageFreshness() already knew. The verdict was printed directly above this
+     control — OUT OF DATE — REBUILD BEFORE GENERATING — and GENERATE H3 VIDEO sat
+     beside it, enabled, in the primary style, as the obvious thing to press. The
+     Aug 26 pass pressed it. A compiled package is a frozen sentence about inputs
+     that have since moved; sending it spends money to render something the shot no
+     longer says.
+
+     REBUILD BECOMES THE PRIMARY ACTION and the reason travels with it, so the
+     filmmaker is not sent to look for what changed. Nothing is deleted: the
+     package, its prompt, its history and its Copy/Download controls are all
+     untouched, and one rebuild restores the paid action IF the shot's current
+     preconditions still allow one — this function is re-entered from scratch, so
+     the intent refusal above is asked again too.
+
+     "NOT RECORDED" IS NOT STALE. A package compiled before dependencies were
+     captured cannot be checked either way, and refusing generation on an absence
+     would block every pre-existing package on evidence nobody has. It keeps its
+     button and its own NOT CHECKED verdict. */
+  /* The SAME list the paid dialog resolves the build from, so the button and the
+     dialog behind it can never be looking at different packages. */
+  const builds = shot && typeof resolvePromptBuildList === "function"
+    ? resolvePromptBuildList(P, ensureShotCreation(shot).motionPromptBuilds || [])
+    : [];
+  const build = builds.find((item) => item.id === buildId) || builds.at(-1) || null;
+  const freshness = shot && build && typeof packageFreshness === "function" ? packageFreshness(shot, build) : null;
+  /* The control stays VISIBLE and disabled rather than disappearing: principle 8 —
+     a primary action explains its prerequisite instead of vanishing. The rebuild
+     that lifts it is the primary button in the freshness block directly beneath
+     this header, where the reasons already are, so the action and the explanation
+     are not in two places. */
+  if (freshness && freshness.recorded && !freshness.current)
+    return `<button class="approve-btn h3-generate-btn" disabled data-h3-generate-blocked="${attr(shotId)}" data-h3-stale-reasons="${attr(freshness.reasons.join("; "))}" title="${attr(`This compiled package is out of date: ${freshness.reasons.join("; ")}. Rebuild it before generating.`)}">GENERATE H3 VIDEO</button>`;
   return `<button class="approve-btn h3-generate-btn" onclick="openFalH3MotionModal('${shotId}','${buildId}')">GENERATE H3 VIDEO</button>`;
 }
 /* THE PRE-FLIGHT QUOTE, from the same configured rate the ledger will record.
@@ -1173,8 +1207,14 @@ window.openFalH3MotionModal = async (shotId, buildId = "") => {
    * package is a legitimate choice, and the filmmaker makes it knowing what changed.
    */
   const freshness = typeof packageFreshness === "function" ? packageFreshness(s, build) : { current: true, recorded: true, reasons: [] };
-  const freshnessBanner = freshness.recorded && !freshness.current
-    ? `<div id="fal-h3-stale-notice" class="guided-prompt-error"><div><b>This compiled package is out of date</b><small>${esc(freshness.reasons.join("; "))}. Rebuild the motion prompt to send what the shot says now, or continue to send this package as compiled.</small></div></div>`
+  /* DOGFOOD SLICE 0. This banner used to end "…or continue to send this package as
+     compiled", and the paid button below it stayed enabled — a warning the screen
+     itself invited the filmmaker past, on the last surface before money is spent.
+     Generation is refused while the package is stale; REBUILD is the action offered,
+     and the exact reasons stay on screen so nobody has to go looking for what moved. */
+  const packageStale = freshness.recorded && !freshness.current;
+  const freshnessBanner = packageStale
+    ? `<div id="fal-h3-stale-notice" class="guided-prompt-error" data-h3-package-stale="1"><div><b>This compiled package is out of date</b><small>${esc(freshness.reasons.join("; "))}. Generation is unavailable until it is rebuilt from what the shot says now.</small></div><button class="approve-btn" onclick="closeModal();buildGuidedMotionPrompt('${attr(s.id)}',false)">REBUILD MOTION PROMPT</button></div>`
     : "";
   /* Assigned here rather than in the literal above: `durationNote` is computed from the
      preview a few lines up, and reading it before its `const` is a temporal-dead-zone
@@ -1184,7 +1224,7 @@ window.openFalH3MotionModal = async (shotId, buildId = "") => {
     ? `<div id="fal-h3-duration-notice" class="guided-prompt-error"><div><b>This shot is written as ${esc(String(askedDuration))} seconds, which this backend cannot render</b><small>MiniMax H3 renders from ${preview.modelDurationRange[0]}s, but fal accepts ${durationLow}–${durationHigh}s. ${preview.durationSeconds}s is selected below — confirm it or choose another length. CineBraid will not change the length of your shot for you: submitting ${esc(String(askedDuration))}s is refused, not adjusted.</small></div></div>`
     : "";
 
-  openModal(`<div class="h3-generation-modal"><header class="h3-generation-head"><div><span>MINIMAX H3 · PAID GENERATION</span><h3>Generate with ${esc(request.profileName)}</h3><p>This is the request CineBraid compiled from the approved package. Confirm the inputs, the prompt and the estimated spend before submission.</p></div><button class="cancel" onclick="closeModal()">Close</button></header><div class="h3-generation-scroll"><div class="modal-sub">FAL · ${esc(preview.dispatch?.model || "minimax/h3")} · compiled by ${esc(preview.compiler?.packId || "minimax-h3")} ${esc(preview.compiler?.packVersion || "")}</div><div class="candidate-evidence-facts"><span>${images.length} image${images.length === 1 ? "" : "s"}</span><span>${videos.length} video${videos.length === 1 ? "" : "s"}</span><span>${audio.length} audio</span><span id="fal-h3-prompt-fact">${preview.compiledPrompt.length.toLocaleString()}/${limit.toLocaleString()} prompt characters</span><span>Native stereo audio</span></div><div id="fal-h3-refusal" class="guided-prompt-error" hidden></div><div id="fal-h3-options"></div><section id="fal-h3-sequence" class="h3-submit-sequence" hidden></section>${freshnessBanner}${durationBanner}<div id="fal-h3-generation-view"></div><div id="fal-h3-aspect-warning" class="guided-prompt-error" ${aspectGate.ok ? "hidden" : ""}>${aspectGate.ok ? "" : `<div><b>MiniMax H3 cannot deliver ${esc(ratio)}</b><small>${esc(aspectGate.message)}</small></div>`}</div><div id="fal-h3-cost-estimate" class="h3-cost-estimate"></div><div id="fal-h3-plan-warnings"></div><div id="fal-h3-prompt-warning" class="guided-prompt-error" ${promptReady ? "hidden" : ""}><div><b>Prompt is not ready for submission</b><small>${promptReady ? "" : `Shorten this prompt to ${limit.toLocaleString()} characters before a paid submission.`}</small></div></div><section class="h3-prompt-editor"><header><div><b>Edit prompt before generation</b><small>This is the prompt CineBraid compiled and the exact text that will be sent. ${esc(limitNote)} The compiled package is preserved; any change is saved as a linked manual revision and recorded beside the compiled original.</small></div><span id="fal-h3-prompt-count">${preview.compiledPrompt.length.toLocaleString()}/${limit.toLocaleString()}</span></header><textarea id="fal-h3-prompt-editor" oninput="updateFalH3PromptEditor()" onchange="reviewFalH3PromptEdit()">${esc(preview.compiledPrompt)}</textarea><div id="fal-h3-edit-coverage" class="h3-edit-coverage" hidden></div><div class="h3-prompt-editor-actions"><label><span>Revision note · optional</span><input id="fal-h3-prompt-edit-reason" placeholder="Clarified timing, removed duplicate action…"></label><button class="ghost-btn" onclick="resetFalH3PromptEditor()">Reset compiled prompt</button></div></section><p class="hint">This submits one paid MiniMax H3 request through FAL. The returned MP4 is saved as an unapproved video candidate in this shot. The request uses an idempotency key to prevent an accidental double submission from this dialog.</p></div><footer class="modal-actions h3-generation-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button id="fal-h3-submit" class="approve-btn large" onclick="startFalH3MotionGeneration()" ${promptReady && aspectGate.ok && !preview.refusal ? "" : "disabled"}>START H3 GENERATION</button></footer></div>`);
+  openModal(`<div class="h3-generation-modal"><header class="h3-generation-head"><div><span>MINIMAX H3 · PAID GENERATION</span><h3>Generate with ${esc(request.profileName)}</h3><p>This is the request CineBraid compiled from the approved package. Confirm the inputs, the prompt and the estimated spend before submission.</p></div><button class="cancel" onclick="closeModal()">Close</button></header><div class="h3-generation-scroll"><div class="modal-sub">FAL · ${esc(preview.dispatch?.model || "minimax/h3")} · compiled by ${esc(preview.compiler?.packId || "minimax-h3")} ${esc(preview.compiler?.packVersion || "")}</div><div class="candidate-evidence-facts"><span>${images.length} image${images.length === 1 ? "" : "s"}</span><span>${videos.length} video${videos.length === 1 ? "" : "s"}</span><span>${audio.length} audio</span><span id="fal-h3-prompt-fact">${preview.compiledPrompt.length.toLocaleString()}/${limit.toLocaleString()} prompt characters</span><span>Native stereo audio</span></div><div id="fal-h3-refusal" class="guided-prompt-error" hidden></div><div id="fal-h3-options"></div><section id="fal-h3-sequence" class="h3-submit-sequence" hidden></section>${freshnessBanner}${durationBanner}<div id="fal-h3-generation-view"></div><div id="fal-h3-aspect-warning" class="guided-prompt-error" ${aspectGate.ok ? "hidden" : ""}>${aspectGate.ok ? "" : `<div><b>MiniMax H3 cannot deliver ${esc(ratio)}</b><small>${esc(aspectGate.message)}</small></div>`}</div><div id="fal-h3-cost-estimate" class="h3-cost-estimate"></div><div id="fal-h3-plan-warnings"></div><div id="fal-h3-prompt-warning" class="guided-prompt-error" ${promptReady ? "hidden" : ""}><div><b>Prompt is not ready for submission</b><small>${promptReady ? "" : `Shorten this prompt to ${limit.toLocaleString()} characters before a paid submission.`}</small></div></div><section class="h3-prompt-editor"><header><div><b>Edit prompt before generation</b><small>This is the prompt CineBraid compiled and the exact text that will be sent. ${esc(limitNote)} The compiled package is preserved; any change is saved as a linked manual revision and recorded beside the compiled original.</small></div><span id="fal-h3-prompt-count">${preview.compiledPrompt.length.toLocaleString()}/${limit.toLocaleString()}</span></header><textarea id="fal-h3-prompt-editor" oninput="updateFalH3PromptEditor()" onchange="reviewFalH3PromptEdit()">${esc(preview.compiledPrompt)}</textarea><div id="fal-h3-edit-coverage" class="h3-edit-coverage" hidden></div><div class="h3-prompt-editor-actions"><label><span>Revision note · optional</span><input id="fal-h3-prompt-edit-reason" placeholder="Clarified timing, removed duplicate action…"></label><button class="ghost-btn" onclick="resetFalH3PromptEditor()">Reset compiled prompt</button></div></section><p class="hint">This submits one paid MiniMax H3 request through FAL. The returned MP4 is saved as an unapproved video candidate in this shot. The request uses an idempotency key to prevent an accidental double submission from this dialog.</p></div><footer class="modal-actions h3-generation-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button id="fal-h3-submit" class="approve-btn large" onclick="startFalH3MotionGeneration()" ${promptReady && aspectGate.ok && !preview.refusal && !packageStale ? "" : "disabled"}>START H3 GENERATION</button></footer></div>`);
   /* One slot, and this dialog now owns it: switching Simple/Advanced redraws THIS view.
      Registered before the first paint so the very first toggle has somewhere to go. */
   window._generationViewRefresh = () => renderFalH3GenerationView();
@@ -1301,6 +1341,24 @@ window.startFalH3MotionGeneration = async () => {
     : (PROMPT_LIBRARY?.profiles || []).find((item) => item.id === request.profileId) || null;
   const gateRefusal = typeof guidedMotionIntentRefusal === "function" ? guidedMotionIntentRefusal(gateShot, gateProfile) : "";
   if (gateRefusal) return toast(gateRefusal);
+  /* DOGFOOD SLICE 0 — THE FRESHNESS GATE, AT THE BOUNDARY THAT SPENDS MONEY.
+
+     falH3MotionPromptAction() already withholds the button and the footer already
+     disables its own, but neither is the boundary: this dialog can be opened
+     programmatically, and an input can go stale while it sits open. The package is
+     re-checked against the shot AS IT IS NOW, for the same reason the intent gate
+     directly above is re-asked here.
+
+     A package with no recorded dependency snapshot is NOT refused — see
+     falH3MotionPromptAction. Refusing on an absence would block every package
+     compiled before dependencies were captured, on evidence nobody has. */
+  const gateBuilds = gateShot && typeof resolvePromptBuildList === "function"
+    ? resolvePromptBuildList(P, ensureShotCreation(gateShot).motionPromptBuilds || [])
+    : [];
+  const gateBuild = gateBuilds.find((item) => item.id === request.buildId) || null;
+  const gateFreshness = gateShot && gateBuild && typeof packageFreshness === "function" ? packageFreshness(gateShot, gateBuild) : null;
+  if (gateFreshness && gateFreshness.recorded && !gateFreshness.current)
+    return toast(`This compiled package is out of date: ${gateFreshness.reasons.join("; ")}. Rebuild the motion prompt before generating.`);
   const limit = falH3PromptLimit();
   const editedPrompt = String(document.getElementById("fal-h3-prompt-editor")?.value ?? request.prompt ?? "").trim();
   if (!editedPrompt) return toast("Enter a MiniMax H3 prompt before generation");

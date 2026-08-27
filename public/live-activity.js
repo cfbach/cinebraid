@@ -284,6 +284,40 @@ function v670WaitingForHumanRun(run) {
      says "running"; the truthful sentence is "waiting for you". */
   return run?.status === "running" && v670RunLeaseLapsed(run);
 }
+/* IS SOMETHING ALREADY PUTTING THIS RIGHT WITHOUT ASKING THE DIRECTOR?
+
+   DOGFOOD SLICE 0. A scene run drives its shots as durable CHILD runs. When a child
+   fails, v640RunSceneShot posts the child's failed step for retry and resumes it -
+   automatic recovery, entirely inside a parent that is still `running`. In the window
+   between those two calls the child's durable record says `failed` or `interrupted`,
+   and every activity surface read that as a previous failure needing a person: a red
+   NEEDS ATTENTION row for work the machine was already repairing, beside the parent
+   run reporting normal progress.
+
+   THE RULE THIS ENCODES: parent-run health governs the primary severity, and a child
+   stage failure is detailed evidence underneath it. A director cannot act on the child
+   anyway - retrying it by hand would race the runner that owns it.
+
+   THE LINK IS DERIVED, NOT STORED. public/scene-automation.js sets `parentRunId` on a
+   child before creating it and automation-runs.js's sanitizer does not carry that
+   field, so the durable record has no parent pointer. The parent's own step DOES record
+   `result.childRunId`, is preserved, and exists on every scene run already on disk -
+   so the relationship is read from the side that survives.
+
+   NARROW ON PURPOSE. The parent must be machine-active by the shipped predicate:
+   a parent that has itself failed, been interrupted, or finished is NOT recovering
+   anything, and its child goes straight back to needing attention. */
+function v670ParentRunFor(run) {
+  const id = String(run?.id || "");
+  if (!id) return null;
+  const rows = (typeof AUTOMATION_RUNS !== "undefined" ? AUTOMATION_RUNS : window.AUTOMATION_RUNS) || [];
+  return rows.find((row) => row && row.id !== id
+    && Object.values(row.steps || {}).some((step) => String(step?.result?.childRunId || step?.childRunId || "") === id)) || null;
+}
+function v670RunRecovering(run) {
+  const parent = v670ParentRunFor(run);
+  return !!parent && v670MachineActiveRun(parent);
+}
 /* DOES THIS RUN NEED A PERSON TO LOOK AT IT BECAUSE SOMETHING WENT WRONG?
 
    The third member of the pair above, extracted for the same reason the first two
@@ -299,13 +333,19 @@ function v670WaitingForHumanRun(run) {
    rather than split, because splitting them touches the dispatch path and is a different
    piece of work.
 
-   THE ONE EXCLUSION is the half the server can now name: a run whose lease lapsed with
+   THE FIRST EXCLUSION is the half the server can now name: a run whose lease lapsed with
    no heartbeat. Nothing went wrong with it, so calling it a previous failure is false,
    and it is already counted where it belongs - waiting for a person to press Resume Run.
    Without this it would sit in BOTH sections at once, which is how it would have
-   arrived. */
+   arrived.
+
+   THE SECOND is Dogfood Slice 0's: a run a healthy parent is already re-driving. See
+   v670RunRecovering directly above. Both exclusions are the same idea - a run nobody
+   is being asked to act on is not a claim on the director - and neither hides anything
+   permanently, because both go back to needing attention the moment their reason for
+   not needing it ends. */
 function v670AttentionRun(run) {
-  return ["failed", "interrupted", "cancelled"].includes(run?.status) && !v670RunnerWentAway(run);
+  return ["failed", "interrupted", "cancelled"].includes(run?.status) && !v670RunnerWentAway(run) && !v670RunRecovering(run);
 }
 /* Unfinished, so the poller keeps asking - deliberately NOT the active predicate.
    A run parked at a human gate still needs refreshing, because the approval may
@@ -337,6 +377,8 @@ window.v670MachineActiveRun = v670MachineActiveRun;
 window.v670WaitingForHumanRun = v670WaitingForHumanRun;
 window.v670RunnerWentAway = v670RunnerWentAway;
 window.v670AttentionRun = v670AttentionRun;
+window.v670RunRecovering = v670RunRecovering;
+window.v670ParentRunFor = v670ParentRunFor;
 window.v670RunLeaseLapsed = v670RunLeaseLapsed;
 window.v670StepElapsedLabel = v670StepElapsedLabel;
 function v641StatusTone(status) {
@@ -723,13 +765,27 @@ function v641DrawerRunMarkup(run, duplicateCount = 1) {
   const active = v670MachineActiveRun(run);
   const waiting = v670WaitingForHumanRun(run);
   const failed = Object.values(run.steps || {}).find((item) => item.status === "failed") || null;
+  /* WHOSE FAILURE IS THIS TO REPORT AS AN ERROR? A step marked failed inside a run
+     that is itself healthy is history, not a fault the director is being handed —
+     and painting it in the error style put a red line on a row in ACTIVE NOW. The
+     run's own health decides; the step's message is still shown either way. */
+  const unhealthy = run.status === "failed" || v670AttentionRun(run);
+  /* A CHILD THE MACHINE IS ALREADY PUTTING RIGHT, named rather than left to be read
+     off a status. Its own row is not in PREVIOUS FAILURES while this parent is
+     driving it — see v670RunRecovering — so this line is where the evidence lives.
+     It is resolved from the parent's OWN current step rather than from the display
+     pair above, because v641DisplayedRunAndStep only surfaces a child that has a
+     step of its own to show and a child sitting between a retry POST and its resume
+     has none — which is exactly the window this line exists for. */
+  const ownedChild = run?.type === "scene-chain" ? v641ChildRunForStep(v641CurrentStep(run)) : null;
+  const childRecovering = !!ownedChild && ["failed", "interrupted"].includes(String(ownedChild.status || "")) && active;
   const repairable = run.status === "failed" && run.type === "scene-chain" && (failed?.kind === "generation" || String(failed?.key || "").includes("scene-correction"));
   const primary = repairable
     ? `<button class="approve-btn" onclick="retryFailedAutomationStep('${attr(run.id)}','${attr(failed.key)}')">REPAIR & RETRY</button>`
     : run.status === "failed" && failed
       ? `<button onclick="retryFailedAutomationStep('${attr(run.id)}','${attr(failed.key)}')">RETRY</button>`
       : `<button onclick="openRunResult('${attr(run.id)}')">${v670RunResultTarget(run).resolved ? "OPEN RESULT" : "OPEN WORKSPACE"}</button>`;
-  return `<article class="automation-drawer-run state-${attr(v670RunTone(run))}" data-run-id="${attr(run.id)}" data-activity-key="run:${attr(run.id)}"><header><div><span>${esc(run.type.replace(/-/g, " ").toUpperCase())}</span><b>${esc(run.label || run.targetId)}${duplicateCount > 1 ? ` <em class="automation-duplicate-count">×${duplicateCount}</em>` : ""}</b></div><i>${active ? '<span class="spin">◌</span>' : waiting ? "!" : run.status === "completed" ? "✓" : run.status === "failed" ? "!" : "○"}</i></header><p>${esc(v670RunHeadline(run))}</p>${failed?.error ? `<small class="automation-drawer-error">${esc(failed.error)}</small>` : child ? `<small>Child run: ${esc(child.label || child.targetId)}</small>` : ""}<footer>${primary}<button onclick="closeGlobalAutomationActivity();openAutomationReport('${attr(run.id)}')">VIEW REPORT</button>${v670AttentionRun(run) ? `<button class="ghost-btn" onclick="dismissAutomationActivityRun('${attr(run.id)}')">DISMISS</button>` : ""}</footer></article>`;
+  return `<article class="automation-drawer-run state-${attr(v670RunTone(run))}" data-run-id="${attr(run.id)}" data-activity-key="run:${attr(run.id)}"><header><div><span>${esc(run.type.replace(/-/g, " ").toUpperCase())}</span><b>${esc(run.label || run.targetId)}${duplicateCount > 1 ? ` <em class="automation-duplicate-count">×${duplicateCount}</em>` : ""}</b></div><i>${active ? '<span class="spin">◌</span>' : waiting ? "!" : run.status === "completed" ? "✓" : run.status === "failed" ? "!" : "○"}</i></header><p>${esc(v670RunHeadline(run))}</p>${failed?.error && unhealthy ? `<small class="automation-drawer-error">${esc(failed.error)}</small>` : childRecovering ? `<small data-child-recovering="${attr(ownedChild.id)}">Recovering ${esc(ownedChild.label || ownedChild.targetId)} automatically — no action needed from you.</small>` : failed?.error ? `<small>${esc(failed.error)}</small>` : child ? `<small>Child run: ${esc(child.label || child.targetId)}</small>` : ""}<footer>${primary}<button onclick="closeGlobalAutomationActivity();openAutomationReport('${attr(run.id)}')">VIEW REPORT</button>${v670AttentionRun(run) ? `<button class="ghost-btn" onclick="dismissAutomationActivityRun('${attr(run.id)}')">DISMISS</button>` : ""}</footer></article>`;
 }
 /* WAITING FOR YOU, said in the run's own terms. A run parked at an approval gate and
    a run whose runner went away need different things from the director, and the

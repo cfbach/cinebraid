@@ -211,6 +211,8 @@ const nodeSuites = [
   "check:launch-language-negative",
   "check:reference-demand",
   "check:reference-demand-negative",
+  "check:dogfood-truth",
+  "check:dogfood-truth-negative",
 ];
 
 /* Suites that assert something about the whole machine and therefore cannot share it.

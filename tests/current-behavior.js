@@ -396,6 +396,8 @@ async function main() {
     "data-recovery-focused-state.js",
     "data-safety-repair.js",
     "deep-bot-safety.js",
+    "dogfood-truth-reconciliation-negative-controls.js",
+    "dogfood-truth-reconciliation.js",
     "dogfood2-p0-architecture.js",
     "dogfood2-p0-negative-controls.js",
     "entity-derivation-authority.js",
