@@ -318,7 +318,17 @@ function testMotionAndOmniAudioCompile() {
   );
   assert.strictEqual(spec.camera.movement, "push in forward", "motion plan should set the camera move");
   assert(spec.actions.some((item) => item.action.includes("KAI walk toward screen right")), "motion plan should add the selected character movement");
-  assert(spec.actions.some((item) => item.action.includes("PR-CAR static")), "motion plan should lock a staged prop");
+  /* AMENDED BY DOGFOOD SLICE 1'S HOLD CORRECTION, deliberately and in the same commit as
+     the change that makes it necessary. This fixture's prop row carries the DEFAULT
+     action `static` and a note the filmmaker typed. The word `static` was never chosen by
+     anyone — it is what the normalizer writes into a control nobody opened — and
+     publishing it beside a declared sibling is the sibling-promotion this correction
+     exists to end. The property the line has always actually guarded is that a staged
+     prop's own direction reaches the compiled beats, and that is what it asserts now: the
+     filmmaker's sentence, in their words, instead of a manufactured one. A prop whose
+     action IS chosen still compiles it — asserted in tests/shot-intent-compiler-integrity.js. */
+  assert(spec.actions.some((item) => item.action.includes("PR-CAR The car remains parked.")), "motion plan should carry a staged prop's declared direction");
+  assert(!spec.actions.some((item) => item.action.includes("PR-CAR static")), "an untouched prop action must not be published beside a declared note");
   assert.strictEqual(spec.audio.mode, "lip-sync-reference", "audio assignment should use explicit lip-sync mode");
   assert.strictEqual(spec.audio.referenceLabel, "Kai dialogue take", "audio assignment should preserve the selected recording label");
   assert.strictEqual(spec.audio.dialogue, "", "lip-sync mode must not request a second generated voice");

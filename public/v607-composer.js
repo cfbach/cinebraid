@@ -721,22 +721,68 @@
   structuredMotionSummary = window.structuredMotionSummary = function structuredMotionSummary607(s) {
     const c = ensureShotCreation(s), unit = activeMotionUnit(s), plan = effectiveMotionPlan(s, unit), camera = plan.camera || {}, lines = [];
     const declaration = motionPlanDeclaration(plan);
-    if (declaration.camera.declared && camera.move && camera.move !== "none") lines.push(`Camera: ${textLabel(camera.move)}${camera.direction ? ` ${textLabel(camera.direction)}` : ""}, ${camera.intensity || "subtle"}, ${camera.style || "smooth"}; ${camera.framing === "allow-reframe" ? "reframing allowed" : "preserve the staged composition"}.`);
+    /* PER FIELD, not per row — the hold correction. A filmmaker who set only the camera
+       intensity had the untouched `move` published as `locked` beside it; one who set only
+       the pacing had the untouched `holdEnd` published as settle-and-hold. Each clause
+       below now asks about the value it is actually printing. */
+    const says = (reading, field) => Boolean(reading && reading.fields.includes(field));
+    const clause = (rows) => {
+      const parts = rows.filter((row) => String(row[1] == null ? "" : row[1]).trim());
+      return parts.map(([lead, value], index) => `${index ? lead : ""}${String(value).trim()}`).join("").trim();
+    };
+    const cameraSays = (field) => says(declaration.camera, field);
+    if (cameraSays("move") && camera.move && camera.move !== "none") {
+      const qualifiers = clause([
+        ["", cameraSays("intensity") ? camera.intensity : ""],
+        [", ", cameraSays("style") ? camera.style : ""],
+      ]);
+      const framing = cameraSays("framing") ? (camera.framing === "allow-reframe" ? "reframing allowed" : "preserve the staged composition") : "";
+      lines.push(`Camera: ${textLabel(camera.move)}${cameraSays("direction") && camera.direction ? ` ${textLabel(camera.direction)}` : ""}${qualifiers ? `, ${qualifiers}` : ""}${framing ? `; ${framing}` : ""}.`);
+    }
     for (const id of s.characters || []) {
-      if (!declaration.subjects[id]?.declared) continue;
-      const x = P.characters.find((item) => item.id === id), p = plan.subjects[id] || { action: "still" }, target = p.targetLabel || targetLabelFor(s, p.targetId);
-      if (p.action && p.action !== "still") lines.push(`${x?.name || id}: ${textLabel(p.action)}${target ? ` toward or in relation to ${target}` : p.direction ? ` toward ${textLabel(p.direction)}` : ""}${p.destination ? `, ending ${p.destination}` : ""}, ${p.intensity || "natural"}${p.look ? `; looks ${textLabel(p.look)}` : ""}${p.notes ? `; ${p.notes}` : ""}.`);
-      else lines.push(`${x?.name || id} remains still except for natural breathing and blinking${p.notes ? `; ${p.notes}` : ""}.`);
+      const reading = declaration.subjects[id];
+      const subjectSays = (field) => says(reading, field);
+      const x = P.characters.find((item) => item.id === id), p = plan.subjects[id] || {};
+      const target = subjectSays("targetId") ? (p.targetLabel || targetLabelFor(s, p.targetId)) : "";
+      const directed = subjectSays("action") && p.action && p.action !== "still";
+      const body = clause([
+        ["", directed ? textLabel(p.action) : ""],
+        [" ", target ? `toward or in relation to ${target}` : (!target && subjectSays("direction") && p.direction ? `toward ${textLabel(p.direction)}` : "")],
+        [", ", subjectSays("destination") && p.destination ? `ending ${p.destination}` : ""],
+        [", ", directed && subjectSays("intensity") ? p.intensity : ""],
+        ["; ", subjectSays("look") && p.look ? `looks ${textLabel(p.look)}` : ""],
+        ["; ", subjectSays("notes") ? p.notes : ""],
+      ]);
+      if (subjectSays("action") && !directed) lines.push(`${x?.name || id} remains still except for natural breathing and blinking${body ? `; ${body}` : ""}.`);
+      else if (body) lines.push(`${x?.name || id}: ${body}.`);
     }
     for (const id of c.propIds || []) {
-      if (!declaration.props[id]?.declared) continue;
-      const x = [...(P.props || []), ...(P.vehicles || [])].find((item) => item.id === id), p = plan.props[id] || { action: "static" }, target = p.targetLabel || targetLabelFor(s, p.targetId);
-      lines.push(`${x?.name || id}: ${textLabel(p.action || "static")}${target ? ` in relation to ${target}` : p.direction ? ` ${textLabel(p.direction)}` : ""}${p.destination ? `, ending ${p.destination}` : ""}${p.notes ? `; ${p.notes}` : ""}.`);
+      const reading = declaration.props[id];
+      const propSays = (field) => says(reading, field);
+      const x = [...(P.props || []), ...(P.vehicles || [])].find((item) => item.id === id), p = plan.props[id] || {};
+      const target = propSays("targetId") ? (p.targetLabel || targetLabelFor(s, p.targetId)) : "";
+      const body = clause([
+        ["", propSays("action") ? textLabel(p.action || "static") : ""],
+        [" ", target ? `in relation to ${target}` : (!target && propSays("direction") && p.direction ? textLabel(p.direction) : "")],
+        [", ", propSays("destination") && p.destination ? `ending ${p.destination}` : ""],
+        ["; ", propSays("notes") ? p.notes : ""],
+      ]);
+      if (body) lines.push(`${x?.name || id}: ${body}.`);
     }
     const env = plan.environment || {};
-    if (declaration.environment.declared) lines.push(env.action && env.action !== "static" ? `Environment: ${textLabel(env.action)}, ${env.intensity || "subtle"}${env.notes ? `; ${env.notes}` : ""}.` : "Environment remains stable unless explicitly animated above.");
+    const envSays = (field) => says(declaration.environment, field);
+    if (envSays("action")) lines.push(env.action && env.action !== "static"
+      ? `Environment: ${textLabel(env.action)}${envSays("intensity") ? `, ${env.intensity || "subtle"}` : ""}${envSays("notes") && env.notes ? `; ${env.notes}` : ""}.`
+      : "Environment remains stable unless explicitly animated above.");
     const timing = plan.timing || {};
-    if (declaration.timing.declared) lines.push(`Timing: ${timing.onset || "immediate"} onset, ${timing.pacing || "natural"} pacing${timing.holdEnd ? "; settle and hold the final state" : ""}${timing.secondary ? `; secondary action: ${timing.secondary}` : ""}.`);
+    const timingSays = (field) => says(declaration.timing, field);
+    const timingBody = clause([
+      ["", timingSays("onset") ? `${timing.onset || "immediate"} onset` : ""],
+      [", ", timingSays("pacing") ? `${timing.pacing || "natural"} pacing` : ""],
+      ["; ", timingSays("holdEnd") && timing.holdEnd ? "settle and hold the final state" : ""],
+      ["; ", timingSays("secondary") && timing.secondary ? `secondary action: ${timing.secondary}` : ""],
+    ]);
+    if (timingBody) lines.push(`Timing: ${timingBody}.`);
     const audio = plan.audio || {};
     if (audio.mode === "lip-sync-reference" && audio.referenceKey) { const ref = shotPlanningGenerationReferences(s, ["audio"]).find((item) => item.key === audio.referenceKey), speaker = P.characters.find((item) => item.id === audio.speakerId); lines.push(`${speaker?.name || audio.speakerId || "The selected character"} is the only speaking character and lip-syncs the dialogue from ${ref?.label || "the linked audio reference"}${audio.direction ? ` with ${audio.direction}` : ""}.`); }
     return lines.join("\n");

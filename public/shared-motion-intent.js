@@ -43,6 +43,22 @@
  * absolutely still while the water settles" is a direction. An untouched dropdown is not.
  *
  * ---------------------------------------------------------------------------
+ * THE UNIT OF THE ANSWER IS A FIELD, NEVER A ROW.
+ *
+ * HOLD CORRECTION, blocker 1. The first pass asked this question per ROW — "is this
+ * camera declared?" — and an emitter that got `true` then wrote the whole row. So
+ * touching camera INTENSITY made the untouched `move` speak as `locked-off camera with
+ * no drift`; touching timing PACING made the untouched `holdEnd` require settle-and-hold;
+ * touching environment INTENSITY made the untouched `action` assert stability. One
+ * declared member promoted every default beside it, which is the original defect wearing
+ * a smaller coat.
+ *
+ * `fields` is therefore the answer, and `declared` is only ever the convenience question
+ * "is there anything here at all". A caller that emits must ask per field —
+ * motionFieldDeclared(), or `.fields.includes(...)` — and every emitter in this
+ * repository does.
+ *
+ * ---------------------------------------------------------------------------
  * HOW A DECLARATION IS RECOGNISED. TWO READINGS, AND THE SECOND IS THE FALLBACK.
  *
  *   MARKED     The writer recorded the field. `entry.declaredFields` is a list of the
@@ -155,6 +171,18 @@
       holdEnd: true,
       secondary: "",
     },
+    /* HOLD CORRECTION, blocker 2. The audio row is here so a DECLARED motion-audio mode
+       can be recognised as one. `none` is what an untouched plan carries, so a stored
+       `lip-sync-reference` is a decision under the divergent reading alone — which is
+       what makes every project written before this contract read correctly. */
+    audio: {
+      mode: "none",
+      referenceKey: "",
+      speakerId: "",
+      voiceEntityId: "",
+      lipSync: false,
+      direction: "",
+    },
   });
 
   const MOTION_INTENT_DIMENSIONS = motionIntentFreeze(Object.keys(MOTION_PLAN_DEFAULTS));
@@ -168,6 +196,9 @@
     camera: [],
     environment: [],
     timing: [],
+    /* `lipSync` is recomputed from `mode` by the normalizer on every pass, so it is a
+       restatement of a decision rather than one of its own. */
+    audio: ["lipSync"],
   });
 
   function motionPlanDefaults(dimension) {
@@ -237,6 +268,14 @@
     return motionEntryDeclaration(dimension, entry).declared;
   }
 
+  /* THE QUESTION EVERY EMITTER MUST ACTUALLY ASK.
+     One field at a time, so a declared sibling can never speak for an untouched one.
+     A derived field is never declared, and an unrecognised dimension or field is `false`
+     rather than an error — absence and unreadability behave identically here. */
+  function motionFieldDeclared(dimension, entry, field) {
+    return motionEntryDeclaration(dimension, entry).fields.includes(motionIntentText(field));
+  }
+
   /* ==========================================================================
      THE WHOLE PLAN'S READING.
 
@@ -263,7 +302,7 @@
       }
     }
     const singles = {};
-    for (const dimension of ["camera", "environment", "timing"]) {
+    for (const dimension of ["camera", "environment", "timing", "audio"]) {
       const reading = motionEntryDeclaration(dimension, source[dimension]);
       singles[dimension] = reading;
       if (reading.present) (reading.declared ? declared : defaulted).push({ dimension, id: "" });
@@ -275,6 +314,7 @@
       camera: singles.camera,
       environment: singles.environment,
       timing: singles.timing,
+      audio: singles.audio,
       declared,
       defaulted,
       anyDeclared: declared.length > 0,
@@ -300,6 +340,9 @@
   }
   function motionTimingDeclared(plan) {
     return motionEntryDeclared("timing", motionIntentRecord(plan) ? plan.timing : null);
+  }
+  function motionAudioDeclared(plan) {
+    return motionEntryDeclared("audio", motionIntentRecord(plan) ? plan.audio : null);
   }
 
   /* ==========================================================================
@@ -328,12 +371,14 @@
     motionPlanDefaults,
     motionEntryDeclaration,
     motionEntryDeclared,
+    motionFieldDeclared,
     motionPlanDeclaration,
     motionSubjectDeclared,
     motionPropDeclared,
     motionCameraDeclared,
     motionEnvironmentDeclared,
     motionTimingDeclared,
+    motionAudioDeclared,
     motionDeclaredFieldsWith,
   };
 });

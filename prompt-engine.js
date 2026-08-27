@@ -790,6 +790,26 @@ function defaultSpec(context, purpose, mode, references, mediaAnalysis) {
 
 
 function normalizedLabel(value) { return cleanText(value).replace(/-/g, " "); }
+/* One motion sentence, built only from the fragments that were actually declared.
+ *
+ * `rows` is [separator, phrase] in the order the sentence has always used, and a phrase
+ * carries its own connective ("ending on the far bank") so that dropping a separator can
+ * never drop a word with it. An empty phrase drops its separator too, and whichever
+ * fragment ends up FIRST has its separator reduced to a single space — otherwise a
+ * subject directed by a custom note alone would compile as "CH-REX; reaches for the
+ * coupler", which reads as a truncation rather than a sentence. A row that is fully
+ * declared assembles the exact text it always did. Returns "" when nothing was declared,
+ * which is how a caller learns to say nothing. */
+function motionClause(subject, rows) {
+  const parts = (Array.isArray(rows) ? rows : []).filter((row) => cleanText(row && row[1]));
+  if (!parts.length) return "";
+  const body = parts
+    .map(([lead, text], index) => `${index ? lead : " "}${cleanText(text)}`)
+    .join("")
+    .replace(/\s+/g, " ")
+    .trim();
+  return `${cleanText(subject)} ${body}`.trim();
+}
 function applyStructuredDirection(spec, composition, motionPlan, refs = []) {
   const out = validateSpec(spec, spec);
   const comp = composition && typeof composition === "object" ? composition : null;
@@ -853,45 +873,128 @@ function applyStructuredDirection(spec, composition, motionPlan, refs = []) {
      * stillness directive standing in front of it as `action.primary`, and the model
      * did as it was told. Nothing in the project ever said "stand still".
      *
-     * public/shared-motion-intent.js is the one owner of the distinction. It is asked
-     * per dimension, and what it withholds is RECORDED rather than dropped, so the plan
-     * shows a decision instead of a gap. */
+     * public/shared-motion-intent.js is the one owner of the distinction, and it is asked
+     * PER FIELD. Asking per row was the first pass's mistake: one declared member then
+     * spoke for every default beside it, so setting camera intensity alone published
+     * `locked-off camera with no drift` and setting timing pacing alone published a
+     * requirement to settle and hold. What is withheld is RECORDED rather than dropped,
+     * naming the field, so the plan shows a decision instead of a gap. */
     const declaration = MotionIntent.motionPlanDeclaration(plan);
     const provenance = { contract: MotionIntent.CINEBRAID_MOTION_INTENT_CONTRACT, declared: [], withheld: [] };
-    const took = (dimension, id) => provenance.declared.push({ dimension, id: cleanText(id), source: "current-shot-motion-plan" });
-    const withheld = (dimension, id, reason) => provenance.withheld.push({ dimension, id: cleanText(id), reason });
+    const took = (dimension, id, field) => provenance.declared.push({ dimension, id: cleanText(id), field: cleanText(field), source: "current-shot-motion-plan" });
+    const withheld = (dimension, id, field, reason) => provenance.withheld.push({ dimension, id: cleanText(id), field: cleanText(field), reason });
+    /* One field, one answer. `rows` is the per-dimension reading; a field absent from
+       `fields` was never addressed by anybody and may not appear in the output. */
+    const says = (reading, field) => Boolean(reading && reading.fields && reading.fields.includes(field));
+
+    /* WHICH ENTITIES THIS SHOT IS ACTUALLY ABOUT, right now.
+     *
+     * HOLD CORRECTION, blocker 3. A motion-plan row survives on the record after its
+     * subject is removed from the shot — correctly, because history is not deleted to
+     * make a compile succeed — and the compiler read the stored rows without ever asking
+     * whether those entities are still members. A character dropped from the cast kept
+     * driving the timed motion of every later package.
+     *
+     * Membership comes from the spec's own lists, which are the ones the prompt is
+     * ALREADY allowed to describe: promptEntities is the cast after frame presence has
+     * removed anyone this frame declares absent, and blockingEntities is the same
+     * treatment for props and locations. Reusing them means a frame-level absence and a
+     * shot-level removal are answered by one rule rather than two.
+     *
+     * An EMPTY membership set is unestablished, not empty: a caller that supplied no
+     * entity context at all cannot be told who belongs, so nothing is filtered. Absence
+     * of an answer never becomes a negative one — the same reading
+     * public/shared-shot-intent.js gives an unreadable route. */
+    const memberIds = new Set([
+      ...(Array.isArray(out.promptEntities) ? out.promptEntities : []),
+      ...(Array.isArray(out.blockingEntities) ? out.blockingEntities : []),
+    ].map((row) => cleanText(row && row.id)).filter(Boolean));
+    const membershipKnown = memberIds.size > 0;
+    const isMember = (id) => !membershipKnown || memberIds.has(cleanText(id));
+
     const camera = plan.camera || {};
-    /* A DEFAULTED CAMERA MAY NOT OVERWRITE A DECLARED ONE. The plan's camera used to be
-       written over `out.camera` unconditionally, so an untouched control silently
+    /* A DEFAULTED CAMERA MAY NOT OVERWRITE A DECLARED ONE, and a declared camera FIELD
+       may not speak for its untouched siblings. The plan's camera used to be written over
+       `out.camera` on the mere existence of a plan, so an untouched control silently
        replaced a movement the shot record, the media analysis or the assistant spec had
        established. It may still FILL the gap where nothing else answered — that is a
        default doing its job — and `meaningfulCamera()` in generation-compiler.js already
        knows defaultSpec's placeholder sentence is not an answer. */
-    if (declaration.camera.declared) {
-      out.camera.movement = camera.move === "locked" ? "locked-off camera with no drift" : [normalizedLabel(camera.move), normalizedLabel(camera.direction)].filter(Boolean).join(" ") || out.camera.movement;
-      out.camera.stability = [normalizedLabel(camera.style), normalizedLabel(camera.intensity), camera.framing === "allow-reframe" ? "reframing allowed" : "preserve staged framing"].filter(Boolean).join(", ");
-      took("camera", "");
+    const cameraSays = (field) => says(declaration.camera, field);
+    if (cameraSays("move")) {
+      const direction = cameraSays("direction") ? normalizedLabel(camera.direction) : "";
+      out.camera.movement = camera.move === "locked"
+        ? "locked-off camera with no drift"
+        : [normalizedLabel(camera.move), direction].filter(Boolean).join(" ") || out.camera.movement;
+      took("camera", "", "move");
+      if (cameraSays("direction")) took("camera", "", "direction");
+    } else {
+      if (declaration.camera.present) withheld("camera", "", "move", "field-carries-no-declaration");
+      /* A direction is a statement ABOUT a move. With no declared move there is no verb
+         for it to qualify, so it is recorded rather than turned into one. */
+      if (cameraSays("direction")) withheld("camera", "", "direction", "camera-direction-without-a-declared-move");
+    }
+    const stability = [
+      cameraSays("style") ? normalizedLabel(camera.style) : "",
+      cameraSays("intensity") ? normalizedLabel(camera.intensity) : "",
+      cameraSays("framing") ? (camera.framing === "allow-reframe" ? "reframing allowed" : "preserve staged framing") : "",
+    ].filter(Boolean);
+    if (stability.length) {
+      out.camera.stability = stability.join(", ");
+      for (const field of ["style", "intensity", "framing"]) if (cameraSays(field)) took("camera", "", field);
     } else if (declaration.camera.present) {
-      withheld("camera", "", "camera-plan-carries-no-declaration");
+      for (const field of ["style", "intensity", "framing"]) withheld("camera", "", field, "field-carries-no-declaration");
     }
     const actions = [];
+    /* The sentence is assembled from DECLARED FRAGMENTS ONLY, in the order it has always
+       used, so a fully directed subject compiles exactly the text it did before and a
+       partly directed one loses only the parts nobody wrote. `motionClause` drops the
+       leading punctuation when a fragment ends up first, so a subject directed by a note
+       alone reads as a sentence rather than as a dangling clause. */
     for (const [id, item] of Object.entries(plan.subjects || {})) {
-      if (!declaration.subjects[id]?.declared) {
-        withheld("subject", id, "subject-plan-carries-no-declaration");
+      const reading = declaration.subjects[id];
+      if (!isMember(id)) {
+        withheld("subject", id, "", "not-a-member-of-the-current-shot");
         continue;
       }
-      const target = cleanText(item.targetLabel || item.targetId || "");
-      actions.push(`${id} ${normalizedLabel(item.action || "still")}${target ? ` toward or in relation to ${target}` : item.direction ? ` toward ${normalizedLabel(item.direction)}` : ""}${item.destination ? `, ending ${cleanText(item.destination)}` : ""}${item.look ? ` while looking ${normalizedLabel(item.look)}` : ""}${item.notes ? `; ${item.notes}` : ""}`);
-      took("subject", id);
+      const subjectSays = (field) => says(reading, field);
+      const target = subjectSays("targetId") ? cleanText(item.targetLabel || item.targetId || "") : "";
+      const clause = motionClause(id, [
+        [" ", subjectSays("action") ? normalizedLabel(item.action || "still") : ""],
+        [" ", target ? `toward or in relation to ${target}` : ""],
+        [" ", !target && subjectSays("direction") && item.direction ? `toward ${normalizedLabel(item.direction)}` : ""],
+        [", ", subjectSays("destination") && item.destination ? `ending ${cleanText(item.destination)}` : ""],
+        [" ", subjectSays("look") && item.look ? `while looking ${normalizedLabel(item.look)}` : ""],
+        ["; ", subjectSays("notes") ? cleanText(item.notes) : ""],
+      ]);
+      if (!clause) {
+        withheld("subject", id, "", "subject-plan-carries-no-declaration");
+        continue;
+      }
+      actions.push(clause);
+      for (const field of reading.fields) took("subject", id, field);
     }
     for (const [id, item] of Object.entries(plan.props || {})) {
-      if (!declaration.props[id]?.declared) {
-        withheld("prop", id, "prop-plan-carries-no-declaration");
+      const reading = declaration.props[id];
+      if (!isMember(id)) {
+        withheld("prop", id, "", "not-a-member-of-the-current-shot");
         continue;
       }
-      const target = cleanText(item.targetLabel || item.targetId || "");
-      actions.push(`${id} ${normalizedLabel(item.action || "static")}${target ? ` in relation to ${target}` : item.direction ? ` ${normalizedLabel(item.direction)}` : ""}${item.destination ? `, ending ${cleanText(item.destination)}` : ""}${item.notes ? `; ${item.notes}` : ""}`);
-      took("prop", id);
+      const propSays = (field) => says(reading, field);
+      const target = propSays("targetId") ? cleanText(item.targetLabel || item.targetId || "") : "";
+      const clause = motionClause(id, [
+        [" ", propSays("action") ? normalizedLabel(item.action || "static") : ""],
+        [" ", target ? `in relation to ${target}` : ""],
+        [" ", !target && propSays("direction") && item.direction ? normalizedLabel(item.direction) : ""],
+        [", ", propSays("destination") && item.destination ? `ending ${cleanText(item.destination)}` : ""],
+        ["; ", propSays("notes") ? cleanText(item.notes) : ""],
+      ]);
+      if (!clause) {
+        withheld("prop", id, "", "prop-plan-carries-no-declaration");
+        continue;
+      }
+      actions.push(clause);
+      for (const field of reading.fields) took("prop", id, field);
     }
     if (actions.length) {
       const structuredAction = actions.join(". ");
@@ -905,6 +1008,14 @@ function applyStructuredDirection(spec, composition, motionPlan, refs = []) {
     }
     const audioPlan = plan.audio || {};
     const audioMode = normalizeAudioMode(audioPlan.mode, !!audioPlan.lipSync, !!out.audio?.dialogue);
+    /* WHETHER A HUMAN CHOSE THIS MODE, recorded so the layer that runs next can tell.
+       applyMotionAudioBrief() recomputes the mode from "is there a line and is native
+       audio on", which is a correct DERIVATION for a shot nobody has answered for and a
+       silent overwrite of one who has: a shot set to lip-sync a recorded reference came
+       back as generate-voice with the reference still attached. The brief may fill an
+       unset mode; it may not replace a declared one, and this is how it knows. */
+    if (says(declaration.audio, "mode")) took("audio", "", "mode");
+    else if (declaration.audio.present) withheld("audio", "", "mode", "field-carries-no-declaration");
     const ref = refs.find((item) => item.key === audioPlan.referenceKey);
     const speakerId = cleanText(audioPlan.speakerId || out.audio?.speakerId);
     const speakerName = cleanText(audioPlan.speakerName || out.audio?.speakerName || speakerId || "Selected character");
@@ -937,23 +1048,37 @@ function applyStructuredDirection(spec, composition, motionPlan, refs = []) {
       out.audio = { ...out.audio, mode: "none", dialogue: "", transcript: "", referenceKey: "", referenceLabel: "", delivery: "" };
     }
     const env = plan.environment || {};
-    if (declaration.environment.declared) {
-      if (env.action && env.action !== "static") out.environmentMotion = unique([...out.environmentMotion, `${normalizedLabel(env.action)}, ${normalizedLabel(env.intensity || "subtle")}${env.notes ? `; ${env.notes}` : ""}`]);
-      took("environment", "");
+    /* The environment SPEAKS only when its action was declared. Intensity and notes
+       qualify that action; on their own they have nothing to qualify, and reading them as
+       permission to publish the default `static` is what made an untouched control assert
+       that the world holds still. */
+    const envSays = (field) => says(declaration.environment, field);
+    if (envSays("action") && env.action && env.action !== "static") {
+      const intensity = envSays("intensity") ? normalizedLabel(env.intensity || "subtle") : "";
+      const notes = envSays("notes") ? cleanText(env.notes) : "";
+      out.environmentMotion = unique([...out.environmentMotion, [normalizedLabel(env.action), intensity].filter(Boolean).join(", ") + (notes ? `; ${notes}` : "")]);
+      for (const field of ["action", "intensity", "notes"]) if (envSays(field)) took("environment", "", field);
     } else if (declaration.environment.present) {
-      withheld("environment", "", "environment-plan-carries-no-declaration");
+      for (const field of ["action", "intensity", "notes"]) withheld("environment", "", field, envSays(field) ? "environment-qualifier-without-a-declared-action" : "field-carries-no-declaration");
     }
     const timing = plan.timing || {};
-    if (declaration.timing.declared) {
-      if (timing.secondary) out.actions.push({ start: Math.max(0, out.durationSeconds * .5), end: out.durationSeconds, action: timing.secondary });
-      /* `holdEnd` normalizes to TRUE, so every plan that had ever been opened added a
-         must-preserve requirement to settle and hold the final state — the same
-         manufactured stillness as the subject row above, in the requirement list rather
-         than the beats, and directly opposed to a shot that has to end mid-stride. */
-      if (timing.holdEnd) out.mustPreserve = unique([...out.mustPreserve, "settle into and briefly hold the final state"]);
-      took("timing", "");
+    /* `holdEnd` normalizes to TRUE, so every plan that had ever been opened added a
+       must-preserve requirement to settle and hold the final state — the same
+       manufactured stillness as the subject rows above, in the requirement list rather
+       than the beats, and directly opposed to a shot that has to end mid-stride. It is
+       asked for on its OWN now: declaring a pacing does not declare a hold. */
+    const timingSays = (field) => says(declaration.timing, field);
+    if (timingSays("secondary") && timing.secondary) {
+      out.actions.push({ start: Math.max(0, out.durationSeconds * .5), end: out.durationSeconds, action: timing.secondary });
+      took("timing", "", "secondary");
     } else if (declaration.timing.present) {
-      withheld("timing", "", "timing-plan-carries-no-declaration");
+      withheld("timing", "", "secondary", "field-carries-no-declaration");
+    }
+    if (timingSays("holdEnd") && timing.holdEnd) {
+      out.mustPreserve = unique([...out.mustPreserve, "settle into and briefly hold the final state"]);
+      took("timing", "", "holdEnd");
+    } else if (declaration.timing.present) {
+      withheld("timing", "", "holdEnd", "field-carries-no-declaration");
     }
     /* WHERE EVERY MOTION VALUE CAME FROM, carried on the spec beside the values
        themselves. validateSpec() preserves unknown keys through `{...fallback, ...s}`,
@@ -1011,6 +1136,23 @@ function applyMotionAudioBrief(spec, rawBrief) {
   if (cleanText(performance.prohibitedMotion)) out.mustAvoid = unique([...out.mustAvoid, cleanText(performance.prohibitedMotion)]);
   const nativeAudio = output.nativeAudio !== false;
   const line = cleanText(dialogue.line);
+  /* A DECLARED AUDIO MODE IS NOT THIS LAYER'S TO REPLACE.
+   *
+   * HOLD CORRECTION, blocker 2. `mode` below was recomputed unconditionally as
+   * "native audio and a line -> generate-voice, otherwise none". For a shot whose
+   * filmmaker had chosen `lip-sync-reference` that silently became `generate-voice`
+   * WHILE THE REFERENCE STAYED ATTACHED — `referenceKey` and `referenceLabel` are not in
+   * the assignment below, so they survived the spread and the package described one
+   * thing while its mode asked for another.
+   *
+   * applyStructuredDirection() records whether a human chose the mode. Where it did, that
+   * answer stands. Where nothing did, the derivation below is exactly right and still
+   * runs: this fills an unknown and refuses to overwrite a statement, which is the same
+   * rule the motion plan is read under. */
+  const declaredAudioMode = (out.motionIntent?.declared || [])
+    .some((row) => cleanText(row?.dimension) === "audio" && cleanText(row?.field) === "mode");
+  const derivedMode = nativeAudio && line ? "generate-voice" : "none";
+  const audioMode = declaredAudioMode ? cleanText(out.audio?.mode) || derivedMode : derivedMode;
   const delivery = [
     cleanText(dialogue.language) ? `Language: ${cleanText(dialogue.language)}` : "",
     cleanText(dialogue.emotion) ? `Emotion: ${cleanText(dialogue.emotion)}` : "",
@@ -1019,10 +1161,15 @@ function applyMotionAudioBrief(spec, rawBrief) {
     cleanText(dialogue.volume) ? `Volume: ${cleanText(dialogue.volume)}` : "",
     cleanText(dialogue.startTime) || cleanText(dialogue.endTime) ? `Timing: ${cleanText(dialogue.startTime) || "start"} to ${cleanText(dialogue.endTime) || "end"}` : "",
   ].filter(Boolean).join("; ");
+  /* The mode is not a label on its own: lip-sync means the words are the TRANSCRIPT of a
+     recording the model must match, and an empty `dialogue` is what stops a second voice
+     being generated over it. Restoring the mode while leaving the line in `dialogue`
+     would preserve the word and lose the contract. */
+  const lipSyncing = audioMode === "lip-sync-reference";
   out.audio = {
     ...out.audio,
-    dialogue: line,
-    transcript: line,
+    dialogue: lipSyncing ? "" : line,
+    transcript: lipSyncing ? (line || cleanText(out.audio?.transcript)) : line,
     speakerId: cleanText(dialogue.speakerId || out.audio?.speakerId),
     speakerName: cleanText(dialogue.speakerName || out.audio?.speakerName || dialogue.speakerId),
     voiceDesign: compactVoiceDesign(dialogue.voiceDesign || out.audio?.voiceDesign),
@@ -1040,7 +1187,7 @@ function applyMotionAudioBrief(spec, rawBrief) {
        indistinguishable from `none` again. */
     lipSync: deriveLipSync({ ...dialogue, line }),
     lipSyncRequired: lipSyncRequiredFrom({ ...dialogue, line }),
-    mode: nativeAudio && line ? "generate-voice" : "none",
+    mode: audioMode,
     sfx: motionBriefSfxText(sound.sfxEvents) || cleanText(out.audio?.sfx),
     ambience: cleanText(sound.ambience || out.audio?.ambience),
     music: cleanText(sound.music),

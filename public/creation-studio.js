@@ -3426,25 +3426,61 @@ function motionPropPlan(c, id) {
 function structuredMotionSummary(s) {
   const c = ensureShotCreation(s), plan = c.motionPlan, camera = plan.camera || {}, lines = [];
   const declaration = motionPlanDeclaration(plan);
-  if (declaration.camera.declared && camera.move && camera.move !== "none") lines.push(`Camera: ${camera.move.replace(/-/g," ")}${camera.direction ? ` ${camera.direction.replace(/-/g," ")}` : ""}, ${camera.intensity || "subtle"}, ${camera.style || "smooth"}; ${camera.framing === "allow-reframe" ? "reframing allowed" : "preserve the staged composition"}.`);
+  /* PER FIELD, matching public/v607-composer.js exactly — a declared sibling never speaks
+     for an untouched default, in safe mode either. */
+  const says = (reading, field) => Boolean(reading && reading.fields.includes(field));
+  const clause = (rows) => rows
+    .filter((row) => String(row[1] == null ? "" : row[1]).trim())
+    .map(([lead, value], index) => `${index ? lead : ""}${String(value).trim()}`)
+    .join("")
+    .trim();
+  const cameraSays = (field) => says(declaration.camera, field);
+  if (cameraSays("move") && camera.move && camera.move !== "none") {
+    const qualifiers = clause([["", cameraSays("intensity") ? camera.intensity : ""], [", ", cameraSays("style") ? camera.style : ""]]);
+    const framing = cameraSays("framing") ? (camera.framing === "allow-reframe" ? "reframing allowed" : "preserve the staged composition") : "";
+    lines.push(`Camera: ${camera.move.replace(/-/g," ")}${cameraSays("direction") && camera.direction ? ` ${camera.direction.replace(/-/g," ")}` : ""}${qualifiers ? `, ${qualifiers}` : ""}${framing ? `; ${framing}` : ""}.`);
+  }
   for (const id of s.characters || []) {
-    if (!declaration.subjects[id]?.declared) continue;
+    const reading = declaration.subjects[id];
+    const subjectSays = (field) => says(reading, field);
     const x = P.characters.find((item) => item.id === id), p = (plan.subjects || {})[id] || {};
-    if (p.action && p.action !== "still") lines.push(`${x?.name || id}: ${p.action.replace(/-/g," ")}${p.direction ? ` toward ${p.direction.replace(/-/g," ")}` : ""}, ${p.intensity || "natural"}${p.look ? `; looks ${p.look.replace(/-/g," ")}` : ""}${p.notes ? `; ${p.notes}` : ""}.`);
-    else lines.push(`${x?.name || id} remains still except for natural breathing and blinking${p.notes ? `; ${p.notes}` : ""}.`);
+    const directed = subjectSays("action") && p.action && p.action !== "still";
+    const body = clause([
+      ["", directed ? p.action.replace(/-/g," ") : ""],
+      [" ", subjectSays("direction") && p.direction ? `toward ${p.direction.replace(/-/g," ")}` : ""],
+      [", ", directed && subjectSays("intensity") ? p.intensity : ""],
+      ["; ", subjectSays("look") && p.look ? `looks ${p.look.replace(/-/g," ")}` : ""],
+      ["; ", subjectSays("notes") ? p.notes : ""],
+    ]);
+    if (subjectSays("action") && !directed) lines.push(`${x?.name || id} remains still except for natural breathing and blinking${body ? `; ${body}` : ""}.`);
+    else if (body) lines.push(`${x?.name || id}: ${body}.`);
   }
   for (const id of c.propIds || []) {
-    if (!declaration.props[id]?.declared) continue;
+    const reading = declaration.props[id];
+    const propSays = (field) => says(reading, field);
     const x = [...(P.props || []), ...(P.vehicles || [])].find((item) => item.id === id), p = (plan.props || {})[id] || {};
-    lines.push(`${x?.name || id}: ${String(p.action || "static").replace(/-/g," ")}${p.direction ? ` ${p.direction.replace(/-/g," ")}` : ""}${p.notes ? `; ${p.notes}` : ""}.`);
+    const body = clause([
+      ["", propSays("action") ? String(p.action || "static").replace(/-/g," ") : ""],
+      [" ", propSays("direction") && p.direction ? p.direction.replace(/-/g," ") : ""],
+      ["; ", propSays("notes") ? p.notes : ""],
+    ]);
+    if (body) lines.push(`${x?.name || id}: ${body}.`);
   }
   const env = plan.environment || {};
-  if (declaration.environment.declared) {
-    if (env.action && env.action !== "static") lines.push(`Environment: ${env.action.replace(/-/g," ")}, ${env.intensity || "subtle"}${env.notes ? `; ${env.notes}` : ""}.`);
+  const envSays = (field) => says(declaration.environment, field);
+  if (envSays("action")) {
+    if (env.action && env.action !== "static") lines.push(`Environment: ${env.action.replace(/-/g," ")}${envSays("intensity") ? `, ${env.intensity || "subtle"}` : ""}${envSays("notes") && env.notes ? `; ${env.notes}` : ""}.`);
     else lines.push("Environment remains stable unless explicitly animated above.");
   }
   const timing = plan.timing || {};
-  if (declaration.timing.declared) lines.push(`Timing: ${timing.onset || "immediate"} onset, ${timing.pacing || "natural"} pacing${timing.holdEnd ? "; settle and hold the final state" : ""}${timing.secondary ? `; secondary action: ${timing.secondary}` : ""}.`);
+  const timingSays = (field) => says(declaration.timing, field);
+  const timingBody = clause([
+    ["", timingSays("onset") ? `${timing.onset || "immediate"} onset` : ""],
+    [", ", timingSays("pacing") ? `${timing.pacing || "natural"} pacing` : ""],
+    ["; ", timingSays("holdEnd") && timing.holdEnd ? "settle and hold the final state" : ""],
+    ["; ", timingSays("secondary") && timing.secondary ? `secondary action: ${timing.secondary}` : ""],
+  ]);
+  if (timingBody) lines.push(`Timing: ${timingBody}.`);
   const audio = plan.audio || {};
   if (audio.lipSync && audio.referenceKey) {
     const ref = shotPlanningGenerationReferences(s, ["audio"]).find((item) => item.key === audio.referenceKey);
@@ -4611,7 +4647,30 @@ window.buildGuidedMotionPrompt = async (id, useLLM = false) => {
     directiveSeen.add(key);
     return true;
   }).join("\n");
-  if (!structuredDirection && !writtenDirection) return toast("Choose at least one motion direction");
+  /* AN EMPTY HIGHER LAYER FALLS THROUGH; IT DOES NOT REFUSE.
+   *
+   * HOLD CORRECTION, blocker 4. Before the slice, structuredMotionSummary() could not
+   * return "" — it manufactured a line for every untouched control — so this refusal was
+   * unreachable and nobody noticed what it actually asks. Once the manufacture stopped,
+   * it started firing on shots that ARE directed: a filmmaker who wrote the action in the
+   * shot description and never opened the motion composer was told to choose a motion
+   * direction, and /api/prompt/compile never ran.
+   *
+   * The declared precedence is composer brief -> declared motion plan -> the current
+   * shot's own narrative -> lower sources. The first two being silent is the second one
+   * yielding, not the shot being undirected. buildContext() reads exactly the chain
+   * below for a segment (`motionPrompt || note || title`, then the shot narrative), so
+   * asking it here is asking what the compile would actually receive rather than
+   * guessing. Read without creating: resolving the unit through activeMotionUnit() would
+   * write a clip as a side effect of a refusal check.
+   *
+   * Nothing is manufactured to satisfy this. A shot with no motion intent at ANY layer
+   * still gets the honest refusal. */
+  const unitForNarrative = (s.clips || []).find((item) => item.id === c.activeMotionUnitId) || (s.clips || [])[0] || null;
+  const narrativeDirection = String(
+    unitForNarrative?.motionPrompt || unitForNarrative?.note || unitForNarrative?.title || s.desc || "",
+  ).trim();
+  if (!structuredDirection && !writtenDirection && !narrativeDirection) return toast("Choose at least one motion direction");
   if (useLLM && !capabilityState("text").ready) return toast(capabilityState("text").message);
   const progress = guidedFrameProgress(s, takesFor(id));
   if (!progress.requiredApproved && needsApprovedStill) return toast("Approve all required frames before building motion");

@@ -155,11 +155,19 @@ function compileSwamp(plan, options = {}) {
 function firstBeat(result) {
   return result.beats[0] || "";
 }
-function withheldDimensions(spec) {
-  return (spec.motionIntent?.withheld || []).map((row) => `${row.dimension}:${row.id}`);
+/* PROVENANCE IS READ PER FIELD, because that is the unit the correction works in. A
+   reader that only asked which DIMENSION was taken could not tell "the filmmaker set the
+   camera intensity" from "the filmmaker set the camera move", which is exactly the
+   distinction the hold correction turns on. */
+function withheldFields(spec) {
+  return (spec.motionIntent?.withheld || []).map((row) => `${row.dimension}:${row.id}:${row.field}`);
 }
-function declaredDimensions(spec) {
-  return (spec.motionIntent?.declared || []).map((row) => `${row.dimension}:${row.id}`);
+function declaredFields(spec) {
+  return (spec.motionIntent?.declared || []).map((row) => `${row.dimension}:${row.id}:${row.field}`);
+}
+function withheldReason(spec, key) {
+  const row = (spec.motionIntent?.withheld || []).find((item) => `${item.dimension}:${item.id}:${item.field}` === key);
+  return row ? row.reason : "";
 }
 
 /* =========================================================== 1. WALK VS STILL
@@ -193,12 +201,16 @@ function testWalkVsStillSurvivesCompilation() {
   assert.ok(!new RegExp(`${REX}\\s+still`).test(result.compiled.prompt),
     `the compiled prompt directs the declared-moving subject to hold still: ${result.compiled.prompt.slice(0, 400)}`);
 
-  /* WITHHELD, NOT DROPPED. A gap the compiler chose to leave open is a decision, and
-     the record has to show it. */
-  assert.deepStrictEqual(withheldDimensions(result.spec).sort(),
-    ["camera:", "environment:", `prop:${CHAIR}`, `subject:${REX}`, "timing:"].sort(),
-    "every dimension the plan carried but did not declare must be recorded as withheld");
-  assert.deepStrictEqual(declaredDimensions(result.spec), [],
+  /* WITHHELD, NOT DROPPED, AND NAMED BY FIELD. A gap the compiler chose to leave open is
+     a decision, and the record has to show which value it declined to publish. */
+  assert.deepStrictEqual(withheldFields(result.spec).sort(), [
+    "camera::move", "camera::style", "camera::intensity", "camera::framing",
+    "environment::action", "environment::intensity", "environment::notes",
+    "timing::secondary", "timing::holdEnd",
+    "audio::mode",
+    `subject:${REX}:`, `prop:${CHAIR}:`,
+  ].sort(), "every field the plan carried but did not declare must be recorded as withheld, by name");
+  assert.deepStrictEqual(declaredFields(result.spec), [],
     "an untouched motion plan declares nothing");
 
 }
@@ -244,6 +256,25 @@ function testDerivedLabelIsNotADeclaration() {
       `a derived target label is not a declaration, and the compiler emitted: ${beat}`);
   assert.strictEqual(firstBeat(result), DECLARED_WALK,
     "the declared walk must remain the principal action beside a stale target label");
+  /* And the provenance must not claim it either. Under the field-level reading a derived
+     label cannot reach a clause on its own, so the record is where the mistake would
+     surface: claiming `targetLabel` as taken would be the compiler saying a filmmaker
+     decided something the composer decided for them. */
+  assert.deepStrictEqual(declaredFields(result.spec), [],
+    "a derived label must not be recorded as a filmmaker decision");
+
+  /* And beside a field that IS declared, where a clause does get written. This is where
+     the exclusion earns its keep under the field-level reading: the composer writes
+     `targetLabel` for the filmmaker when they pick a target, so recording it as one of
+     their decisions would be the provenance claiming a choice nobody made — and a target
+     cleared afterwards would keep a stale label alive in the record. */
+  const walking = blankPlan();
+  walking.subjects[REX] = { ...BLANK_SUBJECT, action: "walk", targetLabel: "the folding chair" };
+  const walkingResult = compileSwamp(walking);
+  assert.strictEqual(firstBeat(walkingResult), `${REX} walk`,
+    `a stale label must not reach the beat beside a declared action: ${JSON.stringify(walkingResult.beats)}`);
+  assert.deepStrictEqual(declaredFields(walkingResult.spec), [`subject:${REX}:action`],
+    "only the filmmaker's own field may be recorded as a decision; a derived label may not");
 }
 
 /* THE INVERSE, AND IT MATTERS AS MUCH.
@@ -251,13 +282,24 @@ function testDerivedLabelIsNotADeclaration() {
    "Remain still while the water settles" is real direction. A repair that could not tell
    it from a blank form would be a worse defect than the one it replaced. */
 function testDeclaredStillnessStillCompiles() {
+  /* A note the filmmaker typed is declared; the `action` dropdown they never opened is
+     not. So the note speaks and the default `still` beside it stays silent — and the note
+     itself may perfectly well be about holding still, which is the filmmaker saying it in
+     their own words rather than the compiler saying it for them. */
   const plan = blankPlan();
   plan.subjects[REX] = { ...BLANK_SUBJECT, action: "still", notes: "holds absolutely still while the water settles" };
   const withNote = compileSwamp(plan);
-  assert.ok(firstBeat(withNote).startsWith(`${REX} still`),
-    `a directed stillness must compile: ${JSON.stringify(withNote.beats)}`);
-  assert.ok(firstBeat(withNote).includes("water settles"),
-    "the filmmaker's own words must survive with it");
+  assert.strictEqual(firstBeat(withNote), `${REX} holds absolutely still while the water settles`,
+    `a directed note must compile on its own, without its untouched siblings: ${JSON.stringify(withNote.beats)}`);
+  assert.deepStrictEqual(declaredFields(withNote.spec), [`subject:${REX}:notes`],
+    "only the field the filmmaker wrote may be recorded as taken");
+
+  /* A NON-default action is declared by divergence, and compiles with its qualifiers. */
+  const walking = blankPlan();
+  walking.subjects[REX] = { ...BLANK_SUBJECT, action: "walk", direction: "screen-right", notes: "steady pace" };
+  const walkingResult = compileSwamp(walking);
+  assert.strictEqual(firstBeat(walkingResult), `${REX} walk toward screen right; steady pace`,
+    `a fully directed subject must compile the sentence it always did: ${JSON.stringify(walkingResult.beats)}`);
 
   /* And the harder half: stillness chosen deliberately, with NOTHING else set, so the
      stored entry is byte-identical to the blank one. Only the writer's own mark can tell
@@ -268,8 +310,8 @@ function testDeclaredStillnessStillCompiles() {
   const markedResult = compileSwamp(marked);
   assert.ok(firstBeat(markedResult).startsWith(`${REX} still`),
     `a deliberately re-chosen default must be heard: ${JSON.stringify(markedResult.beats)}`);
-  assert.deepStrictEqual(declaredDimensions(markedResult.spec), [`subject:${REX}`],
-    "a marked field must read as a declaration");
+  assert.deepStrictEqual(declaredFields(markedResult.spec), [`subject:${REX}:action`],
+    "a marked field must read as a declaration, and must name itself");
 }
 
 /* THE SAME SHOT THROUGH THE MODEL PACK, so the repair is not only true of the legacy
@@ -507,10 +549,25 @@ async function main() {
   for (const token of SHOT_A_TOKENS)
     assert.ok(aStates[0].includes(token), `shot A must actually carry its own ${token}`);
 
+  /* ---- 2b. THE EMPTY-COMPOSER FALLTHROUGH (hold correction, blocker 4) ----- */
+  await testEmptyComposerFallsThroughToShotNarrative();
+  await testUndirectedShotStillRefuses();
+  await testDeclaredPlanFieldAloneAvoidsTheRefusal();
+
   /* ---- 3. THE REPORTED STRINGS ARE SHIPPED PLACEHOLDERS -------------------- */
   testReportedStringsArePlaceholders();
 
   /* ---- 4. PRECEDENCE: A, B, C, D ------------------------------------------ */
+  testDeclaredCameraFieldDoesNotPromoteItsSiblings();
+  testDeclaredTimingFieldDoesNotPromoteItsSiblings();
+  testDeclaredEnvironmentFieldDoesNotPromoteItsSiblings();
+  testDeclaredSubjectFieldDoesNotPromoteItsSiblings();
+  testOrphanedSubjectDoesNotCompile();
+  testUnestablishedMembershipFiltersNothing();
+  testDeclaredAudioModeSurvivesTheMotionBrief();
+  testUnsetAudioModeMayStillBeDerived();
+  await testDeclaredAudioModeSurvivesTheServerRoute();
+  await testBrowserSummaryDoesNotPromoteSiblings();
   testDeclaredCameraOutranksDefaultedPlan();
   testDeclaredPlanCameraIsApplied();
   testLowerLayerDefaultSurvivesWhenNothingContradictsIt();
@@ -612,8 +669,8 @@ function testDeclaredCameraOutranksDefaultedPlan() {
   const result = compileSwamp(blankPlan(), { mediaAnalysis: declared });
   assert.strictEqual(result.spec.camera.movement, "slow dolly push-in that begins at 1.0s",
     `a defaulted camera row must not overwrite a declared camera movement: ${result.spec.camera.movement}`);
-  assert.ok(withheldDimensions(result.spec).includes("camera:"),
-    "the withheld record must name the camera row it declined to apply");
+  assert.ok(withheldFields(result.spec).includes("camera::move"),
+    "the withheld record must name the camera field it declined to apply");
 }
 
 /* THE INVERSE. A camera the filmmaker DID direct on the motion pass is the closest
@@ -624,8 +681,8 @@ function testDeclaredPlanCameraIsApplied() {
   const result = compileSwamp(plan, { mediaAnalysis: { camera: { movement: "locked" } } });
   assert.ok(/push in/.test(result.spec.camera.movement),
     `a declared plan camera must reach the spec: ${result.spec.camera.movement}`);
-  assert.ok(declaredDimensions(result.spec).includes("camera:"),
-    "a declared camera must be recorded as taken");
+  assert.ok(declaredFields(result.spec).includes("camera::move"),
+    "a declared camera move must be recorded as taken, by name");
 }
 
 /* CASE B. The shot declares no subject movement of its own, and a LOWER layer supplies
@@ -747,10 +804,472 @@ async function testIntentEditRebuildUsesCurrentState() {
     `V1-only semantic content survived the rebuild: ${rebuilt.compiled.prompt.slice(0, 400)}`);
 }
 
+/* ============================================ 6. THE HOLD CORRECTION, BLOCKER 1
+   ===========================================================================
+   ONE DECLARED FIELD MAY NEVER SPEAK FOR ITS UNTOUCHED SIBLINGS.
+
+   The first pass asked "is this camera declared?" and an emitter that got `true` wrote
+   the whole row. So the three cases below each set exactly ONE control and got a second,
+   third and fourth statement nobody had made — the original defect at a smaller scale,
+   and the reason this correction exists. */
+
+/* CASE A. Camera intensity only. The untouched `move` must not become locked-off. */
+function testDeclaredCameraFieldDoesNotPromoteItsSiblings() {
+  const plan = blankPlan();
+  plan.camera = { ...BLANK_CAMERA, intensity: "strong" };
+  const declared = { camera: { movement: "slow dolly push-in", shotSize: "medium-wide" } };
+  const result = compileSwamp(plan, { mediaAnalysis: declared });
+  assert.strictEqual(result.spec.camera.movement, "slow dolly push-in",
+    `an untouched camera move must not publish itself beside a declared intensity: ${result.spec.camera.movement}`);
+  assert.ok(!/locked/i.test(result.spec.camera.movement),
+    `the normalizer's own default reached the compiled camera: ${result.spec.camera.movement}`);
+  assert.strictEqual(result.spec.camera.stability, "strong",
+    `the declared intensity is the only camera value the plan may contribute: ${result.spec.camera.stability}`);
+  assert.deepStrictEqual(declaredFields(result.spec), ["camera::intensity"],
+    "provenance must name the field the filmmaker actually set, and only that field");
+  assert.strictEqual(withheldReason(result.spec, "camera::move"), "field-carries-no-declaration",
+    "the untouched move must be recorded as withheld by name");
+}
+
+/* CASE B. Timing pacing only. The untouched `holdEnd` must not require settle-and-hold. */
+function testDeclaredTimingFieldDoesNotPromoteItsSiblings() {
+  const plan = blankPlan();
+  plan.timing = { ...BLANK_TIMING, pacing: "brisk" };
+  const result = compileSwamp(plan);
+  assert.ok(!result.spec.mustPreserve.includes("settle into and briefly hold the final state"),
+    `an untouched holdEnd must not publish itself beside a declared pacing: ${JSON.stringify(result.spec.mustPreserve)}`);
+  assert.strictEqual(withheldReason(result.spec, "timing::holdEnd"), "field-carries-no-declaration",
+    "the untouched holdEnd must be recorded as withheld by name");
+  /* And the inverse, so this is a distinction rather than a blanket refusal. */
+  const held = blankPlan();
+  held.timing = { ...BLANK_TIMING, pacing: "brisk", declaredFields: ["holdEnd"] };
+  const heldResult = compileSwamp(held);
+  assert.ok(heldResult.spec.mustPreserve.includes("settle into and briefly hold the final state"),
+    "a declared hold must still reach the requirement list");
+}
+
+/* CASE C. Environment intensity only. The untouched `action` must not assert stability. */
+function testDeclaredEnvironmentFieldDoesNotPromoteItsSiblings() {
+  const plan = blankPlan();
+  plan.environment = { ...BLANK_ENVIRONMENT, intensity: "strong" };
+  const result = compileSwamp(plan);
+  assert.deepStrictEqual(result.spec.environmentMotion, [],
+    `an untouched environment action must not publish itself beside a declared intensity: ${JSON.stringify(result.spec.environmentMotion)}`);
+  assert.strictEqual(withheldReason(result.spec, "environment::intensity"), "environment-qualifier-without-a-declared-action",
+    "a qualifier with nothing to qualify must say so rather than be dropped");
+  /* Declared action, and the declared qualifier rides with it. */
+  const windy = blankPlan();
+  windy.environment = { ...BLANK_ENVIRONMENT, action: "wind", intensity: "strong" };
+  const windyResult = compileSwamp(windy);
+  assert.deepStrictEqual(windyResult.spec.environmentMotion, ["wind, strong"],
+    `a declared environment action must compile with its declared qualifier: ${JSON.stringify(windyResult.spec.environmentMotion)}`);
+}
+
+/* The same rule inside one subject row: an end position is not permission to publish an
+   action nobody chose. */
+function testDeclaredSubjectFieldDoesNotPromoteItsSiblings() {
+  const plan = blankPlan();
+  plan.subjects[REX] = { ...BLANK_SUBJECT, destination: "on the far bank" };
+  const result = compileSwamp(plan);
+  assert.strictEqual(firstBeat(result), `${REX} ending on the far bank`,
+    `only the declared field may compile: ${JSON.stringify(result.beats)}`);
+  assert.ok(!/\bstill\b/.test(firstBeat(result)),
+    `the untouched action reached the beat: ${firstBeat(result)}`);
+  assert.deepStrictEqual(declaredFields(result.spec), [`subject:${REX}:destination`],
+    "provenance must name the one field that contributed");
+}
+
+/* ============================================ 7. THE HOLD CORRECTION, BLOCKER 3
+   ===========================================================================
+   A SUBJECT THAT LEFT THE SHOT STOPS DIRECTING IT.
+
+   Its stored row stays on the record — history is not deleted to make a compile succeed —
+   but the compiled prompt is about the shot as it stands now. */
+function testOrphanedSubjectDoesNotCompile() {
+  const GHOST = "CH-GHOST";
+  const plan = blankPlan();
+  plan.subjects[GHOST] = { ...BLANK_SUBJECT, action: "run", notes: "ORPHANTOKEN" };
+  plan.subjects[REX] = { ...BLANK_SUBJECT, action: "walk" };
+  /* The shot's cast is Rex and the chair. CH-GHOST is in the stored plan and nowhere
+     else, which is exactly what a character removed from the shot leaves behind. */
+  const result = compileSwamp(plan);
+  assert.ok(!result.beats.some((beat) => beat.includes("ORPHANTOKEN")),
+    `a subject that no longer belongs to this shot still directed it: ${JSON.stringify(result.beats)}`);
+  assert.ok(!result.compiled.prompt.includes("ORPHANTOKEN"),
+    `the orphan reached the compiled prompt: ${result.compiled.prompt.slice(0, 400)}`);
+  assert.strictEqual(withheldReason(result.spec, `subject:${GHOST}:`), "not-a-member-of-the-current-shot",
+    "the orphan must be recorded as withheld for the reason it was withheld");
+  /* The stored row is untouched — the filter is a compilation boundary, not a deletion. */
+  assert.ok(plan.subjects[GHOST] && plan.subjects[GHOST].notes === "ORPHANTOKEN",
+    "the historic row must remain in the project bytes");
+  /* And a current member still compiles normally beside it. */
+  assert.ok(result.beats.some((beat) => beat.startsWith(`${REX} walk`)),
+    `a current subject must still compile: ${JSON.stringify(result.beats)}`);
+}
+
+/* MEMBERSHIP THAT WAS NEVER ESTABLISHED IS NOT AN EMPTY MEMBERSHIP. A caller that
+   supplied no entity context cannot be told who belongs, so nothing may be filtered —
+   otherwise the correction would silently delete every directed subject in any compile
+   built without references. */
+function testUnestablishedMembershipFiltersNothing() {
+  const context = swampContext();
+  context.references = [];
+  const profile = motionProfile();
+  let spec = PromptEngine.defaultSpec(context, "motion", profile.mode || "i2v", [], null);
+  assert.deepStrictEqual([...(spec.promptEntities || []), ...(spec.blockingEntities || [])], [],
+    "the fixture must actually establish no membership, or this case proves nothing");
+  const plan = blankPlan();
+  plan.subjects[REX] = { ...BLANK_SUBJECT, action: "walk" };
+  spec = PromptEngine.applyStructuredDirection(spec, null, plan, []);
+  assert.ok((spec.actions || []).some((row) => String(row.action).startsWith(`${REX} walk`)),
+    `an unestablished membership must filter nothing: ${JSON.stringify((spec.actions || []).map((row) => row.action))}`);
+}
+
+/* ============================================ 8. THE HOLD CORRECTION, BLOCKER 2
+   ===========================================================================
+   A DECLARED AUDIO MODE IS NOT THE MOTION BRIEF'S TO REPLACE.
+
+   A shot set to lip-sync a recorded reference came back as `generate-voice` WITH THE
+   REFERENCE STILL ATTACHED: applyMotionAudioBrief() recomputed the mode from "is native
+   audio on and is there a line", which is the right derivation for a shot nobody has
+   answered for and a silent overwrite of one who has. The reference survived because
+   `referenceKey` is not in that assignment; the decision did not. */
+
+const LIP_SYNC_LINE = "You said the coupler would hold.";
+const AUDIO_REFERENCE_KEY = "kai-dialogue-take";
+
+function lipSyncPlan() {
+  const plan = blankPlan();
+  plan.audio = {
+    mode: "lip-sync-reference",
+    referenceKey: AUDIO_REFERENCE_KEY,
+    speakerId: REX,
+    voiceEntityId: "",
+    lipSync: true,
+    direction: "close, unhurried",
+  };
+  return plan;
+}
+function lipSyncReferences() {
+  return [{ key: AUDIO_REFERENCE_KEY, label: "Rex dialogue take", mediaType: "audio", role: "audio-timing", sourceType: "audio" }];
+}
+function lipSyncBrief() {
+  return {
+    schemaVersion: 1,
+    performance: { action: "Rex speaks the line without moving from the chair." },
+    camera: {},
+    dialogue: { line: LIP_SYNC_LINE, speakerId: REX, speakerName: "Rex", language: "English", locked: true },
+    sound: { sfxEvents: [] },
+    output: { resolution: "model-default", nativeAudio: true },
+  };
+}
+
+/* THE DIRECT HELPER PATH, in the order server.js calls them. */
+function testDeclaredAudioModeSurvivesTheMotionBrief() {
+  const context = swampContext({ shot: { audio: { dialogue: LIP_SYNC_LINE, sfx: "" } } });
+  const profile = motionProfile();
+  let spec = PromptEngine.defaultSpec(context, "motion", profile.mode || "i2v", lipSyncReferences(), null);
+  spec = PromptEngine.applyStructuredDirection(spec, null, lipSyncPlan(), lipSyncReferences());
+  assert.strictEqual(spec.audio.mode, "lip-sync-reference",
+    "the fixture must actually declare lip-sync before the brief runs, or this case proves nothing");
+  spec = PromptEngine.applyMotionAudioBrief(spec, lipSyncBrief());
+  assert.strictEqual(spec.audio.mode, "lip-sync-reference",
+    `a declared audio mode must survive the motion brief: ${spec.audio.mode}`);
+  assert.strictEqual(spec.audio.referenceKey, AUDIO_REFERENCE_KEY,
+    "the reference the declaration names must still be attached");
+  /* The mode is not a label on its own. Lip-sync means the words are a TRANSCRIPT of a
+     recording, and an empty `dialogue` is what stops a second voice being generated. */
+  assert.strictEqual(spec.audio.dialogue, "",
+    `lip-sync mode must not also request a generated voice: ${JSON.stringify(spec.audio.dialogue)}`);
+  assert.strictEqual(spec.audio.transcript, LIP_SYNC_LINE,
+    `the words belong in the transcript under lip-sync: ${JSON.stringify(spec.audio.transcript)}`);
+}
+
+/* AND THE INVERSE: a mode nobody declared is still derived, so this is a precedence rule
+   rather than a refusal to answer. */
+function testUnsetAudioModeMayStillBeDerived() {
+  const context = swampContext();
+  const profile = motionProfile();
+  let spec = PromptEngine.defaultSpec(context, "motion", profile.mode || "i2v", [], null);
+  spec = PromptEngine.applyStructuredDirection(spec, null, blankPlan(), []);
+  assert.strictEqual(spec.audio.mode, "none", "an untouched audio plan declares nothing");
+  spec = PromptEngine.applyMotionAudioBrief(spec, lipSyncBrief());
+  assert.strictEqual(spec.audio.mode, "generate-voice",
+    `an unset mode must still be derived from the brief: ${spec.audio.mode}`);
+  assert.strictEqual(spec.audio.dialogue, LIP_SYNC_LINE,
+    "a derived generate-voice mode still carries the line as dialogue");
+}
+
+/* ============================================ 9. THE HOLD CORRECTION, BLOCKER 4
+   ===========================================================================
+   AN EMPTY HIGHER LAYER FALLS THROUGH; IT DOES NOT REFUSE.
+
+   Once the composer stopped manufacturing a line for every untouched control, the
+   "Choose at least one motion direction" refusal became reachable — and started firing on
+   shots that ARE directed, because the filmmaker had written the action in the shot
+   description instead of the motion composer. /api/prompt/compile never ran.
+
+   These cases drive the shipped handler and watch whether the request is made. */
+
+const NARRATIVE_LOWER_SOURCE_TOKEN = "NARRATIVELOWERSOURCE";
+
+/* One run of buildGuidedMotionPrompt against a recording fetch stub. Returns the compile
+   request body if the handler made one, and null if it refused. */
+async function motionCompileAttempt(project, { shotId = "L1-01" } = {}) {
+  const seen = [];
+  const { context } = await render(`#/shot/${shotId}`, project, {
+    storage: { [`cinebraid-focused:fixture:shot-task:${shotId}`]: "motion" },
+    fetch: async (url, options, respond) => {
+      if (url !== "/api/prompt/compile") return null;
+      seen.push(JSON.parse(String(options.body || "{}")));
+      return respond({
+        compiledPrompt: "COMPILED",
+        spec: { schemaVersion: 1, actions: [] },
+        references: [],
+        warnings: [],
+        confirmations: [],
+        profile: { name: "MiniMax H3", profileVersion: "1" },
+      });
+    },
+  });
+  await vm.runInContext(`buildGuidedMotionPrompt(${JSON.stringify(shotId)}, false)`, context);
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  return { request: seen[0] || null, context };
+}
+
+/* The fixture a filmmaker actually has: an action written on the shot, a motion composer
+   nobody has opened, and no free-text motion direction anywhere. */
+function narrativeOnlyFixture() {
+  const project = buildFixture();
+  const shot = project.shots[0];
+  shot.desc = `Kai walks the length of the hull. ${NARRATIVE_LOWER_SOURCE_TOKEN}`;
+  shot.motionPrompt = "";
+  shot.clips = [{ ...shot.clips[0], motionPrompt: "", note: "", title: "", generationPackages: [] }];
+  delete shot.creationBrief;
+  return project;
+}
+
+/* CASE B. Untouched composer, valid current-shot narrative. No refusal; the compile runs
+   and the lower current-shot direction is what reaches it. */
+async function testEmptyComposerFallsThroughToShotNarrative() {
+  const attempt = await motionCompileAttempt(narrativeOnlyFixture());
+  assert.ok(attempt.request,
+    "an untouched composer beside a directed shot must fall through to the shot's own narrative, not refuse");
+  assert.strictEqual(String(attempt.request.directive || ""), "",
+    "the higher layers really are empty here — the request carries no directive of its own");
+  assert.strictEqual(String(attempt.request.shotId || ""), "L1-01",
+    "the request must name the shot whose narrative will answer for it");
+  /* WHERE THE ANSWER ACTUALLY COMES FROM. The browser sends no directive because it has
+     none; buildContext() then falls through `motionPrompt || note || title` to the shot's
+     own narrative, which is the layer the precedence says should answer. Resolved here
+     the way the server resolves it, so the claim is about the compiled prompt rather than
+     about the request that asked for it. */
+  const live = vm.runInContext("JSON.parse(JSON.stringify(P))", attempt.context);
+  const compiled = compileFromLiveProject(live, "L1-01", "");
+  assert.ok(compiled.compiled.prompt.includes(NARRATIVE_LOWER_SOURCE_TOKEN),
+    `the lower current-shot direction must be what the compile is built from: ${compiled.compiled.prompt.slice(0, 400)}`);
+}
+
+/* CASE A. A shot directed at no layer at all still gets the honest refusal. */
+async function testUndirectedShotStillRefuses() {
+  const project = narrativeOnlyFixture();
+  project.shots[0].desc = "";
+  project.shots[0].title = "";
+  const attempt = await motionCompileAttempt(project);
+  assert.strictEqual(attempt.request, null,
+    "a shot with no motion intent at any layer must still refuse rather than compile from nothing");
+}
+
+/* CASE C. A declared motion-plan field is itself enough; the composer summary is the
+   higher layer and it is no longer empty. */
+async function testDeclaredPlanFieldAloneAvoidsTheRefusal() {
+  const project = narrativeOnlyFixture();
+  project.shots[0].desc = "";
+  project.shots[0].title = "";
+  project.shots[0].creationBrief = {
+    motionPlan: { camera: { move: "push-in" }, subjects: {}, props: {}, environment: {}, timing: {}, audio: {} },
+  };
+  const attempt = await motionCompileAttempt(project);
+  assert.ok(attempt.request,
+    "a declared motion-plan field must be enough to compile, with no narrative and no free text");
+}
+
+/* ================================ 8b. THE REAL SERVER ORDERING, BLOCKER 2
+   ===========================================================================
+   The helper pair above is the shape of the defect; THIS is the path a filmmaker takes.
+
+   server.js runs applyStructuredDirection() and then applyMotionAudioBrief() on the same
+   spec, in that order, inside POST /api/prompt/compile. Asserting the two helpers in
+   sequence proves they compose; it does not prove the route composes them the same way,
+   and the reviewer reproduced the overwrite through the route. So the route is started
+   and asked.
+
+   The server runs against a sandbox in the system temp directory — its own config and its
+   own projects root, through the env vars the product already supports — so nothing here
+   touches this repository's `data/` or its shipped sample. `useLLM: false` keeps the
+   route deterministic and offline: no assistant is contacted, and no provider,
+   model or paid call is made by any part of this. */
+
+function freePort() {
+  const net = require("net");
+  return new Promise((resolve, reject) => {
+    const probe = net.createServer();
+    probe.unref();
+    probe.on("error", reject);
+    probe.listen(0, "127.0.0.1", () => {
+      const address = probe.address();
+      probe.close(() => resolve(address.port));
+    });
+  });
+}
+
+function sandboxProject() {
+  return {
+    meta: { title: "Motion Intent Sandbox", format: "Test", version: "v1", hubVersion: "v5.5.0", aiPolicy: "disabled" },
+    qcChecklist: [],
+    characters: [{ id: REX, name: "Rex", canon: "", audio: { voiceDesignPrompt: "" } }],
+    locations: [], props: [], vehicles: [], audio: [], mediaAssets: [],
+    scenes: [{ id: "SC-01", title: "The crossing", whatHappens: "Rex crosses the swamp." }],
+    shots: [{
+      id: "TLS-002",
+      scene: "SC-01",
+      title: "Swamp crossing",
+      desc: "Rex sits on the folding chair and speaks.",
+      positioning: "Wide.",
+      dur: 6,
+      characters: [REX],
+      keyframes: [{ id: "frame-a", label: "A", title: "Opening frame", winner: "", generationPackages: [] }],
+      clips: [{ id: "seg-a", suffix: "a", label: "A", kind: "i2v", dur: 6, motionPrompt: "", note: "", generationPackages: [] }],
+    }],
+  };
+}
+
+async function withMotionIntentServer(body) {
+  const fs = require("fs");
+  const os = require("os");
+  const path = require("path");
+  const { spawn } = require("child_process");
+  const root = path.join(__dirname, "..");
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "cinebraid-motion-intent-"));
+  const projectsRoot = path.join(temp, "projects");
+  const projectDir = path.join(projectsRoot, "motion-intent-sandbox");
+  fs.mkdirSync(projectDir, { recursive: true });
+  for (const dir of ["anchors", "plates", "props", "audio", "media", "shots", "docs"]) fs.mkdirSync(path.join(projectDir, dir), { recursive: true });
+  fs.writeFileSync(path.join(projectDir, "project.json"), JSON.stringify(sandboxProject(), null, 2));
+  const configPath = path.join(temp, "config.json");
+  fs.writeFileSync(configPath, JSON.stringify({
+    activeProject: "motion-intent-sandbox",
+    assistant: { provider: "none", visionProvider: "none" },
+    agents: { enabled: false, maxConcurrent: 1 },
+    generation: { fal: { enabled: false } },
+  }, null, 2));
+
+  const port = await freePort();
+  const base = `http://127.0.0.1:${port}`;
+  let log = "";
+  const child = spawn(process.execPath, ["server.js"], {
+    cwd: root,
+    env: { ...process.env, PORT: String(port), CINEBRAID_CONFIG_PATH: configPath, CINEBRAID_PROJECTS_ROOT: projectsRoot },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  child.stdout.on("data", (chunk) => { log += chunk; });
+  child.stderr.on("data", (chunk) => { log += chunk; });
+  try {
+    const deadline = Date.now() + 15000;
+    for (;;) {
+      if (Date.now() > deadline) throw new Error(`the sandbox server did not start:\n${log}`);
+      try { if ((await fetch(`${base}/api/me`)).ok) break; } catch {}
+      await new Promise((resolve) => setTimeout(resolve, 75));
+    }
+    const response = await fetch(`${base}/api/prompt/compile`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const text = await response.text();
+    let parsed = {};
+    try { parsed = JSON.parse(text); } catch {}
+    return { status: response.status, body: parsed, raw: text, log };
+  } finally {
+    child.kill();
+    try { fs.rmSync(temp, { recursive: true, force: true }); } catch {}
+  }
+}
+
+async function testDeclaredAudioModeSurvivesTheServerRoute() {
+  const result = await withMotionIntentServer({
+    shotId: "TLS-002",
+    segmentId: "seg-a",
+    profileId: "seedance-2/r2v",
+    purpose: "motion",
+    durationSeconds: 6,
+    useLLM: false,
+    directive: "Rex speaks the line without leaving the chair.",
+    references: lipSyncReferences(),
+    motionPlan: lipSyncPlan(),
+    motionBrief: lipSyncBrief(),
+    audio: { dialogue: LIP_SYNC_LINE, speakerId: REX, mode: "lip-sync-reference" },
+  });
+  assert.strictEqual(result.status, 200,
+    `the sandbox route must compile the request: ${result.raw.slice(0, 500)}\n${result.log.slice(0, 500)}`);
+  assert.strictEqual(result.body.spec?.audio?.mode, "lip-sync-reference",
+    `POST /api/prompt/compile replaced a declared lip-sync mode: ${JSON.stringify(result.body.spec?.audio)}`);
+  assert.strictEqual(result.body.spec?.audio?.referenceKey, AUDIO_REFERENCE_KEY,
+    "the reference the declaration names must still be attached after the route runs");
+  assert.strictEqual(result.body.spec?.audio?.dialogue, "",
+    `the route must not also request a generated voice: ${JSON.stringify(result.body.spec?.audio?.dialogue)}`);
+  assert.strictEqual(result.body.spec?.audio?.transcript, LIP_SYNC_LINE,
+    "the words belong in the transcript under lip-sync");
+  return result;
+}
+
+/* ========================== 6b. THE BROWSER HALF OF BLOCKER 1
+   ===========================================================================
+   The composer summary manufactured the same sibling defaults, and it is the surface the
+   reviewer reproduced case C on: setting the environment INTENSITY published "Environment
+   remains stable unless explicitly animated above", which is an assertion about the world
+   holding still made by a control nobody opened.
+
+   Driven through the shipped setters, one field at a time, in a real dispatch. */
+async function browserSummaryAfter(edits) {
+  const project = buildFixture();
+  const shot = project.shots[0];
+  shot.desc = "Kai walks the length of the hull.";
+  for (const clip of shot.clips) { clip.motionPrompt = ""; clip.title = ""; clip.note = ""; }
+  const { context } = await render("#/shot/L1-01", project, { storage: { "cinebraid-focused:fixture:shot-task:L1-01": "motion" } });
+  for (const [group, key, value] of edits) {
+    vm.runInContext(`setMotionPlanField("L1-01", ${JSON.stringify(group)}, ${JSON.stringify(key)}, ${JSON.stringify(value)})`, context);
+  }
+  return { summary: vm.runInContext("structuredMotionSummary(P.shots[0])", context), context };
+}
+
+async function testBrowserSummaryDoesNotPromoteSiblings() {
+  /* CASE A, in the composer. Intensity is declared; the untouched move is not. */
+  const camera = await browserSummaryAfter([["camera", "intensity", "strong"]]);
+  assert.ok(!/^Camera:/m.test(camera.summary),
+    `the summary must not state a camera move nobody chose: ${JSON.stringify(camera.summary)}`);
+  /* And with the move itself declared, the line returns, carrying only declared values. */
+  const moved = await browserSummaryAfter([["camera", "move", "push-in"], ["camera", "intensity", "strong"]]);
+  assert.ok(/^Camera: push in, strong\.$/m.test(moved.summary),
+    `a declared camera move must compile with its declared qualifiers and nothing else: ${JSON.stringify(moved.summary)}`);
+
+  /* CASE C, in the composer — the site the reviewer reproduced. */
+  const environment = await browserSummaryAfter([["environment", "intensity", "strong"]]);
+  assert.ok(!/Environment remains stable/i.test(environment.summary),
+    `the summary must not state that the environment holds when nobody said so: ${JSON.stringify(environment.summary)}`);
+
+  /* CASE B, in the composer. */
+  const timing = await browserSummaryAfter([["timing", "pacing", "brisk"]]);
+  assert.ok(!/settle and hold/i.test(timing.summary),
+    `the summary must not state a hold nobody chose: ${JSON.stringify(timing.summary)}`);
+  assert.ok(/^Timing: brisk pacing\.$/m.test(timing.summary),
+    `a declared pacing must compile on its own: ${JSON.stringify(timing.summary)}`);
+}
+
 module.exports = {
   BLANK_SUBJECT, BLANK_PROP, BLANK_CAMERA, BLANK_ENVIRONMENT, BLANK_TIMING,
   REX, CHAIR, DECLARED_WALK, SHOT_A, SHOT_B, SHOT_A_TOKENS, SHOT_B_TOKENS, REPORTED_STRINGS,
-  blankPlan, swampContext, compileSwamp, firstBeat, withheldDimensions, declaredDimensions,
+  blankPlan, swampContext, compileSwamp, firstBeat, withheldFields, declaredFields, withheldReason,
   walkVsStillThroughTheBrowser, testBrowserSummaryManufacturesNothing, baseComposerSummary,
   compileFromLiveProject, twoShotFixture, contaminationRun, assertNoForeignTokens,
   testWalkVsStillSurvivesCompilation, testUndeclaredTimingAddsNoHoldRequirement,
@@ -761,6 +1280,16 @@ module.exports = {
   testLowerLayerDefaultSurvivesWhenNothingContradictsIt,
   testUnknownDimensionMayStillBeFilled, testNoDeclaredActionBecomesAVisibleGap,
   testIntentEditRebuildUsesCurrentState, sameAsShippedNormalizer,
+  testDeclaredCameraFieldDoesNotPromoteItsSiblings, testDeclaredTimingFieldDoesNotPromoteItsSiblings,
+  testDeclaredEnvironmentFieldDoesNotPromoteItsSiblings, testDeclaredSubjectFieldDoesNotPromoteItsSiblings,
+  testOrphanedSubjectDoesNotCompile, testUnestablishedMembershipFiltersNothing,
+  testDeclaredAudioModeSurvivesTheMotionBrief, testUnsetAudioModeMayStillBeDerived,
+  testDeclaredAudioModeSurvivesTheServerRoute, withMotionIntentServer,
+  browserSummaryAfter, testBrowserSummaryDoesNotPromoteSiblings,
+  lipSyncPlan, lipSyncReferences, lipSyncBrief, LIP_SYNC_LINE, AUDIO_REFERENCE_KEY,
+  NARRATIVE_LOWER_SOURCE_TOKEN, narrativeOnlyFixture, motionCompileAttempt,
+  testEmptyComposerFallsThroughToShotNarrative, testUndirectedShotStillRefuses,
+  testDeclaredPlanFieldAloneAvoidsTheRefusal,
   main,
 };
 

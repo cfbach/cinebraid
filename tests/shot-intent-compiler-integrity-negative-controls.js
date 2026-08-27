@@ -39,6 +39,24 @@
  *   NC-M13  the base composer that safe mode falls back to states stillness for an
  *           undirected cast member again
  *
+ * THE HOLD-CORRECTION CONTROLS, one per guard the four blockers closed:
+ *
+ *   NC-M14  the camera guard asks per row again, so one declared intensity publishes an
+ *           untouched move as locked-off
+ *   NC-M15  the timing guard asks per row again, so one declared pacing requires
+ *           settle-and-hold
+ *   NC-M16  the subject clause asks per row again, so an end position publishes the
+ *           untouched action beside it
+ *   NC-M17  the composer's environment guard asks per row again, so one declared
+ *           intensity states that the world holds still
+ *   NC-M18  the motion brief recomputes the audio mode unconditionally, so a declared
+ *           lip-sync becomes generate-voice with the reference still attached
+ *   NC-M19  the same, through a live POST /api/prompt/compile rather than the helpers
+ *   NC-M20  the current-shot membership boundary is removed, so a subject dropped from
+ *           the cast keeps directing the shot it left
+ *   NC-M21  the motion refusal ignores the shot's own narrative again, so a directed
+ *           shot never reaches /api/prompt/compile
+ *
  * EVERY CONTROL DECLARES WHICH DETECTOR IT EXPECTS. `expect` is a regular expression over
  * the detector's own message, and a failure that does not match it fails THIS suite — a
  * control that armed one defect and tripped an unrelated assertion elsewhere would
@@ -122,6 +140,15 @@ function freshSuite() {
   return require("./shot-intent-compiler-integrity");
 }
 
+/* The compiler, re-required after a patch. A module captured at the top of this file
+   would keep pointing at the ORIGINAL bytes however carefully dropCaches() ran, and a
+   probe holding one reports that the defect did not land while the defect is sitting on
+   disk. It has to be asked for after the patch, every time. */
+function freshPromptEngine() {
+  dropCaches();
+  return require("../prompt-engine");
+}
+
 async function control({ id, defect, files, probe, guard, expect }) {
   await patchedFiles(files, async () => {
     const literal = await probe(freshSuite());
@@ -136,21 +163,16 @@ async function control({ id, defect, files, probe, guard, expect }) {
 /* ================================================ THE COMPILER-SIDE DEFECTS
    =========================================================================== */
 
+/* The guard now lives inside the clause assembly: a fragment is written only when its own
+   field was declared. Removing it means the action is written whatever the plan says,
+   which is exactly the manufactured "<id> still" the dogfood pass received. */
 const SUBJECT_GUARD = [
-  `      if (!declaration.subjects[id]?.declared) {
-        withheld("subject", id, "subject-plan-carries-no-declaration");
-        continue;
-      }
-`,
-  "",
+  `        [" ", subjectSays("action") ? normalizedLabel(item.action || "still") : ""],`,
+  `        [" ", normalizedLabel(item.action || "still")],`,
 ];
 const PROP_GUARD = [
-  `      if (!declaration.props[id]?.declared) {
-        withheld("prop", id, "prop-plan-carries-no-declaration");
-        continue;
-      }
-`,
-  "",
+  `        [" ", propSays("action") ? normalizedLabel(item.action || "static") : ""],`,
+  `        [" ", normalizedLabel(item.action || "static")],`,
 ];
 
 async function nc1() {
@@ -192,22 +214,8 @@ async function nc3() {
     defect: "the declaration reader calls every stored entry declared, so the guard is present and discriminates nothing",
     files: {
       "public/shared-motion-intent.js": [[
-        `    return motionIntentFreeze({
-      dimension: key,
-      known: true,
-      present: true,
-      declared: fields.length > 0,
-      fields,
-      reasons,
-    });`,
-        `    return motionIntentFreeze({
-      dimension: key,
-      known: true,
-      present: true,
-      declared: true,
-      fields,
-      reasons,
-    });`,
+        `      if (!motionIntentSame(entry[field], defaults[field])) {`,
+        `      if (true) {`,
       ]],
     },
     probe: async (suite) => {
@@ -223,7 +231,7 @@ async function nc3() {
 async function nc4() {
   await control({
     id: "NC-M4",
-    expect: /a derived target label is not a declaration/,
+    expect: /a derived label may not|a derived target label is not a declaration/,
     defect: "the derived-field exclusion is dropped, so a stale target label alone resurrects an otherwise blank entry",
     files: {
       "public/shared-motion-intent.js": [[
@@ -233,11 +241,12 @@ async function nc4() {
     },
     probe: async (suite) => {
       const plan = suite.blankPlan();
-      plan.subjects[suite.REX] = { ...suite.BLANK_SUBJECT, targetLabel: "the folding chair" };
+      plan.subjects[suite.REX] = { ...suite.BLANK_SUBJECT, action: "walk", targetLabel: "the folding chair" };
       const result = suite.compileSwamp(plan);
-      assert.ok(result.beats.some((beat) => beat.startsWith(suite.REX)),
-        `NC-M4: the defect did not land — beats are ${JSON.stringify(result.beats)}`);
-      return `a label written by the composer read as a decision: ${JSON.stringify(result.beats[0])}`;
+      const claimed = suite.declaredFields(result.spec);
+      assert.ok(claimed.includes(`subject:${suite.REX}:targetLabel`),
+        `NC-M4: the defect did not land — provenance claims ${JSON.stringify(claimed)}`);
+      return `a label written by the composer was recorded as a filmmaker decision: ${JSON.stringify(claimed)}`;
     },
     guard: (suite) => suite.testDerivedLabelIsNotADeclaration(),
   });
@@ -278,10 +287,8 @@ async function nc6() {
     defect: "the camera guard is removed, so an untouched camera row overwrites a camera movement the shot had established",
     files: {
       "prompt-engine.js": [[
-        `    if (declaration.camera.declared) {
-      out.camera.movement = camera.move === "locked"`,
-        `    if (true) {
-      out.camera.movement = camera.move === "locked"`,
+        `    if (cameraSays("move")) {`,
+        `    if (true) {`,
       ]],
     },
     probe: async (suite) => {
@@ -301,10 +308,8 @@ async function nc7() {
     defect: "the timing guard is removed, so an untouched timing row requires a shot that ends mid-stride to settle and hold",
     files: {
       "prompt-engine.js": [[
-        `    if (declaration.timing.declared) {
-      if (timing.secondary)`,
-        `    if (true) {
-      if (timing.secondary)`,
+        `    if (timingSays("holdEnd") && timing.holdEnd) {`,
+        `    if (timing.holdEnd) {`,
       ]],
     },
     probe: async (suite) => {
@@ -327,8 +332,8 @@ async function nc8() {
     defect: "the browser summary states stillness for an undirected cast member again",
     files: {
       "public/v607-composer.js": [[
-        `      if (!declaration.subjects[id]?.declared) continue;\n`,
-        "",
+        `      if (subjectSays("action") && !directed) lines.push(`,
+        `      if (!directed) lines.push(`,
       ]],
     },
     probe: async (suite) => {
@@ -356,8 +361,8 @@ async function nc9() {
     defect: "the browser summary states an undirected camera move again",
     files: {
       "public/v607-composer.js": [[
-        `    if (declaration.camera.declared && camera.move && camera.move !== "none")`,
-        `    if (camera.move && camera.move !== "none")`,
+        `    if (cameraSays("move") && camera.move && camera.move !== "none") {`,
+        `    if (camera.move && camera.move !== "none") {`,
       ]],
     },
     probe: async (suite) => {
@@ -425,9 +430,8 @@ async function nc13() {
     defect: "the base composer that safe mode falls back to states stillness for an undirected cast member again",
     files: {
       "public/creation-studio.js": [[
-        `    if (!declaration.subjects[id]?.declared) continue;
-`,
-        "",
+        `    if (subjectSays("action") && !directed) lines.push(`,
+        `    if (!directed) lines.push(`,
       ]],
     },
     probe: async (suite) => {
@@ -490,6 +494,210 @@ async function nc12() {
   });
 }
 
+/* ==================================== THE HOLD-CORRECTION CONTROLS (NC-M14…NC-M21)
+   ===========================================================================
+   Four blockers, and a control for each guard that closes one. Every one of these armed
+   a defect an independent reviewer had already reproduced on the held candidate, so the
+   claim being tested here is not hypothetical. */
+
+/* BLOCKER 1. Ask per ROW again, and one declared member speaks for every default beside
+   it — which is the whole of what the reviewer sent back. */
+async function nc14() {
+  await control({
+    id: "NC-M14",
+    expect: /an untouched camera move must not publish itself beside a declared intensity/,
+    defect: "the camera guard asks per row again, so setting only the intensity publishes the untouched move as locked-off",
+    files: {
+      "prompt-engine.js": [[
+        `    if (cameraSays("move")) {`,
+        `    if (declaration.camera.declared) {`,
+      ]],
+    },
+    probe: async (suite) => {
+      const plan = suite.blankPlan();
+      plan.camera = { ...suite.BLANK_CAMERA, intensity: "strong" };
+      const result = suite.compileSwamp(plan, { mediaAnalysis: { camera: { movement: "slow dolly push-in" } } });
+      assert.strictEqual(result.spec.camera.movement, "locked-off camera with no drift",
+        `NC-M14: the defect did not land — camera.movement is ${result.spec.camera.movement}`);
+      return `one declared intensity published an untouched move: ${result.spec.camera.movement}`;
+    },
+    guard: (suite) => suite.testDeclaredCameraFieldDoesNotPromoteItsSiblings(),
+  });
+}
+
+async function nc15() {
+  await control({
+    id: "NC-M15",
+    expect: /an untouched holdEnd must not publish itself beside a declared pacing/,
+    defect: "the timing guard asks per row again, so setting only the pacing requires settle-and-hold",
+    files: {
+      "prompt-engine.js": [[
+        `    if (timingSays("holdEnd") && timing.holdEnd) {`,
+        `    if (declaration.timing.declared && timing.holdEnd) {`,
+      ]],
+    },
+    probe: async (suite) => {
+      const plan = suite.blankPlan();
+      plan.timing = { ...suite.BLANK_TIMING, pacing: "brisk" };
+      const result = suite.compileSwamp(plan);
+      assert.ok(result.spec.mustPreserve.includes("settle into and briefly hold the final state"),
+        `NC-M15: the defect did not land — mustPreserve is ${JSON.stringify(result.spec.mustPreserve)}`);
+      return "one declared pacing required the shot to settle and hold the final state";
+    },
+    guard: (suite) => suite.testDeclaredTimingFieldDoesNotPromoteItsSiblings(),
+  });
+}
+
+async function nc16() {
+  await control({
+    id: "NC-M16",
+    expect: /only the declared field may compile/,
+    defect: "the subject clause asks per row again, so an end position publishes the untouched action beside it",
+    files: {
+      "prompt-engine.js": [[
+        `        [" ", subjectSays("action") ? normalizedLabel(item.action || "still") : ""],`,
+        `        [" ", reading.declared ? normalizedLabel(item.action || "still") : ""],`,
+      ]],
+    },
+    probe: async (suite) => {
+      const plan = suite.blankPlan();
+      plan.subjects[suite.REX] = { ...suite.BLANK_SUBJECT, destination: "on the far bank" };
+      const result = suite.compileSwamp(plan);
+      assert.ok(/\bstill\b/.test(suite.firstBeat(result)),
+        `NC-M16: the defect did not land — the beat is ${JSON.stringify(suite.firstBeat(result))}`);
+      return `an end position published an untouched action: ${JSON.stringify(suite.firstBeat(result))}`;
+    },
+    guard: (suite) => suite.testDeclaredSubjectFieldDoesNotPromoteItsSiblings(),
+  });
+}
+
+/* CASE C lives in the composer, not the compiler: the server only ever published the
+   environment when its action was non-default, so the manufactured "the world holds
+   still" sentence is the browser's. This is the guard that stops it. */
+async function nc17() {
+  await control({
+    id: "NC-M17",
+    expect: /must not state that the environment holds when nobody said so/,
+    defect: "the composer's environment guard asks per row again, so setting only the intensity states that the world holds still",
+    files: {
+      "public/v607-composer.js": [[
+        `    if (envSays("action")) lines.push(env.action && env.action !== "static"`,
+        `    if (declaration.environment.declared) lines.push(env.action && env.action !== "static"`,
+      ]],
+    },
+    probe: async (suite) => {
+      const seen = await suite.browserSummaryAfter([["environment", "intensity", "strong"]]);
+      assert.ok(/Environment remains stable/i.test(seen.summary),
+        `NC-M17: the defect did not land — the summary is ${JSON.stringify(seen.summary)}`);
+      return `one declared intensity stated: ${JSON.stringify(seen.summary.split("\n").find((line) => /Environment remains stable/i.test(line)))}`;
+    },
+    guard: (suite) => suite.testBrowserSummaryDoesNotPromoteSiblings(),
+  });
+}
+
+/* BLOCKER 2. The recomputation that overwrote a declared decision. */
+async function nc18() {
+  await control({
+    id: "NC-M18",
+    expect: /a declared audio mode must survive the motion brief/,
+    defect: "the motion brief recomputes the audio mode unconditionally, so a declared lip-sync becomes generate-voice",
+    files: {
+      "prompt-engine.js": [[
+        `  const audioMode = declaredAudioMode ? cleanText(out.audio?.mode) || derivedMode : derivedMode;`,
+        `  const audioMode = derivedMode;`,
+      ]],
+    },
+    probe: async (suite) => {
+      const PE = freshPromptEngine();
+      const context = suite.swampContext({ shot: { audio: { dialogue: suite.LIP_SYNC_LINE, sfx: "" } } });
+      let spec = PE.defaultSpec(context, "motion", "i2v", suite.lipSyncReferences(), null);
+      spec = PE.applyStructuredDirection(spec, null, suite.lipSyncPlan(), suite.lipSyncReferences());
+      assert.strictEqual(spec.audio.mode, "lip-sync-reference", "NC-M18: the declaration did not land before the brief ran");
+      spec = PE.applyMotionAudioBrief(spec, suite.lipSyncBrief());
+      assert.strictEqual(spec.audio.mode, "generate-voice",
+        `NC-M18: the defect did not land — the mode is ${spec.audio.mode}`);
+      return `a declared lip-sync became ${spec.audio.mode} with reference ${JSON.stringify(spec.audio.referenceKey)} still attached`;
+    },
+    guard: (suite) => suite.testDeclaredAudioModeSurvivesTheMotionBrief(),
+  });
+}
+
+/* The same defect, through the route a filmmaker actually reaches. The helper pair going
+   red proves the functions compose; only this proves server.js does. */
+async function nc19() {
+  await control({
+    id: "NC-M19",
+    expect: /POST \/api\/prompt\/compile replaced a declared lip-sync mode/,
+    defect: "the compile route replaces a declared lip-sync mode with a derived one",
+    files: {
+      "prompt-engine.js": [[
+        `  const audioMode = declaredAudioMode ? cleanText(out.audio?.mode) || derivedMode : derivedMode;`,
+        `  const audioMode = derivedMode;`,
+      ]],
+    },
+    probe: async (suite) => {
+      const result = await suite.withMotionIntentServer({
+        shotId: "TLS-002", segmentId: "seg-a", profileId: "seedance-2/r2v", purpose: "motion",
+        durationSeconds: 6, useLLM: false, directive: "Rex speaks the line without leaving the chair.",
+        references: suite.lipSyncReferences(), motionPlan: suite.lipSyncPlan(), motionBrief: suite.lipSyncBrief(),
+        audio: { dialogue: suite.LIP_SYNC_LINE, speakerId: suite.REX, mode: "lip-sync-reference" },
+      });
+      assert.strictEqual(result.status, 200, `NC-M19: the sandbox route did not compile: ${result.raw.slice(0, 400)}`);
+      assert.strictEqual(result.body.spec?.audio?.mode, "generate-voice",
+        `NC-M19: the defect did not land — the route returned ${result.body.spec?.audio?.mode}`);
+      return `the live route returned mode=${result.body.spec.audio.mode} with reference ${JSON.stringify(result.body.spec.audio.referenceKey)} still attached`;
+    },
+    guard: (suite) => suite.testDeclaredAudioModeSurvivesTheServerRoute(),
+  });
+}
+
+/* BLOCKER 3. Without the membership boundary the orphan's stored row directs a shot it
+   left. */
+async function nc20() {
+  await control({
+    id: "NC-M20",
+    expect: /no longer belongs to this shot still directed it|orphan reached the compiled prompt/,
+    defect: "the current-shot membership boundary is removed, so a subject dropped from the cast keeps compiling",
+    files: {
+      "prompt-engine.js": [[
+        `    const isMember = (id) => !membershipKnown || memberIds.has(cleanText(id));`,
+        `    const isMember = () => true;`,
+      ]],
+    },
+    probe: async (suite) => {
+      const plan = suite.blankPlan();
+      plan.subjects["CH-GHOST"] = { ...suite.BLANK_SUBJECT, action: "run", notes: "ORPHANTOKEN" };
+      const result = suite.compileSwamp(plan);
+      assert.ok(result.compiled.prompt.includes("ORPHANTOKEN"),
+        `NC-M20: the defect did not land — beats are ${JSON.stringify(result.beats)}`);
+      return `a removed subject's stored row reached the compiled prompt: ${JSON.stringify(result.beats.find((beat) => beat.includes("ORPHANTOKEN")))}`;
+    },
+    guard: (suite) => suite.testOrphanedSubjectDoesNotCompile(),
+  });
+}
+
+/* BLOCKER 4. Restore the refusal that could not see the layer beneath it. */
+async function nc21() {
+  await control({
+    id: "NC-M21",
+    expect: /must fall through to the shot's own narrative, not refuse/,
+    defect: "the motion refusal ignores the shot's own narrative again, so a directed shot never reaches /api/prompt/compile",
+    files: {
+      "public/creation-studio.js": [[
+        `  if (!structuredDirection && !writtenDirection && !narrativeDirection) return toast("Choose at least one motion direction");`,
+        `  if (!structuredDirection && !writtenDirection) return toast("Choose at least one motion direction");`,
+      ]],
+    },
+    probe: async (suite) => {
+      const attempt = await suite.motionCompileAttempt(suite.narrativeOnlyFixture());
+      assert.strictEqual(attempt.request, null,
+        "NC-M21: the defect did not land — the compile request was still made");
+      return "a shot directed by its own description was refused and /api/prompt/compile never ran";
+    },
+    guard: (suite) => suite.testEmptyComposerFallsThroughToShotNarrative(),
+  });
+}
+
 /* ================================================================== THE RUN
    =========================================================================== */
 
@@ -532,6 +740,14 @@ async function main() {
   await nc11();
   await nc12();
   await nc13();
+  await nc14();
+  await nc15();
+  await nc16();
+  await nc17();
+  await nc18();
+  await nc19();
+  await nc20();
+  await nc21();
 
   assert.deepStrictEqual(hashes(), before,
     "a control left a patched file changed; every patched byte must be restored exactly");
