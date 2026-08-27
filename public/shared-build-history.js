@@ -243,6 +243,174 @@
     return changed;
   }
 
+  /* =========================================================================
+     PACKAGE FRESHNESS - THE COMPARISON, OWNED ONCE.
+
+     A compiled package records what it was made from, in `dependencySnapshot`. It is
+     STALE when the production would now supply something different. That comparison
+     used to live entirely in public/review-provenance.js, where the money boundary
+     could not reach it: POST /api/generation/fal/jobs is a Node process and
+     review-provenance.js is browser-lexical - no module.exports, and a transitive
+     closure that runs through promptReferenceOptions(), the disk scan and the profile
+     library.
+
+     So the COMPARISON moved here and the EVIDENCE did not. This module is dual-mode and
+     the server already requires it. review-provenance.js now calls packageDependencyDrift()
+     with the full snapshot it has always built; fal-generation.js calls the same function
+     with the fields a Node process can read out of the project document alone.
+
+     THAT IS ONE OWNER WITH TWO EVIDENCE SETS, NOT TWO ANSWERS. Every reason string, every
+     comparison and every skip rule below is shared. A field neither side supplied is
+     skipped rather than compared against undefined, which is the same rule the original
+     already applied to the three motion keys a historic package never recorded - a
+     comparison nobody has evidence for is not a finding. The server therefore reports a
+     SUBSET of the browser's reasons and can never invent one the browser would not give.
+
+     What the server deliberately does not supply, and why:
+       - `references`  needs promptReferenceOptions(), whose closure spans four
+                       browser-only files. Porting it would be a second reference
+                       catalogue, which is exactly the competing architecture this
+                       refuses to build.
+       - `mode`        the browser reads it through guidedVideoProfiles(), which
+                       public/motion-sound-composer.js narrows to the families it
+                       supports. A server reading data/model-profiles.json directly
+                       would answer for a profile the browser cannot see, and the two
+                       would disagree. Left to the browser, which owns the narrowing. */
+
+  /* The browser twin is unitKey() in public/planning.js and the bodies are identical.
+     Named apart so a reader cannot mistake this for a second definition of that one. */
+  function buildUnitKey(unit) {
+    return unit ? String(unit.id || unit.suffix) : "shot";
+  }
+  function buildFrameById(shot, id) {
+    return (shot?.frames || []).find((frame) => String(frame?.id) === String(id)) || null;
+  }
+  function buildUnitFor(shot, pack) {
+    if (!pack?.segmentId) return null;
+    return (shot?.clips || []).find((clip) => buildUnitKey(clip) === String(pack.segmentId)) || null;
+  }
+
+  /* WHAT THE PROJECT DOCUMENT ALONE SAYS about a package's inputs. Every read below is a
+     plain field on the shot, its frames, its clips or project.mediaAssets - no catalogue,
+     no disk, no profile library - which is why it is computable identically on both sides,
+     and why public/review-provenance.js now builds its own snapshot on top of this rather
+     than beside it. */
+  function packageProjectInputs(project, shot, pack, direction) {
+    const unit = buildUnitFor(shot, pack);
+    const frame = pack?.frameId ? buildFrameById(shot, pack.frameId) : null;
+    const first = unit ? buildFrameById(shot, unit.fromFrame) : null;
+    const last = unit ? buildFrameById(shot, unit.toFrame) : null;
+    const assets = Array.isArray(project?.mediaAssets) ? project.mediaAssets : [];
+    const media = assets
+      .flatMap((asset) => (Array.isArray(asset?.links) ? asset.links : [])
+        .filter((link) => link?.targetType === "shot" && String(link.targetId) === String(shot?.id))
+        .map((link) => ({ asset, link })))
+      .filter(({ link }) => link.generationInput)
+      .map(({ asset, link }) => [asset.id, asset.file || "", link.role || ""])
+      .sort((a, b) => String(a[0]).localeCompare(String(b[0])));
+    return {
+      direction: String(direction || "").trim(),
+      frameWinner: frame?.winner || "",
+      firstFrameWinner: first?.winner || "",
+      lastFrameWinner: last?.winner || "",
+      generationMedia: media,
+    };
+  }
+
+  /* THE WRITTEN DIRECTION a package would be compiled from now. Plain reads again, and
+     the same three-way choice public/review-provenance.js has always made: a frame
+     package takes the frame's description, a motion package takes the unit's own text,
+     and a shot-level package takes the shot's - each joined with the planner's directive
+     for that scope. */
+  function packageDirection(shot, pack) {
+    const directive = shot?.packagePlanner?.directiveByScope?.[pack?.scope] || "";
+    let base = "";
+    if (pack?.frameId) base = buildFrameById(shot, pack.frameId)?.description || "";
+    else if (pack?.segmentId) {
+      const unit = buildUnitFor(shot, pack);
+      base = unit?.motionPrompt || unit?.note || "";
+    } else base = shot?.motionPrompt || "";
+    return [base, directive].filter(Boolean).join("\n").trim();
+  }
+
+  /* The motion inputs a package's own text STATES, read from the shot as it is now.
+     `mode` is deliberately absent - see the note above. */
+  function packageMotionInputs(shot, pack) {
+    if (!pack?.segmentId) return null;
+    const brief = shot?.creationBrief || {};
+    const unit = buildUnitFor(shot, pack);
+    return {
+      durationSeconds: Number(brief.motionDuration || unit?.dur || 0) || 0,
+      profileId: String(brief.motionProfileId || pack.profileId || ""),
+    };
+  }
+
+  /* A field is compared only when BOTH sides have it. `undefined` on either side means
+     nobody has evidence, and a difference nobody has evidence for is not a difference. */
+  function comparable(saved, now, key) {
+    return saved?.[key] !== undefined && now?.[key] !== undefined;
+  }
+  function packageDependencyDrift({ saved, now, missingReferences } = {}) {
+    if (!saved) return [];
+    const reasons = [];
+    const at = now || {};
+    if (comparable(saved, at, "direction") && String(saved.direction || "") !== String(at.direction || ""))
+      reasons.push("written direction changed");
+    if (comparable(saved, at, "frameWinner") && String(saved.frameWinner || "") !== String(at.frameWinner || ""))
+      reasons.push("approved frame changed");
+    if (comparable(saved, at, "firstFrameWinner") && String(saved.firstFrameWinner || "") !== String(at.firstFrameWinner || ""))
+      reasons.push("approved start frame changed");
+    if (comparable(saved, at, "lastFrameWinner") && String(saved.lastFrameWinner || "") !== String(at.lastFrameWinner || ""))
+      reasons.push("approved end frame changed");
+    if (comparable(saved, at, "generationMedia")
+      && JSON.stringify(saved.generationMedia || []) !== JSON.stringify(at.generationMedia || []))
+      reasons.push("approved generation media changed");
+    /* Named before the generic array comparison, because "an input is gone" is a
+       different fact from "an input changed" and sends the filmmaker somewhere else.
+       Only a caller that can enumerate what the production may currently supply passes
+       this; a caller that cannot passes nothing and gets neither reference reason. */
+    const missing = Array.isArray(missingReferences) ? missingReferences : null;
+    if (missing && missing.length)
+      reasons.push(missingReferenceReason(missing));
+    if ((!missing || !missing.length) && comparable(saved, at, "references")
+      && JSON.stringify(saved.references || []) !== JSON.stringify(at.references || []))
+      reasons.push("approved reference file changed");
+    if (comparable(saved, at, "durationSeconds") && Number(saved.durationSeconds || 0) !== Number(at.durationSeconds || 0))
+      reasons.push("duration changed to " + Number(at.durationSeconds || 0) + "s - the compiled prompt still states " + Number(saved.durationSeconds || 0) + "s");
+    if (comparable(saved, at, "mode") && String(saved.mode || "") !== String(at.mode || ""))
+      reasons.push("execution method changed to " + String(at.mode || "none").toUpperCase() + " - the compiled prompt is " + String(saved.mode || "none").toUpperCase());
+    if (comparable(saved, at, "profileId") && String(saved.profileId || "") !== String(at.profileId || ""))
+      reasons.push("target model changed to " + String(at.profileId || "none") + " - the compiled prompt targets " + String(saved.profileId || "none"));
+    return [...new Set(reasons)];
+  }
+  function missingReferenceReason(missing) {
+    const count = missing.length === 1 ? "an input" : missing.length + " inputs";
+    return count + " this prompt was compiled from can no longer be supplied by this shot: " + missing.join(", ");
+  }
+
+  /* THE SERVER'S ANSWER, assembled from the functions above and handed to the one
+     comparator. A package with no recorded snapshot returns `recorded: false` and no
+     reasons - refusing on an absence would block every package compiled before
+     dependencies were captured, on evidence nobody has. */
+  function packageProjectFreshness(project, shot, pack) {
+    const saved = pack && pack.dependencySnapshot;
+    if (!saved) return { current: true, recorded: false, reasons: [], evidence: "none" };
+    const now = {
+      ...packageProjectInputs(project, shot, pack, packageDirection(shot, pack)),
+      ...(packageMotionInputs(shot, pack) || {}),
+    };
+    const reasons = packageDependencyDrift({ saved, now });
+    return {
+      current: !reasons.length,
+      recorded: true,
+      reasons,
+      /* Named so a caller cannot mistake a partial verdict for the whole one. The
+         browser's evidence is `full`; this one has not looked at references or at
+         execution method. */
+      evidence: "project-document",
+    };
+  }
+
   return {
     DEFAULT_PROMPT_BUILD_RETENTION,
     ensurePromptHistory,
@@ -254,5 +422,10 @@
     normalizePromptBuildHistory,
     applyPromptBuildRetention,
     entryBuildId,
+    packageDependencyDrift,
+    packageDirection,
+    packageMotionInputs,
+    packageProjectFreshness,
+    packageProjectInputs,
   };
 });

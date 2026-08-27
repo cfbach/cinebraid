@@ -217,6 +217,8 @@ const nodeSuites = [
   "check:shot-intent-compiler-negative",
   "check:reference-convergence",
   "check:reference-convergence-negative",
+  "check:paid-request-truth",
+  "check:paid-request-truth-negative",
   "check:sheet-gate",
   "check:sheet-gate-negative",
 ];

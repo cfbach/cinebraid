@@ -26,6 +26,7 @@ const {
 } = require("../fal-image-backend");
 const ImagePack = require("../model-packs/gpt-image-2");
 const { validateGenerationPlan } = require("../generation-contracts");
+const { withGenerationDeclaration } = require("./generation-request-fixture");
 const {
   addBlockingPromptBuild, addFramePromptBuild, baseSpec, buildRef,
   FRAME_A, REF_IDENTITY, REF_LOCATION, REF_PROP,
@@ -129,7 +130,7 @@ async function harness() {
     const response = await fetch(`${appOrigin}${url}`, {
       method: options.method || "POST",
       headers: { "content-type": "application/json" },
-      ...(options.body ? { body: JSON.stringify(options.body) } : {}),
+      ...(options.body ? { body: JSON.stringify(withGenerationDeclaration(url, options.body)) } : {}),
     });
     return { status: response.status, data: await response.json() };
   };

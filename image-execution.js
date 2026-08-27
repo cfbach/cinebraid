@@ -332,6 +332,40 @@ function imagePlanProvenance(compiled) {
   };
 }
 
+/* WHAT THE CONTROL PLAN MAY DRAW for this route, resolved WITHOUT compiling.
+ *
+ * The money boundary has to restrict a submitted payload BEFORE it compiles, because
+ * compilation consumes the very keys the restriction decides about - a size the active
+ * view never rendered would otherwise be honoured by the compiler and then stripped
+ * from a request that had already been built around it.
+ *
+ * So this answers the same three questions the preview response already carries
+ * (`sizes`, `qualityTiers`, `seedSupported`) from the same resolver, and nothing else.
+ * It is not a second capability layer: every value below is read off the record
+ * resolveImageFalCapability() produces or off the pack's own facts, exactly as
+ * compileImageExecutionPlan() reads them a few lines further on. */
+function imageControlCapability(request = {}) {
+  const project = isRecord(request.project) ? request.project : null;
+  if (!project) throw new ImageExecutionError("IMAGE_PROJECT_MISSING", "No project was supplied.", {}, 500);
+  const purpose = IMAGE_TASK_PURPOSES[text(request.purpose)] || "frame";
+  const { build } = readSourceIntent(project, text(request.shotId), text(request.buildId), purpose);
+  const mode = resolveImageMode(purpose, buildReferences(build));
+  if (!FAL_IMAGE_MODES.includes(mode))
+    throw new ImageExecutionError(
+      "IMAGE_MODE_UNSUPPORTED",
+      `CineBraid cannot dispatch GPT Image 2 ${mode || "generation"} through fal.`,
+      { mode, supported: FAL_IMAGE_MODES },
+    );
+  const surface = text(request.surface) || "api";
+  const capability = resolveImageFalCapability(mode, ImagePack.capabilityLayer(mode, surface));
+  return {
+    resolutions: capability.resolutions,
+    qualityTiers: ImagePack.GPT_IMAGE_2_FACTS.qualityTiers,
+    durationSeconds: null,
+    flags: { seed: capability.flags?.seed === true },
+  };
+}
+
 module.exports = {
   IMAGE_MODEL_ID,
   IMAGE_PACK_ID,
@@ -339,6 +373,7 @@ module.exports = {
   ImageExecutionError,
   buildReferences,
   compileImageExecutionPlan,
+  imageControlCapability,
   imagePlanProvenance,
   readSourceIntent,
   resolveImageMode,

@@ -320,6 +320,24 @@ async function main() {
         "      let compiled;\n      try {\n        compiled = compileH3ExecutionPlan({",
         "      let compiled;\n      if (!req.body?.sourceBuildId) { /* legacy passthrough */ } else\n      try {\n        compiled = compileH3ExecutionPlan({",
       ],
+      /* …AND the request-truth gate stops standing in front of it.
+       *
+       * Paid Request Truth V1 put a second guard between a posted body and this
+       * dispatcher: enforceRequestPlan() resolves the route's control capability from
+       * the shot's own package, so a body with no package cannot get past it either.
+       * That is a real second guarantee and it is welcome - but with only the first two
+       * mutations applied, the property this control exists for went on holding for a
+       * reason that had nothing to do with the legacy path, and the control correctly
+       * reported itself vacuous.
+       *
+       * A control has to remove EVERY guard that supplies the property, or it is
+       * measuring the guards it forgot. So the gate is neutralised here too, and what
+       * this control now proves is the original claim in full: with nothing standing in
+       * the way, a hand-written prompt WOULD originate a paid H3 request. */
+      [
+        "    const planGate = enforceRequestPlan(owner, req, purpose);",
+        "    const planGate = { ok: true, surface: \"motion-h3\", declaration: { viewMode: \"advanced\", selectedOptionId: \"\", selectedModelId: \"\" }, payload: req.body, removed: [] };",
+      ],
     ]);
 
     const calls = [];

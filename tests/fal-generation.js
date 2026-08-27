@@ -5,6 +5,7 @@ const path = require("path");
 const express = require("express");
 const { registerFalGeneration } = require("../fal-generation");
 const { addMotionPromptBuild } = require("./h3-execution-fixture");
+const { declaredRequestInit } = require("./generation-request-fixture");
 
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z5xkAAAAASUVORK5CYII=", "base64");
 const MP4 = Buffer.from("00000018667479706d703432000000006d703432", "hex");
@@ -18,7 +19,9 @@ function origin(server) {
   return `http://127.0.0.1:${server.address().port}`;
 }
 async function json(url, options = {}) {
-  const response = await fetch(url, options);
+  /* A suite that posts to the paid route is standing in for a dialog, and a dialog
+     declares which surface and view it was. See tests/generation-request-fixture.js. */
+  const response = await fetch(url, declaredRequestInit(url, options));
   const data = await response.json();
   return { response, data };
 }

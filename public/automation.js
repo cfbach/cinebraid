@@ -257,6 +257,42 @@ async function v626RefreshRun(runId, render = true) {
   return data.run;
 }
 function v626Now() { return new Date().toISOString(); }
+/* WHAT THE FILMMAKER AUTHORISED IN MONEY, recorded beside what they authorised in
+   images, at the moment they authorise it.
+ *
+ * `maxImages` has been the run's ceiling and the server has enforced it since the credit
+ * guard landed. A count is not a budget: the same nine images cost one thing at $0.02
+ * and another at $0.20, and the number the planner actually put in front of the person
+ * pressing the button was the DOLLAR figure - the shared shell has quoted
+ * maxImages x the configured rate there for a while now.
+ *
+ * So the figure they were shown is the figure that gets recorded, from the SAME owner
+ * that drew it. Not a second multiplication: costEstimateFromRate() is the one place
+ * this arithmetic happens, here and in the price line and in submissionAccounting().
+ *
+ * Recorded at CREATION and never recomputed. Editing the rate in Settings tomorrow
+ * changes what tomorrow's run is authorised to spend and changes nothing about this one,
+ * for the same reason a job keeps the estimate it was submitted with. An unconfigured
+ * rate records an honest `priced: false` and the server then has no spend ceiling to
+ * enforce - it still has the image cap, and claiming a dollar ceiling nobody quoted
+ * would be worse than having none. */
+function v626AuthorizedSpend(config) {
+  const maxImages = Math.max(0, Number(config?.maxImages || 0));
+  const derived = costEstimateFromRate({
+    rate: configuredImageRate(typeof CONFIG === "object" ? CONFIG : {}),
+    quantity: maxImages,
+  });
+  return {
+    priced: derived.priced,
+    amount: derived.priced ? derived.estimate.amount : null,
+    quantity: maxImages,
+    unitBasis: derived.basis.unitBasis,
+    ratePerUnit: derived.basis.ratePerUnit,
+    rateSource: derived.basis.rateSource,
+    ...(derived.priced ? {} : { unpricedReason: derived.basis.unpricedReason || "no-configured-rate" }),
+  };
+}
+
 function v626NewRun(type, targetId, scope, label, mode, config = {}) {
   return {
     schemaVersion: 2,
@@ -264,7 +300,7 @@ function v626NewRun(type, targetId, scope, label, mode, config = {}) {
     id: `automation-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
     type, targetId, scope: scope || "main", label, mode,
     status: "running", stage: "Starting", phase: "preflight", summary: "",
-    current: {}, config, result: {}, usage: { imageRequests: 0, imagesGenerated: 0, assistantCalls: 0, reviewCalls: 0 },
+    current: {}, config: { ...config, maxSpend: v626AuthorizedSpend(config) }, result: {}, usage: { imageRequests: 0, imagesGenerated: 0, assistantCalls: 0, reviewCalls: 0 },
     steps: {}, logs: [], cancelRequested: false, runnerId: "", leaseAcquiredAt: "", heartbeatAt: "", leaseExpiresAt: "", leaseDiagnostics: {}, createdAt: v626Now(), updatedAt: v626Now(), completedAt: "",
   };
 }
@@ -1535,7 +1571,14 @@ async function v626WaitFalJob(run, step, body) {
       system: "FAL · GPT IMAGE 2", providerAccepted: false,
       outputCount: count, quality: String(body.quality || ""), resolution: String(body.resolution || ""),
     });
-    const response = await fetch("/api/generation/fal/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...body, automationRunId: run.id, automationStepKey: durableOperationKey, automationRunnerId: V627_AUTOMATION_RUNNER_ID }) });
+    /* WHAT THIS DISPATCHER IS. Same declaration as the coverage path and for the same
+       reason: without it the money boundary has no plan to enforce. The runner sends the
+       generation settings the planner already stored on this run - which the filmmaker
+       approved as a block when they authorised it - so quality, size and images-per-pass
+       are a recorded authorisation here rather than live controls. `simple` is lossless
+       for this surface: it owns the candidate count and quality, both production-tier,
+       and the run's stored resolution is a route input the gate leaves alone. */
+    const response = await fetch("/api/generation/fal/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...body, generationRequest: generationRequestDeclaration({ surface: CINEBRAID_REQUEST_SURFACE_IDS.automationRun, viewMode: "simple" }), automationRunId: run.id, automationStepKey: durableOperationKey, automationRunnerId: V627_AUTOMATION_RUNNER_ID }) });
     const data = await response.json();
     if (!response.ok) {
       step.activity = { ...(step.activity || {}), state: "request rejected", detail: `${data.error || `FAL submission returned HTTP ${response.status}` } No paid request was accepted.`, system: "FAL · GPT IMAGE 2", providerAccepted: false, paidRequestSubmitted: false, httpStatus: response.status, errorCode: data.code || "", updatedAt: v626Now() };

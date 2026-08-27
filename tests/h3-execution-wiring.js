@@ -25,6 +25,7 @@ const H3Pack = require("../model-packs/minimax-h3");
 const { resolveCapability } = require("../public/shared-generation-capability");
 const { addMotionPromptBuild, baseSpec } = require("./h3-execution-fixture");
 const { render, buildFixture } = require("./render-harness");
+const { withGenerationDeclaration } = require("./generation-request-fixture");
 
 const ROOT = path.join(__dirname, "..");
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z5xkAAAAASUVORK5CYII=", "base64");
@@ -154,7 +155,7 @@ async function harness() {
     const response = await fetch(`${appOrigin}${url}`, {
       method: options.method || "POST",
       headers: { "content-type": "application/json" },
-      ...(options.body ? { body: JSON.stringify(options.body) } : {}),
+      ...(options.body ? { body: JSON.stringify(withGenerationDeclaration(url, options.body)) } : {}),
     });
     return { status: response.status, data: await response.json() };
   };

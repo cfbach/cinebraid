@@ -27,12 +27,15 @@ const { registerFalGeneration } = require("../fal-generation");
 const { registerAutomationRuns } = require("../automation-runs");
 const { submissionAccounting, summarizeRecordedCost, recordedAmount, recordedEstimate, RECORDED_BASIS } = require("../generation-cost");
 const { validateCostEstimate } = require("../generation-contracts");
+const { declaredRequestInit } = require("./generation-request-fixture");
 
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z5xkAAAAASUVORK5CYII=", "base64");
 const listen = (app) => new Promise((resolve) => { const server = app.listen(0, "127.0.0.1", () => resolve(server)); });
 const originOf = (server) => `http://127.0.0.1:${server.address().port}`;
 async function json(url, options = {}) {
-  const response = await fetch(url, options);
+  /* A suite that posts to the paid route is standing in for a dialog, and a dialog
+     declares which surface and view it was. See tests/generation-request-fixture.js. */
+  const response = await fetch(url, declaredRequestInit(url, options));
   const data = await response.json().catch(() => ({}));
   return { response, data };
 }

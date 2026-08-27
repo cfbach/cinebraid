@@ -138,16 +138,78 @@ function generationLimitsMarkup(limits) {
     + '</div>';
 }
 
+/* ---------------------------------------------------------------------------
+   DID CINEBRAID ACTUALLY INCLUDE WHAT I ASKED FOR?
+
+   The compiler has answered this since C1 and nothing has ever shown the answer. Every
+   compiled plan carries a `coverage` array - one entry per piece of direction the shot
+   was carrying - saying whether it reached the prompt, is anchored by a reference
+   instead, was left out on purpose, or cannot be expressed by the selected model at all.
+   It travelled on the wire from both plan preview routes and had no reader. A filmmaker
+   pressing a paid button could see the compiled prompt and could not see which of their
+   decisions were in it.
+
+   THIS RENDERS THAT RECORD AND JUDGES NOTHING. Every state, every reason and every
+   `via` below is the compiler's own; the label is the compiler's too, joined onto the
+   entry by the route from generation-compiler.js's INTENT_FIELDS. There is no second
+   semantic check here, no re-reading of the prompt and no language model - the whole of
+   the analysis already happened, upstream, deterministically.
+
+   WHAT IS SHOWN, AND WHERE. Anything the filmmaker asked for that this model cannot do,
+   and anything deliberately left out, is shown in BOTH views: an unsupported intent is
+   the single most expensive thing to discover after paying, and Advanced is a panel that
+   may be closed. Simple stops there. Advanced additionally lists what DID arrive, because
+   "camera movement: represented in the prompt" is reassurance rather than a decision, and
+   thirty reassurances in front of a paid button is a wall the important two rows hide in. */
+const GENERATION_COVERAGE_STATES = {
+  represented: { word: "in the prompt", tone: "carried" },
+  anchored: { word: "anchored by a reference", tone: "carried" },
+  "omitted-by-design": { word: "left out on purpose", tone: "omitted" },
+  unsupported: { word: "not supported by this model", tone: "missing" },
+};
+function generationCoverageRow(entry) {
+  const state = GENERATION_COVERAGE_STATES[String(entry.state)] || { word: String(entry.state || ""), tone: "carried" };
+  /* The compiler says WHY for the two states that need one and says nothing for the two
+     that do not. Printing an empty reason as a dash would invent an absence. */
+  const detail = String(entry.reason || "")
+    || (entry.state === "anchored" ? `anchored by ${String(entry.via || "a reference")}` : "")
+    || (entry.state === "represented" && String(entry.via) === "parameter" ? "sent as a request parameter" : "");
+  return `<li data-coverage-state="${attr(entry.state)}"><span>${esc(entry.label || entry.intent)}</span><b>${esc(state.word)}</b>${detail ? `<small>${esc(detail)}</small>` : ""}</li>`;
+}
+function generationCoverageMarkup(coverage, mode) {
+  const rows = (Array.isArray(coverage) ? coverage : []).filter((entry) => entry && entry.intent);
+  if (!rows.length) return "";
+  const view = generationViewMode(mode);
+  const attention = rows.filter((entry) => ["unsupported", "omitted-by-design"].includes(String(entry.state)));
+  const carried = rows.filter((entry) => !["unsupported", "omitted-by-design"].includes(String(entry.state)));
+  const shown = view === "advanced" ? [...attention, ...carried] : attention;
+  /* Nothing to warn about is a real and good answer, and it is worth saying: silence
+     here reads as "coverage was not computed", which is a different fact. */
+  if (!shown.length)
+    return `<section class="gen-coverage" data-coverage-summary="clear"><b>Every piece of direction on this shot is in this request</b><small>${esc(`All ${carried.length} of them. Open Advanced to see each one.`)}</small></section>`;
+  return `<section class="gen-coverage" data-coverage-summary="${attr(attention.length ? "attention" : "full")}">`
+    + `<b>What this request carries</b>`
+    + `<small>${esc(attention.length
+      ? `${attention.length} piece${attention.length === 1 ? "" : "s"} of direction ${attention.length === 1 ? "is" : "are"} not in the prompt. This is the compiler's own record of what it wrote.`
+      : "The compiler's own record of what it wrote, intent by intent.")}</small>`
+    + `<ul>${shown.map(generationCoverageRow).join("")}</ul>`
+    + (view === "simple" && carried.length
+      ? `<small class="gen-coverage-rest">${esc(`${carried.length} other piece${carried.length === 1 ? "" : "s"} of direction reached the request. Open Advanced to see ${carried.length === 1 ? "it" : "them"}.`)}</small>`
+      : "")
+    + "</section>";
+}
+
 /* The whole shared shell. A surface supplies its own control markup for the active mode
    and gets everything else from here, so "Simple" means the same thing on the blocking
    dialog and on the scene planner. */
-function generationViewMarkup({ mode, plan, option, recommendation, rate, quantity, limits, controlsMarkup }) {
+function generationViewMarkup({ mode, plan, option, recommendation, rate, quantity, limits, controlsMarkup, coverage }) {
   const view = generationViewMode(mode);
   return `<section class="gen-view" data-gen-view="${attr(view)}">`
     + `<header class="gen-view-head"><div><b>Generation settings</b><small>${esc(view === "simple" ? "The facts that decide this request. Open Advanced for the machine settings." : "Every setting this model and provider actually support.")}</small></div>${generationViewSwitchMarkup(view)}</header>`
     + generationAlwaysVisibleMarkup({ option, recommendation, rate, quantity })
     + `<div class="gen-view-controls" id="gen-view-controls" role="tabpanel" aria-labelledby="gen-view-tab-${attr(view)}">${controlsMarkup || ""}${generationSavedDefaultsMarkup(plan)}</div>`
     + generationLimitsMarkup(limits)
+    + generationCoverageMarkup(coverage, view)
     + generationUnsupportedMarkup(plan)
     + '</section>';
 }

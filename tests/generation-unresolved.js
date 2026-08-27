@@ -19,6 +19,7 @@ const { registerFalGeneration } = require("../fal-generation");
 const Lifecycle = require("../generation-lifecycle");
 const Contracts = require("../generation-contracts");
 const { addMotionPromptBuild } = require("./h3-execution-fixture");
+const { withGenerationDeclaration } = require("./generation-request-fixture");
 
 const ROOT = path.join(__dirname, "..");
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z5xkAAAAASUVORK5CYII=", "base64");
@@ -118,7 +119,7 @@ async function harness() {
     const response = await fetch(`${mounted.origin}${url}`, {
       method,
       headers: { "content-type": "application/json" },
-      ...(body ? { body: JSON.stringify(body) } : {}),
+      ...(body ? { body: JSON.stringify(withGenerationDeclaration(url, body)) } : {}),
     });
     return { status: response.status, data: await response.json() };
   };

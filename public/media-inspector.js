@@ -368,8 +368,10 @@
         <article><span>Generation job</span>${jobWords}</article>
         ${factRow("Provider request", provenance.requestId)}
         ${factRow("Resolution", provenance.resolution)}
+        ${factRow("Setup shown", provenance.viewMode)}
         ${costMarkup(provenance.cost)}
       </div>
+      ${provenance.removedKeys.length ? `<p class="mi-note" data-mi-removed-keys="${attr(provenance.removedKeys.join(","))}">${esc(`This request did not carry ${provenance.removedKeys.join(", ")}. The generation setup that ordered it did not offer ${provenance.removedKeys.length === 1 ? "that control" : "those controls"}, so the saved default was used instead of a value nobody chose.`)}</p>` : ""}
       <div class="mi-prompt" data-mi-prompt="${attr(provenance.prompt.state)}">
         <span>Prompt</span>
         ${provenance.prompt.state === "known"

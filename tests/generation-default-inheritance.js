@@ -33,6 +33,7 @@ const { registerFalGeneration } = require("../fal-generation");
 const { compileImageExecutionPlan } = require("../image-execution");
 const { addFramePromptBuild, addBlockingPromptBuild } = require("./image-execution-fixture");
 const { render, buildFixture } = require("./render-harness");
+const { withGenerationDeclaration } = require("./generation-request-fixture");
 
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z5xkAAAAASUVORK5CYII=", "base64");
 const notes = [];
@@ -204,7 +205,7 @@ async function harness() {
 
   const post = async (route, body) => {
     const response = await fetch(`${base}${route}`, {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(withGenerationDeclaration(route, body)),
     });
     return { status: response.status, data: await response.json() };
   };

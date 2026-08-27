@@ -17,6 +17,7 @@ const express = require("express");
 
 const RealLifecycle = require("../generation-lifecycle");
 const { addMotionPromptBuild } = require("./h3-execution-fixture");
+const { withGenerationDeclaration } = require("./generation-request-fixture");
 
 const ROOT = path.join(__dirname, "..");
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z5xkAAAAASUVORK5CYII=", "base64");
@@ -99,7 +100,7 @@ async function scenario(falGeneration, behaviour) {
   const api = async (url, body, method = "POST") => {
     const response = await fetch(`${origin}${url}`, {
       method, headers: { "content-type": "application/json" },
-      ...(body ? { body: JSON.stringify(body) } : {}),
+      ...(body ? { body: JSON.stringify(withGenerationDeclaration(url, body)) } : {}),
     });
     return { status: response.status, data: await response.json() };
   };

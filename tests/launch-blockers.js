@@ -32,6 +32,7 @@ const vm = require('vm');
 const Aspect = require('../public/shared-aspect');
 const { registerFalGeneration } = require('../fal-generation');
 const { addMotionPromptBuild } = require('./h3-execution-fixture');
+const { withGenerationDeclaration } = require('./generation-request-fixture');
 
 const ROOT = path.join(__dirname, '..');
 const css = fs.readFileSync(path.join(ROOT, 'public', 'styles.css'), 'utf8');
@@ -465,7 +466,10 @@ async function providerRefusal() {
   const reference = (name, role) => ({ key: name, label: name, role, mediaType: 'image', url: `/assets/shots/S1/takes/${name}` });
   const submit = (body) => fetch(`${appOrigin}/api/generation/fal/jobs`, {
     method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ purpose: 'motion-h3', shotId: 'S1', profileFamily: 'minimax-h3', prompt, ...body }),
+    /* A paid request declares which surface built it and which view was showing; the
+       boundary refuses one that does not, and this suite is standing in for the motion
+       dialog. See tests/generation-request-fixture.js. */
+    body: JSON.stringify(withGenerationDeclaration('/api/generation/fal/jobs', { purpose: 'motion-h3', shotId: 'S1', profileFamily: 'minimax-h3', prompt, ...body })),
   }).then(async (response) => ({ status: response.status, data: await response.json() }));
 
   try {

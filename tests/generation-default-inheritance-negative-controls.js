@@ -29,6 +29,7 @@ const express = require("express");
 const ROOT = path.join(__dirname, "..");
 const { render, buildFixture } = require("./render-harness");
 const { addFramePromptBuild, addBlockingPromptBuild } = require("./image-execution-fixture");
+const { withGenerationDeclaration } = require("./generation-request-fixture");
 
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z5xkAAAAASUVORK5CYII=", "base64");
 /* Normalised to LF before matching. Anchors span lines, and on a Windows checkout with
@@ -171,7 +172,7 @@ async function serverOn(config) {
 
   const post = async (route, body) => {
     const response = await fetch(`${base}${route}`, {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(withGenerationDeclaration(route, body)),
     });
     return { status: response.status, data: await response.json() };
   };

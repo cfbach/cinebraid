@@ -183,6 +183,222 @@ const CINEBRAID_CONTROL_PAYLOAD_KEYS = Array.from(
   new Set(CINEBRAID_GENERATION_CONTROLS.flatMap((control) => control.payloadKeys)),
 ).sort();
 
+/* ---------------------------------------------------------------------------
+   THE SURFACE TABLE. Which controls a paid surface owns, declared once and read on
+   BOTH sides of the wire.
+
+   Until now each dialog passed its own `only:` list and its own output-shaped flags to
+   generationControlPlan(), and the server saw neither. That is what made the gate a
+   browser convention: a replayed POST simply did not run the code that knew which keys
+   the surface was allowed to send, and the money boundary had no way to find out. The
+   lists below moved here unchanged - this table is a relocation, not a new policy - so
+   the dialog and POST /api/generation/fal/jobs derive the same plan from the same
+   declaration.
+
+   `only` is the control vocabulary the surface owns. Narrowing is allowed and widening
+   is not; generationControlPlan() already enforces that, and it still evaluates every
+   control in CINEBRAID_GENERATION_CONTROLS for support, so a surface that forgot to
+   declare one cannot ship it.
+
+   `flags` are the capability facts that are properties of the OUTPUT rather than of the
+   model, which is why capabilityFromPlan() has always required the caller to declare
+   them: a still-image request returns a batch of candidates and a motion request returns
+   one clip, and neither is inferable from a capability record.
+
+   `capability` is present ONLY for the fixed fal image route - the one route that
+   dispatches through the configured text/edit endpoints rather than through a compiled
+   plan, and therefore the one route with no capability resolver to ask. It is the exact
+   literal the fixed dialogs already carried inline; moving it here is what lets the
+   server enforce the same answer instead of inventing one. The compiled routes leave it
+   absent and the caller supplies the capability their own resolver produced. */
+const CINEBRAID_GENERATION_REQUEST_SURFACES = {
+  /* The compiled still-frame dialog, public/generation-picker.js. */
+  "compiled-frame": {
+    label: "Compiled frame",
+    only: ["outputCount", "quality", "resolution", "seed", "cfgScale", "steps", "referenceStrength"],
+    flags: { candidateBatching: true, referenceWeights: false },
+  },
+  /* Every dialog that dispatches through CineBraid's configured fal image path: the
+     blocking frame and its revision, entity reference generation, candidate correction,
+     coverage automation and the automation runner's frame steps. One route, one
+     capability, one control vocabulary. */
+  "fixed-image": {
+    label: "Configured image path",
+    only: ["outputCount", "quality", "resolution", "seed", "cfgScale", "steps", "referenceStrength"],
+    flags: { candidateBatching: true, referenceWeights: false },
+    capability: {
+      qualityTiers: ["low", "medium", "high"],
+      resolutions: ["1k", "2k", "4k"],
+      durationSeconds: null,
+      flags: { seed: false, candidateBatching: true, referenceWeights: false, cfgScale: false, steps: false },
+    },
+  },
+  /* THE TWO UNATTENDED DISPATCHERS, and why their vocabulary is SHORTER rather than
+     their view wider.
+   *
+   * Neither of these is a Simple/Advanced screen at the moment it dispatches. The
+   * coverage modal draws a sheet resolution unconditionally, because a sheet whose
+   * panels are too small to crop is not a sheet; the automation runner sends the
+   * settings the planner already stored on the run, which the filmmaker approved as a
+   * block when they authorised it. In both cases `resolution` is an input the route
+   * asserts, not a control a view is hiding - the same standing `aspectRatio` already
+   * has on the frame dialogs, which show the shot's ratio rather than offering a picker.
+   *
+   * So it is left OUT of the vocabulary, where restrictPayloadToPlan() treats it as part
+   * of the request rather than as a control to strip. Declaring these as `fixed-image`
+   * in Simple would have deleted a value the filmmaker really did choose and silently
+   * substituted today's Settings default for it.
+   *
+   * What both still guarantee - and what neither had before, because neither ran the
+   * gate at all - is that a machine setting this route cannot honour never travels. An
+   * unsupported control is stripped whether or not the surface declares it. */
+  "reference-automation": {
+    label: "Coverage automation",
+    only: ["outputCount", "quality"],
+    flags: { candidateBatching: true, referenceWeights: false },
+    capability: {
+      qualityTiers: ["low", "medium", "high"],
+      resolutions: ["1k", "2k", "4k"],
+      durationSeconds: null,
+      flags: { seed: false, candidateBatching: true, referenceWeights: false, cfgScale: false, steps: false },
+    },
+  },
+  "automation-run": {
+    label: "Automation run",
+    only: ["outputCount", "quality"],
+    flags: { candidateBatching: true, referenceWeights: false },
+    capability: {
+      qualityTiers: ["low", "medium", "high"],
+      resolutions: ["1k", "2k", "4k"],
+      durationSeconds: null,
+      flags: { seed: false, candidateBatching: true, referenceWeights: false, cfgScale: false, steps: false },
+    },
+  },
+  /* The MiniMax H3 motion dialog, public/fal-generation.js. One clip per request, so
+     there is no candidate-count control to draw or to send. */
+  "motion-h3": {
+    label: "MiniMax H3 motion",
+    only: ["durationSeconds", "resolution", "aspectRatio", "seed", "cfgScale", "steps", "referenceStrength"],
+    flags: { candidateBatching: false, referenceWeights: false },
+  },
+};
+
+/* THE IDS, NAMED. A dialog file referring to its own surface needs a name for it, and a
+   top-level `const` in public/*.js is not available for that: every browser script shares
+   one lexical scope, and more than one test harness re-evaluates a single file into a
+   context that already holds it - which a lexical redeclaration turns into a SyntaxError
+   that blanks the whole app. These ride on the exports object instead, which is assigned
+   rather than declared and is therefore safe to evaluate twice. */
+const CINEBRAID_REQUEST_SURFACE_IDS = {
+  compiledFrame: "compiled-frame",
+  fixedImage: "fixed-image",
+  motionH3: "motion-h3",
+  referenceAutomation: "reference-automation",
+  automationRun: "automation-run",
+};
+
+function generationRequestSurface(id) {
+  const key = presentationText(id);
+  return Object.prototype.hasOwnProperty.call(CINEBRAID_GENERATION_REQUEST_SURFACES, key)
+    ? CINEBRAID_GENERATION_REQUEST_SURFACES[key]
+    : null;
+}
+
+/* THE PLAN A PAID REQUEST IS GOVERNED BY, built the same way wherever it is asked for.
+ *
+ * The surface decides the vocabulary and the output-shaped flags; the caller supplies the
+ * capability its own resolver produced, or omits it where the surface declares a fixed
+ * route capability of its own.
+ *
+ * AN UNKNOWN SURFACE RETURNS NULL rather than a permissive plan, and so does a known one
+ * with no capability to judge by. A plan nobody declared must not be the plan that
+ * decides what may be spent - the caller has to handle the absence, and at the money
+ * boundary handling it means refusing. */
+function generationRequestPlan({ surface, mode, capability, force } = {}) {
+  const row = generationRequestSurface(surface);
+  if (!row) return null;
+  const declared = presentationRecord(capability) || presentationRecord(row.capability) || null;
+  if (!declared) return null;
+  /* The surface's output-shaped flags win over the capability's, because they describe
+     the REQUEST and the capability describes the model. A resolved image capability that
+     says nothing about candidate batching must not turn the picker off. */
+  const flags = { ...(presentationRecord(declared.flags) || {}), ...(presentationRecord(row.flags) || {}) };
+  return generationControlPlan({
+    capability: { ...declared, flags },
+    mode,
+    only: row.only.slice(),
+    force,
+  });
+}
+
+/* WHAT A REQUEST SAYS ABOUT ITSELF, read in one place so the browser writes exactly the
+   record the server reads.
+
+   `declared` is the fact the money boundary actually needs, and it is deliberately not
+   the same as `viewMode`. "This filmmaker was in Simple" and "nothing said" must not
+   collapse: the safe reading of an absent declaration is Simple, and a caller that meant
+   Advanced would silently lose its own controls to that reading. So the boundary refuses
+   the absence rather than assuming either answer. */
+const CINEBRAID_REQUEST_PLAN_KEY = "generationRequest";
+function readGenerationRequestDeclaration(body) {
+  const row = presentationRecord(presentationRecord(body)?.[CINEBRAID_REQUEST_PLAN_KEY]);
+  const surface = presentationText(row?.surface);
+  const rawMode = presentationText(row?.viewMode);
+  return {
+    declared: Boolean(row) && Boolean(surface) && CINEBRAID_GENERATION_VIEW_MODES.includes(rawMode),
+    surface,
+    viewMode: generationViewMode(rawMode),
+    /* Carried through unchanged so a ledger row can record which option the screen was
+       showing. It is evidence about the SCREEN and is never used to choose a model. */
+    selectedOptionId: presentationText(row?.selectedOptionId),
+    selectedModelId: presentationText(row?.selectedModelId),
+  };
+}
+
+/* WHICH SURFACE COULD HONESTLY HAVE BUILT THIS REQUEST, decided from the request itself.
+ *
+ * A declaration is evidence about a screen, and evidence that chooses its own vocabulary
+ * is not evidence: without this, a body could name whichever surface governs it least.
+ * So the boundary asks this first and accepts a declaration only if it is in the answer.
+ *
+ * `canonical` is the surface a CineBraid dialog would declare for this request, named
+ * rather than taken from a list position. `legal` is the full set, because two surfaces
+ * genuinely can build the same request - an entity reference comes from both the
+ * reference dialog and the coverage automation modal, and they offer different controls.
+ *
+ * Note what decides it: `purpose`, the `imagePlan` marker and the presence of an
+ * automation run id. All three are structural facts about the request, not readings of
+ * its content - nothing here infers what a filmmaker meant from an arbitrary payload. */
+function generationRequestSurfacesFor(body, purpose) {
+  const row = presentationRecord(body) || {};
+  const kind = presentationText(purpose) || presentationText(row.purpose) || "frame";
+  if (kind === "motion-h3") return { canonical: "motion-h3", legal: ["motion-h3"] };
+  /* AN AUTHORISED RUN IS ASKED FIRST, before the compiled marker, and the order is a
+     judgement rather than a convenience: inside a run, quality and size are not live
+     controls a view is hiding - they are the settings the filmmaker approved as a block
+     when they authorised it. That stays true whether or not the step happens to compile
+     through a plan, so the run surface owns the request either way. Reading it as
+     `compiled-frame` would tier a value nobody is being offered and could substitute
+     today's Settings default for what was actually approved. */
+  if (presentationText(row.automationRunId)) return { canonical: "automation-run", legal: ["automation-run"] };
+  if (row.imagePlan === true && ["blocking", "frame"].includes(kind))
+    return { canonical: "compiled-frame", legal: ["compiled-frame"] };
+  if (kind === "entity-reference")
+    return { canonical: "fixed-image", legal: ["fixed-image", "reference-automation"] };
+  return { canonical: "fixed-image", legal: ["fixed-image"] };
+}
+
+/* What a dialog attaches to its body. One writer, so a surface cannot invent a shape the
+   reader above does not understand. */
+function generationRequestDeclaration({ surface, viewMode, selectedOptionId, selectedModelId } = {}) {
+  return {
+    surface: presentationText(surface),
+    viewMode: generationViewMode(viewMode),
+    ...(presentationText(selectedOptionId) ? { selectedOptionId: presentationText(selectedOptionId) } : {}),
+    ...(presentationText(selectedModelId) ? { selectedModelId: presentationText(selectedModelId) } : {}),
+  };
+}
+
 function presentationRecord(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value) ? value : null;
 }
@@ -482,11 +698,19 @@ const GENERATION_PRESENTATION_EXPORTS = {
   CINEBRAID_GENERATION_VIEW_MODES,
   CINEBRAID_GENERATION_CONTROLS,
   CINEBRAID_CONTROL_PAYLOAD_KEYS,
+  CINEBRAID_GENERATION_REQUEST_SURFACES,
+  CINEBRAID_REQUEST_PLAN_KEY,
+  CINEBRAID_REQUEST_SURFACE_IDS,
   controlSupport,
   generationControlPlan,
   generationRecommendation,
+  generationRequestDeclaration,
+  generationRequestPlan,
+  generationRequestSurface,
+  generationRequestSurfacesFor,
   generationTimeEstimate,
   generationViewMode,
+  readGenerationRequestDeclaration,
   restrictPayloadToPlan,
   routePlacement,
   selectedModelStanding,

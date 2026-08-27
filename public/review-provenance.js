@@ -155,22 +155,13 @@ function normalizeShotPackageHistory(s) {
   return changed;
 }
 function packageInputSnapshot(s, pack, refs = [], direction = "") {
-  const frame = pack.frameId ? frameById(s, pack.frameId) : null;
-  const unit = pack.segmentId
-    ? (s.clips || []).find((x) => unitKey(x) === String(pack.segmentId))
-    : null;
-  const first = unit ? frameById(s, unit.fromFrame) : null;
-  const last = unit ? frameById(s, unit.toFrame) : null;
-  const media = shotMediaLinks(s)
-    .filter(({ link }) => link.generationInput)
-    .map(({ asset, link }) => [asset.id, asset.file || "", link.role || ""])
-    .sort((a, b) => String(a[0]).localeCompare(String(b[0])));
+  /* THE FIVE PROJECT-DOCUMENT FIELDS come from public/shared-build-history.js, which is
+     the module the money boundary can also require. They used to be computed here and
+     nowhere else, which is exactly why POST /api/generation/fal/jobs had no way to ask
+     whether a package was still current. This is a delegation, not a second reading:
+     the bodies moved, the values did not. */
   return {
-    direction: String(direction || "").trim(),
-    frameWinner: frame?.winner || "",
-    firstFrameWinner: first?.winner || "",
-    lastFrameWinner: last?.winner || "",
-    generationMedia: media,
+    ...packageProjectInputs(P, s, pack, direction),
     references: (refs || [])
       .map((x) => [x.key || "", x.url || "", x.role || "", x.mediaType || "", x.instruction || ""])
       .sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
@@ -208,18 +199,18 @@ function packageInputSnapshot(s, pack, refs = [], direction = "") {
    into nothing else, so asking them of a frame package would invent a comparison
    with no text behind it. */
 function currentMotionInputs(s, pack) {
-  if (!pack || !pack.segmentId) return null;
-  const c = s?.creationBrief || {};
-  const unit = (s?.clips || []).find((x) => unitKey(x) === String(pack.segmentId)) || null;
-  const profileId = String(c.motionProfileId || pack.profileId || "");
+  /* Duration and target come from the shared reader; EXECUTION METHOD stays here,
+     because the profile list this reads is the one public/motion-sound-composer.js has
+     narrowed to the families CineBraid can dispatch. A server reading
+     data/model-profiles.json directly would answer for a profile this screen cannot
+     offer, so the shared module deliberately does not compute `mode` and the server
+     deliberately does not compare it. */
+  const shared = packageMotionInputs(s, pack);
+  if (!shared) return null;
   const profile = typeof guidedVideoProfiles === "function"
-    ? guidedVideoProfiles().find((item) => item.id === profileId)
+    ? guidedVideoProfiles().find((item) => item.id === shared.profileId)
     : null;
-  return {
-    durationSeconds: Number(c.motionDuration || unit?.dur || 0) || 0,
-    profileId,
-    mode: String(profile?.mode || pack.mode || ""),
-  };
+  return { ...shared, mode: String(profile?.mode || pack.mode || "") };
 }
 function appendPackageRevision(list, pack, reason = "compiled", parent = null) {
   const revisions = resolvePromptBuildList(P, list || []).map((x) => Number(x.revision) || 0);
@@ -233,16 +224,9 @@ function appendPackageRevision(list, pack, reason = "compiled", parent = null) {
   return resolvePromptBuild(P, buildId);
 }
 function currentDirectionForPackage(s, pack) {
-  const directive = s.packagePlanner?.directiveByScope?.[pack.scope] || "";
-  let base = "";
-  if (pack.frameId) base = frameById(s, pack.frameId)?.description || "";
-  else if (pack.segmentId) {
-    const unit = (s.clips || []).find(
-      (x) => unitKey(x) === String(pack.segmentId),
-    );
-    base = unit?.motionPrompt || unit?.note || "";
-  } else base = s.motionPrompt || "";
-  return [base, directive].filter(Boolean).join("\n").trim();
+  /* Same delegation as packageInputSnapshot, for the same reason: the money boundary
+     has to be able to ask this question too. */
+  return packageDirection(s, pack);
 }
 /* WHAT THE PACKAGE CONSUMED THAT THIS PRODUCTION CAN NO LONGER PROVIDE.
  *
@@ -288,46 +272,24 @@ function currentSnapshotForPackage(s, pack) {
   const motion = currentMotionInputs(s, pack);
   return motion ? { ...snapshot, ...motion } : snapshot;
 }
+/* THE COMPARISON ITSELF NOW LIVES IN public/shared-build-history.js, and this function
+   is what supplies it with the evidence only a browser has: the reference catalogue
+   promptReferenceOptions() derives, and the execution method the narrowed profile list
+   reports. The server calls the SAME comparator with the fields it can read out of the
+   project document alone, so it reports a subset of these reasons and can never invent
+   one this screen would not give.
+
+   The "only compared when the saved snapshot recorded the field" rule that used to be
+   written out three times here is now the comparator's general rule for every field, on
+   both sides: a comparison nobody has evidence for is not a finding. */
 function packageStaleReasons(s, pack) {
   const saved = pack?.dependencySnapshot;
   if (!saved) return [];
-  const now = currentSnapshotForPackage(s, pack),
-    reasons = [];
-  if (String(saved.direction || "") !== String(now.direction || ""))
-    reasons.push("written direction changed");
-  if (String(saved.frameWinner || "") !== String(now.frameWinner || ""))
-    reasons.push("approved frame changed");
-  if (
-    String(saved.firstFrameWinner || "") !== String(now.firstFrameWinner || "")
-  )
-    reasons.push("approved start frame changed");
-  if (
-    String(saved.lastFrameWinner || "") !== String(now.lastFrameWinner || "")
-  )
-    reasons.push("approved end frame changed");
-  if (
-    JSON.stringify(saved.generationMedia || []) !==
-    JSON.stringify(now.generationMedia || [])
-  )
-    reasons.push("approved generation media changed");
-  /* Named before the generic array comparison, because "an input is gone" is a
-     different fact from "an input changed" and sends the filmmaker somewhere else. */
-  const missing = missingConsumedReferences(s, pack);
-  if (missing.length)
-    reasons.push(`${missing.length === 1 ? "an input" : `${missing.length} inputs`} this prompt was compiled from can no longer be supplied by this shot: ${missing.join(", ")}`);
-  if (!missing.length && JSON.stringify(saved.references || []) !== JSON.stringify(now.references || []))
-    reasons.push("approved reference file changed");
-  /* Only compared when the saved snapshot actually recorded the field. A package
-     compiled before these were captured genuinely does not know what its duration
-     or method was, and reporting "changed" from an absence would be a guess in the
-     other direction. */
-  if (saved.durationSeconds !== undefined && Number(saved.durationSeconds || 0) !== Number(now.durationSeconds || 0))
-    reasons.push(`duration changed to ${Number(now.durationSeconds || 0)}s — the compiled prompt still states ${Number(saved.durationSeconds || 0)}s`);
-  if (saved.mode !== undefined && String(saved.mode || "") !== String(now.mode || ""))
-    reasons.push(`execution method changed to ${String(now.mode || "none").toUpperCase()} — the compiled prompt is ${String(saved.mode || "none").toUpperCase()}`);
-  if (saved.profileId !== undefined && String(saved.profileId || "") !== String(now.profileId || ""))
-    reasons.push(`target model changed to ${String(now.profileId || "none")} — the compiled prompt targets ${String(saved.profileId || "none")}`);
-  return [...new Set(reasons)];
+  return packageDependencyDrift({
+    saved,
+    now: currentSnapshotForPackage(s, pack),
+    missingReferences: missingConsumedReferences(s, pack),
+  });
 }
 /* THE COMPILED PACKAGE'S OWN FRESHNESS, for the surface that shows it. Same
    derivation as the project-health list above — one answer, two readers. */

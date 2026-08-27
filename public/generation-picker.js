@@ -412,17 +412,23 @@ function falFrameControlsMarkup(plan, request) {
  * ratio, and a control here could only disagree with it. Leaving the key ungoverned is
  * what lets the production's real ratio travel untouched; declaring it and then hiding it
  * would strip it and hand the server its literal "16:9" fallback. */
+/* The vocabulary and the output-shaped flags now come from the surface table in
+   public/shared-generation-presentation.js, which POST /api/generation/fal/jobs reads
+   too. The list this used to pass inline moved there unchanged - what changed is that
+   the money boundary can now derive the same plan instead of taking the payload on
+   trust. The CAPABILITY is still this screen's, mapped out of the plan response the
+   server already sent. */
 function falFrameControlPlan(mode) {
   const request = window._falFrameRequest || {};
-  return generationControlPlan({
+  return generationRequestPlan({
+    surface: CINEBRAID_REQUEST_SURFACE_IDS.compiledFrame,
+    mode,
     capability: capabilityFromPlan(request, {
       /* Still-image plans return a candidate count, so the batching capability is real
          here in a way it is not for a one-clip motion request. */
       candidateBatching: true,
       referenceWeights: false,
     }),
-    mode,
-    only: ["outputCount", "quality", "resolution", "seed", "cfgScale", "steps", "referenceStrength"],
   });
 }
 
@@ -451,6 +457,8 @@ function renderFalFrameGenerationView(mode) {
       stopEarly: "Every returned image is an unapproved candidate. Nothing becomes canon until you approve one.",
     },
     controlsMarkup: falFrameControlsMarkup(plan, request),
+    /* The compiler's own coverage record, rendered by the shared shell. */
+    coverage: request.coverage,
   });
 }
 
@@ -484,6 +492,16 @@ window.startFalFrameGeneration = async () => {
     profileName: request.profile?.name || "",
     prompt: request.prompt,
     aspectRatio: request.aspectRatio,
+    /* WHAT THIS SCREEN WAS SHOWING, so the money boundary can restrict the payload the
+       same way instead of trusting it. `selectedOptionId` and the model it names are
+       carried as evidence about the screen - the server refuses a model it cannot
+       dispatch rather than quietly substituting one, and never chooses from them. */
+    generationRequest: generationRequestDeclaration({
+      surface: CINEBRAID_REQUEST_SURFACE_IDS.compiledFrame,
+      viewMode: generationViewPreference(),
+      selectedOptionId: request.selectedOptionId,
+      selectedModelId: selectedGenerationOption(request.options || null, request.selectedOptionId)?.modelId || "",
+    }),
     ...settings,
   };
   /* THE GATE, recomputed at dispatch against the view that is actually showing. A size

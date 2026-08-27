@@ -6,22 +6,54 @@ const path = require("path");
 const { parseAspectRatio, h3AspectSupport } = require("./public/shared-aspect");
 const { readJobLedger, writeJobLedgerSync, JobLedgerUnreadableError } = require("./generation-job-store");
 const { jobOutputsForRename, repairJobOutputIdentity } = require("./public/shared-media-disposition");
-const { compileH3ExecutionPlan, planProvenance, H3ExecutionError } = require("./h3-execution");
+const { compileH3ExecutionPlan, h3ControlCapability, planProvenance, H3ExecutionError } = require("./h3-execution");
 const { serializeH3PlanForFal, H3BackendError, FAL_H3_BACKEND } = require("./fal-h3-backend");
-const { compileImageExecutionPlan, imagePlanProvenance, ImageExecutionError, IMAGE_MODEL_ID } = require("./image-execution");
+const { compileImageExecutionPlan, imageControlCapability, imagePlanProvenance, ImageExecutionError, IMAGE_MODEL_ID } = require("./image-execution");
 const { serializeImagePlanForFal, FalImageBackendError, FAL_IMAGE_BACKEND } = require("./fal-image-backend");
 const { generationOptionsFor, generationConnections } = require("./generation-options");
+const { INTENT_FIELDS } = require("./generation-compiler");
 const { generationBindingRecord, GenerationBindingError } = require("./generation-binding");
-const { submissionAccounting } = require("./generation-cost");
+const { submissionAccounting, summarizeRecordedCost } = require("./generation-cost");
 const { configuredMotionRate } = require("./public/shared-generation-rate");
 const { guidePayload } = require("./generation-options");
 const Lifecycle = require("./generation-lifecycle");
 const FramePresence = require("./public/shared-frame-presence");
+/* THE PAYLOAD GATE, ON THE SERVER. public/shared-generation-presentation.js is the
+   module every dialog already restricts its body through; requiring it here is what
+   moves that guarantee from a browser convention to the boundary that spends money.
+   The policy is not reimplemented - this file calls restrictPayloadToPlan() itself. */
+const Presentation = require("./public/shared-generation-presentation");
+const BuildHistory = require("./public/shared-build-history");
+const { costEstimateFromRate } = require("./public/shared-generation-rate");
 
 /* The request that takes delivery of the background-recovery notice says so here rather
    than in the URL. See the GET /api/generation/fal/jobs route for why. Lowercase because
    that is how Node presents an incoming header name. */
 const CLAIM_RECOVERY_HEADER = "x-cinebraid-claim-recovery";
+
+/* THE FILMMAKER'S OWN WORD FOR AN INTENT KEY.
+ *
+ * The compiler has always emitted coverage as `{ intent: "camera.movement", state, via }`
+ * and a screen has no business turning "camera.movement" into "camera movement" itself:
+ * the label is already written down, once, beside the field that reads the intent, in
+ * generation-compiler.js's INTENT_FIELDS. This joins the two on the way out so the dialog
+ * renders the authority's words rather than a prettified key.
+ *
+ * `reproducibility.seed` is the one intent with no INTENT_FIELDS row - it is not read off
+ * the shot, it is a request parameter - so it is named here and nowhere else.
+ *
+ * A JOIN, NOT A COMPUTATION. No entry is added, removed, reordered or re-judged; every
+ * state and every reason is the compiler's, unchanged. */
+const INTENT_LABELS = new Map([
+  ...INTENT_FIELDS.map((field) => [field.key, field.label]),
+  ["reproducibility.seed", "seed"],
+]);
+function labelledCoverage(coverage) {
+  return (Array.isArray(coverage) ? coverage : []).map((entry) => ({
+    ...entry,
+    label: INTENT_LABELS.get(String(entry?.intent || "")) || String(entry?.intent || ""),
+  }));
+}
 
 function registerFalGeneration(app, context) {
   const { readConfig, readProject, writeProject, activeSlug, projectDirForSlug } = context;
@@ -372,6 +404,207 @@ function registerFalGeneration(app, context) {
       return Array.isArray(parsed) ? parsed : Array.isArray(parsed?.runs) ? parsed.runs : [];
     } catch { return []; }
   }
+  /* =========================================================================
+     THE REQUEST-TRUTH GATE, AT THE BOUNDARY THAT SPENDS MONEY.
+
+     Every generation dialog has restricted its own body through restrictPayloadToPlan()
+     since Batch 2 Slice 4, and that was a real guarantee about the SCREEN and no
+     guarantee at all about the REQUEST. The gate ran in the browser; this route did not
+     run it, did not know a view mode existed, and could not tell a body a dialog built
+     from one replayed by hand. A Simple-mode filmmaker who was never offered a size
+     could still have a 4K size honoured here - not because anything was bypassed, but
+     because nothing at this end had ever been told what Simple meant.
+
+     So the same function now runs on the same declaration on both sides. The dialog
+     attaches `generationRequest: { surface, viewMode }`; this reads it, rebuilds the
+     control plan from the SAME shared table, and restricts the payload again. Where the
+     two agree - the normal case - the second restriction removes nothing and the only
+     visible effect is the ledger row recording what the screen was showing.
+
+     WHAT THIS DOES NOT DO. It does not infer intent from an arbitrary payload, and it
+     does not invent a plan for a request that declared none: a body with no declaration
+     is REFUSED rather than defaulted. Defaulting would have to pick Simple (the narrower
+     reading), which would silently delete a legitimate Advanced value from a caller that
+     simply had not been updated - and the caller would never find out. A named refusal
+     with a code is the honest failure. */
+
+  /* WHICH SURFACE A REQUEST IS ALLOWED TO CLAIM, decided from the request itself rather
+     than taken on trust. A declaration is evidence about a screen; letting it also
+     choose its own vocabulary would let a replay pick the vocabulary that governs least. */
+  /* The rule itself lives in public/shared-generation-presentation.js beside the surface
+     table it names, so this boundary and anything that has to reproduce a dialog's
+     declaration cannot drift apart about which surface a request may claim.
+
+     An automation step reaches the shorter automation vocabulary only by carrying a run
+     id - and automationSubmissionError() below then requires that the run exists, that
+     the runner holds an unexpired lease and that the image cap still allows the work. A
+     hand-rolled body cannot get there by claiming it. */
+  function legalRequestSurfaces(body, purpose) {
+    return Presentation.generationRequestSurfacesFor(body, purpose).legal;
+  }
+
+  /* The control capability for the gate, from the owner that already resolves it for
+     this route. `fixed-image` has none to ask - it dispatches through the configured
+     text/edit endpoints rather than a compiled plan - so the shared table carries the
+     literal the dialogs already used, and generationRequestPlan() reads it from there. */
+  function controlCapabilityForSurface(owner, surface, body, purpose) {
+    if (surface === "compiled-frame")
+      return imageControlCapability({
+        project: ownerProject(owner),
+        purpose,
+        shotId: String(body?.shotId || ""),
+        buildId: String(body?.sourceBuildId || ""),
+      });
+    if (surface === "motion-h3")
+      return h3ControlCapability({
+        project: ownerProject(owner),
+        shotId: String(body?.shotId || ""),
+        buildId: String(body?.sourceBuildId || ""),
+      });
+    return null;
+  }
+
+  /* A refusal shaped like every other pre-provider refusal in this route: nothing was
+     committed, nothing was sent, and the screen it came from still holds everything it
+     was about to send. */
+  function requestTruthRefusal(res, status, code, error, extra = {}) {
+    return res.status(status).json({
+      error,
+      code,
+      ...extra,
+      providerContacted: false,
+      paidRequestSubmitted: false,
+    });
+  }
+
+  function enforceRequestPlan(owner, req, purpose) {
+    const declaration = Presentation.readGenerationRequestDeclaration(req.body);
+    const legal = legalRequestSurfaces(req.body, purpose);
+    if (!declaration.declared)
+      return {
+        ok: false,
+        status: 400,
+        code: "GENERATION_PLAN_REQUIRED",
+        error: "This paid request did not say which generation surface built it or which view the filmmaker was using, so CineBraid cannot tell what it was allowed to send. Nothing was submitted. Generate again from a CineBraid generation dialog.",
+        detail: { expectedSurfaces: legal },
+      };
+    if (!legal.includes(declaration.surface))
+      return {
+        ok: false,
+        status: 400,
+        code: "GENERATION_PLAN_SURFACE_MISMATCH",
+        error: `This request says it came from the ${declaration.surface} surface, but its own contents describe a ${legal.join(" or ")} request. Nothing was submitted.`,
+        detail: { declaredSurface: declaration.surface, expectedSurfaces: legal },
+      };
+    const expected = declaration.surface;
+    let capability = null;
+    try {
+      capability = controlCapabilityForSurface(owner, expected, req.body, purpose);
+    } catch (error) {
+      /* The capability resolvers throw the same typed refusals the compilers do, and
+         they are answering about the same package. Passed straight through rather than
+         relabelled, so a missing package reads as a missing package. */
+      return { ok: false, throwable: error };
+    }
+    const plan = Presentation.generationRequestPlan({ surface: expected, mode: declaration.viewMode, capability });
+    if (!plan)
+      return {
+        ok: false,
+        status: 400,
+        code: "GENERATION_PLAN_UNRESOLVED",
+        error: "CineBraid could not work out which controls this request was allowed to carry, so it did not send it.",
+        detail: { surface: expected },
+      };
+    /* THE GATE. The same call the dialog made, on the same plan, at the boundary that
+       spends money. `removed` is kept because a request that silently dropped a value
+       is the mirror image of one that silently kept it. */
+    const gated = Presentation.restrictPayloadToPlan(req.body, plan);
+    return { ok: true, declaration, plan, surface: expected, payload: gated.payload, removed: gated.removed };
+  }
+
+  /* WHAT THE SCREEN WAS SHOWING, recorded on the job. Additive execution-ledger facts:
+     nothing here is production truth and nothing here is read back as authority. They
+     exist so "why does this render have no seed in it" has an answer that does not
+     require reconstructing a dialog from three months ago. */
+  function applyRequestTruth(job, gate) {
+    job.generationSurface = gate.surface;
+    job.generationViewMode = gate.declaration.viewMode;
+    job.removedPayloadKeys = gate.removed.slice();
+    job.selectedOptionId = gate.declaration.selectedOptionId;
+    job.selectedModelId = gate.declaration.selectedModelId;
+  }
+
+  /* THE MODEL THE SCREEN NAMED, checked against the model this route will actually
+     dispatch.
+   *
+   * The compiled still path compiles for IMAGE_MODEL_ID unconditionally and the fixed
+   * path dispatches whatever Settings configured, so a picker selection has never been
+   * able to change either. That is a defensible route design and an indefensible
+   * silence: a filmmaker who chose a model and got a different one was told nothing.
+   *
+   * This does not make the selection choose a model - that would be the provider
+   * abstraction this slice is explicitly not building. It refuses the mismatch instead,
+   * which is the honest half: CineBraid either dispatches what the screen named or says
+   * it cannot. A request that names nothing is not refused - there is a well-defined
+   * truthful fallback, which is that the route's own configured model is used and the
+   * ledger records it - but a request that names the WRONG one never quietly proceeds. */
+  function modelIdentityRefusal(job, cfg) {
+    const claimed = String(job.selectedModelId || "");
+    if (!claimed) return null;
+    const dispatching = job.purpose === "motion-h3"
+      ? ""
+      : job.generationSurface === "compiled-frame"
+        ? IMAGE_MODEL_ID
+        : String((job.references || []).length ? cfg.editModel : cfg.textModel);
+    /* Motion resolves its model from the package's own profile inside the compiler, and
+       the compiler already refuses a mode the package was not built for. Nothing here
+       could add to that without duplicating it. */
+    if (!dispatching || claimed === dispatching) return null;
+    return {
+      status: 409,
+      code: "GENERATION_MODEL_MISMATCH",
+      error: `This request was set up for ${claimed}, but this route dispatches ${dispatching}. Nothing was submitted. Reopen the generation dialog and choose again.`,
+      detail: { selectedModelId: claimed, dispatchModelId: dispatching },
+    };
+  }
+
+  /* =========================================================================
+     SERVER-SIDE PACKAGE FRESHNESS.
+
+     public/fal-generation.js refuses an out-of-date motion package in three places, and
+     all three are browser code: a replayed POST reached this route with a package the
+     screen had already marked stale. The comparison itself now lives in
+     public/shared-build-history.js - ONE comparator, called by the browser with the full
+     evidence it can gather and by this route with the fields a Node process can read out
+     of the project document alone.
+
+     This is deliberately a SUBSET and says so. It does not evaluate references (that
+     needs promptReferenceOptions(), whose closure spans four browser-only files) and it
+     does not evaluate execution method (the browser reads a narrowed profile list this
+     process cannot see). Building either here would be the second freshness architecture
+     this refuses to build. Every reason it does report is one the browser reports in the
+     same words, because they come from the same function.
+
+     A package with no recorded dependency snapshot is NOT refused. Refusing on an absence
+     would block every package compiled before dependencies were captured - and every
+     blocking package, which never records one at all - on evidence nobody has. */
+  function packageFreshnessRefusal(owner, job) {
+    if (!job.shotId || !job.sourceBuildId) return null;
+    const project = ownerProject(owner);
+    const shot = (project.shots || []).find((row) => String(row?.id) === String(job.shotId));
+    if (!shot) return null;
+    const pack = BuildHistory.resolvePromptBuild(project, job.sourceBuildId);
+    if (!pack || pack.missing) return null;
+    const freshness = BuildHistory.packageProjectFreshness(project, shot, pack);
+    if (!freshness.recorded || freshness.current) return null;
+    return {
+      status: 409,
+      code: "GENERATION_PACKAGE_STALE",
+      error: `This compiled package is out of date: ${freshness.reasons.join("; ")}. Nothing was submitted. Rebuild the prompt on this shot and generate from the new package.`,
+      detail: { reasons: freshness.reasons, evidence: freshness.evidence, buildId: job.sourceBuildId },
+    };
+  }
+
   function automationSubmissionError(owner, jobs, body, outputCount) {
     const runId = String(body?.automationRunId || "").trim();
     const stepKey = String(body?.automationStepKey || "").trim();
@@ -386,13 +619,65 @@ function registerFalGeneration(app, context) {
     if (!runnerId || runnerId !== String(run.runnerId || "") || !Number.isFinite(leaseExpiry) || leaseExpiry <= Date.now()) {
       return { status: 409, code: "LEASE_NOT_ACTIVE", message: "Automation lease is not active for this window. No paid request was submitted." };
     }
-    const committed = jobs
-      .filter((job) => job.automationRunId === runId)
-      .reduce((sum, job) => sum + Math.max(0, Number(job.outputCount || 0)), 0);
+    const runJobs = jobs.filter((job) => job.automationRunId === runId);
+    const committed = runJobs.reduce((sum, job) => sum + Math.max(0, Number(job.outputCount || 0)), 0);
     const reportedUsage = Math.max(0, Number(run.usage?.imagesGenerated || 0));
     const consumed = Math.max(committed, reportedUsage);
     if (consumed + outputCount > maxImages) return { status: 409, message: `Automation credit guard stopped the request before exceeding its ${maxImages}-image cap.` };
+    /* THE AUTHORISED SPEND, ENFORCED WHERE IT IS SPENT.
+     *
+     * One press authorises a bounded run, and until now the boundary understood only
+     * half of what that press said. `maxImages` is a count; the number the planner
+     * actually put in front of the person pressing the button was the dollar ceiling it
+     * quoted, and nothing enforced that. A run authorised at nine images and about
+     * $0.18 could be resumed after the rate moved and spend several times what was
+     * approved, one in-cap job at a time.
+     *
+     * The ceiling is the run's own recorded figure - quoted and stored at authorisation
+     * from costEstimateFromRate(), so this compares like with like and performs no
+     * arithmetic of its own. What has been spent comes from the estimates the jobs
+     * already carry, through summarizeRecordedCost(), which is the only sanctioned way
+     * to read them.
+     *
+     * DELIBERATELY CONSERVATIVE IN ONE DIRECTION. A run holding unpriced or unrecorded
+     * jobs has a true spend at least as high as its priced sum, so this can let through
+     * a request that is genuinely over - it can never refuse one that is genuinely
+     * under. Refusing on a total known to be incomplete would stop authorised work on
+     * arithmetic nobody can show.
+     *
+     * A run with no recorded ceiling is not refused: there is nothing to compare
+     * against, the image cap still stands, and inventing a dollar limit the filmmaker
+     * was never quoted would be worse than having none. */
+    const authorized = run.config?.maxSpend;
+    if (authorized && authorized.priced === true && Number.isFinite(Number(authorized.amount))) {
+      const spent = summarizeRecordedCost(runJobs);
+      const pending = submissionAccounting({
+        purpose: String(body?.purpose || "frame"),
+        outputCount,
+        ratePerImage: config().estimatedCostPerImage,
+        motionRate: configuredMotionRate({ generation: { fal: config() } }),
+        durationSeconds: Number(body?.durationSeconds) || 0,
+        at: now(),
+      });
+      const pendingAmount = Number(pending.estimate?.amount);
+      /* `spent.amount` is the summed PRICED total; `spent.priced` is how many jobs it
+         came from. Reading the count as the total is the kind of mistake that makes a
+         spend guard silently never fire, so the two are named apart here. */
+      const projected = Number(spent.amount || 0) + (Number.isFinite(pendingAmount) ? pendingAmount : 0);
+      if (projected > Number(authorized.amount))
+        return {
+          status: 409,
+          code: "AUTOMATION_SPEND_CAP",
+          message: `This run was authorised to spend up to ${formatRunUsd(authorized.amount)}. This request would take it to ${formatRunUsd(projected)}, so it was not submitted.`,
+        };
+    }
     return null;
+  }
+  /* The same two-decimal USD the price line uses. Named here rather than inlined so a
+     refusal and a quote cannot format the same number differently. */
+  function formatRunUsd(amount) {
+    const value = Number(amount);
+    return Number.isFinite(value) ? `$${value.toFixed(2)}` : "an unknown amount";
   }
   function publicJob(job) {
     if (!job) return null;
@@ -1456,7 +1741,7 @@ function registerFalGeneration(app, context) {
         refId: row.refId, role: row.role, mediaType: row.mediaType, order: row.order,
         required: row.required, label: row.production?.label || "", purpose: row.production?.purpose || "",
       })),
-      coverage: plan.coverage,
+      coverage: labelledCoverage(plan.coverage),
       warnings: plan.warnings,
       /* Only present when the caller sent edited text. Names what the compiler wrote and
          the edit removed, so a filmmaker can see the cost of their own change before
@@ -1535,7 +1820,7 @@ function registerFalGeneration(app, context) {
         refId: row.refId, role: row.role, mediaType: row.mediaType, order: row.order,
         required: row.required, label: row.production?.label || "", purpose: row.production?.purpose || "",
       })),
-      coverage: plan.coverage,
+      coverage: labelledCoverage(plan.coverage),
       warnings: plan.warnings,
       editedCoverage: compiled.editedCoverage,
       promptEdited: compiled.promptEdited,
@@ -1674,6 +1959,26 @@ function registerFalGeneration(app, context) {
     if (activeCount(jobs) >= cfg.maxConcurrent) return res.status(409).json({ error: `FAL already has ${cfg.maxConcurrent} active CineBraid job${cfg.maxConcurrent === 1 ? "" : "s"}. Wait for completion or cancel it.` });
     const requestedPurpose = String(req.body?.purpose || "frame");
     const purpose = ["blocking", "frame", "correction", "entity-reference", "motion-h3"].includes(requestedPurpose) ? requestedPurpose : "frame";
+    /* THE PAYLOAD GATE, BEFORE THE FIRST CONTROL KEY IS READ.
+     *
+     * Placement is the whole guarantee. `requestedOutputCount` on the next line is the
+     * first read of a control key, the compiled branches consume resolution, duration
+     * and aspect ratio, and the fixed branch hands its own `job.resolution` to the
+     * adapter - so a gate that ran any later would be restricting a request that had
+     * already been built around the keys it was removing.
+     *
+     * It also runs before `commit()` and before `submit()`. A refusal here creates no
+     * durable row, contacts no provider and spends nothing. */
+    const planGate = enforceRequestPlan(owner, req, purpose);
+    if (!planGate.ok) {
+      if (planGate.throwable) return purpose === "motion-h3" ? h3Refusal(res, planGate.throwable) : imageRefusal(res, planGate.throwable);
+      return requestTruthRefusal(res, planGate.status, planGate.code, planGate.error, planGate.detail || {});
+    }
+    /* THE RESTRICTED PAYLOAD IS THE REQUEST FROM HERE ON. Assigned back onto req.body
+       rather than threaded through sixty reads, so there is no way for a later line to
+       reach a key the active view never rendered by simply forgetting to use the gated
+       copy. */
+    req.body = planGate.payload;
     const requestedOutputCount = purpose === "motion-h3" ? 1 : clamp(req.body?.outputCount, purpose === "blocking" ? cfg.blockingOutputs : cfg.frameOutputs, 1, 4);
     const guardError = automationSubmissionError(owner, jobs, req.body, requestedOutputCount);
     if (guardError) return res.status(guardError.status).json({ error: guardError.message, code: guardError.code || "AUTOMATION_GUARD" });
@@ -1745,6 +2050,18 @@ function registerFalGeneration(app, context) {
       outputs: [],
       error: "",
     };
+    /* WHAT THE SCREEN WAS SHOWING, on the row before the row exists. */
+    applyRequestTruth(job, planGate);
+    /* THE MODEL THE SCREEN NAMED, and THE PACKAGE THE SHOT STILL STANDS BEHIND. Both
+       refuse before compilation, before the row is committed and before anything leaves
+       this machine, for the same reason every other gate on this route does: a refused
+       dispatch costs nothing and changes nothing. */
+    const identityRefusal = modelIdentityRefusal(job, cfg);
+    if (identityRefusal)
+      return requestTruthRefusal(res, identityRefusal.status, identityRefusal.code, identityRefusal.error, identityRefusal.detail);
+    const staleRefusal = packageFreshnessRefusal(owner, job);
+    if (staleRefusal)
+      return requestTruthRefusal(res, staleRefusal.status, staleRefusal.code, staleRefusal.error, staleRefusal.detail);
     if (purpose === "motion-h3") {
       if (job.profileFamily !== "minimax-h3") return res.status(400).json({ error: "MiniMax H3 motion generation requires a minimax-h3 prompt profile." });
       if (!job.shotId) return res.status(400).json({ error: "shotId is required." });

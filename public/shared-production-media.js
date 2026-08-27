@@ -938,6 +938,21 @@
       resolution: known(it.generationResolution || generation.resolution || job.resolution),
       automationRunId: known(it.automationRunId || generation.automationRunId),
       sourceBuildId: known(it.sourceBuildId || generation.sourceBuildId),
+      /* WHAT THE SCREEN WAS SHOWING WHEN THIS WAS ORDERED.
+       *
+       * Read from the JOB only, deliberately: these describe the request, and the row
+       * and the library record describe the file that came back. There is no older
+       * place to fall back to, and inventing one would let a media row claim a view
+       * mode nobody dispatched under.
+       *
+       * `removedKeys` is the honest half of the Simple/Advanced guarantee. A render
+       * that arrived at the saved default because Simple was showing is correct and is
+       * indistinguishable from a bug unless something says so afterwards. */
+      requestSurface: known(job.generationSurface),
+      viewMode: known(job.generationViewMode),
+      removedKeys: deepFreeze(list(job.removedPayloadKeys).map(text).filter(Boolean)),
+      selectedOptionId: known(job.selectedOptionId),
+      selectedModelId: known(job.selectedModelId),
       prompt: promptOf(row, libraryRow),
       cost: costOf(resolved.job, resolved.state),
       lineage: lineageOf(row, libraryRow),

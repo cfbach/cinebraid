@@ -370,12 +370,58 @@ function planProvenance(compiled) {
   };
 }
 
+/* WHAT THE CONTROL PLAN MAY DRAW for this route, resolved WITHOUT compiling - the
+   motion twin of image-execution.js's imageControlCapability(), and there for the same
+   reason: the payload gate at the money boundary runs before compilation, because
+   compilation consumes duration, resolution and aspect ratio.
+
+   Every value is read off the record resolveH3FalCapability() produces, which is the
+   same record compileH3ExecutionPlan() resolves four lines into its own body and the
+   same one POST /api/generation/fal/h3/plan reports as `resolutions`, `durationRange`
+   and `seedSupported`. The MODE still comes from the profile rather than the caller,
+   exactly as the compiler insists. */
+function h3ControlCapability(request = {}) {
+  const project = isRecord(request.project) ? request.project : null;
+  if (!project) throw new H3ExecutionError("H3_PROJECT_MISSING", "No project was supplied.", {}, 500);
+  const { build } = readSourceIntent(project, text(request.shotId), text(request.buildId));
+  const getProfile = typeof request.getProfile === "function" ? request.getProfile : defaultProfileLookup;
+  const profile = getProfile(text(build.profileId));
+  if (!profile)
+    throw new H3ExecutionError(
+      "H3_PROFILE_UNKNOWN",
+      `The model target this package was built for (${text(build.profileId) || "unknown"}) is no longer available.`,
+      { profileId: text(build.profileId) },
+    );
+  const mode = text(profile.mode);
+  if (!FAL_H3_MODES.includes(mode))
+    throw new H3ExecutionError(
+      "H3_MODE_UNSUPPORTED",
+      `CineBraid cannot dispatch MiniMax H3 ${mode || "generation"} through fal.`,
+      { mode, supported: FAL_H3_MODES },
+      400,
+    );
+  const surface = text(request.surface) || "api";
+  const capability = resolveH3FalCapability(mode, H3Pack.capabilityLayer(mode, surface));
+  return {
+    resolutions: capability.resolutions,
+    /* An empty ARRAY where the mode carries no aspect_ratio field at all, which is the
+       same answer public/fal-generation.js's falH3ControlPlan() gives from
+       `carriesAspectRatio`: null would mean "nobody constrained it" and would leave a
+       control drawable for a field the request has no room for. */
+    aspectRatios: Array.isArray(capability.aspectRatios) ? capability.aspectRatios : [],
+    durationSeconds: capability.durationSeconds,
+    qualityTiers: null,
+    flags: { seed: capability.flags?.seed === true },
+  };
+}
+
 module.exports = {
   H3ExecutionError,
   H3_MODEL_IDS,
   H3_PACK_ID,
   buildReferences,
   compileH3ExecutionPlan,
+  h3ControlCapability,
   planProvenance,
   readSourceIntent,
 };

@@ -140,17 +140,14 @@ function falFixedImageRoute() {
    declared as the lists these dialogs have always offered — and the four machine settings
    are evaluated against a capability that declares none of them, which is why none of
    them renders and none of them can reach the body. */
+/* Both the vocabulary AND the capability now come from the surface table in
+   public/shared-generation-presentation.js. They were a literal here, which was the
+   right answer for a route with no capability resolver to ask - the configured fal
+   text/edit endpoints are not reached through a compiled plan - and the wrong PLACE for
+   it: POST /api/generation/fal/jobs could not see the literal, so it could not enforce
+   what these dialogs had decided. The values are unchanged; only their address is. */
 function falFixedImageControlPlan(mode, request) {
-  return generationControlPlan({
-    capability: {
-      qualityTiers: ["low", "medium", "high"],
-      resolutions: ["1k", "2k", "4k"],
-      durationSeconds: null,
-      flags: { seed: false, candidateBatching: true, referenceWeights: false, cfgScale: false, steps: false },
-    },
-    mode,
-    only: ["outputCount", "quality", "resolution", "seed", "cfgScale", "steps", "referenceStrength"],
-  });
+  return generationRequestPlan({ surface: CINEBRAID_REQUEST_SURFACE_IDS.fixedImage, mode });
 }
 
 function falFixedImageControlsMarkup(plan, ids, current) {
@@ -327,6 +324,13 @@ window.startFalGeneration = async () => {
     aspectRatio: shotAspectLabel(P, s),
     revisionRequest: request.revision || "",
     revisedFromAssetId: request.sourceId || "",
+    /* WHAT THIS SCREEN WAS SHOWING. The gate below restricts the body; this is what
+       lets POST /api/generation/fal/jobs restrict it the same way instead of trusting
+       whatever arrives. */
+    generationRequest: generationRequestDeclaration({
+      surface: CINEBRAID_REQUEST_SURFACE_IDS.fixedImage,
+      viewMode: generationViewPreference(),
+    }),
   };
   /* Same gate as every other generation surface: a control the active view does not
      render does not travel, and a machine setting no model declares can never travel. */
@@ -630,6 +634,13 @@ window.startFalEntityGeneration = async () => {
     /* From the resolver, not from the modal. The compiled prompt already committed to
        this shape; reading a control here is what let the two disagree. */
     aspectRatio: referenceAspectLabel(request.list),
+    /* WHAT THIS SCREEN WAS SHOWING. The gate below restricts the body; this is what
+       lets POST /api/generation/fal/jobs restrict it the same way instead of trusting
+       whatever arrives. */
+    generationRequest: generationRequestDeclaration({
+      surface: CINEBRAID_REQUEST_SURFACE_IDS.fixedImage,
+      viewMode: generationViewPreference(),
+    }),
   };
   /* The same gate every generation surface passes through. */
   const gatedBody = restrictPayloadToPlan(body, falFixedImageControlPlan(generationViewPreference(), request)).payload;
@@ -694,6 +705,13 @@ window.startCandidateCorrectionGeneration = async () => {
     quality: document.getElementById("candidate-correction-quality")?.value || falGenerationConfig().frameQuality || "high",
     resolution: document.getElementById("candidate-correction-resolution")?.value || falResolutionValue("frame"),
     aspectRatio: shotAspectLabel(P, s),
+    /* WHAT THIS SCREEN WAS SHOWING. The gate below restricts the body; this is what
+       lets POST /api/generation/fal/jobs restrict it the same way instead of trusting
+       whatever arrives. */
+    generationRequest: generationRequestDeclaration({
+      surface: CINEBRAID_REQUEST_SURFACE_IDS.fixedImage,
+      viewMode: generationViewPreference(),
+    }),
   };
   /* THE SAME GATE EVERY OTHER PAID GENERATION SURFACE PASSES THROUGH, recomputed against
      the view that is actually showing. This dialog used to POST `body` directly: it drew
@@ -1275,7 +1293,9 @@ function falH3ControlsMarkup(plan, request) {
    startFalH3MotionGeneration() is allowed to put in the body. */
 function falH3ControlPlan(mode) {
   const request = window._falH3MotionRequest || {};
-  return generationControlPlan({
+  return generationRequestPlan({
+    surface: CINEBRAID_REQUEST_SURFACE_IDS.motionH3,
+    mode,
     capability: capabilityFromPlan(request, {
       aspectRatios: request.carriesAspectRatio
         ? [...(request.aspectSupported || []), ...(request.aspectOk === false && request.aspectRequested ? [request.aspectRequested] : [])]
@@ -1289,8 +1309,6 @@ function falH3ControlPlan(mode) {
       candidateBatching: false,
       referenceWeights: false,
     }),
-    mode,
-    only: ["durationSeconds", "resolution", "aspectRatio", "seed", "cfgScale", "steps", "referenceStrength"],
     /* A format this model cannot deliver disables the paid button, and the control that
        fixes it must not sit behind a panel the filmmaker has not opened. */
     force: request.aspectOk === false ? ["aspectRatio"] : [],
@@ -1321,6 +1339,8 @@ function renderFalH3GenerationView(mode) {
       stopEarly: "One clip is returned as an unapproved candidate. A request already at the provider can be cancelled from the shot while it runs.",
     },
     controlsMarkup: falH3ControlsMarkup(plan, request),
+    /* The compiler's own coverage record, rendered by the shared shell. */
+    coverage: request.coverage,
   });
 }
 window.startFalH3MotionGeneration = async () => {
@@ -1417,6 +1437,13 @@ window.startFalH3MotionGeneration = async () => {
     durationSeconds: Number(document.getElementById("fal-h3-duration")?.value || request.durationSeconds || 5),
     resolution: document.getElementById("fal-h3-resolution")?.value || request.resolution || falH3ResolutionValue(),
     aspectRatio: gate.carriesAspectRatio ? gate.value : request.aspectRatio || "",
+    /* WHAT THIS SCREEN WAS SHOWING. The motion dialog resolves its model from the
+       package's own profile rather than from a picker, so it names no option id - and
+       says nothing rather than claiming one. */
+    generationRequest: generationRequestDeclaration({
+      surface: CINEBRAID_REQUEST_SURFACE_IDS.motionH3,
+      viewMode: generationViewPreference(),
+    }),
   };
   /* THE GATE. Every control key the active view does not render is removed here, so a
      value can only reach the provider if the screen offered it and this model supports

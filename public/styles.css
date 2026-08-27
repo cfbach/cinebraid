@@ -5497,6 +5497,21 @@ body[data-focused-workspace="1"] .guided-frame-body,
 .gen-view-unsupported li{display:grid;gap:1px}
 .gen-view-unsupported li span{font-size:10px}
 .gen-view-unsupported li small,.gen-view-unsupported>small{color:var(--muted);font-size:9px;line-height:1.45}
+/* INTENT COVERAGE. Deliberately the same shape as .gen-view-unsupported — both answer
+   "what is not in this request", and giving them different furniture would suggest they
+   are different kinds of fact. The state colour is carried by the row rather than by the
+   block, because one panel legitimately holds rows of several states at once. */
+.gen-coverage{display:grid;gap:6px;padding:9px 10px;border:1px dashed var(--line);border-radius:9px}
+.gen-coverage>b{font-size:10px}
+.gen-coverage>small{color:var(--muted);font-size:9px;line-height:1.45}
+.gen-coverage ul{margin:0;padding:0;list-style:none;display:grid;gap:4px}
+.gen-coverage li{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:baseline;gap:2px 10px}
+.gen-coverage li span{font-size:10px;min-width:0}
+.gen-coverage li b{font-size:9px;color:var(--muted);text-align:right}
+.gen-coverage li small{grid-column:1/-1;color:var(--muted);font-size:9px;line-height:1.45}
+.gen-coverage li[data-coverage-state="unsupported"] b{color:var(--warn,var(--fg))}
+.gen-coverage li[data-coverage-state="represented"] b,.gen-coverage li[data-coverage-state="anchored"] b{color:var(--ok,var(--muted))}
+.gen-coverage-rest{display:block}
 @media (prefers-reduced-motion:no-preference){.gen-view-tab{transition:background .12s ease,color .12s ease}}
 
 /* SLICE 3 — THE RETURNED-RESULT CARD.

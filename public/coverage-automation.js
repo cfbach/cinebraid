@@ -318,6 +318,17 @@
       // requirement, but it prevents support reports from looking source-less.
       sourceCandidate: primary?.name || "",
       clientRequestId: options.clientRequestId || coverageClientRequestId(list, entity.id, options.coverageJobType || "sheet", options.slot?.id || options.coverageSheetType || ""),
+      /* WHAT THIS DISPATCHER IS, declared so the money boundary can restrict the payload
+         instead of taking it on trust. This path sent no plan at all before, which meant
+         POST /api/generation/fal/jobs had nothing to enforce and a machine setting no
+         model declares could have travelled unchallenged.
+
+         `simple` is the narrower of the two readings and it is also LOSSLESS here: the
+         coverage surface owns only the candidate count and quality, both production-tier
+         controls that render in either view, so the mode changes nothing this dispatcher
+         sends. The sheet resolution is a route input rather than a tiered control - see
+         the surface table - and is untouched. */
+      generationRequest: generationRequestDeclaration({ surface: CINEBRAID_REQUEST_SURFACE_IDS.referenceAutomation, viewMode: "simple" }),
     };
     const response = await fetch("/api/generation/fal/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     const data = await response.json().catch(() => ({}));

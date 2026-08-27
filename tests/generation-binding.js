@@ -31,6 +31,7 @@ const { GENERATION_BINDING_VERSION, readGenerationBinding } = require("../genera
 const { addMotionPromptBuild } = require("./h3-execution-fixture");
 const { addFramePromptBuild } = require("./image-execution-fixture");
 const { baseSpec, KAI, HANGAR } = require("./generation-compiler-fixture");
+const { withGenerationDeclaration } = require("./generation-request-fixture");
 
 /* Six DIFFERENT images. Identical fixture bytes would let "the opening and closing
    frames are two different files" pass on a swap, and would make every content hash
@@ -208,7 +209,7 @@ async function harness() {
     const response = await fetch(`${appOrigin}${url}`, {
       method: options.method || "POST",
       headers: { "content-type": "application/json" },
-      ...(options.body ? { body: JSON.stringify(options.body) } : {}),
+      ...(options.body ? { body: JSON.stringify(withGenerationDeclaration(url, options.body)) } : {}),
     });
     return { status: response.status, data: await response.json() };
   };
