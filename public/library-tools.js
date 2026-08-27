@@ -128,10 +128,23 @@ function intakeModal(list, id, files) {
     : null;
   const targetState = pendingState ? entityStateById(it, pendingState.stateId) : null;
   window._intake = { list, id, files, targetStateId: targetState?.id || "", targetStateName: targetState?.name || "" };
+  /* R1 — A CHOOSER WITH NOTHING TO CHOOSE IS NOT A CHOICE.
+   *
+   * `P.meta.models` is the project's own model list, and in the common case it is
+   * empty — so this rendered a dropdown whose only option was "— not recorded —".
+   * A control offering one non-answer asks the filmmaker to make a decision that
+   * does not exist, and it costs a field of vertical space to do it.
+   *
+   * The CAPABILITY is untouched: `doIntake()` still reads `#in-model` and still
+   * writes the `made` provenance record when a model is chosen. What changed is
+   * that the chooser only appears once there is something to choose. doIntake()
+   * already reads the element with `?.value || ""`, so the absent field is the
+   * same "not recorded" answer the single option was standing for. */
+  const provenanceModels = P.meta.models || [];
   openModal(`<h3>Upload candidates — ${files.length} file(s)</h3><div class="modal-sub">${targetState ? `TARGET · ${esc(targetState.name || "CONTINUITY STATE")} · ` : ""}ORIGINAL FILENAMES ARE RETAINED IN METADATA · PRODUCTION NAMES ARE ASSIGNED ONLY ON APPROVAL</div>
     <div class="approval-preview"><b>${esc(it.name || it.id)}</b><span>${esc(files.map((f) => f.name).join(", ")).slice(0, 180)}</span></div>
     <div class="form-field"><label>What are these files?</label><select id="in-structure" class="status-select" onchange="syncIntakeStructure()"><option value="">— choose —</option><option value="single-reference">Single reference image</option><option value="sheet">Coverage / multi-view sheet</option></select><small class="hint" id="in-structure-note">CineBraid cannot tell one reference from a multi-view sheet by looking at the file, and it will not guess. Only a single reference can become this asset&rsquo;s identity; a sheet is a source you extract views from.</small></div>
-    <div class="form-field"><label>Made with (optional provenance)</label><select id="in-model" class="status-select"><option value="">— not recorded —</option>${(P.meta.models || []).map((m) => `<option value="${m.id}">${esc(m.name)}</option>`).join("")}</select></div>
+    ${provenanceModels.length ? `<div class="form-field"><label>Made with (optional provenance)</label><select id="in-model" class="status-select"><option value="">— not recorded —</option>${provenanceModels.map((m) => `<option value="${m.id}">${esc(m.name)}</option>`).join("")}</select></div>` : ""}
     <div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button class="submit-btn" id="in-submit" disabled onclick="doIntake()">UPLOAD CANDIDATES</button></div>`);
   syncIntakeStructure();
 }
@@ -644,8 +657,40 @@ window.approveEntityFile = (list, id, name, stateId = "") => {
     || pool.find((item) => item.name === x.approvedFile)
     || pool[pool.length - 1];
   window._entityApproval = { list, id, name: selected.name, stateId: requestedState?.id || "state-default" };
+  /* SINGLE-STATE APPROVAL — A CHOICE WITH ONE OPTION IS NOT A CHOICE.
+   *
+   * Most references have exactly one continuity state: Default. This modal asked
+   * such a reference's approval to be routed through a dropdown containing only
+   * "Default", and then offered "Continue to another version after approval" with
+   * nothing to continue to, and a primary action reading APPROVE & EDIT NEXT
+   * STATE that was permanently disabled beside a secondary reading APPROVE ONLY.
+   * Four controls, one real act.
+   *
+   * When there is one legitimate state, it is now stated rather than chosen, the
+   * continuation field is absent, and the single approval action is primary and
+   * says APPROVE. When two or more genuinely exist, everything below is exactly
+   * what it was — same select, same continuation list, same lineage rule, same
+   * two actions.
+   *
+   * CANON AUTHORITY IS UNTOUCHED IN BOTH SHAPES. `confirmEntityApproval()` is the
+   * only writer either way, it still reads the same three element ids, and the
+   * hidden input carries the state id when the select is absent — so the command
+   * it issues is byte-identical to the one the two-state form issues for the same
+   * approval. Nothing here decides what may be approved; the boundary still does.
+   * Request changes stays available in both shapes. */
+  const singleState = states.length <= 1;
+  const targetState = requestedState || states[0] || { id: "state-default", name: "Default" };
+  const stateField = singleState
+    ? `<div class="form-field entity-approval-single-state" data-single-state="1"><label>Approve for continuity state</label><input id="entity-approve-target" type="hidden" value="${attr(targetState.id)}"><div class="entity-approval-single-state-readout"><b>${esc(targetState.name || "Default")}</b><small>${esc(targetState.appliesTo || (targetState.isDefault === false ? "No scene/shot range assigned" : "This reference has one continuity state."))}</small></div></div>`
+    : `<div class="form-field"><label>Approve for continuity state</label><select id="entity-approve-target" onchange="syncEntityApprovalModal()">${states.map((st) => `<option value="${attr(st.id)}" ${String(requestedState?.id || "state-default") === String(st.id) ? "selected" : ""}>${esc(st.name || "Default")}${st.appliesTo ? ` · ${esc(st.appliesTo)}` : ""}</option>`).join("")}</select></div>`;
+  const continuationField = singleState
+    ? ""
+    : `<div class="form-field entity-approval-continuation"><label>Continue to another version after approval</label><select id="entity-approve-next" onchange="syncEntityApprovalContinuation()"></select><small id="entity-approve-next-note">Approve only, or continue directly into another continuity-state editor.</small></div>`;
+  const approvalActions = singleState
+    ? `<button class="cancel" onclick="closeModal()">Cancel</button><button class="approve-btn large" onclick="confirmEntityApproval(false)">APPROVE</button>`
+    : `<button class="cancel" onclick="closeModal()">Cancel</button><button class="ghost-btn" onclick="confirmEntityApproval(false)">APPROVE ONLY</button><button id="entity-approve-continue" class="approve-btn large" onclick="confirmEntityApproval(true)">APPROVE & EDIT NEXT STATE</button>`;
   openModal(
-    `<div class="entity-approval-modal"><h3>Approve reference — ${esc(x.name || id)}</h3><div class="modal-sub">ASSIGN ONE CANDIDATE TO ONE CONTINUITY STATE</div><div class="entity-approval-modal-layout"><figure><div id="entity-approval-preview">${isVideo(selected.name) ? `<video muted controls src="${attr(selected.url)}"></video>` : `<img src="${attr(selected.url)}" alt="Candidate to approve">`}</div><figcaption id="entity-approval-file-caption">${esc(selected.name)}</figcaption></figure><div class="entity-approval-fields"><div class="form-field"><label>Candidate file</label><select id="entity-approve-file" onchange="syncEntityApprovalModal()">${media.map((item) => `<option value="${attr(item.name)}" ${item.name === selected.name ? "selected" : ""}>${esc(item.name)}</option>`).join("")}</select></div><div class="form-field"><label>Approve for continuity state</label><select id="entity-approve-target" onchange="syncEntityApprovalModal()">${states.map((st) => `<option value="${attr(st.id)}" ${String(requestedState?.id || "state-default") === String(st.id) ? "selected" : ""}>${esc(st.name || "Default")}${st.appliesTo ? ` · ${esc(st.appliesTo)}` : ""}</option>`).join("")}</select></div><div class="entity-approval-target-summary" id="entity-approval-target-summary"></div><input type="hidden" id="entity-approve-name" value="${attr(entityCanonicalSuggestion(list, id, selected.name, requestedState?.id || "state-default"))}"><p class="hint">The selected state will show this image in the live Project Bible. Other states and candidates are unchanged.</p><div class="form-field entity-approval-continuation"><label>Continue to another version after approval</label><select id="entity-approve-next" onchange="syncEntityApprovalContinuation()"></select><small id="entity-approve-next-note">Approve only, or continue directly into another continuity-state editor.</small></div></div></div><div class="modal-actions entity-approval-actions"><button class="changes-btn" onclick="closeModal();requestEntityChanges('${list}','${id}')">Request changes</button><div><button class="cancel" onclick="closeModal()">Cancel</button><button class="ghost-btn" onclick="confirmEntityApproval(false)">APPROVE ONLY</button><button id="entity-approve-continue" class="approve-btn large" onclick="confirmEntityApproval(true)">APPROVE & EDIT NEXT STATE</button></div></div></div>`,
+    `<div class="entity-approval-modal"><h3>Approve reference — ${esc(x.name || id)}</h3><div class="modal-sub">ASSIGN ONE CANDIDATE TO ONE CONTINUITY STATE</div><div class="entity-approval-modal-layout"><figure><div id="entity-approval-preview">${isVideo(selected.name) ? `<video muted controls src="${attr(selected.url)}"></video>` : `<img src="${attr(selected.url)}" alt="Candidate to approve">`}</div><figcaption id="entity-approval-file-caption">${esc(selected.name)}</figcaption></figure><div class="entity-approval-fields"><div class="form-field"><label>Candidate file</label><select id="entity-approve-file" onchange="syncEntityApprovalModal()">${media.map((item) => `<option value="${attr(item.name)}" ${item.name === selected.name ? "selected" : ""}>${esc(item.name)}</option>`).join("")}</select></div>${stateField}<div class="entity-approval-target-summary" id="entity-approval-target-summary"></div><input type="hidden" id="entity-approve-name" value="${attr(entityCanonicalSuggestion(list, id, selected.name, requestedState?.id || "state-default"))}"><p class="hint">The selected state will show this image in the live Project Bible. Other states and candidates are unchanged.</p>${continuationField}</div></div><div class="modal-actions entity-approval-actions"><button class="changes-btn" onclick="closeModal();requestEntityChanges('${list}','${id}')">Request changes</button><div>${approvalActions}</div></div></div>`,
   );
   syncEntityApprovalModal();
 };

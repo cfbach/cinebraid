@@ -532,6 +532,8 @@ async function main() {
     "reference-review-contract.js",
     "reference-truth-sheet-gate-negative-controls.js",
     "reference-truth-sheet-gate.js",
+    "reference-ux-convergence-negative-controls.js",
+    "reference-ux-convergence.js",
     "reference-workflow-repair.js",
     "reference-workspace-ux.js",
     "release-package-smoke.js",

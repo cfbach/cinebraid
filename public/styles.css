@@ -5558,3 +5558,102 @@ body[data-focused-workspace="1"] .guided-frame-body,
    is clipped, which the shipped visual audit in tests/production-media-real-browser.py
    catches at 1280px. The name has to be in the sentence, so the sentence has to break. */
 .returned-review-card p,.returned-review-secondary>small,.returned-review-compare em{overflow-wrap:anywhere}
+
+/* ===========================================================================
+   REFERENCES UX CONVERGENCE V1 — presentation only.
+
+   Every rule below styles markup that already exists or that this slice
+   composes out of existing owners. Nothing here decides a state, a status or an
+   authority; the words these rules paint are still chosen in JavaScript by the
+   owners that were already choosing them.
+   =========================================================================== */
+
+/* R22 · THE NATIVE DROPDOWN WAS THE ONE SURFACE THE DARK THEME NEVER REACHED.
+ *
+ * `.workflow-select.wf-approved` sets `color:var(--green)` on the CONTROL, and an
+ * <option> inherits its select's colour. The page never declared a colour scheme,
+ * so Chrome painted the popup menu with the platform's LIGHT chrome and then drew
+ * mint-on-white text into it — unreadable, and the one place in the app where a
+ * status hue was doing the work of a foreground colour with no background of its
+ * own to sit on.
+ *
+ * Two rules fix it and neither touches the lifecycle. `color-scheme` tells the
+ * browser to render every native popup in this app with dark chrome, and the
+ * explicit option pair means the menu's readability no longer depends on whatever
+ * hue the closed control happens to be wearing. The status is still carried by the
+ * WORD (workflowStatusLabel), which is what keeps it legible without colour at
+ * all; the hue stays on the closed control, where it has a known background. */
+select{color-scheme:dark}
+select option,select optgroup{color:var(--ink);background:var(--panel)}
+select option:disabled{color:var(--faint)}
+select option:checked{background:var(--panel-2);color:var(--ink)}
+select:hover{border-color:var(--line-2)}
+
+/* R5 · A FACTOR NOBODY CHECKED IS NOT A FACTOR THAT PASSED. The fourth answer
+   the grid always needed: neutral rail, muted word, no green anywhere. */
+.entity-review-factor.severity-unreviewed{border-left-color:var(--line-2)}
+.entity-review-factor.severity-unreviewed header b{color:var(--muted)}
+.entity-review-factor.severity-unreviewed p{color:var(--faint)}
+
+/* R6/R11 · THE COMPACT COVERAGE SUMMARY, and the compact plan rows beneath it.
+   The counts and the plan are the same rows the full-size list rendered — same
+   article, same data attributes, same action — laid out as a dense strip instead
+   of a stack of full-width blocks, so the coverage board below is the only
+   full-size representation of this work on the screen. */
+.entity-demand-summary{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center;padding:10px 12px;margin:0 0 10px;border:1px solid var(--line);border-radius:9px;background:var(--surface-2)}
+.entity-demand-summary>div{display:flex;flex-direction:column;gap:2px;min-width:0}
+.entity-demand-summary span{font:800 7px var(--mono);letter-spacing:.1em;color:var(--muted)}
+.entity-demand-summary b{font-size:12px;font-variant-numeric:tabular-nums}
+.entity-demand-summary small{color:var(--muted);font-size:10px;line-height:1.4}
+.entity-demand-summary .entity-demand-summary-now{margin-left:auto;text-align:right}
+.entity-demand-summary .entity-demand-summary-now b{color:var(--muted)}
+.entity-demand-summary.has-blockers .entity-demand-summary-now b{color:var(--amber)}
+.entity-demand-summary button{padding:6px 10px;border:1px solid var(--line);border-radius:var(--r-sm);font:700 9px var(--mono);letter-spacing:.06em;color:var(--muted)}
+.entity-demand-summary button:hover{color:var(--ink);border-color:var(--line-2)}
+.entity-demand-row.is-compact{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;padding:6px 10px}
+.entity-demand-row.is-compact>div{display:flex;flex-direction:row;flex-wrap:wrap;gap:2px 8px;align-items:baseline;min-width:0}
+.entity-demand-row.is-compact>div small{color:var(--muted)}
+.entity-demand-row.is-compact b{font-size:11px}
+.entity-demand-row.is-compact small{font-size:9.5px}
+.entity-demand-row.is-compact button{margin-left:auto;padding:4px 9px;font-size:9px}
+
+/* R3 · Fine tune, closed by default. The crop stage and the target are the
+   normal path; the layout, panel index, numeric fields, note and source
+   metadata are the power the finding asks to keep and stop leading with. */
+.coverage-crop-advanced{margin-top:2px;border:1px solid var(--line);border-radius:8px;background:var(--surface-2)}
+.coverage-crop-advanced>summary{padding:8px 10px;font:700 9px var(--mono);letter-spacing:.08em;color:var(--muted);cursor:pointer}
+.coverage-crop-advanced>summary:hover{color:var(--ink)}
+.coverage-crop-advanced>div{display:grid;gap:8px;padding:0 10px 10px}
+
+/* R8/R9 · Previewing is not In use, and the board must not print the same word
+   for both. `data-slot-preview` is written by stageSlotSelection() only. */
+.coverage-slot-preview[data-slot-preview="staged"]{outline:1px dashed var(--amber);outline-offset:-3px}
+.coverage-slot-staged-note{display:none;font:700 8px var(--mono);letter-spacing:.08em;color:var(--amber);padding:2px 0}
+.coverage-slot-preview[data-slot-preview="staged"]~.coverage-slot-staged-note{display:block}
+
+/* R21 · The add affordance belongs beside the heading, not inside a tools fold. */
+.continuity-states-lead{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;padding:2px 0 8px}
+.continuity-states-lead>div{display:flex;flex-direction:column;gap:2px;min-width:0}
+.continuity-states-lead b{font-size:12px}
+.continuity-states-lead small{color:var(--muted);font-size:10px;line-height:1.4}
+.continuity-states-lead .add-btn{white-space:nowrap}
+
+/* R23 · Normal details lead; voice, reference pack and reconciliation are power
+   that opens when it is asked for. */
+.entity-details-advanced{margin-top:10px;border:1px solid var(--line);border-radius:9px;background:var(--surface-2)}
+.entity-details-advanced>summary{padding:9px 11px;font:700 9px var(--mono);letter-spacing:.08em;color:var(--muted);cursor:pointer}
+.entity-details-advanced>summary:hover{color:var(--ink)}
+.entity-details-advanced>div{padding:4px 11px 11px}
+
+/* R10 · The visual chooser is the primary way in; the filename list is the
+   compact fallback it always should have been. */
+.coverage-slot-filename{margin-top:2px;border:1px solid var(--line);border-radius:8px;background:var(--surface-2)}
+.coverage-slot-filename>summary{padding:7px 10px;font:700 9px var(--mono);letter-spacing:.08em;color:var(--muted);cursor:pointer}
+.coverage-slot-filename>summary:hover{color:var(--ink)}
+.coverage-slot-filename>label{display:grid;gap:4px;padding:0 10px 10px}
+.coverage-slot-filename>label span{font:700 7px var(--mono);letter-spacing:.08em;color:var(--muted)}
+
+/* Single-state approval: the state is stated, not chosen. */
+.entity-approval-single-state-readout{padding:9px 11px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--surface-2)}
+.entity-approval-single-state-readout b{display:block;font-size:12px}
+.entity-approval-single-state-readout small{display:block;margin-top:2px;color:var(--muted);font-size:10px;line-height:1.4}

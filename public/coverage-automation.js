@@ -566,6 +566,33 @@
     });
     stage.addEventListener("pointerup", () => { start = null; });
   }
+  /* R4 — AN ACTION RETURNS THE FILMMAKER TO WHERE IT WAS ASKED FOR.
+   *
+   * "Save crop & use" and "Map & assign" both name a coverage view, do their work
+   * on it, and used to leave the filmmaker somewhere else: a re-render of
+   * whichever stage happened to be selected, with the coverage detail possibly
+   * shut and certainly not scrolled to the slot that had just been filled — or,
+   * on the unchecked crop path, on top of a Candidate Review modal nobody asked
+   * for. The work landed correctly every time; it was invisible.
+   *
+   * This writes the three shipped selection keys the coverage stage already
+   * reads, so the next render opens on the coverage stage, on the right board,
+   * with the target slot selected. It writes NOTHING about the project: these are
+   * per-user view selections in localStorage, the same ones the demand panel's
+   * own "Open this view" button writes, and they are set BEFORE the caller's
+   * route() so one render lands in the right place instead of two.
+   *
+   * The expression rail is keyed on the entity id alone and the coverage rail on
+   * `list:id`; getting that wrong writes a selection nothing reads. */
+  function returnToCoverageSlot(list, entityId, group, slotId) {
+    const context = `${list}:${entityId}`;
+    const expressions = group === "expressions";
+    if (typeof boundedWriteFocusedTask === "function") boundedWriteFocusedTask("entity-task", context, "coverage");
+    if (typeof boundedWriteState !== "function") return;
+    boundedWriteState("selected:entity-coverage-view", context, expressions ? "expressions" : "coverage");
+    if (slotId) boundedWriteState(`selected:${expressions ? "expression-slot" : "coverage-slot"}`, expressions ? entityId : context, slotId);
+  }
+  window.returnToCoverageSlot = returnToCoverageSlot;
   window.openCoverageSheetExtractor = (list, entityId, fileName, allowHumanOverride = false) => {
     const entity = entityFor(list, entityId);
     const media = entity && entityMedia(list, entity).find((item) => item.name === fileName);
@@ -589,7 +616,35 @@
     const panelCount = COVERAGE_CROP_LAYOUTS[layout].cols * COVERAGE_CROP_LAYOUTS[layout].rows;
     const panelIndex = Math.max(0, Math.min(panelCount - 1, firstIndex));
     window._coverageCrop = { list, entityId, fileName, url: media.url, sheetType, slots, slotId: slots[firstIndex]?.id || slots[0]?.id || "", layout, panelIndex, crop: cropPresetForPanel(panelIndex, layout), sourceRow: row };
-    openModal(`<div class="coverage-extractor-modal"><header><div><span>REFERENCE EXTRACTION</span><h3>${esc(entity.name || entity.id)}</h3><p>Turn one sheet into clean authority views. Select a target, choose the panel, fine-tune only when needed, then save.</p></div><button class="cancel" onclick="closeModal()">Close</button></header><nav class="coverage-extractor-steps" aria-label="Reference extraction steps"><span class="active"><b>1</b> Choose target</span><span class="active"><b>2</b> Crop panel</span><span><b>3</b> Save authority</span></nav><div class="coverage-extractor-layout"><div><div id="coverage-crop-stage" class="coverage-crop-stage"><img id="coverage-crop-source" src="${attr(media.url)}" alt="Reference sheet"><div id="coverage-crop-overlay" class="coverage-crop-overlay"><span id="coverage-crop-target-label"></span></div></div><small>Drag anywhere on the sheet to redraw the crop. The layout and panel controls provide a fast starting point.</small></div><aside><label><span>Save this crop as</span><select id="coverage-crop-slot" onchange="selectCoverageCropSlot(this.value)">${slots.map((slot) => `<option value="${attr(slot.id)}" ${slot.id === window._coverageCrop.slotId ? "selected" : ""}>${esc(slot.label)}${slot.approvedFile ? " · already assigned" : ""}</option>`).join("")}</select></label><div class="coverage-crop-quick-grid"><label><span>Sheet layout</span><select id="coverage-crop-layout" onchange="setCoverageCropLayout(this.value)">${Object.entries(COVERAGE_CROP_LAYOUTS).map(([id,preset]) => `<option value="${id}" ${id === layout ? "selected" : ""}>${preset.label}</option>`).join("")}</select></label><label><span>Panel position</span><select id="coverage-crop-panel" onchange="setCoverageCropPanel(this.value)">${coverageCropPanelOptions(layout,panelIndex)}</select></label></div><div class="coverage-crop-navigation"><button class="ghost-btn" onclick="stepCoverageCropPanel(-1)">← Previous panel</button><button class="ghost-btn" onclick="stepCoverageCropPanel(1)">Next panel →</button></div><div class="coverage-crop-presets"><button onclick="applyCoverageCropPreset()">Reset to panel</button><button onclick="setCoverageCropFull()">Use full image</button></div><details class="coverage-crop-fine"><summary>Fine crop controls</summary><div class="coverage-crop-fields">${["x","y","w","h"].map((key) => `<label><span>${key.toUpperCase()} %</span><input id="coverage-crop-${key}" type="number" min="0" max="100" step="0.5" onchange="setCoverageCropField('${key}',this.value)"></label>`).join("")}</div></details><label><span>Extraction note</span><textarea id="coverage-crop-note" placeholder="Why this panel is authoritative or any limitations."></textarea></label><label class="checkline coverage-direct-override"><input id="coverage-crop-approve" type="checkbox"> Save this crop and use it for this view</label><div class="coverage-review-gate"><b>Review is optional</b><span>Ticked, the crop is saved and selected for the view you chose above, in this one action &mdash; nothing further to confirm. Left unticked, it is saved as a candidate for AI or human review instead. Selecting a view is not a canon approval either way.</span></div><div class="coverage-crop-provenance"><b>Source sheet</b><span>${esc(fileName)}</span><small>CineBraid stores the crop coordinates, panel layout, and source file so the angle can be traced later.</small></div></aside></div><div class="modal-actions coverage-extractor-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button class="ghost-btn" onclick="extractCoverageCrop(true)">SAVE CROP & CLOSE</button><button class="approve-btn large" onclick="extractCoverageCrop(false)">SAVE CROP & NEXT ANGLE</button></div></div>`);
+    /* R3 — THE CROP IS THE INTERACTION; EVERYTHING ELSE WAS COMPETING WITH IT.
+     *
+     * This modal exposed eleven controls at once — target, sheet layout, panel
+     * position, previous/next, reset, use-full-image, four numeric crop fields, a
+     * note, a save-and-use checkbox, a four-line explanation of what the checkbox
+     * meant, the source-sheet metadata, and three bottom actions. The good part
+     * (drag on the sheet to draw the crop) was surrounded by its own settings.
+     *
+     * The normal path is now the four things a filmmaker uses every time: WHICH
+     * VIEW this becomes, the large draggable crop, previous/next panel, and save.
+     * The rest is behind "Fine tune", closed:
+     *
+     *   sheet layout, panel position  a faster starting rectangle; dragging
+     *                                 already reaches every one of them
+     *   reset / use full image        recovery, not routine
+     *   X / Y / W / H                 numeric equivalents of the drag
+     *   extraction note               optional provenance prose
+     *   source sheet metadata         a statement of what is stored, not a control
+     *
+     * NOTHING IS REMOVED. Every id above is still emitted, so
+     * setCoverageCropLayout()'s `panel.innerHTML` write, stepCoverageCropPanel()'s
+     * `panel.value` write, setCoverageCropField() and coverageCropRender() all
+     * still find their elements — a closed <details> hides its contents, it does
+     * not withhold them from getElementById. Provenance storage is untouched:
+     * extractCoverageCrop() still records the layout, panel index, normalized
+     * crop, source sheet and note on the candidate row, and "Save crop & use"
+     * still performs the accepted one-action assignment with no second
+     * confirmation. */
+    openModal(`<div class="coverage-extractor-modal"><header><div><span>REFERENCE EXTRACTION</span><h3>${esc(entity.name || entity.id)}</h3><p>Turn one sheet into clean authority views. Select a target, choose the panel, fine-tune only when needed, then save.</p></div><button class="cancel" onclick="closeModal()">Close</button></header><nav class="coverage-extractor-steps" aria-label="Reference extraction steps"><span class="active"><b>1</b> Choose target</span><span class="active"><b>2</b> Crop panel</span><span><b>3</b> Save authority</span></nav><div class="coverage-extractor-layout"><div><div id="coverage-crop-stage" class="coverage-crop-stage"><img id="coverage-crop-source" src="${attr(media.url)}" alt="Reference sheet"><div id="coverage-crop-overlay" class="coverage-crop-overlay"><span id="coverage-crop-target-label"></span></div></div><small>Drag anywhere on the sheet to redraw the crop. The layout and panel controls provide a fast starting point.</small></div><aside><label><span>Save this crop as</span><select id="coverage-crop-slot" onchange="selectCoverageCropSlot(this.value)">${slots.map((slot) => `<option value="${attr(slot.id)}" ${slot.id === window._coverageCrop.slotId ? "selected" : ""}>${esc(slot.label)}${slot.approvedFile ? " · already assigned" : ""}</option>`).join("")}</select></label><div class="coverage-crop-navigation"><button class="ghost-btn" onclick="stepCoverageCropPanel(-1)">← Previous panel</button><button class="ghost-btn" onclick="stepCoverageCropPanel(1)">Next panel →</button></div><label class="checkline coverage-direct-override"><input id="coverage-crop-approve" type="checkbox"> Save this crop and use it for this view</label><div class="coverage-review-gate"><b>Review is optional</b><span>Ticked, the crop is saved and selected for the view above in this one action. Left unticked, it is saved as a candidate you can review later. Neither is a canon approval.</span></div><details class="coverage-crop-advanced"><summary>Fine tune</summary><div><div class="coverage-crop-quick-grid"><label><span>Sheet layout</span><select id="coverage-crop-layout" onchange="setCoverageCropLayout(this.value)">${Object.entries(COVERAGE_CROP_LAYOUTS).map(([id,preset]) => `<option value="${id}" ${id === layout ? "selected" : ""}>${preset.label}</option>`).join("")}</select></label><label><span>Panel position</span><select id="coverage-crop-panel" onchange="setCoverageCropPanel(this.value)">${coverageCropPanelOptions(layout,panelIndex)}</select></label></div><div class="coverage-crop-presets"><button onclick="applyCoverageCropPreset()">Reset to panel</button><button onclick="setCoverageCropFull()">Use full image</button></div><div class="coverage-crop-fields">${["x","y","w","h"].map((key) => `<label><span>${key.toUpperCase()} %</span><input id="coverage-crop-${key}" type="number" min="0" max="100" step="0.5" onchange="setCoverageCropField('${key}',this.value)"></label>`).join("")}</div><label><span>Extraction note</span><textarea id="coverage-crop-note" placeholder="Why this panel is authoritative or any limitations."></textarea></label><div class="coverage-crop-provenance"><b>Source sheet</b><span>${esc(fileName)}</span><small>CineBraid stores the crop coordinates, panel layout, and source file so the angle can be traced later.</small></div></div></details></aside></div><div class="modal-actions coverage-extractor-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button class="ghost-btn" onclick="extractCoverageCrop(true)">SAVE CROP & CLOSE</button><button class="approve-btn large" onclick="extractCoverageCrop(false)">SAVE CROP & NEXT ANGLE</button></div></div>`);
     setTimeout(() => { coverageCropRender(); coverageCropBindStage(); }, 30);
   };
   window.selectCoverageCropSlot = (slotId) => {
@@ -667,7 +722,10 @@
     SCAN = await fetch("/api/scan").then((r) => r.json());
     updateCoverageTerminalState(state.list, entity);
     dirty();
-    rememberWorkspaceSection(entityCoverageSectionKey(state.list, state.entityId, state.sheetType === "expressions" ? "expressions" : "angles"), true);
+    const group = state.sheetType === "expressions" ? "expressions" : "angles";
+    rememberWorkspaceSection(entityCoverageSectionKey(state.list, state.entityId, group), true);
+    /* R4 — back to the view this crop was made for, whichever branch runs. */
+    returnToCoverageSlot(state.list, state.entityId, group, slot.id);
     const nextSlot = state.slots.find((item) => item.id !== slot.id && !slotSelectedFile(item)) || null;
     closeModal();
     await route();
@@ -689,11 +747,20 @@
          approveCoverageCandidate() may still raise a REPLACE confirmation. That
          is a question about displacing a view the slot already holds, which is a
          different question from approving this crop, and it stays. */
+      /* R4, THE OTHER HALF. The unchecked branch used to open Candidate Review
+         on a 60ms timer, and the human pass found that the worst hand-off on the
+         screen: the button that had just been pressed said SAVE CROP, not
+         REVIEW, and the answer to pressing it was a modal about a decision the
+         filmmaker had not asked to make — on top of the Coverage board they had
+         been working in, which they then had to dismiss to see the result.
+
+         Candidate Review is not removed and is not harder to reach. It is one
+         press away on the candidate's own card ("OPTIONAL AI CHECK", written by
+         entities.js's entityCandidateCard), which is where a request to review
+         something belongs: on the thing. What changed is that CineBraid no
+         longer opens it on the filmmaker's behalf after a save. */
       if (approve) approveCoverageCandidate(state.list, state.entityId, data.name, slot.id, true, { confirmed: true });
-      else {
-        toast(`${slot.label} crop extracted as a review candidate`);
-        setTimeout(() => openEntityCandidateReview(state.list, state.entityId, data.name, "state-default"), 60);
-      }
+      else toast(`${slot.label} crop saved as a candidate — review it from the candidate card whenever you want to`);
     }
   };
   window.openImportedReferenceMapper = (list, entityId) => {
@@ -775,7 +842,15 @@
       row.targetStateName = "Default";
       dirty();
       closeModal();
-      if (directOverride) return setTimeout(() => approveCoverageCandidate(current.list, current.entityId, fileName, slot.id, true), 30);
+      /* R4 — "MAP & ASSIGN" IS AN ASSIGNMENT, so it lands on the view it named.
+         The other button on this modal is labelled MAP FOR OPTIONAL AI CHECK /
+         MAP & AI CHECK, which IS the filmmaker explicitly asking for a review —
+         so that branch still opens Candidate Review, and must. The finding is
+         about actions that do not ask for a review getting one anyway. */
+      if (directOverride) {
+        returnToCoverageSlot(current.list, current.entityId, kind === "expression" ? "expressions" : "angles", slot.id);
+        return setTimeout(() => approveCoverageCandidate(current.list, current.entityId, fileName, slot.id, true), 30);
+      }
       try { localStorage.setItem(entityCandidateFilterKey(current.list, current.entityId), kind === "expression" ? "expressions" : "coverage"); } catch {}
       route();
       return setTimeout(() => openEntityCandidateReview(current.list, current.entityId, fileName, "state-default", "coverage"), 60);

@@ -879,7 +879,28 @@ function continuityStatesPanel(list, it, media = []) {
     return `<button type="button" class="tone-${tone} ${state.id===selectedId?"selected":""}" onclick="selectBoundedItem('continuity-state','${attr(list+":"+it.id)}','${attr(state.id)}')"><i></i><span><b>${esc(state.name || `State ${index+1}`)}</b><small>${status}</small></span></button>`;
   }).join("")}</nav>`;
   const editor = st ? `<article class="continuity-state-card continuity-state-card-focused ${st.isDefault ? "is-default" : ""}" data-continuity-state-id="${attr(st.id)}"><div class="continuity-state-head"><span>${selectedIndex + 1}</span><input value="${attr(st.name || "")}" placeholder="Clean suit / Damaged sleeve / Night lighting" onchange="setContinuityState('${list}','${it.id}',${selectedIndex},'name',this.value)" ${st.isDefault ? 'data-default="1"' : ''}><div class="continuity-state-head-actions">${st.isDefault ? `<button class="chip" onclick="approveEntityFile('${list}','${it.id}','${attr(st.approvedFile || '')}','${attr(st.id)}')">CHOOSE AUTHORITY</button>` : `<button class="chip" onclick="openContinuityStateVariant('${attr(list)}','${attr(it.id)}','${attr(st.id)}')">${selectedIsCanon ? "EDIT / REGENERATE" : selectedParentIsCanon ? `GENERATE FROM ${esc(parentInfo.label.toUpperCase())}` : "OPEN STATE WORKFLOW"}</button><button class="ghost-btn" onclick="openStateReferenceUpload('${attr(list)}','${attr(it.id)}','${attr(st.id)}')">UPLOAD STATE REFERENCE</button><button class="chip" onclick="approveEntityFile('${attr(list)}','${attr(it.id)}','','${attr(st.id)}')">CHOOSE CANDIDATE</button><button class="icon-danger" onclick="removeContinuityState('${list}','${it.id}',${selectedIndex})">×</button>`}</div></div>${selectedApprovedHero}${continuityStateValidationMarkup(list,it,st,media)}<div class="continuity-state-scope"><label>Applies to scenes / shots<input value="${attr(st.appliesTo || "")}" placeholder="Scenes 1–2 or L2-01, L2-02" onchange="setContinuityState('${list}','${it.id}',${selectedIndex},'appliesTo',this.value)"></label>${st.isDefault ? `<label>Reference requirement<input value="Required — the main approved image" disabled></label>` : `<label>Reference requirement${referenceRequirementSelect(referenceRequirement(st), `setContinuityState('${list}','${it.id}',${selectedIndex},'referenceRequirement',this.value);dirty();route()`)}</label>`}<div class="state-approved-readout"><span>${selectedIsCanon ? "Canon image" : selectedApprovedFile ? "Historic image · not approved" : "Canon image"}</span><b>${esc(selectedApprovedFile || "None selected")}</b><small>${selectedIsCanon ? "Approved by you as this state’s production truth." : selectedApprovedFile ? "Previously selected. Approve it to make it canon." : "Use Upload State Reference or Choose Candidate above."}</small></div></div><label class="continuity-state-delta"><span>${st.isDefault ? "Base-state notes" : "State change / delta"}</span><textarea placeholder="${st.isDefault ? "Primary appearance and any details that must always remain true." : "What changes from the parent state? Also name anything that must remain unchanged."}" onchange="setContinuityState('${list}','${it.id}',${selectedIndex},'notes',this.value)">${esc(st.notes || "")}</textarea></label>${typeof assetStatePromptStudio === "function" ? assetStatePromptStudio(list, it, st) : ""}${continuityStateCandidateTray(list,it,st,media)}</article>` : '<div class="canon-notes">No continuity states yet.</div>';
-  return `<details class="fold continuity-states" data-entity-continuity="${attr(list + ":" + it.id)}" ${workspaceSectionOpen(sectionKey, true) ? "open" : ""} ontoggle="rememberWorkspaceSection('${attr(sectionKey)}',this.open)"><summary>Continuity states <span>${states.length}</span></summary><div class="entity-coverage-intro"><div><b>Edit one state at a time</b><small>Other states stay compact so the workflow remains readable.</small></div></div>${continuityTrackingPanel(list, it)}${rail}<details class="state-chain-tools"><summary><span>State tools</span><small>Add another state or automate several parent-first</small></summary><div class="state-tool-actions"><button class="add-btn" onclick="addContinuityState('${list}','${it.id}')">+ Add continuity state</button></div>${typeof entityChainAutomationPanel === "function" ? entityChainAutomationPanel(list, it) : ""}</details><div class="continuity-state-list bounded-single-state">${editor}</div></details>`;
+  /* R21 — A CONTINUITY STATE IS A STORY VARIANT, NOT A CONFIGURATION RECORD.
+   *
+   * Glasses on, wet, bloodied, helmet off, thirty years older. That is what this
+   * panel is for, and the human pass could not find how to add one: the single
+   * "+ Add continuity state" button was the third thing inside a closed
+   * `<details>` called "State tools", underneath a tracking-configuration fold
+   * and a rail. Two disclosures and a scroll to reach the primary verb of the
+   * section.
+   *
+   * The verb now sits beside the heading, which is the whole of the fix; the
+   * writer, the validator, the lineage rule and the label are all untouched
+   * (`addContinuityState()` is called with exactly the arguments it was called
+   * with before). Chain automation stays behind "Advanced state tools" — that IS
+   * the parent-first tooling the finding asks to demote — and continuity tracking
+   * keeps its own closed fold but moves BELOW the state it configures, so it no
+   * longer stands between a filmmaker and the list of states.
+   *
+   * The tracking fold deliberately stays a VISIBLE closed disclosure rather than
+   * being nested inside "Advanced state tools": tests/continuity-workflow-real-browser.py
+   * step 14 waits for `.continuity-tracking` to be visible and clicks it open, and
+   * burying it inside a second closed fold would make it unreachable. */
+  return `<details class="fold continuity-states" data-entity-continuity="${attr(list + ":" + it.id)}" ${workspaceSectionOpen(sectionKey, true) ? "open" : ""} ontoggle="rememberWorkspaceSection('${attr(sectionKey)}',this.open)"><summary>Continuity states <span>${states.length}</span></summary><div class="continuity-states-lead"><div><b>${states.length === 1 ? "Default only" : `${states.length} states`}</b><small>A persistent story variant — glasses on, wet, damaged, older. Add one only when the story needs it.</small></div><button class="add-btn" onclick="addContinuityState('${list}','${it.id}')">+ Add continuity state</button></div>${rail}<div class="continuity-state-list bounded-single-state">${editor}</div><details class="state-chain-tools"><summary><span>Advanced state tools</span><small>Automate several states parent-first</small></summary>${typeof entityChainAutomationPanel === "function" ? entityChainAutomationPanel(list, it) : ""}</details>${continuityTrackingPanel(list, it)}</details>`;
 }
 /* CREATION IS THE ONE MOMENT LINEAGE IS DECIDED.
  *
@@ -1131,6 +1152,37 @@ window.setExpressionSlotRequirement = (id, index, value) => {
   dirty();
   route();
 };
+/* R7 — TWO AXES, AND THE BOARD NOW SAYS WHICH ONE IT IS SPEAKING.
+ *
+ * The human pass read "No shot uses this character yet, so nothing is required
+ * now" at the top of the screen and "Required — missing" on four slots below it,
+ * and concluded — reasonably — that the app was contradicting itself.
+ *
+ * It was not. Those are two different questions with two different owners, and
+ * both answers were correct:
+ *
+ *   REQUIREMENT   coverageRequirement() — what THIS PROJECT'S COVERAGE PLAN says
+ *                 about the slot. Authored by the filmmaker in the "Project need"
+ *                 control on the very card that prints it. `referenceSlotStatus`
+ *                 reads this and nothing else, which is why it can say Required.
+ *   DEMAND        referenceDemandState() over entityReferenceDemand() — whether
+ *                 any shot is actually waiting on this reference right now.
+ *                 Slice 5 added it BESIDE the requirement without re-filing it.
+ *
+ * What was missing was any sentence saying so. This is that sentence, and it
+ * reads the SAME demand projection the panel above reads — handed down, not
+ * resolved again — so the two surfaces are incapable of disagreeing about
+ * whether the production is waiting. No state, tone, label or count changes:
+ * `referenceSlotStatus` still returns exactly the four answers it returned, and
+ * a required slot is still Required. */
+function coveragePlanAxisNote(list, entity, production, noun = "view") {
+  const kind = entityKindLabel(list).toLowerCase();
+  const plan = `Mark each ${noun} Required, Planned, or Not required — that is this project's coverage plan for the reference, not a claim that a shot is waiting for it.`;
+  if (production && production.known === true && production.demanded === false) {
+    return `${plan} No shot uses this ${kind} yet, so nothing here is required right now.`;
+  }
+  return `${plan} What the production is actually waiting on is listed under What this production needs, above.`;
+}
 function referenceRequirementSelect(value, onchange) {
   return `<select class="status-select reference-requirement-select" onchange="${onchange}"><option value="required" ${value === "required" ? "selected" : ""}>Required for this project</option><option value="planned" ${value === "planned" ? "selected" : ""}>Planned / useful later</option><option value="not-required" ${value === "not-required" ? "selected" : ""}>Not required</option></select>`;
 }
@@ -1141,7 +1193,7 @@ function referenceSlotRailMarkup(scope, entityId, slots, selectedId) {
     return `<button type="button" class="tone-${state.tone} ${slot.id === selectedId ? "selected" : ""}" data-slot-state="${attr(state.state)}" onclick="selectBoundedItem('${attr(scope)}','${attr(entityId)}','${attr(slot.id)}')"><i></i><span>${esc(slot.label)}</span><small>${state.label}</small></button>`;
   }).join("")}</nav>`;
 }
-function expressionBoardMarkup(entity, mediaByName, media) {
+function expressionBoardMarkup(entity, mediaByName, media, production = null) {
   const sourceSlots = ensureExpressionSlots(entity);
   const slots = sourceSlots.map((slot, sourceIndex) => ({ slot, sourceIndex })).filter((row) => !row.slot.retired);
   const stats = coverageStats(slots.map((row) => row.slot));
@@ -1156,10 +1208,10 @@ function expressionBoardMarkup(entity, mediaByName, media) {
   const item = slot ? mediaByName.get(slotSelectedFile(slot)) : null;
   const slotState = slot ? referenceSlotStatus(slot) : null;
   const requirement = slot ? referenceRequirement(slot) : "planned";
-  const editor = slot ? `<article class="coverage-slot-card focused-slot-selected ${slotSelectedFile(slot) ? "is-ready" : requirement === "required" ? "needs-attention" : ""}"><header><div><span>${esc(referenceRequirementLabel(slot).toUpperCase())} EXPRESSION</span><b>${esc(slot.label)}</b></div><span class="coverage-slot-state tone-${slotState.tone}" data-slot-state="${attr(slotState.state)}">${slotState.label}</span></header><div class="coverage-slot-preview">${item ? `<img src="${attr(item.url)}" alt="">` : `<div class="coverage-slot-empty">${requirement === "not-required" ? "No reference needed" : "No expression selected"}</div>`}</div><label><span>Project need</span>${referenceRequirementSelect(requirement, `setExpressionSlotRequirement('${entity.id}',${selected.sourceIndex},this.value)`)}</label><label><span>Selected file</span><select id="expression-slot-file" data-committed="${attr(slotSelectedFile(slot))}" onchange="stageSlotSelection('expression-slot-file','expression-slot-use')">${coverageSlotOptions(media,slotSelectedFile(slot),entity)}</select></label><div class="slot-commit-row"><button type="button" class="ghost-btn" onclick="openReferenceMediaChooser('characters','${attr(entity.id)}','expression',${selected.sourceIndex})">Browse visually</button><button type="button" id="expression-slot-use" class="approve-btn" disabled onclick="useExpressionSlotSelection('${attr(entity.id)}',${selected.sourceIndex})">${slotSelectedFile(slot) ? "IN USE" : "SELECT AN IMAGE"}</button><small>Choosing a file previews it here. Nothing is written to this expression until you use it.</small></div><label><span>Performance notes</span><textarea placeholder="Physical expression, intensity, and what must remain unchanged." onchange="setExpressionSlotField('${entity.id}',${selected.sourceIndex},'notes',this.value)">${esc(slot.notes||"")}</textarea></label></article>` : `<div class="entity-candidate-empty"><b>No expression slots configured</b><span>Add expressions only when this project needs them.</span></div>`;
+  const editor = slot ? `<article class="coverage-slot-card focused-slot-selected ${slotSelectedFile(slot) ? "is-ready" : requirement === "required" ? "needs-attention" : ""}"><header><div><span>${esc(referenceRequirementLabel(slot).toUpperCase())} EXPRESSION</span><b>${esc(slot.label)}</b></div><span class="coverage-slot-state tone-${slotState.tone}" data-slot-state="${attr(slotState.state)}">${slotState.label}</span></header><div id="expression-slot-preview" class="coverage-slot-preview" data-slot-preview="committed">${item ? `<img src="${attr(item.url)}" alt="">` : `<div class="coverage-slot-empty">${requirement === "not-required" ? "No reference needed" : "No expression selected"}</div>`}</div><div class="coverage-slot-staged-note">PREVIEWING — nothing is written to this expression until you use it</div><label><span>Project need</span>${referenceRequirementSelect(requirement, `setExpressionSlotRequirement('${entity.id}',${selected.sourceIndex},this.value)`)}</label><div class="slot-commit-row"><button type="button" class="approve-btn" onclick="openReferenceMediaChooser('characters','${attr(entity.id)}','expression',${selected.sourceIndex})">Browse visually</button><button type="button" id="expression-slot-use" class="approve-btn" disabled onclick="useExpressionSlotSelection('${attr(entity.id)}',${selected.sourceIndex})">${slotSelectedFile(slot) ? "IN USE" : "SELECT AN IMAGE"}</button><small>Choosing an image previews it above. Nothing is written to this expression until you use it.</small></div><details class="coverage-slot-filename"><summary>Choose by filename</summary><label><span>Selected file</span><select id="expression-slot-file" data-committed="${attr(slotSelectedFile(slot))}" data-slot-list="characters" data-slot-entity="${attr(entity.id)}" onchange="stageSlotSelection('expression-slot-file','expression-slot-use')">${coverageSlotOptions(media,slotSelectedFile(slot),entity)}</select></label></details><label><span>Performance notes</span><textarea placeholder="Physical expression, intensity, and what must remain unchanged." onchange="setExpressionSlotField('${entity.id}',${selected.sourceIndex},'notes',this.value)">${esc(slot.notes||"")}</textarea></label></article>` : `<div class="entity-candidate-empty"><b>No expression slots configured</b><span>Add expressions only when this project needs them.</span></div>`;
   const manual = `<div class="compact-section-actions coverage-board-actions manual-coverage-actions"><button class="approve-btn" onclick="openCoverageSheetPicker('characters','${entity.id}')">Crop expression sheet</button></div>`;
   const assisted = `<details class="coverage-assisted-actions" ${manualFirstWorkflow() ? "" : "open"}><summary>Optional assisted creation</summary><div class="compact-section-actions coverage-board-actions"><button class="approve-btn" onclick="openCoverageExpressionAutomation('${entity.id}')">Generate expression sheet</button></div></details>`;
-  return `<details class="fold compact-entity-section entity-expression-section bounded-source-section" ${open ? "open" : ""} ontoggle="rememberWorkspaceSection('${attr(key)}',this.open)"><summary>Expression board <span>${stats.approvedRequired}/${stats.required} required approved${stats.planned ? ` · ${stats.planned} planned` : ""}${active ? " · generating" : ""}</span></summary>${entityCoverageActivityMarkup("characters", entity, "expressions")}<div class="entity-coverage-intro"><div><b>${stats.approvedTotal} of ${stats.total} expressions assigned</b><small>Mark each expression Required, Planned, or Not required. Only required gaps affect project attention.</small></div></div>${referenceSlotRailMarkup("expression-slot", entity.id, slots.map((row) => row.slot), selectedId)}<div class="coverage-slot-grid bounded-single-slot">${editor}</div>${manual}${assisted}</details>`;
+  return `<details class="fold compact-entity-section entity-expression-section bounded-source-section" ${open ? "open" : ""} ontoggle="rememberWorkspaceSection('${attr(key)}',this.open)"><summary>Expression board <span>${stats.approvedRequired}/${stats.required} required approved${stats.planned ? ` · ${stats.planned} planned` : ""}${active ? " · generating" : ""}</span></summary>${entityCoverageActivityMarkup("characters", entity, "expressions")}<div class="entity-coverage-intro"><div><b>${stats.approvedTotal} of ${stats.total} expressions assigned</b><small>${esc(coveragePlanAxisNote("characters", entity, production, "expression"))}</small></div></div>${referenceSlotRailMarkup("expression-slot", entity.id, slots.map((row) => row.slot), selectedId)}<div class="coverage-slot-grid bounded-single-slot">${editor}</div>${manual}${assisted}</details>`;
 }
 
 /* Every coverage fraction CineBraid prints comes from here, and here is now one
@@ -1249,6 +1301,30 @@ function applyCoverageAssignment(list, entity, slot, fileName, source = "manual"
  *
  * Only one slot editor is on screen at a time (`bounded-single-slot`), which is
  * what makes the fixed element ids safe here. */
+/* R8/R9 — STAGING THAT THE FILMMAKER CAN SEE.
+ *
+ * Staging without a preview is a filename and a promise. The human pass chose a
+ * file, the large preview area stayed exactly as it was — blank, for an empty
+ * slot — and the only way to find out what had been chosen was to commit it. So
+ * the choice looked like it had not registered, and "Use this image" became a
+ * guess rather than a confirmation.
+ *
+ * WHAT THIS DOES AND DOES NOT DO. It paints the chosen image into the preview
+ * the slot already had, and it labels that state PREVIEWING. It writes nothing:
+ * no slot field, no candidate row, no revision, no authority. The commit is
+ * still the named button, still applyCoverageAssignment() behind it, still the
+ * replace confirmation on displacement, and closing or re-selecting still leaves
+ * the slot exactly as it was — which is what `data-slot-preview="committed"`
+ * restores when the selection returns to the committed file.
+ *
+ * WHY THE MEDIA IS RESOLVED FROM THE PROJECT rather than read off the chosen
+ * <option>. The select's options carry a filename, and this needs a URL. Reading
+ * it back out of `P` through entityMedia() means the picture shown here is the
+ * same picture every other surface would show for that name — there is no second
+ * media lookup, and a name that resolves to nothing simply previews nothing
+ * rather than inventing a path. `data-slot-list` / `data-slot-entity` carry the
+ * scope for exactly the reason `data-committed` already carries the baseline: the
+ * handler string is fixed, so the element states its own context. */
 window.stageSlotSelection = (selectId, buttonId) => {
   const select = document.getElementById(selectId);
   const button = document.getElementById(buttonId);
@@ -1259,7 +1335,28 @@ window.stageSlotSelection = (selectId, buttonId) => {
   button.textContent = chosen === committed
     ? (committed ? "IN USE" : "SELECT AN IMAGE")
     : chosen ? "USE THIS IMAGE" : "CLEAR THIS VIEW";
+  renderStagedSlotPreview(select, chosen, committed);
 };
+/* The preview half, separate so the commit path and the chooser both reach the
+   same renderer and there is one place that decides what "Previewing" looks
+   like. Every lookup below is optional: an absent preview element is a surface
+   that has none, not an error. */
+function renderStagedSlotPreview(select, chosen, committed) {
+  const preview = document.getElementById(String(select?.id || "").replace(/-file$/, "-preview"));
+  if (!preview) return;
+  const staged = chosen !== committed;
+  preview.dataset.slotPreview = staged ? "staged" : "committed";
+  if (!staged) return;
+  const list = select.dataset.slotList || "";
+  const entity = list && select.dataset.slotEntity
+    ? (P[list] || []).find((row) => row && row.id === select.dataset.slotEntity)
+    : null;
+  const item = entity && chosen ? entityMedia(list, entity).find((row) => row.name === chosen) : null;
+  preview.innerHTML = item
+    ? (isVideo(item.name) ? `<video muted src="${attr(item.url)}"></video>` : `<img src="${attr(item.url)}" alt="">`)
+    : `<div class="coverage-slot-empty">${chosen ? "That file is not available to preview" : "This view will be cleared"}</div>`;
+}
+window.renderStagedSlotPreview = renderStagedSlotPreview;
 /* THE VISUAL CHOOSER — A THIRD CONSUMER OF THE ONE PROJECTION, NOT A SECOND
  * MEDIA SYSTEM.
  *
@@ -1441,7 +1538,7 @@ window.openCoverageReviewQueue = (list, id, group = "angles") => {
   try { localStorage.setItem(entityCandidateFilterKey(list, id), group === "expressions" ? "expressions" : "coverage"); } catch {}
   window.selectBoundedTask?.("entity-task", `${list}:${id}`, "review");
 };
-function coverageBoardMarkup(list, entity, mediaByName, media) {
+function coverageBoardMarkup(list, entity, mediaByName, media, production = null) {
   if (list === "audio") return "";
   const slots = ensureCoverageSlots(list, entity);
   const stats = coverageStats(slots);
@@ -1458,10 +1555,10 @@ function coverageBoardMarkup(list, entity, mediaByName, media) {
   const mediaItem = slot ? mediaByName.get(slotSelectedFile(slot)) : null;
   const slotState = slot ? referenceSlotStatus(slot) : null;
   const requirement = slot ? referenceRequirement(slot) : "planned";
-  const editor = slot ? `<article class="coverage-slot-card focused-slot-selected ${slotSelectedFile(slot) ? "is-ready" : requirement === "required" ? "needs-attention" : ""}"><header><div><span>${esc(referenceRequirementLabel(slot).toUpperCase())} SLOT</span><b>${esc(slot.label)}</b></div><span class="coverage-slot-state tone-${slotState.tone}" data-slot-state="${attr(slotState.state)}">${slotState.label}</span></header><div class="coverage-slot-preview">${mediaItem ? (isVideo(mediaItem.name) ? `<video muted src="${attr(mediaItem.url)}"></video>` : `<img src="${attr(mediaItem.url)}" alt="">`) : `<div class="coverage-slot-empty">${requirement === "not-required" ? "No reference needed" : "No reference selected"}</div>`}</div><label><span>Project need</span>${referenceRequirementSelect(requirement, `setCoverageSlotRequirement('${list}','${entity.id}',${selectedIndex},this.value)`)}</label><label><span>Selected file</span><select id="coverage-slot-file" data-committed="${attr(slotSelectedFile(slot))}" onchange="stageSlotSelection('coverage-slot-file','coverage-slot-use')">${coverageSlotOptions(media, slotSelectedFile(slot), entity)}</select></label><div class="slot-commit-row"><button type="button" class="ghost-btn" onclick="openReferenceMediaChooser('${attr(list)}','${attr(entity.id)}','coverage',${selectedIndex})">Browse visually</button><button type="button" id="coverage-slot-use" class="approve-btn" disabled onclick="useCoverageSlotSelection('${attr(list)}','${attr(entity.id)}',${selectedIndex})">${slotSelectedFile(slot) ? "IN USE" : "SELECT AN IMAGE"}</button><small>Choosing a file previews it here. Nothing is written to this view until you use it.</small></div>${slotSelectedFile(slot) ? `<div class="approval-provenance-note">Supporting reference${String(slot.provenance?.source || "").includes("human") ? " chosen by you" : ""} — context for generation, not production truth.</div>` : ""}<label><span>Notes</span><textarea placeholder="When to use this slot, framing constraints, or what makes this view the right one to approve." onchange="setCoverageSlotField('${list}','${entity.id}',${selectedIndex},'notes',this.value)">${esc(slot.notes || "")}</textarea></label></article>` : `<div class="entity-candidate-empty"><b>No coverage slots configured</b><span>Add only the views this project actually needs.</span></div>`;
+  const editor = slot ? `<article class="coverage-slot-card focused-slot-selected ${slotSelectedFile(slot) ? "is-ready" : requirement === "required" ? "needs-attention" : ""}"><header><div><span>${esc(referenceRequirementLabel(slot).toUpperCase())} SLOT</span><b>${esc(slot.label)}</b></div><span class="coverage-slot-state tone-${slotState.tone}" data-slot-state="${attr(slotState.state)}">${slotState.label}</span></header><div id="coverage-slot-preview" class="coverage-slot-preview" data-slot-preview="committed">${mediaItem ? (isVideo(mediaItem.name) ? `<video muted src="${attr(mediaItem.url)}"></video>` : `<img src="${attr(mediaItem.url)}" alt="">`) : `<div class="coverage-slot-empty">${requirement === "not-required" ? "No reference needed" : "No reference selected"}</div>`}</div><div class="coverage-slot-staged-note">PREVIEWING — nothing is written to this view until you use it</div><label><span>Project need</span>${referenceRequirementSelect(requirement, `setCoverageSlotRequirement('${list}','${entity.id}',${selectedIndex},this.value)`)}</label><div class="slot-commit-row"><button type="button" class="approve-btn" onclick="openReferenceMediaChooser('${attr(list)}','${attr(entity.id)}','coverage',${selectedIndex})">Browse visually</button><button type="button" id="coverage-slot-use" class="approve-btn" disabled onclick="useCoverageSlotSelection('${attr(list)}','${attr(entity.id)}',${selectedIndex})">${slotSelectedFile(slot) ? "IN USE" : "SELECT AN IMAGE"}</button><small>Choosing an image previews it above. Nothing is written to this view until you use it.</small></div><details class="coverage-slot-filename"><summary>Choose by filename</summary><label><span>Selected file</span><select id="coverage-slot-file" data-committed="${attr(slotSelectedFile(slot))}" data-slot-list="${attr(list)}" data-slot-entity="${attr(entity.id)}" onchange="stageSlotSelection('coverage-slot-file','coverage-slot-use')">${coverageSlotOptions(media, slotSelectedFile(slot), entity)}</select></label></details>${slotSelectedFile(slot) ? `<div class="approval-provenance-note">Supporting reference${String(slot.provenance?.source || "").includes("human") ? " chosen by you" : ""} — context for generation, not production truth.</div>` : ""}<label><span>Notes</span><textarea placeholder="When to use this slot, framing constraints, or what makes this view the right one to approve." onchange="setCoverageSlotField('${list}','${entity.id}',${selectedIndex},'notes',this.value)">${esc(slot.notes || "")}</textarea></label></article>` : `<div class="entity-candidate-empty"><b>No coverage slots configured</b><span>Add only the views this project actually needs.</span></div>`;
   const manualActions = `<div class="compact-section-actions coverage-board-actions manual-coverage-actions"><button class="approve-btn" onclick="openImportedReferenceMapper('${list}','${entity.id}')">Map imported references</button><button class="ghost-btn" onclick="openCoverageSheetPicker('${list}','${entity.id}')">Crop reference sheet</button><button class="add-btn" onclick="addCoverageSlot('${list}','${entity.id}')">+ Add custom slot</button></div>`;
   const assistedActions = `<details class="coverage-assisted-actions" ${manualFirstWorkflow() ? "" : "open"}><summary>Optional assisted creation</summary><div class="compact-section-actions coverage-board-actions"><button class="approve-btn" onclick="openCoverageAutomationModal('${list}','${entity.id}','hybrid')">Generate missing angles</button></div></details>`;
-  return `<details class="fold compact-entity-section entity-coverage-section bounded-source-section" ${open ? "open" : ""} ontoggle="rememberWorkspaceSection('${attr(key)}',this.open)"><summary>Coverage board <span>${stats.approvedRequired}/${stats.required} required approved${stats.planned ? ` · ${stats.planned} planned` : ""}${active ? " · generating" : ""}</span></summary>${entityCoverageActivityMarkup(list, entity, "angles")}${assignmentNotice}<div class="entity-coverage-intro"><div><b>${stats.approvedTotal} of ${stats.total} views assigned</b><small>Mark each view Required, Planned, or Not required. Imported references can fill slots directly; generation is optional.</small></div></div>${referenceSlotRailMarkup("coverage-slot", `${list}:${entity.id}`, slots, selectedId)}<div class="coverage-slot-grid bounded-single-slot">${editor}</div>${manualActions}${assistedActions}</details>`;
+  return `<details class="fold compact-entity-section entity-coverage-section bounded-source-section" ${open ? "open" : ""} ontoggle="rememberWorkspaceSection('${attr(key)}',this.open)"><summary>Coverage board <span>${stats.approvedRequired}/${stats.required} required approved${stats.planned ? ` · ${stats.planned} planned` : ""}${active ? " · generating" : ""}</span></summary>${entityCoverageActivityMarkup(list, entity, "angles")}${assignmentNotice}<div class="entity-coverage-intro"><div><b>${stats.approvedTotal} of ${stats.total} views assigned</b><small>${esc(coveragePlanAxisNote(list, entity, production))} Imported references can fill slots directly; generation is optional.</small></div></div>${referenceSlotRailMarkup("coverage-slot", `${list}:${entity.id}`, slots, selectedId)}<div class="coverage-slot-grid bounded-single-slot">${editor}</div>${manualActions}${assistedActions}</details>`;
 }
 
 
@@ -1726,7 +1823,11 @@ function entitySavedPromptsMarkup(list, entity) {
 }
 function entityReconciliationMarkup(list, entity) {
   const id=entity.id;
-  return `<details class="fold compact-entity-section" open><summary>Reconciliation & coverage</summary><div class="two-col">${field("Same object as (canonical id — for inserts/variants across chats)", `<input list="entity-ids" value="${attr(entity.sameObjectAs || "")}" onchange="setVal('${list}','${id}','sameObjectAs',this.value)" placeholder="e.g. PROP-SPOON">`)}${field("Role (if variant)", `<input value="${attr(entity.role || "")}" onchange="setVal('${list}','${id}','role',this.value)" placeholder="e.g. insert / state B / degraded">`)}</div><datalist id="entity-ids">${[...P.characters,...P.locations,...P.props,...(P.vehicles||[])].map((e)=>`<option value="${attr(e.id)}">`).join("")}</datalist>${list === "locations" ? field("Coverage policy", `<select class="status-select" onchange="setVal('${list}','${id}','coveragePolicy',this.value)">${["","locked-setup-only (reuse the plate, never re-angle)","re-frame-safe (generic geometry)"].map((o)=>`<option value="${attr(o)}" ${entity.coveragePolicy===o?"selected":""}>${esc(o||"— unset —")}</option>`).join("")}</select><div class="hint">New framings are derived from the original locked plate, never from a derivation.</div>`) : ""}</details>`;
+  /* R23 — the label said "SAME OBJECT AS (CANONICAL ID — FOR INSERTS/VARIANTS
+     ACROSS CHATS)", which is the schema's own name for the field shouted at a
+     filmmaker. The field, the writer and the datalist are unchanged; what it is
+     FOR now reads as a sentence underneath instead of as a heading. */
+  return `<details class="fold compact-entity-section" open><summary>Reconciliation & coverage</summary><div class="two-col">${field("Same object as", `<input list="entity-ids" value="${attr(entity.sameObjectAs || "")}" onchange="setVal('${list}','${id}','sameObjectAs',this.value)" placeholder="e.g. PROP-SPOON">`)}${field("Role (if variant)", `<input value="${attr(entity.role || "")}" onchange="setVal('${list}','${id}','role',this.value)" placeholder="e.g. insert / state B / degraded">`)}<p class="hint">Use these when one physical thing appears in the project more than once — an insert, a variant, or the same object re-created in another chat. Naming the canonical id keeps them recognisably the same object.</p></div><datalist id="entity-ids">${[...P.characters,...P.locations,...P.props,...(P.vehicles||[])].map((e)=>`<option value="${attr(e.id)}">`).join("")}</datalist>${list === "locations" ? field("Coverage policy", `<select class="status-select" onchange="setVal('${list}','${id}','coveragePolicy',this.value)">${["","locked-setup-only (reuse the plate, never re-angle)","re-frame-safe (generic geometry)"].map((o)=>`<option value="${attr(o)}" ${entity.coveragePolicy===o?"selected":""}>${esc(o||"— unset —")}</option>`).join("")}</select><div class="hint">New framings are derived from the original locked plate, never from a derivation.</div>`) : ""}</details>`;
 }
 function boundedEntityTaskStatus(list, entity, taskId, activeCandidates, states) {
   /* Same status vocabulary as the shot taskbar (STAGE_STATUS), for the same reason:
@@ -2043,7 +2144,16 @@ function entityDemandActionMarkup(list, entity, row) {
   return `<button class="ghost-btn" onclick="boundedWriteState('selected:entity-coverage-view','${attr(context)}','${view}');selectBoundedItem('${scope}','${attr(scopeContext)}','${attr(row.id)}')">${row.family === "expression" ? "Open this expression" : "Open this view"}</button>`;
 }
 
-function entityDemandRowMarkup(list, entity, row) {
+/* R6/R11 — THE SAME ROW, TWO DENSITIES.
+ *
+ * `compact` drops the family kicker (the summary strip above names the family
+ * and the count) and lays the row out on one line. It removes NO information a
+ * decision needs: the label, the status sentence, every data attribute and the
+ * contextual action are all still here, which is what keeps the compact plan
+ * strip a presentation of the same rows rather than a summary that hides them.
+ * Only rows nobody is currently waiting on are ever drawn this way. */
+function entityDemandRowMarkup(list, entity, row, options = {}) {
+  const compact = options.compact === true;
   const what = row.family === "primary" ? "Primary reference" : row.family === "state" ? "Continuity state" : row.family === "expression" ? "Expression" : "View";
   /* THE PRIMARY'S OBLIGATION SAYS WHAT READINESS SAYS, in readiness's own words
      rather than in a second vocabulary invented here. */
@@ -2058,7 +2168,13 @@ function entityDemandRowMarkup(list, entity, row) {
          still on screen for the cases whose action label is deliberately fixed. */
       ? (row.standing === "historic" ? "Image not approved" : row.parentIsCanon ? `Derives from ${row.parentLabel}` : row.parentRecorded ? `${row.parentLabel} is not approved` : "Source not recorded — CineBraid will not guess")
       : "Nothing selected yet";
-  return `<article class="entity-demand-row ${row.satisfied ? "is-satisfied" : "is-open"}" data-demand-family="${attr(row.family)}" data-demand-tier="${attr(row.tier)}" data-demand-confirmed="${row.confirmed ? "1" : "0"}" data-demand-id="${attr(row.id)}"><div><span>${esc(what)}</span><b>${esc(row.label)}</b><small>${esc(status)}</small></div>${entityDemandActionMarkup(list, entity, row)}</article>`;
+  /* R6 asks a blocker to say WHO is blocked on it. The shots are already carried
+     on the obligation row by readiness — this prints them and derives nothing. */
+  const shots = Array.isArray(row.shotIds) ? row.shotIds.filter(Boolean) : [];
+  const because = shots.length
+    ? ` — required by ${shots.length <= 2 ? shots.map((id) => `Shot ${id}`).join(" and ") : plural(shots.length, "shot")}`
+    : "";
+  return `<article class="entity-demand-row ${compact ? "is-compact " : ""}${row.satisfied ? "is-satisfied" : "is-open"}" data-demand-family="${attr(row.family)}" data-demand-tier="${attr(row.tier)}" data-demand-confirmed="${row.confirmed ? "1" : "0"}" data-demand-id="${attr(row.id)}"><div>${compact ? "" : `<span>${esc(what)}</span>`}<b>${esc(row.label)}</b><small>${esc(status + because)}</small></div>${entityDemandActionMarkup(list, entity, row)}</article>`;
 }
 
 /* SECTION E — what the default screen leads with, and what it declines to dump.
@@ -2068,9 +2184,8 @@ function entityDemandRowMarkup(list, entity, row) {
    Recommended, and Not-currently-needed are all present, all counted, and all
    collapsed: nothing is deleted and nothing is hidden, but the schema's full
    catalogue of conceivable angles and expressions no longer arrives uninvited. */
-function entityDemandMarkup(list, entity) {
+function entityDemandMarkup(list, entity, production = entityReferenceDemandFor(list, entity)) {
   if (list === "audio") return "";
-  const production = entityReferenceDemandFor(list, entity);
   const obligations = entityCurrentObligations(list, entity, production);
   const rows = entityDemandRows(list, entity, production, obligations);
   /* THE SLICE 3 GROUPS, UNCHANGED AND STILL PUBLISHED. `tier` is the rename of
@@ -2141,6 +2256,34 @@ function entityDemandMarkup(list, entity) {
    * strip says Nothing waiting. Recommended and Not-currently-needed keep the
    * Slice 3 treatment, unchanged, because those are statements about the
    * REQUIREMENT and this is a statement about the DEMAND. */
+  /* R6/R11 — THE SUMMARY THAT REPLACES A SECOND COVERAGE BOARD.
+   *
+   * The human pass found this panel rendering a full-width row for Front, 3/4
+   * front, Profile, Rear, Neutral, Focused, Worried and Determined — and then the
+   * editable Coverage board rendering the same eight again, twenty inches further
+   * down. Two full-size representations of one piece of work, and the one on top
+   * could not be acted on except by scrolling to the one below.
+   *
+   * The counts come out of `rows` — the very array the list beneath prints — so
+   * the strip and the rows cannot disagree, and there is no second walk of the
+   * project to produce them. What it publishes is the shape of the plan and
+   * whether anything is owed; the ONE editable slot workspace is still the
+   * Coverage board, and the button goes there. */
+  const familyTally = (family) => {
+    const items = rows.filter((row) => row.family === family);
+    return { total: items.length, satisfied: items.filter((row) => row.satisfied).length };
+  };
+  const views = familyTally("coverage"), expressionTally = familyTally("expression"), stateTally = familyTally("state");
+  const fractions = [
+    views.total ? `Views ${views.satisfied}/${views.total}` : "",
+    expressionTally.total ? `Expressions ${expressionTally.satisfied}/${expressionTally.total}` : "",
+    stateTally.total ? `States ${stateTally.satisfied}/${stateTally.total}` : "",
+  ].filter(Boolean).join(" · ");
+  const asides = [
+    recommended.length ? `${recommended.length} recommended` : "",
+    notNeeded.length ? `${notNeeded.length} not currently needed` : "",
+  ].filter(Boolean).join(" · ");
+  const summaryMarkup = `<div class="entity-demand-summary${now.length ? " has-blockers" : ""}" data-demand-summary="1" data-demand-summary-now="${now.length}"><div><span>COVERAGE</span><b>${esc(fractions || "Nothing planned beyond the primary reference")}</b>${asides ? `<small>${esc(asides)}</small>` : ""}</div><div class="entity-demand-summary-now"><span>NEEDED NOW</span><b>${esc(now.length ? plural(now.length, "required reference") : "None")}</b></div><button type="button" onclick="selectBoundedItem('entity-coverage-view','${attr(`${list}:${entity.id}`)}','coverage')">Open coverage</button></div>`;
   const leading = now.length ? now : plan;
   const leadingState = now.length ? "required-now" : plan.length ? "available" : "";
   const leadCaption = leadingState === "available"
@@ -2148,12 +2291,30 @@ function entityDemandMarkup(list, entity) {
       ? `${referenceDemandStateLabel("available")} — this is what the production will need once a shot uses this ${kind}. None of it is required now.`
       : `${referenceDemandStateLabel("available")} — the current production is not waiting on any of this. Build it when you want broader coverage.`)}</p>`
     : "";
-  return `<section class="entity-demand" data-demand-required="${required.length}" data-demand-missing="${missing.length}" data-demand-recommended="${recommended.length}" data-demand-not-needed="${notNeeded.length}" data-demand-now="${now.length}" data-demand-plan="${plan.length}" data-demand-dormant="${dormant.length}" data-demand-lead="${attr(leadingState)}" data-demand-obligations="${obligations.known === true ? "readiness" : "unknown"}" data-demand-production="${production.known ? (production.demanded ? "demanded" : "dormant") : "unknown"}"><header><div><span>WHAT THIS PRODUCTION NEEDS</span><b>${esc(headline)}</b><small>${esc(`${coverageDemandLabel("required")} material is listed first. ${coverageDemandLabel("recommended")} and ${coverageDemandLabel("not-currently-needed")} material stays available below.`)}${usage ? ` ${esc(usage)}` : ""}</small></div></header>${leading.length ? `${leadCaption}<div class="entity-demand-rows entity-demand-open">${leading.map((row) => entityDemandRowMarkup(list, entity, row)).join("")}</div>` : `<div class="entity-demand-clear">Nothing required is outstanding.</div>`}${group(`${coverageDemandLabel("required")} · already covered`, covered, "covered")}${group(coverageDemandLabel("recommended"), recommended, "recommended")}${group(coverageDemandLabel("not-currently-needed"), notNeeded, "not-needed")}</section>`;
+  /* WHICH ROWS KEEP THEIR FULL SIZE, AND WHY IT IS DECIDED BY FAMILY.
+   *
+   * Anything the production is waiting on is drawn full — that is R6's "only
+   * actual required-now production blockers deserve expanded rows".
+   *
+   * When nothing is owed, the plan leads (Slice 5's rule, and the reason for it
+   * is above), but a coverage or expression row is drawn compact: its only action
+   * is "open this view", which is a shortcut to the board directly below, so a
+   * full-width block was buying vertical space with a duplicate. A CONTINUITY
+   * STATE row is drawn full whatever else is true, because its action — "Use
+   * approved <parent> reference to generate <state>" — exists nowhere else on
+   * this screen, and the real-browser gate has already caught one attempt to
+   * make that control harder to reach. */
+  const leadDensity = (row) => ({ compact: !now.length && (row.family === "coverage" || row.family === "expression") });
+  return `<section class="entity-demand" data-demand-required="${required.length}" data-demand-missing="${missing.length}" data-demand-recommended="${recommended.length}" data-demand-not-needed="${notNeeded.length}" data-demand-now="${now.length}" data-demand-plan="${plan.length}" data-demand-dormant="${dormant.length}" data-demand-lead="${attr(leadingState)}" data-demand-obligations="${obligations.known === true ? "readiness" : "unknown"}" data-demand-production="${production.known ? (production.demanded ? "demanded" : "dormant") : "unknown"}"><header><div><span>WHAT THIS PRODUCTION NEEDS</span><b>${esc(headline)}</b><small>${esc(`${coverageDemandLabel("required")} material is listed first. ${coverageDemandLabel("recommended")} and ${coverageDemandLabel("not-currently-needed")} material stays available below.`)}${usage ? ` ${esc(usage)}` : ""}</small></div></header>${summaryMarkup}${leading.length ? `${leadCaption}<div class="entity-demand-rows entity-demand-open">${leading.map((row) => entityDemandRowMarkup(list, entity, row, leadDensity(row))).join("")}</div>` : `<div class="entity-demand-clear">Nothing required is outstanding.</div>`}${group(`${coverageDemandLabel("required")} · already covered`, covered, "covered")}${group(coverageDemandLabel("recommended"), recommended, "recommended")}${group(coverageDemandLabel("not-currently-needed"), notNeeded, "not-needed")}</section>`;
 }
 
 function entityCoverageStatesMarkup(list, entity, mediaByName, media) {
-  const views = [{id:"coverage",label:"Angles / views",render:()=>coverageBoardMarkup(list,entity,mediaByName,media)}];
-  if (list === "characters") views.push({id:"expressions",label:"Expressions",render:()=>expressionBoardMarkup(entity,mediaByName,media)});
+  /* R7 — ONE RESOLUTION OF DEMAND FOR THE WHOLE STAGE. Demand is a fact about
+     the REFERENCE, so the summary panel and both boards read the same answer
+     rather than each walking the project for its own copy of it. */
+  const production = list === "audio" ? null : entityReferenceDemandFor(list, entity);
+  const views = [{id:"coverage",label:"Angles / views",render:()=>coverageBoardMarkup(list,entity,mediaByName,media,production)}];
+  if (list === "characters") views.push({id:"expressions",label:"Expressions",render:()=>expressionBoardMarkup(entity,mediaByName,media,production)});
   views.push({id:"states",label:"Continuity states",render:()=>continuityStatesPanel(list,entity,media)});
   const ids=views.map((view)=>view.id), context=`${list}:${entity.id}`;
   const fallback = entityStateListRead(entity,true).some((state)=>!state.isDefault && !state.approvedFile) ? "states" : "coverage";
@@ -2186,13 +2347,55 @@ function entityCoverageStatesMarkup(list, entity, mediaByName, media) {
   const board = detailOpen
     ? `<nav class="entity-subworkspace-tabs" aria-label="Coverage and state tools">${views.map((view)=>`<button type="button" class="${view.id===selectedId?"selected":""}" onclick="selectBoundedItem('entity-coverage-view','${attr(context)}','${attr(view.id)}')">${esc(view.label)}</button>`).join("")}</nav><div data-entity-subworkspace="${attr(selected.id)}">${selected.render()}</div>`
     : "";
-  return `<section class="entity-subworkspace">${entityDemandMarkup(list, entity)}<section class="entity-coverage-detail" data-coverage-detail="1" data-coverage-detail-open="${detailOpen ? "1" : "0"}">${toggle}${board}</section></section>`;
+  /* R23 — the reference pack lands here, with the coverage it supports, rather
+     than under Details. Same renderer, same links, same writers; only its home
+     changed. Collapsed, because it is supporting material and not the question
+     this stage is asking. */
+  const pack = list === "audio" || typeof entityPlanningMediaPanel !== "function" ? "" : `<details class="entity-details-advanced entity-reference-pack"><summary>Supporting reference pack</summary><div>${entityPlanningMediaPanel(list, entity)}</div></details>`;
+  return `<section class="entity-subworkspace">${entityDemandMarkup(list, entity, production || undefined)}<section class="entity-coverage-detail" data-coverage-detail="1" data-coverage-detail-open="${detailOpen ? "1" : "0"}">${toggle}${board}</section>${pack}</section>`;
 }
 function entityDetailsHistoryMarkup(list, entity, extra) {
   const dangerZone = `<details class="entity-danger-zone"><summary>Advanced reference actions</summary><div><p class="hint">Deleting a reference removes it from this project. Media files remain on disk.</p><button class="danger-btn" onclick="delEntity('${list}','${entity.id}');location.hash='#/library/${list}'">Delete reference</button></div></details>`;
+  /* R23 — DETAILS WAS SEVEN UNRELATED JOBS SHARING ONE SCROLL.
+   *
+   * Identity notes, drift notes, a blocking label, the expression-sheet builder
+   * config, voice design, voice synthesis settings, an alternate voice prompt,
+   * voice notes, the character reference pack, reconciliation ids, a variant
+   * role and a coverage policy — all open, all at once, under a heading called
+   * "Details". A filmmaker looking for the one line of design notes read eleven
+   * fields to find it, most of them named in the app's internal vocabulary.
+   *
+   * Nothing here is deleted and no field is dropped from the record. The change
+   * is which of them the screen leads with:
+   *
+   *   NORMAL      the identity and production notes the extra() renderer owns —
+   *               the fields a filmmaker edits while writing the reference.
+   *   VOICE       its own collapsed section, with the SHIPPED voice outcome word
+   *               (resolveCharacterVoice) on the summary so a linked or missing
+   *               voice is visible without opening it. Characters only, because
+   *               nothing else has one.
+   *   ADVANCED    reconciliation / canonical id / variant role, and the saved
+   *               Phase 1 prompt library — reference metadata and a reusable
+   *               store, neither of them a daily edit.
+   *   COVERAGE    the reference pack moves out of Details entirely, to the stage
+   *               that owns supporting media. Same renderer, same links, same
+   *               writers; it is beside the coverage it supports now.
+   *
+   * HISTORY IS NOW ONLY HISTORY. The saved-prompt library was editable
+   * configuration filed under History; it is a library, so it moved to Advanced.
+   * What remains is the generation provenance record, which is the one thing on
+   * that tab that is actually a record of what happened. */
+  const voiceSection = list === "characters" && typeof voicePanel === "function"
+    ? (() => {
+      const outcome = typeof resolveCharacterVoice === "function" ? resolveCharacterVoice(P, entity) : null;
+      const word = outcome ? (outcome.voice ? (outcome.voice.name || outcome.voice.id) : outcome.voiceId ? "reference not found" : "none linked") : "";
+      return `<details class="entity-details-advanced entity-voice-section"><summary>Voice${word ? ` · ${esc(word)}` : ""}</summary><div>${voicePanel(entity)}</div></details>`;
+    })()
+    : "";
+  const advancedSection = `<details class="entity-details-advanced"><summary>Advanced reference metadata</summary><div>${list === "audio" ? "" : entityReconciliationMarkup(list,entity)}${entitySavedPromptsMarkup(list,entity)}</div></details>`;
   const views=[
-    {id:"details",label:"Details",render:()=>`<details open class="fold compact-entity-section"><summary>Identity & production notes</summary>${extra(entity)}</details>${entityPlanningMediaPanel(list,entity)}${list === "audio" ? "" : entityReconciliationMarkup(list,entity)}`},
-    {id:"history",label:"History",render:()=>`${entityGenerationRecordsMarkup(list,entity)}${entitySavedPromptsMarkup(list,entity)}`},
+    {id:"details",label:"Details",render:()=>`<details open class="fold compact-entity-section"><summary>Identity & production notes</summary>${extra(entity)}</details>${voiceSection}${advancedSection}`},
+    {id:"history",label:"History",render:()=>entityGenerationRecordsMarkup(list,entity)},
   ];
   const context=`${list}:${entity.id}`, ids=views.map((view)=>view.id), selectedId=boundedSelected("entity-detail-view",context,ids,"details"), selected=views.find((view)=>view.id===selectedId)||views[0];
   return `<section class="entity-subworkspace"><nav class="entity-subworkspace-tabs" aria-label="Details and history"><button type="button" class="${selected.id==="details"?"selected":""}" onclick="selectBoundedItem('entity-detail-view','${attr(context)}','details')">Details</button><button type="button" class="${selected.id==="history"?"selected":""}" onclick="selectBoundedItem('entity-detail-view','${attr(context)}','history')">History</button></nav>${selected.render()}${dangerZone}</section>`;

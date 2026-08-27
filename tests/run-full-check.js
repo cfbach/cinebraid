@@ -215,6 +215,8 @@ const nodeSuites = [
   "check:dogfood-truth-negative",
   "check:shot-intent-compiler",
   "check:shot-intent-compiler-negative",
+  "check:reference-convergence",
+  "check:reference-convergence-negative",
   "check:sheet-gate",
   "check:sheet-gate-negative",
 ];

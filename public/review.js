@@ -606,10 +606,28 @@ function entityReviewModalMarkup(list, entity, media, state, review, busy = fals
   const categories = review?.categories || {};
   const row = entityCandidateRow(entity, media.name, false) || {};
   const isSheet = typeof entityCandidateIsCoverageSheet === "function" && entityCandidateIsCoverageSheet(entity, media.name);
+  /* R5 — NO REVIEW IS NOT A PASS, AND THE FACTOR GRID USED TO SAY IT WAS.
+   *
+   * entityReviewSeverity() normalises an ABSENT severity to "pass", which is the
+   * right answer for a reviewer that returned a factor and left the field off —
+   * and exactly the wrong one for a candidate nobody has reviewed. With `review`
+   * null every one of the six factors read a green PASS underneath an overall
+   * result of NOT REVIEWED, so the screen contradicted itself and the greener
+   * half was the one a filmmaker reads first.
+   *
+   * The gate is now the EVIDENCE rather than the default: a factor prints a
+   * severity only when this review actually returned that factor. That is the
+   * same rule two doors down — a human assignment does not manufacture an AI
+   * result, and neither does an empty object. Authority semantics are untouched:
+   * this panel still reports the contract's decisions and still re-derives none
+   * of them, and "Run AI review" is still one press away in the footer. */
   const categoriesMarkup = Object.entries(factors).map(([key, label]) => {
-    const item = categories[key] || {};
-    const severity = entityReviewSeverity(item.severity);
-    return `<article class="entity-review-factor severity-${severity}"><header><span>${esc(label)}</span><b>${esc(severity.toUpperCase())}</b></header><p>${esc(item.note || (review ? "No specific note returned." : "Run the vision review to check this factor."))}</p></article>`;
+    const item = (review && categories[key]) || null;
+    const severity = item ? entityReviewSeverity(item.severity) : "unreviewed";
+    const word = item ? severity.toUpperCase() : busy ? "CHECKING" : "NOT REVIEWED";
+    const note = item?.note
+      || (item ? "No specific note returned." : review ? "This review returned no result for this factor." : "Run the AI review to check this factor.");
+    return `<article class="entity-review-factor severity-${severity}"><header><span>${esc(label)}</span><b>${esc(word)}</b></header><p>${esc(note)}</p></article>`;
   }).join("");
   /* Outcome, mode and actionability are decided by the review contract on the
      server. This panel reports them; it never re-derives one from the score. */
@@ -727,6 +745,31 @@ function renderLB() {
     el = document.createElement("div");
     el.id = "lb";
     el.className = "lb";
+    /* R2 — THE DARK AREA AROUND THE PICTURE IS A CONTROL, AND IT SAID NOTHING.
+     *
+     * Escape closed this and the ✕ closed this, but the backdrop — the largest
+     * target on the screen and the one every other overlay in the app already
+     * honours (openModal() has closed on its own backdrop since it was written)
+     * — did nothing at all. A filmmaker who clicks beside the image is asking to
+     * leave, and this is the only viewer that did not hear it.
+     *
+     * WHAT IS AND IS NOT THE BACKDROP. Only the two elements that are literally
+     * empty space: the `.lb` root itself, and the `.lb-stage` padding around the
+     * media. A click that lands on the image, the video, an arrow, the top bar or
+     * any of its buttons and links has hit a CHILD, so `event.target` is not one
+     * of those two and nothing closes — which is the whole distinction the
+     * finding asks for. The `<video>` element in particular must never close on
+     * click: its own controls are inside it.
+     *
+     * Bound once, on the element rather than in the markup, because renderLB()
+     * rewrites innerHTML on every navigation and an inline handler would have to
+     * be re-emitted on each of the three surfaces below. Escape, the arrows and
+     * the ✕ are untouched, and so is the focus behaviour: this adds a way out,
+     * it does not take one away. */
+    el.addEventListener("click", (event) => {
+      const target = event.target;
+      if (target === el || target?.classList?.contains?.("lb-stage")) closeLB();
+    });
     document.body.appendChild(el);
   }
   el.innerHTML = `

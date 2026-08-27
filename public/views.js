@@ -100,12 +100,23 @@ const ROUTES = {
     return entityPage(
       "characters",
       id,
+      /* R23 — THE NORMAL DETAILS OF A CHARACTER, AND ONLY THOSE.
+       *
+       * Two changes, both presentational. The identity block keeps its rule and
+       * loses the shout: "LOCKED — PASTE VERBATIM" is an instruction about how
+       * to use the text, so it reads as one under the field rather than as a
+       * heading in the app's internal voice.
+       *
+       * And the voice panel is gone from here — not removed, MOVED. It is eight
+       * fields about a completely different craft, and entityDetailsHistoryMarkup
+       * now renders it as its own collapsed section carrying the shipped voice
+       * outcome word. Every field, writer and value is identical. */
       (c) => `
-    ${field("Identity block (LOCKED — paste verbatim)", ta(c, "block", "characters", c.id))}
+    ${field("Identity block", ta(c, "block", "characters", c.id))}
+    <p class="hint">Paste this verbatim into a prompt. It is the locked description of who this character is, and editing it changes every prompt built from it.</p>
     ${field("Drift notes", ta(c, "driftNotes", "characters", c.id))}
     ${field("Blocking label (optional)", inp(c, "blockingNote", "characters", c.id, "e.g. a seated figure labelled KAI"))}
-    ${field("Expression set (for the sheet builder)", inp(c, "expressions", "characters", c.id))}
-    ${voicePanel(c)}`,
+    ${field("Expression set (for the sheet builder)", inp(c, "expressions", "characters", c.id))}`,
     );
   },
   location(id) {
