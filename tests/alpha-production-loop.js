@@ -391,7 +391,7 @@ async function batchApproval(kind, mutateSource = null) {
   const fixture = buildFixture();
   const character = fixture.characters[0];
   character.candidateFiles = [
-    { stored: "KAI-BATCH.png", decision: "unreviewed" },
+    { stored: "KAI-BATCH.png", decision: "unreviewed", coverageJobType: "single-reference" },
   ];
   character.coverageSlots = [{ id: "front", label: "Front", required: true, approvedFile: "", notes: "" }];
   character.expressionSlots = [{ id: "smile", label: "Smile", required: true, approvedFile: "", notes: "" }];

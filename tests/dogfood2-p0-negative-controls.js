@@ -180,8 +180,11 @@ const shotProject = () => ({
 });
 const contestedProject = () => ({
   characters: [
-    { id: "CHAR-A", prefix: "CHAR-A", candidateFiles: [{ stored: "SHARED.png" }], continuityStates: [{ id: "state-default", isDefault: true, approvedFile: "" }] },
-    { id: "CHAR-B", prefix: "CHAR-B", candidateFiles: [{ stored: "SHARED.png" }], continuityStates: [{ id: "state-default", isDefault: true, approvedFile: "" }] },
+    /* Declared single references: C5 is about the OWNERSHIP veto, so the artifact
+       veto beside it must not be what refuses — otherwise breaking ownership
+       changes nothing and the control measures the wrong guard. */
+    { id: "CHAR-A", prefix: "CHAR-A", candidateFiles: [{ stored: "SHARED.png", coverageJobType: "single-reference" }], continuityStates: [{ id: "state-default", isDefault: true, approvedFile: "" }] },
+    { id: "CHAR-B", prefix: "CHAR-B", candidateFiles: [{ stored: "SHARED.png", coverageJobType: "single-reference" }], continuityStates: [{ id: "state-default", isDefault: true, approvedFile: "" }] },
   ],
 });
 

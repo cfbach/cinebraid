@@ -69,10 +69,21 @@ function promptReferenceOptions(s, takes = takesFor(s.id)) {
     /* WORKFLOW: which image travels with the prompt. Not a claim that anybody
        approved it — an unreceipted pointer is historic and still useful here. */
     const referenceFile = selectedState?.approvedFile || entity.approvedFile || "";
+    /* A SHEET IS NOT A FALLBACK IDENTITY. With no pointer at all this took
+       `media[0]`, and for a reference whose only upload was a turnaround that is
+       the sheet — published below with `defaultRole: "identity"`. The pointer is
+       still honoured when there is one (an unreceipted pointer is historic and
+       still useful here, as the note above says); only the blind fallback is
+       narrowed to media this project can actually treat as one view. */
+    const singleViewMedia = typeof projectCandidateIsCoverageSheet === "function"
+      ? media.filter((item) => !projectCandidateIsCoverageSheet(entity, item.name))
+      : media;
     const chosen =
-      (referenceFile && media.find((item) => item.name === referenceFile)) || media[0];
+      (referenceFile && media.find((item) => item.name === referenceFile)) || singleViewMedia[0];
     if (!chosen) return;
     const mediaType = promptReferenceMediaType(chosen.url || chosen.name);
+    const canonFiles = typeof entityIdentityCanonFiles === "function"
+      ? entityIdentityCanonFiles(entity) : new Set();
     out.push({
       key: entity.type.toLowerCase() + ":" + entity.id,
       label:
@@ -83,10 +94,17 @@ function promptReferenceOptions(s, takes = takesFor(s.id)) {
       url: chosen.url,
       sourceType: entity.type.toLowerCase(),
       mediaType,
-      approved: entityWorkflowState(entity).key === "APPROVED",
+      /* APPROVED MEANS A RECEIPT FOR THESE BYTES. This read
+         entityWorkflowState() — the design-review word — so accepting a coverage
+         sheet as a source published it as an approved identity reference. The
+         claim is now scoped to the exact file being sent, and it comes from the
+         authority owner. */
+      approved: canonFiles.has(chosen.name),
       defaultRole:
         entity.type === "Character"
-          ? "identity"
+          ? (typeof projectCandidateIsCoverageSheet === "function" && projectCandidateIsCoverageSheet(entity, chosen.name)
+            ? "reference"
+            : "identity")
           : entity.type === "Location"
             ? "location"
             : entity.type === "Audio"

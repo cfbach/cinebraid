@@ -99,6 +99,10 @@ function baseProject(extras = {}) {
     scenes: [{ id: "SC-1", title: "Scene" }],
     characters: [{
       id: "CHAR-KAI", name: "Kai", prefix: "CHAR-KAI", approvedFile: KAI_FILE,
+      /* Declared single references: since the sheet gate, an artifact whose kind
+         nothing recorded cannot become an identity, and these controls are about
+         readiness rather than about that refusal. */
+      candidateFiles: [KAI_FILE, "CHAR-KAI-RAIN.png"].map((stored) => ({ stored, original: stored, decision: "unreviewed", coverageJobType: "single-reference" })),
       continuityStates: [state("state-default", "Default", KAI_FILE, true), state("state-rain", "Rain", "CHAR-KAI-RAIN.png")],
     }],
     locations: [], props: [], vehicles: [], audio: [], mediaAssets: [],

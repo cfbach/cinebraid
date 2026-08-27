@@ -1356,7 +1356,12 @@ window.setCoverageSlotField = (list, id, index, key, value) => {
   }
   applyCoverageAssignment(list, entity, slot, next, "manual-assignment");
 };
-window.approveCoverageCandidate = (list, id, fileName, slotId, directOverride = false) => {
+/* `options.confirmed` says the caller ALREADY carried an explicit, specific
+   confirmation for this exact act — see extractCoverageCrop's "save crop & use".
+   It suppresses only the generic are-you-sure below; it changes no write, and the
+   REPLACE question (a different question, about displacing a view the slot
+   already holds) still fires. Every other caller is untouched. */
+window.approveCoverageCandidate = (list, id, fileName, slotId, directOverride = false, options = {}) => {
   const entity = P[list]?.find((item) => item.id === id);
   if (!entity) return;
   const row = entityCandidateRow(entity, fileName, false) || {};
@@ -1403,7 +1408,14 @@ window.approveCoverageCandidate = (list, id, fileName, slotId, directOverride = 
     if (held && held !== fileName) return confirmModal(`Replace ${slot.label}? ${held} will remain in replacement history.`, commit, { title: "Replace the image selected for this view", confirmLabel: "REPLACE VIEW" });
     commit();
   };
-  if (directOverride) return confirmModal(`Assign ${fileName} to ${slot.label} based on human judgment? CineBraid will record that no current AI check authorized this assignment.`, replaceOrCommit, { title: "Human approval", confirmLabel: "ASSIGN VIEW" });
+  /* THE FILMMAKER IS NOT ASKED TO CONFIRM THE SAME ACT TWICE. Pressing a button
+     that names the slot and says "use it" IS the human judgment this modal was
+     collecting; raising it again after that press asked the same question in
+     weaker words, and until it was answered the slot the action named stayed
+     empty. It still guards every caller whose gesture was NOT specific. */
+  if (directOverride && options.confirmed !== true) {
+    return confirmModal(`Assign ${fileName} to ${slot.label} based on human judgment? CineBraid will record that no current AI check authorized this assignment.`, replaceOrCommit, { title: "Human approval", confirmLabel: "ASSIGN VIEW" });
+  }
   replaceOrCommit();
 };
 window.addCoverageSlot = (list, id) => {

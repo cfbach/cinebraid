@@ -130,14 +130,59 @@ function intakeModal(list, id, files) {
   window._intake = { list, id, files, targetStateId: targetState?.id || "", targetStateName: targetState?.name || "" };
   openModal(`<h3>Upload candidates — ${files.length} file(s)</h3><div class="modal-sub">${targetState ? `TARGET · ${esc(targetState.name || "CONTINUITY STATE")} · ` : ""}ORIGINAL FILENAMES ARE RETAINED IN METADATA · PRODUCTION NAMES ARE ASSIGNED ONLY ON APPROVAL</div>
     <div class="approval-preview"><b>${esc(it.name || it.id)}</b><span>${esc(files.map((f) => f.name).join(", ")).slice(0, 180)}</span></div>
+    <div class="form-field"><label>What are these files?</label><select id="in-structure" class="status-select" onchange="syncIntakeStructure()"><option value="">— choose —</option><option value="single-reference">Single reference image</option><option value="sheet">Coverage / multi-view sheet</option></select><small class="hint" id="in-structure-note">CineBraid cannot tell one reference from a multi-view sheet by looking at the file, and it will not guess. Only a single reference can become this asset&rsquo;s identity; a sheet is a source you extract views from.</small></div>
     <div class="form-field"><label>Made with (optional provenance)</label><select id="in-model" class="status-select"><option value="">— not recorded —</option>${(P.meta.models || []).map((m) => `<option value="${m.id}">${esc(m.name)}</option>`).join("")}</select></div>
-    <div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button class="submit-btn" onclick="doIntake()">UPLOAD CANDIDATES</button></div>`);
+    <div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button class="submit-btn" id="in-submit" disabled onclick="doIntake()">UPLOAD CANDIDATES</button></div>`);
+  syncIntakeStructure();
 }
+/* THE ONE THING THE APPLICATION CANNOT SEE, ASKED ONCE, AT THE ONLY MOMENT A
+ * PERSON IS HOLDING THE ANSWER.
+ *
+ * doIntake() persisted `{stored, original}` and nothing else, so an ordinary
+ * reference and a four-panel turnaround arrived structurally identical. The
+ * classifier called both `undeclared` and the authority boundary let both become
+ * an identity, which is fail-OPEN: no evidence is not evidence of eligibility.
+ *
+ * WHY IT IS ASKED RATHER THAN INFERRED. There is no honest signal in the file.
+ * A filename cannot say it — that heuristic is deleted and the reasons are in
+ * public/shared-coverage.js. Dimensions and aspect ratio cannot say it either; a
+ * 16:9 image is as likely to be an establishing shot as a two-panel board, and
+ * guessing from pixels is the same mistake wearing better clothes.
+ *
+ * WHY IT IS ASKED EVEN WHEN A CONTINUITY STATE IS THE TARGET. A pending state
+ * upload records `targetStateId`, which is a fact about WHERE the image is
+ * going, not about WHAT it is — a filmmaker can drop a turnaround onto a state
+ * slot, and that is precisely the gesture that produced the original defect. The
+ * import MAPPER is different and is not asked twice: it writes
+ * `importedMapping.kind`, which is a claim the person made about one image and
+ * one single-view target, and shared-coverage.js reads it.
+ *
+ * The answer is written as `coverageJobType`, the field the shared classifier
+ * already keys on, so nothing new has to be taught to read it. */
+const INTAKE_STRUCTURES = ["single-reference", "sheet"];
+window.syncIntakeStructure = () => {
+  const chosen = document.getElementById("in-structure")?.value || "";
+  const submit = document.getElementById("in-submit");
+  if (submit) submit.disabled = !chosen;
+  const note = document.getElementById("in-structure-note");
+  if (note && chosen) {
+    note.textContent = chosen === "sheet"
+      ? "Saved as a coverage sheet: a source for extraction. It will not be offered as this asset's identity reference."
+      : "Saved as a single reference image, which can be approved as this asset's identity.";
+  }
+};
 window.doIntake = async () => {
   const { list, id, files, targetStateId = "", targetStateName = "" } = window._intake,
     model = document.getElementById("in-model")?.value || "",
+    /* Re-read at the writer, not carried from the click, and refused rather than
+       defaulted: a silent default would be the guess this whole seam exists to
+       avoid. */
+    structure = document.getElementById("in-structure")?.value || "",
     it = P[list].find((x) => x.id === id),
     type = ENTITY_MEDIA[list];
+  /* The button is disabled without a choice; this is the writer saying the same
+     thing, so a replayed or scripted call cannot land undeclared rows either. */
+  if (!INTAKE_STRUCTURES.includes(structure)) return toast("Say whether these files are a single reference or a coverage sheet");
   closeModal();
   const saved = [],
     original = [];
@@ -160,7 +205,7 @@ window.doIntake = async () => {
     const d = await r.json();
     if (r.ok) {
       saved.push(d.name);
-      original.push({ stored: d.name, original: f.name, ...(targetStateId ? { targetStateId, targetStateName } : {}) });
+      original.push({ stored: d.name, original: f.name, coverageJobType: structure, ...(targetStateId ? { targetStateId, targetStateName } : {}) });
     }
   }
   it.candidateFiles = [...(it.candidateFiles || []), ...original];
@@ -817,10 +862,23 @@ window.confirmEntityApproval = async (continueToNext = false) => {
        establishing parentage is a separate, explicit act. */
     if (!nextState.generationMode || nextState.generationMode === "derive") nextState.generationMode = "derive";
   }
-  x.workflowStatus = "APPROVED";
-  x.status = "APPROVED";
-  x.reviewStatus = "";
-  x.approvedAt = new Date().toISOString();
+  /* ACCEPTING A SOURCE IS PROGRESS, NOT APPROVAL.
+     This ran for a sheet too, and `entityWorkflowState()` reads exactly these
+     fields — so "use as sheet source" on a reference with NO primary and NO
+     receipt made it report APPROVED, which promptReferenceOptions() then
+     published as `approved: true` with `defaultRole: "identity"`, and which the
+     References stage read as ready. A status word became a second authority
+     system by being believed.
+     A sheet source moves the reference forward, so it is recorded as in
+     progress; it does not claim the design was approved, because nothing was. */
+  if (approvedIsCoverageSheet) {
+    if (entityWorkflowState(x).key === "DRAFT") { x.workflowStatus = "IN PROGRESS"; x.status = "IN PROGRESS"; }
+  } else {
+    x.workflowStatus = "APPROVED";
+    x.status = "APPROVED";
+    x.reviewStatus = "";
+    x.approvedAt = new Date().toISOString();
+  }
   dirty();
   closeModal();
   await route();

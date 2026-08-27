@@ -255,10 +255,13 @@ control({
 control({
   label: "C4 no filename may classify an artifact",
   file: COVERAGE_FILE,
-  anchor: "    if (!jobType && coverageText(row.coverageSheetType)) return \"sheet\";\n    return \"undeclared\";",
-  replacement: "    if (!jobType && coverageText(row.coverageSheetType)) return \"sheet\";\n"
-    + "    if (/(?:SHEET|TURNAROUND|CONTACT)/i.test(String(row.stored || row.name || \"\"))) return \"sheet\";\n"
-    + "    return \"undeclared\";",
+  /* RE-ANCHORED. The correction inserted the importedMapping read between the
+     two lines this straddled, and the probe receipt refused rather than mutating
+     nothing — which is the receipt doing its job. One line now, the last step
+     before the honest "I do not know". */
+  anchor: "    return \"undeclared\";\n  }",
+  replacement: "    if (/(?:SHEET|TURNAROUND|CONTACT)/i.test(String(row.stored || row.name || \"\"))) return \"sheet\";\n"
+    + "    return \"undeclared\";\n  }",
   baseline: (coverage) => {
     assert.strictEqual(
       coverage.referenceArtifactStructureOf({ candidateFiles: [{ stored: "PROP-BEDSHEET-CANDIDATE-M9X-01.png" }] }, "PROP-BEDSHEET-CANDIDATE-M9X-01.png"),
@@ -306,6 +309,58 @@ const gateScan = () => ({
   plates: [], props: [], vehicles: [], audio: [], media: [],
   shots: { "L1-01": { takes: [], locked: [] } },
 });
+
+
+/* A kernel realm whose shared-coverage classifier is the module under test, so a
+   mutation to the predicate is what the authority boundary actually asks. */
+function buildKernelWith(coverage) {
+  const moduleObject = { exports: {} };
+  const abs = path.join(ROOT, KERNEL_FILE);
+  const resolve = require("module").createRequire(abs);
+  const sandboxRequire = (specifier) =>
+    (String(specifier).includes("shared-coverage") ? coverage : resolve(specifier));
+  vm.runInNewContext(source(KERNEL_FILE),
+    { module: moduleObject, exports: moduleObject.exports, require: sandboxRequire, console, structuredClone, globalThis: {} },
+    { filename: KERNEL_FILE });
+  return moduleObject.exports;
+}
+
+/* A reference carrying the LEGACY shadow shape: design-approved by status word,
+   with no receipt and no primary pointer behind it. */
+function shadowFixture({ withSingle = false } = {}) {
+  const project = buildFixture();
+  const character = project.characters[0];
+  character.id = "CHAR-IREN";
+  character.name = "Iren";
+  character.approvedFile = "";
+  character.workflowStatus = "APPROVED";
+  character.status = "APPROVED";
+  character.continuityStates = [{ id: "state-default", name: "Default", isDefault: true, approvedFile: "" }];
+  character.candidateFiles = [
+    { stored: "CHAR-IREN-SHEET.png", original: "CHAR-IREN-SHEET.png", decision: "approved-sheet-source", coverageJobType: "sheet", coverageSheetType: "angles" },
+  ];
+  if (withSingle) {
+    character.candidateFiles.push({ stored: "CHAR-IREN-PRIMARY.png", original: "CHAR-IREN-PRIMARY.png", decision: "unreviewed", coverageJobType: "single-reference" });
+    character.approvedFile = "CHAR-IREN-PRIMARY.png";
+    character.continuityStates[0].approvedFile = "CHAR-IREN-PRIMARY.png";
+  }
+  project.shots[0].characters = [character.id];
+  delete project.productionAuthority;
+  return project;
+}
+
+/* A saved crop waiting to be used in the view it was cut for. */
+function cropFixture() {
+  const project = gateFixture();
+  project.characters[0].coverageSlots = [{ id: "front", label: "Front", requirement: "required", selectedFile: "" }];
+  project.characters[0].candidateFiles.push({
+    stored: "CHAR-IREN-CROP-FRONT.png", original: "CHAR-IREN-CROP-FRONT.png", decision: "unreviewed",
+    coverageJobType: "extracted-crop", targetCoverageSlotId: "front", targetCoverageSlotName: "Front",
+    coverageGroup: "angles",
+    coverageCrop: { sourceSheet: "CHAR-IREN-SHEET.png", layout: "2x2", panelIndex: 0, normalized: { x: 0, y: 0, w: 50, h: 50 }, manuallyAdjusted: true },
+  });
+  return project;
+}
 
 const COVERAGE_VIEW_STORAGE = {
   "cinebraid-focused:fixture:entity-task:characters:CHAR-IREN": "coverage",
@@ -438,6 +493,205 @@ controlAsync({
   },
   reason: "quote-priced-0.04-for-12-images",
   explain: "A price that does not move with the request is decoration next to a paid button.",
+});
+
+/* ===========================================================================
+   C9 — UNDECLARED IS NOT ELIGIBLE.
+
+   The held candidate shipped `!== "sheet"` here, which reads as fail-closed and
+   is not: a hand-dropped single image and a hand-dropped multi-panel sheet
+   persist identical fields, so BOTH answered `undeclared` and BOTH could become
+   an identity. Restore that reading and the real defect comes straight back. */
+control({
+  label: "C9 undeclared artifacts are not identity-eligible",
+  file: COVERAGE_FILE,
+  anchor: '    return coverageText(structure) === "single";',
+  replacement: '    return coverageText(structure) !== "sheet";',
+  baseline: (coverage) => {
+    assert.strictEqual(coverage.artifactMayHoldPrimaryAuthority("undeclared"), false,
+      "baseline: undeclared must be refused, or this control measures nothing");
+    assert.strictEqual(coverage.artifactMayHoldPrimaryAuthority("single"), true,
+      "baseline: a DECLARED single must still be eligible, or the correction broke the product");
+  },
+  probe: (coverage) => {
+    /* The real hand-dropped shape: exactly what doIntake() wrote before the
+       declaration seam existed. */
+    const handDropped = { stored: "CHAR-A-CANDIDATE-M9X-01.png", original: "IREN-TURNAROUND.png" };
+    const structure = coverage.referenceArtifactStructure(handDropped);
+    const eligible = coverage.artifactMayHoldPrimaryAuthority(structure);
+    return {
+      reached: structure === "undeclared",
+      held: eligible === false,
+      reason: eligible ? `undeclared-artifact-is-identity-eligible(${structure})` : "refused",
+    };
+  },
+  reason: "undeclared-artifact-is-identity-eligible(undeclared)",
+  explain: "Missing evidence is not evidence of eligibility.",
+});
+
+/* And the same break, driven through the SHIPPED approval command rather than
+   the predicate, so the fail-open is observed as a written receipt. */
+control({
+  label: "C9b an undeclared sheet reaches primary authority",
+  file: COVERAGE_FILE,
+  anchor: '    return coverageText(structure) === "single";',
+  replacement: '    return coverageText(structure) !== "sheet";',
+  baseline: (coverage) => {
+    assert.strictEqual(coverage.artifactMayHoldPrimaryAuthority("undeclared"), false,
+      "baseline: undeclared must be refused at the predicate");
+  },
+  probe: (coverage) => {
+    /* Build a kernel whose classifier IS the module under test, so the mutation
+       reaches the authority boundary the way the product composes it. */
+    const kernel = buildKernelWith(coverage);
+    const manual = installTestManualActionSource(kernel);
+    const project = {
+      characters: [{
+        id: "CHAR-A", prefix: "CHAR-A",
+        candidateFiles: [{ stored: "CHAR-A-CANDIDATE-M9X-01.png", original: "IREN-TURNAROUND.png" }],
+        continuityStates: [{ id: "state-default", isDefault: true, approvedFile: "" }],
+      }],
+    };
+    let wrote = false;
+    try {
+      manual.gesture(() => kernel.approveEntityStateCanon(project, {
+        list: "characters", entityId: "CHAR-A", stateId: "state-default",
+        value: "CHAR-A-CANDIDATE-M9X-01.png", assetId: "", at: AT,
+      }));
+      wrote = true;
+    } catch { wrote = false; }
+    const canon = kernel.entityProductionTruth(project, "characters", "CHAR-A").canon;
+    const pointer = project.characters[0].continuityStates[0].approvedFile || "";
+    return {
+      reached: true,
+      held: !wrote && canon.length === 0 && !pointer,
+      reason: wrote ? `undeclared-sheet-became-primary(${pointer || "no-pointer"})` : "refused",
+    };
+  },
+  reason: "undeclared-sheet-became-primary(CHAR-A-CANDIDATE-M9X-01.png)",
+  explain: "The predicate is what the authority boundary asks; weakening it writes real receipts.",
+});
+
+/* ===========================================================================
+   C10 — A STATUS WORD IS NOT AN AUTHORITY SYSTEM.
+
+   Put the References stage back on entityWorkflowState() and a reference whose
+   only event was accepting a coverage SHEET as a source reports the stage ready,
+   with no primary image and nobody's approval behind it. */
+controlAsync({
+  label: "C10 references readiness must not believe a status word",
+  mutateSource: (file, text) => file !== "app.js" ? text : mutate(
+    text,
+    "    const unapproved = refs.filter((x) => !entityHasIdentityCanon(x));",
+    "    const unapproved = refs.filter((x) => entityWorkflowState(x).key !== \"APPROVED\");",
+    "C10", 1),
+  probe: async (mutateSource) => {
+    const project = shadowFixture();
+    const rendered = await render("#/character/CHAR-IREN", project, {
+      scan: gateScan(), ...(mutateSource ? { mutateSource } : {}),
+    });
+    const out = vm.runInContext(
+      "(() => { const s=P.shots.find(x=>x.characters && x.characters.includes('CHAR-IREN'));"
+      + " if(!s) return null;"
+      + " const e=P.characters.find(x=>x.id==='CHAR-IREN');"
+      + " return { status: entityWorkflowState(e).key,"
+      + "  canon: entityProductionTruth(P,'characters','CHAR-IREN').canon.length,"
+      + "  named: shotStageFacts(s,'references').gaps.filter(g=>/CHAR-IREN/.test(g)).length }; })()",
+      rendered.context);
+    if (!out) return { reached: false, held: false, reason: "no-shot" };
+    if (out.status !== "APPROVED" || out.canon !== 0) {
+      return { reached: false, held: false, reason: `fixture-wrong(status=${out.status},canon=${out.canon})` };
+    }
+    return {
+      reached: true,
+      held: out.named === 1,
+      reason: out.named ? "still-named-unapproved" : "references-ready-with-no-identity-canon",
+    };
+  },
+  reason: "references-ready-with-no-identity-canon",
+  explain: "A word anything may write must never stand in for a receipt.",
+});
+
+/* The prompt half of the same shadow: publish `approved` from the status word
+   and a reference with no receipt is handed to generation as approved. */
+controlAsync({
+  label: "C11 prompt references must not publish a status word as approval",
+  mutateSource: (file, text) => file !== "planning.js" ? text : mutate(
+    text,
+    "      approved: canonFiles.has(chosen.name),",
+    "      approved: entityWorkflowState(entity).key === \"APPROVED\",",
+    "C11", 1),
+  probe: async (mutateSource) => {
+    const project = shadowFixture({ withSingle: true });
+    const rendered = await render("#/character/CHAR-IREN", project, {
+      scan: gateScan(), ...(mutateSource ? { mutateSource } : {}),
+    });
+    const out = vm.runInContext(
+      "(() => { const s=P.shots.find(x=>x.characters && x.characters.includes('CHAR-IREN'));"
+      + " if(!s) return null;"
+      + " const e=P.characters.find(x=>x.id==='CHAR-IREN');"
+      + " const opts=promptReferenceOptions(s).filter(r=>r.key==='character:CHAR-IREN');"
+      + " return { status: entityWorkflowState(e).key,"
+      + "  canon: entityProductionTruth(P,'characters','CHAR-IREN').canon.length,"
+      + "  approved: opts.map(r=>r.approved) }; })()",
+      rendered.context);
+    if (!out || !out.approved.length) return { reached: false, held: false, reason: "no-option" };
+    if (out.status !== "APPROVED" || out.canon !== 0) {
+      return { reached: false, held: false, reason: `fixture-wrong(status=${out.status},canon=${out.canon})` };
+    }
+    const claimed = out.approved.includes(true);
+    return {
+      reached: true,
+      held: !claimed,
+      reason: claimed ? "unreceipted-reference-published-as-approved" : "not-claimed",
+    };
+  },
+  reason: "unreceipted-reference-published-as-approved",
+  explain: "Generation reads this list; an approval it invents is spent as though a person gave it.",
+});
+
+/* ===========================================================================
+   C12 — ONE EXPLICIT PRESS, ONE COMPLETED ACTION.
+
+   Ignore the caller's specific confirmation and the generic "Human approval /
+   ASSIGN VIEW" modal returns in front of the write — so the slot the filmmaker's
+   own button named stays empty until they answer the same question twice. */
+controlAsync({
+  label: "C12 an explicit use action must not ask again",
+  mutateSource: (file, text) => file !== "entities.js" ? text : mutate(
+    text,
+    "  if (directOverride && options.confirmed !== true) {",
+    "  if (directOverride) {",
+    "C12", 1),
+  probe: async (mutateSource) => {
+    const project = cropFixture();
+    const scan = gateScan();
+    scan.anchors.push({ name: "CHAR-IREN-CROP-FRONT.png", url: "/assets/anchors/CHAR-IREN-CROP-FRONT.png" });
+    const rendered = await render("#/character/CHAR-IREN", project, {
+      scan,
+      storage: {
+        "cinebraid-focused:fixture:entity-task:characters:CHAR-IREN": "coverage",
+        "cinebraid-bounded:fixture:selected:entity-coverage-view:characters:CHAR-IREN": "coverage",
+      },
+      ...(mutateSource ? { mutateSource } : {}),
+    });
+    const out = vm.runInContext(
+      "(() => { approveCoverageCandidate('characters','CHAR-IREN','CHAR-IREN-CROP-FRONT.png','front',true,{confirmed:true});"
+      + " const e=P.characters.find(x=>x.id==='CHAR-IREN');"
+      + " const slot=ensureCoverageSlots('characters',e)[0];"
+      + " return { file: slotSelectedFile(slot),"
+      + "  modal: document.getElementById('modal').innerHTML }; })()",
+      rendered.context);
+    const asked = /Human approval|ASSIGN VIEW/.test(out.modal || "");
+    return {
+      reached: true,
+      held: out.file === "CHAR-IREN-CROP-FRONT.png" && !asked,
+      reason: out.file ? (asked ? "asked-again-after-filling" : "completed")
+        : asked ? "slot-empty-second-confirmation-required" : `slot-empty(${out.file || "none"})`,
+    };
+  },
+  reason: "slot-empty-second-confirmation-required",
+  explain: "An action that names the slot and says use it is the confirmation; asking again leaves the slot empty.",
 });
 
 /* ---------------------------------------------------------------------------

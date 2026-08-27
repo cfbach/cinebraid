@@ -3550,6 +3550,46 @@ function workflowState(s, takes = takesFor(s.id)) {
   const cls = key.toLowerCase().replace(/ /g, "-");
   return { key, label: workflowStatusLabel(key), cls };
 }
+/* DOES THIS REFERENCE HAVE AN APPROVED IDENTITY, asked of the one owner.
+ *
+ * entityWorkflowState() answers a DESIGN-REVIEW question — draft, in progress,
+ * ready for review, approved — and it answers it from `workflowStatus`/`status`,
+ * two plain strings anything may write. Two surfaces were reading that word as
+ * though it meant "a person approved this reference's identity":
+ * promptReferenceOptions() published `approved: true` from it, and the References
+ * stage called a shot ready from it. Neither consults the receipt ledger, so a
+ * status word was acting as authority — and a sheet accepted as a SOURCE set it.
+ *
+ * Identity approval has exactly one owner, entityProductionTruth(), and it is the
+ * same owner the entity page, the Bible and coverage automation already read.
+ * This is a thin named reading of it, not a second flag: it stores nothing,
+ * caches nothing, and returns false when it cannot tell which collection an
+ * entity belongs to rather than guessing.
+ *
+ * `type` is carried by the records referenceRecordsForShot() builds; the scan is
+ * the fallback for a bare entity, and it includes `audio`, which entityListOf()
+ * in public/entities.js deliberately does not. */
+const ENTITY_LIST_FOR_REFERENCE_TYPE = {
+  Character: "characters", Location: "locations", Prop: "props", Vehicle: "vehicles", Audio: "audio",
+};
+function entityListForReference(entity) {
+  if (!entity) return "";
+  const byType = ENTITY_LIST_FOR_REFERENCE_TYPE[String(entity.type || "")];
+  if (byType && (P[byType] || []).some((row) => row && row.id === entity.id)) return byType;
+  for (const list of ["characters", "locations", "props", "vehicles", "audio"]) {
+    if ((P[list] || []).some((row) => row && row.id === entity.id)) return list;
+  }
+  return "";
+}
+function entityIdentityCanonFiles(entity) {
+  if (!entity || typeof entityProductionTruth !== "function") return new Set();
+  const list = entityListForReference(entity);
+  if (!list) return new Set();
+  return new Set(entityProductionTruth(P, list, entity.id).canon.map((row) => row.value).filter(Boolean));
+}
+function entityHasIdentityCanon(entity) {
+  return entityIdentityCanonFiles(entity).size > 0;
+}
 function entityWorkflowState(x) {
   let key = WORKFLOW_STATES.includes(x.workflowStatus) ? x.workflowStatus : "";
   if (!key) {
@@ -5573,7 +5613,13 @@ function shotStageFacts(s, stage, takes = takesFor(s.id), refs = referenceRecord
   } else if (stage === "references") {
     if (!refs.length && !mediaLinks.length)
       gaps.push("Link canon records or add animatic / planning media for this shot.");
-    const unapproved = refs.filter((x) => entityWorkflowState(x).key !== "APPROVED");
+    /* READY MEANS APPROVED, AND APPROVED MEANS A RECEIPT. This read
+       entityWorkflowState() — a design-review word — so a reference whose only
+       event was accepting a coverage SHEET as an extraction source reported this
+       stage ready with no primary image and nobody's approval behind it. The
+       question the stage is actually asking is "do these references have an
+       approved identity", and that has one owner. */
+    const unapproved = refs.filter((x) => !entityHasIdentityCanon(x));
     if (unapproved.length)
       gaps.push(`Approve or replace ${unapproved.map((x) => x.id).join(", ")}.`);
     data = {

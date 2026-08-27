@@ -63,7 +63,15 @@ function state(id, name, approvedFile, isDefault = false) {
 }
 function entity(id, name, states) {
   const fallback = states.find((row) => row.isDefault) || states[0];
-  return { id, name, prefix: id, continuityStates: states, approvedFile: fallback ? fallback.approvedFile : "" };
+  /* A real project has a candidate row per image, and since the sheet gate it
+     also has that row's DECLARED structure — the authority boundary refuses an
+     artifact whose kind nothing recorded. These are ordinary single references,
+     so they say so. */
+  const candidateFiles = states
+    .map((row) => row.approvedFile)
+    .filter(Boolean)
+    .map((stored) => ({ stored, original: stored, decision: "unreviewed", coverageJobType: "single-reference" }));
+  return { id, name, prefix: id, continuityStates: states, candidateFiles, approvedFile: fallback ? fallback.approvedFile : "" };
 }
 function shot(id, extras = {}) {
   return {

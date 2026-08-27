@@ -78,7 +78,7 @@ const entityProject = () => ({
     name: "A",
     prefix: "CHAR-A",
     approvedFile: "",
-    candidateFiles: [{ stored: "CHAR-A-ONE.png", decision: "unreviewed" }],
+    candidateFiles: [{ stored: "CHAR-A-ONE.png", decision: "unreviewed", coverageJobType: "single-reference" }],
     continuityStates: [
       { id: "state-default", name: "Default", isDefault: true, approvedFile: "" },
       { id: "st-soot", name: "Soot", parentStateId: "state-default", approvedFile: "" },
@@ -330,8 +330,8 @@ eq(WRITE_SURFACE, [
 {
   const project = {
     characters: [
-      { id: "CHAR-A", prefix: "CHAR-A", candidateFiles: [{ stored: "SHARED.png" }], continuityStates: [{ id: "state-default", isDefault: true, approvedFile: "" }] },
-      { id: "CHAR-B", prefix: "CHAR-B", candidateFiles: [{ stored: "SHARED.png" }], continuityStates: [{ id: "state-default", isDefault: true, approvedFile: "" }] },
+      { id: "CHAR-A", prefix: "CHAR-A", candidateFiles: [{ stored: "SHARED.png", coverageJobType: "single-reference" }], continuityStates: [{ id: "state-default", isDefault: true, approvedFile: "" }] },
+      { id: "CHAR-B", prefix: "CHAR-B", candidateFiles: [{ stored: "SHARED.png", coverageJobType: "single-reference" }], continuityStates: [{ id: "state-default", isDefault: true, approvedFile: "" }] },
     ],
   };
   refuses(
@@ -504,8 +504,8 @@ eq(WRITE_SURFACE, [
      may skip by omitting the owner. */
   const contested = {
     characters: [
-      { id: "CHAR-A", prefix: "CHAR-A", candidateFiles: [{ stored: "SHARED.png" }], coverageSlots: [{ id: "front", label: "Front" }] },
-      { id: "CHAR-B", prefix: "CHAR-B", candidateFiles: [{ stored: "SHARED.png" }] },
+      { id: "CHAR-A", prefix: "CHAR-A", candidateFiles: [{ stored: "SHARED.png", coverageJobType: "single-reference" }], coverageSlots: [{ id: "front", label: "Front" }] },
+      { id: "CHAR-B", prefix: "CHAR-B", candidateFiles: [{ stored: "SHARED.png", coverageJobType: "single-reference" }] },
     ],
   };
   const refused = Slots.assignSlotReference(contested.characters[0].coverageSlots[0], {
@@ -554,7 +554,7 @@ eq(WRITE_SURFACE, [
 
   /* AND A PERSON CAN CONVERT IT IN ONE ACT — the whole upgrade path, with no
      migration and no fabricated receipt. */
-  entity.candidateFiles = [{ stored: "LEGACY.png", decision: "unreviewed" }];
+  entity.candidateFiles = [{ stored: "LEGACY.png", decision: "unreviewed", coverageJobType: "single-reference" }];
   human(() => Kernel.approveEntityStateCanon(project, {
     list: "characters", entityId: "CHAR-A", stateId: "state-default", value: "LEGACY.png", assetId: "", at: AT(2),
   }));
@@ -675,7 +675,7 @@ eq(WRITE_SURFACE, [
   project.characters[0].continuityStates[0].approvedFile = "LEGACY.png";
   eq(P4.edgesAreReceiptBacked(project, [{ kind: "entity", id: "CHAR-A" }], { list: "characters" }), false,
     "an unreceipted pointer is not receipt-backed for Generated Media either");
-  project.characters[0].candidateFiles = [{ stored: "LEGACY.png", decision: "unreviewed" }];
+  project.characters[0].candidateFiles = [{ stored: "LEGACY.png", decision: "unreviewed", coverageJobType: "single-reference" }];
   human(() => Kernel.approveEntityStateCanon(project, {
     list: "characters", entityId: "CHAR-A", stateId: "state-default", value: "LEGACY.png", assetId: "", at: AT(1),
   }));

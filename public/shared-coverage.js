@@ -249,7 +249,26 @@
                                               the board the job belongs to; only a
                                               structural claim when no job type was
                                               recorded at all (legacy rows). */
-  const SINGLE_VIEW_JOB_TYPES = ["slot", "extracted-crop", "imported-reference"];
+  /* `single-reference` is the filmmaker's own answer at manual intake — see
+     doIntake() in public/library-tools.js, which asks what the artifact is when
+     nothing else has recorded it. It is a DECLARATION, not an inference, which is
+     what makes it usable as identity evidence. */
+  const SINGLE_VIEW_JOB_TYPES = ["slot", "extracted-crop", "imported-reference", "single-reference"];
+
+  /* WHICH IMPORT MAPPINGS ARE A SINGLE-VIEW CLAIM, enumerated rather than assumed.
+     confirmImportedReferenceMapping() splits its target as `${kind}:${targetId}`
+     and the option list offers exactly three kinds (public/coverage-automation.js,
+     `targetOptions`):
+
+       state       -> one continuity state's approvedFile
+       coverage    -> one named angle/view slot
+       expression  -> one named expression slot
+
+     Every one of them assigns ONE image to ONE single-view target, so all three
+     are single-view claims and none of them can mean "sheet". A kind outside this
+     set is not guessed at — it falls through to `undeclared` and fails closed. */
+  const SINGLE_VIEW_IMPORT_KINDS = ["state", "coverage", "expression"];
+
   function referenceArtifactStructure(row) {
     if (!row || typeof row !== "object" || Array.isArray(row)) return "undeclared";
     const jobType = coverageText(row.coverageJobType);
@@ -257,6 +276,10 @@
     if (SINGLE_VIEW_JOB_TYPES.includes(jobType)) return "single";
     if (row.coverageCrop && typeof row.coverageCrop === "object" && !Array.isArray(row.coverageCrop)) return "single";
     if (!jobType && coverageText(row.coverageSheetType)) return "sheet";
+    /* The state-import mapping was already being written and was already a
+       single-view statement; only this reader was ignoring it. */
+    const importKind = coverageText(coverageSlotObject(row.importedMapping).kind);
+    if (SINGLE_VIEW_IMPORT_KINDS.includes(importKind)) return "single";
     return "undeclared";
   }
 
@@ -284,15 +307,21 @@
   }
 
   /* MAY THIS ARTIFACT BECOME AN ENTITY'S PRIMARY IDENTITY AUTHORITY.
-     A sheet may not: it is several views, and an identity-dependent generation
-     that packages it hands the model a contact sheet as though it were a face.
-     `undeclared` may — see the header: refusing it would make every hand-dropped
-     primary impossible, which is the opposite failure. The residual gap that
-     leaves (a hand-dropped SHEET is `undeclared` and therefore still eligible) is
-     a missing declaration seam at import time, not something this reader can
-     invent from the bytes it is given. */
+     ONLY A KNOWN SINGLE VIEW MAY. This used to read `!== "sheet"`, and the
+     independent review was right that it was fail-OPEN wearing a fail-closed
+     comment: a hand-dropped single image and a hand-dropped multi-panel sheet
+     persist the identical structural fields — `{stored, original}` — so BOTH
+     answered `undeclared` and BOTH stayed identity-eligible. `undeclared` does
+     not mean "probably fine"; it means THE APPLICATION HAS NO EVIDENCE, and no
+     evidence is not evidence of eligibility.
+     What makes this usable rather than merely strict is that the missing evidence
+     is now COLLECTED instead of guessed: manual intake asks the filmmaker which
+     one this is and records the answer structurally, and the import mapper's
+     existing `importedMapping.kind` was already a single-view statement that this
+     module simply was not reading. Nothing here infers from a filename, a
+     dimension or an aspect ratio. */
   function artifactMayHoldPrimaryAuthority(structure) {
-    return coverageText(structure) !== "sheet";
+    return coverageText(structure) === "single";
   }
 
   function activeCoverageSlots(slots) {

@@ -689,7 +689,7 @@
          approveCoverageCandidate() may still raise a REPLACE confirmation. That
          is a question about displacing a view the slot already holds, which is a
          different question from approving this crop, and it stays. */
-      if (approve) approveCoverageCandidate(state.list, state.entityId, data.name, slot.id, true);
+      if (approve) approveCoverageCandidate(state.list, state.entityId, data.name, slot.id, true, { confirmed: true });
       else {
         toast(`${slot.label} crop extracted as a review candidate`);
         setTimeout(() => openEntityCandidateReview(state.list, state.entityId, data.name, "state-default"), 60);

@@ -146,7 +146,7 @@ function fixture() {
         coverageSlots: [{ id: "front", label: "Front", approvedFile: "KAI_DEFAULT_V001.png" }],
         candidateFiles: [
           {
-            stored: "KAI_DEFAULT_V001.png", addedAt: ISO(1), decision: "approved-reference",
+            stored: "KAI_DEFAULT_V001.png", addedAt: ISO(1), decision: "approved-reference", coverageJobType: "single-reference",
             humanApproved: true, decidedAt: ISO(1),
             approvalProvenance: { source: "human", aiReviewed: true, aiPassed: true, approvedAt: ISO(1) },
             generationProvider: "fal", generationModel: "openai/gpt-image-2",

@@ -841,10 +841,24 @@ function entityArtifactVerdict(project, target, fileName) {
     .find((row) => kernelText(row.id) === kernelText(need.entityId)) || null;
   const structure = kernelText(structures.referenceArtifactStructureOf(entity, name));
   if (structures.artifactMayHoldPrimaryAuthority(structure) === true) return { ok: true };
+  /* TWO REFUSALS, AND THEY ARE NOT THE SAME SENTENCE. A declared sheet is a
+     statement about the artifact; an UNDECLARED one is a statement about this
+     project's records. Saying "this is a coverage sheet" to somebody holding an
+     ordinary photograph is a false claim about their file, and it sends them to
+     an extractor that has nothing to extract. Each says what is true and what
+     would resolve it. */
+  if (structure === "sheet") {
+    return {
+      ok: false,
+      code: "AUTHORITY_ARTIFACT_NOT_IDENTITY_ELIGIBLE",
+      message: `${name} is a coverage sheet — several views in one image — so it cannot be the identity reference for ${kernelText(need.entityId)}. Approve it as a sheet source and extract a single view instead. No authority was written.`,
+      detail: { structure },
+    };
+  }
   return {
     ok: false,
-    code: "AUTHORITY_ARTIFACT_NOT_IDENTITY_ELIGIBLE",
-    message: `${name} is a coverage sheet — several views in one image — so it cannot be the identity reference for ${kernelText(need.entityId)}. Approve it as a sheet source and extract a single view instead. No authority was written.`,
+    code: "AUTHORITY_ARTIFACT_UNDECLARED",
+    message: `CineBraid has no record of what kind of image ${name} is, and it will not guess — a multi-view sheet and a single reference look the same to it. Say which it is when you import it, or map it to a continuity state or view first. No authority was written.`,
     detail: { structure },
   };
 }

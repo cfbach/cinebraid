@@ -178,7 +178,7 @@ async function testPrimaryReferenceNeverSilentlyBecomesThreeQuarter() {
     { id: "state-night", name: "After the night's work", isDefault: false, approvedFile: "", parentStateId: "state-default", notes: "Coveralls are dirty and worn; hands are bare. Preserve face, proportions, hair and base garment construction." },
   ];
   character.coverageSlots = [];
-  character.candidateFiles = [{ stored: "CHAR-IREN-PRIMARY.png", original: "CHAR-IREN-PRIMARY.png", decision: "unreviewed" }];
+  character.candidateFiles = [{ stored: "CHAR-IREN-PRIMARY.png", original: "CHAR-IREN-PRIMARY.png", decision: "unreviewed", coverageJobType: "single-reference" }];
   const rendered = await render("#/character/CHAR-IREN", project, {
     scan: coverageScan(),
     storage: { "cinebraid-focused:fixture:entity-task:characters:CHAR-IREN": "states", "cinebraid-bounded:fixture:selected:continuity-state:characters:CHAR-IREN": "state-night" },

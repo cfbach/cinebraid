@@ -296,6 +296,7 @@ function rawFixture() {
         status: "APPROVED",
         workflowStatus: "APPROVED",
         block: "Maintenance worker.",
+        candidateFiles: [{ stored: "KAI-ANCHOR.png", original: "KAI-ANCHOR.png", decision: "unreviewed", coverageJobType: "single-reference" }],
         approvedFile: "KAI-ANCHOR.png",
         continuityStates: [],
       },
@@ -307,6 +308,7 @@ function rawFixture() {
         status: "APPROVED",
         workflowStatus: "APPROVED",
         notes: "Docking camera.",
+        candidateFiles: [{ stored: "LOC-HULL-PLATE.png", original: "LOC-HULL-PLATE.png", decision: "unreviewed", coverageJobType: "single-reference" }],
         approvedFile: "LOC-HULL-PLATE.png",
         continuityStates: [],
       },
@@ -318,6 +320,7 @@ function rawFixture() {
         status: "APPROVED",
         workflowStatus: "APPROVED",
         notes: "Handheld maintenance tool.",
+        candidateFiles: [{ stored: "PR-TOOL-PLATE.png", original: "PR-TOOL-PLATE.png", decision: "unreviewed", coverageJobType: "single-reference" }],
         approvedFile: "PR-TOOL-PLATE.png",
         continuityStates: [],
       },
@@ -861,7 +864,7 @@ async function main() {
     { id: "state-damaged", name: "Damaged", isDefault: false, approvedFile: "PR-TOOL_PRIMARY_DAMAGED_V001.png", appliesTo: "SC-01", notes: "Chipped grip and scratched casing.", parentStateId: "state-default", generationMode: "derive", assetPromptBuilds: [] },
   ];
   stateProp.candidateFiles = [
-    { stored: "PR-TOOL-CANDIDATE-A.png", decision: "unreviewed", targetStateId: "state-damaged", targetStateName: "Damaged", derivationMode: "derive", structuredReviews: { "state-damaged": { contractVersion: "reference-authority-v3", score: 84, pass: true, stateName: "Damaged", reviewedAt: "2026-07-27T20:00:00Z" } } },
+    { stored: "PR-TOOL-CANDIDATE-A.png", decision: "unreviewed", coverageJobType: "single-reference", targetStateId: "state-damaged", targetStateName: "Damaged", derivationMode: "derive", structuredReviews: { "state-damaged": { contractVersion: "reference-authority-v3", score: 84, pass: true, stateName: "Damaged", reviewedAt: "2026-07-27T20:00:00Z" } } },
     { stored: "PR-TOOL-CANDIDATE-B.png", decision: "rejected" },
   ];
   /* Two states the creator approved. Since the acceptance-correction pass that
