@@ -580,6 +580,12 @@ async function main() {
   await testGeneratedUnitTitleIsNotMotionIntent();
   testGeneratedUnitTitleIsNotTheShotDescription();
   testNoTitleIsTreatedAsAuthoredDirection();
+
+  /* ---- 12. COMPOSER FALLBACK RESTORES ONE COMPOSER (third hold) ------------ */
+  await testExplicitNoneSurvivesAComposerFallback();
+  await testExplicitLipSyncSurvivesAComposerFallback();
+  await testUntouchedModeStillDerivesAfterAComposerFallback();
+  await testRepeatedFallbackDoesNotAccumulateWrappers();
   testDeclaredCameraOutranksDefaultedPlan();
   testDeclaredPlanCameraIsApplied();
   testLowerLayerDefaultSurvivesWhenNothingContradictsIt();
@@ -1515,6 +1521,186 @@ function testNoTitleIsTreatedAsAuthoredDirection() {
     "the direction box outranks the note, as it always has");
 }
 
+/* ======================================= 12. THE THIRD HOLD CORRECTION
+   ===========================================================================
+   AFTER A FALLBACK THE PAGE RUNS ONE COMPOSER, NOT HALF OF EACH.
+
+   public/v607-composer.js captures the base implementations it replaces so
+   restoreComposerOriginals607() can put them back — the escape hatch a filmmaker reaches
+   through `disableComposerEnhancements`, and the one the file's own load-time guard
+   takes when a dependency is missing. Every motion-plan READER was captured. None of the
+   four WRITERS was.
+
+   So a real fallback left a hybrid: this file's writers, which store into the ACTIVE
+   UNIT's plan, beside the base composer's readers, which read the SHOT's plan. An
+   explicitly chosen `audio.mode = none` was written to the unit plan complete with its
+   declaration mark; the restored base builder sent the shot plan's untouched `none`; and
+   the compiler correctly derived `generate-voice` over a decision somebody had made. An
+   explicit `lip-sync-reference` vanished the same way.
+
+   These cases take the real runtime path — the shipped `disableComposerEnhancements`,
+   with no function swapped in by the test — and follow the choice all the way to the
+   audio mode the compiled package would carry. */
+
+/* The four writers this file replaces. Named here so the fixture asserts the CLASS was
+   restored rather than the one field the reviewer happened to reproduce. */
+const V607_REPLACED_MOTION_WRITERS = Object.freeze([
+  "setMotionSubject", "setMotionProp", "setMotionPlanField", "setSimpleMotionAudio",
+]);
+
+/* Render with the enhanced composer active, then take the shipped fallback. Returns the
+   live context plus whatever the compile route was asked for. */
+async function afterRealComposerFallback({ chooseMode = "", withDialogue = true } = {}) {
+  const project = buildFixture();
+  const seen = [];
+  const { context } = await render("#/shot/L1-01", project, {
+    storage: { "cinebraid-focused:fixture:shot-task:L1-01": "motion" },
+    fetch: async (url, options, respond) => {
+      if (url !== "/api/prompt/compile") return null;
+      seen.push(JSON.parse(String(options.body || "{}")));
+      return respond({ compiledPrompt: "COMPILED", spec: { schemaVersion: 1, actions: [] }, references: [], warnings: [], confirmations: [] });
+    },
+  });
+  assert.strictEqual(vm.runInContext("!window.__CINEBRAID_COMPOSER_607_DISABLED", context), true,
+    "the fixture must start with the enhanced composer actually installed");
+  const enhanced = vm.runInContext(`JSON.stringify(${JSON.stringify(V607_REPLACED_MOTION_WRITERS)}.map((name) => String(window[name]).slice(0, 80)))`, context);
+
+  /* THE REAL FALLBACK. `disableComposerEnhancements` is the shipped entry point — the
+     same function the file's own load-time dependency guard calls. Nothing is restored
+     by hand. */
+  vm.runInContext(`disableComposerEnhancements(new Error("fixture: composer dependency check failed"))`, context);
+  assert.strictEqual(vm.runInContext("window.__CINEBRAID_COMPOSER_607_DISABLED === true", context), true,
+    "the fallback must actually have been taken");
+
+  if (withDialogue) vm.runInContext(`(() => {
+    const s = shotById("L1-01");
+    const c = ensureShotCreation(s);
+    const unit = (s.clips || []).find((item) => item.id === c.activeMotionUnitId) || s.clips[0];
+    setMotionSoundField("L1-01", unit.id, "dialogue", "line", ${JSON.stringify(LIP_SYNC_LINE)});
+  })()`, context);
+  if (chooseMode) vm.runInContext(`setSimpleMotionAudio("L1-01", "mode", ${JSON.stringify(chooseMode)})`, context);
+
+  const state = JSON.parse(vm.runInContext(`(() => {
+    const s = shotById("L1-01");
+    const c = ensureShotCreation(s);
+    const unit = (s.clips || []).find((item) => item.id === c.activeMotionUnitId) || s.clips[0];
+    return JSON.stringify({
+      restoredIsCapturedBase: ${JSON.stringify(V607_REPLACED_MOTION_WRITERS)}
+        .every((name) => window[name] === (window.__cinebraidComposerOriginals607 || {})[name]),
+      restoredSources: ${JSON.stringify(V607_REPLACED_MOTION_WRITERS)}.map((name) => String(window[name]).slice(0, 80)),
+      shotPlanAudio: c.motionPlan.audio,
+      unitPlanAudio: (unit && unit.motionPlan && unit.motionPlan.audio) || null,
+    });
+  })()`, context));
+
+  await vm.runInContext(`buildGuidedMotionPrompt("L1-01", false)`, context);
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  const request = seen[0] || null;
+
+  /* What the server would make of that request, through the real ordering. */
+  let spec = null;
+  if (request) {
+    const live = vm.runInContext("JSON.parse(JSON.stringify(P))", context);
+    const shotContext = PromptEngine.buildContext(live, "L1-01", request.segmentId);
+    spec = PromptEngine.defaultSpec(shotContext, "motion", "i2v", request.references || [], null);
+    spec = PromptEngine.applyStructuredDirection(spec, request.composition || null, request.motionPlan || null, request.references || []);
+    if (request.motionBrief) spec = PromptEngine.applyMotionAudioBrief(spec, request.motionBrief);
+  }
+  return { context, enhanced: JSON.parse(enhanced), state, request, spec };
+}
+
+/* PROOF THE RESTORED FUNCTION IS THE BASE ONE, asked two ways. Identity against the
+   capture is the direct claim; where the write LANDS is the one that could not be faked
+   by a wrapper, because the two implementations store in different places. */
+function assertRestoredWritersAreBase(run) {
+  assert.ok(run.state.restoredIsCapturedBase,
+    `every motion-plan writer this file replaces must be restored to the captured base implementation: ${JSON.stringify(run.state.restoredSources)}`);
+  for (let index = 0; index < V607_REPLACED_MOTION_WRITERS.length; index += 1) {
+    assert.notStrictEqual(run.state.restoredSources[index], run.enhanced[index],
+      `${V607_REPLACED_MOTION_WRITERS[index]} was not replaced by the fallback — the fixture is not exercising a restoration`);
+  }
+}
+
+/* CASE A. An explicit `none` chosen after a real fallback. */
+async function testExplicitNoneSurvivesAComposerFallback() {
+  const run = await afterRealComposerFallback({ chooseMode: "none" });
+  assertRestoredWritersAreBase(run);
+  /* The base writer stores in the SHOT plan. A write that landed in the unit plan instead
+     is the hybrid this correction removes, and it is asserted rather than inferred. */
+  assert.strictEqual(run.state.shotPlanAudio.mode, "none",
+    `the restored base writer must store the chosen mode where the base reader looks: ${JSON.stringify(run.state.shotPlanAudio)}`);
+  assert.ok(MotionIntent.motionFieldDeclared("audio", run.state.shotPlanAudio, "mode"),
+    `the declaration must be stored with it: ${JSON.stringify(run.state.shotPlanAudio)}`);
+  assert.strictEqual(run.state.unitPlanAudio, null,
+    `nothing may have been written into the enhanced composer's own store after a fallback: ${JSON.stringify(run.state.unitPlanAudio)}`);
+
+  assert.ok(run.request, "the compile must proceed");
+  assert.strictEqual(run.request.motionPlan?.audio?.mode, "none",
+    `the request must carry the chosen mode: ${JSON.stringify(run.request.motionPlan?.audio)}`);
+  assert.strictEqual(run.request.audio?.mode, "none",
+    `the request's audio block must carry it too: ${JSON.stringify(run.request.audio)}`);
+  assert.strictEqual(run.spec.audio.mode, "none",
+    `an explicitly chosen "none" must survive a composer fallback all the way to the compiled package: ${run.spec.audio.mode}`);
+  assert.strictEqual(run.spec.audio.dialogue, "",
+    `"no audio" must generate no dialogue: ${JSON.stringify(run.spec.audio.dialogue)}`);
+}
+
+/* CASE B. An explicit lip-sync chosen after the same fallback, contract intact. */
+async function testExplicitLipSyncSurvivesAComposerFallback() {
+  const run = await afterRealComposerFallback({ chooseMode: "lip-sync-reference" });
+  assertRestoredWritersAreBase(run);
+  assert.strictEqual(run.state.shotPlanAudio.mode, "lip-sync-reference",
+    `the restored base writer must store the chosen mode where the base reader looks: ${JSON.stringify(run.state.shotPlanAudio)}`);
+  assert.strictEqual(run.request.motionPlan?.audio?.mode, "lip-sync-reference",
+    `the request must carry the chosen mode: ${JSON.stringify(run.request.motionPlan?.audio)}`);
+  assert.strictEqual(run.spec.audio.mode, "lip-sync-reference",
+    `an explicit lip-sync must survive a composer fallback: ${run.spec.audio.mode}`);
+  assert.strictEqual(run.spec.audio.dialogue, "",
+    `lip-sync must not also request a generated voice: ${JSON.stringify(run.spec.audio.dialogue)}`);
+  assert.strictEqual(run.spec.audio.transcript, LIP_SYNC_LINE,
+    `the words belong in the transcript under lip-sync: ${JSON.stringify(run.spec.audio.transcript)}`);
+}
+
+/* CASE C. No interaction at all after the fallback. The mode is genuinely unset, so a
+   lower layer may still derive over it — the half that keeps this a distinction rather
+   than a blanket preservation. */
+async function testUntouchedModeStillDerivesAfterAComposerFallback() {
+  const run = await afterRealComposerFallback({ chooseMode: "" });
+  assertRestoredWritersAreBase(run);
+  assert.ok(!MotionIntent.motionFieldDeclared("audio", run.state.shotPlanAudio, "mode"),
+    `a mode nobody selected must carry no declaration: ${JSON.stringify(run.state.shotPlanAudio)}`);
+  assert.strictEqual(run.spec.audio.mode, "generate-voice",
+    `an unset mode must still be derived after a fallback: ${run.spec.audio.mode}`);
+}
+
+/* CASE D. REPEATED RESTORATION, on the path the runtime actually has.
+ *
+ * There is no in-page way back to the enhanced composer: enableComposerEnhancementsNextLoad()
+ * clears the stored preference and RELOADS, so v607 -> base -> v607 is two page lifetimes,
+ * not a toggle. What is reachable is calling the fallback again on a page that has already
+ * taken it, and that is what is exercised here — no toggle system is invented for the
+ * test. Restoration must be idempotent: the same base functions, no wrapper accumulating
+ * around them, and the same compiled answer. */
+async function testRepeatedFallbackDoesNotAccumulateWrappers() {
+  const first = await afterRealComposerFallback({ chooseMode: "none" });
+  const before = JSON.parse(vm.runInContext(`JSON.stringify(${JSON.stringify(V607_REPLACED_MOTION_WRITERS)}.map((name) => String(window[name])))`, first.context));
+  vm.runInContext(`disableComposerEnhancements(new Error("fixture: second fallback"))`, first.context);
+  vm.runInContext(`disableComposerEnhancements(new Error("fixture: third fallback"))`, first.context);
+  const after = JSON.parse(vm.runInContext(`JSON.stringify(${JSON.stringify(V607_REPLACED_MOTION_WRITERS)}.map((name) => String(window[name])))`, first.context));
+  assert.deepStrictEqual(after, before,
+    "restoring an already-restored composer must be a no-op; a wrapper accumulating here would mean each fallback wrapped the last");
+  assert.ok(vm.runInContext(`${JSON.stringify(V607_REPLACED_MOTION_WRITERS)}.every((name) => window[name] === (window.__cinebraidComposerOriginals607 || {})[name])`, first.context),
+    "and the functions must still be the captured base ones");
+
+  /* Two page lifetimes that each end in a fallback must agree, which is the closest the
+     runtime gets to the toggle sequence and is a real sequence a filmmaker can produce. */
+  const second = await afterRealComposerFallback({ chooseMode: "none" });
+  assert.strictEqual(second.spec.audio.mode, first.spec.audio.mode,
+    "a second page that falls back must reach the same answer as the first");
+  assert.deepStrictEqual(second.state.shotPlanAudio, first.state.shotPlanAudio,
+    "and must store the choice identically");
+}
+
 module.exports = {
   BLANK_SUBJECT, BLANK_PROP, BLANK_CAMERA, BLANK_ENVIRONMENT, BLANK_TIMING,
   REX, CHAIR, DECLARED_WALK, SHOT_A, SHOT_B, SHOT_A_TOKENS, SHOT_B_TOKENS, REPORTED_STRINGS,
@@ -1542,6 +1728,9 @@ module.exports = {
   testProvenanceDistinguishesExplicitFromUntouchedNone,
   testGeneratedUnitTitleIsNotMotionIntent, testGeneratedUnitTitleIsNotTheShotDescription,
   testNoTitleIsTreatedAsAuthoredDirection,
+  V607_REPLACED_MOTION_WRITERS, afterRealComposerFallback, assertRestoredWritersAreBase,
+  testExplicitNoneSurvivesAComposerFallback, testExplicitLipSyncSurvivesAComposerFallback,
+  testUntouchedModeStillDerivesAfterAComposerFallback, testRepeatedFallbackDoesNotAccumulateWrappers,
   lipSyncPlan, lipSyncReferences, lipSyncBrief, LIP_SYNC_LINE, AUDIO_REFERENCE_KEY,
   NARRATIVE_LOWER_SOURCE_TOKEN, narrativeOnlyFixture, motionCompileAttempt,
   testEmptyComposerFallsThroughToShotNarrative, testUndirectedShotStillRefuses,

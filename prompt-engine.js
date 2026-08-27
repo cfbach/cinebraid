@@ -1171,15 +1171,23 @@ function applyMotionAudioBrief(spec, rawBrief) {
     cleanText(dialogue.volume) ? `Volume: ${cleanText(dialogue.volume)}` : "",
     cleanText(dialogue.startTime) || cleanText(dialogue.endTime) ? `Timing: ${cleanText(dialogue.startTime) || "start"} to ${cleanText(dialogue.endTime) || "end"}` : "",
   ].filter(Boolean).join("; ");
-  /* The mode is not a label on its own: lip-sync means the words are the TRANSCRIPT of a
-     recording the model must match, and an empty `dialogue` is what stops a second voice
-     being generated over it. Restoring the mode while leaving the line in `dialogue`
-     would preserve the word and lose the contract. */
+  /* THE MODE IS NOT A LABEL ON ITS OWN; IT IS A CONTRACT, AND EACH MODE HAS ONE.
+     `lip-sync-reference` means the words are the TRANSCRIPT of a recording the model must
+     match, and an empty `dialogue` is what stops a second voice being generated over it.
+     `none` means no spoken output at all: neither field carries the line, because the
+     model packs read `audio.dialogue` and print "X says, exactly: …" from it without ever
+     consulting the mode — so a filmmaker who chose "no audio" would still have heard one.
+
+     applyStructuredDirection() has always cleared both fields for both modes. This is the
+     same rule in the layer that runs after it, so the two agree instead of the second one
+     silently undoing the first; the mode itself is decided above and is not re-ranked
+     here. */
   const lipSyncing = audioMode === "lip-sync-reference";
+  const silent = audioMode === "none";
   out.audio = {
     ...out.audio,
-    dialogue: lipSyncing ? "" : line,
-    transcript: lipSyncing ? (line || cleanText(out.audio?.transcript)) : line,
+    dialogue: lipSyncing || silent ? "" : line,
+    transcript: silent ? "" : (lipSyncing ? (line || cleanText(out.audio?.transcript)) : line),
     speakerId: cleanText(dialogue.speakerId || out.audio?.speakerId),
     speakerName: cleanText(dialogue.speakerName || out.audio?.speakerName || dialogue.speakerId),
     voiceDesign: compactVoiceDesign(dialogue.voiceDesign || out.audio?.voiceDesign),

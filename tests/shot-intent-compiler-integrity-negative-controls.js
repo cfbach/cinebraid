@@ -68,6 +68,13 @@
  *   NC-M25  buildContext reads the same generated title as the shot's subject, ahead of
  *           the narrative the filmmaker actually wrote
  *
+ * THE THIRD HOLD-CORRECTION CONTROL:
+ *
+ *   NC-M26  the composer fallback stops restoring the audio writer, so a real v607 ->
+ *           base restoration leaves a hybrid: the enhanced writer storing into the
+ *           active unit's plan beside the base reader sending the shot's plan, and an
+ *           explicit "no audio" compiles as generate-voice
+ *
  * EVERY CONTROL DECLARES WHICH DETECTOR IT EXPECTS. `expect` is a regular expression over
  * the detector's own message, and a failure that does not match it fails THIS suite — a
  * control that armed one defect and tripped an unrelated assertion elsewhere would
@@ -821,6 +828,47 @@ async function nc25() {
   });
 }
 
+/* ============================== THE THIRD HOLD-CORRECTION CONTROL (NC-M26)
+   ===========================================================================
+   Take the audio writer back out of the capture set and the fallback leaves a hybrid
+   composer behind: this file's writer storing into the active unit's plan, the base
+   composer's reader sending the shot's plan. The filmmaker's explicit "no audio" lands
+   where nothing looks, and the compiler derives a voice over it.
+
+   The probe does not merely observe the wrong answer — it proves the MIXED STATE that
+   causes it, because "the mode came out wrong" has more than one possible cause and only
+   one of them is the defect this control names. */
+async function nc26() {
+  await control({
+    id: "NC-M26",
+    expect: /must be restored to the captured base implementation|must store the chosen mode where the base reader looks|must survive a composer fallback all the way to the compiled package/,
+    defect: "the composer fallback stops restoring the audio writer, leaving a v607-writer / base-reader hybrid",
+    files: {
+      "public/v607-composer.js": [[
+        `    setSimpleMotionAudio: typeof window.setSimpleMotionAudio === "function" ? window.setSimpleMotionAudio : null,`,
+        "",
+      ]],
+    },
+    probe: async (suite) => {
+      const run = await suite.afterRealComposerFallback({ chooseMode: "none" });
+      /* 1. THE MUTATION LANDED: the writer was not restored with its siblings. */
+      assert.ok(!run.state.restoredIsCapturedBase,
+        `NC-M26: the defect did not land — every writer was still restored: ${JSON.stringify(run.state.restoredSources)}`);
+      /* 2. THE HYBRID ACTUALLY EXISTS: the choice went into the enhanced composer's own
+            store while the base composer's store stayed untouched. */
+      assert.ok(run.state.unitPlanAudio && run.state.unitPlanAudio.mode === "none",
+        `NC-M26: the enhanced writer did not run — unit plan is ${JSON.stringify(run.state.unitPlanAudio)}`);
+      assert.ok(!suite.MotionIntent.motionFieldDeclared("audio", run.state.shotPlanAudio, "mode"),
+        `NC-M26: the base store carries the declaration after all, so there is no hybrid: ${JSON.stringify(run.state.shotPlanAudio)}`);
+      /* 3. THE LITERAL UNSAFE COMPILED MODE. */
+      assert.strictEqual(run.spec.audio.mode, "generate-voice",
+        `NC-M26: the compile did not go wrong — the mode is ${run.spec.audio.mode}`);
+      return `explicit "none" was written to ${JSON.stringify(run.state.unitPlanAudio.declaredFields)} in the unit plan, the base builder sent the shot plan's ${JSON.stringify(run.state.shotPlanAudio.mode)}, and the package compiled as ${JSON.stringify(run.spec.audio.mode)} with dialogue ${JSON.stringify(run.spec.audio.dialogue)}`;
+    },
+    guard: (suite) => suite.testExplicitNoneSurvivesAComposerFallback(),
+  });
+}
+
 /* ================================================================== THE RUN
    =========================================================================== */
 
@@ -875,6 +923,7 @@ async function main() {
   await nc23();
   await nc24();
   await nc25();
+  await nc26();
 
   assert.deepStrictEqual(hashes(), before,
     "a control left a patched file changed; every patched byte must be restored exactly");

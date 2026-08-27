@@ -36,6 +36,27 @@
     guidedMotionPanel: typeof guidedMotionPanel === "function" ? guidedMotionPanel : null,
     guidedMotionPromptResult: typeof guidedMotionPromptResult === "function" ? guidedMotionPromptResult : null,
     setGuidedMotionField: typeof window.setGuidedMotionField === "function" ? window.setGuidedMotionField : null,
+    /* THE MOTION-PLAN WRITERS, WHICH THIS FILE ALSO REPLACES.
+     *
+     * THIRD HOLD CORRECTION. Restoration was asymmetric: every motion-plan READER below
+     * was captured and put back, and none of the four WRITERS was. So after a real
+     * fallback the page ran a hybrid — this file's writers, which store into the ACTIVE
+     * UNIT's plan, beside the base composer's readers, which read the SHOT's plan. A
+     * filmmaker's explicit choice then landed somewhere nothing looked.
+     *
+     * That is not a cosmetic gap, it is the Slice-1 invariant failing: an explicitly
+     * chosen `audio.mode = none` was written to the unit plan complete with its
+     * declaration mark, the restored base builder sent the shot plan's untouched `none`
+     * instead, and the compiler correctly derived `generate-voice` over a decision
+     * somebody had made. An explicit `lip-sync-reference` disappeared the same way.
+     *
+     * The repair is symmetry and nothing else: what this file replaces, it restores. No
+     * state is copied between the two plans on the way out, no mode is special-cased, and
+     * the base readers are untouched — after restoration the page runs ONE composer. */
+    setMotionSubject: typeof window.setMotionSubject === "function" ? window.setMotionSubject : null,
+    setMotionProp: typeof window.setMotionProp === "function" ? window.setMotionProp : null,
+    setMotionPlanField: typeof window.setMotionPlanField === "function" ? window.setMotionPlanField : null,
+    setSimpleMotionAudio: typeof window.setSimpleMotionAudio === "function" ? window.setSimpleMotionAudio : null,
     buildGuidedFramePrompt: typeof window.buildGuidedFramePrompt === "function" ? window.buildGuidedFramePrompt : null,
     buildGuidedMotionPrompt: typeof window.buildGuidedMotionPrompt === "function" ? window.buildGuidedMotionPrompt : null,
     addComposerElement: typeof window.addComposerElement === "function" ? window.addComposerElement : null,
