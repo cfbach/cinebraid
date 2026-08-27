@@ -32,6 +32,7 @@ const assert = require("assert");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
+const vm = require("vm");
 const express = require("express");
 
 const { registerFalGeneration } = require("../fal-generation");
@@ -134,7 +135,7 @@ async function harness(options = {}) {
   };
 
   return {
-    dir, file, calls, post, runs, settle,
+    dir, file, calls, post, runs, settle, appOrigin,
     project: () => JSON.parse(fs.readFileSync(file, "utf8")),
     saveProject: (project) => fs.writeFileSync(file, JSON.stringify(project, null, 2)),
     saveRuns: (rows) => fs.writeFileSync(runs.file, JSON.stringify(rows, null, 2)),
@@ -627,6 +628,97 @@ async function main() {
       assert(Array.isArray(capability.qualityTiers) && capability.qualityTiers.length, "and real quality tiers");
       assert.strictEqual(capability.flags.seed, false, "and GPT Image 2's documented absence of a seed");
       note(`13. the gate's capability comes from the route's own resolver — ${capability.resolutions.length} sizes, ${capability.qualityTiers.length} quality tiers, seed false`);
+    } finally { h.close(); }
+  }
+
+  /* =======================================================================
+     14. THE COVERAGE RECORD, END TO END.
+
+     plan.coverage has been computed since C1 and has travelled on the wire from both
+     plan preview routes since C2b. It had no reader: a filmmaker pressing a paid button
+     could see the compiled prompt and could NOT see which of their decisions were in it.
+
+     This drives the real preview route on a real package and renders the real response
+     through the shipped renderer. Nothing is re-derived on the way: the states, the
+     reasons and the labels are all the compiler's. */
+  {
+    const h = await harness();
+    try {
+      const buildId = seedFramePackage(h);
+      const preview = await fetch(`${h.appOrigin}/api/generation/fal/image/plan`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ purpose: "frame", shotId: "SH-1", sourceBuildId: buildId }),
+      });
+      const plan = await preview.json();
+      assert.strictEqual(preview.status, 200, `the plan preview must compile: ${JSON.stringify(plan)}`);
+      const coverage = plan.coverage || [];
+      assert(coverage.length > 0, "the compiled plan must carry a coverage record");
+
+      /* THE LABEL IS THE COMPILER'S. Every entry names a filmmaker-facing field, joined
+         from generation-compiler.js's INTENT_FIELDS rather than prettified from the key. */
+      for (const entry of coverage) {
+        assert(entry.label && entry.label !== entry.intent || entry.intent === entry.label,
+          `every coverage entry must carry a label: ${JSON.stringify(entry)}`);
+        assert(["represented", "anchored", "omitted-by-design", "unsupported"].includes(entry.state),
+          `and a state from the compiler's own vocabulary: ${JSON.stringify(entry)}`);
+      }
+      /* The compiler's own answers, not the ones a reader might expect. A camera move on
+         a STILL frame is `omitted-by-design` with a reason — CineBraid left it out because
+         it belongs to the motion pass — and not `unsupported`, which would claim the model
+         refused something. The distinction is the compiler's and this reports it. */
+      const camera = coverage.find((entry) => entry.intent === "camera.movement");
+      assert(camera, "a fully directed shot carries a camera move");
+      assert.strictEqual(camera.label, "camera movement", "and the dialog reads the compiler's word for it");
+      assert.strictEqual(camera.state, "omitted-by-design",
+        "a still frame holds one instant, and the compiler says so as a decision rather than a refusal");
+      assert(/motion/i.test(String(camera.reason)), `and gives its reason: ${JSON.stringify(camera.reason)}`);
+      const identity = coverage.find((entry) => entry.intent === "identity.canon");
+      assert.strictEqual(identity.state, "anchored",
+        "and Kai's identity is carried by the approved reference rather than restated in words");
+      assert(/Kai/.test(String(identity.via)), `naming which one: ${JSON.stringify(identity.via)}`);
+
+      /* AND THE SHIPPED RENDERER SHOWS IT. public/generation-view.js is browser-lexical,
+         so it is evaluated here with the small set of helpers it actually uses — the
+         alternative is asserting against a copy of the markup, which proves nothing. */
+      const context = {
+        window: {},
+        localStorage: { getItem: () => null, setItem: () => {} },
+        esc: (value) => String(value == null ? "" : value).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])),
+        attr: (value) => String(value == null ? "" : value).replace(/"/g, "&quot;"),
+        ...Presentation,
+      };
+      vm.createContext(context);
+      vm.runInContext(fs.readFileSync(path.join(__dirname, "..", "public", "generation-view.js"), "utf8"), context, { filename: "public/generation-view.js" });
+
+      /* SIMPLE IS CONCISE ABOUT A LONG RECORD AND NEVER SILENT ABOUT ONE. This shot's
+         plan carries around thirty entries and roughly half are deliberate omissions —
+         a still has no duration and carries no sound. Listing them in front of a paid
+         button is the wall the one row that matters would hide in. */
+      const simpleMarkup = context.generationCoverageMarkup(coverage, "simple");
+      assert(/data-coverage-summary="clear"/.test(simpleMarkup),
+        `nothing in this request was refused by the model, and Simple says so plainly: ${simpleMarkup}`);
+      assert.strictEqual((simpleMarkup.match(/data-coverage-state=/g) || []).length, 0,
+        "with no row to raise, Simple lists none");
+      assert(/left out on purpose/.test(simpleMarkup) && /carried into this request/.test(simpleMarkup),
+        `but it still accounts for every entry by count: ${simpleMarkup}`);
+
+      /* AND IT DOES RAISE THE ONE STATE THAT COSTS MONEY TO DISCOVER LATE. */
+      const refused = [...coverage, { intent: "reproducibility.seed", label: "seed", state: "unsupported", reason: "This model does not accept a seed." }];
+      const raised = context.generationCoverageMarkup(refused, "simple");
+      assert(/data-coverage-summary="unsupported"/.test(raised), `an unsupported intent changes the summary: ${raised}`);
+      assert(/not supported by this model/.test(raised), "in words a filmmaker reads");
+      assert.strictEqual((raised.match(/data-coverage-state=/g) || []).length, 1,
+        "and Simple raises exactly the one row, not the other thirty-three");
+
+      /* ADVANCED IS THE WHOLE RECORD, unfiltered. */
+      const advancedMarkup = context.generationCoverageMarkup(refused, "advanced");
+      const rendered = (advancedMarkup.match(/data-coverage-state=/g) || []).length;
+      assert.strictEqual(rendered, refused.length,
+        `Advanced must render every entry the compiler emitted — ${rendered} of ${refused.length}`);
+      assert(/anchored by a reference/.test(advancedMarkup),
+        "including the answer to \"why is Kai not described in here\"");
+      const omitted = coverage.filter((entry) => entry.state === "omitted-by-design").length;
+      note(`14. the compiled plan's ${coverage.length}-entry coverage record reaches the browser labelled in the compiler's own words; Simple raises only what the model refused and accounts for the other ${omitted} omissions by count, and Advanced renders all ${refused.length}`);
     } finally { h.close(); }
   }
 

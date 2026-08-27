@@ -425,26 +425,28 @@ async function main() {
      stops being true is not a rewrite — it is a filter that looks like tidying: drop the
      entries with nothing good to say, and a request missing a piece of the filmmaker's
      direction presents a clean bill of health. */
-  await control("a coverage projection that quietly drops what the model cannot do",
+  await control("a coverage projection that quietly drops what CineBraid decided not to send",
     "the boundary reports the compiler's record whole", async () => {
       const falGeneration = loadModified("fal-generation.js", [[
         `function labelledCoverage(coverage) {
   return (Array.isArray(coverage) ? coverage : []).map((entry) => ({`,
         `function labelledCoverage(coverage) {
-  return (Array.isArray(coverage) ? coverage : []).filter((entry) => entry?.state !== "unsupported").map((entry) => ({`,
+  return (Array.isArray(coverage) ? coverage : []).filter((entry) => entry?.state !== "omitted-by-design").map((entry) => ({`,
       ]]);
       const h = await harness(falGeneration);
       try {
         const buildId = seedFramePackage(h);
         /* The still-image plan preview is where a filmmaker reads coverage before paying.
-           A frame plan for a fully directed shot always carries unsupported intents: a
-           still cannot render a camera move or a spoken line, and the compiler says so. */
+           A frame plan for a fully directed shot always carries deliberate omissions — a
+           still has no duration and carries no sound — and each one is a decision the
+           compiler recorded with a reason. Dropping them is the tidying that looks
+           harmless and turns "here is what I did not send you" into silence. */
         const preview = await h.plan({ purpose: "frame", shotId: "SH-1", sourceBuildId: buildId });
         assert.strictEqual(preview.status, 200, `the plan preview must compile: ${JSON.stringify(preview.data)}`);
         const coverage = preview.data.coverage || [];
         assert(coverage.length > 0, "the unsafe path must actually produce a coverage record");
-        assert(coverage.some((entry) => entry.state === "unsupported"),
-          `THE DEFECT: every intent this still image cannot carry was filtered out of the record the dialog reads — ${coverage.length} entries survived and not one of them says anything is missing`);
+        assert(coverage.some((entry) => entry.state === "omitted-by-design"),
+          `THE DEFECT: every intent CineBraid decided not to send was filtered out of the record the dialog reads — ${coverage.length} entries survived and not one of them admits anything was left out`);
       } finally { h.close(); }
     });
 

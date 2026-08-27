@@ -155,12 +155,26 @@ function generationLimitsMarkup(limits) {
    semantic check here, no re-reading of the prompt and no language model - the whole of
    the analysis already happened, upstream, deterministically.
 
-   WHAT IS SHOWN, AND WHERE. Anything the filmmaker asked for that this model cannot do,
-   and anything deliberately left out, is shown in BOTH views: an unsupported intent is
-   the single most expensive thing to discover after paying, and Advanced is a panel that
-   may be closed. Simple stops there. Advanced additionally lists what DID arrive, because
-   "camera movement: represented in the prompt" is reassurance rather than a decision, and
-   thirty reassurances in front of a paid button is a wall the important two rows hide in. */
+   WHAT IS SHOWN, AND WHERE — and the partition is the whole design, because a complete
+   coverage record is LONG. A compiled still frame for a fully directed shot carries
+   around thirty entries, and roughly half of them are `omitted-by-design`: a still has no
+   duration, carries no sound, and holds one instant rather than a camera move. Those are
+   correct, expected and reassuring, and listing sixteen of them in front of a paid button
+   is a wall for the one row that actually needs reading.
+
+   So exactly one state is alarming, and only it is shown in Simple:
+
+     unsupported        THE FILMMAKER ASKED FOR SOMETHING THIS CONFIGURATION CANNOT DO.
+                        The single most expensive thing to discover after paying, and
+                        Advanced is a panel that may be closed. Always shown, both views.
+     omitted-by-design  CineBraid left it out on purpose and says why - it belongs to a
+                        different pass. Counted in Simple, listed in Advanced.
+     represented        It reached the prompt. Reassurance rather than a decision.
+     anchored           A reference carries it instead of the words. Also reassurance -
+                        and the answer to "why is Kai not described in here".
+
+   Simple never hides a count. It says how many are in each population and where to read
+   them, which is the difference between a concise summary and an incomplete one. */
 const GENERATION_COVERAGE_STATES = {
   represented: { word: "in the prompt", tone: "carried" },
   anchored: { word: "anchored by a reference", tone: "carried" },
@@ -176,25 +190,35 @@ function generationCoverageRow(entry) {
     || (entry.state === "represented" && String(entry.via) === "parameter" ? "sent as a request parameter" : "");
   return `<li data-coverage-state="${attr(entry.state)}"><span>${esc(entry.label || entry.intent)}</span><b>${esc(state.word)}</b>${detail ? `<small>${esc(detail)}</small>` : ""}</li>`;
 }
+function generationCoverageCount(count, singular, plural) {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
 function generationCoverageMarkup(coverage, mode) {
   const rows = (Array.isArray(coverage) ? coverage : []).filter((entry) => entry && entry.intent);
   if (!rows.length) return "";
   const view = generationViewMode(mode);
-  const attention = rows.filter((entry) => ["unsupported", "omitted-by-design"].includes(String(entry.state)));
-  const carried = rows.filter((entry) => !["unsupported", "omitted-by-design"].includes(String(entry.state)));
-  const shown = view === "advanced" ? [...attention, ...carried] : attention;
-  /* Nothing to warn about is a real and good answer, and it is worth saying: silence
-     here reads as "coverage was not computed", which is a different fact. */
-  if (!shown.length)
-    return `<section class="gen-coverage" data-coverage-summary="clear"><b>Every piece of direction on this shot is in this request</b><small>${esc(`All ${carried.length} of them. Open Advanced to see each one.`)}</small></section>`;
-  return `<section class="gen-coverage" data-coverage-summary="${attr(attention.length ? "attention" : "full")}">`
-    + `<b>What this request carries</b>`
-    + `<small>${esc(attention.length
-      ? `${attention.length} piece${attention.length === 1 ? "" : "s"} of direction ${attention.length === 1 ? "is" : "are"} not in the prompt. This is the compiler's own record of what it wrote.`
-      : "The compiler's own record of what it wrote, intent by intent.")}</small>`
-    + `<ul>${shown.map(generationCoverageRow).join("")}</ul>`
-    + (view === "simple" && carried.length
-      ? `<small class="gen-coverage-rest">${esc(`${carried.length} other piece${carried.length === 1 ? "" : "s"} of direction reached the request. Open Advanced to see ${carried.length === 1 ? "it" : "them"}.`)}</small>`
+  const unsupported = rows.filter((entry) => String(entry.state) === "unsupported");
+  const omitted = rows.filter((entry) => String(entry.state) === "omitted-by-design");
+  const carried = rows.filter((entry) => ["represented", "anchored"].includes(String(entry.state)));
+  const shown = view === "advanced" ? [...unsupported, ...omitted, ...carried] : unsupported;
+  /* The rest, as counts rather than rows. Simple is concise about a long record; it is
+     never silent about one, because silence here reads as "coverage was not computed"
+     and that is a different fact from "everything arrived". */
+  const rest = [
+    omitted.length ? `${generationCoverageCount(omitted.length, "piece", "pieces")} left out on purpose` : "",
+    carried.length ? `${generationCoverageCount(carried.length, "piece", "pieces")} carried into this request` : "",
+  ].filter(Boolean).join(" · ");
+  const headline = unsupported.length
+    ? `${generationCoverageCount(unsupported.length, "piece", "pieces")} of your direction ${unsupported.length === 1 ? "cannot be" : "cannot be"} carried by this model`
+    : "Everything you asked for is accounted for";
+  return `<section class="gen-coverage" data-coverage-summary="${attr(unsupported.length ? "unsupported" : "clear")}" data-coverage-total="${attr(String(rows.length))}">`
+    + `<b>${esc(headline)}</b>`
+    + `<small>${esc(unsupported.length
+      ? "CineBraid compiled this request and recorded what reached it. This is that record, not a review."
+      : "CineBraid's own record of what it wrote, intent by intent. Nothing you asked for was refused by this model.")}</small>`
+    + (shown.length ? `<ul>${shown.map(generationCoverageRow).join("")}</ul>` : "")
+    + (view === "simple" && rest
+      ? `<small class="gen-coverage-rest">${esc(`${rest}. Open Advanced to read each one.`)}</small>`
       : "")
     + "</section>";
 }
