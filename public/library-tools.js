@@ -586,10 +586,18 @@ window.approveEntityFile = (list, id, name, stateId = "") => {
     media = entityMedia(list, x);
   if (!media.length) return toast("Add or generate a candidate before approving a reference");
   const requestedState = entityStateById(x, stateId || "state-default") || states[0];
+  /* AN EXPLICIT NAME IS HONOURED — including a sheet, because "use as sheet
+     source" opens this same modal deliberately. The FALLBACKS are eligibility
+     aware, which is what makes "choose replacement" on a bad primary useful:
+     without this, the fallback is `requestedState.approvedFile`, which for the
+     entity that needs correcting IS the sheet, so the modal opened offering the
+     wrong image back as its own replacement. */
+  const eligiblePool = media.filter((item) => !entityCandidateIsCoverageSheet(x, item.name));
+  const pool = eligiblePool.length ? eligiblePool : media;
   const selected = media.find((item) => item.name === name)
-    || media.find((item) => item.name === requestedState?.approvedFile)
-    || media.find((item) => item.name === x.approvedFile)
-    || media[media.length - 1];
+    || pool.find((item) => item.name === requestedState?.approvedFile)
+    || pool.find((item) => item.name === x.approvedFile)
+    || pool[pool.length - 1];
   window._entityApproval = { list, id, name: selected.name, stateId: requestedState?.id || "state-default" };
   openModal(
     `<div class="entity-approval-modal"><h3>Approve reference — ${esc(x.name || id)}</h3><div class="modal-sub">ASSIGN ONE CANDIDATE TO ONE CONTINUITY STATE</div><div class="entity-approval-modal-layout"><figure><div id="entity-approval-preview">${isVideo(selected.name) ? `<video muted controls src="${attr(selected.url)}"></video>` : `<img src="${attr(selected.url)}" alt="Candidate to approve">`}</div><figcaption id="entity-approval-file-caption">${esc(selected.name)}</figcaption></figure><div class="entity-approval-fields"><div class="form-field"><label>Candidate file</label><select id="entity-approve-file" onchange="syncEntityApprovalModal()">${media.map((item) => `<option value="${attr(item.name)}" ${item.name === selected.name ? "selected" : ""}>${esc(item.name)}</option>`).join("")}</select></div><div class="form-field"><label>Approve for continuity state</label><select id="entity-approve-target" onchange="syncEntityApprovalModal()">${states.map((st) => `<option value="${attr(st.id)}" ${String(requestedState?.id || "state-default") === String(st.id) ? "selected" : ""}>${esc(st.name || "Default")}${st.appliesTo ? ` · ${esc(st.appliesTo)}` : ""}</option>`).join("")}</select></div><div class="entity-approval-target-summary" id="entity-approval-target-summary"></div><input type="hidden" id="entity-approve-name" value="${attr(entityCanonicalSuggestion(list, id, selected.name, requestedState?.id || "state-default"))}"><p class="hint">The selected state will show this image in the live Project Bible. Other states and candidates are unchanged.</p><div class="form-field entity-approval-continuation"><label>Continue to another version after approval</label><select id="entity-approve-next" onchange="syncEntityApprovalContinuation()"></select><small id="entity-approve-next-note">Approve only, or continue directly into another continuity-state editor.</small></div></div></div><div class="modal-actions entity-approval-actions"><button class="changes-btn" onclick="closeModal();requestEntityChanges('${list}','${id}')">Request changes</button><div><button class="cancel" onclick="closeModal()">Cancel</button><button class="ghost-btn" onclick="confirmEntityApproval(false)">APPROVE ONLY</button><button id="entity-approve-continue" class="approve-btn large" onclick="confirmEntityApproval(true)">APPROVE & EDIT NEXT STATE</button></div></div></div>`,
@@ -701,13 +709,29 @@ window.confirmEntityApproval = async (continueToNext = false) => {
      writes nothing and says why. */
   const displayedAssetId = (entityMedia(list, x).find((item) => item.name === name) || {}).assetId || "";
   const entityAuthorityStateId = targetState?.id || targetStateId || "state-default";
-  try {
-    approveEntityStateCanon(P, {
-      list, entityId: id, stateId: entityAuthorityStateId, value: name, assetId: displayedAssetId,
-      at: new Date().toISOString(), via: "entity-approval-modal",
-    });
-  } catch (error) {
-    return toast(error.message || "That file cannot be approved for this reference");
+  /* USE AS SHEET SOURCE IS NOT AN IDENTITY DECISION, AND NOW THE CODE AGREES
+     WITH THE COPY.
+     `approvedIsCoverageSheet` was computed eleven lines above and spent on a
+     toast and a navigation branch, while this call ran unconditionally — so
+     accepting a turnaround as an extraction source wrote the entity's primary
+     pointer to a six-panel image and, a few lines below, filed the row as
+     `decision: "approved-sheet-source"`. Both statements were recorded; only one
+     of them was true.
+     Accepting a sheet source records the decision on the row and opens the
+     extractor. It moves NO primary pointer, so an entity that already has a real
+     identity reference keeps it. The kernel refuses this target as well — see
+     enforceTargetPolicy — and that refusal is the guarantee; this branch is what
+     stops the filmmaker meeting an error message for an action the product
+     deliberately offers. */
+  if (!approvedIsCoverageSheet) {
+    try {
+      approveEntityStateCanon(P, {
+        list, entityId: id, stateId: entityAuthorityStateId, value: name, assetId: displayedAssetId,
+        at: new Date().toISOString(), via: "entity-approval-modal",
+      });
+    } catch (error) {
+      return toast(error.message || "That file cannot be approved for this reference");
+    }
   }
   let finalName = name, renamedAssetId = "";
   if (to && name && to !== name) {
@@ -738,7 +762,11 @@ window.confirmEntityApproval = async (continueToNext = false) => {
     } else toast("Rename failed; approved with original filename");
   }
   const approvedAssetId = (entityMedia(list, x).find((item) => item.name === finalName) || {}).assetId || renamedAssetId || displayedAssetId;
-  if (targetState?.isDefault || targetStateId === "state-default") {
+  /* ...and neither is anything downstream of it. Accepting a sheet source moved
+     no primary, so the child states' validations are still answers about the
+     same parent image, and there is no new identity for an angle slot to be
+     "unassigned" against. Both writes below used to run for a sheet. */
+  if (!approvedIsCoverageSheet && (targetState?.isDefault || targetStateId === "state-default")) {
     for (const childState of ensureEntityStateList(x, true)) if (!childState.isDefault) childState.parentValidation = null;
     if (!approvedIsCoverageSheet && typeof ensureCoverageSlots === "function" && list !== "characters") {
       const slots = ensureCoverageSlots(list, x);

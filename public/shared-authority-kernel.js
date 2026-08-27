@@ -776,14 +776,94 @@ function entityOwnershipVerdict(project, target, fileName) {
   return { ok: true };
 }
 
+/* THE SECOND VETO: IS THIS ARTIFACT THE KIND OF THING THAT MAY BE AN IDENTITY.
+ *
+ * Ownership asks WHOSE bytes these are. This asks WHAT THEY ARE, and the two are
+ * independent: a coverage sheet an entity indisputably owns is still not that
+ * entity's identity reference, because it is six views of a face rather than a
+ * face. Approving one made every identity-dependent generation package a contact
+ * sheet as though it were the character.
+ *
+ * WHY IT IS HERE AND NOT ON THE BUTTON. public/library-tools.js already computed
+ * this fact — `approvedIsCoverageSheet` — and spent it on copy and navigation
+ * while calling approveEntityStateCanon() unconditionally a few lines above. The
+ * modal's own record even said `decision: "approved-sheet-source"` on a row whose
+ * primary-authority receipt had already been written. A UI branch is a rule with
+ * an off switch: a replay, a direct call, or the next surface that forgets to ask
+ * walks straight past it. The boundary refuses instead, so there is no path that
+ * can grant it.
+ *
+ * FAIL CLOSED ON THE RESOLVER, exactly as ownership does above. If
+ * public/shared-coverage.js is not in the composition the kernel cannot ask what
+ * the artifact is, and an unanswerable question is a refusal rather than a pass.
+ *
+ * WHAT IT DOES NOT DO. `undeclared` is eligible. Every hand-dropped import is
+ * `undeclared` — doIntake() writes `{stored, original}` and nothing structural —
+ * so refusing it would make ordinary primary approval impossible, which is the
+ * opposite defect. The consequence is stated plainly rather than hidden: a
+ * hand-dropped SHEET is `undeclared` and this gate does not stop it. Closing that
+ * needs a declaration at import time, which is a new contract and not this
+ * slice's to invent. */
+function coverageStructureModule() {
+  if (typeof module !== "undefined" && module.exports) {
+    try { return require("./shared-coverage.js"); } catch { return null; }
+  }
+  if (typeof referenceArtifactStructureOf === "function" && typeof artifactMayHoldPrimaryAuthority === "function") {
+    return { referenceArtifactStructureOf, artifactMayHoldPrimaryAuthority };
+  }
+  if (typeof globalThis !== "undefined"
+    && typeof globalThis.referenceArtifactStructureOf === "function"
+    && typeof globalThis.artifactMayHoldPrimaryAuthority === "function") {
+    return {
+      referenceArtifactStructureOf: globalThis.referenceArtifactStructureOf,
+      artifactMayHoldPrimaryAuthority: globalThis.artifactMayHoldPrimaryAuthority,
+    };
+  }
+  return null;
+}
+
+function entityArtifactVerdict(project, target, fileName) {
+  const need = kernelObject(target);
+  const name = kernelText(fileName);
+  if (!name) return { ok: true };
+  const structures = coverageStructureModule();
+  if (!structures
+    || typeof structures.referenceArtifactStructureOf !== "function"
+    || typeof structures.artifactMayHoldPrimaryAuthority !== "function") {
+    return {
+      ok: false,
+      code: "AUTHORITY_ARTIFACT_CLASSIFIER_UNAVAILABLE",
+      message: `CineBraid cannot confirm what kind of image ${name} is, so it will not make it the identity reference. No authority was written.`,
+    };
+  }
+  const entity = kernelList(kernelObject(project)[kernelText(need.list)])
+    .map(kernelObject)
+    .find((row) => kernelText(row.id) === kernelText(need.entityId)) || null;
+  const structure = kernelText(structures.referenceArtifactStructureOf(entity, name));
+  if (structures.artifactMayHoldPrimaryAuthority(structure) === true) return { ok: true };
+  return {
+    ok: false,
+    code: "AUTHORITY_ARTIFACT_NOT_IDENTITY_ELIGIBLE",
+    message: `${name} is a coverage sheet — several views in one image — so it cannot be the identity reference for ${kernelText(need.entityId)}. Approve it as a sheet source and extract a single view instead. No authority was written.`,
+    detail: { structure },
+  };
+}
+
 function enforceTargetPolicy(project, target, value) {
   if (target.kind !== "entity-state") return;
-  const verdict = kernelObject(entityOwnershipVerdict(project, target, value));
-  if (verdict.ok === true) return;
-  throw authorityError(
-    kernelText(verdict.code) || "AUTHORITY_OWNERSHIP_INELIGIBLE",
-    kernelText(verdict.message) || `${describeTarget(target)} cannot be approved for this image.`,
-  );
+  /* Ownership first: WHOSE this is, then WHAT it is. A file the entity does not
+     own should say so before its structure is discussed. */
+  for (const verdict of [
+    kernelObject(entityOwnershipVerdict(project, target, value)),
+    kernelObject(entityArtifactVerdict(project, target, value)),
+  ]) {
+    if (verdict.ok === true) continue;
+    throw authorityError(
+      kernelText(verdict.code) || "AUTHORITY_OWNERSHIP_INELIGIBLE",
+      kernelText(verdict.message) || `${describeTarget(target)} cannot be approved for this image.`,
+      kernelObject(verdict.detail),
+    );
+  }
 }
 
 /* ========================================================================== */

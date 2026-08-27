@@ -183,6 +183,118 @@
     return required === false ? LEGACY_FALSE_REQUIREMENT : LEGACY_TRUE_REQUIREMENT;
   }
 
+  /* ==========================================================================
+     WHAT KIND OF ARTIFACT A REFERENCE FILE IS.
+
+     A coverage sheet is a SOURCE ARTIFACT for coverage work: one image carrying
+     several views. A single reference is one view. The distinction is not
+     cosmetic — it decides whether an artifact may become an entity's PRIMARY
+     IDENTITY AUTHORITY, and that question is now asked at the authority boundary
+     in public/shared-authority-kernel.js rather than by whichever button happens
+     to be on screen.
+
+     THE ANSWER COMES FROM WHAT A WRITER DECLARED, AND FROM NOTHING ELSE.
+
+     Three copies of a filename heuristic used to answer it —
+     `/(?:SHEET|TURNAROUND|CONTACT)/i` over the stored filename, in
+     public/entities.js, public/app.js and public/coverage-automation.js. It
+     could not work in either direction, and that is measurable rather than
+     asserted:
+
+       * IT NEVER SAW A REAL SHEET. Every stored filename in a project is
+         machine-generated from the entity id. doIntake() (public/library-tools.js)
+         stores `${prefix}-CANDIDATE-${stamp}-NN.ext` and keeps the creator's own
+         filename only in `original`; fal-generation.js stores
+         `${entity.id}_FAL_CANDIDATE_N.ext`. A turnaround a filmmaker dragged in
+         as `IREN-TURNAROUND.png` is stored as `CHAR-IREN-CANDIDATE-M9X-01.png`,
+         which the pattern does not match.
+
+       * IT FIRED ON ORDINARY IMAGES. The pattern read the WHOLE stored name, and
+         that name begins with the entity id — so a prop called Bedsheet, a
+         character codenamed Contact, or a location called Contact Point had every
+         one of its single identity images classified as a multi-view sheet:
+         barred from every coverage slot by coverageSlotOptions(), and, once the
+         authority gate below exists, barred from primary authority too.
+
+     So the pattern is DELETED rather than replaced, and no second filename
+     convention takes its place. What remains is the declared record.
+
+     PRECEDENCE, and the order matters. `coverageJobType` describes THE ARTIFACT;
+     `coverageSheetType` describes WHICH BOARD the job was for. They are not the
+     same fact and the old predicate conflated them: an individually generated
+     expression candidate is written with `coverageJobType: "slot"` AND
+     `coverageSheetType: "expressions"` (public/coverage-automation.js, the
+     `mode === "individual"` arm), so `!!coverageSheetType` classified a single
+     expression image as a multi-panel sheet — and coverageSlotOptions() then
+     refused to let the filmmaker assign the very candidate the product had just
+     generated for that slot. The job type is asked first for that reason.
+
+     THE THIRD ANSWER IS REAL. `undeclared` is not a soft "no". It is the honest
+     state of a file that reached the project without any writer describing its
+     structure — which today is every hand-dropped import, because doIntake()
+     writes only `{stored, original}`. It is reported as itself so that a caller
+     decides what to do about it, rather than being rounded to "single" here where
+     the decision would be invisible. */
+  const REFERENCE_ARTIFACT_STRUCTURES = ["sheet", "single", "undeclared"];
+
+  /* The declarations this reads, named beside the writer that authors each one:
+
+       coverageJobType: "sheet"               submitCoverageJob, the sheet arm
+       coverageJobType: "slot"                submitCoverageJob, the individual arm
+       coverageJobType: "extracted-crop"      extractCoverageCrop
+       coverageJobType: "imported-reference"  confirmImportedReferenceMapping
+       coverageCrop: {...}                    extractCoverageCrop — the panel taken
+                                              OUT of a sheet, which is one view
+       coverageSheetType: "angles"|"expressions"
+                                              the board the job belongs to; only a
+                                              structural claim when no job type was
+                                              recorded at all (legacy rows). */
+  const SINGLE_VIEW_JOB_TYPES = ["slot", "extracted-crop", "imported-reference"];
+  function referenceArtifactStructure(row) {
+    if (!row || typeof row !== "object" || Array.isArray(row)) return "undeclared";
+    const jobType = coverageText(row.coverageJobType);
+    if (jobType === "sheet") return "sheet";
+    if (SINGLE_VIEW_JOB_TYPES.includes(jobType)) return "single";
+    if (row.coverageCrop && typeof row.coverageCrop === "object" && !Array.isArray(row.coverageCrop)) return "single";
+    if (!jobType && coverageText(row.coverageSheetType)) return "sheet";
+    return "undeclared";
+  }
+
+  /* The candidate row for a stored filename. This is public/entities.js's
+     entityCandidateRow() lookup — `stored || name` — and deliberately NOT
+     public/app.js's `stored || name || original`: `original` holds the creator's
+     pre-upload filename, and matching one row's STORED name against another
+     row's ORIGINAL name is the same filename-as-truth confusion this section
+     exists to remove. Returns null rather than {} so "no record" stays
+     distinguishable from "a record that declares nothing". */
+  function referenceArtifactRow(entity, fileName) {
+    const rows = entity && Array.isArray(entity.candidateFiles) ? entity.candidateFiles : [];
+    const wanted = String(fileName == null ? "" : fileName);
+    if (!wanted) return null;
+    return rows.find((row) => row && String(row.stored || row.name || "") === wanted) || null;
+  }
+
+  function referenceArtifactStructureOf(entity, fileName) {
+    return referenceArtifactStructure(referenceArtifactRow(entity, fileName));
+  }
+
+  /* The one predicate every "is this a sheet" caller now asks. */
+  function isCoverageSheetArtifact(entity, fileName) {
+    return referenceArtifactStructureOf(entity, fileName) === "sheet";
+  }
+
+  /* MAY THIS ARTIFACT BECOME AN ENTITY'S PRIMARY IDENTITY AUTHORITY.
+     A sheet may not: it is several views, and an identity-dependent generation
+     that packages it hands the model a contact sheet as though it were a face.
+     `undeclared` may — see the header: refusing it would make every hand-dropped
+     primary impossible, which is the opposite failure. The residual gap that
+     leaves (a hand-dropped SHEET is `undeclared` and therefore still eligible) is
+     a missing declaration seam at import time, not something this reader can
+     invent from the bytes it is given. */
+  function artifactMayHoldPrimaryAuthority(structure) {
+    return coverageText(structure) !== "sheet";
+  }
+
   function activeCoverageSlots(slots) {
     return (Array.isArray(slots) ? slots : []).filter((slot) => slot && !slot.retired);
   }
@@ -513,6 +625,12 @@
     requirementConflict,
     writeCoverageRequirement,
     templateRequirement,
+    REFERENCE_ARTIFACT_STRUCTURES,
+    referenceArtifactStructure,
+    referenceArtifactRow,
+    referenceArtifactStructureOf,
+    isCoverageSheetArtifact,
+    artifactMayHoldPrimaryAuthority,
     activeCoverageSlots,
     coverageSlotFile,
     summariseCoverage,

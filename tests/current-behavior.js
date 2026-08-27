@@ -530,6 +530,8 @@ async function main() {
     "reference-reframe-real-browser.py",
     "reference-reframe.js",
     "reference-review-contract.js",
+    "reference-truth-sheet-gate-negative-controls.js",
+    "reference-truth-sheet-gate.js",
     "reference-workflow-repair.js",
     "reference-workspace-ux.js",
     "release-package-smoke.js",

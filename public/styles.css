@@ -2098,7 +2098,34 @@ body.automation-activity-open::after{content:"";position:fixed;z-index:var(--z-a
 .coverage-slot-card.needs-attention { border-color: rgba(255, 178, 76, 0.35); }
 .coverage-slot-card header { display: flex; justify-content: space-between; gap: 12px; align-items: start; }
 .coverage-slot-card header span { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; }
+/* FOUR STATES, FOUR READINGS. This was one rule — `color:var(--muted)` — and it
+   printed Satisfied, Planned, Optional and Required-missing in the same grey.
+   referenceSlotStatus() has always returned the distinction; only the stylesheet
+   was collapsing it. `--amber`, `--green` and `--muted` are the palette's real
+   declared variables. */
 .coverage-slot-state { white-space: nowrap; font-size: 12px; color: var(--muted); }
+.coverage-slot-state.tone-complete { color: var(--green); }
+.coverage-slot-state.tone-attention { color: var(--amber); font-weight: 700; }
+.coverage-slot-state.tone-pending { color: var(--blue); }
+.coverage-slot-state.tone-optional { color: var(--muted); opacity: .68; }
+/* The commit step that the file dropdown used to skip. */
+.slot-commit-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:2px 0 4px}
+.slot-commit-row>button{flex:0 0 auto}
+.slot-commit-row>button[disabled]{opacity:.5}
+.slot-commit-row>small{color:var(--muted);min-width:0}
+/* The coverage quote, beside the counts it prices. */
+.coverage-spend-price{display:block;margin-top:6px;font-style:normal;font:700 11px/1.5 var(--mono)}
+.coverage-spend-price.is-estimated{color:var(--amber)}
+.coverage-spend-price.is-unavailable{color:var(--muted)}
+.coverage-spend-price.is-local{color:var(--green)}
+/* The visual chooser reuses the Generated Media grid and card wholesale; only the
+   modal shell around them is new. */
+.modal-box:has(.reference-media-chooser){max-width:min(1080px,94vw);width:min(1080px,94vw)}
+.reference-media-chooser>header{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;margin-bottom:12px}
+.reference-media-chooser>header span{font:800 8px var(--mono);letter-spacing:.12em;color:var(--muted)}
+.reference-media-chooser>header h3{margin:3px 0 4px}
+.reference-media-chooser>header p{margin:0;color:var(--muted)}
+.reference-media-chooser-grid{max-height:min(62vh,640px);overflow-y:auto}
 .coverage-slot-preview { min-height: 140px; border-radius: 12px; overflow: hidden; background: rgba(255,255,255,0.03); display: grid; place-items: center; }
 .coverage-slot-preview img, .coverage-slot-preview video { width: 100%; height: 100%; object-fit: cover; display: block; }
 .coverage-slot-empty { color: var(--muted); font-size: 13px; }
@@ -2319,7 +2346,16 @@ body.automation-activity-open{overflow:hidden}
 .bounded-slot-rail button i{grid-area:dot;width:8px;height:8px;border-radius:999px;background:var(--muted)}
 .bounded-slot-rail button span{grid-area:label;font-weight:700}.bounded-slot-rail button small{grid-area:status;color:var(--muted)}
 .bounded-slot-rail button.selected{border-color:var(--cyan);box-shadow:0 0 0 1px rgba(30,198,200,.22)}
-.bounded-slot-rail button.tone-complete i{background:var(--green)}.bounded-slot-rail button.tone-attention i{background:var(--yellow)}
+/* The rail defined two dots for four states, and `--yellow` is not a declared
+   custom property in this file, so required-missing fell back to the initial
+   value rather than reading as attention at all. Four states, four dots, all in
+   declared colours. */
+.bounded-slot-rail button.tone-complete i{background:var(--green)}
+.bounded-slot-rail button.tone-attention i{background:var(--amber);box-shadow:0 0 0 3px color-mix(in srgb,var(--amber) 20%,transparent)}
+.bounded-slot-rail button.tone-pending i{background:var(--blue)}
+.bounded-slot-rail button.tone-optional i{background:var(--muted);opacity:.5}
+.bounded-slot-rail button.tone-attention small{color:var(--amber)}
+.bounded-slot-rail button.tone-optional span,.bounded-slot-rail button.tone-optional small{opacity:.7}
 .bounded-single-slot{grid-template-columns:minmax(0,720px)!important;justify-content:start}
 .bounded-selected-task{min-width:0}
 .bounded-shot-workspace>.shot-main{min-width:0;overflow:hidden}
@@ -3660,6 +3696,21 @@ body[data-focused-workspace="1"] .guided-frame-body{grid-template-columns:minmax
 .entity-authority-details span b,.entity-authority-details span small{display:block}
 .entity-authority-details span small{margin-top:3px;color:var(--muted);overflow-wrap:anywhere}
 .entity-authority-details em{font:800 8px var(--mono);color:var(--green);font-style:normal}
+/* AUTHORITY THAT POINTS AT THE WRONG KIND OF IMAGE.
+   A receipt this row reports is untouched — the tone says the entity needs a
+   decision, it does not withdraw one. `--amber` is the palette's real declared
+   variable (see :root); `--warn`/`--orange`/`--yellow` are referenced elsewhere
+   in this file with no definition, so they are not used here. */
+.entity-authority-row.needs-correction{border-color:color-mix(in srgb,var(--amber) 46%,var(--line));background:color-mix(in srgb,var(--amber) 6%,var(--surface))}
+.entity-authority-row.needs-correction .entity-authority-details em{color:var(--amber)}
+.entity-authority-row.needs-correction .entity-authority-details span small{color:color-mix(in srgb,var(--amber) 62%,var(--ink))}
+.entity-authority-replace{white-space:nowrap}
+.entity-authority-row>.entity-authority-extract,.entity-authority-row>.entity-authority-replace{align-self:center}
+/* Four children once a row needs correction (thumb, details, extract, replace);
+   the base rule declares three columns, so the actions wrap to their own line
+   rather than being squeezed out of the track. */
+.entity-authority-row.needs-correction{grid-template-columns:auto minmax(0,1fr)}
+.entity-authority-row.needs-correction>.entity-authority-extract,.entity-authority-row.needs-correction>.entity-authority-replace{grid-column:2/-1;justify-self:start}
 .state-approved-hero{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:14px;align-items:center;margin:12px 0;padding:12px 14px;border:1px solid var(--line);border-radius:13px;background:var(--surface-1)}
 .state-approved-hero.is-approved{border-color:color-mix(in srgb,var(--green) 48%,var(--line));box-shadow:inset 3px 0 0 var(--green)}
 .state-approved-hero.is-missing{border-color:color-mix(in srgb,var(--amber) 48%,var(--line));box-shadow:inset 3px 0 0 var(--amber)}

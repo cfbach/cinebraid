@@ -797,9 +797,11 @@ function projectExpressionTemplate(entity) {
     replacementHistory: [],
   }));
 }
+/* The second copy, now the same one reader. See shared-coverage.js — this one
+   also matched a row on `original`, the creator's pre-upload filename, so a file
+   could be classified by a NEIGHBOURING row's name. */
 function projectCandidateIsCoverageSheet(entity, fileName) {
-  const row = (entity?.candidateFiles || []).find((item) => String(item?.stored || item?.name || item?.original || "") === String(fileName || "")) || {};
-  return row.coverageJobType === "sheet" || !!row.coverageSheetType || /(?:SHEET|TURNAROUND|CONTACT)/i.test(String(fileName || ""));
+  return isCoverageSheetArtifact(entity, fileName);
 }
 function normalizedCoverageAlias(list, slot) {
   const label = String(slot?.label || slot?.id || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();

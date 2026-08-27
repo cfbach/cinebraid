@@ -126,7 +126,15 @@
      the difference between a production review surface and a photo gallery. Every
      card is a BUTTON that opens the Inspector — one interaction, everywhere, so a
      filmmaker never has to learn which grid enlarges and which navigates. */
-  function cardMarkup(row) {
+  /* `options.action` lets another surface reuse this exact card to RETURN A
+     SELECTION instead of opening the Inspector. It is the only thing a caller may
+     change, and it changes nothing about what the card SAYS: the status word, the
+     authority line and the AI-suggested marker are still this function's, so a
+     picker cannot quietly present a rejected or unapproved file as something else.
+     Omitted — which is every existing call — the card opens the Inspector exactly
+     as before. */
+  function cardMarkup(row, options = {}) {
+    const action = typeof options.action === "function" ? options.action(row) : "";
     const url = row.file.url;
     const preview = !url
       ? `<div class="results-card-empty">Missing file</div>`
@@ -162,8 +170,8 @@
       : "";
     return `<button type="button" class="results-card role-${attr(row.disposition.role)}"
       data-results-card="1" data-mi-key="${attr(row.key)}" data-role="${attr(row.disposition.role)}" data-kind="${attr(row.kind)}"
-      onclick="window.inspectMedia('${attr(row.key)}')"
-      aria-label="${attr(`Inspect ${row.file.name} — ${statusWord.toLowerCase()}`)}">
+      onclick="${action || `window.inspectMedia('${attr(row.key)}')`}"
+      aria-label="${attr(`${action ? "Choose" : "Inspect"} ${row.file.name} — ${statusWord.toLowerCase()}`)}">
       <span class="results-card-media">${preview}<span class="results-card-status status-${attr(row.disposition.role)}">${esc(statusWord)}</span>${recommended}</span>
       <span class="results-card-body"><span class="results-card-kind">${esc(kindWords)}</span><b>${esc(owner)}</b><small>${esc(row.file.name)}</small>${authority}</span>
     </button>`;

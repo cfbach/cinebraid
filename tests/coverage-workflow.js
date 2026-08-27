@@ -112,14 +112,32 @@ async function testSheetApprovalDoesNotSeedAngleAndRemainsExtractable() {
   rendered.context.document.getElementById("entity-approve-next").value = "";
   await rendered.gesture.act(() => rendered.context.confirmEntityApproval(false));
   await delay(80);
-  const state = vm.runInContext(`(() => { const e=P.characters.find((item)=>item.id==='CHAR-IREN'); const assigned=(ensureCoverageSlots('characters',e)||[]).filter((slot)=>slot.approvedFile); return {approved:e.approvedFile, assigned:assigned.map((slot)=>({id:slot.id,file:slot.approvedFile}))}; })()`, rendered.context);
-  assert.strictEqual(state.approved, "CHAR-IREN-SHEET.png", "the sheet can remain an approved source artifact when the user explicitly chooses it");
+  const state = vm.runInContext(`(() => { const e=P.characters.find((item)=>item.id==='CHAR-IREN'); const assigned=(ensureCoverageSlots('characters',e)||[]).filter((slot)=>slot.approvedFile); const row=(e.candidateFiles||[]).find((item)=>(item.stored||item.name)==='CHAR-IREN-SHEET.png')||{}; return {approved:e.approvedFile, decision:row.decision, assigned:assigned.map((slot)=>({id:slot.id,file:slot.approvedFile}))}; })()`, rendered.context);
+  /* THIS ASSERTION USED TO READ THE OTHER WAY, and it was reading the defect.
+     It required `e.approvedFile === "CHAR-IREN-SHEET.png"` — i.e. that accepting
+     a turnaround as an EXTRACTION SOURCE moved the character's primary identity
+     pointer onto a six-panel image. The row was filed `approved-sheet-source` in
+     the same gesture, so the project recorded two contradictory statements and
+     this suite pinned the false one.
+     A sheet source is a source. The primary the reference already had is still
+     its primary, and the sheet is recorded as what it is. */
+  assert.strictEqual(state.approved, "CHAR-IREN-PRIMARY.png", "accepting a sheet as an extraction source must leave the existing primary identity reference untouched");
+  assert.notStrictEqual(state.approved, "CHAR-IREN-SHEET.png", "a multi-view sheet must never become the entity's primary identity pointer");
+  assert.strictEqual(state.decision, "approved-sheet-source", "the sheet must still be recorded as an accepted source artifact");
   assert.strictEqual(state.assigned.length, 0, "a whole sheet must not be auto-seeded into a single angle slot");
   rendered.context.localStorage.setItem("cinebraid-focused:fixture:entity-task:characters:CHAR-IREN", "approved");
   await rendered.context.route();
   const html = rendered.context.document.getElementById("main").innerHTML;
-  assert(html.includes("MULTI-VIEW SHEET"), "approved sheet source must be clearly identified");
-  assert(html.includes("EXTRACT VIEWS"), "approved sheets must remain extractable after leaving the candidate pool");
+  /* These two used to look for "MULTI-VIEW SHEET" and "EXTRACT VIEWS", which are
+     rendered by entityAuthoritySummaryMarkup — the CANON IMAGES strip. They
+     matched only because the sheet had become the default state's approved file,
+     i.e. the very defect above. The sheet does not go there any more, so the
+     question "is it still clearly identified and still extractable" is asked
+     where the sheet actually lives: its candidate card. */
+  assert(html.includes("COVERAGE SHEET"), "an accepted sheet source must still be clearly identified as a sheet");
+  assert(html.includes("is-coverage-sheet"), "the sheet's card must carry its structural class");
+  assert(html.includes("USE AS SHEET SOURCE"), "an accepted sheet must remain routable into the extractor");
+  assert(!/NEEDS CORRECTION/.test(html), "a sheet that was never made canon must not report a correction against the entity");
 }
 
 async function testLegacyFailureGroupingAndOpaqueUI() {

@@ -332,8 +332,14 @@ control({
 control({
   label: "C5 the ownership veto",
   file: KERNEL_FILE,
-  anchor: "  const verdict = kernelObject(entityOwnershipVerdict(project, target, value));",
-  replacement: "  const verdict = { ok: true };",
+  /* THE ANCHOR MOVED WHEN THE SECOND VETO ARRIVED, and this control refused
+     itself rather than quietly mutating nothing — which is the probe receipt
+     working. enforceTargetPolicy now walks two verdicts (whose bytes these are,
+     then what kind of artifact it is); this control still breaks exactly the
+     ownership half, and the artifact half has its own control in
+     tests/reference-truth-sheet-gate-negative-controls.js. */
+  anchor: "    kernelObject(entityOwnershipVerdict(project, target, value)),",
+  replacement: "    { ok: true },",
   baseline: (kernel) => {
     const manual = harness(kernel);
     const project = contestedProject();
