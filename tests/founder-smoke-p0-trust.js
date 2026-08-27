@@ -866,9 +866,22 @@ async function testRemovedConsumedReferenceStalesThePackage() {
 }
 
 /* The paid submission is the last screen before money is spent, so a stale package
-   must not reach it silently either. It is not refused — sending an older package is
-   a legitimate choice — but it is named, beside the duration banner that exists for
-   the same reason. */
+   must not reach it silently — it is named, beside the duration banner that exists for
+   the same reason.
+
+   THE SECOND HALF OF THIS CHECK CHANGED, AND ON PURPOSE. It used to require that a
+   stale package was "named, not refused", because sending an older package was a
+   legitimate choice. Dogfood Remediation Slice 0 reversed that decision on the
+   evidence of the Aug 26 Spark pass: the screen said OUT OF DATE — REBUILD BEFORE
+   GENERATING and offered the enabled paid button anyway, and the button was pressed.
+   Generation is now withheld while a RECORDED dependency snapshot says the package no
+   longer matches the shot, and REBUILD is the primary action offered instead.
+
+   Nothing this check held is dropped: the dialog still opens, the package is still
+   named stale, and it still says exactly what changed. Only the claim about what the
+   filmmaker may do next moved, and it moved because a later accepted decision moved
+   it. A package with no recorded snapshot is still not refused — see
+   falH3MotionPromptAction in public/fal-generation.js. */
 async function testStalePackageIsNamedBeforeAPaidSubmission() {
   const project = buildFixture();
   const shot = project.shots[0];
@@ -912,9 +925,11 @@ async function testStalePackageIsNamedBeforeAPaidSubmission() {
   const stale = app.context.document.getElementById("modal").innerHTML;
   assert(/This compiled package is out of date/.test(stale), "a stale package must be named before a paid submission");
   assert(/duration changed to 6s/.test(stale), "the paid dialog must say exactly what changed");
-  assert(/id="fal-h3-submit"/.test(stale) && !/id="fal-h3-submit"[^>]*disabled/.test(stale),
-    "a stale package is named, not refused — sending it stays the filmmaker's choice");
-  record("P0-7b", "the paid H3 dialog names a stale compiled package before submission and still lets the filmmaker send it");
+  assert(/id="fal-h3-submit"[^>]*disabled/.test(stale),
+    "a stale package must not keep an enabled paid button beside the sentence telling the filmmaker to rebuild it");
+  assert(/REBUILD MOTION PROMPT/.test(stale),
+    "withholding the paid action must offer the action that lifts it");
+  record("P0-7b", "the paid H3 dialog names a stale compiled package, says what changed, withholds the paid action and offers the rebuild");
 }
 
 async function main() {

@@ -6,14 +6,41 @@
   function coverageClientRequestId(list, entityId, kind, target = "") { return `coverage:${ACTIVE_PROJECT_SLUG || "project"}:${list}:${entityId}:${kind}:${target}:${Date.now().toString(36)}:${Math.random().toString(36).slice(2,8)}`; }
   function setCoverageLock(key, value = true) { if (value) COVERAGE_SUBMISSION_LOCKS.set(key, Date.now()); else COVERAGE_SUBMISSION_LOCKS.delete(key); }
   function coverageLocked(key) { return COVERAGE_SUBMISSION_LOCKS.has(key); }
-  /* WHICH SLOTS THIS RUN WAS LAUNCHED AGAINST. A run carries its own `sheetType`,
-     and an expression run is answerable to the expression slots rather than to the
-     angle board. Extracted so the render-time projection and the durable writer
-     below cannot pick two different sets. */
-  function coverageRunSlots(list, entity, run = entity?.coverageAutomation) {
-    return list === "characters" && run?.sheetType === "expressions"
+  /* WHICH SLOTS A COVERAGE TASK IS ANSWERABLE TO — THE ONE OWNER.
+
+     A coverage task is identified by its `sheetType`: `expressions` is answerable
+     to the expression slots, everything else to the angle board. This function is
+     the only place that decides, and every surface that shows, prices, enables,
+     stamps, requests or dispatches coverage work reads it.
+
+     THE HOLD REVIEW FOUND WHAT HAPPENS WITHOUT THAT. The expression modal priced
+     its quote from the expression slots while startCoverageAutomation derived its
+     request list from missingCoverageSlots(), which reads the ANGLE board and
+     nothing else. Two owners, one screen, and the disagreement was in both
+     directions at once: with expressions complete and one angle missing the quote
+     said "no paid request to submit" and the handler submitted an ANGLE job; with
+     one expression missing and every angle filled the quote said one paid request
+     and the handler submitted nothing. */
+  function coverageSlotsForTask(list, entity, sheetType) {
+    return list === "characters" && String(sheetType || "") === "expressions"
       ? (typeof ensureExpressionSlots === "function" ? ensureExpressionSlots(entity) : entity?.expressionSlots || [])
       : (typeof ensureCoverageSlots === "function" ? ensureCoverageSlots(list, entity) : entity?.coverageSlots || []);
+  }
+  /* THE WORK ONE COVERAGE TASK WOULD DO, right now. The quote, the paid control,
+     the run stamp, the request list and the dispatch boundary all call this and
+     nothing else, so a run cannot be priced against one requirement and submitted
+     against another. Required-and-unfilled, exactly as missingCoverageSlots()
+     already answered it for angles — isRequiredCoverage() already excludes a
+     retired slot, and `!slot.retired` is stated as well because a reader should
+     not have to know that. */
+  function missingCoverageWork(list, entity, sheetType) {
+    return coverageSlotsForTask(list, entity, sheetType)
+      .filter((slot) => slot && !slot.retired && isRequiredCoverage(slot) && !slotSelectedFile(slot));
+  }
+  /* WHICH SLOTS THIS RUN WAS LAUNCHED AGAINST. A run carries its own `sheetType`,
+     so the run projection asks the one owner above rather than repeating it. */
+  function coverageRunSlots(list, entity, run = entity?.coverageAutomation) {
+    return coverageSlotsForTask(list, entity, run?.sheetType);
   }
   /* THE LIVE REQUIREMENT, counted through the one owner. summariseCoverage() is
      what the coverage board prints, so the run and the board cannot report two
@@ -185,27 +212,62 @@
     else if (list === "locations") common.push("Treat all panels as camera viewpoints of one physically coherent location. Preserve the exact floor plan, topology, walls, openings, doors, windows, fixed fixtures, structural landmarks, surfaces, set dressing and scale relationships across every view. Do not invent a plausible alternative room. When an area is not visible in one authority, infer it only from the other approved views and never contradict them.");
     return common.filter(Boolean).join("\n\n");
   }
-  function coverageSlotPrompt(list, entity, slot, userDirection = "") {
+  /* `sheetType` names WHICH KIND OF REFERENCE this slot is, and it is honoured
+     rather than assumed. Every contract arm below says "changing only the camera
+     angle" — the right instruction for a viewpoint and the wrong one for an
+     expression. Until the correction above, an expression slot could never reach
+     this function, so the wording was never wrong in practice; now that it can,
+     the expression contract is stated, in the SAME sentence the expression SHEET
+     path already uses, so there is one wording for the concept. */
+  function coverageSlotPrompt(list, entity, slot, userDirection = "", sheetType = "angles") {
+    const expressions = list === "characters" && String(sheetType || "") === "expressions";
     const identity = entityIdentityText(list, entity);
     const immutable = String(entity.coverageCharacteristics || entity.driftNotes || entity.coverageNotes || "").trim();
-    const contract = list === "locations"
-      ? "SPATIAL CONTINUITY LOCK: all supplied approved images are views of one physical location. Preserve the exact floor plan, topology, wall and opening placement, doors, windows, fixed fixtures, structural landmarks, material boundaries, set dressing and scale relationships. Move only the camera to the requested view. Do not invent, remove, mirror, relocate or redesign architecture."
-      : list === "props"
-        ? "PROP CONTENT LOCK: preserve the exact object, dimensions, material, construction and wear. Preserve any embedded photograph, mural, artwork, text, label, map, document, print or screen image exactly; do not substitute similar content."
-        : list === "characters"
-          ? "CHARACTER IDENTITY LOCK: preserve the exact same face, anatomy, proportions, hair, wardrobe construction and accessories while changing only the camera angle."
-          : "VEHICLE DESIGN LOCK: preserve exact silhouette, construction, wheels, panels, openings, materials and components while changing only the camera angle.";
+    const contract = expressions
+      ? "CHARACTER IDENTITY LOCK: preserve the exact same face, anatomy, proportions, hair, wardrobe construction and accessories. Change only facial expression and subtle performance; do not change identity, hair, wardrobe or accessories."
+      : list === "locations"
+        ? "SPATIAL CONTINUITY LOCK: all supplied approved images are views of one physical location. Preserve the exact floor plan, topology, wall and opening placement, doors, windows, fixed fixtures, structural landmarks, material boundaries, set dressing and scale relationships. Move only the camera to the requested view. Do not invent, remove, mirror, relocate or redesign architecture."
+        : list === "props"
+          ? "PROP CONTENT LOCK: preserve the exact object, dimensions, material, construction and wear. Preserve any embedded photograph, mural, artwork, text, label, map, document, print or screen image exactly; do not substitute similar content."
+          : list === "characters"
+            ? "CHARACTER IDENTITY LOCK: preserve the exact same face, anatomy, proportions, hair, wardrobe construction and accessories while changing only the camera angle."
+            : "VEHICLE DESIGN LOCK: preserve exact silhouette, construction, wheels, panels, openings, materials and components while changing only the camera angle.";
     return [
-      `Create the ${slot.label} production reference for the exact same ${entityTypeLabel(list)} shown across the supplied reference package.`,
+      `Create the ${slot.label} ${expressions ? "expression" : "production"} reference for the exact same ${entityTypeLabel(list)} shown across the supplied reference package.`,
       identity ? `DESIGN DESCRIPTION: ${identity}` : "Preserve every visible identifying feature from every supplied image.",
       immutable ? `IMMUTABLE CHARACTERISTICS: ${immutable}` : "Preserve silhouette, proportions, colors, materials, construction and distinguishing details.",
       contract,
-      `TARGET VIEW: ${slot.label}. ${slot.notes || ""}`,
-      "The output must be a clean future-generation authority, not a dramatic reinterpretation. The requested angle must be unambiguous. No text labels, borders or watermarks.",
+      `${expressions ? "TARGET EXPRESSION" : "TARGET VIEW"}: ${slot.label}. ${slot.notes || ""}`,
+      expressions ? "Use head-and-shoulders framing with even lighting and a plain neutral background." : "",
+      `The output must be a clean future-generation authority, not a dramatic reinterpretation. The requested ${expressions ? "expression" : "angle"} must be unambiguous. No text labels, borders or watermarks.`,
       userDirection ? `ADDITIONAL DIRECTION: ${userDirection}` : "",
     ].filter(Boolean).join("\n\n");
   }
   async function submitCoverageJob(list, entity, options) {
+    /* THE DISPATCH BOUNDARY, AND IT FAILS CLOSED.
+
+       This is the one function that posts to the paid route, and it is reachable
+       without any of the surfaces above: startCoverageAutomation reads its mode
+       from the DOM, and generateCoverageSlot is a global with no rendered caller
+       at all. So the slot a request names is checked against the group the request
+       DECLARES, here, rather than trusted from whoever assembled the options.
+
+       This is the leak the hold review found, stopped at the seam that spends the
+       money: an expression run whose work set came from the angle board submitted
+       an ANGLE slot under `coverageSheetType` "angles" while the dialog beside it
+       said no paid request was due.
+
+       IT CHECKS MEMBERSHIP, NOT MISSINGNESS. Deliberately regenerating a slot that
+       already holds a file is a real capability and this must not remove it; the
+       "is there any work" question belongs to startCoverageAutomation, which asks
+       missingCoverageWork() and refuses an empty set before it writes anything. */
+    if (options.coverageJobType === "slot") {
+      const group = String(options.coverageSheetType || "") === "expressions" ? "expressions" : "angles";
+      const slotId = String(options.slot?.id || "");
+      const belongs = !!slotId && coverageSlotsForTask(list, entity, group).some((row) => row && String(row.id) === slotId);
+      if (!belongs)
+        throw new Error(`${options.slot?.label || slotId || "That slot"} is not ${group === "expressions" ? "an expression" : "a coverage"} slot on ${entity.name || entity.id}. Nothing was submitted.`);
+    }
     const authorities = coverageReferencePackage(list, entity, options.slot || null);
     const primary = authorities[0]?.item || null;
     /* S8 — EVERY ROLE NAMES A PURPOSE. Only `identity-canon` is receipt-backed,
@@ -282,7 +344,7 @@
        submitted a sheet anyway. A control that takes a different decision from the
        one it names is the same defect family as a status that describes a
        different project from the one on screen. */
-    openModal(`<div class="coverage-automation-modal"><header><div><span>COVERAGE AUTOMATION</span><h3>${esc(entity.name || entity.id)}</h3><p>Generate a large multi-view sheet, extract approved crops, and individually regenerate only weak or missing slots.</p></div><button class="cancel" onclick="closeModal()">Close</button></header><div class="coverage-automation-summary"><img src="${attr(primary.url)}" alt="Approved primary reference"><div><b>Approved source</b><span>${esc(primary.name)}</span><small>${missingRequired.length} required coverage slot${missingRequired.length === 1 ? "" : "s"} still missing.</small></div></div><div class="two-col"><label><span>Generation mode</span><select id="coverage-mode" onchange="updateCoverageAutomationPlan()"><option value="hybrid" ${defaultMode === "hybrid" ? "selected" : ""}>Hybrid — sheet first, manual missing-view fallback</option><option value="sheet" ${defaultMode === "sheet" ? "selected" : ""}>Sheet first only</option><option value="individual" ${defaultMode === "individual" ? "selected" : ""}>Generate missing slots individually</option></select></label><label><span>Sheet type</span><select id="coverage-sheet-type" onchange="updateCoverageAutomationPlan()"><option value="angles">Angle / viewpoint sheet</option>${expressionOption}</select></label><label><span>Resolution</span><select id="coverage-resolution"><option value="2k">2K</option><option value="4k" selected>4K recommended</option></select></label><label><span>Sheet candidates</span><select id="coverage-output-count" onchange="updateCoverageAutomationPlan()"><option value="1" selected>1</option><option value="2">2</option><option value="3">3</option></select></label></div><label><span>Additional direction</span><textarea id="coverage-direction" placeholder="Panel order, pose constraints, critical details, expression list, or geometry notes.">${esc(entity.coverageGenerationNotes || "")}</textarea></label><div class="coverage-mode-note"><b>${list === "locations" ? "Location guidance" : "Hybrid behavior"}</b><span>${list === "locations" ? "Individual viewpoints are recommended for locations because a single generated sheet may invent incompatible architecture. A sheet remains available when you have a strong layout authority." : "Generate a consistent overview sheet first. Extract useful panels into slots, then generate only any remaining or rejected views individually."}</span></div><div id="coverage-spend-plan" class="coverage-spend-plan"></div><div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button id="coverage-start-button" class="approve-btn large" onclick="startCoverageAutomation()">START COVERAGE GENERATION</button></div></div>`);
+    openModal(`<div class="coverage-automation-modal"><header><div><span>COVERAGE AUTOMATION</span><h3>${esc(entity.name || entity.id)}</h3><p>Generate a large multi-view sheet, extract approved crops, and individually regenerate only weak or missing slots.</p></div><button class="cancel" onclick="closeModal()">Close</button></header><div class="coverage-automation-summary"><img src="${attr(primary.url)}" alt="Approved primary reference"><div><b>Approved source</b><span>${esc(primary.name)}</span><small id="coverage-missing-summary">${missingRequired.length} required coverage slot${missingRequired.length === 1 ? "" : "s"} still missing.</small></div></div><div class="two-col"><label><span>Generation mode</span><select id="coverage-mode" onchange="updateCoverageAutomationPlan()"><option value="hybrid" ${defaultMode === "hybrid" ? "selected" : ""}>Hybrid — sheet first, manual missing-view fallback</option><option value="sheet" ${defaultMode === "sheet" ? "selected" : ""}>Sheet first only</option><option value="individual" ${defaultMode === "individual" ? "selected" : ""}>Generate missing slots individually</option></select></label><label><span>Sheet type</span><select id="coverage-sheet-type" onchange="updateCoverageAutomationPlan()"><option value="angles">Angle / viewpoint sheet</option>${expressionOption}</select></label><label><span>Resolution</span><select id="coverage-resolution"><option value="2k">2K</option><option value="4k" selected>4K recommended</option></select></label><label><span>Sheet candidates</span><select id="coverage-output-count" onchange="updateCoverageAutomationPlan()"><option value="1" selected>1</option><option value="2">2</option><option value="3">3</option></select></label></div><label><span>Additional direction</span><textarea id="coverage-direction" placeholder="Panel order, pose constraints, critical details, expression list, or geometry notes.">${esc(entity.coverageGenerationNotes || "")}</textarea></label><div class="coverage-mode-note"><b>${list === "locations" ? "Location guidance" : "Hybrid behavior"}</b><span>${list === "locations" ? "Individual viewpoints are recommended for locations because a single generated sheet may invent incompatible architecture. A sheet remains available when you have a strong layout authority." : "Generate a consistent overview sheet first. Extract useful panels into slots, then generate only any remaining or rejected views individually."}</span></div><div id="coverage-spend-plan" class="coverage-spend-plan"></div><div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button id="coverage-start-button" class="approve-btn large" onclick="startCoverageAutomation()">START COVERAGE GENERATION</button></div></div>`);
     setTimeout(() => updateCoverageAutomationPlan(), 20);
   };
   window.openCoverageExpressionAutomation = (entityId) => {
@@ -294,12 +356,12 @@
     const mode = document.getElementById("coverage-mode")?.value || "hybrid";
     const sheetType = document.getElementById("coverage-sheet-type")?.value || "angles";
     const outputs = Number(document.getElementById("coverage-output-count")?.value || 1);
-    /* `!slot.approvedFile` WAS A LEGACY READ AND IT COUNTED EVERY ASSIGNED SLOT AS
-       MISSING. assignSlotReference() writes `selectedFile` and DELETES
-       `approvedFile` (public/shared-entity-slots.js), so a fully covered reference
-       priced an individual run at one paid request per satisfied view. The one
-       accessor answers it now, exactly as missingCoverageSlots() already did. */
-    const missing = entity ? (sheetType === "expressions" ? ensureExpressionSlots(entity) : missingCoverageSlots(req.list, entity, false)).filter((slot) => isRequiredCoverage(slot) && !slotSelectedFile(slot) && !slot.retired).length : 0;
+    /* THE SAME OWNER THE HANDLER USES. This branch used to assemble its own set —
+       expression slots one way, angle slots the other — and read `!slot.approvedFile`,
+       a key assignSlotReference() DELETES, so every assigned expression priced as
+       another paid request. It now asks missingCoverageWork() for this task, which
+       is the identical call startCoverageAutomation makes. */
+    const missing = entity ? missingCoverageWork(req.list, entity, sheetType).length : 0;
     const requests = mode === "individual" ? missing : 1;
     const images = mode === "individual" ? requests * 3 : outputs;
     const potential = mode === "hybrid" ? ` · up to ${missing} later individual fallback request${missing === 1 ? "" : "s"}` : "";
@@ -314,6 +376,13 @@
       : `<b data-coverage-spend-plan="none">No paid request to submit</b><span>Every required ${sheetType === "expressions" ? "expression" : "view"} already has an image selected. Choose a sheet mode to generate new material, or close this dialog.</span>`;
     /* THE CONTROL HEARS THE QUOTE. A derived plan that the button beside it does
        not obey is the same defect as a derived count nobody reads. */
+    /* THE HEADER SAYS THE SAME NUMBER AS THE QUOTE. It is rendered once, when the
+       dialog opens, from the ANGLE board — so an expression dialog headlined an
+       angle count above a quote that had already been corrected to count
+       expressions. Same number, said twice, from two owners; it is refreshed here
+       from the one owner whenever the task changes. */
+    const summary = document.getElementById("coverage-missing-summary");
+    if (summary) summary.innerHTML = `${missing} required ${sheetType === "expressions" ? "expression" : "coverage"} slot${missing === 1 ? "" : "s"} still missing.`;
     const start = document.getElementById("coverage-start-button");
     if (start && !start.dataset.coverageSubmitting) {
       start.disabled = !requests;
@@ -331,7 +400,10 @@
     const direction = document.getElementById("coverage-direction")?.value || "";
     const lockKey = coverageLockKey(req.list, req.entityId, "automation", sheetType);
     if (coverageLocked(lockKey)) return toast("This coverage submission is already being prepared.");
-    const requestedSlots = mode === "individual" ? missingCoverageSlots(req.list, entity, false) : [];
+    /* THE REQUEST LIST IS THE QUOTE'S LIST. This read missingCoverageSlots(), which
+       answers for the ANGLE board whatever task the dialog is on — so an expression
+       run requested angles, or requested nothing while an expression was missing. */
+    const requestedSlots = mode === "individual" ? missingCoverageWork(req.list, entity, sheetType) : [];
     const requestCount = mode === "individual" ? requestedSlots.length : 1;
     const imageCount = mode === "individual" ? requestCount * 3 : outputCount;
     /* THE REFUSAL MOVED IN FRONT OF THE RECORD.
@@ -365,8 +437,13 @@
         if (!slots.length) throw new Error("All required coverage slots are already assigned");
         entity.coverageAutomation.status = "individual-running";
         for (const slot of slots) {
-          const prompt = coverageSlotPrompt(req.list, entity, slot, direction);
-          const job = await submitCoverageJob(req.list, entity, { prompt, outputCount: 3, resolution, aspectRatio: referenceAspectLabel(req.list), coverageJobType: "slot", coverageSheetType: "", slot, clientRequestId: coverageClientRequestId(req.list, req.entityId, "slot", slot.id) });
+          /* THE PAYLOAD SAYS WHICH KIND OF THING IT IS ASKING FOR. `coverageSheetType`
+             was hard-coded empty here, which submitCoverageJob defaults to "angles" —
+             so a returned expression candidate would have been filed against the angle
+             board. The prompt is asked for the same task for the same reason: an
+             expression request must not arrive worded as a camera angle. */
+          const prompt = coverageSlotPrompt(req.list, entity, slot, direction, sheetType);
+          const job = await submitCoverageJob(req.list, entity, { prompt, outputCount: 3, resolution, aspectRatio: referenceAspectLabel(req.list), coverageJobType: "slot", coverageSheetType: sheetType === "expressions" ? "expressions" : "", slot, clientRequestId: coverageClientRequestId(req.list, req.entityId, "slot", slot.id) });
           entity.coverageAutomation.jobs.push(job.id);
         }
         toast(`${slots.length} missing coverage slot generation job${slots.length === 1 ? "" : "s"} queued`);
@@ -751,5 +828,5 @@
      module's own dialogs read; a second derivation over there is exactly the
      duplicate truth the Aug 26 pass found. */
   window.coverageRunState = coverageRunState;
-  window.__CINEBRAID_COVERAGE_AUTOMATION = { missingCoverageSlots, coverageSheetSlots, coverageRunSlots, coverageRunCoverage, coverageRunState, updateCoverageTerminalState, primaryReference, historicPrimaryPointer, coverageReferencePackage };
+  window.__CINEBRAID_COVERAGE_AUTOMATION = { missingCoverageSlots, missingCoverageWork, coverageSheetSlots, coverageSlotsForTask, coverageRunSlots, coverageRunCoverage, coverageRunState, updateCoverageTerminalState, primaryReference, historicPrimaryPointer, coverageReferencePackage, coverageSlotPrompt, submitCoverageJob };
 })();

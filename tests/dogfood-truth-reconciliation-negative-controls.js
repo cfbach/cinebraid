@@ -43,10 +43,22 @@
  *   NC-D13  severity ignores recovery, so a retried step is attention
  *   NC-D14  the H3 paid control ignores package freshness, so OUT OF DATE sits
  *           beside an enabled GENERATE
- *   NC-D15  the H3 dispatch boundary ignores package freshness, so a
- *           programmatically opened dialog spends on a stale package
+ *   NC-D15  the H3 dispatch boundary ignores package freshness, so an
+ *           out-of-date package reaches POST /api/generation/fal/jobs
  *   NC-D16  the freshness gate refuses an UNRECORDED snapshot too, so every
  *           package compiled before dependencies were captured is blocked
+ *   NC-D17  the submission handler derives its request list from the angle board
+ *           again, so an expression task submits an angle
+ *   NC-D18  the dispatch boundary stops checking that a slot belongs to the
+ *           group its request declares
+ *
+ * EVERY CONTROL DECLARES WHICH DETECTOR IT EXPECTS. `expect` is a regular
+ * expression over the detector's own message, and a failure that does not match
+ * it fails THIS suite. Independent review found the previous helper accepting any
+ * AssertionError, which is a weaker claim than it reads as: a control that armed
+ * one defect and tripped an unrelated assertion elsewhere reported success while
+ * the protection it named went untested. The message that actually fired is
+ * printed beside every control, so the pairing can be read rather than trusted.
  *
  * Nothing here contacts a provider, spends anything, or writes to a project. The
  * patched files are restored from their ORIGINAL BYTES in a `finally` — never by
@@ -63,19 +75,34 @@ const readLF = (file) => fs.readFileSync(path.join(ROOT, file), "utf8").replace(
 
 const results = [];
 const literals = [];
+/* What the intended detector actually said, printed beside the defect it caught. */
+const caughtBy = [];
 
 /* ---------------------------------------------------------------- machinery */
 
-/* Require a body to throw an AssertionError. A control that passes here has
-   proved its detector fires; a control that does NOT throw has found a blind
-   spot and fails this suite. */
-async function expectRed(id, body) {
+/* Require a body to fail, BY ASSERTION, FOR THE INTENDED REASON.
+ *
+ * HOLD BLOCKER 2, part B. This used to accept any AssertionError, which is a
+ * weaker claim than it reads as: a control that armed one defect and tripped an
+ * unrelated assertion somewhere else in the suite reported success. The suite
+ * would then be green while the protection it named was untested.
+ *
+ * Every control now declares `expect` — a regular expression over the detector's
+ * own message — and a failure that does not match it is a FAILURE OF THE CONTROL,
+ * reported with what actually fired so the mismatch can be read rather than
+ * guessed at. This is the same `expect:` discipline
+ * tests/founder-smoke-p0-trust-negative-controls.js already applies. */
+async function expectRed(id, expect, body) {
+  assert.ok(expect instanceof RegExp, `${id}: a control must declare which detector it expects to fire`);
   let threw = null;
   try { await body(); } catch (error) { threw = error; }
   assert.ok(threw, `${id}: the defect was introduced and NOTHING caught it — that assertion cannot fail`);
   assert.ok(threw instanceof assert.AssertionError || /AssertionError/.test(String(threw && threw.name)),
     `${id}: the detector must fail by assertion, not by crashing (${threw && threw.message})`);
-  return threw;
+  const message = String((threw && threw.message) || "");
+  assert.ok(expect.test(message),
+    `${id}: the suite went red for the WRONG REASON. Expected ${expect} but the detector said: ${message.slice(0, 400)}`);
+  return message;
 }
 
 /* Every module this suite reaches is loaded through `require` (the shared
@@ -122,12 +149,13 @@ function freshSuite() {
   return require("./dogfood-truth-reconciliation");
 }
 
-async function control({ id, defect, files, probe, guard }) {
+async function control({ id, defect, files, probe, guard, expect }) {
   await patchedFiles(files, async () => {
     const literal = await probe(freshSuite());
     assert.ok(literal, `${id}: the probe must produce the literal bad state, not merely run`);
     literals.push(`${id} → ${literal}`);
-    await expectRed(id, () => guard(freshSuite()));
+    const caught = await expectRed(id, expect, () => guard(freshSuite()));
+    caughtBy.push(`${id} ← ${caught.split("\n")[0].slice(0, 150)}`);
   });
   results.push(`${id} · ${defect}`);
 }
@@ -146,6 +174,7 @@ const BANNER_READS_STORED = {
 async function nc1() {
   await control({
     id: "NC-D1",
+    expect: /the banner must report the live goal/,
     defect: "the coverage banner reads the stored status again, so a satisfied goal keeps saying NEEDS ATTENTION",
     files: BANNER_READS_STORED,
     probe: async (suite) => {
@@ -161,6 +190,7 @@ async function nc1() {
 async function nc2() {
   await control({
     id: "NC-D2",
+    expect: /a satisfied goal must expose no resume-missing-views control/,
     defect: "the resume control is drawn from the stored status, so a satisfied goal still offers the paid dialog",
     files: {
       "public/entities.js": [[
@@ -181,6 +211,7 @@ async function nc2() {
 async function nc3() {
   await control({
     id: "NC-D3",
+    expect: /an unestablished coverage answer must stay unknown/,
     defect: "the reconciliation suppresses on an unknown coverage answer, so an unestablished requirement hides the run",
     files: {
       "public/shared-coverage.js": [[
@@ -205,11 +236,12 @@ async function nc3() {
 async function nc4() {
   await control({
     id: "NC-D4",
+    expect: /the quote must price an empty work set at nothing/,
     defect: "the spend plan reads the retired approvedFile key, so every assigned view is priced as a paid request",
     files: {
       "public/coverage-automation.js": [[
-        `.filter((slot) => isRequiredCoverage(slot) && !slotSelectedFile(slot) && !slot.retired).length : 0;`,
-        `.filter((slot) => isRequiredCoverage(slot) && !slot.approvedFile && !slot.retired).length : 0;`,
+        `      .filter((slot) => slot && !slot.retired && isRequiredCoverage(slot) && !slotSelectedFile(slot));`,
+        `      .filter((slot) => slot && !slot.retired && isRequiredCoverage(slot) && !slot.approvedFile);`,
       ]],
     },
     probe: async (suite) => {
@@ -232,6 +264,7 @@ async function nc4() {
 async function nc5() {
   await control({
     id: "NC-D5",
+    expect: /a refused submission must not stamp a new run record over the old one/,
     defect: "the coverage start handler stamps its run record before asking, so a refused submission overwrites automation state",
     files: {
       "public/coverage-automation.js": [[
@@ -260,6 +293,7 @@ async function nc5() {
 async function nc6() {
   await control({
     id: "NC-D6",
+    expect: /an approved frame must not be headlined by a run status/,
     defect: "the run record outranks approved frames again, so an approved frame reports Running",
     files: {
       "public/shared-stage-model.js": [[
@@ -281,6 +315,7 @@ async function nc6() {
 async function nc7() {
   await control({
     id: "NC-D7",
+    expect: /a stage carrying a live run must still be the recommended destination/,
     defect: "stage navigation follows the colour again, so a completed stage carrying a live run stops being where the shot opens",
     files: {
       "public/shared-stage-model.js": [[
@@ -302,6 +337,7 @@ async function nc7() {
 async function nc8() {
   await control({
     id: "NC-D8",
+    expect: /Frames must say Not required rather than Not started/,
     defect: "a route that needs no frame counts a fraction of a requirement that does not exist",
     files: {
       "public/shared-stage-model.js": [[
@@ -323,6 +359,7 @@ async function nc8() {
 async function nc9() {
   await control({
     id: "NC-D9",
+    expect: /a skipped optional stage says Optional/,
     defect: "a skipped optional stage claims attention again for guides nobody chose",
     files: {
       "public/shared-stage-model.js": [[
@@ -351,6 +388,7 @@ async function nc9() {
 async function nc10() {
   await control({
     id: "NC-D10",
+    expect: /Deliver must not be blocked while an approved result exists/,
     defect: "Deliver infers its prerequisite from a lifecycle label again, so an approved still is told to approve a still",
     files: {
       "public/shared-stage-model.js": [[
@@ -376,6 +414,7 @@ async function nc10() {
 async function nc11() {
   await control({
     id: "NC-D11",
+    expect: /the child must not claim the director's attention/,
     defect: "the attention verdict ignores parent health, so a child under automatic recovery is a red NEEDS ATTENTION row",
     files: {
       "public/live-activity.js": [[
@@ -401,6 +440,7 @@ async function nc11() {
 async function nc12() {
   await control({
     id: "NC-D12",
+    expect: /a healthy run must not paint a past step failure as a fault the director is handed/,
     defect: "the drawer paints a healthy run's past step failure as an error the director is handed",
     files: {
       "public/live-activity.js": [[
@@ -431,6 +471,7 @@ async function nc12() {
 async function nc13() {
   await control({
     id: "NC-D13",
+    expect: /failed[/]recovering: status key/,
     defect: "severity ignores recovery, so a retried step is attention while the automation continues",
     files: {
       "public/shared-stage-model.js": [[
@@ -458,6 +499,7 @@ async function nc13() {
 async function nc14() {
   await control({
     id: "NC-D14",
+    expect: /an out-of-date package must not carry an enabled paid control/,
     defect: "the H3 paid control ignores package freshness, so OUT OF DATE sits beside an enabled GENERATE",
     files: {
       "public/fal-generation.js": [[
@@ -482,10 +524,23 @@ async function nc14() {
   });
 }
 
+/* NC-D15 — REBUILT FOR THE HOLD REVIEW.
+ *
+ * The first version hand-built `window._falH3MotionRequest` and, with the gate
+ * removed, watched the request stop at the ASPECT check on that half-built
+ * object. It therefore proved only that ONE EARLIER GATE HAD BEEN PASSED — not
+ * that a stale package would actually reach the seam that spends money.
+ *
+ * This drives the REAL dialog on a fixture whose every unrelated prerequisite is
+ * valid, and the suite's own E2 asserts that a CURRENT package on that same
+ * fixture does reach `/api/generation/fal/jobs` with `purpose: "motion-h3"`. So
+ * with the freshness protection removed the stale package must land there too —
+ * and the probe below captures the literal unsafe request that arrives. */
 async function nc15() {
   await control({
     id: "NC-D15",
-    defect: "the H3 dispatch boundary ignores package freshness, so a programmatically opened dialog spends on a stale package",
+    expect: /the boundary that spends money must fail closed on a stale package/,
+    defect: "the H3 dispatch boundary ignores package freshness, so an out-of-date package reaches the paid route",
     files: {
       "public/fal-generation.js": [[
         `  if (gateFreshness && gateFreshness.recorded && !gateFreshness.current)`,
@@ -493,29 +548,24 @@ async function nc15() {
       ]],
     },
     probe: async (suite) => {
-      const view = await suite.openMotionStage(suite.motionPackageFixture({ stale: true }), ["FRAME_A.png"]);
-      /* The refusal MESSAGE is the observable, because the harness has no live
-         provider behind the route and a suite that only counted POSTs could not
-         tell "refused for the right reason" from "the stub answered nothing". */
-      const said = await vm.runInContext(`(async () => {
-        const heard = [];
-        const priorToast = toast;
-        toast = (message) => { heard.push(String(message)); };
-        try {
-          window._falH3MotionRequest = { shotId: "L1-01", buildId: "build-h3-1", profileId: "minimax-h3/i2v", prompt: "x", compiledPrompt: "x" };
-          window._falH3Submitting = false;
-          document.getElementById("fal-h3-prompt-editor").value = "The worker turns from the panel and walks out of frame.";
-          await startFalH3MotionGeneration();
-        } finally { toast = priorToast; }
-        return JSON.stringify(heard);
-      })()`, view.rendered.context);
-      assert.ok(!/out of date/i.test(said),
-        `NC-D15: the defect did not land — the dispatch boundary still refuses: ${said}`);
-      /* What the handler says INSTEAD is a downstream gate — the aspect check on
-         a hand-built request. That is the proof: with the freshness question
-         removed, an out-of-date package is no longer stopped here and execution
-         carries on past the point that was supposed to end it. */
-      return `a stale package walked past the freshness gate at the paid boundary; the next thing to stop it was ${said}`;
+      const stale = await suite.openRealH3Dialog({ stale: true });
+      /* THE MUTATION IS ARMED AND THE STALENESS IS REAL: the dialog still names
+         it, because only the DISPATCH gate was removed. */
+      assert.ok(/This compiled package is out of date/.test(stale.dialog()),
+        "NC-D15: the fixture is not stale, so nothing about freshness is under test");
+      const sent = await stale.submit();
+      assert.strictEqual(sent.jobs.length, 1,
+        `NC-D15: the defect did not land — the stale package still never reached the paid route (${JSON.stringify(sent.said)})`);
+      const request = sent.jobs[0];
+      assert.strictEqual(request.purpose, "motion-h3", "NC-D15: what landed must be the paid motion request itself");
+      return `an out-of-date package reached POST /api/generation/fal/jobs: ${JSON.stringify({
+        purpose: request.purpose,
+        shotId: request.shotId,
+        sourceBuildId: request.sourceBuildId,
+        packageId: request.packageId,
+        durationSeconds: request.durationSeconds,
+        staleReasons: stale.staleReasons(),
+      })}`;
     },
     guard: (suite) => suite.main(),
   });
@@ -524,6 +574,7 @@ async function nc15() {
 async function nc16() {
   await control({
     id: "NC-D16",
+    expect: /an uncheckable package keeps its paid action/,
     defect: "the freshness gate refuses an unrecorded snapshot too, blocking every package compiled before dependencies were captured",
     /* TWO EDITS, because the `recorded` conjunct only bites once something can
        report an absence AS staleness. The first arms exactly that — a plausible
@@ -560,6 +611,94 @@ async function nc16() {
   });
 }
 
+/* ==================================================== HOLD BLOCKER 1 CONTROLS
+   Two protections were added because independent review found the quote and the
+   submission handler deriving work from different owners. Each gets a control
+   that puts the split back. */
+
+async function nc17() {
+  await control({
+    id: "NC-D17",
+    expect: /an expression task with nothing missing must contact no generation route/,
+    defect: "the submission handler derives its request list from the angle board again, so an expression task submits angles",
+    files: {
+      /* BOTH HALVES OF THE HELD CANDIDATE'S BEHAVIOUR, because they were one
+         defect: the request list came from the angle board AND the payload
+         declared the angle group, which is why the group check at the dispatch
+         boundary saw a coherent request and let it through. Arming only the
+         first would be caught by the second protection and would report a
+         defect the reviewer never observed. */
+      "public/coverage-automation.js": [[
+        `    const requestedSlots = mode === "individual" ? missingCoverageWork(req.list, entity, sheetType) : [];`,
+        `    const requestedSlots = mode === "individual" ? missingCoverageSlots(req.list, entity, false) : [];`,
+      ], [
+        `coverageSheetType: sheetType === "expressions" ? "expressions" : "", slot,`,
+        `coverageSheetType: "", slot,`,
+      ]],
+    },
+    probe: async (suite) => {
+      /* The reviewer's observation A, exactly: expressions complete, one angle
+         missing, and the EXPRESSION dialog driven. */
+      const run = await suite.submitCoverageTask(
+        suite.coverageFixture({ missing: ["rear"], missingExpressions: [] }),
+        { sheetType: "expressions" },
+      );
+      assert.ok(/data-coverage-spend-plan="none"/.test(run.quote),
+        "NC-D17: the quote is no longer saying there is nothing to submit, so the split is not what is under test");
+      assert.strictEqual(run.requests.length, 1,
+        `NC-D17: the defect did not land — the handler still submitted nothing: ${JSON.stringify(run.requests)}`);
+      const after = JSON.parse(run.after);
+      return `the expression dialog quoted "No paid request to submit" and the handler POSTed ${run.requests[0].targetCoverageSlotId} `
+        + `[${run.requests[0].coverageSheetType}], rewriting the run record to status=${after.status}`;
+    },
+    guard: (suite) => suite.main(),
+  });
+}
+
+async function nc18() {
+  await control({
+    id: "NC-D18",
+    expect: /an angle slot submitted under the expression group must be refused/,
+    defect: "the dispatch boundary stops checking that a slot belongs to the group its request declares",
+    files: {
+      "public/coverage-automation.js": [[
+        `    if (options.coverageJobType === "slot") {\n      const group = String(options.coverageSheetType || "") === "expressions" ? "expressions" : "angles";`,
+        `    if (false) {\n      const group = String(options.coverageSheetType || "") === "expressions" ? "expressions" : "angles";`,
+      ]],
+    },
+    probe: async (suite) => {
+      const board = await suite.openCoverageBoard(suite.coverageFixture({ missing: ["rear"], missingExpressions: ["worried"] }), {
+        fetch: async (url, init = {}, respond) => {
+          if (String(url) !== "/api/generation/fal/jobs" || init.method !== "POST") return null;
+          return respond({ ok: true, job: { id: "control-job", status: "IN_QUEUE", ...JSON.parse(init.body) } });
+        },
+      });
+      const said = JSON.parse(await vm.runInContext(`(async () => {
+        const api = window.__CINEBRAID_COVERAGE_AUTOMATION;
+        const entity = P.characters.find((row) => row.id === "KAI");
+        const angle = ensureCoverageSlots("characters", entity).find((row) => row.id === "rear");
+        try {
+          await api.submitCoverageJob("characters", entity, {
+            prompt: "control", outputCount: 3, resolution: "4k", aspectRatio: "1:1",
+            coverageJobType: "slot", coverageSheetType: "expressions", slot: angle,
+            clientRequestId: "control-cross-group",
+          });
+          return JSON.stringify({ submitted: true });
+        } catch (error) { return JSON.stringify({ submitted: false, message: String((error && error.message) || error) }); }
+      })()`, board.rendered.context));
+      assert.strictEqual(said.submitted, true,
+        `NC-D18: the defect did not land — the boundary still refuses (${said.message})`);
+      const reached = board.posts
+        .filter((row) => String(row.url).includes("/api/generation/"))
+        .map((row) => JSON.parse(row.body));
+      assert.strictEqual(reached.length, 1, "NC-D18: the cross-group request must actually reach the paid route");
+      return `the angle slot ${reached[0].targetCoverageSlotId} reached the paid route declared as `
+        + `coverageSheetType=${reached[0].coverageSheetType}`;
+    },
+    guard: (suite) => suite.main(),
+  });
+}
+
 /* ==================================================================== runner */
 
 async function main() {
@@ -579,6 +718,8 @@ async function main() {
   await nc14();
   await nc15();
   await nc16();
+  await nc17();
+  await nc18();
 
   /* THE TREE IS BACK. Each control restores its files in a `finally`, and these
      read the bytes on disk rather than trusting that it happened. */
@@ -599,8 +740,10 @@ async function main() {
      every control above was measuring its own defect rather than a leftover. */
   await freshSuite().main();
 
-  console.log(`Dogfood truth reconciliation negative controls passed — ${results.length} defects introduced, ${results.length} caught:`);
+  console.log(`Dogfood truth reconciliation negative controls passed — ${results.length} defects introduced, ${results.length} caught by their intended detector:`);
   for (const line of results) console.log("  " + line);
+  console.log("  the detector that fired:");
+  for (const line of caughtBy) console.log("    " + line);
   console.log("  literal bad states produced:");
   for (const line of literals) console.log("    " + line);
   console.log("  tree restored · no provider call · no paid call · nothing written to any project");

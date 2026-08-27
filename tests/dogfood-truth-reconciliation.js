@@ -138,9 +138,9 @@ async function openCoverageBoard(project, options = {}) {
   const posts = [];
   const rendered = await render("#/character/KAI", project, {
     ...options,
-    fetch: async (url, init = {}) => {
+    fetch: async (url, init = {}, respond) => {
       if (init.method === "POST") posts.push({ url, body: init.body });
-      return options.fetch ? options.fetch(url, init) : null;
+      return options.fetch ? options.fetch(url, init, respond) : null;
     },
   });
   rendered.context.selectBoundedTask("entity-task", "characters:KAI", "coverage");
@@ -356,6 +356,202 @@ async function checkCoveragePaidActionTruth() {
     "a refused coverage submission must contact no generation route");
 
   note("G1 coverage paid action: an empty work set quotes nothing, disables start, and the handler refuses before writing");
+}
+
+/* ===================================================== SECTION G, HOLD BLOCKER 1
+   THE QUOTE, THE ENABLEMENT, THE RUN STAMP, THE REQUEST LIST, THE PAYLOAD AND THE
+   DISPATCH BOUNDARY ALL DERIVE FROM ONE CURRENT TASK-SPECIFIC COVERAGE TRUTH.
+
+   Independent review found the expression modal pricing its quote from expression
+   slots while startCoverageAutomation derived its request list from the ANGLE
+   board, and the disagreement ran in both directions on one screen:
+
+     expressions complete, one angle missing  the quote said "no paid request to
+                                              submit"; the handler stamped the run
+                                              failed and posted an ANGLE job
+     one expression missing, angles complete  the quote said 1 paid request; the
+                                              handler submitted nothing
+
+   Every check below drives the REAL startCoverageAutomation handler and reads the
+   REAL request bodies the page attempted. A suite that exercised only the pricing
+   helper is exactly the suite that missed this. */
+
+/* Drive the shipped handler for one task and return what the page actually did:
+   the quote it showed, whether the paid control was enabled, the requests it
+   attempted, and the run record on both sides. The handler is invoked with
+   `spendConfirmed` so nothing is waiting on a confirmation modal — and it is
+   invoked EVEN WHEN THE START CONTROL IS DISABLED, which is the bypass the
+   invariant says the boundary must independently refuse. */
+async function submitCoverageTask(project, { sheetType, mode = "individual" }) {
+  /* The generation route answers with a job-shaped row rather than the harness's
+     bare `{ok:true}`. Nothing is sent anywhere — the request body is still
+     recorded and asserted — but the shipped handler stores what this returns and
+     the next render reads it, so a bare acknowledgement puts `undefined` in the
+     job ledger and the page dies for a reason that is not under test. */
+  let issued = 0;
+  const board = await openCoverageBoard(project, {
+    fetch: async (url, init = {}, respond) => {
+      if (String(url) !== "/api/generation/fal/jobs" || init.method !== "POST") return null;
+      const body = JSON.parse(init.body);
+      issued += 1;
+      return respond({ ok: true, job: { id: `harness-job-${issued}`, status: "IN_QUEUE", ...body } });
+    },
+  });
+  const context = board.rendered.context;
+  if (sheetType === "expressions") context.openCoverageExpressionAutomation("KAI");
+  else context.openCoverageAutomationModal("characters", "KAI", mode);
+  context.document.getElementById("coverage-mode").value = mode;
+  context.document.getElementById("coverage-sheet-type").value = sheetType;
+  context.updateCoverageAutomationPlan();
+  const quote = context.document.getElementById("coverage-spend-plan").innerHTML;
+  /* The header count, which is the SAME NUMBER the quote states and must not be a
+     second answer to it. */
+  const summary = context.document.getElementById("coverage-missing-summary").innerHTML;
+  const startDisabled = context.document.getElementById("coverage-start-button").disabled === true;
+  const before = vm.runInContext(`JSON.stringify(P.characters.find((r) => r.id === "KAI").coverageAutomation)`, context);
+  await context.startCoverageAutomation(true);
+  const after = vm.runInContext(`JSON.stringify(P.characters.find((r) => r.id === "KAI").coverageAutomation)`, context);
+  const requests = board.posts
+    .filter((row) => String(row.url).includes("/api/generation/"))
+    .map((row) => { try { return JSON.parse(row.body); } catch { return { unparsed: String(row.body) }; } });
+  return { board, context, quote, summary, startDisabled, before, after, requests };
+}
+
+/* G3 — EXPRESSIONS SATISFIED, AN UNRELATED ANGLE MISSING. */
+async function checkExpressionTaskWithNoWorkSubmitsNothing() {
+  const run = await submitCoverageTask(
+    coverageFixture({ missing: ["rear"], missingExpressions: [] }),
+    { sheetType: "expressions" },
+  );
+  assert.ok(/data-coverage-spend-plan="none"/.test(run.quote),
+    `the expression quote must price an empty work set at nothing: ${run.quote}`);
+  assert.strictEqual(run.startDisabled, true, "the paid control must obey that quote");
+  assert.ok(/^0 required expression slots still missing\./.test(run.summary),
+    `the dialog header must count the task's own slots, not the angle board: ${run.summary}`);
+  /* The four things the invariant names, read off what the page actually did. */
+  assert.deepStrictEqual(run.requests, [],
+    `an expression task with nothing missing must contact no generation route: ${JSON.stringify(run.requests)}`);
+  assert.strictEqual(run.after, run.before,
+    `a refused expression submission must not rewrite, stamp or fail the run record: ${run.after}`);
+  assert.ok(!/"status":"failed"/.test(run.after), `the refusal must leave no failed run behind: ${run.after}`);
+  const bodies = JSON.stringify(run.requests);
+  for (const angle of REQUIRED_ANGLES)
+    assert.ok(!bodies.includes(angle), `the angle slot ${angle} must never appear in an expression request: ${bodies}`);
+
+  note("G3 expression task, nothing missing: no POST, no run mutation, no angle in any payload");
+}
+
+/* G4 — EXACTLY ONE EXPRESSION MISSING, EVERY ANGLE SATISFIED. */
+async function checkExpressionTaskSubmitsExactlyItsOwnWork() {
+  const run = await submitCoverageTask(
+    coverageFixture({ missing: [], missingExpressions: ["worried"] }),
+    { sheetType: "expressions" },
+  );
+  assert.ok(/Confirmed first submission: 1 paid request/.test(run.quote),
+    `the quote must price exactly the one missing expression: ${run.quote}`);
+  assert.strictEqual(run.startDisabled, false, "real work enables the paid control");
+  assert.ok(/^1 required expression slot still missing\./.test(run.summary),
+    `the dialog header must agree with the quote beside it: ${run.summary}`);
+  assert.strictEqual(run.requests.length, 1,
+    `exactly one request must be submitted for the one missing expression: ${JSON.stringify(run.requests)}`);
+  const body = run.requests[0];
+  assert.strictEqual(body.targetCoverageSlotId, "worried",
+    `the request must name the missing expression: ${JSON.stringify(body)}`);
+  assert.strictEqual(body.coverageSheetType, "expressions",
+    `the payload must declare its own group, or the returned candidate is filed against the angle board: ${JSON.stringify(body)}`);
+  for (const angle of REQUIRED_ANGLES)
+    assert.notStrictEqual(body.targetCoverageSlotId, angle, `no angle slot may be requested: ${JSON.stringify(body)}`);
+  /* THE PAYLOAD IS WORDED FOR THE THING IT ASKS FOR. Making this path reachable
+     without this would trade one wrong request for another. */
+  assert.ok(/TARGET EXPRESSION: worried/.test(String(body.prompt || "")),
+    `an expression request must not be worded as a camera angle: ${String(body.prompt || "").slice(0, 240)}`);
+  assert.ok(!/changing only the camera angle/.test(String(body.prompt || "")),
+    "an expression request must not carry the angle contract");
+  /* The run record moves, because this submission is legitimate. */
+  const after = JSON.parse(run.after);
+  assert.strictEqual(after.sheetType, "expressions", `the stamped run must record its own task: ${run.after}`);
+  assert.strictEqual(after.mode, "individual");
+
+  note("G4 expression task, one missing: exactly that expression is requested, in its own group, worded as an expression");
+}
+
+/* G5 — THE ANGLE ARM IS UNCHANGED, in both directions. */
+async function checkAngleTaskIsUnchanged() {
+  const one = await submitCoverageTask(
+    coverageFixture({ missing: ["rear"], missingExpressions: ["worried"] }),
+    { sheetType: "angles" },
+  );
+  assert.ok(/Confirmed first submission: 1 paid request/.test(one.quote), `the angle quote is unchanged: ${one.quote}`);
+  assert.ok(/^1 required coverage slot still missing\./.test(one.summary),
+    `the angle dialog keeps its own header wording and count: ${one.summary}`);
+  assert.strictEqual(one.requests.length, 1, `exactly the missing angle is submitted: ${JSON.stringify(one.requests)}`);
+  assert.strictEqual(one.requests[0].targetCoverageSlotId, "rear");
+  assert.strictEqual(one.requests[0].coverageSheetType, "angles",
+    "an angle request keeps the group submitCoverageJob has always defaulted it to");
+  assert.ok(!/TARGET EXPRESSION/.test(String(one.requests[0].prompt || "")),
+    "an angle request keeps its viewpoint wording");
+  assert.ok(!String(one.requests[0].prompt || "").includes("worried"),
+    `a missing expression must not leak into an angle request: ${String(one.requests[0].prompt || "").slice(0, 240)}`);
+
+  const none = await submitCoverageTask(
+    coverageFixture({ missing: [], missingExpressions: ["worried"] }),
+    { sheetType: "angles" },
+  );
+  assert.ok(/data-coverage-spend-plan="none"/.test(none.quote), `an angle task with no missing angle quotes nothing: ${none.quote}`);
+  assert.deepStrictEqual(none.requests, [], "and submits nothing, even though an expression is missing");
+  assert.strictEqual(none.after, none.before, "and writes nothing");
+
+  note("G5 angle task: unchanged in both directions, and a missing expression never reaches it");
+}
+
+/* G6 — THE DISPATCH BOUNDARY REFUSES A CROSS-GROUP SLOT ON ITS OWN, with every
+   surface above it bypassed entirely: no dialog, no quote, no start control. */
+async function checkDispatchBoundaryRefusesCrossGroupSlots() {
+  let issued = 0;
+  const board = await openCoverageBoard(coverageFixture({ missing: ["rear"], missingExpressions: ["worried"] }), {
+    fetch: async (url, init = {}, respond) => {
+      if (String(url) !== "/api/generation/fal/jobs" || init.method !== "POST") return null;
+      issued += 1;
+      return respond({ ok: true, job: { id: `harness-job-${issued}`, status: "IN_QUEUE", ...JSON.parse(init.body) } });
+    },
+  });
+  const said = JSON.parse(await vm.runInContext(`(async () => {
+    const api = window.__CINEBRAID_COVERAGE_AUTOMATION;
+    const entity = P.characters.find((row) => row.id === "KAI");
+    const angle = ensureCoverageSlots("characters", entity).find((row) => row.id === "rear");
+    const expression = ensureExpressionSlots(entity).find((row) => row.id === "worried");
+    const heard = [];
+    const attempt = async (label, slot, group) => {
+      try {
+        await api.submitCoverageJob("characters", entity, {
+          prompt: api.coverageSlotPrompt("characters", entity, slot, "", group),
+          outputCount: 3, resolution: "4k", aspectRatio: "1:1",
+          coverageJobType: "slot", coverageSheetType: group, slot,
+          clientRequestId: "control-" + label,
+        });
+        heard.push(label + ":submitted");
+      } catch (error) { heard.push(label + ":refused:" + String((error && error.message) || error)); }
+    };
+    await attempt("angle-as-expression", angle, "expressions");
+    await attempt("expression-as-angle", expression, "angles");
+    await attempt("expression-as-expression", expression, "expressions");
+    return JSON.stringify(heard);
+  })()`, board.rendered.context));
+  const transcript = said.join(" | ");
+  assert.ok(/angle-as-expression:refused/.test(transcript),
+    `an angle slot submitted under the expression group must be refused: ${transcript}`);
+  assert.ok(/expression-as-angle:refused/.test(transcript),
+    `an expression slot submitted under the angle group must be refused: ${transcript}`);
+  assert.ok(/expression-as-expression:submitted/.test(transcript),
+    `the legitimate pairing must still submit: ${transcript}`);
+  const reached = board.posts
+    .filter((row) => String(row.url).includes("/api/generation/"))
+    .map((row) => JSON.parse(row.body));
+  assert.strictEqual(reached.length, 1,
+    `only the legitimate pairing may reach the paid route: ${JSON.stringify(reached.map((row) => row.targetCoverageSlotId))}`);
+  assert.strictEqual(reached[0].targetCoverageSlotId, "worried");
+
+  note("G6 dispatch boundary: a slot must belong to the group its request declares, checked where the money is spent");
 }
 
 /* SECTION G, the second half — the legacy read that mispriced the plan.
@@ -803,6 +999,119 @@ async function openMotionStage(project, takes) {
   return { rendered, posts, html: () => rendered.context.document.getElementById("main").innerHTML };
 }
 
+/* ================================================ THE REAL PAID H3 DIALOG
+
+   HOLD BLOCKER 2. The freshness gate at the dispatch boundary was previously
+   exercised by hand-building `window._falH3MotionRequest`, and independent review
+   showed why that proves too little: with the gate removed, the request was
+   stopped by the ASPECT check on a half-built request, so the control demonstrated
+   only that one earlier gate had been passed — never that a stale package would
+   actually reach the seam that spends money.
+
+   This opens the dialog the product opens, from a package the product compiled,
+   with every unrelated prerequisite valid: FAL configured, a real compiled plan, a
+   mode whose aspect the model supports, a prompt inside the limit, and no refusal.
+   On this fixture the paid button is enabled and `startFalH3MotionGeneration()`
+   posts `purpose: "motion-h3"` to `/api/generation/fal/jobs` — so removing the
+   freshness protection is observable at the paid seam itself, and keeping it is
+   observable as a refusal for the freshness reason.
+
+   The plan shape is the one tests/founder-smoke-p0-trust.js already serves, so
+   there is one description of a compiled H3 plan in this repository's suites
+   rather than a second guess at it. */
+const H3_PLAN = {
+  compiledPrompt: "MINIMAX H3 FIRST / LAST FRAME — 8 SECONDS\n\nTRANSITION\nKai crosses to the ledge.",
+  profile: { id: "minimax-h3/flf", name: "MiniMax H3 — First / Last Frame" },
+  mode: "flf",
+  references: [],
+  durationSeconds: 8,
+  durationRequested: 8,
+  durationRange: [5, 15],
+  resolutions: ["2K", "768P"],
+  resolution: "2K",
+  carriesAspectRatio: false,
+  maxPromptCharacters: 2000,
+  modelMaxPromptCharacters: 2000,
+  modelDurationRange: [5, 15],
+  dispatch: { model: "minimax/h3" },
+  compiler: { packId: "minimax-h3", packVersion: "1" },
+};
+
+const COMPILE_H3_PACKAGE = `
+  const s = shotById("L1-01"), c = ensureShotCreation(s), unit = s.clips[0];
+  const build = { id: "pkg-1", packageId: "L1-01-MOTION-R01", date: "2026-08-26T10:00:00Z",
+    profileId: "minimax-h3/flf", profileName: "MiniMax H3 — First / Last Frame", mode: "flf",
+    segmentId: unitKey(unit), durationSeconds: 8, kind: "guided-motion", revision: 1,
+    prompt: "MINIMAX H3 FIRST / LAST FRAME — 8 SECONDS", references: [], warnings: [], confirmations: [] };
+  build.dependencySnapshot = packageInputSnapshot(s, build, build.references, currentDirectionForPackage(s, build));
+  const packId = registerPromptBuild(P, build);
+  c.motionPromptBuilds = [promptBuildRef(packId, { kind: "guided-motion" })];
+  unit.generationPackages = [promptBuildRef(packId, { kind: "guided-motion", scope: "segment:" + unitKey(unit) })];`;
+
+function h3MotionProject() {
+  const project = buildFixture();
+  const shot = project.shots[0];
+  shot.clips = [{ id: "unit-a", suffix: "A", label: "A", dur: 8, motionPrompt: "Kai crosses to the ledge.", generationPackages: [] }];
+  shot.creationBrief = { ...(shot.creationBrief || {}), motionDuration: 8, motionProfileId: "minimax-h3/flf", motionDirection: "Kai crosses to the ledge." };
+  return project;
+}
+
+/* Open the real paid dialog on a compiled package. `stale` changes the SHOT after
+   the package was compiled, exactly as a filmmaker would — the package is never
+   edited, so its recorded snapshot is genuinely out of date rather than doctored. */
+async function openRealH3Dialog({ stale = false } = {}) {
+  const posts = [];
+  const jobs = [];
+  const rendered = await render("#/shot/L1-01", h3MotionProject(), {
+    fetch: async (url, init = {}, respond) => {
+      if (init.method === "POST") posts.push({ url: String(url), body: init.body });
+      if (url === "/api/config") return respond({ generation: { fal: { enabled: true, apiKey: "harness", keySource: "config" } } });
+      if (url === "/api/generation/fal/h3/plan") return respond(H3_PLAN);
+      if (String(url).startsWith("/api/generation/options")) return respond({ options: [] });
+      if (url === "/api/generation/fal/jobs" && init.method === "POST") {
+        const body = JSON.parse(init.body);
+        jobs.push(body);
+        return respond({ ok: true, job: { id: `harness-h3-${jobs.length}`, status: "IN_QUEUE", ...body } });
+      }
+      return null;
+    },
+  });
+  vm.runInContext(`${COMPILE_H3_PACKAGE}\n  pollFalGeneration = () => {};`, rendered.context);
+  if (stale) vm.runInContext(`shotById("L1-01").creationBrief.motionDuration = 6;`, rendered.context);
+  await rendered.context.openFalH3MotionModal("L1-01", "pkg-1");
+  const dialog = () => rendered.context.document.getElementById("modal").innerHTML;
+  /* Everything unrelated to freshness must be valid, or this fixture proves
+     nothing about freshness. */
+  assert.ok(/MINIMAX H3 · PAID GENERATION/.test(dialog()), "the paid dialog must open, or the fixture is vacuous");
+  assert.ok(!/id="fal-h3-aspect-warning"[^>]*>\s*<div>/.test(dialog()), "the aspect prerequisite must be satisfied on this fixture");
+  assert.ok(!/Prompt is not ready for submission<\/b><small>Shorten/.test(dialog()), "the prompt prerequisite must be satisfied on this fixture");
+  /* Drive the paid handler and report what actually reached the paid route. */
+  const submit = async () => {
+    const said = JSON.parse(await vm.runInContext(`(async () => {
+      const heard = [];
+      const priorToast = toast;
+      toast = (message) => { heard.push(String(message)); };
+      /* The harness's DOM does not parse a textarea's text into its value, so the
+         editor is given the compiled prompt the real browser would already be
+         showing. Identical to the compiled text, so no manual revision is created
+         and the submission is the unedited one. */
+      document.getElementById("fal-h3-prompt-editor").value = String(window._falH3MotionRequest.compiledPrompt || "");
+      try { window._falH3Submitting = false; await startFalH3MotionGeneration(); }
+      finally { toast = priorToast; }
+      return JSON.stringify(heard);
+    })()`, rendered.context));
+    return { said, jobs: jobs.filter((row) => row.purpose === "motion-h3") };
+  };
+  /* What packageFreshness() says about this package right now, so a control can
+     print the reasons beside the request it captured. */
+  const staleReasons = () => JSON.parse(vm.runInContext(`(() => {
+    const shot = shotById("L1-01");
+    const build = resolvePromptBuildList(P, ensureShotCreation(shot).motionPromptBuilds)[0];
+    return JSON.stringify(packageFreshness(shot, build).reasons);
+  })()`, rendered.context));
+  return { rendered, posts, jobs, dialog, submit, staleReasons };
+}
+
 async function checkStalePackageWithholdsGeneration() {
   const staleView = await openMotionStage(motionPackageFixture({ stale: true }), ["FRAME_A.png"]);
   const freshness = JSON.parse(vm.runInContext(`(() => {
@@ -839,32 +1148,40 @@ async function checkStalePackageWithholdsGeneration() {
 }
 
 async function checkStalePackageFailsClosedAtDispatch() {
-  const staleView = await openMotionStage(motionPackageFixture({ stale: true }), ["FRAME_A.png"]);
-  const before = staleView.posts.length;
-  /* The dispatch handler is driven directly, with the request the dialog would
-     have assembled. That is the point: this boundary must fail closed even when
-     no rendered control led to it — a "Try again" chip on an older job and a
-     programmatic opener both arrive exactly here. */
-  const refusal = await vm.runInContext(`(async () => {
-    const said = [];
-    const priorToast = toast;
-    toast = (message) => { said.push(String(message)); };
-    try {
-      window._falH3MotionRequest = { shotId: "L1-01", buildId: "build-h3-1", profileId: "minimax-h3/i2v", prompt: "x", compiledPrompt: "x" };
-      window._falH3Submitting = false;
-      document.getElementById("fal-h3-prompt-editor").value = "The worker turns from the panel and walks out of frame.";
-      await startFalH3MotionGeneration();
-    } finally { toast = priorToast; }
-    return JSON.stringify(said);
-  })()`, staleView.rendered.context);
-  assert.ok(/out of date/i.test(refusal), `the dispatch boundary must refuse for the freshness reason: ${refusal}`);
-  assert.ok(/Rebuild the motion prompt before generating/.test(refusal),
-    `the refusal must name the safe action: ${refusal}`);
-  const generationPosts = staleView.posts.slice(before).filter((row) => /\/api\/generation\//.test(row.url));
-  assert.deepStrictEqual(generationPosts, [],
-    `the boundary that spends money must fail closed on a stale package: ${JSON.stringify(generationPosts)}`);
+  /* THE REAL DIALOG, ON A FIXTURE WHOSE EVERY OTHER PREREQUISITE IS VALID. A
+     current package on this fixture reaches the paid route; a stale one must not,
+     and the difference must be the freshness question and nothing else. */
+  const current = await openRealH3Dialog({ stale: false });
+  assert.ok(!/id="fal-h3-submit"[^>]*disabled/.test(current.dialog()),
+    "precondition: a current package on this fixture has an enabled paid button");
+  const sent = await current.submit();
+  assert.strictEqual(sent.jobs.length, 1,
+    `precondition: this fixture actually reaches the paid seam, or a refusal below proves nothing: ${JSON.stringify(sent.said)}`);
+  assert.strictEqual(sent.jobs[0].purpose, "motion-h3");
 
-  note("E2 dispatch: a programmatically opened dialog cannot spend on an out-of-date package");
+  /* NOW THE SAME FIXTURE WITH THE SHOT MOVED ON. Nothing else changed. */
+  const stale = await openRealH3Dialog({ stale: true });
+  assert.ok(/This compiled package is out of date/.test(stale.dialog()),
+    `the last screen before money is spent must name the staleness: ${stale.dialog().slice(0, 200)}`);
+  assert.ok(/id="fal-h3-submit"[^>]*disabled/.test(stale.dialog()),
+    "the paid button must be withheld rather than left beside the warning");
+  assert.ok(/REBUILD MOTION PROMPT/.test(stale.dialog()), "the action that lifts the refusal must be offered");
+
+  /* AND THE HANDLER ITSELF REFUSES, with the disabled control bypassed entirely —
+     a "Try again" chip on an older job and a programmatic opener both arrive here. */
+  const refused = await stale.submit();
+  assert.deepStrictEqual(refused.jobs, [],
+    `the boundary that spends money must fail closed on a stale package: ${JSON.stringify(refused.jobs)}`);
+  assert.ok(/out of date/i.test(refused.said.join(" ")),
+    `the refusal must be the FRESHNESS refusal, not an unrelated gate: ${JSON.stringify(refused.said)}`);
+  assert.ok(/Rebuild the motion prompt before generating/.test(refused.said.join(" ")),
+    `the refusal must name the safe action: ${JSON.stringify(refused.said)}`);
+  assert.deepStrictEqual(
+    stale.posts.filter((row) => row.url === "/api/generation/fal/jobs"), [],
+    "a stale package must not reach the generation route at all",
+  );
+
+  note("E2 dispatch: on a fixture that genuinely reaches the paid seam, a stale package is refused there for the freshness reason");
 }
 
 async function checkNotCheckedIsNotStale() {
@@ -949,6 +1266,10 @@ async function main() {
   await checkCoverageBanner();
   await checkManualSatisfactionReconciles();
   await checkCoveragePaidActionTruth();
+  await checkExpressionTaskWithNoWorkSubmitsNothing();
+  await checkExpressionTaskSubmitsExactlyItsOwnWork();
+  await checkAngleTaskIsUnchanged();
+  await checkDispatchBoundaryRefusesCrossGroupSlots();
   await checkCoverageSpendPlanReadsSelections();
 
   checkApprovalDominatesRun();
@@ -982,9 +1303,11 @@ module.exports = {
   shotScan,
   shotStages,
   openCoverageBoard,
+  submitCoverageTask,
   coverageBanner,
   motionPackageFixture,
   openMotionStage,
+  openRealH3Dialog,
   PARENT_RUN,
   REQUIRED_ANGLES,
   ANGLE_FILE,
