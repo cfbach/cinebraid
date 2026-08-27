@@ -352,6 +352,43 @@
      `field` on it. The caller assigns it, so the mutation stays with the setter that
      owns the record and this module keeps its no-write guarantee. A derived field is
      never marked: `targetLabel` is written for the filmmaker, not by them. */
+  /* ==========================================================================
+     A MOTION UNIT'S AUTHORED DIRECTION, AND ITS GENERATED LABEL.
+
+     SECOND HOLD CORRECTION, blocker 2. A shot nobody had directed still reached a
+     compiled package, because every reader of "what does this unit say" walked
+     `motionPrompt || note || title` and a unit's TITLE is written by the product:
+     ensureGuidedMotionUnit() stamps "Primary motion" on the unit it creates while the
+     motion workspace is merely being rendered, and addGuidedMotionUnit() stamps
+     "Motion unit B". So the empty-intent refusal saw intent, and buildContext() compiled
+     "Primary motion" as the shot's description ahead of the filmmaker's own narrative.
+
+     The distinction is structural, not lexical. `motionPrompt` and `note` EXIST to carry
+     filmmaker-written motion direction: the composer writes them from the direction box,
+     and the Project Builder import maps an authored direction into both. `title`,
+     `label`, `suffix` and `id` are identity — how a unit is NAMED in a tab strip. The
+     composer offers no way to write a unit title at all, and the import path fills an
+     absent one with "Motion <label>", so a stored title cannot be shown to have been
+     authored by anyone. Under this module's rule that settles it: what the code cannot
+     prove was declared is not treated as a declaration.
+
+     There is deliberately no check for the string "Primary motion" anywhere. A blacklist
+     would make the VALUE authoritative, and would still be wrong for the next generated
+     label the product invents. */
+  const MOTION_UNIT_AUTHORED_DIRECTION_FIELDS = motionIntentFreeze(["motionPrompt", "note"]);
+  const MOTION_UNIT_GENERATED_IDENTITY_FIELDS = motionIntentFreeze(["title", "label", "suffix", "id"]);
+
+  /* What this motion unit says that a filmmaker actually wrote. "" when it says nothing —
+     which is the answer a generated unit gives, however fully labelled it is. */
+  function motionUnitAuthoredDirection(unit) {
+    if (!motionIntentRecord(unit)) return "";
+    for (const field of MOTION_UNIT_AUTHORED_DIRECTION_FIELDS) {
+      const value = motionIntentText(unit[field]);
+      if (value) return value;
+    }
+    return "";
+  }
+
   function motionDeclaredFieldsWith(dimension, entry, field) {
     const key = motionIntentText(dimension);
     const name = motionIntentText(field);
@@ -379,6 +416,9 @@
     motionEnvironmentDeclared,
     motionTimingDeclared,
     motionAudioDeclared,
+    MOTION_UNIT_AUTHORED_DIRECTION_FIELDS,
+    MOTION_UNIT_GENERATED_IDENTITY_FIELDS,
+    motionUnitAuthoredDirection,
     motionDeclaredFieldsWith,
   };
 });

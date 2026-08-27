@@ -535,12 +535,22 @@ function buildContext(P, shotId, segmentId = "", options = {}) {
       title: segment
         ? `${shot.title || shot.id} — ${segment.title || segment.suffix || "segment"}`
         : shot.title || "",
+      /* A UNIT'S TITLE IS ITS NAME, NOT ITS DIRECTION.
+       *
+       * SECOND HOLD CORRECTION, blocker 2. This chain read `segment.title` ahead of the
+       * shot's own narrative, and a unit title is written by the product — "Primary
+       * motion" from ensureGuidedMotionUnit(), "Motion <label>" from the Project Builder
+       * import when the source document supplied none. So a shot whose filmmaker HAD
+       * written a description compiled "Primary motion" as its subject instead, and a
+       * shot nobody had directed compiled a package out of a label.
+       *
+       * The authored direction is `motionPrompt` / `note` — the fields the composer
+       * writes from the direction box and the fields the importer maps an authored
+       * direction into, each from the other. public/shared-motion-intent.js owns that
+       * distinction; the display title above still uses `segment.title`, because naming
+       * the unit is exactly what it is for. */
       description: segment
-        ? segment.motionPrompt ||
-          segment.note ||
-          segment.title ||
-          shotNarrative.text ||
-          ""
+        ? MotionIntent.motionUnitAuthoredDirection(segment) || shotNarrative.text || ""
         : shotNarrative.text,
       positioning: segment
         ? segment.positioning || shotPositioning.text || ""

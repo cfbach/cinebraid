@@ -568,6 +568,18 @@ async function main() {
   testUnsetAudioModeMayStillBeDerived();
   await testDeclaredAudioModeSurvivesTheServerRoute();
   await testBrowserSummaryDoesNotPromoteSiblings();
+
+  /* ---- 10. EXPLICIT DEFAULT-VALUED AUDIO MODE (second hold, blocker 1) ----- */
+  await testExplicitDefaultValuedAudioModeIsDeclared();
+  await testExplicitLipSyncModeIsDeclaredThroughTheRealWriters();
+  testUntouchedAudioModeIsStillDefaulted();
+  await testAudioModeDeclarationSurvivesSaveAndReopen();
+  await testProvenanceDistinguishesExplicitFromUntouchedNone();
+
+  /* ---- 11. GENERATED UNIT TITLE (second hold, blocker 2) ------------------- */
+  await testGeneratedUnitTitleIsNotMotionIntent();
+  testGeneratedUnitTitleIsNotTheShotDescription();
+  testNoTitleIsTreatedAsAuthoredDirection();
   testDeclaredCameraOutranksDefaultedPlan();
   testDeclaredPlanCameraIsApplied();
   testLowerLayerDefaultSurvivesWhenNothingContradictsIt();
@@ -1266,6 +1278,243 @@ async function testBrowserSummaryDoesNotPromoteSiblings() {
     `a declared pacing must compile on its own: ${JSON.stringify(timing.summary)}`);
 }
 
+/* ====================================== 10. THE SECOND HOLD CORRECTION, BLOCKER 1
+   ===========================================================================
+   AN EXPLICIT CHOICE IS DECLARED EVEN WHEN IT LOOKS LIKE THE DEFAULT.
+
+   The audio row's canonical mode is `none`. The subject, prop, camera, environment and
+   timing setters all record the field they just wrote; the audio setter did not. So a
+   filmmaker who deliberately chose "No audio" stored a value byte-identical to an
+   untouched control, classification correctly called it defaulted, and
+   applyMotionAudioBrief() then legitimately derived `generate-voice` over a decision
+   somebody had actually made.
+
+   Driven through the REAL writers, in a real dispatch, one field at a time. There is no
+   test for the string `none` in the product or here: what is asserted is that a
+   SELECTION was recorded, whatever was selected. */
+
+/* The composer's own audio setter, on each implementation a filmmaker can actually
+   reach. `base` renders the page in SAFE MODE — the shipped preference
+   public/v607-composer.js checks before it installs anything — so the pre-6.0.7 writer is
+   the one on `window`, exactly as it is for a filmmaker who has turned the enhanced
+   composer off or whose page fell back to it. Nothing is swapped in by the test. */
+const COMPOSER_SAFE_MODE_KEY = "cinebraid-disable-v607-composer";
+
+async function audioModeChosenThrough(implementation, mode) {
+  const project = buildFixture();
+  const storage = { "cinebraid-focused:fixture:shot-task:L1-01": "motion" };
+  if (implementation === "base") storage[COMPOSER_SAFE_MODE_KEY] = "1";
+  const { context } = await render("#/shot/L1-01", project, { storage });
+  const enhanced = vm.runInContext("!window.__CINEBRAID_COMPOSER_607_DISABLED", context);
+  assert.strictEqual(enhanced, implementation !== "base",
+    `${implementation}: the harness must be running the implementation this case names`);
+  vm.runInContext(`setSimpleMotionAudio("L1-01", "mode", ${JSON.stringify(mode)})`, context);
+  const stored = JSON.parse(vm.runInContext(`(() => {
+    const s = shotById("L1-01");
+    const c = ensureShotCreation(s);
+    const unit = (s.clips || []).find((item) => item.id === c.activeMotionUnitId) || s.clips[0];
+    /* The base writer keeps the shot's default plan; the enhanced one keeps the unit's.
+       Both are read, and the one that carries the mark is the one that was written. */
+    return JSON.stringify({
+      shotPlanAudio: c.motionPlan.audio,
+      unitPlanAudio: (unit && unit.motionPlan && unit.motionPlan.audio) || null,
+      project: JSON.parse(JSON.stringify(P)),
+    });
+  })()`, context));
+  const written = stored.unitPlanAudio && stored.unitPlanAudio.mode === mode ? stored.unitPlanAudio : stored.shotPlanAudio;
+  return { written, project: stored.project, context };
+}
+
+/* What the compiler makes of a plan whose audio row is exactly what a writer produced. */
+function audioModeAfterTheBrief(audio) {
+  const context = swampContext({ shot: { audio: { dialogue: LIP_SYNC_LINE, sfx: "" } } });
+  const profile = motionProfile();
+  const plan = blankPlan();
+  plan.audio = JSON.parse(JSON.stringify(audio));
+  let spec = PromptEngine.defaultSpec(context, "motion", profile.mode || "i2v", lipSyncReferences(), null);
+  spec = PromptEngine.applyStructuredDirection(spec, null, plan, lipSyncReferences());
+  const declaredBefore = declaredFields(spec).includes("audio::mode");
+  spec = PromptEngine.applyMotionAudioBrief(spec, lipSyncBrief());
+  return { declaredBefore, mode: spec.audio.mode, spec };
+}
+
+/* CASES A and B. An explicit `none` through each real writer, all the way to the mode the
+   compiled package would carry. */
+async function testExplicitDefaultValuedAudioModeIsDeclared() {
+  for (const implementation of ["base", "v607"]) {
+    const chosen = await audioModeChosenThrough(implementation, "none");
+    assert.strictEqual(chosen.written.mode, "none",
+      `${implementation}: the stored mode must be what the filmmaker chose`);
+    assert.ok(Array.isArray(chosen.written[MotionIntent.MOTION_INTENT_DECLARED_KEY])
+      && chosen.written[MotionIntent.MOTION_INTENT_DECLARED_KEY].includes("mode"),
+      `${implementation}: the real writer must record that the filmmaker set the audio mode, even when the value they chose equals the canonical default: ${JSON.stringify(chosen.written)}`);
+    assert.ok(MotionIntent.motionFieldDeclared("audio", chosen.written, "mode"),
+      `${implementation}: classification must read an explicitly chosen mode as declared`);
+
+    const compiled = audioModeAfterTheBrief(chosen.written);
+    assert.ok(compiled.declaredBefore,
+      `${implementation}: provenance must record the explicit choice as taken`);
+    assert.strictEqual(compiled.mode, "none",
+      `${implementation}: an explicitly chosen audio mode must survive the motion brief rather than being derived away: ${compiled.mode}`);
+  }
+}
+
+/* CASE C. An explicit lip-sync is declared and preserved through the same writers. */
+async function testExplicitLipSyncModeIsDeclaredThroughTheRealWriters() {
+  for (const implementation of ["base", "v607"]) {
+    const chosen = await audioModeChosenThrough(implementation, "lip-sync-reference");
+    assert.strictEqual(chosen.written.mode, "lip-sync-reference", `${implementation}: the stored mode must be what the filmmaker chose`);
+    assert.ok(MotionIntent.motionFieldDeclared("audio", chosen.written, "mode"),
+      `${implementation}: an explicit lip-sync must read as declared`);
+    const compiled = audioModeAfterTheBrief(chosen.written);
+    assert.strictEqual(compiled.mode, "lip-sync-reference",
+      `${implementation}: an explicit lip-sync must survive the motion brief: ${compiled.mode}`);
+  }
+}
+
+/* CASE D. An untouched `none` — nobody interacted with the control at all — is still
+   defaulted, and a lower layer may still legitimately derive over it. This is the half
+   that keeps the fix a distinction rather than a blanket preservation. */
+function testUntouchedAudioModeIsStillDefaulted() {
+  const untouched = blankPlan().audio;
+  assert.strictEqual(untouched.mode, "none", "the fixture must carry the canonical default");
+  assert.ok(!MotionIntent.motionFieldDeclared("audio", untouched, "mode"),
+    "a mode nobody selected must read as defaulted");
+  const compiled = audioModeAfterTheBrief(untouched);
+  assert.ok(!compiled.declaredBefore, "provenance must not claim an untouched mode");
+  assert.strictEqual(compiled.mode, "generate-voice",
+    `an unset mode must still be derived by a lower layer: ${compiled.mode}`);
+}
+
+/* CASE E. The marker is durable. A project is saved as the bytes `P` holds and reopened
+   by loading those bytes, so this is the round trip a filmmaker takes between sessions —
+   and the answer must be the same on the other side of it. */
+async function testAudioModeDeclarationSurvivesSaveAndReopen() {
+  const chosen = await audioModeChosenThrough("v607", "none");
+  const saved = JSON.parse(JSON.stringify(chosen.project));
+  const { context } = await render("#/shot/L1-01", saved, { storage: { "cinebraid-focused:fixture:shot-task:L1-01": "motion" } });
+  const reopened = JSON.parse(vm.runInContext(`(() => {
+    const s = shotById("L1-01");
+    const c = ensureShotCreation(s);
+    const unit = (s.clips || []).find((item) => item.id === c.activeMotionUnitId) || s.clips[0];
+    return JSON.stringify((unit && unit.motionPlan && unit.motionPlan.audio) || c.motionPlan.audio);
+  })()`, context));
+  assert.strictEqual(reopened.mode, "none", "the reopened project must carry the chosen mode");
+  assert.ok(MotionIntent.motionFieldDeclared("audio", reopened, "mode"),
+    `the declaration marker must survive save and reopen: ${JSON.stringify(reopened)}`);
+  assert.strictEqual(audioModeAfterTheBrief(reopened).mode, "none",
+    "and the reopened declaration must still outrank the derivation");
+}
+
+/* PROVENANCE MUST TELL THE TWO APART, which is the whole claim in one assertion. */
+async function testProvenanceDistinguishesExplicitFromUntouchedNone() {
+  const explicit = await audioModeChosenThrough("v607", "none");
+  const explicitSpec = audioModeAfterTheBrief(explicit.written);
+  const untouchedSpec = audioModeAfterTheBrief(blankPlan().audio);
+  assert.ok(declaredFields(explicitSpec.spec).includes("audio::mode"),
+    "an explicit choice must be recorded as taken");
+  assert.ok(!declaredFields(untouchedSpec.spec).includes("audio::mode"),
+    "an untouched control must not be recorded as taken");
+  assert.strictEqual(withheldReason(untouchedSpec.spec, "audio::mode"), "field-carries-no-declaration",
+    "an untouched control must be recorded as withheld, by name");
+  assert.notStrictEqual(explicitSpec.mode, untouchedSpec.mode,
+    "the two must reach different compiled answers, or the distinction is decorative");
+}
+
+/* ====================================== 11. THE SECOND HOLD CORRECTION, BLOCKER 2
+   ===========================================================================
+   A GENERATED LABEL IS NOT AUTHORED INTENT.
+
+   ensureGuidedMotionUnit() stamps `title: "Primary motion"` on the unit it creates while
+   the motion workspace is merely being RENDERED. Both semantic readers walked
+   `motionPrompt || note || title`, so a shot nobody had directed acquired intent by being
+   looked at: the truthful refusal was bypassed and a package was built out of a label.
+
+   The inherited unit creation is NOT touched here and is deliberately allowed to happen
+   in these fixtures — it is what makes them the reviewer's path rather than a tidier one. */
+
+/* A shot with no clips at all, no description, no title and no motion plan. Opening the
+   motion workspace is what creates the unit, and the generated title comes with it. */
+function undirectedShotFixture() {
+  const project = buildFixture();
+  const shot = project.shots[0];
+  shot.desc = "";
+  shot.title = "";
+  shot.motionPrompt = "";
+  shot.clips = [];
+  delete shot.creationBrief;
+  return project;
+}
+
+async function testGeneratedUnitTitleIsNotMotionIntent() {
+  const attempt = await motionCompileAttempt(undirectedShotFixture());
+  /* THE INHERITED UNIT REALLY WAS CREATED. Without this the case would pass against a
+     shot that simply had no unit, which is not the path the reviewer reproduced. */
+  const unit = JSON.parse(vm.runInContext(`(() => {
+    const s = shotById("L1-01");
+    return JSON.stringify((s.clips || [])[0] || null);
+  })()`, attempt.context));
+  assert.ok(unit, "the fixture must actually go through the inherited motion-unit creation");
+  assert.ok(String(unit.title || "").trim(),
+    `the created unit must carry the generated title this case is about: ${JSON.stringify(unit)}`);
+  assert.strictEqual(MotionIntent.motionUnitAuthoredDirection(unit), "",
+    `a unit carrying only generated identity says nothing: ${JSON.stringify(unit)}`);
+  assert.strictEqual(attempt.request, null,
+    `a generated unit title must not be read as motion intent; the shot is undirected and the refusal must stand: ${JSON.stringify(unit)}`);
+}
+
+/* And the compiler agrees: a generated title never becomes the shot's subject. */
+function testGeneratedUnitTitleIsNotTheShotDescription() {
+  const project = buildFixture();
+  const shot = project.shots.find((row) => row.id === "L1-01");
+  shot.desc = "Kai walks the length of the hull.";
+  shot.clips = [{ id: "seg-generated", suffix: "a", label: "A", title: "Primary motion", kind: "i2v", dur: 5, motionPrompt: "", note: "", generationPackages: [] }];
+  const context = PromptEngine.buildContext(project, "L1-01", "seg-generated");
+  assert.strictEqual(context.shot.description, "Kai walks the length of the hull.",
+    `the filmmaker's narrative must outrank a generated unit label: ${JSON.stringify(context.shot.description)}`);
+  /* The unit is still NAMED by its title — that is what a title is for. */
+  assert.ok(context.shot.title.includes("Primary motion"),
+    `the unit must still be named by its title: ${context.shot.title}`);
+  const profile = motionProfile();
+  let spec = PromptEngine.defaultSpec(context, "motion", profile.mode || "i2v", [], null);
+  spec = PromptEngine.applyStructuredDirection(spec, null, null, []);
+  const compiled = PromptEngine.compile(profile, spec, []);
+  assert.ok(compiled.prompt.includes("walks the length of the hull"),
+    `the narrative must reach the compiled prompt: ${compiled.prompt.slice(0, 400)}`);
+  assert.ok(!/Primary motion/.test(compiled.prompt),
+    `a generated label reached the compiled prompt: ${compiled.prompt.slice(0, 400)}`);
+
+  /* AND AN AUTHORED DIRECTION ON THE SAME UNIT STILL WINS, so this is a distinction
+     between fields rather than a demotion of the unit. */
+  shot.clips[0].motionPrompt = "Kai stops at the third panel and turns.";
+  const directed = PromptEngine.buildContext(project, "L1-01", "seg-generated");
+  assert.strictEqual(directed.shot.description, "Kai stops at the third panel and turns.",
+    `an authored unit direction must still outrank the shot narrative: ${directed.shot.description}`);
+}
+
+/* CASE D. A stored title cannot be shown to have been authored — the composer offers no
+   way to write one, and the Project Builder import fills an absent one with "Motion
+   <label>". So no title is read as intent, whatever it says. Asserting this with a
+   title that is NOT the generated string is what proves the fix is structural rather
+   than a blacklist. */
+function testNoTitleIsTreatedAsAuthoredDirection() {
+  const unit = { id: "seg-a", title: "Rex wades through the swamp", label: "A", suffix: "a", motionPrompt: "", note: "" };
+  assert.strictEqual(MotionIntent.motionUnitAuthoredDirection(unit), "",
+    `a title is identity whatever it says; authorship cannot be inferred from the string: ${JSON.stringify(unit)}`);
+  const project = buildFixture();
+  const shot = project.shots.find((row) => row.id === "L1-01");
+  shot.desc = "Kai walks the length of the hull.";
+  shot.clips = [{ ...unit, kind: "i2v", dur: 5, generationPackages: [] }];
+  const context = PromptEngine.buildContext(project, "L1-01", "seg-a");
+  assert.strictEqual(context.shot.description, "Kai walks the length of the hull.",
+    `an evocative title is still a title: ${context.shot.description}`);
+  /* The fields that DO carry authored direction still answer, from either one. */
+  assert.strictEqual(MotionIntent.motionUnitAuthoredDirection({ ...unit, note: "Kai turns at the hatch" }), "Kai turns at the hatch",
+    "a unit's authored note is authored direction");
+  assert.strictEqual(MotionIntent.motionUnitAuthoredDirection({ ...unit, motionPrompt: "Kai turns", note: "ignored" }), "Kai turns",
+    "the direction box outranks the note, as it always has");
+}
+
 module.exports = {
   BLANK_SUBJECT, BLANK_PROP, BLANK_CAMERA, BLANK_ENVIRONMENT, BLANK_TIMING,
   REX, CHAIR, DECLARED_WALK, SHOT_A, SHOT_B, SHOT_A_TOKENS, SHOT_B_TOKENS, REPORTED_STRINGS,
@@ -1286,6 +1535,13 @@ module.exports = {
   testDeclaredAudioModeSurvivesTheMotionBrief, testUnsetAudioModeMayStillBeDerived,
   testDeclaredAudioModeSurvivesTheServerRoute, withMotionIntentServer,
   browserSummaryAfter, testBrowserSummaryDoesNotPromoteSiblings,
+  audioModeChosenThrough, audioModeAfterTheBrief, undirectedShotFixture, COMPOSER_SAFE_MODE_KEY,
+  MotionIntent,
+  testExplicitDefaultValuedAudioModeIsDeclared, testExplicitLipSyncModeIsDeclaredThroughTheRealWriters,
+  testUntouchedAudioModeIsStillDefaulted, testAudioModeDeclarationSurvivesSaveAndReopen,
+  testProvenanceDistinguishesExplicitFromUntouchedNone,
+  testGeneratedUnitTitleIsNotMotionIntent, testGeneratedUnitTitleIsNotTheShotDescription,
+  testNoTitleIsTreatedAsAuthoredDirection,
   lipSyncPlan, lipSyncReferences, lipSyncBrief, LIP_SYNC_LINE, AUDIO_REFERENCE_KEY,
   NARRATIVE_LOWER_SOURCE_TOKEN, narrativeOnlyFixture, motionCompileAttempt,
   testEmptyComposerFallsThroughToShotNarrative, testUndirectedShotStillRefuses,

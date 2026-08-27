@@ -4479,9 +4479,23 @@ window.setMotionProp = (id, propId, key, value) => {
   keepGuidedPanelOpen(s, "motion", "motionDirector");
   dirty(); route();
 };
+/* THE AUDIO WRITER MARKS WHAT THE FILMMAKER SET, like every other motion control.
+ *
+ * SECOND HOLD CORRECTION, blocker 1. The subject, prop, camera, environment and timing
+ * setters record the field they just wrote; this one did not, and the audio row's
+ * canonical default is `none`. So a filmmaker who deliberately chose "No audio" stored a
+ * value byte-identical to an untouched control, classification correctly reported it as
+ * defaulted, and applyMotionAudioBrief() then legitimately derived `generate-voice` over
+ * a decision someone had actually made.
+ *
+ * The mark is made because a SELECTION HAPPENED, not because of what was selected. There
+ * is no test for the string `none` here or anywhere: a value-based exception would make
+ * the value authoritative instead of the filmmaker's action, and would fail the moment a
+ * different control shared its default. */
 window.setSimpleMotionAudio = (id, key, value) => {
   const s = shotById(id), c = ensureShotCreation(s), audio = c.motionPlan.audio;
   audio[key] = value;
+  markMotionDeclaration("audio", audio, key);
   if (key === "mode") {
     audio.lipSync = value === "lip-sync-reference";
     if (value !== "lip-sync-reference") audio.referenceKey = "";
@@ -4658,17 +4672,23 @@ window.buildGuidedMotionPrompt = async (id, useLLM = false) => {
    *
    * The declared precedence is composer brief -> declared motion plan -> the current
    * shot's own narrative -> lower sources. The first two being silent is the second one
-   * yielding, not the shot being undirected. buildContext() reads exactly the chain
-   * below for a segment (`motionPrompt || note || title`, then the shot narrative), so
-   * asking it here is asking what the compile would actually receive rather than
-   * guessing. Read without creating: resolving the unit through activeMotionUnit() would
-   * write a clip as a side effect of a refusal check.
+   * yielding, not the shot being undirected. Read without creating: resolving the unit
+   * through activeMotionUnit() would write a clip as a side effect of a refusal check.
+   *
+   * A GENERATED LABEL IS NOT ONE OF THOSE LAYERS. The first correction read the unit
+   * chain `motionPrompt || note || title`, and a unit's TITLE is written by the product:
+   * ensureGuidedMotionUnit() stamps "Primary motion" on the unit it creates while the
+   * motion workspace is merely being RENDERED. So a shot nobody had directed at any layer
+   * acquired intent by being looked at, and this refusal was bypassed on the way to a
+   * generation package. public/shared-motion-intent.js owns which unit fields carry
+   * authored direction and which are identity, and there is no test for the string
+   * "Primary motion" here or anywhere else.
    *
    * Nothing is manufactured to satisfy this. A shot with no motion intent at ANY layer
    * still gets the honest refusal. */
   const unitForNarrative = (s.clips || []).find((item) => item.id === c.activeMotionUnitId) || (s.clips || [])[0] || null;
   const narrativeDirection = String(
-    unitForNarrative?.motionPrompt || unitForNarrative?.note || unitForNarrative?.title || s.desc || "",
+    motionUnitAuthoredDirection(unitForNarrative) || s.desc || "",
   ).trim();
   if (!structuredDirection && !writtenDirection && !narrativeDirection) return toast("Choose at least one motion direction");
   if (useLLM && !capabilityState("text").ready) return toast(capabilityState("text").message);

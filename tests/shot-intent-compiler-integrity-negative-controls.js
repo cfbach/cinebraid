@@ -57,6 +57,17 @@
  *   NC-M21  the motion refusal ignores the shot's own narrative again, so a directed
  *           shot never reaches /api/prompt/compile
  *
+ * THE SECOND HOLD-CORRECTION CONTROLS:
+ *
+ *   NC-M22  the BASE composer's audio writer stops marking the field, so an explicitly
+ *           chosen "No audio" is classified defaulted and derived into generate-voice
+ *   NC-M23  the ENHANCED composer's audio writer stops marking it, same outcome — the
+ *           half-repair this pair exists to forbid
+ *   NC-M24  the motion refusal reads a generated unit title as motion intent, so an
+ *           undirected shot buys a package on the strength of a label the product wrote
+ *   NC-M25  buildContext reads the same generated title as the shot's subject, ahead of
+ *           the narrative the filmmaker actually wrote
+ *
  * EVERY CONTROL DECLARES WHICH DETECTOR IT EXPECTS. `expect` is a regular expression over
  * the detector's own message, and a failure that does not match it fails THIS suite — a
  * control that armed one defect and tripped an unrelated assertion elsewhere would
@@ -698,6 +709,118 @@ async function nc21() {
   });
 }
 
+/* ============================ THE SECOND HOLD-CORRECTION CONTROLS (NC-M22…NC-M25)
+   ===========================================================================
+   Two blockers, four guards. Both defects were reproduced by an independent reviewer on
+   5a63117 through the real writers and the real render path, so what these arm is history
+   rather than hypothesis. */
+
+/* BLOCKER 1. Take the mark off the real BASE writer and an explicit "No audio" becomes
+   indistinguishable from a control nobody opened — which is what the reviewer saw. */
+async function nc22() {
+  await control({
+    id: "NC-M22",
+    expect: /^base: the real writer must record that the filmmaker set the audio mode/,
+    defect: "the base composer's audio writer stops marking the field, so an explicit default-valued mode reads as untouched",
+    files: {
+      "public/creation-studio.js": [[
+        `  markMotionDeclaration("audio", audio, key);\n`,
+        "",
+      ]],
+    },
+    probe: async (suite) => {
+      const chosen = await suite.audioModeChosenThrough("base", "none");
+      assert.strictEqual(chosen.written.mode, "none", "NC-M22: the writer did not store the chosen mode");
+      assert.ok(!suite.MotionIntent.motionFieldDeclared("audio", chosen.written, "mode"),
+        `NC-M22: the defect did not land — the mark is still there: ${JSON.stringify(chosen.written)}`);
+      const compiled = suite.audioModeAfterTheBrief(chosen.written);
+      assert.strictEqual(compiled.mode, "generate-voice",
+        `NC-M22: the derivation did not take over — the mode is ${compiled.mode}`);
+      return `an explicitly chosen "none" was classified defaulted and compiled as ${compiled.mode}`;
+    },
+    guard: (suite) => suite.testExplicitDefaultValuedAudioModeIsDeclared(),
+  });
+}
+
+/* The same, on the enhanced writer. The base case passing while this one fails is exactly
+   the half-repair this control exists to forbid. */
+async function nc23() {
+  await control({
+    id: "NC-M23",
+    expect: /^v607: the real writer must record that the filmmaker set the audio mode/,
+    defect: "the enhanced composer's audio writer stops marking the field, so an explicit default-valued mode reads as untouched",
+    files: {
+      "public/v607-composer.js": [[
+        `audio[key] = value; markMotionDeclaration607("audio", audio, key); if (key === "mode")`,
+        `audio[key] = value; if (key === "mode")`,
+      ]],
+    },
+    probe: async (suite) => {
+      const chosen = await suite.audioModeChosenThrough("v607", "none");
+      assert.ok(!suite.MotionIntent.motionFieldDeclared("audio", chosen.written, "mode"),
+        `NC-M23: the defect did not land — the mark is still there: ${JSON.stringify(chosen.written)}`);
+      const compiled = suite.audioModeAfterTheBrief(chosen.written);
+      assert.strictEqual(compiled.mode, "generate-voice",
+        `NC-M23: the derivation did not take over — the mode is ${compiled.mode}`);
+      return `an explicitly chosen "none" was classified defaulted and compiled as ${compiled.mode}`;
+    },
+    guard: (suite) => suite.testExplicitDefaultValuedAudioModeIsDeclared(),
+  });
+}
+
+/* BLOCKER 2. Put the generated title back into the refusal's source chain and an
+   undirected shot buys a generation package with a label the product wrote for it. */
+async function nc24() {
+  await control({
+    id: "NC-M24",
+    expect: /the shot is undirected and the refusal must stand/,
+    defect: "the motion refusal reads a generated unit title as motion intent, so an undirected shot bypasses it",
+    files: {
+      "public/creation-studio.js": [[
+        `    motionUnitAuthoredDirection(unitForNarrative) || s.desc || "",`,
+        `    unitForNarrative?.motionPrompt || unitForNarrative?.note || unitForNarrative?.title || s.desc || "",`,
+      ]],
+    },
+    probe: async (suite) => {
+      const attempt = await suite.motionCompileAttempt(suite.undirectedShotFixture());
+      assert.ok(attempt.request,
+        "NC-M24: the defect did not land — the refusal still stood");
+      const unit = JSON.parse(require("vm").runInContext(
+        `JSON.stringify((shotById("L1-01").clips || [])[0] || null)`, attempt.context));
+      return `an undirected shot compiled a package on the strength of a generated label: ${JSON.stringify(unit && unit.title)}`;
+    },
+    guard: (suite) => suite.testGeneratedUnitTitleIsNotMotionIntent(),
+  });
+}
+
+/* And the compiler's half: the same label taken as the shot's subject, ahead of what the
+   filmmaker actually wrote. */
+async function nc25() {
+  await control({
+    id: "NC-M25",
+    expect: /the filmmaker's narrative must outrank a generated unit label/,
+    defect: "buildContext reads a generated unit title as the shot description, ahead of the authored narrative",
+    files: {
+      "prompt-engine.js": [[
+        `        ? MotionIntent.motionUnitAuthoredDirection(segment) || shotNarrative.text || ""`,
+        `        ? segment.motionPrompt || segment.note || segment.title || shotNarrative.text || ""`,
+      ]],
+    },
+    probe: async (suite) => {
+      const PE = freshPromptEngine();
+      const project = suite.twoShotFixture();
+      const shot = project.shots.find((row) => row.id === "L1-01");
+      shot.desc = "Kai walks the length of the hull.";
+      shot.clips = [{ id: "seg-generated", suffix: "a", label: "A", title: "Primary motion", kind: "i2v", dur: 5, motionPrompt: "", note: "", generationPackages: [] }];
+      const context = PE.buildContext(project, "L1-01", "seg-generated");
+      assert.strictEqual(context.shot.description, "Primary motion",
+        `NC-M25: the defect did not land — the description is ${JSON.stringify(context.shot.description)}`);
+      return `the compiler took a generated label as the shot's subject: ${JSON.stringify(context.shot.description)}`;
+    },
+    guard: (suite) => suite.testGeneratedUnitTitleIsNotTheShotDescription(),
+  });
+}
+
 /* ================================================================== THE RUN
    =========================================================================== */
 
@@ -748,6 +871,10 @@ async function main() {
   await nc19();
   await nc20();
   await nc21();
+  await nc22();
+  await nc23();
+  await nc24();
+  await nc25();
 
   assert.deepStrictEqual(hashes(), before,
     "a control left a patched file changed; every patched byte must be restored exactly");
