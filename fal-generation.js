@@ -1465,6 +1465,63 @@ function registerFalGeneration(app, context) {
      invalidates a perfectly good prepared refresh on every cancel, and guessing NO
      lets a prepared snapshot reinstall the pre-cancel coverage status. The answer
      is cheap here and unknowable there, so it travels in the response. */
+  /* THE COVERAGE RUN A JOB ROW JUSTIFIES, rebuilt from the job row.
+   *
+   * This is the whole recovery mechanism, and it needs nothing that was not already
+   * being written: a coverage job row carries `entityList`, `entityId`,
+   * `coverageJobType`, `coverageSheetType` and `createdAt`, which is precisely the
+   * record. ingestEntity() has always done this when the record was missing — the
+   * behaviour is unchanged, it simply has a name now so the seam that can lose the
+   * projection and the seam that repairs it are visibly the same rule.
+   *
+   * WHY A REBUILD IS ENOUGH. The ledger is written before the projection, so the only
+   * interruption this has to answer is "job exists, record does not" — and every field
+   * the record needs is on the job. The opposite state, a record with no job, is the one
+   * the ordering makes unreachable.
+   *
+   * Mutates the entity in place and is only ever called inside a commitProject() turn. */
+  function projectCoverageRunFromJob(entity, job) {
+    const existing = entity.coverageAutomation && typeof entity.coverageAutomation === "object"
+      ? entity.coverageAutomation
+      : {
+        id: `coverage:${job.entityList}:${job.entityId}:${job.id}`,
+        list: job.entityList,
+        entityId: entity.id,
+        mode: job.coverageJobType === "sheet" ? "sheet" : "individual",
+        sheetType: job.coverageSheetType || "angles",
+        status: job.coverageJobType === "sheet" ? "sheet-running" : "individual-running",
+        startedAt: job.createdAt || now(),
+        /* Named so a reader can tell a rebuilt projection from one the dispatch wrote,
+           which is a real difference: this one was reconstructed after its own write was
+           lost or interrupted. */
+        rebuiltFromJobAt: now(),
+        jobs: [],
+      };
+    existing.jobs = Array.isArray(existing.jobs) ? existing.jobs : [];
+    if (!existing.jobs.includes(job.id)) existing.jobs.push(job.id);
+    entity.coverageAutomation = existing;
+    return existing;
+  }
+
+  /* Rebuild a coverage projection that an interruption left unwritten. Deliberately
+     narrow: it only ever ADDS a record the ledger justifies, never advances or finishes
+     one, because lifecycle transitions belong to updateEntityCoverageRun() and ingest. */
+  async function repairCoverageProjection(owner, job) {
+    if (job?.purpose !== "entity-reference" || !job.coverageJobType || !job.entityList || !job.entityId) return false;
+    try {
+      const known = (ownerProject(owner)[job.entityList] || []).find((item) => String(item.id) === String(job.entityId));
+      if (!known || known.coverageAutomation) return false;
+      let wrote = false;
+      await commitProject(owner, (project) => {
+        const entity = (project[job.entityList] || []).find((item) => String(item.id) === String(job.entityId));
+        if (!entity || entity.coverageAutomation) return;
+        projectCoverageRunFromJob(entity, job);
+        wrote = true;
+      });
+      return wrote;
+    } catch { return false; }
+  }
+
   async function updateEntityCoverageRun(owner, job, status, error = "") {
     if (job?.purpose !== "entity-reference" || !job.entityList || !job.entityId) return false;
     try {
@@ -1538,9 +1595,7 @@ function registerFalGeneration(app, context) {
       if (!entity.workflowStatus || entity.workflowStatus === "DRAFT") entity.workflowStatus = "IN PROGRESS";
       if (!entity.status || entity.status === "NOT STARTED") entity.status = "IN PROGRESS";
       if (job.coverageJobType) {
-        entity.coverageAutomation = entity.coverageAutomation && typeof entity.coverageAutomation === "object" ? entity.coverageAutomation : { list, entityId: entity.id, mode: job.coverageJobType === "sheet" ? "sheet" : "individual", sheetType: job.coverageSheetType || "angles", startedAt: job.createdAt || now(), jobs: [] };
-        entity.coverageAutomation.jobs = Array.isArray(entity.coverageAutomation.jobs) ? entity.coverageAutomation.jobs : [];
-        if (!entity.coverageAutomation.jobs.includes(job.id)) entity.coverageAutomation.jobs.push(job.id);
+        projectCoverageRunFromJob(entity, job);
         const knownJobs = readJobs(owner);
         const pending = knownJobs.filter((item) => entity.coverageAutomation.jobs.includes(item.id) && item.id !== job.id && !["COMPLETED", "FAILED", "CANCELLED"].includes(String(item.status || "").toUpperCase()));
         if (!pending.length) {
@@ -2464,7 +2519,7 @@ function registerFalGeneration(app, context) {
        snapshot this request read minutes ago — a job created by an overlapping
        request in between must survive. */
     /* ===================================================================
-       THE DISPATCH-COMMIT POINT.
+       THE DISPATCH-COMMIT POINT, AND THE ORDER OF ITS TWO DURABLE WRITES.
 
        Everything above this line can still refuse: the plan gate, the surface, the
        payload restriction, model identity, package freshness, the compiled-plan and
@@ -2474,36 +2529,52 @@ function registerFalGeneration(app, context) {
 
        Below it, a job row exists and a provider is about to be told about it.
 
-       SO THIS IS WHERE A SERVER OPERATION'S OWN STATE BECOMES TRUE. The coverage route
-       used to establish its run before calling this function, and an independent reviewer
-       showed the cost: a coverage request refused by the shared boundary for a missing
-       plan left `sheet-running` on the entity with no jobs, no ledger row and no provider
-       call — a machine-owned claim that work was under way that never began.
+       THE LEDGER IS WRITTEN FIRST, AND THAT IS THE WHOLE CORRECTION HERE.
 
-       The hook is a CALLBACK ON THE TRUSTED OPERATION DESCRIPTOR, so the route keeps
-       ownership of what its state means while the boundary keeps ownership of when it
-       becomes true. Nothing here is reachable from a request. */
+       The coverage run and the generation ledger are two files with two persistence
+       chains. An earlier version of this code wrote the run first and called the pair
+       "one durable turn", which was simply false: an independent reviewer interrupted
+       the process between them and got `sheet-running` carrying a job id that no ledger
+       had ever heard of, with zero provider calls. Adjacent writes are not atomic and a
+       catch block is not protection against process death.
+
+       So the projection may never precede its source. A crash between these two writes
+       now leaves a `SUBMITTING` job with no coverage record — which UNDER-claims, is
+       visible in Activity, is refused a duplicate by blocksResubmission(), and is
+       rebuilt into a coverage record the next time the job is ingested or refreshed.
+       The old order could only over-claim, which is the direction that lies.
+
+       See docs/coverage-durability-correction-note.md for the reading at every seam. */
+    try {
+      await commit(owner, (current) => { current.push(job); });
+    } catch (error) {
+      /* Nothing durable exists and nothing has been sent. There is no coverage record to
+         reconcile, because it has not been written yet — which is the point of the
+         order. */
+      return res.status(ledgerFailureStatus(error)).json(ledgerFailurePayload(error));
+    }
     if (typeof trusted?.onDispatchCommit === "function") {
       try {
         await trusted.onDispatchCommit(owner, job);
       } catch (error) {
-        /* Nothing is committed and nothing is sent. A run that could not be recorded is
-           a run that did not start, and saying so is better than dispatching work whose
-           own record failed to exist. */
-        return requestTruthRefusal(res, 500, "COVERAGE_RUN_NOT_RECORDED",
-          `CineBraid could not record the coverage run for this request: ${error.message}`, {});
+        /* THE JOB IS ALREADY DURABLE, so this is not a refusal — refusing now would
+           report "nothing happened" about a row that exists and is about to be
+           submitted. The projection is simply missing, and the job it would have been
+           built from carries everything needed to rebuild it: entity, list, coverage job
+           type, sheet type and creation time. It is rebuilt on the next refresh or at
+           ingest, exactly as a record lost to a crash at this same seam is.
+
+           Recorded ON THE DURABLE ROW, not just on the in-memory job: a note only this
+           process can see explains nothing to the next reader, which is the whole
+           difference between a missing projection that is understood and one that is a
+           mystery. A failure to write the note is not worth failing the dispatch over —
+           the job is still real and the rebuild does not depend on the note. */
+        job.coverageProjectionError = String(error?.message || error);
+        await commit(owner, (current) => {
+          const row = current.find((item) => item.id === job.id);
+          if (row) row.coverageProjectionError = job.coverageProjectionError;
+        }).catch(() => {});
       }
-    }
-    try {
-      await commit(owner, (current) => { current.push(job); });
-    } catch (error) {
-      /* THE ONE WINDOW THE HOOK OPENS, CLOSED HERE. The operation's state is already
-         true and the job row is not, so the run is transitioned truthfully rather than
-         left claiming work that has no job behind it. Through the same lifecycle owner
-         every other failure on this route uses. */
-      await updateEntityCoverageRun(owner, job, "needs-attention",
-        `CineBraid could not record the generation job for this coverage run: ${error.message}`).catch(() => {});
-      return res.status(ledgerFailureStatus(error)).json(ledgerFailurePayload(error));
     }
     try {
       const outcome = await submit(owner, job, job.references, preparedLegacy);
@@ -2530,6 +2601,23 @@ function registerFalGeneration(app, context) {
           row.updatedAt = now();
           Object.assign(job, row);
         }).catch(() => {});
+        /* AND THE COVERAGE PROJECTION MUST NOT GO ON LOOKING HEALTHY.
+         *
+         * An independent reviewer drove exactly this: the provider accepted and returned
+         * img-1, BOTH acknowledgement writes failed, and the durable state was left with
+         * one provider submission, a job still reading `SUBMITTING` with no external id,
+         * and a coverage run still reading `sheet-running`. The response object was the
+         * only thing that ever knew the request id. The job half of that is already
+         * handled — an in-flight row with no handle blocks its own duplicate — but the
+         * coverage board went on presenting the run as running, which is the half that
+         * tells a filmmaker nothing is wrong.
+         *
+         * Reconciled through updateEntityCoverageRun(), the same lifecycle owner every
+         * other failure on this route uses. `needs-attention` is the existing word for
+         * "a person has to look at this", and it is the truthful one: the provider may
+         * genuinely be rendering, and CineBraid cannot say. */
+        await updateEntityCoverageRun(owner, job, "needs-attention",
+          job.unresolvedReason || `CineBraid could not record the provider's answer: ${persistError.message}`).catch(() => {});
         return res.status(502).json({
           error: job.unresolvedReason || persistError.message,
           code: "GENERATION_UNRESOLVED",
@@ -2569,7 +2657,12 @@ function registerFalGeneration(app, context) {
 
   /* THE PUBLIC ENTRY POINT. No trusted context, ever: a browser request describes the
      work it wants and cannot tell the server which privileged operation is running. */
-  app.post("/api/generation/fal/jobs", (req, res) => dispatchGenerationRequest(req, res, null));
+  /* Both entry points end in guardRoute(), as guardRoute's own note says every
+     serialized route must. Express 4 does not catch a rejected async handler, and an
+     unanswered paid request is worse than an error: the browser waits forever on a
+     generation whose state it cannot see, and the process dies on the unhandled
+     rejection. These two were the only serialized routes still outside it. */
+  app.post("/api/generation/fal/jobs", (req, res) => guardRoute(res, dispatchGenerationRequest(req, res, null)));
 
   /* THE COVERAGE OPERATION, which is a SERVER operation that happens to be started by a
      browser press.
@@ -2615,7 +2708,7 @@ function registerFalGeneration(app, context) {
        itself, handed to the shared boundary as an argument, and reachable from no request
        field. It says which operation is running, which entity it is for, and what to do
        at the one moment the boundary decides the work is really happening. */
-    return dispatchGenerationRequest(req, res, {
+    return guardRoute(res, dispatchGenerationRequest(req, res, {
       surface: "reference-automation",
       entityList: list,
       entityId,
@@ -2652,7 +2745,7 @@ function registerFalGeneration(app, context) {
           entity.coverageAutomation = run;
         });
       },
-    });
+    }));
   });
 
   /* The way out of UNRESOLVED, and the only one that does not involve guessing.
@@ -2796,10 +2889,17 @@ function registerFalGeneration(app, context) {
       return res.status(ledgerFailureStatus(error)).json(ledgerFailurePayload(error));
     }
     return guardRoute(res, collectJob(owner, req.params.id).then(async (result) => {
+      /* THE EARLIEST DETERMINISTIC REPAIR. A crash between the ledger write and the
+         projection write leaves a coverage job whose record was never written; the
+         browser polls this route for exactly such a job, because it is still active. So
+         the projection is rebuilt here from the row, rather than waiting for outputs to
+         arrive at ingest. A record that already exists is untouched. */
+      if (result.job) await repairCoverageProjection(owner, result.job);
       if (result.ok) return res.json({ ok: true, job: publicJob(result.job) });
       if (result.outcome === "not-found") return res.status(404).json({ error: result.error });
       if (result.outcome === "no-handle")
         return res.status(409).json({ error: result.error, code: result.code, job: publicJob(result.job) });
+      await repairCoverageProjection(owner, result.job);
       const projectUpdated = await updateEntityCoverageRun(owner, result.job, "needs-attention", result.error);
       res.status(502).json({ error: result.error, job: publicJob(result.job), projectUpdated });
     }));

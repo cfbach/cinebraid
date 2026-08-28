@@ -209,6 +209,16 @@ async function harness(falGeneration, options = {}) {
       });
       return { status: response.status, data: await response.json() };
     },
+    durable: () => ({
+      jobs: (() => {
+        const raw = path.join(dir, "generation-jobs.json");
+        if (!fs.existsSync(raw)) return [];
+        const parsed = JSON.parse(fs.readFileSync(raw, "utf8"));
+        return Array.isArray(parsed) ? parsed : (parsed.jobs || []);
+      })(),
+      coverage: (JSON.parse(fs.readFileSync(file, "utf8")).characters || [])
+        .map((row) => row.coverageAutomation).filter(Boolean),
+    }),
     coverage: async (body) => {
       const response = await fetch(`${appOrigin}/api/generation/fal/coverage/jobs`, {
         method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
@@ -694,7 +704,7 @@ async function main() {
       const falGeneration = loadModified("fal-generation.js", [[
         /* The hook fires at the dispatch-commit point; this makes the route fire it up
            front instead, exactly as the held candidate did. */
-        `    return dispatchGenerationRequest(req, res, {
+        `    return guardRoute(res, dispatchGenerationRequest(req, res, {
       surface: "reference-automation",
       entityList: list,
       entityId,`,
@@ -705,13 +715,13 @@ async function main() {
       ], [
         `        });
       },
-    });
+    }));
   });`,
         `        });
       },
     };
     await early.onDispatchCommit(owner, { id: "early-run-job" });
-    return dispatchGenerationRequest(req, res, { ...early, onDispatchCommit: undefined });
+    return guardRoute(res, dispatchGenerationRequest(req, res, { ...early, onDispatchCommit: undefined }));
   });`,
       ]]);
       phase("MUTATION_LANDED");
@@ -742,6 +752,104 @@ async function main() {
         phase("UNSAFE_PATH_EXECUTED");
         observeHarm(Boolean(run) && run.status === "sheet-running",
           `THE DEFECT: a coverage request the shared boundary refused for a missing plan left a live run behind — ${JSON.stringify(run)} with ${h.calls.length} provider call(s) and ${h.ledger().length} ledger row(s)`);
+      } finally { h.close(); }
+    });
+
+  /* =======================================================================
+     9c. THE PROJECTION WRITTEN BEFORE THE TRUTH IT PROJECTS.
+
+     Two files, two persistence chains, and an earlier version of this route wrote the
+     coverage run first and called the pair "one durable turn". An independent reviewer
+     stopped the process between them and read `sheet-running` carrying a job id that no
+     ledger had ever heard of, with zero provider calls.
+
+     The mutation puts the writes back in that order and stops the process straight after
+     the first one. What is observed is what a cold reader finds on disk — not an
+     exception, not a log line. */
+  await control("a coverage projection written before the job that justifies it",
+    "persisted coverage never claims paid generation the ledger cannot justify", async (phase) => {
+      const falGeneration = loadModified("fal-generation.js", [[
+        `    try {
+      await commit(owner, (current) => { current.push(job); });
+    } catch (error) {`,
+        `    if (typeof trusted?.onDispatchCommit === "function") await trusted.onDispatchCommit(owner, job);
+    if (trusted) throw new Error("process stopped between the two durable writes");
+    try {
+      await commit(owner, (current) => { current.push(job); });
+    } catch (error) {`,
+      ]]);
+      phase("MUTATION_LANDED");
+      const h = await harness(falGeneration);
+      try {
+        const project = h.project();
+        project.characters.push({ id: "KAI", name: "Kai", type: "Character", approvedFile: "KAI.png", continuityStates: [] });
+        h.saveProject(project);
+        await h.coverage({
+          purpose: "entity-reference", entityList: "characters", entityId: "KAI", entityType: "character",
+          sourceBuildId: "entity-fixture", prompt: "Kai against neutral grey.",
+          references: [{ key: "base", label: "Approved primary", role: "base", url: KAI_PNG }],
+          outputCount: 1, quality: "high", resolution: "4k", aspectRatio: "16:9",
+          coverageJobType: "sheet", coverageSheetType: "angles", clientRequestId: "ordering",
+          generationRequest: Presentation.generationRequestDeclaration({ surface: "reference-automation", viewMode: "simple" }),
+        });
+        /* READ OFF DISK. The inconsistency has to be independently observable, or this is
+           an assertion about source order rather than about durable state. */
+        const durable = h.durable();
+        assert.strictEqual(h.calls.length, 0, "the unsafe path must stop before any provider call");
+        phase("UNSAFE_PATH_EXECUTED");
+        observeHarm(durable.coverage.length > 0 && durable.jobs.length === 0,
+          `THE DEFECT: the coverage store claims paid generation is live and the ledger has never heard of it — coverage ${JSON.stringify(durable.coverage)} against ${durable.jobs.length} job(s) and ${h.calls.length} provider call(s)`);
+      } finally { h.close(); }
+    });
+
+  /* =======================================================================
+     9d. AN ACKNOWLEDGEMENT THAT CANNOT BE PERSISTED, LEFT LOOKING HEALTHY.
+
+     The provider accepted and returned its request id; both acknowledgement writes fail;
+     the only place that id ever existed is a response object in memory. The job half is
+     already handled — an in-flight row with no handle blocks its own duplicate — but the
+     coverage board went on presenting the run as running, which is the half that tells a
+     filmmaker nothing is wrong. */
+  await control("an unpersistable acknowledgement that leaves the coverage run running",
+    "a run whose provider answer could not be recorded asks for attention", async (phase) => {
+      const falGeneration = loadModified("fal-generation.js", [[
+        `        await updateEntityCoverageRun(owner, job, "needs-attention",
+          job.unresolvedReason || \`CineBraid could not record the provider's answer: \${persistError.message}\`).catch(() => {});`,
+        `        /* control: the coverage projection is left saying the run is healthy */`,
+      ], [
+        `      const outcome = await submit(owner, job, job.references, preparedLegacy);
+      try {
+        await commit(owner, (current) => {`,
+        `      const outcome = await submit(owner, job, job.references, preparedLegacy);
+      try {
+        await Promise.reject(new Error("acknowledgement store unavailable"));
+        await commit(owner, (current) => {`,
+      ], [
+        `          Object.assign(job, row);
+        }).catch(() => {});`,
+        `          Object.assign(job, row);
+        }).then(() => { throw new Error("second acknowledgement write also failed"); }).catch(() => {});`,
+      ]]);
+      phase("MUTATION_LANDED");
+      const h = await harness(falGeneration);
+      try {
+        const project = h.project();
+        project.characters.push({ id: "KAI", name: "Kai", type: "Character", approvedFile: "KAI.png", continuityStates: [] });
+        h.saveProject(project);
+        const result = await h.coverage({
+          purpose: "entity-reference", entityList: "characters", entityId: "KAI", entityType: "character",
+          sourceBuildId: "entity-fixture", prompt: "Kai against neutral grey.",
+          references: [{ key: "base", label: "Approved primary", role: "base", url: KAI_PNG }],
+          outputCount: 1, quality: "high", resolution: "4k", aspectRatio: "16:9",
+          coverageJobType: "sheet", coverageSheetType: "angles", clientRequestId: "ack",
+          generationRequest: Presentation.generationRequestDeclaration({ surface: "reference-automation", viewMode: "simple" }),
+        });
+        assert.strictEqual(result.status, 502, `the unsafe path must actually reach the failure: ${JSON.stringify(result.data)}`);
+        assert.strictEqual(h.calls.length, 1, "with the provider genuinely contacted — a paid request may exist");
+        phase("UNSAFE_PATH_EXECUTED");
+        const run = h.durable().coverage[0];
+        observeHarm(Boolean(run) && ["starting", "sheet-running", "individual-running"].includes(String(run.status)),
+          `THE DEFECT: the provider was told about a paid request CineBraid could not record, and the coverage board still reads ${JSON.stringify(run && run.status)} — ${JSON.stringify(run)}`);
       } finally { h.close(); }
     });
 

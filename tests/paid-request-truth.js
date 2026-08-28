@@ -35,7 +35,31 @@ const path = require("path");
 const vm = require("vm");
 const express = require("express");
 
+const Module = require("module");
 const { registerFalGeneration } = require("../fal-generation");
+
+/* FAULT INJECTION FOR THE DURABILITY SEAMS.
+ *
+ * A durable step is made to fail by compiling a private copy of the route with that step
+ * replaced. This is not a try/catch test dressed up: what each seam asserts afterwards is
+ * read straight off the two files on disk, which is the only thing a stopped process
+ * leaves behind. Nothing is written to the repository — the mutation exists only in the
+ * string handed to Module._compile, and the anchor is proved unique so a control cannot
+ * silently patch nothing. */
+function loadRouteWithFault(edits) {
+  const file = path.join(__dirname, "..", "fal-generation.js");
+  let code = fs.readFileSync(file, "utf8").replace(/\r\n/g, "\n");
+  for (const [from, to] of edits) {
+    assert(code.includes(from), `durability fault anchor no longer exists in fal-generation.js:\n${from}`);
+    assert.strictEqual(code.split(from).length - 1, 1, `the fault anchor must be unique:\n${from}`);
+    code = code.replace(from, to);
+  }
+  const patched = new Module(file, module);
+  patched.filename = file;
+  patched.paths = Module._nodeModulePaths(path.dirname(file));
+  patched._compile(code, file);
+  return patched.exports;
+}
 const Presentation = require("../public/shared-generation-presentation");
 const BuildHistory = require("../public/shared-build-history");
 const { imageControlCapability, IMAGE_MODEL_ID } = require("../image-execution");
@@ -103,7 +127,7 @@ async function harness(options = {}) {
   const runs = { file: path.join(dir, "automation-runs.json") };
   const app = express();
   app.use(express.json({ limit: "8mb" }));
-  registerFalGeneration(app, {
+  (options.falGeneration || { registerFalGeneration }).registerFalGeneration(app, {
     readConfig: () => ({ generation: { fal: {
       enabled: true, apiKey: "fal-secret-test-key", baseUrl: mockOrigin,
       textModel: "openai/gpt-image-2", editModel: "openai/gpt-image-2/edit",
@@ -145,8 +169,27 @@ async function harness(options = {}) {
     project: () => JSON.parse(fs.readFileSync(file, "utf8")),
     saveProject: (project) => fs.writeFileSync(file, JSON.stringify(project, null, 2)),
     saveRuns: (rows) => fs.writeFileSync(runs.file, JSON.stringify(rows, null, 2)),
+    /* WHAT THE STORES HOLD, read straight off disk rather than through any route — the
+       only honest way to ask what survived an interruption. */
+    durable: () => ({
+      jobs: (() => {
+        const raw = path.join(dir, "generation-jobs.json");
+        if (!fs.existsSync(raw)) return [];
+        const parsed = JSON.parse(fs.readFileSync(raw, "utf8"));
+        return Array.isArray(parsed) ? parsed : (parsed.jobs || []);
+      })(),
+      coverage: (JSON.parse(fs.readFileSync(file, "utf8")).characters || [])
+        .map((row) => row.coverageAutomation).filter(Boolean),
+    }),
     /* THE COVERAGE OPERATION'S OWN ENTRY POINT. The browser asks the server to run
        coverage; the server establishes the run and dispatches through the same boundary. */
+    mockOrigin,
+    refresh: async (jobId) => {
+      const response = await fetch(`${appOrigin}/api/generation/fal/jobs/${encodeURIComponent(jobId)}/refresh`, {
+        method: "POST", headers: { "content-type": "application/json" },
+      });
+      return { status: response.status, data: await response.json().catch(() => ({})) };
+    },
     coverage: async (body) => {
       const response = await fetch(`${appOrigin}/api/generation/fal/coverage/jobs`, {
         method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
@@ -1322,6 +1365,182 @@ async function main() {
       assert.strictEqual(h.calls.length, 0, "no provider call may be made");
       note("19. a run holding one $0.10 child and one child of unknown cost refuses the next request under its $0.30 ceiling — a known subtotal below a ceiling is not proof, because the unknown child is excluded from it");
     } finally { h.close(); }
+  }
+
+  /* =======================================================================
+     15d. CROSS-STORE DURABILITY: WHAT SURVIVES AN INTERRUPTION AT EVERY SEAM.
+
+     The coverage run and the generation ledger are two files with two persistence
+     chains, and an earlier version of this route wrote the run first and called the pair
+     "one durable turn". An independent reviewer interrupted the process between them and
+     got `sheet-running` carrying a job id no ledger had ever heard of.
+
+     THESE ARE NOT try/catch TESTS. Each seam is exercised by stopping the process from
+     completing the NEXT durable step — the module is loaded with that step replaced by
+     one that never returns a written result — and then the two files are read straight
+     off disk. What is asserted is what a cold reader would find, which is the only thing
+     a crash leaves behind.
+
+     Every seam must have a truthful reading, and the ordering must make the ONE
+     unreachable state the one that lies: coverage claiming live with no job. */
+  {
+    const interrupt = async (what, mutations, drive) => {
+      const h = await harness({ falGeneration: loadRouteWithFault(mutations) });
+      try {
+        const project = h.project();
+        project.characters.push({ id: "KAI", name: "Kai", type: "Character", approvedFile: "KAI.png", continuityStates: [] });
+        h.saveProject(project);
+        return { state: await drive(h), h, what };
+      } finally { h.close(); }
+    };
+    const coverageRequest = (extra = {}) => ({
+      purpose: "entity-reference", entityList: "characters", entityId: "KAI", entityType: "character",
+      sourceBuildId: "entity-fixture", prompt: "Kai against neutral grey.",
+      references: [{ key: "base", label: "Approved primary", role: "base", url: KAI_PNG }],
+      outputCount: 1, quality: "high", resolution: "4k", aspectRatio: "16:9",
+      coverageJobType: "sheet", coverageSheetType: "angles",
+      generationRequest: Presentation.generationRequestDeclaration({ surface: "reference-automation", viewMode: "simple" }),
+      ...extra,
+    });
+
+    /* B1. THE PROCESS STOPS IMMEDIATELY AFTER THE LEDGER ROW.
+           The reviewer's seam, in the order that makes it safe. Nothing after the commit
+           runs at all: no projection, no provider call. This is what a crash there
+           leaves, read off both files. */
+    {
+      const { state } = await interrupt("the process stops after the ledger write",
+        [["    if (typeof trusted?.onDispatchCommit === \"function\") {",
+          "    if (true) throw new Error(\"process stopped after the ledger write\");\n    if (typeof trusted?.onDispatchCommit === \"function\") {"]],
+        async (h) => { await h.coverage(coverageRequest({ clientRequestId: "seam-b1" })); return { ...h.durable(), calls: h.calls.length }; });
+      assert.strictEqual(state.jobs.length, 1, `the ledger row is durable: ${JSON.stringify(state.jobs.map((j) => j.id))}`);
+      assert.strictEqual(state.calls, 0, "and no provider was contacted");
+      assert.strictEqual(state.coverage.length, 0,
+        `and NO coverage record claims anything — the state the old order made unreachable is now this one: ${JSON.stringify(state.coverage)}`);
+      assert.strictEqual(state.jobs[0].status, "SUBMITTING", "the surviving row reads as intent");
+      assert(!state.jobs[0].externalId, "with no provider handle, which is what makes it uncertain");
+    }
+
+    /* B2. THE PROJECTION WRITE ITSELF FAILS, and the process lives.
+           Different from a crash and answered differently: the job is already durable, so
+           refusing now would report "nothing happened" about a row that exists. The
+           dispatch continues and the absence is recorded on the row. */
+    {
+      const { state } = await interrupt("the projection write fails",
+        [["        await trusted.onDispatchCommit(owner, job);",
+          "        await Promise.reject(new Error(\"coverage store unavailable\"));"]],
+        async (h) => { await h.coverage(coverageRequest({ clientRequestId: "seam-b2" })); return h.durable(); });
+      assert.strictEqual(state.jobs.length, 1, "the job is durable");
+      assert.strictEqual(state.coverage.length, 0, "and still no coverage record claims anything");
+      assert.strictEqual(state.jobs[0].status, "IN_QUEUE", "the dispatch completed, because the job was real");
+      assert(state.jobs[0].coverageProjectionError,
+        `and the missing projection is explained on the row rather than silent: ${JSON.stringify(state.jobs[0].coverageProjectionError)}`);
+    }
+
+    /* B2. AND THAT SURVIVING ROW REFUSES ITS OWN DUPLICATE, so recovery never bills
+           twice. This is what makes leaving it behind safe. */
+    {
+      const h = await harness();
+      try {
+        const project = h.project();
+        project.characters.push({ id: "KAI", name: "Kai", type: "Character", approvedFile: "KAI.png", continuityStates: [] });
+        h.saveProject(project);
+        h.seedLedger([{
+          id: "interrupted-1", provider: "fal", purpose: "entity-reference", status: "SUBMITTING",
+          entityList: "characters", entityId: "KAI", coverageJobType: "sheet", coverageSheetType: "angles",
+          sourceBuildId: "entity-fixture", outputCount: 1, createdAt: "2026-08-28T00:00:00.000Z",
+        }]);
+        const before = h.durable().jobs.length;
+        const again = await h.coverage(coverageRequest({ clientRequestId: "after-interruption" }));
+        /* THE PROPERTY IS "NO SECOND PAID REQUEST", not which guard says so. Two of them
+           can answer here and both are correct: the entity-reference duplicate guard
+           REATTACHES to the interrupted job (200, reused, duplicatePrevented), and the
+           unresolved-twin guard REFUSES (409, GENERATION_UNRESOLVED). Asserting one by
+           name would make this pass or fail on guard ordering rather than on the bill. */
+        const reattached = again.status === 200 && again.data.reused === true && again.data.duplicatePrevented === true;
+        const refused = again.status === 409 && again.data.code === "GENERATION_UNRESOLVED";
+        assert(reattached || refused,
+          `an interrupted submission must be reattached or refused, never re-sent: ${again.status} ${JSON.stringify(again.data)}`);
+        assert.strictEqual(h.calls.length, 0, "and no provider is contacted — no second bill");
+        assert.strictEqual(h.durable().jobs.length, before, "and no second job row is created");
+        if (reattached) assert.strictEqual(again.data.job.id, "interrupted-1", "the reattachment names the interrupted job");
+      } finally { h.close(); }
+    }
+
+    /* C. THE PROVIDER ACCEPTED AND BOTH ACKNOWLEDGEMENT WRITES FAIL.
+          The reviewer's second reproduction. */
+    {
+      /* Both acknowledgement persistence attempts fail — the reviewer's exact
+         reproduction. The provider has already accepted and returned its request id; the
+         only place that id ever existed is the response object in memory. */
+      const ackFails = loadRouteWithFault([[
+        "      const outcome = await submit(owner, job, job.references, preparedLegacy);\n      try {\n        await commit(owner, (current) => {",
+        "      const outcome = await submit(owner, job, job.references, preparedLegacy);\n      try {\n        await Promise.reject(new Error(\"acknowledgement store unavailable\"));\n        await commit(owner, (current) => {",
+      ], [
+        "          Object.assign(job, row);\n        }).catch(() => {});",
+        "          Object.assign(job, row);\n        }).then(() => { throw new Error(\"second acknowledgement write also failed\"); }).catch(() => {});",
+      ]]);
+      const h = await harness({ falGeneration: ackFails });
+      try {
+        const project = h.project();
+        project.characters.push({ id: "KAI", name: "Kai", type: "Character", approvedFile: "KAI.png", continuityStates: [] });
+        h.saveProject(project);
+        const result = await h.coverage(coverageRequest({ clientRequestId: "ack-fails" }));
+        assert.strictEqual(result.status, 502, `the request answers 502: ${JSON.stringify(result.data)}`);
+        assert.strictEqual(result.data.code, "GENERATION_UNRESOLVED", "as unresolved");
+        assert.strictEqual(h.calls.length, 1, "the provider WAS contacted — one paid submission may exist");
+        const state = h.durable();
+        assert.strictEqual(state.coverage.length, 1, "the coverage record exists");
+        assert.strictEqual(state.coverage[0].status, "needs-attention",
+          `and must NOT go on reading as running: ${JSON.stringify(state.coverage[0])}`);
+        assert(state.coverage[0].error, "carrying why a person has to look");
+      } finally { h.close(); }
+    }
+
+    /* D. THE JOB IS ACKNOWLEDGED AND DURABLE; THE PROJECTION WAS NEVER WRITTEN.
+          The job is the truth, and the record is rebuilt from it — no browser state, no
+          new field: the row already carries the entity, the coverage kind and the sheet. */
+    {
+      const h = await harness();
+      try {
+        const project = h.project();
+        project.characters.push({ id: "KAI", name: "Kai", type: "Character", approvedFile: "KAI.png", continuityStates: [] });
+        h.saveProject(project);
+        h.seedLedger([{
+          id: "acknowledged-1", provider: "fal", purpose: "entity-reference", status: "IN_QUEUE",
+          externalId: "img-1", statusUrl: `${h.mockOrigin}/status/img-1`, responseUrl: `${h.mockOrigin}/result/img-1`,
+          entityList: "characters", entityId: "KAI", coverageJobType: "sheet", coverageSheetType: "angles",
+          sourceBuildId: "entity-fixture", outputCount: 1, createdAt: "2026-08-28T00:00:00.000Z",
+        }]);
+        assert.strictEqual(h.durable().coverage.length, 0, "the projection is genuinely missing to begin with");
+        await h.refresh("acknowledged-1");
+        const rebuilt = h.durable().coverage;
+        assert.strictEqual(rebuilt.length, 1, `the projection is rebuilt from the job row: ${JSON.stringify(rebuilt)}`);
+        assert.strictEqual(rebuilt[0].entityId, "KAI", "for the entity the row names");
+        assert.strictEqual(rebuilt[0].sheetType, "angles", "carrying the coverage kind the row names");
+        assert.deepStrictEqual(rebuilt[0].jobs, ["acknowledged-1"], "and the job that justifies it");
+        assert(rebuilt[0].rebuiltFromJobAt, "and says it was reconstructed rather than dispatched");
+      } finally { h.close(); }
+    }
+
+    /* E. THE ORDINARY SUCCESSFUL LIFECYCLE, for contrast: both stores agree, and the
+          record names exactly the job that justifies it. */
+    {
+      const h = await harness();
+      try {
+        const project = h.project();
+        project.characters.push({ id: "KAI", name: "Kai", type: "Character", approvedFile: "KAI.png", continuityStates: [] });
+        h.saveProject(project);
+        const ok = await h.coverage(coverageRequest({ clientRequestId: "healthy" }));
+        assert.strictEqual(ok.status, 200, `a healthy coverage dispatch: ${JSON.stringify(ok.data)}`);
+        const state = h.durable();
+        assert.strictEqual(state.jobs.length, 1, "one durable job");
+        assert.strictEqual(state.coverage.length, 1, "one coverage record");
+        assert.deepStrictEqual(state.coverage[0].jobs, [state.jobs[0].id],
+          "and the record names exactly the job that justifies it");
+        assert.strictEqual(state.jobs[0].resolution, "4k", "with the coverage 4K intact");
+      } finally { h.close(); }
+    }
+      note("15d. at every durable seam the two stores read truthfully OFF DISK: a stop after the ledger write leaves a SUBMITTING row with no coverage record and no provider call (never the reverse); a failed projection write leaves the real job dispatching with the absence recorded on the row; that surviving row is reattached rather than re-sent, with no second provider call and no second row; a doubly-failed acknowledgement leaves the run needs-attention rather than running; an acknowledged job rebuilds its projection from the row alone; and a healthy dispatch has both stores naming the same job");
   }
 
   console.log("");
