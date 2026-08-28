@@ -125,6 +125,8 @@ async function harness(options = {}) {
      cancel is not one. */
   const cancelCalls = [];
   mock.put("/cancel/:id", (req, res) => { cancelCalls.push(req.params.id); res.json({ status: "CANCELLED" }); });
+  /* A provider that is reachable and refuses. Still loopback; still nothing paid. */
+  mock.put("/cancel-503/:id", (req, res) => { cancelCalls.push(req.params.id); res.status(503).json({ detail: "provider unavailable" }); });
   mock.get("/status/:id", (req, res) => res.json({ status: "IN_QUEUE" }));
   mock.get("/result/:id", (req, res) => res.json({ images: [] }));
   const mockServer = await listen(mock);
@@ -1694,6 +1696,169 @@ async function main() {
       assert.strictEqual(h.calls.length, 1, "and THIS is the first paid submission in the whole reproduction");
       assert.strictEqual(h.durable().jobs.length, 2, "on a second job row, which is what a deliberate retry is");
       note(`15e. refresh leaves an uncertain SUBMITTING/no-handle job SUBMITTING rather than FAILED, contacts no provider, moves only the coverage projection to needs-attention, and still blocks an equivalent retry with a different clientRequestId — 0 provider submissions and 1 job row until a human reconciliation (recorded previousStatus SUBMITTING) releases it, after which the identical request dispatches once`);
+    } finally { h.close(); }
+  }
+
+  /* =======================================================================
+     15i. AND IT HAS TO BE REACHABLE FROM THE SCREEN THE WORK IS ON.
+
+     15h put the server's answer on the wire and the frame and H3 strips read it. The
+     entity/coverage strip did not: falEntityGenerationInline() had no uncertainty branch
+     at all, so it asked falJobActive(), which counts SUBMITTING, and drew a submission
+     nobody could account for as ordinary running work — "Submitting", a Refresh, and a
+     Cancel the route refuses. The one control that state has was never rendered, so on
+     the screen where reference and coverage work actually lives, the way out did not
+     exist.
+
+     This runs the shipped browser source rather than asserting on its text: the module is
+     evaluated and the renderer is called, so what is asserted is the markup a filmmaker
+     would be looking at. */
+  {
+    const vm = require("vm");
+    const escape = (value) => String(value == null ? "" : value)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    const sandbox = {
+      window: {}, console, CONFIG: { generation: { fal: { enabled: true, apiKey: "k" } } },
+      FAL_GENERATION_JOBS: [], esc: escape, attr: escape, fetch: async () => ({ ok: true, json: async () => ({}) }),
+    };
+    sandbox.globalThis = sandbox;
+    vm.runInNewContext(fs.readFileSync(path.join(__dirname, "..", "public", "fal-generation.js"), "utf8"), sandbox, { filename: "public/fal-generation.js" });
+    assert.strictEqual(typeof sandbox.falEntityGenerationInline, "function",
+      "the shipped renderer must actually be reachable, or this proves nothing about it");
+
+    const render = (job) => {
+      sandbox.FAL_GENERATION_JOBS = [job];
+      return sandbox.falEntityGenerationInline("characters", "KAI");
+    };
+    const base = {
+      id: "job-1", purpose: "entity-reference", entityList: "characters", entityId: "KAI",
+      model: "gpt-image-2", outputCount: 4, createdAt: "2026-08-28T00:00:00.000Z",
+    };
+
+    /* THE DEFECT. Exactly the state the reviewer persisted. */
+    const uncertain = render({ ...base, status: "SUBMITTING", uncertain: true });
+    assert(uncertain.includes("Check and resolve"),
+      `THE DEFECT: an uncertain submission must offer the reconciliation control on this screen too: ${uncertain}`);
+    assert(uncertain.includes("openFalUnresolvedModal"), "reaching the EXISTING dialog, not a second recovery flow");
+    assert(!uncertain.includes("cancelFalGeneration"), "and it must not offer a Cancel the route refuses");
+    assert(!uncertain.includes("refreshFalGeneration"), "nor a Refresh that answers with the same uncertainty");
+    assert(uncertain.includes("fal-job-strip unresolved"), "and it is drawn as unresolved rather than active");
+
+    /* IT IS THE SAME EXPERIENCE THE OTHER STRIPS DRAW — the reviewer asked for reuse, so
+       this compares the two renderers rather than describing them. */
+    sandbox.FAL_GENERATION_JOBS = [{ ...base, purpose: "frame", shotId: "SH-1", status: "SUBMITTING", uncertain: true }];
+    const frame = sandbox.falGenerationInline("SH-1", "frame");
+    for (const token of ["fal-job-strip unresolved", "Check and resolve", "openFalUnresolvedModal"]) {
+      assert(frame.includes(token) && uncertain.includes(token),
+        `the entity strip must use the frame strip's own uncertainty controls, not new ones (${token})`);
+    }
+
+    /* AND ORDINARY HEALTHY WORK IS UNTOUCHED. */
+    const healthy = render({ ...base, status: "SUBMITTING", externalId: "req-1", uncertain: false });
+    assert(healthy.includes("refreshFalGeneration") && healthy.includes("cancelFalGeneration"),
+      `a submission with a provider handle keeps its normal controls: ${healthy}`);
+    assert(!healthy.includes("Check and resolve"), "and is not presented as needing a person");
+    const queued = render({ ...base, status: "IN_QUEUE", externalId: "req-1", uncertain: false });
+    assert(queued.includes("refreshFalGeneration") && queued.includes("cancelFalGeneration"), "ordinary queued work is unchanged");
+    const done = render({ ...base, status: "COMPLETED", externalId: "req-1", uncertain: false, ingestedAt: "t" });
+    assert(!done.includes("Check and resolve") && !done.includes("cancelFalGeneration"), "completed work is unchanged");
+    assert(done.includes("fal-job-strip done"), "and still reads as delivered");
+    const failed = render({ ...base, status: "FAILED", uncertain: false, error: "the provider declined" });
+    assert(failed.includes("Try again") && !failed.includes("Check and resolve"), "an ordinary failure keeps Try again");
+    const settled = render({ ...base, status: "FAILED", uncertain: false, reconciliation: { outcome: "not-accepted" } });
+    assert(!settled.includes("Check and resolve"), "and a job a person already settled is not asked about again");
+
+    /* THE BOUNDED CONSISTENCY CHECK, at the third place that answered this by status. */
+    const CreatorState = require("../public/shared-creator-state");
+    assert.deepStrictEqual(
+      CreatorState.creatorJobKind({ status: "SUBMITTING", active: true, uncertain: true }),
+      { kind: "needs-attention", reason: "submission-unresolved" },
+      "the activity classifier must not bucket an uncertain submission as a machine at work",
+    );
+    assert.strictEqual(CreatorState.creatorJobKind({ status: "SUBMITTING", active: true, uncertain: false }).kind, "machine-active",
+      "while ordinary in-flight work is still a machine at work");
+    assert.strictEqual(CreatorState.creatorJobKind({ status: "UNRESOLVED", active: false }).reason, "submission-unresolved",
+      "and the existing status arm still stands on its own");
+    note(`15i. falEntityGenerationInline() renders SUBMITTING+uncertain with the frame strip's own unresolved class, explanation and "Check and resolve" control instead of Refresh/Cancel — proved by evaluating the shipped browser source and comparing the two renderers — while SUBMITTING-with-handle, IN_QUEUE, COMPLETED, FAILED and reconciled work render exactly as before; creatorJobKind() stops bucketing an uncertain submission as machine-active`);
+  }
+
+  /* =======================================================================
+     15j. A CANCELLATION THE PROVIDER DID NOT CONFIRM IS NOT A CANCELLATION.
+
+     The response was discarded outright — `.catch(() => null)`, nothing read — so a 503,
+     a 404 and a dropped connection all reached the same write, and CANCELLED was
+     persisted for a render that may still be running and still be charged. A CANCELLED
+     job does not block resubmission, so a failed cancel handed the filmmaker permission
+     to buy the same shot again.
+
+     The criterion is `response.ok`, which is what this module already treats as a usable
+     provider answer everywhere else. */
+  {
+    const h = await harness();
+    try {
+      const mockOrigin = h.mockOrigin;
+      const project = h.project();
+      project.characters.push({
+        id: "KAI", name: "Kai", type: "Character", approvedFile: "KAI.png", continuityStates: [],
+        coverageAutomation: { id: "coverage:characters:KAI:run", list: "characters", entityId: "KAI", mode: "sheet", sheetType: "angles", status: "sheet-running", startedAt: "2026-08-28T00:00:00.000Z", jobs: ["refusing-cancel"] },
+      });
+      h.saveProject(project);
+      const COVERAGE = {
+        purpose: "entity-reference", entityList: "characters", entityId: "KAI", entityType: "character",
+        coverageJobType: "sheet", coverageSheetType: "angles", sourceBuildId: "entity-fixture",
+        outputCount: 1, prompt: "Kai against neutral grey.", createdAt: "2026-08-28T00:00:00.000Z",
+      };
+      h.seedLedger([
+        /* A. reachable provider that refuses. */
+        { ...COVERAGE, id: "refusing-cancel", provider: "fal", status: Lifecycle.UNRESOLVED, clientRequestId: "original-press", externalId: "req-a", statusUrl: `${mockOrigin}/status/req-a`, cancelUrl: `${mockOrigin}/cancel-503/req-a` },
+        /* B. a provider that cannot be reached at all. */
+        { id: "unreachable", provider: "fal", purpose: "shot-frame", shotId: "SH-1", status: Lifecycle.UNRESOLVED, externalId: "req-b", cancelUrl: "http://127.0.0.1:9/cancel/req-b", createdAt: "2026-08-28T00:00:00.000Z" },
+        /* C. the ordinary successful cancel. */
+        { id: "cancellable", provider: "fal", purpose: "shot-frame", shotId: "SH-1", status: "IN_QUEUE", externalId: "req-c", statusUrl: `${mockOrigin}/status/req-c`, cancelUrl: `${mockOrigin}/cancel/req-c`, createdAt: "2026-08-28T00:00:00.000Z" },
+      ]);
+
+      /* A. PROVIDER 503. */
+      const refused = await h.cancel("refusing-cancel");
+      assert.strictEqual(refused.status, 502,
+        `THE DEFECT: CineBraid must not report a cancellation the provider refused: ${JSON.stringify(refused.data)}`);
+      assert.strictEqual(refused.data.code, "GENERATION_CANCEL_UNCONFIRMED", "with a typed refusal");
+      assert(/provider unavailable/.test(refused.data.error), "carrying the provider's own words through the existing normaliser");
+      assert.strictEqual(h.cancelCalls.filter((id) => id === "req-a").length, 1, "the provider was contacted exactly once");
+      let row = h.durable().jobs.find((item) => item.id === "refusing-cancel");
+      assert.notStrictEqual(row.status, "CANCELLED", `and the durable job must not be terminalized: ${JSON.stringify(row.status)}`);
+      assert.strictEqual(row.status, Lifecycle.UNRESOLVED, "it is left in the state it was truthfully in");
+      assert.strictEqual(Lifecycle.blocksResubmission(row), true, "still holding the duplicate block");
+      assert.strictEqual(h.durable().coverage[0].status, "sheet-running",
+        "and the projection is not moved either — the job did not change, so neither did what describes it");
+
+      /* B. TRANSPORT FAILURE. */
+      const unreachable = await h.cancel("unreachable");
+      assert.strictEqual(unreachable.status, 502, `an unreachable provider is not a cancellation either: ${JSON.stringify(unreachable.data)}`);
+      assert.strictEqual(unreachable.data.code, "GENERATION_CANCEL_UNCONFIRMED", "with the same typed refusal");
+      assert.strictEqual(h.durable().jobs.find((item) => item.id === "unreachable").status, Lifecycle.UNRESOLVED,
+        "and the job is untouched");
+
+      /* C. THE SUCCESSFUL CANCEL STILL WORKS — the correction must not make cancelling
+            impossible, which is the obvious way to "fix" this and be wrong. */
+      const cancelled = await h.cancel("cancellable");
+      assert.strictEqual(cancelled.status, 200, `a provider-confirmed cancellation still succeeds: ${JSON.stringify(cancelled.data)}`);
+      assert(h.cancelCalls.includes("req-c"), "with the provider contacted exactly as before");
+      assert.strictEqual(h.durable().jobs.find((item) => item.id === "cancellable").status, "CANCELLED",
+        "and CANCELLED persisted, because this time the provider confirmed it");
+
+      /* THE CHAIN THE REVIEWER REQUIRED: a failed cancel must not become permission. */
+      const retry = await h.coverage({
+        ...COVERAGE, references: [{ key: "base", label: "Approved primary", role: "base", url: KAI_PNG }],
+        quality: "high", resolution: "4k", aspectRatio: "16:9", clientRequestId: "a-different-press",
+        generationRequest: Presentation.generationRequestDeclaration({ surface: "reference-automation", viewMode: "simple" }),
+      });
+      assert.strictEqual(retry.status, 409, `the equivalent request is still refused after a failed cancel: ${JSON.stringify(retry.data)}`);
+      assert.strictEqual(retry.data.code, "GENERATION_UNRESOLVED", "through the existing uncertainty guard");
+      assert.strictEqual(h.calls.length, 0, "ZERO provider generation submissions across the whole chain");
+      assert.strictEqual(h.durable().jobs.length, 3, "and no fourth job row — nothing new was created");
+      row = h.durable().jobs.find((item) => item.id === "refusing-cancel");
+      assert.strictEqual(row.status, Lifecycle.UNRESOLVED, "the original job is still exactly what it was");
+      note(`15j. a cancellation the provider refused (503) or could not be asked for (transport failure) is answered 502 GENERATION_CANCEL_UNCONFIRMED and leaves the durable job and its coverage record untouched, still blocking — while a provider-confirmed cancel still contacts the provider and still persists CANCELLED; the failed-cancel-then-equivalent-retry chain produces 0 provider generation submissions and no new job row`);
     } finally { h.close(); }
   }
 

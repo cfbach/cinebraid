@@ -335,6 +335,14 @@
   function creatorJobKind(facts) {
     const raw = facts && typeof facts === "object" ? facts : {};
     const status = creatorText(raw.status).toUpperCase();
+    /* UNCERTAINTY OUTRANKS ACTIVITY, and it is the server that says which jobs are
+       uncertain. Asking `status === "UNRESOLVED"` here answered only one of the two ways
+       a submission becomes uncertain: a durable SUBMITTING row with no provider handle is
+       "active" by status, so it was bucketed machine-active and the rail told the
+       filmmaker a machine was working on something nobody could account for. The status
+       arm below still stands on its own for a projection built before the server carried
+       this field. */
+    if (raw.uncertain === true) return { kind: "needs-attention", reason: "submission-unresolved" };
     if (raw.active === true) return { kind: "machine-active", reason: "" };
     if (status === "UNRESOLVED") return { kind: "needs-attention", reason: "submission-unresolved" };
     if (status === "ORPHANED") return { kind: "needs-attention", reason: "provider-ran-uncollected" };

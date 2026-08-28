@@ -385,7 +385,9 @@
     const scan = new Map(recent.map((job) => [job.id, job]));
     for (const job of rows) if (active(job) === true) scan.set(job.id, job);
     return [...scan.values()].map((job) => {
-      const bucket = creatorJobKind({ status: job.status, active: active(job) === true });
+      /* `uncertain` is the server's own answer, carried on every job by publicJob(). The
+         collection point passes it through; the classifier decides. */
+      const bucket = creatorJobKind({ status: job.status, active: active(job) === true, uncertain: job.uncertain === true });
       return {
         key: `job:${job.id}`,
         source: "generation-job",

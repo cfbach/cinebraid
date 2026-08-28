@@ -3007,7 +3007,34 @@ function registerFalGeneration(app, context) {
           job: publicJob(job),
         });
       if (job.cancelUrl && !["COMPLETED", "FAILED", "CANCELLED"].includes(job.status)) {
-        await fetch(job.cancelUrl, { method: "PUT", headers: { Authorization: `Key ${cfg.apiKey}` } }).catch(() => null);
+        /* A CANCELLATION THE PROVIDER DID NOT CONFIRM IS NOT A CANCELLATION.
+         *
+         * The response used to be discarded outright — `.catch(() => null)` and nothing
+         * read — so a 503, a 404 or a dropped connection all ended at the same write
+         * below, and CANCELLED was persisted for a render that may well still be running
+         * and still be charged. An independent reviewer took the obvious next step: a
+         * CANCELLED job does not block resubmission, so a failed cancel handed the
+         * filmmaker permission to buy the same shot again.
+         *
+         * The criterion is not invented here. `response.ok` is what this module already
+         * treats as a usable provider answer — refresh() polls the status URL and throws
+         * `normalizeError(data, status)` on anything else — so a cancellation is
+         * confirmed on exactly the terms every other provider call in this file is, and
+         * nothing else about fal's cancel semantics is assumed.
+         *
+         * On failure the durable job is left EXACTLY as it was, in whatever state it was
+         * truthfully in, and so is its coverage record: the projection describes the job,
+         * the job did not change, so neither does the projection. 502 is the status this
+         * module already answers with when the provider gives no usable answer. */
+        const response = await fetch(job.cancelUrl, { method: "PUT", headers: { Authorization: `Key ${cfg.apiKey}` } }).catch(() => null);
+        if (!response || !response.ok) {
+          const detail = response ? normalizeError(await response.json().catch(() => ({})), response.status) : "the provider could not be reached";
+          return res.status(502).json({
+            error: `CineBraid asked the provider to cancel this generation and did not get a confirmation (${detail}). It may still be running and may still be charged, so CineBraid has left the job as it was rather than recording a cancellation it cannot vouch for.`,
+            code: "GENERATION_CANCEL_UNCONFIRMED",
+            job: publicJob(job),
+          });
+        }
       }
       try {
         await commit(owner, (current) => {

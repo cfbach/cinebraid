@@ -368,11 +368,24 @@ function falEntityGenerationJob(list, entityId, stateId = "") {
     .filter((job) => job.purpose === "entity-reference" && job.entityList === list && job.entityId === entityId && (stateId ? job.continuityStateId === stateId : !job.continuityStateId))
     .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")))[0] || null;
 }
+/* THE SAME STRIP THE FRAME AND H3 PATHS DRAW, for reference and coverage work.
+ *
+ * This one had no uncertainty branch at all. It read `falJobActive()`, which counts
+ * SUBMITTING, so a submission CineBraid could not account for was drawn here as an
+ * ordinary running job: "Submitting", a Refresh, and a Cancel the route now correctly
+ * refuses. The one control that state has — the reconciliation dialog — was never
+ * offered, so on this screen the way out did not exist.
+ *
+ * `unknown` is checked FIRST for the same reason it is in falGenerationInline(): an
+ * uncertain job is still "active" by status, and whichever branch is tested first is the
+ * one the filmmaker gets. No new control, no new copy, no second recovery flow — the
+ * unknown branch here is the frame renderer's, verbatim. */
 function falEntityGenerationInline(list, entityId, stateId = "") {
   const job = falEntityGenerationJob(list, entityId, stateId);
   if (!job) return "";
   const active = falJobActive(job), done = job.status === "COMPLETED", failed = job.status === "FAILED";
-  return `<div class="fal-job-strip ${active ? "active" : done ? "done" : failed ? "failed" : ""}"><div><span>${active ? '<i class="spin">◌</i>' : done ? "✓" : failed ? "!" : "·"}</span><div><b>${esc(falJobStatusLabel(job))}</b><small>${job.continuityStateName ? `${esc(job.continuityStateName)} · ` : ""}${esc(job.model || "GPT Image 2")}${job.outputCount ? ` · ${job.outputCount} candidate${job.outputCount === 1 ? "" : "s"}` : ""}${job.error ? ` · ${esc(job.error)}` : ""}</small></div></div><div>${active ? `<button class="chip" onclick="refreshFalGeneration('${job.id}',true)">Refresh</button><button class="chip danger" onclick="cancelFalGeneration('${job.id}')">Cancel</button>` : failed ? `<button class="chip" onclick="openFalEntityGenerationModal('${list}','${entityId}','','${stateId}')">Try again</button>` : ""}</div></div>`;
+  const unknown = falJobUnresolved(job);
+  return `<div class="fal-job-strip ${unknown ? "unresolved" : active ? "active" : done ? "done" : failed ? "failed" : ""}"><div><span>${unknown ? "?" : active ? '<i class="spin">◌</i>' : done ? "✓" : failed ? "!" : "·"}</span><div><b>${esc(falJobStatusLabel(job))}</b><small>${unknown ? esc(falUnresolvedExplanation(job)) : `${job.continuityStateName ? `${esc(job.continuityStateName)} · ` : ""}${esc(job.model || "GPT Image 2")}${job.outputCount ? ` · ${job.outputCount} candidate${job.outputCount === 1 ? "" : "s"}` : ""}${job.error ? ` · ${esc(job.error)}` : ""}`}</small></div></div><div>${unknown ? `<button class="chip" onclick="openFalUnresolvedModal('${attr(job.id)}')">Check and resolve</button>` : active ? `<button class="chip" onclick="refreshFalGeneration('${job.id}',true)">Refresh</button><button class="chip danger" onclick="cancelFalGeneration('${job.id}')">Cancel</button>` : failed ? `<button class="chip" onclick="openFalEntityGenerationModal('${list}','${entityId}','','${stateId}')">Try again</button>` : ""}</div></div>`;
 }
 function falEntityPromptAction(list, entityId, buildId, fallbackDownload = "") {
   if (!falGenerationReady()) return fallbackDownload;

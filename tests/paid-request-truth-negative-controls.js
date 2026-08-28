@@ -46,7 +46,7 @@ const KAI_PNG = "/assets/anchors/KAI.png";
  * so a multi-line anchor containing \n matches ZERO times against the bytes on disk — and
  * the control would abort with "anchor no longer exists" while the source was perfectly
  * fine. That failure looks like a source change and is not one. */
-function loadModified(relative, edits) {
+function modifiedSource(relative, edits) {
   const file = path.join(ROOT, relative);
   let code = fs.readFileSync(file, "utf8").replace(/\r\n/g, "\n");
   for (const [from, to] of edits) {
@@ -55,6 +55,11 @@ function loadModified(relative, edits) {
     assert.strictEqual(code.split(from).length - 1, 1, `the anchor must be unique in ${relative}:\n${from}`);
     code = code.replace(from, to);
   }
+  return { file, code };
+}
+
+function loadModified(relative, edits) {
+  const { file, code } = modifiedSource(relative, edits);
   const patched = new Module(file, module);
   patched.filename = file;
   patched.paths = Module._nodeModulePaths(path.dirname(file));
@@ -178,6 +183,8 @@ async function harness(falGeneration, options = {}) {
     calls.push({ endpoint: req.path, body: req.body });
     res.json({ request_id: id, status_url: `${mockOrigin}/status/${id}`, response_url: `${mockOrigin}/result/${id}` });
   });
+  const cancelCalls = [];
+  mock.put("/cancel-503/:id", (req, res) => { cancelCalls.push(req.params.id); res.status(503).json({ detail: "provider unavailable" }); });
   mock.get("/status/:id", (req, res) => res.json({ status: "IN_QUEUE" }));
   mock.get("/result/:id", (req, res) => res.json({ images: [] }));
   const mockServer = await listen(mock);
@@ -237,6 +244,8 @@ async function harness(falGeneration, options = {}) {
       });
       return { status: response.status, data: await response.json() };
     },
+    cancelCalls,
+    mockOrigin: () => mockOrigin,
     cancel: async (jobId) => {
       const response = await fetch(`${appOrigin}/api/generation/fal/jobs/${encodeURIComponent(jobId)}/cancel`, {
         method: "POST", headers: { "content-type": "application/json" },
@@ -1012,6 +1021,93 @@ async function main() {
         assert.strictEqual(h.calls.length, 0, "and nothing was asked of the provider");
         observeHarm(durable.coverage.length > 0 && ["sheet-running", "individual-running", "starting"].includes(String(durable.coverage[0].status)),
           `THE DEFECT: the durable job is ${JSON.stringify(job.status)} with no request id to check it by, and the rebuilt coverage record reports ${JSON.stringify(durable.coverage[0] && durable.coverage[0].status)} — ${JSON.stringify(durable.coverage[0])}`);
+      } finally { h.close(); }
+    });
+
+  /* =======================================================================
+     9h. AN ENTITY STRIP THAT DRAWS AN UNCERTAIN SUBMISSION AS RUNNING WORK.
+
+     The screen where reference and coverage work lives had no uncertainty branch, so a
+     submission CineBraid could not account for was drawn as an ordinary running job. The
+     harm is not cosmetic: the only control that resolves that state was absent, and a
+     Cancel the route refuses stood where it should have been.
+
+     The mutation removes the branch. What is observed is the markup itself — the shipped
+     browser source, evaluated and called. */
+  await control("an entity strip that draws an uncertain submission as running work",
+    "every generation surface offers the reconciliation control for an uncertain submission", async (phase) => {
+      const vm = require("vm");
+      const { code } = modifiedSource("public/fal-generation.js", [[
+        "  const unknown = falJobUnresolved(job);\n  return `<div class=\"fal-job-strip ${unknown ? \"unresolved\" : active ? \"active\" : done ? \"done\" : failed ? \"failed\" : \"\"}\"><div><span>${unknown ? \"?\" : active ? '<i class=\"spin\">◌</i>' : done ? \"✓\" : failed ? \"!\" : \"·\"}</span><div><b>${esc(falJobStatusLabel(job))}</b><small>${unknown ? esc(falUnresolvedExplanation(job)) : `${job.continuityStateName",
+        "  const unknown = false;\n  return `<div class=\"fal-job-strip ${unknown ? \"unresolved\" : active ? \"active\" : done ? \"done\" : failed ? \"failed\" : \"\"}\"><div><span>${unknown ? \"?\" : active ? '<i class=\"spin\">◌</i>' : done ? \"✓\" : failed ? \"!\" : \"·\"}</span><div><b>${esc(falJobStatusLabel(job))}</b><small>${unknown ? esc(falUnresolvedExplanation(job)) : `${job.continuityStateName",
+      ]]);
+      phase("MUTATION_LANDED");
+      const escape = (value) => String(value == null ? "" : value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+      const uncertainJob = {
+        id: "job-1", purpose: "entity-reference", entityList: "characters", entityId: "KAI",
+        status: "SUBMITTING", uncertain: true, model: "gpt-image-2", createdAt: "2026-08-28T00:00:00.000Z",
+      };
+      const sandbox = {
+        window: {}, console, CONFIG: { generation: { fal: { enabled: true, apiKey: "k" } } },
+        FAL_GENERATION_JOBS: [uncertainJob], esc: escape, attr: escape, fetch: async () => ({ ok: true, json: async () => ({}) }),
+      };
+      sandbox.globalThis = sandbox;
+      vm.runInNewContext(code, sandbox, { filename: "public/fal-generation.js" });
+      assert.strictEqual(typeof sandbox.falEntityGenerationInline, "function", "the mutated renderer must still be callable");
+      const markup = sandbox.falEntityGenerationInline("characters", "KAI");
+      phase("UNSAFE_PATH_EXECUTED");
+      observeHarm(!markup.includes("Check and resolve") && markup.includes("cancelFalGeneration"),
+        `THE DEFECT: a submission the server reports as uncertain is drawn with no way to resolve it and a Cancel the route refuses — ${markup}`);
+    });
+
+  /* =======================================================================
+     9i. A CANCELLATION NOBODY CONFIRMED, PERSISTED ANYWAY.
+
+     The cancel route discarded the provider's response entirely, so a 503, a 404 and a
+     dropped connection all reached the same write. CANCELLED does not block
+     resubmission, so a failed cancel handed the filmmaker permission to buy the same
+     shot again while the original render may still have been running and still charged.
+
+     The mutation restores the discard. What is observed is the persisted CANCELLED and
+     then the provider actually being contacted for the same production result. */
+  await control("a cancellation persisted without the provider confirming it",
+    "CineBraid records a cancellation only when the provider confirmed one", async (phase) => {
+      const falGeneration = loadModified("fal-generation.js", [[
+        "        if (!response || !response.ok) {",
+        "        if (false && !response) {",
+      ]]);
+      phase("MUTATION_LANDED");
+      const h = await harness(falGeneration);
+      try {
+        const project = h.project();
+        project.characters.push({ id: "KAI", name: "Kai", type: "Character", approvedFile: "KAI.png", continuityStates: [] });
+        h.saveProject(project);
+        h.seedLedger([{
+          id: "refusing-cancel", provider: "fal", purpose: "entity-reference", status: "UNRESOLVED",
+          entityList: "characters", entityId: "KAI", entityType: "character",
+          coverageJobType: "sheet", coverageSheetType: "angles",
+          sourceBuildId: "entity-fixture", outputCount: 1, clientRequestId: "original-press",
+          prompt: "Kai against neutral grey.", createdAt: "2026-08-28T00:00:00.000Z",
+          externalId: "req-a", cancelUrl: `${h.mockOrigin()}/cancel-503/req-a`,
+        }]);
+        await h.cancel("refusing-cancel");
+        /* OFF DISK, before anything is retried. */
+        const afterCancel = h.durable().jobs.find((row) => row.id === "refusing-cancel");
+        assert.strictEqual(afterCancel.status, "CANCELLED",
+          `the unsafe path must actually persist the unconfirmed cancellation: ${JSON.stringify(afterCancel.status)}`);
+        assert.strictEqual(h.cancelCalls.length, 1, "with the provider having genuinely refused");
+        const retry = await h.coverage({
+          purpose: "entity-reference", entityList: "characters", entityId: "KAI", entityType: "character",
+          sourceBuildId: "entity-fixture", prompt: "Kai against neutral grey.",
+          references: [{ key: "base", label: "Approved primary", role: "base", url: KAI_PNG }],
+          outputCount: 1, quality: "high", resolution: "4k", aspectRatio: "16:9",
+          coverageJobType: "sheet", coverageSheetType: "angles",
+          clientRequestId: "a-different-press",
+          generationRequest: Presentation.generationRequestDeclaration({ surface: "reference-automation", viewMode: "simple" }),
+        });
+        phase("UNSAFE_PATH_EXECUTED");
+        observeHarm(retry.status === 200 && h.calls.length > 0,
+          `THE DEFECT: the provider refused the cancellation and CineBraid recorded ${JSON.stringify(afterCancel.status)} anyway, and the equivalent retry then reached the provider — ${h.calls.length} paid submission(s) across ${h.durable().jobs.length} job rows, while the original render may still be running`);
       } finally { h.close(); }
     });
 
