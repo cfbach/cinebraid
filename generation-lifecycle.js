@@ -276,17 +276,31 @@ function isReconciliationOutcome(value) {
 
 /* Returns the mutation to apply, or null when the job is not one that can be reconciled.
    Pure: the caller performs the write inside its own durable, serialized turn. */
+/* THE WAY OUT OF UNCERTAINTY, for every job that is in it.
+ *
+ * This asked `isUnresolved()`, which is one of the two ways a job becomes uncertain. The
+ * other is a durable `SUBMITTING` row with no provider handle — the state a process death
+ * between the ledger write and the provider answer leaves behind. blocksResubmission()
+ * has always counted both, so both were correctly refused a duplicate; but only one of
+ * them could ever be settled, which left the other blocked forever with no path out.
+ *
+ * A person looking at the provider and recording what they found is the same act in both
+ * cases, so it is accepted in both. Nothing is loosened: a job that does not block
+ * resubmission is not uncertain and is still refused here, and an already-reconciled job
+ * has been settled once and is not settled again. */
 function reconcileUnresolved(job, outcome, meta = {}) {
-  if (!isUnresolved(job)) return null;
+  if (!isUnresolved(job) && !blocksResubmission(job)) return null;
   if (!isReconciliationOutcome(outcome)) return null;
   const resolution = RECONCILIATION_OUTCOMES[String(outcome)];
   return {
     status: resolution.status,
     reconciliation: {
       outcome: String(outcome),
-      /* What it was before a person settled it. An unresolved job that has been
-         reconciled must still read as having been unresolved. */
-      previousStatus: UNRESOLVED,
+      /* What it was before a person settled it, read off the job rather than assumed.
+         An unresolved job still records UNRESOLVED because that is what it was; a
+         submission that died in flight records SUBMITTING, which is the honest answer to
+         "what state was a person looking at when they decided this". */
+      previousStatus: String(job.status || UNRESOLVED),
       at: String(meta.at || ""),
       by: String(meta.by || "user"),
       note: String(meta.note || ""),

@@ -2775,7 +2775,9 @@ function registerFalGeneration(app, context) {
         return res.status(ledgerFailureStatus(error)).json(ledgerFailurePayload(error));
       }
       if (!job) return res.status(404).json({ error: "Generation job not found." });
-      if (!Lifecycle.isUnresolved(job))
+      /* Both ways a job can be uncertain, so a submission that died in flight has the
+         same way out as one the classifier marked unresolved. */
+      if (!Lifecycle.isUnresolved(job) && !Lifecycle.blocksResubmission(job))
         return res.status(409).json({
           error: "Only a job whose provider outcome is unknown can be reconciled.",
           code: "GENERATION_NOT_UNRESOLVED",
@@ -2832,17 +2834,46 @@ function registerFalGeneration(app, context) {
     return serializeJobOperation(owner, jobId, async () => {
       const job = readJobs(owner).find((item) => item.id === jobId);
       if (!job) return { ok: false, outcome: "not-found", error: "Generation job not found." };
-      /* An unresolved job with no request id has nothing to poll. Pretending otherwise
-         would fetch an empty URL and report the resulting error as though the provider
-         had answered — inventing a status out of a failure. */
-      if (Lifecycle.isUnresolved(job) && !job.externalId)
+      /* AN UNCERTAIN JOB WITH NO REQUEST ID HAS NOTHING TO POLL.
+       *
+       * This used to ask `isUnresolved(job)`, which is only one of the two ways a job
+       * reaches that condition. The other is a durable `SUBMITTING` row with no handle,
+       * and an independent reviewer followed what happened to it: the guard did not fire,
+       * refresh() built a provider status URL out of nothing, the fetch failed, and the
+       * catch below wrote FAILED. FAILED does not block resubmission — so a refresh
+       * turned "we do not know whether we were billed" into "it definitely failed", and
+       * the next request with the same context and a fresh clientRequestId was free to
+       * send a second paid submission.
+       *
+       * A MISSING HANDLE IS NOT EVIDENCE OF FAILURE. The same durable row means either
+       * the process stopped before the provider was contacted, or the provider accepted
+       * and CineBraid could not record the answer. Nothing here can tell those apart, and
+       * only one of them is free.
+       *
+       * So the question asked is the lifecycle's own: blocksResubmission() is already the
+       * definition of "this attempt is uncertain", and it already covers both origins —
+       * `isUnresolved`, and `SUBMITTING && !externalId`. Asking it here means the poller
+       * and the duplicate guard cannot disagree about which jobs are uncertain, which is
+       * exactly how they came apart. */
+      if (Lifecycle.blocksResubmission(job) && !job.externalId) {
+        /* The projection is a projection: a run whose only job is uncertain must not go
+           on presenting itself as an ordinary healthy generation. The durable JOB is
+           left exactly as it is — see the invariant above — and only the coverage record
+           is moved, through the same lifecycle owner every other attention state uses. */
+        await updateEntityCoverageRun(owner, job, "needs-attention",
+          "CineBraid has no request id for this submission, so it cannot check what happened to it.").catch(() => {});
+        const reason = Lifecycle.resubmissionBlockReason(job);
         return {
           ok: false,
           outcome: "no-handle",
           code: "GENERATION_UNRESOLVED_NO_HANDLE",
           job,
-          error: "CineBraid never received a request id for this submission, so there is nothing it can check. Look for it at the provider and record what you find.",
+          blockReason: reason,
+          error: reason === "in-flight-without-handle"
+            ? "CineBraid never received a request id for this submission, so there is nothing it can check. It may never have reached the provider, or the provider may have accepted it and the answer was lost — CineBraid cannot tell which. Look for it at the provider and record what you find."
+            : "CineBraid never received a request id for this submission, so there is nothing it can check. Look for it at the provider and record what you find.",
         };
+      }
       const deliveredBefore = !!job.ingestedAt;
       try {
         await refresh(owner, job);

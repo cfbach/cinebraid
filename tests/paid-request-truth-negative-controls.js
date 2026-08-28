@@ -219,6 +219,12 @@ async function harness(falGeneration, options = {}) {
       coverage: (JSON.parse(fs.readFileSync(file, "utf8")).characters || [])
         .map((row) => row.coverageAutomation).filter(Boolean),
     }),
+    refresh: async (jobId) => {
+      const response = await fetch(`${appOrigin}/api/generation/fal/jobs/${encodeURIComponent(jobId)}/refresh`, {
+        method: "POST", headers: { "content-type": "application/json" },
+      });
+      return { status: response.status, data: await response.json().catch(() => ({})) };
+    },
     coverage: async (body) => {
       const response = await fetch(`${appOrigin}/api/generation/fal/coverage/jobs`, {
         method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
@@ -850,6 +856,61 @@ async function main() {
         const run = h.durable().coverage[0];
         observeHarm(Boolean(run) && ["starting", "sheet-running", "individual-running"].includes(String(run.status)),
           `THE DEFECT: the provider was told about a paid request CineBraid could not record, and the coverage board still reads ${JSON.stringify(run && run.status)} — ${JSON.stringify(run)}`);
+      } finally { h.close(); }
+    });
+
+  /* =======================================================================
+     9e. REFRESH THAT READS A MISSING HANDLE AS FAILURE, AND BILLS TWICE FOR IT.
+
+     THE HISTORICAL BUG, end to end. collectJob()'s no-handle guard covered UNRESOLVED
+     only, so a durable `SUBMITTING` row with no handle fell through to a provider poll
+     built out of an absent URL; the poll failed; the catch persisted FAILED; FAILED does
+     not block resubmission; and the next request for the same production result with a
+     fresh clientRequestId sent a SECOND paid submission.
+
+     The mutation narrows the guard back to UNRESOLVED. What is observed is the persisted
+     FAILED and then the provider actually being contacted a second time — the bill, not
+     the status. */
+  await control("a refresh that reads a missing provider handle as failure",
+    "an uncertain submission is never turned into a failure that permits a retry", async (phase) => {
+      const falGeneration = loadModified("fal-generation.js", [[
+        "      if (Lifecycle.blocksResubmission(job) && !job.externalId) {",
+        "      if (Lifecycle.isUnresolved(job) && !job.externalId) {",
+      ]]);
+      phase("MUTATION_LANDED");
+      const h = await harness(falGeneration);
+      try {
+        const project = h.project();
+        project.characters.push({
+          id: "KAI", name: "Kai", type: "Character", approvedFile: "KAI.png", continuityStates: [],
+          coverageAutomation: { id: "coverage:characters:KAI:run", list: "characters", entityId: "KAI", mode: "sheet", sheetType: "angles", status: "sheet-running", startedAt: "2026-08-28T00:00:00.000Z", jobs: ["uncertain-1"] },
+        });
+        h.saveProject(project);
+        h.seedLedger([{
+          id: "uncertain-1", provider: "fal", purpose: "entity-reference", status: "SUBMITTING",
+          entityList: "characters", entityId: "KAI", entityType: "character",
+          coverageJobType: "sheet", coverageSheetType: "angles",
+          sourceBuildId: "entity-fixture", outputCount: 1, clientRequestId: "original-press",
+          prompt: "Kai against neutral grey.", createdAt: "2026-08-28T00:00:00.000Z",
+        }]);
+        await h.refresh("uncertain-1");
+        /* THE PERSISTED INCONSISTENCY, read off disk before anything is retried. */
+        const afterRefresh = h.durable().jobs.find((row) => row.id === "uncertain-1");
+        assert.strictEqual(afterRefresh.status, "FAILED",
+          `the unsafe path must actually persist the false failure: ${JSON.stringify(afterRefresh.status)}`);
+        /* And the retry must genuinely be attempted, or the bill is not what is measured. */
+        const retry = await h.coverage({
+          purpose: "entity-reference", entityList: "characters", entityId: "KAI", entityType: "character",
+          sourceBuildId: "entity-fixture", prompt: "Kai against neutral grey.",
+          references: [{ key: "base", label: "Approved primary", role: "base", url: KAI_PNG }],
+          outputCount: 1, quality: "high", resolution: "4k", aspectRatio: "16:9",
+          coverageJobType: "sheet", coverageSheetType: "expressions",
+          clientRequestId: "a-different-press",
+          generationRequest: Presentation.generationRequestDeclaration({ surface: "reference-automation", viewMode: "simple" }),
+        });
+        phase("UNSAFE_PATH_EXECUTED");
+        observeHarm(retry.status === 200 && h.calls.length > 0,
+          `THE DEFECT: refresh persisted ${JSON.stringify(afterRefresh.status)} for a submission that may already have been charged, and the equivalent retry then reached the provider — ${h.calls.length} paid submission(s) for one production result, across ${h.durable().jobs.length} job rows`);
       } finally { h.close(); }
     });
 

@@ -65,6 +65,7 @@ const BuildHistory = require("../public/shared-build-history");
 const { imageControlCapability, IMAGE_MODEL_ID } = require("../image-execution");
 const Options = require("../public/shared-generation-options");
 const CoverageOwnership = require("../public/shared-coverage");
+const Lifecycle = require("../generation-lifecycle");
 const { addFramePromptBuild, baseSpec, buildRef, REF_IDENTITY } = require("./image-execution-fixture");
 const { declaredGenerationBody } = require("./generation-request-fixture");
 
@@ -184,6 +185,13 @@ async function harness(options = {}) {
     /* THE COVERAGE OPERATION'S OWN ENTRY POINT. The browser asks the server to run
        coverage; the server establishes the run and dispatches through the same boundary. */
     mockOrigin,
+    reconcile: async (jobId, outcome, note) => {
+      const response = await fetch(`${appOrigin}/api/generation/fal/jobs/${encodeURIComponent(jobId)}/reconcile`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ outcome, note }),
+      });
+      return { status: response.status, data: await response.json().catch(() => ({})) };
+    },
     refresh: async (jobId) => {
       const response = await fetch(`${appOrigin}/api/generation/fal/jobs/${encodeURIComponent(jobId)}/refresh`, {
         method: "POST", headers: { "content-type": "application/json" },
@@ -1541,6 +1549,119 @@ async function main() {
       } finally { h.close(); }
     }
       note("15d. at every durable seam the two stores read truthfully OFF DISK: a stop after the ledger write leaves a SUBMITTING row with no coverage record and no provider call (never the reverse); a failed projection write leaves the real job dispatching with the absence recorded on the row; that surviving row is reattached rather than re-sent, with no second provider call and no second row; a doubly-failed acknowledgement leaves the run needs-attention rather than running; an acknowledged job rebuilds its projection from the row alone; and a healthy dispatch has both stores naming the same job");
+  }
+
+  /* =======================================================================
+     15e. REFRESH MUST NOT TURN UNCERTAINTY INTO FAILURE.
+
+     A durable `SUBMITTING` row with no provider handle is the state a process death
+     leaves behind, and it has TWO possible histories that nothing on disk can tell apart:
+     the process stopped before the provider was contacted, or the provider accepted and
+     the answer was lost. Only one of them is free.
+
+     An independent reviewer followed what refresh did with it: the no-handle guard only
+     covered UNRESOLVED, so this row fell through to a provider poll built out of an
+     absent URL, the poll failed, and the catch persisted FAILED. FAILED does not block
+     resubmission — so a refresh converted "we do not know whether we were billed" into
+     "it definitely failed", and the next request with the same context and a fresh
+     clientRequestId was free to send a second paid submission.
+
+     The refresh-then-retry chain below is the whole defect, end to end. */
+  {
+    const h = await harness();
+    try {
+      const project = h.project();
+      project.characters.push({
+        id: "KAI", name: "Kai", type: "Character", approvedFile: "KAI.png", continuityStates: [],
+        /* The projection that survived alongside it, as it would after an interruption. */
+        coverageAutomation: { id: "coverage:characters:KAI:run", list: "characters", entityId: "KAI", mode: "sheet", sheetType: "angles", status: "sheet-running", startedAt: "2026-08-28T00:00:00.000Z", jobs: ["uncertain-1"] },
+      });
+      h.saveProject(project);
+      const UNCERTAIN = {
+        id: "uncertain-1", provider: "fal", purpose: "entity-reference", status: "SUBMITTING",
+        entityList: "characters", entityId: "KAI", entityType: "character",
+        coverageJobType: "sheet", coverageSheetType: "angles",
+        sourceBuildId: "entity-fixture", outputCount: 1, clientRequestId: "original-press",
+        prompt: "Kai against neutral grey.", createdAt: "2026-08-28T00:00:00.000Z",
+      };
+      h.seedLedger([UNCERTAIN]);
+      /* THE CONTEXT KEY IS WHAT A RETRY WOULD COLLIDE ON, and it is the same for both
+         requests below — the identity is the production result, not the press. */
+      const contextKey = Lifecycle.generationContextKey(UNCERTAIN);
+      assert(contextKey, "the fixture must have a real context key or the retry proves nothing");
+      assert.strictEqual(Lifecycle.blocksResubmission(UNCERTAIN), true,
+        "and the seeded row must genuinely be one that blocks a duplicate before refresh");
+
+      /* 1. THE NORMAL REFRESH PATH. */
+      const refreshed = await h.refresh("uncertain-1");
+      assert.strictEqual(refreshed.status, 409, `refresh answers truthfully rather than polling nothing: ${JSON.stringify(refreshed.data)}`);
+      assert.strictEqual(refreshed.data.code, "GENERATION_UNRESOLVED_NO_HANDLE", "with the existing no-handle vocabulary");
+      assert.strictEqual(h.calls.length, 0, "and contacts no provider — refresh never guesses by asking");
+
+      const afterRefresh = h.durable().jobs.find((row) => row.id === "uncertain-1");
+      assert.notStrictEqual(afterRefresh.status, "FAILED",
+        `THE DEFECT: refresh must not persist FAILED merely because the handle is absent — status is ${JSON.stringify(afterRefresh.status)}`);
+      assert.strictEqual(afterRefresh.status, "SUBMITTING", "the uncertainty is preserved exactly as it was");
+      assert(!afterRefresh.externalId, "and no provider handle is invented");
+      assert.strictEqual(Lifecycle.blocksResubmission(afterRefresh), true,
+        "and the row still blocks an equivalent resubmission after refresh");
+
+      /* The projection is allowed to move, because it is only a projection. */
+      const coverage = h.durable().coverage[0];
+      assert.strictEqual(coverage.status, "needs-attention",
+        `and coverage stops presenting it as an ordinary healthy run: ${JSON.stringify(coverage)}`);
+
+      /* 2. THE RETRY: same context, DIFFERENT clientRequestId — the exact shape that
+            became eligible once FAILED was persisted. */
+      const retry = await h.coverage({
+        purpose: "entity-reference", entityList: "characters", entityId: "KAI", entityType: "character",
+        sourceBuildId: "entity-fixture", prompt: "Kai against neutral grey.",
+        references: [{ key: "base", label: "Approved primary", role: "base", url: KAI_PNG }],
+        outputCount: 1, quality: "high", resolution: "4k", aspectRatio: "16:9",
+        coverageJobType: "sheet", coverageSheetType: "angles",
+        clientRequestId: "a-different-press",
+        generationRequest: Presentation.generationRequestDeclaration({ surface: "reference-automation", viewMode: "simple" }),
+      });
+      /* BOTH ESTABLISHED GUARDS ANSWER THIS, and both are correct: the entity-reference
+         duplicate guard REATTACHES to the uncertain job when the coverage target is
+         identical, and the unresolved-twin guard REFUSES when it is not. What must never
+         happen is a second submission, so that is what is asserted rather than a code. */
+      const reattached = retry.status === 200 && retry.data.reused === true && retry.data.duplicatePrevented === true;
+      assert(reattached, `an identical coverage target reattaches to the uncertain job: ${retry.status} ${JSON.stringify(retry.data)}`);
+      assert.strictEqual(retry.data.job.id, "uncertain-1", "naming the job that is already uncertain");
+
+      /* The other arm: same generationContextKey, a target the duplicate guard does not
+         match, so the unresolved-twin guard is the one that answers. */
+      const twin = await h.coverage({
+        purpose: "entity-reference", entityList: "characters", entityId: "KAI", entityType: "character",
+        sourceBuildId: "entity-fixture", prompt: "Kai against neutral grey.",
+        references: [{ key: "base", label: "Approved primary", role: "base", url: KAI_PNG }],
+        outputCount: 1, quality: "high", resolution: "4k", aspectRatio: "16:9",
+        coverageJobType: "sheet", coverageSheetType: "expressions",
+        clientRequestId: "another-different-press",
+        generationRequest: Presentation.generationRequestDeclaration({ surface: "reference-automation", viewMode: "simple" }),
+      });
+      assert.strictEqual(twin.status, 409, `a same-context request is refused outright: ${JSON.stringify(twin.data)}`);
+      assert.strictEqual(twin.data.code, "GENERATION_UNRESOLVED", "through the existing uncertainty guard");
+      assert.strictEqual(Lifecycle.generationContextKey(twin.data.job || UNCERTAIN), contextKey,
+        "and it is the same production result that is being protected");
+
+      assert.strictEqual(h.calls.length, 0, "ZERO provider submissions across the whole chain");
+      assert.strictEqual(h.durable().jobs.length, 1, "and no second generation row exists");
+
+      /* 3. AND THERE IS A WAY OUT. A person looks at the provider and records what they
+            found — the existing reconciliation path, which now accepts both ways a job
+            can be uncertain rather than only one. */
+      const settled = await h.reconcile("uncertain-1", "not-accepted", "Checked fal; the request never arrived.");
+      assert.strictEqual(settled.status, 200, `a human can settle it: ${JSON.stringify(settled.data)}`);
+      const settledRow = h.durable().jobs.find((row) => row.id === "uncertain-1");
+      assert.strictEqual(settledRow.status, "FAILED", "recorded as the person found it");
+      assert.strictEqual(settledRow.reconciliation.previousStatus, "SUBMITTING",
+        "and the record says what it was when they looked, rather than assuming UNRESOLVED");
+      assert.strictEqual(Lifecycle.blocksResubmission(settledRow), false,
+        "and only now, on a person's evidence, is an equivalent request allowed again");
+      note(`15e. refresh leaves an uncertain SUBMITTING/no-handle job SUBMITTING rather than FAILED, contacts no provider, moves only the coverage projection to needs-attention, and still blocks an equivalent retry with a different clientRequestId — 0 provider submissions and 1 job row across the whole chain, with a human reconciliation as the only way out (recorded previousStatus SUBMITTING)`);
+    } finally { h.close(); }
   }
 
   console.log("");
