@@ -18,6 +18,7 @@ const net = require("net");
 const os = require("os");
 const path = require("path");
 const { spawn } = require("child_process");
+const { withGenerationDeclaration } = require("./generation-request-fixture");
 
 const ROOT = path.join(__dirname, "..");
 const {
@@ -207,7 +208,7 @@ async function serverChecks() {
     return { status: response.status, body: await response.json().catch(() => ({})) };
   };
   const postJson = (url, payload) =>
-    request(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
+    request(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(withGenerationDeclaration(url, payload)) });
 
   try {
     const deadline = Date.now() + 20000;

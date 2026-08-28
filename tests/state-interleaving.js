@@ -35,6 +35,7 @@ const os = require("os");
 const path = require("path");
 const { spawn } = require("child_process");
 const { addMotionPromptBuild } = require("./h3-execution-fixture");
+const { withGenerationDeclaration } = require("./generation-request-fixture");
 
 const ROOT = path.join(__dirname, "..");
 const TEMP = fs.mkdtempSync(path.join(os.tmpdir(), "cinebraid-interleave-"));
@@ -163,7 +164,7 @@ async function request(url, options) {
   return { response, body };
 }
 const postJson = (url, payload) =>
-  request(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
+  request(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(withGenerationDeclaration(url, payload)) });
 const putJson = (url, payload, headers = {}) =>
   request(url, { method: "PUT", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(payload) });
 

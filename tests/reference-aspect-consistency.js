@@ -37,6 +37,7 @@ const os = require("os");
 const path = require("path");
 const express = require("express");
 const { spawn } = require("child_process");
+const { withGenerationDeclaration } = require("./generation-request-fixture");
 const {
   referenceAspectLabel,
   aspectPromptConflicts,
@@ -200,7 +201,7 @@ async function request(url, options = {}) {
 const post = (url, payload) => request(url, {
   method: "POST",
   headers: { "content-type": "application/json" },
-  body: JSON.stringify(payload),
+  body: JSON.stringify(withGenerationDeclaration(url, payload)),
 });
 
 /* --------------------------------------------------------------- receipts */

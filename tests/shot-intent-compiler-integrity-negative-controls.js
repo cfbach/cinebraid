@@ -493,12 +493,21 @@ async function nc12() {
     expect: /must make the compiled package stale/,
     defect: "package freshness reads the saved snapshot as the current direction, so an edited Shot Intent leaves the package reading current",
     files: {
+      /* The body this arms moved into public/shared-build-history.js's packageDirection()
+         when the money boundary needed to ask the same question — see Paid Request Truth
+         V1. The DEFECT is unchanged and so is the property: read the saved snapshot as
+         the current direction and freshness compares a value with itself. Only the host
+         line moved, which is why this control was updated rather than deleted. */
       "public/review-provenance.js": [[
         `function currentDirectionForPackage(s, pack) {
-  const directive = s.packagePlanner?.directiveByScope?.[pack.scope] || "";`,
+  /* Same delegation as packageInputSnapshot, for the same reason: the money boundary
+     has to be able to ask this question too. */
+  return packageDirection(s, pack);
+}`,
         `function currentDirectionForPackage(s, pack) {
   if (pack?.dependencySnapshot) return String(pack.dependencySnapshot.direction || "");
-  const directive = s.packagePlanner?.directiveByScope?.[pack.scope] || "";`,
+  return packageDirection(s, pack);
+}`,
       ]],
     },
     probe: async (suite) => {
