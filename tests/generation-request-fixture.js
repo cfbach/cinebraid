@@ -33,11 +33,24 @@ function declaredGenerationBody(body, options = {}) {
   /* An explicit declaration always wins. A test that is making a point about the
      declaration must be able to make it. */
   if (body[Presentation.CINEBRAID_REQUEST_PLAN_KEY]) return body;
-  const { canonical } = Presentation.generationRequestSurfacesFor(body, body.purpose);
+  const { canonical, legal } = Presentation.generationRequestSurfacesFor(body, body.purpose);
+  /* THE COVERAGE SURFACE IS NEVER STAMPED AUTOMATICALLY.
+   *
+   * `reference-automation` is corroborated at the paid boundary against a live coverage
+   * run recorded on the entity — state a fixture has not created and should not fake in
+   * passing. A suite that is genuinely exercising coverage automation writes that record
+   * and names the surface explicitly (tests/paid-request-truth.js does both); every other
+   * suite is standing in for the ordinary entity dialog, which declares `fixed-image`.
+   *
+   * Chosen by NAME, not by list position: `fixed-image` is the surface that needs no
+   * corroboration, and saying so is the point. */
+  const surfaceless = canonical === "reference-automation" && legal.includes("fixed-image")
+    ? "fixed-image"
+    : canonical;
   return {
     ...body,
     [Presentation.CINEBRAID_REQUEST_PLAN_KEY]: Presentation.generationRequestDeclaration({
-      surface: options.surface || canonical,
+      surface: options.surface || surfaceless,
       viewMode: options.viewMode || FIXTURE_VIEW_MODE,
       ...(options.selectedOptionId ? { selectedOptionId: options.selectedOptionId } : {}),
       ...(options.selectedModelId ? { selectedModelId: options.selectedModelId } : {}),

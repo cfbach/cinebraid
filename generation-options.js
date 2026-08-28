@@ -30,7 +30,7 @@ const { IMAGE_MODEL_ID } = require("./image-execution");
 const { getModelPack } = require("./generation-compiler");
 const { loadModelIntelligence } = require("./model-intelligence");
 const { checkRequestAgainstCapability } = require("./public/shared-generation-capability");
-const { resolveGenerationOptions, resolveTaskModes } = require("./public/shared-generation-options");
+const { generationOptionMintable, resolveGenerationOptions, resolveTaskModes } = require("./public/shared-generation-options");
 
 /* Every model×surface×mode CineBraid can serialise and send today. Three entries,
    two serializers, one provider — and saying so plainly is the point. Adding a
@@ -242,8 +242,20 @@ function generationOptionsFor(input = {}) {
   });
 }
 
+/* THE MINTABILITY QUESTION, WITH THE CATALOGUE SUPPLIED.
+ *
+ * public/shared-generation-options.js owns the rule and holds no data; this hands it the
+ * same `intelligence` that generationOptionsFor() hands resolveGenerationOptions() a few
+ * lines above, so an identity is judged against exactly the source it would have been
+ * minted from. The paid boundary calls this rather than reasoning about option ids
+ * itself — there is no second option taxonomy anywhere. */
+function generationOptionIdentityFor(optionId, input = {}) {
+  return generationOptionMintable(optionId, input.intelligence || loadModelIntelligence());
+}
+
 module.exports = {
   CINEBRAID_GENERATION_ADAPTERS,
+  generationOptionIdentityFor,
   annotateProfileLibraryExecution,
   generationConnections,
   generationOptionsFor,

@@ -672,6 +672,58 @@ function generationOptionIdentity(optionId) {
   };
 }
 
+/* EVERY MODE ANY FILMMAKER TASK CAN ASK FOR, from the task table above and nothing
+   else. resolveTaskModes() returns a subset of these for a given task and input shape —
+   it narrows by shape, it never invents a mode a task does not declare — so the union of
+   the declared arrays IS the mode vocabulary this module can mint. That relationship is
+   asserted in tests/paid-request-truth.js against the live table rather than trusted,
+   because a task that started returning an undeclared mode would make this quietly
+   incomplete. */
+function generationOptionModes() {
+  return [...new Set(CINEBRAID_FILMMAKER_TASKS.flatMap((task) => listOf(task.modes).map(text)).filter(Boolean))];
+}
+
+/* COULD CINEBRAID HAVE MINTED THIS OPTION IDENTITY?
+ *
+ * generationOptionIdentity() answers whether a string has the SHAPE of an id. That is
+ * not the same question, and an independent reviewer proved the gap: `gpt-image-2/
+ * standard::not-a-real-surface::not-a-real-mode` has three segments, passed, dispatched,
+ * and was recorded durably as the option a filmmaker had chosen.
+ *
+ * So every component is checked against the source resolveGenerationOptions() mints from,
+ * and nothing here holds a list of its own:
+ *
+ *   model    intelligence.getModel() — the catalogue.
+ *   surface  intelligence.offeringsForModel() — the surfaces that actually OFFER this
+ *            model. A real surface that does not carry this model could never have
+ *            produced this id, which is the "valid mode on the wrong surface" case.
+ *            An empty surface segment is legal and means exactly what the minter means
+ *            by it: a model no reachable provider offers.
+ *   mode     the filmmaker task table above.
+ *
+ * MINTABLE IS NOT AVAILABLE, deliberately. The picker mints an option for every
+ * model x surface x mode a task considers, INCLUDING ones the model cannot do — that is
+ * how it shows a filmmaker why something is unavailable. An id for an unsupported
+ * combination is a real id and stays mintable here; whether that option can be
+ * dispatched is a different question, asked by a different owner, further on. */
+function generationOptionMintable(optionId, intelligence) {
+  const identity = generationOptionIdentity(optionId);
+  if (!identity.known) return { ...identity, mintable: false, reason: "not-an-option-identity" };
+  if (!intelligence || typeof intelligence.getModel !== "function")
+    return { ...identity, mintable: false, reason: "no-catalogue" };
+  if (!intelligence.getModel(identity.modelId))
+    return { ...identity, mintable: false, reason: "model-not-in-catalogue" };
+  const offerings = typeof intelligence.offeringsForModel === "function"
+    ? listOf(intelligence.offeringsForModel(identity.modelId))
+    : [];
+  const offered = offerings.map((row) => text(row?.surface?.surfaceId)).filter(Boolean);
+  if (identity.surfaceId ? !offered.includes(identity.surfaceId) : offered.length)
+    return { ...identity, mintable: false, reason: "surface-does-not-offer-this-model", offeredSurfaces: offered };
+  if (!generationOptionModes().includes(identity.mode))
+    return { ...identity, mintable: false, reason: "not-a-filmmaker-task-mode" };
+  return { ...identity, mintable: true, reason: "" };
+}
+
 const GENERATION_OPTION_EXPORTS = {
   CINEBRAID_FILMMAKER_TASKS,
   CINEBRAID_MODE_LANGUAGE,
@@ -683,6 +735,8 @@ const GENERATION_OPTION_EXPORTS = {
   describeInputs,
   filmmakerTask,
   generationOptionIdentity,
+  generationOptionMintable,
+  generationOptionModes,
   isNormalOption,
   modeLanguage,
   resolveGenerationOptions,

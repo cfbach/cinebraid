@@ -382,14 +382,18 @@ function readGenerationRequestDeclaration(body) {
  * named `reference-automation` kept a 4K size under Simple and dispatched. A declaration
  * is evidence about a screen, and evidence that can be chosen is not evidence.
  *
- * So the surface has to be PROVED, and it is proved from a marker the request already
- * carries. `coverageJobType` is written by public/coverage-automation.js on every sheet
- * and slot dispatch, is validated against this same list at the paid boundary before the
- * job row is built, and is part of the duplicate-active guard's identity for coverage
- * work. The ordinary entity-reference dialog does not send it at all.
+ * So the surface has to be PROVED. `coverageJobType` says which KIND of coverage work a
+ * request is asking for, and the ordinary entity dialog never sends it — but it is a
+ * field in the same body, so on its own it proves nothing. A second reviewer demonstrated
+ * exactly that: an ordinary entity request with `coverageJobType: "sheet"` added kept its
+ * 4K and dispatched.
  *
- * NO NEW TAXONOMY, and nothing derived from client prose: this reads a field the route
- * already whitelists, for the surface that already depends on it. */
+ * READING THE KIND IS THEREFORE ONLY HALF THE ANSWER, and this function only does that
+ * half. The other half is corroboration the caller cannot put in the body, and it lives
+ * at the boundary that can read persisted state: coverageRunCorroboration() in
+ * fal-generation.js requires a live coverage run recorded on the entity itself. This
+ * module is pure and has no project to read, so it reports the surface a request is
+ * ASKING for and the boundary decides whether the request may have it. */
 const CINEBRAID_COVERAGE_JOB_TYPES = ["sheet", "slot"];
 
 function generationRequestSurfacesFor(body, purpose) {

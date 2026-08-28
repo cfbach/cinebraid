@@ -39,6 +39,7 @@ const { registerFalGeneration } = require("../fal-generation");
 const Presentation = require("../public/shared-generation-presentation");
 const BuildHistory = require("../public/shared-build-history");
 const { imageControlCapability, IMAGE_MODEL_ID } = require("../image-execution");
+const Options = require("../public/shared-generation-options");
 const { addFramePromptBuild, baseSpec, buildRef, REF_IDENTITY } = require("./image-execution-fixture");
 const { declaredGenerationBody } = require("./generation-request-fixture");
 
@@ -345,7 +346,14 @@ async function main() {
     const h = await harness();
     try {
       const entityProject = h.project();
-      entityProject.characters.push({ id: "KAI", name: "Kai", type: "Character", approvedFile: "KAI.png", continuityStates: [] });
+      /* The entity AND the live coverage run public/coverage-automation.js writes into
+         the project document before it dispatches. The paid boundary corroborates the
+         `reference-automation` surface against this record; without it, this request is
+         indistinguishable from an ordinary entity reference wearing the name. */
+      entityProject.characters.push({
+        id: "KAI", name: "Kai", type: "Character", approvedFile: "KAI.png", continuityStates: [],
+        coverageAutomation: { id: "coverage:characters:KAI:run:angles", list: "characters", entityId: "KAI", mode: "sheet", sheetType: "angles", status: "starting", startedAt: "2026-08-27T00:00:00.000Z", jobs: [], requestCount: 1, maximumImages: 1 },
+      });
       h.saveProject(entityProject);
       const result = await h.post({
         purpose: "entity-reference",
@@ -392,7 +400,11 @@ async function main() {
         ...framePlanBody(buildId),
         generationRequest: Presentation.generationRequestDeclaration({
           surface: "compiled-frame", viewMode: "advanced",
-          selectedOptionId: "some-other-model::fal-queue::t2i", selectedModelId: "some-other-model",
+          /* A REAL CATALOGUED OPTION this route cannot dispatch — seedream/5.0-pro is in
+             the shipped catalogue and runware offers it. A made-up id would be refused
+             one step earlier, as an identity CineBraid could not have minted, and this
+             case is about the ROUTE rather than about the identity. */
+          selectedOptionId: "seedream/5.0-pro::runware::t2i", selectedModelId: "seedream/5.0-pro",
         }),
       });
       assert.strictEqual(wrong.status, 409, `a model this route cannot dispatch must be refused: ${JSON.stringify(wrong.data)}`);
@@ -419,7 +431,7 @@ async function main() {
       assert.strictEqual(silent.status, 200, `a request naming no model is not refused: ${JSON.stringify(silent.data)}`);
       const silentRow = h.ledger().find((item) => item.clientRequestId === "no-model-named");
       assert.strictEqual(silentRow.selectedModelId, "", "and it claims no selection rather than inventing one");
-      note(`7. a request naming a model this route cannot dispatch is refused with GENERATION_MODEL_MISMATCH naming ${IMAGE_MODEL_ID}; naming the right one is accepted and recorded; naming none is accepted and records nothing`);
+      note(`7. a request naming a catalogued model this route cannot dispatch is refused with GENERATION_MODEL_MISMATCH naming ${IMAGE_MODEL_ID}; naming the right one is accepted and recorded; naming none is accepted and records nothing`);
     } finally { h.close(); }
   }
 
@@ -754,54 +766,103 @@ async function main() {
   }
 
   /* =======================================================================
-     15. A SURFACE HAS TO BE PROVED, NOT NAMED.  [reviewer blocker 1]
+     15. A SURFACE IS PROVED BY STATE THE REQUEST CANNOT CARRY.  [reviewer blocker 1]
 
-     `reference-automation` leaves resolution out of its vocabulary, because a coverage
-     sheet's size is a route input rather than a control a view is hiding. That makes it
-     the more permissive surface for one key — and the reviewer reproduced an ORDINARY
-     entity-reference request simply naming it, keeping 4K under Simple, and dispatching.
+     `reference-automation` leaves resolution out of its vocabulary — a coverage sheet's
+     size is a route input, not a control a view hides — which makes it the MORE permissive
+     surface for that one key. Two independent reviewers in a row got past a guard on it,
+     and both were right about why: a declared surface name and then a declared
+     `coverageJobType` are both just fields in the body being judged.
 
-     The proof is a marker the request already carries: `coverageJobType`, written by the
-     coverage dispatcher on every sheet and slot, whitelisted by this route before the job
-     row is built, and absent from the ordinary entity dialog entirely. */
+     The corroboration is `entity.coverageAutomation`, the durable coverage-run record the
+     coverage dispatcher writes into the project document before it dispatches and this
+     route already reads when it reports failures. A request cannot put it in its own body.
+
+     THE HONEST LIMIT, stated because overclaiming it would be worse than the original
+     defect: this is same-origin single-user software with no per-route authentication, so
+     a client that can write the project document can create the record. What this stops is
+     the thing the reviewers actually did — gaining a more permissive paid surface by adding
+     fields to the generation request — and it makes the alternative a persisted, auditable
+     act that shows on the entity's coverage board rather than a string in one POST. */
   {
     const h = await harness();
     try {
-      const entityProject = h.project();
-      entityProject.characters.push({ id: "KAI", name: "Kai", type: "Character", approvedFile: "KAI.png", continuityStates: [] });
-      h.saveProject(entityProject);
       const entityBody = (extra) => ({
         purpose: "entity-reference", entityList: "characters", entityId: "KAI", entityType: "character",
         sourceBuildId: "entity-fixture", prompt: "Kai against neutral grey, three-quarter view.",
         references: [{ key: "base", label: "Approved primary", role: "base", url: KAI_PNG }],
         outputCount: 1, quality: "high", resolution: "4k", aspectRatio: "16:9", ...extra,
       });
+      const character = (coverageAutomation) => {
+        const project = h.project();
+        project.characters = [{
+          id: "KAI", name: "Kai", type: "Character", approvedFile: "KAI.png", continuityStates: [],
+          ...(coverageAutomation ? { coverageAutomation } : {}),
+        }];
+        h.saveProject(project);
+      };
+      const LIVE_RUN = { id: "coverage:characters:KAI:run:angles", list: "characters", entityId: "KAI", mode: "sheet", sheetType: "angles", status: "starting", startedAt: "2026-08-27T00:00:00.000Z", jobs: [], requestCount: 1, maximumImages: 1 };
 
-      /* A. THE FORGERY. An ordinary entity request claiming the coverage surface. */
+      /* A. THE REVIEWER'S ATTACK, EXACTLY. Every client-visible coverage marker copied. */
+      character(null);
       const forged = await h.post(entityBody({
         clientRequestId: "forged",
+        coverageJobType: "sheet", coverageSheetType: "angles",
         generationRequest: Presentation.generationRequestDeclaration({ surface: "reference-automation", viewMode: "simple" }),
       }));
-      assert.strictEqual(forged.status, 400, `a surface the request cannot prove must be refused: ${JSON.stringify(forged.data)}`);
+      assert.strictEqual(forged.status, 400, `copying every client field must not buy the surface: ${JSON.stringify(forged.data)}`);
       assert.strictEqual(forged.data.code, "GENERATION_PLAN_SURFACE_MISMATCH", "the refusal must be typed");
+      assert.strictEqual(forged.data.coverageCorroboration, "no-coverage-run-recorded",
+        "and must name what could not be corroborated");
       assert.deepStrictEqual(forged.data.expectedSurfaces, ["fixed-image"],
-        "and must name the only surface this request's own contents support");
+        "and the only surface this request's own contents support");
       assert.strictEqual(h.calls.length, 0, "no provider call may be made");
+      assert.strictEqual(h.ledger().length, 0, "and no durable row is created");
 
-      /* B. THE ORDINARY REQUEST ON ITS OWN SURFACE, accepted — and its 4K stripped,
-            because on `fixed-image` under Simple that is exactly a control the view did
-            not render. */
+      /* B. THE SAME WITHOUT THE MARKER — refused for the same reason, not a different one. */
+      const bare = await h.post(entityBody({
+        clientRequestId: "bare",
+        generationRequest: Presentation.generationRequestDeclaration({ surface: "reference-automation", viewMode: "simple" }),
+      }));
+      assert.strictEqual(bare.status, 400, `and without the marker either: ${JSON.stringify(bare.data)}`);
+      assert.strictEqual(bare.data.code, "GENERATION_PLAN_SURFACE_MISMATCH", "typed the same way");
+
+      /* C. A FINISHED RUN DOES NOT AUTHORISE NEW COVERAGE WORK. The record has to be live,
+            or every entity that ever ran coverage would keep the surface forever. */
+      character({ ...LIVE_RUN, status: "completed" });
+      const stale = await h.post(entityBody({
+        clientRequestId: "stale-run",
+        coverageJobType: "sheet", coverageSheetType: "angles",
+        generationRequest: Presentation.generationRequestDeclaration({ surface: "reference-automation", viewMode: "simple" }),
+      }));
+      assert.strictEqual(stale.status, 400, `a completed run must not authorise new coverage work: ${JSON.stringify(stale.data)}`);
+      assert.strictEqual(stale.data.coverageCorroboration, "coverage-run-is-not-running", "and say so");
+
+      /* D. A RUN RECORDED FOR ANOTHER ENTITY AUTHORISES NOTHING HERE. */
+      character({ ...LIVE_RUN, entityId: "IREN" });
+      const wrongEntity = await h.post(entityBody({
+        clientRequestId: "wrong-entity",
+        coverageJobType: "sheet", coverageSheetType: "angles",
+        generationRequest: Presentation.generationRequestDeclaration({ surface: "reference-automation", viewMode: "simple" }),
+      }));
+      assert.strictEqual(wrongEntity.status, 400, `another entity's run proves nothing here: ${JSON.stringify(wrongEntity.data)}`);
+      assert.strictEqual(wrongEntity.data.coverageCorroboration, "coverage-run-is-for-another-entity", "and say so");
+      assert.strictEqual(h.calls.length, 0, "still no provider call");
+
+      /* E. THE ORDINARY REQUEST ON ITS OWN SURFACE, accepted — 4K stripped, because on
+            `fixed-image` under Simple that is exactly a control the view did not render. */
+      character(null);
       const honest = await h.post(entityBody({
         clientRequestId: "honest",
         generationRequest: Presentation.generationRequestDeclaration({ surface: "fixed-image", viewMode: "simple" }),
       }));
       assert.strictEqual(honest.status, 200, `the same request on its own surface is accepted: ${JSON.stringify(honest.data)}`);
       const honestRow = h.ledger().find((row) => row.clientRequestId === "honest");
-      assert.deepStrictEqual(honestRow.removedPayloadKeys, ["resolution"],
-        "and Simple strips the size it never offered");
+      assert.deepStrictEqual(honestRow.removedPayloadKeys, ["resolution"], "and Simple strips the size it never offered");
       await h.settle(honest.data.job.id);
 
-      /* C. REAL COVERAGE WORK, which proves the surface structurally and keeps its 4K. */
+      /* F. GENUINE COVERAGE WORK, corroborated by its own live run, keeps its 4K. */
+      character(LIVE_RUN);
       const coverage = await h.post(entityBody({
         clientRequestId: "coverage",
         coverageJobType: "sheet", coverageSheetType: "angles",
@@ -811,7 +872,8 @@ async function main() {
       const coverageRow = h.ledger().find((row) => row.clientRequestId === "coverage");
       assert.strictEqual(coverageRow.resolution, "4k", "and keep the sheet resolution its panels depend on");
       assert.deepStrictEqual(coverageRow.removedPayloadKeys, [], "with nothing stripped");
-      note("15. an ordinary entity request naming `reference-automation` is refused — the surface is proved from the coverageJobType marker the request already carries, not from the name it supplied; real coverage work keeps its 4K and the same request on `fixed-image` has its 4K stripped under Simple");
+      assert.strictEqual(coverageRow.generationSurface, "reference-automation", "and record the surface it proved");
+      note("15. an ordinary entity request copying every client-visible coverage marker — coverageJobType included — is refused with coverageCorroboration \"no-coverage-run-recorded\"; a completed run and another entity's run are refused with their own reasons; only a live coverage run recorded on THIS entity buys the surface, and then the 4K is kept");
     } finally { h.close(); }
   }
 
@@ -834,7 +896,12 @@ async function main() {
         }),
       });
       const OPTION_A = `${IMAGE_MODEL_ID}::fal-queue::t2i`;
-      const OPTION_B = "some-other-model::fal-queue::t2i";
+      /* A REAL CATALOGUED OPTION THIS ROUTE CANNOT DISPATCH. seedream/5.0-pro is in the
+         shipped model catalogue and runware genuinely offers it, so this id is one
+         CineBraid could have minted — which is what makes the cases below about the PAIR
+         and about the ROUTE rather than about a string that never existed. */
+      const OPTION_B = "seedream/5.0-pro::runware::t2i";
+      const MODEL_B = "seedream/5.0-pro";
 
       /* A. The consistent, dispatchable pair. */
       const aa = await send(OPTION_A, IMAGE_MODEL_ID, "pair-aa");
@@ -845,7 +912,7 @@ async function main() {
       await h.settle(aa.data.job.id);
 
       /* B. The consistent pair this route cannot dispatch — the existing refusal. */
-      const bb = await send(OPTION_B, "some-other-model", "pair-bb");
+      const bb = await send(OPTION_B, MODEL_B, "pair-bb");
       assert.strictEqual(bb.status, 409, `B option + B model must still be refused: ${JSON.stringify(bb.data)}`);
       assert.strictEqual(bb.data.code, "GENERATION_MODEL_MISMATCH", "for the model this route dispatches");
 
@@ -853,7 +920,7 @@ async function main() {
       const ba = await send(OPTION_B, IMAGE_MODEL_ID, "pair-ba");
       assert.strictEqual(ba.status, 409, `B option + A model must be refused: ${JSON.stringify(ba.data)}`);
       assert.strictEqual(ba.data.code, "GENERATION_OPTION_MODEL_MISMATCH", "for contradicting itself, not for the route");
-      assert.strictEqual(ba.data.optionModelId, "some-other-model", "and the refusal names what the option actually is");
+      assert.strictEqual(ba.data.optionModelId, MODEL_B, "and the refusal names what the option actually is");
       assert.strictEqual(h.calls.length, 1, "no provider call beyond the one legitimate dispatch");
       assert.strictEqual(h.ledger().find((row) => row.clientRequestId === "pair-ba"), undefined,
         "and no contradictory pair is written to the ledger");
@@ -871,12 +938,63 @@ async function main() {
       assert.strictEqual(noneRow.model, "openai/gpt-image-2/edit",
         "while the route's own configured endpoint is what is recorded as dispatched");
 
-      /* E. An id this system never minted is refused rather than half-read. */
-      const junk = await send("not-an-option-id", IMAGE_MODEL_ID, "pair-junk");
-      assert.strictEqual(junk.status, 409, `an unmintable option id must be refused: ${JSON.stringify(junk.data)}`);
-      assert.strictEqual(junk.data.code, "GENERATION_OPTION_IDENTITY_INVALID", "and typed as such");
-      note("16. B-option + A-model is refused with GENERATION_OPTION_MODEL_MISMATCH naming what the option actually is, writes no ledger row and contacts no provider; A/A dispatches and records both, B/B keeps its existing route refusal, both-absent keeps the legacy fallback, and an unmintable option id is refused rather than half-read");
+      /* E. SHAPE IS NOT MINTABILITY.
+       *
+       * Every one of these has three colon-separated segments and is impossible. The
+       * second reviewer dispatched the first of them and had it recorded durably as the
+       * option a filmmaker had chosen, because the check only counted segments. Each is
+       * refused for its own reason, from the catalogue the picker mints from. */
+      const IMPOSSIBLE = [
+        [`${IMAGE_MODEL_ID}::not-a-real-surface::not-a-real-mode`, "surface-does-not-offer-this-model", "a surface and a mode that do not exist"],
+        [`${IMAGE_MODEL_ID}::fal-queue::not-a-real-mode`, "not-a-filmmaker-task-mode", "a real surface and an impossible mode"],
+        /* comfy-local is a real surface and t2i is a real mode; comfy-local simply does
+           not offer GPT Image 2, so this triple could never have been minted. */
+        [`${IMAGE_MODEL_ID}::comfy-local::t2i`, "surface-does-not-offer-this-model", "a real mode on a surface that does not carry this model"],
+        ["no-such-model/v1::fal-queue::t2i", "model-not-in-catalogue", "a model that is not in the catalogue"],
+        ["not-an-option-id", "not-an-option-identity", "a string that is not an identity at all"],
+      ];
+      const before = h.calls.length;
+      for (const [optionId, reason, description] of IMPOSSIBLE) {
+        const impossible = await send(optionId, IMAGE_MODEL_ID, `pair-${reason}-${optionId.length}`);
+        assert.strictEqual(impossible.status, 409, `${description} must be refused: ${JSON.stringify(impossible.data)}`);
+        assert.strictEqual(impossible.data.code, "GENERATION_OPTION_IDENTITY_INVALID", `${description}: typed as an identity refusal`);
+        assert.strictEqual(impossible.data.reason, reason, `${description}: refused for the right reason`);
+      }
+      assert.strictEqual(h.calls.length, before, "and none of them reached the provider");
+      assert.strictEqual(h.ledger().filter((row) => IMPOSSIBLE.some(([id]) => row.selectedOptionId === id)).length, 0,
+        "and none of them was recorded as an option a filmmaker chose");
+      note(`16. ${IMPOSSIBLE.length} well-formed but impossible option identities are each refused for their own catalogue reason with no dispatch and no ledger row; B-option + A-model is refused with GENERATION_OPTION_MODEL_MISMATCH naming ${MODEL_B}; A/A dispatches and records both, B/B keeps its existing route refusal, and both-absent keeps the legacy fallback`);
     } finally { h.close(); }
+  }
+
+  /* =======================================================================
+     16b. THE MODE VOCABULARY IS THE TASK TABLE'S, AND STAYS THAT WAY.
+
+     generationOptionMintable() judges a mode against generationOptionModes(), which is
+     the union of what the filmmaker tasks DECLARE. That is only sound while
+     resolveTaskModes() — the function that actually decides which modes a task offers for
+     a given input shape — returns a subset of them. It narrows by shape today; a task
+     that started returning an undeclared mode would make the validator quietly reject
+     real option ids. Asserted against the live table across every input shape
+     resolveTaskModes branches on, so the relationship cannot rot silently. */
+  {
+    const declared = new Set(Options.generationOptionModes());
+    const shapes = [
+      {}, { hasMask: true },
+      { references: [{ role: "identity", mediaType: "image" }] },
+      { firstFrame: true }, { firstFrame: true, lastFrame: true },
+      { references: [{ role: "reference", mediaType: "image" }], firstFrame: true },
+    ];
+    const seen = new Set();
+    for (const task of Options.CINEBRAID_FILMMAKER_TASKS)
+      for (const inputs of shapes)
+        for (const mode of Options.resolveTaskModes(task.task, inputs)) {
+          seen.add(mode);
+          assert(declared.has(mode),
+            `resolveTaskModes(${task.task}) offers "${mode}", which no filmmaker task declares — generationOptionModes() would refuse a real option id`);
+        }
+    assert(seen.size >= 5, `the probe must actually exercise the branches: only ${seen.size} modes were reached`);
+    note(`16b. every mode resolveTaskModes() can offer across ${shapes.length} input shapes (${[...seen].sort().join(", ")}) is declared by a filmmaker task, so the mintability vocabulary cannot silently narrow`);
   }
 
   /* =======================================================================

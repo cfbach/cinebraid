@@ -59,24 +59,82 @@ function loadModified(relative, edits) {
   return patched.exports;
 }
 
+/* ===========================================================================
+   WHAT COUNTS AS A DETECTION, AND WHY IT IS NOT AN AssertionError.
+
+   The first version of this harness treated ANY AssertionError as "the defect was
+   detected". An independent reviewer found what that costs: control 7's mutation anchor
+   went stale when the projected-spend line moved, loadModified() raised
+   `negative control anchor no longer exists`, and the harness counted that setup failure
+   as a successful detection. The control had not mutated anything, had not run the unsafe
+   path, and had observed no harm — and reported green. One false green invalidates the
+   whole suite's result, because a reader cannot tell which of the fourteen are real.
+
+   MUTATION FAILURE IS NOT UNSAFE BEHAVIOUR DETECTED. So detection now has its own type,
+   thrown at exactly one moment: after the unsafe path has run and the literal bad state
+   has been observed. Everything else — a stale anchor, a mutation that changed nothing,
+   a TypeError from a broken patch, an unrelated assertion, a server error, an import
+   failure — propagates and FAILS the control.
+
+   Each control also records the phases it actually reached, and a control that claims
+   harm without having recorded that its mutation landed and that the unsafe path ran is
+   rejected even if it threw the right type. The phases are proved, not narrated. */
+class UnsafeBehaviourObserved extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "UnsafeBehaviourObserved";
+  }
+}
+/* Called ONLY after the literal bad state has been read back. `condition` is the harm. */
+function observeHarm(condition, message) {
+  if (condition) throw new UnsafeBehaviourObserved(message);
+}
+const REQUIRED_PHASES = ["MUTATION_LANDED", "UNSAFE_PATH_EXECUTED"];
+
 const results = [];
 async function control(label, guardedTest, run) {
+  const reached = new Set();
+  const phase = (name) => {
+    assert(REQUIRED_PHASES.includes(name) || name === "RESTORED", `unknown control phase: ${name}`);
+    reached.add(name);
+  };
   let detected = false;
   let outcome = "";
   try {
-    await run();
+    await run(phase);
   } catch (error) {
-    /* ONLY AN ASSERTION COUNTS. A TypeError means the mutation broke the module rather
-       than reintroducing the defect, and a control that crashes has proved nothing about
-       the property it claims to guard. */
-    if (!(error instanceof assert.AssertionError)) throw error;
+    /* The ONE type that means "the unsafe path ran and the bad state was there". */
+    if (!(error instanceof UnsafeBehaviourObserved)) throw error;
     detected = true;
     outcome = error.message.split("\n")[0];
   }
   assert(detected,
     `NEGATIVE CONTROL FAILED: reintroducing ${label} did not break "${guardedTest}". `
     + "That test cannot detect the defect it exists for.");
-  results.push({ label, guardedTest, outcome });
+  for (const required of REQUIRED_PHASES)
+    assert(reached.has(required),
+      `NEGATIVE CONTROL FAILED: ${label} reported harm without recording ${required}. `
+      + "A control that has not proved its mutation landed and its unsafe path ran has proved nothing.");
+  results.push({ label, guardedTest, outcome, phases: [...reached].sort() });
+}
+
+/* ===========================================================================
+   THE HARNESS, TESTED AGAINST ITSELF.
+
+   The two failures that produced the false green are now failures this suite proves it
+   rejects, every run — because a discipline nobody exercises is a comment. */
+async function assertHarnessRejects(what, body) {
+  let threw = null;
+  try {
+    await control(`self-check: ${what}`, "the harness rejects it", body);
+  } catch (error) {
+    threw = error;
+  }
+  assert(threw, `HARNESS SELF-CHECK FAILED: ${what} was accepted as a detection`);
+  /* And the rejection must be the harness's own, not an accident of the body. */
+  assert(!(threw instanceof UnsafeBehaviourObserved),
+    `HARNESS SELF-CHECK FAILED: ${what} produced a real detection instead of being rejected`);
+  return String(threw.message).split("\n")[0];
 }
 
 const listen = (app) => new Promise((resolve) => { const server = app.listen(0, "127.0.0.1", () => resolve(server)); });
@@ -198,7 +256,41 @@ function framePlanBody(buildId, extra = {}) {
    suite also observed rather than a number written from memory. */
 const FOUR_K = JSON.stringify({ width: 3840, height: 2160 });
 
+/* A REAL option identity from the shipped catalogue that this route cannot dispatch:
+   seedream/5.0-pro is a catalogued image model and runware genuinely offers it. Using a
+   made-up id here would make the pair-consistency control pass for the wrong reason —
+   the mintability check would refuse it before the pair check ever ran. */
+const OTHER_OPTION_ID = "seedream/5.0-pro::runware::t2i";
+const OTHER_MODEL_ID = "seedream/5.0-pro";
+
+/* ===========================================================================
+   THE HARNESS PROVES ITSELF FIRST.
+
+   Both of these were accepted as detections by the previous harness. Running them every
+   time is the only thing that keeps the fix from rotting back. */
+async function harnessSelfChecks() {
+  const stale = await assertHarnessRejects("a stale mutation anchor", async (phase) => {
+    /* Exactly what happened to control 7: the anchor no longer matches the shipped
+       source, so loadModified() raises an AssertionError before anything is mutated. */
+    loadModified("fal-generation.js", [["a line that has never existed in this file", "x"]]);
+    phase("MUTATION_LANDED");
+    phase("UNSAFE_PATH_EXECUTED");
+  });
+  const arbitrary = await assertHarnessRejects("an arbitrary AssertionError as the detector", async (phase) => {
+    phase("MUTATION_LANDED");
+    phase("UNSAFE_PATH_EXECUTED");
+    /* A perfectly ordinary assertion failure. It is not a detection and must not be
+       counted as one, however plausible its message looks. */
+    assert.strictEqual(1, 2, "this looks like a detector and is not one");
+  });
+  const unproved = await assertHarnessRejects("harm claimed without running the unsafe path", async () => {
+    observeHarm(true, "THE DEFECT: claimed without mutating anything or reaching any path");
+  });
+  return { stale, arbitrary, unproved };
+}
+
 async function main() {
+  const selfChecks = await harnessSelfChecks();
   /* =======================================================================
      1. THE GATE ITSELF, GONE.
 
@@ -206,11 +298,12 @@ async function main() {
      With the gate removed, a Simple request carrying an expert size reaches the adapter
      with that size — which is the exact bypass a replayed POST performed before. */
   await control("a money boundary that does not restrict the payload it was handed",
-    "a control the active view never rendered cannot reach the adapter", async () => {
+    "a control the active view never rendered cannot reach the adapter", async (phase) => {
       const falGeneration = loadModified("fal-generation.js", [[
         "    const planGate = enforceRequestPlan(owner, req, purpose);",
         `    const planGate = { ok: true, surface: "compiled-frame", declaration: { viewMode: "simple", selectedOptionId: "", selectedModelId: "" }, payload: req.body, removed: [] };`,
       ]]);
+      phase("MUTATION_LANDED");
       const h = await harness(falGeneration);
       try {
         const buildId = seedFramePackage(h);
@@ -220,7 +313,8 @@ async function main() {
         });
         assert.strictEqual(result.status, 200, `the unsafe path must actually run: ${JSON.stringify(result.data)}`);
         assert.strictEqual(h.calls.length, 1, "and must actually reach the provider");
-        assert.notStrictEqual(JSON.stringify(h.calls[0].body.image_size), FOUR_K,
+        phase("UNSAFE_PATH_EXECUTED");
+        observeHarm(JSON.stringify(h.calls[0].body.image_size) === FOUR_K,
           `THE DEFECT: a Simple request reached the adapter carrying the 4K size the view never rendered — image_size ${JSON.stringify(h.calls[0].body.image_size)}`);
       } finally { h.close(); }
     });
@@ -232,7 +326,7 @@ async function main() {
      "be lenient with old clients" instinct produces, and it hands every replayed body the
      widest vocabulary in the system — silently, with no code and no record. */
   await control("an absent declaration defaulted to the widest view instead of refused",
-    "a paid request that does not say what built it is refused", async () => {
+    "a paid request that does not say what built it is refused", async (phase) => {
       const falGeneration = loadModified("fal-generation.js", [[
         `    if (!declaration.declared)
       return {
@@ -245,12 +339,14 @@ async function main() {
         status: 400,
         code: "GENERATION_PLAN_REQUIRED",`,
       ]]);
+      phase("MUTATION_LANDED");
       const h = await harness(falGeneration);
       try {
         const buildId = seedFramePackage(h);
         const result = await h.post(framePlanBody(buildId, { resolution: "4k" }));
         assert.strictEqual(h.calls.length <= 1, true, "the unsafe path runs at most once");
-        assert.notStrictEqual(result.status, 200,
+        phase("UNSAFE_PATH_EXECUTED");
+        observeHarm(result.status === 200,
           `THE DEFECT: an undeclared paid request was accepted and dispatched — HTTP ${result.status}, adapter received ${JSON.stringify(h.calls[0] && h.calls[0].body.image_size)}`);
       } finally { h.close(); }
     });
@@ -262,11 +358,12 @@ async function main() {
      evidence and becomes a menu: a request picks the vocabulary that governs it least and
      the gate politely applies it. */
   await control("a declared surface accepted without checking the request could be it",
-    "a request cannot choose the vocabulary that governs it least", async () => {
+    "a request cannot choose the vocabulary that governs it least", async (phase) => {
       const falGeneration = loadModified("fal-generation.js", [[
         "    if (!legal.includes(declaration.surface))",
         "    if (false && !legal.includes(declaration.surface))",
       ]]);
+      phase("MUTATION_LANDED");
       const h = await harness(falGeneration);
       try {
         const buildId = seedFramePackage(h);
@@ -277,7 +374,8 @@ async function main() {
           generationRequest: Presentation.generationRequestDeclaration({ surface: "reference-automation", viewMode: "simple" }),
         });
         assert.strictEqual(result.status, 200, `the unsafe path must actually run: ${JSON.stringify(result.data)}`);
-        assert.notStrictEqual(JSON.stringify(h.calls[0].body.image_size), FOUR_K,
+        phase("UNSAFE_PATH_EXECUTED");
+        observeHarm(JSON.stringify(h.calls[0].body.image_size) === FOUR_K,
           `THE DEFECT: a compiled-frame request called itself reference-automation and its 4K size reached the adapter — image_size ${JSON.stringify(h.calls[0].body.image_size)}`);
       } finally { h.close(); }
     });
@@ -290,11 +388,12 @@ async function main() {
      replayed POST did before this slice, and what a second CineBraid window can still do
      to a dialog left open. */
   await control("a money boundary that does not check whether the package is still current",
-    "a package the shot no longer stands behind is refused before dispatch", async () => {
+    "a package the shot no longer stands behind is refused before dispatch", async (phase) => {
       const falGeneration = loadModified("fal-generation.js", [[
         "    const staleRefusal = packageFreshnessRefusal(owner, job);",
         "    const staleRefusal = null;",
       ]]);
+      phase("MUTATION_LANDED");
       const h = await harness(falGeneration);
       try {
         const project = h.project();
@@ -314,7 +413,8 @@ async function main() {
         h.saveProject(moved);
 
         const result = await h.post(declaredGenerationBody(framePlanBody(buildId)));
-        assert.notStrictEqual(result.status, 200,
+        phase("UNSAFE_PATH_EXECUTED");
+        observeHarm(result.status === 200,
           `THE DEFECT: an out-of-date package was dispatched — HTTP ${result.status}, ${h.calls.length} provider call(s), and the job row claims ${JSON.stringify((h.ledger()[0] || {}).sourceBuildId)}`);
       } finally { h.close(); }
     });
@@ -328,7 +428,7 @@ async function main() {
      the "compare only what both sides have" rule and every package on the system reads
      stale, for a difference nobody has evidence for. */
   await control("a freshness comparator that compares fields one side never supplied",
-    "a comparison nobody has evidence for is not a finding", async () => {
+    "a comparison nobody has evidence for is not a finding", async (phase) => {
       const history = loadModified("public/shared-build-history.js", [[
         `  function comparable(saved, now, key) {
     return saved?.[key] !== undefined && now?.[key] !== undefined;
@@ -337,6 +437,7 @@ async function main() {
     return saved?.[key] !== undefined;
   }`,
       ]]);
+      phase("MUTATION_LANDED");
       const project = makeProject();
       const shot = project.shots[0];
       const pack = { frameId: "FR-A" };
@@ -346,7 +447,9 @@ async function main() {
         references: [["kai", KAI_PNG, "identity", "image", ""]],
       };
       const freshness = history.packageProjectFreshness(project, shot, pack);
-      assert.deepStrictEqual(freshness.reasons, [],
+      assert.strictEqual(freshness.recorded, true, "the unsafe path must actually evaluate a recorded snapshot");
+      phase("UNSAFE_PATH_EXECUTED");
+      observeHarm(freshness.reasons.length > 0,
         `THE DEFECT: a current package was declared stale for a field the server never supplied — ${JSON.stringify(freshness.reasons)}`);
     });
 
@@ -357,11 +460,12 @@ async function main() {
      telling a filmmaker something untrue about what they are buying. Remove the refusal
      and the request proceeds with the ledger recording a selection the dispatch ignored. */
   await control("a boundary that dispatches its own model whatever the screen named",
-    "the model the screen named is dispatched or the request is refused", async () => {
+    "the model the screen named is dispatched or the request is refused", async (phase) => {
       const falGeneration = loadModified("fal-generation.js", [[
         "    const identityRefusal = modelIdentityRefusal(job, cfg);",
         "    const identityRefusal = null;",
       ]]);
+      phase("MUTATION_LANDED");
       const h = await harness(falGeneration);
       try {
         const buildId = seedFramePackage(h);
@@ -369,11 +473,12 @@ async function main() {
           ...framePlanBody(buildId),
           generationRequest: Presentation.generationRequestDeclaration({
             surface: "compiled-frame", viewMode: "advanced",
-            selectedOptionId: "some-other-model::fal-queue::t2i", selectedModelId: "some-other-model",
+            selectedOptionId: OTHER_OPTION_ID, selectedModelId: OTHER_MODEL_ID,
           }),
         });
-        assert.notStrictEqual(result.status, 200,
-          `THE DEFECT: a request set up for "some-other-model" was dispatched to ${IMAGE_MODEL_ID} — HTTP ${result.status}, and the job row records selectedModelId ${JSON.stringify((h.ledger()[0] || {}).selectedModelId)} beside model ${JSON.stringify((h.ledger()[0] || {}).model)}`);
+        phase("UNSAFE_PATH_EXECUTED");
+        observeHarm(result.status === 200,
+          `THE DEFECT: a request set up for a model this route cannot dispatch was sent to ${IMAGE_MODEL_ID} — HTTP ${result.status}, and the job row records selectedModelId ${JSON.stringify((h.ledger()[0] || {}).selectedModelId)} beside model ${JSON.stringify((h.ledger()[0] || {}).model)}`);
       } finally { h.close(); }
     });
 
@@ -386,11 +491,18 @@ async function main() {
      guard never fires — while looking, in every review and in every log, exactly like a
      guard that is working. */
   await control("a spend guard that reads the priced-job COUNT where the total belongs",
-    "a bounded run cannot exceed the spend it was authorised for", async () => {
+    "a bounded run cannot exceed the spend it was authorised for", async (phase) => {
+      /* RE-SEATED. The projected-spend line changed shape when the unknown-cost guard
+         landed above it, and this anchor kept pointing at the old one — so loadModified()
+         raised "anchor no longer exists", the old harness counted that AssertionError as
+         a detection, and the control reported green having mutated nothing. That false
+         green is what the phase discipline and UnsafeBehaviourObserved above exist to
+         make impossible; this is the anchor it was hiding. */
       const falGeneration = loadModified("fal-generation.js", [[
-        "      const projected = Number(spent.amount || 0) + (Number.isFinite(pendingAmount) ? pendingAmount : 0);",
-        "      const projected = Number(spent.priced?.amount || 0) + (Number.isFinite(pendingAmount) ? pendingAmount : 0);",
+        "      const projected = Number(spent.amount || 0) + pendingAmount;",
+        "      const projected = Number(spent.priced?.amount || 0) + pendingAmount;",
       ]]);
+      phase("MUTATION_LANDED");
       const h = await harness(falGeneration, { ratePerImage: 0.06 });
       try {
         const buildId = seedFramePackage(h);
@@ -415,7 +527,8 @@ async function main() {
         await h.settle(first.data.job.id);
         await h.settle(second.data.job.id);
         const third = await h.post(runBody("step-3"));
-        assert.notStrictEqual(third.status, 200,
+        phase("UNSAFE_PATH_EXECUTED");
+        observeHarm(third.status === 200,
           `THE DEFECT: a run authorised for $0.12 dispatched a third $0.06 job — HTTP ${third.status}, ${h.calls.length} provider calls, total estimated ${h.ledger().reduce((sum, row) => sum + Number(row.accounting?.estimate?.amount || 0), 0)}`);
       } finally { h.close(); }
     });
@@ -428,13 +541,14 @@ async function main() {
      entries with nothing good to say, and a request missing a piece of the filmmaker's
      direction presents a clean bill of health. */
   await control("a coverage projection that quietly drops what CineBraid decided not to send",
-    "the boundary reports the compiler's record whole", async () => {
+    "the boundary reports the compiler's record whole", async (phase) => {
       const falGeneration = loadModified("fal-generation.js", [[
         `function labelledCoverage(coverage) {
   return (Array.isArray(coverage) ? coverage : []).map((entry) => ({`,
         `function labelledCoverage(coverage) {
   return (Array.isArray(coverage) ? coverage : []).filter((entry) => entry?.state !== "omitted-by-design").map((entry) => ({`,
       ]]);
+      phase("MUTATION_LANDED");
       const h = await harness(falGeneration);
       try {
         const buildId = seedFramePackage(h);
@@ -447,7 +561,8 @@ async function main() {
         assert.strictEqual(preview.status, 200, `the plan preview must compile: ${JSON.stringify(preview.data)}`);
         const coverage = preview.data.coverage || [];
         assert(coverage.length > 0, "the unsafe path must actually produce a coverage record");
-        assert(coverage.some((entry) => entry.state === "omitted-by-design"),
+        phase("UNSAFE_PATH_EXECUTED");
+        observeHarm(!coverage.some((entry) => entry.state === "omitted-by-design"),
           `THE DEFECT: every intent CineBraid decided not to send was filtered out of the record the dialog reads — ${coverage.length} entries survived and not one of them admits anything was left out`);
       } finally { h.close(); }
     });
@@ -458,19 +573,27 @@ async function main() {
      The exact defect the reviewer reproduced on the held candidate: `reference-automation`
      was legal for any entity-reference request, so naming it was enough to keep a 4K size
      under Simple. Remove the structural proof and the forgery works again. */
-  await control("a coverage surface any entity request may simply name",
-    "a request cannot claim a surface its own contents do not prove", async () => {
-      /* The held candidate's own rule, restored at the route: both entity surfaces legal
-         for any entity-reference request, whatever it carries. */
+  await control("a coverage surface proved only by a field the caller supplies",
+    "a request cannot claim a surface its own contents do not prove", async (phase) => {
+      /* THE ATTACK AS AN INDEPENDENT REVIEWER ACTUALLY PERFORMED IT.
+       *
+       * The first attempt at this control omitted `coverageJobType`, which made it far
+       * too easy: it proved only that a request with no coverage marker at all could not
+       * claim the coverage surface. The reviewer's request DID carry
+       * `coverageJobType: "sheet"` — every client-visible marker a real coverage dispatch
+       * sends — and got the surface, the 4K and the adapter call.
+       *
+       * So the mutation removes only the SERVER-OWNED half of the proof, leaving the
+       * client-visible half exactly as the held candidate had it. What this control now
+       * demonstrates is precisely the reviewer's finding: with corroboration disabled,
+       * copying the marker is enough. */
       const falGeneration = loadModified("fal-generation.js", [[
-        `  function legalRequestSurfaces(body, purpose) {
-    return Presentation.generationRequestSurfacesFor(body, purpose).legal;
-  }`,
-        `  function legalRequestSurfaces(body, purpose) {
-    const legal = Presentation.generationRequestSurfacesFor(body, purpose).legal;
-    return String(body?.purpose || purpose) === "entity-reference" ? ["fixed-image", "reference-automation"] : legal;
-  }`,
+        `    return coverageRunCorroboration(owner, body).corroborated
+      ? asked
+      : asked.filter((surface) => surface !== "reference-automation");`,
+        `    return asked;`,
       ]]);
+      phase("MUTATION_LANDED");
       const h = await harness(falGeneration);
       try {
         const project = h.project();
@@ -481,25 +604,30 @@ async function main() {
           sourceBuildId: "entity-fixture", prompt: "Kai against neutral grey.",
           references: [{ key: "base", label: "Approved primary", role: "base", url: KAI_PNG }],
           outputCount: 1, quality: "high", resolution: "4k", aspectRatio: "16:9",
-          /* NO coverageJobType. An ordinary entity reference wearing the coverage
-             surface's name, and nothing else. */
+          /* EVERY CLIENT-VISIBLE COVERAGE MARKER, copied. What this request does not have
+             — and cannot put in its own body — is a live coverage run recorded on the
+             entity in the project document. */
+          coverageJobType: "sheet", coverageSheetType: "angles",
           generationRequest: Presentation.generationRequestDeclaration({ surface: "reference-automation", viewMode: "simple" }),
         });
         assert.strictEqual(result.status, 200, `the unsafe path must actually run: ${JSON.stringify(result.data)}`);
+        assert.strictEqual(h.calls.length, 1, "and must actually reach the provider");
+        phase("UNSAFE_PATH_EXECUTED");
         const row = h.ledger()[0];
-        assert.notStrictEqual(row.resolution, "4k",
-          `THE DEFECT: an ordinary entity request named the coverage surface and kept a 4K size Simple never offered - the job records resolution ${JSON.stringify(row.resolution)} and removedPayloadKeys ${JSON.stringify(row.removedPayloadKeys)}`);
+        observeHarm(row.resolution === "4k",
+          `THE DEFECT: an ordinary entity request named the coverage surface and kept a 4K size Simple never offered — the job records resolution ${JSON.stringify(row.resolution)}, removedPayloadKeys ${JSON.stringify(row.removedPayloadKeys)} and generationSurface ${JSON.stringify(row.generationSurface)}`);
       } finally { h.close(); }
     });
 
   /* =======================================================================
      10. AN IDENTITY PAIR NOBODY CHECKS AGAINST ITSELF.  [reviewer blocker 2] */
   await control("a boundary that reads the model half of an identity and ignores the option",
-    "a request whose own two names disagree is refused", async () => {
+    "a request whose own two names disagree is refused", async (phase) => {
       const falGeneration = loadModified("fal-generation.js", [[
         "    if (claimed && optionId) {",
         "    if (false && claimed && optionId) {",
       ]]);
+      phase("MUTATION_LANDED");
       const h = await harness(falGeneration);
       try {
         const buildId = seedFramePackage(h);
@@ -507,12 +635,13 @@ async function main() {
           ...framePlanBody(buildId),
           generationRequest: Presentation.generationRequestDeclaration({
             surface: "compiled-frame", viewMode: "advanced",
-            selectedOptionId: "some-other-model::fal-queue::t2i", selectedModelId: IMAGE_MODEL_ID,
+            selectedOptionId: OTHER_OPTION_ID, selectedModelId: IMAGE_MODEL_ID,
           }),
         });
         assert.strictEqual(result.status, 200, `the unsafe path must actually run: ${JSON.stringify(result.data)}`);
+        phase("UNSAFE_PATH_EXECUTED");
         const row = h.ledger()[0];
-        assert.notStrictEqual(row.selectedOptionId, "some-other-model::fal-queue::t2i",
+        observeHarm(row.selectedOptionId === OTHER_OPTION_ID,
           `THE DEFECT: a request naming option ${JSON.stringify(row.selectedOptionId)} beside model ${JSON.stringify(row.selectedModelId)} dispatched to ${JSON.stringify(row.model)}, and the ledger now records a pair describing a screen that cannot have existed`);
       } finally { h.close(); }
     });
@@ -520,11 +649,12 @@ async function main() {
   /* =======================================================================
      11. A BUDGET COMPARED IN BINARY FLOATING POINT.  [reviewer blocker 3] */
   await control("a spend ceiling compared with a raw floating-point greater-than",
-    "meeting a budget exactly is not exceeding it", async () => {
+    "meeting a budget exactly is not exceeding it", async (phase) => {
       const falGeneration = loadModified("fal-generation.js", [[
         "      if (usdExceeds(projected, authorized.amount))",
         "      if (projected > Number(authorized.amount))",
       ]]);
+      phase("MUTATION_LANDED");
       const h = await harness(falGeneration, { ratePerImage: 0.1 });
       try {
         const buildId = seedFramePackage(h);
@@ -550,7 +680,8 @@ async function main() {
         await h.settle(second.data.job.id);
         const third = await h.post(runBody("e3"));
         const total = h.ledger().reduce((sum, row) => sum + Number(row.accounting?.estimate?.amount || 0), 0);
-        assert.strictEqual(third.status, 200,
+        phase("UNSAFE_PATH_EXECUTED");
+        observeHarm(third.status !== 200,
           `THE DEFECT: three $0.10 children exactly meet a $0.30 ceiling and the third was refused — HTTP ${third.status}, ${JSON.stringify(third.data.error)}, raw float total ${total}`);
       } finally { h.close(); }
     });
@@ -558,13 +689,14 @@ async function main() {
   /* =======================================================================
      12. AN UNKNOWN COST READ AS ZERO.  [reviewer blocker 4] */
   await control("an unpriceable child whose unknown cost falls back to zero",
-    "a ceiling that cannot be checked has not been honoured", async () => {
+    "a ceiling that cannot be checked has not been honoured", async (phase) => {
       const falGeneration = loadModified("fal-generation.js", [[
         `      const pendingAmount = pending.estimate?.confidence === "estimated" ? Number(pending.estimate.amount) : null;
       if (!Number.isFinite(pendingAmount))`,
         `      const pendingAmount = Number(pending.estimate?.amount) || 0;
       if (false)`,
       ]]);
+      phase("MUTATION_LANDED");
       const h = await harness(falGeneration, { ratePerImage: 0 });
       try {
         const buildId = seedFramePackage(h);
@@ -582,7 +714,8 @@ async function main() {
           automationRunId: "run-unknown", automationStepKey: "u1", automationRunnerId: "runner-unknown",
           generationRequest: Presentation.generationRequestDeclaration({ surface: "automation-run", viewMode: "simple" }),
         });
-        assert.notStrictEqual(result.status, 200,
+        phase("UNSAFE_PATH_EXECUTED");
+        observeHarm(result.status === 200,
           `THE DEFECT: a child CineBraid could not price dispatched under a numeric $0.30 ceiling — HTTP ${result.status}, ${h.calls.length} provider call(s), and the job records ${JSON.stringify(h.ledger()[0]?.accounting?.estimate)}`);
       } finally { h.close(); }
     });
@@ -590,11 +723,12 @@ async function main() {
   /* =======================================================================
      13. AN INCOMPLETE TOTAL READ AS A COMPLETE ONE.  [reviewer blocker 4b] */
   await control("a spend bound that omits the run's own children of unknown cost",
-    "a known subtotal below a ceiling is not proof the run is inside it", async () => {
+    "a known subtotal below a ceiling is not proof the run is inside it", async (phase) => {
       const falGeneration = loadModified("fal-generation.js", [[
         "      if (runJobs.length && spent.complete !== true)",
         "      if (false)",
       ]]);
+      phase("MUTATION_LANDED");
       const h = await harness(falGeneration, { ratePerImage: 0.1 });
       try {
         const buildId = seedFramePackage(h);
@@ -625,7 +759,8 @@ async function main() {
           automationRunId: "run-partial", automationStepKey: "p1", automationRunnerId: "runner-partial",
           generationRequest: Presentation.generationRequestDeclaration({ surface: "automation-run", viewMode: "simple" }),
         });
-        assert.notStrictEqual(result.status, 200,
+        phase("UNSAFE_PATH_EXECUTED");
+        observeHarm(result.status === 200,
           `THE DEFECT: a run holding a child of unknown cost authorised another paid child on the strength of its $0.10 known subtotal — HTTP ${result.status}, ${h.calls.length} provider call(s)`);
       } finally { h.close(); }
     });
@@ -637,12 +772,13 @@ async function main() {
      decides what a shot's direction is and in what order, and a panel that regroups it is
      quietly publishing a different sequence as the true one. */
   await control("a coverage panel that groups the compiler's rows by state",
-    "the record is rendered in the compiler's own order", async () => {
+    "the record is rendered in the compiler's own order", async (phase) => {
       const view = fs.readFileSync(path.join(ROOT, "public", "generation-view.js"), "utf8").replace(/\r\n/g, "\n");
       const anchor = `  const shown = view === "advanced" ? rows : unsupported;`;
       assert(view.includes(anchor), "negative control anchor no longer exists in public/generation-view.js");
       const mutated = view.replace(anchor, `  const shown = view === "advanced" ? [...unsupported, ...omitted, ...carried] : unsupported;`);
       assert.notStrictEqual(mutated, view, "the mutation must change something");
+      phase("MUTATION_LANDED");
 
       const context = {
         window: {}, localStorage: { getItem: () => null, setItem: () => {} },
@@ -662,14 +798,24 @@ async function main() {
       ];
       const markup = context.generationCoverageMarkup(coverage, "advanced");
       const rendered = [...markup.matchAll(/<li data-coverage-state="[^"]*"><span>([^<]*)<\/span>/g)].map((m) => m[1]);
-      assert.deepStrictEqual(rendered, coverage.map((entry) => entry.label),
+      assert.strictEqual(rendered.length, coverage.length, "the unsafe path must actually render every row");
+      phase("UNSAFE_PATH_EXECUTED");
+      observeHarm(JSON.stringify(rendered) !== JSON.stringify(coverage.map((entry) => entry.label)),
         `THE DEFECT: the panel published its own sequence — the compiler emitted ${JSON.stringify(coverage.map((e) => e.label))} and the screen shows ${JSON.stringify(rendered)}`);
     });
 
   console.log("");
+  console.log("Harness self-checks — each of these was counted as a DETECTION by the previous harness:");
+  console.log(`  - a stale mutation anchor is rejected: ${selfChecks.stale}`);
+  console.log(`  - an arbitrary AssertionError is rejected: ${selfChecks.arbitrary}`);
+  console.log(`  - harm claimed without a proved mutation and unsafe path is rejected: ${selfChecks.unproved}`);
+  console.log("");
   console.log(`Paid request truth negative controls passed: ${results.length} deliberate defects reintroduced in memory —`);
   for (const row of results) console.log(`  - ${row.label} → detected by "${row.guardedTest}"`);
-  console.log("  - every mutation lived only in a private module instance; no file on disk was written, and 0 paid calls were made");
+  for (const row of results)
+    assert.deepStrictEqual(row.phases, ["MUTATION_LANDED", "UNSAFE_PATH_EXECUTED"],
+      `${row.label} did not record both required phases: ${JSON.stringify(row.phases)}`);
+  console.log("  - every control recorded MUTATION_LANDED and UNSAFE_PATH_EXECUTED before its named harm; every mutation lived only in a private module instance; no file on disk was written, and 0 paid calls were made");
 }
 
 main().catch((error) => {

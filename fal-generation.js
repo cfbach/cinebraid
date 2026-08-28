@@ -24,7 +24,7 @@ const FramePresence = require("./public/shared-frame-presence");
    The policy is not reimplemented - this file calls restrictPayloadToPlan() itself. */
 const Presentation = require("./public/shared-generation-presentation");
 const BuildHistory = require("./public/shared-build-history");
-const { generationOptionIdentity } = require("./public/shared-generation-options");
+const { generationOptionIdentityFor } = require("./generation-options");
 
 /* The request that takes delivery of the background-recovery notice says so here rather
    than in the URL. See the GET /api/generation/fal/jobs route for why. Lowercase because
@@ -431,16 +431,79 @@ function registerFalGeneration(app, context) {
   /* WHICH SURFACE A REQUEST IS ALLOWED TO CLAIM, decided from the request itself rather
      than taken on trust. A declaration is evidence about a screen; letting it also
      choose its own vocabulary would let a replay pick the vocabulary that governs least. */
-  /* The rule itself lives in public/shared-generation-presentation.js beside the surface
-     table it names, so this boundary and anything that has to reproduce a dialog's
-     declaration cannot drift apart about which surface a request may claim.
+  /* WHICH SURFACE A REQUEST IS ASKING FOR, and then WHETHER IT MAY HAVE IT.
+   *
+   * The first question is pure and lives in public/shared-generation-presentation.js
+   * beside the surface table, so this boundary and anything reproducing a dialog's
+   * declaration cannot drift apart. The second question is this file's, because only a
+   * request handler can read persisted state.
+   *
+   * `reference-automation` is the one surface whose vocabulary is NARROWER — resolution
+   * is a route input there rather than a tiered control — which makes it the more
+   * permissive surface for that one key. Two reviewers in a row got past the first
+   * attempt at guarding it, and both were right: a declared surface name and then a
+   * declared coverageJobType are both just fields in the body being judged.
+   *
+   * So it is corroborated below from state the request cannot carry. `automation-run` has
+   * always been corroborated the same way — automationSubmissionError() requires the run
+   * to exist, the runner to hold an unexpired lease, and the caps to allow the work. This
+   * gives the coverage surface the equivalent. */
+  function legalRequestSurfaces(owner, body, purpose) {
+    const asked = Presentation.generationRequestSurfacesFor(body, purpose).legal;
+    if (!asked.includes("reference-automation")) return asked;
+    return coverageRunCorroboration(owner, body).corroborated
+      ? asked
+      : asked.filter((surface) => surface !== "reference-automation");
+  }
 
-     An automation step reaches the shorter automation vocabulary only by carrying a run
-     id - and automationSubmissionError() below then requires that the run exists, that
-     the runner holds an unexpired lease and that the image cap still allows the work. A
-     hand-rolled body cannot get there by claiming it. */
-  function legalRequestSurfaces(body, purpose) {
-    return Presentation.generationRequestSurfacesFor(body, purpose).legal;
+  /* THE SERVER-OWNED HALF OF THE COVERAGE PROOF.
+   *
+   * `entity.coverageAutomation` is a durable coverage-run record written into the project
+   * document by public/coverage-automation.js BEFORE it dispatches anything, and read by
+   * this file already — updateEntityCoverageRun() reports every failure onto it. It
+   * carries the run's own id, the entity it is for, its mode and sheet type, the job ids
+   * it has produced and its status.
+   *
+   * A request cannot put that record in its own body. To have one, a caller must have
+   * gone through the project-save route first and written durable state that persists,
+   * appears on the entity's coverage board, and is still there afterwards to be read.
+   * That is what "corroboration" means here and it is worth being exact about the limit:
+   * this is same-origin single-user software with no per-route authentication, so a
+   * client that can write the project document can create the record. What this stops is
+   * the thing both reviewers actually did — gaining a more permissive paid surface by
+   * adding fields to the generation request itself — and it makes the alternative a
+   * visible, auditable, persisted act rather than a string.
+   *
+   * THE RECORD MUST BE LIVE AND MUST BE THIS ENTITY'S. A finished or failed run does not
+   * authorise new coverage work, and a run recorded against another entity authorises
+   * nothing here at all. */
+  function coverageRefusalText(coverage) {
+    if (coverage.reason === "no-coverage-run-recorded") return "no coverage run is recorded on this entity";
+    if (coverage.reason === "coverage-run-is-not-running") return `the coverage run recorded on this entity is ${coverage.status || "not running"}`;
+    if (coverage.reason === "coverage-run-is-for-another-entity") return "the coverage run recorded here is for another entity";
+    if (coverage.reason === "entity-not-found") return "that entity no longer exists";
+    return "CineBraid could not corroborate a coverage run for it";
+  }
+  const COVERAGE_RUN_ACTIVE_STATUSES = ["starting", "sheet-running", "individual-running"];
+  function coverageRunCorroboration(owner, body) {
+    const list = String(body?.entityList || "");
+    const entityId = String(body?.entityId || "");
+    if (!list || !entityId) return { corroborated: false, reason: "no-entity" };
+    let project;
+    try {
+      project = ownerProject(owner);
+    } catch {
+      return { corroborated: false, reason: "project-unreadable" };
+    }
+    const entity = (project[list] || []).find((item) => String(item?.id) === entityId);
+    if (!entity) return { corroborated: false, reason: "entity-not-found" };
+    const run = entity.coverageAutomation;
+    if (!run || typeof run !== "object") return { corroborated: false, reason: "no-coverage-run-recorded" };
+    if (String(run.entityId || "") !== entityId || String(run.list || "") !== list)
+      return { corroborated: false, reason: "coverage-run-is-for-another-entity" };
+    if (!COVERAGE_RUN_ACTIVE_STATUSES.includes(String(run.status || "")))
+      return { corroborated: false, reason: "coverage-run-is-not-running", status: String(run.status || "") };
+    return { corroborated: true, reason: "", runId: String(run.id || "") };
   }
 
   /* The control capability for the gate, from the owner that already resolves it for
@@ -479,7 +542,7 @@ function registerFalGeneration(app, context) {
 
   function enforceRequestPlan(owner, req, purpose) {
     const declaration = Presentation.readGenerationRequestDeclaration(req.body);
-    const legal = legalRequestSurfaces(req.body, purpose);
+    const legal = legalRequestSurfaces(owner, req.body, purpose);
     if (!declaration.declared)
       return {
         ok: false,
@@ -488,14 +551,26 @@ function registerFalGeneration(app, context) {
         error: "This paid request did not say which generation surface built it or which view the filmmaker was using, so CineBraid cannot tell what it was allowed to send. Nothing was submitted. Generate again from a CineBraid generation dialog.",
         detail: { expectedSurfaces: legal },
       };
-    if (!legal.includes(declaration.surface))
+    if (!legal.includes(declaration.surface)) {
+      /* When the coverage surface was asked for and withheld, the refusal says WHY the
+         corroboration failed rather than only which surfaces were left. "No coverage run
+         is recorded on this entity" sends a filmmaker somewhere; "expected fixed-image"
+         does not. */
+      const coverage = declaration.surface === "reference-automation"
+        ? coverageRunCorroboration(owner, req.body)
+        : null;
       return {
         ok: false,
         status: 400,
         code: "GENERATION_PLAN_SURFACE_MISMATCH",
-        error: `This request says it came from the ${declaration.surface} surface, but its own contents describe a ${legal.join(" or ")} request. Nothing was submitted.`,
-        detail: { declaredSurface: declaration.surface, expectedSurfaces: legal },
+        error: `This request says it came from the ${declaration.surface} surface, but its own contents describe a ${legal.join(" or ")} request${coverage && !coverage.corroborated ? ` — ${coverageRefusalText(coverage)}` : ""}. Nothing was submitted.`,
+        detail: {
+          declaredSurface: declaration.surface,
+          expectedSurfaces: legal,
+          ...(coverage ? { coverageCorroboration: coverage.reason } : {}),
+        },
       };
+    }
     const expected = declaration.surface;
     let capability = null;
     try {
@@ -571,13 +646,21 @@ function registerFalGeneration(app, context) {
      * checking that too, and it is a widening of behaviour rather than a repair of the
      * reproduced defect, so it is named here as a residual instead of taken silently. */
     if (claimed && optionId) {
-      const identity = generationOptionIdentity(optionId);
-      if (!identity.known)
+      /* SHAPE IS NOT MINTABILITY. Three colon-separated segments is what an id looks
+         like; whether CineBraid could ever have issued THIS one is a question about the
+         catalogue, the surfaces that offer the model and the modes a filmmaker task can
+         ask for. An independent reviewer proved the difference with
+         `gpt-image-2/standard::not-a-real-surface::not-a-real-mode`, which is
+         well-formed, impossible, and was dispatched and durably recorded as the option a
+         filmmaker had chosen. generation-options.js answers it from the same sources the
+         picker mints from; nothing here holds a vocabulary of its own. */
+      const identity = generationOptionIdentityFor(optionId);
+      if (!identity.mintable)
         return {
           status: 409,
           code: "GENERATION_OPTION_IDENTITY_INVALID",
-          error: `This request names the generation option "${optionId}", which is not an option identity CineBraid issues. Nothing was submitted.`,
-          detail: { selectedOptionId: optionId, selectedModelId: claimed },
+          error: `This request names the generation option "${optionId}", which is not an option identity CineBraid could have issued (${identity.reason}). Nothing was submitted.`,
+          detail: { selectedOptionId: optionId, selectedModelId: claimed, reason: identity.reason },
         };
       if (identity.modelId !== claimed)
         return {

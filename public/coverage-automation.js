@@ -453,6 +453,16 @@
     closeModal();
     route();
     try {
+      /* THE RUN RECORD HAS TO REACH THE SERVER BEFORE THE FIRST PAID REQUEST DOES.
+       *
+       * `dirty()` only schedules a save. Every other paid dispatcher in CineBraid already
+       * flushes before it POSTs — this one did not, and it did not matter while nothing
+       * server-side read the record. It matters now: the paid boundary corroborates the
+       * `reference-automation` surface against `entity.coverageAutomation`, and a run
+       * whose record is still sitting in a debounce timer would be refused its own
+       * surface. Awaited, so a save that fails surfaces here rather than as a puzzling
+       * refusal on the request after it. */
+      await flushPendingProjectSave();
       if (mode === "sheet" || mode === "hybrid") {
         const slots = coverageSheetSlots(req.list, entity, sheetType);
         const prompt = coverageSheetPrompt(req.list, entity, sheetType, slots, direction);
