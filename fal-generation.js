@@ -807,6 +807,19 @@ function registerFalGeneration(app, context) {
     if (!job) return null;
     const copy = structuredClone(job);
     delete copy.providerRequest;
+    /* THE SERVER'S OWN ANSWER TO "DOES CINEBRAID KNOW WHAT HAPPENED TO THIS", carried on
+       the wire because the browser was working it out for itself and getting a different
+       answer. Its `falJobUnresolved()` asked only whether the status was UNRESOLVED, so a
+       durable SUBMITTING row with no request id — the second way a submission becomes
+       uncertain — was drawn as an ordinary running job: a Cancel button the route now
+       correctly refuses, and no way at all to reach the reconciliation dialog that is the
+       only exit from that state. The filmmaker was told to go and record what they found
+       and given nothing to record it with.
+
+       This is the uncertainty half only, not `isSubmissionUncertainWithoutHandle`: an
+       UNRESOLVED job that DOES carry a handle is still something CineBraid cannot account
+       for, and has always offered that dialog. */
+    copy.uncertain = Lifecycle.blocksResubmission(job);
     return copy;
   }
   function safeName(value, fallback) {

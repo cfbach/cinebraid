@@ -197,6 +197,10 @@ async function harness(options = {}) {
       });
       return { status: response.status, data: await response.json().catch(() => ({})) };
     },
+    jobs: async () => {
+      const response = await fetch(`${appOrigin}/api/generation/fal/jobs`);
+      return (await response.json()).jobs || [];
+    },
     cancel: async (jobId) => {
       const response = await fetch(`${appOrigin}/api/generation/fal/jobs/${encodeURIComponent(jobId)}/cancel`, {
         method: "POST", headers: { "content-type": "application/json" },
@@ -1690,6 +1694,50 @@ async function main() {
       assert.strictEqual(h.calls.length, 1, "and THIS is the first paid submission in the whole reproduction");
       assert.strictEqual(h.durable().jobs.length, 2, "on a second job row, which is what a deliberate retry is");
       note(`15e. refresh leaves an uncertain SUBMITTING/no-handle job SUBMITTING rather than FAILED, contacts no provider, moves only the coverage projection to needs-attention, and still blocks an equivalent retry with a different clientRequestId — 0 provider submissions and 1 job row until a human reconciliation (recorded previousStatus SUBMITTING) releases it, after which the identical request dispatches once`);
+    } finally { h.close(); }
+  }
+
+  /* =======================================================================
+     15h. THE WAY OUT HAS TO BE REACHABLE.
+
+     Found while auditing who else interprets this state. The browser was deciding for
+     itself which jobs CineBraid cannot account for — its `falJobUnresolved()` asked only
+     whether the status was UNRESOLVED — so a durable SUBMITTING row with no request id
+     was drawn as an ordinary running job. It offered Cancel, which reproduction 15f shows
+     the route now refuses, and it never offered the reconciliation dialog, which is that
+     state's only exit. A filmmaker was told to go and record what they found, and given
+     nothing to record it with.
+
+     The screen no longer decides. Every job it draws arrives through publicJob(), and
+     publicJob() states the lifecycle's answer. This asserts the wire, which is the part a
+     Node suite can see; the browser's own read of it is one field. */
+  {
+    const h = await harness();
+    try {
+      const mockOrigin = h.mockOrigin;
+      h.seedLedger([
+        { id: "in-flight-no-handle", provider: "fal", purpose: "shot-frame", shotId: "SH-1", status: "SUBMITTING", createdAt: "2026-08-28T00:00:00.000Z" },
+        { id: "classified-no-handle", provider: "fal", purpose: "shot-frame", shotId: "SH-1", status: Lifecycle.UNRESOLVED, createdAt: "2026-08-28T00:00:00.000Z" },
+        /* Uncertain, but WITH a handle: still something CineBraid cannot account for, and
+           it has always been offered the same dialog. */
+        { id: "classified-with-handle", provider: "fal", purpose: "shot-frame", shotId: "SH-1", status: Lifecycle.UNRESOLVED, externalId: "req-u", statusUrl: `${mockOrigin}/status/req-u`, createdAt: "2026-08-28T00:00:00.000Z" },
+        { id: "healthy", provider: "fal", purpose: "shot-frame", shotId: "SH-1", status: "IN_QUEUE", externalId: "req-h", statusUrl: `${mockOrigin}/status/req-h`, createdAt: "2026-08-28T00:00:00.000Z" },
+        { id: "settled", provider: "fal", purpose: "shot-frame", shotId: "SH-1", status: "FAILED", createdAt: "2026-08-28T00:00:00.000Z", reconciliation: { outcome: "not-accepted", previousStatus: "SUBMITTING", at: "2026-08-28T00:00:00.000Z", by: "user" } },
+      ]);
+      const byId = Object.fromEntries((await h.jobs()).map((job) => [job.id, job]));
+      assert.strictEqual(byId["in-flight-no-handle"].uncertain, true,
+        "THE DEFECT: a submission stranded with no request id must reach the screen as uncertain, or it is drawn as ordinary running work with no way out");
+      assert.strictEqual(byId["classified-no-handle"].uncertain, true, "and so must a classified one");
+      assert.strictEqual(byId["classified-with-handle"].uncertain, true,
+        "including one that has a handle — a handle says the request was accepted, never what became of it");
+      assert.strictEqual(byId.healthy.uncertain, false, "while an ordinary queued job is not uncertain");
+      assert.strictEqual(byId.settled.uncertain, false, "and a job a person has already settled is not uncertain either");
+      for (const id of Object.keys(byId)) {
+        assert.strictEqual(byId[id].uncertain, Lifecycle.blocksResubmission(byId[id]),
+          `and the wire says exactly what the lifecycle says, for ${id} — not an approximation of it`);
+      }
+      assert.strictEqual(h.calls.length, 0, "reading the job list submits nothing");
+      note(`15h. publicJob() states the lifecycle's own uncertainty on the wire, so the screen no longer decides it: a stranded SUBMITTING/no-handle row, a classified UNRESOLVED row and an UNRESOLVED row WITH a handle all arrive uncertain, while a queued job and a reconciled job do not — which is what puts the reconciliation dialog in front of both uncertainties instead of one`);
     } finally { h.close(); }
   }
 

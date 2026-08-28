@@ -53,14 +53,29 @@ function falJobStatusLabel(job) {
   };
   return map[job?.status] || String(job?.status || "");
 }
-/* Where CineBraid does not know what happened to a paid request. */
+/* WHERE CINEBRAID DOES NOT KNOW WHAT HAPPENED TO A PAID REQUEST — read from the server,
+   which is the only thing that gets to decide it.
+   This asked whether the status was UNRESOLVED, which is one of the two ways a
+   submission becomes uncertain. The other is a durable SUBMITTING row with no request
+   id, and this screen drew those as ordinary running jobs: it offered Cancel, which the
+   route refuses, and never offered the reconciliation dialog, which is their only way
+   out. Every job on this screen arrives through publicJob(), so the flag is always
+   present and the answer is always the lifecycle's. */
 function falJobUnresolved(job) {
-  return String(job?.status || "") === "UNRESOLVED";
+  return job?.uncertain === true;
 }
 /* Plain language, no jargon, no stack traces, and no reassurance CineBraid cannot give.
    It says what was done, what is unknown, and what to do about it. */
 function falUnresolvedExplanation(job) {
   const where = job?.model ? ` (${job.model})` : "";
+  /* TWO UNCERTAINTIES, AND THEY ARE NOT THE SAME SENTENCE. With a request id, CineBraid
+     knows the provider took the request and lost the answer. Without one it does not even
+     know that much — the process may have stopped before the request went out — and
+     saying "CineBraid sent this" would be the confident falsehood this whole state exists
+     to avoid. Both end at the same instruction, because both are settled the same way. */
+  if (!String(job?.externalId || "")) {
+    return `CineBraid started this request${where} and stopped before it recorded a request id, so it cannot tell whether the provider ever received it. The generation may be running and may have been charged. Check the provider before generating this shot again.`;
+  }
   return `CineBraid sent this request to the provider${where} but lost contact before it could confirm whether it was accepted. The generation may be running and may have been charged. Check the provider before generating this shot again.`;
 }
 /* The only exit, and it needs a person who has actually looked. CineBraid never guesses
