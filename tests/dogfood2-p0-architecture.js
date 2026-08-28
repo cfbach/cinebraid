@@ -315,7 +315,9 @@ async function main() {
       storage: { "cinebraid-focused:fixture:entity-task:characters:CHAR-LEG": "coverage" },
       fetch: async (url, options, respond) => {
         if (url === "/api/generation/fal/status") return respond({ enabled: true, configured: true, defaults: {} });
-        if (url === "/api/generation/fal/jobs" && options.method === "POST") {
+        /* Coverage dispatch is a SERVER operation now — the browser asks
+           /api/generation/fal/coverage/jobs to run it. */
+        if (url === "/api/generation/fal/coverage/jobs" && options.method === "POST") {
           submitted = JSON.parse(options.body);
           return respond({ ok: true, job: { id: "job-1", status: "IN_QUEUE" } });
         }
