@@ -429,6 +429,8 @@ function buildOption(context) {
   const decision = guide && isRecord(guide.decision) ? guide.decision : null;
 
   return {
+    /* Minted here and read back by generationOptionIdentity() a few lines below, so the
+       two halves of this identity cannot drift apart. */
     optionId: `${modelId}::${surfaceId || "none"}::${mode}`,
     modelId,
     modelName,
@@ -640,6 +642,36 @@ function resolveGenerationOptions(input = {}) {
    one global scope, and a second top-level `const EXPORTS` is a SyntaxError that stops
    the whole bundle. shared-model-intelligence.js already had that name and had never
    been loaded in the browser before this phase. */
+/* WHAT AN OPTION ID SAYS ABOUT ITSELF.
+ *
+ * An option id is minted above as `modelId::surfaceId::mode` and is a CineBraid identity,
+ * not client prose - reading it here, in the module that writes it, is the opposite of
+ * inferring intent from an arbitrary payload. This exists because the paid boundary needs
+ * to check one thing it could not check before: that a request naming BOTH an option and
+ * a model is naming a consistent pair.
+ *
+ * The route cannot re-run resolveGenerationOptions() to answer that - resolving needs a
+ * filmmaker task and the shot inputs, and a dispatch body carries neither. What it can do
+ * is ask the minting owner what identity a given id carries.
+ *
+ * A model id may itself contain "/" (gpt-image-2/standard) but never "::", so the split
+ * is unambiguous. Anything that is not exactly three segments is not an id this system
+ * minted, and the answer is `known: false` rather than a guess. */
+function generationOptionIdentity(optionId) {
+  const raw = text(optionId);
+  if (!raw) return { known: false, optionId: "", modelId: "", surfaceId: "", mode: "" };
+  const parts = raw.split("::");
+  if (parts.length !== 3 || !text(parts[0]) || !text(parts[2]))
+    return { known: false, optionId: raw, modelId: "", surfaceId: "", mode: "" };
+  return {
+    known: true,
+    optionId: raw,
+    modelId: text(parts[0]),
+    surfaceId: text(parts[1]) === "none" ? "" : text(parts[1]),
+    mode: text(parts[2]),
+  };
+}
+
 const GENERATION_OPTION_EXPORTS = {
   CINEBRAID_FILMMAKER_TASKS,
   CINEBRAID_MODE_LANGUAGE,
@@ -650,6 +682,7 @@ const GENERATION_OPTION_EXPORTS = {
   connectionFor,
   describeInputs,
   filmmakerTask,
+  generationOptionIdentity,
   isNormalOption,
   modeLanguage,
   resolveGenerationOptions,

@@ -366,9 +366,32 @@ function readGenerationRequestDeclaration(body) {
  * genuinely can build the same request - an entity reference comes from both the
  * reference dialog and the coverage automation modal, and they offer different controls.
  *
- * Note what decides it: `purpose`, the `imagePlan` marker and the presence of an
- * automation run id. All three are structural facts about the request, not readings of
- * its content - nothing here infers what a filmmaker meant from an arbitrary payload. */
+ * Note what decides it: `purpose`, the `imagePlan` marker, the presence of an automation
+ * run id and the coverage job type. All four are structural facts about the request, not
+ * readings of its content - nothing here infers what a filmmaker meant from an arbitrary
+ * payload, from free text or from a filename. */
+
+/* THE STRUCTURAL PROOF OF A COVERAGE-AUTOMATION REQUEST.
+ *
+ * `reference-automation` owns a SHORTER control vocabulary than `fixed-image` - it leaves
+ * resolution out, because a coverage sheet whose panels are too small to crop is not a
+ * sheet, so its size is a route input rather than a control a view is hiding.
+ *
+ * That makes it the more permissive surface for one specific key, and an independent
+ * reviewer reproduced the consequence: an ORDINARY entity-reference request that simply
+ * named `reference-automation` kept a 4K size under Simple and dispatched. A declaration
+ * is evidence about a screen, and evidence that can be chosen is not evidence.
+ *
+ * So the surface has to be PROVED, and it is proved from a marker the request already
+ * carries. `coverageJobType` is written by public/coverage-automation.js on every sheet
+ * and slot dispatch, is validated against this same list at the paid boundary before the
+ * job row is built, and is part of the duplicate-active guard's identity for coverage
+ * work. The ordinary entity-reference dialog does not send it at all.
+ *
+ * NO NEW TAXONOMY, and nothing derived from client prose: this reads a field the route
+ * already whitelists, for the surface that already depends on it. */
+const CINEBRAID_COVERAGE_JOB_TYPES = ["sheet", "slot"];
+
 function generationRequestSurfacesFor(body, purpose) {
   const row = presentationRecord(body) || {};
   const kind = presentationText(purpose) || presentationText(row.purpose) || "frame";
@@ -383,8 +406,14 @@ function generationRequestSurfacesFor(body, purpose) {
   if (presentationText(row.automationRunId)) return { canonical: "automation-run", legal: ["automation-run"] };
   if (row.imagePlan === true && ["blocking", "frame"].includes(kind))
     return { canonical: "compiled-frame", legal: ["compiled-frame"] };
-  if (kind === "entity-reference")
-    return { canonical: "fixed-image", legal: ["fixed-image", "reference-automation"] };
+  if (kind === "entity-reference") {
+    /* Both surfaces stay legal for a request that PROVES it is coverage work, because a
+       caller naming the longer vocabulary can only make itself stricter. A request that
+       cannot prove it gets the one surface its contents support. */
+    return CINEBRAID_COVERAGE_JOB_TYPES.includes(presentationText(row.coverageJobType))
+      ? { canonical: "reference-automation", legal: ["fixed-image", "reference-automation"] }
+      : { canonical: "fixed-image", legal: ["fixed-image"] };
+  }
   return { canonical: "fixed-image", legal: ["fixed-image"] };
 }
 
@@ -701,6 +730,7 @@ const GENERATION_PRESENTATION_EXPORTS = {
   CINEBRAID_GENERATION_REQUEST_SURFACES,
   CINEBRAID_REQUEST_PLAN_KEY,
   CINEBRAID_REQUEST_SURFACE_IDS,
+  CINEBRAID_COVERAGE_JOB_TYPES,
   controlSupport,
   generationControlPlan,
   generationRecommendation,

@@ -174,7 +174,21 @@ function generationLimitsMarkup(limits) {
                         and the answer to "why is Kai not described in here".
 
    Simple never hides a count. It says how many are in each population and where to read
-   them, which is the difference between a concise summary and an incomplete one. */
+   them, which is the difference between a concise summary and an incomplete one.
+
+   AND THE ORDER IS THE COMPILER'S, IN BOTH VIEWS.
+
+   The first version of this panel grouped Advanced by state - unsupported, then omitted,
+   then carried - and an independent reviewer named it correctly: `plan.coverage` is
+   emitted in the compiler's own inventory order, which follows INTENT_FIELDS, and a
+   renderer that regroups it is quietly asserting a different sequence is the true one.
+   The compiler decides what a shot's direction is and in what order; this decides what a
+   filmmaker is shown. Filtering, annotating, styling and raising a count are all this
+   layer's business. Reordering is not, and a reader comparing the panel against a
+   support bundle or the plan itself has to see the same sequence.
+
+   So each view is a FILTER over the record in place. Nothing below sorts, and no copy of
+   the intent order exists here to drift from the one in generation-compiler.js. */
 const GENERATION_COVERAGE_STATES = {
   represented: { word: "in the prompt", tone: "carried" },
   anchored: { word: "anchored by a reference", tone: "carried" },
@@ -200,7 +214,10 @@ function generationCoverageMarkup(coverage, mode) {
   const unsupported = rows.filter((entry) => String(entry.state) === "unsupported");
   const omitted = rows.filter((entry) => String(entry.state) === "omitted-by-design");
   const carried = rows.filter((entry) => ["represented", "anchored"].includes(String(entry.state)));
-  const shown = view === "advanced" ? [...unsupported, ...omitted, ...carried] : unsupported;
+  /* A FILTER, NEVER A SORT. Advanced is the record as the compiler emitted it; Simple is
+     the same sequence with everything but the refusals filtered out, so the rows a
+     filmmaker sees in one view are in the same relative order in the other. */
+  const shown = view === "advanced" ? rows : unsupported;
   /* The rest, as counts rather than rows. Simple is concise about a long record; it is
      never silent about one, because silence here reads as "coverage was not computed"
      and that is a different fact from "everything arrived". */

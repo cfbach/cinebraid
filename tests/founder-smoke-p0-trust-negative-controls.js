@@ -552,8 +552,18 @@ const CONTROLS = [
         to: `        return current ? { ...saved, url: current.url, label: current.label } : saved;\n      });`,
       },
       {
-        from: `  const missing = missingConsumedReferences(s, pack);\n  if (missing.length)\n    reasons.push(\`\${missing.length === 1 ? "an input" : \`\${missing.length} inputs\`} this prompt was compiled from can no longer be supplied by this shot: \${missing.join(", ")}\`);\n  if (!missing.length && JSON.stringify(saved.references || []) !== JSON.stringify(now.references || []))`,
-        to: `  if (JSON.stringify(saved.references || []) !== JSON.stringify(now.references || []))`,
+        /* THE SECOND HALF MOVED SEAM, NOT MEANING. Paid Request Truth V1 lifted the
+           comparison itself into public/shared-build-history.js so the money boundary
+           could call it too, and packageStaleReasons() became the thing that GATHERS
+           the evidence and hands it over. The disappearance reason is therefore
+           suppressed here by WITHHOLDING the evidence rather than by deleting the
+           branch that reports it - the same defect, at the line that now owns it, and
+           still inside this file.
+
+           missingConsumedReferences() is left defined and uncalled by this edit, which
+           is exactly what a regression of this kind looks like in the wild. */
+        from: `    missingReferences: missingConsumedReferences(s, pack),`,
+        to: `    missingReferences: [],`,
       },
     ],
     expect: /consumed reference disappeared and the package stayed current/,

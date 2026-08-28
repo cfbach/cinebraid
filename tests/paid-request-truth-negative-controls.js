@@ -24,6 +24,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const Module = require("module");
+const vm = require("vm");
 const express = require("express");
 
 const Presentation = require("../public/shared-generation-presentation");
@@ -162,6 +163,7 @@ async function harness(falGeneration, options = {}) {
     project: () => JSON.parse(fs.readFileSync(file, "utf8")),
     saveProject: (project) => fs.writeFileSync(file, JSON.stringify(project, null, 2)),
     saveRuns: (rows) => fs.writeFileSync(path.join(dir, "automation-runs.json"), JSON.stringify(rows, null, 2)),
+    seedLedger: (rows) => fs.writeFileSync(path.join(dir, "generation-jobs.json"), JSON.stringify(rows, null, 2)),
     ledger: () => {
       const raw = path.join(dir, "generation-jobs.json");
       if (!fs.existsSync(raw)) return [];
@@ -448,6 +450,220 @@ async function main() {
         assert(coverage.some((entry) => entry.state === "omitted-by-design"),
           `THE DEFECT: every intent CineBraid decided not to send was filtered out of the record the dialog reads — ${coverage.length} entries survived and not one of them admits anything was left out`);
       } finally { h.close(); }
+    });
+
+  /* =======================================================================
+     9. A SURFACE TAKEN ON ITS OWN WORD.  [reviewer blocker 1]
+
+     The exact defect the reviewer reproduced on the held candidate: `reference-automation`
+     was legal for any entity-reference request, so naming it was enough to keep a 4K size
+     under Simple. Remove the structural proof and the forgery works again. */
+  await control("a coverage surface any entity request may simply name",
+    "a request cannot claim a surface its own contents do not prove", async () => {
+      /* The held candidate's own rule, restored at the route: both entity surfaces legal
+         for any entity-reference request, whatever it carries. */
+      const falGeneration = loadModified("fal-generation.js", [[
+        `  function legalRequestSurfaces(body, purpose) {
+    return Presentation.generationRequestSurfacesFor(body, purpose).legal;
+  }`,
+        `  function legalRequestSurfaces(body, purpose) {
+    const legal = Presentation.generationRequestSurfacesFor(body, purpose).legal;
+    return String(body?.purpose || purpose) === "entity-reference" ? ["fixed-image", "reference-automation"] : legal;
+  }`,
+      ]]);
+      const h = await harness(falGeneration);
+      try {
+        const project = h.project();
+        project.characters.push({ id: "KAI", name: "Kai", type: "Character", approvedFile: "KAI.png", continuityStates: [] });
+        h.saveProject(project);
+        const result = await h.post({
+          purpose: "entity-reference", entityList: "characters", entityId: "KAI", entityType: "character",
+          sourceBuildId: "entity-fixture", prompt: "Kai against neutral grey.",
+          references: [{ key: "base", label: "Approved primary", role: "base", url: KAI_PNG }],
+          outputCount: 1, quality: "high", resolution: "4k", aspectRatio: "16:9",
+          /* NO coverageJobType. An ordinary entity reference wearing the coverage
+             surface's name, and nothing else. */
+          generationRequest: Presentation.generationRequestDeclaration({ surface: "reference-automation", viewMode: "simple" }),
+        });
+        assert.strictEqual(result.status, 200, `the unsafe path must actually run: ${JSON.stringify(result.data)}`);
+        const row = h.ledger()[0];
+        assert.notStrictEqual(row.resolution, "4k",
+          `THE DEFECT: an ordinary entity request named the coverage surface and kept a 4K size Simple never offered - the job records resolution ${JSON.stringify(row.resolution)} and removedPayloadKeys ${JSON.stringify(row.removedPayloadKeys)}`);
+      } finally { h.close(); }
+    });
+
+  /* =======================================================================
+     10. AN IDENTITY PAIR NOBODY CHECKS AGAINST ITSELF.  [reviewer blocker 2] */
+  await control("a boundary that reads the model half of an identity and ignores the option",
+    "a request whose own two names disagree is refused", async () => {
+      const falGeneration = loadModified("fal-generation.js", [[
+        "    if (claimed && optionId) {",
+        "    if (false && claimed && optionId) {",
+      ]]);
+      const h = await harness(falGeneration);
+      try {
+        const buildId = seedFramePackage(h);
+        const result = await h.post({
+          ...framePlanBody(buildId),
+          generationRequest: Presentation.generationRequestDeclaration({
+            surface: "compiled-frame", viewMode: "advanced",
+            selectedOptionId: "some-other-model::fal-queue::t2i", selectedModelId: IMAGE_MODEL_ID,
+          }),
+        });
+        assert.strictEqual(result.status, 200, `the unsafe path must actually run: ${JSON.stringify(result.data)}`);
+        const row = h.ledger()[0];
+        assert.notStrictEqual(row.selectedOptionId, "some-other-model::fal-queue::t2i",
+          `THE DEFECT: a request naming option ${JSON.stringify(row.selectedOptionId)} beside model ${JSON.stringify(row.selectedModelId)} dispatched to ${JSON.stringify(row.model)}, and the ledger now records a pair describing a screen that cannot have existed`);
+      } finally { h.close(); }
+    });
+
+  /* =======================================================================
+     11. A BUDGET COMPARED IN BINARY FLOATING POINT.  [reviewer blocker 3] */
+  await control("a spend ceiling compared with a raw floating-point greater-than",
+    "meeting a budget exactly is not exceeding it", async () => {
+      const falGeneration = loadModified("fal-generation.js", [[
+        "      if (usdExceeds(projected, authorized.amount))",
+        "      if (projected > Number(authorized.amount))",
+      ]]);
+      const h = await harness(falGeneration, { ratePerImage: 0.1 });
+      try {
+        const buildId = seedFramePackage(h);
+        const lease = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+        h.saveRuns([{
+          id: "run-exact", schemaVersion: 2, revision: 1, status: "running",
+          runnerId: "runner-exact", leaseExpiresAt: lease,
+          config: { maxImages: 9, outputsPerRequest: 1, maxSpend: { priced: true, amount: 0.3, quantity: 3, unitBasis: "image", ratePerUnit: 0.1 } },
+          usage: { imagesGenerated: 0 }, steps: {}, logs: [],
+        }]);
+        const runBody = (step) => ({
+          purpose: "frame", shotId: "SH-1", frameId: "FR-A", frameLabel: "A",
+          sourceBuildId: buildId, prompt: "Kai sets the parcel down in the hangar.",
+          aspectRatio: "16:9", outputCount: 1, quality: "high", resolution: "1k", clientRequestId: step,
+          automationRunId: "run-exact", automationStepKey: step, automationRunnerId: "runner-exact",
+          generationRequest: Presentation.generationRequestDeclaration({ surface: "automation-run", viewMode: "simple" }),
+        });
+        const first = await h.post(runBody("e1"));
+        const second = await h.post(runBody("e2"));
+        assert.strictEqual(first.status, 200, `the authorised work must actually run: ${JSON.stringify(first.data)}`);
+        assert.strictEqual(second.status, 200, `and the second: ${JSON.stringify(second.data)}`);
+        await h.settle(first.data.job.id);
+        await h.settle(second.data.job.id);
+        const third = await h.post(runBody("e3"));
+        const total = h.ledger().reduce((sum, row) => sum + Number(row.accounting?.estimate?.amount || 0), 0);
+        assert.strictEqual(third.status, 200,
+          `THE DEFECT: three $0.10 children exactly meet a $0.30 ceiling and the third was refused — HTTP ${third.status}, ${JSON.stringify(third.data.error)}, raw float total ${total}`);
+      } finally { h.close(); }
+    });
+
+  /* =======================================================================
+     12. AN UNKNOWN COST READ AS ZERO.  [reviewer blocker 4] */
+  await control("an unpriceable child whose unknown cost falls back to zero",
+    "a ceiling that cannot be checked has not been honoured", async () => {
+      const falGeneration = loadModified("fal-generation.js", [[
+        `      const pendingAmount = pending.estimate?.confidence === "estimated" ? Number(pending.estimate.amount) : null;
+      if (!Number.isFinite(pendingAmount))`,
+        `      const pendingAmount = Number(pending.estimate?.amount) || 0;
+      if (false)`,
+      ]]);
+      const h = await harness(falGeneration, { ratePerImage: 0 });
+      try {
+        const buildId = seedFramePackage(h);
+        const lease = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+        h.saveRuns([{
+          id: "run-unknown", schemaVersion: 2, revision: 1, status: "running",
+          runnerId: "runner-unknown", leaseExpiresAt: lease,
+          config: { maxImages: 9, outputsPerRequest: 1, maxSpend: { priced: true, amount: 0.3, quantity: 3, unitBasis: "image", ratePerUnit: 0.1 } },
+          usage: { imagesGenerated: 0 }, steps: {}, logs: [],
+        }]);
+        const result = await h.post({
+          purpose: "frame", shotId: "SH-1", frameId: "FR-A", frameLabel: "A",
+          sourceBuildId: buildId, prompt: "Kai sets the parcel down in the hangar.",
+          aspectRatio: "16:9", outputCount: 1, quality: "high", resolution: "1k", clientRequestId: "u1",
+          automationRunId: "run-unknown", automationStepKey: "u1", automationRunnerId: "runner-unknown",
+          generationRequest: Presentation.generationRequestDeclaration({ surface: "automation-run", viewMode: "simple" }),
+        });
+        assert.notStrictEqual(result.status, 200,
+          `THE DEFECT: a child CineBraid could not price dispatched under a numeric $0.30 ceiling — HTTP ${result.status}, ${h.calls.length} provider call(s), and the job records ${JSON.stringify(h.ledger()[0]?.accounting?.estimate)}`);
+      } finally { h.close(); }
+    });
+
+  /* =======================================================================
+     13. AN INCOMPLETE TOTAL READ AS A COMPLETE ONE.  [reviewer blocker 4b] */
+  await control("a spend bound that omits the run's own children of unknown cost",
+    "a known subtotal below a ceiling is not proof the run is inside it", async () => {
+      const falGeneration = loadModified("fal-generation.js", [[
+        "      if (runJobs.length && spent.complete !== true)",
+        "      if (false)",
+      ]]);
+      const h = await harness(falGeneration, { ratePerImage: 0.1 });
+      try {
+        const buildId = seedFramePackage(h);
+        const lease = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+        h.saveRuns([{
+          id: "run-partial", schemaVersion: 2, revision: 1, status: "running",
+          runnerId: "runner-partial", leaseExpiresAt: lease,
+          config: { maxImages: 9, outputsPerRequest: 1, maxSpend: { priced: true, amount: 0.3, quantity: 3, unitBasis: "image", ratePerUnit: 0.1 } },
+          usage: { imagesGenerated: 0 }, steps: {}, logs: [],
+        }]);
+        h.seedLedger([{
+          id: "job-priced", provider: "fal", purpose: "frame", status: "COMPLETED", outputCount: 1,
+          automationRunId: "run-partial", automationStepKey: "seeded-priced", shotId: "SH-1",
+          accounting: { costClass: "metered_api", recordedAt: "2026-08-27T00:00:00.000Z",
+            estimate: { costClass: "metered_api", unit: "usd", confidence: "estimated", amount: 0.1, breakdown: [] },
+            basis: { unitBasis: "image", quantity: 1, ratePerUnit: 0.1, rateSource: "generation.fal.estimatedCostPerImage" } },
+        }, {
+          id: "job-unknown", provider: "fal", purpose: "frame", status: "COMPLETED", outputCount: 1,
+          automationRunId: "run-partial", automationStepKey: "seeded-unknown", shotId: "SH-1",
+          accounting: { costClass: "metered_api", recordedAt: "2026-08-27T00:00:00.000Z",
+            estimate: { costClass: "metered_api", unit: "usd", confidence: "unknown" },
+            basis: { unitBasis: "image", quantity: 1, unpricedReason: "no-configured-rate" } },
+        }]);
+        const result = await h.post({
+          purpose: "frame", shotId: "SH-1", frameId: "FR-A", frameLabel: "A",
+          sourceBuildId: buildId, prompt: "Kai sets the parcel down in the hangar.",
+          aspectRatio: "16:9", outputCount: 1, quality: "high", resolution: "1k", clientRequestId: "p1",
+          automationRunId: "run-partial", automationStepKey: "p1", automationRunnerId: "runner-partial",
+          generationRequest: Presentation.generationRequestDeclaration({ surface: "automation-run", viewMode: "simple" }),
+        });
+        assert.notStrictEqual(result.status, 200,
+          `THE DEFECT: a run holding a child of unknown cost authorised another paid child on the strength of its $0.10 known subtotal — HTTP ${result.status}, ${h.calls.length} provider call(s)`);
+      } finally { h.close(); }
+    });
+
+  /* =======================================================================
+     14. A RENDERER THAT REORDERS THE COMPILER'S RECORD.  [reviewer blocker 5]
+
+     Not a safety defect and it is here for the same reason the others are: the compiler
+     decides what a shot's direction is and in what order, and a panel that regroups it is
+     quietly publishing a different sequence as the true one. */
+  await control("a coverage panel that groups the compiler's rows by state",
+    "the record is rendered in the compiler's own order", async () => {
+      const view = fs.readFileSync(path.join(ROOT, "public", "generation-view.js"), "utf8").replace(/\r\n/g, "\n");
+      const anchor = `  const shown = view === "advanced" ? rows : unsupported;`;
+      assert(view.includes(anchor), "negative control anchor no longer exists in public/generation-view.js");
+      const mutated = view.replace(anchor, `  const shown = view === "advanced" ? [...unsupported, ...omitted, ...carried] : unsupported;`);
+      assert.notStrictEqual(mutated, view, "the mutation must change something");
+
+      const context = {
+        window: {}, localStorage: { getItem: () => null, setItem: () => {} },
+        esc: (value) => String(value == null ? "" : value).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])),
+        attr: (value) => String(value == null ? "" : value).replace(/"/g, "&quot;"),
+        ...Presentation,
+      };
+      vm.createContext(context);
+      vm.runInContext(mutated, context, { filename: "public/generation-view.js" });
+
+      /* A record whose compiler order deliberately interleaves the states. */
+      const coverage = [
+        { intent: "action.primary", label: "principal action", state: "represented", via: "prompt" },
+        { intent: "camera.movement", label: "camera movement", state: "omitted-by-design", reason: "A still holds one instant." },
+        { intent: "reproducibility.seed", label: "seed", state: "unsupported", reason: "No seed." },
+        { intent: "identity.canon", label: "approved identity canon", state: "anchored", via: "the approved identity references" },
+      ];
+      const markup = context.generationCoverageMarkup(coverage, "advanced");
+      const rendered = [...markup.matchAll(/<li data-coverage-state="[^"]*"><span>([^<]*)<\/span>/g)].map((m) => m[1]);
+      assert.deepStrictEqual(rendered, coverage.map((entry) => entry.label),
+        `THE DEFECT: the panel published its own sequence — the compiler emitted ${JSON.stringify(coverage.map((e) => e.label))} and the screen shows ${JSON.stringify(rendered)}`);
     });
 
   console.log("");

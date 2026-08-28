@@ -78,6 +78,42 @@ function roundRateUsd(value) {
   return Number.isFinite(amount) ? Math.round(amount * 1e6) / 1e6 : 0;
 }
 
+/* THE ONE PLACE TWO USD FIGURES ARE COMPARED.
+ *
+ * Every amount in this system is already rounded to MICRO-USD - roundRateUsd() above and
+ * generation-cost.js's roundUsd() both do `Math.round(v * 1e6) / 1e6`, which is the
+ * precision the configured rate needs (Settings accepts three decimals) with room to
+ * spare. That rounding makes the numbers presentable; it does not make them comparable.
+ *
+ * An independent reviewer reproduced the consequence at the spend boundary: three $0.10
+ * children against a $0.30 ceiling. `0.1 + 0.1 + 0.1` is 0.30000000000000004 in binary
+ * floating point, so `projected > ceiling` was TRUE and the third child was refused while
+ * both figures displayed as $0.30. A filmmaker was told they had exceeded a budget they
+ * had exactly met.
+ *
+ * So the comparison is done on integers in the unit the system already rounds to, and it
+ * is done HERE rather than with an epsilon at each caller: an epsilon scattered across
+ * callers is several slightly different definitions of "equal", which is the same defect
+ * wearing a tolerance. Equality is allowed; only a strict excess is an excess. */
+function usdMicroUnits(value) {
+  /* `Number(null)`, `Number("")` and `Number([])` are all 0, so a bare Number.isFinite()
+     check would turn "no ceiling was recorded" into "the ceiling is zero" - and a zero
+     ceiling refuses everything. Only a number, or a string that is one, is an amount. */
+  if (typeof value === "number") return Number.isFinite(value) ? Math.round(value * 1e6) : null;
+  if (typeof value !== "string" || !value.trim()) return null;
+  const amount = Number(value);
+  return Number.isFinite(amount) ? Math.round(amount * 1e6) : null;
+}
+function usdExceeds(amount, ceiling) {
+  const spent = usdMicroUnits(amount);
+  const limit = usdMicroUnits(ceiling);
+  /* An unusable figure on either side is not proof of an excess, and it is not proof of
+     compliance either - the caller decides what to do about an absence. This answers only
+     the question it is asked. */
+  if (spent === null || limit === null) return false;
+  return spent > limit;
+}
+
 /* An ISO calendar date and nothing else.
  *
  * A freshness field that will accept "recently" or "last week" cannot be compared to
@@ -324,6 +360,8 @@ const GENERATION_RATE_EXPORTS = {
   generationPriceLine,
   rateProvenance,
   roundRateUsd,
+  usdExceeds,
+  usdMicroUnits,
   unconfiguredRate,
 };
 

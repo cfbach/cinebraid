@@ -14,7 +14,7 @@ const { generationOptionsFor, generationConnections } = require("./generation-op
 const { INTENT_FIELDS } = require("./generation-compiler");
 const { generationBindingRecord, GenerationBindingError } = require("./generation-binding");
 const { submissionAccounting, summarizeRecordedCost } = require("./generation-cost");
-const { configuredMotionRate } = require("./public/shared-generation-rate");
+const { configuredMotionRate, usdExceeds } = require("./public/shared-generation-rate");
 const { guidePayload } = require("./generation-options");
 const Lifecycle = require("./generation-lifecycle");
 const FramePresence = require("./public/shared-frame-presence");
@@ -24,7 +24,7 @@ const FramePresence = require("./public/shared-frame-presence");
    The policy is not reimplemented - this file calls restrictPayloadToPlan() itself. */
 const Presentation = require("./public/shared-generation-presentation");
 const BuildHistory = require("./public/shared-build-history");
-const { costEstimateFromRate } = require("./public/shared-generation-rate");
+const { generationOptionIdentity } = require("./public/shared-generation-options");
 
 /* The request that takes delivery of the background-recovery notice says so here rather
    than in the URL. See the GET /api/generation/fal/jobs route for why. Lowercase because
@@ -550,6 +550,43 @@ function registerFalGeneration(app, context) {
    * ledger records it - but a request that names the WRONG one never quietly proceeds. */
   function modelIdentityRefusal(job, cfg) {
     const claimed = String(job.selectedModelId || "");
+    const optionId = String(job.selectedOptionId || "");
+    /* THE PAIR HAS TO AGREE WITH ITSELF BEFORE IT IS WORTH CHECKING AGAINST THE ROUTE.
+     *
+     * An independent reviewer reproduced the gap: a request naming an UNSUPPORTED option
+     * B together with the supported model A passed, because only the model half was ever
+     * read. The dispatch was A, the refusal that should have caught B never ran, and the
+     * ledger recorded a B/A pair describing a screen that cannot have existed.
+     *
+     * An option id is `modelId::surfaceId::mode`, minted by public/shared-generation-
+     * options.js, and generationOptionIdentity() is that same module reading its own
+     * identity back. This is not parsing client prose - it is asking the owner what a
+     * CineBraid-minted id names. The route cannot re-resolve the option list here: that
+     * needs a filmmaker task and the shot inputs, and a dispatch body carries neither.
+     *
+     * EXACTLY ONE HALF SUPPLIED KEEPS THE EXISTING CONTRACT, deliberately. A lone
+     * `selectedModelId` drives the dispatch check below exactly as before. A lone
+     * `selectedOptionId` is recorded and not validated, which is what the accepted
+     * candidate already did - there is a real argument for deriving the model from it and
+     * checking that too, and it is a widening of behaviour rather than a repair of the
+     * reproduced defect, so it is named here as a residual instead of taken silently. */
+    if (claimed && optionId) {
+      const identity = generationOptionIdentity(optionId);
+      if (!identity.known)
+        return {
+          status: 409,
+          code: "GENERATION_OPTION_IDENTITY_INVALID",
+          error: `This request names the generation option "${optionId}", which is not an option identity CineBraid issues. Nothing was submitted.`,
+          detail: { selectedOptionId: optionId, selectedModelId: claimed },
+        };
+      if (identity.modelId !== claimed)
+        return {
+          status: 409,
+          code: "GENERATION_OPTION_MODEL_MISMATCH",
+          error: `This request names the option ${optionId}, which is ${identity.modelId}, but says its model is ${claimed}. CineBraid will not dispatch a request whose own two names disagree. Nothing was submitted.`,
+          detail: { selectedOptionId: optionId, selectedModelId: claimed, optionModelId: identity.modelId },
+        };
+    }
     if (!claimed) return null;
     const dispatching = job.purpose === "motion-h3"
       ? ""
@@ -659,12 +696,45 @@ function registerFalGeneration(app, context) {
         durationSeconds: Number(body?.durationSeconds) || 0,
         at: now(),
       });
-      const pendingAmount = Number(pending.estimate?.amount);
-      /* `spent.amount` is the summed PRICED total; `spent.priced` is how many jobs it
-         came from. Reading the count as the total is the kind of mistake that makes a
-         spend guard silently never fire, so the two are named apart here. */
-      const projected = Number(spent.amount || 0) + (Number.isFinite(pendingAmount) ? pendingAmount : 0);
-      if (projected > Number(authorized.amount))
+      /* WHAT THIS CHILD WOULD COST, or the honest admission that CineBraid cannot say.
+       *
+       * `confidence: "unknown"` is a real answer from the cost owner and it is NOT zero.
+       * The first version of this guard added `Number(pending.estimate?.amount)` and fell
+       * back to 0 when that was NaN, which is exactly "unknown counts as free": under a
+       * numeric ceiling an unpriced child dispatched forever, because zero never moves a
+       * total. A ceiling that cannot be checked has not been honoured - it has been
+       * skipped - so the request is refused and told why. */
+      const pendingAmount = pending.estimate?.confidence === "estimated" ? Number(pending.estimate.amount) : null;
+      if (!Number.isFinite(pendingAmount))
+        return {
+          status: 409,
+          code: "AUTOMATION_SPEND_UNKNOWN",
+          message: `This run was authorised to spend up to ${formatRunUsd(authorized.amount)}, and CineBraid cannot price this request - ${unpricedReasonText(pending)}. It cannot prove the request stays inside what you approved, so it was not submitted. Configure a rate for this kind of output, or start a run without a spend ceiling.`,
+        };
+      /* WHAT THE RUN HAS ALREADY COMMITTED, and whether that figure is the whole story.
+       *
+       * summarizeRecordedCost() keeps three populations apart on purpose: `amount` is the
+       * summed PRICED total, `priced`/`unpriced`/`unrecorded` are COUNTS, and `complete`
+       * says whether the total describes every job. Reading the count as the total was
+       * this slice's own first defect; reading an INCOMPLETE total as a complete one is
+       * the same failure a level up. A run holding a child whose cost is unknown has a
+       * true spend of at least the priced sum and possibly much more, so authorising
+       * another paid child on the strength of the known subtotal is a guess dressed as a
+       * budget check. */
+      if (runJobs.length && spent.complete !== true)
+        return {
+          status: 409,
+          code: "AUTOMATION_SPEND_UNKNOWN",
+          message: `This run was authorised to spend up to ${formatRunUsd(authorized.amount)}, and ${spent.unpriced + spent.unrecorded} of its ${spent.jobs} submitted request${spent.jobs === 1 ? "" : "s"} carr${spent.unpriced + spent.unrecorded === 1 ? "ies" : "y"} no priced estimate. CineBraid cannot prove another request stays inside what you approved, so it was not submitted.`,
+        };
+      const projected = Number(spent.amount || 0) + pendingAmount;
+      /* EQUALITY IS NOT AN EXCESS, and proving that needs integers. Three $0.10 children
+         against a $0.30 ceiling sum to 0.30000000000000004 in binary floating point, so a
+         raw `>` refused a run that had exactly met its budget while displaying both
+         figures as $0.30. usdExceeds() compares in the micro-USD unit every amount in
+         this system is already rounded to, in one place, so a tolerance cannot be defined
+         differently by two callers. */
+      if (usdExceeds(projected, authorized.amount))
         return {
           status: 409,
           code: "AUTOMATION_SPEND_CAP",
@@ -672,6 +742,15 @@ function registerFalGeneration(app, context) {
         };
     }
     return null;
+  }
+  /* The cost owner's own word for why it could not price something, in a sentence. It
+     records the reason; this only reads it, and says so plainly when there is none. */
+  function unpricedReasonText(accounting) {
+    const reason = String(accounting?.basis?.unpricedReason || "");
+    if (reason === "no-configured-rate") return "no rate is configured for it";
+    if (reason === "no-rate-basis-for-this-output") return "CineBraid has no rate basis for this kind of output";
+    if (reason === "no-quantity") return "it has no quantity to price";
+    return reason ? `the cost owner reports ${reason}` : "it reports the cost as unknown";
   }
   /* The same two-decimal USD the price line uses. Named here rather than inlined so a
      refusal and a quote cannot format the same number differently. */

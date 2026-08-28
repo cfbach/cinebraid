@@ -139,6 +139,10 @@ async function harness(options = {}) {
     project: () => JSON.parse(fs.readFileSync(file, "utf8")),
     saveProject: (project) => fs.writeFileSync(file, JSON.stringify(project, null, 2)),
     saveRuns: (rows) => fs.writeFileSync(runs.file, JSON.stringify(rows, null, 2)),
+    /* A ledger written directly, for the one thing a live submission cannot produce on
+       demand: a child of THIS run whose recorded cost is honestly unknown. The shape is
+       generation-job-store.js's — a bare array of job rows. */
+    seedLedger: (rows) => fs.writeFileSync(path.join(dir, "generation-jobs.json"), JSON.stringify(rows, null, 2)),
     ledger: () => {
       const raw = path.join(dir, "generation-jobs.json");
       if (!fs.existsSync(raw)) return [];
@@ -717,8 +721,293 @@ async function main() {
         `Advanced must render every entry the compiler emitted — ${rendered} of ${refused.length}`);
       assert(/anchored by a reference/.test(advancedMarkup),
         "including the answer to \"why is Kai not described in here\"");
+
+      /* THE ORDER IS THE COMPILER'S, IN BOTH VIEWS.
+       *
+       * plan.coverage is emitted in the compiler's own inventory order. A renderer that
+       * regroups it by state is quietly asserting a different sequence is the true one,
+       * and a filmmaker comparing this panel against the plan or a support bundle would
+       * see two different documents.
+       *
+       * Asserted against the LIVE plan's order, never against a copy of INTENT_FIELDS:
+       * a hard-coded expected list in a test is a second declaration of the intent order
+       * and would go on passing after the compiler changed its own. */
+      const labelsOf = (markup) => [...markup.matchAll(/<li data-coverage-state="[^"]*"><span>([^<]*)<\/span>/g)].map((m) => m[1]);
+      assert.deepStrictEqual(labelsOf(advancedMarkup), refused.map((entry) => entry.label),
+        "Advanced must render the compiler's rows in the compiler's own order");
+
+      /* And Simple's surviving rows keep their relative order too — proved on a record
+         carrying more than one refusal, since one row can be in any order. */
+      const twoRefused = [
+        ...coverage.slice(0, 3),
+        { intent: "reproducibility.seed", label: "seed", state: "unsupported", reason: "No seed." },
+        ...coverage.slice(3, 6),
+        { intent: "output.upscale", label: "upscale", state: "unsupported", reason: "No upscale." },
+        ...coverage.slice(6),
+      ];
+      const simpleTwo = context.generationCoverageMarkup(twoRefused, "simple");
+      assert.deepStrictEqual(labelsOf(simpleTwo), ["seed", "upscale"],
+        "Simple keeps its surviving rows in the order the compiler emitted them");
       const omitted = coverage.filter((entry) => entry.state === "omitted-by-design").length;
       note(`14. the compiled plan's ${coverage.length}-entry coverage record reaches the browser labelled in the compiler's own words; Simple raises only what the model refused and accounts for the other ${omitted} omissions by count, and Advanced renders all ${refused.length}`);
+    } finally { h.close(); }
+  }
+
+  /* =======================================================================
+     15. A SURFACE HAS TO BE PROVED, NOT NAMED.  [reviewer blocker 1]
+
+     `reference-automation` leaves resolution out of its vocabulary, because a coverage
+     sheet's size is a route input rather than a control a view is hiding. That makes it
+     the more permissive surface for one key — and the reviewer reproduced an ORDINARY
+     entity-reference request simply naming it, keeping 4K under Simple, and dispatching.
+
+     The proof is a marker the request already carries: `coverageJobType`, written by the
+     coverage dispatcher on every sheet and slot, whitelisted by this route before the job
+     row is built, and absent from the ordinary entity dialog entirely. */
+  {
+    const h = await harness();
+    try {
+      const entityProject = h.project();
+      entityProject.characters.push({ id: "KAI", name: "Kai", type: "Character", approvedFile: "KAI.png", continuityStates: [] });
+      h.saveProject(entityProject);
+      const entityBody = (extra) => ({
+        purpose: "entity-reference", entityList: "characters", entityId: "KAI", entityType: "character",
+        sourceBuildId: "entity-fixture", prompt: "Kai against neutral grey, three-quarter view.",
+        references: [{ key: "base", label: "Approved primary", role: "base", url: KAI_PNG }],
+        outputCount: 1, quality: "high", resolution: "4k", aspectRatio: "16:9", ...extra,
+      });
+
+      /* A. THE FORGERY. An ordinary entity request claiming the coverage surface. */
+      const forged = await h.post(entityBody({
+        clientRequestId: "forged",
+        generationRequest: Presentation.generationRequestDeclaration({ surface: "reference-automation", viewMode: "simple" }),
+      }));
+      assert.strictEqual(forged.status, 400, `a surface the request cannot prove must be refused: ${JSON.stringify(forged.data)}`);
+      assert.strictEqual(forged.data.code, "GENERATION_PLAN_SURFACE_MISMATCH", "the refusal must be typed");
+      assert.deepStrictEqual(forged.data.expectedSurfaces, ["fixed-image"],
+        "and must name the only surface this request's own contents support");
+      assert.strictEqual(h.calls.length, 0, "no provider call may be made");
+
+      /* B. THE ORDINARY REQUEST ON ITS OWN SURFACE, accepted — and its 4K stripped,
+            because on `fixed-image` under Simple that is exactly a control the view did
+            not render. */
+      const honest = await h.post(entityBody({
+        clientRequestId: "honest",
+        generationRequest: Presentation.generationRequestDeclaration({ surface: "fixed-image", viewMode: "simple" }),
+      }));
+      assert.strictEqual(honest.status, 200, `the same request on its own surface is accepted: ${JSON.stringify(honest.data)}`);
+      const honestRow = h.ledger().find((row) => row.clientRequestId === "honest");
+      assert.deepStrictEqual(honestRow.removedPayloadKeys, ["resolution"],
+        "and Simple strips the size it never offered");
+      await h.settle(honest.data.job.id);
+
+      /* C. REAL COVERAGE WORK, which proves the surface structurally and keeps its 4K. */
+      const coverage = await h.post(entityBody({
+        clientRequestId: "coverage",
+        coverageJobType: "sheet", coverageSheetType: "angles",
+        generationRequest: Presentation.generationRequestDeclaration({ surface: "reference-automation", viewMode: "simple" }),
+      }));
+      assert.strictEqual(coverage.status, 200, `real coverage work must still dispatch: ${JSON.stringify(coverage.data)}`);
+      const coverageRow = h.ledger().find((row) => row.clientRequestId === "coverage");
+      assert.strictEqual(coverageRow.resolution, "4k", "and keep the sheet resolution its panels depend on");
+      assert.deepStrictEqual(coverageRow.removedPayloadKeys, [], "with nothing stripped");
+      note("15. an ordinary entity request naming `reference-automation` is refused — the surface is proved from the coverageJobType marker the request already carries, not from the name it supplied; real coverage work keeps its 4K and the same request on `fixed-image` has its 4K stripped under Simple");
+    } finally { h.close(); }
+  }
+
+  /* =======================================================================
+     16. AN IDENTITY PAIR HAS TO AGREE WITH ITSELF.  [reviewer blocker 2]
+
+     The reviewer reproduced a request naming an unsupported option B beside the supported
+     model A: only the model half was read, A dispatched, and the ledger recorded a B/A
+     pair describing a screen that cannot have existed. */
+  {
+    const h = await harness();
+    try {
+      const buildId = seedFramePackage(h);
+      const send = (optionId, modelId, tag) => h.post({
+        ...framePlanBody(buildId, { clientRequestId: tag }),
+        generationRequest: Presentation.generationRequestDeclaration({
+          surface: "compiled-frame", viewMode: "advanced",
+          ...(optionId ? { selectedOptionId: optionId } : {}),
+          ...(modelId ? { selectedModelId: modelId } : {}),
+        }),
+      });
+      const OPTION_A = `${IMAGE_MODEL_ID}::fal-queue::t2i`;
+      const OPTION_B = "some-other-model::fal-queue::t2i";
+
+      /* A. The consistent, dispatchable pair. */
+      const aa = await send(OPTION_A, IMAGE_MODEL_ID, "pair-aa");
+      assert.strictEqual(aa.status, 200, `A option + A model must dispatch: ${JSON.stringify(aa.data)}`);
+      const aaRow = h.ledger().find((row) => row.clientRequestId === "pair-aa");
+      assert.strictEqual(aaRow.selectedOptionId, OPTION_A, "and record the option");
+      assert.strictEqual(aaRow.selectedModelId, IMAGE_MODEL_ID, "beside the model it names");
+      await h.settle(aa.data.job.id);
+
+      /* B. The consistent pair this route cannot dispatch — the existing refusal. */
+      const bb = await send(OPTION_B, "some-other-model", "pair-bb");
+      assert.strictEqual(bb.status, 409, `B option + B model must still be refused: ${JSON.stringify(bb.data)}`);
+      assert.strictEqual(bb.data.code, "GENERATION_MODEL_MISMATCH", "for the model this route dispatches");
+
+      /* C. THE REVIEWER'S CASE. The two names disagree with each other. */
+      const ba = await send(OPTION_B, IMAGE_MODEL_ID, "pair-ba");
+      assert.strictEqual(ba.status, 409, `B option + A model must be refused: ${JSON.stringify(ba.data)}`);
+      assert.strictEqual(ba.data.code, "GENERATION_OPTION_MODEL_MISMATCH", "for contradicting itself, not for the route");
+      assert.strictEqual(ba.data.optionModelId, "some-other-model", "and the refusal names what the option actually is");
+      assert.strictEqual(h.calls.length, 1, "no provider call beyond the one legitimate dispatch");
+      assert.strictEqual(h.ledger().find((row) => row.clientRequestId === "pair-ba"), undefined,
+        "and no contradictory pair is written to the ledger");
+
+      /* D. Both absent — the deterministic legacy fallback, unchanged. */
+      const none = await send("", "", "pair-none");
+      assert.strictEqual(none.status, 200, `naming neither must still dispatch: ${JSON.stringify(none.data)}`);
+      const noneRow = h.ledger().find((row) => row.clientRequestId === "pair-none");
+      assert.strictEqual(noneRow.selectedOptionId, "", "and claim no option");
+      assert.strictEqual(noneRow.selectedModelId, "", "and claim no model");
+      /* The route's own configured endpoint is what is recorded as dispatched. This
+         package carries an approved identity reference, so the compiled plan is an edit
+         and the edit endpoint is the truthful answer — which is exactly why the ledger
+         records what was DISPATCHED rather than echoing a selection nobody made. */
+      assert.strictEqual(noneRow.model, "openai/gpt-image-2/edit",
+        "while the route's own configured endpoint is what is recorded as dispatched");
+
+      /* E. An id this system never minted is refused rather than half-read. */
+      const junk = await send("not-an-option-id", IMAGE_MODEL_ID, "pair-junk");
+      assert.strictEqual(junk.status, 409, `an unmintable option id must be refused: ${JSON.stringify(junk.data)}`);
+      assert.strictEqual(junk.data.code, "GENERATION_OPTION_IDENTITY_INVALID", "and typed as such");
+      note("16. B-option + A-model is refused with GENERATION_OPTION_MODEL_MISMATCH naming what the option actually is, writes no ledger row and contacts no provider; A/A dispatches and records both, B/B keeps its existing route refusal, both-absent keeps the legacy fallback, and an unmintable option id is refused rather than half-read");
+    } finally { h.close(); }
+  }
+
+  /* =======================================================================
+     17. EQUALITY IS NOT AN EXCESS.  [reviewer blocker 3]
+
+     Three $0.10 children against a $0.30 ceiling. `0.1 + 0.1 + 0.1` is
+     0.30000000000000004 in binary floating point, so the third was refused while both
+     figures displayed as $0.30 — a filmmaker told they had exceeded a budget they had
+     exactly met. */
+  {
+    const h = await harness({ ratePerImage: 0.1 });
+    try {
+      const buildId = seedFramePackage(h);
+      const lease = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+      h.saveRuns([{
+        id: "run-exact", schemaVersion: 2, revision: 1, status: "running",
+        runnerId: "runner-exact", leaseExpiresAt: lease,
+        config: { maxImages: 9, outputsPerRequest: 1, maxSpend: { priced: true, amount: 0.3, quantity: 3, unitBasis: "image", ratePerUnit: 0.1 } },
+        usage: { imagesGenerated: 0 }, steps: {}, logs: [],
+      }]);
+      const runBody = (step) => ({
+        purpose: "frame", shotId: "SH-1", frameId: "FR-A", frameLabel: "A",
+        sourceBuildId: buildId, prompt: "Kai sets the parcel down in the hangar.",
+        aspectRatio: "16:9", outputCount: 1, quality: "high", resolution: "1k", clientRequestId: step,
+        automationRunId: "run-exact", automationStepKey: step, automationRunnerId: "runner-exact",
+        generationRequest: Presentation.generationRequestDeclaration({ surface: "automation-run", viewMode: "simple" }),
+      });
+      for (const step of ["e1", "e2", "e3"]) {
+        const result = await h.post(runBody(step));
+        assert.strictEqual(result.status, 200,
+          `${step}: three $0.10 children exactly meet a $0.30 ceiling and must all dispatch: ${JSON.stringify(result.data)}`);
+        await h.settle(result.data.job.id);
+      }
+      assert.strictEqual(h.calls.length, 3, "all three reach the provider");
+      const total = h.ledger().reduce((sum, row) => sum + Number(row.accounting?.estimate?.amount || 0), 0);
+      assert.notStrictEqual(total, 0.3,
+        `the reproduction is only meaningful while the raw sum is NOT exactly 0.3 — it is ${total}`);
+
+      /* One more priced child is a real excess and is refused. */
+      const over = await h.post(runBody("e4"));
+      assert.strictEqual(over.status, 409, `a fourth $0.10 child exceeds $0.30: ${JSON.stringify(over.data)}`);
+      assert.strictEqual(over.data.code, "AUTOMATION_SPEND_CAP", "for the ceiling");
+      assert.strictEqual(h.calls.length, 3, "and reaches no provider");
+      note(`17. three $0.10 children dispatch against a $0.30 ceiling whose raw float sum is ${total} — equality is not an excess — and the fourth is refused with AUTOMATION_SPEND_CAP`);
+    } finally { h.close(); }
+  }
+
+  /* =======================================================================
+     18. UNKNOWN COST IS NOT ZERO.  [reviewer blocker 4]
+
+     A monetary ceiling that cannot be checked has not been honoured; it has been skipped.
+     The reviewer reproduced an unpriced child dispatching under a numeric ceiling because
+     an unknown amount fell back to 0, and zero never moves a total. */
+  {
+    /* No configured rate, so the cost owner honestly answers `unknown` for every child. */
+    const h = await harness({ ratePerImage: 0 });
+    try {
+      const buildId = seedFramePackage(h);
+      const lease = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+      h.saveRuns([{
+        id: "run-unknown", schemaVersion: 2, revision: 1, status: "running",
+        runnerId: "runner-unknown", leaseExpiresAt: lease,
+        /* A NUMERIC ceiling, recorded when a rate existed. The rate is gone now. */
+        config: { maxImages: 9, outputsPerRequest: 1, maxSpend: { priced: true, amount: 0.3, quantity: 3, unitBasis: "image", ratePerUnit: 0.1 } },
+        usage: { imagesGenerated: 0 }, steps: {}, logs: [],
+      }]);
+      const body = {
+        purpose: "frame", shotId: "SH-1", frameId: "FR-A", frameLabel: "A",
+        sourceBuildId: buildId, prompt: "Kai sets the parcel down in the hangar.",
+        aspectRatio: "16:9", outputCount: 1, quality: "high", resolution: "1k", clientRequestId: "u1",
+        automationRunId: "run-unknown", automationStepKey: "u1", automationRunnerId: "runner-unknown",
+        generationRequest: Presentation.generationRequestDeclaration({ surface: "automation-run", viewMode: "simple" }),
+      };
+      const refused = await h.post(body);
+      assert.strictEqual(refused.status, 409, `an unpriceable child under a numeric ceiling must be refused: ${JSON.stringify(refused.data)}`);
+      assert.strictEqual(refused.data.code, "AUTOMATION_SPEND_UNKNOWN", "and typed as a cost-unavailable refusal");
+      assert(/cannot price this request/.test(String(refused.data.error)), `saying so honestly: ${refused.data.error}`);
+      assert(!/\$0\.00/.test(String(refused.data.error)) && !/free/i.test(String(refused.data.error)),
+        `and never calling an unknown cost zero or free: ${refused.data.error}`);
+      assert.strictEqual(h.calls.length, 0, "no provider call may be made");
+      assert.strictEqual(h.ledger().length, 0, "and no durable row is created");
+      note("18. under a numeric ceiling an unpriceable child is refused with AUTOMATION_SPEND_UNKNOWN before dispatch — unknown is never read as $0, and the refusal says neither zero nor free");
+    } finally { h.close(); }
+  }
+
+  /* =======================================================================
+     19. AN INCOMPLETE TOTAL CANNOT AUTHORISE MORE SPEND.  [reviewer blocker 4b]
+
+     The other half. A run already holding a child whose cost is unknown has a true spend
+     of at least the priced sum and possibly much more, so authorising another paid child
+     on the strength of the known subtotal is a guess dressed as a budget check. */
+  {
+    const h = await harness({ ratePerImage: 0.1 });
+    try {
+      const buildId = seedFramePackage(h);
+      const lease = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+      h.saveRuns([{
+        id: "run-partial", schemaVersion: 2, revision: 1, status: "running",
+        runnerId: "runner-partial", leaseExpiresAt: lease,
+        config: { maxImages: 9, outputsPerRequest: 1, maxSpend: { priced: true, amount: 0.3, quantity: 3, unitBasis: "image", ratePerUnit: 0.1 } },
+        usage: { imagesGenerated: 0 }, steps: {}, logs: [],
+      }]);
+      /* One child of this run whose recorded cost is honestly unknown — the state a run
+         reaches when a rate was removed part-way through, or an output whose billing
+         basis CineBraid does not know. The known subtotal is $0.10, well under $0.30. */
+      h.seedLedger([{
+        id: "job-priced", provider: "fal", purpose: "frame", status: "COMPLETED", outputCount: 1,
+        automationRunId: "run-partial", automationStepKey: "seeded-priced", shotId: "SH-1",
+        accounting: { costClass: "metered_api", recordedAt: "2026-08-27T00:00:00.000Z",
+          estimate: { costClass: "metered_api", unit: "usd", confidence: "estimated", amount: 0.1, breakdown: [] },
+          basis: { unitBasis: "image", quantity: 1, ratePerUnit: 0.1, rateSource: "generation.fal.estimatedCostPerImage" } },
+      }, {
+        id: "job-unknown", provider: "fal", purpose: "frame", status: "COMPLETED", outputCount: 1,
+        automationRunId: "run-partial", automationStepKey: "seeded-unknown", shotId: "SH-1",
+        accounting: { costClass: "metered_api", recordedAt: "2026-08-27T00:00:00.000Z",
+          estimate: { costClass: "metered_api", unit: "usd", confidence: "unknown" },
+          basis: { unitBasis: "image", quantity: 1, ratePerUnit: null, rateSource: null, unpricedReason: "no-configured-rate" } },
+      }]);
+      const refused = await h.post({
+        purpose: "frame", shotId: "SH-1", frameId: "FR-A", frameLabel: "A",
+        sourceBuildId: buildId, prompt: "Kai sets the parcel down in the hangar.",
+        aspectRatio: "16:9", outputCount: 1, quality: "high", resolution: "1k", clientRequestId: "p1",
+        automationRunId: "run-partial", automationStepKey: "p1", automationRunnerId: "runner-partial",
+        generationRequest: Presentation.generationRequestDeclaration({ surface: "automation-run", viewMode: "simple" }),
+      });
+      assert.strictEqual(refused.status, 409,
+        `a run whose committed spend is not fully known must not authorise another paid child: ${JSON.stringify(refused.data)}`);
+      assert.strictEqual(refused.data.code, "AUTOMATION_SPEND_UNKNOWN", "and typed as a cost-unavailable refusal");
+      assert(/no priced estimate/.test(String(refused.data.error)), `naming the gap: ${refused.data.error}`);
+      assert.strictEqual(h.calls.length, 0, "no provider call may be made");
+      note("19. a run holding one $0.10 child and one child of unknown cost refuses the next request under its $0.30 ceiling — a known subtotal below a ceiling is not proof, because the unknown child is excluded from it");
     } finally { h.close(); }
   }
 
