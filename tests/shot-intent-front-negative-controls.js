@@ -639,6 +639,127 @@ mustFailAsync("NC-24 an optional unit's declared inputs are dropped", "still a c
   assert(owed > 0, "the cast the shot declares is still a current obligation");
 });
 
+/* ---------------------------------------------------------------------------
+   THE ROUTE-FRESHNESS CONTROLS.
+
+   Each breaks ONE half of the route dependency and proves packageStaleReasons()
+   then misses a real route change — or invents one it should not. The detector is
+   the shipped one in every case; no control builds a parallel comparator.
+   --------------------------------------------------------------------------- */
+function freshnessProject(route) {
+  const shot = newShotRecord({
+    keyframes: [
+      { id: "frame-a-new", label: "A", title: "Opening frame A", winner: "HISTORIC-A.png", required: true, generationPackages: [] },
+      { id: "frame-b-new", label: "B", title: "Closing frame B", winner: "HISTORIC-B.png", required: true, generationPackages: [] },
+    ],
+    clips: [{ id: "seg-a", suffix: "a", label: "A", title: "Primary motion", dur: 5, kind: "i2v", note: "",
+              motionPrompt: "The ship lifts away.", fromFrame: "frame-a-new", toFrame: "frame-b-new", generationPackages: [] }],
+  });
+  if (route) shot.deliveryRoute = route;
+  return projectWith(shot);
+}
+const FRESHNESS_WALK = [
+  'const s = P.shots.find((row) => row.id === "SC-01-01");',
+  "const unit = s.clips[0];",
+  'const motionPack = { id: "pack-motion", segmentId: unit.id, revision: 1, scope: "motion", kind: "motion", profileId: "minimax-h3/i2v", mode: "i2v", dependencySnapshot: null };',
+  'const framePack = { id: "pack-frame", frameId: "frame-a-new", revision: 1, scope: "frame", kind: "frame", profileId: "gpt-image-2/t2i", mode: "t2i", dependencySnapshot: null };',
+  "unit.generationPackages = [motionPack];",
+  "s.keyframes[0].generationPackages = [framePack];",
+  "motionPack.dependencySnapshot = JSON.parse(JSON.stringify(currentSnapshotForPackage(s, motionPack)));",
+  "framePack.dependencySnapshot = JSON.parse(JSON.stringify(currentSnapshotForPackage(s, framePack)));",
+  'declareShotRoute(s, "r2v");',
+  "return { motion: packageStaleReasons(s, motionPack), frame: packageStaleReasons(s, framePack) };",
+].join("\n");
+
+/* ===========================================================================
+   NC-25 — THE PACKAGE STOPS RECORDING THE ROUTE IT WAS BUILT AGAINST.
+
+   The exact defect the correction exists to remove: with no route in the evidence,
+   the comparator has nothing to compare and a real i2v -> r2v change reports clean.
+   =========================================================================== */
+mustFailAsync("NC-25 the package records no route", "must report the route change", async () => {
+  const project = freshnessProject("i2v");
+  const page = await render("#/shot/SC-01-01", project, {
+    scan: scanFor(project),
+    mutateSource: pageMutation("shared-build-history.js",
+      "      deliveryRoute: shotRouteOwner()(shot?.deliveryRoute),",
+      "",
+      "NC-25"),
+  });
+  const seen = run(page.context, FRESHNESS_WALK);
+  assert(seen.motion.some((reason) => /delivery route changed/.test(reason)),
+    "the freshness owner must report the route change");
+});
+
+/* ===========================================================================
+   NC-26 — THE COMPARATOR STOPS COMPARING IT.
+
+   The other half: the evidence is recorded and nothing reads it.
+   =========================================================================== */
+mustFailAsync("NC-26 the comparator ignores the recorded route", "must report the route change", async () => {
+  const project = freshnessProject("i2v");
+  const page = await render("#/shot/SC-01-01", project, {
+    scan: scanFor(project),
+    mutateSource: pageMutation("shared-build-history.js",
+      '    if (comparable(saved, at, "deliveryRoute") && String(saved.deliveryRoute || "") !== String(at.deliveryRoute || ""))',
+      "    if (false)",
+      "NC-26"),
+  });
+  const seen = run(page.context, FRESHNESS_WALK);
+  assert(seen.motion.some((reason) => /delivery route changed/.test(reason)),
+    "the freshness owner must report the route change");
+});
+
+/* ===========================================================================
+   NC-27 — EVERY PACKAGE BECOMES ROUTE-SENSITIVE.
+
+   The blanket revision bump the brief forbids. `pack.segmentId` is what makes the
+   route motion-only evidence; remove that discriminator and a frame package — whose
+   compiled t2i prompt does not branch on the route at all — goes stale too.
+   =========================================================================== */
+mustFailAsync("NC-27 a frame package is staled by a route change", "never be staled by a route change", async () => {
+  const project = freshnessProject("i2v");
+  const page = await render("#/shot/SC-01-01", project, {
+    scan: scanFor(project),
+    mutateSource: pageMutation("shared-build-history.js",
+      "  function packageMotionInputs(shot, pack) {\n    if (!pack?.segmentId) return null;",
+      "  function packageMotionInputs(shot, pack) {\n    if (false) return null;",
+      "NC-27"),
+  });
+  const seen = run(page.context, FRESHNESS_WALK);
+  assert.deepStrictEqual(seen.frame, [],
+    "a frame package must never be staled by a route change");
+});
+
+/* ===========================================================================
+   NC-28 — THE LEGACY SKIP IS REMOVED.
+
+   Drop the both-sides rule for this one key and every package compiled before the
+   route was evidence reads stale on sight, from evidence nobody has — the migration
+   pressure the correction was written to avoid.
+   =========================================================================== */
+mustFail("NC-28 a legacy package is staled for a route it never recorded", "never staled for one", () => {
+  const source = readLF(path.join(PUBLIC, "shared-build-history.js"));
+  const mutated = mutateIn(source,
+    '    if (comparable(saved, at, "deliveryRoute") && String(saved.deliveryRoute || "") !== String(at.deliveryRoute || ""))',
+    '    if (String(saved.deliveryRoute || "") !== String(at.deliveryRoute || ""))',
+    "NC-28");
+  const compiled = new Module(path.join(PUBLIC, "shared-build-history.js"), null);
+  compiled.filename = path.join(PUBLIC, "shared-build-history.js");
+  compiled.paths = Module._nodeModulePaths(PUBLIC);
+  compiled._compile(mutated, compiled.filename);
+  const shot = { id: "SH-LEGACY", deliveryRoute: "r2v", creationBrief: { motionDuration: 5, motionProfileId: "minimax-h3/i2v" },
+    keyframes: [{ id: "frame-a", winner: "A.png" }, { id: "frame-b", winner: "B.png" }],
+    clips: [{ id: "seg-a", suffix: "a", kind: "i2v", dur: 5, motionPrompt: "x", fromFrame: "frame-a", toFrame: "frame-b" }] };
+  const pack = { id: "p", segmentId: "seg-a", profileId: "minimax-h3/i2v", mode: "i2v" };
+  const legacy = { ...pack, dependencySnapshot: {
+    ...compiled.exports.packageProjectInputs({ mediaAssets: [] }, shot, pack, compiled.exports.packageDirection(shot, pack)),
+    durationSeconds: 5, profileId: "minimax-h3/i2v" } };
+  const answer = compiled.exports.packageProjectFreshness({ mediaAssets: [] }, shot, legacy);
+  assert(!answer.reasons.some((reason) => /delivery route/.test(reason)),
+    "a package that recorded no route is never staled for one");
+});
+
 async function main() {
   for (const control of QUEUE) await control();
   console.log("Shot intent at the front negative controls passed:");

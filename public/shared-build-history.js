@@ -1,8 +1,21 @@
 (function (root, factory) {
-  const api = factory();
+  /* ONE OWNER IS PASSED IN, and it is resolved LATE on purpose.
+     public/index.html loads this module BEFORE public/shared-shot-route.js, so a
+     browser-side `root.canonicalShotRoute` captured here would be `undefined` forever.
+     The live global object is handed over instead and the function is read at CALL
+     time — see shotRouteOwner(), which fails loudly rather than falling back, because a
+     fallback would be a second reading of the route vocabulary. */
+  const api = factory({ route: typeof module === "object" && module.exports ? require("./shared-shot-route.js") : root });
   if (typeof module === "object" && module.exports) module.exports = api;
   if (root) Object.assign(root, api);
-})(typeof window !== "undefined" ? window : globalThis, function () {
+})(typeof window !== "undefined" ? window : globalThis, function (OWNERS) {
+  const ROUTE = OWNERS && OWNERS.route;
+  function shotRouteOwner() {
+    const owner = ROUTE && ROUTE.canonicalShotRoute;
+    if (typeof owner !== "function")
+      throw new Error("shared-build-history.js needs canonicalShotRoute() from shared-shot-route.js; load that module first");
+    return owner;
+  }
   const DEFAULT_PROMPT_BUILD_RETENTION = 12;
 
   function clean(value) { return String(value || "").trim(); }
@@ -334,7 +347,34 @@
   }
 
   /* The motion inputs a package's own text STATES, read from the shot as it is now.
-     `mode` is deliberately absent - see the note above. */
+     `mode` is deliberately absent - see the note above.
+
+     THE DECLARED DELIVERY ROUTE IS RECORDED HERE, AND ONLY HERE.
+
+     A route is a durable statement about how the SHOT is delivered, and its whole
+     vocabulary - t2v/i2v/flf/r2v/hybrid - is about motion. A motion prompt compiles
+     through a different branch with a different endpoint contract for each of them, so
+     changing the route changes what this package was made FOR. That is dependency
+     drift, and it is what the accepted decision "changing the route stales affected
+     packages" means.
+
+     WHICH IS WHY IT IS NOT IN packageProjectInputs(). That reader answers for EVERY
+     package; a frame package's compiled t2i prompt does not branch on the shot's
+     delivery route, and changing i2v to r2v does not make the picture it describes
+     wrong - it makes the frame no longer REQUIRED, which is readiness's answer and
+     already given. Recording the route there would stale every frame package on every
+     route change: a blanket revision bump wearing a dependency's name. `pack.segmentId`
+     is the discriminator this function has always used for "this is a motion package",
+     and the route rides it.
+
+     CANONICAL, NEVER INFERRED. The value comes from shared-shot-route.js, so a stored
+     token this build cannot read folds to "" exactly as it does everywhere else, and an
+     undeclared shot records "" - a real fact about the build, not a guess. Nothing here
+     reads a frame, a clip kind, a profile, a provider or a filename to produce one.
+
+     BOTH SIDES CAN SUPPLY IT, unlike `mode`: `shot.deliveryRoute` is a plain durable
+     field, so the server's packageProjectFreshness() reports route drift too and the
+     two evidence sets agree rather than diverging. */
   function packageMotionInputs(shot, pack) {
     if (!pack?.segmentId) return null;
     const brief = shot?.creationBrief || {};
@@ -342,6 +382,7 @@
     return {
       durationSeconds: Number(brief.motionDuration || unit?.dur || 0) || 0,
       profileId: String(brief.motionProfileId || pack.profileId || ""),
+      deliveryRoute: shotRouteOwner()(shot?.deliveryRoute),
     };
   }
 
@@ -381,7 +422,20 @@
       reasons.push("execution method changed to " + String(at.mode || "none").toUpperCase() + " - the compiled prompt is " + String(saved.mode || "none").toUpperCase());
     if (comparable(saved, at, "profileId") && String(saved.profileId || "") !== String(at.profileId || ""))
       reasons.push("target model changed to " + String(at.profileId || "none") + " - the compiled prompt targets " + String(saved.profileId || "none"));
+    /* THE DELIVERY ROUTE, under the same rule as every field above it: compared only
+       when BOTH sides recorded one. A package compiled before the route was captured
+       has no `deliveryRoute` key, so it is skipped rather than declared stale on
+       evidence nobody has - which is how a legacy package is handled without inventing
+       a route it never had. */
+    if (comparable(saved, at, "deliveryRoute") && String(saved.deliveryRoute || "") !== String(at.deliveryRoute || ""))
+      reasons.push("delivery route changed to " + routeWord(at.deliveryRoute) + " - this prompt was compiled for " + routeWord(saved.deliveryRoute));
     return [...new Set(reasons)];
+  }
+  /* "NOT DECIDED" rather than "NONE": withdrawing a route is a real production state
+     and reads as one, where `none` would read like a missing value. */
+  function routeWord(value) {
+    const route = String(value || "");
+    return route ? route.toUpperCase() : "NOT DECIDED";
   }
   function missingReferenceReason(missing) {
     const count = missing.length === 1 ? "an input" : missing.length + " inputs";

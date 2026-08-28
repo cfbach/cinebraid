@@ -22,11 +22,14 @@
  *      "mark this final" fall-through — for a new shot AND for a legacy one
  *   D  every declared route keeps exactly the requirements its canonical owner states
  *   E  declaring, changing and withdrawing a route moves requirements and never media
- *   F  the freshness owner is asked rather than restated, and the accepted intent gate
- *      is what refuses a package the new route cannot run
+ *   F  a route change stales the AFFECTED packages through the one freshness owner,
+ *      leaves frame packages and legacy packages alone, and does not replace the
+ *      execution gate that separately refuses to run an incompatible target
  *   G  nothing infers a route — not a frame, a candidate, a clip, a package or a render
  *   H  inputs and the route choice are in front of the filmmaker before any production
  *      CTA, and Look/Blocking stay optional
+ *   I  shotApprovalComplete() stays a workflow sign-off answer: route-invariant, on no
+ *      persistent surface, and unable to contradict current-route readiness
  *
  * NO PROVIDER, NO PAID ROUTE, NO NETWORK, NO PROJECT DATA. Every fixture is built in
  * memory and the repository's own projects/ directory is never opened.
@@ -627,69 +630,210 @@ function checkRouteChanges() {
 }
 
 /* ===========================================================================
-   F — THE FRESHNESS OWNER, AND WHAT ACTUALLY REFUSES A ROUTE-INCOMPATIBLE PACKAGE.
+   F — ROUTE DEPENDENCY FRESHNESS, THROUGH THE ONE FRESHNESS OWNER.
+
+   A route is a durable statement about how the shot is delivered, and a motion prompt
+   compiles through a different branch with a different endpoint contract for each of
+   them. So changing the route changes what an existing motion package was made FOR, and
+   that is dependency drift — reported by packageStaleReasons() / packageDependencyDrift()
+   like every other dependency, from evidence the package recorded at build time.
+
+   NOTHING HERE IS A SECOND DETECTOR. Every answer below comes out of the shipped
+   packageStaleReasons() in a rendered page, or out of the server's
+   packageProjectFreshness() in Node — one comparator, two evidence sets.
    =========================================================================== */
-async function checkFreshnessAndGate() {
-  const project = projectWith(newShotRecord("SC-01-01", "SC-01", {
-    deliveryRoute: "i2v",
-    keyframes: [{ id: "frame-a-new", label: "A", title: "Opening frame A", winner: "HISTORIC-A.png", required: true, generationPackages: [] }],
-    candidateFiles: [{ stored: "HISTORIC-A.png", original: "HISTORIC-A.png", decision: "approved", mediaType: "image", frameId: "frame-a-new" }],
-    clips: [{ id: "seg-a", suffix: "a", label: "A", title: "Primary motion", dur: 5, kind: "i2v", note: "", motionPrompt: "The ship lifts away.", fromFrame: "frame-a-new", toFrame: "", generationPackages: [], motionPlan: null }],
-  }));
+function freshnessShot(route) {
+  const shot = newShotRecord("SC-01-01", "SC-01", {
+    keyframes: [
+      { id: "frame-a-new", label: "A", title: "Opening frame A", winner: "HISTORIC-A.png", required: true, generationPackages: [] },
+      { id: "frame-b-new", label: "B", title: "Closing frame B", winner: "HISTORIC-B.png", required: true, generationPackages: [] },
+    ],
+    candidateFiles: [
+      { stored: "HISTORIC-A.png", original: "HISTORIC-A.png", decision: "approved", mediaType: "image", frameId: "frame-a-new" },
+      { stored: "HISTORIC-B.png", original: "HISTORIC-B.png", decision: "approved", mediaType: "image", frameId: "frame-b-new" },
+    ],
+    clips: [{ id: "seg-a", suffix: "a", label: "A", title: "Primary motion", dur: 5, kind: "i2v", note: "", motionPrompt: "The ship lifts away.", fromFrame: "frame-a-new", toFrame: "frame-b-new", generationPackages: [], motionPlan: null }],
+  });
+  if (route) shot.deliveryRoute = route;
+  return shot;
+}
+
+/* One walk: build a motion package and a frame package under `from`, move the shot to
+   `to`, and report what the SHIPPED owner says at each step. `to === ""` withdraws. */
+const FRESHNESS_WALK = [
+  'const s = P.shots.find((row) => row.id === "SC-01-01");',
+  'const unit = s.clips[0];',
+  'const motionPack = { id: "pack-motion", segmentId: unit.id, revision: 1, scope: "motion", kind: "motion", profileId: "minimax-h3/i2v", mode: "i2v", dependencySnapshot: null };',
+  'const framePack = { id: "pack-frame", frameId: "frame-a-new", revision: 1, scope: "frame", kind: "frame", profileId: "gpt-image-2/t2i", mode: "t2i", dependencySnapshot: null };',
+  'unit.generationPackages = [motionPack];',
+  's.keyframes[0].generationPackages = [framePack];',
+  '/* THE SAVED SNAPSHOT IS THE ONE THE PRODUCT WOULD HAVE RECORDED, taken through the',
+  '   shipped writer rather than hand-written — a hand-written one differs from the live',
+  '   answer in some field nobody meant to test and "stale" stops meaning anything. */',
+  'motionPack.dependencySnapshot = JSON.parse(JSON.stringify(currentSnapshotForPackage(s, motionPack)));',
+  'framePack.dependencySnapshot = JSON.parse(JSON.stringify(currentSnapshotForPackage(s, framePack)));',
+  'const recordedRoute = { motion: motionPack.dependencySnapshot.deliveryRoute, frame: framePack.dependencySnapshot.deliveryRoute };',
+  'const before = { motion: packageStaleReasons(s, motionPack), frame: packageStaleReasons(s, framePack) };',
+  'if (TARGET) declareShotRoute(s, TARGET); else clearShotRoute(s);',
+  'const after = { motion: packageStaleReasons(s, motionPack), frame: packageStaleReasons(s, framePack) };',
+  '/* F — UNRELATED METADATA IS NOT RECORDED DEPENDENCY EVIDENCE. None of these three is',
+  '   in any snapshot, so none of them may produce a reason of its own. */',
+  's.title = "Renamed shot"; s.notes = "a production note"; s.safe = "safe area";',
+  'const unrelated = packageStaleReasons(s, motionPack);',
+  'return {',
+  '  recordedRoute, before, after, unrelated,',
+  '  storedNow: Object.prototype.hasOwnProperty.call(s, "deliveryRoute") ? s.deliveryRoute : null,',
+  '  media: { frames: s.keyframes.map((f) => f.winner || ""), candidates: (s.candidateFiles || []).map((c) => c.stored),',
+  '           clips: s.clips.length, motionPackages: unit.generationPackages.length, framePackages: s.keyframes[0].generationPackages.length },',
+  '};',
+].join("\n");
+
+async function checkRouteFreshness() {
+  const CASES = [
+    { name: "A", from: "i2v", to: "i2v", stale: false },
+    { name: "B", from: "i2v", to: "r2v", stale: true },
+    { name: "C", from: "flf", to: "r2v", stale: true },
+    { name: "D", from: "r2v", to: "i2v", stale: true },
+    { name: "E", from: "i2v", to: "", stale: true },
+    { name: "G", from: "", to: "i2v", stale: true },
+    { name: "H", from: "", to: "", stale: false },
+  ];
+  const observed = [];
+  for (const row of CASES) {
+    const project = projectWith(freshnessShot(row.from));
+    approveFrame(project, "SC-01-01", "frame-a-new", "HISTORIC-A.png");
+    approveFrame(project, "SC-01-01", "frame-b-new", "HISTORIC-B.png");
+    const page = await render("#/shot/SC-01-01", project, { scan: scanFor(project) });
+    const seen = run(page.context, `const TARGET = ${JSON.stringify(row.to)};\n${FRESHNESS_WALK}`);
+    const label = `${row.name}. ${row.from || "undecided"} -> ${row.to || "withdrawn"}`;
+
+    /* The package records the route it was built against, canonically. */
+    assert.strictEqual(seen.recordedRoute.motion, row.from,
+      `${label}: the motion package must record the route it was compiled against`);
+    assert.strictEqual(seen.recordedRoute.frame, undefined,
+      `${label}: and a FRAME package must record none — its prompt does not branch on the route`);
+    assert.deepStrictEqual(seen.before, { motion: [], frame: [] },
+      `${label}: precondition — both packages are fresh before the route moves`);
+    assert.strictEqual(seen.storedNow, row.to || null, `${label}: the route change landed on the record`);
+
+    const routeReasons = seen.after.motion.filter((reason) => /delivery route changed/.test(reason));
+    if (row.stale) {
+      assert.strictEqual(routeReasons.length, 1,
+        `${label}: the freshness owner must report exactly one route drift, got ${JSON.stringify(seen.after.motion)}`);
+      assert(new RegExp(`compiled for ${row.from ? row.from.toUpperCase() : "NOT DECIDED"}`).test(routeReasons[0]),
+        `${label}: naming the route it was compiled for, got ${routeReasons[0]}`);
+    } else {
+      assert.deepStrictEqual(seen.after.motion, [],
+        `${label}: an unchanged route is not drift, got ${JSON.stringify(seen.after.motion)}`);
+    }
+    /* AFFECTED PACKAGES ONLY. */
+    assert.deepStrictEqual(seen.after.frame, [],
+      `${label}: a frame package must never be staled by a route change`);
+    /* F — and nothing unrecorded may add a reason of its own. */
+    assert.deepStrictEqual(seen.unrelated, seen.after.motion,
+      `${label}: renaming the shot and editing its notes must fabricate no staleness`);
+    /* HISTORICAL MEDIA IS UNTOUCHED BY ANY OF IT. */
+    assert.deepStrictEqual(seen.media, {
+      frames: ["HISTORIC-A.png", "HISTORIC-B.png"],
+      candidates: ["HISTORIC-A.png", "HISTORIC-B.png"],
+      clips: 1, motionPackages: 1, framePackages: 1,
+    }, `${label}: a stale package is still a package, and no frame, candidate or clip moved`);
+    observed.push(`${label}=${row.stale ? "stale" : "fresh"}`);
+  }
+  note(`F1. route dependency drift, all through packageStaleReasons(): ${observed.join(", ")}; `
+    + "frame packages record no route and are never staled by one, and unrelated shot metadata fabricates nothing");
+}
+
+/* F2 — THE LEGACY PACKAGE, AND THE RULE THAT ALREADY COVERED IT. A package compiled
+   before the route became evidence has no `deliveryRoute` key, and packageDependencyDrift()
+   compares a field only when BOTH sides recorded one. No migration, no inferred history,
+   no second model — the general rule the comparator already applies to every other key. */
+function checkLegacyPackage() {
+  const History = require("../public/shared-build-history.js");
+  const shot = {
+    id: "SH-LEGACY", deliveryRoute: "r2v",
+    creationBrief: { motionDuration: 5, motionProfileId: "minimax-h3/i2v" },
+    keyframes: [{ id: "frame-a", winner: "A.png" }, { id: "frame-b", winner: "B.png" }],
+    clips: [{ id: "seg-a", suffix: "a", kind: "i2v", dur: 5, motionPrompt: "x", fromFrame: "frame-a", toFrame: "frame-b" }],
+  };
+  const project = { mediaAssets: [] };
+  const pack = { id: "p", segmentId: "seg-a", profileId: "minimax-h3/i2v", mode: "i2v" };
+
+  /* Built the way the product builds one now, under i2v, then read under r2v. */
+  const builtNow = {
+    ...pack,
+    dependencySnapshot: {
+      ...History.packageProjectInputs(project, shot, pack, History.packageDirection(shot, pack)),
+      ...History.packageMotionInputs({ ...shot, deliveryRoute: "i2v" }, pack),
+    },
+  };
+  const current = History.packageProjectFreshness(project, shot, builtNow);
+  assert.strictEqual(current.current, false, "F2: the server's evidence set reports the route change too");
+  assert(current.reasons.some((reason) => /delivery route changed to R2V/.test(reason)),
+    `F2: one comparator, two evidence sets — the server names the same drift, got ${JSON.stringify(current.reasons)}`);
+
+  /* The same package with the route key removed, which is exactly what a package
+     compiled before this correction carries. */
+  const legacy = { ...pack, dependencySnapshot: { ...builtNow.dependencySnapshot } };
+  delete legacy.dependencySnapshot.deliveryRoute;
+  const legacyAnswer = History.packageProjectFreshness(project, shot, legacy);
+  assert(!legacyAnswer.reasons.some((reason) => /delivery route/.test(reason)),
+    `F2: a package that recorded no route is never staled for one, got ${JSON.stringify(legacyAnswer.reasons)}`);
+  assert.strictEqual(legacyAnswer.recorded, true,
+    "F2: and it is still a package with recorded evidence — the absence is one field, not the snapshot");
+
+  /* CANONICAL, NEVER A SECOND NORMALISER. */
+  assert.strictEqual(History.packageMotionInputs({ ...shot, deliveryRoute: "  I2V  " }, pack).deliveryRoute, "i2v",
+    "F2: case and surrounding whitespace fold, because the route owner folds them");
+  assert.strictEqual(History.packageMotionInputs({ ...shot, deliveryRoute: "GENERATE (FLF)" }, pack).deliveryRoute, "",
+    "F2: and a token this build cannot read is absent rather than the nearest valid one");
+  assert.strictEqual(History.packageMotionInputs(shot, { id: "f", frameId: "frame-a" }), null,
+    "F2: a package with no motion unit gets no motion evidence at all, route included");
+  /* THE LOAD ORDER THAT MAKES LATE RESOLUTION NECESSARY, stated so a later reader does
+     not "tidy" the route owner into a load-time capture: index.html loads this module
+     BEFORE shared-shot-route.js, and F1 above answers correctly from inside a rendered
+     page built in exactly that order — which is the executable half of this claim. */
+  const indexHtml = readLF("public/index.html");
+  assert(indexHtml.indexOf("shared-build-history.js") < indexHtml.indexOf("shared-shot-route.js"),
+    "F2: the shipped page still loads shared-build-history.js first, which is why the route owner is read at call time");
+  note("F2. legacy: a package that recorded no route is skipped by the comparator's own both-sides rule — "
+    + "no migration and no inferred history; the server's evidence set reports the same route drift the browser does; "
+    + "an unreadable stored token folds to absent through the one route owner");
+}
+
+/* F3 — BOTH TRUTHS, AND THEY ARE DIFFERENT TRUTHS. "This package was built for an
+   earlier route" is what the freshness owner says; "this target cannot run under the
+   route you have now" is what Slice 5b's execution gate says. The correction adds the
+   first without weakening the second, and they agree on the same shot. */
+async function checkExecutionCompatibility() {
+  const project = projectWith(freshnessShot("i2v"));
   approveFrame(project, "SC-01-01", "frame-a-new", "HISTORIC-A.png");
   const page = await render("#/shot/SC-01-01", project, { scan: scanFor(project) });
-
-  /* F1 — THE FRESHNESS OWNER IS ASKED, NOT RESTATED. A package is compiled under one
-     route and read back under another; whatever packageStaleReasons() answers is what
-     this suite records. It is asked twice — unchanged and changed — so a suite that
-     recorded a constant would be visible as one. */
-  const freshness = run(page.context, `
+  const both = run(page.context, `
     const s = P.shots.find((row) => row.id === "SC-01-01");
     const unit = s.clips[0];
-    const pack = {
-      id: "pack-1", segmentId: unit.id, revision: 1, scope: "motion", kind: "motion",
-      profileId: "minimax-h3/i2v", mode: "i2v", dependencySnapshot: null,
-    };
-    unit.generationPackages = [pack];
-    /* THE SAVED SNAPSHOT IS THE ONE THE PRODUCT WOULD HAVE RECORDED, taken through the
-       shipped reader rather than hand-written — a hand-written one differs from the
-       live answer in some field nobody meant to test and "stale" stops meaning
-       anything. */
-    pack.dependencySnapshot = JSON.parse(JSON.stringify(currentSnapshotForPackage(s, pack)));
-    const before = packageStaleReasons(s, pack);
-    declareShotRoute(s, "r2v");
-    const after = packageStaleReasons(s, pack);
-    /* And the same question once the change also moves the evidence the owner DOES
-       record, so the comparator is demonstrably alive on this fixture. */
-    s.creationBrief.motionDuration = 9;
-    const moved = packageStaleReasons(s, pack);
-    return { before, after, moved };`);
-  assert.deepStrictEqual(freshness.before, [], "F1: an unchanged package is not stale");
-  assert(freshness.moved.length > 0,
-    "F1: precondition — the freshness owner must be alive on this fixture, or 'no reasons' below proves nothing");
-  assert.deepStrictEqual(freshness.after, freshness.before,
-    "F1: the freshness owner records no route in a package's dependency evidence, so a route change alone reports "
-    + "no staleness reason. This suite asserts what the owner says rather than inventing a reason beside it — "
-    + "the accepted refusal for a route-incompatible package is the intent gate below, which is stronger than stale.");
-
-  /* F2 — WHAT A ROUTE CHANGE ACTUALLY DOES TO A PACKAGE, through the gate Slice 5b
-     shipped for it: a stored target whose method the declared route does not admit
-     stops being executable, and says so in a sentence. Nothing is deleted. */
-  const gate = run(page.context, `
-    const s = P.shots.find((row) => row.id === "SC-01-01");
     const profile = { id: "minimax-h3/i2v", mode: "i2v" };
-    declareShotRoute(s, "i2v");
-    const underI2v = guidedMotionProfileExecutable(s, profile);
+    const pack = { id: "pack-1", segmentId: unit.id, revision: 1, scope: "motion", kind: "motion", profileId: profile.id, mode: "i2v", dependencySnapshot: null };
+    unit.generationPackages = [pack];
+    pack.dependencySnapshot = JSON.parse(JSON.stringify(currentSnapshotForPackage(s, pack)));
+    const underI2v = { executable: !!guidedMotionProfileExecutable(s, profile), stale: packageStaleReasons(s, pack) };
     declareShotRoute(s, "r2v");
-    const underR2v = guidedMotionProfileExecutable(s, profile);
-    const refusal = guidedMotionIntentRefusal(s, profile);
-    return { underI2v: !!underI2v, underR2v: !!underR2v, refusal: String(refusal || ""), clips: s.clips.length, frames: s.keyframes.map((f) => f.winner || "") };`);
-  assert.strictEqual(gate.underI2v, true, "F2: an i2v target is executable under an i2v route");
-  assert.strictEqual(gate.underR2v, false, "F2: and stops being executable when the route becomes r2v");
-  assert(gate.refusal.length > 0, "F2: the refusal is a sentence, not a silence");
-  assert.strictEqual(gate.clips, 1, "F2: and nothing about the motion unit was deleted");
-  assert.deepStrictEqual(gate.frames, ["HISTORIC-A.png"], "F2: nor the approved frame it was compiled from");
-  note("F. freshness: packageStaleReasons() reports no reason for a route change alone — the route is not in a package's recorded dependency evidence — and the accepted Shot Intent gate is what refuses a now-incompatible target, without deleting the package, the clip or the frame");
+    const underR2v = { executable: !!guidedMotionProfileExecutable(s, profile), stale: packageStaleReasons(s, pack),
+                       refusal: String(guidedMotionIntentRefusal(s, profile) || "") };
+    return { underI2v, underR2v, clips: s.clips.length, packages: unit.generationPackages.length,
+             frames: s.keyframes.map((f) => f.winner || "") };`);
+  assert.strictEqual(both.underI2v.executable, true, "F3: an i2v target is executable under an i2v route");
+  assert.deepStrictEqual(both.underI2v.stale, [], "F3: and its package is fresh");
+  assert.strictEqual(both.underR2v.executable, false, "F3: it stops being executable when the route becomes r2v");
+  assert(both.underR2v.refusal.length > 0, "F3: and the refusal is a sentence, not a silence");
+  assert(both.underR2v.stale.some((reason) => /delivery route changed/.test(reason)),
+    `F3: while the freshness owner separately reports the package stale, got ${JSON.stringify(both.underR2v.stale)}`);
+  assert.strictEqual(both.clips, 1, "F3: nothing about the motion unit was deleted");
+  assert.strictEqual(both.packages, 1, "F3: nor the package — stale is a reading, not a removal");
+  assert.deepStrictEqual(both.frames, ["HISTORIC-A.png", "HISTORIC-B.png"], "F3: nor the approved frames");
+  note("F3. both truths agree and stay distinct: the package reads STALE because its route dependency changed, "
+    + "and the execution gate separately refuses to run the incompatible target — neither deletes the package, "
+    + "the clip or the frames");
 }
 
 /* ===========================================================================
@@ -830,6 +974,100 @@ async function checkHierarchy() {
   note("H. hierarchy: a fresh shot opens on Inputs with the reference controls open and the route control expanded and stating that nothing was chosen; the single primary action is the decision, no production CTA is drawn, Look/Inputs stay optional, and a stored stage still resumes");
 }
 
+/* ===========================================================================
+   I — THE shotApprovalComplete() BOUNDARY, PROVED RATHER THAN ASSUMED.
+
+   public/app.js's `shotApprovalComplete()` still reads `frame.required`, the default
+   flag no filmmaker-facing control writes. This slice deliberately did not change it,
+   and this section is why that is safe: it is a WORKFLOW SIGN-OFF answer — has every
+   frame and motion unit this shot carries been approved — and it is ROUTE-INVARIANT.
+
+   It cannot contradict current-route readiness because it never reaches a surface that
+   states current-route work. Its only live consumer is confirmActApproveTake()'s
+   `workflowStatus` write and the one transient sentence beside it;
+   shotStageFacts("review")'s gap text is unreachable, because its only callers are the
+   deliberately-inert legacy stage writers.
+
+   If any of that stops being true, this section fails before the boundary becomes a
+   product defect.
+   =========================================================================== */
+function approvalBoundaryShot(route) {
+  const shot = newShotRecord("SC-01-01", "SC-01", {
+    keyframes: [
+      { id: "frame-a-new", label: "A", title: "Opening frame A", winner: "A.png", required: true, generationPackages: [] },
+      { id: "frame-b-new", label: "B", title: "Closing frame B", winner: null, required: true, generationPackages: [] },
+    ],
+  });
+  if (route) shot.deliveryRoute = route;
+  return shot;
+}
+
+async function checkApprovalBoundary() {
+  const seen = {};
+  for (const route of ["", "i2v", "r2v", "t2v"]) {
+    const project = projectWith(approvalBoundaryShot(route));
+    const page = await render("#/shot/SC-01-01", project, { scan: scanFor(project) });
+    seen[route || "undeclared"] = run(page.context, `
+      const s = P.shots.find((row) => row.id === "SC-01-01");
+      const readiness = shotReadinessFor(s);
+      const main = String(document.getElementById("main").innerHTML || "");
+      return {
+        approvalComplete: !!shotApprovalComplete(s),
+        legacyRequiredFrames: (s.keyframes || []).filter((f) => f.required !== false).length,
+        readinessRequiredFrames: readiness.units.filter((u) => u.kind === "frame" && u.required).length,
+        readinessAction: readiness.nextAction.code,
+        /* Every persistent frame-debt sentence the shipped workspace can print. */
+        framesDebtOnScreen: /Produce the frame|Produce Frame|Approve required frames|still to approve/i.test(main),
+        requiredFramesTile: (main.match(/Required frames<\\/span><b>([^<]*)<\\/b>/) || [, ""])[1],
+      };`);
+  }
+
+  /* I1 — IT DOES NOT VARY WITH THE ROUTE. Same frames, four routes, one answer: this is
+     a question about the shot's retained work, not about the route's requirements. */
+  const answers = [...new Set(Object.values(seen).map((row) => row.approvalComplete))];
+  assert.deepStrictEqual(answers, [false],
+    `I1: shotApprovalComplete() must be route-invariant, got ${JSON.stringify(Object.fromEntries(Object.entries(seen).map(([k, v]) => [k, v.approvalComplete])))}`);
+  const legacyCounts = [...new Set(Object.values(seen).map((row) => row.legacyRequiredFrames))];
+  assert.deepStrictEqual(legacyCounts, [2], "I1: and it counts the same retained frames under every route");
+
+  /* I2 — READINESS IS UNAFFECTED BY IT, and disagrees with it on purpose. */
+  assert.strictEqual(seen.i2v.readinessRequiredFrames, 1, "I2: i2v owes its opening frame");
+  assert.strictEqual(seen.r2v.readinessRequiredFrames, 0, "I2: r2v owes none");
+  assert.strictEqual(seen.t2v.readinessRequiredFrames, 0, "I2: nor does t2v");
+  assert.strictEqual(seen.undeclared.readinessRequiredFrames, 0, "I2: nor does an undeclared shot");
+
+  /* I3 — AND NO PERSISTENT SURFACE CARRIES THE LEGACY ANSWER. The i2v row is what makes
+     this a measurement: the same detector finds frame debt there, where a route really
+     does ask for a frame. */
+  assert.strictEqual(seen.i2v.framesDebtOnScreen, true,
+    "I3: precondition — the detector must find frame debt where a route genuinely owes one");
+  for (const route of ["r2v", "t2v", "undeclared"]) {
+    assert.strictEqual(seen[route].framesDebtOnScreen, false,
+      `I3: ${route} owes no frame, and no rendered surface may say otherwise while shotApprovalComplete() is false`);
+    assert.strictEqual(seen[route].requiredFramesTile, "0/0",
+      `I3: ${route}: the command summary counts readiness's zero, not the legacy two`);
+  }
+
+  /* I4 — THE UNREACHABLE CONSUMER STAYS UNREACHABLE. shotStageFacts("review") pushes
+     "Approve the required frame and motion outputs." off shotApprovalComplete(), and
+     that sentence can only surface through the legacy stage writers, which
+     tests/stage-model.js already pins as callerless. Asserted here too, because THIS
+     slice is the one that made the legacy count differ from the current one. */
+  const shell = readLF("public/app.js");
+  const code = shell.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  for (const writer of ["approveShotStage", "markShotStageNotNeeded"]) {
+    const uses = (code.match(new RegExp(`\\b${writer}\\b`, "g")) || []).length;
+    assert.strictEqual(uses, 1,
+      `I4: ${writer} must remain a declaration with no caller, found ${uses} occurrences`);
+  }
+  const consumers = [...new Set((code.match(/shotApprovalComplete\(/g) || []))].length;
+  assert(consumers > 0, "I4: precondition — the helper must still exist to be bounded");
+  note("I. approval boundary: shotApprovalComplete() is route-invariant (false under undeclared, i2v, r2v and t2v "
+    + "with the same two retained frames) and reaches no persistent surface — r2v, t2v and an undeclared shot all "
+    + "render 0/0 required frames and no frame-debt sentence, while the same detector finds one under i2v. It stays "
+    + "a workflow sign-off answer; its unreachable gap text is still unreachable. Left unchanged deliberately.");
+}
+
 /* =========================================================================== */
 async function main() {
   await checkContextualAdd();
@@ -837,9 +1075,12 @@ async function main() {
   await checkUndeclaredFabricatesNothing();
   checkDeclaredRoutes();
   checkRouteChanges();
-  await checkFreshnessAndGate();
+  await checkRouteFreshness();
+  checkLegacyPackage();
+  await checkExecutionCompatibility();
   await checkNoInference();
   await checkHierarchy();
+  await checkApprovalBoundary();
 
   /* The action code this slice adds is declared in all three places a readiness action
      has to be declared, or it renders as a bare "Next action" with no destination. */

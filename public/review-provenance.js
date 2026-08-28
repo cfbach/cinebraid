@@ -160,8 +160,17 @@ function packageInputSnapshot(s, pack, refs = [], direction = "") {
      nowhere else, which is exactly why POST /api/generation/fal/jobs had no way to ask
      whether a package was still current. This is a delegation, not a second reading:
      the bodies moved, the values did not. */
+  /* THE ROUTE THIS PACKAGE IS BEING BUILT AGAINST, taken through the same reader that
+     will answer for the CURRENT route later. At build time "what the shot declares now"
+     and "what this was compiled for" are the same value, so recording it through
+     packageMotionInputs() rather than beside it is what stops the saved half and the
+     compared half from ever drifting apart. It returns null for a package with no
+     motion unit, and a frame package therefore records no route at all - see the note
+     on that function for why a frame prompt does not depend on one. */
+  const motionAtBuild = typeof packageMotionInputs === "function" ? packageMotionInputs(s, pack) : null;
   return {
     ...packageProjectInputs(P, s, pack, direction),
+    ...(motionAtBuild ? { deliveryRoute: motionAtBuild.deliveryRoute } : {}),
     references: (refs || [])
       .map((x) => [x.key || "", x.url || "", x.role || "", x.mediaType || "", x.instruction || ""])
       .sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
