@@ -228,6 +228,45 @@ function blocksResubmission(job) {
   return String(job.status || "") === "SUBMITTING" && !job.externalId;
 }
 
+/* EVERYTHING THE LEDGER EVER PERSISTS THAT COULD FOLLOW A REQUEST BACK TO THE PROVIDER.
+   Written together from one acknowledgement, so in ordinary operation a job has all four
+   or none; listed separately because a row recovered from a partial write may not. */
+const PROVIDER_HANDLE_FIELDS = ["externalId", "statusUrl", "responseUrl", "cancelUrl"];
+
+/* IS THIS SUBMISSION'S OUTCOME UNCERTAIN, WITH NOTHING DURABLE TO SETTLE IT BY?
+ *
+ * The one definition, for every consumer that has to decide whether a local action may
+ * write a terminal status over a request that may already have been paid for.
+ *
+ * It exists because that question was being asked twice in different words. The poller
+ * asked `isUnresolved(job) && !job.externalId`; cancel asked `isUnresolved(job) &&
+ * !job.cancelUrl`. Neither counted a durable `SUBMITTING` row with no handle — the state
+ * a process death between the ledger write and the provider's answer leaves behind — so
+ * refresh inferred FAILED from it and cancel wrote CANCELLED over it, and both of those
+ * release the duplicate block that the uncertainty exists to hold. A second press then
+ * bought the same shot again.
+ *
+ * The uncertainty half is not restated here: it is `blocksResubmission()`, which is
+ * already the lifecycle's own answer to "is this attempt uncertain" and already counts
+ * both origins. That is the half that came apart, and it now has exactly one owner.
+ *
+ * `handleField` narrows "settle it by" to the handle a particular operation actually
+ * needs — the poller needs a request id, cancel needs a cancel URL — because an operation
+ * that cannot reach the provider is making a local inference whatever other fields
+ * happen to exist. Narrowing only ever ADDS jobs to the answer: a job with no handle at
+ * all has no handle of any single kind either, so no caller can use this to be more
+ * permissive than the bare question. Omit it and the question is "nothing to follow this
+ * by at all", which is the weakest form.
+ *
+ * By construction this excludes SUBMITTING with a valid request id, IN_QUEUE and every
+ * other healthy active state, COMPLETED, reconciled jobs and ordinary FAILED jobs —
+ * none of those block resubmission. */
+function isSubmissionUncertainWithoutHandle(job, handleField = "") {
+  if (!blocksResubmission(job)) return false;
+  const fields = handleField ? [handleField] : PROVIDER_HANDLE_FIELDS;
+  return !fields.some((field) => String(job?.[field] || "").trim());
+}
+
 /* Why a job blocks, so the refusal can say the right thing. Both are uncertainty; only
    one of them has been through the classifier. */
 function resubmissionBlockReason(job) {
@@ -289,7 +328,13 @@ function isReconciliationOutcome(value) {
  * resubmission is not uncertain and is still refused here, and an already-reconciled job
  * has been settled once and is not settled again. */
 function reconcileUnresolved(job, outcome, meta = {}) {
-  if (!isUnresolved(job) && !blocksResubmission(job)) return null;
+  /* The uncertainty half, from its owner — a third spelling of the same question is how
+     the last two defects happened. `blocksResubmission()` already covers both origins,
+     and it is false once a job carries a reconciliation, so a settled job is not settled
+     twice. A job that has a provider handle may still be reconciled: a person who went
+     and looked knows something this process does not, and the handle only says the
+     request was accepted, never what became of it. */
+  if (!blocksResubmission(job)) return null;
   if (!isReconciliationOutcome(outcome)) return null;
   const resolution = RECONCILIATION_OUTCOMES[String(outcome)];
   return {
@@ -313,6 +358,7 @@ function reconcileUnresolved(job, outcome, meta = {}) {
 
 module.exports = {
   ACTIVE_LEDGER_STATUSES,
+  PROVIDER_HANDLE_FIELDS,
   LEDGER_STATUSES,
   LEDGER_STATUS_TO_CONTRACT,
   RECONCILIATION_OUTCOMES,
@@ -324,6 +370,7 @@ module.exports = {
   generationContextKey,
   isActiveStatus,
   isReconciliationOutcome,
+  isSubmissionUncertainWithoutHandle,
   isTerminalStatus,
   isUnresolved,
   nextStatus,

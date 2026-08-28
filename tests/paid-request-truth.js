@@ -120,6 +120,11 @@ async function harness(options = {}) {
       return res.status(options.providerStatus).json({ detail: "provider refused" });
     res.json({ request_id: id, status_url: `${mockOrigin}/status/${id}`, response_url: `${mockOrigin}/result/${id}` });
   });
+  /* A cancel the provider actually receives. Recorded apart from `calls` on purpose:
+     every assertion in this suite reads `calls.length` as "paid submissions", and a
+     cancel is not one. */
+  const cancelCalls = [];
+  mock.put("/cancel/:id", (req, res) => { cancelCalls.push(req.params.id); res.json({ status: "CANCELLED" }); });
   mock.get("/status/:id", (req, res) => res.json({ status: "IN_QUEUE" }));
   mock.get("/result/:id", (req, res) => res.json({ images: [] }));
   const mockServer = await listen(mock);
@@ -166,7 +171,7 @@ async function harness(options = {}) {
   };
 
   return {
-    dir, file, calls, post, runs, settle, appOrigin,
+    dir, file, calls, cancelCalls, post, runs, settle, appOrigin,
     project: () => JSON.parse(fs.readFileSync(file, "utf8")),
     saveProject: (project) => fs.writeFileSync(file, JSON.stringify(project, null, 2)),
     saveRuns: (rows) => fs.writeFileSync(runs.file, JSON.stringify(rows, null, 2)),
@@ -189,6 +194,12 @@ async function harness(options = {}) {
       const response = await fetch(`${appOrigin}/api/generation/fal/jobs/${encodeURIComponent(jobId)}/reconcile`, {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ outcome, note }),
+      });
+      return { status: response.status, data: await response.json().catch(() => ({})) };
+    },
+    cancel: async (jobId) => {
+      const response = await fetch(`${appOrigin}/api/generation/fal/jobs/${encodeURIComponent(jobId)}/cancel`, {
+        method: "POST", headers: { "content-type": "application/json" },
       });
       return { status: response.status, data: await response.json().catch(() => ({})) };
     },
@@ -1660,7 +1671,246 @@ async function main() {
         "and the record says what it was when they looked, rather than assuming UNRESOLVED");
       assert.strictEqual(Lifecycle.blocksResubmission(settledRow), false,
         "and only now, on a person's evidence, is an equivalent request allowed again");
-      note(`15e. refresh leaves an uncertain SUBMITTING/no-handle job SUBMITTING rather than FAILED, contacts no provider, moves only the coverage projection to needs-attention, and still blocks an equivalent retry with a different clientRequestId — 0 provider submissions and 1 job row across the whole chain, with a human reconciliation as the only way out (recorded previousStatus SUBMITTING)`);
+
+      /* 4. AND THE WAY OUT ACTUALLY LEADS SOMEWHERE. A refusal that never lifts is not a
+            recovery path, it is a dead end wearing one. The SAME request that was refused
+            three lines ago now goes through — which is what makes reconciliation the
+            intentional way out rather than a status write with no consequence. */
+      const afterSettlement = await h.coverage({
+        purpose: "entity-reference", entityList: "characters", entityId: "KAI", entityType: "character",
+        sourceBuildId: "entity-fixture", prompt: "Kai against neutral grey.",
+        references: [{ key: "base", label: "Approved primary", role: "base", url: KAI_PNG }],
+        outputCount: 1, quality: "high", resolution: "4k", aspectRatio: "16:9",
+        coverageJobType: "sheet", coverageSheetType: "angles",
+        clientRequestId: "after-a-person-looked",
+        generationRequest: Presentation.generationRequestDeclaration({ surface: "reference-automation", viewMode: "simple" }),
+      });
+      assert.strictEqual(afterSettlement.status, 200,
+        `a settled uncertainty stops blocking anything: ${JSON.stringify(afterSettlement.data)}`);
+      assert.strictEqual(h.calls.length, 1, "and THIS is the first paid submission in the whole reproduction");
+      assert.strictEqual(h.durable().jobs.length, 2, "on a second job row, which is what a deliberate retry is");
+      note(`15e. refresh leaves an uncertain SUBMITTING/no-handle job SUBMITTING rather than FAILED, contacts no provider, moves only the coverage projection to needs-attention, and still blocks an equivalent retry with a different clientRequestId — 0 provider submissions and 1 job row until a human reconciliation (recorded previousStatus SUBMITTING) releases it, after which the identical request dispatches once`);
+    } finally { h.close(); }
+  }
+
+  /* =======================================================================
+     15f. CANCEL MUST NOT INVENT THE OUTCOME EITHER.
+
+     The same defect as 15e, in the route next door, found by the same reviewer following
+     the same state one step further. Refresh had been taught that a durable `SUBMITTING`
+     row with no handle is uncertain; cancel had not. It asked `isUnresolved(job) &&
+     !job.cancelUrl`, so this row walked straight past the guard, no provider was
+     contacted — there was no cancel URL to contact one with — and CANCELLED was persisted
+     from local intent alone. CANCELLED does not block resubmission, so pressing Cancel on
+     a request that might be rendering was enough to buy it a second time.
+
+     Wanting something cancelled is not evidence that it never happened. */
+  {
+    const h = await harness();
+    try {
+      const project = h.project();
+      project.characters.push({
+        id: "KAI", name: "Kai", type: "Character", approvedFile: "KAI.png", continuityStates: [],
+        coverageAutomation: { id: "coverage:characters:KAI:run", list: "characters", entityId: "KAI", mode: "sheet", sheetType: "angles", status: "sheet-running", startedAt: "2026-08-28T00:00:00.000Z", jobs: ["uncertain-1"] },
+      });
+      h.saveProject(project);
+      h.seedLedger([{
+        id: "uncertain-1", provider: "fal", purpose: "entity-reference", status: "SUBMITTING",
+        entityList: "characters", entityId: "KAI", entityType: "character",
+        coverageJobType: "sheet", coverageSheetType: "angles",
+        sourceBuildId: "entity-fixture", outputCount: 1, clientRequestId: "original-press",
+        prompt: "Kai against neutral grey.", createdAt: "2026-08-28T00:00:00.000Z",
+      }]);
+
+      /* The reviewer's sequence exactly: refresh first, so the job is already known to be
+         uncertain by the time Cancel is pressed. */
+      const refreshed = await h.refresh("uncertain-1");
+      assert.strictEqual(refreshed.status, 409, "refresh still answers with uncertainty");
+
+      const cancelled = await h.cancel("uncertain-1");
+      assert.strictEqual(cancelled.status, 409,
+        `THE DEFECT: cancel must refuse rather than write a terminal status it cannot know: ${JSON.stringify(cancelled.data)}`);
+      assert.strictEqual(cancelled.data.code, "GENERATION_UNRESOLVED_NO_HANDLE",
+        "through the existing no-handle vocabulary, not a new one");
+      assert.strictEqual(cancelled.data.blockReason, "in-flight-without-handle",
+        "and it says which kind of uncertainty this is");
+      assert.strictEqual(h.cancelCalls.length, 0, "with no provider contacted — there is no handle to contact one with");
+
+      const afterCancel = h.durable().jobs.find((row) => row.id === "uncertain-1");
+      assert.notStrictEqual(afterCancel.status, "CANCELLED",
+        `and the durable row must not be marked cancelled: ${JSON.stringify(afterCancel.status)}`);
+      assert.strictEqual(afterCancel.status, "SUBMITTING", "the uncertainty is preserved exactly as it was");
+      assert.strictEqual(Lifecycle.blocksResubmission(afterCancel), true,
+        "and it still holds the duplicate block, which is the whole point of refusing");
+      assert.strictEqual(h.durable().coverage[0].status, "needs-attention",
+        "the projection still asks for a person rather than reporting a cancellation that did not happen");
+
+      /* THE BILL. Both established duplicate mechanisms, exactly as reproduction 15e
+         exercises them: an identical coverage target REATTACHES to the uncertain job,
+         and a target the duplicate guard does not match is REFUSED by the unresolved
+         twin guard. Neither may submit anything. */
+      const retry = await h.coverage({
+        purpose: "entity-reference", entityList: "characters", entityId: "KAI", entityType: "character",
+        sourceBuildId: "entity-fixture", prompt: "Kai against neutral grey.",
+        references: [{ key: "base", label: "Approved primary", role: "base", url: KAI_PNG }],
+        outputCount: 1, quality: "high", resolution: "4k", aspectRatio: "16:9",
+        coverageJobType: "sheet", coverageSheetType: "angles",
+        clientRequestId: "a-different-press",
+        generationRequest: Presentation.generationRequestDeclaration({ surface: "reference-automation", viewMode: "simple" }),
+      });
+      assert(retry.status === 200 && retry.data.reused === true && retry.data.duplicatePrevented === true,
+        `an identical coverage target reattaches to the uncertain job: ${retry.status} ${JSON.stringify(retry.data)}`);
+      assert.strictEqual(retry.data.job.id, "uncertain-1", "naming the job that is already uncertain");
+
+      const twin = await h.coverage({
+        purpose: "entity-reference", entityList: "characters", entityId: "KAI", entityType: "character",
+        sourceBuildId: "entity-fixture", prompt: "Kai against neutral grey.",
+        references: [{ key: "base", label: "Approved primary", role: "base", url: KAI_PNG }],
+        outputCount: 1, quality: "high", resolution: "4k", aspectRatio: "16:9",
+        coverageJobType: "sheet", coverageSheetType: "expressions",
+        clientRequestId: "a-third-press",
+        generationRequest: Presentation.generationRequestDeclaration({ surface: "reference-automation", viewMode: "simple" }),
+      });
+      assert.strictEqual(twin.status, 409, `and a differing target is refused outright: ${JSON.stringify(twin.data)}`);
+      assert.strictEqual(twin.data.code, "GENERATION_UNRESOLVED", "through the existing uncertainty guard");
+      assert.strictEqual(h.calls.length, 0, "ZERO provider submissions across refresh, cancel and retry");
+      assert.strictEqual(h.durable().jobs.length, 1, "and one durable job for the whole sequence");
+      note(`15f. pressing Cancel on an uncertain SUBMITTING/no-handle job is refused with GENERATION_UNRESOLVED_NO_HANDLE instead of persisting CANCELLED, contacts no provider, leaves the row SUBMITTING and still blocking — refresh then cancel then an equivalent retry produce 0 provider submissions and 1 job row`);
+    } finally { h.close(); }
+  }
+
+  /* =======================================================================
+     15f-matrix. THE STATES CANCEL MUST STILL CANCEL.
+
+     A guard that refuses everything is not a fix. The refusal above is narrow by
+     construction — it is the lifecycle's uncertainty predicate, narrowed to the handle
+     cancel itself needs — and these are the states on the other side of it. */
+  {
+    const h = await harness();
+    try {
+      const mockOrigin = h.mockOrigin;
+      h.seedLedger([
+        /* B. The classifier's own uncertainty, with nothing to cancel by. */
+        { id: "unresolved-no-handle", provider: "fal", purpose: "shot-frame", shotId: "SH-1", status: "UNRESOLVED", createdAt: "2026-08-28T00:00:00.000Z" },
+        /* C. A submission the provider acknowledged, with a real cancel handle. */
+        { id: "submitting-handled", provider: "fal", purpose: "shot-frame", shotId: "SH-1", status: "SUBMITTING", externalId: "req-c", statusUrl: `${mockOrigin}/status/req-c`, cancelUrl: `${mockOrigin}/cancel/req-c`, createdAt: "2026-08-28T00:00:00.000Z" },
+        /* D. An ordinary queued job. */
+        { id: "queued", provider: "fal", purpose: "shot-frame", shotId: "SH-1", status: "IN_QUEUE", externalId: "req-d", statusUrl: `${mockOrigin}/status/req-d`, cancelUrl: `${mockOrigin}/cancel/req-d`, createdAt: "2026-08-28T00:00:00.000Z" },
+        /* E. Delivered, and already settled by a person. */
+        { id: "delivered", provider: "fal", purpose: "shot-frame", shotId: "SH-1", status: "COMPLETED", externalId: "req-e", ingestedAt: "2026-08-28T00:00:00.000Z", createdAt: "2026-08-28T00:00:00.000Z" },
+        { id: "settled", provider: "fal", purpose: "shot-frame", shotId: "SH-1", status: "FAILED", createdAt: "2026-08-28T00:00:00.000Z", reconciliation: { outcome: "not-accepted", previousStatus: "UNRESOLVED", at: "2026-08-28T00:00:00.000Z", by: "user" } },
+      ]);
+
+      const b = await h.cancel("unresolved-no-handle");
+      assert.strictEqual(b.status, 409, `B. UNRESOLVED with no handle is refused: ${JSON.stringify(b.data)}`);
+      assert.strictEqual(b.data.code, "GENERATION_UNRESOLVED_NO_HANDLE", "with the same vocabulary");
+      assert.strictEqual(h.durable().jobs.find((row) => row.id === "unresolved-no-handle").status, "UNRESOLVED",
+        "and stays exactly as uncertain as it was");
+
+      const c = await h.cancel("submitting-handled");
+      assert.strictEqual(c.status, 200, `C. a submission WITH a cancel handle still cancels: ${JSON.stringify(c.data)}`);
+      assert(h.cancelCalls.includes("req-c"), "and the provider is genuinely told — that is what makes it evidence rather than a guess");
+      assert.strictEqual(h.durable().jobs.find((row) => row.id === "submitting-handled").status, "CANCELLED",
+        "so CANCELLED is the truth here, and is written");
+
+      const d = await h.cancel("queued");
+      assert.strictEqual(d.status, 200, `D. an ordinary queued job still cancels: ${JSON.stringify(d.data)}`);
+      assert(h.cancelCalls.includes("req-d"), "with the provider contacted");
+      assert.strictEqual(h.durable().jobs.find((row) => row.id === "queued").status, "CANCELLED", "and the row updated");
+
+      const e1 = await h.cancel("delivered");
+      assert.strictEqual(e1.status, 200, `E. a delivered job answers as before: ${JSON.stringify(e1.data)}`);
+      assert.strictEqual(h.durable().jobs.find((row) => row.id === "delivered").status, "COMPLETED",
+        "and the delivery the filmmaker paid for is not erased");
+
+      const e2 = await h.cancel("settled");
+      assert.strictEqual(e2.status, 200, `E. a reconciled job answers as before: ${JSON.stringify(e2.data)}`);
+      assert.strictEqual(h.calls.length, 0, "and nothing in this matrix submitted anything");
+      note(`15f-matrix. cancel refuses ONLY uncertain no-handle work: UNRESOLVED/no-handle and SUBMITTING/no-handle are refused untouched, while SUBMITTING and IN_QUEUE with a real cancel handle still contact the provider and persist CANCELLED, a delivered job keeps COMPLETED, and a reconciled job is unchanged`);
+    } finally { h.close(); }
+  }
+
+  /* =======================================================================
+     15g. A REBUILT PROJECTION MUST NOT MAKE UNCERTAIN WORK LOOK HEALTHY.
+
+     The second half of the same review. A crash between the ledger write and the
+     projection write leaves the job durable and its coverage record missing, and refresh
+     rebuilds the record from the row — deliberately, because that is the earliest moment
+     the projection can be recovered. But the rebuild wrote `sheet-running` unconditionally,
+     so the recovered board said a sheet was on its way while the only job behind it was
+     one nobody could account for.
+
+     The job is ambiguous; the projection is how the project DESCRIBES the job; so the
+     projection has to describe the ambiguity. The live dispatch path is untouched — it
+     still writes a running record for a SUBMITTING row it is about to submit, because
+     there it knows what it is doing. */
+  {
+    const h = await harness();
+    try {
+      const project = h.project();
+      /* No coverageAutomation at all: the write that would have created it never landed. */
+      project.characters.push({ id: "KAI", name: "Kai", type: "Character", approvedFile: "KAI.png", continuityStates: [] });
+      h.saveProject(project);
+      h.seedLedger([{
+        id: "uncertain-1", provider: "fal", purpose: "entity-reference", status: "SUBMITTING",
+        entityList: "characters", entityId: "KAI", entityType: "character",
+        coverageJobType: "sheet", coverageSheetType: "angles",
+        sourceBuildId: "entity-fixture", outputCount: 1, clientRequestId: "original-press",
+        prompt: "Kai against neutral grey.", createdAt: "2026-08-28T00:00:00.000Z",
+      }]);
+      assert.strictEqual(h.durable().coverage.length, 0, "the fixture must genuinely start with no projection");
+
+      const refreshed = await h.refresh("uncertain-1");
+      assert.strictEqual(refreshed.status, 409, `refresh answers with uncertainty: ${JSON.stringify(refreshed.data)}`);
+      assert.strictEqual(refreshed.data.code, "GENERATION_UNRESOLVED_NO_HANDLE", "with the existing vocabulary");
+      assert.strictEqual(h.calls.length, 0, "and contacts no provider");
+
+      const job = h.durable().jobs.find((row) => row.id === "uncertain-1");
+      assert.strictEqual(job.status, "SUBMITTING", "the durable job is not touched to make the board easier to draw");
+      assert(!job.externalId, "and no provider handle is invented");
+
+      /* THE REBUILD HAPPENED — this is not a test that repair was skipped. */
+      const rebuilt = h.durable().coverage[0];
+      assert(rebuilt, "the missing projection IS reconstructed; recovery is not abandoned");
+      assert(rebuilt.rebuiltFromJobAt, "and it is marked as a reconstruction rather than a dispatch's own record");
+      assert(rebuilt.jobs.includes("uncertain-1"), "carrying the job it was rebuilt from");
+      assert.notStrictEqual(rebuilt.status, "sheet-running",
+        `THE DEFECT: a reconstruction from an uncertain row must not present it as an ordinary running sheet: ${JSON.stringify(rebuilt)}`);
+      assert.strictEqual(rebuilt.status, "needs-attention", "it asks for the person it needs");
+      assert(rebuilt.needsAttentionAt, "and is stamped like every other record that wants attention");
+
+      /* And the block is still held, which is the property none of this may cost. */
+      /* THE BILL. Both established duplicate mechanisms, exactly as reproduction 15e
+         exercises them: an identical coverage target REATTACHES to the uncertain job,
+         and a target the duplicate guard does not match is REFUSED by the unresolved
+         twin guard. Neither may submit anything. */
+      const retry = await h.coverage({
+        purpose: "entity-reference", entityList: "characters", entityId: "KAI", entityType: "character",
+        sourceBuildId: "entity-fixture", prompt: "Kai against neutral grey.",
+        references: [{ key: "base", label: "Approved primary", role: "base", url: KAI_PNG }],
+        outputCount: 1, quality: "high", resolution: "4k", aspectRatio: "16:9",
+        coverageJobType: "sheet", coverageSheetType: "angles",
+        clientRequestId: "a-different-press",
+        generationRequest: Presentation.generationRequestDeclaration({ surface: "reference-automation", viewMode: "simple" }),
+      });
+      assert(retry.status === 200 && retry.data.reused === true && retry.data.duplicatePrevented === true,
+        `an identical coverage target reattaches to the uncertain job: ${retry.status} ${JSON.stringify(retry.data)}`);
+      assert.strictEqual(retry.data.job.id, "uncertain-1", "naming the job that is already uncertain");
+
+      const twin = await h.coverage({
+        purpose: "entity-reference", entityList: "characters", entityId: "KAI", entityType: "character",
+        sourceBuildId: "entity-fixture", prompt: "Kai against neutral grey.",
+        references: [{ key: "base", label: "Approved primary", role: "base", url: KAI_PNG }],
+        outputCount: 1, quality: "high", resolution: "4k", aspectRatio: "16:9",
+        coverageJobType: "sheet", coverageSheetType: "expressions",
+        clientRequestId: "a-third-press",
+        generationRequest: Presentation.generationRequestDeclaration({ surface: "reference-automation", viewMode: "simple" }),
+      });
+      assert.strictEqual(twin.status, 409, `and a differing target is refused outright: ${JSON.stringify(twin.data)}`);
+      assert.strictEqual(twin.data.code, "GENERATION_UNRESOLVED", "through the existing uncertainty guard");
+      assert.strictEqual(h.calls.length, 0, "ZERO provider submissions");
+      assert.strictEqual(h.durable().jobs.length, 1, "and no second generation row");
+      note(`15g. refresh over an uncertain SUBMITTING/no-handle job whose coverage record was lost rebuilds the record as needs-attention rather than sheet-running, leaves the job SUBMITTING with no invented handle, contacts no provider, and still refuses the equivalent retry — 0 provider submissions and 1 job row`);
     } finally { h.close(); }
   }
 

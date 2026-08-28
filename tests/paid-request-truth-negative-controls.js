@@ -237,6 +237,12 @@ async function harness(falGeneration, options = {}) {
       });
       return { status: response.status, data: await response.json() };
     },
+    cancel: async (jobId) => {
+      const response = await fetch(`${appOrigin}/api/generation/fal/jobs/${encodeURIComponent(jobId)}/cancel`, {
+        method: "POST", headers: { "content-type": "application/json" },
+      });
+      return { status: response.status, data: await response.json().catch(() => ({})) };
+    },
     settle: async (jobId) => {
       if (!jobId) return;
       await fetch(`${appOrigin}/api/generation/fal/jobs/${encodeURIComponent(jobId)}/cancel`, {
@@ -874,7 +880,7 @@ async function main() {
   await control("a refresh that reads a missing provider handle as failure",
     "an uncertain submission is never turned into a failure that permits a retry", async (phase) => {
       const falGeneration = loadModified("fal-generation.js", [[
-        "      if (Lifecycle.blocksResubmission(job) && !job.externalId) {",
+        `      if (Lifecycle.isSubmissionUncertainWithoutHandle(job, "externalId")) {`,
         "      if (Lifecycle.isUnresolved(job) && !job.externalId) {",
       ]]);
       phase("MUTATION_LANDED");
@@ -911,6 +917,101 @@ async function main() {
         phase("UNSAFE_PATH_EXECUTED");
         observeHarm(retry.status === 200 && h.calls.length > 0,
           `THE DEFECT: refresh persisted ${JSON.stringify(afterRefresh.status)} for a submission that may already have been charged, and the equivalent retry then reached the provider — ${h.calls.length} paid submission(s) for one production result, across ${h.durable().jobs.length} job rows`);
+      } finally { h.close(); }
+    });
+
+  /* =======================================================================
+     9f. A CANCEL THAT DECIDES THE PROVIDER NEVER TOOK THE REQUEST.
+
+     The second half of the refresh defect, in the route next door. Cancel asked
+     `isUnresolved(job) && !job.cancelUrl`, so a durable `SUBMITTING` row with no handle
+     went past the guard; there was no cancel URL, so no provider was told anything; and
+     CANCELLED was written from local intent alone. CANCELLED does not block resubmission.
+
+     The mutation restores that question. What is observed is the persisted CANCELLED and
+     then the provider actually being contacted for the same production result — the
+     bill, not the status. */
+  await control("a cancel that reads local intent as proof the provider never took it",
+    "wanting a submission cancelled is never treated as evidence that it did not happen", async (phase) => {
+      const falGeneration = loadModified("fal-generation.js", [[
+        `      if (Lifecycle.isSubmissionUncertainWithoutHandle(job, "cancelUrl"))`,
+        `      if (Lifecycle.isUnresolved(job) && !job.cancelUrl)`,
+      ]]);
+      phase("MUTATION_LANDED");
+      const h = await harness(falGeneration);
+      try {
+        const project = h.project();
+        project.characters.push({
+          id: "KAI", name: "Kai", type: "Character", approvedFile: "KAI.png", continuityStates: [],
+          coverageAutomation: { id: "coverage:characters:KAI:run", list: "characters", entityId: "KAI", mode: "sheet", sheetType: "angles", status: "sheet-running", startedAt: "2026-08-28T00:00:00.000Z", jobs: ["uncertain-1"] },
+        });
+        h.saveProject(project);
+        h.seedLedger([{
+          id: "uncertain-1", provider: "fal", purpose: "entity-reference", status: "SUBMITTING",
+          entityList: "characters", entityId: "KAI", entityType: "character",
+          coverageJobType: "sheet", coverageSheetType: "angles",
+          sourceBuildId: "entity-fixture", outputCount: 1, clientRequestId: "original-press",
+          prompt: "Kai against neutral grey.", createdAt: "2026-08-28T00:00:00.000Z",
+        }]);
+        await h.cancel("uncertain-1");
+        /* OFF DISK, before anything is retried. */
+        const afterCancel = h.durable().jobs.find((row) => row.id === "uncertain-1");
+        assert.strictEqual(afterCancel.status, "CANCELLED",
+          `the unsafe path must actually persist the false cancellation: ${JSON.stringify(afterCancel.status)}`);
+        const retry = await h.coverage({
+          purpose: "entity-reference", entityList: "characters", entityId: "KAI", entityType: "character",
+          sourceBuildId: "entity-fixture", prompt: "Kai against neutral grey.",
+          references: [{ key: "base", label: "Approved primary", role: "base", url: KAI_PNG }],
+          outputCount: 1, quality: "high", resolution: "4k", aspectRatio: "16:9",
+          coverageJobType: "sheet", coverageSheetType: "angles",
+          clientRequestId: "a-different-press",
+          generationRequest: Presentation.generationRequestDeclaration({ surface: "reference-automation", viewMode: "simple" }),
+        });
+        phase("UNSAFE_PATH_EXECUTED");
+        observeHarm(retry.status === 200 && h.calls.length > 0,
+          `THE DEFECT: cancel persisted ${JSON.stringify(afterCancel.status)} for a submission that may already have been charged — with no provider contacted to justify it — and the equivalent retry then reached the provider: ${h.calls.length} paid submission(s) across ${h.durable().jobs.length} job rows`);
+      } finally { h.close(); }
+    });
+
+  /* =======================================================================
+     9g. A REBUILT PROJECTION THAT REPORTS UNCERTAIN WORK AS RUNNING.
+
+     A crash between the ledger write and the projection write leaves the job durable and
+     its coverage record missing; refresh rebuilds the record from the row. The rebuild
+     wrote `sheet-running` unconditionally, so a board recovered from an uncertain row
+     told the filmmaker a sheet was on its way when nobody knew whether it existed.
+
+     The mutation restores the unconditional status. What is observed is the pair of
+     persisted facts read off disk: an uncertain job, and a projection calling it healthy. */
+  await control("a reconstructed coverage record that calls an uncertain job healthy",
+    "recovery describes an ambiguous durable row as ambiguous, not as ordinary running work", async (phase) => {
+      const falGeneration = loadModified("fal-generation.js", [[
+        `        status: uncertain ? "needs-attention" : runningStatus,`,
+        `        status: runningStatus,`,
+      ]]);
+      phase("MUTATION_LANDED");
+      const h = await harness(falGeneration);
+      try {
+        const project = h.project();
+        /* The projection write is the one that never landed. */
+        project.characters.push({ id: "KAI", name: "Kai", type: "Character", approvedFile: "KAI.png", continuityStates: [] });
+        h.saveProject(project);
+        h.seedLedger([{
+          id: "uncertain-1", provider: "fal", purpose: "entity-reference", status: "SUBMITTING",
+          entityList: "characters", entityId: "KAI", entityType: "character",
+          coverageJobType: "sheet", coverageSheetType: "angles",
+          sourceBuildId: "entity-fixture", outputCount: 1, clientRequestId: "original-press",
+          prompt: "Kai against neutral grey.", createdAt: "2026-08-28T00:00:00.000Z",
+        }]);
+        assert.strictEqual(h.durable().coverage.length, 0, "the fixture must genuinely start with no projection");
+        await h.refresh("uncertain-1");
+        phase("UNSAFE_PATH_EXECUTED");
+        const durable = h.durable();
+        const job = durable.jobs.find((row) => row.id === "uncertain-1");
+        assert.strictEqual(job.status, "SUBMITTING", "the job must still be the uncertain one the projection is describing");
+        assert.strictEqual(h.calls.length, 0, "and nothing was asked of the provider");
+        observeHarm(durable.coverage.length > 0 && ["sheet-running", "individual-running", "starting"].includes(String(durable.coverage[0].status)),
+          `THE DEFECT: the durable job is ${JSON.stringify(job.status)} with no request id to check it by, and the rebuilt coverage record reports ${JSON.stringify(durable.coverage[0] && durable.coverage[0].status)} — ${JSON.stringify(durable.coverage[0])}`);
       } finally { h.close(); }
     });
 

@@ -1479,8 +1479,22 @@ function registerFalGeneration(app, context) {
    * the record needs is on the job. The opposite state, a record with no job, is the one
    * the ordering makes unreachable.
    *
+   * REBUILDING IS NOT THE SAME AS WATCHING IT HAPPEN, which is what decides the status
+   * a rebuilt record starts at. The live dispatch writes its own record while it still
+   * knows what it is doing (see onDispatchCommit) and is untouched by any of this — a
+   * SUBMITTING row the current request is about to submit legitimately reads as running.
+   * RECONSTRUCTION has less to go on: all it has is the persisted row, and `SUBMITTING`
+   * with no handle is ambiguous there. It means the process stopped before the provider
+   * was contacted, or the provider accepted and the answer was lost. Presenting that as
+   * an ordinary running generation tells a filmmaker their sheet is on its way when
+   * nobody knows whether it exists, so recovery says what is true: this needs a person.
+   * The JOB is not touched — its status is the ledger's business, and the projection is
+   * only how the project describes it.
+   *
    * Mutates the entity in place and is only ever called inside a commitProject() turn. */
   function projectCoverageRunFromJob(entity, job) {
+    const uncertain = Lifecycle.isSubmissionUncertainWithoutHandle(job);
+    const runningStatus = job.coverageJobType === "sheet" ? "sheet-running" : "individual-running";
     const existing = entity.coverageAutomation && typeof entity.coverageAutomation === "object"
       ? entity.coverageAutomation
       : {
@@ -1489,7 +1503,11 @@ function registerFalGeneration(app, context) {
         entityId: entity.id,
         mode: job.coverageJobType === "sheet" ? "sheet" : "individual",
         sheetType: job.coverageSheetType || "angles",
-        status: job.coverageJobType === "sheet" ? "sheet-running" : "individual-running",
+        status: uncertain ? "needs-attention" : runningStatus,
+        ...(uncertain ? {
+          needsAttentionAt: now(),
+          error: "CineBraid has no request id for this submission, so it cannot check what happened to it.",
+        } : {}),
         startedAt: job.createdAt || now(),
         /* Named so a reader can tell a rebuilt projection from one the dispatch wrote,
            which is a real difference: this one was reconstructed after its own write was
@@ -2776,8 +2794,9 @@ function registerFalGeneration(app, context) {
       }
       if (!job) return res.status(404).json({ error: "Generation job not found." });
       /* Both ways a job can be uncertain, so a submission that died in flight has the
-         same way out as one the classifier marked unresolved. */
-      if (!Lifecycle.isUnresolved(job) && !Lifecycle.blocksResubmission(job))
+         same way out as one the classifier marked unresolved — asked once, of the owner
+         of the question, rather than spelled out again here. */
+      if (!Lifecycle.blocksResubmission(job))
         return res.status(409).json({
           error: "Only a job whose provider outcome is unknown can be reconciled.",
           code: "GENERATION_NOT_UNRESOLVED",
@@ -2850,12 +2869,11 @@ function registerFalGeneration(app, context) {
        * and CineBraid could not record the answer. Nothing here can tell those apart, and
        * only one of them is free.
        *
-       * So the question asked is the lifecycle's own: blocksResubmission() is already the
-       * definition of "this attempt is uncertain", and it already covers both origins —
-       * `isUnresolved`, and `SUBMITTING && !externalId`. Asking it here means the poller
-       * and the duplicate guard cannot disagree about which jobs are uncertain, which is
-       * exactly how they came apart. */
-      if (Lifecycle.blocksResubmission(job) && !job.externalId) {
+       * So the question asked is the lifecycle's own, by name: a job whose outcome is
+       * uncertain and which carries no request id to ask about. The poller and the
+       * duplicate guard cannot disagree about which jobs are uncertain, because there is
+       * only one definition of it and this is not a second copy of it. */
+      if (Lifecycle.isSubmissionUncertainWithoutHandle(job, "externalId")) {
         /* The projection is a projection: a run whose only job is uncertain must not go
            on presenting itself as an ordinary healthy generation. The durable JOB is
            left exactly as it is — see the invariant above — and only the coverage record
@@ -2951,14 +2969,28 @@ function registerFalGeneration(app, context) {
         return res.status(ledgerFailureStatus(error)).json(ledgerFailurePayload(error));
       }
       if (!job) return res.status(404).json({ error: "Generation job not found." });
-      /* Cancelling an unresolved job with no provider handle would write CANCELLED over
-         a request that may well be rendering — turning an honest "unknown" into a
-         confident falsehood, and unblocking the retry that this state exists to hold.
-         There is nothing to cancel; there is something to go and check. */
-      if (Lifecycle.isUnresolved(job) && !job.cancelUrl)
+      /* CANCELLING AN UNCERTAIN JOB WITH NO HANDLE WOULD WRITE CANCELLED OVER A REQUEST
+         THAT MAY WELL BE RENDERING — turning an honest "unknown" into a confident
+         falsehood, and releasing the duplicate block that the uncertainty exists to hold.
+         There is nothing to cancel; there is something to go and check.
+
+         This asked `isUnresolved(job)`, one of the two ways a job becomes uncertain, so a
+         durable `SUBMITTING` row with no request id walked straight past it: no provider
+         was contacted, because there was no cancel URL to contact one with, and CANCELLED
+         was persisted anyway from local intent alone. CANCELLED does not block
+         resubmission, so the next press bought the shot again. Wanting a job cancelled is
+         not evidence that the provider never took it.
+
+         The question is now the lifecycle's own, narrowed to the handle THIS operation
+         needs: without a cancel URL there is no way to tell the provider anything, so
+         writing a terminal status here is local inference whatever else the row carries.
+         An uncertain job that HAS a cancel URL is untouched — it still contacts the
+         provider and still cancels, which is real evidence, not a guess. */
+      if (Lifecycle.isSubmissionUncertainWithoutHandle(job, "cancelUrl"))
         return res.status(409).json({
           error: "CineBraid never received a handle for this submission, so it cannot cancel it. The generation may be running at the provider. Check there, then record what you found on this job.",
           code: "GENERATION_UNRESOLVED_NO_HANDLE",
+          blockReason: Lifecycle.resubmissionBlockReason(job),
           job: publicJob(job),
         });
       if (job.cancelUrl && !["COMPLETED", "FAILED", "CANCELLED"].includes(job.status)) {

@@ -554,6 +554,74 @@ async function main() {
       note("generic: the plain image path — no plan, no model pack, another endpoint — produces UNRESOLVED and is duplicate-guarded identically");
     }
 
+    /* =====================================================================
+       THE ONE DEFINITION OF UNCERTAIN-WITHOUT-HANDLE.
+
+       Two separate reviews found the same defect in two routes because the question
+       "is this submission uncertain" was being asked in different words in each of
+       them: the poller asked `isUnresolved && !externalId`, cancel asked
+       `isUnresolved && !cancelUrl`, and neither counted a durable `SUBMITTING` row
+       with no handle. Each route then wrote a terminal status over a request that
+       might already have been paid for, and each of those releases the duplicate
+       block.
+
+       This is the state matrix the shared predicate has to get right, asserted
+       directly rather than through any one route, so a future consumer can be checked
+       against it without rediscovering the two defects. */
+    {
+      const handled = { externalId: "req-1", statusUrl: "https://provider/status/req-1", responseUrl: "https://provider/result/req-1", cancelUrl: "https://provider/cancel/req-1" };
+      const cases = [
+        /* The two uncertainties, which is the whole point of the predicate. */
+        [{ status: "SUBMITTING" }, true, "a submission still in flight with no handle at all"],
+        [{ status: Lifecycle.UNRESOLVED }, true, "a classified unresolved job with no handle at all"],
+        /* Everything the reviewer named as OUT. */
+        [{ status: "SUBMITTING", ...handled }, false, "SUBMITTING with a valid request id"],
+        [{ status: "IN_QUEUE", ...handled }, false, "IN_QUEUE with a provider handle"],
+        [{ status: "IN_PROGRESS", ...handled }, false, "an ordinary healthy active job"],
+        [{ status: "COMPLETED", ...handled, ingestedAt: "2026-08-28T00:00:00.000Z" }, false, "a completed job"],
+        [{ status: "FAILED", error: "the provider declined" }, false, "an ordinary failed job"],
+        [{ status: "CANCELLED" }, false, "a cancelled job"],
+        [{ status: Lifecycle.UNRESOLVED, reconciliation: { outcome: "not-accepted", previousStatus: Lifecycle.UNRESOLVED } }, false, "a job a person has already settled"],
+        [{ status: "FAILED", reconciliation: { outcome: "not-accepted", previousStatus: "SUBMITTING" } }, false, "a settled in-flight submission"],
+      ];
+      for (const [job, expected, label] of cases) {
+        assert.strictEqual(Lifecycle.isSubmissionUncertainWithoutHandle(job), expected,
+          `${label} must ${expected ? "" : "NOT "}be uncertain-without-handle: ${JSON.stringify(job)}`);
+      }
+
+      /* NARROWING ONLY EVER ADDS JOBS. Each route asks about the handle its own
+         operation needs — the poller a request id, cancel a cancel URL — and that must
+         never be a way to be MORE permissive than the bare question, or the routes are
+         back to disagreeing. Proved over the whole matrix plus the partial rows that
+         only a recovered ledger produces. */
+      const partials = [
+        { status: "UNRESOLVED", externalId: "req-2" },
+        { status: "UNRESOLVED", cancelUrl: "https://provider/cancel/req-2" },
+        { status: "UNRESOLVED", statusUrl: "https://provider/status/req-2" },
+        { status: "SUBMITTING", cancelUrl: "https://provider/cancel/req-2" },
+        { status: "SUBMITTING", statusUrl: "https://provider/status/req-2" },
+      ];
+      for (const job of [...cases.map(([job]) => job), ...partials]) {
+        const bare = Lifecycle.isSubmissionUncertainWithoutHandle(job);
+        for (const field of Lifecycle.PROVIDER_HANDLE_FIELDS) {
+          const narrowed = Lifecycle.isSubmissionUncertainWithoutHandle(job, field);
+          assert(!bare || narrowed,
+            `narrowing to ${field} must not release a job the bare question calls uncertain: ${JSON.stringify(job)}`);
+          assert(!narrowed || Lifecycle.blocksResubmission(job),
+            `and it must never fire on a job the lifecycle does not consider uncertain: ${JSON.stringify(job)}`);
+        }
+      }
+
+      /* THE INVARIANT ITSELF: every job the predicate calls uncertain is one the
+         duplicate guard is already holding. A route that refuses on this predicate is
+         therefore never refusing work that could legitimately proceed. */
+      for (const [job, expected] of cases) {
+        if (expected) assert.strictEqual(Lifecycle.blocksResubmission(job), true,
+          `an uncertain-without-handle job must block resubmission: ${JSON.stringify(job)}`);
+      }
+      note("predicate: isSubmissionUncertainWithoutHandle() covers both uncertainties and excludes SUBMITTING-with-id, IN_QUEUE, IN_PROGRESS, COMPLETED, FAILED, CANCELLED and reconciled jobs; narrowing to a single handle field can only ADD jobs, never release one, and every job it names is already blocking resubmission");
+    }
+
     console.log(`\nUnresolved paid-submission suite passed:\n  ${notes.join("\n  ")}\n`);
   } finally {
     h.close();
