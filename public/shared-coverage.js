@@ -582,6 +582,66 @@
      work is owed — it simply does not restate the machine's own status. */
   const COVERAGE_RUN_ACTIVE_STATUSES = ["starting", "sheet-running", "individual-running"];
 
+  /* The machine's own coverage-run records, reconciled against the authoritative document.
+   *
+   * A coverage run is a record of work the SERVER is executing. What an ordinary save may
+   * say about one is therefore limited, and the limits are exactly the five an independent
+   * reviewer named after writing `status: "starting"` onto an entity with no run at all and
+   * watching the paid boundary accept it as proof a privileged operation was under way:
+   *
+   *   it may not CREATE a run;
+   *   it may not change a run's IDENTITY;
+   *   it may not change which entity a run BELONGS TO;
+   *   it may not resurrect a finished run;
+   *   it may not make a nonexistent or finished run appear LIVE.
+   *
+   * Matched BY ENTITY ID within each list, so a save that reorders, renames or adds
+   * entities keeps every run attached to the entity that owns it. An entity the stored
+   * document has no run for gets none — which is what makes fabrication impossible rather
+   * than merely detectable — and the server's own writer uses INTERNAL_NONAUTHORITY_WRITE
+   * and never reaches this function, so the real lifecycle is unaffected.
+   *
+   * ONE DIRECTION IS LEFT OPEN, deliberately and narrowly: a run the browser can see may be
+   * moved to a TERMINAL state. public/coverage-automation.js has always done that when the
+   * last required slot is filled, and it is the opposite of the defect — it takes privilege
+   * AWAY. A completed run stops corroborating anything. Going the other way, from absent or
+   * finished to live, is the promotion that was being abused and is refused outright.
+   *
+   * Everything else on the entity is the filmmaker's and is left exactly as it arrived. */
+  const SERVER_OWNED_COVERAGE_RUN_LIVE_STATUSES = ["starting", "sheet-running", "individual-running"];
+  /* What an ordinary save is allowed to contribute to a run it did not create: the outcome
+     of the filmmaker's own work on the entity, and nothing about the run's identity. */
+  const CLIENT_WRITABLE_COVERAGE_RUN_FIELDS = ["status", "completedAt", "missingRequired", "error"];
+
+  function preserveServerOwnedCoverageRuns(prepared, current) {
+    for (const list of ["characters", "locations", "props", "vehicles"]) {
+      const stored = new Map(
+        (Array.isArray(current?.[list]) ? current[list] : [])
+          .filter((row) => row && row.coverageAutomation && typeof row.coverageAutomation === "object")
+          .map((row) => [String(row.id), row.coverageAutomation]),
+      );
+      for (const entity of Array.isArray(prepared[list]) ? prepared[list] : []) {
+        if (!entity || typeof entity !== "object") continue;
+        const owned = stored.get(String(entity.id));
+        if (owned === undefined) { delete entity.coverageAutomation; continue; }
+        const supplied = entity.coverageAutomation && typeof entity.coverageAutomation === "object"
+          ? entity.coverageAutomation : {};
+        /* The authoritative record first, so identity and ownership come from the server
+           whatever the successor says about them. */
+        const merged = JSON.parse(JSON.stringify(owned));
+        for (const field of CLIENT_WRITABLE_COVERAGE_RUN_FIELDS) {
+          if (!Object.prototype.hasOwnProperty.call(supplied, field)) continue;
+          /* The one refusal inside the one open direction: a supplied status that would put
+             the run back into a live state is discarded and the stored one kept. */
+          if (field === "status" && SERVER_OWNED_COVERAGE_RUN_LIVE_STATUSES.includes(String(supplied.status || ""))) continue;
+          merged[field] = JSON.parse(JSON.stringify(supplied[field]));
+        }
+        entity.coverageAutomation = merged;
+      }
+    }
+    return prepared;
+  }
+
   function coverageRunReconciliation(run, coverage) {
     const record = coverageSlotObject(run);
     const it = coverageSlotObject(coverage);
@@ -676,5 +736,6 @@
     COVERAGE_RUN_REVIEW_STATUSES,
     COVERAGE_RUN_ACTIVE_STATUSES,
     coverageRunReconciliation,
+    preserveServerOwnedCoverageRuns,
   };
 });

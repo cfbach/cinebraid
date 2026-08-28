@@ -448,9 +448,25 @@ function registerFalGeneration(app, context) {
    * always been corroborated the same way — automationSubmissionError() requires the run
    * to exist, the runner to hold an unexpired lease, and the caps to allow the work. This
    * gives the coverage surface the equivalent. */
-  function legalRequestSurfaces(owner, body, purpose) {
+  function legalRequestSurfaces(owner, body, purpose, trusted) {
     const asked = Presentation.generationRequestSurfacesFor(body, purpose).legal;
     if (!asked.includes("reference-automation")) return asked;
+    /* TWO CONDITIONS, AND THE FIRST IS NOT NEGOTIABLE BY ANY REQUEST.
+     *
+     * The privileged surface is available only to the server operation that is actually
+     * executing coverage work. `trusted` is an argument of this function, supplied by the
+     * coverage route and by nothing else — there is no body field, header or project
+     * value that can produce it, which is what "a client request cannot promote itself"
+     * means concretely.
+     *
+     * The corroboration below is kept as well, and it is not redundant. It is what makes
+     * the trusted context TRUE rather than merely asserted: the run record it reads is
+     * now server-owned (prepareSuccessor() preserves it across every ordinary save), so
+     * this asks whether the operation the server thinks it is running is one the
+     * authoritative document agrees is live. A coverage route that forgot to establish
+     * its run would be refused by its own boundary. */
+    if (trusted?.surface !== "reference-automation")
+      return asked.filter((surface) => surface !== "reference-automation");
     return coverageRunCorroboration(owner, body).corroborated
       ? asked
       : asked.filter((surface) => surface !== "reference-automation");
@@ -540,9 +556,9 @@ function registerFalGeneration(app, context) {
     });
   }
 
-  function enforceRequestPlan(owner, req, purpose) {
+  function enforceRequestPlan(owner, req, purpose, trusted) {
     const declaration = Presentation.readGenerationRequestDeclaration(req.body);
-    const legal = legalRequestSurfaces(owner, req.body, purpose);
+    const legal = legalRequestSurfaces(owner, req.body, purpose, trusted);
     if (!declaration.declared)
       return {
         ok: false,
@@ -2040,7 +2056,15 @@ function registerFalGeneration(app, context) {
     if (!cfg.apiKey) return res.status(400).json({ error: "Add a FAL API key or set FAL_KEY on the server." });
     res.json({ ok: true, message: "FAL is configured. The first generation will verify the key with fal.", textModel: cfg.textModel, editModel: cfg.editModel });
   });
-  app.post("/api/generation/fal/jobs", async (req, res) => {
+  /* THE ONE PAID BOUNDARY, and the only thing that changed about it: it now takes the
+     server context of the operation dispatching the work.
+   *
+   * `trusted` is never built from a request body. The public route below passes null;
+   * the coverage operation passes the surface it is actually executing. Everything after
+   * this line — the payload gate, the plan requirement, freshness, model identity, spend
+   * and quantity bounds, binding, accounting and adapter preparation — is unchanged and
+   * happens exactly once, for both entry points. */
+  async function dispatchGenerationRequest(req, res, trusted) {
     const cfg = config();
     /* Captured before the first await. Everything this request writes — the
        ledger row, the downloaded media, the project document — is addressed
@@ -2131,7 +2155,7 @@ function registerFalGeneration(app, context) {
      *
      * It also runs before `commit()` and before `submit()`. A refusal here creates no
      * durable row, contacts no provider and spends nothing. */
-    const planGate = enforceRequestPlan(owner, req, purpose);
+    const planGate = enforceRequestPlan(owner, req, purpose, trusted);
     if (!planGate.ok) {
       if (planGate.throwable) return purpose === "motion-h3" ? h3Refusal(res, planGate.throwable) : imageRefusal(res, planGate.throwable);
       return requestTruthRefusal(res, planGate.status, planGate.code, planGate.error, planGate.detail || {});
@@ -2558,6 +2582,90 @@ function registerFalGeneration(app, context) {
         job: publicJob(job),
       });
     }
+  }
+
+  /* THE PUBLIC ENTRY POINT. No trusted context, ever: a browser request describes the
+     work it wants and cannot tell the server which privileged operation is running. */
+  app.post("/api/generation/fal/jobs", (req, res) => dispatchGenerationRequest(req, res, null));
+
+  /* THE COVERAGE OPERATION, which is a SERVER operation that happens to be started by a
+     browser press.
+   *
+   * The browser asks for coverage work on an entity. The server establishes the run
+   * record itself — through writeProject(), which uses INTERNAL_NONAUTHORITY_WRITE and is
+   * therefore the only writer that can author it now that prepareSuccessor() preserves
+   * the field across an ordinary save — and then dispatches through the same paid
+   * boundary, supplying `reference-automation` as its own context.
+   *
+   * That is the whole ownership correction. The browser never says "I am
+   * reference-automation"; it says "run coverage for this entity", and the server decides
+   * what surface the operation it is running has. */
+  app.post("/api/generation/fal/coverage/jobs", async (req, res) => {
+    let owner;
+    try {
+      owner = captureOwner();
+    } catch (error) {
+      return res.status(ledgerFailureStatus(error)).json(ledgerFailurePayload(error));
+    }
+    const list = String(req.body?.entityList || "");
+    const entityId = String(req.body?.entityId || "");
+    const jobType = String(req.body?.coverageJobType || "");
+    if (!["characters", "locations", "props", "vehicles"].includes(list))
+      return res.status(400).json({ error: "A supported entityList is required.", code: "COVERAGE_ENTITY_LIST_REQUIRED", providerContacted: false, paidRequestSubmitted: false });
+    if (!entityId)
+      return res.status(400).json({ error: "entityId is required.", code: "COVERAGE_ENTITY_REQUIRED", providerContacted: false, paidRequestSubmitted: false });
+    if (!Presentation.CINEBRAID_COVERAGE_JOB_TYPES.includes(jobType))
+      return res.status(400).json({
+        error: `Coverage generation needs a coverage job type (${Presentation.CINEBRAID_COVERAGE_JOB_TYPES.join(" or ")}).`,
+        code: "COVERAGE_JOB_TYPE_REQUIRED", providerContacted: false, paidRequestSubmitted: false,
+      });
+    if (!(ownerProject(owner)[list] || []).some((item) => String(item?.id) === entityId))
+      return res.status(404).json({ error: "Entity no longer exists.", code: "COVERAGE_ENTITY_MISSING", providerContacted: false, paidRequestSubmitted: false });
+    /* THE RUN, ESTABLISHED BEFORE ANYTHING IS DISPATCHED. An existing live run for this
+       entity is continued rather than replaced, so the slot jobs of one coverage press
+       all belong to one run. */
+    try {
+      await commitProject(owner, (project) => {
+        const entity = (project[list] || []).find((item) => String(item?.id) === entityId);
+        if (!entity) return;
+        const existing = entity.coverageAutomation;
+        const mode = String(req.body?.coverageMode || jobType);
+        const sheetType = String(req.body?.coverageSheetType || "");
+        /* ONE PRESS IS ONE RUN, and a different task is a different run.
+         *
+         * A single coverage press dispatches several slot jobs, and they belong to one
+         * run — so a live run for the same task is CONTINUED rather than replaced, and
+         * the job ids accumulate on it. Asking for different work is not a continuation:
+         * an expression sheet is not the angle sheet that happened to be running, and a
+         * record that kept saying `angles` would file the returned candidates against the
+         * wrong board. That is the same mistake the payload's own coverageSheetType was
+         * fixed for. */
+        const continuing = existing
+          && COVERAGE_RUN_ACTIVE_STATUSES.includes(String(existing.status || ""))
+          && String(existing.sheetType || "") === sheetType
+          && String(existing.mode || "") === mode;
+        entity.coverageAutomation = continuing
+          ? {
+            ...existing,
+            updatedAt: now(),
+            /* What the planner told the filmmaker this press would cost, kept current as
+               the press adds work to the run it already started. */
+            ...(Number(req.body?.coverageRequestCount) > 0 ? { requestCount: Number(req.body.coverageRequestCount) } : {}),
+            ...(Number(req.body?.coverageMaximumImages) > 0 ? { maximumImages: Number(req.body.coverageMaximumImages) } : {}),
+          }
+          : {
+            id: `coverage:${list}:${entityId}:${uid()}`,
+            list, entityId, mode, sheetType,
+            status: jobType === "sheet" ? "sheet-running" : "individual-running",
+            startedAt: now(), updatedAt: now(), jobs: [],
+            ...(Number(req.body?.coverageRequestCount) > 0 ? { requestCount: Number(req.body.coverageRequestCount) } : {}),
+            ...(Number(req.body?.coverageMaximumImages) > 0 ? { maximumImages: Number(req.body.coverageMaximumImages) } : {}),
+          };
+      });
+    } catch (error) {
+      return res.status(500).json({ error: `CineBraid could not record the coverage run: ${error.message}`, code: "COVERAGE_RUN_NOT_RECORDED", providerContacted: false, paidRequestSubmitted: false });
+    }
+    return dispatchGenerationRequest(req, res, { surface: "reference-automation" });
   });
 
   /* The way out of UNRESOLVED, and the only one that does not involve guessing.

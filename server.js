@@ -1091,8 +1091,26 @@ const AuthorityWriteBoundary = createAuthorityWriteSeam({
       return normalizeProjectCollections(recovered);
     }
     const prepared = normalizeProjectCollections(structuredClone(successor || {}));
-    if ([WRITE_CLASSES.NORMAL_SAVE, WRITE_CLASSES.CANON_TRANSITION].includes(context.writeClass))
+    /* SERVER-OWNED OPERATIONAL STATE SURVIVES A BROWSER SAVE UNCHANGED.
+     *
+     * `agentRuns` has worked this way since it existed: a NORMAL_SAVE carries whatever
+     * the browser happens to be holding, and what the machine recorded about its own
+     * work is taken from the authoritative document instead. The successor's version is
+     * not refused, it is simply not authoritative — which is the right shape, because a
+     * browser that is a few seconds stale should not have its ordinary edit rejected
+     * over a field it does not own.
+     *
+     * `entity.coverageAutomation` is the same kind of fact and now joins it. It is a
+     * machine's record of a coverage run it is executing, and an independent reviewer
+     * demonstrated the cost of leaving it client-writable: an ordinary project PUT wrote
+     * `status: "starting"` onto an entity that had no run, and the paid boundary then
+     * accepted that as proof a privileged coverage operation was under way and granted
+     * the more permissive generation surface. Marker validation could not fix that,
+     * because the marker was real — it was the OWNERSHIP that was wrong. */
+    if ([WRITE_CLASSES.NORMAL_SAVE, WRITE_CLASSES.CANON_TRANSITION].includes(context.writeClass)) {
       prepared.agentRuns = Array.isArray(current.agentRuns) ? current.agentRuns : [];
+      Coverage.preserveServerOwnedCoverageRuns(prepared, current);
+    }
     normalizePromptBuildHistory(prepared, { applyRetention: false });
     return prepared;
   },

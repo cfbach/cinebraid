@@ -391,7 +391,9 @@ async function submitCoverageTask(project, { sheetType, mode = "individual" }) {
   let issued = 0;
   const board = await openCoverageBoard(project, {
     fetch: async (url, init = {}, respond) => {
-      if (String(url) !== "/api/generation/fal/jobs" || init.method !== "POST") return null;
+      /* Coverage dispatch is a SERVER operation now — the browser asks
+         /api/generation/fal/coverage/jobs to run it. */
+      if (String(url) !== "/api/generation/fal/coverage/jobs" || init.method !== "POST") return null;
       const body = JSON.parse(init.body);
       issued += 1;
       return respond({ ok: true, job: { id: `harness-job-${issued}`, status: "IN_QUEUE", ...body } });
@@ -467,10 +469,20 @@ async function checkExpressionTaskSubmitsExactlyItsOwnWork() {
     `an expression request must not be worded as a camera angle: ${String(body.prompt || "").slice(0, 240)}`);
   assert.ok(!/changing only the camera angle/.test(String(body.prompt || "")),
     "an expression request must not carry the angle contract");
-  /* The run record moves, because this submission is legitimate. */
-  const after = JSON.parse(run.after);
-  assert.strictEqual(after.sheetType, "expressions", `the stamped run must record its own task: ${run.after}`);
-  assert.strictEqual(after.mode, "individual");
+  /* THE RUN RECORD IS THE SERVER'S NOW, so what this asserts is the REQUEST that tells
+     it which task to record. Paid Request Truth V1 made entity.coverageAutomation
+     server-owned — an ordinary project save can no longer author or promote one, which
+     is what stopped a hand-written save from buying the privileged generation surface —
+     so this browser-only harness, whose fetch is mocked, is no longer where the record
+     moves. The server establishing a NEW run for a different task is proved end to end in
+     tests/paid-request-truth.js.
+
+     What still belongs here is that this dispatch asks for the right work: its own group
+     and its own mode, asserted above and below. */
+  assert.strictEqual(body.coverageSheetType, "expressions",
+    `the request must tell the server which task to record: ${JSON.stringify(body)}`);
+  assert.strictEqual(body.coverageMode, "individual",
+    `and which mode it is running: ${JSON.stringify(body)}`);
 
   note("G4 expression task, one missing: exactly that expression is requested, in its own group, worded as an expression");
 }
@@ -510,7 +522,9 @@ async function checkDispatchBoundaryRefusesCrossGroupSlots() {
   let issued = 0;
   const board = await openCoverageBoard(coverageFixture({ missing: ["rear"], missingExpressions: ["worried"] }), {
     fetch: async (url, init = {}, respond) => {
-      if (String(url) !== "/api/generation/fal/jobs" || init.method !== "POST") return null;
+      /* Coverage dispatch is a SERVER operation now — the browser asks
+         /api/generation/fal/coverage/jobs to run it. */
+      if (String(url) !== "/api/generation/fal/coverage/jobs" || init.method !== "POST") return null;
       issued += 1;
       return respond({ ok: true, job: { id: `harness-job-${issued}`, status: "IN_QUEUE", ...JSON.parse(init.body) } });
     },

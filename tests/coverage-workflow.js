@@ -76,7 +76,12 @@ async function testCoverageSubmissionAndPersistentOpenState() {
     storage: { "cinebraid-focused:fixture:entity-task:characters:CHAR-IREN": "coverage" },
     fetch: async (url, options, respond) => {
       if (url === "/api/generation/fal/status") return respond({ enabled: true, configured: true, textModel: "fal-ai/gpt-image-2/text-to-image", editModel: "fal-ai/gpt-image-2/edit", defaults: {} });
-      if (url === "/api/generation/fal/jobs" && options.method === "POST") {
+      /* Coverage dispatch is a SERVER operation now: the browser asks
+         /api/generation/fal/coverage/jobs to run it, and that route establishes the run
+         record and dispatches through the one paid boundary with its own context. The
+         browser no longer posts to the paid route directly and no longer claims a
+         surface. */
+      if (url === "/api/generation/fal/coverage/jobs" && options.method === "POST") {
         submitted = JSON.parse(options.body);
         return respond({ ok: true, job: { id: "coverage-job-1", purpose: "entity-reference", entityList: "characters", entityId: "CHAR-IREN", coverageJobType: "sheet", coverageSheetType: "angles", status: "IN_QUEUE", outputCount: 1, model: "GPT Image 2" } });
       }

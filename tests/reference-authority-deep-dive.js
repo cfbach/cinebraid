@@ -52,7 +52,9 @@ async function testLocationAuthorityPackage() {
     storage: { "cinebraid-focused:fixture:entity-task:locations:LOC-SPATIAL": "coverage" },
     fetch: async (url, options, respond) => {
       if (url === "/api/generation/fal/status") return respond({ enabled: true, configured: true, defaults: {} });
-      if (url === "/api/generation/fal/jobs" && options.method === "POST") {
+      /* Coverage dispatch is a SERVER operation: the browser asks
+         /api/generation/fal/coverage/jobs to run it. */
+      if (url === "/api/generation/fal/coverage/jobs" && options.method === "POST") {
         submitted = JSON.parse(options.body);
         return respond({ ok: true, job: { id: "location-coverage-job", purpose: "entity-reference", entityList: "locations", entityId: "LOC-SPATIAL", coverageJobType: "slot", targetCoverageSlotId: "left-coverage", status: "IN_QUEUE", outputCount: 3 } });
       }

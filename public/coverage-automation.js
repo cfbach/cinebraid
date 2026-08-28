@@ -311,6 +311,12 @@
       aspectRatio: options.aspectRatio || "16:9",
       coverageJobType: options.coverageJobType || "sheet",
       coverageSheetType: options.coverageSheetType || "angles",
+      /* WHAT THIS PRESS IS, so the server's run record describes the work it is running.
+         These group jobs into runs and carry the planner's own quote onto the record;
+         none of them grants anything - the surface is the server operation's. */
+      coverageMode: options.coverageMode || "",
+      ...(Number(options.requestCount) > 0 ? { coverageRequestCount: Number(options.requestCount) } : {}),
+      ...(Number(options.maximumImages) > 0 ? { coverageMaximumImages: Number(options.maximumImages) } : {}),
       targetCoverageSlotId: options.slot?.id || "",
       targetCoverageSlotName: options.slot?.label || "",
       coverageSourceFile: primary?.name || "",
@@ -318,19 +324,26 @@
       // requirement, but it prevents support reports from looking source-less.
       sourceCandidate: primary?.name || "",
       clientRequestId: options.clientRequestId || coverageClientRequestId(list, entity.id, options.coverageJobType || "sheet", options.slot?.id || options.coverageSheetType || ""),
-      /* WHAT THIS DISPATCHER IS, declared so the money boundary can restrict the payload
-         instead of taking it on trust. This path sent no plan at all before, which meant
-         POST /api/generation/fal/jobs had nothing to enforce and a machine setting no
-         model declares could have travelled unchallenged.
-
-         `simple` is the narrower of the two readings and it is also LOSSLESS here: the
-         coverage surface owns only the candidate count and quality, both production-tier
-         controls that render in either view, so the mode changes nothing this dispatcher
-         sends. The sheet resolution is a route input rather than a tiered control - see
-         the surface table - and is untouched. */
+      /* THE VIEW THIS SCREEN WAS SHOWING, and nothing about privilege.
+       *
+       * `simple` is the narrower of the two readings and it is LOSSLESS here: the coverage
+       * surface owns only the candidate count and quality, both production-tier controls
+       * that render in either view. The SURFACE is deliberately absent - see below. */
       generationRequest: generationRequestDeclaration({ surface: CINEBRAID_REQUEST_SURFACE_IDS.referenceAutomation, viewMode: "simple" }),
     };
-    const response = await fetch("/api/generation/fal/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    /* THE COVERAGE OPERATION IS THE SERVER'S, and this asks it to run.
+     *
+     * This used to POST straight to the paid route carrying `reference-automation` and a
+     * coverage run record it had written into the project itself. An independent reviewer
+     * showed why that could never be sound: an ordinary project save could author the same
+     * record, and then any request could claim the same surface. Neither the record nor
+     * the surface is this file's to assert any more.
+     *
+     * So the browser says what it wants done. /api/generation/fal/coverage/jobs
+     * establishes the real run through the server's own writer and dispatches through the
+     * same paid boundary with its own context - the request body is unchanged and is
+     * still restricted, priced, bounded and prepared exactly once. */
+    const response = await fetch("/api/generation/fal/coverage/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.error || "Could not start coverage generation");
     FAL_GENERATION_JOBS = [...(FAL_GENERATION_JOBS || []).filter((job) => job.id !== data.job.id), data.job];
@@ -447,7 +460,12 @@
     setCoverageLock(lockKey, true);
     const startButton = document.getElementById("coverage-start-button"); if (startButton) { startButton.dataset.coverageSubmitting = "1"; startButton.disabled = true; startButton.textContent = "PREPARING…"; }
     entity.coverageGenerationNotes = direction;
-    entity.coverageAutomation = { id: coverageClientRequestId(req.list, req.entityId, "run", sheetType), list: req.list, entityId: req.entityId, mode, sheetType, status: "starting", startedAt: new Date().toISOString(), jobs: [], requestCount, maximumImages: imageCount };
+    /* THE RUN RECORD IS NOT WRITTEN HERE ANY MORE. It is server-owned operational state:
+       the coverage route establishes it, and server.js's prepareSuccessor() restores the
+       authoritative copy over whatever an ordinary save happens to be carrying, so a value
+       written here would be discarded on the next save and could never be authoritative.
+       What this screen shows about the run comes back from the server with the refresh
+       below. */
     rememberWorkspaceSection(entityCoverageSectionKey(req.list, req.entityId, sheetType === "expressions" ? "expressions" : "angles"), true);
     dirty();
     closeModal();
@@ -466,14 +484,12 @@
       if (mode === "sheet" || mode === "hybrid") {
         const slots = coverageSheetSlots(req.list, entity, sheetType);
         const prompt = coverageSheetPrompt(req.list, entity, sheetType, slots, direction);
-        const job = await submitCoverageJob(req.list, entity, { prompt, outputCount, resolution, aspectRatio: sheetType === "expressions" ? "4:3" : "16:9", coverageJobType: "sheet", coverageSheetType: sheetType, clientRequestId: coverageClientRequestId(req.list, req.entityId, "sheet", sheetType) });
-        entity.coverageAutomation.jobs.push(job.id);
-        entity.coverageAutomation.status = "sheet-running";
+        const job = await submitCoverageJob(req.list, entity, { prompt, outputCount, resolution, aspectRatio: sheetType === "expressions" ? "4:3" : "16:9", coverageJobType: "sheet", coverageSheetType: sheetType, coverageMode: mode, requestCount, maximumImages: imageCount, clientRequestId: coverageClientRequestId(req.list, req.entityId, "sheet", sheetType) });
+        void job;
         toast("Coverage sheet generation queued");
       } else {
         const slots = requestedSlots;
         if (!slots.length) throw new Error("All required coverage slots are already assigned");
-        entity.coverageAutomation.status = "individual-running";
         for (const slot of slots) {
           /* THE PAYLOAD SAYS WHICH KIND OF THING IT IS ASKING FOR. `coverageSheetType`
              was hard-coded empty here, which submitCoverageJob defaults to "angles" —
@@ -481,17 +497,19 @@
              board. The prompt is asked for the same task for the same reason: an
              expression request must not arrive worded as a camera angle. */
           const prompt = coverageSlotPrompt(req.list, entity, slot, direction, sheetType);
-          const job = await submitCoverageJob(req.list, entity, { prompt, outputCount: 3, resolution, aspectRatio: referenceAspectLabel(req.list), coverageJobType: "slot", coverageSheetType: sheetType === "expressions" ? "expressions" : "", slot, clientRequestId: coverageClientRequestId(req.list, req.entityId, "slot", slot.id) });
-          entity.coverageAutomation.jobs.push(job.id);
+          await submitCoverageJob(req.list, entity, { prompt, outputCount: 3, resolution, aspectRatio: referenceAspectLabel(req.list), coverageJobType: "slot", coverageSheetType: sheetType === "expressions" ? "expressions" : "", coverageMode: mode, requestCount, maximumImages: imageCount, slot, clientRequestId: coverageClientRequestId(req.list, req.entityId, "slot", slot.id) });
         }
         toast(`${slots.length} missing coverage slot generation job${slots.length === 1 ? "" : "s"} queued`);
       }
-      dirty();
+      /* The run the SERVER recorded, read back. Its status and job list are the only
+         authoritative ones now, and this screen renders them rather than a local guess. */
+      if (typeof load === "function") await load({ intent: "refresh" });
       route();
     } catch (error) {
-      entity.coverageAutomation.status = "failed";
-      entity.coverageAutomation.error = error.message;
-      dirty();
+      /* A failed run is the server's to record too — updateEntityCoverageRun() already
+         writes `failed` / `needs-attention` onto the run it owns. This reads the result
+         instead of asserting one. */
+      if (typeof load === "function") await load({ intent: "refresh" }).catch(() => {});
       route();
       toast("Coverage generation failed: " + error.message);
     } finally {

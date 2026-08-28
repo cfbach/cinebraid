@@ -213,7 +213,9 @@ async function automationWorld(options = {}) {
           profile: { name: "GPT Image 2", profileVersion: "1" },
         });
       }
-      if (url === "/api/generation/fal/jobs" && method === "POST") {
+      /* Coverage dispatch is a SERVER operation: the browser asks
+         /api/generation/fal/coverage/jobs to run it. */
+      if ((url === "/api/generation/fal/coverage/jobs" || url === "/api/generation/fal/jobs") && method === "POST") {
         const pass = passes[counts.generationBatches];
         assert(pass, `automation asked for generation batch ${counts.generationBatches + 1}, which the confirmed authorization never covered`);
         counts.generationBatches += 1;

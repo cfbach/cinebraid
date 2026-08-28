@@ -261,31 +261,29 @@ async function nc4() {
   });
 }
 
-async function nc5() {
-  await control({
-    id: "NC-D5",
-    expect: /a refused submission must not stamp a new run record over the old one/,
-    defect: "the coverage start handler stamps its run record before asking, so a refused submission overwrites automation state",
-    files: {
-      "public/coverage-automation.js": [[
-        `    if (!requestCount) return toast(\`Every required \${sheetType === "expressions" ? "expression" : "view"} already has an image selected.\`);`,
-        `    /* control: the refusal is moved behind the record write, as it was */`,
-      ]],
-    },
-    probe: async (suite) => {
-      const board = await suite.openCoverageBoard(suite.coverageFixture({ missing: [] }));
-      const context = board.rendered.context;
-      context.openCoverageAutomationModal("characters", "KAI", "individual");
-      context.document.getElementById("coverage-mode").value = "individual";
-      const before = vm.runInContext(`JSON.stringify(P.characters.find((r) => r.id === "KAI").coverageAutomation)`, context);
-      await context.startCoverageAutomation(true);
-      const after = vm.runInContext(`JSON.stringify(P.characters.find((r) => r.id === "KAI").coverageAutomation)`, context);
-      assert.notStrictEqual(after, before, "NC-D5: the defect did not land — the record is still untouched");
-      return `a zero-request submission rewrote the run record to status=${JSON.parse(after).status}`;
-    },
-    guard: (suite) => suite.main(),
-  });
-}
+/* NC-D5 — RETIRED, AND MOVED RATHER THAN DROPPED.
+ *
+ * It guarded "a refused submission must not stamp a new run record over the old one", by
+ * removing the early zero-work guard in startCoverageAutomation() and watching
+ * entity.coverageAutomation get overwritten with `status: "starting"` for work that never
+ * happened.
+ *
+ * That harm is no longer reachable from this file. Paid Request Truth V1 made the run
+ * record SERVER-OWNED — public/coverage-automation.js no longer writes it at all, and
+ * server.js's prepareSuccessor() restores the authoritative copy over anything an
+ * ordinary save carries — so there is no browser line whose removal stamps a run. A
+ * control kept pointing at a line that cannot cause its harm is a control reporting on
+ * guards it is not testing, which is the failure mode the harness self-checks exist for.
+ *
+ * The property did not go away with it. Two controls in
+ * tests/paid-request-truth-negative-controls.js hold it now, at the seams that own it:
+ *
+ *   - "a coverage route that records its run before it validates the request" — the same
+ *     defect, exactly: a refused request stamping a run;
+ *   - "a paid surface granted by state a generic project save can write" — the ownership
+ *     rule that stops anything else authoring one.
+ *
+ * Deleted here rather than weakened, and named so the deletion is auditable. */
 
 /* ================================================================ STAGE (B/C)
    =========================================================================== */
@@ -632,7 +630,7 @@ async function nc17() {
         `    const requestedSlots = mode === "individual" ? missingCoverageWork(req.list, entity, sheetType) : [];`,
         `    const requestedSlots = mode === "individual" ? missingCoverageSlots(req.list, entity, false) : [];`,
       ], [
-        `coverageSheetType: sheetType === "expressions" ? "expressions" : "", slot,`,
+        `coverageSheetType: sheetType === "expressions" ? "expressions" : "", coverageMode: mode, requestCount, maximumImages: imageCount, slot,`,
         `coverageSheetType: "", slot,`,
       ]],
     },
@@ -669,7 +667,9 @@ async function nc18() {
     probe: async (suite) => {
       const board = await suite.openCoverageBoard(suite.coverageFixture({ missing: ["rear"], missingExpressions: ["worried"] }), {
         fetch: async (url, init = {}, respond) => {
-          if (String(url) !== "/api/generation/fal/jobs" || init.method !== "POST") return null;
+          /* Coverage dispatch is a SERVER operation now — the browser asks
+             /api/generation/fal/coverage/jobs to run it. */
+          if (String(url) !== "/api/generation/fal/coverage/jobs" || init.method !== "POST") return null;
           return respond({ ok: true, job: { id: "control-job", status: "IN_QUEUE", ...JSON.parse(init.body) } });
         },
       });
@@ -706,7 +706,6 @@ async function main() {
   await nc2();
   await nc3();
   await nc4();
-  await nc5();
   await nc6();
   await nc7();
   await nc8();

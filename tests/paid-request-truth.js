@@ -40,6 +40,7 @@ const Presentation = require("../public/shared-generation-presentation");
 const BuildHistory = require("../public/shared-build-history");
 const { imageControlCapability, IMAGE_MODEL_ID } = require("../image-execution");
 const Options = require("../public/shared-generation-options");
+const CoverageOwnership = require("../public/shared-coverage");
 const { addFramePromptBuild, baseSpec, buildRef, REF_IDENTITY } = require("./image-execution-fixture");
 const { declaredGenerationBody } = require("./generation-request-fixture");
 
@@ -140,6 +141,25 @@ async function harness(options = {}) {
     project: () => JSON.parse(fs.readFileSync(file, "utf8")),
     saveProject: (project) => fs.writeFileSync(file, JSON.stringify(project, null, 2)),
     saveRuns: (rows) => fs.writeFileSync(runs.file, JSON.stringify(rows, null, 2)),
+    /* THE COVERAGE OPERATION'S OWN ENTRY POINT. The browser asks the server to run
+       coverage; the server establishes the run and dispatches through the same boundary. */
+    coverage: async (body) => {
+      const response = await fetch(`${appOrigin}/api/generation/fal/coverage/jobs`, {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+      });
+      return { status: response.status, data: await response.json() };
+    },
+    /* WHAT A GENERIC PROJECT SAVE IS ALLOWED TO AUTHOR, applied exactly as server.js
+       applies it inside prepareSuccessor() for a NORMAL_SAVE. The end-to-end proof that
+       the real PUT route runs this is reproduction 20b, which drives the shipped server. */
+    genericSave: (mutate) => {
+      const current = JSON.parse(fs.readFileSync(file, "utf8"));
+      const successor = JSON.parse(JSON.stringify(current));
+      mutate(successor);
+      CoverageOwnership.preserveServerOwnedCoverageRuns(successor, current);
+      fs.writeFileSync(file, JSON.stringify(successor, null, 2));
+      return successor;
+    },
     /* A ledger written directly, for the one thing a live submission cannot produce on
        demand: a child of THIS run whose recorded cost is honestly unknown. The shape is
        generation-job-store.js's — a bare array of job rows. */
@@ -346,16 +366,11 @@ async function main() {
     const h = await harness();
     try {
       const entityProject = h.project();
-      /* The entity AND the live coverage run public/coverage-automation.js writes into
-         the project document before it dispatches. The paid boundary corroborates the
-         `reference-automation` surface against this record; without it, this request is
-         indistinguishable from an ordinary entity reference wearing the name. */
-      entityProject.characters.push({
-        id: "KAI", name: "Kai", type: "Character", approvedFile: "KAI.png", continuityStates: [],
-        coverageAutomation: { id: "coverage:characters:KAI:run:angles", list: "characters", entityId: "KAI", mode: "sheet", sheetType: "angles", status: "starting", startedAt: "2026-08-27T00:00:00.000Z", jobs: [], requestCount: 1, maximumImages: 1 },
-      });
+      /* Only the entity. The coverage ROUTE establishes the run record itself — that is
+         the correction: the run is server-owned, so no fixture and no browser writes it. */
+      entityProject.characters.push({ id: "KAI", name: "Kai", type: "Character", approvedFile: "KAI.png", continuityStates: [] });
       h.saveProject(entityProject);
-      const result = await h.post({
+      const result = await h.coverage({
         purpose: "entity-reference",
         entityList: "characters",
         entityId: "KAI",
@@ -803,7 +818,11 @@ async function main() {
       };
       const LIVE_RUN = { id: "coverage:characters:KAI:run:angles", list: "characters", entityId: "KAI", mode: "sheet", sheetType: "angles", status: "starting", startedAt: "2026-08-27T00:00:00.000Z", jobs: [], requestCount: 1, maximumImages: 1 };
 
-      /* A. THE REVIEWER'S ATTACK, EXACTLY. Every client-visible coverage marker copied. */
+      /* A. THE PUBLIC ROUTE CANNOT GRANT THE PRIVILEGED SURFACE AT ALL.
+       *
+       * Not "cannot prove it" — cannot request it. `trusted` is an argument of
+       * legalRequestSurfaces(), supplied by the coverage operation and by nothing else,
+       * so there is no body field, header or project value that reaches it. */
       character(null);
       const forged = await h.post(entityBody({
         clientRequestId: "forged",
@@ -812,42 +831,58 @@ async function main() {
       }));
       assert.strictEqual(forged.status, 400, `copying every client field must not buy the surface: ${JSON.stringify(forged.data)}`);
       assert.strictEqual(forged.data.code, "GENERATION_PLAN_SURFACE_MISMATCH", "the refusal must be typed");
-      assert.strictEqual(forged.data.coverageCorroboration, "no-coverage-run-recorded",
-        "and must name what could not be corroborated");
       assert.deepStrictEqual(forged.data.expectedSurfaces, ["fixed-image"],
-        "and the only surface this request's own contents support");
+        "and the only surface a public request can have");
       assert.strictEqual(h.calls.length, 0, "no provider call may be made");
       assert.strictEqual(h.ledger().length, 0, "and no durable row is created");
 
-      /* B. THE SAME WITHOUT THE MARKER — refused for the same reason, not a different one. */
-      const bare = await h.post(entityBody({
-        clientRequestId: "bare",
-        generationRequest: Presentation.generationRequestDeclaration({ surface: "reference-automation", viewMode: "simple" }),
-      }));
-      assert.strictEqual(bare.status, 400, `and without the marker either: ${JSON.stringify(bare.data)}`);
-      assert.strictEqual(bare.data.code, "GENERATION_PLAN_SURFACE_MISMATCH", "typed the same way");
-
-      /* C. A FINISHED RUN DOES NOT AUTHORISE NEW COVERAGE WORK. The record has to be live,
-            or every entity that ever ran coverage would keep the surface forever. */
-      character({ ...LIVE_RUN, status: "completed" });
-      const stale = await h.post(entityBody({
-        clientRequestId: "stale-run",
+      /* B. AND NOT EVEN WITH A GENUINE LIVE RUN IN THE DOCUMENT.
+       *
+       * This is the correction the second hold missed. Under the previous candidate a
+       * real run was sufficient — so anything that could write one could promote itself.
+       * The run is necessary now and is not sufficient: the public route has no trusted
+       * context whatever the project says. */
+      character(LIVE_RUN);
+      const withRealRun = await h.post(entityBody({
+        clientRequestId: "with-real-run",
         coverageJobType: "sheet", coverageSheetType: "angles",
         generationRequest: Presentation.generationRequestDeclaration({ surface: "reference-automation", viewMode: "simple" }),
       }));
-      assert.strictEqual(stale.status, 400, `a completed run must not authorise new coverage work: ${JSON.stringify(stale.data)}`);
-      assert.strictEqual(stale.data.coverageCorroboration, "coverage-run-is-not-running", "and say so");
-
-      /* D. A RUN RECORDED FOR ANOTHER ENTITY AUTHORISES NOTHING HERE. */
-      character({ ...LIVE_RUN, entityId: "IREN" });
-      const wrongEntity = await h.post(entityBody({
-        clientRequestId: "wrong-entity",
-        coverageJobType: "sheet", coverageSheetType: "angles",
-        generationRequest: Presentation.generationRequestDeclaration({ surface: "reference-automation", viewMode: "simple" }),
-      }));
-      assert.strictEqual(wrongEntity.status, 400, `another entity's run proves nothing here: ${JSON.stringify(wrongEntity.data)}`);
-      assert.strictEqual(wrongEntity.data.coverageCorroboration, "coverage-run-is-for-another-entity", "and say so");
+      assert.strictEqual(withRealRun.status, 400,
+        `a public request cannot claim the surface even beside a real live run: ${JSON.stringify(withRealRun.data)}`);
+      assert.deepStrictEqual(withRealRun.data.expectedSurfaces, ["fixed-image"], "the public route offers one surface here");
       assert.strictEqual(h.calls.length, 0, "still no provider call");
+
+      /* C. A GENERIC PROJECT SAVE CANNOT AUTHOR THE RUN. The reviewer's step 2. */
+      character(null);
+      h.genericSave((project) => {
+        project.characters[0].coverageAutomation = {
+          id: "fabricated", list: "characters", entityId: "KAI", mode: "sheet",
+          sheetType: "angles", status: "starting", startedAt: "2026-08-27T00:00:00.000Z", jobs: [],
+        };
+      });
+      assert.strictEqual(h.project().characters[0].coverageAutomation, undefined,
+        "a generic save must not be able to author a coverage run where the server recorded none");
+
+      /* D. NOR REWRITE A LEGITIMATE ONE. Identity, ownership and liveness are the
+            server's; a completed run cannot be talked back into running. */
+      character({ ...LIVE_RUN, status: "completed" });
+      h.genericSave((project) => {
+        project.characters[0].coverageAutomation = {
+          id: "hijacked", list: "props", entityId: "SOMEONE-ELSE", status: "starting", jobs: ["fake"],
+        };
+      });
+      const afterHijack = h.project().characters[0].coverageAutomation;
+      assert.strictEqual(afterHijack.id, LIVE_RUN.id, "the run keeps its own identity");
+      assert.strictEqual(afterHijack.entityId, "KAI", "and its own entity");
+      assert.strictEqual(afterHijack.status, "completed", "and a finished run stays finished");
+
+      /* E. A GENERIC SAVE THAT SAYS NOTHING ABOUT THE RUN DOES NOT ERASE IT. */
+      character(LIVE_RUN);
+      h.genericSave((project) => { delete project.characters[0].coverageAutomation; project.characters[0].name = "Kai (renamed)"; });
+      const survived = h.project().characters[0];
+      assert.strictEqual(survived.coverageAutomation.id, LIVE_RUN.id, "the legitimate run survives an ordinary save");
+      assert.strictEqual(survived.name, "Kai (renamed)", "and the filmmaker's own edit is saved");
 
       /* E. THE ORDINARY REQUEST ON ITS OWN SURFACE, accepted — 4K stripped, because on
             `fixed-image` under Simple that is exactly a control the view did not render. */
@@ -861,19 +896,30 @@ async function main() {
       assert.deepStrictEqual(honestRow.removedPayloadKeys, ["resolution"], "and Simple strips the size it never offered");
       await h.settle(honest.data.job.id);
 
-      /* F. GENUINE COVERAGE WORK, corroborated by its own live run, keeps its 4K. */
-      character(LIVE_RUN);
-      const coverage = await h.post(entityBody({
+      /* G. THE SERVER'S OWN COVERAGE OPERATION. It establishes the run and dispatches
+            through the same boundary with its own context — no fixture writes the run. */
+      character(null);
+      const coverage = await h.coverage(entityBody({
         clientRequestId: "coverage",
         coverageJobType: "sheet", coverageSheetType: "angles",
         generationRequest: Presentation.generationRequestDeclaration({ surface: "reference-automation", viewMode: "simple" }),
       }));
-      assert.strictEqual(coverage.status, 200, `real coverage work must still dispatch: ${JSON.stringify(coverage.data)}`);
+      assert.strictEqual(coverage.status, 200, `the coverage operation must dispatch: ${JSON.stringify(coverage.data)}`);
       const coverageRow = h.ledger().find((row) => row.clientRequestId === "coverage");
       assert.strictEqual(coverageRow.resolution, "4k", "and keep the sheet resolution its panels depend on");
       assert.deepStrictEqual(coverageRow.removedPayloadKeys, [], "with nothing stripped");
-      assert.strictEqual(coverageRow.generationSurface, "reference-automation", "and record the surface it proved");
-      note("15. an ordinary entity request copying every client-visible coverage marker — coverageJobType included — is refused with coverageCorroboration \"no-coverage-run-recorded\"; a completed run and another entity's run are refused with their own reasons; only a live coverage run recorded on THIS entity buys the surface, and then the 4K is kept");
+      assert.strictEqual(coverageRow.generationSurface, "reference-automation", "and record the surface the server selected");
+      const established = h.project().characters[0].coverageAutomation;
+      assert(established && established.status === "sheet-running",
+        `and the server must have established the run itself: ${JSON.stringify(established)}`);
+      assert(String(established.id).startsWith("coverage:characters:KAI:"), "with an id it minted");
+
+      /* H. THE COVERAGE ROUTE IS NOT A BYPASS. It refuses work that is not coverage work,
+            so it cannot be used to launder an ordinary request into the surface. */
+      const notCoverage = await h.coverage(entityBody({ clientRequestId: "not-coverage" }));
+      assert.strictEqual(notCoverage.status, 400, `the coverage route needs a coverage job type: ${JSON.stringify(notCoverage.data)}`);
+      assert.strictEqual(notCoverage.data.code, "COVERAGE_JOB_TYPE_REQUIRED", "typed as such");
+      note("15. a public request cannot obtain `reference-automation` even carrying every coverage marker AND beside a genuine live run — the surface is the server operation's, not the body's; a generic save can neither author a run, rewrite one's identity, resurrect a finished one, nor erase a live one; and the server's own coverage operation establishes the run, keeps its 4K and refuses non-coverage work");
     } finally { h.close(); }
   }
 

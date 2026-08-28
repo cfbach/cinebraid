@@ -335,7 +335,7 @@ async function main() {
        * this control now proves is the original claim in full: with nothing standing in
        * the way, a hand-written prompt WOULD originate a paid H3 request. */
       [
-        "    const planGate = enforceRequestPlan(owner, req, purpose);",
+        "    const planGate = enforceRequestPlan(owner, req, purpose, trusted);",
         "    const planGate = { ok: true, surface: \"motion-h3\", declaration: { viewMode: \"advanced\", selectedOptionId: \"\", selectedModelId: \"\" }, payload: req.body, removed: [] };",
       ],
     ]);

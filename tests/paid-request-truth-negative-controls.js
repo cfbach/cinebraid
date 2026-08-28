@@ -30,6 +30,7 @@ const express = require("express");
 const Presentation = require("../public/shared-generation-presentation");
 const BuildHistory = require("../public/shared-build-history");
 const { IMAGE_MODEL_ID } = require("../image-execution");
+const CoverageOwnership = require("../public/shared-coverage");
 const { addFramePromptBuild, baseSpec, buildRef, REF_IDENTITY } = require("./image-execution-fixture");
 const { declaredGenerationBody } = require("./generation-request-fixture");
 
@@ -206,6 +207,12 @@ async function harness(falGeneration, options = {}) {
       });
       return { status: response.status, data: await response.json() };
     },
+    coverage: async (body) => {
+      const response = await fetch(`${appOrigin}/api/generation/fal/coverage/jobs`, {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+      });
+      return { status: response.status, data: await response.json() };
+    },
     post: async (body) => {
       const response = await fetch(`${appOrigin}/api/generation/fal/jobs`, {
         method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
@@ -222,6 +229,16 @@ async function harness(falGeneration, options = {}) {
     saveProject: (project) => fs.writeFileSync(file, JSON.stringify(project, null, 2)),
     saveRuns: (rows) => fs.writeFileSync(path.join(dir, "automation-runs.json"), JSON.stringify(rows, null, 2)),
     seedLedger: (rows) => fs.writeFileSync(path.join(dir, "generation-jobs.json"), JSON.stringify(rows, null, 2)),
+    /* A GENERIC PROJECT SAVE, applying whichever ownership rule the control hands in —
+       the real one, or a mutated copy that has stopped protecting server-owned state. */
+    genericSave: (mutate, preserve = CoverageOwnership.preserveServerOwnedCoverageRuns) => {
+      const current = JSON.parse(fs.readFileSync(file, "utf8"));
+      const successor = JSON.parse(JSON.stringify(current));
+      mutate(successor);
+      preserve(successor, current);
+      fs.writeFileSync(file, JSON.stringify(successor, null, 2));
+      return successor;
+    },
     ledger: () => {
       const raw = path.join(dir, "generation-jobs.json");
       if (!fs.existsSync(raw)) return [];
@@ -300,7 +317,7 @@ async function main() {
   await control("a money boundary that does not restrict the payload it was handed",
     "a control the active view never rendered cannot reach the adapter", async (phase) => {
       const falGeneration = loadModified("fal-generation.js", [[
-        "    const planGate = enforceRequestPlan(owner, req, purpose);",
+        "    const planGate = enforceRequestPlan(owner, req, purpose, trusted);",
         `    const planGate = { ok: true, surface: "compiled-frame", declaration: { viewMode: "simple", selectedOptionId: "", selectedModelId: "" }, payload: req.body, removed: [] };`,
       ]]);
       phase("MUTATION_LANDED");
@@ -573,25 +590,35 @@ async function main() {
      The exact defect the reviewer reproduced on the held candidate: `reference-automation`
      was legal for any entity-reference request, so naming it was enough to keep a 4K size
      under Simple. Remove the structural proof and the forgery works again. */
-  await control("a coverage surface proved only by a field the caller supplies",
-    "a request cannot claim a surface its own contents do not prove", async (phase) => {
-      /* THE ATTACK AS AN INDEPENDENT REVIEWER ACTUALLY PERFORMED IT.
+  await control("a paid surface granted by state a generic project save can write",
+    "a client request cannot promote itself to the coverage surface", async (phase) => {
+      /* THE ATTACK AS THE THIRD REVIEW PERFORMED IT, both halves.
        *
-       * The first attempt at this control omitted `coverageJobType`, which made it far
-       * too easy: it proved only that a request with no coverage marker at all could not
-       * claim the coverage surface. The reviewer's request DID carry
-       * `coverageJobType: "sheet"` — every client-visible marker a real coverage dispatch
-       * sends — and got the surface, the 4K and the adapter call.
+       * Two earlier guards fell to the same shape: whatever the boundary demanded as
+       * proof, the client could write. The last one demanded a live coverage run in the
+       * project document — and an ordinary project PUT wrote one.
        *
-       * So the mutation removes only the SERVER-OWNED half of the proof, leaving the
-       * client-visible half exactly as the held candidate had it. What this control now
-       * demonstrates is precisely the reviewer's finding: with corroboration disabled,
-       * copying the marker is enough. */
+       * So this control removes BOTH halves of the correction, and needs both to
+       * reproduce the defect. Remove only the ownership rule and the public route still
+       * refuses, because the surface is the server operation's; remove only the trusted
+       * context and there is no run to corroborate. Together they restore exactly the
+       * chain the reviewer demonstrated: generic PUT fabricates the run, the forged
+       * request is granted the surface, and 4K reaches the adapter. */
+      const ownership = loadModified("public/shared-coverage.js", [[
+        `        const owned = stored.get(String(entity.id));
+        if (owned === undefined) { delete entity.coverageAutomation; continue; }`,
+        `        const owned = stored.get(String(entity.id));
+        if (owned === undefined) continue;`,
+      ]]);
       const falGeneration = loadModified("fal-generation.js", [[
+        `    if (trusted?.surface !== "reference-automation")
+      return asked.filter((surface) => surface !== "reference-automation");
+    return coverageRunCorroboration(owner, body).corroborated
+      ? asked
+      : asked.filter((surface) => surface !== "reference-automation");`,
         `    return coverageRunCorroboration(owner, body).corroborated
       ? asked
       : asked.filter((surface) => surface !== "reference-automation");`,
-        `    return asked;`,
       ]]);
       phase("MUTATION_LANDED");
       const h = await harness(falGeneration);
@@ -599,6 +626,16 @@ async function main() {
         const project = h.project();
         project.characters.push({ id: "KAI", name: "Kai", type: "Character", approvedFile: "KAI.png", continuityStates: [] });
         h.saveProject(project);
+        /* STEP 2 OF THE REPRODUCTION: an ordinary client-facing project save authors the
+           machine-owned run. With the ownership rule intact this write is discarded. */
+        h.genericSave((successor) => {
+          successor.characters[0].coverageAutomation = {
+            id: "fabricated", list: "characters", entityId: "KAI", mode: "sheet",
+            sheetType: "angles", status: "starting", startedAt: "2026-08-27T00:00:00.000Z", jobs: [],
+          };
+        }, ownership.preserveServerOwnedCoverageRuns);
+        assert.strictEqual(h.project().characters[0].coverageAutomation?.status, "starting",
+          "the unsafe path must actually fabricate the run, or the rest proves nothing");
         const result = await h.post({
           purpose: "entity-reference", entityList: "characters", entityId: "KAI", entityType: "character",
           sourceBuildId: "entity-fixture", prompt: "Kai against neutral grey.",
@@ -616,6 +653,42 @@ async function main() {
         const row = h.ledger()[0];
         observeHarm(row.resolution === "4k",
           `THE DEFECT: an ordinary entity request named the coverage surface and kept a 4K size Simple never offered — the job records resolution ${JSON.stringify(row.resolution)}, removedPayloadKeys ${JSON.stringify(row.removedPayloadKeys)} and generationSurface ${JSON.stringify(row.generationSurface)}`);
+      } finally { h.close(); }
+    });
+
+  /* =======================================================================
+     9b. A RUN RECORDED FOR WORK THAT WAS REFUSED.
+     Inherited from NC-D5 in tests/dogfood-truth-reconciliation-negative-controls.js,
+     which guarded exactly this and could no longer reach it once the record stopped being
+     the browser's to write. The route validates first and records second; swap the two
+     and a refused coverage request leaves a live run behind — which, now that a live run
+     is what the boundary reads, is a machine-owned lie about work nobody did. */
+  await control("a coverage route that records its run before it validates the request",
+    "a refused request must not leave a coverage run behind", async (phase) => {
+      const falGeneration = loadModified("fal-generation.js", [[
+        `    if (!Presentation.CINEBRAID_COVERAGE_JOB_TYPES.includes(jobType))`,
+        `    if (false && !Presentation.CINEBRAID_COVERAGE_JOB_TYPES.includes(jobType))`,
+      ]]);
+      phase("MUTATION_LANDED");
+      const h = await harness(falGeneration);
+      try {
+        const project = h.project();
+        project.characters.push({ id: "KAI", name: "Kai", type: "Character", approvedFile: "KAI.png", continuityStates: [] });
+        h.saveProject(project);
+        /* A coverage request that is not coverage work: no job type at all. */
+        const result = await h.coverage({
+          purpose: "entity-reference", entityList: "characters", entityId: "KAI", entityType: "character",
+          sourceBuildId: "entity-fixture", prompt: "Kai against neutral grey.",
+          references: [{ key: "base", label: "Approved primary", role: "base", url: KAI_PNG }],
+          outputCount: 1, quality: "high", resolution: "4k", aspectRatio: "16:9",
+          generationRequest: Presentation.generationRequestDeclaration({ surface: "reference-automation", viewMode: "simple" }),
+        });
+        assert.notStrictEqual(result.status, 200,
+          `the request must still be refused for some reason, or this proves nothing about the ORDER: ${JSON.stringify(result.data)}`);
+        phase("UNSAFE_PATH_EXECUTED");
+        const run = h.project().characters[0].coverageAutomation;
+        observeHarm(Boolean(run),
+          `THE DEFECT: a refused coverage request left a live run behind — ${JSON.stringify(run)}`);
       } finally { h.close(); }
     });
 
