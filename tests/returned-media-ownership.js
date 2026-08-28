@@ -123,7 +123,15 @@ function shotOf(template, spec) {
     /* A shot may declare no cast, so a case can have a readiness action that is purely
        about producing rather than about confirming somebody's reference. */
     ...(spec.bare ? { characters: [], codes: [] } : {}),
-    creationBrief: spec.creationBrief || undefined,
+    /* THE FIXTURE DECLARES WHAT IT DELIVERS, because readiness now requires it to.
+       `frame.required` is written `true` by newKeyframe() on every frame of every
+       project and by no filmmaker-facing control at all, so a shot that has declared
+       neither a delivery route nor a still delivery requires no frame — a default may
+       fill an unknown and may never make a statement. Every case in this file is about
+       what happens to a shot that IS producing a frame, so the fixture says so; a spec
+       that supplies its own brief still overrides every key of it.
+       See tests/shot-intent-front.js for the undeclared shot's own coverage. */
+    creationBrief: { deliveryIntent: "still", ...(spec.creationBrief || {}) },
     promptBuilds: [],
     promptOptions: [],
   };

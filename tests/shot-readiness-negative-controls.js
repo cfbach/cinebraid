@@ -109,7 +109,12 @@ function baseProject(extras = {}) {
     shots: [{
       id: "SH-1", title: "SH-1", scene: "SC-1", characters: ["CHAR-KAI"], codes: [],
       keyframes: [{ id: "frame-a", label: "A", required: true }],
-      creationBrief: { propIds: [] },
+      /* The shot DECLARES a still delivery, because readiness no longer requires a
+         frame of a shot that has declared nothing: `frame.required` is a default with
+         no filmmaker-facing writer, and a default may not make a statement. Without a
+         declaration every control below would compare NEEDS_DECISION with
+         NEEDS_DECISION and report that it never fired. */
+      creationBrief: { propIds: [], deliveryIntent: "still" },
     }],
     ...extras,
   };

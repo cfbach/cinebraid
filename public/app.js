@@ -4114,10 +4114,29 @@ function nextActionTargetHref(target) {
  * requirements, and reporting "8 required references still needed" for a shot
  * whose next action was MARK SHOT FINAL. Two readers of one question is how that
  * happens, so there is one. */
+/* AN INPUT THE SHOT DECLARES IS OWED BEFORE THE SHOT HAS SAID HOW IT IS MADE.
+ *
+ * Readiness attaches an `entity-state` requirement to EVERY unit, because every unit
+ * consumes the shot's cast; the requirement is a fact about the SHOT rather than about
+ * the unit carrying it. That distinction never showed while every frame of every project
+ * was required by default — now that a shot which has declared nothing requires nothing,
+ * gating these rows on `unit.required` would mean casting a character onto an undecided
+ * shot raised no obligation at all, and the reference surface would report the approval
+ * it needs as coverage plan.
+ *
+ * Unit-scoped requirements stay gated on `required`, because those ARE the work: a
+ * frame's parent frame and a route's missing endpoint belong to the unit that owes them,
+ * and letting an optional unit contribute them would put frame debt back through a side
+ * door. Only the shot's own declared inputs cross. */
+const SHOT_INPUT_REQUIREMENT_KINDS = ["entity-state"];
 function outstandingReadinessRows(shot) {
-  const rows = [...(shot?.requirements || []), ...(shot?.units || [])
-    .filter((unit) => !unit.complete && unit.required)
-    .flatMap((unit) => unit.requirements || [])];
+  const units = shot?.units || [];
+  const rows = [
+    ...(shot?.requirements || []),
+    ...units.filter((unit) => !unit.complete && unit.required).flatMap((unit) => unit.requirements || []),
+    ...units.filter((unit) => !unit.complete && !unit.required)
+      .flatMap((unit) => (unit.requirements || []).filter((row) => SHOT_INPUT_REQUIREMENT_KINDS.includes(row?.kind))),
+  ];
   return rows.filter((row) => row && (row.state === "missing" || row.state === "needs-decision"));
 }
 
@@ -4649,9 +4668,30 @@ function sceneAudioPanel(sc) {
 function workspaceTabs(base, active, tabs) {
   return `<nav class="workspace-tabs">${tabs.map(([key, label, count]) => `<a class="workspace-tab ${active === key ? "on" : ""}" href="#/${base}/${key}">${esc(label)}${count != null ? ` <span>${count}</span>` : ""}</a>`).join("")}</nav>`;
 }
-function shotPlanningFlags(s) {
+/* WHICH FRAMES THIS SHOT CURRENTLY OWES, asked of the one readiness owner.
+ *
+ * `requiredFrames()` above reads `frame.required`, and newKeyframe() writes that `true`
+ * on every frame of every project while no filmmaker-facing control writes it at all.
+ * shared-shot-readiness.js is what decides requiredness from what the shot has actually
+ * DECLARED, so a shot that has declared nothing — no route, no still delivery, no motion
+ * unit — owes no frame there. Without this, the project log would go on reporting "1
+ * required frame is not approved" for a shot the shot workspace correctly says owes
+ * none: one fabrication, moved to a quieter screen.
+ *
+ * The stored flag survives as the fallback for the case readiness cannot answer at all,
+ * where reporting nothing would be its own overclaim. The unit id format is
+ * declaredUnits()'s own (`frame:<frameId>`), which is why this asks the module rather
+ * than rebuilding its answer. */
+function currentlyRequiredFrames(s, readiness) {
+  if (!readiness) return requiredFrames(s);
+  const required = new Set((readiness.units || [])
+    .filter((unit) => unit.kind === "frame" && unit.required)
+    .map((unit) => String(unit.id)));
+  return (s.keyframes || []).filter((f) => required.has(`frame:${f.id}`));
+}
+function shotPlanningFlags(s, readiness = shotReadinessFor(s)) {
   normalizeShotV5(s);
-  const frames = requiredFrames(s),
+  const frames = currentlyRequiredFrames(s, readiness),
     missingFrames = frames.filter((f) => !f.winner),
     missingMotion = (s.clips || []).filter(
       (c) =>
@@ -4671,10 +4711,13 @@ function shotPlanningFlags(s) {
     );
   return { missingFrames, missingMotion, missingPackages, flfBlocked };
 }
-function projectHealthIssues() {
+/* The readiness feed is derived ONCE and handed to every row. projectShotReadiness()
+   evaluates the whole project on each call, so asking it per shot inside this loop would
+   make a page that lists issues for N shots derive readiness N times. */
+function projectHealthIssues(feed = projectShotReadiness()) {
   const issues = [];
   for (const s of P.shots) {
-    const f = shotPlanningFlags(s);
+    const f = shotPlanningFlags(s, shotReadinessFor(s, feed));
     if (f.missingFrames.length)
       issues.push({
         type: "Frames",
@@ -5015,6 +5058,10 @@ const READINESS_ACTION_WORDS = {
   "repair-presence-declaration": "Repair the frame presence",
   "resolve-media-ownership": "Resolve the media claim",
   "declare-producible-unit": "Declare what this shot produces",
+  /* Not "Declare the delivery route": the contract's word is `deliveryRoute` and the
+     filmmaker's question is how the shot gets made. Same rule as `mark-shot-final`
+     above — the ledger's noun stays in the ledger. */
+  "declare-shot-route": "Choose how this shot is made",
   "supply-approved-media": "Supply approved media",
   "prepare-references": "Prepare required references",
   "approve-parent-frame": "Approve the previous frame",
@@ -5215,7 +5262,7 @@ async function productionHomeView() {
   const isDelivered = (shot) => (decisions.available ? deliveredIds.has(shot.id) : shotIsDelivered(shot));
   const activeRows = P.shots.map((shot) => ({ shot, next: shotProductionNextAction(shot, readinessByShot.get(shot.id)) }))
     .filter((row) => !isDelivered(row.shot)).slice(0, 8);
-  return `<div class="view-head production-home-head"><div><div class="eyebrow">Production</div><span class="view-title">${esc(P.meta.title)}</span><div class="view-sub">Continue the film from the next unfinished decision. Detailed tools stay inside each shot.</div></div><div class="production-home-actions"><button class="${next ? "ghost-btn" : "assemble-btn"}" onclick="continueProduction()">${next ? "CONTINUE PRODUCTION" : hasShots ? "NOTHING OUTSTANDING" : "ADD THE FIRST SHOT"}</button><button class="add-btn" onclick="openGlobalAdd('shot')">＋ Add shot</button></div></div>
+  return `<div class="view-head production-home-head"><div><div class="eyebrow">Production</div><span class="view-title">${esc(P.meta.title)}</span><div class="view-sub">Continue the film from the next unfinished decision. Detailed tools stay inside each shot.</div></div><div class="production-home-actions"><button class="${next ? "ghost-btn" : "assemble-btn"}" onclick="continueProduction()">${next ? "CONTINUE PRODUCTION" : hasShots ? "NOTHING OUTSTANDING" : "ADD THE FIRST SHOT"}</button><button class="add-btn" onclick="openContextualAdd('shot')">＋ Add shot</button></div></div>
   <div class="production-summary"><article title="A shot is delivered once you have marked it final in Finish &amp; Delivery. That decision is recorded as a production approval you can withdraw later, and a leftover file pointer with no approval behind it does not count."><b>${deliveredCount}/${P.shots.length}</b><span>${pluralWord(P.shots.length, "shot")} delivered</span></article><article title="A shot is signed off once its workflow status reaches Signed off. Signing a shot off is not the same as delivering it, and neither one approves an image."><b>${approvedCount}/${P.shots.length}</b><span>${pluralWord(P.shots.length, "shot")} signed off</span></article><article class="${decisions.available && decisions.count ? "review" : ""}" title="Shots that cannot move without a decision only you can make. This is the one decision count in CineBraid: the readiness list, the scene cards and the shot filters all report this same number.">${decisions.available ? `<b>${decisions.count}</b><span>${pluralWord(decisions.count, FILMMAKER_DECISION_LABEL)} ${decisions.count === 1 ? "needs" : "need"} you</span>` : `<b>—</b><span>decisions unavailable</span>`}</article><article><b>${mmss(P.shots.reduce((sum, shot) => sum + shotDur(shot), 0))}</b><span>planned runtime across ${plural(P.scenes.length, "scene")}</span></article></div>
   <!-- THE ORDER OF THIS PAGE IS THE POINT.
        What to do now, then the outstanding decisions behind it, then the detail.
@@ -5250,17 +5297,39 @@ async function productionHomeView() {
     return `<a href="#/scene/${scene.id}" class="scene-progress-card${complete ? " is-complete" : ""}" data-scene-decisions="${attr(String(scene_.count))}"><header><b>${esc(scene.title)}</b><span title="A shot is delivered once you have marked it final.">${scene_.delivered}/${shots.length} delivered</span></header><div class="progress-line"><i style="width:${pct}%"></i></div><footer>${complete ? `<span>Scene complete</span><span>Nothing outstanding</span>` : `<span>${esc(parts[0] || (decisions.available ? "No decision waiting" : "Decisions unavailable"))}</span><span>${esc(parts[1] || `${plural(remaining, "shot")} not delivered`)}</span>`}</footer></a>`;
   }).join("")}</div>` : `<div class="production-inbox-empty">No scenes have been added yet.</div>`}</section>`;
 }
+/* The records the add control can create, declared once so the chooser and the
+   contextual entry point below cannot come to disagree about what a key means. */
+const GLOBAL_ADD_CHOICES = [
+  ["shot","Shot","Add a shot to an existing scene or create the first scene."],
+  ["scene","Scene","Create a scene before adding its shots."],
+  ["character","Character","Create an identity and reference pack."],
+  ["location","Location","Create a reusable location plate and continuity states."],
+  ["prop","Prop","Create an object reference and continuity states."],
+  ["audio","Audio","Add dialogue, ambience, music, or timing material."],
+  ["project","New project","Start from scratch or import structured material."],
+];
 window.openGlobalAdd = (preferred = "") => {
-  const choices = [
-    ["shot","Shot","Add a shot to an existing scene or create the first scene."],
-    ["scene","Scene","Create a scene before adding its shots."],
-    ["character","Character","Create an identity and reference pack."],
-    ["location","Location","Create a reusable location plate and continuity states."],
-    ["prop","Prop","Create an object reference and continuity states."],
-    ["audio","Audio","Add dialogue, ambience, music, or timing material."],
-    ["project","New project","Start from scratch or import structured material."],
-  ];
+  const choices = GLOBAL_ADD_CHOICES;
   openModal(`<div class="global-add-modal"><h3>What are you adding?</h3><div class="modal-sub">Choose the record you need. CineBraid will take you to its one canonical workspace.</div><div class="global-add-grid">${choices.map(([key,label,note]) => `<button class="${preferred === key ? "recommended" : ""}" onclick="runGlobalAdd('${key}')"><b>${label}</b><span>${note}</span></button>`).join("")}</div><div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button></div></div>`);
+};
+/* ADD, WHERE THE SURFACE HAS ALREADY NAMED THE RECORD.
+ *
+ * A button that says "＋ Add shot", on a page that is only about shots, opened a
+ * chooser whose first question was "What are you adding?" — and the filmmaker's answer
+ * was the word already printed on the button they had just pressed. It is one extra
+ * click and one moment of doubt about whether the button did what it said.
+ *
+ * THE GENERIC CHOOSER IS NOT REPLACED and is not weakened. `#global-add` in the shell
+ * and the References page's Add — which is genuinely multi-entity, and passes "" on the
+ * All and Canon tabs — still call openGlobalAdd() and still get the full grid. The only
+ * difference is that a caller that already KNOWS the record type stops asking.
+ *
+ * An unrecognised key falls back to the chooser rather than to nothing, so a future
+ * surface that names a record this build does not have still lands somewhere useful. */
+window.openContextualAdd = (key = "") => {
+  const target = String(key || "").trim();
+  if (!GLOBAL_ADD_CHOICES.some(([choice]) => choice === target)) return openGlobalAdd(target);
+  return runGlobalAdd(target);
 };
 window.runGlobalAdd = (key) => {
   closeModal();
@@ -5344,7 +5413,7 @@ function productionView(tab = "board") {
   const tabDefs = [["board", "Shot board"], ["scenes", "Scene directory"]];
   if (tab === "table") tab = "board";
   const tabs = workspaceTabs("production", tab, tabDefs);
-  const head = `<div class="view-head board-head"><div><div class="eyebrow">Shots</div><span class="view-title">Shots</span><div class="view-sub">Track scene readiness, approved frames, and one clear next action for every shot.</div></div><div class="board-head-actions"><button class="assemble-btn" onclick="continueProduction()">CONTINUE</button><button class="add-btn" onclick="openGlobalAdd('shot')">＋ Add</button></div></div>${tabs}`;
+  const head = `<div class="view-head board-head"><div><div class="eyebrow">Shots</div><span class="view-title">Shots</span><div class="view-sub">Track scene readiness, approved frames, and one clear next action for every shot.</div></div><div class="board-head-actions"><button class="assemble-btn" onclick="continueProduction()">CONTINUE</button><button class="add-btn" onclick="openContextualAdd('shot')">＋ Add</button></div></div>${tabs}`;
   if (tab === "scenes") {
     const scenePage = boundedPage(P.scenes, "scenes", "overview", BOUNDED_PAGE_SIZES.scenes);
     return head + runtimeBar(P.shots, P.meta.targetRuntime) + `<div class="bounded-scene-list">${scenePage.rows.map((sc) => {
@@ -5375,7 +5444,7 @@ function productionView(tab = "board") {
     return `<section class="log-strip ${collapsed ? "collapsed" : ""}"><div class="log-head"><button class="collapse-btn" onclick="toggleSceneCollapse('${sc.id}')" aria-label="${collapsed ? "Expand" : "Collapse"} ${attr(sc.title || sc.id)}" aria-expanded="${collapsed ? "false" : "true"}">${collapsed ? "▸" : "▾"}</button><a class="log-title" href="#/scene/${sc.id}">${esc(sc.title)}</a><span class="tier-badge ${sc.tier || "B"}">TIER ${sc.tier || "B"}</span>${pending ? `<span class="scene-attention">${plural(pending, "shot")} ready for review</span>` : ""}<span class="log-count" title="Shots in this scene whose workflow status has reached Signed off">${approvedCount}/${all.length} ${pluralWord(all.length, "shot")} signed off</span></div>${collapsed ? "" : `<div class="shot-row bounded-shot-page size-${SHOT_BOARD_DENSITY}">${shots.map((shot) => slate(shot, "", readinessByShot.get(shot.id))).join("")}</div>`}</section>`;
   }).join("") || (P.shots.length
     ? `<div class="empty-state"><h2>No shots match these filters</h2><p>Change a filter to see the other ${plural(P.shots.length, "shot")} in this project.</p></div>`
-    : `<div class="empty-state"><h2>This project has no shots yet</h2><p>Add the first shot to start tracking scenes, frames and deliveries.</p><button class="add-btn" onclick="openGlobalAdd('shot')">＋ Add shot</button></div>`);
+    : `<div class="empty-state"><h2>This project has no shots yet</h2><p>Add the first shot to start tracking scenes, frames and deliveries.</p><button class="add-btn" onclick="openContextualAdd('shot')">＋ Add shot</button></div>`);
   const pager = boundedPagerMarkup("shots",boardPageKey,shotPage,"shots");
   return head + controls + pager + body + pager;
 }

@@ -119,6 +119,15 @@ function projectOf(shots, { canon = CAST_CANON } = {}) {
     })),
     clips: spec.clips || [],
     candidateFiles: spec.candidates || [],
+    /* THE FIXTURE DECLARES WHAT IT DELIVERS, the same way its sibling suite's does.
+       `frame.required` is written `true` by newKeyframe() on every frame of every
+       project and by no filmmaker-facing control at all, so readiness no longer reads
+       it on a shot that has declared neither a delivery route nor a still delivery —
+       a default may fill an unknown and may never make a statement. Every control here
+       reproduces a defect that only exists while the shot IS producing a frame, so
+       without this the controls would compare two identical undeclared states and
+       report that they never fired. */
+    creationBrief: { deliveryIntent: "still", ...(spec.creationBrief || {}) },
     promptBuilds: [],
     promptOptions: [],
   }));

@@ -4036,6 +4036,21 @@ const SHOT_INTENT_UI_WORDS = Object.freeze({
   unrecognised: "Needs review — this shot's stored intent is not readable",
   roles: Object.freeze({ "first-frame": "an opening frame", "last-frame": "a closing frame", reference: "approved references to guide the motion" }),
 });
+/* THE ROUTE CHOICES A FILMMAKER IS OFFERED, as `[value, label]` rows, with this
+   surface's words for the two states no shipped owner names — the undeclared one and
+   the route that names no mode. The vocabulary and its order are still 5a's; nothing
+   here adds, removes or reorders a route.
+
+   It is a function rather than markup so the New Shot form and the in-shot control can
+   offer the SAME list. Two hand-built option lists for one vocabulary is how a fifth
+   route comes to exist on one screen and not the other. */
+function shotIntentChoiceRows() {
+  return [
+    ["", SHOT_INTENT_UI_WORDS.absent],
+    ...shotIntentChoices().map((choice) => [choice.route, choice.label || SHOT_INTENT_UI_WORDS.hybrid]),
+  ];
+}
+window.shotIntentChoiceRows = shotIntentChoiceRows;
 function shotIntentNeedsPhrase(needs) {
   const words = (needs || []).map((role) => SHOT_INTENT_UI_WORDS.roles[role] || role);
   if (!words.length) return "";
@@ -4069,11 +4084,13 @@ function shotIntentControl(s) {
      choose. Withdrawing it is an explicit act with its own button, because clearing a
      value CineBraid merely failed to understand should never be a side effect of
      glancing at a menu. */
-  const placeholder = intent.reading === "unrecognised"
-    ? `<option value="" disabled selected>${esc(SHOT_INTENT_UI_WORDS.unrecognised)}</option>`
-    : `<option value="" ${declared ? "" : "selected"}>${esc(SHOT_INTENT_UI_WORDS.absent)}</option>`;
-  const options = placeholder + shotIntentChoices().map((choice) =>
-    `<option value="${attr(choice.route)}" ${intent.route === choice.route ? "selected" : ""}>${esc(choice.label || SHOT_INTENT_UI_WORDS.hybrid)}</option>`).join("");
+  const options = shotIntentChoiceRows().map(([value, label]) => {
+    if (!value)
+      return intent.reading === "unrecognised"
+        ? `<option value="" disabled selected>${esc(SHOT_INTENT_UI_WORDS.unrecognised)}</option>`
+        : `<option value="" ${declared ? "" : "selected"}>${esc(label)}</option>`;
+    return `<option value="${attr(value)}" ${intent.route === value ? "selected" : ""}>${esc(label)}</option>`;
+  }).join("");
   const needs = shotIntentNeedsPhrase(intent.needs);
   const workflow = !declared
     ? "Every stage is open until you say how this shot is made. Say it, and the workflow leads with the part that applies."
@@ -4093,8 +4110,30 @@ function shotIntentControl(s) {
   const warning = intent.reading === "unrecognised"
     ? `<p class="prompt-check warn shot-intent-unreadable">${esc(intent.reason || "the stored value is not one CineBraid recognises")}. Nothing about this shot has been changed, and no method has been offered because of it. Choose how the shot is made, or withdraw the stored value.</p><button type="button" class="ghost-btn shot-intent-clear" onclick="setShotIntent('${attr(s.id)}','')">Withdraw the unreadable value</button>`
     : "";
-  const sectionKey = `${s.id}:shot-intent`;
-  return `<details class="shot-intent-control" data-shot-intent-control="1" data-shot-id="${attr(s.id)}" data-shot-intent="${attr(intent.route)}" data-shot-intent-reading="${attr(intent.reading)}" data-frames-required="${exposure.required ? "1" : "0"}" ${workspaceSectionOpen(sectionKey, false) ? "open" : ""} ontoggle="rememberWorkspaceSection('${attr(sectionKey)}',this.open)"><summary><b>Shot intent</b><span>${esc(summary)}</span></summary>
+  /* SHOT INTENT AT THE FRONT. An undeclared route is the state in which this control
+     is the shot's actual next question, so it is the state in which it opens — and it
+     SAYS the thing a filmmaker had to infer from an empty summary line: that nothing
+     has been chosen and nothing has been assumed on their behalf.
+
+     THE KEY IS SCOPED TO THE STATE, and that is not decoration. `<details ontoggle>`
+     writes the remembered value on every open/close, so a shot visited once under the
+     declared default carries a stored `0` that would silently defeat this default the
+     moment its route was withdrawn — the exact trap that made a previous conditional
+     default inert. One key per state means each state honours its own default the
+     first time it is seen and remembers the filmmaker's choice separately after. */
+  const undeclaredStatement = declared
+    ? ""
+    : `<p class="prompt-check shot-intent-undeclared" data-shot-intent-undeclared="1">Execution route not chosen. Nothing has been assumed for you: until you say how this shot is made, it owes no frame and no motion, and everything already attached to it is kept.</p>`;
+  const sectionKey = declared ? `${s.id}:shot-intent` : `${s.id}:shot-intent:undeclared`;
+  /* `data-frames-required` keeps its shipped meaning — "should the Frames workflow be
+     put in front of this filmmaker" — which is why an undeclared shot carries a 1 there
+     while owing no frame at all: nothing is hidden from a shot nobody has decided about.
+     That is a presentation answer and it reads like a requirement, so the relevance the
+     Frames stage already states is stated here beside it. A reader asking what the shot
+     OWES has the word for it, and it is the same word the frames workspace uses. */
+  const framesRelevance = !exposure.known ? "undeclared" : exposure.required ? "required" : "not-required";
+  return `<details class="shot-intent-control" data-shot-intent-control="1" data-shot-id="${attr(s.id)}" data-shot-intent="${attr(intent.route)}" data-shot-intent-reading="${attr(intent.reading)}" data-frames-required="${exposure.required ? "1" : "0"}" data-frames-relevance="${attr(framesRelevance)}" ${workspaceSectionOpen(sectionKey, !declared) ? "open" : ""} ontoggle="rememberWorkspaceSection('${attr(sectionKey)}',this.open)"><summary><b>Shot intent</b><span>${esc(summary)}</span></summary>
+    ${undeclaredStatement}
     <div class="shot-intent-fields"><label for="shot-intent-${attr(s.id)}">How is this shot made?</label>
     <select id="shot-intent-${attr(s.id)}" onchange="setShotIntent('${attr(s.id)}',this.value)">${options}</select>
     ${needs ? `<small class="hint shot-intent-needs">Uses ${esc(needs)}.</small>` : ""}
@@ -4170,7 +4209,17 @@ function shotStageModelFacts(s, takes) {
     frameNeedsReview: frameStates.some((row) => row.key === "review"),
     requiredFramesApproved: routeNeeds.known ? routeRequiredFramesApproved : !!progress.requiredApproved,
     routeRequirementsKnown: routeNeeds.known === true,
-    requiredFrameCount: routeNeeds.known ? routeRequiredFrameCount : progress.frames.filter((frame) => frame.required !== false).length,
+    /* THE UNDECLARED FALLBACK ASKS READINESS, NOT THE STORED FLAG.
+       `frame.required` is `true` on every frame of every project — newKeyframe()
+       writes it and normalizeShotV5() back-fills it, and no filmmaker-facing control
+       writes it at all — so counting it told a shot that had declared nothing that it
+       owed "Required frames 0/1". shared-shot-readiness.js is the one owner of which
+       units a shot's declarations actually require; this reads its answer.
+       The stored-flag count survives only for the case readiness cannot answer at
+       all, where saying nothing is required would be its own overclaim. */
+    requiredFrameCount: routeNeeds.known ? routeRequiredFrameCount
+      : readiness ? requiredFrameUnits.length
+        : progress.frames.filter((frame) => frame.required !== false).length,
     hasMotionUnit: !!motionUnit,
     motionReadinessStatus: motionUnit ? (motionUnit.complete ? "COMPLETE" : motionUnit.status) : "",
     motionReadinessReason: motionUnit?.complete ? "" : motionUnit?.nextAction?.message || readiness?.nextAction?.message || "",
@@ -4333,7 +4382,16 @@ function guidedShotWorkspaceView(s, takes, sc, state, refs, planningMedia, neigh
   const requiredFrameUnits = (readiness?.units || []).filter((unit) => unit.kind === "frame" && unit.required);
   const stageFacts = shotStageModelFacts(s, takes);
   const motionStage = shotStageState("motion", stageFacts);
-  const openInputs = !progress.firstApproved && (shotMediaLinks(s).length || shotCreationReferences(s).length);
+  /* INPUTS OPEN WHILE THE SHOT IS STILL BEING SET UP — including, and especially, when
+     nothing has been attached yet.
+
+     The old condition was `(shotMediaLinks(s).length || shotCreationReferences(s).length)`
+     on top of this one, so the panel opened only for a shot that ALREADY had an input:
+     the one shot that most needs the attachment controls in front of it, a brand new
+     one with nothing linked, was the only shot that got them folded away. Removing that
+     clause is the whole change — this is still a DEFAULT, and guidedPanelOpen() still
+     lets a filmmaker who folded the panel keep it folded. */
+  const openInputs = !progress.firstApproved;
   const motionOpen = motionStage?.availability === "available" && (life.panel === "motion" || ensureShotCreation(s).deliveryIntent === "motion");
   /* One renderer per DECLARED stage. The keys are not a fourth statement of the
      stage list — tests/stage-model.js requires this map's keys to equal
@@ -4370,7 +4428,23 @@ function guidedShotWorkspaceView(s, takes, sc, state, refs, planningMedia, neigh
      one of them could not be found from the others. It sits after the command summary
      and before the next-action card: it is context for the whole shot, not an action. */
   const intentControl = shotIntentControl(s);
-  const commandSummary = `<section class="shot-command-summary"><article><span>References</span><b>${referenceCount}</b><small>${referenceCount ? "linked and available" : "none linked yet"}</small></article><article><span>Required frames</span><b>${approvedFrames}/${requiredFrames}</b><small>${requiredFrames ? approvedFrames === requiredFrames ? "approved" : "still to approve" : "not required by this intent"}</small></article><article><span>Motion</span><b>${videos || "-"}</b><small>${videos ? plural(videos, "video file") : motionStage?.availability === "available" ? "available for this intent" : motionStage?.blockedReason || "readiness unavailable"}</small></article><article><span>Open stage</span><b>${esc(String(selectedTask).replace(/^./, (c) => c.toUpperCase()))}</b><small>Shot status: ${esc(state?.label || life.label || "In progress")}</small></article></section>`;
+  /* THE SUMMARY MAY NOT SAY "THIS INTENT" WHERE THERE IS NO INTENT.
+     `0/0 · not required by this intent` is the right sentence for a declared t2v or
+     r2v shot and the wrong one for a shot nobody has declared anything about: both
+     read as a settled answer, and only one of them is. The undeclared shot gets the
+     state it is actually in. Same for Motion, whose blocked reason falls back to the
+     shot's own next action when there is no motion unit at all — a route-undeclared
+     shot was printing the whole readiness sentence into a four-word tile. */
+  const routeDeclared = stageFacts.routeRequirementsKnown;
+  const frameNote = requiredFrames
+    ? approvedFrames === requiredFrames ? "approved" : "still to approve"
+    : routeDeclared ? "not required by this intent" : "none until you say how this shot is made";
+  const motionNote = videos
+    ? plural(videos, "video file")
+    : motionStage?.availability === "available" ? "available for this intent"
+      : !routeDeclared && !stageFacts.hasMotionUnit ? "not declared yet"
+        : motionStage?.blockedReason || "readiness unavailable";
+  const commandSummary = `<section class="shot-command-summary" data-shot-route-declared="${routeDeclared ? "1" : "0"}"><article><span>References</span><b>${referenceCount}</b><small>${referenceCount ? "linked and available" : "none linked yet"}</small></article><article><span>Required frames</span><b>${approvedFrames}/${requiredFrames}</b><small>${esc(frameNote)}</small></article><article><span>Motion</span><b>${videos || "-"}</b><small>${esc(motionNote)}</small></article><article><span>Open stage</span><b>${esc(String(selectedTask).replace(/^./, (c) => c.toUpperCase()))}</b><small>Shot status: ${esc(state?.label || life.label || "In progress")}</small></article></section>`;
   return `<div class="shot-shell guided-shot-shell focused-workspace-shell bounded-shot-workspace clarity-shot-workspace" data-bounded="1" data-selected-task="${attr(selectedTask)}">${projectNavigator(s)}<div class="shot-main"><div class="crumb"><a href="#/shots/board">Shots</a> / <a href="#/scene/${s.scene}">${esc(sc ? sc.title : s.scene)}</a> / ${esc(s.id)}</div><header class="shot-workspace-head guided-shot-head"><div class="shot-head-nav">${neighbors.prev ? `<a href="#/shot/${neighbors.prev.id}" title="Previous shot" aria-label="Previous shot: ${attr(neighbors.prev.title || neighbors.prev.id)}">‹</a>` : '<span aria-hidden="true">‹</span>'}${neighbors.next ? `<a href="#/shot/${neighbors.next.id}" title="Next shot" aria-label="Next shot: ${attr(neighbors.next.title || neighbors.next.id)}">›</a>` : '<span aria-hidden="true">›</span>'}</div><div class="shot-head-main"><h1 class="shot-title-display">${esc(s.title || "Untitled shot")}</h1><div class="record-meta">${esc(s.id)} · ${takes.length} returned file${takes.length === 1 ? "" : "s"}</div></div><div class="shot-head-controls"><details class="guided-inline-actions"><summary>Shot actions</summary><button class="ghost-btn" onclick="openRenameShotModal('${s.id}')">Rename shot</button><button class="ghost-btn" onclick="duplicateShot('${s.id}')">Duplicate shot</button><button class="ghost-btn" onclick="clickGuidedUpload('${s.id}','${life.key.includes("motion") || life.key === "final" ? "video" : "still"}')">Import existing ${life.key.includes("motion") || life.key === "final" ? "video" : "still"}</button><button class="danger-btn" onclick="delShot('${s.id}')">Delete shot</button></details></div></header>${commandSummary}${intentControl}${guidedShotStatusCard(s,takes,neighbors)}${typeof v642RelatedShotActivityMarkup === "function" ? v642RelatedShotActivityMarkup(s.id) : ""}<div class="guided-work-stack bounded-selected-task" data-bounded-task="${attr(selectedTask)}">${selectedMarkup}</div></div></div>`;
 }
 

@@ -82,7 +82,15 @@ function shot(id, extras = {}) {
     codes: [],
     keyframes: [{ id: "frame-a", label: "A", required: true }],
     ...extras,
-    creationBrief: { locationId: "", propIds: [], ...(extras.creationBrief || {}) },
+    /* THE FIXTURE DECLARES WHAT IT DELIVERS, because readiness now requires it to.
+       `frame.required` is written `true` by newKeyframe() on every frame of every
+       project and by no filmmaker-facing control at all, so a shot that has declared
+       neither a delivery route nor a still delivery requires no frame — the flag is a
+       default, and a default may not make a statement. These fixtures are about what
+       happens once a frame IS required, so they say so; every case that declares its
+       own creationBrief (a motion intent, a video intent) still overrides this.
+       The undeclared shot has its own coverage in tests/shot-intent-front.js. */
+    creationBrief: { locationId: "", propIds: [], deliveryIntent: "still", ...(extras.creationBrief || {}) },
   };
 }
 function project(extras = {}) {

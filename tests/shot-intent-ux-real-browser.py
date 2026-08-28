@@ -341,12 +341,23 @@ try:
         assert state["reading"] == "absent", f"1. and must read as undeclared, got {state['reading']!r}"
         assert state["route"] == "", "1. and must show no route"
         assert state["selected"] == [""], f"1. only the undeclared option may be selected, got {state['selected']}"
-        assert state["open"] is False, "1. the control must open COLLAPSED — one line, not another panel"
-        assert state["summary"] == "Not decided yet", f"1. the collapsed line must say so, got {state['summary']!r}"
+        # SUPERSEDED, DELIBERATELY, BY "SHOT INTENT AT THE FRONT". Slice 5b shipped this
+        # control collapsed in every state, on the reasoning that most shots need it once.
+        # Dogfooding found the undeclared state is the one where it is the shot's actual
+        # next question: a filmmaker was shown "Shot Intent / Not decided" beside a
+        # fabricated "Required frames 0/1" and a PRODUCE THE FRAME button. An UNDECLARED
+        # shot now opens with the control expanded and stating that nothing was chosen; a
+        # DECLARED one is unchanged and still collapses, which the declared cases below
+        # continue to exercise through open_intent().
+        assert state["open"] is True, "1. an undeclared shot must open with the intent control expanded"
+        assert state["summary"] == "Not decided yet", f"1. and the summary line must still say so, got {state['summary']!r}"
+        undeclared_note = page.locator('.shot-intent-control [data-shot-intent-undeclared="1"]')
+        assert undeclared_note.count() == 1, "1. and must state that no execution route was chosen"
+        assert "Execution route not chosen" in undeclared_note.first.inner_text(), "1. in the filmmaker's own words, not an empty control"
         assert state["options"] == [""] + ROUTES, f"1. the five routes plus the undeclared state, got {state['options']}"
         assert all(label and label not in ROUTES for label in state["labels"]), \
             f"1. every option must be labelled in filmmaker language, got {state['labels']}"
-        findings.append(f"1. {FRAMES_SHOT} opens route-less: the control is collapsed, reads 'Not decided yet', "
+        findings.append(f"1. {FRAMES_SHOT} opens route-less: the control is EXPANDED and says the route was not chosen, reads 'Not decided yet', "
                         f"offers {len(ROUTES)} routes plus the undeclared state, and the record carries no key")
 
         select_stage("Frames")

@@ -325,12 +325,35 @@ window.addShot = (sceneId) => {
       label: "First scene title",
       ph: "Arrival at the tavern",
     });
+  /* WHAT HAPPENS, NOT WHAT THE STILL SHOWS.
+     "What must the still show?" assumed the shot begins by producing an image, which
+     is one of five ways CineBraid can make a shot and is a decision this form has not
+     asked for yet. The field is the shot's durable description — it is stored on
+     `desc` and copied to `creationBrief.action`, and every route reads it — so it has
+     to describe the event, not the artefact. Framing stays, marked optional, because
+     it is supporting input for whichever route the filmmaker later declares. */
   fields.push(
     { k: "title", label: "Shot title", ph: "Traveler enters the tavern" },
-    { k: "desc", label: "What must the still show?", type: "textarea", ph: "The traveler pushes through the warped door and pauses as the room turns toward him." },
-    { k: "positioning", label: "Framing and placement", type: "textarea", ph: "Wide interior from behind the bar; traveler framed in the doorway, innkeeper foreground-left." },
+    { k: "desc", label: "What happens in this shot?", type: "textarea", ph: "The traveler pushes through the warped door and pauses as the room turns toward him." },
+    { k: "positioning", label: "Framing and placement (optional)", type: "textarea", ph: "Wide interior from behind the bar; traveler framed in the doorway, innkeeper foreground-left." },
     { k: "location", label: "Base location (optional)", type: "select", options: ["", ...P.locations.map((x) => x.id)], value: "" },
   );
+  /* HOW IT IS MADE — OFFERED HERE, AND GENUINELY OPTIONAL.
+     The list comes from the one route vocabulary, through the one presentation owner,
+     so this form cannot offer a route the shot workspace does not. "Not decided yet"
+     is first and is the default, and choosing it writes nothing at all. The field is
+     omitted entirely if the intent surface has not loaded, rather than falling back to
+     a hand-written route list that could drift from the contract. */
+  const routeRows = typeof shotIntentChoiceRows === "function" ? shotIntentChoiceRows() : null;
+  if (routeRows)
+    fields.push({
+      k: "deliveryRoute",
+      label: "How is this shot made? (optional)",
+      type: "select",
+      options: routeRows,
+      value: "",
+      hint: "Leave this undecided if you do not know yet. Nothing is assumed for you: an undecided shot owes no frame and no motion, and you can choose or change this at any time from the shot.",
+    });
   formModal("New shot", fields, (v) => {
     let sid = v.scene;
     if (!hasScenes) {
@@ -392,6 +415,18 @@ window.addShot = (sceneId) => {
         promptBuilds: [],
       },
     });
+    /* THE ROUTE GOES THROUGH THE APPLICATION'S ONE WRITER, never onto the record from
+       here. setShotIntent() is that writer: it goes through Slice 5a's route
+       authority, refuses a value the normaliser does not recognise without touching
+       the shot, and marks the continuity schema — three behaviours a second writer
+       beside it would have to reimplement and would eventually reimplement
+       differently. A suite asserts that this file names neither route-writing
+       function by name, which is why they are described here instead.
+
+       AN UNDECIDED SHOT GETS NO KEY. `deliveryRoute` is absent, not "", so a shot the
+       filmmaker did not decide about serialises exactly as one created before this
+       control existed, and nothing downstream can read a slot as a decision. */
+    if (v.deliveryRoute && typeof setShotIntent === "function") setShotIntent(id, v.deliveryRoute);
     dirty();
     location.hash = "#/shot/" + id;
     route();

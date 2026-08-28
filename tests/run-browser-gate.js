@@ -57,6 +57,7 @@ const SUITES = [
   "check:reference-reframe-browser",
   "check:simple-advanced-browser",
   "check:shot-intent-browser",
+  "check:shot-intent-front-browser",
   "check:authority-browser",
   "check:save-truth-browser",
   "check:bible-canon-browser",

@@ -186,6 +186,11 @@
         { code: "resolve-state-declaration", surface: "shot-state-declaration", renderer: "guidedSourceInputsPanel", control: "guidedShotStateDeclarations", focus: '[data-shot-state-declaration-invalid="1"] select' },
         { code: "resolve-media-ownership", surface: "shot-inputs", renderer: "guidedShotAttachmentPicker", control: "guidedEntityPickerButton" },
         { code: "declare-producible-unit", surface: "shot-inputs", renderer: "shotIntentControl", control: "setShotIntent" },
+        /* The same destination, for the readiness action that names the missing
+           decision precisely: a shot that HAS a frame and a description but has not
+           said how it is made. It lands on the same control for the same reason —
+           `setShotIntent` is the application's one writer of a declared route. */
+        { code: "declare-shot-route", surface: "shot-inputs", renderer: "shotIntentControl", control: "setShotIntent", focus: ".shot-intent-control select" },
         { code: "supply-approved-media", surface: "shot-inputs", renderer: "guidedSourceInputsPanel", control: "guidedShotAttachmentPicker" },
         { code: "prepare-references", surface: "shot-inputs", renderer: "guidedSourceInputsPanel", control: "guidedShotAttachmentPicker" },
       ],
