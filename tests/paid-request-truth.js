@@ -1745,12 +1745,27 @@ async function main() {
     assert(uncertain.includes("fal-job-strip unresolved"), "and it is drawn as unresolved rather than active");
 
     /* IT IS THE SAME EXPERIENCE THE OTHER STRIPS DRAW — the reviewer asked for reuse, so
-       this compares the two renderers rather than describing them. */
+       this compares the renderers rather than describing them. */
     sandbox.FAL_GENERATION_JOBS = [{ ...base, purpose: "frame", shotId: "SH-1", status: "SUBMITTING", uncertain: true }];
     const frame = sandbox.falGenerationInline("SH-1", "frame");
     for (const token of ["fal-job-strip unresolved", "Check and resolve", "openFalUnresolvedModal"]) {
       assert(frame.includes(token) && uncertain.includes(token),
         `the entity strip must use the frame strip's own uncertainty controls, not new ones (${token})`);
+    }
+
+    /* AND EVERY STRIP THAT DRAWS A PAID JOB, not the two that happened to be reported.
+       The candidate-correction modal in review-provenance.js is the fourth, and it had
+       the identical omission. Asserted on the SOURCE OF EVERY MATCH so a fifth renderer
+       added later cannot quietly reintroduce this: each `fal-job-strip` template must
+       carry an unresolved arm. */
+    for (const file of ["public/fal-generation.js", "public/review-provenance.js"]) {
+      const source = fs.readFileSync(path.join(__dirname, "..", file), "utf8").replace(/\r\n/g, "\n");
+      for (const line of source.split("\n").filter((row) => row.includes('class="fal-job-strip'))) {
+        assert(/\$\{unknown \? "unresolved"/.test(line),
+          `every strip that draws a paid generation job must have an uncertainty arm — ${file}: ${line.trim().slice(0, 90)}`);
+        assert(line.includes("openFalUnresolvedModal"),
+          `and must reach the existing reconciliation dialog — ${file}: ${line.trim().slice(0, 90)}`);
+      }
     }
 
     /* AND ORDINARY HEALTHY WORK IS UNTOUCHED. */
@@ -1779,7 +1794,7 @@ async function main() {
       "while ordinary in-flight work is still a machine at work");
     assert.strictEqual(CreatorState.creatorJobKind({ status: "UNRESOLVED", active: false }).reason, "submission-unresolved",
       "and the existing status arm still stands on its own");
-    note(`15i. falEntityGenerationInline() renders SUBMITTING+uncertain with the frame strip's own unresolved class, explanation and "Check and resolve" control instead of Refresh/Cancel — proved by evaluating the shipped browser source and comparing the two renderers — while SUBMITTING-with-handle, IN_QUEUE, COMPLETED, FAILED and reconciled work render exactly as before; creatorJobKind() stops bucketing an uncertain submission as machine-active`);
+    note(`15i. falEntityGenerationInline() renders SUBMITTING+uncertain with the frame strip's own unresolved class, explanation and "Check and resolve" control instead of Refresh/Cancel — proved by evaluating the shipped browser source and comparing the two renderers — while SUBMITTING-with-handle, IN_QUEUE, COMPLETED, FAILED and reconciled work render exactly as before; all FOUR fal-job-strip renderers now carry an uncertainty arm reaching the one existing dialog, and creatorJobKind() stops bucketing an uncertain submission as machine-active`);
   }
 
   /* =======================================================================
