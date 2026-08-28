@@ -582,37 +582,38 @@
      work is owed — it simply does not restate the machine's own status. */
   const COVERAGE_RUN_ACTIVE_STATUSES = ["starting", "sheet-running", "individual-running"];
 
-  /* The machine's own coverage-run records, reconciled against the authoritative document.
+  /* THE MACHINE'S OWN COVERAGE-RUN RECORDS, PRESERVED WHOLESALE.
    *
-   * A coverage run is a record of work the SERVER is executing. What an ordinary save may
-   * say about one is therefore limited, and the limits are exactly the five an independent
-   * reviewer named after writing `status: "starting"` onto an entity with no run at all and
-   * watching the paid boundary accept it as proof a privileged operation was under way:
+   * A coverage run is a record of work the SERVER is executing, and during a generic
+   * project save the authoritative value wins entirely. Not "wins except for the fields
+   * that look harmless" — entirely.
    *
-   *   it may not CREATE a run;
-   *   it may not change a run's IDENTITY;
-   *   it may not change which entity a run BELONGS TO;
-   *   it may not resurrect a finished run;
-   *   it may not make a nonexistent or finished run appear LIVE.
+   * The previous version left one direction open: a run the browser could see could be
+   * moved to a TERMINAL state, on the reasoning that terminating removes privilege rather
+   * than granting it. An independent reviewer showed why that reasoning is not enough. A
+   * generic PUT carrying `id: OLD, status: completed, completedAt: <stale>` was accepted
+   * against the CURRENT ETag, and the stored run kept the server's identity and jobs while
+   * its authoritative status became `completed` with a `completedAt` copied from a record
+   * that no longer existed. Removing privilege is still WRITING LIFECYCLE, and a generic
+   * save is not an authorised lifecycle writer at any point on the dial.
+   *
+   * So there is no field list any more and no status logic. One rule:
+   *
+   *   stored run exists  -> the stored run, exactly, whatever the successor says;
+   *   stored run absent  -> no run, whatever the successor says.
+   *
+   * Nothing is lost by this. The browser's updateCoverageTerminalState() was caching a
+   * value that coverageRunReconciliation() below already derives fresh for every reader —
+   * `goal: "satisfied"` yields `status: "completed"` from the live requirement whatever
+   * the stored word is — so the display never depended on the write. And the run does not
+   * stay live: fal-generation.js's ingestEntity() moves it to `sheet-ready-for-review` or
+   * `slot-candidates-ready` when the last job of the run returns, and
+   * updateEntityCoverageRun() writes `failed` / `cancelled` / `needs-attention`. Both go
+   * through INTERNAL_NONAUTHORITY_WRITE, which never reaches this function.
    *
    * Matched BY ENTITY ID within each list, so a save that reorders, renames or adds
-   * entities keeps every run attached to the entity that owns it. An entity the stored
-   * document has no run for gets none — which is what makes fabrication impossible rather
-   * than merely detectable — and the server's own writer uses INTERNAL_NONAUTHORITY_WRITE
-   * and never reaches this function, so the real lifecycle is unaffected.
-   *
-   * ONE DIRECTION IS LEFT OPEN, deliberately and narrowly: a run the browser can see may be
-   * moved to a TERMINAL state. public/coverage-automation.js has always done that when the
-   * last required slot is filled, and it is the opposite of the defect — it takes privilege
-   * AWAY. A completed run stops corroborating anything. Going the other way, from absent or
-   * finished to live, is the promotion that was being abused and is refused outright.
-   *
-   * Everything else on the entity is the filmmaker's and is left exactly as it arrived. */
-  const SERVER_OWNED_COVERAGE_RUN_LIVE_STATUSES = ["starting", "sheet-running", "individual-running"];
-  /* What an ordinary save is allowed to contribute to a run it did not create: the outcome
-     of the filmmaker's own work on the entity, and nothing about the run's identity. */
-  const CLIENT_WRITABLE_COVERAGE_RUN_FIELDS = ["status", "completedAt", "missingRequired", "error"];
-
+   * entities keeps every run attached to the entity that owns it. Everything else on the
+   * entity is the filmmaker's and is left exactly as it arrived. */
   function preserveServerOwnedCoverageRuns(prepared, current) {
     for (const list of ["characters", "locations", "props", "vehicles"]) {
       const stored = new Map(
@@ -623,20 +624,8 @@
       for (const entity of Array.isArray(prepared[list]) ? prepared[list] : []) {
         if (!entity || typeof entity !== "object") continue;
         const owned = stored.get(String(entity.id));
-        if (owned === undefined) { delete entity.coverageAutomation; continue; }
-        const supplied = entity.coverageAutomation && typeof entity.coverageAutomation === "object"
-          ? entity.coverageAutomation : {};
-        /* The authoritative record first, so identity and ownership come from the server
-           whatever the successor says about them. */
-        const merged = JSON.parse(JSON.stringify(owned));
-        for (const field of CLIENT_WRITABLE_COVERAGE_RUN_FIELDS) {
-          if (!Object.prototype.hasOwnProperty.call(supplied, field)) continue;
-          /* The one refusal inside the one open direction: a supplied status that would put
-             the run back into a live state is discarded and the stored one kept. */
-          if (field === "status" && SERVER_OWNED_COVERAGE_RUN_LIVE_STATUSES.includes(String(supplied.status || ""))) continue;
-          merged[field] = JSON.parse(JSON.stringify(supplied[field]));
-        }
-        entity.coverageAutomation = merged;
+        if (owned === undefined) delete entity.coverageAutomation;
+        else entity.coverageAutomation = JSON.parse(JSON.stringify(owned));
       }
     }
     return prepared;

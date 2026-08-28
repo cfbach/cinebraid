@@ -89,6 +89,10 @@ async function harness(options = {}) {
   mock.post(["/openai/gpt-image-2", "/openai/gpt-image-2/edit"], (req, res) => {
     const id = `img-${calls.length + 1}`;
     calls.push({ endpoint: req.path, body: req.body });
+    /* A provider that refuses, for the one reproduction that needs submission to fail
+       AFTER the dispatch-commit point. Still loopback; still no paid call. */
+    if (options.providerStatus && options.providerStatus !== 200)
+      return res.status(options.providerStatus).json({ detail: "provider refused" });
     res.json({ request_id: id, status_url: `${mockOrigin}/status/${id}`, response_url: `${mockOrigin}/result/${id}` });
   });
   mock.get("/status/:id", (req, res) => res.json({ status: "IN_QUEUE" }));
@@ -853,7 +857,39 @@ async function main() {
       assert.deepStrictEqual(withRealRun.data.expectedSurfaces, ["fixed-image"], "the public route offers one surface here");
       assert.strictEqual(h.calls.length, 0, "still no provider call");
 
-      /* C. A GENERIC PROJECT SAVE CANNOT AUTHOR THE RUN. The reviewer's step 2. */
+      /* C-F. WHAT A GENERIC PROJECT SAVE MAY SAY ABOUT A COVERAGE RUN: nothing.
+       *
+       * The previous candidate left one direction open — a run the browser could see
+       * could be moved to a TERMINAL state, on the reasoning that terminating removes
+       * privilege. An independent reviewer wrote `id: OLD, status: completed,
+       * completedAt: <stale>` against the CURRENT ETag and the authoritative run took the
+       * status and the stale timestamp while keeping the server's identity. Removing
+       * privilege is still writing lifecycle. There is no field list now: the stored run
+       * wins wholesale, and each case below is asserted BYTE-EQUIVALENT rather than
+       * field by field, because a field-by-field assertion is how the last exception
+       * survived review. */
+      const RUN_JSON = JSON.stringify(LIVE_RUN);
+
+      /* C. The reviewer's exact reproduction: a stale OLD/completed over a live NEW. */
+      character(LIVE_RUN);
+      h.genericSave((project) => {
+        project.characters[0].coverageAutomation = {
+          id: "OLD", list: "characters", entityId: "KAI", status: "completed",
+          completedAt: "2020-01-01T00:00:00.000Z", jobs: ["ghost"],
+        };
+      });
+      assert.strictEqual(JSON.stringify(h.project().characters[0].coverageAutomation), RUN_JSON,
+        "a stale OLD/completed save must leave the authoritative live run byte-equivalent");
+
+      /* D. AND A MATCHING ID GRANTS NO LIFECYCLE AUTHORITY EITHER. */
+      character(LIVE_RUN);
+      h.genericSave((project) => {
+        project.characters[0].coverageAutomation = { ...LIVE_RUN, status: "completed", completedAt: "2020-01-01T00:00:00.000Z" };
+      });
+      assert.strictEqual(JSON.stringify(h.project().characters[0].coverageAutomation), RUN_JSON,
+        "knowing the run's id does not make a generic save its lifecycle writer");
+
+      /* E. NOR MAY IT AUTHOR ONE WHERE THE SERVER RECORDED NONE. */
       character(null);
       h.genericSave((project) => {
         project.characters[0].coverageAutomation = {
@@ -864,24 +900,23 @@ async function main() {
       assert.strictEqual(h.project().characters[0].coverageAutomation, undefined,
         "a generic save must not be able to author a coverage run where the server recorded none");
 
-      /* D. NOR REWRITE A LEGITIMATE ONE. Identity, ownership and liveness are the
-            server's; a completed run cannot be talked back into running. */
-      character({ ...LIVE_RUN, status: "completed" });
+      /* F. NOR RESURRECT A FINISHED ONE, NOR HIJACK ITS IDENTITY. */
+      const DONE = { ...LIVE_RUN, status: "completed", completedAt: "2026-08-27T09:00:00.000Z" };
+      character(DONE);
       h.genericSave((project) => {
         project.characters[0].coverageAutomation = {
           id: "hijacked", list: "props", entityId: "SOMEONE-ELSE", status: "starting", jobs: ["fake"],
         };
       });
-      const afterHijack = h.project().characters[0].coverageAutomation;
-      assert.strictEqual(afterHijack.id, LIVE_RUN.id, "the run keeps its own identity");
-      assert.strictEqual(afterHijack.entityId, "KAI", "and its own entity");
-      assert.strictEqual(afterHijack.status, "completed", "and a finished run stays finished");
+      assert.strictEqual(JSON.stringify(h.project().characters[0].coverageAutomation), JSON.stringify(DONE),
+        "a finished run survives a resurrection attempt byte-equivalent");
 
-      /* E. A GENERIC SAVE THAT SAYS NOTHING ABOUT THE RUN DOES NOT ERASE IT. */
+      /* G. AND A SAVE THAT SAYS NOTHING ABOUT THE RUN DOES NOT ERASE IT, while the
+            filmmaker's own edit in the same save persists normally. */
       character(LIVE_RUN);
       h.genericSave((project) => { delete project.characters[0].coverageAutomation; project.characters[0].name = "Kai (renamed)"; });
       const survived = h.project().characters[0];
-      assert.strictEqual(survived.coverageAutomation.id, LIVE_RUN.id, "the legitimate run survives an ordinary save");
+      assert.strictEqual(JSON.stringify(survived.coverageAutomation), RUN_JSON, "the legitimate run survives an ordinary save");
       assert.strictEqual(survived.name, "Kai (renamed)", "and the filmmaker's own edit is saved");
 
       /* E. THE ORDINARY REQUEST ON ITS OWN SURFACE, accepted — 4K stripped, because on
@@ -919,7 +954,121 @@ async function main() {
       const notCoverage = await h.coverage(entityBody({ clientRequestId: "not-coverage" }));
       assert.strictEqual(notCoverage.status, 400, `the coverage route needs a coverage job type: ${JSON.stringify(notCoverage.data)}`);
       assert.strictEqual(notCoverage.data.code, "COVERAGE_JOB_TYPE_REQUIRED", "typed as such");
-      note("15. a public request cannot obtain `reference-automation` even carrying every coverage marker AND beside a genuine live run — the surface is the server operation's, not the body's; a generic save can neither author a run, rewrite one's identity, resurrect a finished one, nor erase a live one; and the server's own coverage operation establishes the run, keeps its 4K and refuses non-coverage work");
+      note("15. a public request cannot obtain `reference-automation` even carrying every coverage marker AND beside a genuine live run — the surface is the server operation's, not the body's; and a generic project save leaves the authoritative run BYTE-EQUIVALENT through a stale OLD/completed write, a same-id terminalization, a fabrication, a resurrection and an omission, while the filmmaker's own edit in the same save persists");
+    } finally { h.close(); }
+  }
+
+  /* =======================================================================
+     15b. A REFUSED COVERAGE REQUEST LEAVES NO LIVE RUN.
+
+     The coverage route used to establish its run and THEN enter the shared boundary. An
+     independent reviewer sent a valid coverage request with no generation plan: the
+     boundary answered 400 GENERATION_PLAN_REQUIRED, no provider was called, no ledger row
+     was written — and `sheet-running` was left on the entity with no jobs. A machine-owned
+     claim that work was under way that never began.
+
+     The run is established at the DISPATCH-COMMIT point now: after every pre-submission
+     refusal has passed, immediately before the durable job row and the adapter. This walks
+     the refusal gates that sit above that point and requires the same thing of each one —
+     no provider call, and no live run left behind. */
+  {
+    const h = await harness();
+    try {
+      const project = h.project();
+      project.characters.push({ id: "KAI", name: "Kai", type: "Character", approvedFile: "KAI.png", continuityStates: [] });
+      h.saveProject(project);
+      const coverageBody = (extra) => ({
+        purpose: "entity-reference", entityList: "characters", entityId: "KAI", entityType: "character",
+        sourceBuildId: "entity-fixture", prompt: "Kai against neutral grey.",
+        references: [{ key: "base", label: "Approved primary", role: "base", url: KAI_PNG }],
+        outputCount: 1, quality: "high", resolution: "4k", aspectRatio: "16:9",
+        coverageJobType: "sheet", coverageSheetType: "angles",
+        generationRequest: Presentation.generationRequestDeclaration({ surface: "reference-automation", viewMode: "simple" }),
+        ...extra,
+      });
+      const runOf = () => h.project().characters[0].coverageAutomation;
+
+      /* THE REVIEWER'S REPRODUCTION, first and by name. */
+      const noPlan = await h.coverage({ ...coverageBody({ clientRequestId: "no-plan" }), generationRequest: undefined });
+      assert.strictEqual(noPlan.status, 400, `a coverage request with no plan is refused: ${JSON.stringify(noPlan.data)}`);
+      assert.strictEqual(noPlan.data.code, "GENERATION_PLAN_REQUIRED", "by the shared boundary, for the shared reason");
+      assert.strictEqual(h.calls.length, 0, "no provider call");
+      assert.strictEqual(h.ledger().length, 0, "no ledger row");
+      assert.strictEqual(runOf(), undefined,
+        `and NO LIVE RUN — this is the defect: ${JSON.stringify(runOf())}`);
+
+      /* THE REST OF THE GATES THAT SIT ABOVE THE DISPATCH-COMMIT POINT. Each is reached
+         with a request that is otherwise a valid coverage operation, and each must leave
+         the same nothing behind. */
+      const REFUSALS = [
+        ["a mismatched declared surface", { clientRequestId: "bad-surface", generationRequest: Presentation.generationRequestDeclaration({ surface: "compiled-frame", viewMode: "simple" }) }, "GENERATION_PLAN_SURFACE_MISMATCH"],
+        ["an impossible option identity", { clientRequestId: "bad-option", generationRequest: Presentation.generationRequestDeclaration({ surface: "reference-automation", viewMode: "simple", selectedOptionId: `${IMAGE_MODEL_ID}::not-a-real-surface::not-a-real-mode`, selectedModelId: IMAGE_MODEL_ID }) }, "GENERATION_OPTION_IDENTITY_INVALID"],
+        ["a model this route cannot dispatch", { clientRequestId: "bad-model", generationRequest: Presentation.generationRequestDeclaration({ surface: "reference-automation", viewMode: "simple", selectedOptionId: "seedream/5.0-pro::runware::t2i", selectedModelId: "seedream/5.0-pro" }) }, "GENERATION_MODEL_MISMATCH"],
+        /* Capability/preparation: the entity-reference branch requires the approved parent
+           as an editable base for a derived state, and refuses without it. */
+        ["a preparation refusal", { clientRequestId: "bad-prep", derivationMode: "derive", continuityStateId: "" }, undefined],
+        ["a request with no prompt", { clientRequestId: "no-prompt", prompt: "" }, undefined],
+        ["an entity that does not exist", { clientRequestId: "no-entity", entityId: "GHOST" }, "COVERAGE_ENTITY_MISSING"],
+      ];
+      for (const [what, extra, code] of REFUSALS) {
+        const before = h.calls.length;
+        const result = await h.coverage(coverageBody(extra));
+        assert.notStrictEqual(result.status, 200, `${what} must be refused: ${JSON.stringify(result.data)}`);
+        if (code) assert.strictEqual(result.data.code, code, `${what}: typed`);
+        assert.strictEqual(h.calls.length, before, `${what}: no provider call`);
+        assert.strictEqual(runOf(), undefined, `${what}: NO LIVE RUN may be left behind — found ${JSON.stringify(runOf())}`);
+      }
+
+      /* CONCURRENCY, which sits above the commit point too. Two live jobs fill the cap,
+         and the third coverage request is refused with nothing recorded. */
+      /* Distinct slots, so the entity-reference duplicate guard — which correctly reuses
+         an in-flight request for the SAME coverage target — does not answer instead of
+         the cap this is about. */
+      const slotBody = (n) => coverageBody({ clientRequestId: `cap-${n}`, coverageJobType: "slot", targetCoverageSlotId: `slot-${n}` });
+      const first = await h.coverage(slotBody(1));
+      assert.strictEqual(first.status, 200, `the first coverage request dispatches: ${JSON.stringify(first.data)}`);
+      const runAfterFirst = runOf();
+      assert(runAfterFirst && runAfterFirst.status === "individual-running", `and NOW the run is live: ${JSON.stringify(runAfterFirst)}`);
+      assert.deepStrictEqual(runAfterFirst.jobs, [first.data.job.id],
+        "carrying the job it was established for, in the same durable turn");
+      const second = await h.coverage(slotBody(2));
+      assert.strictEqual(second.status, 200, `and the second: ${JSON.stringify(second.data)}`);
+      const capped = await h.coverage(slotBody(3));
+      assert.strictEqual(capped.status, 409, `the third exceeds the concurrency cap: ${JSON.stringify(capped.data)}`);
+      assert.strictEqual(h.calls.length, 2, "and reaches no provider");
+      assert.deepStrictEqual(runOf().jobs, [first.data.job.id, second.data.job.id],
+        "and adds nothing to the run it was refused from");
+      note(`15b. a coverage request refused for a missing plan leaves no run, no row and no provider call — and so does every other pre-submit gate above the dispatch-commit point (${REFUSALS.length + 1} of them plus the concurrency cap); the run becomes live only with the job it was established for`);
+    } finally { h.close(); }
+  }
+
+  /* =======================================================================
+     15c. A COVERAGE RUN THAT REACHES THE ADAPTER AND FAILS IS NOT LEFT LIVE.
+
+     The dispatch-commit point opens exactly one window: the run is true and the provider
+     has not answered yet. Every failure after it must transition the run truthfully
+     through the lifecycle owner that already writes those states. */
+  {
+    const h = await harness({ providerStatus: 500 });
+    try {
+      const project = h.project();
+      project.characters.push({ id: "KAI", name: "Kai", type: "Character", approvedFile: "KAI.png", continuityStates: [] });
+      h.saveProject(project);
+      const failed = await h.coverage({
+        purpose: "entity-reference", entityList: "characters", entityId: "KAI", entityType: "character",
+        sourceBuildId: "entity-fixture", prompt: "Kai against neutral grey.",
+        references: [{ key: "base", label: "Approved primary", role: "base", url: KAI_PNG }],
+        outputCount: 1, quality: "high", resolution: "4k", aspectRatio: "16:9",
+        coverageJobType: "sheet", coverageSheetType: "angles", clientRequestId: "adapter-fails",
+        generationRequest: Presentation.generationRequestDeclaration({ surface: "reference-automation", viewMode: "simple" }),
+      });
+      assert.strictEqual(failed.status, 502, `the adapter refused, so the request fails: ${JSON.stringify(failed.data)}`);
+      const run = h.project().characters[0].coverageAutomation;
+      assert(run, "the run was established before submission, so it exists");
+      assert.strictEqual(run.status, "needs-attention",
+        `and a submission that failed must not leave it live: ${JSON.stringify(run)}`);
+      assert(run.needsAttentionAt, "with the lifecycle owner's own timestamp");
+      note("15c. when the adapter refuses after the dispatch-commit point, the established run is transitioned to needs-attention by the existing lifecycle owner — no path leaves a run live with no valid submission behind it");
     } finally { h.close(); }
   }
 

@@ -56,10 +56,24 @@
     if (!run || typeof coverageRunReconciliation !== "function") return null;
     return coverageRunReconciliation(run, coverageRunCoverage(list, entity, run));
   }
-  /* THE ONE DURABLE WRITER, unchanged in what it is for and no longer holding an
-     opinion of its own. It used to re-derive the requirement inline; it now copies
-     the shared reconciliation, so the record it writes and the banner a creator
-     reads are the same answer by construction rather than by coincidence. */
+  /* A WITHIN-RENDER CACHE OF A DERIVATION, and no longer durable in any sense.
+   *
+   * This used to be the one durable writer of the run's terminal state. It is not any
+   * more: entity.coverageAutomation is server-owned, and server.js's prepareSuccessor()
+   * restores the authoritative record wholesale over whatever an ordinary save carries.
+   * Anything written here is discarded on the next save, deliberately — an independent
+   * reviewer showed a generic PUT terminating a live run with a stale completedAt, and
+   * "terminating removes privilege" turned out not to make a generic save an authorised
+   * lifecycle writer.
+   *
+   * NOTHING DEPENDS ON THE WRITE. coverageRunReconciliation() derives `completed` from
+   * the live requirement for every reader, fresh, whatever the stored word says — see
+   * its `goal: "satisfied"` arm. And the run does leave its live state: ingestEntity()
+   * moves it when the last job returns, and updateEntityCoverageRun() writes the failure
+   * states, both through INTERNAL_NONAUTHORITY_WRITE.
+   *
+   * Kept because the in-memory value is what the current render reads before the next
+   * refresh, and because the states it names are still the states this workflow reaches. */
   function updateCoverageTerminalState(list, entity) {
     if (!entity?.coverageAutomation) return;
     const state = coverageRunState(list, entity);

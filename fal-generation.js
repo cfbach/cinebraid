@@ -451,76 +451,28 @@ function registerFalGeneration(app, context) {
   function legalRequestSurfaces(owner, body, purpose, trusted) {
     const asked = Presentation.generationRequestSurfacesFor(body, purpose).legal;
     if (!asked.includes("reference-automation")) return asked;
-    /* TWO CONDITIONS, AND THE FIRST IS NOT NEGOTIABLE BY ANY REQUEST.
+    /* THE PRIVILEGED SURFACE BELONGS TO THE SERVER OPERATION THAT IS DISPATCHING.
      *
-     * The privileged surface is available only to the server operation that is actually
-     * executing coverage work. `trusted` is an argument of this function, supplied by the
-     * coverage route and by nothing else — there is no body field, header or project
-     * value that can produce it, which is what "a client request cannot promote itself"
-     * means concretely.
+     * `trusted` is an argument of this function, constructed by the coverage route and
+     * reachable from no body field, header, query, param or project value — which is what
+     * "a client request cannot promote itself" means concretely.
      *
-     * The corroboration below is kept as well, and it is not redundant. It is what makes
-     * the trusted context TRUE rather than merely asserted: the run record it reads is
-     * now server-owned (prepareSuccessor() preserves it across every ordinary save), so
-     * this asks whether the operation the server thinks it is running is one the
-     * authoritative document agrees is live. A coverage route that forgot to establish
-     * its run would be refused by its own boundary. */
-    if (trusted?.surface !== "reference-automation")
-      return asked.filter((surface) => surface !== "reference-automation");
-    return coverageRunCorroboration(owner, body).corroborated
-      ? asked
-      : asked.filter((surface) => surface !== "reference-automation");
+     * AND IT MUST BE THIS ENTITY'S OPERATION. The descriptor carries the entity the
+     * coverage route validated for itself; a request naming a different one is not the
+     * work that operation is running, so it does not inherit its surface. Both halves come
+     * from the server: one from the argument, one from comparing the request against it.
+     *
+     * NOTE WHAT IS NO LONGER ASKED FOR: a live coverage run in the document. It cannot be
+     * — the run is established at the dispatch-commit point below, after every
+     * pre-submission refusal has passed, precisely so that a refused request never leaves
+     * a live run behind. Requiring one here would have meant creating it before the
+     * boundary had accepted the request, which is the defect this ordering removes. */
+    if (trusted?.surface !== "reference-automation") return asked.filter(notCoverageAutomation);
+    const sameEntity = String(trusted?.entityList || "") === String(body?.entityList || "")
+      && String(trusted?.entityId || "") === String(body?.entityId || "");
+    return sameEntity ? asked : asked.filter(notCoverageAutomation);
   }
-
-  /* THE SERVER-OWNED HALF OF THE COVERAGE PROOF.
-   *
-   * `entity.coverageAutomation` is a durable coverage-run record written into the project
-   * document by public/coverage-automation.js BEFORE it dispatches anything, and read by
-   * this file already — updateEntityCoverageRun() reports every failure onto it. It
-   * carries the run's own id, the entity it is for, its mode and sheet type, the job ids
-   * it has produced and its status.
-   *
-   * A request cannot put that record in its own body. To have one, a caller must have
-   * gone through the project-save route first and written durable state that persists,
-   * appears on the entity's coverage board, and is still there afterwards to be read.
-   * That is what "corroboration" means here and it is worth being exact about the limit:
-   * this is same-origin single-user software with no per-route authentication, so a
-   * client that can write the project document can create the record. What this stops is
-   * the thing both reviewers actually did — gaining a more permissive paid surface by
-   * adding fields to the generation request itself — and it makes the alternative a
-   * visible, auditable, persisted act rather than a string.
-   *
-   * THE RECORD MUST BE LIVE AND MUST BE THIS ENTITY'S. A finished or failed run does not
-   * authorise new coverage work, and a run recorded against another entity authorises
-   * nothing here at all. */
-  function coverageRefusalText(coverage) {
-    if (coverage.reason === "no-coverage-run-recorded") return "no coverage run is recorded on this entity";
-    if (coverage.reason === "coverage-run-is-not-running") return `the coverage run recorded on this entity is ${coverage.status || "not running"}`;
-    if (coverage.reason === "coverage-run-is-for-another-entity") return "the coverage run recorded here is for another entity";
-    if (coverage.reason === "entity-not-found") return "that entity no longer exists";
-    return "CineBraid could not corroborate a coverage run for it";
-  }
-  const COVERAGE_RUN_ACTIVE_STATUSES = ["starting", "sheet-running", "individual-running"];
-  function coverageRunCorroboration(owner, body) {
-    const list = String(body?.entityList || "");
-    const entityId = String(body?.entityId || "");
-    if (!list || !entityId) return { corroborated: false, reason: "no-entity" };
-    let project;
-    try {
-      project = ownerProject(owner);
-    } catch {
-      return { corroborated: false, reason: "project-unreadable" };
-    }
-    const entity = (project[list] || []).find((item) => String(item?.id) === entityId);
-    if (!entity) return { corroborated: false, reason: "entity-not-found" };
-    const run = entity.coverageAutomation;
-    if (!run || typeof run !== "object") return { corroborated: false, reason: "no-coverage-run-recorded" };
-    if (String(run.entityId || "") !== entityId || String(run.list || "") !== list)
-      return { corroborated: false, reason: "coverage-run-is-for-another-entity" };
-    if (!COVERAGE_RUN_ACTIVE_STATUSES.includes(String(run.status || "")))
-      return { corroborated: false, reason: "coverage-run-is-not-running", status: String(run.status || "") };
-    return { corroborated: true, reason: "", runId: String(run.id || "") };
-  }
+  const notCoverageAutomation = (surface) => surface !== "reference-automation";
 
   /* The control capability for the gate, from the owner that already resolves it for
      this route. `fixed-image` has none to ask - it dispatches through the configured
@@ -567,26 +519,14 @@ function registerFalGeneration(app, context) {
         error: "This paid request did not say which generation surface built it or which view the filmmaker was using, so CineBraid cannot tell what it was allowed to send. Nothing was submitted. Generate again from a CineBraid generation dialog.",
         detail: { expectedSurfaces: legal },
       };
-    if (!legal.includes(declaration.surface)) {
-      /* When the coverage surface was asked for and withheld, the refusal says WHY the
-         corroboration failed rather than only which surfaces were left. "No coverage run
-         is recorded on this entity" sends a filmmaker somewhere; "expected fixed-image"
-         does not. */
-      const coverage = declaration.surface === "reference-automation"
-        ? coverageRunCorroboration(owner, req.body)
-        : null;
+    if (!legal.includes(declaration.surface))
       return {
         ok: false,
         status: 400,
         code: "GENERATION_PLAN_SURFACE_MISMATCH",
-        error: `This request says it came from the ${declaration.surface} surface, but its own contents describe a ${legal.join(" or ")} request${coverage && !coverage.corroborated ? ` — ${coverageRefusalText(coverage)}` : ""}. Nothing was submitted.`,
-        detail: {
-          declaredSurface: declaration.surface,
-          expectedSurfaces: legal,
-          ...(coverage ? { coverageCorroboration: coverage.reason } : {}),
-        },
+        error: `This request says it came from the ${declaration.surface} surface, but its own contents describe a ${legal.join(" or ")} request. Nothing was submitted.`,
+        detail: { declaredSurface: declaration.surface, expectedSurfaces: legal },
       };
-    }
     const expected = declaration.surface;
     let capability = null;
     try {
@@ -740,6 +680,12 @@ function registerFalGeneration(app, context) {
       detail: { reasons: freshness.reasons, evidence: freshness.evidence, buildId: job.sourceBuildId },
     };
   }
+  /* The statuses that mean a coverage run is EXECUTING, as opposed to waiting for a
+     person or finished. ingestEntity() moves a run out of this set when the last job of
+     the run returns, and updateEntityCoverageRun() writes the failure states; both go
+     through INTERNAL_NONAUTHORITY_WRITE, so a generic project save never touches any of
+     it. Read here only to decide whether one press is continuing an existing run. */
+  const COVERAGE_RUN_ACTIVE_STATUSES = ["starting", "sheet-running", "individual-running"];
 
   function automationSubmissionError(owner, jobs, body, outputCount) {
     const runId = String(body?.automationRunId || "").trim();
@@ -2517,9 +2463,46 @@ function registerFalGeneration(app, context) {
     /* The row is committed against CURRENT durable state, not against the
        snapshot this request read minutes ago — a job created by an overlapping
        request in between must survive. */
+    /* ===================================================================
+       THE DISPATCH-COMMIT POINT.
+
+       Everything above this line can still refuse: the plan gate, the surface, the
+       payload restriction, model identity, package freshness, the compiled-plan and
+       capability preparation, the frame-presence gate, the legacy binding, the
+       concurrency cap, the unresolved twin, the automation lease and both spend guards.
+       Every one of them returns without a durable row and without contacting anything.
+
+       Below it, a job row exists and a provider is about to be told about it.
+
+       SO THIS IS WHERE A SERVER OPERATION'S OWN STATE BECOMES TRUE. The coverage route
+       used to establish its run before calling this function, and an independent reviewer
+       showed the cost: a coverage request refused by the shared boundary for a missing
+       plan left `sheet-running` on the entity with no jobs, no ledger row and no provider
+       call — a machine-owned claim that work was under way that never began.
+
+       The hook is a CALLBACK ON THE TRUSTED OPERATION DESCRIPTOR, so the route keeps
+       ownership of what its state means while the boundary keeps ownership of when it
+       becomes true. Nothing here is reachable from a request. */
+    if (typeof trusted?.onDispatchCommit === "function") {
+      try {
+        await trusted.onDispatchCommit(owner, job);
+      } catch (error) {
+        /* Nothing is committed and nothing is sent. A run that could not be recorded is
+           a run that did not start, and saying so is better than dispatching work whose
+           own record failed to exist. */
+        return requestTruthRefusal(res, 500, "COVERAGE_RUN_NOT_RECORDED",
+          `CineBraid could not record the coverage run for this request: ${error.message}`, {});
+      }
+    }
     try {
       await commit(owner, (current) => { current.push(job); });
     } catch (error) {
+      /* THE ONE WINDOW THE HOOK OPENS, CLOSED HERE. The operation's state is already
+         true and the job row is not, so the run is transitioned truthfully rather than
+         left claiming work that has no job behind it. Through the same lifecycle owner
+         every other failure on this route uses. */
+      await updateEntityCoverageRun(owner, job, "needs-attention",
+        `CineBraid could not record the generation job for this coverage run: ${error.message}`).catch(() => {});
       return res.status(ledgerFailureStatus(error)).json(ledgerFailurePayload(error));
     }
     try {
@@ -2610,6 +2593,10 @@ function registerFalGeneration(app, context) {
     const list = String(req.body?.entityList || "");
     const entityId = String(req.body?.entityId || "");
     const jobType = String(req.body?.coverageJobType || "");
+    /* OPERATION SHAPE ONLY. Just enough to know WHICH server operation is being asked
+       for, and no more: there is no plan check, no payload restriction, no capability,
+       freshness, model, quantity or spend logic here. All of that belongs to the shared
+       boundary and happens there exactly once, for this route and the public one alike. */
     if (!["characters", "locations", "props", "vehicles"].includes(list))
       return res.status(400).json({ error: "A supported entityList is required.", code: "COVERAGE_ENTITY_LIST_REQUIRED", providerContacted: false, paidRequestSubmitted: false });
     if (!entityId)
@@ -2621,51 +2608,51 @@ function registerFalGeneration(app, context) {
       });
     if (!(ownerProject(owner)[list] || []).some((item) => String(item?.id) === entityId))
       return res.status(404).json({ error: "Entity no longer exists.", code: "COVERAGE_ENTITY_MISSING", providerContacted: false, paidRequestSubmitted: false });
-    /* THE RUN, ESTABLISHED BEFORE ANYTHING IS DISPATCHED. An existing live run for this
-       entity is continued rather than replaced, so the slot jobs of one coverage press
-       all belong to one run. */
-    try {
-      await commitProject(owner, (project) => {
-        const entity = (project[list] || []).find((item) => String(item?.id) === entityId);
-        if (!entity) return;
-        const existing = entity.coverageAutomation;
-        const mode = String(req.body?.coverageMode || jobType);
-        const sheetType = String(req.body?.coverageSheetType || "");
-        /* ONE PRESS IS ONE RUN, and a different task is a different run.
-         *
-         * A single coverage press dispatches several slot jobs, and they belong to one
-         * run — so a live run for the same task is CONTINUED rather than replaced, and
-         * the job ids accumulate on it. Asking for different work is not a continuation:
-         * an expression sheet is not the angle sheet that happened to be running, and a
-         * record that kept saying `angles` would file the returned candidates against the
-         * wrong board. That is the same mistake the payload's own coverageSheetType was
-         * fixed for. */
-        const continuing = existing
-          && COVERAGE_RUN_ACTIVE_STATUSES.includes(String(existing.status || ""))
-          && String(existing.sheetType || "") === sheetType
-          && String(existing.mode || "") === mode;
-        entity.coverageAutomation = continuing
-          ? {
-            ...existing,
-            updatedAt: now(),
-            /* What the planner told the filmmaker this press would cost, kept current as
-               the press adds work to the run it already started. */
-            ...(Number(req.body?.coverageRequestCount) > 0 ? { requestCount: Number(req.body.coverageRequestCount) } : {}),
-            ...(Number(req.body?.coverageMaximumImages) > 0 ? { maximumImages: Number(req.body.coverageMaximumImages) } : {}),
-          }
-          : {
+
+    const mode = String(req.body?.coverageMode || jobType);
+    const sheetType = String(req.body?.coverageSheetType || "");
+    /* THE TRUSTED OPERATION DESCRIPTOR. Built here from values this route validated for
+       itself, handed to the shared boundary as an argument, and reachable from no request
+       field. It says which operation is running, which entity it is for, and what to do
+       at the one moment the boundary decides the work is really happening. */
+    return dispatchGenerationRequest(req, res, {
+      surface: "reference-automation",
+      entityList: list,
+      entityId,
+      async onDispatchCommit(dispatchOwner, job) {
+        await commitProject(dispatchOwner, (project) => {
+          const entity = (project[list] || []).find((item) => String(item?.id) === entityId);
+          if (!entity) throw new Error(`Entity ${entityId} no longer exists.`);
+          const existing = entity.coverageAutomation;
+          /* ONE PRESS IS ONE RUN, and a different task is a different run. A single
+             coverage press dispatches several slot jobs and they belong together, so a
+             live run for the same task is CONTINUED and the job ids accumulate on it.
+             Asking for different work is not a continuation: an expression sheet is not
+             the angle sheet that happened to be running, and a record that kept saying
+             `angles` would file the returned candidates against the wrong board. */
+          const continuing = existing
+            && COVERAGE_RUN_ACTIVE_STATUSES.includes(String(existing.status || ""))
+            && String(existing.sheetType || "") === sheetType
+            && String(existing.mode || "") === mode;
+          const run = continuing ? { ...existing, updatedAt: now() } : {
             id: `coverage:${list}:${entityId}:${uid()}`,
             list, entityId, mode, sheetType,
             status: jobType === "sheet" ? "sheet-running" : "individual-running",
             startedAt: now(), updatedAt: now(), jobs: [],
-            ...(Number(req.body?.coverageRequestCount) > 0 ? { requestCount: Number(req.body.coverageRequestCount) } : {}),
-            ...(Number(req.body?.coverageMaximumImages) > 0 ? { maximumImages: Number(req.body.coverageMaximumImages) } : {}),
           };
-      });
-    } catch (error) {
-      return res.status(500).json({ error: `CineBraid could not record the coverage run: ${error.message}`, code: "COVERAGE_RUN_NOT_RECORDED", providerContacted: false, paidRequestSubmitted: false });
-    }
-    return dispatchGenerationRequest(req, res, { surface: "reference-automation" });
+          /* What the planner told the filmmaker this press would cost. Display facts on
+             the machine's own record; they grant nothing. */
+          if (Number(req.body?.coverageRequestCount) > 0) run.requestCount = Number(req.body.coverageRequestCount);
+          if (Number(req.body?.coverageMaximumImages) > 0) run.maximumImages = Number(req.body.coverageMaximumImages);
+          /* THE JOB THIS RUN IS BECOMING LIVE FOR, recorded with it. A run and the job it
+             was established for exist in the same durable turn, so there is no moment at
+             which the record claims work with nothing behind it. */
+          run.jobs = Array.isArray(run.jobs) ? run.jobs : [];
+          if (!run.jobs.includes(job.id)) run.jobs.push(job.id);
+          entity.coverageAutomation = run;
+        });
+      },
+    });
   });
 
   /* The way out of UNRESOLVED, and the only one that does not involve guessing.

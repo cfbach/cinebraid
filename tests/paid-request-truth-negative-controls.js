@@ -31,6 +31,8 @@ const Presentation = require("../public/shared-generation-presentation");
 const BuildHistory = require("../public/shared-build-history");
 const { IMAGE_MODEL_ID } = require("../image-execution");
 const CoverageOwnership = require("../public/shared-coverage");
+/* The shipped route, for a control whose mutation is in a DIFFERENT module. */
+const falGenerationReal = require("../fal-generation");
 const { addFramePromptBuild, baseSpec, buildRef, REF_IDENTITY } = require("./image-execution-fixture");
 const { declaredGenerationBody } = require("./generation-request-fixture");
 
@@ -590,35 +592,19 @@ async function main() {
      The exact defect the reviewer reproduced on the held candidate: `reference-automation`
      was legal for any entity-reference request, so naming it was enough to keep a 4K size
      under Simple. Remove the structural proof and the forgery works again. */
-  await control("a paid surface granted by state a generic project save can write",
+  await control("a paid surface any request may promote itself to",
     "a client request cannot promote itself to the coverage surface", async (phase) => {
-      /* THE ATTACK AS THE THIRD REVIEW PERFORMED IT, both halves.
-       *
-       * Two earlier guards fell to the same shape: whatever the boundary demanded as
-       * proof, the client could write. The last one demanded a live coverage run in the
-       * project document — and an ordinary project PUT wrote one.
-       *
-       * So this control removes BOTH halves of the correction, and needs both to
-       * reproduce the defect. Remove only the ownership rule and the public route still
-       * refuses, because the surface is the server operation's; remove only the trusted
-       * context and there is no run to corroborate. Together they restore exactly the
-       * chain the reviewer demonstrated: generic PUT fabricates the run, the forged
-       * request is granted the surface, and 4K reaches the adapter. */
-      const ownership = loadModified("public/shared-coverage.js", [[
-        `        const owned = stored.get(String(entity.id));
-        if (owned === undefined) { delete entity.coverageAutomation; continue; }`,
-        `        const owned = stored.get(String(entity.id));
-        if (owned === undefined) continue;`,
-      ]]);
+      /* THE SURFACE GUARD, REMOVED. `reference-automation` becomes available to any
+         entity-reference request again, which is what the first two candidates shipped
+         and what two reviewers in a row walked straight through. The request below
+         carries every client-visible coverage marker; what it does not have — and what no
+         request can have — is the trusted operation descriptor the coverage route builds. */
       const falGeneration = loadModified("fal-generation.js", [[
-        `    if (trusted?.surface !== "reference-automation")
-      return asked.filter((surface) => surface !== "reference-automation");
-    return coverageRunCorroboration(owner, body).corroborated
-      ? asked
-      : asked.filter((surface) => surface !== "reference-automation");`,
-        `    return coverageRunCorroboration(owner, body).corroborated
-      ? asked
-      : asked.filter((surface) => surface !== "reference-automation");`,
+        `    if (trusted?.surface !== "reference-automation") return asked.filter(notCoverageAutomation);
+    const sameEntity = String(trusted?.entityList || "") === String(body?.entityList || "")
+      && String(trusted?.entityId || "") === String(body?.entityId || "");
+    return sameEntity ? asked : asked.filter(notCoverageAutomation);`,
+        `    return asked;`,
       ]]);
       phase("MUTATION_LANDED");
       const h = await harness(falGeneration);
@@ -626,24 +612,11 @@ async function main() {
         const project = h.project();
         project.characters.push({ id: "KAI", name: "Kai", type: "Character", approvedFile: "KAI.png", continuityStates: [] });
         h.saveProject(project);
-        /* STEP 2 OF THE REPRODUCTION: an ordinary client-facing project save authors the
-           machine-owned run. With the ownership rule intact this write is discarded. */
-        h.genericSave((successor) => {
-          successor.characters[0].coverageAutomation = {
-            id: "fabricated", list: "characters", entityId: "KAI", mode: "sheet",
-            sheetType: "angles", status: "starting", startedAt: "2026-08-27T00:00:00.000Z", jobs: [],
-          };
-        }, ownership.preserveServerOwnedCoverageRuns);
-        assert.strictEqual(h.project().characters[0].coverageAutomation?.status, "starting",
-          "the unsafe path must actually fabricate the run, or the rest proves nothing");
         const result = await h.post({
           purpose: "entity-reference", entityList: "characters", entityId: "KAI", entityType: "character",
           sourceBuildId: "entity-fixture", prompt: "Kai against neutral grey.",
           references: [{ key: "base", label: "Approved primary", role: "base", url: KAI_PNG }],
           outputCount: 1, quality: "high", resolution: "4k", aspectRatio: "16:9",
-          /* EVERY CLIENT-VISIBLE COVERAGE MARKER, copied. What this request does not have
-             — and cannot put in its own body — is a live coverage run recorded on the
-             entity in the project document. */
           coverageJobType: "sheet", coverageSheetType: "angles",
           generationRequest: Presentation.generationRequestDeclaration({ surface: "reference-automation", viewMode: "simple" }),
         });
@@ -652,22 +625,94 @@ async function main() {
         phase("UNSAFE_PATH_EXECUTED");
         const row = h.ledger()[0];
         observeHarm(row.resolution === "4k",
-          `THE DEFECT: an ordinary entity request named the coverage surface and kept a 4K size Simple never offered — the job records resolution ${JSON.stringify(row.resolution)}, removedPayloadKeys ${JSON.stringify(row.removedPayloadKeys)} and generationSurface ${JSON.stringify(row.generationSurface)}`);
+          `THE DEFECT: an ordinary entity request on the PUBLIC route named the coverage surface and kept a 4K size Simple never offered — the job records resolution ${JSON.stringify(row.resolution)}, removedPayloadKeys ${JSON.stringify(row.removedPayloadKeys)} and generationSurface ${JSON.stringify(row.generationSurface)}`);
       } finally { h.close(); }
     });
 
   /* =======================================================================
-     9b. A RUN RECORDED FOR WORK THAT WAS REFUSED.
-     Inherited from NC-D5 in tests/dogfood-truth-reconciliation-negative-controls.js,
-     which guarded exactly this and could no longer reach it once the record stopped being
-     the browser's to write. The route validates first and records second; swap the two
-     and a refused coverage request leaves a live run behind — which, now that a live run
-     is what the boundary reads, is a machine-owned lie about work nobody did. */
-  await control("a coverage route that records its run before it validates the request",
-    "a refused request must not leave a coverage run behind", async (phase) => {
+     9a. A GENERIC PROJECT SAVE THAT MAY WRITE THE MACHINE'S OWN RECORD.
+
+     Blocker 1's harm on its own terms, with no surface involved. An independent reviewer
+     sent an ordinary project PUT carrying `id: OLD, status: completed, completedAt:
+     <stale>` against the CURRENT ETag, and the authoritative run — live, with the
+     server's identity and jobs — took the terminal status and the stale timestamp. */
+  await control("a generic project save that may write the machine's own coverage lifecycle",
+    "the authoritative coverage run survives an ordinary save byte-equivalent", async (phase) => {
+      const ownership = loadModified("public/shared-coverage.js", [[
+        `        const owned = stored.get(String(entity.id));
+        if (owned === undefined) delete entity.coverageAutomation;
+        else entity.coverageAutomation = JSON.parse(JSON.stringify(owned));`,
+        /* The exception the previous candidate shipped: identity from the server, and
+           terminal lifecycle fields from whatever the save happened to carry. */
+        `        const owned = stored.get(String(entity.id));
+        if (owned === undefined) { delete entity.coverageAutomation; continue; }
+        const supplied = entity.coverageAutomation && typeof entity.coverageAutomation === "object" ? entity.coverageAutomation : {};
+        const merged = JSON.parse(JSON.stringify(owned));
+        for (const field of ["status", "completedAt"]) {
+          if (!Object.prototype.hasOwnProperty.call(supplied, field)) continue;
+          if (field === "status" && ["starting", "sheet-running", "individual-running"].includes(String(supplied.status || ""))) continue;
+          merged[field] = JSON.parse(JSON.stringify(supplied[field]));
+        }
+        entity.coverageAutomation = merged;`,
+      ]]);
+      phase("MUTATION_LANDED");
+      const h = await harness(falGenerationReal);
+      try {
+        const LIVE = { id: "NEW", list: "characters", entityId: "KAI", mode: "sheet", sheetType: "angles", status: "sheet-running", startedAt: "2026-08-27T00:00:00.000Z", jobs: ["job-1"] };
+        const project = h.project();
+        project.characters.push({ id: "KAI", name: "Kai", type: "Character", approvedFile: "KAI.png", continuityStates: [], coverageAutomation: LIVE });
+        h.saveProject(project);
+        /* THE REVIEWER'S PUT: a stale OLD/completed over the live NEW. */
+        h.genericSave((successor) => {
+          successor.characters[0].coverageAutomation = {
+            id: "OLD", list: "characters", entityId: "KAI", status: "completed",
+            completedAt: "2020-01-01T00:00:00.000Z", jobs: ["ghost"],
+          };
+        }, ownership.preserveServerOwnedCoverageRuns);
+        const after = h.project().characters[0].coverageAutomation;
+        assert(after, "the unsafe path must leave a run to inspect");
+        phase("UNSAFE_PATH_EXECUTED");
+        observeHarm(JSON.stringify(after) !== JSON.stringify(LIVE),
+          `THE DEFECT: a generic project save rewrote the machine's own lifecycle — the authoritative run was ${JSON.stringify(LIVE)} and is now ${JSON.stringify(after)}`);
+      } finally { h.close(); }
+    });
+
+  /* =======================================================================
+     9b. LIVE COVERAGE STATE ESTABLISHED BEFORE THE SHARED BOUNDARY ACCEPTS.
+
+     THE PRODUCTION DEFECT, EXACTLY. The first version of this control only disabled the
+     route's shallow job-type validation, and an independent reviewer showed that proved
+     nothing about the harm they had found: a coverage route that persists `sheet-running`
+     and THEN enters the shared paid boundary leaves a live run behind for every request
+     the boundary refuses — a machine-owned claim that work was under way that never began.
+
+     So the mutation moves the establishment back to where it used to be: run first, then
+     boundary. The request is then refused for a missing generation plan, which is the
+     reviewer's own reproduction, and the false live run is read back off the entity. */
+  await control("a coverage run established before the shared paid boundary has accepted",
+    "a refused coverage request leaves no live run", async (phase) => {
       const falGeneration = loadModified("fal-generation.js", [[
-        `    if (!Presentation.CINEBRAID_COVERAGE_JOB_TYPES.includes(jobType))`,
-        `    if (false && !Presentation.CINEBRAID_COVERAGE_JOB_TYPES.includes(jobType))`,
+        /* The hook fires at the dispatch-commit point; this makes the route fire it up
+           front instead, exactly as the held candidate did. */
+        `    return dispatchGenerationRequest(req, res, {
+      surface: "reference-automation",
+      entityList: list,
+      entityId,`,
+        `    const early = {
+      surface: "reference-automation",
+      entityList: list,
+      entityId,`,
+      ], [
+        `        });
+      },
+    });
+  });`,
+        `        });
+      },
+    };
+    await early.onDispatchCommit(owner, { id: "early-run-job" });
+    return dispatchGenerationRequest(req, res, { ...early, onDispatchCommit: undefined });
+  });`,
       ]]);
       phase("MUTATION_LANDED");
       const h = await harness(falGeneration);
@@ -675,20 +720,28 @@ async function main() {
         const project = h.project();
         project.characters.push({ id: "KAI", name: "Kai", type: "Character", approvedFile: "KAI.png", continuityStates: [] });
         h.saveProject(project);
-        /* A coverage request that is not coverage work: no job type at all. */
+        /* A valid coverage operation whose request the SHARED boundary will refuse: no
+           generation plan declaration at all. */
         const result = await h.coverage({
           purpose: "entity-reference", entityList: "characters", entityId: "KAI", entityType: "character",
           sourceBuildId: "entity-fixture", prompt: "Kai against neutral grey.",
           references: [{ key: "base", label: "Approved primary", role: "base", url: KAI_PNG }],
           outputCount: 1, quality: "high", resolution: "4k", aspectRatio: "16:9",
-          generationRequest: Presentation.generationRequestDeclaration({ surface: "reference-automation", viewMode: "simple" }),
+          coverageJobType: "sheet", coverageSheetType: "angles",
         });
-        assert.notStrictEqual(result.status, 200,
-          `the request must still be refused for some reason, or this proves nothing about the ORDER: ${JSON.stringify(result.data)}`);
-        phase("UNSAFE_PATH_EXECUTED");
+        /* The early establishment must ACTUALLY have happened, or the ordering defect is
+           not what this control is exercising. */
         const run = h.project().characters[0].coverageAutomation;
-        observeHarm(Boolean(run),
-          `THE DEFECT: a refused coverage request left a live run behind — ${JSON.stringify(run)}`);
+        assert(run && run.status === "sheet-running",
+          `the unsafe path must actually establish the run early: ${JSON.stringify(run)}`);
+        /* And the shared boundary must ACTUALLY refuse, for its own reason. */
+        assert.strictEqual(result.status, 400, `the boundary must refuse the request: ${JSON.stringify(result.data)}`);
+        assert.strictEqual(result.data.code, "GENERATION_PLAN_REQUIRED", "for the missing plan");
+        assert.strictEqual(h.calls.length, 0, "with no provider call");
+        assert.strictEqual(h.ledger().length, 0, "and no ledger row");
+        phase("UNSAFE_PATH_EXECUTED");
+        observeHarm(Boolean(run) && run.status === "sheet-running",
+          `THE DEFECT: a coverage request the shared boundary refused for a missing plan left a live run behind — ${JSON.stringify(run)} with ${h.calls.length} provider call(s) and ${h.ledger().length} ledger row(s)`);
       } finally { h.close(); }
     });
 
