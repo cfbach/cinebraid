@@ -30,6 +30,9 @@
  *      CTA, and Look/Blocking stay optional
  *   I  shotApprovalComplete() stays a workflow sign-off answer: route-invariant, on no
  *      persistent surface, and unable to contradict current-route readiness
+ *   J  historical media on an undeclared shot is preserved and owed nothing: a stored
+ *      post/reuse/hold/plan/i2v clip, an old approved frame and all of them together
+ *      leave the route absent and the answer the route question
  *
  * NO PROVIDER, NO PAID ROUTE, NO NETWORK, NO PROJECT DATA. Every fixture is built in
  * memory and the repository's own projects/ directory is never opened.
@@ -359,20 +362,20 @@ async function checkUndeclaredFabricatesNothing() {
     "C2: it says what is actually true instead");
   assert(/data-shot-route-declared="0"/.test(summary), "C2: and states the undeclared reading for any reader");
 
-  /* C3 — a LEGACY shot with an i2v motion unit. NO ROUTE IS INFERRED from its frames,
-     its approved media, its returned candidate, its motion unit or its legacy output
-     plan — and its opening frame is still required, because the UNIT declares `i2v`
-     and that method needs one. That requirement belongs to the unit, not to a route
-     nobody declared, which is the distinction section D's `frameNeedsOf` measures. */
+  /* C3 — a LEGACY shot carrying a stored `i2v` clip, an approved frame and a returned
+     candidate. NO ROUTE IS INFERRED from any of it, and — the correction a Codex review
+     demanded — none of it is CURRENT WORK either. A clip whose stored `kind` names a
+     method is history describing a production that already happened; reading it as a
+     declaration let an undeclared shot require the opening frame that method would
+     need. Section J walks every historical shape; this is the one the earlier candidate
+     got wrong, kept here beside the media it must not move. */
   const legacyProject = projectWith(legacyShotRecord("SC-01-02", "SC-01"));
   approveFrame(legacyProject, "SC-01-02", "frame-a-legacy", "LEGACY-A.png");
   const legacy = readinessOf(legacyProject, "SC-01-02");
   assert.strictEqual(Route.readShotRoute(legacyProject.shots[0]).reading, "absent",
     "C3: opening a legacy shot declares no route on its behalf");
-  assert.deepStrictEqual(requiredFrameUnits(legacy).map((unit) => unit.id), ["frame:frame-a-legacy"],
-    "C3: the i2v unit's own declared kind requires the opening frame, and only that one");
-  assert.strictEqual(legacy.units.find((unit) => unit.id === "frame:frame-b-legacy").required, false,
-    "C3: the second frame is retained and owed by nothing — no route asked for a closing endpoint");
+  assert.deepStrictEqual(requiredFrameUnits(legacy).map((unit) => unit.id), [],
+    "C3: and a stored i2v clip does not make its opening frame current work");
   assert.strictEqual(legacy.units.filter((unit) => unit.kind === "frame").length, 2,
     "C3: both frame records survive as declared units");
   assert.strictEqual(legacy.units.find((unit) => unit.id === "frame:frame-a-legacy").complete, true,
@@ -381,10 +384,9 @@ async function checkUndeclaredFabricatesNothing() {
   assert.strictEqual(legacyProject.shots[0].candidateFiles.length, 1, "C3: the returned candidate is untouched");
   assert.strictEqual(legacyProject.shots[0].keyframes[0].winner, "LEGACY-A.png", "C3: the frame's own pointer is untouched");
 
-  /* C4 — the same legacy shot with NOTHING left that declares a method: the motion unit
-     is a `post` unit, which the shipped probe set maps to no animate method. Every frame
-     it carries is then historical, and it is asked how the shot is made rather than told
-     to buy a frame. This is the legacy half of the brief's undeclared case. */
+  /* C4 — the same legacy shot whose motion unit is a `post` unit, a finishing pass that
+     was never a generation. Every frame it carries is historical, and it is asked how
+     the shot is made rather than told to buy one. */
   const dormantProject = projectWith(legacyShotRecord("SC-01-03", "SC-01", {
     clips: [{ id: "seg-post", suffix: "a", label: "A", title: "Finishing pass", dur: 5, kind: "post", note: "", motionPrompt: "", generationPackages: [] }],
     creationBrief: { locationId: "", propIds: [], mode: "auto", action: "The courier sets the parcel down.", promptBuilds: [] },
@@ -470,7 +472,7 @@ async function checkUndeclaredFabricatesNothing() {
   assert(!owed.kinds.includes("shot-frame"),
     `C7: and no frame-scoped requirement crosses from an optional unit, got ${owed.kinds.join(", ")}`);
 
-  note("C. undeclared: a new shot requires no frame, states the decision it is missing rather than a purchase, and never falls through to 'mark this final'; a legacy i2v unit still requires the opening frame ITS kind names while the shot's route stays absent; a legacy shot whose units name no method owes neither of its frames, and every frame, approval, candidate and clip survives all of it; an optional unit carrying a malformed record still keeps the card, and the project log reports no frame debt either, while the cast the shot declares is still owed");
+  note("C. undeclared: a new shot requires no frame, states the decision it is missing rather than a purchase, and never falls through to 'mark this final'; a stored i2v clip declares no route on the shot's behalf and does not make its opening frame current work; a legacy shot whose units name no method owes neither of its frames, and every frame, approval, candidate and clip survives all of it; an optional unit carrying a malformed record still keeps the card, and the project log reports no frame debt either, while the cast the shot declares is still owed");
 }
 
 /* ===========================================================================
@@ -869,7 +871,7 @@ async function checkNoInference() {
      nothing else: no winner, no candidate, no clip kind, no package, no filename. */
   const readiness = readLF("public/shared-shot-readiness.js");
   const derivation = readiness.slice(
-    readiness.indexOf("function declaredFrameRequirement("),
+    readiness.indexOf("function declaredDelivery("),
     readiness.indexOf("function declaredUnits("),
   );
   assert(derivation.length > 0, "G2: precondition — the frame requirement derivation must be locatable by name");
@@ -881,18 +883,16 @@ async function checkNoInference() {
   for (const forbidden of ["winner", "candidateFiles", "generationPackages", "approvedFile", "promptBuilds", "deliveryRoute"])
     assert(!new RegExp(`\\b${forbidden}\\b`).test(code),
       `G2: the frame requirement must not read ${forbidden} — that would be inferring a route from evidence`);
-  /* A motion unit's `kind` IS a declaration, so it may be read — but only as a method
-     name handed to the shipped probe set. A derivation that tested a kind against a
-     literal would be the second route table this slice must not create. */
-  assert(/ANIMATE_METHOD_PROBES/.test(code),
-    "G2: a declared clip kind must be resolved through the shipped probe set");
+  /* AND IT READS NO CLIP EITHER. A stored `kind` is history describing a production
+     that already happened, so the declaration predicate consults only the route answer
+     and the delivery intent, and names no route or method literal of its own. */
+  for (const forbidden of ["clips", "kind", "ANIMATE_METHOD_PROBES"])
+    assert(!new RegExp(`\\b${forbidden}\\b`).test(code),
+      `G2: the delivery declaration must not read ${forbidden} — history does not declare present intent`);
   for (const token of ['"i2v"', '"flf"', '"t2v"', '"r2v"', "'i2v'", "'flf'"])
     assert(!code.includes(token),
-      `G2: the requirement derivation must name no route or method literal, found ${token}`);
-  /* And the roles it may extract are the ones the route answer is built from. */
-  assert(/FRAME_INPUT_ROLES/.test(code),
-    "G2: the frame roles come from the same declaration shotRouteInputNeeds() reads");
-  note("G. no inference: six route-shaped shots (approved endpoints, i2v and flf clips, the legacy FLF output plan, a motion intent) rendered through every stage and evaluated, and not one declared a route; the requirement derivation reads no winner, candidate, package or approved file, names no method literal, and resolves a declared clip kind through the shipped probe set");
+      `G2: the declaration predicate must name no route or method literal, found ${token}`);
+  note("G. no inference: six route-shaped shots (approved endpoints, i2v and flf clips, the legacy FLF output plan, a motion intent) rendered through every stage and evaluated, and not one declared a route; the delivery declaration reads no winner, candidate, package, approved file OR clip, and names no route or method literal");
 }
 
 /* ===========================================================================
@@ -1068,6 +1068,249 @@ async function checkApprovalBoundary() {
     + "a workflow sign-off answer; its unreachable gap text is still unreachable. Left unchanged deliberately.");
 }
 
+/* ===========================================================================
+   J — HISTORY DOES NOT DECLARE PRESENT INTENT.
+
+   A Codex review demonstrated the leak this section exists to close. A legacy shot
+   carries what a production left behind: a stored `post` clip that was a finishing
+   pass, a `reuse` clip that pointed at footage made elsewhere, an old approved frame,
+   a candidate, a receipt. `declaredUnits()` read every stored clip as a REQUIRED
+   current unit, so an undeclared shot reported
+
+       READY · Produce Motion using t2v
+
+   choosing an execution method from a shot that had chosen none — and an old approved
+   frame fell through the rollup to `mark-shot-final`, skipping the route question
+   entirely.
+
+   THE RULE, and it is one predicate: a route-dependent unit is owed only where the
+   shot has DECLARED a delivery. Historical media is preserved, evaluated and rendered;
+   it is simply not current work. Route-INDEPENDENT obligations — a record-integrity
+   decision, a declared cast reference — still outrank it, because this correction is
+   "an undeclared route disables route-dependent execution interpretation", not "an
+   undeclared shot ignores every unit".
+   =========================================================================== */
+
+/* THE ACTIONS THAT ASSUME A CURRENT EXECUTION ROUTE. Not a blacklist the derivation
+   consults — the derivation expresses this structurally through unit requiredness —
+   but the list this suite AUDITS against, so a future action code that quietly assumes
+   a route is caught by the matrix below rather than by a filmmaker. */
+const ROUTE_DEPENDENT_ACTIONS = ["produce-frame", "produce-motion", "approve-required-frames", "approve-parent-frame", "mark-shot-final"];
+
+const historyClip = (kind) => ({
+  id: `seg-${kind}`, suffix: "a", label: "A", title: `${kind} unit`, kind, dur: 5,
+  note: "", motionPrompt: "the old direction", fromFrame: "frame-a-legacy", toFrame: "",
+  generationPackages: [], motionPlan: null,
+});
+
+/* A legacy shot, built only from what a project made before the route field existed.
+   `extra` supplies the historical artefacts under test. */
+function historyShot(id, extra = {}) {
+  return newShotRecord(id, "SC-01", {
+    title: "Legacy dock shot",
+    status: "BUILT",
+    workflowStatus: "IN PROGRESS",
+    keyframes: [{ id: "frame-a-legacy", label: "A", title: "Opening frame A", winner: null, required: true, generationPackages: [] }],
+    clips: [],
+    candidateFiles: [],
+    creationBrief: { locationId: "", propIds: [], mode: "auto", promptBuilds: [] },
+    ...extra,
+  });
+}
+const APPROVED_FRAME = {
+  keyframes: [{ id: "frame-a-legacy", label: "A", title: "Opening frame A", winner: "LEGACY-A.png", required: true, generationPackages: [] }],
+};
+
+/* THE ORACLE MATTERS HERE. Without one, a receipt whose file cannot be resolved is
+   itself a decision (`establish-media-availability`) and would mask the route answer
+   under test. Supplying the listing the shot's media really is isolates the question. */
+const historyOracle = { mediaListing: () => [{ name: "LEGACY-A.png", url: "/assets/LEGACY-A.png" }], shotMediaListing: () => [] };
+
+function historyState(project, id) {
+  const row = readinessOf(project, id, historyOracle);
+  const shot = project.shots.find((s) => s.id === id);
+  return {
+    reading: Route.readShotRoute(shot).reading,
+    storedRoute: Object.prototype.hasOwnProperty.call(shot, "deliveryRoute") ? shot.deliveryRoute : null,
+    action: row.nextAction.code,
+    status: row.status,
+    requiredFrames: row.units.filter((u) => u.kind === "frame" && u.required).length,
+    requiredMotion: row.units.filter((u) => u.kind === "motion" && u.required).length,
+    units: row.units.map((u) => u.id).sort(),
+    unitActions: row.units.map((u) => u.nextAction?.code || "").filter(Boolean),
+    media: {
+      frames: shot.keyframes.map((f) => `${f.id}:${f.winner || ""}`),
+      clips: (shot.clips || []).map((c) => `${c.id}:${c.kind}`),
+      candidates: (shot.candidateFiles || []).map((c) => c.stored),
+      receipt: Kernel.hasCurrentHumanAuthority(project, { kind: "shot-frame", shotId: id, frameId: "frame-a-legacy" }),
+    },
+  };
+}
+
+function checkHistoricalMedia() {
+  const SHAPES = [
+    ["A. a stored post clip", { clips: [historyClip("post")] }, false],
+    ["B. a stored reuse clip", { clips: [historyClip("reuse")] }, false],
+    ["   a stored hold clip", { clips: [historyClip("hold")] }, false],
+    ["   a stored plan clip", { clips: [historyClip("plan")] }, false],
+    ["   a stored i2v clip", { clips: [historyClip("i2v")] }, false],
+    ["   a stored flf clip", { clips: [historyClip("flf")] }, false],
+    ["C. an old approved frame", APPROVED_FRAME, true],
+    ["D. approved frame + post clip + candidate", {
+      ...APPROVED_FRAME,
+      clips: [historyClip("post")],
+      candidateFiles: [{ stored: "LEGACY-A.png", original: "LEGACY-A.png", decision: "approved", mediaType: "image", frameId: "frame-a-legacy" }],
+    }, true],
+  ];
+
+  const observed = [];
+  for (const [name, extra, approve] of SHAPES) {
+    const project = projectWith(historyShot("SC-01-09", extra));
+    if (approve) approveFrame(project, "SC-01-09", "frame-a-legacy", "LEGACY-A.png");
+    const before = JSON.stringify(historyState(project, "SC-01-09").media);
+    const seen = historyState(project, "SC-01-09");
+
+    /* The route is untouched, and nothing derived one. */
+    assert.strictEqual(seen.reading, "absent", `J1 ${name}: the shot must still read as undeclared`);
+    assert.strictEqual(seen.storedRoute, null, `J1 ${name}: and carry no deliveryRoute key`);
+
+    /* NO ROUTE-DEPENDENT CURRENT WORK, from the requiredness upward. */
+    assert.strictEqual(seen.requiredFrames, 0, `J1 ${name}: no frame may be required`);
+    assert.strictEqual(seen.requiredMotion, 0, `J1 ${name}: no motion unit may be required`);
+    assert(!ROUTE_DEPENDENT_ACTIONS.includes(seen.action),
+      `J1 ${name}: the next action assumes a route CineBraid was never given: ${seen.action}`);
+    assert.strictEqual(seen.action, "declare-shot-route",
+      `J1 ${name}: with no route-independent obligation the answer is the route question, got ${seen.action}`);
+    assert.strictEqual(seen.status, "NEEDS_DECISION", `J1 ${name}: and it is a decision`);
+
+    /* THE MEDIA IS STILL THERE, and still evaluated: the units exist, they are simply
+       not owed. A correction that deleted or hid history would pass the assertions
+       above and fail these. */
+    assert(seen.units.length >= 1, `J1 ${name}: the historical media is still declared as units`);
+    assert.strictEqual(JSON.stringify(seen.media), before, `J1 ${name}: and nothing about it moved`);
+    if (approve) assert.strictEqual(seen.media.receipt, true, `J1 ${name}: the approval receipt survives`);
+    observed.push(`${name.trim()} -> ${seen.action}`);
+  }
+  note("J1. historical media on an undeclared shot: " + observed.join("; ")
+    + " — every one preserved, none required, and not one of "
+    + ROUTE_DEPENDENT_ACTIONS.join("/") + " emitted");
+}
+
+/* J2 — THE SAME LEGACY FIXTURES, GIVEN A ROUTE. The explicit declaration is what
+   changes the current interpretation, and it changes only the requirements. */
+function checkHistoryThenDeclaration() {
+  const walked = [];
+  for (const route of ROUTES) {
+    const project = projectWith(historyShot("SC-01-09", {
+      ...APPROVED_FRAME,
+      keyframes: [
+        { id: "frame-a-legacy", label: "A", title: "Opening frame A", winner: "LEGACY-A.png", required: true, generationPackages: [] },
+        { id: "frame-b-legacy", label: "B", title: "Closing frame B", winner: "LEGACY-B.png", required: true, generationPackages: [] },
+      ],
+      clips: [historyClip("post")],
+      candidateFiles: [{ stored: "LEGACY-A.png", original: "LEGACY-A.png", decision: "approved", mediaType: "image", frameId: "frame-a-legacy" }],
+    }));
+    approveFrame(project, "SC-01-09", "frame-a-legacy", "LEGACY-A.png");
+    const shot = project.shots[0];
+
+    const undeclared = historyState(project, "SC-01-09");
+    assert.strictEqual(undeclared.action, "declare-shot-route", `J2 ${route}: precondition — it starts undeclared`);
+
+    assert(Route.declareShotRoute(shot, route).ok, `J2 ${route}: declarable`);
+    const declared = historyState(project, "SC-01-09");
+    assert.strictEqual(declared.requiredFrames, frameNeedsOf(route).length,
+      `J2 ${route}: the declaration brings exactly its canonical frame roles, and only those`);
+    assert.strictEqual(declared.requiredMotion, 1,
+      `J2 ${route}: and the shot's motion unit becomes current work`);
+    assert.notStrictEqual(declared.action, "declare-shot-route",
+      `J2 ${route}: the question has been answered, so it is not asked again`);
+    assert.deepStrictEqual(declared.media, undeclared.media,
+      `J2 ${route}: declaring a route moves requirements, never media`);
+    assert.deepStrictEqual(declared.units, undeclared.units,
+      `J2 ${route}: and declares no new unit — the same records, differently owed`);
+
+    Route.clearShotRoute(shot);
+    const withdrawn = historyState(project, "SC-01-09");
+    assert.strictEqual(withdrawn.requiredFrames, 0, `J2 ${route}: withdrawing removes the route's frame requirements`);
+    assert.strictEqual(withdrawn.requiredMotion, 0, `J2 ${route}: and its motion requirement`);
+    assert.strictEqual(withdrawn.action, "declare-shot-route",
+      `J2 ${route}: and the shot returns to the undeclared answer rather than to a CTA the media suggests`);
+    assert.deepStrictEqual(withdrawn.media, undeclared.media, `J2 ${route}: with the media still untouched`);
+    walked.push(`${route}:0->${declared.requiredFrames}->0`);
+  }
+  note("J2. the same legacy fixture declared and withdrawn, frames required at each step — "
+    + walked.join(", ") + "; the declaration changes the interpretation, the media never moves, "
+    + "and withdrawal returns to the route question rather than to a CTA the history suggests");
+}
+
+/* J3 — ROUTE-INDEPENDENT OBLIGATIONS STILL OUTRANK IT, and a declared delivery still
+   reaches its own conclusion. This is the half the correction must NOT break. */
+function checkRouteIndependentStillCounts() {
+  /* A record-integrity decision on a unit nothing requires. */
+  const malformed = projectWith(historyShot("SC-01-09", {
+    clips: [historyClip("post")],
+    creationBrief: {
+      locationId: "", propIds: [], mode: "auto", promptBuilds: [],
+      frameWorkflows: { "frame-a-legacy": { entityPresence: { KAI: { state: "absent" } } } },
+    },
+  }));
+  const malformedSeen = historyState(malformed, "SC-01-09");
+  assert.strictEqual(malformedSeen.requiredFrames, 0, "J3: precondition — nothing requires the frame");
+  assert.strictEqual(malformedSeen.action, "repair-presence-declaration",
+    `J3: a corrupted record outranks the route question, got ${malformedSeen.action}`);
+
+  /* A declared cast whose reference nobody has approved: a DECISION on a unit nothing
+     requires. */
+  const cast = projectWith(historyShot("SC-01-09", { characters: ["KAI"], codes: ["LOC-HULL"], clips: [historyClip("post")] }));
+  const castSeen = historyState(cast, "SC-01-09");
+  assert.strictEqual(castSeen.requiredFrames, 0, "J3: precondition — the cast shot still requires no frame");
+  assert.notStrictEqual(castSeen.action, "declare-shot-route",
+    "J3: a declared input the production cannot supply outranks the route question");
+  assert(!ROUTE_DEPENDENT_ACTIONS.includes(castSeen.action),
+    `J3: and the obligation it raises is not route-dependent either, got ${castSeen.action}`);
+
+  /* And the other kind: a cast member with NO approved file anywhere. That is a plain
+     MISSING requirement rather than a decision, so it reaches the shot only through the
+     declared-input crossing — the half that stops this correction from becoming "an
+     undeclared shot ignores every unit". */
+  const unsupplied = projectWith(historyShot("SC-01-09", { characters: ["KAI"], clips: [historyClip("post")] }));
+  for (const entity of unsupplied.characters || []) { entity.approvedFile = ""; entity.continuityStates = []; entity.candidateFiles = []; }
+  const unsuppliedSeen = historyState(unsupplied, "SC-01-09");
+  assert.strictEqual(unsuppliedSeen.requiredFrames + unsuppliedSeen.requiredMotion, 0,
+    "J3: precondition — nothing about the undeclared shot is required");
+  assert.strictEqual(unsuppliedSeen.action, "prepare-references",
+    `J3: a declared input the production cannot supply is still owed, got ${unsuppliedSeen.action}`);
+  assert(!ROUTE_DEPENDENT_ACTIONS.includes(unsuppliedSeen.action),
+    "J3: and that obligation is route-independent");
+
+  /* A declared STILL delivery reaches mark-shot-final exactly as it always did — the
+     gate is the declaration, and a still shot can never declare a route. */
+  const still = projectWith(historyShot("SC-01-09", {
+    ...APPROVED_FRAME,
+    creationBrief: { locationId: "", propIds: [], mode: "auto", deliveryIntent: "still", promptBuilds: [] },
+  }));
+  approveFrame(still, "SC-01-09", "frame-a-legacy", "LEGACY-A.png");
+  const stillSeen = historyState(still, "SC-01-09");
+  assert.strictEqual(stillSeen.requiredFrames, 1, "J3: a declared still delivery still owes its opening frame");
+  assert.strictEqual(stillSeen.action, "mark-shot-final",
+    `J3: and once approved it reaches the delivery decision, got ${stillSeen.action}`);
+
+  /* A declared MOTION delivery owes its motion unit, undeclared route or not. */
+  const motion = projectWith(historyShot("SC-01-09", {
+    clips: [historyClip("post")],
+    creationBrief: { locationId: "", propIds: [], mode: "auto", deliveryIntent: "motion", promptBuilds: [] },
+  }));
+  const motionSeen = historyState(motion, "SC-01-09");
+  assert.strictEqual(motionSeen.requiredMotion, 1, "J3: a declared motion delivery owes its motion unit");
+  assert.notStrictEqual(motionSeen.action, "declare-shot-route",
+    "J3: so it is not asked the route question in place of its own work");
+  note("J3. route-independent truth is untouched: a malformed presence declaration outranks the route question "
+    + `(${malformedSeen.action}), an unconfirmed cast pointer raises its own decision (${castSeen.action}), a cast `
+    + `member with no approved file anywhere is still owed through the declared-input crossing `
+    + `(${unsuppliedSeen.action}), a declared still delivery still reaches ${stillSeen.action}, and a declared `
+    + "motion delivery still owes its motion unit");
+}
+
 /* =========================================================================== */
 async function main() {
   await checkContextualAdd();
@@ -1081,6 +1324,9 @@ async function main() {
   await checkNoInference();
   await checkHierarchy();
   await checkApprovalBoundary();
+  checkHistoricalMedia();
+  checkHistoryThenDeclaration();
+  checkRouteIndependentStillCounts();
 
   /* The action code this slice adds is declared in all three places a readiness action
      has to be declared, or it renders as a bare "Next action" with no destination. */

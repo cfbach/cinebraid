@@ -20,6 +20,10 @@ actually reported:
   5  CHOOSING AND CHANGING THE ROUTE from the real <select> moves the requirements and
      never the media, and every step survives the shipped save. This is the brief's
      human-smoke target, performed.
+  6  A LEGACY SHOT CARRYING HISTORICAL MEDIA — a stored `post` clip and an old approved
+     frame, saved to disk and opened fresh — is not told to produce anything. This is
+     the leak a Codex review demonstrated, and it is a browser claim because it is
+     about what the shot workspace PUTS IN FRONT OF A FILMMAKER after a real page load.
 
 IT CARRIES ITS OWN NEGATIVE CONTROLS, because a "nothing was fabricated" assertion that
 cannot fail is worth nothing:
@@ -185,6 +189,31 @@ try:
                 time.sleep(.15)
             return last
 
+        def open_shot(shot_id, why, fresh_document=False):
+            """Navigate to one shot and wait for THAT shot's workspace.
+
+            A shot-to-shot move is a fragment change: the document is not reloaded, and
+            `.shot-intent-control` is already on screen from the shot we are leaving. A
+            wait for the bare selector therefore returns instantly against the PREVIOUS
+            shot, and every assertion after it reads a workspace nobody asked for — which
+            is how section 6 could pass while reading section 5's shot. The control
+            carries data-shot-id, so wait for the requested one.
+
+            `fresh_document` additionally reloads the document, which is the difference
+            between "the app re-rendered" and "the app was started over and read this shot
+            out of the saved project" — the second is the claim section 7 makes."""
+            page.goto(f"{base}/#/shot/{shot_id}", wait_until="domcontentloaded")
+            if fresh_document:
+                page.reload(wait_until="domcontentloaded")
+            page.wait_for_selector(f'#main .shot-intent-control[data-shot-id="{shot_id}"]', timeout=20000)
+            assert page.evaluate(
+                """(id) => {
+                     const control = document.querySelector('#main .shot-intent-control');
+                     return !!control && control.dataset.shotId === id;
+                   }""",
+                shot_id,
+            ), f"{why}: the workspace on screen must be {shot_id}"
+
         def open_shots_board():
             page.goto(f"{base}/#/shots/board", wait_until="domcontentloaded")
             page.wait_for_selector("#main .board-head", timeout=20000)
@@ -346,8 +375,7 @@ try:
                         "with the frame record intact at every step")
 
         # ======================================================= 6 · A LEGACY SHOT IS NOT GUESSED AT
-        page.goto(f"{base}/#/shot/SAMPLE-03", wait_until="domcontentloaded")
-        page.wait_for_selector("#main .shot-intent-control", timeout=20000)
+        open_shot("SAMPLE-03", "6")
         legacy = page.evaluate(FRAME_STATE, "SAMPLE-03")
         assert legacy["storedRoute"] is None, \
             f"6. opening a legacy shot must not declare a route on its behalf, got {legacy['storedRoute']!r}"
@@ -358,6 +386,68 @@ try:
             "6. and says so plainly"
         findings.append("6. a legacy sample shot opened, and CineBraid guessed no route for it: the record still "
                         "carries no key and the surface says the execution route was not chosen")
+
+        # ================================================= 7 · LEGACY HISTORICAL MEDIA
+        # Written into the saved project the way a pre-route production left it: a
+        # finishing-pass clip and an approved frame, on a shot with no deliveryRoute.
+        legacy_id = page.evaluate("""() => {
+            const scene = P.scenes[0].id;
+            const shot = {
+              id: "SC-LEGACY-01", scene, title: "Legacy dock shot",
+              desc: "The courier sets the parcel down and steps back.",
+              characters: [], positioning: "", route: "GENERATE", codes: [], risks: [], safe: "",
+              status: "BUILT", workflowStatus: "IN PROGRESS", iterations: 2, notes: "",
+              promptOptions: [], promptBuilds: [], winner: "", dur: 5, continuityStateSelections: {},
+              keyframes: [{ id: "frame-a-legacy", label: "A", title: "Opening frame A",
+                            winner: "", description: "", notes: "", required: true, generationPackages: [] }],
+              clips: [{ id: "seg-post", suffix: "a", label: "A", title: "Finishing pass", dur: 5,
+                        kind: "post", note: "", motionPrompt: "the old direction",
+                        generationPackages: [], motionPlan: null }],
+              candidateFiles: [], stageApprovals: {}, generationPackages: [],
+              creationBrief: { locationId: "", propIds: [], mode: "auto", promptBuilds: [] },
+            };
+            P.shots.push(shot);
+            dirty();
+            return shot.id;
+        }""")
+        saved_shot(legacy_id, until=lambda row: (row.get("clips") or []) and row["clips"][0]["kind"] == "post")
+
+        # Opened by RELOADING THE DOCUMENT at this shot and waiting for ITS workspace, so
+        # nothing in memory and nothing on screen is carried over from the shot before it.
+        open_shot(legacy_id, "7", fresh_document=True)
+        assert not page_errors, f"7. the legacy shot raised uncaught errors: {page_errors}"
+
+        legacy = page.evaluate(SHOT_STATE)
+        legacy_frames = page.evaluate(FRAME_STATE, legacy_id)
+        assert legacy_frames["storedRoute"] is None, \
+            f"7. the legacy shot must carry no deliveryRoute, got {legacy_frames['storedRoute']!r}"
+        assert legacy_frames["clipCount"] == 1, "7. and its historical clip must still be there"
+        assert legacy_frames["requiredFrames"] == [], \
+            f"7. history requires no frame, got {legacy_frames['requiredFrames']}"
+        assert legacy_frames["action"] == "declare-shot-route", \
+            f"7. and the canonical next action is the route question, got {legacy_frames['action']!r}"
+        for forbidden in ("Produce the motion", "Produce the frame", "Produce Frame", "Mark shot final"):
+            assert forbidden.lower() not in legacy["primary"].lower(), \
+                f"7. the rendered primary action must not be {forbidden!r}, got {legacy['primary']!r}"
+        assert legacy["primary"].strip().lower() == "choose how this shot is made", \
+            f"7. it is the route decision, got {legacy['primary']!r}"
+        assert legacy["intentOpen"] is True, "7. and the route control is open, so the path forward is reachable"
+        findings.append(f"7. a legacy shot with a stored post clip, opened by a full page load, is offered "
+                        f"{legacy['primary']!r} rather than a generation — history declared nothing")
+
+        # ---- and an explicit declaration DOES bring route-specific work back --------
+        declare("i2v")
+        declared_legacy = page.evaluate(FRAME_STATE, legacy_id)
+        assert declared_legacy["storedRoute"] == "i2v", "7. the declaration lands on the legacy shot"
+        assert len(declared_legacy["requiredFrames"]) == 1, \
+            f"7. and i2v brings its opening frame, got {declared_legacy['requiredFrames']}"
+        assert declared_legacy["clipCount"] == 1, "7. with the historical clip still present"
+        assert declared_legacy["action"] != "declare-shot-route", "7. and the question is not asked again"
+        saved_legacy = saved_shot(legacy_id, until=lambda row: row.get("deliveryRoute") == "i2v")
+        assert (saved_legacy.get("clips") or [])[0]["kind"] == "post", \
+            "7. and the saved project still holds the historical clip verbatim"
+        findings.append(f"7. declaring i2v on that same legacy shot brought exactly one required frame from the "
+                        f"canonical owner ({declared_legacy['action']}), with the post clip untouched on disk")
 
         assert not page_errors, f"the page raised uncaught errors: {page_errors}"
         browser.close()

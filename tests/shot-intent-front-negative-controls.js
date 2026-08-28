@@ -131,7 +131,7 @@ notes.push("Negative controls for Shot Intent at the front:");
    =========================================================================== */
 mustFail("NC-1 undeclared route falls back to the stored required flag", "a new shot requires no frame", () => {
   const broken = compile(mutate(
-    `    return STILL_INTENTS.includes(text(record(creation).deliveryIntent)) ? "still-delivery" : "";`,
+    `    if (STILL_INTENTS.includes(intent)) return "still-delivery";`,
     `    return "still-delivery";`,
     "NC-1",
   ));
@@ -151,7 +151,7 @@ mustFail("NC-1 undeclared route falls back to the stored required flag", "a new 
 mustFail("NC-2 no undeclared branch — the empty shot is told to mark itself final",
   "must never be offered the delivery decision", () => {
     const broken = compile(mutate(
-      `    } else if (!outstanding.length && !units.some((unit) => unit.complete)) {`,
+      `    } else if (!outstanding.length && !context.delivery) {`,
       `    } else if (false) {`,
       "NC-2",
     ));
@@ -170,7 +170,7 @@ mustFail("NC-2 no undeclared branch — the empty shot is told to mark itself fi
    =========================================================================== */
 mustFail("NC-3 the undeclared branch outranks a declared still delivery", "still delivery keeps its frame", () => {
   const broken = compile(mutate(
-    `    } else if (!outstanding.length && !units.some((unit) => unit.complete)) {`,
+    `    } else if (!outstanding.length && !context.delivery) {`,
     `    } else if (!units.some((unit) => unit.complete)) {`,
     "NC-3",
   ));
@@ -206,24 +206,21 @@ mustFail("NC-4 the declared route stops governing requirements", "i2v owes exact
    shot is an i2v shot, and a requirement derived from one is a route nobody chose.
    =========================================================================== */
 mustFail("NC-5 requiredness inferred from an approved frame", "requires no frame", () => {
-  const broken = compile(mutate(
-    `  function declaredFrameRequirement(creation, routeNeeds) {`,
-    `  function declaredFrameRequirement(creation, routeNeeds, shot) {\n`
-    + `    if (list(record(shot).keyframes).some((frame) => record(frame).winner)) return "still-delivery";`,
-    "NC-5",
-  ));
+  /* Two halves, because a declaration read from EVIDENCE has to be given the shot to
+     read it from. Both are taken with a probe receipt, so a rename aborts the control
+     rather than letting it pass against nothing. */
   const withFrame = compile(mutateIn(
     mutate(
-      `  function declaredFrameRequirement(creation, routeNeeds) {`,
-      `  function declaredFrameRequirement(creation, routeNeeds, shot) {\n`
+      `  function declaredDelivery(creation, routeNeeds) {`,
+      `  function declaredDelivery(creation, routeNeeds, shot) {\n`
       + `    if (list(record(shot).keyframes).some((frame) => record(frame).winner)) return "still-delivery";`,
       "NC-5",
     ),
-    `    const frameBasis = declaredFrameRequirement(creation, routeNeeds);`,
-    `    const frameBasis = declaredFrameRequirement(creation, routeNeeds, s);`,
+    `    const delivery = declaredDelivery(creation, routeNeeds);`,
+    `    const delivery = declaredDelivery(creation, routeNeeds, s);`,
     "NC-5 call site",
   ));
-  assert(broken && withFrame, "NC-5: both halves of the mutation must compile");
+  assert(withFrame, "NC-5: the mutation must compile");
   const project = projectWith(newShotRecord({
     keyframes: [{ id: "frame-a-new", label: "A", winner: "HISTORIC-A.png", required: true, generationPackages: [] }],
   }));
@@ -544,26 +541,90 @@ mustFail("NC-20 changing a route removes the frames the old one required", "no f
     "no frame, candidate or approval receipt may move when a route does");
 });
 
-/* ===========================================================================
-   NC-21 — A DECLARED MOTION UNIT STOPS ASKING FOR ITS OWN INPUT.
+/* ---------------------------------------------------------------------------
+   THE HISTORICAL-MEDIA CONTROLS — Codex HOLD 1.
 
-   `clip.kind` is a declaration, and an i2v unit needs an opening frame whether or not
-   the SHOT has declared a route. Neuter that read and a legacy shot mid-production
-   stops owing the frame its own motion unit was built from, and the frameless
-   fallback reports the whole shot ready to animate from nothing.
+   Each restores one half of the demonstrated leak and proves the SHIPPED readiness
+   detector then misses it. Every one asserts BOTH halves the earlier legacy control
+   missed: what the shot is said to REQUIRE, and what it is told to DO. A control that
+   only watched required-unit truth is how "Produce Motion using t2v" survived on a
+   shot with no declared route.
+   --------------------------------------------------------------------------- */
+const HISTORY_CLIP = { id: "seg-post", suffix: "a", label: "A", title: "Finishing pass", kind: "post", dur: 5, motionPrompt: "the old direction" };
+const HISTORY_ORACLE = { mediaListing: () => [{ name: "LEGACY-A.png", url: "/assets/LEGACY-A.png" }], shotMediaListing: () => [] };
+
+/* ===========================================================================
+   NC-21 — A STORED CLIP IS READ AS CURRENT WORK AGAIN.
+
+   The exact defect: `required: true` on every motion unit. A legacy `post` clip — a
+   finishing pass that was never a generation — makes an undeclared shot report READY
+   and offer to produce motion by a method the shot never chose.
    =========================================================================== */
-mustFail("NC-21 a declared clip kind stops requiring its frames", "the i2v unit's own declared kind requires the opening frame", () => {
+mustFail("NC-21 a stored clip becomes a required current unit", "no motion unit may be required", () => {
   const broken = compile(mutate(
-    `    const clipRoles = frameBasis ? new Set() : declaredClipFrameRoles(s);`,
-    `    const clipRoles = new Set();`,
+    `        required: !!delivery,`,
+    `        required: true,`,
     "NC-21",
   ));
+  const project = projectWith(newShotRecord({ clips: [HISTORY_CLIP] }));
+  const row = broken.evaluateShotReadiness(project, project.shots[0], HISTORY_ORACLE);
+  /* BOTH HALVES, because the leak was visible in the second one. */
+  assert.strictEqual(row.units.filter((u) => u.kind === "motion" && u.required).length, 0,
+    "no motion unit may be required on a shot that has declared nothing");
+  assert.strictEqual(row.nextAction.code, "declare-shot-route",
+    `and the next action must be the route question, got ${row.nextAction.code}`);
+});
+
+/* ===========================================================================
+   NC-22b — AN OLD APPROVED FRAME SKIPS THE ROUTE QUESTION.
+
+   The second half of the same leak. The gate used to be "and nothing is complete",
+   so a legacy shot carrying an approved frame fell through to the delivery decision:
+   history finalising a shot whose current execution intent was never declared.
+   =========================================================================== */
+mustFail("NC-22b an old approved frame reaches the delivery decision", "the route question", () => {
+  const broken = compile(mutate(
+    `    } else if (!outstanding.length && !context.delivery) {`,
+    `    } else if (!outstanding.length && !units.some((unit) => unit.complete)) {`,
+    "NC-22b",
+  ));
   const project = projectWith(newShotRecord({
-    clips: [{ id: "seg-a", suffix: "a", label: "A", kind: "i2v", dur: 5, motionPrompt: "x" }],
+    keyframes: [{ id: "frame-a-new", label: "A", title: "Opening frame A", winner: "LEGACY-A.png", required: true, generationPackages: [] }],
   }));
-  const row = broken.evaluateShotReadiness(project, project.shots[0], {});
-  assert.strictEqual(requiredFrames(row).length, 1,
-    "the i2v unit's own declared kind requires the opening frame");
+  GESTURE.gesture(() => Kernel.approveFrameCanon(project, {
+    shotId: "SC-01-01", frameId: "frame-a-new", value: "LEGACY-A.png", assetId: "", at: AT, via: "NC-22b",
+  }));
+  const row = broken.evaluateShotReadiness(project, project.shots[0], HISTORY_ORACLE);
+  assert.strictEqual(row.units.filter((u) => u.required).length, 0,
+    "precondition: nothing is required of the shot");
+  assert.strictEqual(row.nextAction.code, "declare-shot-route",
+    `an undeclared shot must still be asked the route question, got ${row.nextAction.code}`);
+});
+
+/* ===========================================================================
+   NC-22c — A DECLARED INPUT GOES QUIET WITH THE UNIT CARRYING IT.
+
+   The other direction, and the one that would turn this correction into "an
+   undeclared shot ignores everything": drop the declared-input crossing and a cast
+   reference the production cannot supply disappears behind the route question.
+   =========================================================================== */
+mustFail("NC-22c a declared input stops crossing from an optional unit", "outranks the route question", () => {
+  const broken = compile(mutate(
+    `      && (unit.required || unit.status === "NEEDS_DECISION" || inputOutstanding(unit)));`,
+    `      && (unit.required || unit.status === "NEEDS_DECISION"));`,
+    "NC-22c",
+  ));
+  /* THE CAST MEMBER HAS NO APPROVED FILE AT ALL, which is what makes its requirement a
+     plain `missing` row rather than a decision. A cast member carrying an unconfirmed
+     pointer would reach the shot through the NEEDS_DECISION path instead and this
+     control would pass against the wrong mechanism. */
+  const project = projectWith(newShotRecord({ characters: ["KAI"], clips: [HISTORY_CLIP] }));
+  for (const entity of project.characters || []) { entity.approvedFile = ""; entity.continuityStates = []; entity.candidateFiles = []; }
+  const row = broken.evaluateShotReadiness(project, project.shots[0], { mediaListing: () => [], shotMediaListing: () => [] });
+  assert.strictEqual(row.units.filter((u) => u.required).length, 0,
+    "precondition: nothing about the undeclared shot is required");
+  assert.notStrictEqual(row.nextAction.code, "declare-shot-route",
+    "a declared input the production cannot supply outranks the route question");
 });
 
 /* ===========================================================================
@@ -576,7 +637,9 @@ mustFail("NC-21 a declared clip kind stops requiring its frames", "the i2v unit'
    =========================================================================== */
 mustFail("NC-22 an optional unit's decision is dropped from the rollup", "a decision must keep the card", () => {
   const broken = compile(mutate(
-    `    const outstanding = units.filter((unit) => !unit.complete && (unit.required || unit.status === "NEEDS_DECISION"));`,
+    `    const outstanding = units.filter((unit) => !unit.complete`
+    + `
+      && (unit.required || unit.status === "NEEDS_DECISION" || inputOutstanding(unit)));`,
     `    const outstanding = units.filter((unit) => !unit.complete && unit.required);`,
     "NC-22",
   ));
@@ -629,7 +692,7 @@ mustFailAsync("NC-24 an optional unit's declared inputs are dropped", "still a c
     scan: scanFor(project),
     mutateSource: pageMutation("app.js",
       "    ...units.filter((unit) => !unit.complete && !unit.required)\n"
-      + "      .flatMap((unit) => (unit.requirements || []).filter((row) => SHOT_INPUT_REQUIREMENT_KINDS.includes(row?.kind))),",
+      + "      .flatMap((unit) => (unit.requirements || []).filter((row) => shotInputRequirementKinds().includes(row?.kind))),",
       "",
       "NC-24"),
   });

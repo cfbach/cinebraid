@@ -928,55 +928,59 @@
   const STILL_INTENTS = deepFreeze(["still"]);
 
   /* ==========================================================================
-     WHICH DECLARATION MAKES A FRAME REQUIRED — and the invariant that a DEFAULT
-     may fill an unknown but may never make a statement.
+     WHAT THIS SHOT HAS DECLARED ABOUT ITS OWN DELIVERY — the one predicate every
+     route-dependent judgement below is gated on, and the answer to a defect a Codex
+     review demonstrated: HISTORY DOES NOT DECLARE PRESENT INTENT.
 
-     `frame.required` reads `true` on every frame of every project. public/app.js's
-     newKeyframe() writes it unconditionally and normalizeShotV5() back-fills it onto
-     any frame that lacks it, and NO surface in CineBraid writes `true` because a
-     filmmaker asked for it. So on a shot that has declared neither a delivery route
-     nor a still delivery, `required: true` is a default speaking — and readiness was
-     reporting it as route debt: "Required frames 0/1", "Produce Frame A using t2i",
-     on a shot nobody had yet said anything about.
+     A legacy shot can carry a stored `post` clip, a `reuse` clip and an approved frame
+     from a production that happened before the route field existed. Those are EVIDENCE.
+     Reading them as current units let history bypass the route decision entirely: a
+     stored post clip produced "Produce Motion using t2v" and an old approved frame
+     produced "Mark shot final", on a shot whose route reading was `absent` and which
+     nobody had said anything about.
 
-     The three declarations that CAN require a frame, each answering the half it owns:
+     The three declarations, and there is no fourth:
 
-       a declared route      ->  its canonical frameNeeds, from shotRouteInputNeeds()
-       a declared still      ->  the legacy authored flag keeps its exact meaning
-       a declared clip kind  ->  the roles that method needs, per unit; see
-                                 declaredClipFrameRoles() below
+       a declared route      shot.deliveryRoute, through shotRouteInputNeeds()
+       a declared still      creationBrief.deliveryIntent — the route vocabulary is
+                             t2v/i2v/flf/r2v/hybrid, so a still-delivery shot can never
+                             declare a route and its opening frame IS the deliverable
+       a declared motion     the same field's other half; it says motion is owed, and
+                             the route says how
 
-     Anything else has declared nothing, so nothing is required. Retained frames are
-     untouched, still rendered and still producible — an optional unit, never a debt.
-     Declaring a route later turns exactly the roles that route names back on. */
-  function declaredFrameRequirement(creation, routeNeeds) {
+     "" is a shot that has declared NOTHING. Its stored frames and clips stay exactly
+     where they are, rendered and reachable; they are simply not current work. Nothing
+     here reads a clip kind, a frame winner, a candidate, a receipt, a package, a
+     provider or a filename — a route is declared or it is not.
+
+     `frame.required` is not a fourth declaration either. public/app.js's newKeyframe()
+     writes it `true` on every frame of every project and normalizeShotV5() back-fills
+     it, while NO filmmaker-facing control writes it at all, so reading it is a DEFAULT
+     MAKING A STATEMENT. It survives below only where a declared still delivery gives it
+     its legacy meaning. */
+  function declaredDelivery(creation, routeNeeds) {
     if (routeNeeds.known) return "route";
-    return STILL_INTENTS.includes(text(record(creation).deliveryIntent)) ? "still-delivery" : "";
+    const intent = text(record(creation).deliveryIntent);
+    if (STILL_INTENTS.includes(intent)) return "still-delivery";
+    if (MOTION_INTENTS.includes(intent)) return "motion-delivery";
+    return "";
   }
 
-  /* THE THIRD DECLARATION, AND THE REASON IT IS NOT A THIRD TABLE.
-     `clip.kind` is a declaration too — server.js's import normaliser admits exactly the
-     kinds CineBraid can read and demotes what it cannot — and it says how THAT unit is
-     animated. A shot may have declared no route and still contain a unit that has, and
-     the frame roles that unit's method needs are genuinely required by it. The roles
-     come out of ANIMATE_METHOD_PROBES, the same shipped probe set shotRouteInputNeeds()
-     is built from, so a kind and a route that mean the same method cannot disagree. */
-  function declaredClipFrameRoles(shot) {
-    const roles = new Set();
-    for (const clip of list(record(shot).clips)) {
-      const probe = ANIMATE_METHOD_PROBES.find((row) => row.method === text(record(clip).kind));
-      if (!probe) continue;
-      for (const role of probe.needs) if (FRAME_INPUT_ROLES.includes(role)) roles.add(role);
-    }
-    return roles;
-  }
+  /* THE REQUIREMENTS THAT BELONG TO THE SHOT RATHER THAN TO THE UNIT CARRYING THEM.
+
+     Readiness hangs an entity-state requirement on every unit because every unit
+     consumes the shot's cast; the obligation is a fact about the SHOT and survives a
+     unit nothing currently requires. It is what stops this correction from becoming
+     "an undeclared shot ignores everything": casting a character still owes its
+     approval before the shot has said how it is made, and public/app.js reads the same
+     declaration for the reference surface's own obligation list. */
+  const SHOT_INPUT_REQUIREMENT_KINDS = deepFreeze(["entity-state"]);
 
   function declaredUnits(shot) {
     const s = record(shot);
     const creation = record(s.creationBrief);
     const routeNeeds = shotRouteInputNeeds(s.deliveryRoute);
-    const frameBasis = declaredFrameRequirement(creation, routeNeeds);
-    const clipRoles = frameBasis ? new Set() : declaredClipFrameRoles(s);
+    const delivery = declaredDelivery(creation, routeNeeds);
     const units = [];
     const frames = list(s.keyframes).map(record).filter((frame) => text(frame.id));
     frames.forEach((frame, index) => {
@@ -992,14 +996,15 @@
         frameId: text(frame.id),
         index,
         /* A declared route governs which endpoint units are required without editing
-           or deleting the stored frames. With no route but a declared still delivery,
-           the legacy authored flag keeps its exact meaning. With no route and no still
-           delivery, a declared motion unit's own kind still asks for the roles its
-           method needs. With NOTHING declared, nothing requires this frame — see
-           declaredFrameRequirement() and declaredClipFrameRoles(). */
-        required: frameBasis === "route" ? routeRequired
-          : frameBasis === "still-delivery" ? frame.required !== false
-            : (isFirst && clipRoles.has("first-frame")) || (isLast && clipRoles.has("last-frame")),
+           or deleting the stored frames. A declared STILL delivery keeps the legacy
+           authored flag's exact meaning, because the opening frame is that shot's
+           deliverable and the route vocabulary cannot describe it. A declared MOTION
+           delivery says motion is owed and leaves WHICH frames it needs to the route,
+           so it requires none until one is declared. And a shot that has declared
+           nothing requires nothing — its frames are history. */
+        required: delivery === "route" ? routeRequired
+          : delivery === "still-delivery" ? frame.required !== false
+            : false,
         target: { kind: "shot-frame", shotId: text(s.id), frameId: text(frame.id) },
       });
     });
@@ -1010,7 +1015,16 @@
         kind: "motion",
         label: `Motion ${text(clip.suffix) || text(clip.id)}`,
         clip,
-        required: true,
+        /* A STORED CLIP IS NOT A DECLARATION. This was unconditionally `true`, and it
+           is the defect the Codex review demonstrated: a legacy `post` clip — a
+           finishing pass, not a generation — made an undeclared shot report READY and
+           "Produce Motion using t2v", choosing an execution method from a shot that
+           had chosen none. `reuse`, `hold` and `plan` did the same, and so did a clip
+           whose stored `kind` merely NAMED a method, which is history describing a
+           production that already happened.
+           The unit is still declared, still evaluated and still rendered; it is owed
+           only once the shot says it delivers something. */
+        required: !!delivery,
         target: { kind: "shot-motion", shotId: text(s.id), unitKey: text(clip.id) },
       });
     }
@@ -1492,18 +1506,32 @@
 
     const relationships = relationshipRequirements(P, s, context);
     const units = context.units.map((unit) => evaluateUnit(P, s, unit, context));
-    /* A DECISION IS NOT WORK, AND BEING OPTIONAL DOES NOT MAKE IT GO AWAY.
+    /* WHAT THIS SHOT OWES NOW, and the two things that cross from a unit nothing
+       currently requires.
+
        `outstanding` used to mean "required and unfinished", which was the same set
        while every frame of every project was required by default. Now that a shot which
-       has declared nothing requires nothing, a unit can hold a requirement only a
-       person can resolve — a malformed presence declaration, a pointer nobody approved,
-       a state that names no entity — on a unit nothing currently asks for. Those are
-       facts about the RECORD, not about the plan, and going quiet about one until some
-       route happens to require the unit would hide an integrity problem for exactly as
-       long as the shot stayed undecided.
-       WORK stays gated on `required`; a DECISION never is. Declaration order is
-       untouched, so nothing is reordered — the decision is added at its own position. */
-    const outstanding = units.filter((unit) => !unit.complete && (unit.required || unit.status === "NEEDS_DECISION"));
+       has declared nothing requires nothing, two kinds of truth would otherwise go
+       silent on an optional unit, and neither is route-dependent:
+
+         a DECISION      a malformed presence declaration, a pointer nobody approved, a
+                         state that names no entity. Facts about the RECORD, not about
+                         the plan. Going quiet about one until some route happened to
+                         require the unit would hide an integrity problem for exactly as
+                         long as the shot stayed undecided.
+         a DECLARED INPUT  the shot's own cast and references. Readiness hangs an
+                         entity-state requirement on every unit because every unit
+                         consumes the cast; casting a character owes its approval
+                         before the shot has said how it is made.
+
+       WORK stays gated on `required`. Neither of these is work, and neither of them
+       chooses an execution method. Declaration order is untouched, so nothing is
+       reordered — each crossing unit is added at its own position. */
+    const inputOutstanding = (unit) => list(unit.requirements)
+      .some((row) => SHOT_INPUT_REQUIREMENT_KINDS.includes(text(record(row).kind))
+        && text(record(row).state) === "missing");
+    const outstanding = units.filter((unit) => !unit.complete
+      && (unit.required || unit.status === "NEEDS_DECISION" || inputOutstanding(unit)));
     const optionalOutstanding = units.filter((unit) => !unit.complete && !unit.required).map((unit) => unit.id);
 
     let status;
@@ -1518,21 +1546,26 @@
     } else if (!units.length) {
       status = "NEEDS_DECISION";
       next = action("declare-producible-unit", "This shot declares no frame, no motion unit and no motion intent, so there is nothing to produce yet.", 0);
-    } else if (!outstanding.length && !units.some((unit) => unit.complete)) {
-      /* NOTHING IS OUTSTANDING, AND NOTHING IS APPROVED — the shot has declared no
-         route, no delivery and no motion unit, so no requirement of it is knowable yet.
+    } else if (!outstanding.length && !context.delivery) {
+      /* NOTHING IS OUTSTANDING, AND NOTHING HAS BEEN DECLARED — so no requirement of
+         this shot is knowable yet, whatever it happens to be carrying.
 
          THIS BRANCH IS WHY THE ONE BELOW IT IS NOT ENOUGH. `!outstanding.length` reads
          "every declared unit is satisfied" and hands the shot to deliveryDecision(),
-         which would tell a filmmaker who has produced nothing at all that "the approved
-         result is ready — mark this shot final". Satisfied and never-asked-for are not
-         the same state, and a shot carrying an unproduced optional frame is the second.
+         which told a filmmaker who had produced nothing that "the approved result is
+         ready — mark this shot final". Satisfied and never-asked-for are not the same
+         state.
 
-         It cannot fire on a shot that has declared anything: a declared route always
-         produces a required motion unit, so does a declared motion intent, a declared
-         still delivery keeps its frame required, a declared motion unit's own kind
-         requires the frames its method needs, an outstanding DECISION keeps the card
-         through `outstanding`, and any approved unit is caught by the `complete` half. */
+         AND THE GATE IS THE DECLARATION, NOT THE EVIDENCE. It used to also require that
+         no unit was complete, which let an OLD APPROVED FRAME on an undeclared legacy
+         shot fall straight through to the delivery decision — history skipping the
+         route question. What a shot has produced is not what it has decided; only
+         declaredDelivery() answers that, and it reads no frame, clip, candidate or
+         receipt to do it.
+
+         It cannot fire on a shot that has declared anything, because `context.delivery`
+         is exactly that declaration. A real DECISION or a missing DECLARED INPUT still
+         outranks it, through `outstanding` above. */
       status = "NEEDS_DECISION";
       next = action(
         "declare-shot-route",
@@ -1630,6 +1663,10 @@
       dependencies: list(shotDependencyRecordsOwner(project, shot)),
       attachedIds,
       routeNeeds,
+      /* Derived once and carried, because the rollup asks the same question
+         declaredUnits() already answered and re-deriving it is how two readings of one
+         declaration start to disagree. */
+      delivery: declaredDelivery(record(record(shot).creationBrief), routeNeeds),
       units: declaredUnits(shot),
       ownerIndexes: {},
     };
@@ -1777,6 +1814,7 @@
     ANIMATE_METHODS,
     ANIMATE_METHOD_PROBES,
     shotRouteInputNeeds,
+    SHOT_INPUT_REQUIREMENT_KINDS,
     productionInputSatisfaction,
     shotDeliveryAuthority,
     evaluateShotReadiness,

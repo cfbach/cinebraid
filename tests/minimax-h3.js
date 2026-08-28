@@ -196,7 +196,11 @@ async function testRenderedMultiFrameWorkspace() {
     { kind: 'entity-state', list: 'locations', entityId: 'LOC-HULL', stateId: 'state-default', value: 'LOC-HULL-PLATE.png' },
     { kind: 'entity-state', list: 'props', entityId: 'PR-TOOL', stateId: 'state-default', value: 'PR-TOOL-PLATE.png' },
   ]);
+  /* THE FIXTURE DECLARES THAT IT DELIVERS MOTION. The Motion workspace no longer
+     offers NEW generation to a shot that has declared no delivery, and this case is
+     about the H3 multi-frame controls that workspace draws once it is creating one. */
   project.shots[0].creationBrief = {
+    deliveryIntent: 'motion',
     motionProfileId: 'minimax-h3/multi-frame',
     motionDuration: 10,
     h3Keyframes: {

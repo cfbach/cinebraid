@@ -4128,14 +4128,22 @@ function nextActionTargetHref(target) {
  * frame's parent frame and a route's missing endpoint belong to the unit that owes them,
  * and letting an optional unit contribute them would put frame debt back through a side
  * door. Only the shot's own declared inputs cross. */
-const SHOT_INPUT_REQUIREMENT_KINDS = ["entity-state"];
+/* Declared by shared-shot-readiness.js, which uses the same list for the same reason:
+   these are the requirements that belong to the SHOT rather than to the unit carrying
+   them. Read rather than restated, so the reference surface and the readiness rollup
+   cannot come to disagree about which rows survive an optional unit. */
+function shotInputRequirementKinds() {
+  return typeof SHOT_INPUT_REQUIREMENT_KINDS !== "undefined" && Array.isArray(SHOT_INPUT_REQUIREMENT_KINDS)
+    ? SHOT_INPUT_REQUIREMENT_KINDS
+    : [];
+}
 function outstandingReadinessRows(shot) {
   const units = shot?.units || [];
   const rows = [
     ...(shot?.requirements || []),
     ...units.filter((unit) => !unit.complete && unit.required).flatMap((unit) => unit.requirements || []),
     ...units.filter((unit) => !unit.complete && !unit.required)
-      .flatMap((unit) => (unit.requirements || []).filter((row) => SHOT_INPUT_REQUIREMENT_KINDS.includes(row?.kind))),
+      .flatMap((unit) => (unit.requirements || []).filter((row) => shotInputRequirementKinds().includes(row?.kind))),
   ];
   return rows.filter((row) => row && (row.state === "missing" || row.state === "needs-decision"));
 }

@@ -4179,7 +4179,18 @@ function shotStageModelFacts(s, takes) {
   const readiness = typeof shotReadinessFor === "function" ? shotReadinessFor(s) : null;
   const frameUnits = (readiness?.units || []).filter((unit) => unit.kind === "frame");
   const requiredFrameUnits = frameUnits.filter((unit) => unit.required);
-  const motionUnit = (readiness?.units || []).find((unit) => unit.kind === "motion" && unit.required) || null;
+  /* THE MOTION UNIT THIS STAGE IS ABOUT — the required one where there is one, and
+     otherwise the unit the shot is merely CARRYING.
+
+     These facts drive whether the Motion workspace can be OPENED, which is a different
+     question from what the shot owes. Reading only the required unit made a legacy shot
+     with a stored clip and no declared route report no motion unit at all, and its own
+     motion workspace — with its compiled prompt and its returned takes in it — became
+     unreachable. Retained work stays reachable; requiredness still decides what is
+     OWED, and readiness still answers that on its own. */
+  const motionUnit = (readiness?.units || []).find((unit) => unit.kind === "motion" && unit.required)
+    || (readiness?.units || []).find((unit) => unit.kind === "motion")
+    || null;
   const requiredFrameRequirements = (motionUnit?.requirements || [])
     .filter((requirement) => requirement.kind === "shot-frame" && requirement.required);
   const routeRequiredFrameCount = routeNeeds.known ? routeNeeds.frameNeeds.length : 0;
@@ -4442,7 +4453,7 @@ function guidedShotWorkspaceView(s, takes, sc, state, refs, planningMedia, neigh
   const motionNote = videos
     ? plural(videos, "video file")
     : motionStage?.availability === "available" ? "available for this intent"
-      : !routeDeclared && !stageFacts.hasMotionUnit ? "not declared yet"
+      : !routeDeclared ? "not declared yet"
         : motionStage?.blockedReason || "readiness unavailable";
   const commandSummary = `<section class="shot-command-summary" data-shot-route-declared="${routeDeclared ? "1" : "0"}"><article><span>References</span><b>${referenceCount}</b><small>${referenceCount ? "linked and available" : "none linked yet"}</small></article><article><span>Required frames</span><b>${approvedFrames}/${requiredFrames}</b><small>${esc(frameNote)}</small></article><article><span>Motion</span><b>${videos || "-"}</b><small>${esc(motionNote)}</small></article><article><span>Open stage</span><b>${esc(String(selectedTask).replace(/^./, (c) => c.toUpperCase()))}</b><small>Shot status: ${esc(state?.label || life.label || "In progress")}</small></article></section>`;
   return `<div class="shot-shell guided-shot-shell focused-workspace-shell bounded-shot-workspace clarity-shot-workspace" data-bounded="1" data-selected-task="${attr(selectedTask)}">${projectNavigator(s)}<div class="shot-main"><div class="crumb"><a href="#/shots/board">Shots</a> / <a href="#/scene/${s.scene}">${esc(sc ? sc.title : s.scene)}</a> / ${esc(s.id)}</div><header class="shot-workspace-head guided-shot-head"><div class="shot-head-nav">${neighbors.prev ? `<a href="#/shot/${neighbors.prev.id}" title="Previous shot" aria-label="Previous shot: ${attr(neighbors.prev.title || neighbors.prev.id)}">‹</a>` : '<span aria-hidden="true">‹</span>'}${neighbors.next ? `<a href="#/shot/${neighbors.next.id}" title="Next shot" aria-label="Next shot: ${attr(neighbors.next.title || neighbors.next.id)}">›</a>` : '<span aria-hidden="true">›</span>'}</div><div class="shot-head-main"><h1 class="shot-title-display">${esc(s.title || "Untitled shot")}</h1><div class="record-meta">${esc(s.id)} · ${takes.length} returned file${takes.length === 1 ? "" : "s"}</div></div><div class="shot-head-controls"><details class="guided-inline-actions"><summary>Shot actions</summary><button class="ghost-btn" onclick="openRenameShotModal('${s.id}')">Rename shot</button><button class="ghost-btn" onclick="duplicateShot('${s.id}')">Duplicate shot</button><button class="ghost-btn" onclick="clickGuidedUpload('${s.id}','${life.key.includes("motion") || life.key === "final" ? "video" : "still"}')">Import existing ${life.key.includes("motion") || life.key === "final" ? "video" : "still"}</button><button class="danger-btn" onclick="delShot('${s.id}')">Delete shot</button></details></div></header>${commandSummary}${intentControl}${guidedShotStatusCard(s,takes,neighbors)}${typeof v642RelatedShotActivityMarkup === "function" ? v642RelatedShotActivityMarkup(s.id) : ""}<div class="guided-work-stack bounded-selected-task" data-bounded-task="${attr(selectedTask)}">${selectedMarkup}</div></div></div>`;

@@ -184,7 +184,12 @@ async function testRenderedWorkspace() {
       links: [{ id: "link-tool-rear", targetType: "prop", targetId: "PR-TOOL", role: "alternate-view", angleTag: "rear", referenceKind: "detail", detailRegion: "rear housing", priority: "supporting", notes: "Use for the rear housing.", agentContext: true, generationInput: true, order: 1 }],
     },
   );
+  /* THE FIXTURE DECLARES THAT IT DELIVERS MOTION. The Motion workspace no longer
+     offers NEW generation to a shot that has declared no delivery — a stored clip is
+     history, not a current unit — and every assertion below is about the controls
+     that workspace draws once it IS creating motion. */
   project.shots[0].creationBrief = {
+    deliveryIntent: "motion",
     locationId: "LOC-HULL",
     propIds: ["PR-TOOL"],
     composition: {
@@ -247,7 +252,10 @@ async function testMotionPreviewUsesApprovedStillAndPersistentDisclosures() {
     { kind: "entity-state", list: "locations", entityId: "LOC-HULL", stateId: "state-default", value: "LOC-HULL-PLATE.png" },
     { kind: "entity-state", list: "props", entityId: "PR-TOOL", stateId: "state-default", value: "PR-TOOL-PLATE.png" },
   ]);
+  /* Declared, for the reason the fixture above declares it: the Motion workspace
+     draws its creation controls only for a shot that says it is making motion. */
   project.shots[0].creationBrief = {
+    deliveryIntent: "motion",
     locationId: "LOC-HULL",
     propIds: ["PR-TOOL"],
     composition: compositionFixture(),
@@ -1206,6 +1214,9 @@ async function testAudioVoiceWorkspace() {
   ]);
   project.audio.push({ id: "VOICE-KAI-CLEAN", name: "Kai clean master", role: "voice", cleanMaster: true, sameObjectAs: "", notes: "One clean session." });
   project.shots[0].audio = { vo: "Production note. Line: 'Air scrubbers nominal.'", line: "", speakerId: "", note: "", voiceEntityId: "", sfx: "" };
+  /* Declared: the Dialogue & voice controls live inside the motion creation section,
+     which a shot that has declared no delivery is no longer offered. */
+  project.shots[0].creationBrief = { ...(project.shots[0].creationBrief || {}), deliveryIntent: "motion" };
   const shotRender = await render("#/shot/L1-01", project, { storage: { "cinebraid-focused:fixture:shot-task:L1-01": "motion" } });
   assert(shotRender.html.includes("Dialogue & voice"));
   assert(shotRender.html.includes("Spoken line — exact words"));

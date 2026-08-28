@@ -815,7 +815,12 @@ async function main() {
     { kind: "entity-state", list: "locations", entityId: "LOC-HULL", stateId: "state-default", value: "LOC-HULL-PLATE.png" },
     { kind: "entity-state", list: "props", entityId: "PR-TOOL", stateId: "state-default", value: "PR-TOOL-PLATE.png" },
   ]);
+  /* THE FIXTURE DECLARES THAT IT DELIVERS MOTION, because the shot workspace now
+     refuses to offer NEW motion generation on a shot that has declared nothing —
+     a stored clip is history, not a current unit. This case is about a compiled
+     motion prompt being ready to use, so the shot says it is making one. */
   promptFixture.shots[0].creationBrief = {
+    deliveryIntent: "motion",
     motionProfileId: "kling-3/i2v",
     motionDirection: "The ship drifts slowly. Camera remains locked.",
     motionPromptBuilds: [{

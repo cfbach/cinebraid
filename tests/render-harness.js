@@ -1026,6 +1026,10 @@ async function main() {
     { kind: "entity-state", list: "props", entityId: "PR-TOOL", stateId: "state-default", value: "PR-TOOL-PLATE.png" },
   ]);
   motionReadyFixture.shots[0].creationBrief = motionReadyFixture.shots[0].creationBrief || {};
+  /* Declared, for the same reason the prompt fixture in tests/current-behavior.js is:
+     the Motion workspace does not offer new generation to a shot that has declared
+     no delivery, and this case is about a completed still chain handing off TO motion. */
+  motionReadyFixture.shots[0].creationBrief.deliveryIntent = "motion";
   motionReadyFixture.shots[0].creationBrief.automationReadyForMotion = true;
   motionReadyFixture.shots[0].creationBrief.automationCompletedFrameIds = ["frame-a", "frame-b"];
   const motionReadyRender = await render("#/shot/L1-01", motionReadyFixture, { storage: { "cinebraid-focused:fixture:shot-task:L1-01": "motion" } });
