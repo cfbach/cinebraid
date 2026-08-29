@@ -1279,10 +1279,34 @@ async function main() {
         assert.strictEqual(impossible.data.code, "GENERATION_OPTION_IDENTITY_INVALID", `${description}: typed as an identity refusal`);
         assert.strictEqual(impossible.data.reason, reason, `${description}: refused for the right reason`);
       }
+      /* F. THE SAME TABLE, WITH THE OTHER HALF LEFT OUT.
+       *
+       * E sends both halves, so on its own it proves the check only for requests that
+       * happen to carry a model id — and omitting one was the way past it: the guard was
+       * scoped to `claimed && optionId`, so a lone option id was recorded by
+       * applyRequestTruth and asked nothing. Mintability never needed the model half to
+       * answer, which is what made the old scope a gap rather than a limitation. */
+      for (const [optionId, reason, description] of IMPOSSIBLE) {
+        const alone = await send(optionId, "", `lone-${reason}-${optionId.length}`);
+        assert.strictEqual(alone.status, 409, `${description}, named alone, must be refused: ${JSON.stringify(alone.data)}`);
+        assert.strictEqual(alone.data.code, "GENERATION_OPTION_IDENTITY_INVALID", `${description} alone: typed as an identity refusal`);
+        assert.strictEqual(alone.data.reason, reason, `${description} alone: refused for the right reason`);
+      }
       assert.strictEqual(h.calls.length, before, "and none of them reached the provider");
       assert.strictEqual(h.ledger().filter((row) => IMPOSSIBLE.some(([id]) => row.selectedOptionId === id)).length, 0,
-        "and none of them was recorded as an option a filmmaker chose");
-      note(`16. ${IMPOSSIBLE.length} well-formed but impossible option identities are each refused for their own catalogue reason with no dispatch and no ledger row; B-option + A-model is refused with GENERATION_OPTION_MODEL_MISMATCH naming ${MODEL_B}; A/A dispatches and records both, B/B keeps its existing route refusal, and both-absent keeps the legacy fallback`);
+        "and none of them was recorded as an option a filmmaker chose, named alone or in a pair");
+
+      /* AND THE WIDENING THAT WAS NOT DONE. A lone option id CineBraid COULD have minted
+         still dispatches on the route's own configured model rather than deriving one
+         from the option — refusing an impossible id is not the same decision as letting a
+         selection choose what to buy, and only the first belongs to this boundary. */
+      const loneReal = await send(OPTION_A, "", "lone-real");
+      assert.strictEqual(loneReal.status, 200, `a mintable option named alone must still dispatch: ${JSON.stringify(loneReal.data)}`);
+      const loneRow = h.ledger().find((row) => row.clientRequestId === "lone-real");
+      assert.strictEqual(loneRow.selectedOptionId, OPTION_A, "recording the option it named");
+      assert.strictEqual(loneRow.selectedModelId, "", "claiming no model");
+      assert.strictEqual(loneRow.model, "openai/gpt-image-2/edit", "and dispatching the route's own configured endpoint, not one derived from the option");
+      note(`16. ${IMPOSSIBLE.length} well-formed but impossible option identities are each refused for their own catalogue reason with no dispatch and no ledger row — whether they arrive beside a model id or alone; B-option + A-model is refused with GENERATION_OPTION_MODEL_MISMATCH naming ${MODEL_B}; A/A dispatches and records both, B/B keeps its existing route refusal, both-absent keeps the legacy fallback, and a mintable option named alone still dispatches on the route's configured model rather than deriving one`);
     } finally { h.close(); }
   }
 

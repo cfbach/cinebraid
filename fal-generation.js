@@ -595,13 +595,20 @@ function registerFalGeneration(app, context) {
      * CineBraid-minted id names. The route cannot re-resolve the option list here: that
      * needs a filmmaker task and the shot inputs, and a dispatch body carries neither.
      *
-     * EXACTLY ONE HALF SUPPLIED KEEPS THE EXISTING CONTRACT, deliberately. A lone
-     * `selectedModelId` drives the dispatch check below exactly as before. A lone
-     * `selectedOptionId` is recorded and not validated, which is what the accepted
-     * candidate already did - there is a real argument for deriving the model from it and
-     * checking that too, and it is a widening of behaviour rather than a repair of the
-     * reproduced defect, so it is named here as a residual instead of taken silently. */
-    if (claimed && optionId) {
+     * A LONE OPTION ID IS STILL AN ASSERTION ABOUT A SCREEN, so it is checked like one.
+     * This was carried as a named residual - recorded and not validated - and the residual
+     * was not stable: applyRequestTruth() writes selectedOptionId onto the ledger row
+     * before this runs, so the impossible id an independent reviewer used to break the
+     * pair check was durably recorded as the option a filmmaker chose whenever the model
+     * half was simply left out. Mintability does not need the model half to answer -
+     * generationOptionMintable() is not given one - so the only thing the old scope bought
+     * was a way to skip it.
+     *
+     * WHAT IS STILL NOT DONE, and is still the widening it always was: a lone option id
+     * does not DERIVE a dispatch model. The check below stays gated on `claimed`, so a
+     * request that named no model keeps the well-defined fallback described above. This
+     * refuses an id CineBraid could not have issued; it does not start choosing models. */
+    if (optionId) {
       /* SHAPE IS NOT MINTABILITY. Three colon-separated segments is what an id looks
          like; whether CineBraid could ever have issued THIS one is a question about the
          catalogue, the surfaces that offer the model and the modes a filmmaker task can
@@ -618,7 +625,9 @@ function registerFalGeneration(app, context) {
           error: `This request names the generation option "${optionId}", which is not an option identity CineBraid could have issued (${identity.reason}). Nothing was submitted.`,
           detail: { selectedOptionId: optionId, selectedModelId: claimed, reason: identity.reason },
         };
-      if (identity.modelId !== claimed)
+      /* The pair check needs both halves by definition; a lone option id has nothing to
+         disagree with, and inventing the comparison would be the derivation above. */
+      if (claimed && identity.modelId !== claimed)
         return {
           status: 409,
           code: "GENERATION_OPTION_MODEL_MISMATCH",

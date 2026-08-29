@@ -1194,8 +1194,8 @@ async function main() {
   await control("a boundary that reads the model half of an identity and ignores the option",
     "a request whose own two names disagree is refused", async (phase) => {
       const falGeneration = loadModified("fal-generation.js", [[
-        "    if (claimed && optionId) {",
-        "    if (false && claimed && optionId) {",
+        "    if (optionId) {",
+        "    if (false && optionId) {",
       ]]);
       phase("MUTATION_LANDED");
       const h = await harness(falGeneration);
@@ -1213,6 +1213,42 @@ async function main() {
         const row = h.ledger()[0];
         observeHarm(row.selectedOptionId === OTHER_OPTION_ID,
           `THE DEFECT: a request naming option ${JSON.stringify(row.selectedOptionId)} beside model ${JSON.stringify(row.selectedModelId)} dispatched to ${JSON.stringify(row.model)}, and the ledger now records a pair describing a screen that cannot have existed`);
+      } finally { h.close(); }
+    });
+
+  /* =======================================================================
+     10b. THE SAME CHECK, SKIPPED BY LEAVING THE OTHER HALF OUT.
+
+     Control 10 proves the pair check catches a disagreeing pair. It cannot say anything
+     about a request that names ONE half, and for as long as the guard was scoped to
+     `claimed && optionId` that was the way past it: omit selectedModelId and the
+     mintability question was never asked, while applyRequestTruth had already written the
+     impossible id onto the row. The mutation restores that scope. */
+  await control("an option identity checked only when a model id happens to accompany it",
+    "an option identity CineBraid could not have issued is refused however it arrives", async (phase) => {
+      const falGeneration = loadModified("fal-generation.js", [[
+        "    if (optionId) {",
+        "    if (claimed && optionId) {",
+      ]]);
+      phase("MUTATION_LANDED");
+      const h = await harness(falGeneration);
+      try {
+        const buildId = seedFramePackage(h);
+        const result = await h.post({
+          ...framePlanBody(buildId),
+          generationRequest: Presentation.generationRequestDeclaration({
+            surface: "compiled-frame", viewMode: "advanced",
+            /* Well-formed, and impossible — the same id the reviewer used to break the
+               pair check, arriving without the half that used to switch the check on. */
+            selectedOptionId: `${IMAGE_MODEL_ID}::not-a-real-surface::not-a-real-mode`,
+          }),
+        });
+        assert.strictEqual(result.status, 200, `the unsafe path must actually run: ${JSON.stringify(result.data)}`);
+        assert.strictEqual(h.calls.length, 1, "and must actually reach the provider");
+        phase("UNSAFE_PATH_EXECUTED");
+        const row = h.ledger()[0];
+        observeHarm(String(row.selectedOptionId).includes("not-a-real-surface"),
+          `THE DEFECT: a lone option id ${JSON.stringify(row.selectedOptionId)} CineBraid could never have minted was dispatched and durably recorded as the option a filmmaker chose`);
       } finally { h.close(); }
     });
 
