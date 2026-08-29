@@ -33,6 +33,9 @@
  *   J  historical media on an undeclared shot is preserved and owed nothing: a stored
  *      post/reuse/hold/plan/i2v clip, an old approved frame and all of them together
  *      leave the route absent and the answer the route question
+ *   M  the shell around #main agrees: the persistent stage bar offers no Continue and
+ *      the Assistant rail names no next stage unless the destination is genuinely owed,
+ *      and the declared-optional Look & blocking stage is never one
  *
  * NO PROVIDER, NO PAID ROUTE, NO NETWORK, NO PROJECT DATA. Every fixture is built in
  * memory and the repository's own projects/ directory is never opened.
@@ -1585,6 +1588,213 @@ async function checkRetainedMotionHistory() {
     + `opens on ${ordinary.task}, so Resume and an ordinary open stay different questions`);
 }
 
+
+/* ===========================================================================
+   M — THE NEXT ACTION THE SHELL OFFERS.
+
+   Sections C and H proved that an undeclared shot owes no frame and is offered no
+   production CTA inside `#main`. THE SHELL AROUND `#main` WAS STILL ANSWERING THE
+   SAME QUESTION SEPARATELY, and it was answering it wrong.
+
+   public/shared-stage-model.js's recommendedNextFor() returned the first two handoffs
+   unconditionally — `inputs -> "look"` and `look -> "frames"` — and two shipped
+   surfaces render that answer verbatim:
+
+     public/shared-stage-actions.js  a `Continue to <stage>` action, emphasis
+                                     `advance`, in the persistent stage bar;
+     public/creator-surfaces.js      "Next action / <stage> / CineBraid recommends
+                                     this next" in the Assistant rail.
+
+   So a shot created seconds earlier, carrying no route and no attachment, was told to
+   Continue to Look & blocking — a stage its own declaration marks `optional: true`,
+   meaning it may be skipped outright. And a shot whose declared delivery requires ZERO
+   frames was pointed at the Frames stage that the model marks optional FOR THAT SHOT
+   two functions further down: frame debt expressed as a next action rather than as a
+   count, which is the same fabrication section C removes from the count.
+
+   This section reads the facts from the SHIPPED assembler in a rendered page and puts
+   them through the SHIPPED derivations. It invents no fact record, so it cannot pass
+   against a projection that has stopped reflecting the product.
+   =========================================================================== */
+const Actions = require("../public/shared-stage-actions.js");
+const CreatorState = require("../public/shared-creator-state.js");
+
+/* The stage bar's and the rail's answers for one rendered shot, assembled the way the
+   product assembles them: shotStageModelFacts() in the page, then the two contract
+   modules the shell draws through. */
+async function shellNextActions(project, shotId, { takes = [], anchorsOnDisk = true } = {}) {
+  /* Takes go INTO the scan, not beside it: an approved winner with no take on disk
+     is an unresolved frame, and readiness says so. Supplying them is how a fixture
+     reaches "the required frame really is approved". `anchorsOnDisk: false` is the
+     other direction — a cast member the shot declares whose approved reference is
+     named on the record but is not there, which is what a MISSING reference is. */
+  const scan = scanFor(project);
+  if (!anchorsOnDisk) scan.anchors = [];
+  for (const shot of project.shots || [])
+    scan.shots[shot.id] = { takes: takes.map((name) => ({ name, url: `/assets/shots/${shot.id}/takes/${name}` })), locked: [] };
+  const page = await render(`#/shot/${shotId}`, project, { scan });
+  const facts = run(page.context, `
+    const s = P.shots.find((row) => row.id === ${JSON.stringify(shotId)});
+    return shotStageModelFacts(s, takesFor(${JSON.stringify(shotId)}));`);
+  const stages = Stage.shotStageProgress(facts);
+  const labels = Object.fromEntries(Stage.SHOT_STAGES.map((stage) => [stage.id, stage.label]));
+  return {
+    facts,
+    stages: stages.map((stage) => ({
+      id: stage.id,
+      optional: stage.optional,
+      recommendedNext: stage.recommendedNext,
+      /* THE BAR. Every advancing action it would draw for this stage. */
+      advances: [...Actions.stageActions(stage, shotId)].filter((action) => action.advances)
+        .map((action) => ({ label: action.label, target: action.invoke.stageId })),
+      /* THE RAIL. Its four-answer recommendation for this stage. */
+      rail: CreatorState.creatorRecommendation(CreatorState.creatorStageBlock(stage), labels),
+    })),
+  };
+}
+const stageOf = (shell, id) => shell.stages.find((stage) => stage.id === id);
+const everyAdvance = (shell) => shell.stages.flatMap((stage) => stage.advances.map((row) => `${stage.id}->${row.target}`));
+
+async function checkShellNextAction() {
+  const observed = [];
+
+  /* M1 — NOTHING DECLARED, NOTHING RECOMMENDED.
+
+     A shot straight out of the New Shot form. Its route is absent, its frame count is
+     the one section C forces to zero, and the shell must offer no advance at all. */
+  const fresh = await shellNextActions(projectWith(newShotRecord("SC-01-01", "SC-01")), "SC-01-01");
+  assert.strictEqual(fresh.facts.requiredFrameCount, 0, "M1 fixture check: a fresh shot owes no frame");
+  assert.strictEqual(fresh.facts.routeRequirementsKnown, false, "M1 fixture check: and has declared no route");
+  assert.deepStrictEqual(everyAdvance(fresh), [],
+    "M1: a shot that has declared nothing and attached nothing must be offered no Continue anywhere in the bar");
+  assert.strictEqual(stageOf(fresh, "inputs").rail.kind, "none",
+    "M1: and the Assistant rail must report no recommendation rather than name one");
+  assert.strictEqual(stageOf(fresh, "inputs").rail.reason, "no-honest-recommendation",
+    "M1: as a result with a reason — the rail's shipped sentence says CineBraid recommends a next step only once the shot has said what it is delivered as, and that sentence has to be true");
+  observed.push("a fresh undeclared shot: 0 advances anywhere in the bar, rail reports no-honest-recommendation");
+
+  /* M2 — LOOK & BLOCKING IS RECOMMENDED BY NOTHING, UNDER EVERY DECLARATION.
+
+     The stage is declared optional, so it is never OWED, so no state of any shot may
+     make it the step that comes next. Stated over the whole route vocabulary rather
+     than over the one case that exhibited the bug. */
+  const lookOffers = [];
+  for (const route of ["", ...ROUTES]) {
+    const shot = newShotRecord("SC-01-01", "SC-01", route ? { deliveryRoute: route } : {});
+    const shell = await shellNextActions(projectWith(shot), "SC-01-01");
+    assert.strictEqual(stageOf(shell, "look").optional, true,
+      `M2 fixture check: Look & blocking must still be declared optional under ${route || "no route"}`);
+    for (const stage of shell.stages) {
+      if (stage.recommendedNext === "look" || stage.advances.some((row) => row.target === "look"))
+        lookOffers.push(`${route || "undeclared"}:${stage.id}`);
+    }
+  }
+  assert.deepStrictEqual(lookOffers, [],
+    `M2: Look & blocking was offered as the next step by ${lookOffers.join(", ")}. It is declared skippable outright; an optional stage is an invitation and can never be what a shot must do next.`);
+  observed.push(`Look & blocking is recommended by no stage under any of ${ROUTES.length + 1} declarations`);
+
+  /* M3 — FRAMES IS OFFERED EXACTLY WHERE THE CANONICAL OWNER SAYS A FRAME IS OWED.
+
+     The requirement is not restated here: the expectation is DERIVED from
+     shotRouteInputNeeds() through the same frameNeedsOf() section D uses, so a route
+     whose canonical needs change moves this assertion with it instead of breaking it. */
+  const framesByRoute = [];
+  for (const route of ROUTES) {
+    const shell = await shellNextActions(projectWith(newShotRecord("SC-01-01", "SC-01", { deliveryRoute: route })), "SC-01-01");
+    const owed = frameNeedsOf(route).length > 0;
+    assert.strictEqual(shell.facts.requiredFrameCount, frameNeedsOf(route).length,
+      `M3 fixture check: ${route}'s frame count must be the route owner's own answer`);
+    for (const stageId of ["inputs", "look"]) {
+      const stage = stageOf(shell, stageId);
+      assert.strictEqual(stage.recommendedNext, owed ? "frames" : "",
+        owed
+          ? `M3: ${route} owes ${frameNeedsOf(route).length} frame(s) and none is approved, so ${stageId} must offer the Frames handoff`
+          : `M3: ${route} owes no frame, so ${stageId} must not point at Frames — that is image-route frame debt arriving as a next action`);
+      assert.deepStrictEqual(stage.advances.map((row) => row.target), owed ? ["frames"] : [],
+        `M3: the bar's advancing actions for ${route}/${stageId} must match the recommendation exactly`);
+    }
+    framesByRoute.push(`${route}:${frameNeedsOf(route).length}${owed ? "->frames" : "->none"}`);
+  }
+  observed.push(`route-owed frame handoffs ${framesByRoute.join(" ")}`);
+
+  /* M4 — AN APPROVED REQUIREMENT IS NOT AN OUTSTANDING ONE.
+
+     The same declared route, before and after its opening frame is approved. The
+     handoff is withdrawn when the work behind it is done: a Continue pointed at
+     finished work is the same overclaim in the other direction. */
+  const owedRoute = ROUTES.find((route) => frameNeedsOf(route).length === 1);
+  assert(owedRoute, "M4 fixture check: at least one route must require exactly one frame");
+  const beforeApproval = await shellNextActions(projectWith(newShotRecord("SC-01-01", "SC-01", { deliveryRoute: owedRoute })), "SC-01-01");
+  assert.strictEqual(stageOf(beforeApproval, "inputs").recommendedNext, "frames", "M4 fixture check: the frame is owed before approval");
+
+  const approvedProject = projectWith(newShotRecord("SC-01-01", "SC-01", {
+    deliveryRoute: owedRoute,
+    keyframes: [{ id: "frame-a-new", label: "A", title: "Opening frame A", winner: "FRAME_A.png", description: "", notes: "", required: true, generationPackages: [] }],
+    candidateFiles: [{ stored: "FRAME_A.png", original: "FRAME_A.png", decision: "approved", mediaType: "image", frameId: "frame-a-new" }],
+  }));
+  approveFrame(approvedProject, "SC-01-01", "frame-a-new", "FRAME_A.png");
+  const afterApproval = await shellNextActions(approvedProject, "SC-01-01", { takes: ["FRAME_A.png"] });
+  assert.strictEqual(afterApproval.facts.requiredFramesApproved, true, "M4 fixture check: the required frame is approved now");
+  for (const stageId of ["inputs", "look"]) {
+    assert.strictEqual(stageOf(afterApproval, stageId).recommendedNext, "",
+      `M4: ${stageId} must stop offering the Frames handoff once the frame it was for is approved`);
+    assert.deepStrictEqual(stageOf(afterApproval, stageId).advances, [],
+      `M4: and the bar must draw no Continue for ${stageId}`);
+  }
+  observed.push(`${owedRoute} offers the Frames handoff until its opening frame is approved, then withdraws it`);
+
+  /* M5 — A MISSING DECLARED INPUT KEEPS THE SHOT WHERE IT IS.
+
+     Section C proves a cast member with no approved reference still raises an
+     obligation from an optional unit. The shell must not answer that obligation by
+     sending the filmmaker to a later stage, because the thing that is missing is
+     attached HERE. */
+  const castId = (buildFixture().characters || [])[0].id;
+  const missingInput = projectWith(newShotRecord("SC-01-01", "SC-01", { deliveryRoute: owedRoute, characters: [castId] }));
+  const shortOfInput = await shellNextActions(missingInput, "SC-01-01", { anchorsOnDisk: false });
+  assert(shortOfInput.facts.missingReferenceCount > 0,
+    "M5 fixture check: the shot must actually be short of a declared reference");
+  assert.strictEqual(stageOf(shortOfInput, "inputs").recommendedNext, "",
+    "M5: a shot missing an input it has declared must not be advised to leave the stage that is missing it");
+  assert.deepStrictEqual(stageOf(shortOfInput, "inputs").advances, [], "M5: and no Continue is drawn for it");
+  observed.push(`a shot short of ${shortOfInput.facts.missingReferenceCount} declared reference stays on Inputs`);
+
+  /* M6 — THE LEGACY SHOT IS NOT PUSHED ANYWHERE EITHER.
+
+     Two frames, one approved, a stored clip, no declared route. Section G proves none
+     of that declares a route; this proves none of it produces a handoff either. Its
+     retained work stays reachable — every stage is still selectable — but nothing is
+     RECOMMENDED, because the shot has not said how it is made. */
+  const legacyBrief = { ...legacyShotRecord("probe", "probe").creationBrief, deliveryIntent: "" };
+  const legacyProject = projectWith(legacyShotRecord("SC-01-01", "SC-01", { creationBrief: legacyBrief }));
+  approveFrame(legacyProject, "SC-01-01", "frame-a-legacy", "LEGACY-A.png");
+  const legacy = await shellNextActions(legacyProject, "SC-01-01", { takes: ["LEGACY-A.png"] });
+  assert.strictEqual(legacy.facts.deliveryRoute, "", "M6 fixture check: the legacy shot declares no route");
+  assert(legacy.facts.frameApprovedCount > 0, "M6 fixture check: and carries a historical approved frame");
+  assert.deepStrictEqual(everyAdvance(legacy), [],
+    "M6: a legacy shot with historical frames and a stored clip but no declared route must be offered no Continue — its own history is not a recommendation");
+  observed.push(`a legacy shot with ${legacy.facts.frameApprovedCount} approved frame and a stored clip: 0 advances, history intact`);
+
+  /* M7 — A DECLARED STILL DELIVERY STILL GETS ITS HANDOFFS.
+
+     The legacy flag section C leaves meaning exactly what it meant: the opening frame
+     is the deliverable. So this shot is owed a frame, is told so on both surfaces, and
+     nothing about withdrawing false handoffs may withdraw true ones. */
+  const stillProject = stillDeliveryProject();
+  const stillShotId = stillProject.shots[0].id;
+  const still = await shellNextActions(stillProject, stillShotId);
+  assert.strictEqual(still.facts.deliveryIntent, "still", "M7 fixture check: this shot declares a still delivery");
+  assert(still.facts.requiredFrameCount > 0, "M7 fixture check: whose opening frame is therefore required");
+  assert.strictEqual(stageOf(still, "inputs").recommendedNext, "frames",
+    "M7: a declared still delivery owes its frame and must be told so");
+  assert.strictEqual(stageOf(still, "inputs").rail.kind, "stage", "M7: and the rail names a stage");
+  assert.strictEqual(stageOf(still, "inputs").rail.stageId, "frames", "M7: which is Frames");
+  observed.push("a declared still delivery keeps its Frames handoff on both surfaces");
+
+  note("M. the shell's next action: " + observed.join("; ")
+    + " — so the persistent bar and the Assistant rail agree with the frame truth inside #main instead of contradicting it");
+}
+
 /* =========================================================================== */
 async function main() {
   await checkContextualAdd();
@@ -1603,6 +1813,7 @@ async function main() {
   checkRouteIndependentStillCounts();
   checkStillDeliveryMotion();
   await checkRetainedMotionHistory();
+  await checkShellNextAction();
 
   /* The action code this slice adds is declared in all three places a readiness action
      has to be declared, or it renders as a bare "Next action" with no destination. */

@@ -918,6 +918,131 @@ mustFailAsync("NC-30 retained motion work is hidden because generation is blocke
       "retained motion work must be visible when new generation is refused");
   });
 
+
+/* ===========================================================================
+   NC-31 .. NC-34 — THE SHELL'S NEXT ACTION.
+
+   Section M's guarantee, and the four ways it goes back. Every one of these mutates
+   public/shared-stage-model.js's recommendedNextFor()/framesOwed() as the render
+   harness loads it, so the page under test really is running the broken derivation —
+   the same page, drawing the same persistent stage bar and Assistant rail.
+
+   The detector is read out of the RENDERED page rather than from a Node-side call, for
+   the reason NC-6 exists: a truthful module behind an untruthful page is still an
+   untruthful product.
+   =========================================================================== */
+
+/* Every stage's recommendation for one rendered shot, taken from the page's own
+   shotStageProgress() over the page's own shotStageModelFacts(). */
+async function shellRecommendations(shotExtra, mutateSource, { takes = [] } = {}) {
+  const project = projectWith(newShotRecord(shotExtra));
+  const scan = scanFor(project);
+  scan.shots["SC-01-01"] = { takes: takes.map((name) => ({ name, url: `/assets/shots/SC-01-01/takes/${name}` })), locked: [] };
+  const page = await render("#/shot/SC-01-01", project, { scan, mutateSource });
+  return run(page.context, `
+    const s = P.shots.find((row) => row.id === "SC-01-01");
+    const facts = shotStageModelFacts(s, takesFor("SC-01-01"));
+    return {
+      requiredFrameCount: facts.requiredFrameCount,
+      requiredFramesApproved: facts.requiredFramesApproved,
+      frameTotal: facts.frameTotal,
+      stages: shotStageProgress(facts).map((stage) => ({ id: stage.id, optional: stage.optional, recommendedNext: stage.recommendedNext })),
+    };`);
+}
+const recommendedBy = (seen) => seen.stages.filter((stage) => stage.recommendedNext).map((stage) => `${stage.id}->${stage.recommendedNext}`);
+
+const OWED_GATE = `  function framesOwed(facts) {\n    return facts.requiredFrameCount > 0 && !facts.requiredFramesApproved;\n  }`;
+const INPUTS_HANDOFF = `    if (stageId === "inputs") {\n      if (facts.missingReferenceCount) return "";\n      return framesOwed(facts) ? "frames" : "";\n    }`;
+const LOOK_HANDOFF = `    if (stageId === "look") return framesOwed(facts) ? "frames" : "";`;
+
+/* ---------------------------------------------------------------------------
+   NC-31 — THE OPTIONAL STAGE IS THE NEXT STEP AGAIN.
+
+   The shipped defect, restored exactly: `inputs -> "look"`, unconditionally. A shot
+   created seconds ago, with no route and nothing attached, is told to continue to a
+   stage its own declaration says may be skipped outright.
+   --------------------------------------------------------------------------- */
+mustFailAsync("NC-31 Inputs recommends the declared-optional Look stage", "Look & blocking is declared skippable outright", async () => {
+  const seen = await shellRecommendations({}, pageMutation("shared-stage-model.js",
+    INPUTS_HANDOFF, `    if (stageId === "inputs") return "look";`, "NC-31"));
+  assert.strictEqual(seen.requiredFrameCount, 0, "precondition: the fresh shot still owes no frame");
+  const look = seen.stages.find((stage) => stage.id === "look");
+  assert.strictEqual(look.optional, true, "precondition: Look & blocking is still declared optional");
+  const offering = seen.stages.filter((stage) => stage.recommendedNext === "look").map((stage) => stage.id);
+  assert.deepStrictEqual(offering, [],
+    `Look & blocking is declared skippable outright, so it can never be the next step — but ${offering.join(", ")} recommended it`);
+});
+
+/* ---------------------------------------------------------------------------
+   NC-32 — THE FRAMES HANDOFF STOPS ASKING WHETHER A FRAME IS OWED.
+
+   `look -> "frames"`, unconditionally, on a shot whose DECLARED route requires zero
+   frames. The count in `#main` still reads 0, and the bar still points at Frames: the
+   image-route frame debt this slice removed from the count, returning as a next action.
+   --------------------------------------------------------------------------- */
+mustFailAsync("NC-32 a route that owes no frame is pointed at Frames", "owes no frame, so nothing may point at the Frames stage", async () => {
+  const seen = await shellRecommendations({ deliveryRoute: "r2v" }, pageMutation("shared-stage-model.js",
+    LOOK_HANDOFF, `    if (stageId === "look") return "frames";`, "NC-32"));
+  assert.strictEqual(seen.requiredFrameCount, 0, "precondition: this declared route owes no frame");
+  const offering = seen.stages.filter((stage) => stage.recommendedNext === "frames").map((stage) => stage.id);
+  assert.deepStrictEqual(offering, [],
+    `a shot with ${seen.requiredFrameCount} required frames owes no frame, so nothing may point at the Frames stage — ${offering.join(", ")} did`);
+});
+
+/* ---------------------------------------------------------------------------
+   NC-33 — A CONTINUE POINTED AT FINISHED WORK.
+
+   The approval half of the predicate dropped. The requirement is real and the route is
+   declared; it is simply already met. Recommending it anyway is the same overclaim in
+   the other direction, and it is the half a "does the route need a frame" reading alone
+   would never catch.
+   --------------------------------------------------------------------------- */
+mustFailAsync("NC-33 the owed test ignores whether the frame is already approved", "already approved, so no stage may still recommend", async () => {
+  const approved = {
+    deliveryRoute: "i2v",
+    keyframes: [{ id: "frame-a-new", label: "A", title: "Opening frame A", winner: "FRAME_A.png", required: true, generationPackages: [] }],
+    candidateFiles: [{ stored: "FRAME_A.png", original: "FRAME_A.png", decision: "approved", mediaType: "image", frameId: "frame-a-new" }],
+  };
+  /* The receipt is written on the project the render harness will be given, which is
+     rebuilt inside shellRecommendations — so the approval is carried on the record
+     itself and confirmed from the rendered facts below. */
+  const project = projectWith(newShotRecord(approved));
+  GESTURE.gesture(() => Kernel.approveFrameCanon(project, { shotId: "SC-01-01", frameId: "frame-a-new", value: "FRAME_A.png", assetId: "", at: AT, via: "NC-33" }));
+  const scan = scanFor(project);
+  scan.shots["SC-01-01"] = { takes: [{ name: "FRAME_A.png", url: "/assets/shots/SC-01-01/takes/FRAME_A.png" }], locked: [] };
+  const page = await render("#/shot/SC-01-01", project, {
+    scan,
+    mutateSource: pageMutation("shared-stage-model.js", OWED_GATE,
+      `  function framesOwed(facts) {\n    return facts.requiredFrameCount > 0;\n  }`, "NC-33"),
+  });
+  const seen = run(page.context, `
+    const s = P.shots.find((row) => row.id === "SC-01-01");
+    const facts = shotStageModelFacts(s, takesFor("SC-01-01"));
+    return { requiredFramesApproved: facts.requiredFramesApproved,
+      stages: shotStageProgress(facts).map((stage) => ({ id: stage.id, recommendedNext: stage.recommendedNext })) };`);
+  assert.strictEqual(seen.requiredFramesApproved, true, "precondition: the required frame really is approved");
+  const offering = seen.stages.filter((stage) => stage.recommendedNext === "frames").map((stage) => stage.id);
+  assert.deepStrictEqual(offering, [],
+    `the required frame is already approved, so no stage may still recommend the Frames stage — ${offering.join(", ")} did`);
+});
+
+/* ---------------------------------------------------------------------------
+   NC-34 — THE HANDOFF READS EVIDENCE INSTEAD OF THE DECLARATION.
+
+   `frameTotal` instead of `requiredFrameCount`: a frame RECORD exists, therefore go
+   make a frame. That is the shape of every defect this slice removed — history and
+   record structure speaking for a decision nobody made — and it survives the count
+   because the count is still honestly zero while the handoff is not.
+   --------------------------------------------------------------------------- */
+mustFailAsync("NC-34 the frames handoff counts frame records rather than requirements", "carries frame records but owes none", async () => {
+  const seen = await shellRecommendations({}, pageMutation("shared-stage-model.js", OWED_GATE,
+    `  function framesOwed(facts) {\n    return facts.frameTotal > 0 && !facts.requiredFramesApproved;\n  }`, "NC-34"));
+  assert(seen.frameTotal > 0, "precondition: the fresh shot carries a frame record, as every new shot does");
+  assert.strictEqual(seen.requiredFrameCount, 0, "precondition: and owes none of it");
+  assert.deepStrictEqual(recommendedBy(seen), [],
+    `an undeclared shot carries frame records but owes none, so nothing may recommend a stage on the strength of the record — ${recommendedBy(seen).join(", ")} did`);
+});
+
 async function main() {
   for (const control of QUEUE) await control();
   console.log("Shot intent at the front negative controls passed:");
